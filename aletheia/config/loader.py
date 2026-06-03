@@ -55,6 +55,12 @@ def save_config(cfg: AletheiaConfig) -> None:
 def bootstrap() -> AletheiaConfig:
     """Ensure data dirs exist and config is written. Returns loaded config."""
     ensure_data_dirs()
+    # Seed starter playbooks on first run (guide §22.3 / §8)
+    try:
+        from aletheia.trading.playbooks import seed_playbooks
+        seed_playbooks(DATA_DIR)
+    except Exception:
+        pass
     if not CONFIG_PATH.exists():
         cfg = AletheiaConfig()
         save_config(cfg)

@@ -14,6 +14,7 @@ class RiskCheckResult:
     violations: list[str] = field(default_factory=list)
     allowed_execution_mode: str = "paper_internal"
     message: str = ""
+    decision_id: str | None = None
 
 
 def evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult:
@@ -95,5 +96,6 @@ def evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult:
         message=result.message,
     )
     insert_risk_decision(decision)
+    result.decision_id = decision.id
 
     return result

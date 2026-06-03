@@ -50,6 +50,43 @@ async def get_proposals():
     return repo.list_trade_proposals()
 
 
+@router.post("/proposals/{proposal_id}/approve-paper")
+async def approve_proposal(proposal_id: str):
+    """Approve a proposal and route it through the execution gateway (paper)."""
+    _ensure_db()
+    from aletheia.files.jsonl import write_audit
+    p = repo.get_trade_proposal(proposal_id)
+    if p is None:
+        raise HTTPException(404, "Proposal not found")
+    repo.update_trade_proposal(proposal_id, status="approved")
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_approved",
+                 "entity_type": "trade_proposal", "entity_id": proposal_id,
+                 "message": f"Proposal approved for paper execution"})
+    # Execute through the gateway (risk-checked)
+    from aletheia.execution.gateway import submit_proposal
+    result = submit_proposal(
+        symbol=p["symbol"], market_type=p["market_type"], direction=p["direction"],
+        order_type=p.get("order_type", "market"), quantity=p.get("quantity") or 0.0,
+        price=p.get("price") or 0.0, execution_mode="paper_internal",
+        strategy_id=p.get("strategy_id"), agent_rationale=p.get("agent_rationale"),
+    )
+    return {"proposal_id": proposal_id, "execution": result}
+
+
+@router.post("/proposals/{proposal_id}/reject")
+async def reject_proposal(proposal_id: str):
+    _ensure_db()
+    from aletheia.files.jsonl import write_audit
+    p = repo.get_trade_proposal(proposal_id)
+    if p is None:
+        raise HTTPException(404, "Proposal not found")
+    repo.update_trade_proposal(proposal_id, status="rejected")
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_rejected",
+                 "entity_type": "trade_proposal", "entity_id": proposal_id,
+                 "message": "Proposal rejected by human"})
+    return {"proposal_id": proposal_id, "status": "rejected"}
+
+
 @router.get("/trades")
 async def get_trades():
     _ensure_db()
@@ -62,10 +99,50 @@ async def get_positions():
     return repo.list_positions()
 
 
+@router.get("/portfolio")
+async def get_portfolio():
+    _ensure_db()
+    from aletheia.portfolio.pnl import compute_portfolio
+    return compute_portfolio()
+
+
 @router.get("/strategies")
 async def get_strategies():
     _ensure_db()
     return repo.list_strategies()
+
+
+@router.get("/strategies/{strategy_id}")
+async def get_strategy(strategy_id: str):
+    _ensure_db()
+    s = repo.get_strategy(strategy_id)
+    if s is None:
+        raise HTTPException(404, "Strategy not found")
+    return s
+
+
+class PromoteRequest(BaseModel):
+    target_state: str
+
+
+@router.post("/strategies/{strategy_id}/promote")
+async def promote_strategy_route(strategy_id: str, req: PromoteRequest):
+    _ensure_db()
+    from aletheia.trading.strategy_lifecycle import promote_strategy
+    result = promote_strategy(strategy_id, req.target_state)
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error", "Promotion failed"))
+    return result
+
+
+@router.post("/strategies/{strategy_id}/retire")
+async def retire_strategy_route(strategy_id: str):
+    _ensure_db()
+    from aletheia.trading.strategy_lifecycle import promote_strategy
+    result = promote_strategy(strategy_id, "retired")
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error", "Retire failed"))
+    return result
 
 
 @router.get("/knowledge/research-notes")

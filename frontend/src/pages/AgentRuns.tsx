@@ -1,24 +1,50 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 
+const AGENTS = [
+  'market_observer', 'research_agent', 'strategy_designer',
+  'risk_critic', 'portfolio_agent', 'post_trade_reviewer', 'dreaming_agent',
+]
+
 export default function AgentRuns() {
+  const qc = useQueryClient()
   const { data = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
+  const run = useMutation({
+    mutationFn: (name: string) => api.startAgentRun(name),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-runs'] }),
+  })
+  const rows = data as any[]
+
   return (
     <div>
       <h2 className="page-title">Agent Runs</h2>
       <div className="card">
-        {(data as any[]).length === 0 ? <p style={{ color: 'var(--muted)' }}>No agent runs yet.</p> : (
+        <h3>Run an agent now</h3>
+        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+          {AGENTS.map(a => (
+            <button key={a} className="secondary" onClick={() => run.mutate(a)} disabled={run.isPending}>{a}</button>
+          ))}
+        </div>
+      </div>
+      <div className="card">
+        {rows.length === 0 ? <p style={{ color: 'var(--muted)' }}>No agent runs yet.</p> : (
           <table>
-            <thead><tr><th>Agent</th><th>Status</th><th>Trigger</th><th>Started</th></tr></thead>
+            <thead><tr><th>Agent</th><th>Status</th><th>Trigger</th><th>Provider</th><th>Outputs</th><th>Started</th></tr></thead>
             <tbody>
-              {(data as any[]).map((r: any) => (
-                <tr key={r.id}>
-                  <td>{r.agent_name}</td>
-                  <td><span className={`badge ${r.status === 'completed' ? 'badge-green' : 'badge-yellow'}`}>{r.status}</span></td>
-                  <td>{r.trigger_type}</td>
-                  <td>{r.started_at}</td>
-                </tr>
-              ))}
+              {rows.map((r: any) => {
+                let outputs = 0
+                try { outputs = JSON.parse(r.outputs_created || '[]').length } catch { /* ignore */ }
+                return (
+                  <tr key={r.id}>
+                    <td>{r.agent_name}</td>
+                    <td><span className={`badge ${r.status === 'completed' ? 'badge-green' : r.status?.includes('error') ? 'badge-yellow' : 'badge-blue'}`}>{r.status}</span></td>
+                    <td>{r.trigger_type}</td>
+                    <td>{r.model_provider || '—'}</td>
+                    <td>{outputs}</td>
+                    <td>{r.started_at?.slice(0, 16)}</td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

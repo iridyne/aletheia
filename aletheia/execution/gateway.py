@@ -65,7 +65,7 @@ def submit_proposal(
     if allowed_mode in ("paper_internal", "bitget_demo"):
         result = execute_paper_order(
             proposal_id=proposal.id,
-            risk_decision_id="",  # from risk decision
+            risk_decision_id=risk_result.decision_id,
             symbol=symbol,
             market_type=market_type,
             direction=direction,

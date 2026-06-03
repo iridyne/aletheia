@@ -19,18 +19,33 @@ LIFECYCLE_STATES = [
     "deprecated",
 ]
 
+# Forward progress per state. retire/deprecate are escape hatches allowed from any
+# active (non-terminal) state — see _allowed_targets().
 FORWARD_TRANSITIONS = {
-    "draft": ["research_note", "deprecated"],
-    "research_note": ["strategy_hypothesis", "deprecated"],
-    "strategy_hypothesis": ["paper_candidate", "deprecated"],
-    "paper_candidate": ["paper_running", "deprecated"],
-    "paper_running": ["paper_passed", "retired"],
-    "paper_passed": ["live_candidate", "retired"],
-    "live_candidate": ["live_limited", "retired"],
-    "live_limited": ["retired"],
+    "draft": ["research_note"],
+    "research_note": ["strategy_hypothesis"],
+    "strategy_hypothesis": ["paper_candidate"],
+    "paper_candidate": ["paper_running"],
+    "paper_running": ["paper_passed"],
+    "paper_passed": ["live_candidate"],
+    "live_candidate": ["live_limited"],
+    "live_limited": [],
     "retired": ["deprecated"],
     "deprecated": [],
 }
+
+# Terminal states cannot be retired/deprecated further (deprecated is the end).
+_TERMINAL = {"deprecated"}
+
+
+def _allowed_targets(current: str) -> list[str]:
+    """Forward target(s) plus retire/deprecate escape hatches for active states."""
+    targets = list(FORWARD_TRANSITIONS.get(current, []))
+    if current not in _TERMINAL:
+        for escape in ("retired", "deprecated"):
+            if escape != current and escape not in targets:
+                targets.append(escape)
+    return targets
 
 DEFAULT_PROMOTION_GATES = {
     "min_paper_runtime_days": 14,
@@ -66,8 +81,8 @@ def promote_strategy(strategy_id: str, target_state: str) -> dict:
 
     current = record["state"]
 
-    # Validate transition
-    allowed = FORWARD_TRANSITIONS.get(current, [])
+    # Validate transition (forward progress + retire/deprecate escape hatches)
+    allowed = _allowed_targets(current)
     if target_state not in allowed:
         return {
             "success": False,
