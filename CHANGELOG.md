@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.3.0] - 2026-06-03 — Full MVP: risk hardening, live path, reconciliation
+
+Closes the remaining functional gaps between 0.2.0 and a feature-complete MVP per
+the implementation guide. Strictly in-guide scope (no roadmap §30 items). 178 tests
+passing (was 137). Frontend rebuilt.
+
+### Risk Engine — all 13 §21.3 checks (CHANGE-CONTROLLED, guide §31.3)
+- Added the 7 missing checks: max_daily_loss (global; auto-trips kill switch),
+  account_mode_match, max_leverage (futures), data_freshness (live),
+  max_single_trade_risk (live, stop-based), strategy_lifecycle_state (live).
+- New checks gate **live** primarily; paper/demo stays permissive. Daily-loss and
+  kill-switch are global brakes across all modes.
+- `TradeProposal` gained optional `leverage` / `stop_price` (additive migration).
+
+### Kill Switch (§21.3, §2.4)
+- `risk/kill_switch.py`: activate/deactivate/is_active, persisted in
+  `runtime.kill_switch_active` (survives restart). Risk engine rejects every
+  proposal when engaged. Auto-trips on daily-loss breach.
+- Surfaces: CLI `aletheia risk kill|resume|status`, API `GET/POST /api/risk/kill-switch`,
+  `GET /api/risk/boundaries`, dashboard Settings + Overview. All changes audited.
+
+### Live order path (CHANGE-CONTROLLED, guide §31.3)
+- `execution/bitget_broker.py`: approved live-limited proposals now actually place
+  a Bitget order via `BitgetClient.place_order` and record order (with
+  `exchange_order_id`) / fill / position. Gateway wires the `bitget_live_limited`
+  branch to it; still blocked when `live_disabled` (defense in depth) + audited.
+
+### Bitget adapter — full §19.3 interface
+- Added get_account, get_positions, get_open_orders, cancel_order, get_fills
+  (was 5/9 methods; now 9/9).
+
+### Reconciliation (§7, §20.2)
+- `execution/reconciliation.py`: compares local live orders vs exchange open
+  orders, marks vanished orders filled, audits divergence. Never places/cancels.
+  Runs on a scheduler interval (live mode only).
+
+### Portfolio: position close + realized PnL
+- `close_position` (realizes PnL, marks closed) and `today_realized_pnl` (source
+  for the daily-loss check). Scheduler stores periodic portfolio snapshots.
+
+### Optional Git versioning (§2.2, §9.4)
+- `files/git.py`: opt-in (`runtime.git_enabled`, default off) versioning of
+  knowledge/playbooks/reports; never stages secrets.enc/app.db/logs. Graceful
+  when git is absent.
+
+### Scheduler
+- Added reconciliation (2 min, live-only) and portfolio-snapshot (10 min) jobs.
+
+### Fix — `gateway stop` on Windows (§32 #3)
+- `is_running()` used `os.kill(pid, 0)`, which TERMINATES on Windows rather than
+  probing liveness, so the PID file was cleared while the server kept running and
+  `stop` couldn't find it. Now uses a platform-aware `_pid_alive` (tasklist on
+  Windows). Verified start→status→stop end-to-end.
+
+---
+
 ## [0.2.0] - 2026-06-03 — Functional MVP completion
 
 Completion pass after an audit found the initial "MVP" was ~35% of the dashboard
