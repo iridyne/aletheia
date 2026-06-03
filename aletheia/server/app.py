@@ -11,6 +11,7 @@ from aletheia import __version__
 from aletheia.config.loader import bootstrap
 from aletheia.server.routes.health import router as health_router
 from aletheia.server.routes.settings import router as settings_router
+from aletheia.server.routes.data import router as data_router
 
 logger = logging.getLogger("aletheia")
 
@@ -28,6 +29,7 @@ app = FastAPI(title="Aletheia Trading OS", version=__version__, lifespan=lifespa
 
 app.include_router(health_router)
 app.include_router(settings_router)
+app.include_router(data_router)
 
 # Serve static dashboard if the directory exists
 _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"
