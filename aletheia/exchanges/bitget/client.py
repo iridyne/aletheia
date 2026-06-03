@@ -1,0 +1,211 @@
+"""Bitget API client — ExchangeAdapter implementation."""
+
+from dataclasses import dataclass
+from datetime import datetime
+
+import httpx
+
+from aletheia.exchanges.bitget.auth import build_headers
+from aletheia.config.secrets import get_secret, redact
+
+
+BASE_URL = "https://api.bitget.com"
+DEMO_BASE_URL = "https://api.bitget.com"  # Same URL, demo distinguished by header
+
+
+@dataclass
+class Ticker:
+    symbol: str
+    last_price: float
+    volume_24h: float
+    change_pct_24h: float
+
+
+@dataclass
+class Candle:
+    timestamp: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+@dataclass
+class Balance:
+    currency: str
+    available: float
+    frozen: float
+
+
+@dataclass
+class OrderRequest:
+    symbol: str
+    market_type: str  # spot | usdt_futures
+    side: str  # buy | sell
+    order_type: str  # market | limit
+    quantity: float
+    price: float | None = None
+
+
+@dataclass
+class OrderResponse:
+    order_id: str
+    client_oid: str | None = None
+    status: str = "submitted"
+
+
+class BitgetClient:
+    """Native Bitget adapter supporting spot + USDT futures, demo + live."""
+
+    def __init__(self, mode: str = "demo"):
+        self.mode = mode
+        self.demo = mode == "demo"
+        self._base = BASE_URL
+
+    def _cred_prefix(self) -> str:
+        return f"bitget.{self.mode}"
+
+    def _get_creds(self) -> tuple[str, str, str]:
+        prefix = self._cred_prefix()
+        api_key = get_secret(f"{prefix}.api_key")
+        api_secret = get_secret(f"{prefix}.api_secret")
+        passphrase = get_secret(f"{prefix}.passphrase")
+        if not all([api_key, api_secret, passphrase]):
+            raise RuntimeError(f"Bitget {self.mode} credentials not configured. Use: aletheia secrets set {prefix}.api_key")
+        return api_key, api_secret, passphrase
+
+    def _headers(self, method: str, path: str, body: str = "") -> dict:
+        api_key, secret, passphrase = self._get_creds()
+        return build_headers(api_key, secret, passphrase, method, path, body, demo=self.demo)
+
+    async def test_connection(self) -> dict:
+        """Test API connectivity."""
+        path = "/api/v2/spot/account/info"
+        try:
+            headers = self._headers("GET", path)
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(f"{self._base}{path}", headers=headers)
+                data = resp.json()
+                if data.get("code") == "00000":
+                    return {"connected": True, "mode": self.mode}
+                return {"connected": False, "error": data.get("msg", "unknown"), "mode": self.mode}
+        except RuntimeError as e:
+            return {"connected": False, "error": str(e), "mode": self.mode}
+        except Exception as e:
+            return {"connected": False, "error": str(e), "mode": self.mode}
+
+    async def get_ticker(self, symbol: str, market_type: str = "spot") -> Ticker:
+        """Get current ticker for a symbol."""
+        if market_type == "spot":
+            path = f"/api/v2/spot/market/tickers?symbol={symbol}"
+        else:
+            path = f"/api/v2/mix/market/ticker?symbol={symbol}&productType=USDT-FUTURES"
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}")
+            data = resp.json()
+
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+
+        tickers = data.get("data", [])
+        if isinstance(tickers, list) and tickers:
+            t = tickers[0]
+        elif isinstance(tickers, dict):
+            t = tickers
+        else:
+            raise RuntimeError(f"No ticker data for {symbol}")
+
+        return Ticker(
+            symbol=symbol,
+            last_price=float(t.get("lastPr", t.get("last", 0))),
+            volume_24h=float(t.get("baseVolume", t.get("vol24h", 0))),
+            change_pct_24h=float(t.get("change24h", t.get("chgUtc", 0))),
+        )
+
+    async def get_ohlcv(self, symbol: str, timeframe: str = "1H", limit: int = 100, market_type: str = "spot") -> list[Candle]:
+        """Get OHLCV candles."""
+        if market_type == "spot":
+            path = f"/api/v2/spot/market/candles?symbol={symbol}&granularity={timeframe}&limit={limit}"
+        else:
+            path = f"/api/v2/mix/market/candles?symbol={symbol}&productType=USDT-FUTURES&granularity={timeframe}&limit={limit}"
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}")
+            data = resp.json()
+
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+
+        candles = []
+        for c in data.get("data", []):
+            candles.append(Candle(
+                timestamp=int(c[0]),
+                open=float(c[1]),
+                high=float(c[2]),
+                low=float(c[3]),
+                close=float(c[4]),
+                volume=float(c[5]),
+            ))
+        return candles
+
+    async def get_balances(self) -> list[Balance]:
+        """Get account balances."""
+        path = "/api/v2/spot/account/assets"
+        headers = self._headers("GET", path)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        return [
+            Balance(
+                currency=b.get("coin", ""),
+                available=float(b.get("available", 0)),
+                frozen=float(b.get("frozen", 0)),
+            )
+            for b in data.get("data", [])
+        ]
+
+    async def place_order(self, order: OrderRequest) -> OrderResponse:
+        """Place an order — gated by execution mode externally."""
+        import json
+
+        if order.market_type == "spot":
+            path = "/api/v2/spot/trade/place-order"
+            body_data = {
+                "symbol": order.symbol,
+                "side": order.side,
+                "orderType": order.order_type,
+                "size": str(order.quantity),
+                "force": "GTC",
+            }
+        else:
+            path = "/api/v2/mix/order/place-order"
+            body_data = {
+                "symbol": order.symbol,
+                "productType": "USDT-FUTURES",
+                "marginMode": "crossed",
+                "side": order.side,
+                "orderType": order.order_type,
+                "size": str(order.quantity),
+            }
+
+        if order.price and order.order_type == "limit":
+            body_data["price"] = str(order.price)
+
+        body = json.dumps(body_data)
+        headers = self._headers("POST", path, body)
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget order error: {data.get('msg')}")
+
+        return OrderResponse(
+            order_id=data.get("data", {}).get("orderId", ""),
+            client_oid=data.get("data", {}).get("clientOid"),
+        )
