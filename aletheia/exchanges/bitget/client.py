@@ -55,6 +55,23 @@ class OrderResponse:
     status: str = "submitted"
 
 
+@dataclass
+class AccountSummary:
+    user_id: str
+    status: str
+    raw: dict | None = None
+
+
+@dataclass
+class Position:
+    symbol: str
+    side: str  # long | short
+    quantity: float
+    entry_price: float
+    unrealized_pnl: float = 0.0
+    leverage: int | None = None
+
+
 class BitgetClient:
     """Native Bitget adapter supporting spot + USDT futures, demo + live."""
 
@@ -209,3 +226,89 @@ class BitgetClient:
             order_id=data.get("data", {}).get("orderId", ""),
             client_oid=data.get("data", {}).get("clientOid"),
         )
+
+    async def get_account(self) -> AccountSummary:
+        """Get account summary (§19.3)."""
+        path = "/api/v2/spot/account/info"
+        headers = self._headers("GET", path)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        d = data.get("data", {}) or {}
+        return AccountSummary(
+            user_id=str(d.get("userId", "")),
+            status=d.get("accountStatus", "unknown"),
+            raw=d,
+        )
+
+    async def get_positions(self) -> list[Position]:
+        """Get open USDT-futures positions (§19.3)."""
+        path = "/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT"
+        headers = self._headers("GET", path)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        positions = []
+        for p in data.get("data", []) or []:
+            lev = p.get("leverage")
+            positions.append(Position(
+                symbol=p.get("symbol", ""),
+                side=p.get("holdSide", ""),
+                quantity=float(p.get("total", 0) or 0),
+                entry_price=float(p.get("averageOpenPrice", 0) or 0),
+                unrealized_pnl=float(p.get("unrealizedPL", 0) or 0),
+                leverage=int(lev) if lev not in (None, "") else None,
+            ))
+        return positions
+
+    async def get_open_orders(self, market_type: str = "spot") -> list[dict]:
+        """Get unfilled (open) orders (§19.3)."""
+        if market_type == "spot":
+            path = "/api/v2/spot/trade/unfilled-orders"
+        else:
+            path = "/api/v2/mix/order/orders-pending?productType=USDT-FUTURES"
+        headers = self._headers("GET", path)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        return data.get("data", []) or []
+
+    async def cancel_order(self, order_id: str, symbol: str, market_type: str = "spot") -> dict:
+        """Cancel an order (§19.3). Returns {cancelled, order_id, [error]}."""
+        import json as _json
+        if market_type == "spot":
+            path = "/api/v2/spot/trade/cancel-order"
+            body_data = {"symbol": symbol, "orderId": order_id}
+        else:
+            path = "/api/v2/mix/order/cancel-order"
+            body_data = {"symbol": symbol, "orderId": order_id, "productType": "USDT-FUTURES"}
+        body = _json.dumps(body_data)
+        headers = self._headers("POST", path, body)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return {"cancelled": False, "order_id": order_id, "error": data.get("msg", "unknown")}
+        return {"cancelled": True, "order_id": order_id}
+
+    async def get_fills(self, symbol: str | None = None, market_type: str = "spot") -> list[dict]:
+        """Get trade fills (§19.3)."""
+        if market_type == "spot":
+            path = "/api/v2/spot/trade/fills"
+        else:
+            path = "/api/v2/mix/order/fills?productType=USDT-FUTURES"
+        if symbol:
+            path += ("&" if "?" in path else "?") + f"symbol={symbol}"
+        headers = self._headers("GET", path)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        return data.get("data", []) or []
