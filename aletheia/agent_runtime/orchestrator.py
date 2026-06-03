@@ -21,7 +21,7 @@ async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
     try:
         from aletheia.agents import get_agent_fn
         agent_fn = get_agent_fn(agent_name)
-        result = await agent_fn(permission_mode=permission_mode)
+        result = await agent_fn(permission_mode=permission_mode, run_id=run.id)
         if isinstance(result, dict):
             outputs = result.get("outputs", [])
             errors = result.get("errors", [])

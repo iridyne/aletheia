@@ -142,3 +142,23 @@ class KnowledgeItem(BaseModel):
     tags: str = "[]"
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+class MarketSnapshot(BaseModel):
+    id: str = Field(default_factory=new_id)
+    symbol: str
+    market_type: str
+    price: float
+    volume_24h: float | None = None
+    change_pct_24h: float | None = None
+    snapshot_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+
+class PortfolioSnapshot(BaseModel):
+    id: str = Field(default_factory=new_id)
+    total_value_usdt: float
+    unrealized_pnl: float = 0.0
+    realized_pnl: float = 0.0
+    positions_count: int = 0
+    execution_mode: str = "paper_internal"
+    snapshot_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())

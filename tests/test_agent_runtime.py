@@ -76,11 +76,16 @@ def test_get_permitted_tools_research():
     assert "unlock_live" not in tools
 
 
+# Agents now call the LLM; with no model server in tests they degrade gracefully
+# (status "completed_with_errors") but MUST still produce their artifact.
+_OK = ("completed", "completed_with_errors")
+
+
 @pytest.mark.anyio
 async def test_market_observer_creates_opportunity(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     result = await run_agent("market_observer", trigger_type="manual")
-    assert result["status"] == "completed"
+    assert result["status"] in _OK
     assert any("opportunity:" in o for o in result["outputs"])
     opps = repo.list_opportunities()
     assert len(opps) >= 1
@@ -91,7 +96,7 @@ async def test_market_observer_creates_opportunity(tmp_path, monkeypatch):
 async def test_research_agent_creates_note(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     result = await run_agent("research_agent", trigger_type="manual")
-    assert result["status"] == "completed"
+    assert result["status"] in _OK
     assert any("research_note:" in o for o in result["outputs"])
     items = repo.list_knowledge_items(item_type="research_note")
     assert len(items) >= 1
@@ -102,7 +107,7 @@ async def test_research_agent_creates_note(tmp_path, monkeypatch):
 async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     result = await run_agent("dreaming_agent", trigger_type="manual")
-    assert result["status"] == "completed"
+    assert result["status"] in _OK
     assert any("dreaming_log:" in o for o in result["outputs"])
     reset_db()
 

@@ -24,7 +24,21 @@ async def lifespan(app: FastAPI):
     cfg = bootstrap()
     logger.info("Aletheia Trading OS v%s starting", __version__)
     logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, cfg.app.dashboard_port)
+    # Ensure DB schema + register agents/tools, then start the scheduler.
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
+    run_migrations()
+    init_tool_registry()
+    try:
+        init_scheduler()
+    except Exception as e:
+        logger.warning("Scheduler failed to start: %s", e)
     yield
+    try:
+        stop_scheduler()
+    except Exception:
+        pass
     logger.info("Aletheia shutting down")
 
 

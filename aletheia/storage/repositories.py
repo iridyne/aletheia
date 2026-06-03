@@ -177,3 +177,47 @@ def list_knowledge_items(item_type: str | None = None, limit: int = 50) -> list[
     if item_type:
         return _select_all("knowledge_items", where="item_type = ?", params=(item_type,), limit=limit)
     return _select_all("knowledge_items", limit=limit)
+
+
+# --- Market Snapshots ---
+
+def insert_market_snapshot(snap) -> None:
+    _insert("market_snapshots", snap.model_dump())
+
+
+def list_market_snapshots(symbol: str | None = None, limit: int = 100) -> list[dict]:
+    if symbol:
+        return _select_all("market_snapshots", where="symbol = ?", params=(symbol,), limit=limit)
+    return _select_all("market_snapshots", limit=limit)
+
+
+# --- Portfolio Snapshots ---
+
+def insert_portfolio_snapshot(snap) -> None:
+    _insert("portfolio_snapshots", snap.model_dump())
+
+
+def list_portfolio_snapshots(limit: int = 100) -> list[dict]:
+    return _select_all("portfolio_snapshots", limit=limit)
+
+
+# --- Agent Tool Calls ---
+
+def insert_tool_call(run_id: str, tool_name: str, tool_class: str, permitted: bool,
+                     input_data: str | None = None, output_data: str | None = None) -> None:
+    from aletheia.storage.models import new_id
+    _insert("agent_tool_calls", {
+        "id": new_id(),
+        "run_id": run_id,
+        "tool_name": tool_name,
+        "tool_class": tool_class,
+        "input_data": input_data,
+        "output_data": output_data,
+        "permitted": 1 if permitted else 0,
+    })
+
+
+def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
+    if run_id:
+        return _select_all("agent_tool_calls", where="run_id = ?", params=(run_id,), limit=limit)
+    return _select_all("agent_tool_calls", limit=limit)

@@ -34,6 +34,14 @@ async def pause():
     cfg = load_config()
     cfg.runtime.paused = True
     save_config(cfg)
+    try:
+        from aletheia.agent_runtime.scheduler import pause_scheduler
+        pause_scheduler()
+    except Exception:
+        pass
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "gateway_paused",
+                 "message": "Gateway paused"})
     return {"paused": True}
 
 
@@ -42,4 +50,12 @@ async def resume():
     cfg = load_config()
     cfg.runtime.paused = False
     save_config(cfg)
+    try:
+        from aletheia.agent_runtime.scheduler import resume_scheduler
+        resume_scheduler()
+    except Exception:
+        pass
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "gateway_resumed",
+                 "message": "Gateway resumed"})
     return {"paused": False}
