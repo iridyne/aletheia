@@ -46,6 +46,12 @@ export const api = {
   liveUnlock: () => post('/settings/live-unlock', { confirm: true }),
   liveLock: () => post('/settings/live-lock'),
 
+  // Risk: boundaries display + kill switch
+  getRiskBoundaries: () => fetchJson<Record<string, any>>('/risk/boundaries'),
+  getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
+  setKillSwitch: (active: boolean, reason = '') =>
+    post<{ active: boolean }>('/risk/kill-switch', { active, reason }),
+
   // Data
   getAgentRuns: () => fetchJson<any[]>('/agent-runs'),
   startAgentRun: (agent_name: string) => post('/agent-runs/start', { agent_name }),

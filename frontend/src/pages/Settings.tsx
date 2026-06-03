@@ -15,6 +15,7 @@ export default function Settings() {
   return (
     <div>
       <h2 className="page-title">Settings</h2>
+      <KillSwitchCard qc={qc} />
       <PermissionCard status={status} qc={qc} />
       <GatewayCard status={status} qc={qc} />
       <ModelProviderCard />
@@ -23,6 +24,28 @@ export default function Settings() {
       <LiveStateCard status={status} qc={qc} />
       <RiskCard settings={settings} />
       <TelegramCard />
+    </div>
+  )
+}
+
+function KillSwitchCard({ qc }: any) {
+  const { data } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
+  const mut = useMutation({
+    mutationFn: (active: boolean) => api.setKillSwitch(active),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+  })
+  const active = !!data?.active
+  return (
+    <div className="card">
+      <h3>Kill Switch <span className={`badge ${active ? 'badge-red' : 'badge-green'}`}>{active ? 'ENGAGED' : 'inactive'}</span></h3>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button
+          onClick={() => { if (confirm('Engage the kill switch? ALL trading proposals (paper and live) will be rejected until released.')) mut.mutate(true) }}
+          disabled={active}
+        >Engage Kill Switch</button>
+        <button className="secondary" onClick={() => mut.mutate(false)} disabled={!active}>Release</button>
+      </div>
+      <p className="hint">Global trading brake. Rejects every proposal regardless of mode. Auto-engages if the daily-loss limit is breached. All changes are audited.</p>
     </div>
   )
 }
