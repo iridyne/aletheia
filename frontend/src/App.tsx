@@ -8,6 +8,7 @@ import Proposals from './pages/Proposals'
 import PaperTrades from './pages/PaperTrades'
 import Positions from './pages/Positions'
 import StrategyLifecycle from './pages/StrategyLifecycle'
+import Charts from './pages/Charts'
 import Reports from './pages/Reports'
 import Settings from './pages/Settings'
 
@@ -21,6 +22,7 @@ const navItems = [
   { to: '/paper-trades', label: 'Paper Trades' },
   { to: '/positions', label: 'Positions' },
   { to: '/strategies', label: 'Strategy Lifecycle' },
+  { to: '/charts', label: 'Charts' },
   { to: '/reports', label: 'Reports' },
   { to: '/settings', label: 'Settings' },
 ]
@@ -49,6 +51,7 @@ export default function App() {
           <Route path="/paper-trades" element={<PaperTrades />} />
           <Route path="/positions" element={<Positions />} />
           <Route path="/strategies" element={<StrategyLifecycle />} />
+          <Route path="/charts" element={<Charts />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>

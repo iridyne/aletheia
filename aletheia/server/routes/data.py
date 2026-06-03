@@ -145,6 +145,41 @@ async def retire_strategy_route(strategy_id: str):
     return result
 
 
+@router.get("/market/snapshots")
+async def get_market_snapshots(symbol: str | None = None, limit: int = 200):
+    _ensure_db()
+    return repo.list_market_snapshots(symbol=symbol, limit=limit)
+
+
+@router.get("/market/ohlcv")
+async def get_market_ohlcv(symbol: str = "BTCUSDT", timeframe: str = "1h", limit: int = 100):
+    """Fetch OHLCV candles from Bitget for charting (public endpoint)."""
+    from aletheia.config.loader import load_config
+    from aletheia.exchanges.bitget.client import BitgetClient
+    from aletheia.trading.instruments import BITGET_GRANULARITY
+    cfg = load_config()
+    client = BitgetClient(mode=cfg.exchange.mode)
+    gran = BITGET_GRANULARITY.get(timeframe, timeframe)
+    try:
+        candles = await client.get_ohlcv(symbol, timeframe=gran, limit=limit, market_type="spot")
+        # lightweight-charts wants ascending time in seconds
+        rows = [
+            {"time": int(c.timestamp / 1000), "open": c.open, "high": c.high,
+             "low": c.low, "close": c.close, "volume": c.volume}
+            for c in candles
+        ]
+        rows.sort(key=lambda r: r["time"])
+        return rows
+    except Exception as e:
+        return {"error": str(e), "candles": []}
+
+
+@router.get("/market/portfolio-history")
+async def get_portfolio_history(limit: int = 100):
+    _ensure_db()
+    return repo.list_portfolio_snapshots(limit=limit)
+
+
 @router.get("/knowledge/research-notes")
 async def get_research_notes():
     _ensure_db()

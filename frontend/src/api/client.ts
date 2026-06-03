@@ -62,4 +62,9 @@ export const api = {
   getKnowledge: (type?: string) => fetchJson<any[]>(`/knowledge/research-notes${type ? `?type=${type}` : ''}`),
   getStrategyMemory: () => fetchJson<any[]>('/knowledge/strategy-memory'),
   getDreamingLogs: () => fetchJson<any[]>('/knowledge/dreaming-logs'),
+
+  // Charts
+  getOhlcv: (symbol: string, timeframe = '1h', limit = 100) =>
+    fetchJson<any>(`/market/ohlcv?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`),
+  getPortfolioHistory: () => fetchJson<any[]>('/market/portfolio-history'),
 }
