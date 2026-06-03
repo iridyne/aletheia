@@ -14,9 +14,10 @@ def test_help():
 
 
 def test_version():
+    from aletheia import __version__
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert "v0.1.0" in result.output
+    assert f"v{__version__}" in result.output
 
 
 def test_gateway_status(tmp_path, monkeypatch):

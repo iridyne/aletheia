@@ -39,6 +39,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         _run_dreaming_agent, "cron", hour=2, minute=0, id="dreaming_daily",
         misfire_grace_time=300,
     )
+    _scheduler.add_job(
+        _run_reconciliation, "interval", minutes=2, id="reconciliation",
+        misfire_grace_time=60,
+    )
+    _scheduler.add_job(
+        _run_portfolio_snapshot, "interval", minutes=10, id="portfolio_snapshot",
+        misfire_grace_time=120,
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -97,6 +105,31 @@ def _run_dreaming_agent():
     if cfg.runtime.paused:
         return
     asyncio.run(_async_run("dreaming_agent"))
+
+
+def _run_reconciliation():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    # Only meaningful in live mode; reconcile() itself early-returns otherwise.
+    if cfg.exchange.mode != "live":
+        return
+    try:
+        from aletheia.execution.reconciliation import reconcile
+        reconcile()
+    except Exception as e:
+        logger.warning("reconciliation job failed: %s", e)
+
+
+def _run_portfolio_snapshot():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        from aletheia.portfolio.pnl import compute_and_store_snapshot
+        compute_and_store_snapshot(execution_mode=("bitget_live_limited" if cfg.exchange.mode == "live" else "paper_internal"))
+    except Exception as e:
+        logger.warning("portfolio_snapshot job failed: %s", e)
 
 
 async def _async_run(agent_name: str):

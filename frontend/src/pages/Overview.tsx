@@ -5,6 +5,7 @@ import SetupBanner from '../components/SetupBanner'
 export default function Overview() {
   const qc = useQueryClient()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
+  const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
@@ -31,6 +32,7 @@ export default function Overview() {
             <tr><th>Exchange</th><td>{String(status.exchange)} ({String(status.exchange_mode)})</td></tr>
             <tr><th>Live State</th><td><span className="badge badge-red">{String(status.live_state)}</span></td></tr>
             <tr><th>Permission</th><td><span className="badge badge-blue">{String(status.permission_mode)}</span></td></tr>
+            <tr><th>Kill Switch</th><td><span className={`badge ${killSwitch?.active ? 'badge-red' : 'badge-green'}`}>{killSwitch?.active ? 'ENGAGED' : 'inactive'}</span></td></tr>
           </tbody>
         </table>
       </div>

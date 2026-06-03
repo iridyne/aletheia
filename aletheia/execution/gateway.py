@@ -87,13 +87,39 @@ def submit_proposal(
         return {"status": "executed", "proposal_id": proposal.id, **result}
 
     elif allowed_mode == "bitget_live_limited":
-        # Live execution would go through BitgetClient here
-        # For now, block unless explicitly unlocked
+        # Defense in depth: risk engine already checked live_disabled, but re-check here.
         if cfg.live.state == "live_disabled":
             update_trade_proposal(proposal.id, status="rejected")
             return {"status": "rejected", "proposal_id": proposal.id, "message": "Live trading is disabled"}
-        # Future: actual Bitget live order
-        update_trade_proposal(proposal.id, status="pending_live")
-        return {"status": "pending_live", "proposal_id": proposal.id, "message": "Live order queued"}
+        try:
+            from aletheia.execution.bitget_broker import execute_live_order
+            result = execute_live_order(
+                proposal_id=proposal.id,
+                risk_decision_id=risk_result.decision_id,
+                symbol=symbol,
+                market_type=market_type,
+                direction=direction,
+                order_type=order_type,
+                quantity=quantity,
+                price=price,
+                strategy_id=strategy_id,
+            )
+        except Exception as e:
+            update_trade_proposal(proposal.id, status="error")
+            write_audit({
+                "actor": "system", "source": "execution_gateway",
+                "event_type": "live_order_error", "entity_type": "trade_proposal",
+                "entity_id": proposal.id, "message": f"Live order failed: {e}",
+            })
+            return {"status": "error", "proposal_id": proposal.id, "message": str(e)}
+
+        update_trade_proposal(proposal.id, status="executed")
+        write_audit({
+            "actor": "system", "source": "execution_gateway",
+            "event_type": "live_order_executed", "entity_type": "order",
+            "entity_id": result["order_id"],
+            "message": f"Live order placed: {symbol} {direction} {quantity}@{price} (ex:{result['exchange_order_id']})",
+        })
+        return {"status": "executed", "proposal_id": proposal.id, **result}
 
     return {"status": "unknown_mode", "proposal_id": proposal.id}

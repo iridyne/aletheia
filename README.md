@@ -37,8 +37,10 @@ uv run aletheia gateway status | pause | resume | stop
 - React/Vite dashboard served from localhost — primary control surface
 - APScheduler-driven agent runtime (market-data loop, market observer, dreaming)
 - 7 agents call a configurable LLM (OpenAI-compatible / Anthropic-compatible / Codex CLI)
-- Risk Engine enforces hard limits; all orders flow through the Execution Gateway
-- Paper/demo first; live strictly gated behind explicit human unlock
+- Risk Engine enforces the full §21.3 check matrix + a global kill switch; all
+  orders flow through the Execution Gateway (paper broker or live Bitget broker)
+- Paper/demo first; live strictly gated behind explicit human unlock, with order
+  reconciliation against the exchange
 
 ## Safety invariants
 
@@ -50,5 +52,5 @@ uv run aletheia gateway status | pause | resume | stop
 ## Tests
 
 ```bash
-uv run pytest        # 137 tests: unit, integration, security, §32 acceptance
+uv run pytest        # 178 tests: unit, integration, security, §32 acceptance
 ```

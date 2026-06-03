@@ -49,8 +49,8 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     s = sched.init_scheduler()
     assert s is not None
     assert sched.is_running()
-    # market_data + market_observer + dreaming_daily
-    assert len(s.get_jobs()) == 3
+    # market_data + market_observer + dreaming_daily + reconciliation + portfolio_snapshot
+    assert len(s.get_jobs()) == 5
     sched.stop_scheduler()
     reset_db()
 

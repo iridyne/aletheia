@@ -61,6 +61,9 @@ class TradeProposal(BaseModel):
     order_type: str = "market"
     quantity: float | None = None
     price: float | None = None
+    # Optional fields used by §21.3 risk checks (max_leverage, max_single_trade_risk).
+    leverage: int | None = None
+    stop_price: float | None = None
     execution_mode: str = "paper_internal"
     agent_rationale: str | None = None
     status: str = "pending"
