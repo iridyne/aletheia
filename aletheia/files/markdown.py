@@ -1,0 +1,50 @@
+"""Markdown file writer for knowledge base documents."""
+
+from pathlib import Path
+from datetime import datetime
+
+from aletheia.config.loader import get_data_dir
+
+
+def write_research_note(title: str, content: str, metadata: dict | None = None) -> Path:
+    """Write a research note markdown file."""
+    return _write_knowledge_file("research_notes", title, content, metadata)
+
+
+def write_strategy_doc(strategy_id: str, title: str, content: str) -> Path:
+    """Write a strategy description markdown."""
+    base = get_data_dir() / "knowledge" / "strategies" / strategy_id
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / "strategy.md"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def write_dreaming_log(title: str, content: str) -> Path:
+    """Write a dreaming log markdown."""
+    return _write_knowledge_file("dreaming_logs", title, content)
+
+
+def write_daily_review(content: str) -> Path:
+    """Write a daily review markdown."""
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    return _write_knowledge_file("daily_reviews", f"review-{today}", content)
+
+
+def _write_knowledge_file(subdir: str, title: str, content: str, metadata: dict | None = None) -> Path:
+    base = get_data_dir() / "knowledge" / subdir
+    base.mkdir(parents=True, exist_ok=True)
+    safe_name = "".join(c if c.isalnum() or c in "-_ " else "" for c in title).strip().replace(" ", "-").lower()
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    filename = f"{timestamp}-{safe_name}.md"
+    path = base / filename
+
+    header = f"# {title}\n\n"
+    if metadata:
+        header += "---\n"
+        for k, v in metadata.items():
+            header += f"{k}: {v}\n"
+        header += "---\n\n"
+
+    path.write_text(header + content, encoding="utf-8")
+    return path
