@@ -1,6 +1,7 @@
 """Data API routes for dashboard consumption."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.migrations import run_migrations
@@ -23,6 +24,18 @@ async def get_agent_runs():
 async def get_agent_run(run_id: str):
     _ensure_db()
     return repo.get_agent_run(run_id)
+
+
+class StartAgentRequest(BaseModel):
+    agent_name: str = "market_observer"
+
+
+@router.post("/agent-runs/start")
+async def start_agent_run(req: StartAgentRequest):
+    _ensure_db()
+    from aletheia.agent_runtime.orchestrator import run_agent
+    result = await run_agent(req.agent_name, trigger_type="manual")
+    return result
 
 
 @router.get("/opportunities")
