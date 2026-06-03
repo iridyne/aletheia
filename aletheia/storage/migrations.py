@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS trade_proposals (
     order_type TEXT NOT NULL DEFAULT 'market',
     quantity REAL,
     price REAL,
+    leverage INTEGER,
+    stop_price REAL,
     execution_mode TEXT NOT NULL DEFAULT 'paper_internal',
     agent_rationale TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -205,8 +207,24 @@ CREATE TABLE IF NOT EXISTS audit_events (
 """
 
 
+# Additive column migrations for already-existing databases. (col, table, type)
+# CREATE TABLE above covers fresh DBs; these keep older app.db files current.
+_ADDITIVE_COLUMNS = [
+    ("leverage", "trade_proposals", "INTEGER"),
+    ("stop_price", "trade_proposals", "REAL"),
+]
+
+
+def _ensure_columns(db) -> None:
+    for col, table, coltype in _ADDITIVE_COLUMNS:
+        existing = {r["name"] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
+        if col not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
+
+
 def run_migrations() -> None:
     """Run all idempotent schema creation statements."""
     db = get_db()
     db.executescript(SCHEMA_SQL)
+    _ensure_columns(db)
     db.commit()

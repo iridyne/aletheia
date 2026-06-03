@@ -1,5 +1,7 @@
 """Portfolio PnL computation + snapshots (guide §7 portfolio/)."""
 
+from datetime import datetime, timezone
+
 from aletheia.storage.models import PortfolioSnapshot
 from aletheia.storage.repositories import (
     list_positions, insert_portfolio_snapshot, update_position, list_market_snapshots,
@@ -32,6 +34,47 @@ def mark_positions_to_market() -> list[dict]:
         rec["unrealized_pnl"] = upnl
         updated.append(rec)
     return updated
+
+
+def _realized_pnl(direction: str, entry: float, exit_price: float, qty: float) -> float:
+    if direction in ("long", "buy"):
+        return (exit_price - entry) * qty
+    return (entry - exit_price) * qty  # short/sell
+
+
+def close_position(position_id: str, exit_price: float) -> dict:
+    """Close an open position at exit_price, realizing PnL. Returns the result."""
+    from aletheia.storage import repositories as repo
+    row = repo._select_one("positions", position_id)
+    if row is None:
+        raise ValueError(f"position not found: {position_id}")
+
+    realized = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
+    update_position(
+        position_id,
+        status="closed",
+        current_price=exit_price,
+        realized_pnl=realized,
+        unrealized_pnl=0.0,
+        closed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    return {"position_id": position_id, "realized_pnl": realized, "exit_price": exit_price}
+
+
+def today_realized_pnl(execution_mode: str | None = None) -> float:
+    """Sum realized PnL of positions closed today (UTC). Source for §21.3 max_daily_loss."""
+    from aletheia.storage.repositories import _select_all
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = _select_all("positions", where="status = ?", params=("closed",), limit=1000)
+    total = 0.0
+    for r in rows:
+        closed_at = r.get("closed_at") or ""
+        if not closed_at.startswith(today):
+            continue
+        if execution_mode and r.get("execution_mode") != execution_mode:
+            continue
+        total += r.get("realized_pnl") or 0.0
+    return round(total, 8)
 
 
 def compute_portfolio(execution_mode: str | None = None) -> dict:
