@@ -10,6 +10,10 @@ from aletheia.files.jsonl import append_jsonl
 async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
     """Run a named agent with full lifecycle logging."""
     run_migrations()
+    # Ensure tool permissions are registered even if the app lifespan didn't run
+    # (e.g. tests using ASGITransport, or a direct orchestrator call).
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    init_tool_registry()
     cfg = load_config()
     permission_mode = cfg.agent.permission_mode
     provider_name = cfg.models.default_provider

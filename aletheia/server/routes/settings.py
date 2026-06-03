@@ -32,6 +32,10 @@ async def set_permission_mode(req: PermissionModeRequest):
     old = cfg.agent.permission_mode
     cfg.agent.permission_mode = req.mode
     save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "permission_changed",
+                 "entity_type": "permission_mode", "before": {"mode": old}, "after": {"mode": req.mode},
+                 "message": f"Permission mode {old} -> {req.mode}"})
     return {"old": old, "new": req.mode}
 
 
@@ -43,4 +47,8 @@ async def set_exchange_mode(req: ExchangeModeRequest):
     old = cfg.exchange.mode
     cfg.exchange.mode = req.mode
     save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_mode_changed",
+                 "entity_type": "exchange_mode", "before": {"mode": old}, "after": {"mode": req.mode},
+                 "message": f"Exchange mode {old} -> {req.mode}"})
     return {"old": old, "new": req.mode}

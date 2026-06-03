@@ -1,8 +1,55 @@
 # Changelog
 
+## [0.2.0] - 2026-06-03 — Functional MVP completion
+
+Completion pass after an audit found the initial "MVP" was ~35% of the dashboard
+spec with several non-functional core pieces. This release closes those gaps so the
+system is configurable and usable entirely from the dashboard.
+
+### P1 — Backend config + secrets surface
+- `ProviderConfig.api_key_secret_ref`; router injects API key from secret storage
+- Real secrets CLI (`set` hidden prompt, `list`, `test bitget`); `model set` CLI
+- Routes: `GET/POST /api/settings/model`, `GET /api/model/health`,
+  `POST /api/bitget/test-connection`, `POST /api/settings/exchange-credentials`,
+  `GET /api/bitget/credentials-status`
+- Write-only secrets: GET endpoints never return raw keys (configured + last4 only)
+
+### P2 — Dashboard configuration UX (OpenAlice-style)
+- Settings page with all 8 §23.12 controls: model provider + write-only API key,
+  Bitget demo/live credentials + test connection, exchange-mode switch,
+  live unlock/lock, risk display, telegram, permission, pause/resume
+- SetupBanner onboarding nudge; Overview shows account/PnL/positions/latest activity
+
+### P3 — Runtime (the system now actually runs)
+- FIX: scheduler now starts on gateway boot (was never invoked)
+- Real pause/resume (halts scheduler jobs); market-data loop writes market_snapshots
+- Agents call the LLM with graceful degradation; tool calls logged
+- 4 new agents: strategy_designer, risk_critic, portfolio_agent, post_trade_reviewer
+- portfolio/pnl.py: mark-to-market PnL + portfolio snapshots
+
+### P4 — Trading workflow + dashboard actions
+- §25 routes: proposal approve/reject, strategy get/promote/retire, portfolio
+- FIX: gateway passed empty risk_decision_id (FK violation); now passes real id
+- Dashboard action buttons (approve/reject, promote/retire, run-agent); KB tabs;
+  Positions grouped + exposure; 5 seed playbooks on bootstrap
+
+### P5 — Charts
+- lightweight-charts: candlestick price chart + trade markers, PnL line chart
+- Charts page, Reports page renders real summaries
+
+### P6 — Test matrix + acceptance hardening
+- Security tests: secrets never in logs/config/GET responses; restricted tools
+  unreachable; live blocked by default; permission/live changes audited
+- FIX: tool registry now initialized in orchestrator (agents were silently no-op
+  when run before the app lifespan registered tools)
+- §32 acceptance tests through the API/CLI
+- 137 tests passing (was 84)
+
+---
+
 ## [0.1.0] - 2026-06-03
 
-### MVP Release — All 12 milestones complete
+### Initial milestones M0–M11 (function-level)
 
 #### M0 — Repo Skeleton
 - Python 3.12 project with uv, pyproject.toml
