@@ -41,6 +41,9 @@ class ProviderConfig(BaseModel):
     enabled: bool = True
     command: str = ""
     mode: str = ""
+    # Name of the secret holding this provider's API key (the key itself lives
+    # in keyring / secrets.enc, never in config.yaml). e.g. "model.openai_compatible.api_key"
+    api_key_secret_ref: str | None = None
 
 
 class ModelsConfig(BaseModel):

@@ -11,6 +11,27 @@ from aletheia.model_provider.codex_cli import CodexCLIProvider
 from aletheia.model_provider.router import get_provider, clear_cache
 
 
+def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+    clear_cache()
+
+    # Configure a provider with an api_key_secret_ref and store that secret
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.models.providers["openai_compatible"].api_key_secret_ref = "model.openai_compatible.api_key"
+    save_config(cfg)
+    set_secret("model.openai_compatible.api_key", "sk-secret-123")
+
+    provider = get_provider("openai_compatible")
+    assert provider.api_key == "sk-secret-123"
+    clear_cache()
+
+
 def test_router_returns_openai_by_default(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

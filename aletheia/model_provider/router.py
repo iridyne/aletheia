@@ -22,16 +22,24 @@ def get_provider(name: str | None = None) -> ModelProvider:
     if pcfg is None:
         raise ValueError(f"Unknown provider: {name}")
 
+    # Resolve the API key from secret storage (never stored in config.yaml)
+    api_key = None
+    if pcfg.api_key_secret_ref:
+        from aletheia.config.secrets import get_secret
+        api_key = get_secret(pcfg.api_key_secret_ref)
+
     if name == "openai_compatible":
         provider = OpenAICompatibleProvider(
             base_url=pcfg.base_url,
             model=pcfg.model,
             protocol=pcfg.protocol,
+            api_key=api_key,
         )
     elif name == "anthropic_compatible":
         provider = AnthropicCompatibleProvider(
             base_url=pcfg.base_url,
             model=pcfg.model,
+            api_key=api_key,
         )
     elif name == "codex_cli":
         provider = CodexCLIProvider(
