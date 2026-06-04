@@ -24,6 +24,54 @@ export default function Settings() {
       <LiveStateCard status={status} qc={qc} />
       <RiskCard settings={settings} />
       <TelegramCard />
+      <SoftwareUpdateCard />
+    </div>
+  )
+}
+
+function SoftwareUpdateCard() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({ queryKey: ['update-status'], queryFn: api.getUpdateStatus })
+  const [msg, setMsg] = useState('')
+  const apply = useMutation({
+    mutationFn: api.applyUpdate,
+    onSuccess: (r) => {
+      setMsg(r.applied
+        ? `Updated to ${r.new_commit?.slice(0, 8)} (deps reinstalled: ${r.deps_reinstalled}). ${r.message ?? ''}`
+        : `Not applied: ${r.reason}${r.message ? ` — ${r.message}` : ''}`)
+      qc.invalidateQueries({ queryKey: ['update-status'] })
+    },
+  })
+
+  let badge = <span className="badge badge-yellow">not available</span>
+  if (isLoading) badge = <span className="badge">checking…</span>
+  else if (data?.ok && data.has_update) badge = <span className="badge badge-yellow">{data.behind_count} behind</span>
+  else if (data?.ok && !data.has_update) badge = <span className="badge badge-green">up to date</span>
+
+  return (
+    <div className="card">
+      <h3>Software Update {badge}</h3>
+      {data?.ok ? (
+        <>
+          <p className="hint">
+            Branch <code>{data.branch}</code> · current <code>{data.current_commit?.slice(0, 8)}</code>
+            {data.has_update && <> · remote <code>{data.remote_commit?.slice(0, 8)}</code></>}
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['update-status'] })}>Re-check</button>
+            {data.has_update && (
+              <button
+                onClick={() => { if (confirm('Pull latest code and apply update? You must restart the gateway afterward.')) apply.mutate() }}
+                disabled={apply.isPending}
+              >Apply update</button>
+            )}
+          </div>
+        </>
+      ) : (
+        <p className="hint">Update status not available{data?.reason ? ` (${data.reason})` : ''}. Requires a git checkout.</p>
+      )}
+      {msg && <p className="hint">{msg}</p>}
+      <p className="hint">On-demand only. Applying pulls from git; restart the gateway to load new code. Never runs automatically.</p>
     </div>
   )
 }

@@ -97,6 +97,14 @@ def list_opportunities(limit: int = 50) -> list[dict]:
     return _select_all("opportunities", limit=limit)
 
 
+def get_opportunity(oid: str) -> dict | None:
+    return _select_one("opportunities", oid)
+
+
+def update_opportunity(oid: str, **kwargs) -> None:
+    _update("opportunities", oid, kwargs)
+
+
 # --- Trade Proposals ---
 
 def insert_trade_proposal(p: TradeProposal) -> None:

@@ -24,6 +24,7 @@ def submit_proposal(
     stop_price: float | None = None,
     execution_mode: str = "paper_internal",
     strategy_id: str | None = None,
+    opportunity_id: str | None = None,
     agent_rationale: str | None = None,
 ) -> dict:
     """Submit a trade proposal through the full execution pipeline.
@@ -32,6 +33,7 @@ def submit_proposal(
     """
     proposal = TradeProposal(
         strategy_id=strategy_id,
+        opportunity_id=opportunity_id,
         symbol=symbol,
         market_type=market_type,
         direction=direction,
