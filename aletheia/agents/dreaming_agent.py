@@ -6,6 +6,49 @@ from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
 from aletheia.storage.repositories import list_agent_runs
 
+# Lifecycle states surfaced in the ledger, in pipeline order.
+_LEDGER_STATES = [
+    "draft", "research_note", "strategy_hypothesis", "paper_candidate",
+    "paper_running", "paper_passed", "live_candidate", "live_limited",
+    "retired", "deprecated",
+]
+# Knowledge item types that signal learning output.
+_LEDGER_KNOWLEDGE = ["research_note", "strategy_memory", "post_trade_review", "dreaming_log"]
+
+
+def _build_learning_ledger() -> str:
+    """A real snapshot of where the self-evolution pipeline stands.
+
+    Answers "is learning producing validated strategies, or only piling up
+    notes?" using existing repo queries — no new tables, no new page.
+    """
+    from aletheia.storage.repositories import list_strategies, list_knowledge_items
+
+    strategies = list_strategies(limit=500)
+    counts = {s: 0 for s in _LEDGER_STATES}
+    for row in strategies:
+        st = row.get("state") or "draft"
+        counts[st] = counts.get(st, 0) + 1
+    active = [f"{s}:{counts[s]}" for s in _LEDGER_STATES if counts.get(s)]
+    strat_line = ", ".join(active) if active else "none yet"
+
+    know_parts = []
+    for t in _LEDGER_KNOWLEDGE:
+        try:
+            n = len(list_knowledge_items(t, limit=1000))
+        except Exception:
+            n = 0
+        if n:
+            know_parts.append(f"{t}:{n}")
+    know_line = ", ".join(know_parts) if know_parts else "none yet"
+
+    return (
+        "\n\n## Learning Ledger\n"
+        f"- Strategies by state: {strat_line}\n"
+        f"- Knowledge items: {know_line}\n"
+        f"- Total strategies: {len(strategies)}\n"
+    )
+
 
 @register_agent("dreaming_agent")
 async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
@@ -33,6 +76,13 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
     if err:
         errors.append(err)
         content = f"## Daily Consolidation\n\nRecent activity:\n{activity}\n\n(LLM unavailable for synthesis.)"
+
+    # Append a real learning-progress snapshot. Never let it break the run.
+    try:
+        content += _build_learning_ledger()
+        log_tool(run_id, "build_learning_ledger", "read_tool", True)
+    except Exception as e:
+        errors.append(f"learning_ledger_failed: {e}")
 
     item = create_dreaming_log("Daily Consolidation", content)
     log_tool(run_id, "write_dreaming_log", "research_tool", True, output=item.id)
