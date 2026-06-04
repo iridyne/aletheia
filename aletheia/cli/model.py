@@ -87,5 +87,7 @@ def test():
     results = asyncio.run(healthcheck_all())
     for h in results:
         icon = "✓" if h.available else "✗"
-        msg = f"  {icon} {h.provider}: {'available' if h.available else h.error}"
-        typer.echo(msg)
+        detail = "available" if h.available else h.error
+        if h.available and h.models:
+            detail += f" ({len(h.models)} models)"
+        typer.echo(f"  {icon} {h.provider}: {detail}")

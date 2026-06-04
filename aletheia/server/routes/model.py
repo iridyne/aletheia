@@ -40,6 +40,7 @@ async def get_model_config():
             "enabled": pcfg.enabled,
             "command": pcfg.command,
             "mode": pcfg.mode,
+            "codex_model": pcfg.codex_model,
             "api_key": _key_status(pcfg.api_key_secret_ref),
         }
     return {"default_provider": cfg.models.default_provider, "providers": providers}
@@ -49,9 +50,50 @@ async def get_model_config():
 async def get_model_health():
     results = await healthcheck_all()
     return [
-        {"provider": h.provider, "available": h.available, "model": h.model, "error": h.error}
+        {"provider": h.provider, "available": h.available, "model": h.model,
+         "error": h.error, "models": h.models}
         for h in results
     ]
+
+
+# --- Codex subscription provider: web-triggered device-auth login + model listing ---
+
+@router.post("/model/codex/login-start")
+async def codex_login_start():
+    """Begin Codex device-auth login. Returns verification URL + code (never a token)."""
+    from aletheia.model_provider import codex_auth
+    result = await codex_auth.start_login()
+    write_audit({
+        "actor": "human", "source": "dashboard",
+        "event_type": "codex_login_started", "entity_type": "model_provider",
+        "entity_id": "codex_cli",
+        "message": f"Codex device-auth login start (state={result.get('state')})",
+    })
+    return result
+
+
+@router.get("/model/codex/login-status")
+async def codex_login_status():
+    """Poll Codex login status (authoritative via `codex login status`). No token."""
+    from aletheia.model_provider import codex_auth
+    return await codex_auth.poll_status()
+
+
+@router.post("/model/codex/login-cancel")
+async def codex_login_cancel():
+    from aletheia.model_provider import codex_auth
+    return codex_auth.cancel()
+
+
+@router.get("/model/codex/models")
+async def codex_models():
+    """List available Codex models ([] if codex unavailable). Read-only."""
+    from aletheia.model_provider import router as router_mod
+    try:
+        provider = router_mod.get_provider("codex_cli")
+        return await provider.list_models()
+    except Exception:
+        return []
 
 
 class ModelConfigRequest(BaseModel):
@@ -62,6 +104,7 @@ class ModelConfigRequest(BaseModel):
     enabled: bool | None = None
     command: str | None = None
     mode: str | None = None
+    codex_model: str | None = None
     default: bool | None = None
     api_key: str | None = None  # write-only; stored as secret, never returned
 
@@ -91,6 +134,8 @@ async def set_model(req: ModelConfigRequest):
         pcfg.command = req.command
     if req.mode is not None:
         pcfg.mode = req.mode
+    if req.codex_model is not None:
+        pcfg.codex_model = req.codex_model
     if req.default:
         cfg.models.default_provider = req.provider
 
