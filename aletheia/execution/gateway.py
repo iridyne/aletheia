@@ -116,6 +116,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     price=proposal.price or 0.0,
                     execution_mode=allowed_mode,
                     strategy_id=proposal.strategy_id,
+                    stop_price=proposal.stop_price,
                 )
                 update_trade_proposal(proposal.id, status="executed")
             write_audit({

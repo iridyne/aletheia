@@ -137,6 +137,9 @@ CREATE TABLE IF NOT EXISTS positions (
     execution_mode TEXT NOT NULL,
     strategy_id TEXT,
     status TEXT NOT NULL DEFAULT 'open',
+    stop_price REAL,
+    take_profit_price REAL,
+    close_reason TEXT,
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at TEXT
 );
@@ -214,6 +217,9 @@ _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
     ("stop_price", "trade_proposals", "REAL"),
     ("strategy_id", "knowledge_items", "TEXT"),
+    ("stop_price", "positions", "REAL"),
+    ("take_profit_price", "positions", "REAL"),
+    ("close_reason", "positions", "TEXT"),
 ]
 
 

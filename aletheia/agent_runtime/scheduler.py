@@ -51,6 +51,18 @@ def init_scheduler() -> BackgroundScheduler | None:
         _run_paper_trader, "interval", minutes=15, id="paper_trader",
         misfire_grace_time=60,
     )
+    _scheduler.add_job(
+        _run_position_manager, "interval", minutes=5, id="position_manager",
+        misfire_grace_time=60,
+    )
+    _scheduler.add_job(
+        _run_cleanup, "cron", hour=3, minute=17, id="cleanup",
+        misfire_grace_time=600,
+    )
+    _scheduler.add_job(
+        _run_health_check, "interval", minutes=10, id="health_check",
+        misfire_grace_time=120,
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -147,6 +159,52 @@ def _run_paper_trader():
     if cfg.agent.permission_mode not in ("PaperAuto", "AllowEditing", "Auto"):
         return
     asyncio.run(_async_run("paper_trader"))
+
+
+def _run_position_manager():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        from aletheia.portfolio.position_manager import evaluate_open_positions
+        evaluate_open_positions()
+    except Exception as e:
+        logger.warning("position_manager job failed: %s", e)
+
+
+def _run_cleanup():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        from aletheia.storage import repositories as repo
+        from aletheia.files.jsonl import write_audit
+        r = cfg.retention
+        counts = {
+            "agent_runs": repo.prune_agent_runs(r.agent_runs_days),
+            "run_steps": repo.prune_run_steps(r.run_steps_days),
+            "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
+            "market_snapshots": repo.prune_market_snapshots(r.market_snapshots_days),
+            "portfolio_snapshots": repo.prune_portfolio_snapshots(r.portfolio_snapshots_days),
+        }
+        write_audit({
+            "actor": "system", "source": "scheduler",
+            "event_type": "data_pruned", "entity_type": "telemetry",
+            "message": f"Pruned old telemetry: {counts}",
+        })
+    except Exception as e:
+        logger.warning("cleanup job failed: %s", e)
+
+
+def _run_health_check():
+    cfg = load_config()
+    if cfg.runtime.paused or not cfg.health.enabled:
+        return
+    try:
+        from aletheia.agent_runtime.health import run_health_check
+        run_health_check()
+    except Exception as e:
+        logger.warning("health_check job failed: %s", e)
 
 
 async def _async_run(agent_name: str):

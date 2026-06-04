@@ -93,6 +93,39 @@ class TelegramConfig(BaseModel):
     allowed_chat_ids: list[int] = Field(default_factory=list)
 
 
+class HealthConfig(BaseModel):
+    enabled: bool = True
+    alert_via_telegram: bool = True
+    max_agent_failure_ratio: float = 0.5
+    llm_unavailable_alert_after: int = 3
+    # Gateway supervisor (process self-healing).
+    supervisor_max_restarts: int = 5
+    supervisor_restart_window_sec: int = 600
+    supervisor_backoff_cap_sec: int = 60
+
+
+class RetentionConfig(BaseModel):
+    # Telemetry pruning (days). Trust-bearing records are NEVER pruned.
+    agent_runs_days: int = 30
+    tool_calls_days: int = 30
+    run_steps_days: int = 30
+    market_snapshots_days: int = 30
+    portfolio_snapshots_days: int = 90
+    jsonl_max_mb: float = 50.0
+
+
+class TradingConfig(BaseModel):
+    # Paper position exit rules used by the position_manager. Non-zero defaults so
+    # the autonomous loop actually closes positions and realizes PnL.
+    default_stop_loss_pct: float = 2.0
+    default_take_profit_pct: float = 4.0
+    max_position_hold_hours: float = 72.0
+    # Minimum LLM confidence for paper_trader to open a position
+    # (high | medium | speculative). Below this, the opportunity is recorded but
+    # not traded.
+    min_confidence_to_trade: str = "medium"
+
+
 class UpdateConfig(BaseModel):
     # On-demand self-upgrade (git pull). Human-triggered only; never a daemon.
     enabled: bool = True
@@ -112,3 +145,6 @@ class AletheiaConfig(BaseModel):
     risk: RiskConfig = Field(default_factory=RiskConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     update: UpdateConfig = Field(default_factory=UpdateConfig)
+    trading: TradingConfig = Field(default_factory=TradingConfig)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
+    health: HealthConfig = Field(default_factory=HealthConfig)
