@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from aletheia.config.loader import load_config, save_config, _PROJECT_ROOT
 from aletheia.files.jsonl import write_audit
 from aletheia.update import git_ops
+from aletheia.update.smoke import run_smoke_check
 
 logger = logging.getLogger("aletheia.update.applier")
 
@@ -98,6 +99,28 @@ def apply_update() -> dict:
     if pyproject_changed:
         install = _reinstall_deps()
         deps_reinstalled = bool(install.get("ok"))
+
+    # Smoke-verify the pulled code before committing to it. On failure, roll back
+    # to the recorded pre-pull commit (user-authorized controlled rollback) so a
+    # bad update can never brick the gateway. Never auto-restarts.
+    smoke = run_smoke_check()
+    if not smoke.get("ok"):
+        git_ops.reset_hard(old)
+        if pyproject_changed:
+            _reinstall_deps()  # restore old deps to match the reverted code
+        cfg.update.current_commit = old
+        save_config(cfg)
+        write_audit({
+            "actor": "human", "source": "api", "event_type": "update_rolled_back",
+            "entity_type": "system_update", "entity_id": old,
+            "before": {"commit": new}, "after": {"commit": old},
+            "message": f"Update rolled back: smoke failed at {smoke.get('stage')}: {smoke.get('detail')}",
+        })
+        return {
+            "applied": False, "rolled_back": True, "reason": "smoke_failed",
+            "smoke_stage": smoke.get("stage"), "old_commit": old, "attempted_commit": new,
+            "message": "Update rolled back after smoke check failed. No restart needed.",
+        }
 
     cfg.update.current_commit = new
     save_config(cfg)
