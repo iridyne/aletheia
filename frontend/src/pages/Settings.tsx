@@ -25,6 +25,57 @@ export default function Settings() {
       <RiskCard settings={settings} />
       <TelegramCard />
       <SoftwareUpdateCard />
+      <AutostartCard />
+    </div>
+  )
+}
+
+function AutostartCard() {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery({ queryKey: ['autostart'], queryFn: api.getAutostartStatus })
+  const [msg, setMsg] = useState('')
+  const mut = useMutation({
+    mutationFn: (enabled: boolean) => api.setAutostart(enabled),
+    onSuccess: (r) => {
+      if (r.ok === false) setMsg(`Failed: ${r.reason}${r.detail ? ` — ${r.detail}` : ''}`)
+      else setMsg(r.enabled ? 'Autostart enabled.' : 'Autostart disabled.')
+      qc.invalidateQueries({ queryKey: ['autostart'] })
+    },
+  })
+
+  const supported = data?.supported
+  const enabled = data?.enabled
+
+  let badge = <span className="badge">checking…</span>
+  if (!isLoading && data) {
+    if (!supported) badge = <span className="badge badge-yellow">not available</span>
+    else if (enabled === true) badge = <span className="badge badge-green">enabled</span>
+    else if (enabled === false) badge = <span className="badge">disabled</span>
+    else badge = <span className="badge badge-red">unknown</span>
+  }
+
+  return (
+    <div className="card">
+      <h3>Autostart &amp; Watchdog {badge}</h3>
+      {!isLoading && data && !supported ? (
+        <p className="hint">Not available on this OS{data.reason ? ` (${data.reason})` : ''}. Autostart uses the Windows Task Scheduler.</p>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {enabled === true ? (
+              <button className="secondary" onClick={() => mut.mutate(false)} disabled={mut.isPending}>Disable autostart</button>
+            ) : (
+              <button onClick={() => mut.mutate(true)} disabled={mut.isPending || enabled === null}>Enable autostart</button>
+            )}
+            <button className="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['autostart'] })}>Re-check</button>
+          </div>
+          {enabled === null && (
+            <p className="hint"><span className="badge badge-red">unknown</span> Could not read the task state{data?.reason ? ` (${data.reason})` : ''}. Try running the dashboard from your own user account.</p>
+          )}
+        </>
+      )}
+      {msg && <p className="hint">{msg}</p>}
+      <p className="hint">Starts the gateway automatically when you log in, and re-checks every 5 minutes so the supervisor is restarted if it ever dies. Runs the same gated start as <code>aletheia gateway start</code> — live trading stays disabled. All changes are audited.</p>
     </div>
   )
 }
