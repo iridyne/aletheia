@@ -18,6 +18,8 @@ RESEARCH_TOOLS = [
     "create_opportunity",
     "create_strategy_hypothesis",
     "write_dreaming_log",
+    "write_daily_review",
+    "create_post_trade_review",
 ]
 
 # Paper tools

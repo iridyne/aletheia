@@ -1,6 +1,6 @@
 """Data API routes for dashboard consumption."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from aletheia.storage.sqlite import get_db
@@ -8,6 +8,14 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 
 router = APIRouter(prefix="/api", tags=["data"])
+
+VALID_KNOWLEDGE_TYPES = {
+    "research_note",
+    "strategy_memory",
+    "daily_review",
+    "dreaming_log",
+    "post_trade_review",
+}
 
 
 def _ensure_db():
@@ -58,18 +66,22 @@ async def approve_proposal(proposal_id: str):
     p = repo.get_trade_proposal(proposal_id)
     if p is None:
         raise HTTPException(404, "Proposal not found")
+
+    status = str(p.get("status") or "").lower()
+    if status == "executed":
+        return {"proposal_id": proposal_id, "execution": {"status": "already_executed", "proposal_id": proposal_id}}
+    if status in {"error", "rejected"}:
+        return {"proposal_id": proposal_id, "execution": {"status": status, "proposal_id": proposal_id}}
+
     repo.update_trade_proposal(proposal_id, status="approved")
     write_audit({"actor": "human", "source": "dashboard", "event_type": "proposal_approved",
                  "entity_type": "trade_proposal", "entity_id": proposal_id,
+                 "before": {"status": "pending"}, "after": {"status": "approved"},
                  "message": f"Proposal approved for paper execution"})
-    # Execute through the gateway (risk-checked)
-    from aletheia.execution.gateway import submit_proposal
-    result = submit_proposal(
-        symbol=p["symbol"], market_type=p["market_type"], direction=p["direction"],
-        order_type=p.get("order_type", "market"), quantity=p.get("quantity") or 0.0,
-        price=p.get("price") or 0.0, execution_mode="paper_internal",
-        strategy_id=p.get("strategy_id"), agent_rationale=p.get("agent_rationale"),
-    )
+    # Execute the stored proposal through the gateway (risk-checked) without
+    # creating a second proposal row.
+    from aletheia.execution.gateway import execute_existing_proposal
+    result = execute_existing_proposal(proposal_id, execution_mode="paper_internal")
     return {"proposal_id": proposal_id, "execution": result}
 
 
@@ -104,6 +116,13 @@ async def get_portfolio():
     _ensure_db()
     from aletheia.portfolio.pnl import compute_portfolio
     return compute_portfolio()
+
+
+@router.get("/audit/events")
+async def get_audit_events(limit: int = 100):
+    _ensure_db()
+    limit = max(1, min(limit, 500))
+    return repo.list_audit_events(limit=limit)
 
 
 @router.get("/strategies")
@@ -178,6 +197,14 @@ async def get_market_ohlcv(symbol: str = "BTCUSDT", timeframe: str = "1h", limit
 async def get_portfolio_history(limit: int = 100):
     _ensure_db()
     return repo.list_portfolio_snapshots(limit=limit)
+
+
+@router.get("/knowledge")
+async def get_knowledge(type: str = Query(default="research_note")):
+    _ensure_db()
+    if type not in VALID_KNOWLEDGE_TYPES:
+        raise HTTPException(400, f"Invalid knowledge type. Choose from: {sorted(VALID_KNOWLEDGE_TYPES)}")
+    return repo.list_knowledge_items(item_type=type)
 
 
 @router.get("/knowledge/research-notes")

@@ -65,7 +65,8 @@ async def test_ac04_storage_initialized(client):
 async def test_ac05_dashboard_data_endpoints(client):
     c, _ = client
     for path in ["/api/agent-runs", "/api/opportunities", "/api/proposals", "/api/trades",
-                 "/api/positions", "/api/strategies", "/api/portfolio", "/api/settings"]:
+                 "/api/positions", "/api/strategies", "/api/portfolio", "/api/settings",
+                 "/api/audit/events"]:
         assert (await c.get(path)).status_code == 200
 
 
@@ -94,6 +95,7 @@ async def test_ac08_knowledge_base(client):
     c, _ = client
     await c.post("/api/agent-runs/start", json={"agent_name": "dreaming_agent"})
     assert len((await c.get("/api/knowledge/dreaming-logs")).json()) >= 1
+    assert len((await c.get("/api/knowledge?type=daily_review")).json()) >= 1
 
 
 # #11 paper proposal -> risk -> order -> fill -> position
@@ -108,6 +110,9 @@ async def test_ac11_paper_trade_flow(client):
     repo.insert_trade_proposal(p)
     resp = await c.post(f"/api/proposals/{p.id}/approve-paper")
     assert resp.json()["execution"]["status"] == "executed"
+    assert resp.json()["execution"]["proposal_id"] == p.id
+    assert len(repo.list_trade_proposals()) == 1
+    assert repo.list_orders()[0]["proposal_id"] == p.id
     assert len(repo.list_orders()) == 1
     assert len(repo.list_fills()) == 1
     assert len(repo.list_positions(status="open")) == 1

@@ -1,6 +1,7 @@
 """FastAPI application for Aletheia Trading OS."""
 
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,13 +30,37 @@ async def lifespan(app: FastAPI):
     from aletheia.storage.migrations import run_migrations
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
+    from aletheia.telegram.bot import TelegramBot
     run_migrations()
     init_tool_registry()
     try:
         init_scheduler()
     except Exception as e:
         logger.warning("Scheduler failed to start: %s", e)
+    telegram_bot = TelegramBot()
+    telegram_task = None
+    if telegram_bot.configure():
+        if telegram_bot.allowed_chat_ids:
+            try:
+                telegram_task = asyncio.create_task(telegram_bot.run())
+            except Exception as e:
+                logger.warning("Telegram polling startup failed: %s", e)
+                telegram_task = None
+        else:
+            logger.warning("Telegram enabled but no allowed_chat_ids configured; skipping Telegram polling.")
+    app.state.telegram_bot = telegram_bot
+    app.state.telegram_task = telegram_task
     yield
+    if telegram_task is not None:
+        try:
+            telegram_bot.stop()
+            telegram_task.cancel()
+            try:
+                await telegram_task
+            except asyncio.CancelledError:
+                pass
+        except Exception:
+            pass
     try:
         stop_scheduler()
     except Exception:

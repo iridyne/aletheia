@@ -40,7 +40,46 @@ def write_audit(event: dict) -> None:
     """Write an audit event to audit.jsonl."""
     if "timestamp" not in event:
         event["timestamp"] = datetime.utcnow().isoformat()
+    # Keep the JSONL audit stream as the canonical external log format.
     append_jsonl("audit.jsonl", event)
+
+    # Also persist into sqlite.audit_events for structured querying when DB is
+    # available (backward-compatible with pure JSONL deployments).
+    _write_audit_row(event)
+
+
+def _write_audit_row(event: dict) -> None:
+    try:
+        from aletheia.storage.models import AuditEvent
+        from aletheia.storage.repositories import insert_audit_event
+    except Exception:
+        return
+
+    payload = dict(event)
+    # Support both historical keys (before/after) and current keys
+    # (before_state/after_state).
+    if "before_state" not in payload and "before" in payload:
+        payload["before_state"] = _serialize_state(payload.pop("before"))
+    elif "before_state" in payload and isinstance(payload["before_state"], (dict, list)):
+        payload["before_state"] = _serialize_state(payload["before_state"])
+    if "after_state" not in payload and "after" in payload:
+        payload["after_state"] = _serialize_state(payload.pop("after"))
+    elif "after_state" in payload and isinstance(payload["after_state"], (dict, list)):
+        payload["after_state"] = _serialize_state(payload["after_state"])
+
+    try:
+        insert_audit_event(AuditEvent(**payload))
+    except Exception:
+        # Audit table may not exist before migrations run in some tests.
+        return
+
+
+def _serialize_state(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False, default=str)
 
 
 def write_agent_run_log(record: dict) -> None:

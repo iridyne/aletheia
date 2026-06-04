@@ -43,8 +43,42 @@ async def test_approve_proposal_executes_paper(client, monkeypatch):
     resp = await client.post(f"/api/proposals/{p.id}/approve-paper")
     assert resp.status_code == 200
     assert resp.json()["execution"]["status"] == "executed"
+    assert resp.json()["execution"]["proposal_id"] == p.id
+    proposals = repo.list_trade_proposals(limit=10)
+    assert len(proposals) == 1
+    orders = repo.list_orders()
+    assert len(orders) == 1
+    assert orders[0]["proposal_id"] == p.id
     # a position now exists
     assert len(repo.list_positions(status="open")) == 1
+
+
+@pytest.mark.anyio
+async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.agent.permission_mode = "PaperAuto"
+    save_config(cfg)
+
+    p = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=60000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(p)
+
+    first = await client.post(f"/api/proposals/{p.id}/approve-paper")
+    assert first.status_code == 200
+    assert first.json()["execution"]["status"] == "executed"
+    assert len(repo.list_orders()) == 1
+
+    second = await client.post(f"/api/proposals/{p.id}/approve-paper")
+    assert second.status_code == 200
+    assert second.json()["execution"]["status"] == "already_executed"
+    assert len(repo.list_orders()) == 1
 
 
 @pytest.mark.anyio

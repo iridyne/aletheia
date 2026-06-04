@@ -6,9 +6,12 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.knowledge.manager import (
-    create_research_note, create_dreaming_log, create_strategy_memory,
+    create_daily_review, create_post_trade_review, create_research_note,
+    create_dreaming_log, create_strategy_memory,
     archive_item, deprecate_item, delete_item, detect_contradictions,
 )
+from aletheia.agents.post_trade_reviewer import run_post_trade_reviewer
+from aletheia.storage.models import Order, Fill, TradeProposal
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -17,7 +20,9 @@ def setup_test_env(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "knowledge" / "research_notes").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "knowledge" / "daily_reviews").mkdir(parents=True, exist_ok=True)
     (tmp_path / "knowledge" / "dreaming_logs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "knowledge" / "post_trade_reviews").mkdir(parents=True, exist_ok=True)
     (tmp_path / "knowledge" / "strategies").mkdir(parents=True, exist_ok=True)
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     reset_db()
@@ -84,6 +89,70 @@ def test_dreaming_log_creation(tmp_path, monkeypatch):
     assert item.item_type == "dreaming_log"
     items = repo.list_knowledge_items(item_type="dreaming_log")
     assert len(items) == 1
+    reset_db()
+
+
+def test_daily_review_creation(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    item = create_daily_review("Daily Review", "Daily review content")
+    assert item.item_type == "daily_review"
+    assert "daily_reviews" in item.file_path
+    items = repo.list_knowledge_items(item_type="daily_review")
+    assert len(items) == 1
+    reset_db()
+
+
+def test_post_trade_review_creation(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    item = create_post_trade_review("Post-Trade Review", "Review content", metadata={"source": "test"})
+    assert item.item_type == "post_trade_review"
+    assert "post_trade_reviews" in item.file_path
+    items = repo.list_knowledge_items(item_type="post_trade_review")
+    assert len(items) == 1
+    reset_db()
+
+
+@pytest.mark.anyio
+async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+
+    from aletheia.trading.strategy_lifecycle import create_strategy
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+
+    init_tool_registry()
+    strategy = create_strategy("Post Trade Review Strategy")
+    proposal = TradeProposal(
+        strategy_id=strategy.id,
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=60000,
+    )
+    repo.insert_trade_proposal(proposal)
+    order = Order(
+        proposal_id=proposal.id,
+        risk_decision_id="x",
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=60000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_order(order)
+    repo.insert_fill(Fill(
+        order_id=order.id,
+        fill_price=60000,
+        fill_quantity=0.01,
+    ))
+
+    result = await run_post_trade_reviewer(permission_mode="Research")
+    review_items = repo.list_knowledge_items(item_type="post_trade_review", strategy_id=strategy.id)
+    assert len(review_items) == 1
+    if result["errors"]:
+        assert any("llm_unavailable" in err for err in result["errors"])
     reset_db()
 
 

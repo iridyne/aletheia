@@ -3,8 +3,8 @@
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.knowledge.manager import create_research_note
-from aletheia.storage.repositories import list_fills, list_orders
+from aletheia.knowledge.manager import create_post_trade_review
+from aletheia.storage.repositories import get_trade_proposal, list_fills, list_orders
 
 
 @register_agent("post_trade_reviewer")
@@ -13,8 +13,8 @@ async def run_post_trade_reviewer(permission_mode: str = "Research", run_id: str
     outputs: list[str] = []
     errors: list[str] = []
 
-    if not is_tool_permitted("create_research_note", permission_mode):
-        errors.append("create_research_note not permitted in current mode")
+    if not is_tool_permitted("create_post_trade_review", permission_mode):
+        errors.append("create_post_trade_review not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
     fills = list_fills(limit=20)
@@ -33,9 +33,29 @@ async def run_post_trade_reviewer(permission_mode: str = "Research", run_id: str
         errors.append(err)
         content = f"Post-trade review (LLM unavailable). Context: {ctx}"
 
-    item = create_research_note("Post-Trade Review", content, confidence="medium_confidence",
-                                metadata={"source": "post_trade_reviewer"})
-    log_tool(run_id, "create_research_note", "research_tool", True, output=item.id)
-    outputs.append(f"research_note:{item.id}")
+    strategy_id = None
+    for fill in fills:
+        order_id = fill.get("order_id")
+        if not order_id:
+            continue
+        linked_order = next((o for o in orders if o["id"] == order_id), None)
+        if not linked_order:
+            continue
+        proposal_id = linked_order.get("proposal_id")
+        if not proposal_id:
+            continue
+        proposal = get_trade_proposal(proposal_id)
+        if proposal and proposal.get("strategy_id"):
+            strategy_id = proposal["strategy_id"]
+            break
+
+    item = create_post_trade_review(
+        "Post-Trade Review",
+        content,
+        metadata={"source": "post_trade_reviewer"},
+        strategy_id=strategy_id,
+    )
+    log_tool(run_id, "create_post_trade_review", "research_tool", True, output=item.id)
+    outputs.append(f"post_trade_review:{item.id}")
 
     return {"outputs": outputs, "errors": errors}

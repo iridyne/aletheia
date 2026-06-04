@@ -77,7 +77,7 @@ def execute_live_order(
                 fee=quantity * price * 0.0006)  # ~taker fee estimate
     insert_fill(fill)
 
-    existing = _find_open_position(symbol, market_type, direction)
+    existing = _find_open_position(symbol, market_type, direction, strategy_id)
     if existing:
         new_qty = existing["quantity"] + quantity
         new_entry = (existing["entry_price"] * existing["quantity"] + price * quantity) / new_qty
@@ -102,10 +102,17 @@ def execute_live_order(
     }
 
 
-def _find_open_position(symbol: str, market_type: str, direction: str) -> dict | None:
+def _find_open_position(
+    symbol: str,
+    market_type: str,
+    direction: str,
+    strategy_id: str | None,
+) -> dict | None:
     for p in list_positions(status="open"):
         if (p["symbol"] == symbol and p["market_type"] == market_type
                 and p["direction"] == direction
                 and p["execution_mode"] == "bitget_live_limited"):
+            if strategy_id is not None and p.get("strategy_id") not in (None, "", strategy_id):
+                continue
             return p
     return None

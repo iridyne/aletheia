@@ -1,5 +1,6 @@
 """Thin repository functions for SQLite CRUD."""
 
+from contextlib import contextmanager
 import json
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.models import (
@@ -10,10 +11,12 @@ from aletheia.storage.models import (
 
 def _insert(table: str, data: dict) -> None:
     db = get_db()
+    was_in_tx = db.in_transaction
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
     db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(data.values()))
-    db.commit()
+    if not was_in_tx and not db.in_transaction:
+        db.commit()
 
 
 def _select_all(table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int = 100) -> list[dict]:
@@ -34,9 +37,26 @@ def _select_one(table: str, id_val: str) -> dict | None:
 
 def _update(table: str, id_val: str, data: dict) -> None:
     db = get_db()
+    was_in_tx = db.in_transaction
     sets = ", ".join(f"{k} = ?" for k in data.keys())
     db.execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*data.values(), id_val])
-    db.commit()
+    if not was_in_tx and not db.in_transaction:
+        db.commit()
+
+
+@contextmanager
+def transaction():
+    db = get_db()
+    if db.in_transaction:
+        yield
+        return
+    db.execute("BEGIN")
+    try:
+        yield
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 # --- Audit Events ---
@@ -105,6 +125,22 @@ def list_risk_decisions(limit: int = 50) -> list[dict]:
     return _select_all("risk_decisions", limit=limit)
 
 
+def list_strategy_risk_decisions(strategy_id: str, limit: int = 1000) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT rd.*
+        FROM risk_decisions rd
+        JOIN trade_proposals p ON p.id = rd.proposal_id
+        WHERE p.strategy_id = ?
+        ORDER BY rd.created_at DESC
+        LIMIT ?
+        """,
+        (strategy_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # --- Orders ---
 
 def insert_order(o: Order) -> None:
@@ -119,6 +155,32 @@ def list_orders(limit: int = 100) -> list[dict]:
     return _select_all("orders", limit=limit)
 
 
+def list_strategy_orders(
+    strategy_id: str,
+    execution_mode_prefix: str | None = None,
+    limit: int = 1000,
+) -> list[dict]:
+    db = get_db()
+    sql = """
+        SELECT o.*
+        FROM orders o
+        JOIN trade_proposals p ON p.id = o.proposal_id
+        WHERE p.strategy_id = ?
+    """
+    params: list[object] = [strategy_id]
+    if execution_mode_prefix:
+        if execution_mode_prefix == "paper":
+            sql += " AND (o.execution_mode = ? OR o.execution_mode = ?)"
+            params.extend(["paper_internal", "bitget_demo"])
+        else:
+            sql += " AND o.execution_mode LIKE ?"
+            params.append(f"{execution_mode_prefix}%")
+    sql += " ORDER BY o.created_at ASC LIMIT ?"
+    params.append(limit)
+    rows = db.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
 # --- Fills ---
 
 def insert_fill(f: Fill) -> None:
@@ -127,6 +189,33 @@ def insert_fill(f: Fill) -> None:
 
 def list_fills(limit: int = 100) -> list[dict]:
     return _select_all("fills", limit=limit)
+
+
+def list_strategy_fills(
+    strategy_id: str,
+    execution_mode_prefix: str | None = None,
+    limit: int = 1000,
+) -> list[dict]:
+    db = get_db()
+    sql = """
+        SELECT f.*
+        FROM fills f
+        JOIN orders o ON o.id = f.order_id
+        JOIN trade_proposals p ON p.id = o.proposal_id
+        WHERE p.strategy_id = ?
+    """
+    params: list[object] = [strategy_id]
+    if execution_mode_prefix:
+        if execution_mode_prefix == "paper":
+            sql += " AND (o.execution_mode = ? OR o.execution_mode = ?)"
+            params.extend(["paper_internal", "bitget_demo"])
+        else:
+            sql += " AND o.execution_mode LIKE ?"
+            params.append(f"{execution_mode_prefix}%")
+    sql += " ORDER BY f.filled_at ASC LIMIT ?"
+    params.append(limit)
+    rows = db.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
 
 
 # --- Positions ---
@@ -143,6 +232,24 @@ def list_positions(status: str | None = None, limit: int = 50) -> list[dict]:
     if status:
         return _select_all("positions", where="status = ?", params=(status,), limit=limit)
     return _select_all("positions", limit=limit)
+
+
+def list_strategy_positions(strategy_id: str, status: str | None = None, limit: int = 1000) -> list[dict]:
+    if status:
+        return _select_all(
+            "positions",
+            where="strategy_id = ? AND status = ?",
+            params=(strategy_id, status),
+            order="COALESCE(closed_at, opened_at) ASC",
+            limit=limit,
+        )
+    return _select_all(
+        "positions",
+        where="strategy_id = ?",
+        params=(strategy_id,),
+        order="COALESCE(closed_at, opened_at) ASC",
+        limit=limit,
+    )
 
 
 # --- Strategy Records ---
@@ -173,9 +280,14 @@ def update_knowledge_item(kid: str, **kwargs) -> None:
     _update("knowledge_items", kid, kwargs)
 
 
-def list_knowledge_items(item_type: str | None = None, limit: int = 50) -> list[dict]:
+def list_knowledge_items(item_type: str | None = None, limit: int = 50, strategy_id: str | None = None) -> list[dict]:
     if item_type:
-        return _select_all("knowledge_items", where="item_type = ?", params=(item_type,), limit=limit)
+        where = "item_type = ?"
+        params: tuple = (item_type,)
+        if strategy_id is not None:
+            where += " AND strategy_id = ?"
+            params = (item_type, strategy_id)
+        return _select_all("knowledge_items", where=where, params=params, limit=limit)
     return _select_all("knowledge_items", limit=limit)
 
 

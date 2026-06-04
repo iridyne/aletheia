@@ -3,7 +3,7 @@
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.knowledge.manager import create_dreaming_log
+from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
 from aletheia.storage.repositories import list_agent_runs
 
 
@@ -36,6 +36,9 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
 
     item = create_dreaming_log("Daily Consolidation", content)
     log_tool(run_id, "write_dreaming_log", "research_tool", True, output=item.id)
+    review = create_daily_review("Daily Review", content)
+    log_tool(run_id, "write_daily_review", "research_tool", True, output=review.id)
     outputs.append(f"dreaming_log:{item.id}")
+    outputs.append(f"daily_review:{review.id}")
 
     return {"outputs": outputs, "errors": errors}

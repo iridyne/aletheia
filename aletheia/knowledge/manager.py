@@ -4,7 +4,13 @@ from aletheia.storage.models import KnowledgeItem
 from aletheia.storage.repositories import (
     insert_knowledge_item, update_knowledge_item, list_knowledge_items,
 )
-from aletheia.files.markdown import write_research_note, write_dreaming_log, write_strategy_doc
+from aletheia.files.markdown import (
+    write_daily_review,
+    write_dreaming_log,
+    write_post_trade_review,
+    write_research_note,
+    write_strategy_doc,
+)
 
 VALID_CONFIDENCES = {"high_confidence", "medium_confidence", "speculative", "deprecated"}
 VALID_STATUSES = {"active", "archived", "deprecated"}
@@ -30,6 +36,36 @@ def create_dreaming_log(title: str, content: str) -> KnowledgeItem:
         item_type="dreaming_log",
         title=title,
         file_path=str(path),
+        confidence="medium_confidence",
+    )
+    insert_knowledge_item(item)
+    return item
+
+
+def create_daily_review(title: str, content: str) -> KnowledgeItem:
+    path = write_daily_review(content, title=title)
+    item = KnowledgeItem(
+        item_type="daily_review",
+        title=title,
+        file_path=str(path),
+        confidence="medium_confidence",
+    )
+    insert_knowledge_item(item)
+    return item
+
+
+def create_post_trade_review(
+    title: str,
+    content: str,
+    metadata: dict | None = None,
+    strategy_id: str | None = None,
+) -> KnowledgeItem:
+    path = write_post_trade_review(title, content, metadata)
+    item = KnowledgeItem(
+        item_type="post_trade_review",
+        title=title,
+        file_path=str(path),
+        strategy_id=strategy_id,
         confidence="medium_confidence",
     )
     insert_knowledge_item(item)

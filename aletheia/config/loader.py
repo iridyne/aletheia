@@ -26,6 +26,7 @@ def ensure_data_dirs() -> None:
         DATA_DIR / "knowledge" / "agent_memory",
         DATA_DIR / "knowledge" / "daily_reviews",
         DATA_DIR / "knowledge" / "dreaming_logs",
+        DATA_DIR / "knowledge" / "post_trade_reviews",
         DATA_DIR / "knowledge" / "deprecated",
         DATA_DIR / "playbooks",
         DATA_DIR / "reports" / "daily",

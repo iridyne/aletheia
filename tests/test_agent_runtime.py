@@ -21,6 +21,7 @@ def setup_test_env(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     # Ensure knowledge dirs exist
     (tmp_path / "knowledge" / "research_notes").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "knowledge" / "daily_reviews").mkdir(parents=True, exist_ok=True)
     (tmp_path / "knowledge" / "dreaming_logs").mkdir(parents=True, exist_ok=True)
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     # Reset and setup db
@@ -109,6 +110,7 @@ async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
     result = await run_agent("dreaming_agent", trigger_type="manual")
     assert result["status"] in _OK
     assert any("dreaming_log:" in o for o in result["outputs"])
+    assert any("daily_review:" in o for o in result["outputs"])
     reset_db()
 
 

@@ -86,6 +86,8 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
     total_unrealized = sum(p["unrealized_pnl"] for p in positions)
     total_realized = sum(p.get("realized_pnl", 0.0) for p in positions)
     total_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in positions)
+    total_today_realized = today_realized_pnl(execution_mode=execution_mode)
+    total_realized_open = sum(p.get("realized_pnl", 0.0) for p in positions)
 
     # Exposure by symbol
     exposure: dict[str, float] = {}
@@ -97,10 +99,12 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
         "total_value_usdt": round(total_notional, 4),
         "unrealized_pnl": round(total_unrealized, 4),
         "realized_pnl": round(total_realized, 4),
-        "today_pnl": round(total_unrealized + total_realized, 4),
+        "today_pnl": round(total_unrealized + total_today_realized, 4),
         "positions_count": len(positions),
         "exposure_by_symbol": {k: round(v, 4) for k, v in exposure.items()},
         "positions": positions,
+        "today_realized_pnl": round(total_today_realized, 4),
+        "realized_open_pnl": round(total_realized_open, 4),
     }
 
 

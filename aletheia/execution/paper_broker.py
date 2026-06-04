@@ -46,7 +46,7 @@ def execute_paper_order(
     insert_fill(fill)
 
     # Check if we have an existing position to update
-    existing = _find_open_position(symbol, market_type, direction, execution_mode)
+    existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
     if existing:
         # Average into existing position
         new_qty = existing["quantity"] + quantity
@@ -76,10 +76,18 @@ def execute_paper_order(
     }
 
 
-def _find_open_position(symbol: str, market_type: str, direction: str, execution_mode: str) -> dict | None:
+def _find_open_position(
+    symbol: str,
+    market_type: str,
+    direction: str,
+    execution_mode: str,
+    strategy_id: str | None,
+) -> dict | None:
     positions = list_positions(status="open")
     for p in positions:
         if (p["symbol"] == symbol and p["market_type"] == market_type
                 and p["direction"] == direction and p["execution_mode"] == execution_mode):
+            if strategy_id is not None and p.get("strategy_id") not in (None, "", strategy_id):
+                continue
             return p
     return None

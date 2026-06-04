@@ -1,11 +1,16 @@
 """Tests for strategy lifecycle: forward-only transitions, promotion gates."""
 
+from datetime import datetime, timedelta
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.trading.strategy_lifecycle import (
     create_strategy, promote_strategy, FORWARD_TRANSITIONS, check_promotion_gates,
 )
 from aletheia.storage.repositories import get_strategy
+from aletheia.storage import repositories as repo
+from aletheia.storage.models import Fill, Order, Position, RiskDecision, TradeProposal
+from aletheia.knowledge.manager import create_post_trade_review
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -13,6 +18,7 @@ def setup_test_env(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "knowledge" / "post_trade_reviews").mkdir(parents=True, exist_ok=True)
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     reset_db()
     sq._db_conn = None
@@ -83,13 +89,450 @@ def test_promotion_gate_check_not_in_paper_passed(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_live_candidate_requires_paper_orders(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    s = create_strategy("Paper Order Required")
+    for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
+        promote_strategy(s.id, target)
+    result = check_promotion_gates(s.id)
+    assert result["passed"] is False
+    assert "no_strategy_paper_orders" in result["failures"]
+    reset_db()
+
+
+def test_live_candidate_counts_only_paper_fills(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    s = create_strategy("Paper Fill Isolation")
+    for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
+        promote_strategy(s.id, target)
+
+    created_at = (datetime.utcnow() - timedelta(days=15)).isoformat()
+    # One paper order older than minimum runtime.
+    paper_proposal = TradeProposal(
+        strategy_id=s.id,
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        price=60000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(paper_proposal)
+    decision = RiskDecision(proposal_id=paper_proposal.id, approved=True, allowed_execution_mode="paper_internal")
+    repo.insert_risk_decision(decision)
+    repo.insert_order(Order(
+        proposal_id=paper_proposal.id,
+        risk_decision_id=decision.id,
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=60000,
+        execution_mode="paper_internal",
+        status="filled",
+        created_at=created_at,
+        filled_at=created_at,
+    ))
+
+    # 30 live-limited fills should not be counted for paper gate checks.
+    for i in range(30):
+        live_proposal = TradeProposal(
+            strategy_id=s.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="bitget_live_limited",
+        )
+        repo.insert_trade_proposal(live_proposal)
+        live_decision = RiskDecision(proposal_id=live_proposal.id, approved=True, allowed_execution_mode="bitget_live_limited")
+        repo.insert_risk_decision(live_decision)
+        live_order = Order(
+            proposal_id=live_proposal.id,
+            risk_decision_id=live_decision.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="bitget_live_limited",
+            status="filled",
+            created_at=created_at,
+            filled_at=created_at,
+        )
+        repo.insert_order(live_order)
+        repo.insert_fill(Fill(
+            order_id=live_order.id,
+            fill_price=60000 + i,
+            fill_quantity=0.01,
+            filled_at=created_at,
+        ))
+
+    # Positive paper profitability + review so only trade-count can fail.
+    repo.insert_position(Position(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=60000,
+        current_price=60000,
+        realized_pnl=10.0,
+        execution_mode="paper_internal",
+        strategy_id=s.id,
+        status="closed",
+        opened_at=created_at,
+        closed_at=created_at,
+    ))
+    create_post_trade_review("Post-Trade Review", "Reviewed isolated paper signal.", strategy_id=s.id)
+
+    result = check_promotion_gates(s.id)
+    assert result["passed"] is False
+    assert any("insufficient_paper_trades" in failure for failure in result["failures"])
+    reset_db()
+
+
+def test_positive_expectancy_failure_is_non_positive(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    s = create_strategy("Non-Positive Expectancy")
+    for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
+        promote_strategy(s.id, target)
+    created_at = (datetime.utcnow() - timedelta(days=15)).isoformat()
+    for i in range(30):
+        proposal = TradeProposal(
+            strategy_id=s.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="paper_internal",
+        )
+        repo.insert_trade_proposal(proposal)
+        decision = RiskDecision(
+            proposal_id=proposal.id,
+            approved=True,
+            allowed_execution_mode="paper_internal",
+        )
+        repo.insert_risk_decision(decision)
+        order = Order(
+            proposal_id=decision.proposal_id,
+            risk_decision_id=decision.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="paper_internal",
+            status="filled",
+            created_at=created_at,
+            filled_at=created_at,
+        )
+        repo.insert_order(order)
+        repo.insert_fill(Fill(order_id=order.id, fill_price=60000 + i, fill_quantity=0.01, filled_at=created_at))
+        repo.insert_position(Position(
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            entry_price=60000 + i,
+            current_price=60000 + i,
+            realized_pnl=-1.0,
+            execution_mode="paper_internal",
+            strategy_id=s.id,
+            status="closed",
+            opened_at=created_at,
+            closed_at=created_at,
+        ))
+    create_post_trade_review("Post-Trade Review", "Lossy run.", strategy_id=s.id)
+    result = check_promotion_gates(s.id)
+    assert result["passed"] is False
+    assert any("non_positive_expectancy" in failure for failure in result["failures"])
+    reset_db()
+
+
 def test_live_candidate_requires_paper_passed(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Live Gate Test")
     # Advance to paper_passed
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
         promote_strategy(s.id, target)
-    # Now promote to live_candidate should pass gates
+    # State alone is not enough; live-candidate gates need real paper evidence.
+    result = promote_strategy(s.id, "live_candidate")
+    assert result["success"] is False
+    assert "insufficient_paper_trades" in result["error"]
+    reset_db()
+
+
+def test_live_candidate_passes_with_required_paper_evidence(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    s = create_strategy("Evidence Gate Test")
+    for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
+        promote_strategy(s.id, target)
+    _seed_strategy_evidence(s.id)
+
+    gate = check_promotion_gates(s.id)
+    assert gate["passed"] is True, gate
     result = promote_strategy(s.id, "live_candidate")
     assert result["success"] is True
     reset_db()
+
+
+def test_paper_evidence_includes_bitget_demo_modes(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    s = create_strategy("Demo Evidence Test")
+    for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
+        promote_strategy(s.id, target)
+
+    created_at = (datetime.utcnow() - timedelta(days=15)).isoformat()
+    for i in range(10):
+        proposal = TradeProposal(
+            strategy_id=s.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="bitget_demo",
+        )
+        repo.insert_trade_proposal(proposal)
+        decision = RiskDecision(
+            proposal_id=proposal.id,
+            approved=True,
+            violations="[]",
+            allowed_execution_mode="bitget_demo",
+        )
+        repo.insert_risk_decision(decision)
+        order = Order(
+            proposal_id=proposal.id,
+            risk_decision_id=decision.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="bitget_demo",
+            status="filled",
+            created_at=created_at,
+            filled_at=created_at,
+        )
+        repo.insert_order(order)
+        repo.insert_fill(Fill(order_id=order.id, fill_price=60000 + i, fill_quantity=0.01, filled_at=created_at))
+        repo.insert_position(Position(
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            entry_price=60000 + i,
+            current_price=60000 + i,
+            realized_pnl=1.0,
+            execution_mode="bitget_demo",
+            strategy_id=s.id,
+            status="closed",
+            opened_at=created_at,
+            closed_at=created_at,
+        ))
+
+    create_post_trade_review("Post-Trade Review", "Demo evidence accepted.", strategy_id=s.id)
+    result = check_promotion_gates(s.id)
+    assert result["passed"] is False
+    assert any(failure.startswith("insufficient_paper_trades") for failure in result["failures"])
+
+    for i in range(20):
+        proposal = TradeProposal(
+            strategy_id=s.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="bitget_demo",
+        )
+        repo.insert_trade_proposal(proposal)
+        decision = RiskDecision(
+            proposal_id=proposal.id,
+            approved=True,
+            violations="[]",
+            allowed_execution_mode="bitget_demo",
+        )
+        repo.insert_risk_decision(decision)
+        order = Order(
+            proposal_id=proposal.id,
+            risk_decision_id=decision.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="bitget_demo",
+            status="filled",
+            created_at=created_at,
+            filled_at=created_at,
+        )
+        repo.insert_order(order)
+        repo.insert_fill(Fill(order_id=order.id, fill_price=60000 + i, fill_quantity=0.01, filled_at=created_at))
+
+    result = check_promotion_gates(s.id)
+    assert result["passed"] is True
+    reset_db()
+
+
+def test_strategy_post_trade_review_required_by_strategy(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    s = create_strategy("Strategy-Specific Review Required")
+    for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
+        promote_strategy(s.id, target)
+    _seed_strategy_evidence(s.id, include_strategy_review=False)
+    result = promote_strategy(s.id, "live_candidate")
+    assert result["success"] is False
+    assert "post_trade_review_required" in result["error"]
+
+    create_post_trade_review(
+        "Post-Trade Review Strategy-Specific",
+        "Reviewed paper evidence for this strategy.",
+        strategy_id=s.id,
+    )
+    result = promote_strategy(s.id, "live_candidate")
+    assert result["success"] is True
+    reset_db()
+
+
+def test_live_candidate_to_live_limited_requires_live_unlock_and_permission(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    s = create_strategy("Live Limited Gate Test")
+    for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
+        promote_strategy(s.id, target)
+    _seed_strategy_evidence(s.id)
+    result = promote_strategy(s.id, "live_candidate")
+    assert result["success"] is True
+
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.agent.permission_mode = "Research"
+    save_config(cfg)
+    result = promote_strategy(s.id, "live_limited")
+    assert result["success"] is False
+    assert "permission_mode_not_live_promotion" in result["error"]
+
+    cfg.agent.permission_mode = "Auto"
+    save_config(cfg)
+    result = promote_strategy(s.id, "live_limited")
+    assert result["success"] is False
+    assert "live_state_not_limited" in result["error"]
+
+    cfg.live.state = "live_limited"
+    cfg.live.first_live_confirmation_done = False
+    save_config(cfg)
+    result = promote_strategy(s.id, "live_limited")
+    assert result["success"] is False
+    assert "live_first_confirmation_not_done" in result["error"]
+
+    cfg.live.first_live_confirmation_done = True
+    save_config(cfg)
+    result = promote_strategy(s.id, "live_limited")
+    assert result["success"] is True
+    record = get_strategy(s.id)
+    assert record["state"] == "live_limited"
+    reset_db()
+
+
+def test_live_limited_rejects_critical_risk_violations(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    s = create_strategy("Live Limited Critical Risk Gate")
+    for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
+        promote_strategy(s.id, target)
+    _seed_strategy_evidence(s.id)
+    result = promote_strategy(s.id, "live_candidate")
+    assert result["success"] is True
+
+    from aletheia.storage.models import RiskDecision, TradeProposal
+    proposal = TradeProposal(
+        strategy_id=s.id,
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=60000,
+        execution_mode="paper_internal",
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.insert_risk_decision(RiskDecision(
+        proposal_id=proposal.id,
+        approved=False,
+        violations='["strategy_not_live_eligible:paper_only"]',
+    ))
+
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.agent.permission_mode = "Auto"
+    cfg.live.state = "live_limited"
+    cfg.live.first_live_confirmation_done = True
+    save_config(cfg)
+
+    result = promote_strategy(s.id, "live_limited")
+    assert result["success"] is False
+    assert "critical_risk_violations" in result["error"]
+    reset_db()
+
+
+def _seed_strategy_evidence(strategy_id: str, include_strategy_review: bool = True) -> None:
+    created_at = (datetime.utcnow() - timedelta(days=15)).isoformat()
+    for i in range(30):
+        proposal = TradeProposal(
+            strategy_id=strategy_id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="paper_internal",
+        )
+        repo.insert_trade_proposal(proposal)
+        decision = RiskDecision(
+            proposal_id=proposal.id,
+            approved=True,
+            violations="[]",
+            allowed_execution_mode="paper_internal",
+        )
+        repo.insert_risk_decision(decision)
+        order = Order(
+            proposal_id=proposal.id,
+            risk_decision_id=decision.id,
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.01,
+            price=60000 + i,
+            execution_mode="paper_internal",
+            status="filled",
+            created_at=created_at,
+            filled_at=created_at,
+        )
+        repo.insert_order(order)
+        repo.insert_fill(Fill(order_id=order.id, fill_price=60000 + i, fill_quantity=0.01, filled_at=created_at))
+        repo.insert_position(Position(
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            entry_price=60000 + i,
+            current_price=60000 + i,
+            realized_pnl=1.0,
+            execution_mode="paper_internal",
+            strategy_id=strategy_id,
+            status="closed",
+            opened_at=created_at,
+            closed_at=created_at,
+        ))
+    if include_strategy_review:
+        create_post_trade_review(
+            "Post-Trade Review",
+            "Reviewed paper evidence.",
+            strategy_id=strategy_id,
+        )

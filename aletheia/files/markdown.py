@@ -25,10 +25,15 @@ def write_dreaming_log(title: str, content: str) -> Path:
     return _write_knowledge_file("dreaming_logs", title, content)
 
 
-def write_daily_review(content: str) -> Path:
+def write_daily_review(content: str, title: str | None = None) -> Path:
     """Write a daily review markdown."""
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    return _write_knowledge_file("daily_reviews", f"review-{today}", content)
+    return _write_knowledge_file("daily_reviews", title or f"review-{today}", content)
+
+
+def write_post_trade_review(title: str, content: str, metadata: dict | None = None) -> Path:
+    """Write a post-trade review markdown."""
+    return _write_knowledge_file("post_trade_reviews", title, content, metadata)
 
 
 def _write_knowledge_file(subdir: str, title: str, content: str, metadata: dict | None = None) -> Path:

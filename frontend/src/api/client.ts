@@ -48,6 +48,7 @@ export const api = {
 
   // Risk: boundaries display + kill switch
   getRiskBoundaries: () => fetchJson<Record<string, any>>('/risk/boundaries'),
+  getRiskStatus: () => fetchJson<Record<string, any>>('/risk/status'),
   getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
   setKillSwitch: (active: boolean, reason = '') =>
     post<{ active: boolean }>('/risk/kill-switch', { active, reason }),
@@ -65,9 +66,10 @@ export const api = {
   getStrategies: () => fetchJson<any[]>('/strategies'),
   promoteStrategy: (id: string, target_state: string) => post(`/strategies/${id}/promote`, { target_state }),
   retireStrategy: (id: string) => post(`/strategies/${id}/retire`),
-  getKnowledge: (type?: string) => fetchJson<any[]>(`/knowledge/research-notes${type ? `?type=${type}` : ''}`),
+  getKnowledge: (type = 'research_note') => fetchJson<any[]>(`/knowledge?type=${encodeURIComponent(type)}`),
   getStrategyMemory: () => fetchJson<any[]>('/knowledge/strategy-memory'),
   getDreamingLogs: () => fetchJson<any[]>('/knowledge/dreaming-logs'),
+  getPostTradeReviews: () => fetchJson<any[]>('/knowledge?type=post_trade_review'),
 
   // Charts
   getOhlcv: (symbol: string, timeframe = '1h', limit = 100) =>

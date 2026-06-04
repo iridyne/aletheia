@@ -132,16 +132,28 @@ def evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult:
         if age is None or age > _MAX_DATA_AGE_SECONDS:
             violations.append(f"stale_market_data:age={age}")
 
-        # 12. Max single trade risk (only when a stop is provided — else uncomputable).
-        if proposal.stop_price and proposal.price and proposal.quantity:
+        # 12. Total live exposure limit (open positions + proposed notional).
+        if proposal.price and proposal.quantity:
+            current_exposure = _current_live_exposure()
+            projected = current_exposure + (proposal.price * proposal.quantity)
+            live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * risk.max_live_limited_cap_usdt
+            if live_exposure_cap > 0 and projected > live_exposure_cap:
+                violations.append(f"max_total_live_exposure_exceeded:{projected}>{live_exposure_cap}")
+
+        # 13. Max single trade risk must be calculable and within cap.
+        if not proposal.stop_price:
+            violations.append("max_single_trade_risk_missing_stop_price")
+        elif proposal.price and proposal.quantity:
             risk_amount = abs(proposal.price - proposal.stop_price) * proposal.quantity
             max_risk = capital_base * (risk.max_single_trade_risk_pct / 100.0)
             if max_risk > 0 and risk_amount > max_risk:
                 violations.append(f"exceeds_single_trade_risk:{risk_amount}>{max_risk}")
 
-        # 13. Strategy lifecycle state — live needs a live-eligible strategy.
-        if proposal.strategy_id:
-            from aletheia.storage.repositories import get_strategy
+        # 14. Strategy lifecycle state — live needs a live-eligible strategy.
+        from aletheia.storage.repositories import get_strategy
+        if proposal.strategy_id is None:
+            violations.append("strategy_not_live_eligible:missing")
+        else:
             strat = get_strategy(proposal.strategy_id)
             if strat is None or strat.get("state") not in _LIVE_ELIGIBLE_STATES:
                 state = strat.get("state") if strat else "missing"
@@ -178,3 +190,18 @@ def evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult:
     result.decision_id = decision.id
 
     return result
+
+
+def _current_live_exposure() -> float:
+    """Sum absolute notional exposure for live open positions."""
+    total = 0.0
+    for row in list_positions(status="open"):
+        if row.get("execution_mode") != "bitget_live_limited":
+            continue
+        try:
+            quantity = float(row.get("quantity") or 0.0)
+            price = float(row.get("current_price") or row.get("entry_price") or 0.0)
+            total += abs(quantity * price)
+        except (TypeError, ValueError):
+            continue
+    return total

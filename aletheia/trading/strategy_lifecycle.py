@@ -1,10 +1,20 @@
-"""Strategy lifecycle — forward-only state machine with promotion gates."""
+"""Strategy lifecycle: forward-only state machine with promotion gates."""
 
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 
-from aletheia.storage.models import StrategyRecord
-from aletheia.storage.repositories import insert_strategy, update_strategy, get_strategy
 from aletheia.files.jsonl import write_audit
+from aletheia.storage.models import StrategyRecord
+from aletheia.storage.repositories import (
+    get_strategy,
+    insert_strategy,
+    list_knowledge_items,
+    list_strategy_fills,
+    list_strategy_orders,
+    list_strategy_positions,
+    list_strategy_risk_decisions,
+    update_strategy,
+)
 
 LIFECYCLE_STATES = [
     "draft",
@@ -19,8 +29,6 @@ LIFECYCLE_STATES = [
     "deprecated",
 ]
 
-# Forward progress per state. retire/deprecate are escape hatches allowed from any
-# active (non-terminal) state — see _allowed_targets().
 FORWARD_TRANSITIONS = {
     "draft": ["research_note"],
     "research_note": ["strategy_hypothesis"],
@@ -34,18 +42,7 @@ FORWARD_TRANSITIONS = {
     "deprecated": [],
 }
 
-# Terminal states cannot be retired/deprecated further (deprecated is the end).
 _TERMINAL = {"deprecated"}
-
-
-def _allowed_targets(current: str) -> list[str]:
-    """Forward target(s) plus retire/deprecate escape hatches for active states."""
-    targets = list(FORWARD_TRANSITIONS.get(current, []))
-    if current not in _TERMINAL:
-        for escape in ("retired", "deprecated"):
-            if escape != current and escape not in targets:
-                targets.append(escape)
-    return targets
 
 DEFAULT_PROMOTION_GATES = {
     "min_paper_runtime_days": 14,
@@ -56,6 +53,31 @@ DEFAULT_PROMOTION_GATES = {
     "critical_risk_violations_allowed": 0,
     "post_trade_reviews_required": True,
 }
+
+# Permissions that are sufficient to permit live promotion/operation checks.
+LIVE_PROMOTION_PERMISSION_MODES = {"PaperAuto", "AllowEditing", "Auto"}
+
+# Risk violations that indicate strategy is not eligible for live-limited operation.
+CRITICAL_RISK_TOKENS = {
+    "live_disabled",
+    "kill_switch_active",
+    "account_mode_mismatch",
+    "exceeds_max_position_notional",
+    "exceeds_single_trade_risk",
+    "max_daily_loss_exceeded",
+    "stale_market_data",
+    "strategy_not_live_eligible",
+}
+
+
+def _allowed_targets(current: str) -> list[str]:
+    """Forward target(s) plus retire/deprecate escape hatches for active states."""
+    targets = list(FORWARD_TRANSITIONS.get(current, []))
+    if current not in _TERMINAL:
+        for escape in ("retired", "deprecated"):
+            if escape != current and escape not in targets:
+                targets.append(escape)
+    return targets
 
 
 def create_strategy(name: str, description: str | None = None) -> StrategyRecord:
@@ -80,8 +102,6 @@ def promote_strategy(strategy_id: str, target_state: str) -> dict:
         return {"success": False, "error": "Strategy not found"}
 
     current = record["state"]
-
-    # Validate transition (forward progress + retire/deprecate escape hatches)
     allowed = _allowed_targets(current)
     if target_state not in allowed:
         return {
@@ -89,11 +109,17 @@ def promote_strategy(strategy_id: str, target_state: str) -> dict:
             "error": f"Cannot transition from '{current}' to '{target_state}'. Allowed: {allowed}",
         }
 
-    # Check promotion gates for live transitions
     if target_state == "live_candidate":
         gate_result = check_promotion_gates(strategy_id)
         if not gate_result["passed"]:
             return {"success": False, "error": f"Promotion gates failed: {gate_result['failures']}"}
+    if target_state == "live_limited":
+        gate_result = check_live_limited_gates(strategy_id)
+        if not gate_result["passed"]:
+            return {"success": False, "error": f"Promotion gates failed: {gate_result['failures']}"}
+        live_gate = _live_lifecycle_gate()
+        if live_gate["failures"]:
+            return {"success": False, "error": f"Live promotion gates failed: {live_gate['failures']}"}
 
     update_strategy(strategy_id, state=target_state, updated_at=datetime.utcnow().isoformat())
     write_audit({
@@ -110,16 +136,182 @@ def promote_strategy(strategy_id: str, target_state: str) -> dict:
 
 
 def check_promotion_gates(strategy_id: str) -> dict:
-    """Check if a strategy meets promotion gates for live candidacy.
-
-    MVP: simplified check. Full version would query trade history.
-    """
-    failures = []
-    # In MVP, just check that the strategy exists and is in paper_passed
+    """Check if a strategy meets live-candidacy promotion gates."""
+    failures: list[str] = []
     record = get_strategy(strategy_id)
     if record is None:
-        failures.append("strategy_not_found")
-    elif record["state"] != "paper_passed":
+        return {"passed": False, "failures": ["strategy_not_found"], "metrics": {}}
+
+    if record["state"] != "paper_passed":
         failures.append(f"must_be_in_paper_passed_state (currently: {record['state']})")
 
-    return {"passed": len(failures) == 0, "failures": failures}
+    # Paper/development evidence is tied to paper/demo execution modes only.
+    orders = list_strategy_orders(strategy_id, execution_mode_prefix="paper")
+    fills = list_strategy_fills(strategy_id, execution_mode_prefix="paper")
+    closed_positions = list_strategy_positions(strategy_id, status="closed")
+    risk_decisions = list_strategy_risk_decisions(strategy_id)
+    strategy_specific_reviews = [
+        r for r in list_knowledge_items(item_type="post_trade_review", strategy_id=strategy_id, limit=1000)
+        if (r.get("status") or "active") == "active"
+    ]
+    post_trade_reviews_used = "strategy_specific" if strategy_specific_reviews else "missing"
+
+    first_order_age_days = _first_order_age_days(orders)
+    if first_order_age_days is None:
+        failures.append("no_strategy_paper_orders")
+    elif first_order_age_days < DEFAULT_PROMOTION_GATES["min_paper_runtime_days"]:
+        failures.append(
+            f"insufficient_paper_runtime_days:{first_order_age_days}<"
+            f"{DEFAULT_PROMOTION_GATES['min_paper_runtime_days']}"
+        )
+
+    # Prefer filled fills when available, fallback to order count.
+    paper_trade_count = len(fills) if fills else len(orders)
+    if paper_trade_count < DEFAULT_PROMOTION_GATES["min_paper_trades"]:
+        failures.append(f"insufficient_paper_trades:{paper_trade_count}<{DEFAULT_PROMOTION_GATES['min_paper_trades']}")
+
+    if not closed_positions:
+        failures.append("insufficient_closed_positions_for_pnl_checks")
+        realized_pnl = 0.0
+        max_drawdown_pct = None
+        max_consecutive_losses = None
+    else:
+        pnls = [float(p.get("realized_pnl") or 0.0) for p in closed_positions]
+        realized_pnl = sum(pnls)
+        max_drawdown_pct = _max_drawdown_pct(pnls)
+        max_consecutive_losses = _max_consecutive_losses(pnls)
+        if DEFAULT_PROMOTION_GATES["positive_expectancy_required"] and realized_pnl <= 0:
+            failures.append(f"non_positive_expectancy:{realized_pnl}")
+        if max_drawdown_pct > DEFAULT_PROMOTION_GATES["max_drawdown_pct_allowed"]:
+            failures.append(
+                f"max_drawdown_exceeded:{max_drawdown_pct}>{DEFAULT_PROMOTION_GATES['max_drawdown_pct_allowed']}"
+            )
+        if max_consecutive_losses > DEFAULT_PROMOTION_GATES["max_consecutive_losses_allowed"]:
+            failures.append(
+                f"max_consecutive_losses_exceeded:{max_consecutive_losses}>"
+                f"{DEFAULT_PROMOTION_GATES['max_consecutive_losses_allowed']}"
+            )
+
+    critical_violations = _critical_risk_violations(risk_decisions)
+    if critical_violations > DEFAULT_PROMOTION_GATES["critical_risk_violations_allowed"]:
+        failures.append(
+            f"critical_risk_violations:{critical_violations}>"
+            f"{DEFAULT_PROMOTION_GATES['critical_risk_violations_allowed']}"
+        )
+
+    if DEFAULT_PROMOTION_GATES["post_trade_reviews_required"] and not strategy_specific_reviews:
+        failures.append("post_trade_review_required")
+
+    metrics = {
+        "paper_runtime_days": first_order_age_days or 0,
+        "paper_trades": paper_trade_count,
+        "closed_positions": len(closed_positions),
+        "realized_pnl": realized_pnl,
+        "max_drawdown_pct": max_drawdown_pct,
+        "max_consecutive_losses": max_consecutive_losses,
+        "critical_risk_violations": critical_violations,
+        "post_trade_reviews": len(strategy_specific_reviews),
+        "post_trade_reviews_used": post_trade_reviews_used,
+    }
+    return {"passed": len(failures) == 0, "failures": failures, "metrics": metrics}
+
+
+def check_live_limited_gates(strategy_id: str) -> dict:
+    """Check live-eligible risk safety for promotion to live_limited."""
+    record = get_strategy(strategy_id)
+    if record is None:
+        return {"passed": False, "failures": ["strategy_not_found"], "metrics": {}}
+
+    risk_decisions = list_strategy_risk_decisions(strategy_id)
+    critical_violations = _critical_risk_violations(risk_decisions)
+    failures: list[str] = []
+    if critical_violations > 0:
+        failures.append(f"critical_risk_violations:{critical_violations}>0")
+
+    return {
+        "passed": len(failures) == 0,
+        "failures": failures,
+        "metrics": {"critical_risk_violations": critical_violations},
+    }
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def _first_order_age_days(orders: list[dict]) -> int | None:
+    dates = [_parse_dt(o.get("created_at")) for o in orders]
+    dates = [d for d in dates if d is not None]
+    if not dates:
+        return None
+    return (datetime.now(timezone.utc) - min(dates)).days
+
+
+def _max_drawdown_pct(pnls: list[float]) -> float:
+    from aletheia.config.loader import load_config
+
+    capital_base = load_config().risk.max_live_limited_cap_usdt or 1.0
+    equity = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    for pnl in pnls:
+        equity += pnl
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, peak - equity)
+    return round((max_drawdown / capital_base) * 100.0, 6)
+
+
+def _max_consecutive_losses(pnls: list[float]) -> int:
+    current = 0
+    longest = 0
+    for pnl in pnls:
+        if pnl < 0:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
+
+
+def _critical_risk_violations(decisions: list[dict]) -> int:
+    count = 0
+    for decision in decisions:
+        violations = decision.get("violations") or "[]"
+        try:
+            parsed = json.loads(violations)
+        except json.JSONDecodeError:
+            parsed = [violations]
+        approved = bool(decision.get("approved"))
+        if not approved:
+            # Any rejected decision is critical in strategy context.
+            count += 1
+            continue
+        for entry in parsed:
+            text = str(entry)
+            if any(token in text for token in CRITICAL_RISK_TOKENS):
+                count += 1
+                break
+    return count
+
+
+def _live_lifecycle_gate() -> dict:
+    """Check runtime-level prerequisites for promotion from live_candidate to live_limited."""
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    failures: list[str] = []
+    if cfg.live.state != "live_limited":
+        failures.append(f"live_state_not_limited:current={cfg.live.state}")
+    if not cfg.live.first_live_confirmation_done:
+        failures.append("live_first_confirmation_not_done")
+    if cfg.agent.permission_mode not in LIVE_PROMOTION_PERMISSION_MODES:
+        failures.append(f"permission_mode_not_live_promotion:mode={cfg.agent.permission_mode}")
+    return {"failures": failures}

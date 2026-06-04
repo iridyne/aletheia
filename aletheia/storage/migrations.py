@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS knowledge_items (
     item_type TEXT NOT NULL,
     title TEXT NOT NULL,
     file_path TEXT,
+    strategy_id TEXT,
     confidence TEXT NOT NULL DEFAULT 'medium_confidence',
     status TEXT NOT NULL DEFAULT 'active',
     tags TEXT DEFAULT '[]',
@@ -212,6 +213,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
 _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
     ("stop_price", "trade_proposals", "REAL"),
+    ("strategy_id", "knowledge_items", "TEXT"),
 ]
 
 

@@ -121,6 +121,61 @@ def test_fresh_market_data_passes_freshness(tmp_path, monkeypatch):
     assert not any("stale_market_data" in v for v in result.violations)
 
 
+# --- max_total_live_exposure (live) ---
+
+def test_live_exposure_cap_blocks_new_order(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _unlock_live_auto(tmp_path)
+
+    # Existing live exposure already near limit.
+    from aletheia.storage.models import Position
+    repo.insert_position(Position(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        entry_price=10000.0,
+        current_price=10000.0,
+        execution_mode="bitget_live_limited",
+    ))
+    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=10000)
+    repo.insert_market_snapshot(snap)
+
+    p = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="bitget_live_limited",
+        quantity=0.0001,
+        price=10000,
+    )
+    # current_exposure ~1, proposal adds ~1 -> cap is 5 (5% of 100).
+    repo.insert_trade_proposal(p)
+    result = evaluate_proposal(p)
+    assert any("max_total_live_exposure_exceeded" in v for v in result.violations)
+
+
+def test_live_exposure_cap_allows_order_under_limit(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _unlock_live_auto(tmp_path)
+
+    snap = MarketSnapshot(symbol="ETHUSDT", market_type="spot", price=2000)
+    repo.insert_market_snapshot(snap)
+    p = TradeProposal(
+        symbol="ETHUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="bitget_live_limited",
+        quantity=0.0001,
+        price=2000,
+        stop_price=1990,
+    )
+    # projected exposure ~0.2 + existing 0 exposure -> within 5.
+    repo.insert_trade_proposal(p)
+    result = evaluate_proposal(p)
+    assert not any("max_total_live_exposure_exceeded" in v for v in result.violations)
+
+
 # --- max_leverage (futures) ---
 
 def test_demo_leverage_over_limit_blocks(tmp_path, monkeypatch):
@@ -163,17 +218,17 @@ def test_single_trade_risk_exceeded_blocks_live(tmp_path, monkeypatch):
     assert any("exceeds_single_trade_risk" in v for v in result.violations)
 
 
-def test_no_stop_skips_single_trade_risk(tmp_path, monkeypatch):
+def test_missing_stop_price_fails_single_trade_risk_check(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
     snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
     repo.insert_market_snapshot(snap)
     p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000)
-    # no stop_price → risk check skipped (cannot compute)
+    # no stop_price → this is a hard fail in strict live mode.
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
-    assert not any("single_trade_risk" in v for v in result.violations)
+    assert any("max_single_trade_risk_missing_stop_price" in v for v in result.violations)
 
 
 # --- strategy_lifecycle_state (live) ---
@@ -188,6 +243,25 @@ def test_live_requires_live_eligible_strategy(tmp_path, monkeypatch):
     p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000,
                       strategy_id=s.id)
+    repo.insert_trade_proposal(p)
+    result = evaluate_proposal(p)
+    assert any("strategy_not_live_eligible" in v for v in result.violations)
+
+
+def test_live_requires_strategy_id(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _unlock_live_auto(tmp_path)
+    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
+    repo.insert_market_snapshot(snap)
+    p = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="bitget_live_limited",
+        quantity=0.0001,
+        price=60000,
+    )
+    # No strategy_id on a live proposal is not eligible for risk approval.
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
     assert any("strategy_not_live_eligible" in v for v in result.violations)

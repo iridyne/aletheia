@@ -1,5 +1,6 @@
 """Tests for portfolio PnL computation."""
 
+from datetime import datetime, timezone
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position, MarketSnapshot
@@ -60,4 +61,38 @@ def test_snapshot_persisted(tmp_path, monkeypatch):
     snap = compute_and_store_snapshot()
     assert snap.positions_count == 1
     assert len(repo.list_portfolio_snapshots()) == 1
+    reset_db()
+
+
+def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    repo.insert_position(Position(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        realized_pnl=15.0,
+        status="closed",
+        execution_mode="paper_internal",
+        closed_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    repo.insert_position(Position(
+        symbol="ETHUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=2.0,
+        entry_price=50.0,
+        execution_mode="paper_internal",
+        status="open",
+    ))
+    # open ETH position at 60 => unrealized +10
+    repo.insert_market_snapshot(MarketSnapshot(symbol="ETHUSDT", market_type="spot", price=60.0))
+    # closed BTC position closed today should contribute to realized today, closed_at is today by default from model
+    summary = compute_portfolio()
+    assert summary["today_realized_pnl"] == 15.0
+    assert summary["realized_open_pnl"] == 0.0
+    assert summary["unrealized_pnl"] == 20.0
+    assert summary["today_pnl"] == 35.0
     reset_db()

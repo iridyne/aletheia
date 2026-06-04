@@ -13,6 +13,7 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.exchanges.bitget.client import OrderResponse
+from aletheia.storage.models import Position
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -80,12 +81,19 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
 
     # fresh market data so the data-freshness check passes
     from aletheia.storage.models import MarketSnapshot
+    from aletheia.storage.repositories import insert_strategy
+    from aletheia.storage.models import StrategyRecord
+
+    repo.insert_strategy(StrategyRecord(name="Live Strategy", state="live_candidate"))
+    strategy_rows = repo.list_strategies()
+    strategy_id = strategy_rows[0]["id"]
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000))
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
         symbol="BTCUSDT", market_type="spot", direction="long",
-        quantity=0.0001, price=60000.0, execution_mode="bitget_live_limited",
+        quantity=0.00001, price=60000.0, execution_mode="bitget_live_limited", stop_price=59000.0,
+        strategy_id=strategy_id,
     )
     assert result["status"] == "executed"
     assert result["exchange_order_id"] == "EX-123"
@@ -110,3 +118,44 @@ def test_gateway_still_blocks_live_when_disabled(tmp_path, monkeypatch):
     assert result["status"] == "rejected"
     # no live order was sent
     assert len(captured) == 0
+
+
+def test_live_broker_keeps_strategy_positions_separate(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    captured = []
+    _patch_place_order(monkeypatch, captured)
+
+    from aletheia.execution.bitget_broker import execute_live_order
+
+    repo.insert_position(Position(
+        strategy_id="strategy-alpha",
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        entry_price=60000.0,
+        current_price=60000.0,
+        execution_mode="bitget_live_limited",
+        status="open",
+    ))
+
+    result = execute_live_order(
+        proposal_id="live-two",
+        risk_decision_id=None,
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.002,
+        price=60000.0,
+        strategy_id="strategy-beta",
+    )
+
+    assert len(captured) == 1
+    assert result["fill_quantity"] == 0.002
+    positions = repo.list_positions(status="open")
+    assert len(positions) == 2
+    alpha_pos = next(p for p in positions if p["strategy_id"] == "strategy-alpha")
+    beta_pos = next(p for p in positions if p["strategy_id"] == "strategy-beta")
+    assert alpha_pos["quantity"] == 0.001
+    assert beta_pos["quantity"] == 0.002

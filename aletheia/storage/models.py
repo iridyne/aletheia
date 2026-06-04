@@ -140,6 +140,7 @@ class KnowledgeItem(BaseModel):
     item_type: str
     title: str
     file_path: str | None = None
+    strategy_id: str | None = None
     confidence: str = "medium_confidence"
     status: str = "active"
     tags: str = "[]"

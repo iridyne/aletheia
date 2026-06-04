@@ -15,7 +15,10 @@ def setup_env(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    for sub in ("logs", "knowledge/research_notes", "knowledge/dreaming_logs", "knowledge/strategies"):
+    for sub in (
+        "logs", "knowledge/research_notes", "knowledge/daily_reviews",
+        "knowledge/dreaming_logs", "knowledge/post_trade_reviews", "knowledge/strategies",
+    ):
         (tmp_path / sub).mkdir(parents=True, exist_ok=True)
     reset_db()
     sq._db_conn = None
@@ -142,5 +145,5 @@ async def test_risk_critic_and_post_trade_reviewer_run(tmp_path, monkeypatch):
     r1 = await run_agent("risk_critic", trigger_type="manual")
     r2 = await run_agent("post_trade_reviewer", trigger_type="manual")
     assert any("research_note:" in o for o in r1["outputs"])
-    assert any("research_note:" in o for o in r2["outputs"])
+    assert any("post_trade_review:" in o for o in r2["outputs"])
     reset_db()

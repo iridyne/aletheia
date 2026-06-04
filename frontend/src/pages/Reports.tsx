@@ -5,6 +5,7 @@ import PnLChart from '../charts/PnLChart'
 export default function Reports() {
   const { data: dreaming = [] } = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
   const { data: reviews = [] } = useQuery({ queryKey: ['reviews'], queryFn: () => api.getKnowledge('daily_review') })
+  const { data: postTradeReviews = [] } = useQuery({ queryKey: ['post-trade-reviews'], queryFn: api.getPostTradeReviews })
 
   return (
     <div>
@@ -24,6 +25,12 @@ export default function Reports() {
         {(dreaming as any[]).length === 0
           ? <p className="hint">No consolidations yet.</p>
           : (dreaming as any[]).slice(0, 10).map((d: any) => <p key={d.id}>{d.title} — {d.created_at?.slice(0, 16)}</p>)}
+      </div>
+      <div className="card">
+        <h3>Post-Trade Reviews</h3>
+        {(postTradeReviews as any[]).length === 0
+          ? <p className="hint">No post-trade reviews yet.</p>
+          : (postTradeReviews as any[]).slice(0, 10).map((r: any) => <p key={r.id}>{r.title} — {r.created_at?.slice(0, 16)}</p>)}
       </div>
     </div>
   )

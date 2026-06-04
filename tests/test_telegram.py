@@ -76,6 +76,23 @@ async def test_unauthorized_chat_rejected(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_enabled_telegram_requires_allowed_chat_ids(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.telegram.enabled = True
+    cfg.telegram.allowed_chat_ids = []
+    save_config(cfg)
+
+    bot = TelegramBot()
+    resp = await bot.handle_message(123, "/status")
+    assert resp == "Telegram is enabled but no allowed_chat_ids are configured."
+    assert "Gateway" not in resp
+    reset_db()
+
+
+@pytest.mark.anyio
 async def test_latest_command_empty(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     bot = TelegramBot()

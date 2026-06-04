@@ -1,0 +1,649 @@
+# Aletheia Trust and Change Control
+
+This document defines the implementation control layer for Aletheia Trading OS.
+It complements `docs/aletheia_trading_os_implementation_guide.md`.
+
+The implementation guide defines what the system should become. This document
+defines what must remain true while the system changes.
+
+For agentic workers: if this document and a task request conflict, stop and ask
+before editing code. Do not resolve safety or trading-state conflicts by guessing.
+
+---
+
+## 1. Trust Invariants
+
+### 1.1 Causal Record Chain
+
+The trading record chain is:
+
+```text
+trade_proposals.id
+  -> risk_decisions.proposal_id
+  -> orders.proposal_id + orders.risk_decision_id
+  -> fills.order_id
+  -> positions derived from executed orders/fills
+```
+
+Rules:
+
+- A `trade_proposals` row is created exactly once for a proposed trade.
+- Approving, rejecting, risk-checking, or executing an existing proposal must not
+  create a second proposal row.
+- Every `risk_decisions.proposal_id` must reference the original proposal.
+- Every `orders.proposal_id` must reference the original proposal.
+- Every `orders.risk_decision_id` must reference the risk decision that approved
+  or rejected execution for that proposal.
+- Every `fills.order_id` must reference the order that produced the fill.
+- A `positions` row is a portfolio-state projection from orders/fills. The
+  current schema does not directly link a position to proposal/order/fill. Do not
+  fake this link in text, UI, or audit logs. If direct traceability is required,
+  add an explicit schema migration and tests.
+
+### 1.2 Proposal State Transitions
+
+Allowed proposal status flow:
+
+```text
+pending -> approved -> executed
+pending -> rejected
+approved -> rejected
+approved -> error
+```
+
+Rules:
+
+- `pending` means no human approval/rejection has been applied.
+- `approved` means a human-controlled dashboard/API/CLI path approved paper/demo
+  execution or a future explicitly allowed workflow approved execution.
+- `executed` means an order was successfully created through the Execution
+  Gateway.
+- `rejected` means a human action or risk check rejected the proposal.
+- `error` means execution was attempted through the allowed gateway path but
+  failed after approval.
+- Do not use status changes as a substitute for missing records. If execution
+  occurs, an order must exist. If risk evaluation occurs, a risk decision must
+  exist.
+
+### 1.3 Failure Semantics
+
+Failures must leave inspectable state.
+
+- Risk rejection: keep the original proposal row, set proposal status to
+  `rejected`, insert a `risk_decisions` row with `approved=false`, and write an
+  audit event.
+- Human rejection: keep the original proposal row, set proposal status to
+  `rejected`, and write an audit event.
+- Paper execution failure before order creation: keep the proposal row, set
+  status to `error`, and write an audit event.
+- Paper execution failure after order creation: keep the order row, record the
+  best known order status, and write an audit event. Do not delete partially
+  created rows to hide the failure.
+- Live execution failure: keep the proposal row, set status to `error`, do not
+  infer fills unless the exchange confirms them, and write an audit event.
+- Reconciliation must never place or cancel orders. It may only compare exchange
+  state to local state and write convergence/audit records.
+
+### 1.4 Audit Requirements
+
+Every important state transition must write to `data/logs/audit.jsonl`.
+
+Minimum audit event fields:
+
+```json
+{
+  "timestamp": "...",
+  "actor": "human|agent|system|telegram|cli",
+  "source": "dashboard|api|cli|scheduler|agent_runtime|telegram|execution_gateway",
+  "event_type": "...",
+  "entity_type": "...",
+  "entity_id": "...",
+  "message": "..."
+}
+```
+
+When available, include:
+
+```json
+{
+  "before": {"status": "..."},
+  "after": {"status": "..."}
+}
+```
+
+Rules:
+
+- `entity_id` must point to the actual row being changed or created.
+- Do not audit a duplicated replacement row as if it were the original entity.
+- Audit messages must not contain API keys, secrets, request signatures, full
+  authorization headers, or raw model-provider credentials.
+- Audit events must be truthful even when the UI displays a simplified state.
+
+---
+
+## 2. Agent Change Protocol
+
+### 2.1 Before Editing
+
+Before editing code, the agent must state:
+
+- The boundary being touched, such as `execution`, `risk`, `knowledge`,
+  `dashboard`, `telegram`, `secrets`, `model_provider`, or `storage`.
+- The invariant being protected or changed.
+- The non-goals for the change.
+- The focused verification command that will prove the change.
+
+Example:
+
+```text
+Boundary: execution.
+Invariant: approving an existing proposal must preserve the original proposal ID.
+Non-goals: no live-order behavior changes, no schema migration, no new broker.
+Verification: uv run pytest tests/test_workflow_routes.py -q
+```
+
+### 2.2 When Not To Edit
+
+Do not edit code when:
+
+- The user asked for analysis, review, explanation, or planning only.
+- The requested behavior conflicts with a trust invariant.
+- The implementation guide is ambiguous and the ambiguity affects trading,
+  secrets, live mode, risk, or audit behavior.
+- The change would require a new market, exchange, database service, deployment
+  mode, or autonomous live behavior not explicitly requested in the current task.
+- The current code already satisfies the request and the remaining work is
+  documentation or explanation.
+
+### 2.3 Test-First Requirements
+
+Write or update a focused regression test before implementation for changes that
+touch:
+
+- Risk approval/rejection.
+- Execution Gateway behavior.
+- Proposal/order/fill/position state.
+- Live unlock or live execution.
+- Secret storage, redaction, or API responses.
+- Agent permission enforcement.
+- Strategy promotion gates.
+- Knowledge item type semantics.
+- Dashboard safety status display.
+- Telegram authorization.
+
+For trivial copy or documentation edits, tests are not required.
+
+### 2.4 Scope Discipline
+
+Make the smallest change that satisfies the requested behavior.
+
+Do not:
+
+- Bundle unrelated cleanup with a safety fix.
+- Convert a bug fix into a subsystem redesign.
+- Add abstractions without reducing real complexity.
+- Add future roadmap capabilities while fixing current MVP behavior.
+- Touch generated frontend assets unless frontend source changed or the task is
+  explicitly about build output.
+
+---
+
+## 3. UI Truthfulness Rules
+
+The dashboard is an operational control surface. It must not reassure the user
+with invented positive states.
+
+### 3.1 Source Rule
+
+Every displayed operational status must come from a backend value.
+
+Examples:
+
+- Risk state must come from a risk/status API or computed backend summary.
+- Live readiness must come from config live state, exchange mode, permission
+  mode, and risk state.
+- Knowledge tabs must query real `knowledge_items.item_type` values.
+- Strategy lifecycle displays must reflect stored strategy records and gate
+  results.
+
+### 3.2 Unknown State Vocabulary
+
+Use these labels when data is absent:
+
+- `not configured`: required user configuration is missing.
+- `not available`: backend cannot currently compute or fetch the value.
+- `no data`: the system has no records for the requested view.
+- `blocked`: a safety gate prevents the action.
+- `warning`: a non-fatal condition requires attention.
+
+Do not use positive labels such as `within limits`, `ready`, `healthy`, or
+`connected` unless the backend explicitly supports that state.
+
+### 3.3 Forbidden UI Patterns
+
+Do not:
+
+- Hardcode `within limits`, `healthy`, `ready`, or `connected`.
+- Display a tab for a data type unless the backend can return that type.
+- Display live-trading affordances without showing live state and unlock status.
+- Hide risk violations behind a generic success badge.
+- Convert backend errors into empty success states.
+
+### 3.4 Dashboard Action Rules
+
+Actions in the dashboard must map to backend routes with audited behavior.
+
+- Approving a proposal must call a route that preserves the original proposal ID.
+- Rejecting a proposal must write a real proposal rejection state.
+- Changing permission mode must write an audit event.
+- Unlocking live mode must require explicit confirmation and write an audit event.
+- Kill switch changes must write an audit event and affect subsequent risk
+  decisions.
+
+---
+
+## 4. Knowledge Item Taxonomy
+
+Knowledge items are persistent project memory. Their type must match their origin
+and intended use.
+
+### 4.1 Allowed Item Types
+
+The allowed `knowledge_items.item_type` values are:
+
+```text
+research_note
+strategy_memory
+dreaming_log
+daily_review
+post_trade_review
+```
+
+Do not introduce a new item type without updating:
+
+- Knowledge manager creation functions.
+- API validation.
+- Dashboard query logic.
+- Tests.
+- This document.
+
+### 4.2 Type Definitions
+
+`research_note`
+
+- Source: Research Agent, Market Observer research output, human-imported
+  research.
+- Purpose: evidence, hypotheses, market observations, counterarguments.
+- Storage directory: `data/knowledge/research_notes/`.
+- Dashboard: Knowledge Base / Research Notes.
+- Must not contain: API keys, exchange credentials, prompt-hidden secrets.
+
+`strategy_memory`
+
+- Source: Strategy Designer, strategy lifecycle updates, strategy review records.
+- Purpose: strategy descriptions, parameters, lifecycle context, rationale.
+- Storage directory: `data/knowledge/strategies/`.
+- Dashboard: Knowledge Base / Strategy Memory, Strategy Lifecycle.
+
+`dreaming_log`
+
+- Source: Dreaming Agent.
+- Purpose: system-level consolidation, pattern extraction, lessons, suggested
+  focus.
+- Storage directory: `data/knowledge/dreaming_logs/`.
+- Dashboard: Dreaming / Learning, Knowledge Base / Dreaming Logs.
+
+`daily_review`
+
+- Source: Dreaming Agent or scheduled daily review process.
+- Purpose: daily operational summary, trading review, system health notes.
+- Storage directory: `data/knowledge/daily_reviews/`.
+- Dashboard: Reports / Daily Reviews, Knowledge Base / Daily Reviews.
+
+`post_trade_review`
+
+- Source: Post-trade Reviewer or human post-trade review.
+- Purpose: execution quality, what worked, what failed, improvement notes.
+- Storage directory: `data/knowledge/post_trade_reviews/`.
+- Dashboard: Reports / Post-Trade Reviews when present; may also inform Strategy
+  Lifecycle gates.
+
+### 4.3 No Type Laundering
+
+Do not store one type as another to make a page populate.
+
+Examples:
+
+- A post-trade review must not be stored as `research_note`.
+- A daily review must not be queried from `/knowledge/research-notes`.
+- A dreaming log must not be treated as a strategy memory item.
+- A strategy note must not be written into generic research if it is the
+  authoritative strategy record.
+
+### 4.4 Lifecycle Rules
+
+- Hard deletion is forbidden.
+- Use `status="archived"` for items that should disappear from default views.
+- Use `status="deprecated"` and `confidence="deprecated"` for items that remain
+  visible as obsolete knowledge.
+- Contradiction detection may be a stub in MVP, but the UI must not claim
+  contradictions were analyzed unless the backend really computed them.
+
+---
+
+## 5. Promotion Gate Computation Spec
+
+Strategy promotion gates must be computed from stored records, not from strategy
+state labels alone.
+
+### 5.1 Gate Source Tables
+
+Use these data sources:
+
+- `strategy_records`: current strategy state and timestamps.
+- `trade_proposals`: strategy-linked proposals via `strategy_id`.
+- `risk_decisions`: risk decisions linked through proposals.
+- `orders`: paper/demo/live order records linked through proposals.
+- `fills`: fills linked through orders.
+- `positions`: realized PnL and closed position history via `strategy_id`.
+- `knowledge_items`: post-trade review existence via
+  `item_type="post_trade_review"`.
+
+If the current schema cannot compute a metric honestly, fail the gate with an
+explicit `insufficient_*` reason. Do not pass by assumption.
+
+### 5.2 Paper Runtime Days
+
+Default gate:
+
+```text
+min_paper_runtime_days = 14
+```
+
+Computation:
+
+- Consider only orders linked to the strategy through
+  `orders.proposal_id -> trade_proposals.id -> strategy_id`.
+- Consider only paper/demo execution modes: `paper_internal` and `bitget_demo`.
+- Runtime starts at the earliest strategy-linked paper/demo order `created_at`.
+- Runtime ends at current UTC time.
+- Pass if elapsed full days is greater than or equal to 14.
+- Fail with `insufficient_paper_runtime_days:<actual><14` if too short.
+- Fail with `no_strategy_paper_orders` if no order exists.
+
+### 5.3 Paper Trade Count
+
+Default gate:
+
+```text
+min_paper_trades = 30
+```
+
+Computation:
+
+- Count strategy-linked paper/demo filled orders, or fills if fill data is the
+  more precise available source.
+- Prefer fills when present.
+- Pass if count is greater than or equal to 30.
+- Fail with `insufficient_paper_trades:<actual><30`.
+
+### 5.4 Positive Expectancy
+
+Default gate:
+
+```text
+positive_expectancy_required = true
+```
+
+Computation:
+
+- Use closed `positions` with matching `strategy_id`.
+- Sum `positions.realized_pnl`.
+- Pass if total realized PnL is greater than 0.
+- Fail with `non_positive_expectancy:<pnl>` if total realized PnL is less than
+  or equal to 0.
+- Fail with `insufficient_closed_positions_for_pnl_checks` if no closed
+  strategy-linked positions exist.
+
+### 5.5 Max Drawdown
+
+Default gate:
+
+```text
+max_drawdown_pct_allowed = 5.0
+```
+
+MVP computation:
+
+- Use closed strategy-linked positions ordered by `closed_at`.
+- Build an equity curve from cumulative `realized_pnl`.
+- Use a conservative capital base from config risk settings:
+  `risk.max_live_limited_cap_usdt`.
+- Compute drawdown as peak-to-trough cumulative PnL decline divided by capital
+  base.
+- Pass if drawdown percentage is less than or equal to 5.0.
+- Fail with `max_drawdown_exceeded:<actual>>5.0`.
+- Fail with `insufficient_closed_positions_for_pnl_checks` if closed positions
+  are absent.
+
+If a richer portfolio equity table is added later, this gate may migrate to that
+source, but the migration must include tests.
+
+### 5.6 Max Consecutive Losses
+
+Default gate:
+
+```text
+max_consecutive_losses_allowed = 5
+```
+
+Computation:
+
+- Use closed strategy-linked positions ordered by `closed_at`.
+- A loss is `realized_pnl < 0`.
+- Count the longest run of consecutive losses.
+- Pass if the longest run is less than or equal to 5.
+- Fail with `max_consecutive_losses_exceeded:<actual>>5`.
+- Fail with `insufficient_closed_positions_for_pnl_checks` if closed positions
+  are absent.
+
+### 5.7 Critical Risk Violations
+
+Default gate:
+
+```text
+critical_risk_violations_allowed = 0
+```
+
+Computation:
+
+- Read risk decisions linked to the strategy through proposals.
+- Parse `risk_decisions.violations`.
+- Any rejected live execution decision is critical.
+- Any violation containing these tokens is critical:
+  `live_disabled`, `kill_switch_active`, `account_mode_mismatch`,
+  `exceeds_max_position_notional`, `exceeds_single_trade_risk`,
+  `max_daily_loss_exceeded`, `stale_market_data`, `strategy_not_live_eligible`.
+- Pass if critical violation count is 0.
+- Fail with `critical_risk_violations:<actual>>0`.
+
+### 5.8 Post-Trade Reviews
+
+Default gate:
+
+```text
+post_trade_reviews_required = true
+```
+
+MVP computation:
+
+- Require at least one active `knowledge_items` row with
+  `item_type="post_trade_review"`.
+- If the review is strategy-specific in metadata/tags, prefer matching the
+  strategy ID.
+- Until strategy-specific metadata is standardized, a global active
+  `post_trade_review` satisfies the MVP gate.
+- Fail with `post_trade_review_required` if no active review exists.
+
+### 5.9 Live Candidate Promotion
+
+Promotion from `paper_passed` to `live_candidate` passes only if:
+
+- Current state is exactly `paper_passed`.
+- All gates in this section pass.
+- An audit event is written for the promotion.
+
+Do not allow `paper_passed -> live_candidate` based only on state name.
+
+### 5.10 Live Limited Promotion
+
+Promotion from `live_candidate` to `live_limited` additionally requires:
+
+- `live.state != "live_disabled"`.
+- `live.first_live_confirmation_done == true`.
+- Permission mode allows the promotion path.
+- Risk Engine permits live-limited execution.
+- Audit event records the actor and source.
+
+First live unlock must remain human-controlled.
+
+---
+
+## 6. Change-Controlled Module Policy
+
+### 6.1 Controlled Modules
+
+These modules are change-controlled:
+
+```text
+aletheia/risk/
+aletheia/execution/
+aletheia/exchanges/bitget/auth.py
+aletheia/exchanges/bitget/client.py
+aletheia/config/secrets.py
+aletheia/agent_runtime/permissions.py
+aletheia/server/routes/live.py
+```
+
+Changes here require stricter review and testing.
+
+### 6.2 Required Change Note
+
+Every change to a controlled module must state:
+
+- Which invariant is protected or changed.
+- Whether live behavior changes.
+- Whether secret handling changes.
+- Whether persisted state semantics change.
+- Which focused tests prove the behavior.
+
+Example:
+
+```text
+Change-controlled module: aletheia/execution/gateway.py
+Invariant: existing proposal execution preserves proposal ID.
+Live behavior: unchanged.
+Secrets: unchanged.
+Persisted state: no duplicate proposal rows.
+Tests: uv run pytest tests/test_workflow_routes.py -q
+```
+
+### 6.3 Module-Specific Rules
+
+`aletheia/risk/`
+
+- Do not weaken or remove a risk check without explicit user approval.
+- New risk checks must persist a `RiskDecision`.
+- Risk rejection must be visible to API/UI consumers.
+- Tests must cover both approved and rejected paths.
+
+`aletheia/execution/`
+
+- All order placement must pass through Execution Gateway.
+- Do not let agents, dashboard routes, or Telegram call exchange clients directly
+  for order placement.
+- Do not create replacement proposals or orders to hide state transitions.
+- Tests must assert proposal/order/risk IDs.
+
+`aletheia/exchanges/bitget/auth.py`
+
+- Do not change signing logic without checking current official Bitget docs.
+- Tests must cover deterministic signatures and secret redaction.
+- Never log raw prehash strings if they contain sensitive material.
+
+`aletheia/exchanges/bitget/client.py`
+
+- Market-data changes may use public endpoints.
+- Account/order changes must use stored credentials and redaction.
+- Demo-mode requests must preserve required demo headers.
+- Live order methods must remain gated by execution/risk layers.
+
+`aletheia/config/secrets.py`
+
+- GET-style APIs must never return raw secrets.
+- CLI/API errors must redact secret values.
+- Tests must prove secrets do not appear in config, logs, agent context, or API
+  GET responses.
+
+`aletheia/agent_runtime/permissions.py`
+
+- Restricted tools remain uncallable by LLM-driven agents.
+- Permission mode expansion must be explicit and tested.
+- Agents must not gain live unlock, credential mutation, risk-limit mutation, or
+  execution-gateway mutation through registry mistakes.
+
+`aletheia/server/routes/live.py`
+
+- First live unlock must require explicit human confirmation.
+- Live lock/unlock must write audit events.
+- Routes must not place orders.
+- Tests must cover live disabled by default and unlock audit behavior.
+
+### 6.4 Stop Conditions
+
+Stop and ask before editing if:
+
+- A controlled-module change touches more than one safety boundary.
+- A fix requires schema changes for trading-state traceability.
+- Current tests pass but the UI would still display an untrue state.
+- The guide suggests a feature but this document forbids the implementation path.
+- The change would increase agent autonomy in live, risk, secret, or execution
+  domains.
+
+### 6.5 Verification Floor
+
+Minimum verification for controlled-module changes:
+
+```text
+uv run pytest tests/<focused_test_file>.py -q
+```
+
+For cross-boundary changes, also run:
+
+```text
+uv run pytest -q
+```
+
+If frontend operational state is affected, also run:
+
+```text
+cd frontend
+npm run build
+```
+
+Do not claim completion without reporting which verification commands passed.
+
+---
+
+## 7. Defaults For Ambiguous Cases
+
+Use these defaults unless the user explicitly overrides them:
+
+- Missing operational data is `not available`, not healthy.
+- Empty Telegram `allowed_chat_ids` denies all chats.
+- A missing strategy metric fails promotion rather than passing by assumption.
+- A backend capability must exist before the dashboard displays it as available.
+- A safety regression test is required before changing risk, execution, live,
+  secrets, or permissions.
+- Feature expansion is out of scope during trust-hardening work.
+
