@@ -28,11 +28,17 @@ export const api = {
 
   // Model provider config
   getModelConfig: () => fetchJson<{ default_provider: string; providers: Record<string, any> }>('/model'),
-  getModelHealth: () => fetchJson<{ provider: string; available: boolean; model: string; error: string | null }[]>('/model/health'),
+  getModelHealth: () => fetchJson<{ provider: string; available: boolean; model: string; error: string | null; models: string[] }[]>('/model/health'),
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
-    enabled?: boolean; default?: boolean; api_key?: string
+    enabled?: boolean; default?: boolean; api_key?: string; codex_model?: string
   }) => post('/settings/model', body),
+
+  // Codex subscription provider: web-triggered device-auth login + model listing
+  codexLoginStart: () => post<{ state: string; verification_uri: string | null; user_code: string | null; error: string | null }>('/model/codex/login-start'),
+  codexLoginStatus: () => fetchJson<{ state: string; verification_uri: string | null; user_code: string | null; error: string | null }>('/model/codex/login-status'),
+  codexLoginCancel: () => post('/model/codex/login-cancel'),
+  getCodexModels: () => fetchJson<{ slug: string; display_name: string }[]>('/model/codex/models'),
 
   // Bitget credentials + connection test (write-only secrets)
   getBitgetCredStatus: () => fetchJson<{ demo: any; live: any }>('/bitget/credentials-status'),

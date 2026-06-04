@@ -114,3 +114,87 @@ async def test_model_health_endpoint(client):
     data = resp.json()
     assert isinstance(data, list)
     assert all("provider" in h and "available" in h for h in data)
+
+
+# --- Codex subscription provider routes ---
+
+@pytest.mark.anyio
+async def test_get_model_includes_codex_model_no_token(client):
+    resp = await client.get("/api/model")
+    cx = resp.json()["providers"]["codex_cli"]
+    assert "codex_model" in cx
+    # no token/key ever leaks for codex
+    assert "token" not in resp.text.lower()
+    assert cx["api_key"]["configured"] is False
+
+
+@pytest.mark.anyio
+async def test_codex_login_start_returns_url_code_no_token(client, monkeypatch):
+    import aletheia.model_provider.codex_auth as auth
+
+    async def fake_start():
+        return {"state": "awaiting_authorization",
+                "verification_uri": "https://auth.openai.com/device",
+                "user_code": "ABCD-1234", "error": None}
+    monkeypatch.setattr(auth, "start_login", fake_start)
+
+    resp = await client.post("/api/model/codex/login-start")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["verification_uri"].startswith("https://")
+    assert body["user_code"] == "ABCD-1234"
+    assert "access_token" not in resp.text and "token" not in resp.text.lower()
+
+    # audit written
+    from aletheia.files.jsonl import read_jsonl
+    assert any(e.get("event_type") == "codex_login_started" for e in read_jsonl("audit.jsonl"))
+
+
+@pytest.mark.anyio
+async def test_codex_login_status_no_token(client, monkeypatch):
+    import aletheia.model_provider.codex_auth as auth
+
+    async def fake_poll():
+        return {"state": "completed", "verification_uri": None, "user_code": None, "error": None}
+    monkeypatch.setattr(auth, "poll_status", fake_poll)
+
+    resp = await client.get("/api/model/codex/login-status")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "completed"
+    assert "token" not in resp.text.lower()
+
+
+@pytest.mark.anyio
+async def test_codex_models_endpoint(client, monkeypatch):
+    import aletheia.model_provider.router as router_mod
+
+    class FakeProvider:
+        async def list_models(self):
+            return [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+    monkeypatch.setattr(router_mod, "get_provider", lambda name=None: FakeProvider())
+
+    resp = await client.get("/api/model/codex/models")
+    assert resp.status_code == 200
+    assert resp.json() == [{"slug": "gpt-5.5", "display_name": "GPT-5.5"}]
+
+
+@pytest.mark.anyio
+async def test_set_codex_model_persists(client):
+    resp = await client.post("/api/settings/model", json={
+        "provider": "codex_cli", "codex_model": "gpt-5.5", "enabled": True,
+    })
+    assert resp.status_code == 200
+    resp = await client.get("/api/model")
+    assert resp.json()["providers"]["codex_cli"]["codex_model"] == "gpt-5.5"
+
+
+@pytest.mark.anyio
+async def test_codex_health_honest_not_installed(client, monkeypatch):
+    """UI honesty: when codex is absent, health reports not_installed (never connected)."""
+    monkeypatch.setattr("aletheia.model_provider.codex_cli.shutil.which", lambda c: None)
+    # enable codex so healthcheck goes past the 'disabled' branch
+    await client.post("/api/settings/model", json={"provider": "codex_cli", "enabled": True})
+    resp = await client.get("/api/model/health")
+    cx = next(h for h in resp.json() if h["provider"] == "codex_cli")
+    assert cx["available"] is False
+    assert cx["error"] == "not_installed"
