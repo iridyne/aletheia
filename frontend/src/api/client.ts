@@ -53,6 +53,16 @@ export const api = {
   setKillSwitch: (active: boolean, reason = '') =>
     post<{ active: boolean }>('/risk/kill-switch', { active, reason }),
 
+  // Self-upgrade (on-demand code update)
+  getUpdateStatus: () => fetchJson<{
+    ok: boolean; reason?: string; has_update?: boolean; behind_count?: number
+    current_commit?: string; remote_commit?: string; branch?: string
+  }>('/update/status'),
+  applyUpdate: () => post<{
+    applied: boolean; reason?: string; old_commit?: string; new_commit?: string
+    deps_reinstalled?: boolean; restart_required?: boolean; message?: string
+  }>('/update/apply'),
+
   // Data
   getAgentRuns: () => fetchJson<any[]>('/agent-runs'),
   startAgentRun: (agent_name: string) => post('/agent-runs/start', { agent_name }),

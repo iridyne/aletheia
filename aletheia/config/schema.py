@@ -93,6 +93,15 @@ class TelegramConfig(BaseModel):
     allowed_chat_ids: list[int] = Field(default_factory=list)
 
 
+class UpdateConfig(BaseModel):
+    # On-demand self-upgrade (git pull). Human-triggered only; never a daemon.
+    enabled: bool = True
+    branch: str = "master"
+    last_check_time: str | None = None
+    last_known_remote_commit: str | None = None
+    current_commit: str | None = None
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -102,3 +111,4 @@ class AletheiaConfig(BaseModel):
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    update: UpdateConfig = Field(default_factory=UpdateConfig)
