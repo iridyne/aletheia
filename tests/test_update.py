@@ -100,6 +100,7 @@ def test_apply_skips_deps_when_pyproject_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
     installed = {"called": False}
     monkeypatch.setattr(applier, "_reinstall_deps", lambda: installed.__setitem__("called", True))
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
 
     result = applier.apply_update()
     assert result["applied"] is True
@@ -118,6 +119,7 @@ def test_apply_reinstalls_deps_when_pyproject_changed(tmp_path, monkeypatch):
     monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["pyproject.toml", "aletheia/x.py"])
     installed = {"called": 0}
     monkeypatch.setattr(applier, "_reinstall_deps", lambda: installed.__setitem__("called", installed["called"] + 1) or {"ok": True})
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
 
     result = applier.apply_update()
     assert result["applied"] is True
@@ -183,3 +185,83 @@ def test_update_not_agent_callable(tmp_path, monkeypatch):
     from aletheia.agent_runtime import tool_registry
     src = inspect.getsource(tool_registry)
     assert "aletheia.update" not in src
+
+
+# --- Component 4: smoke verification + controlled rollback ---
+
+def _stub_clean_pull(monkeypatch, pyproject_changed=False):
+    """Stub git_ops so apply_update reaches the smoke stage with a clean pull."""
+    from aletheia.update import git_ops, applier
+    commits = iter(["old111", "new222"])
+    monkeypatch.setattr(git_ops, "git_available", lambda: True)
+    monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
+    monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
+    monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
+    changed = ["pyproject.toml"] if pyproject_changed else ["aletheia/x.py"]
+    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: changed)
+    monkeypatch.setattr(applier, "_reinstall_deps", lambda: {"ok": True})
+
+
+def test_apply_rolls_back_on_smoke_failure(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import git_ops, applier
+    _stub_clean_pull(monkeypatch)
+    reset_calls = []
+    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: reset_calls.append(commit) or {"ok": True})
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": False, "stage": "import", "detail": "boom"})
+
+    result = applier.apply_update()
+    assert result["applied"] is False
+    assert result["rolled_back"] is True
+    assert reset_calls == ["old111"]  # rolled back to the pre-pull commit
+
+    from aletheia.files.jsonl import read_jsonl
+    assert any(e.get("event_type") == "update_rolled_back" for e in read_jsonl("audit.jsonl"))
+    from aletheia.config.loader import load_config
+    assert load_config().update.current_commit == "old111"  # restored
+
+
+def test_apply_succeeds_when_smoke_passes(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import git_ops, applier
+    _stub_clean_pull(monkeypatch)
+    reset_calls = []
+    monkeypatch.setattr(git_ops, "reset_hard", lambda commit: reset_calls.append(commit))
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
+
+    result = applier.apply_update()
+    assert result["applied"] is True
+    assert result["restart_required"] is True
+    assert reset_calls == []  # no rollback on success
+
+
+def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import smoke
+    # Force the import subprocess to fail.
+    import subprocess
+
+    class _Fail:
+        returncode = 1
+        stdout = ""
+        stderr = "ModuleNotFoundError"
+
+    monkeypatch.setattr(smoke.subprocess, "run", lambda *a, **k: _Fail())
+    result = smoke.run_smoke_check()
+    assert result["ok"] is False
+    assert result["stage"] == "import"
+
+
+def test_apply_no_auto_restart(tmp_path, monkeypatch):
+    """Neither success nor rollback may restart the gateway (user requirement)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import git_ops, applier
+    _stub_clean_pull(monkeypatch)
+    monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
+    import aletheia.gateway.lifecycle as lifecycle
+    restart_calls = []
+    if hasattr(lifecycle, "do_start"):
+        monkeypatch.setattr(lifecycle, "do_start", lambda *a, **k: restart_calls.append(1))
+    result = applier.apply_update()
+    assert result["restart_required"] is True  # signals, does not act
+    assert restart_calls == []

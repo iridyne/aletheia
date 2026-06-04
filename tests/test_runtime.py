@@ -53,8 +53,8 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     assert s is not None
     assert sched.is_running()
     # market_data + market_observer + dreaming_daily + reconciliation
-    # + portfolio_snapshot + paper_trader
-    assert len(s.get_jobs()) == 6
+    # + portfolio_snapshot + paper_trader + position_manager + cleanup + health_check
+    assert len(s.get_jobs()) == 9
     sched.stop_scheduler()
     reset_db()
 

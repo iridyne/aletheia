@@ -88,3 +88,17 @@ def pull(branch: str = "master") -> dict:
     if r.returncode != 0:
         return {"ok": False, "reason": "pull_failed", "stderr": r.stderr.strip()}
     return {"ok": True, "output": r.stdout.strip()}
+
+
+def reset_hard(commit: str) -> dict:
+    """Hard-reset the source repo to a specific commit (rollback after a bad pull).
+
+    Only ever called inside a human-initiated apply_update, targeting the recorded
+    pre-pull commit. Never raises.
+    """
+    if not git_available():
+        return {"ok": False, "reason": "git_unavailable"}
+    r = _git("reset", "--hard", commit)
+    if r.returncode != 0:
+        return {"ok": False, "reason": "reset_failed", "stderr": r.stderr.strip()}
+    return {"ok": True, "output": r.stdout.strip()}

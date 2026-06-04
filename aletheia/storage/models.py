@@ -121,6 +121,9 @@ class Position(BaseModel):
     execution_mode: str
     strategy_id: str | None = None
     status: str = "open"
+    stop_price: float | None = None
+    take_profit_price: float | None = None
+    close_reason: str | None = None
     opened_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     closed_at: str | None = None
 

@@ -42,9 +42,14 @@ def _realized_pnl(direction: str, entry: float, exit_price: float, qty: float) -
     return (entry - exit_price) * qty  # short/sell
 
 
-def close_position(position_id: str, exit_price: float) -> dict:
-    """Close an open position at exit_price, realizing PnL. Returns the result."""
+def close_position(position_id: str, exit_price: float, reason: str = "manual") -> dict:
+    """Close an open position at exit_price, realizing PnL. Returns the result.
+
+    Writes a position_closed audit event (trust §1.4). `reason` is recorded as
+    close_reason (e.g. stop_loss / take_profit / max_hold / manual).
+    """
     from aletheia.storage import repositories as repo
+    from aletheia.files.jsonl import write_audit
     row = repo._select_one("positions", position_id)
     if row is None:
         raise ValueError(f"position not found: {position_id}")
@@ -56,9 +61,20 @@ def close_position(position_id: str, exit_price: float) -> dict:
         current_price=exit_price,
         realized_pnl=realized,
         unrealized_pnl=0.0,
+        close_reason=reason,
         closed_at=datetime.now(timezone.utc).isoformat(),
     )
-    return {"position_id": position_id, "realized_pnl": realized, "exit_price": exit_price}
+    write_audit({
+        "actor": "system",
+        "source": "scheduler",
+        "event_type": "position_closed",
+        "entity_type": "position",
+        "entity_id": position_id,
+        "before": {"status": row.get("status"), "unrealized_pnl": row.get("unrealized_pnl")},
+        "after": {"status": "closed", "realized_pnl": realized, "close_reason": reason},
+        "message": f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); realized={realized}",
+    })
+    return {"position_id": position_id, "realized_pnl": realized, "exit_price": exit_price, "reason": reason}
 
 
 def today_realized_pnl(execution_mode: str | None = None) -> float:

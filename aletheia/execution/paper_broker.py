@@ -19,8 +19,14 @@ def execute_paper_order(
     price: float,
     execution_mode: str = "paper_internal",
     strategy_id: str | None = None,
+    stop_price: float | None = None,
 ) -> dict:
-    """Execute a paper order: create order, fill, and position."""
+    """Execute a paper order: create order, fill, and position.
+
+    The protective stop_price (from the proposal) and a take-profit derived from
+    config TP% are recorded on a newly-opened position so the position_manager can
+    act on them. Averaging into an existing position preserves its original stop/TP.
+    """
 
     order = Order(
         proposal_id=proposal_id,
@@ -54,6 +60,7 @@ def execute_paper_order(
         update_position(existing["id"], quantity=new_qty, entry_price=new_entry, current_price=price)
         position_id = existing["id"]
     else:
+        take_profit_price = _take_profit_for(direction, price)
         position = Position(
             symbol=symbol,
             market_type=market_type,
@@ -63,6 +70,8 @@ def execute_paper_order(
             current_price=price,
             execution_mode=execution_mode,
             strategy_id=strategy_id,
+            stop_price=stop_price,
+            take_profit_price=take_profit_price,
         )
         insert_position(position)
         position_id = position.id
@@ -74,6 +83,17 @@ def execute_paper_order(
         "fill_price": price,
         "fill_quantity": quantity,
     }
+
+
+def _take_profit_for(direction: str, entry_price: float) -> float | None:
+    """Derive a take-profit price from config TP% and direction."""
+    from aletheia.config.loader import load_config
+    pct = load_config().trading.default_take_profit_pct
+    if not pct or entry_price <= 0:
+        return None
+    if direction in ("long", "buy"):
+        return round(entry_price * (1 + pct / 100.0), 8)
+    return round(entry_price * (1 - pct / 100.0), 8)
 
 
 def _find_open_position(

@@ -26,6 +26,9 @@ from aletheia.trading.market_data import latest_snapshot
 # Conservative fixed paper notional target (USDT) per autonomous paper trade.
 _PAPER_NOTIONAL_USDT = 25.0
 
+# Confidence ranking for the min_confidence_to_trade gate.
+_CONFIDENCE_RANK = {"speculative": 0, "medium": 1, "high": 2}
+
 
 @register_agent("paper_trader")
 async def run_paper_trader(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
@@ -52,36 +55,49 @@ async def run_paper_trader(permission_mode: str = "Research", run_id: str | None
         return {"outputs": outputs, "errors": errors}
 
     symbol = opp["symbol"]
+
+    # Entry gate: only trade a clear direction at sufficient confidence. Non-traded
+    # signals are NOT discarded — they're marked "reviewed" and kept for analysis.
+    bias = (opp.get("direction_bias") or "neutral").lower()
+    direction = "long" if bias in ("long", "bullish") else ("short" if bias in ("short", "bearish") else None)
+    confidence = (opp.get("confidence") or "speculative").lower()
+    min_conf = cfg.trading.min_confidence_to_trade
+    conf_ok = _CONFIDENCE_RANK.get(confidence, 0) >= _CONFIDENCE_RANK.get(min_conf, 1)
+
+    if direction is None or not conf_ok:
+        skip_reason = "neutral_bias" if direction is None else f"confidence_below_{min_conf}:{confidence}"
+        update_opportunity(opp["id"], status="reviewed")  # keep the signal, just don't trade it
+        log_tool(run_id, "create_paper_proposal", "paper_tool", False, output=skip_reason)
+        outputs.append(f"skipped:{opp['id']}:{skip_reason}")
+        return {"outputs": outputs, "errors": errors}
+
     snap = latest_snapshot(symbol)
     price = (snap or {}).get("price")
     if not price:
         errors.append(f"no_price_for:{symbol}")
         return {"outputs": outputs, "errors": errors}
 
+    price = float(price)
     quantity = round(_PAPER_NOTIONAL_USDT / price, 6) or 0.000001
-    direction = "long" if opp.get("direction_bias") in (None, "neutral", "long", "bullish") else "short"
+    # Protective stop from config %, on the correct side of entry for the direction.
+    stop_pct = cfg.trading.default_stop_loss_pct
+    if direction == "long":
+        stop_price = round(price * (1 - stop_pct / 100.0), 8)
+    else:
+        stop_price = round(price * (1 + stop_pct / 100.0), 8)
 
-    # Optional LLM rationale (graceful). Never blocks the trade.
-    rationale, err = await llm_complete(
-        system="You are a paper-trading assistant. In one sentence, state a neutral rationale "
-               "for opening a small paper position based on the given opportunity. No advice.",
-        user=f"Opportunity on {symbol}: {opp.get('thesis')}. Direction: {direction}.",
-        max_tokens=120,
-    )
-    if err:
-        errors.append(err)
-        rationale = f"Autonomous paper trade from opportunity {opp['id']} ({direction} {symbol})."
-    log_tool(run_id, "llm_complete", "research_tool", True)
+    rationale = f"Autonomous paper trade from opportunity {opp['id']} ({direction} {symbol}, conf={confidence})."
 
     result = create_paper_proposal(
         symbol=symbol,
         market_type=opp.get("market", "spot"),
         direction=direction,
         quantity=quantity,
-        price=float(price),
+        price=price,
+        stop_price=stop_price,
         execution_mode="paper_internal",
         opportunity_id=opp["id"],
-        agent_rationale=(rationale or "")[:500],
+        agent_rationale=rationale[:500],
     )
     log_tool(run_id, "create_paper_proposal", "paper_tool", True, output=result.get("proposal_id"))
 
