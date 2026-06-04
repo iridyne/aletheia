@@ -47,6 +47,10 @@ def init_scheduler() -> BackgroundScheduler | None:
         _run_portfolio_snapshot, "interval", minutes=10, id="portfolio_snapshot",
         misfire_grace_time=120,
     )
+    _scheduler.add_job(
+        _run_paper_trader, "interval", minutes=15, id="paper_trader",
+        misfire_grace_time=60,
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -130,6 +134,19 @@ def _run_portfolio_snapshot():
         compute_and_store_snapshot(execution_mode=("bitget_live_limited" if cfg.exchange.mode == "live" else "paper_internal"))
     except Exception as e:
         logger.warning("portfolio_snapshot job failed: %s", e)
+
+
+def _run_paper_trader():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    # Gate A: autonomous paper trading is default-OFF and must be explicitly enabled.
+    if not cfg.agent.autonomous_paper_trading:
+        return
+    # Only modes whose permission allows paper_tool (Research/ReadOnly excluded).
+    if cfg.agent.permission_mode not in ("PaperAuto", "AllowEditing", "Auto"):
+        return
+    asyncio.run(_async_run("paper_trader"))
 
 
 async def _async_run(agent_name: str):
