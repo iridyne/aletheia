@@ -34,6 +34,7 @@ class ModelHealth:
     available: bool
     model: str = ""
     error: str | None = None
+    models: list[str] = field(default_factory=list)
 
 
 class ModelProvider:

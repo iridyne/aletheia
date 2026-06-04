@@ -49,6 +49,9 @@ class ProviderConfig(BaseModel):
     # Name of the secret holding this provider's API key (the key itself lives
     # in keyring / secrets.enc, never in config.yaml). e.g. "model.openai_compatible.api_key"
     api_key_secret_ref: str | None = None
+    # Selected Codex model slug (codex_cli provider only). None = codex default.
+    # No secret_ref: codex self-manages its OAuth token under ~/.codex.
+    codex_model: str | None = None
 
 
 class ModelsConfig(BaseModel):

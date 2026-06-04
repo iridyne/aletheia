@@ -46,6 +46,7 @@ def get_provider(name: str | None = None) -> ModelProvider:
             command=pcfg.command,
             mode=pcfg.mode,
             enabled=pcfg.enabled,
+            model=pcfg.codex_model,
         )
     else:
         raise ValueError(f"Unknown provider type: {name}")
