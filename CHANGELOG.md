@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.5.0] - 2026-06-05 — Codex subscription provider (Web UI login + model listing)
+
+Delivers guide §12.1.3 properly: the "ChatGPT Codex subscription / local
+authenticated CLI mode" provider. Previously `codex_cli.py` was a bare
+`codex exec <prompt>` wrapper with no login detection or model listing. Real
+OAuth + token stay owned by the codex CLI (`~/.codex`); we store **no token**.
+Zero change-controlled files touched. 272 tests passing (was 253).
+
+### Provider (`model_provider/codex_cli.py`)
+- `complete()` runs `codex exec --json` with the prompt on **stdin** and
+  `-m <model>`, hardened with `--sandbox read-only --ask-for-approval never` (a
+  text completion must never gain shell/write/approval surface). Parses the JSONL
+  event stream, tolerantly skipping interleaved non-JSON log lines.
+- `structured()` extracts JSON even from prose-wrapped output.
+- `healthcheck()` is now 3-state: `not_installed` (binary absent) /
+  `not_logged_in` (`codex login status` ≠ 0) / `available` (+ model list).
+- `list_models()` parses `codex debug models --bundled` (visibility=="list").
+- `ModelHealth` gained `models`; `ProviderConfig` gained `codex_model`.
+
+### Web-triggered subscription login (`model_provider/codex_auth.py`, new)
+- In-memory device-auth session: `start_login()` spawns
+  `codex login --device-auth`, defensively parses the verification URL + user code
+  from stdout to show in the dashboard; `poll_status()` asks the authoritative
+  `codex login status`; `cancel()` aborts. No token is ever handled or returned.
+  If the (undocumented) device-auth output can't be parsed, it fails with
+  `device_auth_parse_failed` and the UI tells the user to run `codex login` in a
+  terminal — honest, no fake success.
+
+### API + UI + CLI
+- Routes: `POST /api/model/codex/login-start|login-cancel`,
+  `GET /api/model/codex/login-status|models`; `/api/settings/model` accepts
+  `codex_model`; `/api/model/health` surfaces the model list. Audited; never
+  returns a token.
+- Settings → Model Provider shows a Codex panel: honest `not configured` /
+  `not logged in` (+ Connect Codex device-auth flow) / `connected` (+ model
+  dropdown). The green `connected` badge is backed only by a real
+  `codex login status` exit 0.
+- `model test` reflects the 3-state and shows the model count when available.
+
+### Notes
+- `config/secrets.py` deliberately untouched — codex self-manages its token, so
+  there is nothing for us to store. No change-controlled module changed.
+- Known pre-existing CLI quirk (out of scope, web path unaffected):
+  `aletheia model set --enabled true` doesn't toggle the flag because Typer treats
+  `Optional[bool]` as a `--enabled/--no-enabled` switch. Use the dashboard/API.
+
 ## [0.4.0] - 2026-06-04 — Go-live MVP: autonomous paper loop closes + long-run survival
 
 Makes the system safe to run unattended for long stretches, accumulating real

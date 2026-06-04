@@ -155,6 +155,8 @@ function ModelProviderCard() {
     },
   })
 
+  const isCodex = provider === 'codex_cli'
+
   return (
     <div className="card">
       <h3>Model Provider</h3>
@@ -164,28 +166,110 @@ function ModelProviderCard() {
             {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </label>
-        <label>Base URL
-          <input value={baseUrl} placeholder={cur?.base_url || 'http://localhost:8000/v1'} onChange={e => setBaseUrl(e.target.value)} />
-        </label>
+        {!isCodex && <>
+          <label>Base URL
+            <input value={baseUrl} placeholder={cur?.base_url || 'http://localhost:8000/v1'} onChange={e => setBaseUrl(e.target.value)} />
+          </label>
+          <label>Model
+            <input value={model} placeholder={cur?.model || 'default'} onChange={e => setModel(e.target.value)} />
+          </label>
+          <label>Protocol
+            <select value={protocol} onChange={e => setProtocol(e.target.value)}>
+              <option value="chat_completions">chat_completions</option>
+              <option value="responses">responses</option>
+            </select>
+          </label>
+          <label>API Key {cur?.api_key?.configured && <span className="badge badge-green">configured ··{cur.api_key.last4}</span>}
+            <input type="password" value={apiKey} placeholder={cur?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => setApiKey(e.target.value)} />
+          </label>
+        </>}
+      </div>
+      {isCodex
+        ? <CodexPanel qc={qc} />
+        : <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <button onClick={() => save.mutate()}>Save</button>
+            <button className="secondary" onClick={() => test.mutate()}>Test</button>
+            {health && <span className="hint" style={{ alignSelf: 'center' }}>{health}</span>}
+          </div>}
+      <p className="hint">Default provider: <strong>{data?.default_provider}</strong>. API keys are write-only — never shown after save.</p>
+    </div>
+  )
+}
+
+function CodexPanel({ qc }: any) {
+  const { data: health } = useQuery({
+    queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000,
+  })
+  const cx = (health || []).find((h: any) => h.provider === 'codex_cli')
+  const { data: cfg } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
+  const selectedModel = cfg?.providers?.codex_cli?.codex_model || ''
+
+  const [login, setLogin] = useState<{ state: string; verification_uri: string | null; user_code: string | null; error: string | null } | null>(null)
+
+  // Poll login status while a device-auth flow is awaiting authorization.
+  const statusPoll = useQuery({
+    queryKey: ['codex-login-status'],
+    queryFn: api.codexLoginStatus,
+    enabled: login?.state === 'awaiting_authorization',
+    refetchInterval: 3000,
+  })
+  if (statusPoll.data && statusPoll.data.state !== login?.state) {
+    if (statusPoll.data.state === 'completed') {
+      qc.invalidateQueries({ queryKey: ['model-health'] })
+      qc.invalidateQueries({ queryKey: ['status'] })
+    }
+  }
+
+  const start = useMutation({ mutationFn: api.codexLoginStart, onSuccess: (r) => setLogin(r) })
+  const cancel = useMutation({ mutationFn: api.codexLoginCancel, onSuccess: () => setLogin(null) })
+  const { data: models = [] } = useQuery({
+    queryKey: ['codex-models'], queryFn: api.getCodexModels,
+    enabled: cx?.available === true,
+  })
+  const pickModel = useMutation({
+    mutationFn: (slug: string) => api.setModelProvider({ provider: 'codex_cli', codex_model: slug, enabled: true, default: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+  })
+
+  if (!cx) return <p className="hint">Checking Codex status…</p>
+
+  // not installed → honest "not configured", no Connect button
+  if (cx.error === 'not_installed') {
+    return <p className="hint"><span className="badge badge-yellow">not configured</span> Codex CLI not found in PATH. Install the Codex CLI and log in with your ChatGPT subscription.</p>
+  }
+
+  // available → connected + model picker
+  if (cx.available) {
+    return (
+      <div>
+        <p><span className="badge badge-green">connected</span> via ChatGPT subscription (codex login).</p>
         <label>Model
-          <input value={model} placeholder={cur?.model || 'default'} onChange={e => setModel(e.target.value)} />
-        </label>
-        <label>Protocol
-          <select value={protocol} onChange={e => setProtocol(e.target.value)}>
-            <option value="chat_completions">chat_completions</option>
-            <option value="responses">responses</option>
+          <select value={selectedModel} onChange={e => pickModel.mutate(e.target.value)}>
+            <option value="">codex default</option>
+            {models.map(m => <option key={m.slug} value={m.slug}>{m.display_name}</option>)}
           </select>
         </label>
-        <label>API Key {cur?.api_key?.configured && <span className="badge badge-green">configured ··{cur.api_key.last4}</span>}
-          <input type="password" value={apiKey} placeholder={cur?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => setApiKey(e.target.value)} />
-        </label>
+        <p className="hint">Real OAuth + token are managed by the Codex CLI (~/.codex). Aletheia stores no token.</p>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-        <button onClick={() => save.mutate()}>Save</button>
-        <button className="secondary" onClick={() => test.mutate()}>Test</button>
-        {health && <span className="hint" style={{ alignSelf: 'center' }}>{health}</span>}
-      </div>
-      <p className="hint">Default provider: <strong>{data?.default_provider}</strong>. API keys are write-only — never shown after save.</p>
+    )
+  }
+
+  // present but not logged in → Connect Codex (device-auth)
+  return (
+    <div>
+      <p><span className="badge badge-red">not logged in</span> Codex CLI is installed but no ChatGPT login.</p>
+      {login?.state === 'awaiting_authorization' && login.verification_uri
+        ? <div>
+            <p>1. Open <a href={login.verification_uri} target="_blank" rel="noreferrer">{login.verification_uri}</a></p>
+            <p>2. Enter code: <strong>{login.user_code}</strong></p>
+            <p className="hint">Waiting for authorization… (status: {statusPoll.data?.state || 'polling'})</p>
+            <button className="secondary" onClick={() => cancel.mutate()}>Cancel</button>
+          </div>
+        : login?.state === 'failed'
+        ? <p className="hint"><span className="badge badge-red">login failed</span> {login.error === 'device_auth_parse_failed'
+            ? 'Could not parse device login on this Codex version. Run `codex login` in a terminal, then it will show as connected.'
+            : login.error}</p>
+        : <button onClick={() => start.mutate()} disabled={start.isPending}>Connect Codex</button>}
     </div>
   )
 }
