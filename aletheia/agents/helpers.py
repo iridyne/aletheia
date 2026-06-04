@@ -21,9 +21,11 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800) -> tupl
             system=system,
             max_tokens=max_tokens,
         ))
+        _record_llm(True)
         return resp.content, None
     except Exception as e:
         logger.warning("LLM call failed: %s", e)
+        _record_llm(False)
         return None, f"llm_unavailable: {e}"
 
 
@@ -43,10 +45,24 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 40
         )
         if not isinstance(data, dict):
             return None, "structured_non_dict"
+        _record_llm(True)
         return data, None
     except Exception as e:
         logger.warning("LLM structured call failed: %s", e)
+        _record_llm(False)
         return None, f"llm_unavailable: {e}"
+
+
+def _record_llm(success: bool) -> None:
+    """Feed the health monitor's consecutive-failure counter. Never raises.
+
+    Local import avoids any import-time cycle with agent_runtime.health.
+    """
+    try:
+        from aletheia.agent_runtime.health import record_llm_success, record_llm_failure
+        (record_llm_success if success else record_llm_failure)()
+    except Exception:
+        pass
 
 
 def log_tool(run_id: str | None, tool_name: str, tool_class: str, permitted: bool,

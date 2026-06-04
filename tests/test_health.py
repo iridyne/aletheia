@@ -24,6 +24,12 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    # The LLM consecutive-failure counter is a module-level global that other
+    # test files (running agents without a provider) leave elevated. Reset it so
+    # health-baseline assertions are deterministic regardless of suite order —
+    # same reason the alert tests reset _last_alerted_unhealthy.
+    from aletheia.agent_runtime import health
+    health.reset_llm_failures()
 
 
 def _add_run(status):
@@ -89,3 +95,119 @@ def test_health_no_alert_when_healthy(tmp_path, monkeypatch):
     monkeypatch.setattr(health, "compute_health", lambda: {"healthy": True, "issues": []})
     health.run_health_check()
     assert sent == []  # never fabricate a positive push
+
+
+# --- Market-data staleness (zombie/silent-degradation detection) ---
+
+def _add_snapshot(snapshot_at):
+    from aletheia.storage.models import MarketSnapshot
+    from aletheia.storage.repositories import insert_market_snapshot
+    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=100.0)
+    snap.snapshot_at = snapshot_at
+    insert_market_snapshot(snap)
+
+
+def _isoformat_minutes_ago(minutes):
+    from datetime import datetime, timedelta
+    return (datetime.utcnow() - timedelta(minutes=minutes)).isoformat()
+
+
+def test_fresh_market_data_not_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    _add_snapshot(_isoformat_minutes_ago(1))
+    h = health.compute_health()
+    assert not any("market_data_stale" in i for i in h["issues"])
+
+
+def test_stale_market_data_flagged(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    _add_snapshot(_isoformat_minutes_ago(120))  # 2h old, far past 30m default
+    h = health.compute_health()
+    assert h["healthy"] is False
+    assert any("market_data_stale" in i for i in h["issues"])
+
+
+def test_stale_market_data_not_flagged_when_paused(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config(); cfg.runtime.paused = True; save_config(cfg)
+    from aletheia.agent_runtime import health
+    _add_snapshot(_isoformat_minutes_ago(120))
+    h = health.compute_health()
+    # Paused means data is expected to stop updating — must not false-alarm.
+    assert not any("market_data_stale" in i for i in h["issues"])
+
+
+def test_no_snapshots_is_not_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    # Never collected any data yet — that is "not started", not "stale".
+    h = health.compute_health()
+    assert not any("market_data_stale" in i for i in h["issues"])
+
+
+# --- LLM consecutive-failure counter (fulfils llm_unavailable_alert_after) ---
+
+def test_llm_failure_counter_flags_after_threshold(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    health.reset_llm_failures()
+    # default llm_unavailable_alert_after = 3
+    for _ in range(3):
+        health.record_llm_failure()
+    assert health.get_llm_consecutive_failures() == 3
+    h = health.compute_health()
+    assert h["healthy"] is False
+    assert any("llm_unavailable" in i for i in h["issues"])
+
+
+def test_llm_success_resets_counter(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    health.reset_llm_failures()
+    for _ in range(3):
+        health.record_llm_failure()
+    health.record_llm_success()
+    assert health.get_llm_consecutive_failures() == 0
+    h = health.compute_health()
+    assert not any("llm_unavailable" in i for i in h["issues"])
+
+
+def test_llm_failures_below_threshold_not_flagged(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    health.reset_llm_failures()
+    health.record_llm_failure()
+    health.record_llm_failure()  # 2 < 3
+    h = health.compute_health()
+    assert not any("llm_unavailable" in i for i in h["issues"])
+
+
+# --- llm_complete / llm_structured report success/failure into the counter ---
+
+async def test_llm_complete_reports_failure_then_success(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    from aletheia.agents import helpers
+    health.reset_llm_failures()
+
+    class _Boom:
+        async def complete(self, req):
+            raise RuntimeError("provider down")
+
+    monkeypatch.setattr(helpers, "get_provider", lambda name=None: _Boom())
+    content, err = await helpers.llm_complete(system="s", user="u")
+    assert content is None and "llm_unavailable" in err
+    assert health.get_llm_consecutive_failures() == 1
+
+    class _Ok:
+        async def complete(self, req):
+            class R: content = "hi"
+            return R()
+
+    monkeypatch.setattr(helpers, "get_provider", lambda name=None: _Ok())
+    content, err = await helpers.llm_complete(system="s", user="u")
+    assert content == "hi" and err is None
+    assert health.get_llm_consecutive_failures() == 0

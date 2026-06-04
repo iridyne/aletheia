@@ -101,6 +101,9 @@ class HealthConfig(BaseModel):
     alert_via_telegram: bool = True
     max_agent_failure_ratio: float = 0.5
     llm_unavailable_alert_after: int = 3
+    # Silent-degradation guard: flag the market-data feed as stale when the newest
+    # snapshot is older than this (market data is collected every 5 min).
+    market_data_max_staleness_min: int = 30
     # Gateway supervisor (process self-healing).
     supervisor_max_restarts: int = 5
     supervisor_restart_window_sec: int = 600
