@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.4.0] - 2026-06-04 — Go-live MVP: autonomous paper loop closes + long-run survival
+
+Makes the system safe to run unattended for long stretches, accumulating real
+paper PnL and strategy lessons. Strictly in-guide; only 3 change-controlled files
+touched (all in execution/). 253 tests passing (was 217).
+
+### C1 — Position management + automatic close (the keystone)
+- New `portfolio/position_manager.py` closes open PAPER positions by stop-loss /
+  take-profit / max-hold. This was the missing producer of closed positions — it
+  activates realized PnL, the daily-loss breaker (risk §8), and the strategy
+  promotion gates, which were all previously dead.
+- positions table gains `stop_price` / `take_profit_price` / `close_reason`
+  (additive migration). `close_position` now records the reason and writes a
+  `position_closed` audit event (trust §1.4).
+- **CHANGE-CONTROLLED** `execution/paper_broker.py`: carries the proposal's stop +
+  a config-derived take-profit onto a newly opened position (averaging-in keeps
+  the original stop). `execution/gateway.py`: wires `stop_price` into the paper
+  call. Causal chain unchanged; no closing order is fabricated (paper close is a
+  projection update + audit only).
+- LIVE positions are NEVER auto-closed; the kill switch does NOT block closing
+  (closing reduces risk); no latest price → skip (never fabricate an exit).
+- New `TradingConfig` (stop% / TP% / max-hold / min-confidence).
+
+### C2 — Entry logic upgrade (trades stop being noise)
+- `market_observer` now uses the model provider's structured() to produce a real
+  `{direction_bias, confidence}` (graceful fallback to neutral/speculative). The
+  opportunity is ALWAYS recorded, even when not traded (kept for analysis).
+- `paper_trader` skips neutral and below-`min_confidence_to_trade` signals (marks
+  them `reviewed`, never discards) and sets a protective stop from config.
+- **CHANGE-CONTROLLED** `execution/paper_tools.py`: optional `stop_price`
+  passthrough; the paper-only hard-reject is unchanged.
+
+### C3 — Data retention / cleanup (long-run survival)
+- Whitelist-based pruning of high-volume telemetry only (agent_runs, run_steps,
+  tool_calls, market/portfolio snapshots). Trust-bearing tables (proposals, risk
+  decisions, orders, fills, positions), audit, and knowledge are NEVER pruned.
+- JSONL size-cap rotation to a single `.1` generation (content never deleted).
+- Daily `cleanup` scheduler job + `RetentionConfig`.
+
+### C4 — Self-upgrade safety (a bad pull can't brick the box)
+- `update/smoke.py`: post-pull import gate (fresh subprocess) + fast pytest subset.
+- `apply_update` now verifies the pulled code and, on failure, performs a
+  user-authorized controlled `git reset --hard` back to the pre-pull commit,
+  restores deps + config, and writes an `update_rolled_back` audit. Never
+  auto-restarts. Still not agent-callable.
+
+### C5 — Process liveness + health visibility (safe to walk away)
+- `_gateway_runner.py` is now a supervisor: it respawns the inner uvicorn child on
+  abnormal exit with backoff, gives up after a bounded number of restarts (audited
+  + alerted), and routes the inner server's stderr to `data/logs/errors.log`. Pid
+  semantics preserved (written once; `gateway stop`/`status` unchanged).
+- New `agent_runtime/health.py` + 10-min `health_check` job: honest signals
+  (agent-failure ratio, kill switch) with transition-only, de-duped Telegram
+  alerts. Never fabricates a positive "healthy" push. `HealthConfig` added.
+
 ## [0.3.0] - 2026-06-03 — Full MVP: risk hardening, live path, reconciliation
 
 Closes the remaining functional gaps between 0.2.0 and a feature-complete MVP per

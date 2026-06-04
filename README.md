@@ -52,5 +52,5 @@ uv run aletheia gateway status | pause | resume | stop
 ## Tests
 
 ```bash
-uv run pytest        # 178 tests: unit, integration, security, §32 acceptance
+uv run pytest        # 253 tests: unit, integration, security, §32 acceptance
 ```
