@@ -34,8 +34,10 @@ def setup_env(tmp_path, monkeypatch):
 
 def _seed(symbol="BTCUSDT", price=60000.0):
     repo.insert_market_snapshot(MarketSnapshot(symbol=symbol, market_type="spot", price=price))
-    opp = Opportunity(symbol=symbol, market="spot", direction_bias="neutral",
-                      thesis="test thesis", confidence="speculative", source_agent="market_observer")
+    # Entry-logic upgrade (Component 2): paper_trader now only trades directional,
+    # >=medium-confidence signals, so seed one that triggers a trade.
+    opp = Opportunity(symbol=symbol, market="spot", direction_bias="long",
+                      thesis="test thesis", confidence="medium", source_agent="market_observer")
     repo.insert_opportunity(opp)
     return opp
 

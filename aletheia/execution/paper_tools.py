@@ -21,6 +21,7 @@ def create_paper_proposal(
     execution_mode: str = "paper_internal",
     strategy_id: str | None = None,
     opportunity_id: str | None = None,
+    stop_price: float | None = None,
     agent_rationale: str | None = None,
 ) -> dict:
     """Submit a PAPER proposal through the gateway. Rejects any non-paper mode.
@@ -39,6 +40,7 @@ def create_paper_proposal(
         order_type="market",
         quantity=quantity,
         price=price,
+        stop_price=stop_price,
         execution_mode=execution_mode,
         strategy_id=strategy_id,
         opportunity_id=opportunity_id,

@@ -1,13 +1,25 @@
 """Market Observer agent — observes market conditions and creates opportunities."""
 
+from pydantic import BaseModel
+
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.agents.helpers import llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity
 from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.market_data import latest_snapshot
 from aletheia.config.loader import load_config
+
+_VALID_DIRECTIONS = {"long", "short", "neutral"}
+_VALID_CONFIDENCE = {"high", "medium", "speculative"}
+
+
+class MarketRead(BaseModel):
+    """Structured market read the observer asks the LLM to produce."""
+    direction_bias: str = "neutral"
+    confidence: str = "speculative"
+    rationale: str = ""
 
 
 @register_agent("market_observer")
@@ -34,25 +46,40 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
             context_lines.append(f"{sym}: no snapshot yet")
     context = "\n".join(context_lines)
 
-    # Ask the LLM for a market read (degrades gracefully if unavailable)
-    thesis, err = await llm_complete(
-        system="You are a crypto market observer. Given current market data, write a brief "
-               "neutral observation (2-3 sentences) about regime/conditions for the listed symbols. "
-               "Do not give financial advice.",
-        user=f"Current market data:\n{context}\n\nWrite a short market observation.",
+    # Ask the LLM for a STRUCTURED market read (degrades gracefully if unavailable).
+    read, err = await llm_structured(
+        system="You are a crypto market observer. Given current market data, return a JSON object "
+               "with direction_bias (one of long/short/neutral), confidence (one of "
+               "high/medium/speculative), and a brief rationale. Be conservative: use neutral / "
+               "speculative unless the data clearly supports a directional read. No financial advice.",
+        user=f"Current market data:\n{context}\n\nReturn the market read JSON.",
+        schema=MarketRead,
     )
-    if err:
-        errors.append(err)
-        thesis = f"Market observation (LLM unavailable). Data:\n{context}"
-    log_tool(run_id, "llm_complete", "research_tool", True)
+    log_tool(run_id, "llm_structured", "research_tool", True)
+
+    direction = "neutral"
+    confidence = "speculative"
+    rationale = ""
+    if err or not read:
+        errors.append(err or "no_structured_read")
+    else:
+        d = str(read.get("direction_bias", "")).lower()
+        c = str(read.get("confidence", "")).lower()
+        if d in _VALID_DIRECTIONS:
+            direction = d
+        if c in _VALID_CONFIDENCE:
+            confidence = c
+        rationale = str(read.get("rationale", ""))[:500]
 
     if is_tool_permitted("create_opportunity", permission_mode):
+        # Always record the opportunity, even when neutral/speculative — non-traded
+        # signals are retained for later analysis.
         opp = Opportunity(
             symbol=symbols[0] if symbols else "BTCUSDT",
             market="spot",
-            direction_bias="neutral",
-            thesis=thesis[:500] if thesis else context,
-            confidence="speculative",
+            direction_bias=direction,
+            thesis=(rationale or context)[:500],
+            confidence=confidence,
             source_agent="market_observer",
         )
         insert_opportunity(opp)

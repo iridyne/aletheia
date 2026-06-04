@@ -2,7 +2,7 @@
 
 import logging
 
-from aletheia.model_provider.base import ModelRequest
+from aletheia.model_provider.base import ModelRequest, StructuredModelRequest
 from aletheia.model_provider.router import get_provider
 
 logger = logging.getLogger("aletheia.agents")
@@ -24,6 +24,28 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800) -> tupl
         return resp.content, None
     except Exception as e:
         logger.warning("LLM call failed: %s", e)
+        return None, f"llm_unavailable: {e}"
+
+
+async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 400) -> tuple[dict | None, str | None]:
+    """Call the provider's structured() and return (parsed_dict, error).
+
+    Never raises — absorbs provider errors AND the JSON-parse failure in the
+    provider impl, returning (None, error) so the caller can fall back cleanly.
+    `schema` is a Pydantic model class (uses model_json_schema()).
+    """
+    try:
+        provider = get_provider()
+        data = await provider.structured(
+            StructuredModelRequest(messages=[{"role": "user", "content": user}], system=system,
+                                   max_tokens=max_tokens),
+            schema,
+        )
+        if not isinstance(data, dict):
+            return None, "structured_non_dict"
+        return data, None
+    except Exception as e:
+        logger.warning("LLM structured call failed: %s", e)
         return None, f"llm_unavailable: {e}"
 
 
