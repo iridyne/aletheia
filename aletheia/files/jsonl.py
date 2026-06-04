@@ -13,9 +13,30 @@ def _log_dir() -> Path:
     return d
 
 
+def _max_bytes() -> int:
+    """JSONL rotation threshold in bytes (from config retention.jsonl_max_mb)."""
+    try:
+        from aletheia.config.loader import load_config
+        return int(load_config().retention.jsonl_max_mb * 1024 * 1024)
+    except Exception:
+        return 50 * 1024 * 1024
+
+
 def append_jsonl(filename: str, record: dict) -> None:
-    """Append a JSON record to a JSONL file in data/logs/."""
+    """Append a JSON record to a JSONL file in data/logs/, rotating at a size cap.
+
+    When the file exceeds the cap it is rotated to `{filename}.1` (single cold
+    generation, overwriting any prior .1) — content is never deleted.
+    """
     path = _log_dir() / filename
+    try:
+        if path.exists() and path.stat().st_size >= _max_bytes():
+            rotated = path.with_name(filename + ".1")
+            if rotated.exists():
+                rotated.unlink()
+            path.rename(rotated)
+    except OSError:
+        pass  # rotation is best-effort; never block a write
     line = json.dumps(record, default=str, ensure_ascii=False)
     with path.open("a", encoding="utf-8") as f:
         f.write(line + "\n")

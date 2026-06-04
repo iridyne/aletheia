@@ -1,6 +1,7 @@
 """Thin repository functions for SQLite CRUD."""
 
 from contextlib import contextmanager
+from datetime import datetime, timezone, timedelta
 import json
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.models import (
@@ -341,3 +342,52 @@ def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
     if run_id:
         return _select_all("agent_tool_calls", where="run_id = ?", params=(run_id,), limit=limit)
     return _select_all("agent_tool_calls", limit=limit)
+
+
+# --- Data retention / cleanup (Component 3) ---
+#
+# Only high-volume TELEMETRY may be pruned. Trust-bearing causal-chain tables
+# (trade_proposals, risk_decisions, orders, fills, positions), audit_events, and
+# knowledge_items are intentionally absent from this whitelist — their permanence
+# is the safety guarantee (trust §1.1 + AGENTS.md "hard deletion forbidden").
+_PRUNABLE = {
+    "agent_runs": "started_at",
+    "agent_run_steps": "created_at",
+    "agent_tool_calls": "created_at",
+    "market_snapshots": "snapshot_at",
+    "portfolio_snapshots": "snapshot_at",
+}
+
+
+def _delete_old_rows(table: str, days: int) -> int:
+    """Delete rows in a WHITELISTED telemetry table older than `days`. Returns count."""
+    if table not in _PRUNABLE:
+        raise ValueError(f"table {table!r} is not prunable")
+    ts_col = _PRUNABLE[table]
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff,))
+    if not was_in_tx and not db.in_transaction:
+        db.commit()
+    return cur.rowcount if cur.rowcount is not None else 0
+
+
+def prune_agent_runs(days: int = 30) -> int:
+    return _delete_old_rows("agent_runs", days)
+
+
+def prune_run_steps(days: int = 30) -> int:
+    return _delete_old_rows("agent_run_steps", days)
+
+
+def prune_tool_calls(days: int = 30) -> int:
+    return _delete_old_rows("agent_tool_calls", days)
+
+
+def prune_market_snapshots(days: int = 30) -> int:
+    return _delete_old_rows("market_snapshots", days)
+
+
+def prune_portfolio_snapshots(days: int = 90) -> int:
+    return _delete_old_rows("portfolio_snapshots", days)
