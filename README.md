@@ -2,6 +2,9 @@
 
 Local-first, file-based, Trading-as-Git, AI-native, self-learning agentic trading system.
 
+> **Running it unattended?** See **[docs/RUNBOOK.md](docs/RUNBOOK.md)** — how to take
+> the system live for paper trading, the brakes, self-upgrade, and health monitoring.
+
 ## Quick Start
 
 ```bash
