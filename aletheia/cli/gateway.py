@@ -69,3 +69,32 @@ def open_dashboard():
     from aletheia.config.loader import load_config
     cfg = load_config()
     open_browser(cfg.app.dashboard_port)
+
+
+@gateway_app.command(name="enable-autostart")
+def enable_autostart():
+    """Register a Windows task to start the gateway on logon + watchdog every 5 min."""
+    from aletheia.gateway import autostart
+    result = autostart.enable(source="cli")
+    if result.get("ok"):
+        typer.echo(f"Autostart enabled (task: {autostart.TASK_NAME}).")
+    elif not result.get("supported"):
+        typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
+    else:
+        typer.echo(f"Failed to enable autostart: {result.get('reason')}"
+                   + (f" — {result['detail']}" if result.get("detail") else ""), err=True)
+        raise typer.Exit(1)
+
+
+@gateway_app.command(name="disable-autostart")
+def disable_autostart():
+    """Remove the gateway autostart scheduled task."""
+    from aletheia.gateway import autostart
+    result = autostart.disable(source="cli")
+    if result.get("ok"):
+        typer.echo("Autostart disabled.")
+    elif not result.get("supported"):
+        typer.echo(f"Autostart not available on this OS ({result.get('reason')}).")
+    else:
+        typer.echo(f"Failed to disable autostart: {result.get('reason')}", err=True)
+        raise typer.Exit(1)

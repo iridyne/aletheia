@@ -101,6 +101,17 @@ def do_status() -> None:
     typer.echo(f"Exchange: {cfg.exchange.name} ({cfg.exchange.mode})")
     typer.echo(f"Live state: {cfg.live.state}")
     typer.echo(f"Permission: {cfg.agent.permission_mode}")
+    from aletheia.gateway.autostart import status as autostart_status
+    a = autostart_status()
+    if not a.get("supported"):
+        autostart_label = "not supported"
+    elif a.get("enabled") is True:
+        autostart_label = "enabled"
+    elif a.get("enabled") is False:
+        autostart_label = "disabled"
+    else:
+        autostart_label = f"unknown ({a.get('reason', 'error')})"
+    typer.echo(f"Autostart: {autostart_label}")
 
 
 def do_logs(lines: int = 50) -> None:
