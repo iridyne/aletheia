@@ -69,6 +69,16 @@ export const api = {
     deps_reinstalled?: boolean; restart_required?: boolean; message?: string
   }>('/update/apply'),
 
+  // Autostart + watchdog (Windows Task Scheduler; on-logon start + 5-min watchdog)
+  getAutostartStatus: () => fetchJson<{
+    supported: boolean; enabled: boolean | null; task_name?: string
+    trigger?: string; interval?: string; reason?: string; detail?: string
+  }>('/gateway/autostart'),
+  setAutostart: (enabled: boolean) => post<{
+    supported: boolean; enabled: boolean | null; ok?: boolean
+    reason?: string; detail?: string
+  }>('/gateway/autostart', { enabled }),
+
   // Data
   getAgentRuns: () => fetchJson<any[]>('/agent-runs'),
   startAgentRun: (agent_name: string) => post('/agent-runs/start', { agent_name }),
