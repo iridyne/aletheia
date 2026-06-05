@@ -33,6 +33,10 @@ export const api = {
     provider: string; base_url?: string; protocol?: string; model?: string
     enabled?: boolean; default?: boolean; api_key?: string; codex_model?: string
   }) => post('/settings/model', body),
+  // Verify-before-commit: test a candidate provider config (key NOT persisted)
+  testModelCandidate: (body: {
+    provider: string; base_url?: string; protocol?: string; model?: string; api_key?: string
+  }) => post<{ available: boolean; model: string; error: string | null }>('/model/test-candidate', body),
 
   // Codex subscription provider: web-triggered device-auth login + model listing
   codexLoginStart: () => post<{ state: string; verification_uri: string | null; user_code: string | null; error: string | null }>('/model/codex/login-start'),
@@ -47,6 +51,12 @@ export const api = {
   }) => post('/settings/exchange-credentials', body),
   testBitget: (mode?: string) =>
     post<{ connected: boolean; mode: string; error?: string }>('/bitget/test-connection', mode ? { mode } : {}),
+  // Verify-before-commit: test candidate exchange creds (NOT persisted)
+  testBitgetCandidate: (body: { profile: string; api_key: string; api_secret: string; passphrase: string }) =>
+    post<{ connected: boolean; profile: string; error?: string }>('/bitget/test-candidate', body),
+
+  // Telegram bot reachability (facet A — never returns the token)
+  getTelegramHealth: () => fetchJson<{ reachable: boolean; username?: string; error?: string }>('/telegram/health'),
 
   // Live state
   liveUnlock: () => post('/settings/live-unlock', { confirm: true }),

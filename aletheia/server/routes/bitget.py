@@ -4,13 +4,15 @@ Credentials are write-only over the API: POST accepts api_key/secret/passphrase,
 GET only reports configured + last-4. Raw secrets are never returned.
 """
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aletheia.config.loader import load_config
 from aletheia.config.secrets import set_secret, get_secret
 from aletheia.files.jsonl import write_audit
-from aletheia.exchanges.bitget.client import BitgetClient
+from aletheia.exchanges.bitget.auth import build_headers
+from aletheia.exchanges.bitget.client import BitgetClient, BASE_URL
 
 router = APIRouter(prefix="/api", tags=["bitget"])
 
@@ -76,3 +78,32 @@ async def test_connection(req: TestConnectionRequest | None = None):
     client = BitgetClient(mode=mode)
     result = await client.test_connection()
     return result
+
+
+class TestCandidateCredsRequest(BaseModel):
+    profile: str  # "demo" | "live"
+    api_key: str
+    api_secret: str
+    passphrase: str
+
+
+@router.post("/bitget/test-candidate")
+async def test_candidate_credentials(req: TestCandidateCredsRequest):
+    """Verify-before-commit probe: test CANDIDATE Bitget credentials live without
+    persisting them. Credentials are used to sign one read-only account-info request
+    and are never stored, logged, or echoed back. No audit (nothing is persisted)."""
+    if req.profile not in ("demo", "live"):
+        raise HTTPException(400, "profile must be 'demo' or 'live'")
+
+    path = "/api/v2/spot/account/info"
+    demo = req.profile == "demo"
+    try:
+        headers = build_headers(req.api_key, req.api_secret, req.passphrase, "GET", path, "", demo=demo)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{BASE_URL}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") == "00000":
+            return {"connected": True, "profile": req.profile}
+        return {"connected": False, "profile": req.profile, "error": data.get("msg", "unknown")}
+    except Exception as e:
+        return {"connected": False, "profile": req.profile, "error": str(e)}
