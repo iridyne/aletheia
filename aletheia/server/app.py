@@ -19,6 +19,7 @@ from aletheia.server.routes.bitget import router as bitget_router
 from aletheia.server.routes.risk import router as risk_router
 from aletheia.server.routes.update import router as update_router
 from aletheia.server.routes.gateway import router as gateway_router
+from aletheia.server.routes.telegram import router as telegram_router
 
 logger = logging.getLogger("aletheia")
 
@@ -81,6 +82,7 @@ app.include_router(bitget_router)
 app.include_router(risk_router)
 app.include_router(update_router)
 app.include_router(gateway_router)
+app.include_router(telegram_router)
 
 # Serve static dashboard if the directory exists
 _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"

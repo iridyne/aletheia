@@ -80,6 +80,30 @@ async def test_openai_healthcheck_no_server():
 
 
 @pytest.mark.anyio
+async def test_inline_candidate_key_used_in_healthcheck():
+    """Verify-before-commit primitive: a provider built with an inline candidate key
+    sends that key in the Authorization header during healthcheck — no secrets store."""
+    provider = OpenAICompatibleProvider(base_url="http://probe/v1", model="m", api_key="sk-candidate-xyz")
+    seen = {}
+
+    class FakeResp:
+        status_code = 200
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None):
+            seen["headers"] = headers or {}
+            return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        health = await provider.healthcheck()
+    assert health.available is True
+    assert seen["headers"].get("Authorization") == "Bearer sk-candidate-xyz"
+
+
+@pytest.mark.anyio
 async def test_openai_complete_mock():
     provider = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", model="test")
     mock_response = {

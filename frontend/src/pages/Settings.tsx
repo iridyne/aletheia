@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
 
 const PERMISSION_MODES = ['ReadOnly', 'Research', 'PaperAuto', 'AllowEditing', 'Auto']
 const PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'codex_cli']
@@ -180,6 +181,41 @@ function GatewayCard({ status, qc }: any) {
   )
 }
 
+function ProviderStatusList({ data }: any) {
+  // Facet A: at-a-glance real state for every provider, live-polled (5s, shared key
+  // with CodexPanel so the queries dedupe).
+  const { data: health = [] } = useQuery({
+    queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000,
+  })
+  if (!data) return null
+  return (
+    <div style={{ marginBottom: '0.6rem' }}>
+      {PROVIDERS.map(p => {
+        const h = (health as any[]).find(x => x.provider === p)
+        const cfg = data.providers?.[p]
+        const configured = p === 'codex_cli' ? undefined : cfg?.api_key?.configured
+        let state: ConnState = 'muted'
+        let text = 'unknown'
+        if (h?.available) { state = 'green'; text = 'connected' }
+        else if (p === 'codex_cli' && h?.error === 'not_installed') { state = 'yellow'; text = 'not configured' }
+        else if (p === 'codex_cli' && h?.error?.includes('disabled')) { state = 'muted'; text = 'disabled' }
+        else if (configured === false) { state = 'muted'; text = 'not configured' }
+        else if (h && !h.available) { state = 'red'; text = `✗ ${h.error || 'unreachable'}` }
+        const detailParts: string[] = []
+        if (cfg?.model && cfg.model !== 'default') detailParts.push(`model: ${cfg.model}`)
+        if (cfg?.api_key?.configured) detailParts.push(`··${cfg.api_key.last4}`)
+        return (
+          <ConnectionStatus
+            key={p} label={p} state={state} text={text}
+            detail={detailParts.join(' · ') || undefined}
+            isDefault={p === data.default_provider}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 function ModelProviderCard() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
@@ -188,22 +224,38 @@ function ModelProviderCard() {
   const [model, setModel] = useState('')
   const [protocol, setProtocol] = useState('chat_completions')
   const [apiKey, setApiKey] = useState('')
-  const [health, setHealth] = useState<string>('')
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
   const cur = data?.providers?.[provider]
-  const save = useMutation({
-    mutationFn: () => api.setModelProvider({
-      provider, base_url: baseUrl || undefined, model: model || undefined,
-      protocol, default: true, api_key: apiKey || undefined,
-    }),
-    onSuccess: () => { setApiKey(''); qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
-  })
-  const test = useMutation({
-    mutationFn: api.getModelHealth,
-    onSuccess: (results) => {
-      const h = results.find(r => r.provider === provider)
-      setHealth(h ? (h.available ? '✓ available' : `✗ ${h.error}`) : 'unknown')
+
+  // Facet B: verify-before-commit. Test the candidate config first; persist only on pass.
+  const verifyAndSave = useMutation({
+    mutationFn: async () => {
+      setResult(null)
+      const test = await api.testModelCandidate({
+        provider,
+        base_url: baseUrl || cur?.base_url || undefined,
+        model: model || cur?.model || undefined,
+        protocol,
+        api_key: apiKey || undefined,
+      })
+      if (!test.available) {
+        throw new Error(test.error || 'provider unreachable')
+      }
+      await api.setModelProvider({
+        provider, base_url: baseUrl || undefined, model: model || undefined,
+        protocol, default: true, api_key: apiKey || undefined,
+      })
+      return test
     },
+    onSuccess: (test) => {
+      setApiKey('')
+      setResult({ ok: true, msg: `✓ verified & saved (${test.model || 'ok'})` })
+      qc.invalidateQueries({ queryKey: ['model'] })
+      qc.invalidateQueries({ queryKey: ['model-health'] })
+      qc.invalidateQueries({ queryKey: ['status'] })
+    },
+    onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message} — not saved` }),
   })
 
   const isCodex = provider === 'codex_cli'
@@ -211,9 +263,10 @@ function ModelProviderCard() {
   return (
     <div className="card">
       <h3>Model Provider</h3>
+      <ProviderStatusList data={data} />
       <div className="form-grid">
         <label>Provider
-          <select value={provider} onChange={e => setProvider(e.target.value)}>
+          <select value={provider} onChange={e => { setProvider(e.target.value); setResult(null) }}>
             {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </label>
@@ -237,12 +290,13 @@ function ModelProviderCard() {
       </div>
       {isCodex
         ? <CodexPanel qc={qc} />
-        : <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-            <button onClick={() => save.mutate()}>Save</button>
-            <button className="secondary" onClick={() => test.mutate()}>Test</button>
-            {health && <span className="hint" style={{ alignSelf: 'center' }}>{health}</span>}
+        : <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
+            <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
+              {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
+            </button>
+            {result && <span className="hint" style={{ alignSelf: 'center', color: result.ok ? 'var(--green)' : 'var(--red)' }}>{result.msg}</span>}
           </div>}
-      <p className="hint">Default provider: <strong>{data?.default_provider}</strong>. API keys are write-only — never shown after save.</p>
+      <p className="hint">"Verify &amp; Save" tests the endpoint live and only saves if it responds. API keys are write-only — never shown after save.</p>
     </div>
   )
 }
@@ -325,6 +379,23 @@ function CodexPanel({ qc }: any) {
   )
 }
 
+function ExchangeProfileStatus({ profile, configured }: { profile: 'demo' | 'live'; configured: boolean }) {
+  // Facet A: live reachability of the SAVED creds for this profile (10s poll, only
+  // when configured so we never spam errors for an empty profile).
+  const { data } = useQuery({
+    queryKey: ['bitget-test', profile], queryFn: () => api.testBitget(profile),
+    refetchInterval: 10000, enabled: configured,
+  })
+  let state: ConnState = 'muted'
+  let text = 'not configured'
+  if (configured) {
+    if (!data) { state = 'yellow'; text = 'checking…' }
+    else if (data.connected) { state = 'green'; text = 'connected' }
+    else { state = 'red'; text = `✗ ${data.error || 'unreachable'}` }
+  }
+  return <ConnectionStatus label={`bitget ${profile}`} state={state} text={text} />
+}
+
 function ExchangeCredentialsCard() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['bitgetCreds'], queryFn: api.getBitgetCredStatus })
@@ -332,26 +403,47 @@ function ExchangeCredentialsCard() {
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
   const [passphrase, setPassphrase] = useState('')
-  const [testResult, setTestResult] = useState('')
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
   const cur = data?.[profile]
-  const save = useMutation({
-    mutationFn: () => api.setExchangeCredentials({
-      profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined, passphrase: passphrase || undefined,
-    }),
-    onSuccess: () => { setApiKey(''); setApiSecret(''); setPassphrase(''); qc.invalidateQueries({ queryKey: ['bitgetCreds'] }) },
-  })
-  const test = useMutation({
-    mutationFn: () => api.testBitget(profile),
-    onSuccess: (r) => setTestResult(r.connected ? `✓ connected (${r.mode})` : `✗ ${r.error}`),
+  const fullTriple = !!(apiKey && apiSecret && passphrase)
+
+  // Facet B: verify-before-commit. When a full credential triple is supplied, test it
+  // live and persist only on success. (Bitget signing needs all three together and the
+  // client reads creds from the store at use, so a candidate test requires the full set.)
+  const verifyAndSave = useMutation({
+    mutationFn: async () => {
+      setResult(null)
+      if (fullTriple) {
+        const test = await api.testBitgetCandidate({
+          profile, api_key: apiKey, api_secret: apiSecret, passphrase,
+        })
+        if (!test.connected) throw new Error(test.error || 'connection failed')
+      }
+      await api.setExchangeCredentials({
+        profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined, passphrase: passphrase || undefined,
+      })
+      return fullTriple
+    },
+    onSuccess: (tested) => {
+      setApiKey(''); setApiSecret(''); setPassphrase('')
+      setResult({ ok: true, msg: tested ? '✓ verified & saved' : '✓ saved (partial — live badge will confirm)' })
+      qc.invalidateQueries({ queryKey: ['bitgetCreds'] })
+      qc.invalidateQueries({ queryKey: ['bitget-test', profile] })
+    },
+    onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message} — not saved` }),
   })
 
   return (
     <div className="card">
       <h3>Exchange Credentials (Bitget)</h3>
+      <div style={{ marginBottom: '0.6rem' }}>
+        <ExchangeProfileStatus profile="demo" configured={!!data?.demo?.api_key?.configured} />
+        <ExchangeProfileStatus profile="live" configured={!!data?.live?.api_key?.configured} />
+      </div>
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
         {(['demo', 'live'] as const).map(p => (
-          <button key={p} className={profile === p ? '' : 'secondary'} onClick={() => setProfile(p)}>{p}</button>
+          <button key={p} className={profile === p ? '' : 'secondary'} onClick={() => { setProfile(p); setResult(null) }}>{p}</button>
         ))}
       </div>
       <div className="form-grid">
@@ -365,12 +457,13 @@ function ExchangeCredentialsCard() {
           <input type="password" value={passphrase} placeholder={cur?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} />
         </label>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-        <button onClick={() => save.mutate()}>Save {profile} creds</button>
-        <button className="secondary" onClick={() => test.mutate()}>Test Connection</button>
-        {testResult && <span className="hint" style={{ alignSelf: 'center' }}>{testResult}</span>}
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', alignItems: 'center' }}>
+        <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
+          {verifyAndSave.isPending ? 'Verifying…' : `Verify & Save ${profile} creds`}
+        </button>
+        {result && <span className="hint" style={{ alignSelf: 'center', color: result.ok ? 'var(--green)' : 'var(--red)' }}>{result.msg}</span>}
       </div>
-      <p className="hint">Demo keys are created in Bitget demo mode. Credentials are write-only.</p>
+      <p className="hint">Enter all three fields to test the connection live before saving — a failed test is rejected, not stored. Demo keys are created in Bitget demo mode. Credentials are write-only.</p>
     </div>
   )
 }
@@ -396,17 +489,35 @@ function LiveStateCard({ status, qc }: any) {
   const unlock = useMutation({ mutationFn: api.liveUnlock, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const lock = useMutation({ mutationFn: api.liveLock, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const isDisabled = status.live_state === 'live_disabled'
+  const [warning, setWarning] = useState('')
+
+  // Pre-flight (warn-only): verify the LIVE creds actually reach Bitget before unlock.
+  // This does NOT replace the backend gate — it surfaces a bad-creds state honestly so
+  // the user isn't unlocking into a broken connection. The user may still proceed.
+  const preflightUnlock = async () => {
+    setWarning('')
+    let proceedMsg = 'Unlock live-limited trading? This enables real orders within hard risk limits.'
+    try {
+      const r = await api.testBitget('live')
+      if (!r.connected) {
+        setWarning(`Live credentials not reachable: ${r.error || 'unknown'}. Fix in Exchange Credentials above before trading.`)
+        proceedMsg = `⚠ Live creds did NOT connect (${r.error || 'unknown'}). Unlock anyway?`
+      }
+    } catch {
+      // probe failure shouldn't block the human decision
+    }
+    if (confirm(proceedMsg)) unlock.mutate()
+  }
+
   return (
     <div className="card">
       <h3>Live State <span className={`badge ${isDisabled ? 'badge-red' : 'badge-yellow'}`}>{String(status.live_state)}</span></h3>
       <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <button
-          onClick={() => { if (confirm('Unlock live-limited trading? This enables real orders within hard risk limits.')) unlock.mutate() }}
-          disabled={!isDisabled}
-        >Unlock Live-Limited</button>
+        <button onClick={preflightUnlock} disabled={!isDisabled}>Unlock Live-Limited</button>
         <button className="secondary" onClick={() => lock.mutate()} disabled={isDisabled}>Lock</button>
       </div>
-      <p className="hint">Live trading is disabled by default. Unlocking requires explicit confirmation and is audited.</p>
+      {warning && <p className="hint" style={{ color: 'var(--red)' }}>⚠ {warning}</p>}
+      <p className="hint">Live trading is disabled by default. Unlocking runs a credential pre-flight, requires explicit confirmation, and is audited.</p>
     </div>
   )
 }
@@ -431,10 +542,23 @@ function RiskCard({ settings }: any) {
 
 function TelegramCard() {
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
+  const { data: health } = useQuery({
+    queryKey: ['telegram-health'], queryFn: api.getTelegramHealth, refetchInterval: 30000,
+  })
   const tg = (settings?.telegram as any) || {}
+
+  let state: ConnState = 'muted'
+  let text = 'not configured'
+  if (health) {
+    if (health.reachable) { state = 'green'; text = health.username ? `@${health.username}` : 'reachable' }
+    else if (health.error === 'not_configured') { state = 'muted'; text = 'not configured' }
+    else { state = 'red'; text = `✗ ${health.error || 'unreachable'}` }
+  }
+
   return (
     <div className="card">
       <h3>Telegram</h3>
+      <ConnectionStatus label="telegram bot" state={state} text={text} />
       <p>Enabled: <span className={`badge ${tg.enabled ? 'badge-green' : 'badge-red'}`}>{String(tg.enabled)}</span></p>
       <p className="hint">Allowed chat IDs: {(tg.allowed_chat_ids || []).join(', ') || 'none'}. Configure the bot token via <code>aletheia secrets set telegram.bot_token</code>.</p>
     </div>

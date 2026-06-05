@@ -56,6 +56,43 @@ async def get_model_health():
     ]
 
 
+class TestCandidateRequest(BaseModel):
+    provider: str
+    base_url: str | None = None
+    protocol: str | None = None
+    model: str | None = None
+    api_key: str | None = None  # candidate key — tested only, never persisted
+
+
+@router.post("/model/test-candidate")
+async def test_model_candidate(req: TestCandidateRequest):
+    """Verify-before-commit probe: health-check a CANDIDATE provider config without
+    persisting anything. The candidate api_key is used for the live check only and is
+    never stored, logged, or echoed back. No audit (nothing is persisted)."""
+    if req.provider not in VALID_PROVIDERS:
+        raise HTTPException(400, f"Invalid provider. Choose from: {sorted(VALID_PROVIDERS)}")
+    if req.provider == "codex_cli":
+        # Codex authenticates via its own device-auth flow (`codex login`); there is
+        # no candidate-key concept. The dedicated codex login routes handle it.
+        raise HTTPException(400, "codex_cli uses device-auth login, not a candidate key")
+
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+
+    base_url = req.base_url or ""
+    model = req.model or "default"
+    if req.provider == "openai_compatible":
+        provider = OpenAICompatibleProvider(
+            base_url=base_url, model=model,
+            protocol=req.protocol or "chat_completions", api_key=req.api_key,
+        )
+    else:  # anthropic_compatible
+        provider = AnthropicCompatibleProvider(base_url=base_url, model=model, api_key=req.api_key)
+
+    health = await provider.healthcheck()
+    return {"available": health.available, "model": health.model, "error": health.error}
+
+
 # --- Codex subscription provider: web-triggered device-auth login + model listing ---
 
 @router.post("/model/codex/login-start")

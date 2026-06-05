@@ -198,3 +198,182 @@ async def test_codex_health_honest_not_installed(client, monkeypatch):
     cx = next(h for h in resp.json() if h["provider"] == "codex_cli")
     assert cx["available"] is False
     assert cx["error"] == "not_installed"
+
+
+# --- Verified-Connection: model provider candidate-key test (verify-before-commit) ---
+
+@pytest.mark.anyio
+async def test_model_test_candidate_pass(client, monkeypatch):
+    """A reachable candidate key returns available=true, echoes no key, persists nothing."""
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from aletheia.model_provider.base import ModelHealth
+
+    async def fake_health(self):
+        return ModelHealth(provider="openai_compatible", available=True, model=self.model)
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", fake_health)
+
+    secret = "sk-candidate-not-saved-7777"
+    resp = await client.post("/api/model/test-candidate", json={
+        "provider": "openai_compatible",
+        "base_url": "http://localhost:9000/v1",
+        "model": "probe-model",
+        "api_key": secret,
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is True
+    # candidate key must never be echoed
+    assert secret not in resp.text
+    # nothing persisted: the provider still has no configured key
+    cfg = await client.get("/api/model")
+    assert cfg.json()["providers"]["openai_compatible"]["api_key"]["configured"] is False
+
+
+@pytest.mark.anyio
+async def test_model_test_candidate_fail(client, monkeypatch):
+    """An unreachable candidate returns available=false + error, persists nothing."""
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from aletheia.model_provider.base import ModelHealth
+
+    async def fake_health(self):
+        return ModelHealth(provider="openai_compatible", available=False, error="HTTP 401")
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", fake_health)
+
+    resp = await client.post("/api/model/test-candidate", json={
+        "provider": "openai_compatible",
+        "base_url": "http://localhost:9000/v1",
+        "api_key": "sk-bad",
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is False
+    assert "401" in (body["error"] or "")
+    cfg = await client.get("/api/model")
+    assert cfg.json()["providers"]["openai_compatible"]["api_key"]["configured"] is False
+
+
+@pytest.mark.anyio
+async def test_model_test_candidate_codex_rejected(client):
+    """codex_cli has its own device-auth; candidate-key test is not applicable."""
+    resp = await client.post("/api/model/test-candidate", json={"provider": "codex_cli"})
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_model_test_candidate_invalid_provider(client):
+    resp = await client.post("/api/model/test-candidate", json={"provider": "nonexistent"})
+    assert resp.status_code == 400
+
+
+# --- Verified-Connection: bitget candidate-cred test (Option Z, verify-before-commit) ---
+
+@pytest.mark.anyio
+async def test_bitget_test_candidate_pass(client, monkeypatch):
+    """Reachable candidate creds return connected=true, echo no creds, persist nothing."""
+    import aletheia.server.routes.bitget as bitget_routes
+
+    class FakeResp:
+        def json(self):
+            return {"code": "00000", "data": {}}
+
+    class FakeAsyncClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, *a, **k): return FakeResp()
+
+    monkeypatch.setattr(bitget_routes.httpx, "AsyncClient", FakeAsyncClient)
+
+    secret = "bg-candidate-secret-5555"
+    resp = await client.post("/api/bitget/test-candidate", json={
+        "profile": "demo",
+        "api_key": "bg-cand-key",
+        "api_secret": secret,
+        "passphrase": "bg-cand-pass",
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["connected"] is True
+    assert body["profile"] == "demo"
+    assert secret not in resp.text
+    # nothing persisted: demo creds still unconfigured
+    cs = await client.get("/api/bitget/credentials-status")
+    assert cs.json()["demo"]["api_key"]["configured"] is False
+
+
+@pytest.mark.anyio
+async def test_bitget_test_candidate_fail(client, monkeypatch):
+    """Rejected candidate creds return connected=false + bitget error msg, persist nothing."""
+    import aletheia.server.routes.bitget as bitget_routes
+
+    class FakeResp:
+        def json(self):
+            return {"code": "40012", "msg": "apikey does not match"}
+
+    class FakeAsyncClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, *a, **k): return FakeResp()
+
+    monkeypatch.setattr(bitget_routes.httpx, "AsyncClient", FakeAsyncClient)
+
+    resp = await client.post("/api/bitget/test-candidate", json={
+        "profile": "demo",
+        "api_key": "bad", "api_secret": "bad", "passphrase": "bad",
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["connected"] is False
+    assert "apikey" in (body["error"] or "")
+    cs = await client.get("/api/bitget/credentials-status")
+    assert cs.json()["demo"]["api_key"]["configured"] is False
+
+
+@pytest.mark.anyio
+async def test_bitget_test_candidate_invalid_profile(client):
+    resp = await client.post("/api/bitget/test-candidate", json={
+        "profile": "production", "api_key": "x", "api_secret": "y", "passphrase": "z",
+    })
+    assert resp.status_code == 400
+
+
+# --- Verified-Connection: telegram reachability health (facet A only) ---
+
+@pytest.mark.anyio
+async def test_telegram_health_not_configured(client):
+    """No bot token configured -> reachable false, honest not_configured, no token echo."""
+    resp = await client.get("/api/telegram/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reachable"] is False
+    assert body.get("error") == "not_configured"
+
+
+@pytest.mark.anyio
+async def test_telegram_health_reachable(client, monkeypatch):
+    """A configured + reachable token reports the bot username, never the token."""
+    import aletheia.server.routes.telegram as tg_routes
+    from aletheia.config.secrets import set_secret
+
+    token = "123456:super-secret-bot-token"
+    set_secret("telegram.bot_token", token)
+
+    class FakeResp:
+        def json(self):
+            return {"ok": True, "result": {"username": "aletheia_bot"}}
+
+    class FakeAsyncClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, *a, **k): return FakeResp()
+
+    monkeypatch.setattr(tg_routes.httpx, "AsyncClient", FakeAsyncClient)
+
+    resp = await client.get("/api/telegram/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["reachable"] is True
+    assert body["username"] == "aletheia_bot"
+    assert token not in resp.text

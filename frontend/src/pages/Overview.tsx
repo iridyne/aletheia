@@ -11,6 +11,15 @@ export default function Overview() {
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
+  const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
+  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
+  const exchangeMode = String((status as any)?.exchange_mode || '')
+  const { data: exchangeHealth } = useQuery({
+    queryKey: ['bitget-test', exchangeMode],
+    queryFn: () => api.testBitget(exchangeMode),
+    refetchInterval: 15000,
+    enabled: !!exchangeMode,
+  })
   const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
 
@@ -27,6 +36,14 @@ export default function Overview() {
     ? `${riskState}: ${(riskStatus?.violations as string[]).join(', ')}`
     : riskState
 
+  // Verified-Connection health on the landing page: default model provider + exchange.
+  const defaultProvider = String(modelConfig?.default_provider || '')
+  const dph = (modelHealth as any[]).find(h => h.provider === defaultProvider)
+  const modelBadge = dph?.available ? 'badge-green' : dph ? 'badge-red' : 'badge-yellow'
+  const modelText = dph?.available ? `connected (${defaultProvider})` : dph ? `unreachable: ${dph.error || '—'}` : 'checking…'
+  const exBadge = exchangeHealth?.connected ? 'badge-green' : exchangeHealth ? 'badge-red' : 'badge-yellow'
+  const exText = exchangeHealth?.connected ? 'connected' : exchangeHealth ? `unreachable: ${exchangeHealth.error || '—'}` : 'checking…'
+
   return (
     <div>
       <h2 className="page-title">Overview</h2>
@@ -37,7 +54,8 @@ export default function Overview() {
           <tbody>
             <tr><th>Gateway</th><td><span className={`badge ${status.gateway_running ? 'badge-green' : 'badge-red'}`}>{status.gateway_running ? 'Running' : 'Stopped'}</span></td></tr>
             <tr><th>State</th><td><span className={`badge ${status.paused ? 'badge-yellow' : 'badge-green'}`}>{status.paused ? 'Paused' : 'Active'}</span></td></tr>
-            <tr><th>Exchange</th><td>{String(status.exchange)} ({String(status.exchange_mode)})</td></tr>
+            <tr><th>Exchange</th><td>{String(status.exchange)} ({String(status.exchange_mode)}) <span className={`badge ${exBadge}`}>{exText}</span></td></tr>
+            <tr><th>Model</th><td><span className={`badge ${modelBadge}`}>{modelText}</span></td></tr>
             <tr><th>Live State</th><td><span className={`badge ${liveStateBadge}`}>{String(status.live_state)}</span></td></tr>
             <tr><th>Permission</th><td><span className="badge badge-blue">{String(status.permission_mode)}</span></td></tr>
             <tr><th>Kill Switch</th><td><span className={`badge ${killSwitch?.active ? 'badge-red' : 'badge-green'}`}>{killSwitch?.active ? 'ENGAGED' : 'inactive'}</span></td></tr>
