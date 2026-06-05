@@ -46,10 +46,13 @@ class CodexCLIProvider(ModelProvider):
         for msg in request.messages:
             prompt += f"\n{msg['role']}: {msg['content']}"
 
-        # Text completion only — never grant codex shell/write/approval surface.
+        # Text completion only — read-only sandbox keeps codex from shell/write
+        # surface. `exec` is already non-interactive (no approval prompts), and
+        # codex >=0.133 removed the `--ask-for-approval` flag from `exec`, so we
+        # must not pass it or the whole command is rejected.
         argv = [
             self.command, "exec", "--json", "--skip-git-repo-check",
-            "--sandbox", "read-only", "--ask-for-approval", "never",
+            "--sandbox", "read-only",
         ]
         if self.model:
             argv += ["-m", self.model]
