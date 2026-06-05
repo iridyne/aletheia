@@ -26,7 +26,12 @@ def stop():
 def restart(
     no_browser: bool = typer.Option(False, "--no-browser", help="Don't open browser."),
 ):
-    """Restart the gateway."""
+    """Restart the gateway.
+
+    do_stop tree-kills the supervisor + inner uvicorn, cleans our orphans, and waits
+    for the port to free; do_start then refuses to spawn if the port is somehow still
+    held — so a failed stop no longer stacks crash-looping supervisors.
+    """
     from aletheia.gateway.lifecycle import do_stop, do_start
     do_stop()
     do_start(no_browser=no_browser, foreground=False)
