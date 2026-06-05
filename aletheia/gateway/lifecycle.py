@@ -23,10 +23,12 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         typer.echo(f"Gateway already running (PID {read_pid()}).")
         raise typer.Exit(0)
 
-    # Port guard: if the port is held but no gateway is tracked, an orphaned process
-    # is squatting on it. Spawning now would just crash-loop the new supervisor, so
-    # refuse and point at `stop` (which cleans our own orphans).
-    if port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+    # Port guard: if the port stays held throughout a short grace window with no
+    # tracked gateway, an orphan or foreign process is squatting on it. Spawning
+    # now would just crash-loop the new supervisor. The grace tolerates the brief
+    # post-stop window where the kernel hasn't fully released the listener yet
+    # (TIME_WAIT-like state) — without it, `restart` would race against itself.
+    if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=3.0):
         typer.echo(
             f"Port {cfg.app.dashboard_port} is already in use but no tracked gateway "
             f"is running. Run `aletheia gateway stop` to clear orphaned processes, "
@@ -102,19 +104,30 @@ def do_stop() -> None:
     if tracked:
         kill_pid_tree(pid)          # supervisor + inner uvicorn (tree kill)
         killed_any = True
-    clear_pid()
 
-    # Proactively clean orphaned uvicorns WE spawned (matched by app marker only;
-    # never touches a non-Aletheia process).
-    for opid in find_gateway_orphans(port):
+    # Sweep our own orphans (supervisors first, then inners — the helper orders
+    # them so a still-alive supervisor cannot respawn the inner we just killed).
+    # Skip PIDs we've already targeted to avoid double-kills on the tracked one.
+    targeted = {pid} if tracked else set()
+    for opid in find_gateway_orphans():
+        if opid in targeted:
+            continue
         kill_pid_tree(opid)
+        targeted.add(opid)
         killed_any = True
 
     if not killed_any and not port_in_use(port, host):
+        # Nothing to do: no tracked gateway, no orphans, port is free.
+        clear_pid()
         typer.echo("Gateway is not running.")
         return
 
+    # Wait for the port to actually release BEFORE clearing the pidfile, so a
+    # concurrent watchdog/start in the kill window still sees a tracked gateway
+    # rather than "untracked but port held" → false-orphan misdiagnosis.
     freed = wait_port_free(port, host, timeout=10.0)
+    clear_pid()
+
     if freed:
         typer.echo("Gateway stopped.")
     else:

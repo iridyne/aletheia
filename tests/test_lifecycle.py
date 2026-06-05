@@ -30,7 +30,7 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
-def test_do_stop_tree_kills_and_waits(tmp_path, monkeypatch, capsys):
+def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     from aletheia.gateway import pidfile
@@ -39,15 +39,21 @@ def test_do_stop_tree_kills_and_waits(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     killed = []
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
-    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda port: [])
-    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
+    # Record whether the pidfile still existed at the moment wait_port_free ran:
+    # the pid must NOT be cleared before we've confirmed the port is free (TOCTOU).
+    pid_present_during_wait = {}
+    def fake_wait(port, host, timeout=10.0):
+        pid_present_during_wait["v"] = pidfile.pid_path().exists()
+        return True
+    monkeypatch.setattr(lifecycle, "wait_port_free", fake_wait)
 
     lifecycle.do_stop()
 
-    assert 4242 in killed                 # supervisor tree-killed
-    assert pidfile.read_pid() is None     # pidfile cleared
-    out = capsys.readouterr().out
-    assert "stopped" in out.lower()
+    assert 4242 in killed
+    assert pid_present_during_wait["v"] is True   # pid still tracked while waiting
+    assert pidfile.read_pid() is None             # cleared only after port freed
+    assert "stopped" in capsys.readouterr().out.lower()
 
     from aletheia.files.jsonl import read_jsonl
     assert any(e.get("event_type") == "gateway_stopped" for e in read_jsonl("audit.jsonl"))
@@ -62,7 +68,7 @@ def test_do_stop_cleans_our_orphans(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     killed = []
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
-    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda port: [999])
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [999])
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
 
     lifecycle.do_stop()
@@ -77,7 +83,7 @@ def test_do_stop_reports_when_port_stuck(tmp_path, monkeypatch, capsys):
     pidfile.pid_path().write_text("4242", encoding="utf-8")
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: None)
-    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda port: [])
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
 
     lifecycle.do_stop()
@@ -89,7 +95,7 @@ def test_do_stop_not_running_message(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
-    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda port: [])
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
     # Nothing tracked AND port genuinely free → "not running".
     monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
@@ -99,11 +105,12 @@ def test_do_stop_not_running_message(tmp_path, monkeypatch, capsys):
     assert "not running" in out.lower()
 
 
-def test_do_start_refuses_when_port_taken_and_untracked(tmp_path, monkeypatch, capsys):
+def test_do_start_refuses_when_port_persistently_taken(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
-    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    # Port stays in use throughout the grace window → genuine squatter → refuse.
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
     spawned = []
     monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
 
@@ -114,13 +121,44 @@ def test_do_start_refuses_when_port_taken_and_untracked(tmp_path, monkeypatch, c
     assert "in use" in err.lower()
 
 
+def test_do_start_proceeds_after_transient_port_clears(tmp_path, monkeypatch):
+    """Restart race: the port is briefly held (TIME_WAIT/lingering socket) right after
+    a stop, then clears within the grace window → do_start must proceed, not refuse."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    # Port frees within the grace window.
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
+    spawned = []
+    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
+
+    lifecycle.do_start(no_browser=True)
+    assert spawned == [True]  # transient hold tolerated
+
+
 def test_do_start_proceeds_when_port_free(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
-    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
     spawned = []
     monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
 
     lifecycle.do_start(no_browser=True)
     assert spawned == [True]
+
+
+def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch, capsys):
+    """The port guard must also protect the foreground path (write_pid + _run_server)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
+    ran = []
+    monkeypatch.setattr(lifecycle, "_run_server", lambda cfg: ran.append(True))
+    wrote = []
+    monkeypatch.setattr(lifecycle, "write_pid", lambda: wrote.append(True))
+
+    with pytest.raises(typer.Exit):
+        lifecycle.do_start(no_browser=True, foreground=True)
+    assert ran == [] and wrote == []  # guard fired before write_pid / _run_server
