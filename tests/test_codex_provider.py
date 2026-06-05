@@ -130,6 +130,31 @@ async def test_complete_via_stdin_jsonl(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_complete_exec_argv_no_removed_flags(monkeypatch):
+    """Codex CLI >=0.133 dropped `--ask-for-approval` from `exec`; passing it makes
+    the whole command fail with 'unexpected argument'. Guard the exact argv: keep the
+    read-only sandbox (containment) but never pass the removed approval flag."""
+    stdout = (
+        b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+        b'{"type":"turn.completed","usage":{}}\n'
+    )
+    captured = []
+    procs = {"exec": _FakeProc(stdout=stdout, returncode=0)}
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec_factory(captured, procs))
+
+    from aletheia.model_provider.base import ModelRequest
+    provider = CodexCLIProvider(enabled=True)
+    await provider.complete(ModelRequest(messages=[{"role": "user", "content": "x"}]))
+
+    exec_argv = next(c for c in captured if "exec" in c["argv"])["argv"]
+    assert "--ask-for-approval" not in exec_argv  # removed in codex >=0.133
+    # containment is still enforced: read-only sandbox, no git requirement
+    assert "--sandbox" in exec_argv
+    assert exec_argv[exec_argv.index("--sandbox") + 1] == "read-only"
+    assert "--skip-git-repo-check" in exec_argv
+
+
+@pytest.mark.anyio
 async def test_complete_nonzero_raises(monkeypatch):
     monkeypatch.setattr("aletheia.model_provider.codex_cli.shutil.which", lambda c: "/usr/bin/codex")
     procs = {"exec": _FakeProc(stdout=b"", stderr=b"boom", returncode=1)}
