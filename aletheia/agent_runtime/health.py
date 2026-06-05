@@ -20,6 +20,57 @@ _FAILED_STATUSES = {"failed", "error", "completed_with_errors"}
 # In-process de-dupe of consecutive unhealthy alerts.
 _last_alerted_unhealthy = False
 
+# In-process count of consecutive LLM-provider failures (reset on any success).
+# Lets compute_health() detect "alive but the model backend is down" — a zombie
+# state the process-liveness watchdog cannot see. Resets to 0 on restart, which
+# is fine: a restart re-probes the provider on the next agent run anyway.
+_llm_consecutive_failures = 0
+
+
+def record_llm_failure() -> None:
+    global _llm_consecutive_failures
+    _llm_consecutive_failures += 1
+
+
+def record_llm_success() -> None:
+    global _llm_consecutive_failures
+    _llm_consecutive_failures = 0
+
+
+def reset_llm_failures() -> None:
+    """Reset the counter (used by tests and at known-good boundaries)."""
+    global _llm_consecutive_failures
+    _llm_consecutive_failures = 0
+
+
+def get_llm_consecutive_failures() -> int:
+    return _llm_consecutive_failures
+
+
+def _market_data_stale_minutes(cfg) -> float | None:
+    """Minutes since the newest market snapshot, or None if not applicable.
+
+    Returns None (i.e. "do not flag") when paused, when the scheduler is
+    disabled, when no snapshot exists yet, or when the timestamp can't be parsed
+    — staleness only means something when the feed is supposed to be updating.
+    """
+    if cfg.runtime.paused or not cfg.runtime.scheduler_enabled:
+        return None
+    try:
+        from datetime import datetime
+        from aletheia.storage.repositories import list_market_snapshots
+        rows = list_market_snapshots(limit=1)
+        if not rows:
+            return None  # never collected yet — "not started", not "stale"
+        snapshot_at = rows[0].get("snapshot_at")
+        if not snapshot_at:
+            return None
+        ts = datetime.fromisoformat(snapshot_at)  # naive UTC isoformat
+        return (datetime.utcnow() - ts).total_seconds() / 60.0
+    except Exception as e:
+        logger.warning("market-data staleness check failed: %s", e)
+        return None
+
 
 def compute_health() -> dict:
     """Compute current health from real backend data. Returns {healthy, issues}."""
@@ -35,6 +86,13 @@ def compute_health() -> dict:
 
     if cfg.runtime.kill_switch_active:
         issues.append("kill_switch_active")
+
+    stale_min = _market_data_stale_minutes(cfg)
+    if stale_min is not None and stale_min > cfg.health.market_data_max_staleness_min:
+        issues.append(f"market_data_stale:{stale_min:.0f}min")
+
+    if _llm_consecutive_failures >= cfg.health.llm_unavailable_alert_after:
+        issues.append(f"llm_unavailable:{_llm_consecutive_failures}")
 
     return {"healthy": len(issues) == 0, "issues": issues}
 
