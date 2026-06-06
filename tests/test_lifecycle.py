@@ -105,20 +105,68 @@ def test_do_stop_not_running_message(tmp_path, monkeypatch, capsys):
     assert "not running" in out.lower()
 
 
-def test_do_start_refuses_when_port_persistently_taken(tmp_path, monkeypatch, capsys):
+def test_do_start_refuses_when_port_held_by_foreign_process(tmp_path, monkeypatch, capsys):
+    """Port held, no orphans found → foreign process → refuse."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
-    # Port stays in use throughout the grace window → genuine squatter → refuse.
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     spawned = []
     monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
 
     with pytest.raises(typer.Exit):
         lifecycle.do_start(no_browser=True)
-    assert spawned == []  # never spawned a doomed supervisor
+    assert spawned == []
     err = capsys.readouterr().err
-    assert "in use" in err.lower()
+    assert "foreign" in err.lower()
+
+
+def test_do_start_self_heals_orphan_then_proceeds(tmp_path, monkeypatch):
+    """Port held by an Aletheia orphan → auto-kill → port frees → spawn succeeds."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [9999])
+    killed = []
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
+
+    # First call (timeout=3.0) returns False (port held); second call (timeout=5.0)
+    # after orphan kill returns True (port freed).
+    call_count = {"n": 0}
+    def staged_wait(port, host, timeout=10.0):
+        call_count["n"] += 1
+        return call_count["n"] > 1  # False first time, True second time
+    monkeypatch.setattr(lifecycle, "wait_port_free", staged_wait)
+
+    spawned = []
+    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
+
+    lifecycle.do_start(no_browser=True)
+    assert killed == [9999]
+    assert spawned == [True]
+
+
+def test_do_start_refuses_when_orphan_kill_doesnt_free_port(tmp_path, monkeypatch, capsys):
+    """Orphan found and killed, but port STILL held → refuse (not our process)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [8888])
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: None)
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    spawned = []
+    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
+
+    with pytest.raises(typer.Exit):
+        lifecycle.do_start(no_browser=True)
+    assert spawned == []
+    err = capsys.readouterr().err
+    assert "still in use" in err.lower()
 
 
 def test_do_start_proceeds_after_transient_port_clears(tmp_path, monkeypatch):
@@ -154,6 +202,8 @@ def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch
     from aletheia.gateway import lifecycle
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: False)
+    monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     ran = []
     monkeypatch.setattr(lifecycle, "_run_server", lambda cfg: ran.append(True))
     wrote = []
@@ -210,3 +260,34 @@ def test_spawn_background_posix_unchanged(tmp_path, monkeypatch):
 
     assert "creationflags" not in captured["kwargs"]
     assert captured["kwargs"].get("start_new_session") is True
+
+
+# --- Headless detection + safe echo ---
+
+def test_is_headless_false_on_posix(monkeypatch):
+    from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle.platform, "system", lambda: "Linux")
+    assert lifecycle._is_headless() is False
+
+
+def test_is_headless_true_for_pythonw(monkeypatch):
+    from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(lifecycle.sys, "executable", r"C:\Python\pythonw.exe")
+    assert lifecycle._is_headless() is True
+
+
+def test_echo_safe_suppresses_in_headless(tmp_path, monkeypatch, capsys):
+    from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
+    lifecycle._echo_safe("should not appear on stderr")
+    out = capsys.readouterr()
+    assert out.err == ""
+
+
+def test_echo_safe_writes_stderr_when_not_headless(tmp_path, monkeypatch, capsys):
+    from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    lifecycle._echo_safe("visible error")
+    out = capsys.readouterr()
+    assert "visible error" in out.err

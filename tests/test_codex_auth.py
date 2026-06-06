@@ -136,3 +136,44 @@ async def test_poll_status_completes_then_cancel(monkeypatch, tmp_path):
 
     cancelled = auth.cancel()
     assert cancelled["state"] == "cancelled"
+
+
+# --- subprocess creationflags (no wt window on Win11) ---
+
+@pytest.mark.anyio
+async def test_codex_auth_passes_create_no_window_on_windows(monkeypatch, tmp_path):
+    """Both start_login and poll_status subprocess calls must pass creationflags on Win."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    import aletheia.model_provider.codex_auth as auth
+    import aletheia.gateway.pidfile as pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(auth.shutil, "which", lambda c: "/usr/bin/codex")
+
+    captured = []
+
+    async def capturing_exec(*args, **kwargs):
+        captured.append({"argv": list(args), "kwargs": kwargs})
+        if "--device-auth" in args:
+            return _FakeProc(stdout_lines=[
+                b"Visit https://auth.openai.com/device to authorize\n",
+                b"Enter the code: ABCD-1234\n",
+            ])
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", capturing_exec)
+
+    await auth.start_login()
+    # start_login spawns one process
+    assert len(captured) >= 1
+    flags = captured[0]["kwargs"].get("creationflags", 0)
+    assert flags & 0x08000000 == 0x08000000
+
+    # poll_status spawns another
+    captured.clear()
+    await auth.poll_status()
+    assert len(captured) >= 1
+    flags = captured[0]["kwargs"].get("creationflags", 0)
+    assert flags & 0x08000000 == 0x08000000

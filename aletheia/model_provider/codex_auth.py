@@ -19,6 +19,7 @@ import re
 import shutil
 
 from aletheia.files.jsonl import write_audit
+from aletheia.gateway.pidfile import _no_window_kwargs
 
 logger = logging.getLogger("aletheia.model_provider.codex_auth")
 
@@ -70,6 +71,7 @@ async def start_login() -> dict:
                 _COMMAND, "login", "--device-auth",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                **_no_window_kwargs(),
             )
         except Exception as e:
             _session.state = "failed"
@@ -123,6 +125,7 @@ async def poll_status() -> dict:
         proc = await asyncio.create_subprocess_exec(
             _COMMAND, "login", "status",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            **_no_window_kwargs(),
         )
         await asyncio.wait_for(proc.communicate(), timeout=_STATUS_TIMEOUT)
         rc = proc.returncode
