@@ -44,6 +44,50 @@ def _no_window_kwargs() -> dict:
     return {}
 
 
+def _resolve_real_python() -> tuple[str, dict]:
+    """Resolve the real Python interpreter, bypassing uv venv trampoline shims.
+
+    uv-created venv shims (.venv/Scripts/python.exe) are Console-subsystem
+    executables that internally spawn the real python.exe via CreateProcessW
+    WITHOUT passing CREATE_NO_WINDOW. This causes a console allocation (and a
+    Windows Terminal flash on Win11) even when the parent used DETACHED_PROCESS.
+
+    Returns (real_python_path, env_patch) where env_patch contains
+    __PYVENV_LAUNCHER__ so the real Python still finds the venv's site-packages.
+    On POSIX or if no shim is detected, returns (sys.executable, {}).
+    """
+    import sys as _sys
+
+    if platform.system() != "Windows":
+        return (_sys.executable, {})
+
+    exe = Path(_sys.executable).resolve()
+    venv_dir = exe.parent.parent  # .venv/Scripts/python.exe → .venv/
+    pyvenv_cfg = venv_dir / "pyvenv.cfg"
+
+    if not pyvenv_cfg.exists():
+        return (str(exe), {})
+
+    # Parse pyvenv.cfg for the 'home' key (points to real Python directory).
+    home = None
+    for line in pyvenv_cfg.read_text(encoding="utf-8").splitlines():
+        if line.lower().startswith("home"):
+            _, _, val = line.partition("=")
+            home = val.strip()
+            break
+
+    if not home:
+        return (str(exe), {})
+
+    real_python = Path(home) / "python.exe"
+    if not real_python.exists():
+        return (str(exe), {})
+
+    # __PYVENV_LAUNCHER__ tells CPython's site.py to activate the venv.
+    env_patch = {"__PYVENV_LAUNCHER__": str(exe)}
+    return (str(real_python), env_patch)
+
+
 def pid_path() -> Path:
     return get_data_dir() / "gateway.pid"
 

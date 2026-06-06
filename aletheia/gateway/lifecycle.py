@@ -11,6 +11,7 @@ from aletheia.config.loader import bootstrap, load_config, save_config, get_data
 from aletheia.gateway.pidfile import (
     is_running, read_pid, write_pid, clear_pid, pid_path,
     kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
+    _resolve_real_python,
 )
 from aletheia.gateway.browser import open_browser
 from aletheia.gateway.logs import tail_logs, log_path
@@ -73,24 +74,27 @@ def _run_server(cfg) -> None:
 
 def _spawn_background(no_browser: bool) -> None:
     """Spawn a detached background process running the gateway."""
+    import os
     script = Path(__file__).resolve().parent.parent / "_gateway_runner.py"
-    args = [sys.executable, str(script)]
+    real_python, env_patch = _resolve_real_python()
+    args = [real_python, str(script)]
     if no_browser:
         args.append("--no-browser")
 
     if platform.system() == "Windows":
-        # DETACHED_PROCESS removes the inherited console; CREATE_NO_WINDOW also
-        # forbids allocating a new one (Win11 would otherwise host it via
-        # Windows Terminal). CREATE_NEW_PROCESS_GROUP isolates ctrl-C semantics.
         CREATE_NEW_PROCESS_GROUP = 0x00000200
         DETACHED_PROCESS = 0x00000008
         CREATE_NO_WINDOW = 0x08000000
-        subprocess.Popen(
-            args,
-            creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        popen_kwargs: dict = {
+            "creationflags": CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if env_patch:
+            env = os.environ.copy()
+            env.update(env_patch)
+            popen_kwargs["env"] = env
+        subprocess.Popen(args, **popen_kwargs)
     else:
         subprocess.Popen(
             args,

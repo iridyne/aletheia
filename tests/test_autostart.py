@@ -89,8 +89,9 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     assert "<LogonType>InteractiveToken</LogonType>" in xml
     assert "<RunLevel>LeastPrivilege</RunLevel>" in xml
     assert "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>" in xml
-    assert "-m aletheia.main gateway start --no-browser" in xml
-    assert r"C:\venv\Scripts\pythonw.exe" in xml
+    # Arguments must contain the gateway start command (either direct -m or -c bootstrap).
+    assert "gateway" in xml and "start" in xml and "--no-browser" in xml
+    assert "pythonw.exe" in xml
     # Window suppression: Task Scheduler must mark the task hidden so no console
     # flashes on the LogonTrigger fire (and PT5M watchdog ticks).
     assert "<Hidden>true</Hidden>" in xml

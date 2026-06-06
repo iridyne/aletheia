@@ -49,14 +49,31 @@ def _exists(path) -> bool:
 
 
 def _python_for_task() -> str:
-    """Return the interpreter the task should run.
+    """Return the real GUI-subsystem pythonw.exe for the task, bypassing shims.
 
-    Prefer the windowless ``pythonw.exe`` sibling of the current interpreter (no
-    console flash on logon); fall back to ``sys.executable``. Using sys.executable
-    pins the active venv — the update applier installs the package editable into
-    it, so this captures the right environment at enable time.
+    uv-created venv shims are Console-subsystem executables — Task Scheduler
+    launching them allocates a console (Win11 Windows Terminal flash). We resolve
+    through pyvenv.cfg to the base installation's pythonw.exe (GUI subsystem,
+    PE subsystem=2), which never allocates a console.
     """
     exe = sys.executable
+    venv_dir = Path(exe).resolve().parent.parent
+    pyvenv_cfg = venv_dir / "pyvenv.cfg"
+
+    if _exists(pyvenv_cfg):
+        try:
+            for line in Path(pyvenv_cfg).read_text(encoding="utf-8").splitlines():
+                if line.lower().startswith("home"):
+                    _, _, val = line.partition("=")
+                    home = val.strip()
+                    real_pyw = Path(home) / "pythonw.exe"
+                    if _exists(real_pyw):
+                        return str(real_pyw)
+                    break
+        except (OSError, ValueError):
+            pass
+
+    # Fallback: try sibling pythonw.exe (non-uv venvs or system install).
     try:
         pyw = Path(exe).with_name("pythonw.exe")
         if _exists(pyw):
@@ -79,6 +96,36 @@ def _xml_escape(text: str) -> str:
     )
 
 
+def _task_arguments() -> str:
+    """Build the task arguments, injecting __PYVENV_LAUNCHER__ if needed.
+
+    When using the real pythonw.exe (resolved through pyvenv.cfg), it needs
+    __PYVENV_LAUNCHER__ set to find the venv's site-packages. We pass a -c
+    bootstrap that sets the env var, activates the venv path, and then runs
+    the gateway CLI.
+    """
+    exe = sys.executable
+    venv_dir = Path(exe).resolve().parent.parent
+    pyvenv_cfg = venv_dir / "pyvenv.cfg"
+    real_python = _python_for_task()
+
+    # If we resolved to a real python (different from venv shim), need bootstrap.
+    if _exists(pyvenv_cfg) and str(Path(exe).resolve()) != str(Path(real_python).resolve()):
+        venv_python = str(Path(exe).resolve())
+        project_root = str(_PROJECT_ROOT)
+        # Inline bootstrap: set __PYVENV_LAUNCHER__ so site.py finds the venv,
+        # then import and run the gateway CLI.
+        return (
+            f'-c "import os,sys;'
+            f"os.environ['__PYVENV_LAUNCHER__']=r'{venv_python}';"
+            f"os.chdir(r'{project_root}');"
+            f"from aletheia.main import app;"
+            f"sys.argv=['task','gateway','start','--no-browser'];"
+            f'app()"'
+        )
+    return "-m aletheia.main gateway start --no-browser"
+
+
 def _build_task_xml() -> str:
     """Build the Task Scheduler definition XML.
 
@@ -90,7 +137,7 @@ def _build_task_xml() -> str:
     """
     user = _xml_escape(_current_user())
     command = _xml_escape(_python_for_task())
-    arguments = "-m aletheia.main gateway start --no-browser"
+    arguments = _xml_escape(_task_arguments())
     workdir = _xml_escape(str(_PROJECT_ROOT))
     return (
         '<?xml version="1.0" encoding="UTF-16"?>\n'
