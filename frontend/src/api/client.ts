@@ -89,6 +89,21 @@ export const api = {
     reason?: string; detail?: string
   }>('/gateway/autostart', { enabled }),
 
+  // Activity feed (unified timeline)
+  getActivityFeed: (limit = 30) => fetchJson<any[]>(`/activity?limit=${limit}`),
+
+  // Command Center
+  postCommand: (text: string, context?: Record<string, any>) =>
+    post<{ type: string; message: string; cards?: any[]; actions?: any[] }>('/command', { text, context }),
+
+  // News Intelligence
+  getNews: (limit = 50, status?: string) =>
+    fetchJson<any[]>(`/news?limit=${limit}${status ? `&status=${status}` : ''}`),
+  createNews: (item: { headline: string; source?: string; summary?: string; related_assets?: string[]; event_type?: string; sentiment?: string; urgency?: string; key_points?: string[] }) =>
+    post<any>('/news', item),
+  archiveNews: (id: string) => post<any>(`/news/${id}/archive`),
+  createResearchNoteFromNews: (id: string) => post<any>(`/news/${id}/create-research-note`),
+
   // Data
   getAgentRuns: () => fetchJson<any[]>('/agent-runs'),
   startAgentRun: (agent_name: string) => post('/agent-runs/start', { agent_name }),

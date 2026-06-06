@@ -223,3 +223,47 @@ async def get_dreaming_logs():
 async def get_strategy_memory():
     _ensure_db()
     return repo.list_knowledge_items(item_type="strategy_memory")
+
+
+@router.get("/activity")
+async def get_activity_feed(limit: int = 30):
+    """Unified activity timeline: merges agent runs + audit events into a single feed."""
+    _ensure_db()
+    limit = max(1, min(limit, 100))
+    events: list[dict] = []
+
+    for run in repo.list_agent_runs(limit=limit):
+        events.append({
+            "id": run.get("id", ""),
+            "type": "agent",
+            "category": "agent",
+            "timestamp": run.get("started_at") or run.get("created_at") or "",
+            "summary": f"{run.get('agent_name', 'agent')} — {run.get('status', 'unknown')}",
+            "data": run,
+        })
+
+    for evt in repo.list_audit_events(limit=limit):
+        cat = _classify_audit_event(evt.get("event_type", ""))
+        events.append({
+            "id": evt.get("id", evt.get("timestamp", "")),
+            "type": "audit",
+            "category": cat,
+            "timestamp": evt.get("timestamp") or evt.get("created_at") or "",
+            "summary": evt.get("message") or evt.get("event_type", "event"),
+            "data": evt,
+        })
+
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+    return events[:limit]
+
+
+def _classify_audit_event(event_type: str) -> str:
+    if "risk" in event_type or "kill" in event_type:
+        return "risk"
+    if "trade" in event_type or "proposal" in event_type or "order" in event_type:
+        return "trade"
+    if "agent" in event_type or "run" in event_type:
+        return "agent"
+    if "gateway" in event_type or "autostart" in event_type or "orphan" in event_type:
+        return "system"
+    return "system"

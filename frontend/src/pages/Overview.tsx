@@ -1,9 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import SetupBanner from '../components/SetupBanner'
+import { useInspector } from '../context/InspectorContext'
 
 export default function Overview() {
   const qc = useQueryClient()
+  const { setObject } = useInspector()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus })
@@ -11,8 +13,9 @@ export default function Overview() {
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
-  const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
+  const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
   const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
+  const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const exchangeMode = String((status as any)?.exchange_mode || '')
   const { data: exchangeHealth } = useQuery({
     queryKey: ['bitget-test', exchangeMode],
@@ -20,71 +23,114 @@ export default function Overview() {
     refetchInterval: 15000,
     enabled: !!exchangeMode,
   })
-  const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
-  const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
 
   if (!status) return <p>Loading...</p>
 
-  const latestRun = (runs as any[])[0]
-  const latestProposal = (proposals as any[])[0]
   const openPositions = (positions as any[]).filter(p => p.status === 'open')
-  const riskState = String(riskStatus?.status || 'not_available')
-  const riskBadge = riskState === 'blocked' ? 'badge-red' : (riskState === 'warning' || riskState === 'not_available') ? 'badge-yellow' : 'badge-green'
-  const liveState = String(status.live_state)
-  const liveStateBadge = liveState === 'live_disabled' ? 'badge-red' : liveState === 'live_limited' ? 'badge-yellow' : 'badge-green'
-  const riskText = (riskStatus?.violations as string[] | undefined)?.length
-    ? `${riskState}: ${(riskStatus?.violations as string[]).join(', ')}`
-    : riskState
+  const pendingProposals = (proposals as any[]).filter(p => p.status === 'pending')
+  const recentRuns = (runs as any[]).slice(0, 5)
+  const recentOpps = (opportunities as any[]).slice(0, 5)
 
-  // Verified-Connection health on the landing page: default model provider + exchange.
   const defaultProvider = String(modelConfig?.default_provider || '')
   const dph = (modelHealth as any[]).find(h => h.provider === defaultProvider)
-  const modelBadge = dph?.available ? 'badge-green' : dph ? 'badge-red' : 'badge-yellow'
-  const modelText = dph?.available ? `connected (${defaultProvider})` : dph ? `unreachable: ${dph.error || '—'}` : 'checking…'
-  const exBadge = exchangeHealth?.connected ? 'badge-green' : exchangeHealth ? 'badge-red' : 'badge-yellow'
-  const exText = exchangeHealth?.connected ? 'connected' : exchangeHealth ? `unreachable: ${exchangeHealth.error || '—'}` : 'checking…'
+  const riskState = String(riskStatus?.status || 'unknown')
 
   return (
     <div>
-      <h2 className="page-title">Overview</h2>
+      <h2 className="page-title">Cockpit</h2>
       <SetupBanner />
-      <div className="card">
-        <h3>System</h3>
-        <table>
-          <tbody>
-            <tr><th>Gateway</th><td><span className={`badge ${status.gateway_running ? 'badge-green' : 'badge-red'}`}>{status.gateway_running ? 'Running' : 'Stopped'}</span></td></tr>
-            <tr><th>State</th><td><span className={`badge ${status.paused ? 'badge-yellow' : 'badge-green'}`}>{status.paused ? 'Paused' : 'Active'}</span></td></tr>
-            <tr><th>Exchange</th><td>{String(status.exchange)} ({String(status.exchange_mode)}) <span className={`badge ${exBadge}`}>{exText}</span></td></tr>
-            <tr><th>Model</th><td><span className={`badge ${modelBadge}`}>{modelText}</span></td></tr>
-            <tr><th>Live State</th><td><span className={`badge ${liveStateBadge}`}>{String(status.live_state)}</span></td></tr>
-            <tr><th>Permission</th><td><span className="badge badge-blue">{String(status.permission_mode)}</span></td></tr>
-            <tr><th>Kill Switch</th><td><span className={`badge ${killSwitch?.active ? 'badge-red' : 'badge-green'}`}>{killSwitch?.active ? 'ENGAGED' : 'inactive'}</span></td></tr>
-          </tbody>
-        </table>
+
+      {/* System State */}
+      <div className="cockpit-grid">
+        <div className="card">
+          <h3>System State</h3>
+          <div className="cockpit-fields">
+            <Field label="Gateway" value={status.gateway_running ? 'Running' : 'Stopped'} badge={status.gateway_running ? 'badge-green' : 'badge-red'} />
+            <Field label="Agents" value={status.paused ? 'Paused' : 'Active'} badge={status.paused ? 'badge-yellow' : 'badge-green'} />
+            <Field label="Permission" value={String(status.permission_mode)} badge="badge-blue" />
+            <Field label="Live State" value={String(status.live_state)} badge={status.live_state === 'live_disabled' ? 'badge-red' : 'badge-yellow'} />
+            <Field label="Kill Switch" value={killSwitch?.active ? 'ENGAGED' : 'inactive'} badge={killSwitch?.active ? 'badge-red' : 'badge-green'} />
+            <Field label="Model" value={dph?.available ? `connected (${defaultProvider})` : 'checking...'} badge={dph?.available ? 'badge-green' : 'badge-yellow'} />
+            <Field label="Exchange" value={exchangeHealth?.connected ? 'connected' : 'checking...'} badge={exchangeHealth?.connected ? 'badge-green' : 'badge-yellow'} />
+          </div>
+        </div>
+
+        <div className="card">
+          <h3>Risk State</h3>
+          <div className="cockpit-fields">
+            <Field label="Status" value={riskState} badge={riskState === 'ok' ? 'badge-green' : riskState === 'blocked' ? 'badge-red' : 'badge-yellow'} />
+            <Field label="Open Positions" value={String(openPositions.length)} />
+            <Field label="Total Value" value={`${portfolio?.total_value_usdt ?? '—'} USDT`} />
+            <Field label="Today PnL" value={String(portfolio?.today_pnl ?? portfolio?.unrealized_pnl ?? '—')} />
+          </div>
+        </div>
       </div>
 
-      <div className="card">
-        <h3>Account / PnL</h3>
-        <table>
-          <tbody>
-            <tr><th>Total value (USDT)</th><td>{portfolio?.total_value_usdt ?? '—'}</td></tr>
-            <tr><th>Today PnL</th><td>{portfolio?.today_pnl ?? portfolio?.unrealized_pnl ?? '—'}</td></tr>
-            <tr><th>Open positions</th><td>{openPositions.length}</td></tr>
-            <tr><th>Risk state</th><td><span className={`badge ${riskBadge}`}>{riskText}</span></td></tr>
-          </tbody>
-        </table>
-      </div>
+      {/* Action Queue */}
+      {pendingProposals.length > 0 && (
+        <div className="card">
+          <h3>Pending Actions ({pendingProposals.length})</h3>
+          <table>
+            <thead><tr><th>Symbol</th><th>Direction</th><th>Mode</th><th>Rationale</th></tr></thead>
+            <tbody>
+              {pendingProposals.slice(0, 5).map((p: any) => (
+                <tr key={p.id} onClick={() => setObject({ type: 'proposal', id: p.id, data: p })}>
+                  <td>{p.symbol}</td>
+                  <td>{p.direction}</td>
+                  <td>{p.execution_mode}</td>
+                  <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.agent_rationale || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      <div className="card">
-        <h3>Latest Activity</h3>
-        <p>Latest agent run: {latestRun ? `${latestRun.agent_name} — ${latestRun.status}` : 'none yet'}</p>
-        <p>Latest proposal: {latestProposal ? `${latestProposal.symbol} ${latestProposal.direction} — ${latestProposal.status}` : 'none yet'}</p>
-      </div>
+      {/* Agent Focus */}
+      <div className="cockpit-grid">
+        <div className="card">
+          <h3>Recent Agent Activity</h3>
+          {recentRuns.length === 0 ? <p style={{ color: 'var(--muted)' }}>No runs yet.</p> : (
+            <table>
+              <tbody>
+                {recentRuns.map((r: any) => (
+                  <tr key={r.id} onClick={() => setObject({ type: 'agent_run', id: r.id, data: r })}>
+                    <td>{r.agent_name}</td>
+                    <td><span className={`badge ${r.status === 'completed' ? 'badge-green' : 'badge-yellow'}`}>{r.status}</span></td>
+                    <td style={{ color: 'var(--faint)', fontSize: '0.75rem' }}>{r.started_at?.slice(11, 16)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
 
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <button onClick={() => pauseMut.mutate()} disabled={!!status.paused}>Pause</button>
-        <button onClick={() => resumeMut.mutate()} disabled={!status.paused}>Resume</button>
+        <div className="card">
+          <h3>Recent Opportunities</h3>
+          {recentOpps.length === 0 ? <p style={{ color: 'var(--muted)' }}>None yet.</p> : (
+            <table>
+              <tbody>
+                {recentOpps.map((o: any) => (
+                  <tr key={o.id} onClick={() => setObject({ type: 'opportunity', id: o.id, data: o })}>
+                    <td>{o.symbol}</td>
+                    <td>{o.direction_bias}</td>
+                    <td><span className="badge badge-blue">{o.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
+    </div>
+  )
+}
+
+function Field({ label, value, badge }: { label: string; value: string; badge?: string }) {
+  return (
+    <div className="cockpit-field">
+      <span className="cockpit-field-label">{label}</span>
+      {badge ? <span className={`badge ${badge}`}>{value}</span> : <span className="cockpit-field-value">{value}</span>}
     </div>
   )
 }

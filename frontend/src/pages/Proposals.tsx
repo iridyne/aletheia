@@ -1,8 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { useInspector } from '../context/InspectorContext'
 
 export default function Proposals() {
   const qc = useQueryClient()
+  const { setObject } = useInspector()
   const { data = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
   const approve = useMutation({
     mutationFn: (id: string) => api.approveProposal(id),
@@ -23,7 +25,7 @@ export default function Proposals() {
             <thead><tr><th>Symbol</th><th>Market</th><th>Direction</th><th>Mode</th><th>Rationale</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
               {rows.map((p: any) => (
-                <tr key={p.id}>
+                <tr key={p.id} onClick={() => setObject({ type: 'proposal', id: p.id, data: p })}>
                   <td>{p.symbol}</td>
                   <td>{p.market_type}</td>
                   <td>{p.direction}</td>
@@ -32,7 +34,7 @@ export default function Proposals() {
                   <td><span className={`badge ${p.status === 'executed' || p.status === 'approved' ? 'badge-green' : p.status === 'rejected' ? 'badge-red' : 'badge-yellow'}`}>{p.status}</span></td>
                   <td>
                     {p.status === 'pending' ? (
-                      <div style={{ display: 'flex', gap: '0.25rem' }}>
+                      <div style={{ display: 'flex', gap: '0.25rem' }} onClick={e => e.stopPropagation()}>
                         <button onClick={() => approve.mutate(p.id)}>Approve</button>
                         <button className="secondary" onClick={() => reject.mutate(p.id)}>Reject</button>
                       </div>

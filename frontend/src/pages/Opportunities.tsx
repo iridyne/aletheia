@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { useInspector } from '../context/InspectorContext'
 
 export default function Opportunities() {
+  const { setObject } = useInspector()
   const { data = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
   return (
     <div>
@@ -12,7 +14,7 @@ export default function Opportunities() {
             <thead><tr><th>Symbol</th><th>Market</th><th>Direction</th><th>Confidence</th><th>Status</th></tr></thead>
             <tbody>
               {(data as any[]).map((o: any) => (
-                <tr key={o.id}>
+                <tr key={o.id} onClick={() => setObject({ type: 'opportunity', id: o.id, data: o })}>
                   <td>{o.symbol}</td><td>{o.market}</td><td>{o.direction_bias}</td>
                   <td>{o.confidence}</td><td><span className="badge badge-blue">{o.status}</span></td>
                 </tr>
