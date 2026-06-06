@@ -162,3 +162,51 @@ def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch
     with pytest.raises(typer.Exit):
         lifecycle.do_start(no_browser=True, foreground=True)
     assert ran == [] and wrote == []  # guard fired before write_pid / _run_server
+
+
+# --- Background spawn console suppression (no Windows Terminal pop-up) ---
+
+def test_spawn_background_uses_create_no_window_on_windows(tmp_path, monkeypatch):
+    """Win11 needs CREATE_NO_WINDOW alongside DETACHED_PROCESS to forbid console
+    allocation; without it Windows Terminal pops up for the supervisor child."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+
+    captured = {}
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        class P: pass
+        return P()
+
+    monkeypatch.setattr(lifecycle.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lifecycle.platform, "system", lambda: "Windows", raising=False)
+
+    lifecycle._spawn_background(no_browser=True)
+
+    flags = captured["kwargs"].get("creationflags", 0)
+    assert flags & 0x08000000 == 0x08000000  # CREATE_NO_WINDOW
+    assert flags & 0x00000008 == 0x00000008  # DETACHED_PROCESS still set
+    assert flags & 0x00000200 == 0x00000200  # CREATE_NEW_PROCESS_GROUP still set
+
+
+def test_spawn_background_posix_unchanged(tmp_path, monkeypatch):
+    """POSIX path: no creationflags, start_new_session=True preserved."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+
+    captured = {}
+
+    def fake_popen(args, **kwargs):
+        captured["kwargs"] = kwargs
+        class P: pass
+        return P()
+
+    monkeypatch.setattr(lifecycle.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(lifecycle.platform, "system", lambda: "Linux", raising=False)
+
+    lifecycle._spawn_background(no_browser=True)
+
+    assert "creationflags" not in captured["kwargs"]
+    assert captured["kwargs"].get("start_new_session") is True

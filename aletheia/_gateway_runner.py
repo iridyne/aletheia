@@ -10,12 +10,20 @@ stop`/`status` keep working. The inner server's stderr is sent to
 data/logs/errors.log instead of being discarded.
 """
 
+import platform
+import subprocess
 import sys
 import time
 
 from aletheia.config.loader import bootstrap, get_data_dir
 from aletheia.gateway.pidfile import write_pid
 from aletheia.gateway.browser import open_browser
+
+# Win32: forbid the OS from allocating a console for the inner uvicorn process.
+# Without this, Win11 hosts the console via Windows Terminal and a wt window pops
+# up every time the supervisor spawns the server. Suppression only — stderr still
+# flows to data/logs/errors.log via the existing redirect.
+CREATE_NO_WINDOW = 0x08000000
 
 
 def _sleep(seconds: float) -> None:
@@ -24,8 +32,6 @@ def _sleep(seconds: float) -> None:
 
 def _spawn_server(cfg) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code."""
-    import subprocess
-
     errors_log = get_data_dir() / "logs" / "errors.log"
     errors_log.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -33,8 +39,15 @@ def _spawn_server(cfg) -> int:
         "--host", cfg.app.bind_host, "--port", str(cfg.app.dashboard_port),
         "--log-level", "info",
     ]
+    popen_kwargs: dict = {"stdout": subprocess.DEVNULL}
+    # NOTE: stderr→errors_log redirect is the only post-mortem signal for inner
+    # uvicorn crashes; CREATE_NO_WINDOW only suppresses the console window and
+    # does not affect this redirect.
+    if platform.system() == "Windows":
+        popen_kwargs["creationflags"] = CREATE_NO_WINDOW
     with errors_log.open("a", encoding="utf-8") as ef:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=ef)
+        popen_kwargs["stderr"] = ef
+        proc = subprocess.Popen(cmd, **popen_kwargs)
         return proc.wait()
 
 
