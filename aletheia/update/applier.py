@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config, save_config, _PROJECT_ROOT
 from aletheia.files.jsonl import write_audit
+from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.update import git_ops
 from aletheia.update.smoke import run_smoke_check
 
@@ -56,7 +57,11 @@ def _reinstall_deps() -> dict:
     """Reinstall the package (editable) so changed dependencies take effect."""
     for cmd in (["uv", "pip", "install", "-e", "."], ["pip", "install", "-e", "."]):
         try:
-            r = subprocess.run(cmd, cwd=str(_PROJECT_ROOT), capture_output=True, text=True)
+            r = subprocess.run(
+                cmd,
+                cwd=str(_PROJECT_ROOT), capture_output=True, text=True,
+                **_no_window_kwargs(),
+            )
             if r.returncode == 0:
                 return {"ok": True, "tool": cmd[0]}
         except FileNotFoundError:

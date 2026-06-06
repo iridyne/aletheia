@@ -98,12 +98,77 @@ def test_kill_pid_tree_windows_uses_T_and_F(monkeypatch):
     calls = {}
     def fake_run(argv, **kwargs):
         calls["argv"] = argv
+        calls["kwargs"] = kwargs
         class R: returncode = 0
         return R()
     monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
     pidfile.kill_pid_tree(4242)
     assert "/T" in calls["argv"] and "/F" in calls["argv"]
     assert "4242" in calls["argv"]
+    # Console suppression: this taskkill must not flash a wt window even when the
+    # caller (do_stop) is a detached supervisor with no inherited console.
+    assert calls["kwargs"].get("creationflags", 0) & 0x08000000 == 0x08000000
+
+
+# --- _no_window_kwargs helper + Win32 console suppression splats ---
+
+def test_no_window_kwargs_helper_windows(monkeypatch):
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    assert pidfile._no_window_kwargs() == {"creationflags": 0x08000000}
+
+
+def test_no_window_kwargs_helper_posix(monkeypatch):
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Linux")
+    assert pidfile._no_window_kwargs() == {}
+
+
+def test_pid_alive_windows_uses_create_no_window(monkeypatch):
+    """Tasklist runs from is_running on every gateway start — the PT5M watchdog
+    fires this every 5 minutes, so it must not flash a console window."""
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    calls = {}
+    def fake_run(argv, **kwargs):
+        calls["argv"] = argv
+        calls["kwargs"] = kwargs
+        class R: stdout = ""
+        return R()
+    monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
+    pidfile._pid_alive(4242)
+    assert calls["argv"][0] == "tasklist"
+    assert calls["kwargs"].get("creationflags", 0) & 0x08000000 == 0x08000000
+
+
+def test_list_processes_windows_powershell_uses_create_no_window(monkeypatch):
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    calls = {}
+    def fake_run(argv, **kwargs):
+        calls["argv"] = argv
+        calls["kwargs"] = kwargs
+        class R: stdout = ""
+        return R()
+    monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
+    pidfile._list_processes()
+    assert calls["argv"][0] == "powershell"
+    assert calls["kwargs"].get("creationflags", 0) & 0x08000000 == 0x08000000
+
+
+def test_list_processes_posix_no_creationflags(monkeypatch):
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Linux")
+    calls = {}
+    def fake_run(argv, **kwargs):
+        calls["argv"] = argv
+        calls["kwargs"] = kwargs
+        class R: stdout = ""
+        return R()
+    monkeypatch.setattr(pidfile.subprocess, "run", fake_run)
+    pidfile._list_processes()
+    assert calls["argv"][0] == "ps"
+    assert "creationflags" not in calls["kwargs"]
 
 
 def test_kill_pid_tree_posix_uses_killpg(monkeypatch):

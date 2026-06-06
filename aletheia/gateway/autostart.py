@@ -30,6 +30,7 @@ from pathlib import Path
 
 from aletheia.config.loader import _PROJECT_ROOT
 from aletheia.files.jsonl import write_audit
+from aletheia.gateway.pidfile import _no_window_kwargs
 
 TASK_NAME = "Aletheia Trading OS Gateway"
 
@@ -173,6 +174,7 @@ def enable(source: str = "api") -> dict:
         proc = subprocess.run(
             ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", tmp, "/F"],
             capture_output=True, text=True, timeout=30,
+            **_no_window_kwargs(),
         )
     except FileNotFoundError:
         return {"supported": False, "enabled": False, "ok": False,
@@ -214,6 +216,7 @@ def disable(source: str = "api") -> dict:
         proc = subprocess.run(
             ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
             capture_output=True, text=True, timeout=30,
+            **_no_window_kwargs(),
         )
     except FileNotFoundError:
         return {"supported": False, "enabled": False, "ok": False,
@@ -259,6 +262,7 @@ def status() -> dict:
         proc = subprocess.run(
             ["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"],
             capture_output=True, text=True, timeout=30,
+            **_no_window_kwargs(),
         )
     except FileNotFoundError:
         return {"supported": False, "enabled": False, "task_name": TASK_NAME,

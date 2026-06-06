@@ -23,6 +23,26 @@ _GATEWAY_SUPERVISOR_MARKER = "_gateway_runner"
 # probing port liveness we redirect these to loopback (the actual reachable name).
 _WILDCARD_HOSTS = {"", "0.0.0.0", "::", "*"}
 
+# Win32 process-creation flag that prevents the OS from allocating a console for a
+# spawned child. On Win11, an inherited or fresh console for a child of a detached
+# parent is hosted via Windows Terminal (`wt.exe`), which flashes a black window
+# for every short-lived shell-out (tasklist, schtasks, git, pip, ...). Splat
+# **_no_window_kwargs() into every subprocess.run/Popen call reachable from a
+# detached parent (the supervisor / inner uvicorn / their children).
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _no_window_kwargs() -> dict:
+    """Return {'creationflags': CREATE_NO_WINDOW} on Windows, {} elsewhere.
+
+    Splat into subprocess.run/Popen kwargs to suppress the OS-allocated console
+    window without affecting any other behavior — capture_output, text, timeout,
+    cwd, and stdout/stderr redirects all pass through unchanged.
+    """
+    if platform.system() == "Windows":
+        return {"creationflags": _CREATE_NO_WINDOW}
+    return {}
+
 
 def pid_path() -> Path:
     return get_data_dir() / "gateway.pid"
@@ -61,6 +81,7 @@ def _pid_alive(pid: int) -> bool:
             out = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
                 capture_output=True, text=True, timeout=10,
+                **_no_window_kwargs(),
             ).stdout
             return str(pid) in out
         except Exception:
@@ -101,6 +122,7 @@ def kill_pid_tree(pid: int) -> None:
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 capture_output=True, timeout=15,
+                **_no_window_kwargs(),
             )
         else:
             try:
@@ -155,6 +177,7 @@ def _list_processes() -> list[tuple[int, str]]:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
             capture_output=True, text=True, timeout=20,
+            **_no_window_kwargs(),
         ).stdout
         sep = "\t"
     else:

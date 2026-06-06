@@ -94,6 +94,9 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     # Window suppression: Task Scheduler must mark the task hidden so no console
     # flashes on the LogonTrigger fire (and PT5M watchdog ticks).
     assert "<Hidden>true</Hidden>" in xml
+    # schtasks /Create itself must not flash a console window when called from a
+    # detached parent (e.g. the inner uvicorn API route serving /api/gateway/autostart).
+    assert rec.calls[0][1].get("creationflags", 0) & 0x08000000 == 0x08000000
 
 
 # --- 2. python resolution: prefer pythonw sibling, fall back to sys.executable ---
@@ -169,6 +172,8 @@ def test_disable_argv_and_audit(tmp_path, monkeypatch):
     assert args[0] == "schtasks"
     assert "/Delete" in args and "/TN" in args and "/F" in args
     assert autostart.TASK_NAME in args
+    # schtasks /Delete must not flash a console window from API-route detached caller.
+    assert rec.calls[0][1].get("creationflags", 0) & 0x08000000 == 0x08000000
 
     from aletheia.files.jsonl import read_jsonl
     assert any(e.get("event_type") == "autostart_disabled" for e in read_jsonl("audit.jsonl"))
@@ -199,13 +204,16 @@ def test_status_installed(tmp_path, monkeypatch):
         "Status:        Ready\r\n"
         "Schedule Type: At logon time\r\n"
     )
-    monkeypatch.setattr(autostart.subprocess, "run", _Recorder(returncode=0, stdout=stdout))
+    rec = _Recorder(returncode=0, stdout=stdout)
+    monkeypatch.setattr(autostart.subprocess, "run", rec)
 
     result = autostart.status()
     assert result["supported"] is True
     assert result["enabled"] is True
     assert result["task_name"] == autostart.TASK_NAME
     assert result["trigger"]  # best-effort trigger summary present
+    # schtasks /Query must not flash a console window from API-route detached caller.
+    assert rec.calls[0][1].get("creationflags", 0) & 0x08000000 == 0x08000000
 
 
 # --- 8. status: task not installed → enabled False (disabled) ---
