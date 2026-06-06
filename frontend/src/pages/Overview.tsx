@@ -1,10 +1,12 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import SetupBanner from '../components/SetupBanner'
+import StatusPill from '../components/shared/StatusPill'
+import MetricTile from '../components/shared/MetricTile'
 import { useInspector } from '../context/InspectorContext'
+import { pnlClass } from '../utils/statusColor'
 
 export default function Overview() {
-  const qc = useQueryClient()
   const { setObject } = useInspector()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
@@ -16,6 +18,9 @@ export default function Overview() {
   const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
   const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
+  const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(3), refetchInterval: 30000 })
+  const { data: strategies = [] } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
+  const { data: dreaming = [] } = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
   const exchangeMode = String((status as any)?.exchange_mode || '')
   const { data: exchangeHealth } = useQuery({
     queryKey: ['bitget-test', exchangeMode],
@@ -30,6 +35,8 @@ export default function Overview() {
   const pendingProposals = (proposals as any[]).filter(p => p.status === 'pending')
   const recentRuns = (runs as any[]).slice(0, 5)
   const recentOpps = (opportunities as any[]).slice(0, 5)
+  const activeStrategies = (strategies as any[]).filter((s: any) => ['paper_running', 'paper_passed', 'live_candidate', 'live_limited'].includes(s.state))
+  const latestDream = (dreaming as any[])[0]
 
   const defaultProvider = String(modelConfig?.default_provider || '')
   const dph = (modelHealth as any[]).find(h => h.provider === defaultProvider)
@@ -40,7 +47,7 @@ export default function Overview() {
       <h2 className="page-title">Cockpit</h2>
       <SetupBanner />
 
-      {/* System State */}
+      {/* System State + Risk + Markets */}
       <div className="cockpit-grid">
         <div className="card">
           <h3>System State</h3>
@@ -64,6 +71,22 @@ export default function Overview() {
             <Field label="Today PnL" value={String(portfolio?.today_pnl ?? portfolio?.unrealized_pnl ?? '—')} />
           </div>
         </div>
+
+        <div className="card">
+          <h3>Markets</h3>
+          {(snapshots as any[]).length === 0 ? <p className="text-muted">No market data yet.</p> : (
+            <div className="cockpit-fields">
+              {(snapshots as any[]).map((s: any) => (
+                <MetricTile
+                  key={s.symbol}
+                  label={s.symbol?.replace('USDT', '') || s.symbol}
+                  value={`$${Number(s.price || s.last_price || 0).toLocaleString()}`}
+                  color={pnlClass(s.change_24h) === 'pnl-positive' ? 'var(--green)' : s.change_24h ? 'var(--red)' : undefined}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Action Queue */}
@@ -78,7 +101,7 @@ export default function Overview() {
                   <td>{p.symbol}</td>
                   <td>{p.direction}</td>
                   <td>{p.execution_mode}</td>
-                  <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.agent_rationale || '—'}</td>
+                  <td className="text-truncate text-truncate-200">{p.agent_rationale || '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -90,14 +113,14 @@ export default function Overview() {
       <div className="cockpit-grid">
         <div className="card">
           <h3>Recent Agent Activity</h3>
-          {recentRuns.length === 0 ? <p style={{ color: 'var(--muted)' }}>No runs yet.</p> : (
+          {recentRuns.length === 0 ? <p className="text-muted">No runs yet.</p> : (
             <table>
               <tbody>
                 {recentRuns.map((r: any) => (
                   <tr key={r.id} onClick={() => setObject({ type: 'agent_run', id: r.id, data: r })}>
                     <td>{r.agent_name}</td>
-                    <td><span className={`badge ${r.status === 'completed' ? 'badge-green' : 'badge-yellow'}`}>{r.status}</span></td>
-                    <td style={{ color: 'var(--faint)', fontSize: '0.75rem' }}>{r.started_at?.slice(11, 16)}</td>
+                    <td><StatusPill status={r.status} /></td>
+                    <td className="text-faint font-sm">{r.started_at?.slice(11, 16)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -107,19 +130,31 @@ export default function Overview() {
 
         <div className="card">
           <h3>Recent Opportunities</h3>
-          {recentOpps.length === 0 ? <p style={{ color: 'var(--muted)' }}>None yet.</p> : (
+          {recentOpps.length === 0 ? <p className="text-muted">None yet.</p> : (
             <table>
               <tbody>
                 {recentOpps.map((o: any) => (
                   <tr key={o.id} onClick={() => setObject({ type: 'opportunity', id: o.id, data: o })}>
                     <td>{o.symbol}</td>
                     <td>{o.direction_bias}</td>
-                    <td><span className="badge badge-blue">{o.status}</span></td>
+                    <td><StatusPill status={o.status} /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+        </div>
+
+        <div className="card">
+          <h3>Agent Intelligence</h3>
+          <div className="cockpit-fields">
+            <Field label="Active Strategies" value={String(activeStrategies.length)} badge={activeStrategies.length > 0 ? 'badge-green' : undefined} />
+            {latestDream && <Field label="Latest Dreaming" value={latestDream.title?.slice(0, 30) || 'Session'} />}
+            <Field label="Pending Proposals" value={String(pendingProposals.length)} badge={pendingProposals.length > 0 ? 'badge-yellow' : undefined} />
+          </div>
+          <div className="hint" style={{ marginTop: '0.5rem' }}>
+            <a href="#/dreaming">Dreaming</a> · <a href="#/strategies">Strategies</a>
+          </div>
         </div>
       </div>
     </div>

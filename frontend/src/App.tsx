@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect, useCallback } from 'react'
 import { InspectorProvider } from './context/InspectorContext'
 import TopStatusBar from './components/TopStatusBar'
@@ -13,8 +13,6 @@ import Dreaming from './pages/Dreaming'
 import KnowledgeBase from './pages/KnowledgeBase'
 import Opportunities from './pages/Opportunities'
 import Proposals from './pages/Proposals'
-import PaperTrades from './pages/PaperTrades'
-import Positions from './pages/Positions'
 import StrategyLifecycle from './pages/StrategyLifecycle'
 import Charts from './pages/Charts'
 import Reports from './pages/Reports'
@@ -26,6 +24,7 @@ import Portfolio from './pages/Portfolio'
 
 export default function App() {
   const [cmdOpen, setCmdOpen] = useState(false)
+  const [navOpen, setNavOpen] = useState(false)
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -34,6 +33,7 @@ export default function App() {
     }
     if (e.key === 'Escape') {
       setCmdOpen(false)
+      setNavOpen(false)
     }
   }, [])
 
@@ -44,8 +44,8 @@ export default function App() {
 
   return (
     <InspectorProvider>
-      <div className="app-shell">
-        <TopStatusBar onCommandOpen={() => setCmdOpen(true)} />
+      <div className={`app-shell${navOpen ? ' nav-open' : ''}`}>
+        <TopStatusBar onCommandOpen={() => setCmdOpen(true)} onNavToggle={() => setNavOpen(o => !o)} />
         <LeftNav />
         <main className="main-workspace">
           <Routes>
@@ -62,10 +62,10 @@ export default function App() {
             <Route path="/strategies" element={<StrategyLifecycle />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<Settings />} />
-            {/* Legacy routes */}
             <Route path="/agent-runs" element={<AgentRuns />} />
-            <Route path="/paper-trades" element={<PaperTrades />} />
-            <Route path="/positions" element={<Positions />} />
+            {/* Legacy redirects */}
+            <Route path="/paper-trades" element={<Navigate to="/portfolio" replace />} />
+            <Route path="/positions" element={<Navigate to="/portfolio" replace />} />
           </Routes>
         </main>
         <RightInspector />

@@ -122,8 +122,9 @@ export const api = {
   getDreamingLogs: () => fetchJson<any[]>('/knowledge/dreaming-logs'),
   getPostTradeReviews: () => fetchJson<any[]>('/knowledge?type=post_trade_review'),
 
-  // Charts
+  // Charts & Market
   getOhlcv: (symbol: string, timeframe = '1h', limit = 100) =>
     fetchJson<any>(`/market/ohlcv?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`),
   getPortfolioHistory: () => fetchJson<any[]>('/market/portfolio-history'),
+  getMarketSnapshots: (limit = 3) => fetchJson<any[]>(`/market/snapshots?limit=${limit}`),
 }

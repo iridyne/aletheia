@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 
-export default function TopStatusBar({ onCommandOpen }: { onCommandOpen?: () => void }) {
+export default function TopStatusBar({ onCommandOpen, onNavToggle }: { onCommandOpen?: () => void; onNavToggle?: () => void }) {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
   const { data: ks } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, refetchInterval: 10000 })
@@ -34,6 +34,7 @@ export default function TopStatusBar({ onCommandOpen }: { onCommandOpen?: () => 
   return (
     <header className="top-status-bar">
       <div className="tsb-left">
+        {onNavToggle && <button className="nav-toggle" onClick={onNavToggle} title="Toggle navigation">≡</button>}
         <span className={`pill ${running ? (paused ? 'pill-yellow' : 'pill-green') : 'pill-red'}`}>
           <span className={`dot ${running ? (paused ? 'dot-yellow' : 'dot-green') : 'dot-red'}`} />
           {running ? (paused ? 'Paused' : 'Running') : 'Stopped'}

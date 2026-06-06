@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import MetricTile from '../components/shared/MetricTile'
+import StatusPill from '../components/shared/StatusPill'
 import { useInspector } from '../context/InspectorContext'
+import { pnlClass } from '../utils/statusColor'
 
 type Tab = 'positions' | 'trades' | 'pnl'
 
@@ -22,24 +25,10 @@ export default function Portfolio() {
         <div className="card">
           <h3>Account Summary</h3>
           <div className="form-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-            <div className="metric-tile">
-              <span className="metric-label">Total Value</span>
-              <span className="metric-value">{portfolio.total_value_usdt ?? '—'} USDT</span>
-            </div>
-            <div className="metric-tile">
-              <span className="metric-label">Today PnL</span>
-              <span className="metric-value" style={{ color: (portfolio.today_pnl ?? 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                {portfolio.today_pnl ?? portfolio.unrealized_pnl ?? '—'}
-              </span>
-            </div>
-            <div className="metric-tile">
-              <span className="metric-label">Open Positions</span>
-              <span className="metric-value">{openPositions.length}</span>
-            </div>
-            <div className="metric-tile">
-              <span className="metric-label">Total Trades</span>
-              <span className="metric-value">{(trades as any[]).length}</span>
-            </div>
+            <MetricTile label="Total Value" value={`${portfolio.total_value_usdt ?? '—'} USDT`} />
+            <MetricTile label="Today PnL" value={String(portfolio.today_pnl ?? portfolio.unrealized_pnl ?? '—')} color={pnlClass(portfolio.today_pnl) === 'pnl-positive' ? 'var(--green)' : 'var(--red)'} />
+            <MetricTile label="Open Positions" value={openPositions.length} />
+            <MetricTile label="Total Trades" value={(trades as any[]).length} />
           </div>
         </div>
       )}
@@ -55,7 +44,7 @@ export default function Portfolio() {
       {tab === 'positions' && (
         <div className="card">
           {openPositions.length === 0 ? (
-            <p style={{ color: 'var(--muted)' }}>No open positions.</p>
+            <p className="text-muted">No open positions.</p>
           ) : (
             <table>
               <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry</th><th>Current</th><th>PnL</th><th>Mode</th></tr></thead>
@@ -67,7 +56,7 @@ export default function Portfolio() {
                     <td>{p.quantity}</td>
                     <td>{p.entry_price}</td>
                     <td>{p.current_price ?? '—'}</td>
-                    <td style={{ color: (p.unrealized_pnl ?? 0) >= 0 ? 'var(--green)' : 'var(--red)' }}>{p.unrealized_pnl ?? 0}</td>
+                    <td className={pnlClass(p.unrealized_pnl)}>{p.unrealized_pnl ?? 0}</td>
                     <td><span className="badge badge-blue">{p.execution_mode}</span></td>
                   </tr>
                 ))}
@@ -80,7 +69,7 @@ export default function Portfolio() {
       {tab === 'trades' && (
         <div className="card">
           {(trades as any[]).length === 0 ? (
-            <p style={{ color: 'var(--muted)' }}>No trades yet.</p>
+            <p className="text-muted">No trades yet.</p>
           ) : (
             <table>
               <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Price</th><th>Status</th><th>Time</th></tr></thead>
@@ -91,7 +80,7 @@ export default function Portfolio() {
                     <td>{t.direction}</td>
                     <td>{t.quantity}</td>
                     <td>{t.price}</td>
-                    <td><span className={`badge ${t.status === 'filled' ? 'badge-green' : 'badge-blue'}`}>{t.status}</span></td>
+                    <td><StatusPill status={t.status} /></td>
                     <td>{t.created_at?.slice(0, 16) || '—'}</td>
                   </tr>
                 ))}
@@ -113,7 +102,7 @@ export default function Portfolio() {
               </tbody>
             </table>
           ) : (
-            <p style={{ color: 'var(--muted)' }}>No exposure data.</p>
+            <p className="text-muted">No exposure data.</p>
           )}
         </div>
       )}

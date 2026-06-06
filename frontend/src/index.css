@@ -313,7 +313,7 @@ table, code, .mono, .pill, .badge, .topbar-status, .top-status-bar { font-featur
 .cc-send { padding: 0.4rem 0.7rem; font-size: 0.78rem; }
 
 /* ---------- Cockpit ---------- */
-.cockpit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+.cockpit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
 .cockpit-fields { display: flex; flex-direction: column; gap: 0.3rem; }
 .cockpit-field { display: flex; justify-content: space-between; align-items: center; padding: 0.25rem 0; border-bottom: 1px solid var(--border); }
 .cockpit-field:last-child { border-bottom: none; }
@@ -341,41 +341,6 @@ table, code, .mono, .pill, .badge, .topbar-status, .top-status-bar { font-featur
   margin-bottom: 0.8rem;
 }
 .news-filters { display: flex; gap: 0.2rem; }
-
-/* ========== LEGACY LAYOUT (kept for compatibility) ========== */
-.layout { display: flex; min-height: 100vh; }
-.sidebar {
-  width: 240px; background: var(--surface); border-right: 1px solid var(--border);
-  position: fixed; top: 0; bottom: 0; left: 0; overflow-y: auto;
-  display: flex; flex-direction: column; padding: 0;
-}
-.content { margin-left: 240px; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
-.main { flex: 1; padding: 1.5rem 1.75rem; background: var(--bg-2); }
-
-/* ---------- Topbar (legacy — kept for old route refs) ---------- */
-.topbar {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 0 1.75rem; height: 52px; background: var(--surface);
-  border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
-}
-.breadcrumb { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
-.crumb-group { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; }
-.crumb-sep { color: var(--faint); }
-.crumb-current { font-family: var(--display); font-weight: 600; letter-spacing: 0.01em; }
-.topbar-status { display: flex; align-items: center; gap: 0.4rem; }
-
-/* ---------- Sidebar nav (legacy compat) ---------- */
-.sidebar nav { padding: 0.75rem 0.5rem 1.5rem; }
-.sidebar nav a {
-  display: block; padding: 0.45rem 0.75rem; margin: 0.05rem 0;
-  color: var(--muted); font-size: 0.825rem; border-radius: var(--r-sm);
-  border-left: 2px solid transparent; transition: background 0.12s, color 0.12s;
-}
-.sidebar nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
-.sidebar nav a.active {
-  background: linear-gradient(90deg, rgba(34,211,238,0.12), transparent);
-  color: var(--text); border-left-color: var(--accent); font-weight: 500;
-}
 
 /* ========== SHARED COMPONENTS ========== */
 
@@ -512,3 +477,38 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 .action-bar button { font-size: 0.75rem; padding: 0.35rem 0.7rem; }
 .action-bar .danger-btn { background: var(--red); color: #fff; }
 .action-bar .danger-btn:hover { filter: brightness(1.1); }
+
+/* ---------- Utility Classes ---------- */
+.text-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.text-truncate-200 { max-width: 200px; }
+.text-truncate-240 { max-width: 240px; }
+.pnl-positive { color: var(--green); }
+.pnl-negative { color: var(--red); }
+.text-muted { color: var(--muted); }
+.text-faint { color: var(--faint); }
+.font-mono { font-family: var(--mono); }
+.font-sm { font-size: 0.75rem; }
+.font-xs { font-size: 0.68rem; }
+
+/* ---------- Responsive ---------- */
+.nav-toggle { display: none; background: none; border: none; color: var(--text); font-size: 1.3rem; padding: 0.3rem 0.6rem; cursor: pointer; }
+
+@media (max-width: 1200px) {
+  :root { --inspector-w: 280px; }
+}
+
+@media (max-width: 1024px) {
+  .nav-toggle { display: inline-flex; }
+  .app-shell { grid-template-columns: 0 1fr 0; }
+  .left-nav { position: fixed; top: var(--topbar-h); left: 0; bottom: 0; z-index: 25; transform: translateX(-100%); transition: transform 0.2s ease; width: var(--nav-w); }
+  .app-shell.nav-open .left-nav { transform: translateX(0); }
+  .app-shell:has(.right-inspector) { grid-template-columns: 0 1fr var(--inspector-w); }
+}
+
+@media (max-width: 768px) {
+  .app-shell:has(.right-inspector) { grid-template-columns: 0 1fr 0; }
+  .right-inspector { position: fixed; top: var(--topbar-h); right: 0; bottom: 0; width: min(320px, 85vw); z-index: 30; }
+  .form-grid { grid-template-columns: 1fr; }
+  .bottom-timeline { max-height: 120px; }
+  .cockpit-grid { grid-template-columns: 1fr; }
+}

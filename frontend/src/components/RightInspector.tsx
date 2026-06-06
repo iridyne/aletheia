@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import { useInspector, type InspectorObject } from '../context/InspectorContext'
+import EvidenceStack from './shared/EvidenceStack'
 
 export default function RightInspector() {
   const { object, open, close } = useInspector()
@@ -70,7 +71,7 @@ function buildSections(obj: InspectorObject): Section[] {
     sections.push({
       title: 'Evidence / Reasoning',
       content: Array.isArray(ev)
-        ? <ul className="inspector-list">{ev.map((item: string, i: number) => <li key={i}>{item}</li>)}</ul>
+        ? <EvidenceStack items={ev.map((item: any) => typeof item === 'string' ? { label: '', value: item } : { label: item.label || '', value: item.value || String(item), source: item.source })} />
         : <p className="inspector-text">{String(ev)}</p>,
     })
   }

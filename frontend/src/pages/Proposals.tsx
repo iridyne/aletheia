@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import StatusPill from '../components/shared/StatusPill'
 import { useInspector } from '../context/InspectorContext'
 
 export default function Proposals() {
@@ -20,7 +21,7 @@ export default function Proposals() {
     <div>
       <h2 className="page-title">Proposals</h2>
       <div className="card">
-        {rows.length === 0 ? <p style={{ color: 'var(--muted)' }}>No proposals yet.</p> : (
+        {rows.length === 0 ? <p className="text-muted">No proposals yet.</p> : (
           <table>
             <thead><tr><th>Symbol</th><th>Market</th><th>Direction</th><th>Mode</th><th>Rationale</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
@@ -30,15 +31,15 @@ export default function Proposals() {
                   <td>{p.market_type}</td>
                   <td>{p.direction}</td>
                   <td>{p.execution_mode}</td>
-                  <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.agent_rationale || ''}>{p.agent_rationale || '—'}</td>
-                  <td><span className={`badge ${p.status === 'executed' || p.status === 'approved' ? 'badge-green' : p.status === 'rejected' ? 'badge-red' : 'badge-yellow'}`}>{p.status}</span></td>
+                  <td className="text-truncate text-truncate-240" title={p.agent_rationale || ''}>{p.agent_rationale || '—'}</td>
+                  <td><StatusPill status={p.status} /></td>
                   <td>
                     {p.status === 'pending' ? (
-                      <div style={{ display: 'flex', gap: '0.25rem' }} onClick={e => e.stopPropagation()}>
+                      <div className="action-bar" onClick={e => e.stopPropagation()}>
                         <button onClick={() => approve.mutate(p.id)}>Approve</button>
                         <button className="secondary" onClick={() => reject.mutate(p.id)}>Reject</button>
                       </div>
-                    ) : <span style={{ color: 'var(--muted)' }}>—</span>}
+                    ) : <span className="text-muted">—</span>}
                   </td>
                 </tr>
               ))}
