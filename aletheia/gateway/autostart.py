@@ -123,6 +123,10 @@ def _build_task_xml() -> str:
         "    <StartWhenAvailable>true</StartWhenAvailable>\n"
         "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n"
         "    <Enabled>true</Enabled>\n"
+        # Hidden: Task Scheduler suppresses the task's window. Combined with
+        # pythonw.exe and the spawn-time CREATE_NO_WINDOW guards, this prevents
+        # any Windows Terminal flash on logon or the 5-minute watchdog tick.
+        "    <Hidden>true</Hidden>\n"
         "  </Settings>\n"
         '  <Actions Context="Author">\n'
         "    <Exec>\n"

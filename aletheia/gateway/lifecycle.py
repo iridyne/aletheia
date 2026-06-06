@@ -1,7 +1,8 @@
 """Gateway lifecycle operations: start, stop, status, pause, resume, logs."""
 
-import sys
+import platform
 import subprocess
+import sys
 from pathlib import Path
 
 import typer
@@ -60,19 +61,21 @@ def _run_server(cfg) -> None:
 
 def _spawn_background(no_browser: bool) -> None:
     """Spawn a detached background process running the gateway."""
-    import platform
-
     script = Path(__file__).resolve().parent.parent / "_gateway_runner.py"
     args = [sys.executable, str(script)]
     if no_browser:
         args.append("--no-browser")
 
     if platform.system() == "Windows":
+        # DETACHED_PROCESS removes the inherited console; CREATE_NO_WINDOW also
+        # forbids allocating a new one (Win11 would otherwise host it via
+        # Windows Terminal). CREATE_NEW_PROCESS_GROUP isolates ctrl-C semantics.
         CREATE_NEW_PROCESS_GROUP = 0x00000200
         DETACHED_PROCESS = 0x00000008
+        CREATE_NO_WINDOW = 0x08000000
         subprocess.Popen(
             args,
-            creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+            creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

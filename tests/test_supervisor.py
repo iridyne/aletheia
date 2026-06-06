@@ -77,3 +77,56 @@ def test_supervisor_writes_pid_once(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "_sleep", lambda s: None)
     runner.run_supervised(spawn_fn=lambda: 0)
     assert written["n"] == 1  # supervisor writes pid exactly once
+
+
+# --- Inner-uvicorn console suppression (no Windows Terminal pop-up) ---
+
+def test_inner_uvicorn_uses_create_no_window_on_windows(tmp_path, monkeypatch):
+    """On Windows, the inner uvicorn Popen must pass CREATE_NO_WINDOW so the OS
+    does not allocate a console (which Win11 would render via Windows Terminal)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config
+
+    captured = {}
+
+    class FakeProc:
+        def wait(self):
+            return 0
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(runner.platform, "system", lambda: "Windows", raising=False)
+
+    runner._spawn_server(load_config())
+
+    flags = captured["kwargs"].get("creationflags", 0)
+    assert flags & 0x08000000 == 0x08000000  # CREATE_NO_WINDOW
+
+
+def test_inner_uvicorn_no_creationflags_on_posix(tmp_path, monkeypatch):
+    """POSIX path stays byte-identical: no creationflags kwarg."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config
+
+    captured = {}
+
+    class FakeProc:
+        def wait(self):
+            return 0
+
+    def fake_popen(cmd, **kwargs):
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(runner.platform, "system", lambda: "Linux", raising=False)
+
+    runner._spawn_server(load_config())
+
+    assert "creationflags" not in captured["kwargs"]

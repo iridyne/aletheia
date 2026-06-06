@@ -91,9 +91,22 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     assert "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>" in xml
     assert "-m aletheia.main gateway start --no-browser" in xml
     assert r"C:\venv\Scripts\pythonw.exe" in xml
+    # Window suppression: Task Scheduler must mark the task hidden so no console
+    # flashes on the LogonTrigger fire (and PT5M watchdog ticks).
+    assert "<Hidden>true</Hidden>" in xml
 
 
 # --- 2. python resolution: prefer pythonw sibling, fall back to sys.executable ---
+
+def test_task_xml_marks_hidden_inside_settings(monkeypatch):
+    """<Hidden>true</Hidden> must live inside the <Settings>...</Settings> block —
+    not just somewhere in the document — to be honored by Task Scheduler."""
+    from aletheia.gateway import autostart
+    _force_windows(monkeypatch, autostart)
+    xml = autostart._build_task_xml()
+    settings = xml.split("<Settings>", 1)[1].split("</Settings>", 1)[0]
+    assert "<Hidden>true</Hidden>" in settings
+
 
 def test_python_for_task_prefers_pythonw(monkeypatch):
     from aletheia.gateway import autostart
