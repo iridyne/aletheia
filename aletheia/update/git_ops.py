@@ -10,6 +10,7 @@ import shutil
 import subprocess
 
 from aletheia.config.loader import _PROJECT_ROOT
+from aletheia.gateway.pidfile import _no_window_kwargs
 
 logger = logging.getLogger("aletheia.update.git")
 
@@ -21,7 +22,11 @@ def git_available() -> bool:
 
 
 def _git(*args) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=str(REPO_ROOT), capture_output=True, text=True)
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(REPO_ROOT), capture_output=True, text=True,
+        **_no_window_kwargs(),
+    )
 
 
 def is_repo() -> bool:

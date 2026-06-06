@@ -265,3 +265,73 @@ def test_apply_no_auto_restart(tmp_path, monkeypatch):
     result = applier.apply_update()
     assert result["restart_required"] is True  # signals, does not act
     assert restart_calls == []
+
+
+# --- Win32 console suppression: every shell-out from update routes must be silent ---
+# These run from /api/update/* routes inside the inner uvicorn (a detached child of
+# the supervisor), so any subprocess.run without CREATE_NO_WINDOW would flash wt.
+
+def test_git_ops_passes_create_no_window_on_windows(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import git_ops
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    calls = {}
+    def fake_run(argv, **kwargs):
+        calls["argv"] = argv
+        calls["kwargs"] = kwargs
+        return _FakeProc(stdout="abc1234\n", returncode=0)
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+    git_ops.current_commit()
+    assert calls["argv"][0] == "git"
+    assert calls["kwargs"].get("creationflags", 0) & 0x08000000 == 0x08000000
+
+
+def test_git_ops_no_creationflags_on_posix(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import git_ops
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Linux")
+    calls = {}
+    def fake_run(argv, **kwargs):
+        calls["argv"] = argv
+        calls["kwargs"] = kwargs
+        return _FakeProc(stdout="abc1234\n", returncode=0)
+    monkeypatch.setattr(git_ops.subprocess, "run", fake_run)
+    git_ops.current_commit()
+    assert "creationflags" not in calls["kwargs"]
+
+
+def test_reinstall_deps_passes_create_no_window_on_windows(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    calls = {}
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["kwargs"] = kwargs
+        return _FakeProc(stdout="", returncode=0)
+    monkeypatch.setattr(applier.subprocess, "run", fake_run)
+    applier._reinstall_deps()
+    assert calls["kwargs"].get("creationflags", 0) & 0x08000000 == 0x08000000
+
+
+def test_smoke_import_gate_passes_create_no_window_on_windows(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import smoke
+    from aletheia.gateway import pidfile
+    # Force the helper's platform check to Windows even though the test runs on
+    # whatever the host is (helper reads pidfile's platform module).
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+    calls = {}
+    def fake_run(cmd, **kwargs):
+        calls.setdefault("kwargs_list", []).append(kwargs)
+        return _FakeProc(stdout="", returncode=0)
+    monkeypatch.setattr(smoke.subprocess, "run", fake_run)
+    smoke.run_smoke_check()
+    # Both the import gate (python -c) and the fast-tests gate (python -m pytest)
+    # must include CREATE_NO_WINDOW.
+    assert calls["kwargs_list"], "expected at least one subprocess call"
+    for kw in calls["kwargs_list"]:
+        assert kw.get("creationflags", 0) & 0x08000000 == 0x08000000

@@ -13,6 +13,7 @@ import logging
 import subprocess
 
 from aletheia.config.loader import _PROJECT_ROOT
+from aletheia.gateway.pidfile import _no_window_kwargs
 
 logger = logging.getLogger("aletheia.update.smoke")
 
@@ -29,6 +30,7 @@ def run_smoke_check() -> dict:
         r = subprocess.run(
             [sys.executable, "-c", _IMPORT_TARGETS],
             cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=60,
+            **_no_window_kwargs(),
         )
         if r.returncode != 0:
             return {"ok": False, "stage": "import", "detail": (r.stderr or r.stdout).strip()[:500]}
@@ -40,6 +42,7 @@ def run_smoke_check() -> dict:
         r = subprocess.run(
             [sys.executable, "-m", "pytest", *_FAST_TESTS, "-q", "-x"],
             cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=180,
+            **_no_window_kwargs(),
         )
         if r.returncode != 0:
             return {"ok": False, "stage": "fast_tests", "detail": (r.stdout or r.stderr).strip()[-500:]}
