@@ -12,6 +12,7 @@ import shutil
 import subprocess
 
 from aletheia.config.loader import load_config, get_data_dir
+from aletheia.gateway.pidfile import _no_window_kwargs
 
 logger = logging.getLogger("aletheia.git")
 
@@ -32,7 +33,10 @@ exports/
 
 
 def _git(*args, cwd) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True)
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True,
+        **_no_window_kwargs(),
+    )
 
 
 def is_enabled() -> bool:
