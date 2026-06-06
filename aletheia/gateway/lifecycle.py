@@ -25,17 +25,29 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         raise typer.Exit(0)
 
     # Port guard: if the port stays held throughout a short grace window with no
-    # tracked gateway, an orphan or foreign process is squatting on it. Spawning
-    # now would just crash-loop the new supervisor. The grace tolerates the brief
-    # post-stop window where the kernel hasn't fully released the listener yet
-    # (TIME_WAIT-like state) — without it, `restart` would race against itself.
+    # tracked gateway, attempt to auto-clean our own orphans before giving up.
+    # This self-heals the common case where the supervisor died but the inner
+    # uvicorn survived and holds the port — the PT5M watchdog would otherwise
+    # reject every 5 minutes, flashing a console window each time on Win11.
     if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=3.0):
-        typer.echo(
-            f"Port {cfg.app.dashboard_port} is already in use but no tracked gateway "
-            f"is running. Run `aletheia gateway stop` to clear orphaned processes, "
-            f"then retry.", err=True,
-        )
-        raise typer.Exit(1)
+        orphans = find_gateway_orphans()
+        if orphans:
+            for opid in orphans:
+                kill_pid_tree(opid)
+            _audit_orphan_cleanup(orphans)
+            # Give the port time to release after killing orphans.
+            if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0):
+                _echo_safe(
+                    f"Port {cfg.app.dashboard_port} is still in use after cleaning "
+                    f"orphaned Aletheia processes. A foreign process may be holding it.",
+                )
+                raise typer.Exit(1)
+        else:
+            _echo_safe(
+                f"Port {cfg.app.dashboard_port} is already in use but no tracked gateway "
+                f"or Aletheia orphan found. A foreign process is holding the port.",
+            )
+            raise typer.Exit(1)
 
     if foreground:
         typer.echo(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (foreground)...")
@@ -134,9 +146,9 @@ def do_stop() -> None:
     if freed:
         typer.echo("Gateway stopped.")
     else:
-        typer.echo(
+        _echo_safe(
             f"Gateway processes signalled, but port {port} is still in use. "
-            f"A non-Aletheia process may be holding it.", err=True,
+            f"A non-Aletheia process may be holding it.",
         )
 
     _audit_stop(freed=freed, killed_any=killed_any)
@@ -187,6 +199,53 @@ def do_logs(lines: int = 50) -> None:
         return
     for line in entries:
         typer.echo(line)
+
+
+def _is_headless() -> bool:
+    """True when running under pythonw.exe or with no attached console.
+
+    In this state, writing to stderr would race-allocate a console on Win11
+    (hosted via Windows Terminal → black window flash). All user-facing output
+    should be suppressed or redirected to a log file.
+    """
+    if platform.system() != "Windows":
+        return False
+    import ctypes
+    # pythonw.exe: no console subsystem
+    if sys.executable.lower().endswith("pythonw.exe"):
+        return True
+    # Detached process: console handle is invalid
+    try:
+        return ctypes.windll.kernel32.GetConsoleWindow() == 0
+    except Exception:
+        return False
+
+
+def _echo_safe(msg: str) -> None:
+    """Write a message via typer.echo(err=True), but only if a console is attached.
+
+    Under pythonw/detached (headless) mode, writing to stderr causes Win11 to
+    allocate a new console (hosted by Windows Terminal), which flashes a black
+    window. In headless mode we log instead.
+    """
+    if _is_headless():
+        import logging
+        logging.getLogger("aletheia.gateway.lifecycle").warning(msg)
+        return
+    typer.echo(msg, err=True)
+
+
+def _audit_orphan_cleanup(orphan_pids: list[int]) -> None:
+    """Best-effort audit of watchdog self-healing orphan cleanup."""
+    try:
+        from aletheia.files.jsonl import write_audit
+        write_audit({
+            "actor": "system", "source": "watchdog", "event_type": "orphan_cleanup",
+            "entity_type": "gateway", "entity_id": "gateway",
+            "message": f"Watchdog auto-cleaned {len(orphan_pids)} orphan(s): {orphan_pids}",
+        })
+    except Exception:
+        pass
 
 
 def do_pause() -> None:

@@ -206,3 +206,52 @@ async def test_graceful_degradation_when_codex_absent(monkeypatch, tmp_path):
     assert content is None
     assert err is not None
     clear_cache()
+
+
+# --- subprocess creationflags (no wt window on Win11) ---
+
+@pytest.mark.anyio
+async def test_subprocess_passes_create_no_window_on_windows(monkeypatch):
+    """All asyncio.create_subprocess_exec calls must pass creationflags on Windows."""
+    monkeypatch.setattr("aletheia.model_provider.codex_cli.shutil.which", lambda c: "/usr/bin/codex")
+    import aletheia.gateway.pidfile as pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+
+    stdout = (
+        b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+        b'{"type":"turn.completed","usage":{}}\n'
+    )
+    captured = []
+    procs = {"exec": _FakeProc(stdout=stdout, returncode=0)}
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec_factory(captured, procs))
+
+    from aletheia.model_provider.base import ModelRequest
+    provider = CodexCLIProvider(enabled=True)
+    await provider.complete(ModelRequest(messages=[{"role": "user", "content": "x"}]))
+
+    exec_call = next(c for c in captured if "exec" in c["argv"])
+    flags = exec_call["kwargs"].get("creationflags", 0)
+    assert flags & 0x08000000 == 0x08000000
+
+
+@pytest.mark.anyio
+async def test_subprocess_no_creationflags_on_posix(monkeypatch):
+    """On POSIX, no creationflags should be passed."""
+    monkeypatch.setattr("aletheia.model_provider.codex_cli.shutil.which", lambda c: "/usr/bin/codex")
+    import aletheia.gateway.pidfile as pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Linux")
+
+    stdout = (
+        b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+        b'{"type":"turn.completed","usage":{}}\n'
+    )
+    captured = []
+    procs = {"exec": _FakeProc(stdout=stdout, returncode=0)}
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec_factory(captured, procs))
+
+    from aletheia.model_provider.base import ModelRequest
+    provider = CodexCLIProvider(enabled=True)
+    await provider.complete(ModelRequest(messages=[{"role": "user", "content": "x"}]))
+
+    exec_call = next(c for c in captured if "exec" in c["argv"])
+    assert "creationflags" not in exec_call["kwargs"]

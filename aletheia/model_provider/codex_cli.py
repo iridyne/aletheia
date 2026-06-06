@@ -13,6 +13,7 @@ import json
 import logging
 import shutil
 
+from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth,
@@ -63,6 +64,7 @@ class CodexCLIProvider(ModelProvider):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **_no_window_kwargs(),
         )
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -153,6 +155,7 @@ class CodexCLIProvider(ModelProvider):
         """Run argv, return stdout text if rc==0 else None. Raises on spawn/timeout."""
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            **_no_window_kwargs(),
         )
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -167,6 +170,7 @@ class CodexCLIProvider(ModelProvider):
         """Run argv, return its exit code. Raises on spawn/timeout."""
         proc = await asyncio.create_subprocess_exec(
             *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            **_no_window_kwargs(),
         )
         try:
             await asyncio.wait_for(proc.communicate(), timeout=timeout)
