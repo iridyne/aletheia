@@ -113,14 +113,20 @@ def _run_market_observer():
     cfg = load_config()
     if cfg.runtime.paused:
         return
-    asyncio.run(_async_run("market_observer"))
+    try:
+        asyncio.run(_async_run("market_observer"))
+    except Exception as e:
+        logger.warning("market_observer job failed: %s", e)
 
 
 def _run_dreaming_agent():
     cfg = load_config()
     if cfg.runtime.paused:
         return
-    asyncio.run(_async_run("dreaming_agent"))
+    try:
+        asyncio.run(_async_run("dreaming_agent"))
+    except Exception as e:
+        logger.warning("dreaming_agent job failed: %s", e)
 
 
 def _run_reconciliation():
@@ -158,7 +164,10 @@ def _run_paper_trader():
     # Only modes whose permission allows paper_tool (Research/ReadOnly excluded).
     if cfg.agent.permission_mode not in ("PaperAuto", "AllowEditing", "Auto"):
         return
-    asyncio.run(_async_run("paper_trader"))
+    try:
+        asyncio.run(_async_run("paper_trader"))
+    except Exception as e:
+        logger.warning("paper_trader job failed: %s", e)
 
 
 def _run_position_manager():

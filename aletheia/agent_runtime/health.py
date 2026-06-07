@@ -115,7 +115,12 @@ def _send_alert(message: str) -> None:
                 except Exception:
                     pass
 
-        asyncio.run(_send_all())
+        # Use running loop if available (FastAPI/test context), else create new one.
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_send_all())
+        except RuntimeError:
+            asyncio.run(_send_all())
     except Exception as e:
         logger.warning("health alert send failed: %s", e)
 

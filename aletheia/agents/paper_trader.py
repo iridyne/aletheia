@@ -13,12 +13,12 @@ degrades gracefully when unavailable.
 """
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.agents.helpers import log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.execution.paper_tools import create_paper_proposal
 from aletheia.storage.repositories import (
-    list_opportunities, update_opportunity, get_trade_proposal,
+    list_opportunities, update_opportunity, list_strategies,
 )
 from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.market_data import latest_snapshot
@@ -88,6 +88,16 @@ async def run_paper_trader(permission_mode: str = "Research", run_id: str | None
 
     rationale = f"Autonomous paper trade from opportunity {opp['id']} ({direction} {symbol}, conf={confidence})."
 
+    # Resolve strategy_id: prefer opportunity's linked_strategy_id, else find an
+    # active (paper_running/paper_candidate) strategy to bind this trade to.
+    strategy_id = opp.get("linked_strategy_id")
+    if not strategy_id:
+        active_states = {"paper_candidate", "paper_running"}
+        for s in list_strategies(limit=50):
+            if s.get("state") in active_states:
+                strategy_id = s["id"]
+                break
+
     result = create_paper_proposal(
         symbol=symbol,
         market_type=opp.get("market", "spot"),
@@ -96,6 +106,7 @@ async def run_paper_trader(permission_mode: str = "Research", run_id: str | None
         price=price,
         stop_price=stop_price,
         execution_mode="paper_internal",
+        strategy_id=strategy_id,
         opportunity_id=opp["id"],
         agent_rationale=rationale[:500],
     )

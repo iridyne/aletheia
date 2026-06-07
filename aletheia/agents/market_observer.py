@@ -72,11 +72,12 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
         rationale = str(read.get("rationale", ""))[:500]
 
     if is_tool_permitted("create_opportunity", permission_mode):
-        # Always record the opportunity, even when neutral/speculative — non-traded
-        # signals are retained for later analysis.
+        symbol = symbols[0] if symbols else "BTCUSDT"
+        cfg_markets = cfg.exchange.enabled_markets
+        market_type = "usdt_futures" if cfg_markets.get("usdt_futures") and not cfg_markets.get("spot") else "spot"
         opp = Opportunity(
-            symbol=symbols[0] if symbols else "BTCUSDT",
-            market="spot",
+            symbol=symbol,
+            market=market_type,
             direction_bias=direction,
             thesis=(rationale or context)[:500],
             confidence=confidence,

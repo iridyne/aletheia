@@ -35,7 +35,9 @@ def _build_learning_ledger() -> str:
     know_parts = []
     for t in _LEDGER_KNOWLEDGE:
         try:
-            n = len(list_knowledge_items(t, limit=1000))
+            items = list_knowledge_items(t, limit=1000)
+            active = [k for k in items if k.get("status", "active") == "active"]
+            n = len(active)
         except Exception:
             n = 0
         if n:
@@ -60,7 +62,12 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
         errors.append("write_dreaming_log not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
-    recent_runs = list_agent_runs(limit=20)
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    recent_runs = [
+        r for r in list_agent_runs(limit=200)
+        if (r.get("started_at") or "") >= cutoff
+    ]
     log_tool(run_id, "get_recent_agent_runs", "read_tool", True)
     summary_lines = [f"- {r['agent_name']}: {r['status']} ({r.get('started_at', '')[:16]})" for r in recent_runs]
     activity = "\n".join(summary_lines) if summary_lines else "No recent agent activity."
@@ -86,9 +93,22 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
 
     item = create_dreaming_log("Daily Consolidation", content)
     log_tool(run_id, "write_dreaming_log", "research_tool", True, output=item.id)
-    review = create_daily_review("Daily Review", content)
-    log_tool(run_id, "write_daily_review", "research_tool", True, output=review.id)
     outputs.append(f"dreaming_log:{item.id}")
-    outputs.append(f"daily_review:{review.id}")
+
+    # Only write daily_review on cron-triggered runs (not manual CLI/API triggers)
+    # to avoid duplicate content under different item_types.
+    trigger = kwargs.get("trigger_type", "")
+    if trigger in ("cron", "scheduler", ""):
+        from aletheia.storage.repositories import list_knowledge_items
+        from datetime import datetime, timezone, timedelta
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        existing_reviews = [
+            r for r in list_knowledge_items(item_type="daily_review", limit=10)
+            if r.get("created_at", "") >= today_start.isoformat()
+        ]
+        if not existing_reviews:
+            review = create_daily_review("Daily Review", content)
+            log_tool(run_id, "write_daily_review", "research_tool", True, output=review.id)
+            outputs.append(f"daily_review:{review.id}")
 
     return {"outputs": outputs, "errors": errors}
