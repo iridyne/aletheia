@@ -2,7 +2,30 @@
 
 ## Last Updated
 
-2026-06-07
+2026-06-07 (later — strategy↔trade causal chain wired)
+
+## Recent Change (feat/strategy-causal-chain)
+
+Two passes on this branch (373 tests pass; branch not yet merged):
+
+**1. Strategy↔trade causal chain (gap #2).** Connected the four-way break in the
+`strategy_id` chain (the 2026-06-06 §1.1 "fix" had only wired the downstream fallback).
+Now: `create_strategy` persists `parameters`; `strategy_designer` produces a parameter
+spec, auto-advances a strategy to `paper_running` (ungated states only — live gates
+untouched), and is scheduled daily; `market_observer` binds opportunities to an active
+strategy. Promotion-gate `paper_trades` no longer stuck at 0. Makes paper evidence
+trustworthy — prerequisite for north-star stage 1/2.
+
+**2. Re-audit of BACKEND_ISSUES §10.** The "all fixed 2026-06-06" archive is ~75%
+true, ~25% claimed-but-not. Eight falsely-archived issues really fixed (live-order
+ordering, health-alert delivery, paper/demo risk bounds, clientOid, kill-switch
+TOCTOU lock, paper_trader autonomous gate, commit_all scheduling, gateway log
+rotation). §10 now carries a correction banner. **Lesson: never trust a "fixed"
+claim without grepping current code** — see DEVLOG 2026-06-07.
+
+Change-controlled modules touched (risk/, execution/, exchanges/): all changes are
+hardening (tighter bounds, idempotency, serialization) — no live gate weakened, no
+hard limit relaxed. Each has a focused regression test.
 
 ## Current State Summary
 

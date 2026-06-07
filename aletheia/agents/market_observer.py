@@ -6,7 +6,7 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
-from aletheia.storage.repositories import insert_opportunity
+from aletheia.storage.repositories import insert_opportunity, list_strategies
 from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.market_data import latest_snapshot
 from aletheia.config.loader import load_config
@@ -75,6 +75,14 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
         symbol = symbols[0] if symbols else "BTCUSDT"
         cfg_markets = cfg.exchange.enabled_markets
         market_type = "usdt_futures" if cfg_markets.get("usdt_futures") and not cfg_markets.get("spot") else "spot"
+        # Bind to an active (tradable) strategy so the causal chain
+        # opportunity -> proposal -> order -> fill -> position carries a strategy_id.
+        # Honest: leave None if no active strategy exists (do not fabricate a link).
+        linked_strategy_id = None
+        for s in list_strategies(limit=50):
+            if s.get("state") in ("paper_running", "paper_candidate"):
+                linked_strategy_id = s["id"]
+                break
         opp = Opportunity(
             symbol=symbol,
             market=market_type,
@@ -82,6 +90,7 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
             thesis=(rationale or context)[:500],
             confidence=confidence,
             source_agent="market_observer",
+            linked_strategy_id=linked_strategy_id,
         )
         insert_opportunity(opp)
         log_tool(run_id, "create_opportunity", "research_tool", True, output=opp.id)

@@ -35,13 +35,21 @@ async def run_paper_trader(permission_mode: str = "Research", run_id: str | None
     outputs: list[str] = []
     errors: list[str] = []
 
+    cfg = load_config()
+
+    # Gate A: autonomous paper trading is default-OFF. The scheduler enforces this,
+    # but a direct CLI/API trigger (`aletheia agent run paper_trader`) bypasses the
+    # scheduler — so the same gate lives in the agent body too (defense in depth).
+    if not cfg.agent.autonomous_paper_trading:
+        log_tool(run_id, "create_paper_proposal", "paper_tool", False, output="autonomous_disabled")
+        errors.append("autonomous_paper_trading disabled")
+        return {"outputs": outputs, "errors": errors}
+
     # Gate B: paper_tool permission. Logged even when denied so it is auditable.
     if not is_tool_permitted("create_paper_proposal", permission_mode):
         log_tool(run_id, "create_paper_proposal", "paper_tool", False)
         errors.append(f"create_paper_proposal not permitted in mode {permission_mode}")
         return {"outputs": outputs, "errors": errors}
-
-    cfg = load_config()
     allowed_symbols = set(tradable_symbols_from_config(cfg))
 
     # Pick the most recent OPEN opportunity for an allowed symbol.

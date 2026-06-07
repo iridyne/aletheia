@@ -46,6 +46,7 @@ class OrderRequest:
     order_type: str  # market | limit
     quantity: float
     price: float | None = None
+    client_oid: str | None = None  # idempotency key — dedups retried submissions
 
 
 @dataclass
@@ -211,6 +212,11 @@ class BitgetClient:
 
         if order.price and order.order_type == "limit":
             body_data["price"] = str(order.price)
+
+        # Idempotency: a stable clientOid lets the exchange dedup a retried submission
+        # (e.g. after a transient timeout where the order may already have landed).
+        if order.client_oid:
+            body_data["clientOid"] = str(order.client_oid)
 
         body = json.dumps(body_data)
         headers = self._headers("POST", path, body)

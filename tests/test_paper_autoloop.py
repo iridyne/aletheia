@@ -108,6 +108,23 @@ def test_autonomous_flag_off_no_trade(tmp_path, monkeypatch):
     reset_db()
 
 
+async def test_autonomous_flag_off_blocks_direct_trigger(tmp_path, monkeypatch):
+    """§2.5: a direct CLI/API trigger bypasses the scheduler gate, so the agent body
+    must also refuse to trade when autonomous_paper_trading is OFF."""
+    setup_env(tmp_path, monkeypatch)
+    _set_mode("PaperAuto", autonomous=False)  # permission OK, but flag OFF
+    _seed()
+
+    result = await run_agent("paper_trader", trigger_type="manual")
+    assert result["status"] in ("completed", "completed_with_errors")
+    assert len(repo.list_trade_proposals()) == 0
+    assert len(repo.list_orders()) == 0
+
+    calls = repo.list_tool_calls(run_id=result["run_id"])
+    assert any(c["tool_name"] == "create_paper_proposal" and not c["permitted"] for c in calls)
+    reset_db()
+
+
 async def test_kill_switch_blocks_autoloop(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _set_mode("PaperAuto", kill=True)  # kill switch engaged

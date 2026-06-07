@@ -69,6 +69,50 @@ def test_bitget_broker_records_order_fill_position(tmp_path, monkeypatch):
     assert captured[0].symbol == "BTCUSDT"
 
 
+def test_place_order_carries_client_oid_from_proposal(tmp_path, monkeypatch):
+    """§2.3: a stable clientOid (derived from proposal_id) must reach the exchange
+    so a retried submission is deduplicated."""
+    setup_env(tmp_path, monkeypatch)
+    captured = []
+    _patch_place_order(monkeypatch, captured)
+
+    from aletheia.execution.bitget_broker import execute_live_order
+    execute_live_order(
+        proposal_id="prop-xyz", risk_decision_id=None,
+        symbol="BTCUSDT", market_type="spot", direction="long",
+        order_type="market", quantity=0.001, price=60000.0,
+    )
+    assert len(captured) == 1
+    assert captured[0].client_oid == "prop-xyz"
+
+
+def test_live_order_db_trace_when_exchange_call_fails(tmp_path, monkeypatch):
+    """§1.3 hazard: if place_order fails, a local order row must still exist (marked
+    error) and NO fill/position may be fabricated."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.exchanges.bitget import client as bg
+
+    async def boom_place_order(self, order):
+        raise RuntimeError("exchange timeout")
+
+    monkeypatch.setattr(bg.BitgetClient, "place_order", boom_place_order)
+
+    from aletheia.execution.bitget_broker import execute_live_order
+    with pytest.raises(RuntimeError):
+        execute_live_order(
+            proposal_id="p-fail", risk_decision_id=None,
+            symbol="BTCUSDT", market_type="spot", direction="long",
+            order_type="market", quantity=0.001, price=60000.0,
+        )
+
+    orders = repo.list_orders()
+    assert len(orders) == 1  # pending row was written before the exchange call
+    assert orders[0]["status"] == "error"
+    assert orders[0]["proposal_id"] == "p-fail"
+    assert len(repo.list_fills()) == 0
+    assert len(repo.list_positions(status="open")) == 0
+
+
 def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     captured = []

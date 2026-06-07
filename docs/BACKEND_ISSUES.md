@@ -472,10 +472,29 @@
 
 > 修复后从 §1–§3 移到这里，保留 file:line 与修复 commit。
 > **全量修复于 2026-06-06，本节为修复摘要。原始佐证保留在 §1-§3 供回溯。**
+>
+> 🔴 **存档可信度更正(2026-06-07 复审)**：对当前代码逐条核实 40+ 条后发现,本节
+> "2026-06-06 全量修复"约 **75% 为真、25% 声称修了但代码未改或只改了一半**。
+> 存档不实本身是比单个 bug 更严重的 trust 问题。下列 8 条经复审证伪/半真,已于
+> `feat/strategy-causal-chain` 真修(每条配焦点回归测试,全套 373 passed):
+>
+> | 条目 | 原声称 | 复审真相 | 本次修复 |
+> |---|---|---|---|
+> | §1.1 strategy_id 因果链 | 已修 | 仅 paper_trader 兜底侧,上游断 | 四段全接通 |
+> | §1.2 live-order 顺序 | 已修 | 仍 place 后才 insert(DB崩=无痕) | 先 insert pending 再 place |
+> | §1.3 asyncio.run 推送 | 已修 | `create_task` fire-and-forget 投递丢失 | 线程池跑到完成 |
+> | §2.3 paper/demo 风险无界 | 已修 | notional+single-risk 仍仅 live | 加 demo 独立上限(独立 token) |
+> | §2.3 clientOid | 已修 | 仅解析响应,不发送 | place_order 发 proposal.id 派生 |
+> | §2.3 kill-switch TOCTOU | 已修 | 无锁无二次校验 | evaluate 加 _eval_lock 序列化 |
+> | §2.5 paper_trader 双门 | 已修 | body 缺 autonomous flag 门 | body 顶部补 Gate A |
+> | §3 commit_all 调度 | 已修 | 无调度调用方,TaG 未开 | dreaming 末尾 commit_all |
+>
+> 教训:**任何"已修复"声明引用前必须 grep 当前代码核实**,不得信文档。
 
 ### 10.1 §1 信任不变量修复
 
 - ✅ **§1.1 strategy_id 因果链**：market_observer 写 linked_strategy_id → paper_trader 透传 → 全链路保留
+  - ⚠️ **更正(2026-06-07 later)**：上面这条在 2026-06-06 标"已修复",但代码核实发现修复**只落在 paper_trader 兜底侧**,上游 `market_observer` 当时**仍未**写 `linked_strategy_id`,且 `strategy_designer` 未被调度、策略永远停在 draft——因果链实际仍断,promotion gate `paper_trades` 恒为 0。本次(`feat/strategy-causal-chain`)四段全接通:create_strategy 接 parameters / designer 产出参数 + 自动晋级到 paper_running / designer 进 scheduler / observer 绑 linked_strategy_id。新增 `tests/test_strategy_causal_chain.py` 5 测试锁链路。详见 DEVLOG 2026-06-07 later。
 - ✅ **§1.1 max_drawdown `or 1.0` fallback**：改为 fail `insufficient_drawdown_capital_base`
 - ✅ **§1.1 min_paper_trades 计入未成交**：加 `status='filled'` 过滤
 - ✅ **§1.1 post_trade_review gate 无兜底**：strategy-specific 查空时再查全局

@@ -35,6 +35,9 @@ def _spawn_server(cfg) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code."""
     errors_log = get_data_dir() / "logs" / "errors.log"
     errors_log.parent.mkdir(parents=True, exist_ok=True)
+    # Size-cap the log before each spawn so a crash loop can't fill the disk.
+    from aletheia.gateway.logs import rotate_if_needed
+    rotate_if_needed(errors_log)
     real_python, env_patch = _resolve_real_python()
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",

@@ -16,6 +16,7 @@ from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     insert_order, insert_fill, insert_position, list_positions, update_position,
+    update_order,
 )
 
 logger = logging.getLogger("aletheia.bitget_broker")
@@ -49,14 +50,10 @@ def execute_live_order(
     client = BitgetClient(mode=cfg.exchange.mode)
     side = "buy" if direction in ("long", "buy") else "sell"
 
-    order_resp = _run_coro(client.place_order(OrderRequest(
-        symbol=symbol, market_type=market_type, side=side,
-        order_type=order_type, quantity=quantity,
-        price=price if order_type == "limit" else None,
-    )))
-
-    exchange_order_id = order_resp.order_id or ""
-
+    # Persist a `pending` order row BEFORE touching the exchange (guide §1.3 hazard:
+    # if place_order succeeds but the DB write fails, the exchange has a real order and
+    # we keep no local trace). With the row written first, the order always exists
+    # locally; we backfill exchange_order_id + status after the exchange confirms.
     order = Order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
@@ -67,13 +64,29 @@ def execute_live_order(
         quantity=quantity,
         price=price,
         execution_mode="bitget_live_limited",
-        exchange_order_id=exchange_order_id,
-        status=order_resp.status if order_resp.status in ("filled", "partially_filled") else "submitted",
+        status="pending",
     )
     insert_order(order)
 
-    # Order row is now persisted. If anything below fails, reconciliation
-    # can still find this order by exchange_order_id.
+    try:
+        order_resp = _run_coro(client.place_order(OrderRequest(
+            symbol=symbol, market_type=market_type, side=side,
+            order_type=order_type, quantity=quantity,
+            price=price if order_type == "limit" else None,
+            client_oid=proposal_id,
+        )))
+    except Exception:
+        # Exchange call failed (or never confirmed). Leave the pending row so
+        # reconciliation/operator can investigate; do not infer a fill.
+        update_order(order.id, status="error")
+        raise
+
+    exchange_order_id = order_resp.order_id or ""
+    resolved_status = order_resp.status if order_resp.status in ("filled", "partially_filled") else "submitted"
+    update_order(order.id, exchange_order_id=exchange_order_id, status=resolved_status)
+
+    # Order row is persisted with its exchange id. If anything below fails,
+    # reconciliation can still find this order by exchange_order_id.
     try:
         if order_resp.status in ("filled", "partially_filled"):
             fill = Fill(
@@ -83,7 +96,6 @@ def execute_live_order(
                 fee=quantity * price * 0.0006,
             )
             insert_fill(fill)
-            from aletheia.storage.repositories import update_order
             update_order(order.id, status="filled", filled_at=datetime.utcnow().isoformat())
 
             existing = _find_open_position(symbol, market_type, direction, strategy_id)

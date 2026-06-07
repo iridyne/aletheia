@@ -115,12 +115,20 @@ def _send_alert(message: str) -> None:
                 except Exception:
                     pass
 
-        # Use running loop if available (FastAPI/test context), else create new one.
+        # run_health_check() is sync and may be called from either a plain thread
+        # (scheduler) or inside a running event loop (FastAPI route / tests). A bare
+        # asyncio.run() raises inside a running loop, and loop.create_task() would
+        # fire-and-forget a task this sync function never awaits (it can be GC'd and
+        # the alert silently lost). Run the coroutine to completion in a worker thread
+        # so it is safe and actually delivered in both contexts.
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_send_all())
+            asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(_send_all())
+            asyncio.run(_send_all())  # no loop in this thread
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(asyncio.run, _send_all()).result()
     except Exception as e:
         logger.warning("health alert send failed: %s", e)
 

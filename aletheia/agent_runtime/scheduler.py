@@ -40,6 +40,10 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=300,
     )
     _scheduler.add_job(
+        _run_strategy_designer, "cron", hour=1, minute=0, id="strategy_designer_daily",
+        misfire_grace_time=300,
+    )
+    _scheduler.add_job(
         _run_reconciliation, "interval", minutes=2, id="reconciliation",
         misfire_grace_time=60,
     )
@@ -127,6 +131,16 @@ def _run_dreaming_agent():
         asyncio.run(_async_run("dreaming_agent"))
     except Exception as e:
         logger.warning("dreaming_agent job failed: %s", e)
+
+
+def _run_strategy_designer():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        asyncio.run(_async_run("strategy_designer"))
+    except Exception as e:
+        logger.warning("strategy_designer job failed: %s", e)
 
 
 def _run_reconciliation():

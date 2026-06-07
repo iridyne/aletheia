@@ -89,3 +89,38 @@ async def test_learning_ledger_failure_does_not_break_run(tmp_path, monkeypatch)
     result = await dreaming_agent.run_dreaming_agent(permission_mode="Research")
     # Still wrote its outputs, did not raise.
     assert any(o.startswith("daily_review:") for o in result["outputs"])
+
+
+async def test_dreaming_triggers_git_snapshot_when_enabled(tmp_path, monkeypatch):
+    """§3: dreaming run snapshots the versioned data dirs via commit_all (Trading-as-Git
+    was wired but never called by any scheduler/agent)."""
+    setup_env(tmp_path, monkeypatch)
+    _mock_llm_unavailable(monkeypatch)
+
+    calls = []
+    import aletheia.files.git as git_mod
+    def fake_commit_all(message):
+        calls.append(message)
+        return {"committed": True, "message": message}
+    monkeypatch.setattr(git_mod, "commit_all", fake_commit_all)
+
+    from aletheia.agents import dreaming_agent
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Research")
+
+    assert len(calls) == 1
+    assert "git_snapshot:committed" in result["outputs"]
+
+
+async def test_dreaming_git_snapshot_failure_does_not_break_run(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _mock_llm_unavailable(monkeypatch)
+
+    import aletheia.files.git as git_mod
+    def boom(message):
+        raise RuntimeError("git exploded")
+    monkeypatch.setattr(git_mod, "commit_all", boom)
+
+    from aletheia.agents import dreaming_agent
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Research")
+    # Run still completes and wrote its log despite git failure.
+    assert any(o.startswith("dreaming_log:") for o in result["outputs"])

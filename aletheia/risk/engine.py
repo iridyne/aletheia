@@ -3,6 +3,7 @@
 Change-controlled module (guide §31.3). Implements the §21.3 check matrix.
 """
 
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -12,6 +13,12 @@ from aletheia.storage.repositories import insert_risk_decision, list_positions
 
 # Live market data older than this (seconds) is considered stale for live orders.
 _MAX_DATA_AGE_SECONDS = 120
+
+# Serialize proposal evaluation. The daily-loss check can auto-trip the kill switch
+# mid-evaluation (writes config); without serialization a concurrently-evaluated
+# proposal could read the pre-trip config and slip through (TOCTOU). APScheduler
+# runs jobs on a threadpool, so this lock closes that window.
+_eval_lock = threading.Lock()
 # Strategy lifecycle states eligible for live execution.
 _LIVE_ELIGIBLE_STATES = {"live_candidate", "live_limited"}
 
@@ -49,7 +56,16 @@ class RiskCheckResult:
 
 
 def evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult:
-    """Run all risk checks against a trade proposal. Returns a decision."""
+    """Run all risk checks against a trade proposal. Returns a decision.
+
+    Serialized via _eval_lock so a kill-switch trip during one evaluation is
+    visible to the next proposal (closes the daily-loss TOCTOU window).
+    """
+    with _eval_lock:
+        return _evaluate_proposal_locked(proposal)
+
+
+def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     cfg = load_config()
     risk = cfg.risk
     violations = []
@@ -78,12 +94,17 @@ def evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult:
     if proposal.execution_mode != "paper_internal" and perm in ("ReadOnly", "Research"):
         violations.append(f"permission_mode_insufficient:{perm}")
 
-    # 5. Max position size (for live)
-    if proposal.execution_mode == "bitget_live_limited":
-        if proposal.quantity and proposal.price:
-            notional = proposal.quantity * proposal.price
+    # 5. Max position size. Live and demo each have a notional cap so paper
+    #    promotion evidence is built from bounded trades (distinct tokens: a demo
+    #    size rejection must not count toward live-critical violations).
+    if proposal.quantity and proposal.price:
+        notional = proposal.quantity * proposal.price
+        if proposal.execution_mode == "bitget_live_limited":
             if notional > risk.max_live_position_notional_usdt:
                 violations.append(f"exceeds_max_position_notional:{notional}>{risk.max_live_position_notional_usdt}")
+        else:
+            if notional > risk.max_demo_position_notional_usdt:
+                violations.append(f"exceeds_demo_position_notional:{notional}>{risk.max_demo_position_notional_usdt}")
 
     # 6. Max open positions
     open_positions = list_positions(status="open")
@@ -158,6 +179,16 @@ def evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult:
             if strat is None or strat.get("state") not in _LIVE_ELIGIBLE_STATES:
                 state = strat.get("state") if strat else "missing"
                 violations.append(f"strategy_not_live_eligible:{state}")
+    else:
+        # Demo single-trade risk: paper trades may omit a stop (we don't force one),
+        # but when a stop is present the loss-at-stop must stay within the demo cap.
+        # Distinct token keeps this out of the live-critical-violation count.
+        if proposal.stop_price and proposal.price and proposal.quantity:
+            demo_risk_amount = abs(proposal.price - proposal.stop_price) * proposal.quantity
+            demo_capital = risk.starting_capital_usdt or 0.0
+            demo_max_risk = demo_capital * (risk.max_demo_single_trade_risk_pct / 100.0)
+            if demo_max_risk > 0 and demo_risk_amount > demo_max_risk:
+                violations.append(f"exceeds_demo_single_trade_risk:{demo_risk_amount}>{demo_max_risk}")
 
     # Determine execution mode
     if not violations:

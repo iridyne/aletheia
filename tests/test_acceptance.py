@@ -106,7 +106,7 @@ async def test_ac11_paper_trade_flow(client):
     cfg = load_config(); cfg.agent.permission_mode = "PaperAuto"; save_config(cfg)
     from aletheia.storage.models import TradeProposal
     p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
-                      quantity=0.01, price=60000, execution_mode="paper_internal")
+                      quantity=0.001, price=60000, execution_mode="paper_internal")
     repo.insert_trade_proposal(p)
     resp = await c.post(f"/api/proposals/{p.id}/approve-paper")
     assert resp.json()["execution"]["status"] == "executed"

@@ -36,6 +36,38 @@ def _add_run(status):
     repo.insert_agent_run(AgentRun(agent_name="market_observer", permission_mode="Research", status=status))
 
 
+async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):
+    """§1.3: _send_alert is called from sync run_health_check, which may itself run
+    inside an event loop (FastAPI route). It must actually deliver — not fire-and-
+    forget a task that gets GC'd — and must not raise."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.health.alert_via_telegram = True
+    cfg.telegram.enabled = True
+    save_config(cfg)
+
+    sent: list = []
+
+    class FakeBot:
+        allowed_chat_ids = [111, 222]
+        def configure(self):
+            return True
+        async def send_message(self, chat_id, text):
+            sent.append((chat_id, text))
+
+    import aletheia.telegram.bot as bot_mod
+    monkeypatch.setattr(bot_mod, "TelegramBot", FakeBot)
+
+    from aletheia.agent_runtime import health
+    # We are inside a running loop (async test). This previously scheduled an
+    # un-awaited task and delivered nothing; now it must complete synchronously.
+    health._send_alert("test issue")
+
+    assert len(sent) == 2
+    assert all("test issue" in text for _, text in sent)
+
+
 def test_compute_health_healthy(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health

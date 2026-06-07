@@ -111,4 +111,15 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
             log_tool(run_id, "write_daily_review", "research_tool", True, output=review.id)
             outputs.append(f"daily_review:{review.id}")
 
+    # Trading-as-Git: snapshot the versioned data dirs (knowledge/playbooks/reports)
+    # after the nightly consolidation. No-op when git_enabled is off; never raises.
+    try:
+        from aletheia.files.git import commit_all
+        commit = commit_all(f"daily snapshot ({item.id})")
+        if commit.get("committed"):
+            log_tool(run_id, "git_commit_all", "read_tool", True, output=commit.get("message"))
+            outputs.append("git_snapshot:committed")
+    except Exception as e:
+        errors.append(f"git_snapshot_failed: {e}")
+
     return {"outputs": outputs, "errors": errors}

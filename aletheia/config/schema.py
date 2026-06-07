@@ -92,6 +92,12 @@ class RiskConfig(BaseModel):
     max_total_live_exposure_pct: float = 5.0
     max_live_position_notional_usdt: float = 50.0
     max_live_limited_cap_usdt: float = 100.0
+    # Paper/demo bounds — promotion-gate evidence is built from paper trades, so
+    # paper orders must NOT be unbounded (guide §21.3). Distinct tokens keep demo
+    # size rejections out of the live-critical-violation count.
+    starting_capital_usdt: float = 100.0
+    max_demo_position_notional_usdt: float = 200.0
+    max_demo_single_trade_risk_pct: float = 2.0
     max_futures_leverage_live: int = 2
     max_futures_leverage_demo: int = 5
     max_open_positions_live: int = 3

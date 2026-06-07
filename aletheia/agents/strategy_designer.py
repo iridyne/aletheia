@@ -1,14 +1,43 @@
 """Strategy Designer agent — turns opportunities/hypotheses into strategy drafts."""
 
+from pydantic import BaseModel
+
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.agents.helpers import llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.trading.strategy_lifecycle import create_strategy
+from aletheia.config.loader import load_config
+from aletheia.trading.instruments import tradable_symbols_from_config
+from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
+
+# States the designer walks a fresh strategy through so it becomes tradable.
+# All of these are ungated (only paper_passed / live_* trigger promotion gates),
+# so this is a legitimate auto-advance — it never touches a live gate.
+_ACTIVATION_PATH = ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running"]
+
+_VALID_DIRECTIONS = {"long", "short", "neutral"}
+
+
+class StrategySpec(BaseModel):
+    """Structured strategy the LLM is asked to produce (degrades gracefully)."""
+    name: str = "Designed Strategy"
+    timeframe: str = "1h"
+    direction_bias: str = "neutral"
+    entry_rule: str = ""
+    exit_rule: str = ""
+    rationale: str = ""
 
 
 @register_agent("strategy_designer")
 async def run_strategy_designer(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
-    """Draft a candidate strategy (created in 'draft' lifecycle state)."""
+    """Draft a candidate strategy, persist its parameters, and advance it to paper_running.
+
+    The strategy is created with a structured `parameters` snapshot (symbol, timeframe,
+    direction, entry/exit) so downstream promotion gates and post-trade reviews can
+    audit what the strategy was actually running. It is then auto-advanced through the
+    ungated lifecycle states to `paper_running` so the paper trader can bind trades to
+    it — closing the producer side of the strategy↔trade causal chain. Live gates are
+    untouched: promotion stops at paper_running.
+    """
     outputs: list[str] = []
     errors: list[str] = []
 
@@ -17,21 +46,60 @@ async def run_strategy_designer(permission_mode: str = "Research", run_id: str |
         errors.append("create_strategy_hypothesis not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
-    description, err = await llm_complete(
+    cfg = load_config()
+    symbols = tradable_symbols_from_config(cfg)
+    default_symbol = symbols[0] if symbols else "BTCUSDT"
+
+    spec, err = await llm_structured(
         system="You are a crypto trading strategy designer. Propose ONE concrete paper-tradable "
-               "strategy for BTC/ETH/SOL: name, timeframe, entry rule, exit rule, position sizing idea, "
-               "and rationale. Keep it under 250 words. Risk engine will gate execution.",
-        user="Design one candidate strategy.",
-        max_tokens=800,
+               "strategy for BTC/ETH/SOL. Return JSON with: name, timeframe (e.g. 15m/1h/4h), "
+               "direction_bias (one of long/short/neutral), entry_rule, exit_rule, and a brief "
+               "rationale. The risk engine will gate execution; keep rules concrete and conservative.",
+        user=f"Tradable symbols: {', '.join(symbols) or default_symbol}. Design one candidate strategy.",
+        schema=StrategySpec,
+        max_tokens=600,
     )
-    log_tool(run_id, "llm_complete", "research_tool", True)
+    log_tool(run_id, "llm_structured", "research_tool", True)
+
+    spec = spec or {}
     if err:
         errors.append(err)
-        description = "Strategy draft (LLM unavailable)."
 
-    name = "Designed Strategy"
-    strategy = create_strategy(name=name, description=description[:1000] if description else name)
+    name = str(spec.get("name") or "Designed Strategy")[:120]
+    timeframe = str(spec.get("timeframe") or "1h")[:16]
+    direction = str(spec.get("direction_bias") or "neutral").lower()
+    if direction not in _VALID_DIRECTIONS:
+        direction = "neutral"
+    entry_rule = str(spec.get("entry_rule") or "")[:500]
+    exit_rule = str(spec.get("exit_rule") or "")[:500]
+    rationale = str(spec.get("rationale") or "")[:500]
+
+    # Structured parameter snapshot — the auditable record of "what this strategy is".
+    parameters = {
+        "symbol": default_symbol,
+        "timeframe": timeframe,
+        "direction_bias": direction,
+        "entry_rule": entry_rule,
+        "exit_rule": exit_rule,
+    }
+    description = (
+        rationale
+        or f"{name} ({timeframe}, {direction}). Entry: {entry_rule or 'n/a'}. Exit: {exit_rule or 'n/a'}."
+    )[:1000]
+
+    strategy = create_strategy(name=name, description=description, parameters=parameters)
     log_tool(run_id, "create_strategy_hypothesis", "research_tool", True, output=strategy.id)
     outputs.append(f"strategy:{strategy.id}")
+
+    # Advance through the ungated lifecycle states so the paper trader can bind to it.
+    # Stop and record on the first refused transition rather than forcing it.
+    state = "draft"
+    for target in _ACTIVATION_PATH:
+        result = promote_strategy(strategy.id, target)
+        if not result.get("success"):
+            errors.append(f"promotion_stopped_at:{state}->{target}:{result.get('error')}")
+            break
+        state = target
+    outputs.append(f"strategy_state:{state}")
 
     return {"outputs": outputs, "errors": errors}
