@@ -24,6 +24,7 @@ export const api = {
   resume: () => post('/gateway/resume'),
 
   setPermissionMode: (mode: string) => post('/settings/permission-mode', { mode }),
+  setAutonomousPaperTrading: (enabled: boolean) => post('/settings/autonomous-paper-trading', { enabled }),
   setExchangeMode: (mode: string) => post('/settings/exchange-mode', { mode }),
 
   // Model provider config
@@ -89,28 +90,16 @@ export const api = {
     reason?: string; detail?: string
   }>('/gateway/autostart', { enabled }),
 
-  // Activity feed (unified timeline)
-  getActivityFeed: (limit = 30) => fetchJson<any[]>(`/activity?limit=${limit}`),
-
-  // Command Center
-  postCommand: (text: string, context?: Record<string, any>) =>
-    post<{ type: string; message: string; cards?: any[]; actions?: any[] }>('/command', { text, context }),
-
-  // News Intelligence
-  getNews: (limit = 50, status?: string) =>
-    fetchJson<any[]>(`/news?limit=${limit}${status ? `&status=${status}` : ''}`),
-  createNews: (item: { headline: string; source?: string; summary?: string; related_assets?: string[]; event_type?: string; sentiment?: string; urgency?: string; key_points?: string[] }) =>
-    post<any>('/news', item),
-  archiveNews: (id: string) => post<any>(`/news/${id}/archive`),
-  createResearchNoteFromNews: (id: string) => post<any>(`/news/${id}/create-research-note`),
-
   // Data
   getAgentRuns: () => fetchJson<any[]>('/agent-runs'),
+  getAgentRunToolCalls: (runId: string) => fetchJson<any[]>(`/agent-runs/${runId}/tool-calls`),
   startAgentRun: (agent_name: string) => post('/agent-runs/start', { agent_name }),
+  getDreamingSummary: () => fetchJson<Record<string, any[]>>('/dreaming/summary'),
   getOpportunities: () => fetchJson<any[]>('/opportunities'),
   getProposals: () => fetchJson<any[]>('/proposals'),
   approveProposal: (id: string) => post(`/proposals/${id}/approve-paper`),
   rejectProposal: (id: string) => post(`/proposals/${id}/reject`),
+  getProposalRiskDecision: (id: string) => fetchJson<{ proposal_id: string; decision: any }>(`/proposals/${id}/risk-decision`),
   getTrades: () => fetchJson<any[]>('/trades'),
   getPositions: () => fetchJson<any[]>('/positions'),
   getPortfolio: () => fetchJson<Record<string, any>>('/portfolio'),
@@ -121,10 +110,29 @@ export const api = {
   getStrategyMemory: () => fetchJson<any[]>('/knowledge/strategy-memory'),
   getDreamingLogs: () => fetchJson<any[]>('/knowledge/dreaming-logs'),
   getPostTradeReviews: () => fetchJson<any[]>('/knowledge?type=post_trade_review'),
+  getKnowledgeContent: (id: string) => fetchJson<{ id: string; content: string; error?: string }>(`/knowledge/${id}/content`),
+  getStrategyGates: (id: string) => fetchJson<Record<string, any>>(`/strategies/${id}/gates`),
 
-  // Charts & Market
+  // Charts
   getOhlcv: (symbol: string, timeframe = '1h', limit = 100) =>
     fetchJson<any>(`/market/ohlcv?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`),
   getPortfolioHistory: () => fetchJson<any[]>('/market/portfolio-history'),
-  getMarketSnapshots: (limit = 3) => fetchJson<any[]>(`/market/snapshots?limit=${limit}`),
+
+  // Audit / Activity
+  getAuditEvents: (limit = 50) => fetchJson<any[]>(`/audit/events?limit=${limit}`),
+
+  // Market snapshots (watchlist)
+  getMarketSnapshots: (symbol?: string, limit = 10) =>
+    fetchJson<any[]>(`/market/snapshots${symbol ? `?symbol=${symbol}&limit=${limit}` : `?limit=${limit}`}`),
+
+  // News Intelligence
+  getNews: (limit = 50) => fetchJson<any[]>(`/news?limit=${limit}`),
+  getNewsItem: (id: string) => fetchJson<any>(`/news/${id}`),
+  analyzeNews: (id: string) => post<any>(`/news/${id}/analyze`),
+  createNews: (body: { title: string; source?: string; summary?: string; symbols_mentioned?: string[]; sentiment?: string }) =>
+    post<any>('/news', body),
+
+  // Command Center
+  sendCommand: (input: string, context?: Record<string, string>) =>
+    post<any>('/command', { input, context }),
 }

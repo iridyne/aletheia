@@ -63,7 +63,9 @@ async def healthcheck_all() -> list[ModelHealth]:
     """Run healthcheck on all configured providers."""
     cfg = load_config()
     results = []
-    for name in cfg.models.providers:
+    for name, pcfg in cfg.models.providers.items():
+        if not pcfg.enabled:
+            continue
         try:
             provider = get_provider(name)
             health = await provider.healthcheck()

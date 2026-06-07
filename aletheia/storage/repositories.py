@@ -289,15 +289,20 @@ def update_knowledge_item(kid: str, **kwargs) -> None:
     _update("knowledge_items", kid, kwargs)
 
 
-def list_knowledge_items(item_type: str | None = None, limit: int = 50, strategy_id: str | None = None) -> list[dict]:
+def list_knowledge_items(item_type: str | None = None, limit: int = 50, strategy_id: str | None = None, status: str = "active") -> list[dict]:
+    conditions = []
+    params_list: list = []
     if item_type:
-        where = "item_type = ?"
-        params: tuple = (item_type,)
-        if strategy_id is not None:
-            where += " AND strategy_id = ?"
-            params = (item_type, strategy_id)
-        return _select_all("knowledge_items", where=where, params=params, limit=limit)
-    return _select_all("knowledge_items", limit=limit)
+        conditions.append("item_type = ?")
+        params_list.append(item_type)
+    if strategy_id is not None:
+        conditions.append("strategy_id = ?")
+        params_list.append(strategy_id)
+    if status != "all":
+        conditions.append("(status = ? OR status IS NULL)")
+        params_list.append(status)
+    where = " AND ".join(conditions) if conditions else None
+    return _select_all("knowledge_items", where=where, params=tuple(params_list), limit=limit)
 
 
 # --- Market Snapshots ---

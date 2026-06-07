@@ -54,7 +54,12 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     if row is None:
         raise ValueError(f"position not found: {position_id}")
 
-    realized = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
+    gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
+    # Deduct estimated round-trip fees (entry + exit) based on execution mode rate
+    fee_rate = 0.001 if row.get("execution_mode", "").startswith("paper") else 0.0006
+    entry_fee = row["entry_price"] * row["quantity"] * fee_rate
+    exit_fee = exit_price * row["quantity"] * fee_rate
+    realized = gross_pnl - entry_fee - exit_fee
     update_position(
         position_id,
         status="closed",
@@ -100,10 +105,14 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
         positions = [p for p in positions if p["execution_mode"] == execution_mode]
 
     total_unrealized = sum(p["unrealized_pnl"] for p in positions)
-    total_realized = sum(p.get("realized_pnl", 0.0) for p in positions)
     total_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in positions)
     total_today_realized = today_realized_pnl(execution_mode=execution_mode)
-    total_realized_open = sum(p.get("realized_pnl", 0.0) for p in positions)
+
+    # Account-level realized PnL from closed positions
+    closed = list_positions(status="closed")
+    if execution_mode:
+        closed = [p for p in closed if p["execution_mode"] == execution_mode]
+    total_realized = sum(p.get("realized_pnl", 0.0) for p in closed)
 
     # Exposure by symbol
     exposure: dict[str, float] = {}
@@ -120,7 +129,6 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
         "exposure_by_symbol": {k: round(v, 4) for k, v in exposure.items()},
         "positions": positions,
         "today_realized_pnl": round(total_today_realized, 4),
-        "realized_open_pnl": round(total_realized_open, 4),
     }
 
 

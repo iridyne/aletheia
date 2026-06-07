@@ -1,13 +1,11 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import SetupBanner from '../components/SetupBanner'
-import StatusPill from '../components/shared/StatusPill'
-import MetricTile from '../components/shared/MetricTile'
-import { useInspector } from '../context/InspectorContext'
-import { pnlClass } from '../utils/statusColor'
 
 export default function Overview() {
-  const { setObject } = useInspector()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus })
@@ -15,12 +13,11 @@ export default function Overview() {
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
   const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
-  const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
-  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
+  const { data: portfolioHistory = [] } = useQuery({ queryKey: ['portfolio-history'], queryFn: api.getPortfolioHistory })
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
-  const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(3), refetchInterval: 30000 })
-  const { data: strategies = [] } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
-  const { data: dreaming = [] } = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
+  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
+  const { data: dreamingSummary } = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
+  const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(undefined, 20) })
   const exchangeMode = String((status as any)?.exchange_mode || '')
   const { data: exchangeHealth } = useQuery({
     queryKey: ['bitget-test', exchangeMode],
@@ -28,144 +25,210 @@ export default function Overview() {
     refetchInterval: 15000,
     enabled: !!exchangeMode,
   })
+  const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
+  const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
 
   if (!status) return <p>Loading...</p>
 
+  const latestRun = (runs as any[])[0]
   const openPositions = (positions as any[]).filter(p => p.status === 'open')
   const pendingProposals = (proposals as any[]).filter(p => p.status === 'pending')
-  const recentRuns = (runs as any[]).slice(0, 5)
-  const recentOpps = (opportunities as any[]).slice(0, 5)
-  const activeStrategies = (strategies as any[]).filter((s: any) => ['paper_running', 'paper_passed', 'live_candidate', 'live_limited'].includes(s.state))
-  const latestDream = (dreaming as any[])[0]
+  const riskState = String(riskStatus?.status || 'not_available')
+  const riskBadge = riskState === 'blocked' ? 'badge-red' : (riskState === 'warning' || riskState === 'not_available') ? 'badge-yellow' : 'badge-green'
+  const violations = (riskStatus?.violations as string[]) || []
+  const liveState = String((status as any).live_state)
+  const liveStateBadge = liveState === 'live_disabled' ? 'badge-red' : liveState === 'live_limited' ? 'badge-yellow' : 'badge-green'
+  const killed = !!killSwitch?.active
 
   const defaultProvider = String(modelConfig?.default_provider || '')
   const dph = (modelHealth as any[]).find(h => h.provider === defaultProvider)
-  const riskState = String(riskStatus?.status || 'unknown')
+  const modelBadge = dph?.available ? 'badge-green' : dph ? 'badge-red' : 'badge-yellow'
+  const modelText = dph?.available ? `connected (${defaultProvider})` : dph ? `unreachable: ${dph.error || '—'}` : 'checking...'
+  const exBadge = exchangeHealth?.connected ? 'badge-green' : exchangeHealth ? 'badge-red' : 'badge-yellow'
+  const exText = exchangeHealth?.connected ? 'connected' : exchangeHealth ? `unreachable: ${exchangeHealth.error || '—'}` : 'checking...'
+
+  const recentNotes = (dreamingSummary as any)?.recent_research_notes || []
+  const latestInsight = recentNotes[0]?.title || null
+
+  const watchSymbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+  const snapshotMap: Record<string, any> = {}
+  for (const s of snapshots as any[]) {
+    if (!snapshotMap[s.symbol]) snapshotMap[s.symbol] = s
+  }
 
   return (
     <div>
       <h2 className="page-title">Cockpit</h2>
       <SetupBanner />
 
-      {/* System State + Risk + Markets */}
+      {/* Cockpit Grid — 4 panel overview */}
       <div className="cockpit-grid">
-        <div className="card">
-          <h3>System State</h3>
-          <div className="cockpit-fields">
-            <Field label="Gateway" value={status.gateway_running ? 'Running' : 'Stopped'} badge={status.gateway_running ? 'badge-green' : 'badge-red'} />
-            <Field label="Agents" value={status.paused ? 'Paused' : 'Active'} badge={status.paused ? 'badge-yellow' : 'badge-green'} />
-            <Field label="Permission" value={String(status.permission_mode)} badge="badge-blue" />
-            <Field label="Live State" value={String(status.live_state)} badge={status.live_state === 'live_disabled' ? 'badge-red' : 'badge-yellow'} />
-            <Field label="Kill Switch" value={killSwitch?.active ? 'ENGAGED' : 'inactive'} badge={killSwitch?.active ? 'badge-red' : 'badge-green'} />
-            <Field label="Model" value={dph?.available ? `connected (${defaultProvider})` : 'checking...'} badge={dph?.available ? 'badge-green' : 'badge-yellow'} />
-            <Field label="Exchange" value={exchangeHealth?.connected ? 'connected' : 'checking...'} badge={exchangeHealth?.connected ? 'badge-green' : 'badge-yellow'} />
-          </div>
-        </div>
-
-        <div className="card">
+        {/* Risk State */}
+        <div className="card cockpit-panel">
           <h3>Risk State</h3>
-          <div className="cockpit-fields">
-            <Field label="Status" value={riskState} badge={riskState === 'ok' ? 'badge-green' : riskState === 'blocked' ? 'badge-red' : 'badge-yellow'} />
-            <Field label="Open Positions" value={String(openPositions.length)} />
-            <Field label="Total Value" value={`${portfolio?.total_value_usdt ?? '—'} USDT`} />
-            <Field label="Today PnL" value={String(portfolio?.today_pnl ?? portfolio?.unrealized_pnl ?? '—')} />
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`badge ${riskBadge}`}>{riskState}</span>
+            {killed && <span className="badge badge-red">KILL SWITCH</span>}
+          </div>
+          {violations.length > 0 && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--red)' }}>
+              {violations.slice(0, 3).join(', ')}
+              {violations.length > 3 && ` +${violations.length - 3} more`}
+            </div>
+          )}
+          {violations.length === 0 && <p className="text-muted text-sm">No violations</p>}
+        </div>
+
+        {/* Agent Focus */}
+        <div className="card cockpit-panel">
+          <h3>Agent Focus</h3>
+          {latestRun ? (
+            <>
+              <p style={{ fontSize: '0.82rem' }}>
+                <span className="mono">{latestRun.agent_name}</span>
+                {' '}
+                <span className={`badge ${latestRun.status === 'completed' ? 'badge-green' : latestRun.status === 'running' ? 'badge-yellow' : 'badge-red'}`}>
+                  {latestRun.status}
+                </span>
+              </p>
+              {latestInsight && (
+                <p className="text-muted text-sm mt-2" title={latestInsight}>
+                  Latest insight: {latestInsight.length > 60 ? latestInsight.slice(0, 60) + '...' : latestInsight}
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-muted text-sm">No agent runs yet</p>
+          )}
+        </div>
+
+        {/* Market Snapshot */}
+        <div className="card cockpit-panel">
+          <h3>Market Snapshot</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+            {watchSymbols.map(sym => {
+              const snap = snapshotMap[sym]
+              if (!snap) return <div key={sym} className="text-muted text-sm">{sym.replace('USDT', '')}: —</div>
+              const change = snap.change_pct_24h
+              const color = change > 0 ? 'var(--green)' : change < 0 ? 'var(--red)' : 'var(--muted)'
+              return (
+                <div key={sym}>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--faint)' }}>{sym.replace('USDT', '')}</div>
+                  <div className="mono" style={{ fontSize: '0.82rem' }}>{Number(snap.price).toLocaleString()}</div>
+                  {change != null && <div className="mono" style={{ fontSize: '0.7rem', color }}>{change > 0 ? '+' : ''}{change.toFixed(2)}%</div>}
+                </div>
+              )
+            })}
           </div>
         </div>
 
-        <div className="card">
-          <h3>Markets</h3>
-          {(snapshots as any[]).length === 0 ? <p className="text-muted">No market data yet.</p> : (
-            <div className="cockpit-fields">
-              {(snapshots as any[]).map((s: any) => (
-                <MetricTile
-                  key={s.symbol}
-                  label={s.symbol?.replace('USDT', '') || s.symbol}
-                  value={`$${Number(s.price || s.last_price || 0).toLocaleString()}`}
-                  color={pnlClass(s.change_24h) === 'pnl-positive' ? 'var(--green)' : s.change_24h ? 'var(--red)' : undefined}
-                />
-              ))}
-            </div>
+        {/* Action Queue */}
+        <div className="card cockpit-panel">
+          <h3>Action Queue</h3>
+          {pendingProposals.length > 0 ? (
+            <>
+              <p style={{ fontSize: '0.82rem' }}>
+                <span className="badge badge-yellow">{pendingProposals.length} pending</span> proposals
+              </p>
+              <ul style={{ margin: '0.4rem 0 0 1rem', fontSize: '0.78rem', listStyle: 'disc' }}>
+                {pendingProposals.slice(0, 3).map((p: any) => (
+                  <li key={p.id}>{p.symbol} {p.direction}</li>
+                ))}
+              </ul>
+              <button className="secondary mt-2" style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }} onClick={() => navigate('/proposals')}>
+                Review →
+              </button>
+            </>
+          ) : (
+            <p className="text-muted text-sm">No pending actions</p>
           )}
         </div>
       </div>
 
-      {/* Action Queue */}
-      {pendingProposals.length > 0 && (
-        <div className="card">
-          <h3>Pending Actions ({pendingProposals.length})</h3>
-          <table>
-            <thead><tr><th>Symbol</th><th>Direction</th><th>Mode</th><th>Rationale</th></tr></thead>
-            <tbody>
-              {pendingProposals.slice(0, 5).map((p: any) => (
-                <tr key={p.id} onClick={() => setObject({ type: 'proposal', id: p.id, data: p })}>
-                  <td>{p.symbol}</td>
-                  <td>{p.direction}</td>
-                  <td>{p.execution_mode}</td>
-                  <td className="text-truncate text-truncate-200">{p.agent_rationale || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* System Card (existing, kept) */}
+      <div className="card">
+        <h3>System</h3>
+        <table>
+          <tbody>
+            <tr><th>Gateway</th><td><span className={`badge ${(status as any).gateway_running ? 'badge-green' : 'badge-red'}`}>{(status as any).gateway_running ? 'Running' : 'Stopped'}</span></td></tr>
+            <tr><th>State</th><td><span className={`badge ${(status as any).paused ? 'badge-yellow' : 'badge-green'}`}>{(status as any).paused ? 'Paused' : 'Active'}</span></td></tr>
+            <tr><th>Exchange</th><td>{String((status as any).exchange)} ({String((status as any).exchange_mode)}) <span className={`badge ${exBadge}`}>{exText}</span></td></tr>
+            <tr><th>Model</th><td><span className={`badge ${modelBadge}`}>{modelText}</span></td></tr>
+            <tr><th>Live State</th><td><span className={`badge ${liveStateBadge}`}>{String((status as any).live_state)}</span></td></tr>
+            <tr><th>Permission</th><td><span className="badge badge-blue">{String((status as any).permission_mode)}</span></td></tr>
+            <tr><th>Kill Switch</th><td><span className={`badge ${killed ? 'badge-red' : 'badge-green'}`}>{killed ? 'ENGAGED' : 'inactive'}</span></td></tr>
+          </tbody>
+        </table>
+      </div>
 
-      {/* Agent Focus */}
-      <div className="cockpit-grid">
-        <div className="card">
-          <h3>Recent Agent Activity</h3>
-          {recentRuns.length === 0 ? <p className="text-muted">No runs yet.</p> : (
-            <table>
-              <tbody>
-                {recentRuns.map((r: any) => (
-                  <tr key={r.id} onClick={() => setObject({ type: 'agent_run', id: r.id, data: r })}>
-                    <td>{r.agent_name}</td>
-                    <td><StatusPill status={r.status} /></td>
-                    <td className="text-faint font-sm">{r.started_at?.slice(11, 16)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+      {/* Account / PnL */}
+      <div className="card">
+        <h3>Account / PnL</h3>
+        <table>
+          <tbody>
+            <tr><th>Total value (USDT)</th><td>{(portfolio as any)?.total_value_usdt ?? '—'}</td></tr>
+            <tr><th>Today PnL</th><td>{(portfolio as any)?.today_pnl != null ? (portfolio as any).today_pnl : <span className="text-muted">not available</span>}</td></tr>
+            <tr><th>Unrealized PnL</th><td>{(portfolio as any)?.unrealized_pnl ?? '—'}</td></tr>
+            <tr><th>Open positions</th><td>{openPositions.length}</td></tr>
+          </tbody>
+        </table>
+        <PnLSparkline data={portfolioHistory as any[]} />
+      </div>
 
-        <div className="card">
-          <h3>Recent Opportunities</h3>
-          {recentOpps.length === 0 ? <p className="text-muted">None yet.</p> : (
-            <table>
-              <tbody>
-                {recentOpps.map((o: any) => (
-                  <tr key={o.id} onClick={() => setObject({ type: 'opportunity', id: o.id, data: o })}>
-                    <td>{o.symbol}</td>
-                    <td>{o.direction_bias}</td>
-                    <td><StatusPill status={o.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+      {/* Recent Runs */}
+      <div className="card">
+        <h3>Recent Runs</h3>
+        <RecentRunsTimeline runs={(runs as any[]).slice(0, 8)} />
+      </div>
 
-        <div className="card">
-          <h3>Agent Intelligence</h3>
-          <div className="cockpit-fields">
-            <Field label="Active Strategies" value={String(activeStrategies.length)} badge={activeStrategies.length > 0 ? 'badge-green' : undefined} />
-            {latestDream && <Field label="Latest Dreaming" value={latestDream.title?.slice(0, 30) || 'Session'} />}
-            <Field label="Pending Proposals" value={String(pendingProposals.length)} badge={pendingProposals.length > 0 ? 'badge-yellow' : undefined} />
-          </div>
-          <div className="hint" style={{ marginTop: '0.5rem' }}>
-            <a href="#/dreaming">Dreaming</a> · <a href="#/strategies">Strategies</a>
-          </div>
-        </div>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button onClick={() => pauseMut.mutate()} disabled={!!(status as any).paused}>Pause</button>
+        <button onClick={() => resumeMut.mutate()} disabled={!(status as any).paused}>Resume</button>
       </div>
     </div>
   )
 }
 
-function Field({ label, value, badge }: { label: string; value: string; badge?: string }) {
+function PnLSparkline({ data }: { data: any[] }) {
+  if (!data || data.length < 2) return null
+  const values = data
+    .map(s => (s.unrealized_pnl ?? 0) + (s.realized_pnl ?? 0))
+    .slice(-30)
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min || 1
+  const w = 200
+  const h = 32
+  const points = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w
+    const y = h - ((v - min) / range) * h
+    return `${x},${y}`
+  }).join(' ')
+  const lastVal = values[values.length - 1]
+  const color = lastVal >= 0 ? 'var(--green)' : 'var(--red)'
   return (
-    <div className="cockpit-field">
-      <span className="cockpit-field-label">{label}</span>
-      {badge ? <span className={`badge ${badge}`}>{value}</span> : <span className="cockpit-field-value">{value}</span>}
+    <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+      <svg width={w} height={h} style={{ display: 'block' }}>
+        <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" />
+      </svg>
+      <span className="mono text-sm" style={{ color }}>{lastVal >= 0 ? '+' : ''}{lastVal.toFixed(2)}</span>
+    </div>
+  )
+}
+
+function RecentRunsTimeline({ runs }: { runs: any[] }) {
+  if (!runs || runs.length === 0) return null
+  return (
+    <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
+      {runs.map((r: any) => {
+        const badge = r.status === 'completed' ? 'badge-green' : r.status === 'error' ? 'badge-red' : 'badge-yellow'
+        return (
+          <span key={r.id} className={`badge ${badge}`} title={`${r.agent_name} — ${r.started_at?.slice(0, 16)}`}>
+            {r.agent_name?.slice(0, 3)}
+          </span>
+        )
+      })}
+      <span className="text-muted text-sm" style={{ marginLeft: '0.3rem' }}>recent runs</span>
     </div>
   )
 }

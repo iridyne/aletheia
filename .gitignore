@@ -13,3 +13,18 @@ secrets.enc
 node_modules/
 frontend/dist/
 .pytest_cache/
+
+# === AI Workspace Safety Rules ===
+# Claude Code local/private state
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Codex local/private state
+.codex/auth*
+.codex/session*
+.codex/cache/
+.codex/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,172 +1,119 @@
-"""Command Center API — structured command/query interface for the dashboard."""
+"""Command Center API — natural language intent classification."""
+
+import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from aletheia.config.loader import load_config
-from aletheia.files.jsonl import write_audit
-from aletheia.gateway.pidfile import is_running
+from aletheia.storage.sqlite import get_db
+from aletheia.storage.migrations import run_migrations
 
 router = APIRouter(prefix="/api", tags=["command"])
+logger = logging.getLogger("aletheia.command")
+
+KNOWN_INTENTS = {
+    "pause_gateway": {"keywords": ["pause", "stop", "halt"], "risk": "low"},
+    "resume_gateway": {"keywords": ["resume", "start", "continue", "unpause"], "risk": "low"},
+    "status": {"keywords": ["status", "running", "state", "doing"], "risk": "low"},
+    "kill_switch": {"keywords": ["kill", "emergency", "shutdown"], "risk": "high"},
+    "run_agent": {"keywords": ["run", "trigger", "execute", "start agent"], "risk": "low"},
+    "latest_proposals": {"keywords": ["proposal", "proposals", "pending", "approve"], "risk": "low"},
+    "risk_status": {"keywords": ["risk", "violations", "boundaries"], "risk": "low"},
+    "market_info": {"keywords": ["market", "price", "btc", "eth", "sol"], "risk": "low"},
+}
+
+
+def _classify_intent_simple(text: str) -> tuple[str, dict]:
+    """Rule-based fallback intent classification."""
+    text_lower = text.lower().strip()
+    for intent, meta in KNOWN_INTENTS.items():
+        for kw in meta["keywords"]:
+            if kw in text_lower:
+                return intent, meta
+    return "unknown", {"risk": "low"}
 
 
 class CommandRequest(BaseModel):
-    text: str
+    input: str
     context: dict | None = None
 
 
-class CommandAction(BaseModel):
-    label: str
-    action: str
-    params: dict | None = None
-
-
 class CommandResponse(BaseModel):
-    type: str  # answer | command_result | rejected
-    message: str
-    cards: list[dict] | None = None
-    actions: list[dict] | None = None
-
-
-FORBIDDEN_PATTERNS = ["enable live", "bypass risk", "disable risk", "force trade", "delete all"]
+    intent: str
+    risk_level: str
+    response: str
+    action: dict | None = None
+    needs_confirmation: bool = False
 
 
 @router.post("/command")
-async def handle_command(req: CommandRequest) -> dict:
-    text = req.text.strip().lower()
-
-    for pattern in FORBIDDEN_PATTERNS:
-        if pattern in text:
-            write_audit({
-                "actor": "human", "source": "command_center",
-                "event_type": "command_rejected",
-                "entity_type": "command", "entity_id": text[:50],
-                "message": f"Rejected forbidden command: {text[:100]}",
-            })
-            return {
-                "type": "rejected",
-                "message": f"Command rejected: '{pattern}' is not allowed via Command Center.",
-                "cards": None,
-                "actions": None,
-            }
-
-    if text in ("status", "/status", "what is the status", "system status"):
-        return _handle_status()
-
-    if text in ("pause", "pause all", "pause agents", "pause all agents"):
-        return await _handle_pause()
-
-    if text in ("resume", "resume all", "resume agents", "resume all agents"):
-        return await _handle_resume()
-
-    if text.startswith("latest") or text.startswith("what") or text.startswith("show"):
-        return _handle_query(req.text)
-
-    return {
-        "type": "answer",
-        "message": f"I understood your input: \"{req.text}\". Full natural language processing will be available in a future update. For now, try: status, pause, resume.",
-        "cards": None,
-        "actions": [
-            {"label": "Status", "action": "status"},
-            {"label": "Pause", "action": "pause"},
-            {"label": "Resume", "action": "resume"},
-        ],
-    }
-
-
-def _handle_status() -> dict:
-    cfg = load_config()
-    running = is_running()
-    return {
-        "type": "command_result",
-        "message": "System status retrieved.",
-        "cards": [{
-            "card_type": "status",
-            "title": "System Status",
-            "fields": {
-                "gateway": "running" if running else "stopped",
-                "paused": cfg.runtime.paused,
-                "exchange": f"{cfg.exchange.name} ({cfg.exchange.mode})",
-                "permission_mode": cfg.agent.permission_mode,
-                "live_state": cfg.live.state,
-            },
-        }],
-        "actions": [
-            {"label": "Pause", "action": "pause"},
-            {"label": "Resume", "action": "resume"},
-        ],
-    }
-
-
-async def _handle_pause() -> dict:
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return {"type": "command_result", "message": "System is already paused.", "cards": None, "actions": None}
-
-    from aletheia.config.loader import save_config
-    cfg.runtime.paused = True
-    save_config(cfg)
-    write_audit({
-        "actor": "human", "source": "command_center",
-        "event_type": "gateway_paused",
-        "entity_type": "gateway", "entity_id": "gateway",
-        "message": "Paused via Command Center",
-    })
-    return {
-        "type": "command_result",
-        "message": "All agents paused.",
-        "cards": [{"card_type": "status", "title": "Paused", "fields": {"state": "paused"}}],
-        "actions": [{"label": "Resume", "action": "resume"}],
-    }
-
-
-async def _handle_resume() -> dict:
-    cfg = load_config()
-    if not cfg.runtime.paused:
-        return {"type": "command_result", "message": "System is already running.", "cards": None, "actions": None}
-
-    from aletheia.config.loader import save_config
-    cfg.runtime.paused = False
-    save_config(cfg)
-    write_audit({
-        "actor": "human", "source": "command_center",
-        "event_type": "gateway_resumed",
-        "entity_type": "gateway", "entity_id": "gateway",
-        "message": "Resumed via Command Center",
-    })
-    return {
-        "type": "command_result",
-        "message": "All agents resumed.",
-        "cards": [{"card_type": "status", "title": "Resumed", "fields": {"state": "running"}}],
-        "actions": [{"label": "Pause", "action": "pause"}],
-    }
-
-
-def _handle_query(text: str) -> dict:
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.migrations import run_migrations
+async def process_command(req: CommandRequest) -> CommandResponse:
     run_migrations()
+    text = req.input.strip()
 
-    cards = []
-    runs = repo.list_agent_runs(limit=3)
-    if runs:
-        cards.append({
-            "card_type": "agent_runs",
-            "title": "Recent Agent Runs",
-            "items": [{"agent": r.get("agent_name"), "status": r.get("status"), "time": r.get("started_at")} for r in runs],
-        })
+    intent, meta = _classify_intent_simple(text)
 
-    proposals = repo.list_trade_proposals(limit=3)
-    if proposals:
-        cards.append({
-            "card_type": "proposals",
-            "title": "Recent Proposals",
-            "items": [{"symbol": p.get("symbol"), "direction": p.get("direction"), "status": p.get("status")} for p in proposals],
-        })
+    try:
+        from aletheia.agents.llm import llm_complete
+        prompt = (
+            f"You are the Aletheia Trading OS command interpreter.\n"
+            f"User said: \"{text}\"\n"
+            f"Classify the intent as one of: {', '.join(KNOWN_INTENTS.keys())}, or 'query' for general questions.\n"
+            f"Then provide a brief (1-2 sentence) response.\n"
+            f"Format: INTENT: <intent>\\nRESPONSE: <response>"
+        )
+        llm_result = await llm_complete(prompt)
+        if llm_result and "INTENT:" in llm_result:
+            lines = llm_result.strip().split("\n")
+            for line in lines:
+                if line.startswith("INTENT:"):
+                    parsed_intent = line.replace("INTENT:", "").strip().lower()
+                    if parsed_intent in KNOWN_INTENTS:
+                        intent = parsed_intent
+                        meta = KNOWN_INTENTS[intent]
+                elif line.startswith("RESPONSE:"):
+                    response_text = line.replace("RESPONSE:", "").strip()
+                    return CommandResponse(
+                        intent=intent,
+                        risk_level=meta.get("risk", "low"),
+                        response=response_text,
+                        action=_build_action(intent),
+                        needs_confirmation=meta.get("risk") == "high",
+                    )
+    except Exception as e:
+        logger.debug("LLM command classification unavailable: %s", e)
 
-    return {
-        "type": "answer",
-        "message": f"Here's what's recent in the system:",
-        "cards": cards if cards else None,
-        "actions": None,
+    response = _build_response(intent, text)
+    return CommandResponse(
+        intent=intent,
+        risk_level=meta.get("risk", "low"),
+        response=response,
+        action=_build_action(intent),
+        needs_confirmation=meta.get("risk") == "high",
+    )
+
+
+def _build_action(intent: str) -> dict | None:
+    actions = {
+        "pause_gateway": {"type": "api_call", "method": "POST", "path": "/api/gateway/pause"},
+        "resume_gateway": {"type": "api_call", "method": "POST", "path": "/api/gateway/resume"},
+        "kill_switch": {"type": "api_call", "method": "POST", "path": "/api/risk/kill-switch", "body": {"active": True, "reason": "command_center"}},
+        "run_agent": {"type": "api_call", "method": "POST", "path": "/api/agent-runs/start", "body": {"agent_name": "market_observer"}},
     }
+    return actions.get(intent)
+
+
+def _build_response(intent: str, original_text: str) -> str:
+    responses = {
+        "pause_gateway": "I'll pause the gateway. All scheduled agents will stop until resumed.",
+        "resume_gateway": "Resuming the gateway. Agents will restart their scheduled runs.",
+        "status": "Use the Cockpit page to see full system status, or check the top status bar.",
+        "kill_switch": "This will engage the kill switch and halt ALL trading immediately. Are you sure?",
+        "run_agent": "Triggering the market observer agent now.",
+        "latest_proposals": "Check the Proposals page for pending items that need your review.",
+        "risk_status": "Check the Risk & Controls page for current violations and boundaries.",
+        "market_info": "Check the Charts page for current market data and price action.",
+        "unknown": f"I'm not sure what you mean by \"{original_text}\". Try: pause, resume, status, or run agent.",
+    }
+    return responses.get(intent, responses["unknown"])

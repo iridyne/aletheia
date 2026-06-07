@@ -1,10 +1,11 @@
 """Agent orchestrator — runs agents with permission enforcement."""
 
-from aletheia.agent_runtime.permissions import is_tool_permitted
+import traceback
+
 from aletheia.agent_runtime.run_logger import start_run, end_run
 from aletheia.config.loader import load_config
+from aletheia.files.jsonl import write_audit
 from aletheia.storage.migrations import run_migrations
-from aletheia.files.jsonl import append_jsonl
 
 
 async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
@@ -30,7 +31,13 @@ async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
             outputs = result.get("outputs", [])
             errors = result.get("errors", [])
     except Exception as e:
-        errors.append(str(e))
+        errors.append(traceback.format_exc())
+        write_audit({
+            "actor": "system", "source": "orchestrator",
+            "event_type": "agent_failed", "entity_type": "agent_run",
+            "entity_id": run.id,
+            "message": f"Agent {agent_name} raised: {e}",
+        })
 
     status = "completed" if not errors else "completed_with_errors"
     end_run(run, status=status, outputs=outputs, errors=errors)

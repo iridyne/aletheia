@@ -62,7 +62,7 @@ class AnthropicCompatibleProvider(ModelProvider):
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
-                if resp.status_code < 500:
+                if resp.status_code == 200:
                     return ModelHealth(provider=self.name, available=True, model=self.model)
                 return ModelHealth(provider=self.name, available=False, error=f"HTTP {resp.status_code}")
         except Exception as e:

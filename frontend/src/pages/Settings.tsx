@@ -16,6 +16,7 @@ export default function Settings() {
   return (
     <div>
       <h2 className="page-title">Settings</h2>
+      <EffectiveConfigCard />
       <KillSwitchCard qc={qc} />
       <PermissionCard status={status} qc={qc} />
       <GatewayCard status={status} qc={qc} />
@@ -27,6 +28,42 @@ export default function Settings() {
       <TelegramCard />
       <SoftwareUpdateCard />
       <AutostartCard />
+    </div>
+  )
+}
+
+function EffectiveConfigCard() {
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
+  if (!settings) return null
+  const runtime = settings.runtime as any || {}
+  const agent = settings.agent as any || {}
+  const flags = [
+    { label: 'Paused', value: runtime.paused, warn: runtime.paused },
+    { label: 'Scheduler Enabled', value: runtime.scheduler_enabled },
+    { label: 'Permission Mode', value: agent.permission_mode },
+    { label: 'Autonomous Learning', value: agent.autonomous_learning },
+    { label: 'Autonomous Paper Trading', value: agent.autonomous_paper_trading, warn: agent.permission_mode === 'PaperAuto' && !agent.autonomous_paper_trading },
+    { label: 'Kill Switch Active', value: runtime.kill_switch_active, warn: runtime.kill_switch_active },
+  ]
+  return (
+    <div className="card">
+      <h3>Effective Config (read-only)</h3>
+      <table>
+        <tbody>
+          {flags.map(f => (
+            <tr key={f.label}>
+              <th>{f.label}</th>
+              <td>
+                <span className={`badge ${f.value === true ? 'badge-green' : f.value === false ? 'badge-red' : 'badge-blue'}`}>
+                  {String(f.value ?? '—')}
+                </span>
+                {f.warn && <span style={{ marginLeft: '0.4rem', color: 'var(--yellow)', fontSize: '0.75rem' }}>warning</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="hint">Live snapshot of runtime + agent flags that govern system behavior. Yellow = requires attention.</p>
     </div>
   )
 }
@@ -151,17 +188,39 @@ function KillSwitchCard({ qc }: any) {
 }
 
 function PermissionCard({ status, qc }: any) {
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
   const mut = useMutation({
     mutationFn: (mode: string) => api.setPermissionMode(mode),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['settings'] }) },
   })
+  const autoPaper = useMutation({
+    mutationFn: (enabled: boolean) => api.setAutonomousPaperTrading(enabled),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+  })
+  const autonomousEnabled = !!(settings?.agent as any)?.autonomous_paper_trading
+  const isPaperAuto = String(status.permission_mode) === 'PaperAuto'
   return (
     <div className="card">
       <h3>Permission Mode</h3>
       <select value={String(status.permission_mode)} onChange={e => mut.mutate(e.target.value)}>
         {PERMISSION_MODES.map(m => <option key={m} value={m}>{m}</option>)}
       </select>
-      <p className="hint">Controls how much autonomy agents have. Changes are audited.</p>
+      <div style={{ marginTop: '0.6rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={autonomousEnabled}
+            onChange={e => autoPaper.mutate(e.target.checked)}
+            disabled={autoPaper.isPending}
+          />
+          Autonomous paper trading
+        </label>
+        <span className={`badge ${autonomousEnabled ? 'badge-green' : 'badge-red'}`}>{autonomousEnabled ? 'ON' : 'OFF'}</span>
+      </div>
+      {isPaperAuto && !autonomousEnabled && (
+        <p className="hint" style={{ color: 'var(--yellow)' }}>PaperAuto mode is selected but autonomous paper trading is OFF — the scheduler will not auto-submit paper orders until this flag is enabled.</p>
+      )}
+      <p className="hint">Controls how much autonomy agents have. Changes are audited. Autonomous paper trading is default OFF — enable it to allow the scheduler to auto-submit paper trades when in PaperAuto or higher modes.</p>
     </div>
   )
 }
@@ -522,6 +581,13 @@ function LiveStateCard({ status, qc }: any) {
   )
 }
 
+const RISK_UNITS: Record<string, string> = {
+  max_daily_loss_pct: '%', max_position_notional_usdt: 'USDT',
+  max_open_positions: 'positions', max_leverage: 'x',
+  max_single_trade_pct: '%', max_consecutive_losses_halt: 'losses',
+  cooldown_after_loss_minutes: 'min',
+}
+
 function RiskCard({ settings }: any) {
   const risk = settings?.risk
   if (!risk) return null
@@ -531,7 +597,13 @@ function RiskCard({ settings }: any) {
       <table>
         <tbody>
           {Object.entries(risk).map(([k, v]) => (
-            <tr key={k}><th>{k}</th><td>{Array.isArray(v) ? v.join(', ') : String(v)}</td></tr>
+            <tr key={k}>
+              <th>{k.replace(/_/g, ' ')}</th>
+              <td>
+                {Array.isArray(v) ? v.join(', ') : String(v)}
+                {RISK_UNITS[k] && <span className="text-muted text-sm" style={{ marginLeft: '0.3rem' }}>{RISK_UNITS[k]}</span>}
+              </td>
+            </tr>
           ))}
         </tbody>
       </table>

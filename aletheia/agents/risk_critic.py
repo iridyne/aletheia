@@ -36,7 +36,7 @@ async def run_risk_critic(permission_mode: str = "Research", run_id: str | None 
         content = f"Risk critique (LLM unavailable). Context: {ctx}"
 
     item = create_research_note("Risk Lesson", content, confidence="medium_confidence",
-                                metadata={"source": "risk_critic"})
+                                metadata={"source": "risk_critic", "subtype": "risk_lesson"})
     log_tool(run_id, "create_research_note", "research_tool", True, output=item.id)
     outputs.append(f"research_note:{item.id}")
 

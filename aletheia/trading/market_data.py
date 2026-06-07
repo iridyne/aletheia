@@ -27,22 +27,24 @@ async def collect_market_snapshots() -> dict:
     collected = []
     errors = []
 
+    market_types = ["spot", "usdt_futures"]
     for symbol in symbols:
-        try:
-            ticker = await client.get_ticker(symbol, market_type="spot")
-            snap = MarketSnapshot(
-                symbol=symbol,
-                market_type="spot",
-                price=ticker.last_price,
-                volume_24h=ticker.volume_24h,
-                change_pct_24h=ticker.change_pct_24h,
-            )
-            insert_market_snapshot(snap)
-            append_jsonl("market_snapshots.jsonl", snap.model_dump())
-            collected.append(symbol)
-        except Exception as e:
-            errors.append(f"{symbol}: {e}")
-            logger.warning("Failed to fetch %s: %s", symbol, e)
+        for market_type in market_types:
+            try:
+                ticker = await client.get_ticker(symbol, market_type=market_type)
+                snap = MarketSnapshot(
+                    symbol=symbol,
+                    market_type=market_type,
+                    price=ticker.last_price,
+                    volume_24h=ticker.volume_24h,
+                    change_pct_24h=ticker.change_pct_24h,
+                )
+                insert_market_snapshot(snap)
+                append_jsonl("market_snapshots.jsonl", snap.model_dump())
+                collected.append(f"{symbol}:{market_type}")
+            except Exception as e:
+                errors.append(f"{symbol}:{market_type}: {e}")
+                logger.warning("Failed to fetch %s/%s: %s", symbol, market_type, e)
 
     return {"collected": collected, "errors": errors}
 

@@ -48,25 +48,32 @@ def reconcile() -> dict:
     client = BitgetClient(mode=cfg.exchange.mode)
 
     errors: list[str] = []
-    open_ids: set[str] = set()
+    open_ids: dict[str, set[str]] = {"spot": set(), "usdt_futures": set()}
+    failed_markets: set[str] = set()
     for market_type in ("spot", "usdt_futures"):
         try:
             rows = _run_coro(client.get_open_orders(market_type=market_type))
             for r in rows:
                 oid = r.get("orderId") or r.get("order_id")
                 if oid:
-                    open_ids.add(str(oid))
+                    open_ids[market_type].add(str(oid))
         except Exception as e:
             errors.append(f"{market_type}: {e}")
+            failed_markets.add(market_type)
             logger.warning("reconcile: fetch open orders (%s) failed: %s", market_type, e)
 
-    # If we couldn't fetch open orders at all, don't infer fills (avoid false positives).
-    if errors and not open_ids:
+    # If ALL markets failed, don't infer anything.
+    if failed_markets == {"spot", "usdt_futures"}:
         return {"checked": len(live_orders), "filled": 0, "errors": errors}
 
+    all_open_ids = open_ids["spot"] | open_ids["usdt_futures"]
     filled = 0
     for o in live_orders:
-        if str(o["exchange_order_id"]) not in open_ids:
+        # Skip orders whose market_type had a fetch error — don't infer fills.
+        order_market = o.get("market_type", "spot")
+        if order_market in failed_markets:
+            continue
+        if str(o["exchange_order_id"]) not in all_open_ids:
             update_order(o["id"], status="filled", filled_at=datetime.utcnow().isoformat())
             write_audit({
                 "actor": "system", "source": "reconciliation",

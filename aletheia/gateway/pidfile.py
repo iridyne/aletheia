@@ -113,28 +113,25 @@ def clear_pid() -> None:
 
 
 def _pid_alive(pid: int) -> bool:
-    """Return True if a process with this PID is currently alive.
+    """Return True if a process with this PID is currently alive AND is our gateway.
 
-    On POSIX, os.kill(pid, 0) is a liveness probe. On Windows, os.kill calls
-    TerminateProcess (it would KILL the process), so we must use tasklist instead.
+    On Windows, uses pure ctypes Win32 API (no subprocess spawn — avoids console
+    window flash on Win11). On POSIX, os.kill(pid, 0) + /proc cmdline check.
     """
     if pid <= 0:
         return False
     if platform.system() == "Windows":
-        try:
-            out = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                capture_output=True, text=True, timeout=10,
-                **_no_window_kwargs(),
-            ).stdout
-            return str(pid) in out
-        except Exception:
-            return False
+        from aletheia.gateway._win32_proc import pid_alive_win32
+        return pid_alive_win32(pid, (_GATEWAY_SUPERVISOR_MARKER, "uvicorn"))
     try:
         os.kill(pid, 0)
-        return True
     except (OSError, ProcessLookupError):
         return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_text()
+        return _GATEWAY_SUPERVISOR_MARKER in cmdline or "uvicorn" in cmdline
+    except Exception:
+        return True
 
 
 def is_running() -> bool:
@@ -154,20 +151,17 @@ def kill_pid_tree(pid: int) -> None:
     """Terminate a process AND its children. Never raises.
 
     The gateway spawns a supervisor whose child is the inner uvicorn server. On
-    Windows, killing only the supervisor orphans the uvicorn (it keeps holding the
-    port), so we must kill the whole tree with taskkill /T. On POSIX the spawn uses
-    start_new_session=True, so the supervisor leads its own process group and we can
-    signal the group with killpg.
+    Windows, uses pure ctypes TerminateProcess + tree traversal (no taskkill.exe
+    spawn — avoids console window flash on Win11). On POSIX the spawn uses
+    start_new_session=True, so the supervisor leads its own process group and we
+    can signal the group with killpg.
     """
     if pid <= 0:
         return
     try:
         if platform.system() == "Windows":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid)],
-                capture_output=True, timeout=15,
-                **_no_window_kwargs(),
-            )
+            from aletheia.gateway._win32_proc import kill_process_tree_win32
+            kill_process_tree_win32(pid)
         else:
             try:
                 pgid = os.getpgid(pid)
@@ -210,35 +204,24 @@ def wait_port_free(port: int, host: str = "127.0.0.1", timeout: float = 10.0) ->
 def _list_processes() -> list[tuple[int, str]]:
     """Return [(pid, command_line)] for running processes. Platform-specific.
 
+    On Windows, uses pure ctypes (CreateToolhelp32Snapshot + NtQueryInformation)
+    to avoid spawning powershell.exe which can flash a console window on Win11.
     Best-effort: raises only if the underlying tool fails (caller catches).
     """
     if platform.system() == "Windows":
-        # CIM gives reliable full command lines; PowerShell is always present on Win.
-        ps = (
-            "Get-CimInstance Win32_Process | "
-            "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"
-        )
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, timeout=20,
-            **_no_window_kwargs(),
-        ).stdout
-        sep = "\t"
-    else:
-        out = subprocess.run(
-            ["ps", "-eo", "pid=,args="],
-            capture_output=True, text=True, timeout=20,
-        ).stdout
-        sep = None  # split on whitespace, first token is pid
+        from aletheia.gateway._win32_proc import list_processes_win32
+        return list_processes_win32()
+
+    out = subprocess.run(
+        ["ps", "-eo", "pid=,args="],
+        capture_output=True, text=True, timeout=20,
+    ).stdout
     procs: list[tuple[int, str]] = []
     for line in out.splitlines():
         line = line.strip()
         if not line:
             continue
-        if sep:
-            pid_str, _, cmd = line.partition(sep)
-        else:
-            pid_str, _, cmd = line.partition(" ")
+        pid_str, _, cmd = line.partition(" ")
         try:
             procs.append((int(pid_str.strip()), cmd.strip()))
         except ValueError:

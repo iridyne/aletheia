@@ -1,47 +1,79 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
-import StatusPill from '../components/shared/StatusPill'
-import { useInspector } from '../context/InspectorContext'
+import type { Opportunity } from '../types'
+import { DataTable, StatusBadge } from '../components/DataTable'
+import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 
-const FILTERS = ['all', 'new', 'evaluated', 'converted', 'expired'] as const
-type Filter = typeof FILTERS[number]
+const col = createColumnHelper<Opportunity>()
+
+const columns = [
+  col.accessor('symbol', { header: 'Symbol' }),
+  col.accessor('market', { header: 'Market' }),
+  col.accessor('direction_bias', { header: 'Direction' }),
+  col.accessor('confidence', {
+    header: 'Confidence',
+    cell: info => info.getValue() != null ? `${info.getValue()}%` : '—',
+  }),
+  col.accessor('source_agent', {
+    header: 'Source',
+    cell: info => info.getValue() || '—',
+  }),
+  col.accessor('status', {
+    header: 'Status',
+    cell: info => <StatusBadge status={info.getValue()} />,
+  }),
+  col.accessor('created_at', {
+    header: 'Created',
+    cell: info => info.getValue()?.slice(0, 16) || '—',
+  }),
+]
 
 export default function Opportunities() {
-  const [filter, setFilter] = useState<Filter>('all')
-  const { setObject } = useInspector()
+  const navigate = useNavigate()
   const { data = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
-
-  const rows = (data as any[]).filter(o => filter === 'all' || o.status === filter)
+  const [selected, setSelected] = useState<Opportunity | null>(null)
+  const rows = data as Opportunity[]
 
   return (
     <div>
       <h2 className="page-title">Opportunities</h2>
-      <div className="bt-filters">
-        {FILTERS.map(f => (
-          <button key={f} className={`bt-filter ${filter === f ? 'bt-filter-active' : ''}`} onClick={() => setFilter(f)}>{f}</button>
-        ))}
-      </div>
       <div className="card">
-        {rows.length === 0 ? <p className="text-muted">No opportunities{filter !== 'all' ? ` with status "${filter}"` : ''} yet.</p> : (
-          <table>
-            <thead><tr><th>Symbol</th><th>Market</th><th>Direction</th><th>Confidence</th><th>Source</th><th>Status</th><th>Created</th></tr></thead>
-            <tbody>
-              {rows.map((o: any) => (
-                <tr key={o.id} onClick={() => setObject({ type: 'opportunity', id: o.id, data: o })}>
-                  <td>{o.symbol}</td>
-                  <td>{o.market}</td>
-                  <td className={o.direction_bias === 'long' ? 'pnl-positive' : o.direction_bias === 'short' ? 'pnl-negative' : ''}>{o.direction_bias}</td>
-                  <td className={o.confidence >= 0.7 ? 'pnl-positive' : o.confidence >= 0.4 ? '' : 'text-faint'}>{o.confidence}</td>
-                  <td className="text-faint">{o.source || '—'}</td>
-                  <td><StatusPill status={o.status} /></td>
-                  <td className="text-faint font-sm">{o.created_at?.slice(0, 16) || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <DataTable
+          data={rows}
+          columns={columns}
+          onRowClick={setSelected}
+          emptyMessage="No opportunities yet."
+        />
       </div>
+
+      <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Opportunity Detail">
+        {selected && (
+          <>
+            <DrawerSection label="Market Signal">
+              <DrawerField label="Symbol" value={selected.symbol} mono />
+              <DrawerField label="Market" value={selected.market} />
+              <DrawerField label="Direction Bias" value={selected.direction_bias} />
+              <DrawerField label="Confidence" value={selected.confidence != null ? `${selected.confidence}%` : null} />
+              <DrawerField label="Source Agent" value={selected.source_agent} />
+              <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
+            </DrawerSection>
+            <DrawerSection label="Thesis">
+              <p style={{ fontSize: '0.82rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                {selected.thesis || 'No thesis provided.'}
+              </p>
+            </DrawerSection>
+            <DrawerSection label="Links">
+              <DrawerField label="Linked Strategy" value={selected.linked_strategy_id ? (
+                <a href="#" onClick={e => { e.preventDefault(); navigate('/strategies') }} className="mono">{selected.linked_strategy_id}</a>
+              ) : null} />
+              <DrawerField label="Created" value={selected.created_at?.slice(0, 16)} />
+            </DrawerSection>
+          </>
+        )}
+      </DetailDrawer>
     </div>
   )
 }

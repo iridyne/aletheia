@@ -1,6 +1,11 @@
 """Config schema using Pydantic v2 models."""
 
-from pydantic import BaseModel, Field
+import logging
+from pydantic import BaseModel, Field, field_validator
+
+_logger = logging.getLogger("aletheia.config")
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class AppConfig(BaseModel):
@@ -8,6 +13,13 @@ class AppConfig(BaseModel):
     dashboard_port: int = 8787
     auto_open_browser: bool = True
     bind_host: str = "127.0.0.1"
+
+    @field_validator("bind_host")
+    @classmethod
+    def validate_bind_host(cls, v: str) -> str:
+        if v not in _LOOPBACK_HOSTS:
+            _logger.warning("bind_host=%s is not loopback — API will be network-exposed without authentication", v)
+        return v
 
 
 class RuntimeConfig(BaseModel):

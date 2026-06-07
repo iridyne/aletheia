@@ -7,89 +7,130 @@ export default function RiskControls() {
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus })
   const { data: boundaries } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
   const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
+  const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
 
-  const killMut = useMutation({
-    mutationFn: (active: boolean) => api.setKillSwitch(active, active ? 'Manual kill switch engaged' : 'Kill switch released'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['kill-switch'] }),
+  const engageKill = useMutation({
+    mutationFn: () => api.setKillSwitch(true, 'manual_engage'),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
+  })
+  const releaseKill = useMutation({
+    mutationFn: () => api.setKillSwitch(false),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
   })
   const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
 
-  const paused = !!(status as any)?.paused
   const killed = !!killSwitch?.active
-  const perm = String((status as any)?.permission_mode || '—')
-  const live = String((status as any)?.live_state || 'live_disabled')
+  const paused = !!(status as any)?.paused
+  const violations = (riskStatus?.violations as string[]) || []
+  const riskState = String(riskStatus?.status || 'unknown')
+  const riskBadge = riskState === 'blocked' ? 'badge-red' : riskState === 'warning' ? 'badge-yellow' : riskState === 'healthy' ? 'badge-green' : 'badge-blue'
+
+  const exposure = (portfolio as any)?.exposure_by_symbol as Record<string, number> | undefined
 
   return (
     <div>
       <h2 className="page-title">Risk & Controls</h2>
 
-      <div className="card">
-        <h3>Safety State</h3>
-        <table>
-          <tbody>
-            <tr>
-              <th>Permission Mode</th>
-              <td><span className="badge badge-blue">{perm}</span></td>
-            </tr>
-            <tr>
-              <th>Live State</th>
-              <td><span className={`badge ${live === 'live_disabled' ? 'badge-red' : 'badge-yellow'}`}>{live}</span></td>
-            </tr>
-            <tr>
-              <th>Kill Switch</th>
-              <td><span className={`badge ${killed ? 'badge-red' : 'badge-green'}`}>{killed ? 'ENGAGED' : 'inactive'}</span></td>
-            </tr>
-            <tr>
-              <th>Agents</th>
-              <td><span className={`badge ${paused ? 'badge-yellow' : 'badge-green'}`}>{paused ? 'Paused' : 'Running'}</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div className="card">
-        <h3>Controls</h3>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button className={paused ? '' : 'secondary'} onClick={() => paused ? resumeMut.mutate() : pauseMut.mutate()}>
-            {paused ? '▶ Resume Agents' : '⏸ Pause Agents'}
-          </button>
-          <button
-            className={killed ? '' : 'secondary'}
-            onClick={() => killMut.mutate(!killed)}
-            style={killed ? { background: 'var(--red)', color: '#fff' } : {}}
-          >
-            {killed ? '🔓 Release Kill Switch' : '🛑 Engage Kill Switch'}
-          </button>
-        </div>
-      </div>
-
-      {riskStatus && (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.1rem' }}>
+        {/* Risk State */}
         <div className="card">
-          <h3>Risk Status</h3>
+          <h3>Risk State</h3>
           <table>
             <tbody>
-              <tr><th>Status</th><td><span className={`badge ${riskStatus.status === 'ok' ? 'badge-green' : riskStatus.status === 'blocked' ? 'badge-red' : 'badge-yellow'}`}>{riskStatus.status}</span></td></tr>
-              {riskStatus.violations && (riskStatus.violations as string[]).length > 0 && (
-                <tr><th>Violations</th><td>{(riskStatus.violations as string[]).join(', ')}</td></tr>
-              )}
+              <tr><th>Status</th><td><span className={`badge ${riskBadge}`}>{riskState}</span></td></tr>
+              <tr><th>Violations</th><td>{violations.length > 0 ? violations.map((v, i) => <span key={i} className="badge badge-red" style={{ marginRight: '0.3rem' }}>{v}</span>) : <span className="text-muted">none</span>}</td></tr>
+              <tr><th>Permission Mode</th><td><span className="badge badge-blue">{String((status as any)?.permission_mode || '—')}</span></td></tr>
+              <tr><th>Live State</th><td>{String((status as any)?.live_state || '—')}</td></tr>
             </tbody>
           </table>
         </div>
-      )}
 
-      {boundaries && (
+        {/* Kill Switch */}
         <div className="card">
-          <h3>Risk Boundaries</h3>
+          <h3>Kill Switch</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.8rem' }}>
+            <span className={`badge ${killed ? 'badge-red' : 'badge-green'}`} style={{ fontSize: '0.85rem', padding: '0.3rem 0.7rem' }}>
+              {killed ? 'ENGAGED' : 'INACTIVE'}
+            </span>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '0.8rem' }}>
+            {killed
+              ? 'All trading is halted. No new proposals will be executed until released.'
+              : 'Kill switch is inactive. The system can execute approved proposals.'}
+          </p>
+          <div className="flex gap-2">
+            {!killed && (
+              <button
+                className="secondary"
+                style={{ borderColor: 'rgba(255,93,108,0.4)', color: 'var(--red)' }}
+                onClick={() => { if (confirm('Engage kill switch? All trading will halt immediately.')) engageKill.mutate() }}
+              >
+                Engage Kill Switch
+              </button>
+            )}
+            {killed && (
+              <button onClick={() => releaseKill.mutate()}>
+                Release Kill Switch
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Gateway Control */}
+        <div className="card">
+          <h3>Gateway Control</h3>
           <table>
             <tbody>
-              {Object.entries(boundaries as Record<string, any>).map(([k, v]) => (
-                <tr key={k}><th>{k}</th><td className="mono">{JSON.stringify(v)}</td></tr>
-              ))}
+              <tr><th>Gateway</th><td><span className={`badge ${(status as any)?.gateway_running ? 'badge-green' : 'badge-red'}`}>{(status as any)?.gateway_running ? 'Running' : 'Stopped'}</span></td></tr>
+              <tr><th>Scheduler</th><td><span className={`badge ${paused ? 'badge-yellow' : 'badge-green'}`}>{paused ? 'Paused' : 'Active'}</span></td></tr>
             </tbody>
           </table>
+          <div className="flex gap-2 mt-3">
+            <button className="secondary" onClick={() => pauseMut.mutate()} disabled={paused}>Pause All Agents</button>
+            <button onClick={() => resumeMut.mutate()} disabled={!paused}>Resume</button>
+          </div>
         </div>
-      )}
+
+        {/* Exposure */}
+        <div className="card">
+          <h3>Exposure by Symbol</h3>
+          {exposure && Object.keys(exposure).length > 0 ? (
+            <table>
+              <thead><tr><th>Symbol</th><th>Exposure (USDT)</th></tr></thead>
+              <tbody>
+                {Object.entries(exposure).map(([sym, val]) => (
+                  <tr key={sym}>
+                    <td className="mono">{sym}</td>
+                    <td className="mono" style={{ color: val >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                      {val >= 0 ? '+' : ''}{Number(val).toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-muted text-sm">No open exposure</p>
+          )}
+        </div>
+      </div>
+
+      {/* Risk Boundaries (read-only) */}
+      <div className="card">
+        <h3>Risk Boundaries (configured limits)</h3>
+        {boundaries ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem 1.5rem' }}>
+            {Object.entries(boundaries as Record<string, any>).map(([key, val]) => (
+              <div key={key} className="drawer-field">
+                <span className="drawer-field-label">{key.replace(/_/g, ' ')}</span>
+                <span className="drawer-field-value mono">{typeof val === 'object' ? JSON.stringify(val) : String(val)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-muted text-sm">Loading...</p>
+        )}
+      </div>
     </div>
   )
 }

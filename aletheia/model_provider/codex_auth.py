@@ -28,8 +28,8 @@ _PARSE_TIMEOUT = 20  # seconds to wait for URL+code before giving up
 _STATUS_TIMEOUT = 10
 
 _URL_RE = re.compile(r"https?://\S+")
-# device/user codes are typically like ABCD-1234 or 8-char alnum
-_CODE_RE = re.compile(r"\b([A-Z0-9]{4}-[A-Z0-9]{4}|[A-Z0-9]{8})\b")
+# device/user codes appear after "code" keyword on the line
+_CODE_RE = re.compile(r"(?i)(?:code|enter).*?\b([A-Z0-9]{4}-[A-Z0-9]{4}|[A-Z0-9]{8})\b")
 
 
 class CodexLoginSession:

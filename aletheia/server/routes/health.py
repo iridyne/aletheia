@@ -11,7 +11,13 @@ router = APIRouter(prefix="/api", tags=["system"])
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "version": __version__}
+    from aletheia.agent_runtime.health import compute_health
+    h = compute_health()
+    return {
+        "status": "healthy" if h["healthy"] else "degraded",
+        "issues": h["issues"],
+        "version": __version__,
+    }
 
 
 @router.get("/status")

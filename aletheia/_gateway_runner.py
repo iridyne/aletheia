@@ -78,9 +78,11 @@ def run_supervised(spawn_fn=None) -> dict:
             return {"gave_up": False, "restarts": restarts}  # clean shutdown
 
         # Abnormal exit — decide whether to respawn.
-        now = len(restart_times)  # monotonic-ish counter; wall clock avoided for testability
+        import time as _time
+        now = _time.monotonic()
         restart_times.append(now)
         recent = [t for t in restart_times if now - t <= window]
+        restart_times[:] = recent
         if len(recent) >= max_restarts:
             _record_give_up(restarts + 1)
             return {"gave_up": True, "restarts": restarts + 1}

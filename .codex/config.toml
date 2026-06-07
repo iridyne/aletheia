@@ -1,0 +1,6 @@
+# Codex project-level config
+# See AGENTS.md and docs/AI_HANDOFF.md for project context recovery.
+# Do NOT put API keys, tokens, or provider auth in this file.
+
+[project]
+context_files = ["AGENTS.md", "docs/AI_HANDOFF.md", "docs/CURRENT_TASK.md"]

@@ -87,11 +87,15 @@ def changed_files(old: str, new: str) -> list[str]:
 
 
 def pull(branch: str = "master") -> dict:
+    """Fast-forward only merge from origin. Rejects force-pushes and diverged history."""
     if not git_available():
         return {"ok": False, "reason": "git_unavailable"}
-    r = _git("pull", "origin", branch)
+    r = _git("fetch", "origin", branch)
     if r.returncode != 0:
-        return {"ok": False, "reason": "pull_failed", "stderr": r.stderr.strip()}
+        return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
+    r = _git("merge", "--ff-only", f"origin/{branch}")
+    if r.returncode != 0:
+        return {"ok": False, "reason": "ff_only_rejected", "stderr": r.stderr.strip()}
     return {"ok": True, "output": r.stdout.strip()}
 
 

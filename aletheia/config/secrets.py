@@ -78,9 +78,9 @@ def _file_get(key: str) -> str | None:
 
 
 def redact(value: str | None) -> str:
-    """Redact a secret for display."""
+    """Redact a secret for display — show only last 4 characters."""
     if not value:
         return "***"
     if len(value) <= 4:
         return "***"
-    return value[:2] + "***" + value[-2:]
+    return "***" + value[-4:]

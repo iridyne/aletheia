@@ -1,137 +1,148 @@
-"""News Intelligence API — structured news feed for the dashboard."""
+"""News Intelligence API routes."""
 
-from fastapi import APIRouter, HTTPException
+import json
+import logging
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from aletheia.files.jsonl import read_jsonl, append_jsonl, write_audit
+from aletheia.storage.sqlite import get_db
+from aletheia.storage.migrations import run_migrations
 
 router = APIRouter(prefix="/api", tags=["news"])
+logger = logging.getLogger("aletheia.news")
 
-NEWS_FILE = "news.jsonl"
 
-
-class NewsItem(BaseModel):
-    headline: str
-    source: str = ""
-    url: str = ""
-    related_assets: list[str] = []
-    event_type: str = "other"
-    sentiment: str = "unknown"
-    urgency: str = "low"
-    market_impact: str = "unknown"
-    summary: str = ""
-    key_points: list[str] = []
+def _ensure_db():
+    run_migrations()
 
 
 @router.get("/news")
-async def get_news(limit: int = 50, status: str | None = None):
-    items = read_jsonl(NEWS_FILE)
+async def list_news(
+    limit: int = Query(50, ge=1, le=200),
+    status: str | None = Query(None),
+    symbol: str | None = Query(None),
+):
+    _ensure_db()
+    db = get_db()
+    query = "SELECT * FROM news_items"
+    conditions = []
+    params: list = []
+
     if status:
-        items = [i for i in items if i.get("status") == status]
-    items.sort(key=lambda x: x.get("ingested_at", ""), reverse=True)
-    return items[:limit]
+        conditions.append("status = ?")
+        params.append(status)
+    if symbol:
+        conditions.append("symbols_mentioned LIKE ?")
+        params.append(f"%{symbol}%")
+
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY published_at DESC LIMIT ?"
+    params.append(limit)
+
+    rows = db.execute(query, params).fetchall()
+    results = []
+    for row in rows:
+        item = dict(row)
+        if item.get("symbols_mentioned"):
+            try:
+                item["symbols_mentioned"] = json.loads(item["symbols_mentioned"])
+            except (json.JSONDecodeError, TypeError):
+                item["symbols_mentioned"] = []
+        results.append(item)
+    return results
 
 
 @router.get("/news/{news_id}")
 async def get_news_item(news_id: str):
-    items = read_jsonl(NEWS_FILE)
-    for item in items:
-        if item.get("id") == news_id:
-            return item
-    raise HTTPException(404, "News item not found")
+    _ensure_db()
+    db = get_db()
+    row = db.execute("SELECT * FROM news_items WHERE id = ?", (news_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="News item not found")
+    item = dict(row)
+    if item.get("symbols_mentioned"):
+        try:
+            item["symbols_mentioned"] = json.loads(item["symbols_mentioned"])
+        except (json.JSONDecodeError, TypeError):
+            item["symbols_mentioned"] = []
+    return item
+
+
+class AnalyzeRequest(BaseModel):
+    pass
+
+
+@router.post("/news/{news_id}/analyze")
+async def analyze_news(news_id: str, req: AnalyzeRequest = AnalyzeRequest()):
+    _ensure_db()
+    db = get_db()
+    row = db.execute("SELECT * FROM news_items WHERE id = ?", (news_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="News item not found")
+
+    item = dict(row)
+    title = item.get("title", "")
+    summary = item.get("summary", "")
+
+    try:
+        from aletheia.agents.llm import llm_complete
+        prompt = (
+            f"Analyze this crypto news for trading impact:\n"
+            f"Title: {title}\n"
+            f"Summary: {summary}\n\n"
+            f"Provide a brief (2-3 sentence) impact assessment for crypto markets. "
+            f"Focus on: affected assets, direction of impact, and confidence level."
+        )
+        analysis = await llm_complete(prompt)
+    except Exception as e:
+        logger.warning("LLM analysis failed: %s", e)
+        analysis = "Analysis unavailable — model provider not configured or unreachable."
+
+    db.execute(
+        "UPDATE news_items SET status = ? WHERE id = ?",
+        ("reviewed", news_id),
+    )
+    db.commit()
+
+    return {
+        "news_id": news_id,
+        "analysis": analysis,
+        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+class CreateNewsRequest(BaseModel):
+    title: str
+    source: str = "manual"
+    url: str | None = None
+    summary: str | None = None
+    symbols_mentioned: list[str] = []
+    event_type: str = "other"
+    sentiment: str = "neutral"
+    relevance_score: float = 0.5
 
 
 @router.post("/news")
-async def create_news_item(item: NewsItem):
-    import uuid
-    from datetime import datetime, timezone
-    record = item.model_dump()
-    record["id"] = str(uuid.uuid4())[:8]
-    record["ingested_at"] = datetime.now(timezone.utc).isoformat()
-    record["status"] = "new"
-    record["linked_opportunity_ids"] = []
-    record["linked_research_note_ids"] = []
-    record["linked_strategy_ids"] = []
-    append_jsonl(NEWS_FILE, record)
-    write_audit({
-        "actor": "human", "source": "dashboard",
-        "event_type": "news_ingested",
-        "entity_type": "news", "entity_id": record["id"],
-        "message": f"News ingested: {item.headline[:80]}",
-    })
-    return record
+async def create_news(req: CreateNewsRequest):
+    """Manually create a news item (for testing or manual curation)."""
+    import secrets
+    _ensure_db()
+    db = get_db()
+    news_id = secrets.token_hex(6)
+    now = datetime.now(timezone.utc).isoformat()
 
-
-@router.post("/news/{news_id}/archive")
-async def archive_news(news_id: str):
-    items = read_jsonl(NEWS_FILE)
-    found = False
-    for item in items:
-        if item.get("id") == news_id:
-            item["status"] = "archived"
-            found = True
-            break
-    if not found:
-        raise HTTPException(404, "News item not found")
-    _rewrite_jsonl(NEWS_FILE, items)
-    write_audit({
-        "actor": "human", "source": "dashboard",
-        "event_type": "news_archived",
-        "entity_type": "news", "entity_id": news_id,
-        "message": "News item archived",
-    })
-    return {"ok": True, "status": "archived"}
-
-
-@router.post("/news/{news_id}/create-research-note")
-async def create_research_note_from_news(news_id: str):
-    items = read_jsonl(NEWS_FILE)
-    news = None
-    for item in items:
-        if item.get("id") == news_id:
-            news = item
-            break
-    if not news:
-        raise HTTPException(404, "News item not found")
-
-    import uuid
-    from datetime import datetime, timezone
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage import repositories as repo
-    run_migrations()
-
-    note_id = str(uuid.uuid4())[:8]
-    note = {
-        "id": note_id,
-        "type": "research_note",
-        "title": f"Research: {news.get('headline', '')}",
-        "content": news.get("summary", "") + "\n\nKey points:\n" + "\n".join(f"- {p}" for p in news.get("key_points", [])),
-        "tags": news.get("related_assets", []),
-        "source": f"news:{news_id}",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    repo.insert_knowledge_item(note)
-
-    news["status"] = "linked"
-    if news_id not in news.get("linked_research_note_ids", []):
-        news.setdefault("linked_research_note_ids", []).append(note_id)
-    _rewrite_jsonl(NEWS_FILE, items)
-
-    write_audit({
-        "actor": "human", "source": "dashboard",
-        "event_type": "research_note_created",
-        "entity_type": "knowledge", "entity_id": note_id,
-        "message": f"Research note created from news: {news.get('headline', '')[:60]}",
-    })
-    return {"ok": True, "note_id": note_id}
-
-
-def _rewrite_jsonl(filename: str, items: list[dict]):
-    """Rewrite a JSONL file with updated items."""
-    import json
-    from aletheia.config.loader import get_data_dir
-    path = get_data_dir() / filename
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for item in items:
-            f.write(json.dumps(item, default=str) + "\n")
+    db.execute(
+        """INSERT INTO news_items (id, title, source, url, summary, symbols_mentioned,
+           event_type, sentiment, relevance_score, published_at, fetched_at, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            news_id, req.title, req.source, req.url, req.summary,
+            json.dumps(req.symbols_mentioned), req.event_type, req.sentiment,
+            req.relevance_score, now, now, "new",
+        ),
+    )
+    db.commit()
+    return {"id": news_id, "status": "created"}

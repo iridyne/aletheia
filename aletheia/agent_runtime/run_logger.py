@@ -24,10 +24,8 @@ def end_run(run: AgentRun, status: str = "completed", outputs: list[str] | None 
     update_data = {
         "status": status,
         "ended_at": datetime.utcnow().isoformat(),
+        "outputs_created": json.dumps(outputs if outputs is not None else []),
+        "errors": json.dumps(errors if errors is not None else []),
     }
-    if outputs:
-        update_data["outputs_created"] = json.dumps(outputs)
-    if errors:
-        update_data["errors"] = json.dumps(errors)
     update_agent_run(run.id, **update_data)
     write_agent_run_log({"event": "run_ended", "run_id": run.id, "status": status})

@@ -34,7 +34,7 @@ async def risk_status():
     live_state = cfg.live.state
     permission_mode = cfg.agent.permission_mode
     violations: list[str] = []
-    status = "within_limits"
+    status = "not_evaluated"
 
     if cfg.runtime.kill_switch_active:
         status = "blocked"

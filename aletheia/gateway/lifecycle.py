@@ -22,7 +22,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     cfg = bootstrap()
 
     if is_running():
-        typer.echo(f"Gateway already running (PID {read_pid()}).")
+        _echo_stdout_safe(f"Gateway already running (PID {read_pid()}).")
         raise typer.Exit(0)
 
     # Port guard: if the port stays held throughout a short grace window with no
@@ -51,13 +51,13 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
             raise typer.Exit(1)
 
     if foreground:
-        typer.echo(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (foreground)...")
+        _echo_stdout_safe(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (foreground)...")
         write_pid()
         if not no_browser and cfg.app.auto_open_browser:
             open_browser(cfg.app.dashboard_port)
         _run_server(cfg)
     else:
-        typer.echo(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (background)...")
+        _echo_stdout_safe(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (background)...")
         _spawn_background(no_browser)
 
 
@@ -102,7 +102,7 @@ def _spawn_background(no_browser: bool) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    typer.echo("Gateway started in background.")
+    _echo_stdout_safe("Gateway started in background.")
 
 
 def do_stop() -> None:
@@ -138,7 +138,7 @@ def do_stop() -> None:
     if not killed_any and not port_in_use(port, host):
         # Nothing to do: no tracked gateway, no orphans, port is free.
         clear_pid()
-        typer.echo("Gateway is not running.")
+        _echo_stdout_safe("Gateway is not running.")
         return
 
     # Wait for the port to actually release BEFORE clearing the pidfile, so a
@@ -148,7 +148,7 @@ def do_stop() -> None:
     clear_pid()
 
     if freed:
-        typer.echo("Gateway stopped.")
+        _echo_stdout_safe("Gateway stopped.")
     else:
         _echo_safe(
             f"Gateway processes signalled, but port {port} is still in use. "
@@ -239,6 +239,20 @@ def _echo_safe(msg: str) -> None:
     typer.echo(msg, err=True)
 
 
+def _echo_stdout_safe(msg: str) -> None:
+    """Write a message via typer.echo (stdout), but only if a console is attached.
+
+    Under pythonw/detached mode, writing to stdout with no console handle can
+    trigger Win11 console race-allocation. In headless mode we log instead.
+    This guards the watchdog's "already running" path which fires every 5 min.
+    """
+    if _is_headless():
+        import logging
+        logging.getLogger("aletheia.gateway.lifecycle").info(msg)
+        return
+    typer.echo(msg)
+
+
 def _audit_orphan_cleanup(orphan_pids: list[int]) -> None:
     """Best-effort audit of watchdog self-healing orphan cleanup."""
     try:
@@ -257,7 +271,7 @@ def do_pause() -> None:
     cfg = load_config()
     cfg.runtime.paused = True
     save_config(cfg)
-    typer.echo("Gateway paused. Autonomous jobs suspended.")
+    _echo_stdout_safe("Gateway paused. Autonomous jobs suspended.")
 
 
 def do_resume() -> None:
@@ -265,4 +279,4 @@ def do_resume() -> None:
     cfg = load_config()
     cfg.runtime.paused = False
     save_config(cfg)
-    typer.echo("Gateway resumed.")
+    _echo_stdout_safe("Gateway resumed.")
