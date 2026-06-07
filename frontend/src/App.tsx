@@ -1,6 +1,6 @@
-import { Routes, Route, NavLink, useLocation } from 'react-router-dom'
+import { Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from './api/client'
 import Overview from './pages/Overview'
 import AgentRuns from './pages/AgentRuns'
@@ -14,61 +14,86 @@ import StrategyLifecycle from './pages/StrategyLifecycle'
 import Charts from './pages/Charts'
 import Reports from './pages/Reports'
 import Settings from './pages/Settings'
+import RiskControls from './pages/RiskControls'
+import NewsIntel from './pages/NewsIntel'
+import ActivityTimeline from './components/ActivityTimeline'
+import CommandPalette from './components/CommandPalette'
 
-// Navigation grouped by the system's real workflow: observe → research →
-// propose → execute → review. Flat 12-item list replaced with 5 semantic groups.
 type NavItem = { to: string; label: string }
 type NavGroup = { group: string; items: NavItem[] }
 
 const NAV: NavGroup[] = [
-  { group: '', items: [{ to: '/', label: 'Overview' }] },
+  { group: '', items: [{ to: '/', label: 'Cockpit' }] },
+  {
+    group: 'Markets',
+    items: [
+      { to: '/opportunities', label: 'Opportunities' },
+      { to: '/charts', label: 'Charts' },
+      { to: '/news', label: 'News Intel' },
+    ],
+  },
   {
     group: 'Trading',
     items: [
       { to: '/proposals', label: 'Proposals' },
       { to: '/paper-trades', label: 'Paper Trades' },
       { to: '/positions', label: 'Positions' },
-      { to: '/charts', label: 'Charts' },
     ],
   },
   {
     group: 'Intelligence',
     items: [
       { to: '/agent-runs', label: 'Agent Runs' },
-      { to: '/opportunities', label: 'Opportunities' },
-      { to: '/dreaming', label: 'Dreaming' },
+      { to: '/strategies', label: 'Strategies' },
       { to: '/knowledge', label: 'Knowledge Base' },
+      { to: '/dreaming', label: 'Dreaming' },
     ],
   },
   {
-    group: 'Strategy',
+    group: 'Operations',
     items: [
-      { to: '/strategies', label: 'Strategy Lifecycle' },
+      { to: '/risk', label: 'Risk & Controls' },
       { to: '/reports', label: 'Reports' },
+      { to: '/settings', label: 'Settings' },
     ],
-  },
-  {
-    group: 'System',
-    items: [{ to: '/settings', label: 'Settings' }],
   },
 ]
 
 const ALL_ITEMS = NAV.flatMap(g => g.items)
 
 function StatusBar() {
+  const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
   const { data: ks } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, refetchInterval: 10000 })
+  const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
+
+  const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
+  const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
+
   if (!data) return <div className="topbar-status"><span className="dot dot-muted" />connecting…</div>
 
-  const running = !!data.gateway_running
-  const paused = !!data.paused
-  const live = String(data.live_state || 'live_disabled')
-  const mode = String(data.exchange_mode || '')
-  const perm = String(data.permission_mode || '')
+  const running = !!(data as any).gateway_running
+  const paused = !!(data as any).paused
+  const live = String((data as any).live_state || 'live_disabled')
+  const mode = String((data as any).exchange_mode || '')
+  const perm = String((data as any).permission_mode || '')
   const killed = !!ks?.active
+
+  const latestRun = (runs as any[])[0]
+  let heartbeatText = ''
+  if (latestRun?.ended_at) {
+    const mins = Math.floor((Date.now() - new Date(latestRun.ended_at).getTime()) / 60000)
+    heartbeatText = mins < 1 ? '<1m' : `${mins}m`
+  }
 
   return (
     <div className="topbar-status">
+      {heartbeatText && (
+        <span className="pill pill-muted" title={`Last agent run: ${latestRun?.agent_name}`}>
+          <span className="dot dot-green heartbeat" />
+          {heartbeatText}
+        </span>
+      )}
       <span className={`pill ${running ? (paused ? 'pill-yellow' : 'pill-green') : 'pill-red'}`}>
         <span className={`dot ${running ? (paused ? 'dot-yellow' : 'dot-green') : 'dot-red'}`} />
         {running ? (paused ? 'Paused' : 'Running') : 'Stopped'}
@@ -79,6 +104,13 @@ function StatusBar() {
       </span>
       <span className="pill pill-blue">{perm}</span>
       {killed && <span className="pill pill-red"><span className="dot dot-red" />kill switch</span>}
+      <button
+        className="topbar-btn secondary"
+        onClick={() => paused ? resumeMut.mutate() : pauseMut.mutate()}
+        title={paused ? 'Resume agents' : 'Pause agents'}
+      >
+        {paused ? '▶' : '⏸'}
+      </button>
     </div>
   )
 }
@@ -94,6 +126,7 @@ export default function App() {
 
   return (
     <div className="layout">
+      <CommandPalette />
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">◆</span>
@@ -123,7 +156,7 @@ export default function App() {
           <div className="breadcrumb">
             {currentGroup && <span className="crumb-group">{currentGroup}</span>}
             {currentGroup && <span className="crumb-sep">/</span>}
-            <span className="crumb-current">{current?.label || 'Overview'}</span>
+            <span className="crumb-current">{current?.label || 'Cockpit'}</span>
           </div>
           <StatusBar />
         </header>
@@ -141,8 +174,11 @@ export default function App() {
             <Route path="/charts" element={<Charts />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/risk" element={<RiskControls />} />
+            <Route path="/news" element={<NewsIntel />} />
           </Routes>
         </main>
+        <ActivityTimeline />
       </div>
     </div>
   )

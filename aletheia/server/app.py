@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from aletheia import __version__
@@ -20,6 +21,8 @@ from aletheia.server.routes.risk import router as risk_router
 from aletheia.server.routes.update import router as update_router
 from aletheia.server.routes.gateway import router as gateway_router
 from aletheia.server.routes.telegram import router as telegram_router
+from aletheia.server.routes.news import router as news_router
+from aletheia.server.routes.command import router as command_router
 
 logger = logging.getLogger("aletheia")
 
@@ -73,6 +76,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Aletheia Trading OS", version=__version__, lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
+                   "http://localhost:8787", "http://127.0.0.1:8787"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(health_router)
 app.include_router(settings_router)
 app.include_router(data_router)
@@ -83,6 +94,8 @@ app.include_router(risk_router)
 app.include_router(update_router)
 app.include_router(gateway_router)
 app.include_router(telegram_router)
+app.include_router(news_router)
+app.include_router(command_router)
 
 # Serve static dashboard if the directory exists
 _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"

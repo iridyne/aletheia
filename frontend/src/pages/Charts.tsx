@@ -9,21 +9,70 @@ const TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
 export default function Charts() {
   const [symbol, setSymbol] = useState('BTCUSDT')
   const [timeframe, setTimeframe] = useState('1h')
+  const [selectedOrder, setSelectedOrder] = useState<string | null>(null)
   const { data: trades = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
+  const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(undefined, 20) })
+  const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
 
-  // Build trade markers for this symbol from filled orders
+  const snapshotMap: Record<string, any> = {}
+  for (const s of snapshots as any[]) {
+    if (!snapshotMap[s.symbol]) snapshotMap[s.symbol] = s
+  }
+
+  const symbolOpportunities = (opportunities as any[]).filter(o => o.symbol === symbol && o.status === 'open')
+
   const markers = (trades as any[])
     .filter(o => o.symbol === symbol && o.filled_at)
     .map(o => ({
       time: Math.floor(new Date(o.filled_at + 'Z').getTime() / 1000),
       side: (o.direction === 'long' || o.direction === 'buy' ? 'buy' : 'sell') as 'buy' | 'sell',
       price: o.price || 0,
+      id: o.id,
     }))
     .filter(m => !Number.isNaN(m.time))
 
+  const selectedTrade = selectedOrder ? (trades as any[]).find(t => t.id === selectedOrder) : null
+
   return (
     <div>
-      <h2 className="page-title">Charts</h2>
+      <h2 className="page-title">Markets</h2>
+
+      {/* Watchlist Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1.1rem' }}>
+        {SYMBOLS.map(sym => {
+          const snap = snapshotMap[sym]
+          const isActive = sym === symbol
+          const change = snap?.change_pct_24h
+          const color = change > 0 ? 'var(--green)' : change < 0 ? 'var(--red)' : 'var(--muted)'
+          return (
+            <div
+              key={sym}
+              className="card"
+              style={{
+                cursor: 'pointer', padding: '0.7rem 0.9rem', marginBottom: 0,
+                borderColor: isActive ? 'var(--accent)' : undefined,
+                background: isActive ? 'rgba(34,211,238,0.05)' : undefined,
+              }}
+              onClick={() => setSymbol(sym)}
+            >
+              <div style={{ fontSize: '0.72rem', color: 'var(--faint)', marginBottom: '0.2rem' }}>{sym.replace('USDT', '')}/USDT</div>
+              <div className="mono" style={{ fontSize: '1rem', fontWeight: 600 }}>
+                {snap ? Number(snap.price).toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                {change != null && (
+                  <span className="mono" style={{ fontSize: '0.72rem', color }}>{change > 0 ? '+' : ''}{change.toFixed(2)}%</span>
+                )}
+                {snap?.volume_24h != null && (
+                  <span className="text-muted" style={{ fontSize: '0.65rem' }}>Vol: {(snap.volume_24h / 1e6).toFixed(1)}M</span>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Chart */}
       <div className="card">
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
           <select value={symbol} onChange={e => setSymbol(e.target.value)}>
@@ -33,9 +82,49 @@ export default function Charts() {
             {TIMEFRAMES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </div>
-        <PriceChart symbol={symbol} timeframe={timeframe} markers={markers} />
-        <p className="hint">Green/red arrows mark filled paper trades on {symbol}.</p>
+        <PriceChart symbol={symbol} timeframe={timeframe} markers={markers} onMarkerClick={setSelectedOrder} />
+        <p className="hint">Green/red arrows mark filled paper trades on {symbol}. Click a marker to see trade details.</p>
       </div>
+
+      {/* Linked Opportunities */}
+      {symbolOpportunities.length > 0 && (
+        <div className="card">
+          <h3>Open Opportunities — {symbol.replace('USDT', '')}</h3>
+          <table>
+            <thead>
+              <tr><th>Direction</th><th>Confidence</th><th>Source</th><th>Thesis</th></tr>
+            </thead>
+            <tbody>
+              {symbolOpportunities.slice(0, 5).map((opp: any) => (
+                <tr key={opp.id}>
+                  <td><span className={`badge ${opp.direction_bias === 'long' ? 'badge-green' : opp.direction_bias === 'short' ? 'badge-red' : 'badge-blue'}`}>{opp.direction_bias}</span></td>
+                  <td className="mono">{opp.confidence || '—'}</td>
+                  <td>{opp.source_agent || '—'}</td>
+                  <td style={{ maxWidth: '30ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={opp.thesis || ''}>{opp.thesis || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Trade Detail */}
+      {selectedTrade && (
+        <div className="card">
+          <h3>Trade Detail</h3>
+          <table>
+            <tbody>
+              <tr><th>Order ID</th><td className="mono">{selectedTrade.id}</td></tr>
+              <tr><th>Direction</th><td>{selectedTrade.direction}</td></tr>
+              <tr><th>Quantity</th><td>{selectedTrade.quantity}</td></tr>
+              <tr><th>Price</th><td>{selectedTrade.price}</td></tr>
+              <tr><th>Filled</th><td>{selectedTrade.filled_at?.slice(0, 16)}</td></tr>
+              <tr><th>Strategy</th><td className="mono">{selectedTrade.strategy_id || '—'}</td></tr>
+            </tbody>
+          </table>
+          <button className="secondary" style={{ marginTop: '0.4rem' }} onClick={() => setSelectedOrder(null)}>Close</button>
+        </div>
+      )}
     </div>
   )
 }

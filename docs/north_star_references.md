@@ -35,6 +35,7 @@
 | **Sophia** | 持久数字生命体研究框架（叙事记忆/自我模型/长程适应） | 长程身份 + dreaming/consolidation + 自我解释 | arXiv:2512.18202 |
 | **ALMA** | 让 agent 学习更好的记忆设计（meta-learning agentic memory） | 记忆不是死库；schema 可进化、影响未来检索 | arXiv:2602.07755 |
 | **AlphaQuanter** | 工具编排式 agentic RL 交易框架 | 透明工具调用 + 从交易反馈优化策略 | arXiv:2510.14264 |
+| **Nautilus-Practice** | 用户自有，基于 NautilusTrader 的"包装层"——回测/沙盒/实盘三模式 + 动态 Universe + LangGraph 多 agent 策略生成 | 工程侧范式答案：成熟撮合内核 + 三模式同心圆 + 资金费率熔断 + 用 agent **造策略**而非**做决策**（详见 §10） | github.com/iridite/nautilus-practice （本地克隆） |
 
 > **诚实声明**：以下拆解全部基于各系统的**公开文档 / README / 论文摘要**。
 > 营销表述与可核实机制分开标注；不替对方脑补未公开的内部实现。
@@ -234,3 +235,191 @@ Hermes 指向的闭环是我们的真缺口，但**正因为它会放大一切**
 - 区分"声称 vs 已证实"——Hermes 的"closed learning loop 算法"等属营销层，照搬无据。
 - 最终目标（用户原话）：**一个本地运行、会交易、会复盘、会学习、会积累自我经验、
   但被 hard control 牢牢限制住的个人交易数字孪生**——先当稳定的实习生，再当交易员。
+
+> **代码层结构性问题清单**：与本文件的"范式差距"性质不同，已迁出至
+> `docs/BACKEND_ISSUES.md`。本文件保持为"方向地图"，不承载具体 bug/contract
+> 偏移条目；后者随代码状态变化频繁，应单独维护。
+
+---
+
+## 10. 深度拆解：Nautilus-Practice（用户自有参考系）
+
+> 与 §3–§5 不同：本节参考系是**用户本人的另一个仓库**（基于 NautilusTrader 1.223
+> 的包装层），所以它不是"我们能参考它的什么"，而是"我们能从**自己另一处的工程
+> 选择**里学到什么"。本地克隆于 `C:\Users\Administrator\Projects\nautilus-practice`，
+> 最后查看：2026-06-06。
+>
+> 本节同样**不构成施工授权**——任何借鉴动工前需显式授权。
+
+### 10.1 它是什么（公开材料 + 代码可核实）
+
+**定位**：一个**严肃的量化包装层**——把 NautilusTrader（Rust + Python 撮合内核）
+封装成"配置驱动 + 三模式同心圆 + 多 agent 策略生成"的开发平台。代码量级远超
+Aletheia：keltner_rs_breakout 单策略 1071 行，engine_high.py 2060 行，langgraph 子目录
+完整 DDD 分层（application/domain/infrastructure/presentation）。
+
+**核心组件**（按目录）：
+
+| 目录 | 职责 | 关键代码 |
+|---|---|---|
+| `strategy/` | 4 个完整策略 + 模块化 indicators/signals/universe 复用层 | `core/base.py:82` `BaseStrategy(Strategy)` 继承 NautilusTrader `Strategy` |
+| `backtest/` | 高/低双引擎；高级引擎用 Parquet catalog + `BacktestNode`，低级用 `add_data()` 直 API | `engine_high.py:2060 行`、`engine_low.py:38.9K` |
+| `sandbox/` | 测试网/模拟盘连接器（OKX 为主），有完整 preflight 检查 | `sandbox/engine.py:1067 行`、`sandbox/preflight.py:401 行` |
+| `live/` | 实盘 OKX + Binance；`circuit_breaker.py` 是**资金费率熔断**——年化 >100% 拒、>50% 切现货 | `live/engine.py:408 行`、`live/circuit_breaker.py:229 行` |
+| `core/` | 配置三层架构：YAML → Pydantic → ConfigAdapter；`adapter.py` 单文件 31KB | `core/adapter.py`、`core/schemas.py:28KB`、`core/exceptions.py:15KB` |
+| `langgraph/` | **多 agent 策略生成系统**——LangGraph 编排 Coordinator/Researcher/Validator/Optimizer | `infrastructure/graph/research_graph.py:250 行`、`optimize_graph.py:328 行` |
+| `config/` | active.yaml 选择器 + strategies/ + environments/（dev/sandbox/live） | YAML 驱动一切 |
+| `tests/` | 127 个测试（langgraph 子模块）+ 项目级 unittest | 100% 通过 |
+
+**关键工程选择**：
+
+- **NautilusTrader 作内核**：撮合/订单/风控数据结构都来自上游；自己写的是
+  *策略 + 适配 + 配置 + agent 编排*。**没有自己写撮合或 risk engine**。
+- **三模式同心圆**：backtest（本地）→ sandbox（交易所测试网）→ live（实盘），
+  共享 90% 配置（`extends: "base.yaml"`）。这与 OpenAlice "v1 同机双进程"是另一种
+  解法——**用配置层抽象代替进程隔离**。
+- **资金费率熔断**：`live/circuit_breaker.py:96` 入场前查资金费率，>100% 年化直接
+  拒、50%–100% 切现货、<50% 走永续；典型的"在执行前过 guard"模式，但**触发条件
+  是市场指标而非账户指标**——值得对照我们的 risk engine。
+- **LangGraph 多 agent 策略生成**：`langgraph/infrastructure/graph/research_graph.py`
+  跑 `Coordinator → Researcher（生成代码）→ Validator（评分）→ 回环`，**输出是一段
+  Python 策略源码字符串**，落到 SQLAlchemy DB 里。
+- **DDD 分层**：langgraph 子项目里 application（用例）/ domain（模型 + 仓储接口）/
+  infrastructure（实现：LLM、graph、agents、code_gen、cache、checkpoint）/
+  presentation（CLI），interfaces 通过抽象类强解耦。
+
+### 10.2 与 Aletheia 的工程选择对照
+
+图例：✅ 我们更优 · 🟰 等价不同形 · 🟡 它更成熟 · ❌ 我们没做
+
+| 维度 | Nautilus-Practice 做法 | Aletheia 做法 | 评价 |
+|---|---|---|---|
+| **撮合内核** | NautilusTrader 1.223 (Rust+Python) — 业界级 | 自写 paper_broker + Bitget 适配 | 🟡 它更成熟，但我们规模小到自写没事；上 NautilusTrader 等于换轮子 |
+| **回测严肃度** | Parquet catalog + 13 项性能指标 + Sharpe/Sortino/Calmar/Drawdown 自动计算 | 暂无显式回测；仅 paper trading 模拟 | ❌ 我们没"严肃回测"——promotion gate 是用 paper 实盘累积的（trust §5），周期长 |
+| **环境同心圆** | base.yaml + dev/sandbox/live 三 extends 文件，配置 90% 共用 | live_state + exchange_mode + permission_mode 三个标志位组合 | 🟰 等价不同形；他们靠配置文件继承，我们靠运行时门控 |
+| **入场前 guard** | `circuit_breaker.py:96` 在策略 `on_bar` 内调用 → 资金费率检查 → 切现货/拒/走永续 | Risk Engine 在 gateway 层；Engine 检查的是账户/订单约束，**不查市场指标** | 🟡 他们多一层"市场状态熔断"；我们的 Risk Engine 偏账户安全。借鉴价值真实但**不属于 trust 边界扩展**——属于策略层（playbooks 的活） |
+| **策略产出方式** | LangGraph 编排 4 个 agent → 输出 Python 源码字符串 → 落 SQLAlchemy → 用回测引擎跑分 | 7 个 agent 各自跑 cron，写 markdown/research_note；**不产出代码**，只产出"hypothesis 文字" | 🟰 完全不同的设计哲学。他们是"AI 写策略代码"，我们是"AI 写交易决策"。各有风险 |
+| **agent 角色拆分** | Coordinator → Researcher → Validator → Optimizer，路由由 `_route_after_coordinator` 状态机决定（`research_graph.py:166`） | 7 agent 都是独立 cron job，单向写库，**无 inter-agent 数据流** | 🟡 他们有真正的 agent 协作（state-driven 路由）；我们 §6 已点出这是缺口 |
+| **凭据隔离** | `.env` + `dotenv` + 长度校验（`sandbox/engine.py:362`）；OKX 凭据 passphrase 单独字段 | keyring → fernet fallback；写入只读，永不出现在 GET/log/prompt | ✅ 我们更硬 |
+| **配置驱动度** | YAML active 选择器 + Pydantic schema 校验 + adapter.py 31KB 适配 | TOML/YAML + Pydantic，但适配代码薄（`config/loader.py:12KB`） | 🟡 他们的配置抽象层更厚——好处是策略热替换，坏处是 31KB 单文件维护成本 |
+| **依赖外部 LLM** | LangGraph + Anthropic API（claude_client.py） + LLMCache（pickle） + Checkpoint 恢复 | 多 provider router（OpenAI/Anthropic/Codex CLI），无 cache 无 checkpoint | 🟡 他们做了 LLM 工程化（cache/checkpoint）；我们 §9 BACKEND_ISSUES 也点过 healthcheck 真实 authed call 等问题 |
+| **可观测性** | TUI 进度条 + 13 项指标自动报告 + 过滤器诊断系统（统计每过滤器拦截率） | dashboard 显示状态 + audit JSONL；无策略级"过滤器命中率" | 🟡 他们的"过滤器命中率"诊断对**Aletheia 的 risk_critic 可借鉴**（risk_critic 现在写文字教训，可以改成统计 risk 拒绝原因分布） |
+| **测试** | 127 个 langgraph 测试 + 项目级 unittest | 272 个 pytest（trust + 安全 + 接受度） | ✅ 我们覆盖度更广，他们 langgraph 模块覆盖率仅 12% |
+| **撞名 / 包冲突** | langgraph 子目录与外部 langgraph 包冲突，需 sys.path 黑魔法绕开 | 无此类问题 | ✅ 我们没踩这个坑 |
+
+### 10.3 三个值得诚实学习的点
+
+**① 资金费率熔断（market-state guard）—— 借鉴价值真实但要分层落位**
+
+Nautilus-Practice 的 `circuit_breaker.py` 在策略层做"入场前查市场状态"，决策结构：
+
+```python
+if funding_rate_annual > 100%:  return REJECT
+elif funding_rate_annual > 50%:  return SPOT  # 切现货
+else:                            return PERP
+```
+
+**对 Aletheia 的启示**：我们的 `risk/engine.py` 是**账户/订单**层风控（trust §6.3
+"do not weaken or remove a risk check"），**不该**在这里加市场状态依赖
+（违反单一职责 + 增加外部数据依赖让 risk engine 变脆弱）。
+
+正确落位应该是：**playbooks 层 + market_observer 的 thesis**——用 playbook 描述
+"funding 极端时回避永续"，让 market_observer / strategy_designer 在产出 opportunity
+前考虑这个状态。这与 §6 已点的"playbooks 0 reader"问题正面相关。
+
+**治理红线**：✅ 安全——只要不进 risk engine、只在策略层做。🔴 红线：绝不能让
+agent **绕过** risk engine 自行加入"funding 太高所以下单/撤单"的捷径。
+
+**② LangGraph 编排作为"策略代码自动化生产线"—— 红线最重的一项**
+
+Nautilus-Practice 的 `research_graph.py:62-89` 用 StateGraph 真实跑：
+
+```text
+coordinator (entry) -> researcher 写代码 -> validator 评分 -> 回 coordinator -> ...
+                       ↓ 验证通过则 -> END
+```
+
+研究员调用 `StrategyGenerationPrompt` 让 LLM 输出 JSON，含 `code` 字段（Python 源码），
+再由 validator 跑 `ast.parse` + 关键字检查（`strategy_generator.py:136`），
+通过则保存到 SQLAlchemy。
+
+**对 Aletheia 的启示**：
+
+- 🟢 **可借鉴的形**：state-driven agent 编排让多 agent 真有"协作流"——这正是 §6
+  "agent 是独立 cron 单向写库"的反例。**但不必上 LangGraph**：我们的 `orchestrator.py`
+  扩展一个"工作流定义"小层即可（`coordinator -> researcher -> validator` 三个 agent
+  按状态轮转），不需要引重依赖。
+- 🔴 **绝不借鉴的实**：Nautilus-Practice 让 agent **生成可执行 Python 源码**
+  落 DB 然后回测——这在交易系统里是 AGENTS.md "agent 自改代码权"的同位违规：
+  - LangGraph 那边的"安全"是因为生成的代码只跑回测、不接 live；
+  - 我们的 trust §6.1 把 risk/、execution/、credentials 列为 change-controlled——
+    任何 agent 产出的可执行内容**不得**到达这些路径；
+  - 即使是隔离的回测沙盒，"agent 生成代码 → 自动评分 → 自动晋级 → 接 live"是 Sophia/AlphaQuanter 警告的远期闭环风险，**比 Hermes "skill 自生成"更激进**。
+
+**最大可借鉴**：把策略**参数（数值/枚举）**让 agent 优化（Optimizer 角色，
+受限搜索空间），**绝不**让 agent 写"代码"。这与 §7 阶段 2 "playbook 草案需人审"
+精神一致。
+
+**③ DDD 分层与抽象——可借鉴但要克制**
+
+`langgraph/application/interfaces/llm_service.py` 这种"接口与实现分离"的写法
+对**测试性**有帮助（`tests/` 里 mock LLMService 即可），但 Aletheia 当前
+代码量级（aletheia/ 目录约 50 个 Python 文件）远未到需要 DDD 的规模——
+trust §2.4 "Make the smallest change that satisfies"。
+
+**最大可借鉴**：只在 `model_provider/` 加 `interfaces.py`（已经隐性有 base.py），
+让 agent 单元测试不依赖真实 LLM 网络调用——这与 BACKEND_ISSUES §2.7
+"provider 不一致的 error 形状"正面相关。
+
+### 10.4 同时也是反面教材的几点
+
+诚实说法：Nautilus-Practice 也有问题，避免我们照搬。
+
+| 反面教训 | 代码事实 | 对 Aletheia 的警示 |
+|---|---|---|
+| **包名冲突 hack** | `langgraph/IMPLEMENTATION_SUMMARY.md:131-148` 描述 `sys.path` 黑魔法绕开包冲突；至今未重命名目录 | 不要用与 PyPI 包同名的子目录命名（我们目前安全） |
+| **31KB 单文件 adapter** | `core/adapter.py:31416 字节` 单文件——配置驱动度高 = 适配代码巨型化 | 我们 `config/loader.py` 才 12KB，别因"配置抽象"膨胀到不可维护 |
+| **strategy_generator 是占位** | `langgraph/.../strategy_generator.py:42-50` 拼字符串生成 backtesting.py 风格代码（不是 NautilusTrader），看起来像未完成的 demo | "agent 写代码"在他们那里也只是雏形——别以为它"已经成熟可借鉴" |
+| **CLAUDE.md 自陈"AI 两次直接在 main 分支提交"** | `CLAUDE.md:149-155` 工程纪律失败案例 | 我们的 AGENTS.md 红线（`Do not amend commits unless explicitly asked`）必须严守 |
+| **测试覆盖率 12%（langgraph 模块）** | `IMPLEMENTATION_SUMMARY.md:117` "代码覆盖率: 12.02%" | 我们 272 测试覆盖广得多——别为了"加 agent 编排"牺牲覆盖度 |
+
+### 10.5 排序更新（接 §7 北极星阶段图）
+
+```
+阶段 0（不变）：稳跑验证
+阶段 1（不变）：证明学习质量
+阶段 2（更新）：最小经验闭环
+  └─ 沿用 §7，但额外参考 Nautilus-Practice 的：
+     ├─ playbook 激活策略：把 funding/regime 等市场状态做成 playbook 输入
+     │  （而非进 risk engine）
+     ├─ agent state-driven 编排：让 market_observer → strategy_designer →
+     │  risk_critic 形成有方向的工作流，而非各自 cron。**不引入 LangGraph**，
+     │  在 orchestrator.py 里加个 100 行的 workflow 状态机即可
+     └─ 把 risk_critic 改成"统计型"：参考 Nautilus-Practice 过滤器诊断系统，
+        让它输出"过去 N 天 risk 拒绝原因 top-5"等量化报告，而非纯文字教训
+阶段 3+（更新）：远期研究（已添加）
+  └─ "agent 调参（数值搜索空间）" — 可借鉴 OptimizerAgent 形式但**绝不**到代码生成
+  └─ "回测严肃化" — 远期可考虑引入 vectorbt / NautilusTrader backtest，
+     但这是大改、属于推迟队列；当前 paper trading 路径继续是真值来源
+```
+
+### 10.6 治理红线（Nautilus-Practice 专项）
+
+- 🔴 **永不**：让 agent 生成可执行 Python 代码并落到 strategy/ 目录或 DB（即使有
+  validator 评分，trust §6.1 change-controlled 边界禁止）。
+- 🔴 **永不**：把 `circuit_breaker.py` 这类 market-state 检查放进 `risk/engine.py`——
+  增加 risk engine 的外部数据依赖等于削弱它的可审计性。
+- 🟡 **慎重**：DDD 抽象只在测试性收益明显的边界引入（model_provider），不要扩散
+  到 storage/ 或 risk/。
+- 🟡 **慎重**：LangGraph 的"workflow 编排"范式可借鉴，但**不引入它本身**——
+  我们已有 orchestrator + scheduler 两层，再加一层重依赖违反 AGENTS.md
+  "No Docker/Postgres/Redis/queues" 的精神延伸（不引入复杂 runtime）。
+
+### 10.7 一句话结论
+
+> Nautilus-Practice 在**工程严肃性**（撮合内核、回测引擎、配置抽象）上比 Aletheia
+> 走得更远；在**自动化策略生产**（agent 写代码）上比 Aletheia 更激进，且这部分恰是
+> Aletheia 的红线区。**形可借（agent 工作流编排、playbook 状态依赖、统计型 risk 复盘）**；
+> **实不可借（agent 生成可执行代码、market-state 进 risk engine、DDD 全局扩散）**。
+> 它最大的价值是**自我对照**——证明同一个开发者在另一个项目里选了不同抽象路径，
+> 让我们更清楚 Aletheia 的"local-first + change-controlled + 不写撮合"是有意识的克制。

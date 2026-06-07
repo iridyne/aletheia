@@ -208,6 +208,21 @@ CREATE TABLE IF NOT EXISTS audit_events (
     after_state TEXT,
     message TEXT
 );
+
+CREATE TABLE IF NOT EXISTS news_items (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL,
+    url TEXT,
+    summary TEXT,
+    symbols_mentioned TEXT DEFAULT '[]',
+    event_type TEXT DEFAULT 'other',
+    sentiment TEXT DEFAULT 'neutral',
+    relevance_score REAL DEFAULT 0,
+    published_at TEXT NOT NULL DEFAULT (datetime('now')),
+    fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
+    status TEXT NOT NULL DEFAULT 'new'
+);
 """
 
 

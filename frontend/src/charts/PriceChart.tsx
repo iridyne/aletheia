@@ -1,15 +1,17 @@
 import { useEffect, useRef } from 'react'
-import { createChart, ColorType, type IChartApi, type Time } from 'lightweight-charts'
+import { createChart, type IChartApi, type Time } from 'lightweight-charts'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { chartTheme } from './theme'
 
-interface TradeMarker { time: number; side: 'buy' | 'sell'; price: number }
+export interface TradeMarker { time: number; side: 'buy' | 'sell'; price: number; id?: string }
 
-export default function PriceChart({ symbol, timeframe = '1h', markers = [] }: {
-  symbol: string; timeframe?: string; markers?: TradeMarker[]
+export default function PriceChart({ symbol, timeframe = '1h', markers = [], onMarkerClick }: {
+  symbol: string; timeframe?: string; markers?: TradeMarker[]; onMarkerClick?: (id: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
+
   const { data, isError } = useQuery({
     queryKey: ['ohlcv', symbol, timeframe],
     queryFn: () => api.getOhlcv(symbol, timeframe),
@@ -18,16 +20,16 @@ export default function PriceChart({ symbol, timeframe = '1h', markers = [] }: {
   useEffect(() => {
     if (!containerRef.current) return
     const chart = createChart(containerRef.current, {
-      layout: { background: { type: ColorType.Solid, color: '#1a1f26' }, textColor: '#e8e6e3' },
-      grid: { vertLines: { color: '#2a2f35' }, horzLines: { color: '#2a2f35' } },
+      layout: chartTheme.layout,
+      grid: chartTheme.grid,
       width: containerRef.current.clientWidth,
       height: 320,
       timeScale: { timeVisible: true },
     })
     chartRef.current = chart
     const series = chart.addCandlestickSeries({
-      upColor: '#3fb950', downColor: '#f85149', borderVisible: false,
-      wickUpColor: '#3fb950', wickDownColor: '#f85149',
+      upColor: chartTheme.upColor, downColor: chartTheme.downColor, borderVisible: false,
+      wickUpColor: chartTheme.upColor, wickDownColor: chartTheme.downColor,
     })
 
     const candles = Array.isArray(data) ? data : []
@@ -39,7 +41,7 @@ export default function PriceChart({ symbol, timeframe = '1h', markers = [] }: {
         series.setMarkers(markers.map(m => ({
           time: m.time as Time,
           position: m.side === 'buy' ? 'belowBar' : 'aboveBar',
-          color: m.side === 'buy' ? '#3fb950' : '#f85149',
+          color: m.side === 'buy' ? chartTheme.markerBuy : chartTheme.markerSell,
           shape: m.side === 'buy' ? 'arrowUp' : 'arrowDown',
           text: m.side.toUpperCase(),
         })))
@@ -47,10 +49,19 @@ export default function PriceChart({ symbol, timeframe = '1h', markers = [] }: {
       chart.timeScale().fitContent()
     }
 
+    if (onMarkerClick && markers.length) {
+      chart.subscribeClick((param) => {
+        if (!param.time) return
+        const clickTime = param.time as number
+        const matched = markers.find(m => m.time === clickTime && m.id)
+        if (matched?.id) onMarkerClick(matched.id)
+      })
+    }
+
     const onResize = () => chart.applyOptions({ width: containerRef.current!.clientWidth })
     window.addEventListener('resize', onResize)
     return () => { window.removeEventListener('resize', onResize); chart.remove() }
-  }, [data, markers])
+  }, [data, markers, onMarkerClick])
 
   return (
     <div>

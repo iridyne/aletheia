@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { createChart, ColorType, type IChartApi, type Time } from 'lightweight-charts'
+import { createChart, type IChartApi, type Time } from 'lightweight-charts'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { chartTheme } from './theme'
 
 export default function PnLChart() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -11,14 +12,14 @@ export default function PnLChart() {
   useEffect(() => {
     if (!containerRef.current) return
     const chart = createChart(containerRef.current, {
-      layout: { background: { type: ColorType.Solid, color: '#1a1f26' }, textColor: '#e8e6e3' },
-      grid: { vertLines: { color: '#2a2f35' }, horzLines: { color: '#2a2f35' } },
+      layout: chartTheme.layout,
+      grid: chartTheme.grid,
       width: containerRef.current.clientWidth,
       height: 220,
       timeScale: { timeVisible: true },
     })
     chartRef.current = chart
-    const series = chart.addLineSeries({ color: '#58a6ff', lineWidth: 2 })
+    const series = chart.addLineSeries({ color: chartTheme.lineColor, lineWidth: 2 })
 
     const rows = (data as any[])
       .map((s: any) => {
@@ -29,7 +30,6 @@ export default function PnLChart() {
       .sort((a, b) => (a.time as number) - (b.time as number))
 
     if (rows.length) {
-      // de-dup identical timestamps (lightweight-charts requires strictly ascending)
       const seen = new Set<number>()
       const unique = rows.filter(r => { const k = r.time as number; if (seen.has(k)) return false; seen.add(k); return true })
       series.setData(unique)
