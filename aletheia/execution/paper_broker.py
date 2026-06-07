@@ -76,6 +76,9 @@ def execute_paper_order(
             current_price=price,
             execution_mode=execution_mode,
             strategy_id=strategy_id,
+            # Causal-chain back-link (trust §1.1): the proposal/order that opened it.
+            proposal_id=proposal_id,
+            order_id=order.id,
             stop_price=stop_price,
             take_profit_price=take_profit_price,
         )

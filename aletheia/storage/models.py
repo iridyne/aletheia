@@ -120,6 +120,10 @@ class Position(BaseModel):
     realized_pnl: float = 0.0
     execution_mode: str
     strategy_id: str | None = None
+    # Causal-chain back-links (trust §1.1): which proposal/order opened this position.
+    # Nullable — older rows and positions opened before this field predate it.
+    proposal_id: str | None = None
+    order_id: str | None = None
     status: str = "open"
     stop_price: float | None = None
     take_profit_price: float | None = None

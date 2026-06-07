@@ -41,6 +41,17 @@ async def get_agent_run_tool_calls(run_id: str):
     return repo.list_tool_calls(run_id=run_id, limit=200)
 
 
+@router.get("/agent-runs/{run_id}/steps")
+async def get_agent_run_steps(run_id: str):
+    """Get the ordered reasoning/action steps (inputs/outputs) for an agent run.
+
+    Read-only view of the agent_run_steps table. Returns [] for runs that recorded
+    no steps — the UI renders that honestly rather than implying a trace exists.
+    """
+    _ensure_db()
+    return repo.list_run_steps(run_id=run_id, limit=500)
+
+
 class StartAgentRequest(BaseModel):
     agent_name: str = "market_observer"
 

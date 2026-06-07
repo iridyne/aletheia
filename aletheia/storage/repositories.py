@@ -349,6 +349,26 @@ def list_tool_calls(run_id: str | None = None, limit: int = 100) -> list[dict]:
     return _select_all("agent_tool_calls", limit=limit)
 
 
+def insert_run_step(run_id: str, step_number: int, action: str,
+                    input_data: str | None = None, output_data: str | None = None) -> None:
+    """Record one reasoning/action step of an agent run (ordered by step_number)."""
+    from aletheia.storage.models import new_id
+    _insert("agent_run_steps", {
+        "id": new_id(),
+        "run_id": run_id,
+        "step_number": step_number,
+        "action": action,
+        "input_data": input_data,
+        "output_data": output_data,
+    })
+
+
+def list_run_steps(run_id: str, limit: int = 500) -> list[dict]:
+    """Return a run's steps in execution order (step_number ASC)."""
+    return _select_all("agent_run_steps", where="run_id = ?", params=(run_id,),
+                       order="step_number ASC", limit=limit)
+
+
 # --- Data retention / cleanup (Component 3) ---
 #
 # Only high-volume TELEMETRY may be pruned. Trust-bearing causal-chain tables

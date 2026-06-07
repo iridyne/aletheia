@@ -1,6 +1,26 @@
 # Development Log
 
-## 2026-06-07 (latest) — Experience loop (north-star stage 2, minimal closed loop)
+## 2026-06-07 (latest) — WebUI backend handoff: position FK + steps endpoint
+
+Implemented the two actionable, in-scope gaps from `WEBUI_BACKEND_HANDOFF.md`:
+
+- **#1 position → proposal/order causal link** (⭐ highest value): `positions` gained
+  nullable `proposal_id`/`order_id` FK columns (CREATE TABLE + additive migration).
+  Both brokers populate them when a fill opens a position; averaging into an existing
+  position preserves the *original* opener. Makes the position→upstream direction of the
+  trust §1.1 causal chain real (CausalChain.tsx no longer needs "not recorded"). Touched
+  change-controlled `execution/bitget_broker.py` — additive only, focused regression tests.
+- **#2 `GET /api/agent-runs/{id}/steps`**: read-only endpoint exposing `agent_run_steps`
+  (new `list_run_steps`/`insert_run_step` repo fns). Honest caveat: the table is not yet
+  written by any agent, so it returns `[]` today — populating it is a separate, larger
+  change (every agent) beyond the handoff's "expose the table" ask.
+
+Not done (by design): **#3** exchange equity touches change-controlled `client.py` → needs
+explicit owner authorization; **#4** news ingestion is banned MVP scope (AGENTS.md).
+
+`tests/test_webui_backend_handoff.py` (6 tests); full suite 387 passed.
+
+## 2026-06-07 — Experience loop (north-star stage 2, minimal closed loop)
 
 ### Added — knowledge that reads back into decisions (§6 gap closed, minimally)
 

@@ -136,6 +136,8 @@ CREATE TABLE IF NOT EXISTS positions (
     realized_pnl REAL DEFAULT 0,
     execution_mode TEXT NOT NULL,
     strategy_id TEXT,
+    proposal_id TEXT REFERENCES trade_proposals(id),
+    order_id TEXT REFERENCES orders(id),
     status TEXT NOT NULL DEFAULT 'open',
     stop_price REAL,
     take_profit_price REAL,
@@ -235,6 +237,8 @@ _ADDITIVE_COLUMNS = [
     ("stop_price", "positions", "REAL"),
     ("take_profit_price", "positions", "REAL"),
     ("close_reason", "positions", "TEXT"),
+    ("proposal_id", "positions", "TEXT"),
+    ("order_id", "positions", "TEXT"),
 ]
 
 

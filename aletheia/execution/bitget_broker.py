@@ -109,6 +109,8 @@ def execute_live_order(
                     symbol=symbol, market_type=market_type, direction=direction,
                     quantity=quantity, entry_price=price, current_price=price,
                     execution_mode="bitget_live_limited", strategy_id=strategy_id,
+                    # Causal-chain back-link (trust §1.1): proposal/order that opened it.
+                    proposal_id=proposal_id, order_id=order.id,
                 )
                 insert_position(position)
                 position_id = position.id
