@@ -77,6 +77,12 @@ def set_cmd(
 
     save_config(cfg)
     clear_cache()
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human", "source": "cli", "event_type": "model_provider_changed",
+        "entity_type": "model_provider", "entity_id": provider,
+        "message": f"Model provider '{provider}' updated via CLI",
+    })
     typer.echo(f"Provider '{provider}' updated. Default: {cfg.models.default_provider}")
 
 

@@ -222,8 +222,12 @@ class BitgetClient:
         if data.get("code") != "00000":
             raise RuntimeError(f"Bitget order error: {data.get('msg')}")
 
+        order_id = data.get("data", {}).get("orderId", "")
+        if not order_id:
+            raise RuntimeError("Bitget returned success but no orderId in response")
+
         return OrderResponse(
-            order_id=data.get("data", {}).get("orderId", ""),
+            order_id=order_id,
             client_oid=data.get("data", {}).get("clientOid"),
         )
 

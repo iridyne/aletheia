@@ -22,6 +22,14 @@ def set_mode(mode: str = typer.Argument(..., help="ReadOnly|Research|PaperAuto|A
         typer.echo(f"Invalid mode. Choose from: {', '.join(sorted(valid))}", err=True)
         raise typer.Exit(1)
     cfg = load_config()
+    old = cfg.agent.permission_mode
     cfg.agent.permission_mode = mode
     save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human", "source": "cli", "event_type": "permission_changed",
+        "entity_type": "permission_mode", "entity_id": "global",
+        "before": {"mode": old}, "after": {"mode": mode},
+        "message": f"Permission mode {old} -> {mode} via CLI",
+    })
     typer.echo(f"Permission mode set to: {mode}")

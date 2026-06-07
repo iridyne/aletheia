@@ -26,6 +26,12 @@ def set_cmd(key: str = typer.Argument(..., help="Secret key path, e.g. bitget.de
     """Set a secret value (prompted securely, never echoed)."""
     value = typer.prompt(f"Value for '{key}'", hide_input=True, confirmation_prompt=True)
     set_secret(key, value)
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human", "source": "cli", "event_type": "secret_rotated",
+        "entity_type": "secret", "entity_id": key,
+        "message": f"Secret '{key}' set via CLI",
+    })
     typer.echo(f"Stored '{key}' = {redact(value)}")
 
 

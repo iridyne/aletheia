@@ -63,9 +63,9 @@ class TelegramBot:
                 "actor": "telegram",
                 "source": "telegram",
                 "event_type": "unauthorized_access",
-                "message": f"{auth_error} chat_id: {chat_id}",
+                "message": f"Unauthorized telegram message from chat_id={chat_id}",
             })
-            return auth_error
+            return None
 
         cmd = text.strip().lower()
 
@@ -146,13 +146,16 @@ class TelegramBot:
             logger.warning("Telegram enabled but no allowed_chat_ids are configured.")
             return
         self._running = True
+        backoff = poll_interval
         async with httpx.AsyncClient(timeout=20) as client:
             while self._running:
                 try:
                     updates = await self._fetch_updates(client)
+                    backoff = poll_interval
                 except Exception as exc:
                     logger.warning("Telegram polling failed: %s", exc)
-                    await asyncio.sleep(poll_interval)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60.0)
                     continue
                 for update in updates:
                     await self._handle_update(update, client)
@@ -174,7 +177,9 @@ class TelegramBot:
         return updates
 
     async def _handle_update(self, update: dict[str, Any], client: httpx.AsyncClient) -> None:
-        message = update.get("message") or update.get("edited_message") or {}
+        message = update.get("message") or {}
+        if not message:
+            return
         chat = message.get("chat") or {}
         chat_id = chat.get("id")
         text = message.get("text")

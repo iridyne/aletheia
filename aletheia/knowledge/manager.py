@@ -26,7 +26,11 @@ def create_research_note(title: str, content: str, confidence: str = "medium_con
         file_path=str(path),
         confidence=confidence,
     )
-    insert_knowledge_item(item)
+    try:
+        insert_knowledge_item(item)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     return item
 
 
@@ -38,7 +42,11 @@ def create_dreaming_log(title: str, content: str) -> KnowledgeItem:
         file_path=str(path),
         confidence="medium_confidence",
     )
-    insert_knowledge_item(item)
+    try:
+        insert_knowledge_item(item)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     return item
 
 
@@ -50,7 +58,11 @@ def create_daily_review(title: str, content: str) -> KnowledgeItem:
         file_path=str(path),
         confidence="medium_confidence",
     )
-    insert_knowledge_item(item)
+    try:
+        insert_knowledge_item(item)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     return item
 
 
@@ -68,7 +80,11 @@ def create_post_trade_review(
         strategy_id=strategy_id,
         confidence="medium_confidence",
     )
-    insert_knowledge_item(item)
+    try:
+        insert_knowledge_item(item)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     return item
 
 
@@ -100,8 +116,11 @@ def delete_item(item_id: str) -> None:
 
 
 def detect_contradictions(items: list[dict]) -> list[dict]:
-    """Stub for contradiction detection — returns empty for MVP.
+    """IMPLEMENTATION_STATUS: stub — returns empty for MVP.
 
+    Callers must not present results as "no contradictions found" in the UI.
     Future: compare confidence levels and conflicting theses.
     """
+    import logging
+    logging.getLogger("aletheia.knowledge").debug("detect_contradictions called (stub, returns [])")
     return []

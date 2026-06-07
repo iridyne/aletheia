@@ -60,8 +60,9 @@ def bootstrap() -> AletheiaConfig:
     try:
         from aletheia.trading.playbooks import seed_playbooks
         seed_playbooks(DATA_DIR)
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("aletheia.config").warning("bootstrap: seed_playbooks failed: %s", e)
     if not CONFIG_PATH.exists():
         cfg = AletheiaConfig()
         save_config(cfg)
