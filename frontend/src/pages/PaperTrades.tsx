@@ -6,6 +6,7 @@ import { api } from '../api/client'
 import type { Order } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
+import AccountSnapshot from '../components/AccountSnapshot'
 
 const col = createColumnHelper<Order>()
 
@@ -34,6 +35,7 @@ export default function PaperTrades() {
   return (
     <div>
       <h2 className="page-title">Paper Trades</h2>
+      <AccountSnapshot />
       <div className="card">
         <DataTable
           data={rows}

@@ -39,7 +39,9 @@ Code-layer items in BACKEND_ISSUES.md and FRONTEND_ISSUES.md §1-§3 have been w
 - **portfolio-sync-gap** — Portfolio dashboard does not reflect real exchange account state (only locally-created positions). Filed as BACKEND_ISSUES.md §2.3 last bullet. Touches change-controlled `aletheia/exchanges/bitget/client.py`; requires explicit authorization before work begins.
 - **experience-loop-gap** — knowledge-write-only loop; agents rarely read prior research/reviews back into decisions. Tracked in `docs/north_star_references.md §6`. Stage-2 work per north-star sequencing; do NOT start before stage 0 (stable run) and stage 1 (learning quality) are proven.
 
-Recent: 2026-06-07 cockpit merge resolved (`ace780a`); local 5-zone shell discarded after explicit review against AGENTS.md priorities. See DECISIONS.md and `docs/superpowers/specs/2026-06-07-merge-postmortem-design.md`.
+Recent:
+- 2026-06-07 cockpit merge resolved (`ace780a`); local 5-zone shell discarded after explicit review against AGENTS.md priorities. See DECISIONS.md and `docs/superpowers/specs/2026-06-07-merge-postmortem-design.md`.
+- 2026-06-07 webui lightweight optimization: `.brand`/`.topbar` baseline aligned; `<AccountSnapshot/>` (Total Value with portfolio-sync-gap caveat / Today PnL / Open Positions / Pending Proposals) added to Overview + Paper Trades + Positions. Five-zone shell / Right Inspector / global Command Center deferred to stage 1+. See DECISIONS.md.
 
 ## Next Recommended Step
 

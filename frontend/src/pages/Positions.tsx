@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { Position, PortfolioSummary } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
+import AccountSnapshot from '../components/AccountSnapshot'
 
 const col = createColumnHelper<Position>()
 
@@ -41,6 +42,7 @@ export default function Positions() {
   return (
     <div>
       <h2 className="page-title">Positions</h2>
+      <AccountSnapshot />
 
       {(portfolio as PortfolioSummary | undefined)?.exposure_by_symbol &&
         Object.keys((portfolio as PortfolioSummary).exposure_by_symbol!).length > 0 && (

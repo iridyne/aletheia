@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import SetupBanner from '../components/SetupBanner'
+import AccountSnapshot from '../components/AccountSnapshot'
 
 export default function Overview() {
   const navigate = useNavigate()
@@ -60,6 +61,8 @@ export default function Overview() {
     <div>
       <h2 className="page-title">Cockpit</h2>
       <SetupBanner />
+
+      <AccountSnapshot />
 
       {/* Cockpit Grid — 4 panel overview */}
       <div className="cockpit-grid">

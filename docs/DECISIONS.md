@@ -1,5 +1,41 @@
 # Decisions
 
+## 2026-06-07 - WebUI: lightweight cockpit IA fix, defer 5-zone shell
+
+### Context
+
+User raised two concrete UI pains: (1) sidebar `.brand` and content `.topbar` baselines don't align — visually jarring; (2) account total value / today PnL hidden inside Paper Trades subtab while Overview's 4 panels are all system-health (Risk/Live/Model/Exchange) — operator's most-wanted data is missing from the homepage. User additionally provided `aletheia_web_ui_implementation_plan.md` (the design doc behind the discarded local 5-zone cockpit), asking for a redesign referencing OpenAlice / TradingView / Bloomberg.
+
+### Decision
+
+Take the lightweight slice: adopt the implementation plan's §6.1 information-architecture goals (Cockpit answers operator's first-glance questions, including PnL) without adopting its §3 five-zone shell, §4 global Command Center, or §5 News Intelligence elevation. Specifically:
+
+- Align `.brand` to `.topbar` (52px shared baseline) — pure CSS, ~5 lines.
+- Add `<AccountSnapshot/>` (Total Value / Today PnL / Open Positions / Pending Proposals) at the top of Overview, Paper Trades, and Positions pages. Total Value carries an honest "aletheia-managed only · exchange sync pending" caveat per the portfolio-sync-gap (BACKEND_ISSUES §2.3).
+- Introduce minimal `MetricTile` shared component (no `EntityCard`/`EvidenceStack`/`ActionBar` etc — those tie to the 5-zone Inspector, deferred).
+- Plan archived at `~/.claude/plans/open-alice-tradingview-bloomberg-ai-ui-temporal-sifakis.md`.
+
+### Reasoning
+
+- AGENTS.md priority #4 (UI honesty) is genuinely violated by Overview omitting account state — fixing that is on-charter.
+- AGENTS.md "No Uncontrolled Expansion" forbids importing the 5-zone shell wholesale (Right Inspector + Bottom Timeline + global Command Center are exactly the 18 local files this same day's earlier merge decision discarded).
+- north_star §7 places us in stage 0 (stable run); large UI shell rework belongs to stage 1+, not now.
+- The implementation plan's IA chapter and the shell chapter are separable. Taking IA without shell gives the user the actual win they asked for at ~1% of the work.
+
+### Consequences
+
+- 4 source files touched (`index.css`, `Overview.tsx`, `PaperTrades.tsx`, `Positions.tsx`) + 2 new components (`MetricTile.tsx`, `AccountSnapshot.tsx`); rebuild of `aletheia/dashboard_static/`.
+- Total Value caveat permanently documents the data-source gap in the UI itself, in lockstep with BACKEND_ISSUES §2.3 — the caveat removes only after Exchange Account Sync ships.
+- Five-zone shell / Right Inspector / global Command Center / News upgrade explicitly deferred to "stage 0 stable run + stage 1 learning quality validated", whichever later.
+- 352 tests still passing.
+
+### Alternatives Considered
+
+- Full implementation per `aletheia_web_ui_implementation_plan.md` Milestones 1-7 — rejected: equivalent to reverting today's earlier merge decision and doing what AGENTS.md forbids at the current stage.
+- Inspector-only (medium scope) — rejected: still requires reorganizing all 14 pages to feed the inspector; not justified by the two pains user named.
+
+---
+
 ## 2026-06-07 - Merge: adopt remote cockpit, discard local 5-zone shell
 
 ### Context

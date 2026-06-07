@@ -65,9 +65,12 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 .main { flex: 1; padding: 1.5rem 1.75rem; background: var(--bg-2); overflow-y: auto; }
 
 /* ---------- Brand ---------- */
+/* Height + border match .topbar so sidebar header and content header share one
+   horizontal baseline. Without this they drift apart when topbar gains/loses pills. */
 .brand {
-  display: flex; align-items: baseline; gap: 0.5rem;
-  padding: 1.15rem 1.25rem 1rem; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 0.5rem;
+  height: 52px; padding: 0 1.25rem; border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .brand-mark { color: var(--accent); font-size: 0.9rem; transform: translateY(-1px); }
 .brand-name { font-family: var(--display); font-weight: 700; letter-spacing: 0.14em; font-size: 0.95rem; }
@@ -384,6 +387,25 @@ tr.clickable:hover { background: var(--surface-2); }
 }
 @media (max-width: 900px) { .cockpit-grid { grid-template-columns: 1fr; } }
 .cockpit-panel { min-height: 120px; }
+
+/* ---------- Account Snapshot row + MetricTile ---------- */
+.account-snapshot {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.1rem;
+}
+@media (max-width: 900px) { .account-snapshot { grid-template-columns: repeat(2, 1fr); } }
+.metric-tile { margin-bottom: 0; padding: 0.95rem 1.1rem; min-height: 100px; }
+.metric-label {
+  font-size: 0.65rem; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem;
+}
+.metric-value {
+  font-family: var(--mono); font-size: 1.45rem; font-weight: 600; color: var(--text);
+  font-feature-settings: 'tnum' 1; line-height: 1.1;
+}
+.metric-value.pnl-positive { color: var(--green); }
+.metric-value.pnl-negative { color: var(--red); }
+.metric-value.text-muted { color: var(--muted); }
+.metric-caveat { font-size: 0.65rem; color: var(--faint); margin-top: 0.4rem; letter-spacing: 0.02em; }
 
 /* ---------- Activity Timeline ---------- */
 .activity-timeline {
