@@ -35,6 +35,9 @@ def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys)
     from aletheia.gateway import lifecycle
     from aletheia.gateway import pidfile
 
+    # Exercise the console path so stdout/stderr messages are emitted (the headless
+    # guard suppresses them; tests must pin it like the _echo_safe tests do).
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     pidfile.pid_path().write_text("4242", encoding="utf-8")
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     killed = []
@@ -80,6 +83,7 @@ def test_do_stop_reports_when_port_stuck(tmp_path, monkeypatch, capsys):
     from aletheia.gateway import lifecycle
     from aletheia.gateway import pidfile
 
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     pidfile.pid_path().write_text("4242", encoding="utf-8")
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: None)
@@ -94,6 +98,7 @@ def test_do_stop_reports_when_port_stuck(tmp_path, monkeypatch, capsys):
 def test_do_stop_not_running_message(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
     monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
     # Nothing tracked AND port genuinely free → "not running".

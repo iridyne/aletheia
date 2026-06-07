@@ -14,11 +14,23 @@ def anyio_backend():
 @pytest.fixture
 async def client(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.sqlite import reset_db
+    from aletheia.storage.migrations import run_migrations
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    reset_db()
+    sq._db_conn = None
+    import sqlite3
+    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    run_migrations()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+    reset_db()
 
 
 @pytest.mark.anyio
@@ -26,7 +38,8 @@ async def test_health(client):
     resp = await client.get("/api/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "ok"
+    # /api/health now reports real health: "healthy" or "degraded".
+    assert data["status"] in ("healthy", "degraded")
     assert "version" in data
 
 

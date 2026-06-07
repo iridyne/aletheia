@@ -158,7 +158,8 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
 
 def test_strategy_memory_creation(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    item = create_strategy_memory("strat-001", "Trend Following V1", "# Strategy\nDetails here")
+    # strategy_id must be a safe hex id (path-traversal guard in markdown writer).
+    item = create_strategy_memory("a1b2c3d4e5f6", "Trend Following V1", "# Strategy\nDetails here")
     assert item.item_type == "strategy_memory"
     reset_db()
 

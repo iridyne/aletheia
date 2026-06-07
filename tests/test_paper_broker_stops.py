@@ -40,7 +40,7 @@ def test_paper_order_stores_stop_and_tp(tmp_path, monkeypatch):
     assert pos["take_profit_price"] == 104.0  # 100 * (1 + 4%)
 
 
-def test_average_in_preserves_original_stop(tmp_path, monkeypatch):
+def test_average_in_tightens_stop_to_more_protective(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.execution.paper_broker import execute_paper_order
     r1 = execute_paper_order(
@@ -49,7 +49,8 @@ def test_average_in_preserves_original_stop(tmp_path, monkeypatch):
         order_type="market", quantity=1.0, price=200.0,
         execution_mode="paper_internal", stop_price=196.0,
     )
-    # second fill into same position with a different stop; original stop preserved
+    # second fill into same position with a higher stop; for a long the tighter
+    # (more protective) stop wins -> max(196, 205) = 205 (risk-reducing).
     execute_paper_order(
         proposal_id="p2", risk_decision_id="r2",
         symbol="ETHUSDT", market_type="spot", direction="long",
@@ -58,4 +59,4 @@ def test_average_in_preserves_original_stop(tmp_path, monkeypatch):
     )
     pos = repo._select_one("positions", r1["position_id"])
     assert pos["quantity"] == 2.0  # averaged in
-    assert pos["stop_price"] == 196.0  # original stop kept
+    assert pos["stop_price"] == 205.0  # tighter long stop kept

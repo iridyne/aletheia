@@ -11,10 +11,11 @@ def test_redact_short():
 
 
 def test_redact_normal():
+    # redact() shows only the last 4 chars behind a mask (no leading plaintext).
     r = redact("my_secret_key_123")
-    assert r.startswith("my")
-    assert r.endswith("23")
-    assert "***" in r
+    assert r == "***_123"
+    assert r.startswith("***")
+    assert r.endswith("_123")
     assert "secret" not in r
 
 

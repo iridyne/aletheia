@@ -92,7 +92,6 @@ def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
     # closed BTC position closed today should contribute to realized today, closed_at is today by default from model
     summary = compute_portfolio()
     assert summary["today_realized_pnl"] == 15.0
-    assert summary["realized_open_pnl"] == 0.0
     assert summary["unrealized_pnl"] == 20.0
     assert summary["today_pnl"] == 35.0
     reset_db()

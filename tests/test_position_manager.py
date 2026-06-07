@@ -9,6 +9,8 @@ audit event, no honest exit price → skip (never fabricate an exit).
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
+import pytest
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position, MarketSnapshot
@@ -55,7 +57,9 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     row = repo._select_one("positions", p.id)
     assert row["status"] == "closed"
     assert row["close_reason"] == "stop_loss"
-    assert row["realized_pnl"] == -2.0  # closed at stop 98 -> (98-100)*1
+    # closed at stop 98 -> gross (98-100)*1 = -2, minus round-trip fees
+    expected = -2.0 - (100.0 + 98.0) * 1.0 * 0.001
+    assert row["realized_pnl"] == pytest.approx(expected)
     assert len(repo.list_positions(status="open")) == 0
 
 
@@ -72,7 +76,9 @@ def test_take_profit_closes_short(tmp_path, monkeypatch):
     assert result["closed"] == 1
     row = repo._select_one("positions", p.id)
     assert row["close_reason"] == "take_profit"
-    assert row["realized_pnl"] == 40.0  # (200-180)*2
+    # closed at TP 180 -> gross (200-180)*2 = 40, minus round-trip fees
+    expected = 40.0 - (200.0 + 180.0) * 2.0 * 0.001
+    assert row["realized_pnl"] == pytest.approx(expected)
 
 
 def test_max_hold_closes(tmp_path, monkeypatch):

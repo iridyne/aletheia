@@ -72,9 +72,10 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.exchanges.bitget.client.BitgetClient.get_ticker", fake_ticker)
     from aletheia.trading.market_data import collect_market_snapshots
     result = await collect_market_snapshots()
-    assert len(result["collected"]) == 3
+    # 3 symbols × 2 market types (spot + usdt_futures) = 6 snapshots.
+    assert len(result["collected"]) == 6
     snaps = repo.list_market_snapshots()
-    assert len(snaps) == 3
+    assert len(snaps) == 6
     assert snaps[0]["price"] == 60000.0
     reset_db()
 

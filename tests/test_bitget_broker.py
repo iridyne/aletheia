@@ -36,7 +36,9 @@ def _patch_place_order(monkeypatch, captured):
 
     async def fake_place_order(self, order):
         captured.append(order)
-        return OrderResponse(order_id="EX-123", client_oid="cli-1", status="submitted")
+        # Exchange confirms the fill; broker only records a fill/position when
+        # the order is reported filled/partially_filled (no fabricated fills).
+        return OrderResponse(order_id="EX-123", client_oid="cli-1", status="filled")
 
     monkeypatch.setattr(bg.BitgetClient, "place_order", fake_place_order)
 

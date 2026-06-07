@@ -6,6 +6,8 @@ breach the cap, the next proposal is rejected and the kill switch auto-trips.
 
 import sqlite3
 
+import pytest
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position, TradeProposal
@@ -36,8 +38,10 @@ def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     pos = Position(symbol="BTCUSDT", market_type="spot", direction="long",
                    quantity=1.0, entry_price=100.0, execution_mode="paper_internal")
     repo.insert_position(pos)
-    close_position(pos.id, exit_price=90.0, reason="stop_loss")  # realized -10
-    assert today_realized_pnl() == -10.0
+    close_position(pos.id, exit_price=90.0, reason="stop_loss")  # gross -10, minus fees
+    # gross (90-100)*1 = -10, minus round-trip fees -> still far past the $1 cap
+    expected = -10.0 - (100.0 + 90.0) * 1.0 * 0.001
+    assert today_realized_pnl() == pytest.approx(expected)
 
     p = TradeProposal(symbol="ETHUSDT", market_type="spot", direction="long",
                       execution_mode="paper_internal", quantity=0.001, price=3000)

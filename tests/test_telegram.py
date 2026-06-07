@@ -70,8 +70,9 @@ async def test_unauthorized_chat_rejected(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     bot = TelegramBot()
     bot.allowed_chat_ids = {999}  # Only chat 999 allowed
+    # Unauthorized chats get no reply at all (silent + audited), not an error string.
     resp = await bot.handle_message(123, "/status")
-    assert "Unauthorized" in resp
+    assert resp is None
     reset_db()
 
 
@@ -86,9 +87,10 @@ async def test_enabled_telegram_requires_allowed_chat_ids(tmp_path, monkeypatch)
     save_config(cfg)
 
     bot = TelegramBot()
+    # Misconfigured (enabled but no allow-list) also yields no reply, never a
+    # status leak — the condition is audited instead.
     resp = await bot.handle_message(123, "/status")
-    assert resp == "Telegram is enabled but no allowed_chat_ids are configured."
-    assert "Gateway" not in resp
+    assert resp is None
     reset_db()
 
 

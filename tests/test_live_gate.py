@@ -42,7 +42,11 @@ async def test_live_unlock_requires_confirm(client):
 
 @pytest.mark.anyio
 async def test_live_unlock_with_confirm(client):
-    resp = await client.post("/api/settings/live-unlock", json={"confirm": True})
+    # First-ever unlock now requires a second explicit acknowledgment.
+    resp = await client.post(
+        "/api/settings/live-unlock",
+        json={"confirm": True, "acknowledge_first_unlock": True},
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "live_limited"
