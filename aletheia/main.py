@@ -10,6 +10,7 @@ from aletheia.cli.bitget_cmd import bitget_app
 from aletheia.cli.strategy import strategy_app
 from aletheia.cli.risk_cmd import risk_app
 from aletheia.cli.update_cmd import update_app
+from aletheia.cli.knowledge_cmd import knowledge_app
 
 app = typer.Typer(
     name="aletheia",
@@ -25,6 +26,7 @@ app.add_typer(bitget_app, name="bitget", help="Bitget connection commands.")
 app.add_typer(strategy_app, name="strategy", help="Strategy lifecycle commands.")
 app.add_typer(risk_app, name="risk", help="Risk / kill-switch commands.")
 app.add_typer(update_app, name="update", help="Code self-upgrade commands.")
+app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience-loop commands.")
 
 
 @app.command()

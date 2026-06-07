@@ -48,3 +48,46 @@ def seed_playbooks(data_dir: Path) -> list[str]:
             path.write_text(content, encoding="utf-8")
             written.append(name)
     return written
+
+
+def load_playbooks() -> dict[str, str]:
+    """Read all playbook markdown files into {name: text} (experience loop, §6).
+
+    READ-ONLY: this is how design/observer agents consult playbooks as hypothesis
+    templates. Agents never write or modify playbooks (self-authored playbooks would
+    be a human-reviewed draft at most — out of scope here). Returns {} on any error.
+    """
+    from aletheia.config.loader import get_data_dir
+    try:
+        pb_dir = get_data_dir() / "playbooks"
+        if not pb_dir.exists():
+            return {}
+        out: dict[str, str] = {}
+        for path in sorted(pb_dir.glob("*.md")):
+            try:
+                out[path.stem] = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        return out
+    except Exception:
+        return {}
+
+
+def format_playbook_block(playbooks: dict[str, str], *, max_chars: int = 1800) -> str:
+    """Render playbooks as a compact, read-only prompt block (capped to keep prompts lean)."""
+    if not playbooks:
+        return ""
+    parts = ["\n\n## Playbooks (observation frameworks / hypothesis templates — read-only)\n"]
+    budget = max_chars
+    for name, text in playbooks.items():
+        # First non-empty content line as a one-line summary keeps the prompt small.
+        body = "\n".join(ln for ln in text.splitlines() if ln.strip() and not ln.startswith("# "))
+        summary = body.strip().replace("\n", " ")
+        if len(summary) > 240:
+            summary = summary[:240] + " …"
+        entry = f"- **{name}**: {summary}"
+        if len(entry) > budget:
+            break
+        parts.append(entry)
+        budget -= len(entry)
+    return "\n".join(parts) + "\n"

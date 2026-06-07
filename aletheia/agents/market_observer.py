@@ -46,13 +46,28 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
             context_lines.append(f"{sym}: no snapshot yet")
     context = "\n".join(context_lines)
 
+    # Experience loop (§6): pull relevant high-confidence prior lessons and inject
+    # them as ADVISORY context. Read-only, quality-gated, degrades to nothing.
+    memory_block = ""
+    try:
+        from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
+        lessons = retrieve_lessons(
+            query=f"{' '.join(symbols)} market regime risk funding volatility",
+            k=3,
+            item_types=["research_note", "post_trade_review", "dreaming_log"],
+        )
+        memory_block = format_memory_block(lessons)
+        log_tool(run_id, "retrieve_lessons", "read_tool", True, output=f"lessons:{len(lessons)}")
+    except Exception:
+        pass
+
     # Ask the LLM for a STRUCTURED market read (degrades gracefully if unavailable).
     read, err = await llm_structured(
         system="You are a crypto market observer. Given current market data, return a JSON object "
                "with direction_bias (one of long/short/neutral), confidence (one of "
                "high/medium/speculative), and a brief rationale. Be conservative: use neutral / "
                "speculative unless the data clearly supports a directional read. No financial advice.",
-        user=f"Current market data:\n{context}\n\nReturn the market read JSON.",
+        user=f"Current market data:\n{context}{memory_block}\n\nReturn the market read JSON.",
         schema=MarketRead,
     )
     log_tool(run_id, "llm_structured", "research_tool", True)

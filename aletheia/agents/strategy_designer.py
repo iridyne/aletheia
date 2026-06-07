@@ -50,12 +50,37 @@ async def run_strategy_designer(permission_mode: str = "Research", run_id: str |
     symbols = tradable_symbols_from_config(cfg)
     default_symbol = symbols[0] if symbols else "BTCUSDT"
 
+    # Experience loop (§6): consult prior high-confidence lessons + playbooks as
+    # ADVISORY design inputs. Both are read-only and quality-gated; degrade to nothing.
+    memory_block = ""
+    try:
+        from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
+        lessons = retrieve_lessons(
+            query="strategy design entry exit risk drawdown expectancy",
+            k=3,
+            item_types=["research_note", "post_trade_review", "strategy_memory"],
+        )
+        memory_block = format_memory_block(lessons)
+        log_tool(run_id, "retrieve_lessons", "read_tool", True, output=f"lessons:{len(lessons)}")
+    except Exception:
+        pass
+
+    playbook_block = ""
+    try:
+        from aletheia.trading.playbooks import load_playbooks, format_playbook_block
+        playbook_block = format_playbook_block(load_playbooks())
+        log_tool(run_id, "load_playbooks", "read_tool", True)
+    except Exception:
+        pass
+
     spec, err = await llm_structured(
         system="You are a crypto trading strategy designer. Propose ONE concrete paper-tradable "
                "strategy for BTC/ETH/SOL. Return JSON with: name, timeframe (e.g. 15m/1h/4h), "
                "direction_bias (one of long/short/neutral), entry_rule, exit_rule, and a brief "
-               "rationale. The risk engine will gate execution; keep rules concrete and conservative.",
-        user=f"Tradable symbols: {', '.join(symbols) or default_symbol}. Design one candidate strategy.",
+               "rationale. The risk engine will gate execution; keep rules concrete and conservative."
+               + playbook_block,
+        user=f"Tradable symbols: {', '.join(symbols) or default_symbol}. Design one candidate "
+             f"strategy.{memory_block}",
         schema=StrategySpec,
         max_tokens=600,
     )

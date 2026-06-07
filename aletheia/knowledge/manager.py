@@ -16,6 +16,21 @@ VALID_CONFIDENCES = {"high_confidence", "medium_confidence", "speculative", "dep
 VALID_STATUSES = {"active", "archived", "deprecated"}
 
 
+def _index(item, content: str) -> None:
+    """Best-effort full-text index of a knowledge item (experience loop, §6).
+
+    Only high_confidence items become retrievable (the quality gate); others are
+    written/audited as before but kept out of decision retrieval. Never raises.
+    """
+    try:
+        if item.confidence != "high_confidence":
+            return
+        from aletheia.knowledge.retrieval import index_knowledge_item
+        index_knowledge_item(item, content)
+    except Exception:
+        pass
+
+
 def create_research_note(title: str, content: str, confidence: str = "medium_confidence", metadata: dict | None = None) -> KnowledgeItem:
     if confidence not in VALID_CONFIDENCES:
         raise ValueError(f"Invalid confidence: {confidence}")
@@ -31,6 +46,7 @@ def create_research_note(title: str, content: str, confidence: str = "medium_con
     except Exception:
         path.unlink(missing_ok=True)
         raise
+    _index(item, content)
     return item
 
 
@@ -47,6 +63,7 @@ def create_dreaming_log(title: str, content: str) -> KnowledgeItem:
     except Exception:
         path.unlink(missing_ok=True)
         raise
+    _index(item, content)
     return item
 
 
@@ -63,6 +80,7 @@ def create_daily_review(title: str, content: str) -> KnowledgeItem:
     except Exception:
         path.unlink(missing_ok=True)
         raise
+    _index(item, content)
     return item
 
 
@@ -85,6 +103,7 @@ def create_post_trade_review(
     except Exception:
         path.unlink(missing_ok=True)
         raise
+    _index(item, content)
     return item
 
 
@@ -97,17 +116,29 @@ def create_strategy_memory(strategy_id: str, title: str, content: str) -> Knowle
         confidence="medium_confidence",
     )
     insert_knowledge_item(item)
+    _index(item, content)
     return item
+
+
+def _unindex(item_id: str) -> None:
+    """Best-effort removal from the FTS index (archived/deprecated → not recalled)."""
+    try:
+        from aletheia.knowledge.retrieval import remove_from_index
+        remove_from_index(item_id)
+    except Exception:
+        pass
 
 
 def archive_item(item_id: str) -> None:
     """Archive a KB item — soft removal, not deletion."""
     update_knowledge_item(item_id, status="archived")
+    _unindex(item_id)
 
 
 def deprecate_item(item_id: str) -> None:
     """Mark a KB item as deprecated — it stays but loses active relevance."""
     update_knowledge_item(item_id, status="deprecated", confidence="deprecated")
+    _unindex(item_id)
 
 
 def delete_item(item_id: str) -> None:

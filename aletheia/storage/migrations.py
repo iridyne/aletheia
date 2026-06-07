@@ -245,9 +245,38 @@ def _ensure_columns(db) -> None:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
 
 
+def fts5_available(db) -> bool:
+    """True if this SQLite build supports FTS5 (some distro builds omit it)."""
+    try:
+        db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(x)")
+        db.execute("DROP TABLE IF EXISTS _fts5_probe")
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_knowledge_fts(db) -> None:
+    """Create the knowledge full-text index (experience-loop retrieval, §6).
+
+    Kept OUT of SCHEMA_SQL so a SQLite build without FTS5 can't break every other
+    migration — this is a best-effort, optional index. retrieval.py degrades to
+    "no lessons" when the table is absent.
+    """
+    if not fts5_available(db):
+        return
+    # content-less FTS5: we store the searchable text directly. item_id/item_type
+    # are UNINDEXED so they're retrievable but not tokenized.
+    db.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5("
+        "title, body, item_type UNINDEXED, item_id UNINDEXED, "
+        "confidence UNINDEXED, created_at UNINDEXED)"
+    )
+
+
 def run_migrations() -> None:
     """Run all idempotent schema creation statements."""
     db = get_db()
     db.executescript(SCHEMA_SQL)
     _ensure_columns(db)
+    _ensure_knowledge_fts(db)
     db.commit()
