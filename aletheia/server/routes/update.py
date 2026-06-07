@@ -7,7 +7,9 @@ These call the same applier the CLI uses. They are NOT agent-callable tools.
 """
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
+from aletheia.files.jsonl import write_audit
 from aletheia.update import applier
 
 router = APIRouter(prefix="/api/update", tags=["update"])
@@ -18,6 +20,18 @@ async def update_status():
     return applier.check_for_update()
 
 
+class ApplyBody(BaseModel):
+    confirm: bool = False
+
+
 @router.post("/apply")
-async def update_apply():
+async def update_apply(body: ApplyBody = ApplyBody()):
+    if not body.confirm:
+        return {"applied": False, "reason": "confirmation_required",
+                "message": "Set confirm=true to apply the update."}
+    write_audit({
+        "actor": "human", "source": "api", "event_type": "code_update_requested",
+        "entity_type": "system_update", "entity_id": "apply",
+        "message": "Human confirmed code update via API",
+    })
     return applier.apply_update()

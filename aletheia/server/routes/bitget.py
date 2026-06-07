@@ -106,4 +106,9 @@ async def test_candidate_credentials(req: TestCandidateCredsRequest):
             return {"connected": True, "profile": req.profile}
         return {"connected": False, "profile": req.profile, "error": data.get("msg", "unknown")}
     except Exception as e:
-        return {"connected": False, "profile": req.profile, "error": str(e)}
+        err_msg = type(e).__name__
+        if "timeout" in str(e).lower():
+            err_msg = "connection_timeout"
+        elif "connect" in str(e).lower():
+            err_msg = "connection_failed"
+        return {"connected": False, "profile": req.profile, "error": err_msg}

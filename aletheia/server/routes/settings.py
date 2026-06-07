@@ -21,7 +21,28 @@ class ExchangeModeRequest(BaseModel):
 @router.get("")
 async def get_settings():
     cfg = load_config()
-    return cfg.model_dump(mode="json")
+    providers_safe = {}
+    for name, p in cfg.models.providers.items():
+        providers_safe[name] = {
+            "base_url": p.base_url,
+            "protocol": p.protocol,
+            "model": p.model,
+            "enabled": p.enabled,
+            "mode": p.mode,
+        }
+    return {
+        "app": cfg.app.model_dump(mode="json"),
+        "runtime": cfg.runtime.model_dump(mode="json"),
+        "exchange": cfg.exchange.model_dump(mode="json"),
+        "live": cfg.live.model_dump(mode="json"),
+        "agent": cfg.agent.model_dump(mode="json"),
+        "models": {"default_provider": cfg.models.default_provider, "providers": providers_safe},
+        "risk": cfg.risk.model_dump(mode="json"),
+        "telegram": {"enabled": cfg.telegram.enabled},
+        "update": {"enabled": cfg.update.enabled, "branch": cfg.update.branch},
+        "trading": cfg.trading.model_dump(mode="json"),
+        "health": cfg.health.model_dump(mode="json"),
+    }
 
 
 @router.post("/permission-mode")
@@ -37,6 +58,24 @@ async def set_permission_mode(req: PermissionModeRequest):
                  "entity_type": "permission_mode", "before": {"mode": old}, "after": {"mode": req.mode},
                  "message": f"Permission mode {old} -> {req.mode}"})
     return {"old": old, "new": req.mode}
+
+
+class AutonomousPaperTradingRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/autonomous-paper-trading")
+async def set_autonomous_paper_trading(req: AutonomousPaperTradingRequest):
+    cfg = load_config()
+    old = cfg.agent.autonomous_paper_trading
+    cfg.agent.autonomous_paper_trading = req.enabled
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "autonomous_paper_trading_changed",
+                 "entity_type": "agent_config", "before": {"autonomous_paper_trading": old},
+                 "after": {"autonomous_paper_trading": req.enabled},
+                 "message": f"autonomous_paper_trading {old} -> {req.enabled}"})
+    return {"old": old, "new": req.enabled}
 
 
 @router.post("/exchange-mode")

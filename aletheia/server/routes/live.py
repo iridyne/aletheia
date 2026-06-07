@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api/settings", tags=["live"])
 
 class LiveUnlockRequest(BaseModel):
     confirm: bool = False
+    acknowledge_first_unlock: bool = False
 
 
 @router.post("/live-unlock")
@@ -22,6 +23,9 @@ async def live_unlock(req: LiveUnlockRequest):
     cfg = load_config()
     if cfg.live.state != "live_disabled":
         return {"status": cfg.live.state, "message": "Already unlocked"}
+
+    if not cfg.live.first_live_confirmation_done and not req.acknowledge_first_unlock:
+        raise HTTPException(400, "First-time live unlock requires acknowledge_first_unlock=true")
 
     old_state = cfg.live.state
     cfg.live.state = "live_limited"
