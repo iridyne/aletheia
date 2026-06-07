@@ -55,6 +55,8 @@ def execute_live_order(
         price=price if order_type == "limit" else None,
     )))
 
+    exchange_order_id = order_resp.order_id or ""
+
     order = Order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
@@ -65,40 +67,53 @@ def execute_live_order(
         quantity=quantity,
         price=price,
         execution_mode="bitget_live_limited",
-        exchange_order_id=order_resp.order_id,
-        status="submitted",
-        filled_at=datetime.utcnow().isoformat(),
+        exchange_order_id=exchange_order_id,
+        status=order_resp.status if order_resp.status in ("filled", "partially_filled") else "submitted",
     )
     insert_order(order)
 
-    # Record a fill at the requested price. Reconciliation later corrects this
-    # against the exchange's actual fills (execution/reconciliation.py).
-    fill = Fill(order_id=order.id, fill_price=price, fill_quantity=quantity,
-                fee=quantity * price * 0.0006)  # ~taker fee estimate
-    insert_fill(fill)
+    # Order row is now persisted. If anything below fails, reconciliation
+    # can still find this order by exchange_order_id.
+    try:
+        if order_resp.status in ("filled", "partially_filled"):
+            fill = Fill(
+                order_id=order.id,
+                fill_price=price,
+                fill_quantity=quantity,
+                fee=quantity * price * 0.0006,
+            )
+            insert_fill(fill)
+            from aletheia.storage.repositories import update_order
+            update_order(order.id, status="filled", filled_at=datetime.utcnow().isoformat())
 
-    existing = _find_open_position(symbol, market_type, direction, strategy_id)
-    if existing:
-        new_qty = existing["quantity"] + quantity
-        new_entry = (existing["entry_price"] * existing["quantity"] + price * quantity) / new_qty
-        update_position(existing["id"], quantity=new_qty, entry_price=new_entry, current_price=price)
-        position_id = existing["id"]
-    else:
-        position = Position(
-            symbol=symbol, market_type=market_type, direction=direction,
-            quantity=quantity, entry_price=price, current_price=price,
-            execution_mode="bitget_live_limited", strategy_id=strategy_id,
-        )
-        insert_position(position)
-        position_id = position.id
+            existing = _find_open_position(symbol, market_type, direction, strategy_id)
+            if existing:
+                new_qty = existing["quantity"] + quantity
+                new_entry = (existing["entry_price"] * existing["quantity"] + price * quantity) / new_qty
+                update_position(existing["id"], quantity=new_qty, entry_price=new_entry, current_price=price)
+                position_id = existing["id"]
+            else:
+                position = Position(
+                    symbol=symbol, market_type=market_type, direction=direction,
+                    quantity=quantity, entry_price=price, current_price=price,
+                    execution_mode="bitget_live_limited", strategy_id=strategy_id,
+                )
+                insert_position(position)
+                position_id = position.id
+        else:
+            position_id = None
+    except Exception as e:
+        err = RuntimeError(f"Post-submit DB error: {e}")
+        err.exchange_order_id = exchange_order_id
+        raise err from e
 
     return {
         "order_id": order.id,
-        "exchange_order_id": order_resp.order_id,
-        "fill_id": fill.id,
+        "exchange_order_id": exchange_order_id,
+        "fill_id": fill.id if order_resp.status in ("filled", "partially_filled") else None,
         "position_id": position_id,
-        "fill_price": price,
-        "fill_quantity": quantity,
+        "fill_price": price if order_resp.status in ("filled", "partially_filled") else None,
+        "fill_quantity": quantity if order_resp.status in ("filled", "partially_filled") else 0,
     }
 
 

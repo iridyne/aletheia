@@ -54,10 +54,16 @@ def execute_paper_order(
     # Check if we have an existing position to update
     existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
     if existing:
-        # Average into existing position
         new_qty = existing["quantity"] + quantity
         new_entry = (existing["entry_price"] * existing["quantity"] + price * quantity) / new_qty
-        update_position(existing["id"], quantity=new_qty, entry_price=new_entry, current_price=price)
+        update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": price}
+        if stop_price is not None:
+            old_stop = existing.get("stop_price")
+            if old_stop is not None:
+                update_kwargs["stop_price"] = max(stop_price, old_stop) if direction in ("long", "buy") else min(stop_price, old_stop)
+            else:
+                update_kwargs["stop_price"] = stop_price
+        update_position(existing["id"], **update_kwargs)
         position_id = existing["id"]
     else:
         take_profit_price = _take_profit_for(direction, price)
