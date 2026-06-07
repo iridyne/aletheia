@@ -34,6 +34,29 @@ respawned with backoff; after too many restarts in a window it gives up, writes 
 `gateway_supervisor_gave_up` audit event, and (if Telegram is configured) alerts
 you. The inner server's stderr goes to `data/logs/errors.log`.
 
+## 2.5 Frontend hot reload (development default)
+
+Open **http://127.0.0.1:5173/** instead of `:8787` while iterating on UI code.
+
+```powershell
+.\scripts\dev.ps1   # ensures gateway is running, then launches Vite dev server
+```
+
+Architecture: Vite serves the frontend on `5173` and proxies `/api/*` to the
+gateway on `8787` (see `frontend/vite.config.ts`). Edits in `frontend/src/*`
+hot-reload in under a second. The gateway keeps running across UI iterations —
+only restart it for Python changes (`aletheia gateway restart`).
+
+When you're done iterating, rebuild static assets so the production path
+(`http://127.0.0.1:8787/`) reflects the changes:
+
+```powershell
+cd frontend; node node_modules\vite\bin\vite.js build
+```
+
+The `build` step writes into `aletheia/dashboard_static/`, which is what the
+gateway serves on `:8787`. The dev server on `:5173` does not need this step.
+
 ## 3. Configure a model provider (required for real analysis)
 
 Everything is configurable from the dashboard **Settings** page (OpenAlice-style),

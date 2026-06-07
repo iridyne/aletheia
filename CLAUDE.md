@@ -13,7 +13,7 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 - **Core modules**: `aletheia/` — agents/, execution/, risk/, exchanges/, trading/, knowledge/, server/, gateway/
 - **Data flow**: Market data → Agent analysis → Strategy proposal → Risk Engine approval → Execution Gateway → Bitget API
 - **External deps**: Bitget API (spot/futures), LLM providers (OpenAI-compatible, Anthropic-compatible)
-- **Frontend**: `frontend/` — React/Vite dashboard (localhost control surface)
+- **Frontend**: `frontend/` — React/Vite dashboard (localhost control surface). For UI iteration, use `scripts/dev.ps1` (Vite HMR on :5173 proxying `/api/*` to the persistent gateway on :8787) — do NOT rebuild `aletheia/dashboard_static/` in a tight loop. Production path (`:8787`) only needs `vite build` once before commit.
 - **Tests**: `tests/` — 272 tests (unit, integration, security, acceptance)
 
 ## Development Rules
