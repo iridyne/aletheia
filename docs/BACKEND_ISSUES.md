@@ -199,6 +199,14 @@
   - 影响：transient httpx timeout 实际已下单时，上层重试创建两个 order + 两个 fill + averaged position；当前上层未重试（暂安全），但和"幻影 fill"问题叠加风险高
   - 最小修复：每次 place_order 用 `proposal.id` 派生稳定 clientOid 发出
 
+- **Portfolio 不同步交易所真实账户状态（缺 Exchange Account Sync 层）** 🟠 P2 / north-star
+  - 佐证：`portfolio/pnl.py::compute_portfolio` 只查本地 SQLite `positions`/`fills`/`portfolio_snapshots`；`server/routes/data.py /api/portfolio` 直传；`exchanges/bitget/client.py` 暴露 account/positions/orders 但无任何调用方周期性拉取并写入本地视图
+  - 复现：Bitget demo 连接成功（10,000 USDT 模拟资金），dashboard Portfolio 总资产显示 0、持仓为空
+  - 影响：违反 AGENTS.md UI 诚实——dashboard "Portfolio" 不反映用户在交易所的真实资产；任何在交易所手动开的仓 / 余额变动 Aletheia 完全感知不到；Charts OHLCV 与 Opportunities market data 也无共享 market context（同根问题）
+  - 最小修复：新增只读 `Exchange Account Sync` 服务（定期拉 account equity + positions + open orders），写入本地统一视图（区分 `aletheia_managed` vs `external_positions`）；`compute_portfolio()` merge 两源后返回；UI 候选方案见 git `02449f0:frontend/src/pages/Portfolio.tsx`（合并版三标签 positions/trades/pnl）
+  - 边界：触及受控模块 `aletheia/exchanges/bitget/client.py`，**需显式授权后才能动工**；当前阶段 0（稳跑验证）暂不开工
+  - 关联：`docs/north_star_references.md §6` 经验闭环、memory `aletheia-portfolio-sync-gap`
+
 ### 2.4 Audit 漏写 / API 不一致
 
 - **CLI mutation 路径不写 audit（与 API 不对称）**

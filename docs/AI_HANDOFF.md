@@ -2,7 +2,7 @@
 
 ## Last Updated
 
-2026-06-06
+2026-06-07
 
 ## Current State Summary
 
@@ -34,13 +34,21 @@ See docs/DECISIONS.md and the existing AGENTS.md governance framework.
 
 ## Known Issues
 
-All documented issues in BACKEND_ISSUES.md and FRONTEND_ISSUES.md have been fixed. No remaining open items.
+Code-layer items in BACKEND_ISSUES.md and FRONTEND_ISSUES.md §1-§3 have been worked through. Two **architectural / north-star gaps** remain explicitly open and unresolved — they are not bugs to flip into §10, they are direction-of-travel work:
+
+- **portfolio-sync-gap** — Portfolio dashboard does not reflect real exchange account state (only locally-created positions). Filed as BACKEND_ISSUES.md §2.3 last bullet. Touches change-controlled `aletheia/exchanges/bitget/client.py`; requires explicit authorization before work begins.
+- **experience-loop-gap** — knowledge-write-only loop; agents rarely read prior research/reviews back into decisions. Tracked in `docs/north_star_references.md §6`. Stage-2 work per north-star sequencing; do NOT start before stage 0 (stable run) and stage 1 (learning quality) are proven.
+
+Recent: 2026-06-07 cockpit merge resolved (`ace780a`); local 5-zone shell discarded after explicit review against AGENTS.md priorities. See DECISIONS.md and `docs/superpowers/specs/2026-06-07-merge-postmortem-design.md`.
 
 ## Next Recommended Step
 
-1. Build frontend: `cd frontend && npm run build`
-2. Run full test suite: `pytest tests/`
-3. Start gateway and manually verify dashboard in browser
+Per `north_star_references.md §7` we are in **stage 0: prove stable run**. Before starting any new feature work or closing the experience loop:
+
+1. Run a 7–14 day unattended paper-trading session and confirm: gateway never crashes, no orphan orders, no lost state, autostart + watchdog actually self-heal (PR #7/#8 capabilities).
+2. Confirm test baseline holds: `uv run pytest -q` should report 352 passed.
+3. Re-confirm gateway health honestly: `uv run aletheia gateway status`.
+4. Only after stage 0 evidence accumulates, consider stage 1 (validate learning-ledger output quality) before opening any north-star work.
 
 ## Commands to Run
 
