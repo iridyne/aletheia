@@ -2,7 +2,17 @@
 
 ## Last Updated
 
-2026-06-07 (later — strategy↔trade causal chain wired)
+2026-06-08 (SQLite 并发锁修复 + known-issues 核实)
+
+## Recent Change (2026-06-08 — SQLite 并发锁 + 核实)
+
+**SQLite 并发锁**：`aletheia/storage/sqlite.py` 从单全局 `_db_conn` 改为 `threading.local()`，每 OS 线程独立连接，彻底消除 APScheduler 后台线程与 uvicorn async handler 竞争写同一连接的问题。`timeout=30` 让 SQLITE_BUSY 重试而非立即抛错；`check_same_thread=True` 恢复正确值（线程现已隔离）。
+
+**Portfolio sync 核实**：`exchange_sync.py` + `pnl.compute_portfolio()` + `/api/portfolio` + `/api/exchange/account` 均已完整接通，scheduler 每 5 min 刷新缓存。无需修改。
+
+**BACKEND_ISSUES §10 核实**：grep 逐条验证 2026-06-07 复审后声称修复的 8 条高风险条目（strategy_id 因果链 / live-order pending-first / asyncio 推送 / paper 风险无界 / clientOid / kill-switch lock / paper_trader Gate A / commit_all 调度）全部在当前代码库中已真修。§10 存档可信。
+
+---
 
 ## Recent Change (feat/strategy-causal-chain)
 
