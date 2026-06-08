@@ -22,6 +22,7 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 - No uncontrolled expansion: no new exchanges, no Docker/Postgres/Redis, no vector search, no web ingestion
 - Trust boundaries: risk/, execution/, auth.py, client.py, secrets.py, permissions.py, live.py are change-controlled
 - Trading state invariants: Orders flow through Execution Gateway only; live trading disabled by default
+- Market data: always go through `get_market_data_provider()` (`aletheia/data/ccxt_provider.py`) — never import `BitgetClient` for market data (it's execution-context only, and its REST v2 rejects canonical `BTC/USDT` symbols). Providers are per-call, never cached (CCXT binds aiohttp to the creating event loop; the scheduler uses a fresh loop per job). Only exception: Bitget-only ON-series xStocks, which construct `CCXTProvider(exchange="bitget", fallback_exchange="bitget")` directly (see comments at the call sites).
 - Priority: State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy
 
 ## AI Collaboration Rules

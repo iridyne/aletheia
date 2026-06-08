@@ -2,7 +2,49 @@
 
 ## Last Updated
 
-2026-06-08 (InstrumentId — three-part unique instrument identity)
+2026-06-08 (xStocks 接入 + 管道 bug fix: confidence default / datetime tz / ticker snapshots)
+
+## Recent Change (xStocks 接入 + 管道 bug fix — 2026-06-08)
+
+**Bitget xStocks (ON-series tokenized equities) — observation-only:**
+- `config/schema.py` — `observed_xstocks: list[str]` 默认 `["AAPLON/USDT","TSLAON/USDT","NVDAON/USDT","SPYON/USDT"]`
+- `trading/instruments.py` — `xstocks_instruments_from_config()` 返回 `exchange="bitget"` InstrumentId 列表
+- `agents/market_observer.py` — xStocks 分析 loop，独立 Bitget provider，`asset_class="equity"`；paper_trader gate 门控 skip（observation-only）
+- `trading/market_data.py` — xStocks ticker 写入 market_snapshots；提取 `_fetch_and_store()` helper
+- `tests/test_xstocks_observer.py` — 4 个新测试
+
+**管道 bug fix (三项):**
+1. `models.py` — `Opportunity.confidence` 默认 `"medium_confidence"` → `"speculative"`（对齐 paper_trader _CONFIDENCE_RANK）
+2. `paper_broker.py` — 移除 naive `datetime.utcnow()`；`Order.filled_at` 默认 None
+3. `market_data.py` — xStocks 也写入 market_snapshots（position_manager 定价依赖）
+
+**测试**：474 passed，1 flaky（test_write_audit_jsonl，既存，单跑通过）
+
+---
+
+## Recent Change (Chart blackout root-cause + market-data hardening — 2026-06-08)
+
+**Symptom**: all lightweight-charts components blank. **Root cause**: the gateway
+process was running stale code (booted before the `CCXTProvider` switch was committed),
+so `/api/market/ohlcv` kept hitting legacy `BitgetClient` with a symbol Bitget rejects.
+`/api/health` showed healthy throughout — the failure was invisible.
+
+**Immediate fix**: `aletheia gateway restart` — charts restored (verified real candles
+for BTC/ETH/SOL).
+
+**Hardening to prevent recurrence:**
+- **`aletheia/agent_runtime/build_info.py`** (NEW) — records boot commit; `code_drift_issue()`
+  flags when disk HEAD moves past the booted commit. Wired into `lifespan()` (records
+  boot commit before scheduler starts) and `compute_health()` (appends
+  `code_updated_pending_restart:<old>..<new>` → `/api/health` degraded).
+- **`get_market_data_provider()`** in `aletheia/data/ccxt_provider.py` is now the single
+  market-data entry point (per-call, never cached). Deleted the dead `get_default_provider()`
+  singleton. Routed `routes/data.py`, `trading/market_context.py`, `trading/market_data.py`
+  through it. The 2 Bitget-only xStocks sites stay direct `CCXTProvider(exchange="bitget",
+  fallback_exchange="bitget")` with deliberate-exception comments.
+- **CLAUDE.md** Development Rules: market-data-via-factory rule added.
+
+See DEVLOG `## 2026-06-08 (later³)` for full detail.
 
 ## Recent Change (InstrumentId + Symbol Format Unification — 2026-06-08)
 

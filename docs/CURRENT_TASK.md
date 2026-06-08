@@ -6,16 +6,16 @@ No active task assigned. System is in maintenance-ready state.
 
 ## Last Completed
 
-- 2026-06-08: Full-market analyzer + paper trading pipeline fix (market_observer per-symbol loop, stock_observer, prediction_observer, Polymarket provider, 3 pipeline bugs fixed)
-- 2026-06-08: Data layer refactor (CCXT + yFinance primary sources; BitgetClient = execution-only)
-- 2026-06-08: Market context layer (multi-timeframe indicators; fixed "all neutral/speculative")
-- 2026-06-08: Exchange account sync (portfolio-sync-gap closed; `/api/exchange/account`)
-- 2026-06-08: Three gaps closed (agent_run_steps populated; stability monitor; Learning Ledger quality signals)
+- 2026-06-08: xStocks 接入（Bitget ON-series tokenized equities，observation-only，asset_class="equity"）
+- 2026-06-08: 管道 bug fix 三项（confidence default / datetime tz / xStocks ticker snapshots）
+- 2026-06-08: Chart blackout fix (stale-process guard + provider factory consolidation)
+- 2026-06-08: InstrumentId + Symbol Format Unification (exchange:symbol:market_type)
+- 2026-06-08: Full-market analyzer (stock_observer, prediction_observer, Polymarket provider)
 
 ## Suggested Next Steps
 
-1. Run full test suite: `uv run pytest -q` — baseline should be ~398 passed, 19 pre-existing failures
-2. Start gateway: `uv run aletheia gateway start`
-3. Verify paper trading now opens positions: trigger `market_observer` then `paper_trader` manually
-4. Begin 7–14 day unattended paper trading run (stage-0 evidence)
-5. Next expansion: additional exchanges (xStocks, Binance via CCXT) — user confirmed post-MVP scope
+1. 验证测试基线：`uv run pytest -q` — 应为 474 passed，1 既存 flaky
+2. 启动 gateway：`uv run aletheia gateway start`
+3. 手动触发验证管道：`aletheia agent run market_observer` → `aletheia agent run paper_trader`（确认 xStocks opportunity 产生但不开仓，crypto opportunity 正常进入 paper trade）
+4. 验证 xStocks ticker 写入 market_snapshots：查询 DB `SELECT symbol, exchange FROM market_snapshots WHERE exchange='bitget'`
+5. 开始 7–14 天 unattended paper trading run（stage-0 证据）

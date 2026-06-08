@@ -94,6 +94,12 @@ def compute_health() -> dict:
     if _llm_consecutive_failures >= cfg.health.llm_unavailable_alert_after:
         issues.append(f"llm_unavailable:{_llm_consecutive_failures}")
 
+    # Stale-process guard: disk source committed past what this process booted on.
+    from aletheia.agent_runtime.build_info import code_drift_issue
+    drift = code_drift_issue()
+    if drift:
+        issues.append(drift)
+
     return {"healthy": len(issues) == 0, "issues": issues}
 
 

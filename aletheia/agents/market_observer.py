@@ -252,7 +252,9 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
             errors.append(f"{instrument}:unexpected:{e}")
 
     # xStocks loop: Bitget tokenized equity tokens, observation-only (asset_class=equity).
-    # Uses a Bitget-specific CCXTProvider so Binance/Bybit are not asked for ON-series.
+    # Deliberate exception: NOT routed through get_market_data_provider(). ON-series
+    # xStocks only list on Bitget, so both primary AND fallback must be bitget — the
+    # factory would force the config fallback (bybit), which doesn't list these tokens.
     if xstocks:
         from aletheia.data.ccxt_provider import CCXTProvider
         bitget_provider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")

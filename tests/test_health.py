@@ -217,6 +217,34 @@ def test_llm_failures_below_threshold_not_flagged(tmp_path, monkeypatch):
     assert not any("llm_unavailable" in i for i in h["issues"])
 
 
+# --- version-drift guard (stale process running old code) ---
+
+def test_code_drift_flagged_in_health(tmp_path, monkeypatch):
+    """When build_info reports drift, compute_health surfaces it as unhealthy.
+
+    compute_health imports code_drift_issue inside the function, so patch it on
+    the build_info module (the import source), not on health.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health, build_info
+    monkeypatch.setattr(build_info, "code_drift_issue",
+                        lambda: "code_updated_pending_restart:aaaaaaa..bbbbbbb")
+    h = health.compute_health()
+    assert h["healthy"] is False
+    assert any(i.startswith("code_updated_pending_restart:") for i in h["issues"])
+
+
+def test_no_code_drift_keeps_health_clean(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health, build_info
+    monkeypatch.setattr(build_info, "code_drift_issue", lambda: None)
+    for _ in range(5):
+        _add_run("completed")
+    h = health.compute_health()
+    assert h["healthy"] is True
+    assert not any("code_updated_pending_restart" in i for i in h["issues"])
+
+
 # --- llm_complete / llm_structured report success/failure into the counter ---
 
 async def test_llm_complete_reports_failure_then_success(tmp_path, monkeypatch):

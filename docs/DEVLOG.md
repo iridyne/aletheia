@@ -1,5 +1,85 @@
 # Development Log
 
+## 2026-06-08 (later⁴) — xStocks 接入 + 管道 bug fix 三项
+
+**本次 session 两阶段工作：**
+
+### 阶段一：Bitget xStocks（ON-series 代币化股票）接入
+
+- `aletheia/config/schema.py` — 新增 `observed_xstocks: list[str]`（默认 AAPLON/TSLAON/NVDAON/SPYON）
+- `aletheia/trading/instruments.py` — 新增 `xstocks_instruments_from_config()`，返回 `exchange="bitget"` 的 `InstrumentId` 列表
+- `aletheia/agents/market_observer.py` — 新增 xStocks 分析 loop：独立 Bitget provider，`asset_class="equity"`，Opportunity 写入但 paper_trader gate 门控跳过（observation-only）
+- `aletheia/trading/market_data.py` — 新增 xStocks ticker 采集 loop，写入 `market_snapshots`（position_manager 定价所需）；提取 `_fetch_and_store()` helper 复用
+- `tests/test_xstocks_observer.py` — 4 个新测试覆盖 xStocks 路径
+
+### 阶段二：管道 bug fix（全链路审计发现）
+
+1. **`Opportunity.confidence` 默认值** (`aletheia/storage/models.py:51`)
+   - `"medium_confidence"` → `"speculative"`
+   - 原因：paper_trader `_CONFIDENCE_RANK = {"speculative":0, "medium":1, "high":2}` 不含 `"medium_confidence"`，任何默认值 opportunity 被 rank KeyError 当 0 静默跳过
+
+2. **`paper_broker.py` datetime 时区不一致**
+   - 移除 `from datetime import datetime` 和 `filled_at=datetime.utcnow().isoformat()`（naive）
+   - `Order.filled_at` 默认 None；`Fill.filled_at` 用 `_utcnow()`（带 tzinfo）
+
+3. **xStocks ticker 未写入 market_snapshots**（顺带修复）
+   - position_manager 调 `_latest_price(symbol)` 时因无 snapshot 返回 None → 持仓永不触发 stop/TP
+   - 修复：`market_data.py` xStocks loop 调 `_fetch_and_store()` 同等写入
+
+**测试结果**：474 passed，1 flaky（`test_write_audit_jsonl` 全量并发路径泄漏，单跑通过，既存问题）
+
+**commit**: `0303907 fix(pipeline): confidence default, datetime tz, xStocks ticker snapshots`
+**commit**: `4f59d70 feat(xstocks): Bitget tokenized equity observation via market_observer`
+
+## 2026-06-08 (later³) — Chart blackout root-cause: stale gateway process + provider consolidation
+
+**Symptom**: Every lightweight-charts component (equity curve + the 3 markets
+K-line charts) rendered blank. `/api/market/ohlcv` returned
+`{"error":"market_data_unavailable","candles":[]}` and the frontend's
+`Array.isArray(data) ? data : []` guard silently turned that into an empty array.
+
+**Root cause was NOT missing abstraction** — the data layer (`MarketDataProvider`
+protocol, `CCXTProvider`, `OHLCVCache`, `symbols.py`) was already implemented and
+correct on disk. Two real causes:
+
+1. **Stale process (the actual blackout).** The gateway booted at 11:16; the commit
+   that switched `data.py` to `CCXTProvider` landed at 13:26. The running process
+   held the *old* `data.py` in memory — which called legacy `BitgetClient.get_ohlcv()`
+   with canonical `BTC/USDT`, a symbol Bitget REST v2 rejects (`Parameter BTC/USDT
+   does not exist`). **Completely invisible**: `/api/health` still reported healthy.
+   Fixed immediately by `aletheia gateway restart`.
+2. **Construction drift.** `CCXTProvider(...)` was hand-constructed from the same
+   "read config → build" template in 3 places, inviting copy-paste in new components.
+   A dead, uncalled singleton `get_default_provider()` also lingered — exactly the
+   cross-event-loop singleton trap we want to forbid.
+
+**Hardening landed (so this class of bug surfaces honestly next time):**
+
+- **Version-drift health check.** New `aletheia/agent_runtime/build_info.py` records
+  the source commit at boot (`record_boot_commit()` in `lifespan()`, before any
+  scheduler thread starts). `code_drift_issue()` compares disk HEAD to the booted
+  commit; `compute_health()` now appends `code_updated_pending_restart:<old>..<new>`
+  when they diverge → `/api/health` goes degraded, telling us to restart. Reuses
+  `update/git_ops.current_commit()`. Non-repo / git-unavailable → stores None → never
+  false-alarms. Known limit (accepted): uncommitted working-tree edits don't move
+  HEAD so aren't flagged — but the real failure here was "committed, not restarted",
+  which is caught.
+- **Single provider factory.** Deleted the dead singleton; added
+  `get_market_data_provider(exchange=None)` as the one market-data entry point
+  (per-call, never cached — documented why: CCXT binds aiohttp to the creating loop,
+  scheduler uses a fresh loop per job). Routed 3 sites through it: `routes/data.py`,
+  `trading/market_context.py`, `trading/market_data.py`. Left the 2 Bitget-only
+  xStocks sites (`market_data.py`, `agents/market_observer.py`) constructing
+  `CCXTProvider(exchange="bitget", fallback_exchange="bitget")` directly — both now
+  carry a comment marking the deliberate exception (factory would force the config
+  fallback `bybit`, which doesn't list ON-series tokens).
+- **CLAUDE.md** Development Rules gained a market-data rule pointing at the factory
+  and forbidding `BitgetClient` for market data.
+
+Note: the equity curve being flat at 0.0 is *honest*, not this bug — `PnLChart`
+reads `/api/market/portfolio-history` (DB), which has snapshots but no positions yet.
+Out of scope.
+
 ## 2026-06-08 (later²) — Market context polish (thesis fallback + score persisted)
 
 After the market context layer landed, real-run inspection surfaced two

@@ -236,7 +236,7 @@ async def get_market_ohlcv(
     """
     import logging
     from aletheia.config.loader import load_config
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from aletheia.data.ccxt_provider import get_market_data_provider
     from aletheia.data.cache import get_cache
     from aletheia.data.symbols import to_canonical, InstrumentId
     cfg = load_config()
@@ -255,10 +255,7 @@ async def get_market_ohlcv(
     try:
         candles = cache.get(cache_key, timeframe, limit)
         if candles is None:
-            provider = CCXTProvider(
-                exchange=effective_exchange,
-                fallback_exchange=md_cfg.ccxt_fallback,
-            )
+            provider = get_market_data_provider(effective_exchange)
             try:
                 candles = await provider.get_ohlcv(instrument, timeframe=timeframe, limit=limit)
                 cache.set(cache_key, timeframe, limit, candles)

@@ -181,11 +181,8 @@ async def build_market_context(
 
     _owned_provider = False
     if provider is None:
-        from aletheia.data.ccxt_provider import CCXTProvider
-        provider = CCXTProvider(
-            exchange=md_cfg.ccxt_exchange,
-            fallback_exchange=md_cfg.ccxt_fallback,
-        )
+        from aletheia.data.ccxt_provider import get_market_data_provider
+        provider = get_market_data_provider()
         _owned_provider = True
 
     from aletheia.data.cache import get_cache

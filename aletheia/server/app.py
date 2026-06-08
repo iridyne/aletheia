@@ -30,6 +30,10 @@ logger = logging.getLogger("aletheia")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = bootstrap()
+    # Record the source commit this process booted on, BEFORE any scheduler
+    # thread starts — lets /api/health flag "code updated, restart needed".
+    from aletheia.agent_runtime.build_info import record_boot_commit
+    record_boot_commit()
     logger.info("Aletheia Trading OS v%s starting", __version__)
     logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, cfg.app.dashboard_port)
     # Ensure DB schema + register agents/tools, then start the scheduler.
