@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
@@ -30,7 +30,9 @@ export default function Settings() {
       <ExchangeCredentialsCard />
       <ExchangeModeCard status={status} qc={qc} />
       <LiveStateCard status={status} qc={qc} />
-      <RiskCard settings={settings} />
+      <SymbolsCard settings={settings} qc={qc} />
+      <RiskCard settings={settings} qc={qc} />
+      <TradingCard settings={settings} qc={qc} />
       <TelegramCard />
       <SoftwareUpdateCard />
       <AutostartCard />
@@ -613,33 +615,283 @@ function LiveStateCard({ status, qc }: any) {
   )
 }
 
-const RISK_UNITS: Record<string, string> = {
-  max_daily_loss_pct: '%', max_position_notional_usdt: 'USDT',
-  max_open_positions: 'positions', max_leverage: 'x',
-  max_single_trade_pct: '%', max_consecutive_losses_halt: 'losses',
-  cooldown_after_loss_minutes: 'min',
-}
+// ---------------------------------------------------------------------------
+// Symbols card
+// ---------------------------------------------------------------------------
 
-function RiskCard({ settings }: any) {
-  const risk = settings?.risk
-  if (!risk) return null
+function SymbolsCard({ settings, qc }: any) {
+  const symbols: string[] = settings?.risk?.allowed_symbols ?? []
+  const [draft, setDraft] = useState<string[]>([])
+  const [input, setInput] = useState('')
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => { if (symbols.length) setDraft(symbols) }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateTradableSymbols(draft),
+    onSuccess: () => {
+      setMsg({ ok: true, text: '✓ saved' })
+      qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const addSymbol = () => {
+    const s = input.trim().toUpperCase()
+    if (!s) return
+    if (!draft.includes(s)) setDraft(prev => [...prev, s])
+    setInput('')
+    setMsg(null)
+  }
+
+  const removeSymbol = (s: string) => {
+    setDraft(prev => prev.filter(x => x !== s))
+    setMsg(null)
+  }
+
+  const dirty = JSON.stringify(draft.slice().sort()) !== JSON.stringify(symbols.slice().sort())
+
   return (
     <div className="card">
-      <h3>Risk Boundaries (read-only)</h3>
-      <table>
-        <tbody>
-          {Object.entries(risk).map(([k, v]) => (
-            <tr key={k}>
-              <th>{k.replace(/_/g, ' ')}</th>
-              <td>
-                {Array.isArray(v) ? v.join(', ') : String(v)}
-                {RISK_UNITS[k] && <span className="text-muted text-sm" style={{ marginLeft: '0.3rem' }}>{RISK_UNITS[k]}</span>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="hint">Hard limits enforced by the Risk Engine. Agents cannot modify these.</p>
+      <h3>Tradable Symbols</h3>
+      <p className="hint" style={{ marginBottom: '0.7rem' }}>
+        Coins agents are allowed to analyze and trade. Applied to both risk engine and exchange config atomically. Add any Bitget symbol pair (e.g. <code>SUIUSDT</code>, <code>DOTUSDT</code>).
+      </p>
+
+      {/* tag list */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.6rem' }}>
+        {draft.map(s => (
+          <span key={s} style={{
+            display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+            padding: '0.15rem 0.5rem', borderRadius: '4px',
+            background: 'rgba(99,210,255,0.12)', border: '1px solid rgba(99,210,255,0.3)',
+            fontSize: '0.8rem', fontFamily: 'var(--font-mono)',
+          }}>
+            {s}
+            <button
+              onClick={() => removeSymbol(s)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '0 0.1rem', lineHeight: 1 }}
+              title={`Remove ${s}`}
+            >×</button>
+          </span>
+        ))}
+      </div>
+
+      {/* add input */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+        <input
+          value={input}
+          placeholder="e.g. SUIUSDT"
+          onChange={e => setInput(e.target.value.toUpperCase())}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSymbol() } }}
+          style={{ width: '140px', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' }}
+        />
+        <button className="secondary" onClick={addSymbol}>Add</button>
+        {dirty && (
+          <button onClick={() => mut.mutate()} disabled={mut.isPending || draft.length === 0}>
+            {mut.isPending ? 'Saving…' : 'Save'}
+          </button>
+        )}
+        {msg && <span className="hint" style={{ alignSelf: 'center', color: msg.ok ? 'var(--green)' : 'var(--red)' }}>{msg.text}</span>}
+      </div>
+      <p className="hint">Changes take effect on the next agent cycle. Removing a symbol does not close open positions.</p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Risk config card (editable limits)
+// ---------------------------------------------------------------------------
+
+interface NumField { key: string; label: string; unit: string; min: number; max: number; step: number; isInt?: boolean }
+interface BoolField { key: string; label: string }
+
+const RISK_NUM_FIELDS: NumField[] = [
+  { key: 'max_daily_loss_pct',            label: 'Max daily loss',              unit: '%',    min: 0.1,  max: 20,     step: 0.1  },
+  { key: 'max_single_trade_risk_pct',     label: 'Max single trade risk',       unit: '%',    min: 0.01, max: 10,     step: 0.01 },
+  { key: 'max_total_live_exposure_pct',   label: 'Max total live exposure',     unit: '%',    min: 1,    max: 50,     step: 0.5  },
+  { key: 'starting_capital_usdt',         label: 'Starting capital',            unit: 'USDT', min: 1,    max: 100000, step: 1    },
+  { key: 'max_live_limited_cap_usdt',     label: 'Live cap',                    unit: 'USDT', min: 1,    max: 100000, step: 1    },
+  { key: 'max_live_position_notional_usdt', label: 'Max live position notional', unit: 'USDT', min: 1,   max: 100000, step: 1   },
+  { key: 'max_demo_position_notional_usdt', label: 'Max demo position notional', unit: 'USDT', min: 1,   max: 100000, step: 1   },
+  { key: 'max_demo_single_trade_risk_pct', label: 'Max demo single trade risk', unit: '%',    min: 0.01, max: 20,     step: 0.01 },
+  { key: 'max_futures_leverage_live',     label: 'Max futures leverage (live)', unit: 'x',    min: 1,    max: 20,     step: 1, isInt: true },
+  { key: 'max_futures_leverage_demo',     label: 'Max futures leverage (demo)', unit: 'x',    min: 1,    max: 125,    step: 1, isInt: true },
+  { key: 'max_open_positions_live',       label: 'Max open positions (live)',   unit: '',     min: 1,    max: 50,     step: 1, isInt: true },
+  { key: 'max_open_positions_demo',       label: 'Max open positions (demo)',   unit: '',     min: 1,    max: 200,    step: 1, isInt: true },
+]
+
+const RISK_BOOL_FIELDS: BoolField[] = [
+  { key: 'allow_short_live', label: 'Allow short (live)' },
+  { key: 'allow_short_demo', label: 'Allow short (demo)' },
+]
+
+function RiskCard({ settings, qc }: any) {
+  const risk = settings?.risk
+  const [vals, setVals] = useState<Record<string, any>>({})
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!risk) return
+    const init: Record<string, any> = {}
+    RISK_NUM_FIELDS.forEach(f => { init[f.key] = risk[f.key] })
+    RISK_BOOL_FIELDS.forEach(f => { init[f.key] = risk[f.key] })
+    setVals(init)
+  }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateRiskConfig(vals as any),
+    onSuccess: () => {
+      setMsg({ ok: true, text: '✓ saved' })
+      qc.invalidateQueries({ queryKey: ['settings'] })
+      qc.invalidateQueries({ queryKey: ['risk-boundaries'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const set = (key: string, value: any) => { setVals(prev => ({ ...prev, [key]: value })); setMsg(null) }
+
+  if (!risk) return null
+
+  return (
+    <div className="card">
+      <h3>Risk Limits</h3>
+      <p className="hint" style={{ marginBottom: '0.8rem' }}>
+        Hard limits enforced by the Risk Engine. <code>require_risk_check</code> and <code>allowed_exchange</code> are permanently locked.
+      </p>
+
+      {/* numeric fields — two columns */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '0.4rem 1.5rem', marginBottom: '0.8rem' }}>
+        {RISK_NUM_FIELDS.map(f => (
+          <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{f.label}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <input
+                type="number"
+                min={f.min} max={f.max} step={f.step}
+                value={vals[f.key] ?? ''}
+                onChange={e => set(f.key, f.isInt ? parseInt(e.target.value) : parseFloat(e.target.value))}
+                style={{ width: '100px', fontFamily: 'var(--font-mono)' }}
+              />
+              {f.unit && <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{f.unit}</span>}
+            </div>
+          </label>
+        ))}
+      </div>
+
+      {/* bool toggles */}
+      <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.8rem', flexWrap: 'wrap' }}>
+        {RISK_BOOL_FIELDS.map(f => (
+          <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={!!vals[f.key]}
+              onChange={e => set(f.key, e.target.checked)}
+            />
+            {f.label}
+          </label>
+        ))}
+      </div>
+
+      {/* immutable display */}
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+        <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+          allowed exchange: <span style={{ color: 'var(--fg)', fontFamily: 'var(--font-mono)' }}>{risk.allowed_exchange}</span>
+        </span>
+        <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+          require risk check: <span className={`badge ${risk.require_risk_check_for_all_orders ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.7rem' }}>{String(risk.require_risk_check_for_all_orders)}</span>
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save risk limits'}</button>
+        {msg && <span className="hint" style={{ color: msg.ok ? 'var(--green)' : 'var(--red)' }}>{msg.text}</span>}
+      </div>
+      <p className="hint">Changes are audited. Takes effect on the next agent evaluation cycle.</p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Trading config card
+// ---------------------------------------------------------------------------
+
+const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
+
+function TradingCard({ settings, qc }: any) {
+  const trading = settings?.trading
+  const [stopLoss, setStopLoss] = useState('')
+  const [takeProfit, setTakeProfit] = useState('')
+  const [holdHours, setHoldHours] = useState('')
+  const [confidence, setConfidence] = useState('medium')
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!trading) return
+    setStopLoss(String(trading.default_stop_loss_pct ?? 2))
+    setTakeProfit(String(trading.default_take_profit_pct ?? 4))
+    setHoldHours(String(trading.max_position_hold_hours ?? 72))
+    setConfidence(trading.min_confidence_to_trade ?? 'medium')
+  }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateTradingConfig({
+      default_stop_loss_pct: parseFloat(stopLoss),
+      default_take_profit_pct: parseFloat(takeProfit),
+      max_position_hold_hours: parseFloat(holdHours),
+      min_confidence_to_trade: confidence,
+    }),
+    onSuccess: () => {
+      setMsg({ ok: true, text: '✓ saved' })
+      qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  if (!trading) return null
+
+  return (
+    <div className="card">
+      <h3>Paper Trading Parameters</h3>
+      <p className="hint" style={{ marginBottom: '0.7rem' }}>
+        Defaults used by the paper position manager when opening and managing paper trades.
+      </p>
+      <div className="form-grid" style={{ marginBottom: '0.6rem' }}>
+        <label>Default stop-loss
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <input type="number" min={0.1} max={50} step={0.1} value={stopLoss}
+              onChange={e => { setStopLoss(e.target.value); setMsg(null) }}
+              style={{ width: '90px', fontFamily: 'var(--font-mono)' }} />
+            <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>%</span>
+          </div>
+        </label>
+        <label>Default take-profit
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <input type="number" min={0.1} max={100} step={0.1} value={takeProfit}
+              onChange={e => { setTakeProfit(e.target.value); setMsg(null) }}
+              style={{ width: '90px', fontFamily: 'var(--font-mono)' }} />
+            <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>%</span>
+          </div>
+        </label>
+        <label>Max hold time
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <input type="number" min={1} max={8760} step={1} value={holdHours}
+              onChange={e => { setHoldHours(e.target.value); setMsg(null) }}
+              style={{ width: '90px', fontFamily: 'var(--font-mono)' }} />
+            <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>hours</span>
+          </div>
+        </label>
+        <label>Min confidence to trade
+          <select value={confidence} onChange={e => { setConfidence(e.target.value); setMsg(null) }}>
+            {CONFIDENCE_LEVELS.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
+        {msg && <span className="hint" style={{ color: msg.ok ? 'var(--green)' : 'var(--red)' }}>{msg.text}</span>}
+      </div>
+      <p className="hint">stop-loss/take-profit apply to new paper positions only; open positions keep their original exits.</p>
     </div>
   )
 }

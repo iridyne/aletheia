@@ -80,9 +80,25 @@ def _allowed_targets(current: str) -> list[str]:
     return targets
 
 
-def create_strategy(name: str, description: str | None = None) -> StrategyRecord:
-    """Create a new strategy in draft state."""
-    strategy = StrategyRecord(name=name, description=description, state="draft")
+def create_strategy(
+    name: str,
+    description: str | None = None,
+    parameters: dict | None = None,
+) -> StrategyRecord:
+    """Create a new strategy in draft state.
+
+    `parameters` is an optional structured snapshot of the strategy's defining
+    inputs (symbol, timeframe, entry/exit rules, sizing). It is persisted as a
+    JSON string so promotion gates and post-trade reviews can later audit
+    "what parameters was this strategy actually running" (trust §4.2). Defaults
+    to an empty object for backward compatibility.
+    """
+    strategy = StrategyRecord(
+        name=name,
+        description=description,
+        state="draft",
+        parameters=json.dumps(parameters or {}),
+    )
     insert_strategy(strategy)
     write_audit({
         "actor": "agent",

@@ -238,11 +238,27 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 
 /* ---------- System plate (Block 2) ---------- */
 .system-plate {
+  display: flex; align-items: center; gap: var(--space-2);
   font-size: 0.68rem; color: var(--muted); white-space: nowrap;
   letter-spacing: 0.04em; padding: 0 var(--space-2);
   border-left: 1px solid var(--border); border-right: 1px solid var(--border);
 }
 @media (max-width: 1200px) { .system-plate { display: none; } }
+
+/* Permission-mode cycle button inside system plate */
+.perm-mode-btn {
+  display: inline-flex; align-items: center;
+  padding: 2px 7px; font-size: 0.68rem; font-family: var(--mono);
+  letter-spacing: 0.04em; color: var(--accent);
+  background: transparent; border: 1px solid var(--accent-dim);
+  border-radius: var(--r-sm); cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  line-height: 1.5;
+}
+.perm-mode-btn:hover:not(:disabled) {
+  background: rgba(34,211,238,0.1); border-color: var(--accent); color: var(--accent);
+}
+.perm-mode-btn:disabled { opacity: 0.5; cursor: default; }
 .pill {
   display: inline-flex; align-items: center; gap: 0.35rem;
   padding: 0.2rem 0.55rem; border-radius: 100px; font-size: 0.7rem; font-weight: 600;

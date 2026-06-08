@@ -63,12 +63,27 @@ export const api = {
   liveUnlock: () => post('/settings/live-unlock', { confirm: true }),
   liveLock: () => post('/settings/live-lock'),
 
-  // Risk: boundaries display + kill switch
+  // Risk: boundaries display + kill switch + editable config
   getRiskBoundaries: () => fetchJson<Record<string, any>>('/risk/boundaries'),
   getRiskStatus: () => fetchJson<Record<string, any>>('/risk/status'),
   getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
   setKillSwitch: (active: boolean, reason = '') =>
     post<{ active: boolean }>('/risk/kill-switch', { active, reason }),
+  updateRiskConfig: (body: Partial<{
+    max_daily_loss_pct: number; max_single_trade_risk_pct: number
+    max_total_live_exposure_pct: number; max_live_position_notional_usdt: number
+    max_live_limited_cap_usdt: number; starting_capital_usdt: number
+    max_demo_position_notional_usdt: number; max_demo_single_trade_risk_pct: number
+    max_futures_leverage_live: number; max_futures_leverage_demo: number
+    max_open_positions_live: number; max_open_positions_demo: number
+    allow_short_demo: boolean; allow_short_live: boolean
+  }>) => post<{ updated: Record<string, any>; risk: Record<string, any> }>('/settings/risk', body),
+  updateTradableSymbols: (symbols: string[]) =>
+    post<{ symbols: string[] }>('/settings/symbols', { symbols }),
+  updateTradingConfig: (body: Partial<{
+    default_stop_loss_pct: number; default_take_profit_pct: number
+    max_position_hold_hours: number; min_confidence_to_trade: string
+  }>) => post<{ updated: Record<string, any>; trading: Record<string, any> }>('/settings/trading', body),
 
   // Self-upgrade (on-demand code update)
   getUpdateStatus: () => fetchJson<{

@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from './api/client'
 import Overview from './pages/Overview'
@@ -82,14 +82,27 @@ export const NAV: NavGroup[] = [
  *
  * Information density goal: same data as before, ~75px narrower, far less visual noise.
  */
+const PERMISSION_MODES = ['ReadOnly', 'Research', 'PaperAuto', 'AllowEditing', 'Auto'] as const
+
 function StatusBar() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
   const { data: ks } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, refetchInterval: 10000 })
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
 
+  // Tick every minute so heartbeat age re-renders even without new data
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 60000)
+    return () => clearInterval(id)
+  }, [])
+
   const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
+  const permMut = useMutation({
+    mutationFn: (mode: string) => api.setPermissionMode(mode),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
+  })
 
   if (!data) return <div className="topbar-status"><span className="dot dot-muted" />connecting…</div>
 
@@ -183,7 +196,19 @@ function StatusBar() {
 
       {/* Block 2 — System plate (low-priority context, hides on narrow). */}
       <div className="system-plate mono" title="Exchange · Mode · Permission">
-        {(exch || '—')}{mode ? `·${mode}` : ''} · {perm || '—'}
+        {(exch || '—')}{mode ? `·${mode}` : ''}
+        <button
+          className="perm-mode-btn mono"
+          onClick={() => {
+            const idx = PERMISSION_MODES.indexOf(perm as any)
+            const next = PERMISSION_MODES[(idx + 1) % PERMISSION_MODES.length]
+            permMut.mutate(next)
+          }}
+          title={`Permission mode: ${perm} — click to cycle`}
+          disabled={permMut.isPending}
+        >
+          {perm || '—'}
+        </button>
       </div>
 
       {/* Block 3 — Pause/Resume action. */}
