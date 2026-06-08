@@ -1,5 +1,65 @@
 # Development Log
 
+## 2026-06-08 (later) — Market context layer (fixes "all neutral / speculative")
+
+The dashboard Markets page had been showing every market_observer opportunity
+as `direction=neutral, confidence=speculative` — symptom that read like "AI is
+not running". Diagnosis: AI is running fine (codex_cli healthy), but the LLM
+was being fed exactly **one line per symbol** ("BTCUSDT: price=X 24h_change=
+0.05%"). With a 1-D input the model can only reply at the base rate; the
+system prompt's "be conservative — default to neutral" hardened that into
+permanence.
+
+Fix is the data-supply layer, not the prompt. Borrowed the **TradingAgents**
+pattern (multi-timeframe pre-computed indicators + short close series +
+markdown verified-snapshot tables + structured output schema) using stdlib
+only — no numpy/pandas/ta-lib. Research memo and design rationale in
+`docs/research/market_context_eval.md` (covers OpenAlice tool-as-DSL pattern,
+TradingAgents predigest pattern, why VergeX is unavailable as a reference).
+
+What got built:
+
+- **`aletheia/trading/indicators.py`** (new, stdlib-only) — SMA / EMA / RSI
+  (Wilder's smoothing) / ATR / Bollinger / momentum / volume z-score / cross-
+  asset relative-strength rank. Pure functions, oldest→newest series, None on
+  too-short windows.
+- **`aletheia/trading/market_context.py`** (new) — `build_market_context()`
+  pulls 1h × 60, 4h × 50, 1day × 30 OHLCV per symbol via the existing
+  `BitgetClient.get_ohlcv` (no creds, no new endpoints), computes the
+  indicator pack per timeframe, ranks the symbols by 24h return, and renders
+  a ~2.5kb markdown block: per-symbol indicator table + last-10 1h closes +
+  cross-asset RS table + indicator glossary. Falls back to the legacy 1-line
+  context on any failure (red line: agents must never crash).
+- **`aletheia/agents/market_observer.py`** — feeds the new context block in,
+  upgrades `MarketRead` schema to add `confidence_score` (0-100, forces the
+  model to commit a number) and `key_observations` (list of specific data
+  citations — empty list signals "no concrete evidence"). System prompt
+  rewritten: removed the "default to neutral" hard nudge, replaced with
+  calibration ladders (high/medium/speculative criteria, when long vs short
+  vs neutral is justified). Adds two `record_step()` breadcrumbs
+  (`market_read_input` with the full snapshot, `market_read_output` with the
+  structured read) so the dashboard step trace shows the model actually saw
+  data and reasoned over it.
+
+Real e2e: first run after the change produced
+`direction=long, confidence=medium` with the thesis citing
+"all three above 1h SMA20 and SMA50, positive 1h+4h Mom10, ETH leads cross-
+asset RS" — vs the previous N runs which were unanimously
+`neutral / speculative`. The ground truth (BTC/ETH/SOL all up 2–6% intraday
+with multi-timeframe agreement) finally reaches the model.
+
+Red lines kept: no funding/OI/orderbook (would extend client.py surface), no
+news/sentiment (AGENTS.md ban), no numpy/pandas (dependency discipline), no
+change-controlled module touched. New `tests/test_market_context.py` (17
+tests covering indicators, builder render, fallback path, observer integration
+and structured-output extraction). Full suite **423 passed**.
+
+What this *doesn't* do: deepen the perception layer (funding regime / OI /
+orderbook / news) — those remain north-star-deferred until stage-0 evidence
+accumulates. This pass just ensures the data we already collect actually
+reaches the model. The Learning Ledger's `activation_ratio` now has a real
+input signal (vs being permanently 0% because no opportunity ever advanced).
+
 ## 2026-06-08 (latest) — Three remaining real gaps closed
 
 After WEBUI_BACKEND_HANDOFF was done, three real gaps remained that I hadn't yet
