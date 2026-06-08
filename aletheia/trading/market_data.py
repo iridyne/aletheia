@@ -11,7 +11,7 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import MarketSnapshot
 from aletheia.storage.repositories import insert_market_snapshot
 from aletheia.data.symbols import to_canonical, to_bitget
-from aletheia.trading.instruments import observed_instruments_from_config
+from aletheia.trading.instruments import observed_instruments_from_config, xstocks_instruments_from_config
 from aletheia.files.jsonl import append_jsonl
 
 logger = logging.getLogger("aletheia.market_data")
@@ -27,41 +27,57 @@ async def collect_market_snapshots() -> dict:
     run_migrations()
     cfg = load_config()
 
-    md_cfg = cfg.market_data
     instruments = observed_instruments_from_config(cfg)
+    xstocks = xstocks_instruments_from_config(cfg)
 
-    from aletheia.data.ccxt_provider import CCXTProvider
-    provider = CCXTProvider(
-        exchange=md_cfg.ccxt_exchange,
-        fallback_exchange=md_cfg.ccxt_fallback,
-    )
+    from aletheia.data.ccxt_provider import CCXTProvider, get_market_data_provider
+    provider = get_market_data_provider()
 
     collected = []
     errors = []
 
+    async def _fetch_and_store(instrument, prov):
+        ticker = await prov.get_ticker(instrument)
+        snap = MarketSnapshot(
+            symbol=instrument.symbol,
+            market_type=instrument.market_type,
+            exchange=instrument.exchange,
+            price=ticker.last_price,
+            volume_24h=ticker.volume_24h,
+            change_pct_24h=ticker.change_pct_24h,
+            high_24h=ticker.high_24h,
+            low_24h=ticker.low_24h,
+            provider=ticker.provider or None,
+        )
+        insert_market_snapshot(snap)
+        append_jsonl("market_snapshots.jsonl", snap.model_dump())
+        return str(instrument)
+
     try:
         for instrument in instruments:
             try:
-                ticker = await provider.get_ticker(instrument)
-                snap = MarketSnapshot(
-                    symbol=instrument.symbol,        # canonical: BTC/USDT
-                    market_type=instrument.market_type,
-                    exchange=instrument.exchange,    # e.g. "binance"
-                    price=ticker.last_price,
-                    volume_24h=ticker.volume_24h,
-                    change_pct_24h=ticker.change_pct_24h,
-                    high_24h=ticker.high_24h,
-                    low_24h=ticker.low_24h,
-                    provider=ticker.provider or None,
-                )
-                insert_market_snapshot(snap)
-                append_jsonl("market_snapshots.jsonl", snap.model_dump())
-                collected.append(str(instrument))
+                collected.append(await _fetch_and_store(instrument, provider))
             except Exception as e:
                 errors.append(f"{instrument}: {e}")
                 logger.warning("Failed to fetch ticker %s: %s", instrument, e)
     finally:
         await provider.close()
+
+    # xStocks: separate Bitget provider (no API key needed, ON-series tokens).
+    # Deliberate exception: NOT routed through get_market_data_provider(). ON-series
+    # xStocks only list on Bitget, so both primary AND fallback must be bitget — the
+    # factory would force the config fallback (bybit), which doesn't list these tokens.
+    if xstocks:
+        xprovider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
+        try:
+            for instrument in xstocks:
+                try:
+                    collected.append(await _fetch_and_store(instrument, xprovider))
+                except Exception as e:
+                    errors.append(f"{instrument}: {e}")
+                    logger.warning("Failed to fetch xStocks ticker %s: %s", instrument, e)
+        finally:
+            await xprovider.close()
 
     return {"collected": collected, "errors": errors}
 

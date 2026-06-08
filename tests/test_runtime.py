@@ -78,6 +78,13 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
             pass
 
     monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
+
+    # Disable xStocks so this test covers only the 3 crypto symbols.
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.market_data.observed_xstocks = []
+    save_config(cfg)
+
     from aletheia.trading.market_data import collect_market_snapshots
     result = await collect_market_snapshots()
     # 3 observed symbols (BTC/USDT, ETH/USDT, SOL/USDT) × 1 spot each.

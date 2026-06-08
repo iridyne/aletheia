@@ -48,7 +48,7 @@ class Opportunity(BaseModel):
     market: str
     direction_bias: str | None = None
     thesis: str | None = None
-    confidence: str = "medium_confidence"
+    confidence: str = "speculative"
     # Numeric calibration the LLM emits alongside the categorical `confidence`.
     # 0..100; None when the model didn't supply one — keeps older rows valid.
     confidence_score: int | None = None

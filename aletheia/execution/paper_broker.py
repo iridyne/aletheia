@@ -1,7 +1,5 @@
 """Paper broker — simulates order fills for paper/demo trading."""
 
-from datetime import datetime
-
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     insert_order, update_order, insert_fill, insert_position, update_position, list_positions,
@@ -39,7 +37,6 @@ def execute_paper_order(
         price=price,
         execution_mode=execution_mode,
         status="filled",
-        filled_at=datetime.utcnow().isoformat(),
     )
     insert_order(order)
 
