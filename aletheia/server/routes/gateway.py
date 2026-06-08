@@ -8,7 +8,7 @@ POST /api/gateway/restart     — kill inner uvicorn so supervisor respawns with
 import asyncio
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from aletheia.files.jsonl import write_audit
@@ -42,19 +42,19 @@ async def set_autostart(req: AutostartRequest):
 
 
 @router.post("/restart")
-async def restart_gateway():
-    """Terminate the uvicorn process tree so the supervisor respawns fresh.
+async def restart_gateway(request: Request):
+    """Terminate the uvicorn process so the supervisor (or watchdog/autostart) respawns fresh.
 
-    The supervisor (run_supervised in _gateway_runner.py) owns proc.wait() on
-    the uvicorn subprocess. When that subprocess exits non-zero, the supervisor
-    respawns it — loading fresh code from disk. We schedule os._exit after a
-    short delay so the HTTP response reaches the client first.
+    os._exit(42) kills this process unconditionally. If a supervisor is running,
+    it sees a non-zero exit and respawns. If running foreground or bare, the
+    autostart scheduled task or manual start will bring it back.
     """
-    from aletheia.gateway.pidfile import read_pid
+    has_supervisor = not getattr(request.app.state, "_owns_pid", True)
+    has_autostart = autostart.status().get("enabled", False)
 
-    supervisor_pid = read_pid()
-    if not supervisor_pid:
-        return {"mode": "cold", "ok": False, "message": "No supervisor PID found"}
+    if not has_supervisor and not has_autostart:
+        return {"mode": "cold", "ok": False,
+                "message": "No supervisor or autostart active — restart would kill the gateway permanently."}
 
     async def _delayed_exit():
         await asyncio.sleep(0.5)

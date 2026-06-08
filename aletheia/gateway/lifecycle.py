@@ -11,7 +11,7 @@ from aletheia.config.loader import bootstrap, load_config, save_config, get_data
 from aletheia.gateway.pidfile import (
     is_running, read_pid, write_pid, clear_pid, pid_path,
     kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
-    _resolve_real_python,
+    find_port_holders, _resolve_real_python,
 )
 from aletheia.gateway.browser import open_browser
 from aletheia.gateway.logs import tail_logs, log_path
@@ -36,17 +36,21 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
             for opid in orphans:
                 kill_pid_tree(opid)
             _audit_orphan_cleanup(orphans)
-            # Give the port time to release after killing orphans.
-            if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0):
-                _echo_safe(
-                    f"Port {cfg.app.dashboard_port} is still in use after cleaning "
-                    f"orphaned Aletheia processes. A foreign process may be holding it.",
-                )
-                raise typer.Exit(1)
-        else:
+
+        # Fallback: kill anything holding the port (catches multiprocessing
+        # workers whose cmdline lacks our markers — the root cause of "ghost
+        # socket" issues on Windows where parent dies but children keep the fd).
+        if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0):
+            holders = find_port_holders(cfg.app.dashboard_port)
+            if holders:
+                for hpid in holders:
+                    kill_pid_tree(hpid)
+                _audit_orphan_cleanup(holders)
+
+        if not wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0):
             _echo_safe(
-                f"Port {cfg.app.dashboard_port} is already in use but no tracked gateway "
-                f"or Aletheia orphan found. A foreign process is holding the port.",
+                f"Port {cfg.app.dashboard_port} is still in use after all cleanup "
+                f"attempts. A foreign process may be holding it.",
             )
             raise typer.Exit(1)
 
@@ -144,7 +148,19 @@ def do_stop() -> None:
     # Wait for the port to actually release BEFORE clearing the pidfile, so a
     # concurrent watchdog/start in the kill window still sees a tracked gateway
     # rather than "untracked but port held" → false-orphan misdiagnosis.
-    freed = wait_port_free(port, host, timeout=10.0)
+    freed = wait_port_free(port, host, timeout=5.0)
+
+    # Fallback: kill port holders directly (catches multiprocessing workers
+    # whose cmdline doesn't match our markers).
+    if not freed:
+        holders = find_port_holders(port)
+        for hpid in holders:
+            if hpid not in targeted:
+                kill_pid_tree(hpid)
+                targeted.add(hpid)
+                killed_any = True
+        freed = wait_port_free(port, host, timeout=5.0)
+
     clear_pid()
 
     if freed:

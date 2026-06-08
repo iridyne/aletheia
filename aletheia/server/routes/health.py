@@ -4,7 +4,6 @@ from fastapi import APIRouter
 
 from aletheia import __version__
 from aletheia.config.loader import load_config, save_config
-from aletheia.gateway.pidfile import is_running
 
 router = APIRouter(prefix="/api", tags=["system"])
 
@@ -34,7 +33,7 @@ async def stability():
 async def status():
     cfg = load_config()
     return {
-        "gateway_running": is_running(),
+        "gateway_running": True,  # if we can respond, we are running
         "paused": cfg.runtime.paused,
         "exchange": cfg.exchange.name,
         "exchange_mode": cfg.exchange.mode,

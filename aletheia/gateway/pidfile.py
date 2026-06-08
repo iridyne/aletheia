@@ -251,3 +251,47 @@ def find_gateway_orphans() -> list[int]:
         elif _GATEWAY_INNER_MARKER in cmd and "uvicorn" in cmd:
             inners.append(pid)
     return supervisors + inners
+
+
+def find_port_holders(port: int) -> list[int]:
+    """Find PIDs holding a specific port (LISTEN state). Last resort for orphan cleanup.
+
+    Catches uvicorn multiprocessing workers whose cmdline lacks our markers but
+    still hold the gateway socket (inherited from a dead parent). Returns [] on
+    any error. Excludes PID 0 and our own PID.
+    """
+    my_pid = os.getpid()
+    pids: set[int] = set()
+    try:
+        if platform.system() == "Windows":
+            out = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=10,
+                **_no_window_kwargs(),
+            ).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and "LISTENING" in parts[3]:
+                    addr = parts[1]
+                    if addr.endswith(f":{port}"):
+                        try:
+                            pid = int(parts[4])
+                            if pid > 0 and pid != my_pid:
+                                pids.add(pid)
+                        except ValueError:
+                            pass
+        else:
+            out = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout
+            for line in out.splitlines():
+                try:
+                    pid = int(line.strip())
+                    if pid > 0 and pid != my_pid:
+                        pids.add(pid)
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return list(pids)

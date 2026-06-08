@@ -30,6 +30,14 @@ logger = logging.getLogger("aletheia")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = bootstrap()
+    # Ensure PID file exists regardless of how we were launched (background
+    # supervisor, foreground CLI, or bare uvicorn). Without this, /api/status
+    # and /api/gateway/restart break when the supervisor PID file is missing.
+    from aletheia.gateway.pidfile import write_pid, read_pid
+    _owns_pid = read_pid() is None
+    if _owns_pid:
+        write_pid()
+    app.state._owns_pid = _owns_pid
     # Record the source commit this process booted on, BEFORE any scheduler
     # thread starts — lets /api/health flag "code updated, restart needed".
     from aletheia.agent_runtime.build_info import record_boot_commit
@@ -75,6 +83,11 @@ async def lifespan(app: FastAPI):
         stop_scheduler()
     except Exception:
         pass
+    # Only clean PID file if we wrote it (bare uvicorn / foreground mode).
+    # In supervised mode the PID belongs to the supervisor — don't touch it.
+    if getattr(app.state, "_owns_pid", False):
+        from aletheia.gateway.pidfile import clear_pid
+        clear_pid()
     logger.info("Aletheia shutting down")
 
 
