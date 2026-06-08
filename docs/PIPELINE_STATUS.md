@@ -185,23 +185,25 @@ risk_critic：已排入 scheduler（每 6h）
 
 ---
 
-## 北极星阶段与当前位置
+## 当前阶段与位置
 
 ```
-[当前] 阶段 0：稳跑验证（7-14 天不崩/不乱单/不丢状态）
-        └─ 尚未开始真正的 unattended run
+[当前] Phase 0 — Stabilize & Observe (IN PROGRESS)
+        ├─ post_trade_reviewer + risk_critic 已排入 scheduler  DONE
+        ├─ Gateway 已启动 (PID 56264, 2026-06-08)             DONE
+        └─ 72h observation period                              IN PROGRESS
 
-  下一步  阶段 0.5：补全基础设施
-        ├─ post_trade_reviewer + risk_critic 排入 scheduler
-        ├─ 72h unattended paper trading run
-        └─ 验证 Learning Ledger 指标非零
+  下一步  Phase 1 — Learning Quality Diagnosis
+        └─ 14 天稳跑 + 学习质量人工审计
 
-  之后    阶段 1：证明学习质量
-        └─ activation_ratio / review_coverage / lessons_consulted 趋势向好
+  之后    Phase 2A — Structured Signals (策略可执行化)
+          Phase 2B — Agent Coordination (协作流)
+          Phase 3A — Experience Closes Loop (经验闭环)
+          Phase 3B — Walk-Forward Evolution (策略进化)
+          Phase 4  — Adversarial Hardening (对抗验证)
+          Phase 5  — Intelligence Expansion (情报扩展)
+          Phase 6  — Live Readiness (上线准备)
 
-  远期    阶段 2：最小经验闭环（需显式授权）
-        ├─ paper_trader 读 lessons（advisory gate）
-        ├─ agent 间有方向性工作流
-        ├─ risk_critic 输出进入决策
-        └─ playbook 全面激活
+详见 ROADMAP.md (阶段制，非按周锁定)
+完整架构蓝图见 WORLD_MAP.md
 ```

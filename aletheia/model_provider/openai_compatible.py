@@ -90,7 +90,7 @@ class OpenAICompatibleProvider(ModelProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=4) as client:
                 resp = await client.get(f"{self.base_url}/models", headers=self._headers())
                 if resp.status_code == 200:
                     return ModelHealth(provider=self.name, available=True, model=self.model)

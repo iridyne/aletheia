@@ -88,36 +88,49 @@ class AgentConfig(BaseModel):
 
 
 class ProviderConfig(BaseModel):
+    type: str = ""
     base_url: str = ""
     protocol: str = "chat_completions"
     model: str = "default"
     enabled: bool = True
     command: str = ""
     mode: str = ""
-    # Name of the secret holding this provider's API key (the key itself lives
-    # in keyring / secrets.enc, never in config.yaml). e.g. "model.openai_compatible.api_key"
     api_key_secret_ref: str | None = None
-    # Selected Codex model slug (codex_cli provider only). None = codex default.
-    # No secret_ref: codex self-manages its OAuth token under ~/.codex.
     codex_model: str | None = None
+    workspace_url: str | None = None
 
 
 class ModelsConfig(BaseModel):
     default_provider: str = "openai_compatible"
     providers: dict[str, ProviderConfig] = Field(default_factory=lambda: {
         "openai_compatible": ProviderConfig(
+            type="openai_compatible",
             base_url="http://localhost:8000/v1",
             protocol="chat_completions",
             model="default",
         ),
         "anthropic_compatible": ProviderConfig(
+            type="anthropic_compatible",
             base_url="http://localhost:8001",
             model="default",
         ),
+        "databricks": ProviderConfig(
+            type="databricks",
+            enabled=False,
+            workspace_url="",
+            model="default",
+        ),
         "codex_cli": ProviderConfig(
+            type="codex_cli",
             enabled=False,
             command="codex",
             mode="exec",
+        ),
+        "claude_cli": ProviderConfig(
+            type="claude_cli",
+            enabled=False,
+            command="claude",
+            mode="print",
         ),
     })
 

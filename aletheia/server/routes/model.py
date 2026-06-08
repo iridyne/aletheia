@@ -10,11 +10,14 @@ from pydantic import BaseModel
 from aletheia.config.loader import load_config, save_config
 from aletheia.config.secrets import set_secret, get_secret
 from aletheia.files.jsonl import write_audit
-from aletheia.model_provider.router import clear_cache, healthcheck_all
+from aletheia.model_provider.router import clear_cache, healthcheck_all, PROVIDER_REGISTRY
 
 router = APIRouter(prefix="/api", tags=["model"])
 
-VALID_PROVIDERS = {"openai_compatible", "anthropic_compatible", "codex_cli"}
+VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
+
+HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "databricks"}
+CLI_PROVIDERS = {"codex_cli", "claude_cli"}
 
 
 def _key_status(secret_ref: str | None) -> dict:
@@ -33,16 +36,23 @@ async def get_model_config():
     cfg = load_config()
     providers = {}
     for name, pcfg in cfg.models.providers.items():
-        providers[name] = {
-            "base_url": pcfg.base_url,
-            "protocol": pcfg.protocol,
-            "model": pcfg.model,
+        ptype = pcfg.type or name
+        entry: dict = {
+            "type": ptype,
             "enabled": pcfg.enabled,
-            "command": pcfg.command,
-            "mode": pcfg.mode,
-            "codex_model": pcfg.codex_model,
+            "model": pcfg.model,
             "api_key": _key_status(pcfg.api_key_secret_ref),
         }
+        if ptype in HTTP_PROVIDERS:
+            entry["base_url"] = pcfg.base_url
+            entry["protocol"] = pcfg.protocol
+        if ptype == "databricks":
+            entry["workspace_url"] = pcfg.workspace_url or ""
+        if ptype in CLI_PROVIDERS:
+            entry["command"] = pcfg.command
+            entry["mode"] = pcfg.mode
+            entry["codex_model"] = pcfg.codex_model
+        providers[name] = entry
     return {"default_provider": cfg.models.default_provider, "providers": providers}
 
 
@@ -56,38 +66,93 @@ async def get_model_health():
     ]
 
 
+@router.get("/model/provider-types")
+async def get_provider_types():
+    """Return schema metadata for each provider type (used by frontend for dynamic forms)."""
+    return {
+        "openai_compatible": {
+            "label": "OpenAI Compatible",
+            "category": "http",
+            "fields": ["base_url", "model", "protocol", "api_key"],
+        },
+        "anthropic_compatible": {
+            "label": "Anthropic Compatible",
+            "category": "http",
+            "fields": ["base_url", "model", "api_key"],
+        },
+        "databricks": {
+            "label": "Databricks",
+            "category": "http",
+            "fields": ["workspace_url", "model", "api_key"],
+        },
+        "codex_cli": {
+            "label": "Codex CLI",
+            "category": "cli",
+            "fields": ["command", "codex_model"],
+        },
+        "claude_cli": {
+            "label": "Claude Code CLI",
+            "category": "cli",
+            "fields": ["command", "model"],
+        },
+    }
+
+
 class TestCandidateRequest(BaseModel):
     provider: str
     base_url: str | None = None
     protocol: str | None = None
     model: str | None = None
-    api_key: str | None = None  # candidate key — tested only, never persisted
+    api_key: str | None = None
+    workspace_url: str | None = None
 
 
 @router.post("/model/test-candidate")
 async def test_model_candidate(req: TestCandidateRequest):
     """Verify-before-commit probe: health-check a CANDIDATE provider config without
     persisting anything. The candidate api_key is used for the live check only and is
-    never stored, logged, or echoed back. No audit (nothing is persisted)."""
+    never stored, logged, or echoed back."""
     if req.provider not in VALID_PROVIDERS:
         raise HTTPException(400, f"Invalid provider. Choose from: {sorted(VALID_PROVIDERS)}")
-    if req.provider == "codex_cli":
-        # Codex authenticates via its own device-auth flow (`codex login`); there is
-        # no candidate-key concept. The dedicated codex login routes handle it.
-        raise HTTPException(400, "codex_cli uses device-auth login, not a candidate key")
+    if req.provider in CLI_PROVIDERS:
+        raise HTTPException(400, f"{req.provider} uses local auth, not a candidate key")
 
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from aletheia.model_provider.databricks import DatabricksProvider
 
-    base_url = req.base_url or ""
     model = req.model or "default"
+
     if req.provider == "openai_compatible":
         provider = OpenAICompatibleProvider(
-            base_url=base_url, model=model,
-            protocol=req.protocol or "chat_completions", api_key=req.api_key,
+            base_url=req.base_url or "",
+            model=model,
+            protocol=req.protocol or "chat_completions",
+            api_key=req.api_key,
         )
-    else:  # anthropic_compatible
-        provider = AnthropicCompatibleProvider(base_url=base_url, model=model, api_key=req.api_key)
+    elif req.provider == "anthropic_compatible":
+        provider = AnthropicCompatibleProvider(
+            base_url=req.base_url or "",
+            model=model,
+            api_key=req.api_key,
+        )
+    elif req.provider == "databricks":
+        ws_url = req.workspace_url or req.base_url or ""
+        if not ws_url:
+            raise HTTPException(400, "workspace_url is required for Databricks")
+        if not ws_url.startswith(("https://", "http://")):
+            raise HTTPException(
+                400,
+                "workspace_url must start with https:// — "
+                "e.g. https://xxx.cloud.databricks.com",
+            )
+        provider = DatabricksProvider(
+            workspace_url=ws_url,
+            model=model,
+            api_key=req.api_key,
+        )
+    else:
+        raise HTTPException(400, f"No test-candidate support for {req.provider}")
 
     health = await provider.healthcheck()
     return {"available": health.available, "model": health.model, "error": health.error}
@@ -142,8 +207,9 @@ class ModelConfigRequest(BaseModel):
     command: str | None = None
     mode: str | None = None
     codex_model: str | None = None
+    workspace_url: str | None = None
     default: bool | None = None
-    api_key: str | None = None  # write-only; stored as secret, never returned
+    api_key: str | None = None
 
 
 @router.post("/settings/model")
@@ -154,10 +220,12 @@ async def set_model(req: ModelConfigRequest):
     cfg = load_config()
     pcfg = cfg.models.providers.get(req.provider)
     if pcfg is None:
-        # initialize an empty provider entry
         from aletheia.config.schema import ProviderConfig
-        pcfg = ProviderConfig()
+        pcfg = ProviderConfig(type=req.provider)
         cfg.models.providers[req.provider] = pcfg
+
+    if not pcfg.type:
+        pcfg.type = req.provider
 
     if req.base_url is not None:
         pcfg.base_url = req.base_url
@@ -173,10 +241,11 @@ async def set_model(req: ModelConfigRequest):
         pcfg.mode = req.mode
     if req.codex_model is not None:
         pcfg.codex_model = req.codex_model
+    if req.workspace_url is not None:
+        pcfg.workspace_url = req.workspace_url
     if req.default:
         cfg.models.default_provider = req.provider
 
-    # Store API key as a secret, record only the reference in config
     if req.api_key:
         secret_ref = f"model.{req.provider}.api_key"
         set_secret(secret_ref, req.api_key)
