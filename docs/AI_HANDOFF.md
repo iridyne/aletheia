@@ -2,9 +2,56 @@
 
 ## Last Updated
 
-2026-06-08 (full-market analyzer + paper trading pipeline fix)
+2026-06-08 (InstrumentId — three-part unique instrument identity)
 
-## Recent Change (Full-Market Analyzer + Paper Trading Pipeline Fix — 2026-06-08)
+## Recent Change (InstrumentId + Symbol Format Unification — 2026-06-08)
+
+Full implementation of `exchange:symbol:market_type` unique instrument identity across the pipeline.
+
+**Core new type — `aletheia/data/symbols.py`:**
+- `InstrumentId` frozen dataclass: `exchange`, `symbol` (canonical `BTC/USDT`), `market_type` (`spot`|`perp`|`futures`)
+- `str(instrument)` → `"binance:BTC/USDT:spot"`. `InstrumentId.parse("binance:BTC/USDT:spot")` round-trips cleanly.
+- `instrument.to_ccxt_symbol()` → `"BTC/USDT"` (spot) or `"BTC/USDT:USDT"` (perp, settle=quote directly, no USD mapping)
+- `instrument.to_bitget_symbol()` → `"BTCUSDT"` (execution-boundary only)
+- `to_ccxt_perp(symbol)` helper added
+
+**Config (`aletheia/config/schema.py`):**
+- `MarketDataConfig.observed_instruments: list[str]` — e.g. `["binance:BTC/USDT:spot"]`
+- Legacy `observed_symbols` kept as fallback when `observed_instruments` is empty
+
+**Storage (additive migrations — zero downtime):**
+- `exchange TEXT` column added to `market_snapshots` and `market_ohlcv`
+- `aletheia/storage/repositories.py` — all query functions accept optional `exchange=` param
+
+**Pipeline — all now canonical `BTC/USDT` end-to-end:**
+- `aletheia/trading/instruments.py` — `observed_instruments_from_config()` returns `list[InstrumentId]`
+- `aletheia/trading/market_data.py` — passes `InstrumentId` to `CCXTProvider`, stores `exchange=instrument.exchange`
+- `aletheia/agents/market_observer.py` — iterates `InstrumentId` objects; `market_type` from instrument
+- `aletheia/data/ccxt_provider.py` — accepts `InstrumentId | str`; `_resolve_ccxt_symbol()` handles both
+- `aletheia/agents/paper_trader.py` — `allowed_symbols = {to_canonical(s) for s in tradable_symbols_from_config(cfg)}`
+
+**API + frontend:**
+- `aletheia/server/routes/data.py` — `/market/ohlcv` and `/market/snapshots` accept `exchange=` + `market_type=`
+- `aletheia/server/routes/settings.py` — `GET /settings` now includes `market_data` block; `POST /settings/symbols` syncs `observed_instruments`
+- `frontend/src/api/client.ts` — `getOhlcv()` uses `URLSearchParams` (auto-encodes `/` in `BTC/USDT`)
+- `frontend/src/pages/Settings.tsx` — read-only "Observed instruments" chip row in Risk & Symbols tab (renders when `observed_instruments` non-empty; requires gateway restart to show after first symbols save)
+
+**Tests:**
+- `tests/test_instrument_id.py` — 45 new tests
+- `tests/test_entry_logic.py` — fixtures + assertions updated to canonical format
+- Final: 1 failed (pre-existing `test_strategy_causal_chain` LLM dependency) / 470 passed
+
+**Invariant verified:**
+```
+binance:BTC/USDT:spot  ≠  bybit:BTC/USDT:spot  (different exchange)
+binance:BTC/USDT:spot  ≠  binance:BTC/USDT:perp (different market type)
+```
+
+**Architecture decision:** `docs/DECISIONS.md` 2026-06-08 "InstrumentId" entry.
+
+---
+
+## Prior Change (Full-Market Analyzer + Paper Trading Pipeline Fix — 2026-06-08)
 
 Three-bug paper trading fix + full-market analyzer expansion.
 
