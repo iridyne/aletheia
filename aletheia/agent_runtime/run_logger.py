@@ -1,6 +1,6 @@
 """Agent run logging to SQLite + JSONL."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aletheia.storage.models import AgentRun
 from aletheia.storage.repositories import insert_agent_run, update_agent_run
@@ -23,7 +23,7 @@ def end_run(run: AgentRun, status: str = "completed", outputs: list[str] | None 
     import json
     update_data = {
         "status": status,
-        "ended_at": datetime.utcnow().isoformat(),
+        "ended_at": datetime.now(timezone.utc).isoformat(),
         "outputs_created": json.dumps(outputs if outputs is not None else []),
         "errors": json.dumps(errors if errors is not None else []),
     }

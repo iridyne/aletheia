@@ -119,7 +119,9 @@ function StatusBar() {
   const latestRun = (runs as any[])[0]
   let heartbeatText = ''
   if (latestRun?.ended_at) {
-    const mins = Math.floor((Date.now() - new Date(latestRun.ended_at).getTime()) / 60000)
+    const ts = latestRun.ended_at
+    const t = new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime()
+    const mins = Math.floor((Date.now() - t) / 60000)
     heartbeatText = mins < 1 ? '<1m' : `${mins}m`
   }
 

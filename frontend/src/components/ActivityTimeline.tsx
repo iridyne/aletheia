@@ -46,9 +46,13 @@ function filterItems(items: ActivityItem[], filter: Filter): ActivityItem[] {
   return items.filter(i => i.type === 'audit_event')
 }
 
+function toUtc(ts: string): string {
+  return ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z'
+}
+
 function formatTime(ts: string): string {
   try {
-    const d = new Date(ts)
+    const d = new Date(toUtc(ts))
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   } catch { return '—' }
 }
@@ -83,7 +87,7 @@ export default function ActivityTimeline() {
   const { data: events = [] } = useQuery({ queryKey: ['audit-events'], queryFn: () => api.getAuditEvents(30) })
 
   const all = [...normalizeRuns(runs.slice(0, 20)), ...normalizeEvents(events)]
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .sort((a, b) => new Date(toUtc(b.timestamp)).getTime() - new Date(toUtc(a.timestamp)).getTime())
 
   const items = filterItems(all, filter)
   const FILTERS: Filter[] = ['all', 'agent', 'risk', 'trade', 'system']

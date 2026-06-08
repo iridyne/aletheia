@@ -1,6 +1,6 @@
 """Pydantic models for storage entities."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from uuid import uuid4
 
@@ -9,9 +9,13 @@ def new_id() -> str:
     return uuid4().hex[:12]
 
 
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class AuditEvent(BaseModel):
     id: str = Field(default_factory=new_id)
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = Field(default_factory=_utcnow)
     actor: str
     source: str
     event_type: str
@@ -27,7 +31,7 @@ class AgentRun(BaseModel):
     agent_name: str
     trigger_type: str = "scheduled"
     permission_mode: str = "Research"
-    started_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    started_at: str = Field(default_factory=_utcnow)
     ended_at: str | None = None
     status: str = "running"
     model_provider: str | None = None
@@ -49,7 +53,7 @@ class Opportunity(BaseModel):
     # 0..100; None when the model didn't supply one — keeps older rows valid.
     confidence_score: int | None = None
     source_agent: str | None = None
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=_utcnow)
     status: str = "open"
     linked_strategy_id: str | None = None
 
@@ -70,7 +74,7 @@ class TradeProposal(BaseModel):
     execution_mode: str = "paper_internal"
     agent_rationale: str | None = None
     status: str = "pending"
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=_utcnow)
 
 
 class RiskDecision(BaseModel):
@@ -81,7 +85,7 @@ class RiskDecision(BaseModel):
     violations: str = "[]"
     allowed_execution_mode: str | None = None
     message: str | None = None
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=_utcnow)
 
 
 class Order(BaseModel):
@@ -97,7 +101,7 @@ class Order(BaseModel):
     execution_mode: str
     exchange_order_id: str | None = None
     status: str = "pending"
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=_utcnow)
     filled_at: str | None = None
 
 
@@ -108,7 +112,7 @@ class Fill(BaseModel):
     fill_quantity: float
     fee: float = 0.0
     fee_currency: str = "USDT"
-    filled_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    filled_at: str = Field(default_factory=_utcnow)
 
 
 class Position(BaseModel):
@@ -131,7 +135,7 @@ class Position(BaseModel):
     stop_price: float | None = None
     take_profit_price: float | None = None
     close_reason: str | None = None
-    opened_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    opened_at: str = Field(default_factory=_utcnow)
     closed_at: str | None = None
 
 
@@ -141,8 +145,8 @@ class StrategyRecord(BaseModel):
     description: str | None = None
     state: str = "draft"
     parameters: str = "{}"
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
 
 
 class KnowledgeItem(BaseModel):
@@ -154,8 +158,8 @@ class KnowledgeItem(BaseModel):
     confidence: str = "medium_confidence"
     status: str = "active"
     tags: str = "[]"
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
 
 
 class MarketSnapshot(BaseModel):
@@ -165,7 +169,10 @@ class MarketSnapshot(BaseModel):
     price: float
     volume_24h: float | None = None
     change_pct_24h: float | None = None
-    snapshot_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    high_24h: float | None = None
+    low_24h: float | None = None
+    provider: str | None = None
+    snapshot_at: str = Field(default_factory=_utcnow)
 
 
 class PortfolioSnapshot(BaseModel):
@@ -176,4 +183,4 @@ class PortfolioSnapshot(BaseModel):
     positions_count: int = 0
     execution_mode: str = "paper_internal"
     exchange_equity_usdt: float | None = None
-    snapshot_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    snapshot_at: str = Field(default_factory=_utcnow)
