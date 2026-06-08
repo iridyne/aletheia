@@ -15,7 +15,7 @@ from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
-from aletheia.trading.instruments import observed_instruments_from_config
+from aletheia.trading.instruments import observed_instruments_from_config, xstocks_instruments_from_config
 from aletheia.config.loader import load_config
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
@@ -85,6 +85,8 @@ async def _analyze_symbol(
     run_id: str | None,
     linked_strategy_id: str | None,
     memory_block: str,
+    asset_class: str = "crypto",
+    provider=None,
 ) -> tuple[str | None, str | None]:
     """Run market context build + LLM read for a single symbol.
 
@@ -94,7 +96,9 @@ async def _analyze_symbol(
     from aletheia.trading.market_context import build_market_context
 
     try:
-        context, ctx_debug = await build_market_context([symbol], market_type=market_type)
+        context, ctx_debug = await build_market_context(
+            [symbol], market_type=market_type, provider=provider
+        )
         log_tool(run_id, "build_market_context", "read_tool", True,
                  output=f"{symbol} fallback={ctx_debug.get('fallback')} "
                         f"errs={len(ctx_debug.get('errors', []))}")
@@ -184,7 +188,7 @@ async def _analyze_symbol(
         confidence_score=confidence_score,
         source_agent="market_observer",
         linked_strategy_id=linked_strategy_id,
-        asset_class="crypto",
+        asset_class=asset_class,
     )
     insert_opportunity(opp)
     log_tool(run_id, "create_opportunity", "research_tool", True, output=opp.id)
@@ -203,6 +207,7 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
 
     cfg = load_config()
     instruments = observed_instruments_from_config(cfg)
+    xstocks = xstocks_instruments_from_config(cfg)
     symbols = [i.symbol for i in instruments]  # canonical list for memory query
 
     # Find an active strategy to link all opportunities from this run.
@@ -237,6 +242,7 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
                 run_id=run_id,
                 linked_strategy_id=linked_strategy_id,
                 memory_block=memory_block,
+                asset_class="crypto",
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")
@@ -244,5 +250,32 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
                 errors.append(f"{instrument}:{err}")
         except Exception as e:
             errors.append(f"{instrument}:unexpected:{e}")
+
+    # xStocks loop: Bitget tokenized equity tokens, observation-only (asset_class=equity).
+    # Uses a Bitget-specific CCXTProvider so Binance/Bybit are not asked for ON-series.
+    if xstocks:
+        from aletheia.data.ccxt_provider import CCXTProvider
+        bitget_provider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
+        try:
+            for instrument in xstocks:
+                try:
+                    opp_id, err = await _analyze_symbol(
+                        symbol=instrument.symbol,
+                        market_type=instrument.market_type,
+                        permission_mode=permission_mode,
+                        run_id=run_id,
+                        linked_strategy_id=None,  # xStocks not linked to crypto strategies
+                        memory_block="",
+                        asset_class="equity",
+                        provider=bitget_provider,
+                    )
+                    if opp_id:
+                        outputs.append(f"opportunity:{opp_id}")
+                    if err:
+                        errors.append(f"{instrument}:{err}")
+                except Exception as e:
+                    errors.append(f"{instrument}:unexpected:{e}")
+        finally:
+            await bitget_provider.close()
 
     return {"outputs": outputs, "errors": errors}

@@ -77,9 +77,12 @@ def test_orchestrator_releases_counter(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime.orchestrator import run_agent
     from aletheia.agents import helpers
+    keys_before = set(helpers._step_counters)
     asyncio.run(run_agent("market_observer", trigger_type="manual"))
-    # No counter should remain — it was popped at end_run.
-    assert helpers._step_counters == {}
+    # No NEW counter should remain after run_agent completes (old residues from
+    # other tests are allowed — we only own the keys introduced in this call).
+    new_keys = set(helpers._step_counters) - keys_before
+    assert not new_keys, f"run_agent leaked counters: {new_keys}"
 
 
 # === Gap 2: stability monitor ===

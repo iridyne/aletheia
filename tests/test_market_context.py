@@ -232,7 +232,7 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
 
     # Stub build_market_context so observer doesn't need network.
-    async def fake_builder(symbols, market_type="spot", client=None):
+    async def fake_builder(symbols, market_type="spot", **kw):
         return ("BTCUSDT verified snapshot here", {"fallback": False, "errors": [],
                                                     "symbols": {}})
     monkeypatch.setattr(mo, "build_market_context", fake_builder, raising=False)
@@ -274,7 +274,7 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
         }, None)
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
 
-    async def fake_builder(symbols, market_type="spot", client=None):
+    async def fake_builder(symbols, market_type="spot", **kw):
         return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
@@ -317,7 +317,7 @@ def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
         }, None)
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
 
-    async def fake_builder(symbols, market_type="spot", client=None):
+    async def fake_builder(symbols, market_type="spot", **kw):
         # Big realistic snapshot — would be ugly if it leaked into thesis.
         return (
             "## Verified market data snapshot\n### BTCUSDT\n| TF | Close ...",
@@ -360,7 +360,7 @@ def test_observer_ignores_invalid_confidence_score(tmp_path, monkeypatch):
         }, None)
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
 
-    async def fake_builder(symbols, market_type="spot", client=None):
+    async def fake_builder(symbols, market_type="spot", **kw):
         return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
     import aletheia.trading.market_context as mc
     monkeypatch.setattr(mc, "build_market_context", fake_builder)

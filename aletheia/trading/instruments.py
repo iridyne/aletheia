@@ -45,6 +45,23 @@ def observed_symbols_from_config(cfg) -> list[str]:
     return cfg.market_data.observed_symbols
 
 
+def xstocks_instruments_from_config(cfg) -> list[InstrumentId]:
+    """Return Bitget tokenized xStocks as InstrumentId list.
+
+    These use exchange="bitget" so CCXTProvider fetches from Bitget (the only
+    exchange listing ON-series tokens like AAPLON/USDT, TSLAON/USDT).
+    asset_class is handled by the caller — always "equity", never traded.
+    """
+    symbols = getattr(cfg.market_data, "observed_xstocks", []) or []
+    result = []
+    for s in symbols:
+        try:
+            result.append(InstrumentId.from_parts("bitget", s, MARKET_SPOT))
+        except (ValueError, Exception):
+            pass
+    return result
+
+
 def observed_instruments_from_config(cfg) -> list[InstrumentId]:
     """Return the full InstrumentId list for market data collection.
 

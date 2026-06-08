@@ -64,6 +64,7 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
+    cfg.market_data.observed_xstocks = []
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
@@ -85,6 +86,7 @@ async def test_observer_falls_back_to_neutral_on_error(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
+    cfg.market_data.observed_xstocks = []
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
@@ -162,6 +164,7 @@ async def test_observer_stores_canonical_format_symbol(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
+    cfg.market_data.observed_xstocks = []
     cfg.agent.permission_mode = "Auto"
     save_config(cfg)
 
@@ -187,6 +190,7 @@ async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
+    cfg.market_data.observed_xstocks = []
     cfg.agent.permission_mode = "PaperAuto"
     cfg.agent.autonomous_paper_trading = True
     save_config(cfg)

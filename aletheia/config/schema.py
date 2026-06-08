@@ -65,6 +65,11 @@ class MarketDataConfig(BaseModel):
     # Polymarket category slugs (or keywords) to observe. prediction_observer
     # fetches active markets matching these categories every 30 minutes.
     observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])
+    # Bitget tokenized xStocks (ON-series spot symbols). market_observer observes
+    # these via Bitget CCXT (no API key needed); asset_class="equity", never traded.
+    observed_xstocks: list[str] = Field(
+        default_factory=lambda: ["AAPLON/USDT", "TSLAON/USDT", "NVDAON/USDT", "SPYON/USDT"]
+    )
 
 
 class LiveConfig(BaseModel):

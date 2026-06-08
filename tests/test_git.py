@@ -27,7 +27,10 @@ def setup_data(tmp_path, monkeypatch):
 def test_git_disabled_is_noop(tmp_path, monkeypatch):
     setup_data(tmp_path, monkeypatch)
     from aletheia.files import git
-    # default config has git_enabled=False
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.runtime.git_enabled = False
+    save_config(cfg)
     result = git.commit_all("test message")
     assert result["committed"] is False
     assert result["reason"] == "git_disabled"

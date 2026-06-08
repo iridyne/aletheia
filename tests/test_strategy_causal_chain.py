@@ -108,8 +108,13 @@ async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
     # directly (LLM is unavailable in tests, so drive a directional opportunity by
     # seeding the bound opportunity the way the observer now constructs it).
     await run_agent("market_observer", trigger_type="manual")
-    observed = [o for o in repo.list_opportunities(limit=20) if o.get("source_agent") == "market_observer"]
-    assert observed, "observer should create an opportunity"
+    # Filter to crypto opportunities only — xStocks (asset_class=equity) have no strategy link.
+    observed = [
+        o for o in repo.list_opportunities(limit=20)
+        if o.get("source_agent") == "market_observer"
+        and (o.get("asset_class") or "crypto") == "crypto"
+    ]
+    assert observed, "observer should create a crypto opportunity"
     assert observed[0]["linked_strategy_id"] == strat["id"], "opportunity must bind to the active strategy"
 
     # Seed a directional, medium-confidence opportunity bound to the strategy so the
