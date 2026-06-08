@@ -15,7 +15,8 @@ logger = logging.getLogger("aletheia.news")
 
 
 def _ensure_db():
-    run_migrations()
+    # No-op: migrations run once at startup (see aletheia/server/routes/data.py:_ensure_db).
+    pass
 
 
 @router.get("/news")

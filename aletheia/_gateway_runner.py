@@ -44,6 +44,18 @@ def _spawn_server(cfg) -> int:
         "--host", cfg.app.bind_host, "--port", str(cfg.app.dashboard_port),
         "--log-level", "info",
     ]
+    # Hot-reload: any .py change under aletheia/ → uvicorn restarts its worker.
+    # The supervisor (this process) is unchanged, so the pidfile stays valid and
+    # single-instance mutex via find_gateway_orphans() keeps working. Multiple
+    # Claude sessions editing the same repo all converge to the same live code.
+    if getattr(cfg.runtime, "auto_reload", True):
+        from pathlib import Path as _P
+        watch_dir = _P(__file__).resolve().parent  # the aletheia/ package dir
+        cmd.extend([
+            "--reload",
+            "--reload-dir", str(watch_dir),
+            "--reload-include", "*.py",
+        ])
     popen_kwargs: dict = {"stdout": subprocess.DEVNULL}
     if platform.system() == "Windows":
         popen_kwargs["creationflags"] = CREATE_NO_WINDOW

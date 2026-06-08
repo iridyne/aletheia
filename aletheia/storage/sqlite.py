@@ -24,6 +24,12 @@ def get_db() -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
+        # synchronous=NORMAL: WAL-safe write throughput tier (FULL is overkill in WAL).
+        # busy_timeout: SQLite-level retry on SQLITE_BUSY (complements connection timeout).
+        # wal_autocheckpoint: bound the WAL file before checkpoint flushes it.
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA wal_autocheckpoint=1000")
         _local.conn = conn
     return conn
 

@@ -49,7 +49,7 @@ class CommandResponse(BaseModel):
 
 @router.post("/command")
 async def process_command(req: CommandRequest) -> CommandResponse:
-    run_migrations()
+    # Migrations run once at startup (aletheia/server/app.py:44).
     text = req.input.strip()
 
     intent, meta = _classify_intent_simple(text)

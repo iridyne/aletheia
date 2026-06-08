@@ -7,7 +7,6 @@ Degrades gracefully if the exchange is unreachable.
 import logging
 
 from aletheia.config.loader import load_config
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import MarketSnapshot
 from aletheia.storage.repositories import insert_market_snapshot
 from aletheia.data.symbols import to_canonical, to_bitget
@@ -24,7 +23,9 @@ async def collect_market_snapshots() -> dict:
     each uniquely identifies exchange + symbol + market_type so snapshots from
     different exchanges for the same symbol can coexist in the DB.
     """
-    run_migrations()
+    # Migrations run once at gateway startup (aletheia/server/app.py:44); scheduler
+    # jobs MUST NOT call run_migrations() — concurrent executescript() across threads
+    # was the dominant `database is locked` source.
     cfg = load_config()
 
     instruments = observed_instruments_from_config(cfg)

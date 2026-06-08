@@ -16,7 +16,10 @@ function post<T>(path: string, body?: unknown): Promise<T> {
 export interface KeyStatus { configured: boolean; last4: string | null }
 
 export const api = {
-  getHealth: () => fetchJson<{ status: string; version: string }>('/health'),
+  getHealth: () => fetchJson<{ status: string; issues: string[]; version: string }>('/health'),
+  // Restart the gateway worker (warm) or full process (cold). Issued from the
+  // topbar restart button when the health endpoint reports code_updated_pending_restart.
+  restartGateway: () => post<{ mode: 'warm' | 'cold'; ok: boolean; message: string }>('/gateway/restart'),
   getStatus: () => fetchJson<Record<string, unknown>>('/status'),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
 
@@ -152,9 +155,12 @@ export const api = {
   getStrategyGates: (id: string) => fetchJson<Record<string, any>>(`/strategies/${id}/gates`),
 
   // Charts
-  getOhlcv: (symbol: string, timeframe = '1h', limit = 100, exchange = '', marketType = 'spot') => {
+  // `before` (unix seconds) requests the page of candles strictly older than that
+  // time — used for scroll-back history paging. 0 = latest window.
+  getOhlcv: (symbol: string, timeframe = '1h', limit = 100, before = 0, exchange = '', marketType = 'spot') => {
     const params = new URLSearchParams({
       symbol, timeframe, limit: String(limit),
+      ...(before > 0 ? { before: String(before) } : {}),
       ...(exchange ? { exchange } : {}),
       ...(marketType !== 'spot' ? { market_type: marketType } : {}),
     })

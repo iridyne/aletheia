@@ -57,7 +57,7 @@ def _market_data_stale_minutes(cfg) -> float | None:
     if cfg.runtime.paused or not cfg.runtime.scheduler_enabled:
         return None
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
         from aletheia.storage.repositories import list_market_snapshots
         rows = list_market_snapshots(limit=1)
         if not rows:
@@ -65,8 +65,12 @@ def _market_data_stale_minutes(cfg) -> float | None:
         snapshot_at = rows[0].get("snapshot_at")
         if not snapshot_at:
             return None
-        ts = datetime.fromisoformat(snapshot_at)  # naive UTC isoformat
-        return (datetime.utcnow() - ts).total_seconds() / 60.0
+        ts = datetime.fromisoformat(snapshot_at)
+        # Snapshots are stored as tz-aware UTC isoformat; older rows may be naive.
+        # Normalize both sides to aware-UTC before subtracting.
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
     except Exception as e:
         logger.warning("market-data staleness check failed: %s", e)
         return None

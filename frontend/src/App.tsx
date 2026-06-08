@@ -89,6 +89,23 @@ function StatusBar() {
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
   const { data: ks } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, refetchInterval: 10000 })
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
+  const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.getHealth, refetchInterval: 10000 })
+
+  // Code drift = disk HEAD has moved past the boot commit. Surfaces the
+  // "code updated, restart needed" signal that build_info.code_drift_issue
+  // emits via /api/health.issues. Empty string when no drift.
+  const driftIssue = (health?.issues || []).find(i => i.startsWith('code_updated_pending_restart:')) || ''
+  const driftRange = driftIssue ? driftIssue.replace('code_updated_pending_restart:', '') : ''
+
+  const restartMut = useMutation({
+    mutationFn: api.restartGateway,
+    onSuccess: (r) => {
+      // Worker reloads in ~3s (warm) or ~10s (cold). Wait, then re-fire all
+      // queries — health drift will clear once the new worker boots.
+      const delay = r.mode === 'warm' ? 3500 : 11000
+      setTimeout(() => qc.invalidateQueries(), delay)
+    },
+  })
 
   // Tick every minute so heartbeat age re-renders even without new data
   const [, setTick] = useState(0)
@@ -142,6 +159,7 @@ function StatusBar() {
           <span className={`dot dot-${gwLight}`} />
           <span className={`dot dot-${liveLight}`} />
           <span className={`dot dot-${killLight}`} />
+          {driftIssue && <span className="dot dot-yellow" title={`Code drift: ${driftRange} — restart needed`} />}
         </span>
         {heartbeatText && (
           <span className="status-cluster-hb mono" title="Time since last agent run">
@@ -189,6 +207,24 @@ function StatusBar() {
                 <tr>
                   <th>Last Run</th>
                   <td className="mono">{latestRun.agent_name}{heartbeatText ? ` · ${heartbeatText} ago` : ''}</td>
+                </tr>
+              )}
+              {driftIssue && (
+                <tr>
+                  <th>Code</th>
+                  <td>
+                    <span className="dot dot-yellow" />
+                    <span className="mono" style={{ fontSize: '0.78rem' }}>{driftRange}</span>{' '}
+                    <button
+                      className="topbar-btn secondary"
+                      style={{ padding: '0.1rem 0.5rem', fontSize: '0.78rem', marginLeft: '0.4rem' }}
+                      onClick={() => restartMut.mutate()}
+                      disabled={restartMut.isPending}
+                      title="Reload worker so the new code takes effect"
+                    >
+                      {restartMut.isPending ? 'restarting…' : '↻ Restart'}
+                    </button>
+                  </td>
                 </tr>
               )}
             </tbody>

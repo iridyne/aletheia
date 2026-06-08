@@ -5,12 +5,13 @@ import traceback
 from aletheia.agent_runtime.run_logger import start_run, end_run
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
-from aletheia.storage.migrations import run_migrations
 
 
 async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
     """Run a named agent with full lifecycle logging."""
-    run_migrations()
+    # Migrations run once at gateway startup (aletheia/server/app.py:44); scheduler
+    # jobs MUST NOT call run_migrations() — concurrent executescript() across threads
+    # was the dominant `database is locked` source.
     # Ensure tool permissions are registered even if the app lifespan didn't run
     # (e.g. tests using ASGITransport, or a direct orchestrator call).
     from aletheia.agent_runtime.tool_registry import init_tool_registry

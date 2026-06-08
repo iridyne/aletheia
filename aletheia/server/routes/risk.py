@@ -27,7 +27,7 @@ async def kill_switch_status():
 @router.get("/status")
 async def risk_status():
     cfg = load_config()
-    run_migrations()
+    # Migrations run once at startup (aletheia/server/app.py:44).
     latest = list_risk_decisions(limit=1)
     latest_decision = latest[0] if latest else None
     exchange_mode = cfg.exchange.mode

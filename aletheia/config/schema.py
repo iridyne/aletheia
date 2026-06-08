@@ -31,6 +31,11 @@ class RuntimeConfig(BaseModel):
     kill_switch_active: bool = False
     # Git versioning of data/knowledge, data/playbooks, data/reports.
     git_enabled: bool = True
+    # Hot-reload the inner uvicorn worker when files under aletheia/ change.
+    # True = any Claude session that edits a .py file gets the change live without
+    # a manual `aletheia gateway restart`. The supervisor PID does not change, so
+    # single-instance mutex (pidfile) is preserved. Set False before going live.
+    auto_reload: bool = True
 
 
 class ExchangeConfig(BaseModel):

@@ -19,7 +19,11 @@ VALID_KNOWLEDGE_TYPES = {
 
 
 def _ensure_db():
-    run_migrations()
+    # No-op: migrations run once at app startup (aletheia/server/app.py:44).
+    # Calling run_migrations() per request was the dominant `database is locked` source
+    # — `executescript(SCHEMA_SQL)` + 19 ALTER probes contended with every concurrent
+    # writer. Kept as a function so existing route call sites stay valid.
+    pass
 
 
 @router.get("/agent-runs")
@@ -227,22 +231,32 @@ async def get_market_ohlcv(
     limit: int = 100,
     exchange: str = "",
     market_type: str = "spot",
+    before: int = 0,
 ):
     """Fetch OHLCV candles via CCXT for charting (public endpoint).
 
     Optional:
     - exchange: prefer this exchange (e.g. "binance"). Defaults to config ccxt_exchange.
     - market_type: "spot" (default) | "perp" — for perpetual contract candles.
+    - before: unix SECONDS. When > 0, return the page of up to `limit` candles
+      whose open time is strictly BEFORE this timestamp — i.e. older history, used
+      when the chart scrolls back. When 0 (default), return the most recent `limit`.
+
+    Caching: the TTL cache is only used for the default latest view at the default
+    limit (before unset). Historical pages (before>0) and any non-default limit are
+    fetched fresh — historical because each window is distinct, and the latest view
+    needs a live tail rather than a cached candle that would freeze the chart.
     """
     import logging
     from aletheia.config.loader import load_config
-    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
     from aletheia.data.cache import get_cache
     from aletheia.data.symbols import to_canonical, InstrumentId
     cfg = load_config()
     md_cfg = cfg.market_data
     sym = to_canonical(symbol)
     effective_exchange = exchange or md_cfg.ccxt_exchange
+    limit = max(1, min(limit, 1000))  # bound to CCXT's typical per-request ceiling
 
     # Build an InstrumentId so CCXTProvider uses the correct CCXT symbol internally
     try:
@@ -250,17 +264,36 @@ async def get_market_ohlcv(
     except ValueError:
         return {"error": f"invalid_instrument: {effective_exchange}:{sym}:{market_type}", "candles": []}
 
+    # Historical pagination window: ask the exchange for `limit` candles ending
+    # just before `before`. since = before - limit*tf yields a window whose newest
+    # candle is the one immediately preceding `before`.
+    since_ms: int | None = None
+    if before > 0:
+        tf_ms = timeframe_ms(timeframe)
+        if tf_ms == 0:
+            return {"error": f"unsupported_timeframe: {timeframe}", "candles": []}
+        since_ms = before * 1000 - limit * tf_ms
+
     cache = get_cache()
     cache_key = sym  # cache by canonical symbol (same data regardless of exchange for spot)
+    use_cache = since_ms is None and limit == 100
     try:
-        candles = cache.get(cache_key, timeframe, limit)
+        candles = cache.get(cache_key, timeframe, limit) if use_cache else None
         if candles is None:
             provider = get_market_data_provider(effective_exchange)
             try:
-                candles = await provider.get_ohlcv(instrument, timeframe=timeframe, limit=limit)
-                cache.set(cache_key, timeframe, limit, candles)
+                candles = await provider.get_ohlcv(
+                    instrument, timeframe=timeframe, limit=limit, since=since_ms,
+                )
+                if use_cache:
+                    cache.set(cache_key, timeframe, limit, candles)
             finally:
                 await provider.close()
+        # For a historical page, drop any candle at/after `before` so the prepend
+        # on the frontend never overlaps the existing left-most bar.
+        if before > 0:
+            cutoff_ms = before * 1000
+            candles = [c for c in candles if c.timestamp < cutoff_ms]
         # lightweight-charts wants ascending time in seconds
         rows = [
             {"time": int(c.timestamp / 1000), "open": c.open, "high": c.high,

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from aletheia.config.loader import load_config
@@ -26,7 +27,10 @@ def init_scheduler() -> BackgroundScheduler | None:
         logger.info("Scheduler disabled by config; not starting.")
         return None
 
-    _scheduler = BackgroundScheduler()
+    # max_workers=3: default 10 lets 13 jobs all hit `data/app.db` at the same minute
+    # mark; with WAL+busy_timeout, 3 concurrent writers is the sweet spot before lock
+    # contention dominates. Jobs that miss their slot use APScheduler's misfire grace.
+    _scheduler = BackgroundScheduler(executors={"default": ThreadPoolExecutor(3)})
 
     _scheduler.add_job(
         _run_market_data, "interval", minutes=5, id="market_data",

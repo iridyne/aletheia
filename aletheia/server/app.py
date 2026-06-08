@@ -104,4 +104,27 @@ app.include_router(command_router)
 # Serve static dashboard if the directory exists
 _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"
 if _static_dir.exists() and (_static_dir / "index.html").exists():
-    app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="dashboard")
+
+    class _StaticCacheHeaders(StaticFiles):
+        """StaticFiles wrapper that adds correct Cache-Control headers.
+
+        Two cache profiles, picked by URL path:
+          /assets/* — vite emits hashed filenames (index-B8SVnxU1.js); the bytes
+                      at a given path are immutable forever, so cache aggressively.
+          everything else (index.html, /favicon, fallback routes) — must be
+                      revalidated every time so the dashboard picks up new builds
+                      without ctrl+shift+R. ETag (already added by StaticFiles)
+                      keeps revalidations cheap (304 Not Modified).
+        """
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            # `path` arg uses OS separator on Windows ("assets\\foo.js"), so match
+            # against scope["path"] (the original URL) which is always forward-slash.
+            url_path = scope.get("path", "")
+            if url_path.startswith("/assets/"):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return response
+
+    app.mount("/", _StaticCacheHeaders(directory=str(_static_dir), html=True), name="dashboard")

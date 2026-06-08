@@ -280,10 +280,20 @@ _ADDITIVE_COLUMNS = [
 
 
 def _ensure_columns(db) -> None:
+    import sqlite3
     for col, table, coltype in _ADDITIVE_COLUMNS:
         existing = {r["name"] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
-        if col not in existing:
+        if col in existing:
+            continue
+        # ALTER TABLE ADD COLUMN cannot run inside a BEGIN/COMMIT, so the PRAGMA-then-ALTER
+        # check above is a TOCTOU race when two threads call run_migrations() concurrently
+        # (uvicorn startup + scheduler boot). Catch the duplicate and continue — any other
+        # OperationalError still propagates.
+        try:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
 
 
 def fts5_available(db) -> bool:
