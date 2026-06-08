@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from aletheia.config.loader import load_config
@@ -53,7 +54,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _run_exchange_sync, "interval", minutes=5, id="exchange_sync",
-        misfire_grace_time=60,
+        misfire_grace_time=60, next_run_time=datetime.now(),
     )
     _scheduler.add_job(
         _run_paper_trader, "interval", minutes=15, id="paper_trader",

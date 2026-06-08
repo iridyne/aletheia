@@ -275,6 +275,24 @@ class BitgetClient:
             ))
         return positions
 
+    async def get_mix_account(self, product_type: str = "USDT-FUTURES") -> dict:
+        """Get futures/mix account summary (equity, available, unrealized PnL).
+
+        For Bitget demo accounts this is the only endpoint that returns real
+        balance — spot/account/assets returns empty for demo keys.
+        """
+        path = f"/api/v2/mix/account/accounts?productType={product_type}"
+        headers = self._headers("GET", path)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        accounts = data.get("data", []) or []
+        if not accounts:
+            return {}
+        return accounts[0]
+
     async def get_open_orders(self, market_type: str = "spot") -> list[dict]:
         """Get unfilled (open) orders (§19.3)."""
         if market_type == "spot":

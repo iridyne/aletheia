@@ -69,8 +69,7 @@ def _store(state: ExchangeAccountState) -> None:
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
         (_settings_key(state.mode), payload),
     )
-    if not db.in_transaction:
-        db.commit()
+    db.commit()
 
 
 def _read_raw(mode: str) -> Optional[dict]:
@@ -162,27 +161,44 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
         return None
 
     try:
-        balances = _run_async(client.get_balances())
-        # Spot balances: USDT line carries the bulk of the account value for our use.
+        # Primary path: mix/account/accounts returns usdtEquity for both demo and
+        # live keys. Bitget demo keys return empty data from spot/account/assets,
+        # so we prefer the mix endpoint which correctly includes all asset value.
         usdt_avail = 0.0
         usdt_frozen = 0.0
-        for b in balances:
-            if (b.currency or "").upper() == "USDT":
-                usdt_avail = float(b.available)
-                usdt_frozen = float(b.frozen)
-                break
-        # Futures positions (USDT-margined). Errors here are non-fatal — many demo
-        # accounts only enable spot, so a 4xx on the futures endpoint is OK.
         futures_upnl = 0.0
+        equity_from_mix = None
+        try:
+            mix_acct = _run_async(client.get_mix_account("USDT-FUTURES"))
+            if mix_acct:
+                equity_from_mix = float(mix_acct.get("usdtEquity") or mix_acct.get("accountEquity") or 0)
+                usdt_avail = float(mix_acct.get("available") or 0)
+                usdt_frozen = float(mix_acct.get("locked") or 0)
+                futures_upnl = float(mix_acct.get("unrealizedPL") or mix_acct.get("crossedUnrealizedPL") or 0)
+                logger.info("exchange_sync: mix equity=%.4f avail=%.4f", equity_from_mix, usdt_avail)
+        except Exception as e:
+            logger.info("exchange_sync: mix account skipped (%s), falling back to spot", e)
+
+        # Fallback: spot/account/assets (works for live keys, empty for demo keys)
+        if equity_from_mix is None:
+            balances = _run_async(client.get_balances())
+            for b in balances:
+                if (b.currency or "").upper() == "USDT":
+                    usdt_avail = float(b.available)
+                    usdt_frozen = float(b.frozen)
+                    break
+
+        # Futures positions (open count + unrealized PnL if not already from mix).
         positions_count = 0
         try:
             futures = _run_async(client.get_positions())
             positions_count = len(futures)
-            futures_upnl = sum(float(p.unrealized_pnl or 0) for p in futures)
+            if equity_from_mix is None:
+                futures_upnl = sum(float(p.unrealized_pnl or 0) for p in futures)
         except Exception as e:
             logger.info("exchange_sync: futures positions skipped (%s)", e)
 
-        # Open orders (spot + futures). Same non-fatal posture for futures.
+        # Open orders (spot + futures).
         open_orders = 0
         try:
             open_orders += len(_run_async(client.get_open_orders(market_type="spot")))
@@ -193,7 +209,7 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
         except Exception as e:
             logger.info("exchange_sync: futures open orders skipped (%s)", e)
 
-        equity = usdt_avail + usdt_frozen + futures_upnl
+        equity = equity_from_mix if equity_from_mix is not None else (usdt_avail + usdt_frozen + futures_upnl)
         state = ExchangeAccountState(
             mode=mode,
             equity_usdt=round(equity, 4),
