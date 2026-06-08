@@ -28,3 +28,10 @@ CLAUDE.local.md
 # OS files
 .DS_Store
 Thumbs.db
+
+# Vite dependency pre-bundling cache (build artifact)
+.vite/
+
+# Chat exports (large personal conversation dumps — keep out of repo history)
+docs/ChatExport_*/
+docs/ChatExport_*.zip
