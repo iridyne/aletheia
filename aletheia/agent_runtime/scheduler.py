@@ -52,6 +52,10 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=120,
     )
     _scheduler.add_job(
+        _run_exchange_sync, "interval", minutes=5, id="exchange_sync",
+        misfire_grace_time=60,
+    )
+    _scheduler.add_job(
         _run_paper_trader, "interval", minutes=15, id="paper_trader",
         misfire_grace_time=60,
     )
@@ -155,6 +159,18 @@ def _run_reconciliation():
         reconcile()
     except Exception as e:
         logger.warning("reconciliation job failed: %s", e)
+
+
+def _run_exchange_sync():
+    """Periodic refresh of the cached real-account view (read-only)."""
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        from aletheia.portfolio.exchange_sync import sync_exchange_account
+        sync_exchange_account()
+    except Exception as e:
+        logger.warning("exchange_sync job failed: %s", e)
 
 
 def _run_portfolio_snapshot():

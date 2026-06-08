@@ -143,6 +143,21 @@ async def get_portfolio():
     return compute_portfolio()
 
 
+@router.get("/exchange/account")
+async def get_exchange_account():
+    """Cached real-account view (closes portfolio-sync-gap).
+
+    Read-only. Returns the last sync result + freshness + status. The HTTP path
+    NEVER hits Bitget synchronously — the scheduler refreshes the cache. UI uses
+    `status` to render honest fallbacks (unconfigured / stale / error).
+    """
+    _ensure_db()
+    from aletheia.portfolio import exchange_sync
+    state = exchange_sync.get_cached_state()
+    status = exchange_sync.status_for(state)
+    return {"status": status, "state": state}
+
+
 @router.get("/audit/events")
 async def get_audit_events(limit: int = 100):
     _ensure_db()

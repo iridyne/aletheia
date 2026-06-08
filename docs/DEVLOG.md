@@ -1,6 +1,39 @@
 # Development Log
 
-## 2026-06-07 (latest) — WebUI backend handoff: position FK + steps endpoint
+## 2026-06-08 — Exchange Account Sync (closes WEBUI_BACKEND_HANDOFF #3 / portfolio-sync-gap)
+
+The Portfolio dashboard was off by an entire reality: it only saw locally-managed
+positions, so `total_value_usdt = 0` even when the demo account held real balance.
+Now closed:
+
+- **`portfolio/exchange_sync.py`** (new) — `sync_exchange_account()` calls the existing
+  read-only Bitget client methods (`get_balances`/`get_positions`/`get_open_orders`)
+  and caches the result as a JSON blob in the `settings` table (no schema change). Status
+  classifier `ok | stale | unconfigured | error`. Never raises; degrades to None and the
+  UI shows the existing caveat. **Note (turned out client.py was already exposing
+  everything — no change-controlled module touched).**
+- **`compute_portfolio()`** — extended with `exchange_equity_usdt`,
+  `exchange_state_age_sec`, `exchange_external_positions` (drift signal), and
+  `exchange_sync_status`. The local managed `total_value_usdt` field is preserved so the
+  UI can show both side-by-side and reconcile drift.
+- **`GET /api/exchange/account`** — read-only cached view; HTTP path never blocks on
+  Bitget. Scheduler refreshes the cache every 5 min via a new `_run_exchange_sync` job.
+- **`aletheia bitget sync`** CLI — manual one-shot for debugging.
+
+Red lines kept: read-only against the exchange; external positions stay out of the
+local `positions` table (they have no proposal back-link → would violate trust §1.1);
+`exchanges/bitget/client.py` untouched. New `tests/test_exchange_sync.py` (9 tests
+including a red-line test that asserts the local positions table stays empty after a
+sync). Full suite 396 passed. Real e2e: CLI sync against the live demo account
+returned `status: ok` and the cached view flowed into `/api/exchange/account` and
+`/api/portfolio` after a gateway restart.
+
+Cross-process visibility caveat: SQLite WAL means a CLI write doesn't immediately
+appear to a long-running gateway process holding its own connection. In practice the
+scheduler refreshes the cache from inside the gateway process every 5 min, so the API
+sees the truth on its own timeline — no extra wiring needed for the production path.
+
+## 2026-06-07 — WebUI backend handoff: position FK + steps endpoint
 
 Implemented the two actionable, in-scope gaps from `WEBUI_BACKEND_HANDOFF.md`:
 

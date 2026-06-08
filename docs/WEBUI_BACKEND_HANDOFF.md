@@ -14,8 +14,12 @@
 >   `agent_run_steps` table is **not yet written by any agent**, so it returns `[]` today —
 >   honest empty. Populating it (agents recording step inputs/outputs) is a separate,
 >   larger change touching every agent and was out of this handoff's "expose the table" scope.
-> - ⏸️ **#3 NOT DONE** — touches change-controlled `exchanges/bitget/client.py`; needs an
->   explicit owner authorization before work begins (per AGENTS.md trust boundary).
+> - ✅ **#3 DONE** (2026-06-08, owner authorized): new `portfolio/exchange_sync.py` pulls
+>   real account state via the existing read-only Bitget client methods (no client.py
+>   change needed). `compute_portfolio` now exposes `exchange_equity_usdt` +
+>   `exchange_sync_status` + drift count; `GET /api/exchange/account` is live; scheduler
+>   refreshes every 5 min. Read-only against the exchange; external positions are NEVER
+>   written into the local positions table (would violate trust §1.1). 9 new tests.
 > - 🚫 **#4 NOT DONE** — news ingestion is banned MVP scope (AGENTS.md); intentionally skipped.
 >
 > Tests: `tests/test_webui_backend_handoff.py` (6); full suite 387 passed.
@@ -64,7 +68,7 @@ point; no layout change needed.
 
 ---
 
-## 3. Real exchange account equity  (portfolio-sync-gap)
+## 3. Real exchange account equity  (portfolio-sync-gap)  ✅ DONE
 **What the UI does today:** `components/AccountSnapshot.tsx` + `components/PnLZone.tsx` render
 `portfolio.total_value_usdt` with the standing caveat **"aletheia-managed only · exchange sync
 pending"**, and `today_pnl` → "—" / "not available" when null. The Trades & Positions exposure
