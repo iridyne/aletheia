@@ -37,13 +37,12 @@ from aletheia.trading.indicators import (
 logger = logging.getLogger("aletheia.market_context")
 
 
-# Timeframes we pull. Bitget granularity strings are case-sensitive.
-# (1h × 48 = 2 days; 4h × 30 = 5 days; 1d × 30 = 1 month — enough for SMA50
-# we need 50, so we bump 1h to 60 and 4h to 50 for SMA coverage)
+# Timeframes in canonical format (1h, 4h, 1d).
+# Limits sized for SMA50 coverage: 1h×60=2.5d, 4h×50=8d, 1d×30=1mo.
 _TIMEFRAMES = [
     ("1h", 60),
     ("4h", 50),
-    ("1day", 30),
+    ("1d", 30),
 ]
 
 
@@ -163,7 +162,8 @@ async def build_market_context(
     symbols: list[str],
     *,
     market_type: str = "spot",
-    client=None,  # injected for testability
+    client=None,   # legacy param — ignored, kept for call-site compatibility
+    provider=None, # MarketDataProvider; created from config if None
 ) -> tuple[str, dict]:
     """Build the verified market snapshot block for the LLM.
 
@@ -175,58 +175,72 @@ async def build_market_context(
     can attach it to a record_step() call so the reasoning trace shows what
     the model actually saw.
     """
-    if client is None:
-        from aletheia.config.loader import load_config
-        from aletheia.exchanges.bitget.client import BitgetClient
-        cfg = load_config()
-        client = BitgetClient(mode=cfg.exchange.mode)
+    from aletheia.config.loader import load_config
+    cfg = load_config()
+    md_cfg = cfg.market_data
+
+    _owned_provider = False
+    if provider is None:
+        from aletheia.data.ccxt_provider import CCXTProvider
+        provider = CCXTProvider(
+            exchange=md_cfg.ccxt_exchange,
+            fallback_exchange=md_cfg.ccxt_fallback,
+        )
+        _owned_provider = True
+
+    from aletheia.data.cache import get_cache
+    cache = get_cache()
 
     debug: dict = {"symbols": {}, "errors": []}
     sections: list[str] = []
     returns_24h: dict[str, float | None] = {}
 
-    for sym in symbols:
-        sym_debug: dict = {}
-        snaps: list[_IndicatorSnap] = []
-        closes_1h: list[float] = []
-        for tf, limit in _TIMEFRAMES:
-            try:
-                candles = await client.get_ohlcv(sym, timeframe=tf, limit=limit,
-                                                  market_type=market_type)
-            except Exception as e:
-                debug["errors"].append(f"{sym}/{tf}: {e}")
-                logger.warning("OHLCV fetch failed %s/%s: %s", sym, tf, e)
-                continue
-            if not candles:
-                continue
-            # Bitget returns newest-first or oldest-first depending on endpoint;
-            # sort defensively so our oldest→newest invariant holds.
-            candles = sorted(candles, key=lambda c: c.timestamp)
-            closes = [c.close for c in candles]
-            highs = [c.high for c in candles]
-            lows = [c.low for c in candles]
-            volumes = [c.volume for c in candles]
-            snap = _compute_snap(closes, highs, lows, volumes, tf)
-            snaps.append(snap)
-            sym_debug[tf] = {
-                "bars": len(candles), "last_close": snap.last_close,
-                "rsi_14": snap.rsi_14, "sma_50": snap.sma_50,
-                "momentum_10": snap.momentum_10,
-            }
-            if tf == "1h":
-                closes_1h = closes
-                # 24h = 24 bars on 1h. Use the last 24 bars to approximate.
-                if len(closes) >= 25:
-                    past = closes[-25]
-                    last = closes[-1]
-                    if past:
-                        returns_24h[sym] = (last - past) / past * 100
-                else:
-                    returns_24h[sym] = None
-        if snaps:
-            sections.append(_render_snap_table(sym, snaps))
-            sections.append(_render_recent_closes(sym, closes_1h, take=10))
-        debug["symbols"][sym] = sym_debug
+    try:
+        for sym in symbols:
+            sym_debug: dict = {}
+            snaps: list[_IndicatorSnap] = []
+            closes_1h: list[float] = []
+            for tf, limit in _TIMEFRAMES:
+                try:
+                    candles = cache.get(sym, tf, limit)
+                    if candles is None:
+                        candles = await provider.get_ohlcv(sym, timeframe=tf, limit=limit)
+                        cache.set(sym, tf, limit, candles)
+                except Exception as e:
+                    debug["errors"].append(f"{sym}/{tf}: {e}")
+                    logger.warning("OHLCV fetch failed %s/%s: %s", sym, tf, e)
+                    continue
+                if not candles:
+                    continue
+                # Sort oldest→newest (providers should guarantee this, but be defensive)
+                candles = sorted(candles, key=lambda c: c.timestamp)
+                closes = [c.close for c in candles]
+                highs = [c.high for c in candles]
+                lows = [c.low for c in candles]
+                volumes = [c.volume for c in candles]
+                snap = _compute_snap(closes, highs, lows, volumes, tf)
+                snaps.append(snap)
+                sym_debug[tf] = {
+                    "bars": len(candles), "last_close": snap.last_close,
+                    "rsi_14": snap.rsi_14, "sma_50": snap.sma_50,
+                    "momentum_10": snap.momentum_10,
+                }
+                if tf == "1h":
+                    closes_1h = closes
+                    if len(closes) >= 25:
+                        past = closes[-25]
+                        last = closes[-1]
+                        if past:
+                            returns_24h[sym] = (last - past) / past * 100
+                    else:
+                        returns_24h[sym] = None
+            if snaps:
+                sections.append(_render_snap_table(sym, snaps))
+                sections.append(_render_recent_closes(sym, closes_1h, take=10))
+            debug["symbols"][sym] = sym_debug
+    finally:
+        if _owned_provider:
+            await provider.close()
 
     if not sections:
         # Hard fallback: nothing came back at all (network, bad symbols, etc.).
@@ -247,12 +261,23 @@ async def build_market_context(
         return "\n".join(legacy_lines), debug
 
     rs_block = _render_relative_strength(returns_24h)
+
+    # Optional macro block (yFinance, default off)
+    macro_block = ""
+    if md_cfg.enable_yfinance_macro:
+        try:
+            from aletheia.data.yfinance_provider import fetch_macro_context
+            macro_block = await fetch_macro_context()
+        except Exception as e:
+            logger.warning("Macro context fetch failed: %s", e)
+
     body = (
         "## Verified market data snapshot\n"
         "Source-of-truth for the read below. If you cite a number, it must "
         "come from this block.\n\n"
         + "\n".join(sections)
         + ("\n" + rs_block if rs_block else "")
+        + ("\n" + macro_block if macro_block else "")
         + "\n" + _INDICATOR_GLOSSARY
     )
     debug["fallback"] = False

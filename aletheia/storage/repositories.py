@@ -311,10 +311,27 @@ def insert_market_snapshot(snap) -> None:
     _insert("market_snapshots", snap.model_dump())
 
 
-def list_market_snapshots(symbol: str | None = None, limit: int = 100) -> list[dict]:
+def list_market_snapshots(
+    symbol: str | None = None,
+    limit: int = 100,
+    exchange: str = "",
+) -> list[dict]:
+    """Return market snapshots, optionally filtered by symbol and/or exchange."""
+    conditions: list[str] = []
+    params: list = []
     if symbol:
-        return _select_all("market_snapshots", where="symbol = ?", params=(symbol,), limit=limit)
-    return _select_all("market_snapshots", limit=limit)
+        conditions.append("symbol = ?")
+        params.append(symbol)
+    if exchange:
+        conditions.append("exchange = ?")
+        params.append(exchange)
+    where = " AND ".join(conditions) if conditions else None
+    return _select_all(
+        "market_snapshots",
+        where=where,
+        params=tuple(params),
+        limit=limit,
+    )
 
 
 # --- Portfolio Snapshots ---
@@ -430,18 +447,25 @@ def upsert_ohlcv_candles(
     timeframe: str,
     candles: list,  # list of Candle dataclass from aletheia.data.providers
     provider: str = "ccxt",
+    exchange: str = "",
 ) -> None:
-    """Insert or replace OHLCV bars, then prune to _OHLCV_WINDOW newest rows."""
+    """Insert or replace OHLCV bars, then prune to _OHLCV_WINDOW newest rows.
+
+    exchange: source exchange name (e.g. "binance"). Stored for query filtering;
+    does not affect the PRIMARY KEY (symbol, timeframe, ts) — last-writer wins
+    for the same bar across exchanges (acceptable MVP tradeoff).
+    """
     if not candles:
         return
+    effective_exchange = exchange or provider
     db = get_db()
     db.executemany(
         "INSERT OR REPLACE INTO market_ohlcv "
-        "(symbol, timeframe, ts, open, high, low, close, volume, provider) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(symbol, timeframe, ts, open, high, low, close, volume, provider, exchange) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (symbol, timeframe, c.timestamp,
-             c.open, c.high, c.low, c.close, c.volume, provider)
+             c.open, c.high, c.low, c.close, c.volume, provider, effective_exchange)
             for c in candles
         ],
     )
@@ -463,15 +487,28 @@ def get_ohlcv_candles(
     symbol: str,
     timeframe: str,
     limit: int = 100,
+    exchange: str = "",
 ) -> list[dict]:
-    """Return up to `limit` most-recent OHLCV bars, oldest-first."""
+    """Return up to `limit` most-recent OHLCV bars, oldest-first.
+
+    exchange: if given, filter to rows from that exchange only.
+    """
     db = get_db()
-    rows = db.execute(
-        "SELECT ts, open, high, low, close, volume, provider "
-        "FROM market_ohlcv "
-        "WHERE symbol = ? AND timeframe = ? "
-        "ORDER BY ts DESC LIMIT ?",
-        (symbol, timeframe, limit),
-    ).fetchall()
+    if exchange:
+        rows = db.execute(
+            "SELECT ts, open, high, low, close, volume, provider, exchange "
+            "FROM market_ohlcv "
+            "WHERE symbol = ? AND timeframe = ? AND exchange = ? "
+            "ORDER BY ts DESC LIMIT ?",
+            (symbol, timeframe, exchange, limit),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT ts, open, high, low, close, volume, provider, exchange "
+            "FROM market_ohlcv "
+            "WHERE symbol = ? AND timeframe = ? "
+            "ORDER BY ts DESC LIMIT ?",
+            (symbol, timeframe, limit),
+        ).fetchall()
     # Reverse so callers get oldest→newest
     return [dict(r) for r in reversed(rows)]

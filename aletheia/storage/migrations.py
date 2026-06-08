@@ -264,6 +264,18 @@ _ADDITIVE_COLUMNS = [
     ("confidence_score", "opportunities", "INTEGER"),
     # Real exchange equity at snapshot time; NULL when exchange is unconfigured/stale.
     ("exchange_equity_usdt", "portfolio_snapshots", "REAL"),
+    # Extended ticker fields added with CCXT migration (2026-06-08)
+    ("high_24h", "market_snapshots", "REAL"),
+    ("low_24h", "market_snapshots", "REAL"),
+    ("provider", "market_snapshots", "TEXT"),
+    # Multi-asset class support (2026-06-08): "crypto" | "equity" | "prediction"
+    ("asset_class", "opportunities", "TEXT"),
+    # Exchange-aware instrument identity (2026-06-08): which exchange supplied the data.
+    # Allows Binance spot BTC/USDT and Bybit spot BTC/USDT to coexist without overwriting.
+    ("exchange", "market_snapshots", "TEXT"),
+    # exchange column on OHLCV (supplement to provider — same value, explicit naming).
+    # Primary key stays (symbol, timeframe, ts); exchange stored for query filtering only.
+    ("exchange", "market_ohlcv", "TEXT"),
 ]
 
 

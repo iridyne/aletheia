@@ -56,6 +56,9 @@ class Opportunity(BaseModel):
     created_at: str = Field(default_factory=_utcnow)
     status: str = "open"
     linked_strategy_id: str | None = None
+    # Asset class: "crypto" | "equity" | "prediction". Default "crypto" keeps
+    # older rows valid. paper_trader only acts on "crypto" opportunities.
+    asset_class: str = "crypto"
 
 
 class TradeProposal(BaseModel):
@@ -164,8 +167,9 @@ class KnowledgeItem(BaseModel):
 
 class MarketSnapshot(BaseModel):
     id: str = Field(default_factory=new_id)
-    symbol: str
-    market_type: str
+    symbol: str        # canonical: BTC/USDT
+    market_type: str   # "spot" | "perp" | "futures"
+    exchange: str = "" # source exchange: "binance", "bybit", "bitget", …
     price: float
     volume_24h: float | None = None
     change_pct_24h: float | None = None

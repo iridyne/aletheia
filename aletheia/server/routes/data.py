@@ -205,32 +205,73 @@ async def retire_strategy_route(strategy_id: str):
 
 
 @router.get("/market/snapshots")
-async def get_market_snapshots(symbol: str | None = None, limit: int = 200):
+async def get_market_snapshots(
+    symbol: str | None = None,
+    limit: int = 200,
+    exchange: str = "",
+):
+    """Return market snapshots.
+
+    Optional filters:
+    - symbol: canonical BTC/USDT format
+    - exchange: source exchange name (e.g. "binance", "bybit")
+    """
     _ensure_db()
-    return repo.list_market_snapshots(symbol=symbol, limit=limit)
+    return repo.list_market_snapshots(symbol=symbol, limit=limit, exchange=exchange)
 
 
 @router.get("/market/ohlcv")
-async def get_market_ohlcv(symbol: str = "BTCUSDT", timeframe: str = "1h", limit: int = 100):
-    """Fetch OHLCV candles from Bitget for charting (public endpoint)."""
+async def get_market_ohlcv(
+    symbol: str = "BTC/USDT",
+    timeframe: str = "1h",
+    limit: int = 100,
+    exchange: str = "",
+    market_type: str = "spot",
+):
+    """Fetch OHLCV candles via CCXT for charting (public endpoint).
+
+    Optional:
+    - exchange: prefer this exchange (e.g. "binance"). Defaults to config ccxt_exchange.
+    - market_type: "spot" (default) | "perp" — for perpetual contract candles.
+    """
+    import logging
     from aletheia.config.loader import load_config
-    from aletheia.exchanges.bitget.client import BitgetClient
-    from aletheia.trading.instruments import BITGET_GRANULARITY
+    from aletheia.data.ccxt_provider import CCXTProvider
+    from aletheia.data.cache import get_cache
+    from aletheia.data.symbols import to_canonical, InstrumentId
     cfg = load_config()
-    client = BitgetClient(mode=cfg.exchange.mode)
-    gran = BITGET_GRANULARITY.get(timeframe, timeframe)
+    md_cfg = cfg.market_data
+    sym = to_canonical(symbol)
+    effective_exchange = exchange or md_cfg.ccxt_exchange
+
+    # Build an InstrumentId so CCXTProvider uses the correct CCXT symbol internally
     try:
-        candles = await client.get_ohlcv(symbol, timeframe=gran, limit=limit, market_type="spot")
+        instrument = InstrumentId.from_parts(effective_exchange, sym, market_type)
+    except ValueError:
+        return {"error": f"invalid_instrument: {effective_exchange}:{sym}:{market_type}", "candles": []}
+
+    cache = get_cache()
+    cache_key = sym  # cache by canonical symbol (same data regardless of exchange for spot)
+    try:
+        candles = cache.get(cache_key, timeframe, limit)
+        if candles is None:
+            provider = CCXTProvider(
+                exchange=effective_exchange,
+                fallback_exchange=md_cfg.ccxt_fallback,
+            )
+            try:
+                candles = await provider.get_ohlcv(instrument, timeframe=timeframe, limit=limit)
+                cache.set(cache_key, timeframe, limit, candles)
+            finally:
+                await provider.close()
         # lightweight-charts wants ascending time in seconds
         rows = [
             {"time": int(c.timestamp / 1000), "open": c.open, "high": c.high,
              "low": c.low, "close": c.close, "volume": c.volume}
-            for c in candles
+            for c in sorted(candles, key=lambda c: c.timestamp)
         ]
-        rows.sort(key=lambda r: r["time"])
         return rows
     except Exception as e:
-        import logging
         logging.getLogger("aletheia.routes.data").warning("OHLCV fetch failed: %s", e)
         return {"error": "market_data_unavailable", "candles": []}
 

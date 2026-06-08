@@ -37,7 +37,34 @@ class ExchangeConfig(BaseModel):
     name: str = "bitget"
     mode: str = "demo"
     enabled_markets: dict[str, bool] = Field(default_factory=lambda: {"spot": True, "usdt_futures": True})
+    # Trading whitelist only — which symbols may be traded via this exchange.
+    # Market data observation is controlled by MarketDataConfig.observed_symbols.
     tradable_symbols: list[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+
+
+class MarketDataConfig(BaseModel):
+    # "ccxt" uses CCXT Binance/Bybit; "bitget" falls back to BitgetClient (legacy).
+    provider: str = "ccxt"
+    ccxt_exchange: str = "binance"
+    ccxt_fallback: str = "bybit"
+    # Symbols to observe for market analysis (canonical BTC/USDT format).
+    # Kept for backwards compatibility — if observed_instruments is non-empty it takes
+    # precedence and this list is derived from it automatically.
+    observed_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    # Full instrument identifiers: "exchange:BASE/QUOTE:market_type"
+    # e.g. ["binance:BTC/USDT:spot", "binance:BTC/USDT:perp", "bybit:ETH/USDT:spot"]
+    # When non-empty, this is the authoritative source for what to observe.
+    # When empty, observed_symbols + ccxt_exchange + "spot" are used (legacy path).
+    observed_instruments: list[str] = Field(default_factory=list)
+    ohlcv_cache_ttl_min: int = 10
+    # Append macro (SPY/VIX/DXY/Gold) block to LLM market context prompt.
+    enable_yfinance_macro: bool = False
+    # US equities to observe (Yahoo Finance tickers). stock_observer runs only
+    # during US market hours (Mon–Fri 14:30–21:00 UTC).
+    observed_stocks: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "NVDA", "AAPL"])
+    # Polymarket category slugs (or keywords) to observe. prediction_observer
+    # fetches active markets matching these categories every 30 minutes.
+    observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])
 
 
 class LiveConfig(BaseModel):
@@ -163,6 +190,7 @@ class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     exchange: ExchangeConfig = Field(default_factory=ExchangeConfig)
+    market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
     live: LiveConfig = Field(default_factory=LiveConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)

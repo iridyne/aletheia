@@ -49,6 +49,11 @@ async def get_settings():
             "enabled": cfg.telegram.enabled,
             "allowed_chat_ids": cfg.telegram.allowed_chat_ids,
         },
+        "market_data": {
+            "observed_symbols": cfg.market_data.observed_symbols,
+            "observed_instruments": cfg.market_data.observed_instruments,
+            "ccxt_exchange": cfg.market_data.ccxt_exchange,
+        },
     }
 
 
@@ -427,6 +432,19 @@ async def update_tradable_symbols(req: SymbolsUpdate):
 
     cfg.risk.allowed_symbols = normalized
     cfg.exchange.tradable_symbols = normalized
+    # Keep observed_symbols + observed_instruments in sync so new symbols
+    # are actually fetched by the market data collection loop.
+    from aletheia.data.symbols import to_canonical, InstrumentId, MARKET_SPOT
+    canonical_symbols = [to_canonical(s) for s in normalized]
+    cfg.market_data.observed_symbols = canonical_symbols
+    # Rebuild observed_instruments using the configured primary exchange + spot.
+    # If user has manually configured perp instruments those will be wiped here —
+    # acceptable for MVP; advanced users edit config.yaml directly.
+    exchange = cfg.market_data.ccxt_exchange or "binance"
+    cfg.market_data.observed_instruments = [
+        str(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
+        for sym in canonical_symbols
+    ]
     save_config(cfg)
 
     from aletheia.files.jsonl import write_audit

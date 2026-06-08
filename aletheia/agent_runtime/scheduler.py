@@ -72,6 +72,19 @@ def init_scheduler() -> BackgroundScheduler | None:
         _run_health_check, "interval", minutes=10, id="health_check",
         misfire_grace_time=120,
     )
+    # US equity observer — runs every 30 min Mon–Fri during US market hours
+    # (14:30–21:00 UTC = 09:30–16:00 Eastern). The job function enforces the
+    # time gate so off-hours fires are silent no-ops (stale daily data).
+    _scheduler.add_job(
+        _run_stock_observer, "cron",
+        day_of_week="mon-fri", hour="14-20", minute="*/30",
+        id="stock_observer", misfire_grace_time=300,
+    )
+    # Prediction market observer — runs every 30 min around the clock.
+    _scheduler.add_job(
+        _run_prediction_observer, "interval", minutes=30,
+        id="prediction_observer", misfire_grace_time=120,
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -210,6 +223,32 @@ def _run_position_manager():
         evaluate_open_positions()
     except Exception as e:
         logger.warning("position_manager job failed: %s", e)
+
+
+def _run_stock_observer():
+    """Run stock_observer during US market hours (gate checked here too)."""
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    # Redundant time gate (scheduler cron already filters, but be explicit).
+    if not cfg.market_data.observed_stocks:
+        return
+    try:
+        asyncio.run(_async_run("stock_observer"))
+    except Exception as e:
+        logger.warning("stock_observer job failed: %s", e)
+
+
+def _run_prediction_observer():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    if not cfg.market_data.observed_prediction_markets:
+        return
+    try:
+        asyncio.run(_async_run("prediction_observer"))
+    except Exception as e:
+        logger.warning("prediction_observer job failed: %s", e)
 
 
 def _run_cleanup():

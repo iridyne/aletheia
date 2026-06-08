@@ -1,4 +1,10 @@
-"""Market Observer agent — observes market conditions and creates opportunities."""
+"""Market Observer agent — observes market conditions and creates opportunities.
+
+Per-symbol loop: each symbol gets its own LLM MarketRead call and its own
+Opportunity row. This fixes the original "only BTC" bug where all symbol data
+was sent to the LLM together but only symbols[0] was used for the resulting
+opportunity.
+"""
 
 from typing import Literal
 
@@ -9,7 +15,7 @@ from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
-from aletheia.trading.instruments import tradable_symbols_from_config
+from aletheia.trading.instruments import observed_instruments_from_config
 from aletheia.config.loader import load_config
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
@@ -17,7 +23,7 @@ _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 
 
 class MarketRead(BaseModel):
-    """Structured market read.
+    """Structured market read for a single symbol.
 
     Two design choices vs. the previous schema:
       1. `confidence_score` (0-100) sits alongside the categorical `confidence`.
@@ -42,10 +48,10 @@ class MarketRead(BaseModel):
 _SYSTEM_PROMPT = """\
 You are a crypto market observer for Aletheia paper-trading.
 
-You will receive a verified market snapshot containing: latest prices, multi-
-timeframe technical indicators (SMA/RSI/ATR/Bollinger/momentum), recent close
-series, and cross-asset relative strength. Use this snapshot as your single
-source of truth — do not invent numbers or claim levels not in the data.
+You will receive a verified market snapshot for ONE symbol containing:
+latest price, multi-timeframe technical indicators (SMA/RSI/ATR/Bollinger/
+momentum), recent close series. Use this snapshot as your single source of
+truth — do not invent numbers or claim levels not in the data.
 
 Output a structured market read. Calibration:
 
@@ -72,77 +78,47 @@ Output a structured market read. Calibration:
 Not financial advice."""
 
 
-@register_agent("market_observer")
-async def run_market_observer(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
-    """Observe market state and create opportunities if permitted."""
-    outputs: list[str] = []
-    errors: list[str] = []
+async def _analyze_symbol(
+    symbol: str,
+    market_type: str,
+    permission_mode: str,
+    run_id: str | None,
+    linked_strategy_id: str | None,
+    memory_block: str,
+) -> tuple[str | None, str | None]:
+    """Run market context build + LLM read for a single symbol.
 
-    if not is_tool_permitted("get_market_snapshot", permission_mode):
-        errors.append("get_market_snapshot not permitted in current mode")
-        return {"outputs": outputs, "errors": errors}
+    Returns (opportunity_id, error_str). Both may be None if the symbol is
+    simply skipped (no permission, neutral signal, etc.).
+    """
+    from aletheia.trading.market_context import build_market_context
 
-    cfg = load_config()
-    symbols = tradable_symbols_from_config(cfg)
-    cfg_markets = cfg.exchange.enabled_markets
-    market_type = "usdt_futures" if cfg_markets.get("usdt_futures") and not cfg_markets.get("spot") else "spot"
-
-    # === New: build a verified multi-timeframe market context ===
-    # Replaces the previous one-line "BTC 24h_change=0.05%" feed that caused
-    # every opportunity to come back neutral / speculative. Falls back to the
-    # legacy 1-liner internally if OHLCV fetch fails.
     try:
-        from aletheia.trading.market_context import build_market_context
-        context, ctx_debug = await build_market_context(symbols, market_type=market_type)
+        context, ctx_debug = await build_market_context([symbol], market_type=market_type)
         log_tool(run_id, "build_market_context", "read_tool", True,
-                 output=f"fallback={ctx_debug.get('fallback')} "
+                 output=f"{symbol} fallback={ctx_debug.get('fallback')} "
                         f"errs={len(ctx_debug.get('errors', []))}")
     except Exception as e:
-        # Truly catastrophic — degrade further to legacy snapshot path so the
-        # agent still produces something and LLM can answer honestly.
         from aletheia.trading.market_data import latest_snapshot
-        context_lines = []
-        for sym in symbols:
-            snap = latest_snapshot(sym)
-            log_tool(run_id, "get_market_snapshot", "read_tool", True, output=sym)
-            if snap:
-                context_lines.append(f"{sym}: price={snap['price']} 24h_change={snap.get('change_pct_24h')}%")
-            else:
-                context_lines.append(f"{sym}: no snapshot yet")
-        context = "\n".join(context_lines)
-        errors.append(f"market_context_fallback: {e}")
+        snap = latest_snapshot(symbol)
+        log_tool(run_id, "get_market_snapshot", "read_tool", True, output=symbol)
+        if snap:
+            context = f"{symbol}: price={snap['price']} 24h_change={snap.get('change_pct_24h')}%"
+        else:
+            context = f"{symbol}: no snapshot yet"
+        return None, f"market_context_fallback:{symbol}:{e}"
 
-    # Experience loop (§6): pull relevant high-confidence prior lessons and
-    # inject them as ADVISORY context. Read-only, quality-gated, degrades to nothing.
-    memory_block = ""
-    try:
-        from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
-        lessons = retrieve_lessons(
-            query=f"{' '.join(symbols)} market regime risk funding volatility",
-            k=3,
-            item_types=["research_note", "post_trade_review", "dreaming_log"],
-        )
-        memory_block = format_memory_block(lessons)
-        log_tool(run_id, "retrieve_lessons", "read_tool", True, output=f"lessons:{len(lessons)}")
-    except Exception:
-        pass
-
-    # Reasoning-trace breadcrumb so /api/agent-runs/{id}/steps shows what the
-    # model actually saw — kills the "AI is doing nothing" perception when
-    # output is honest neutral on flat markets.
     record_step(
-        run_id, "market_read_input",
-        input_data=f"symbols={symbols} ctx_len={len(context)} memory_lessons="
-                   f"{len(memory_block) > 0}",
-        output_data=context[:1500],  # truncate; full context can be 2-5kb
+        run_id, f"market_read_input:{symbol}",
+        input_data=f"symbol={symbol} ctx_len={len(context)} memory={len(memory_block) > 0}",
+        output_data=context[:1000],
     )
 
-    # Ask the LLM for a STRUCTURED market read (degrades gracefully if unavailable).
     read, err = await llm_structured(
         system=_SYSTEM_PROMPT,
-        user=f"Market data:\n{context}{memory_block}\n\nReturn the market read JSON.",
+        user=f"Market data for {symbol}:\n{context}{memory_block}\n\nReturn the market read JSON.",
         schema=MarketRead,
-        max_tokens=600,  # bumped from 400 — observations + rationale need room
+        max_tokens=600,
     )
     log_tool(run_id, "llm_structured", "research_tool", True)
 
@@ -151,9 +127,11 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
     confidence_score: int | None = None
     rationale = ""
     observations: list[str] = []
+
     if err or not read:
-        errors.append(err or "no_structured_read")
+        llm_error = err or "no_structured_read"
     else:
+        llm_error = None
         d = str(read.get("direction_bias", "")).lower()
         c = str(read.get("confidence", "")).lower()
         if d in _VALID_DIRECTIONS:
@@ -168,9 +146,8 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
         if isinstance(obs, list):
             observations = [str(o)[:200] for o in obs[:4] if o]
 
-    # Trace the structured output too — completes the read→decision picture.
     record_step(
-        run_id, "market_read_output",
+        run_id, f"market_read_output:{symbol}",
         input_data=None,
         output_data=(
             f"direction={direction} confidence={confidence} "
@@ -178,51 +155,94 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
         ),
     )
 
-    if is_tool_permitted("create_opportunity", permission_mode):
-        symbol = symbols[0] if symbols else "BTCUSDT"
-        # Bind to an active (tradable) strategy so the causal chain
-        # opportunity -> proposal -> order -> fill -> position carries a strategy_id.
-        # Honest: leave None if no active strategy exists.
-        linked_strategy_id = None
-        for s in list_strategies(limit=50):
-            if s.get("state") in ("paper_running", "paper_candidate"):
-                linked_strategy_id = s["id"]
-                break
+    if not is_tool_permitted("create_opportunity", permission_mode):
+        return None, llm_error
 
-        # Compose thesis: rationale (model's narrative) + observations (citations)
-        # + score so a downstream reader sees the full read at a glance.
-        # When the LLM returns an empty structured read (it happens — codex_cli
-        # JSON parse can drop fields), avoid dumping the raw markdown snapshot
-        # into thesis (looks broken on the dashboard). Use a short honest stub
-        # instead so the row is self-explanatory.
-        thesis_parts = []
-        if rationale:
-            thesis_parts.append(rationale)
-        if observations:
-            thesis_parts.append("Observations: " + " | ".join(observations))
-        if confidence_score is not None:
-            thesis_parts.append(f"score={confidence_score}/100")
-        if thesis_parts:
-            thesis = " ".join(thesis_parts)
-        else:
-            thesis = (
-                f"No structured rationale produced (direction={direction}, "
-                f"confidence={confidence}). Likely cause: LLM unavailable or "
-                f"structured-output parse failure — see agent_runs/errors."
-            )
-
-        opp = Opportunity(
-            symbol=symbol,
-            market=market_type,
-            direction_bias=direction,
-            thesis=thesis,
-            confidence=confidence,
-            confidence_score=confidence_score,
-            source_agent="market_observer",
-            linked_strategy_id=linked_strategy_id,
+    # Build thesis
+    thesis_parts = []
+    if rationale:
+        thesis_parts.append(rationale)
+    if observations:
+        thesis_parts.append("Observations: " + " | ".join(observations))
+    if confidence_score is not None:
+        thesis_parts.append(f"score={confidence_score}/100")
+    if thesis_parts:
+        thesis = " ".join(thesis_parts)
+    else:
+        thesis = (
+            f"No structured rationale produced (direction={direction}, "
+            f"confidence={confidence}). Likely cause: LLM unavailable or "
+            f"structured-output parse failure — see agent_runs/errors."
         )
-        insert_opportunity(opp)
-        log_tool(run_id, "create_opportunity", "research_tool", True, output=opp.id)
-        outputs.append(f"opportunity:{opp.id}")
+
+    opp = Opportunity(
+        symbol=symbol,
+        market=market_type,
+        direction_bias=direction,
+        thesis=thesis,
+        confidence=confidence,
+        confidence_score=confidence_score,
+        source_agent="market_observer",
+        linked_strategy_id=linked_strategy_id,
+        asset_class="crypto",
+    )
+    insert_opportunity(opp)
+    log_tool(run_id, "create_opportunity", "research_tool", True, output=opp.id)
+    return opp.id, llm_error
+
+
+@register_agent("market_observer")
+async def run_market_observer(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+    """Observe market state and create one Opportunity per symbol."""
+    outputs: list[str] = []
+    errors: list[str] = []
+
+    if not is_tool_permitted("get_market_snapshot", permission_mode):
+        errors.append("get_market_snapshot not permitted in current mode")
+        return {"outputs": outputs, "errors": errors}
+
+    cfg = load_config()
+    instruments = observed_instruments_from_config(cfg)
+    symbols = [i.symbol for i in instruments]  # canonical list for memory query
+
+    # Find an active strategy to link all opportunities from this run.
+    linked_strategy_id = None
+    for s in list_strategies(limit=50):
+        if s.get("state") in ("paper_running", "paper_candidate"):
+            linked_strategy_id = s["id"]
+            break
+
+    # Experience-loop lessons block (shared across all symbols in one run).
+    memory_block = ""
+    try:
+        from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
+        lessons = retrieve_lessons(
+            query=f"{' '.join(symbols)} market regime risk funding volatility",
+            k=3,
+            item_types=["research_note", "post_trade_review", "dreaming_log"],
+        )
+        memory_block = format_memory_block(lessons)
+        log_tool(run_id, "retrieve_lessons", "read_tool", True, output=f"lessons:{len(lessons)}")
+    except Exception:
+        pass
+
+    # Per-instrument loop: each instrument gets its own LLM call + Opportunity row.
+    # instrument.market_type is the authoritative type; no more config-derived guessing.
+    for instrument in instruments:
+        try:
+            opp_id, err = await _analyze_symbol(
+                symbol=instrument.symbol,
+                market_type=instrument.market_type,
+                permission_mode=permission_mode,
+                run_id=run_id,
+                linked_strategy_id=linked_strategy_id,
+                memory_block=memory_block,
+            )
+            if opp_id:
+                outputs.append(f"opportunity:{opp_id}")
+            if err:
+                errors.append(f"{instrument}:{err}")
+        except Exception as e:
+            errors.append(f"{instrument}:unexpected:{e}")
 
     return {"outputs": outputs, "errors": errors}
