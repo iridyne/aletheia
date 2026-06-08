@@ -127,6 +127,7 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
     exchange_equity_usdt = None
     exchange_state_age_sec = None
     exchange_external_positions = None
+    exchange_asset_breakdown: list = []
     try:
         from aletheia.portfolio import exchange_sync
         cached = exchange_sync.get_cached_state()
@@ -134,12 +135,10 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
         if cached is not None:
             exchange_equity_usdt = cached.get("equity_usdt")
             exchange_state_age_sec = cached.get("age_seconds")
-            local_open = sum(1 for p in positions)  # locally-managed open
+            local_open = sum(1 for p in positions)
             ext_total = int(cached.get("open_positions_count") or 0)
-            # Drift signal: any externally-held positions beyond what we manage.
-            # Negative would mean local > exchange (shouldn't happen on a dedicated
-            # account); clamp to 0 to keep the signal honest.
             exchange_external_positions = max(0, ext_total - local_open)
+            exchange_asset_breakdown = cached.get("asset_breakdown") or []
     except Exception:
         sync_status = "error"
 
@@ -157,6 +156,7 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
         "exchange_state_age_sec": exchange_state_age_sec,
         "exchange_external_positions": exchange_external_positions,
         "exchange_sync_status": sync_status,
+        "exchange_asset_breakdown": exchange_asset_breakdown,
     }
 
 

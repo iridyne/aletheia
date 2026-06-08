@@ -35,6 +35,13 @@ _DEFAULT_MAX_AGE_SEC = 600
 
 
 @dataclass
+class AssetBreakdown:
+    coin: str
+    usdt_value: float   # current value in USDT
+    pct: float          # percentage of total equity (0-100)
+
+
+@dataclass
 class ExchangeAccountState:
     mode: str  # "demo" | "live"
     equity_usdt: float
@@ -44,6 +51,7 @@ class ExchangeAccountState:
     open_positions_count: int
     open_orders_count: int
     fetched_at: str  # ISO UTC
+    asset_breakdown: list  # list[AssetBreakdown] as dicts for JSON serialisation
 
 
 def _settings_key(mode: str) -> str:
@@ -62,6 +70,7 @@ def _store(state: ExchangeAccountState) -> None:
         "open_positions_count": state.open_positions_count,
         "open_orders_count": state.open_orders_count,
         "fetched_at": state.fetched_at,
+        "asset_breakdown": state.asset_breakdown or [],
     })
     # SQLite UPSERT — settings has key as PRIMARY KEY.
     db.execute(
@@ -161,9 +170,35 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
         return None
 
     try:
-        # Primary path: mix/account/accounts returns usdtEquity for both demo and
-        # live keys. Bitget demo keys return empty data from spot/account/assets,
-        # so we prefer the mix endpoint which correctly includes all asset value.
+        # Build per-coin breakdown. Strategy:
+        # 1. Try spot/account/assets — works for live keys, returns real coin balances.
+        # 2. If spot returns empty (demo keys), fall back to mix/account/accounts which
+        #    gives total usdtEquity but only one USDT "coin". We still fetch mix for
+        #    total equity even when spot has data (mix is the authoritative total).
+        # 3. Each non-USDT coin value is coin_qty * USDT_ticker_price.
+        coin_usdt: dict[str, float] = {}  # coin → USDT value
+
+        # Spot holdings (live accounts / coins held in spot wallet)
+        try:
+            balances = _run_async(client.get_balances())
+            for b in balances:
+                coin = (b.currency or "").upper()
+                qty = float(b.available) + float(b.frozen)
+                if qty <= 0:
+                    continue
+                if coin == "USDT":
+                    coin_usdt["USDT"] = coin_usdt.get("USDT", 0) + qty
+                else:
+                    # Convert to USDT via spot ticker
+                    try:
+                        ticker = _run_async(client.get_ticker(f"{coin}USDT", market_type="spot"))
+                        coin_usdt[coin] = coin_usdt.get(coin, 0) + qty * ticker.last_price
+                    except Exception:
+                        pass  # skip if no USDT pair
+        except Exception as e:
+            logger.info("exchange_sync: spot balances skipped (%s)", e)
+
+        # Mix (futures) account — authoritative total equity for demo accounts
         usdt_avail = 0.0
         usdt_frozen = 0.0
         futures_upnl = 0.0
@@ -175,20 +210,14 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
                 usdt_avail = float(mix_acct.get("available") or 0)
                 usdt_frozen = float(mix_acct.get("locked") or 0)
                 futures_upnl = float(mix_acct.get("unrealizedPL") or mix_acct.get("crossedUnrealizedPL") or 0)
+                # If spot returned nothing (demo), use mix USDT as the whole balance
+                if not coin_usdt and equity_from_mix > 0:
+                    coin_usdt["USDT"] = equity_from_mix
                 logger.info("exchange_sync: mix equity=%.4f avail=%.4f", equity_from_mix, usdt_avail)
         except Exception as e:
             logger.info("exchange_sync: mix account skipped (%s), falling back to spot", e)
 
-        # Fallback: spot/account/assets (works for live keys, empty for demo keys)
-        if equity_from_mix is None:
-            balances = _run_async(client.get_balances())
-            for b in balances:
-                if (b.currency or "").upper() == "USDT":
-                    usdt_avail = float(b.available)
-                    usdt_frozen = float(b.frozen)
-                    break
-
-        # Futures positions (open count + unrealized PnL if not already from mix).
+        # Futures positions — unrealized PnL and open count
         positions_count = 0
         try:
             futures = _run_async(client.get_positions())
@@ -198,7 +227,7 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
         except Exception as e:
             logger.info("exchange_sync: futures positions skipped (%s)", e)
 
-        # Open orders (spot + futures).
+        # Open orders
         open_orders = 0
         try:
             open_orders += len(_run_async(client.get_open_orders(market_type="spot")))
@@ -209,7 +238,22 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
         except Exception as e:
             logger.info("exchange_sync: futures open orders skipped (%s)", e)
 
-        equity = equity_from_mix if equity_from_mix is not None else (usdt_avail + usdt_frozen + futures_upnl)
+        # No usable data from any source — return None to preserve the last good cache.
+        if not coin_usdt and equity_from_mix is None:
+            logger.info("exchange_sync: no data from any source, preserving cache")
+            return None
+
+        # Final equity: mix is authoritative when available, else sum of spot coins
+        equity = equity_from_mix if equity_from_mix is not None else sum(coin_usdt.values())
+
+        # Build breakdown list sorted by value desc, with percentages
+        total = equity if equity > 0 else 1.0
+        breakdown = [
+            {"coin": coin, "usdt_value": round(val, 4), "pct": round(val / total * 100, 2)}
+            for coin, val in sorted(coin_usdt.items(), key=lambda x: -x[1])
+            if val > 0
+        ]
+
         state = ExchangeAccountState(
             mode=mode,
             equity_usdt=round(equity, 4),
@@ -219,6 +263,7 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
             open_positions_count=positions_count,
             open_orders_count=open_orders,
             fetched_at=datetime.now(timezone.utc).isoformat(),
+            asset_breakdown=breakdown,
         )
         _store(state)
         return state

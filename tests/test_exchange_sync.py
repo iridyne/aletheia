@@ -43,9 +43,15 @@ class _FakePosition:
 
 
 def _patch_client(monkeypatch, *, balances=None, positions=None, orders=None,
-                  raises_on_balances=False):
-    """Mock BitgetClient so tests don't hit the network."""
+                  raises_on_balances=False, mix_equity=None):
+    """Mock BitgetClient so tests don't hit the network.
+
+    mix_equity: if given, get_mix_account returns {usdtEquity: mix_equity};
+                if None (default), returns {} so spot balances determine equity.
+    """
     from aletheia.portfolio import exchange_sync as es
+
+    _mix_equity = mix_equity
 
     class _FakeClient:
         def __init__(self, mode="demo"):
@@ -56,6 +62,10 @@ def _patch_client(monkeypatch, *, balances=None, positions=None, orders=None,
             if raises_on_balances:
                 raise RuntimeError("Bitget API error: timeout")
             return balances or [_FakeBalance("USDT", 10000.0, 0.0)]
+        async def get_mix_account(self, product_type="USDT-FUTURES"):
+            if _mix_equity is not None:
+                return {"usdtEquity": str(_mix_equity), "available": str(_mix_equity), "locked": "0", "unrealizedPL": "0"}
+            return {}
         async def get_positions(self):
             return positions if positions is not None else []
         async def get_open_orders(self, market_type="spot"):
@@ -77,7 +87,11 @@ def test_sync_writes_cache_and_status_ok(tmp_path, monkeypatch):
                        orders=[{"id": "o1"}])
     state = es.sync_exchange_account()
     assert state is not None
-    assert state.equity_usdt == 9500.0 + 500.0 + 42.0
+    # equity = spot holdings (9500 available + 500 frozen); futures unrealized PnL is
+    # a separate field. When mix/account returns {} (no demo futures data) the spot
+    # sum is the authoritative total.
+    assert state.equity_usdt == 9500.0 + 500.0
+    assert state.futures_unrealized_pnl == 42.0
     cached = es.get_cached_state()
     assert cached["equity_usdt"] == state.equity_usdt
     assert es.status_for(cached) == "ok"
