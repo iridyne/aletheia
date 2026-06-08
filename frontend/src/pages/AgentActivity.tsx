@@ -53,7 +53,7 @@ const oppColumns = [
   oppCol.accessor('symbol', { header: 'Symbol' }),
   oppCol.accessor('market', { header: 'Market' }),
   oppCol.accessor('direction_bias', { header: 'Direction' }),
-  oppCol.accessor('confidence', { header: 'Confidence', cell: info => info.getValue() != null ? `${info.getValue()}%` : '—' }),
+  oppCol.accessor('confidence_score', { header: 'Confidence', cell: info => info.getValue() != null ? `${info.getValue()}%` : '—' }),
   oppCol.accessor('source_agent', { header: 'Source', cell: info => info.getValue() || '—' }),
   oppCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
   oppCol.accessor('created_at', { header: 'Created', cell: info => info.getValue()?.slice(0, 16) || '—' }),
@@ -159,7 +159,7 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
               <DrawerField label="Symbol" value={selected.symbol} mono />
               <DrawerField label="Market" value={selected.market} />
               <DrawerField label="Direction Bias" value={selected.direction_bias} />
-              <DrawerField label="Confidence" value={selected.confidence != null ? `${selected.confidence}%` : null} />
+              <DrawerField label="Confidence" value={selected.confidence_score != null ? `${selected.confidence_score}%` : selected.confidence ?? null} />
               <DrawerField label="Source Agent" value={selected.source_agent} />
               <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
             </DrawerSection>

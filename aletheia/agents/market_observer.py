@@ -160,7 +160,7 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
             direction = d
         if c in _VALID_CONFIDENCE:
             confidence = c
-        rationale = str(read.get("rationale", ""))[:500]
+        rationale = str(read.get("rationale", ""))
         cs = read.get("confidence_score")
         if isinstance(cs, (int, float)) and 0 <= cs <= 100:
             confidence_score = int(cs)
@@ -203,7 +203,7 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
         if confidence_score is not None:
             thesis_parts.append(f"score={confidence_score}/100")
         if thesis_parts:
-            thesis = " ".join(thesis_parts)[:500]
+            thesis = " ".join(thesis_parts)
         else:
             thesis = (
                 f"No structured rationale produced (direction={direction}, "

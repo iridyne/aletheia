@@ -117,7 +117,7 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
   // ----- narrative/both track: outputs (opportunities + proposals) -----
   if (mode === 'narrative' || mode === 'both') {
     for (const o of (opportunities as Opportunity[])) {
-      const conf = o.confidence != null ? ` (${Math.round(Number(o.confidence) * (o.confidence <= 1 ? 100 : 1))}%)` : ''
+      const conf = o.confidence_score != null ? ` (${o.confidence_score}%)` : o.confidence != null ? ` (${o.confidence})` : ''
       items.push({
         key: `opp-${o.id}`,
         ts: o.created_at,
@@ -230,7 +230,7 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
           <DrawerSection label="Opportunity">
             <DrawerField label="Symbol" value={item.opportunity.symbol} mono />
             <DrawerField label="Bias" value={item.opportunity.direction_bias} />
-            <DrawerField label="Confidence" value={item.opportunity.confidence != null ? String(item.opportunity.confidence) : null} mono />
+            <DrawerField label="Confidence" value={item.opportunity.confidence_score != null ? `${item.opportunity.confidence_score}%` : item.opportunity.confidence ?? null} mono />
             <DrawerField label="Source" value={item.opportunity.source_agent} />
           </DrawerSection>
           <DrawerSection label="Thesis">
