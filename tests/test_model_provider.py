@@ -7,6 +7,7 @@ import json
 from aletheia.model_provider.base import ModelRequest, ModelHealth
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+from aletheia.model_provider.databricks import DatabricksProvider, _normalize_workspace_url
 from aletheia.model_provider.codex_cli import CodexCLIProvider
 from aletheia.model_provider.router import get_provider, clear_cache
 
@@ -142,3 +143,52 @@ async def test_anthropic_complete_mock():
         req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
         resp = await provider.complete(req)
         assert resp.content == "Bonjour"
+
+
+# ── Databricks provider ──────────────────────────────────────────────────────
+# Regression coverage for the "HTTP 404 — not saved" Verify & Save failure: users
+# paste the AI-Gateway URL (…/ai-gateway/anthropic) into the Workspace URL field,
+# but the provider builds its own /serving-endpoints and /api/2.0 paths, so the
+# extra path segment must be stripped to the host root or every request 404s.
+
+def test_databricks_normalizes_gateway_url_to_workspace_root():
+    root = "https://adb-123.azuredatabricks.net"
+    assert _normalize_workspace_url(f"{root}/ai-gateway/anthropic") == root
+    assert _normalize_workspace_url(root) == root
+    assert _normalize_workspace_url(f"{root}/") == root
+    assert _normalize_workspace_url(f"{root}/serving-endpoints/m/invocations") == root
+
+
+def test_databricks_builds_invocations_url_from_normalized_root():
+    p = DatabricksProvider(
+        workspace_url="https://adb-123.azuredatabricks.net/ai-gateway/anthropic",
+        model="databricks-claude-opus-4-8",
+    )
+    assert p.workspace_url == "https://adb-123.azuredatabricks.net"
+    assert p.base_url == (
+        "https://adb-123.azuredatabricks.net"
+        "/serving-endpoints/databricks-claude-opus-4-8/invocations"
+    )
+
+
+@pytest.mark.anyio
+async def test_databricks_complete_omits_temperature():
+    """claude-opus-4-8 on Databricks hard-rejects `temperature` with HTTP 400, so the
+    invocations payload must not include it. No caller overrides the default anyway."""
+    p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
+    sent = {}
+
+    class FakeResponse:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"choices": [{"message": {"content": "OK"}}], "model": "m", "usage": {}}
+
+    async def fake_post(self, url, json=None, headers=None):
+        sent["payload"] = json
+        return FakeResponse()
+
+    with patch("httpx.AsyncClient.post", new=fake_post):
+        resp = await p.complete(ModelRequest(messages=[{"role": "user", "content": "hi"}], temperature=0.9))
+    assert resp.content == "OK"
+    assert "temperature" not in sent["payload"]

@@ -7,10 +7,26 @@ Endpoint pattern: {workspace_url}/serving-endpoints/{endpoint_name}/invocations
 The model field doubles as the endpoint_name for URL construction.
 """
 
+from urllib.parse import urlparse
+
 import httpx
 
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.base import ModelHealth
+
+
+def _normalize_workspace_url(raw: str) -> str:
+    """Reduce any Databricks URL to its workspace root (scheme://host).
+
+    Users commonly paste the URL they already have working elsewhere — e.g. the
+    AI-Gateway URL ``https://<host>/ai-gateway/anthropic`` from their Claude/agent
+    config, or a full ``…/serving-endpoints/<name>/invocations`` URL. A Databricks
+    workspace root never carries a path, and this provider builds the
+    ``/serving-endpoints/...`` and ``/api/2.0/...`` paths itself, so any path the
+    user supplied is spurious and would 404. Strip it to the bare host.
+    """
+    parsed = urlparse(raw.strip())
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 class DatabricksProvider(OpenAICompatibleProvider):
@@ -24,9 +40,10 @@ class DatabricksProvider(OpenAICompatibleProvider):
             raise ValueError(
                 f"workspace_url must start with https:// (got: {workspace_url[:40]})"
             )
-        base_url = f"{workspace_url.rstrip('/')}/serving-endpoints/{model}/invocations"
+        workspace_url = _normalize_workspace_url(workspace_url)
+        base_url = f"{workspace_url}/serving-endpoints/{model}/invocations"
         super().__init__(base_url=base_url, model=model, protocol="chat_completions", api_key=api_key)
-        self.workspace_url = workspace_url.rstrip("/")
+        self.workspace_url = workspace_url
 
     async def healthcheck(self) -> ModelHealth:
         try:
@@ -47,9 +64,13 @@ class DatabricksProvider(OpenAICompatibleProvider):
         messages = list(request.messages)
         if request.system:
             messages.insert(0, {"role": "system", "content": request.system})
+        # NOTE: `temperature` is deliberately omitted. Some Databricks-hosted models
+        # (e.g. claude-opus-4-8) hard-reject the temperature parameter with HTTP 400,
+        # while others accept it. No Aletheia caller overrides the default temperature,
+        # so dropping it lets every serving endpoint use its own default and keeps the
+        # provider compatible across the full model catalogue.
         payload = {
             "messages": messages,
-            "temperature": request.temperature,
             "max_tokens": request.max_tokens,
         }
         async with httpx.AsyncClient(timeout=60) as client:
