@@ -128,27 +128,49 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
     exchange_state_age_sec = None
     exchange_external_positions = None
     exchange_asset_breakdown: list = []
+    # These get overridden by the real exchange view when available.
+    final_unrealized = total_unrealized
+    final_positions_count = len(positions)
+    final_exposure = exposure
+    final_today_pnl = total_unrealized + total_today_realized
     try:
         from aletheia.portfolio import exchange_sync
         cached = exchange_sync.get_cached_state()
         sync_status = exchange_sync.status_for(cached)
-        if cached is not None:
+        if cached is not None and sync_status in ("ok", "stale"):
             exchange_equity_usdt = cached.get("equity_usdt")
             exchange_state_age_sec = cached.get("age_seconds")
-            local_open = sum(1 for p in positions)
+            local_open = len(positions)
             ext_total = int(cached.get("open_positions_count") or 0)
             exchange_external_positions = max(0, ext_total - local_open)
             exchange_asset_breakdown = cached.get("asset_breakdown") or []
+
+            # Override PnL/exposure metrics with real exchange data when available.
+            exc_upnl = cached.get("futures_unrealized_pnl")
+            if exc_upnl is not None:
+                final_unrealized = float(exc_upnl)
+                final_today_pnl = float(exc_upnl)
+
+            exc_positions = cached.get("positions") or []
+            if exc_positions:
+                final_positions_count = len(exc_positions)
+                exc_exposure: dict[str, float] = {}
+                for p in exc_positions:
+                    sym = p.get("symbol", "")
+                    notional = float(p.get("quantity") or 0) * float(p.get("entry_price") or 0)
+                    exc_exposure[sym] = exc_exposure.get(sym, 0.0) + notional
+                if exc_exposure:
+                    final_exposure = exc_exposure
     except Exception:
         sync_status = "error"
 
     return {
         "total_value_usdt": round(total_notional, 4),
-        "unrealized_pnl": round(total_unrealized, 4),
+        "unrealized_pnl": round(final_unrealized, 4),
         "realized_pnl": round(total_realized, 4),
-        "today_pnl": round(total_unrealized + total_today_realized, 4),
-        "positions_count": len(positions),
-        "exposure_by_symbol": {k: round(v, 4) for k, v in exposure.items()},
+        "today_pnl": round(final_today_pnl, 4),
+        "positions_count": final_positions_count,
+        "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
         "positions": positions,
         "today_realized_pnl": round(total_today_realized, 4),
         # Exchange-account view (closes WEBUI_BACKEND_HANDOFF #3 / portfolio-sync-gap).
@@ -169,6 +191,7 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
         realized_pnl=summary["realized_pnl"],
         positions_count=summary["positions_count"],
         execution_mode=execution_mode,
+        exchange_equity_usdt=summary.get("exchange_equity_usdt"),
     )
     insert_portfolio_snapshot(snap)
     return snap

@@ -324,7 +324,7 @@ def insert_portfolio_snapshot(snap) -> None:
 
 
 def list_portfolio_snapshots(limit: int = 100) -> list[dict]:
-    return _select_all("portfolio_snapshots", limit=limit)
+    return _select_all("portfolio_snapshots", order="snapshot_at ASC", limit=limit)
 
 
 # --- Agent Tool Calls ---
@@ -416,3 +416,62 @@ def prune_market_snapshots(days: int = 30) -> int:
 
 def prune_portfolio_snapshots(days: int = 90) -> int:
     return _delete_old_rows("portfolio_snapshots", days)
+
+
+# ---------------------------------------------------------------------------
+# OHLCV rolling window store
+# ---------------------------------------------------------------------------
+
+_OHLCV_WINDOW = 500  # max bars kept per (symbol, timeframe) pair
+
+
+def upsert_ohlcv_candles(
+    symbol: str,
+    timeframe: str,
+    candles: list,  # list of Candle dataclass from aletheia.data.providers
+    provider: str = "ccxt",
+) -> None:
+    """Insert or replace OHLCV bars, then prune to _OHLCV_WINDOW newest rows."""
+    if not candles:
+        return
+    db = get_db()
+    db.executemany(
+        "INSERT OR REPLACE INTO market_ohlcv "
+        "(symbol, timeframe, ts, open, high, low, close, volume, provider) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (symbol, timeframe, c.timestamp,
+             c.open, c.high, c.low, c.close, c.volume, provider)
+            for c in candles
+        ],
+    )
+    # Prune to rolling window: delete any row outside the newest 500
+    db.execute(
+        "DELETE FROM market_ohlcv "
+        "WHERE symbol = ? AND timeframe = ? "
+        "AND ts NOT IN ("
+        "  SELECT ts FROM market_ohlcv "
+        "  WHERE symbol = ? AND timeframe = ? "
+        "  ORDER BY ts DESC LIMIT ?"
+        ")",
+        (symbol, timeframe, symbol, timeframe, _OHLCV_WINDOW),
+    )
+    db.commit()
+
+
+def get_ohlcv_candles(
+    symbol: str,
+    timeframe: str,
+    limit: int = 100,
+) -> list[dict]:
+    """Return up to `limit` most-recent OHLCV bars, oldest-first."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT ts, open, high, low, close, volume, provider "
+        "FROM market_ohlcv "
+        "WHERE symbol = ? AND timeframe = ? "
+        "ORDER BY ts DESC LIMIT ?",
+        (symbol, timeframe, limit),
+    ).fetchall()
+    # Reverse so callers get oldest→newest
+    return [dict(r) for r in reversed(rows)]

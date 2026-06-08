@@ -175,4 +175,5 @@ class PortfolioSnapshot(BaseModel):
     realized_pnl: float = 0.0
     positions_count: int = 0
     execution_mode: str = "paper_internal"
+    exchange_equity_usdt: float | None = None
     snapshot_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())

@@ -226,6 +226,25 @@ CREATE TABLE IF NOT EXISTS news_items (
     fetched_at TEXT NOT NULL DEFAULT (datetime('now')),
     status TEXT NOT NULL DEFAULT 'new'
 );
+
+-- OHLCV rolling window store. Each (symbol, timeframe) pair keeps the most
+-- recent 500 bars. Older bars are pruned by _prune_ohlcv() after each write.
+-- symbol uses canonical BTC/USDT format; provider records which source supplied it.
+CREATE TABLE IF NOT EXISTS market_ohlcv (
+    symbol TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    ts INTEGER NOT NULL,        -- unix milliseconds (open time of bar)
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume REAL NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'ccxt',
+    PRIMARY KEY (symbol, timeframe, ts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_ohlcv_sym_tf_ts
+    ON market_ohlcv (symbol, timeframe, ts DESC);
 """
 
 
@@ -243,6 +262,8 @@ _ADDITIVE_COLUMNS = [
     # Numeric calibration the LLM emits alongside the categorical confidence.
     # 0..100; NULL means the model didn't supply one (older rows or bad output).
     ("confidence_score", "opportunities", "INTEGER"),
+    # Real exchange equity at snapshot time; NULL when exchange is unconfigured/stale.
+    ("exchange_equity_usdt", "portfolio_snapshots", "REAL"),
 ]
 
 

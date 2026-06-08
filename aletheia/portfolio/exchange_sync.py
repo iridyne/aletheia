@@ -52,6 +52,7 @@ class ExchangeAccountState:
     open_orders_count: int
     fetched_at: str  # ISO UTC
     asset_breakdown: list  # list[AssetBreakdown] as dicts for JSON serialisation
+    positions: list  # list[dict] — raw exchange positions for exposure/PnL wiring
 
 
 def _settings_key(mode: str) -> str:
@@ -71,6 +72,7 @@ def _store(state: ExchangeAccountState) -> None:
         "open_orders_count": state.open_orders_count,
         "fetched_at": state.fetched_at,
         "asset_breakdown": state.asset_breakdown or [],
+        "positions": state.positions or [],
     })
     # SQLite UPSERT — settings has key as PRIMARY KEY.
     db.execute(
@@ -219,9 +221,20 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
 
         # Futures positions — unrealized PnL and open count
         positions_count = 0
+        positions_list: list[dict] = []
         try:
             futures = _run_async(client.get_positions())
             positions_count = len(futures)
+            positions_list = [
+                {
+                    "symbol": p.symbol,
+                    "side": p.side,
+                    "quantity": p.quantity,
+                    "entry_price": p.entry_price,
+                    "unrealized_pnl": float(p.unrealized_pnl or 0),
+                }
+                for p in futures
+            ]
             if equity_from_mix is None:
                 futures_upnl = sum(float(p.unrealized_pnl or 0) for p in futures)
         except Exception as e:
@@ -264,6 +277,7 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
             open_orders_count=open_orders,
             fetched_at=datetime.now(timezone.utc).isoformat(),
             asset_breakdown=breakdown,
+            positions=positions_list,
         )
         _store(state)
         return state

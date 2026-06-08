@@ -9,6 +9,24 @@ export default function PnLChart() {
   const chartRef = useRef<IChartApi | null>(null)
   const { data = [] } = useQuery({ queryKey: ['portfolio-history'], queryFn: api.getPortfolioHistory })
 
+  const allRows = data as any[]
+  const hasExchangeData = allRows.some((s: any) => s.exchange_equity_usdt != null)
+
+  // When exchange data exists, only use rows that have it (filter stale all-zero rows
+  // captured before the exchange sync was wired in). Avoids misleading flat→jump shape.
+  const rows = allRows
+    .filter((s: any) => !hasExchangeData || s.exchange_equity_usdt != null)
+    .map((s: any) => {
+      const t = Math.floor(new Date(s.snapshot_at + 'Z').getTime() / 1000)
+      const value = s.exchange_equity_usdt != null
+        ? s.exchange_equity_usdt
+        : (s.unrealized_pnl ?? 0) + (s.realized_pnl ?? 0)
+      return { time: t as Time, value }
+    })
+    .filter(r => !Number.isNaN(r.time))
+
+  const sourceLabel = hasExchangeData ? 'exchange balance' : 'paper PnL (internal)'
+
   useEffect(() => {
     if (!containerRef.current) return
     const chart = createChart(containerRef.current, {
@@ -21,14 +39,6 @@ export default function PnLChart() {
     chartRef.current = chart
     const series = chart.addLineSeries({ color: chartTheme.lineColor, lineWidth: 2 })
 
-    const rows = (data as any[])
-      .map((s: any) => {
-        const t = Math.floor(new Date(s.snapshot_at + 'Z').getTime() / 1000)
-        return { time: t as Time, value: (s.unrealized_pnl ?? 0) + (s.realized_pnl ?? 0) }
-      })
-      .filter(r => !Number.isNaN(r.time))
-      .sort((a, b) => (a.time as number) - (b.time as number))
-
     if (rows.length) {
       const seen = new Set<number>()
       const unique = rows.filter(r => { const k = r.time as number; if (seen.has(k)) return false; seen.add(k); return true })
@@ -39,11 +49,14 @@ export default function PnLChart() {
     const onResize = () => chart.applyOptions({ width: containerRef.current!.clientWidth })
     window.addEventListener('resize', onResize)
     return () => { window.removeEventListener('resize', onResize); chart.remove() }
-  }, [data])
+  }, [rows.length, data])
 
   return (
     <div>
-      {(data as any[]).length === 0 && <p className="hint">No portfolio history yet.</p>}
+      {rows.length === 0
+        ? <p className="hint">No portfolio history yet — first snapshot appears within 10 min.</p>
+        : <p className="metric-caveat" style={{ marginBottom: '4px' }}>{sourceLabel}</p>
+      }
       <div ref={containerRef} style={{ width: '100%' }} />
     </div>
   )
