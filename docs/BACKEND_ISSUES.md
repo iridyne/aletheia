@@ -13,7 +13,7 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-06-07 · 维护者：Aletheia Dev
+> **最后更新**：2026-06-08 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
 >
@@ -555,6 +555,34 @@
 - ✅ **run_logger NULL vs 空**：始终写 '[]'
 - ✅ **Bitget order_id 空串**：空时 raise
 - ✅ **router healthcheck 不跳 disabled**：加 continue
+
+---
+
+## 12. WebUI 重做留下的后端缺口（2026-06-07，前端 session 产出）
+
+> 前端完成了结构性重做（14 页 → 10 个角色化目的地，见 `docs/WEBUI_PAGE_MAP.md`）。
+> 全程 **frontend-only**，未改任何 API 契约。下列是前端已留好挂载点、等后端补能力的缺口。
+> **完整对接说明见 `docs/WEBUI_BACKEND_HANDOFF.md`**（含每条的前端 touch point 与诚实降级串）。
+> 前端对每条都已诚实降级（"not recorded" / "pending backend" / 标注 caveat），不阻塞。
+
+- **12.1 🔴 `positions` 缺 `proposal_id`/`order_id` FK** — 因果链 position→上游方向无法落地。
+  与 §1.1 的 strategy_id 断链同源但不同点：即使 strategy_id 补全，position 行仍无法回指
+  具体 proposal/order。前端 `CausalChain.tsx` 锚定 position 时上游节点显示 "not recorded"
+  （黄色），**禁止按 symbol 猜测伪造**（trust §1.1）。修复：给 `positions` 加 nullable
+  `proposal_id`（execution 路径开仓时写入）。
+- **12.2 🟡 `GET /api/agent-runs/{id}/steps` 未建** — 已在重做 plan 中授权的只读端点，
+  暴露现有 `agent_run_steps` 表（逐步推理 + 工具 in/out）。前端 `AgentActivity.tsx` 的
+  "Reasoning Steps" 块已是稳定挂载点，当前显示 tool-calls + "pending backend" 提示。只读，
+  放 `data.py`。
+- **12.3 🟠 真实交易所账户权益（portfolio-sync-gap）** ✅ 已修复 — Exchange Account Sync 层
+  已建（`aletheia/portfolio/exchange_sync.py`），`/api/portfolio` 新增 `exchange_equity_usdt` +
+  `exchange_asset_breakdown`。Dashboard `PnLZone.tsx` 显示真实余额 + 饼图 + hover tooltip。
+  Bitget demo 账户 198 USDT 已正确同步（commit `e3dd86e`, `754b703`）。
+  ⚠️ **残留限制**：Bitget demo key 的 spot API (`/api/v2/spot/account/assets`) 不返回数据，
+  demo 账户 spot 钱包内的 BTC 无法通过 API 读取。当前 breakdown 仅含 USDT（来自
+  `mix/account/accounts` 的 usdtEquity 字段）。Live key 或真实账户可正常返回 spot 余额，
+  多币种饼图在那时才会生效。这是 **Bitget API 对 demo key 的限制**，非代码问题。
+  详见 `aletheia/portfolio/exchange_sync.py:182-198`（spot 路径说明注释）。
 
 ---
 
