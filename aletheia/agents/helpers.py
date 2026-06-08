@@ -65,13 +65,66 @@ def _record_llm(success: bool) -> None:
         pass
 
 
+# Per-run step counters. agent_run_steps.step_number must be monotonic within a run;
+# keeping the counter in-process avoids a SELECT-MAX round-trip on every tool call.
+# Lost on restart, which is fine: a step trace only matters for currently-running agents.
+_step_counters: dict[str, int] = {}
+
+
+def _next_step(run_id: str) -> int:
+    n = _step_counters.get(run_id, 0) + 1
+    _step_counters[run_id] = n
+    return n
+
+
+def _release_run_counter(run_id: str) -> None:
+    """Drop the per-run step counter after the run finishes (orchestrator calls this)."""
+    _step_counters.pop(run_id, None)
+
+
 def log_tool(run_id: str | None, tool_name: str, tool_class: str, permitted: bool,
-             output: str | None = None) -> None:
-    """Best-effort tool-call logging (never raises)."""
+             output: str | None = None, input_data: str | None = None) -> None:
+    """Best-effort tool-call + reasoning-step logging (never raises).
+
+    Writes BOTH:
+      - `agent_tool_calls` (the existing structured tool ledger)
+      - `agent_run_steps` (the §6 reasoning trace; closes WEBUI_BACKEND_HANDOFF #2's
+        write-side gap so `GET /api/agent-runs/{id}/steps` actually returns content).
+    """
     if not run_id:
         return
     try:
-        from aletheia.storage.repositories import insert_tool_call
-        insert_tool_call(run_id, tool_name, tool_class, permitted, output_data=output)
+        from aletheia.storage.repositories import insert_tool_call, insert_run_step
+        insert_tool_call(run_id, tool_name, tool_class, permitted, output_data=output,
+                         input_data=input_data)
+        insert_run_step(
+            run_id=run_id,
+            step_number=_next_step(run_id),
+            action=f"tool:{tool_name}" + ("" if permitted else " (denied)"),
+            input_data=input_data,
+            output_data=output,
+        )
+    except Exception:
+        pass
+
+
+def record_step(run_id: str | None, action: str, input_data: str | None = None,
+                output_data: str | None = None) -> None:
+    """Record a non-tool reasoning step (e.g. 'considered N lessons', 'skipped: neutral bias').
+
+    Use this for decision points that aren't tool calls — context the reasoning trace
+    needs to make sense. Best-effort, never raises.
+    """
+    if not run_id:
+        return
+    try:
+        from aletheia.storage.repositories import insert_run_step
+        insert_run_step(
+            run_id=run_id,
+            step_number=_next_step(run_id),
+            action=action,
+            input_data=input_data,
+            output_data=output_data,
+        )
     except Exception:
         pass

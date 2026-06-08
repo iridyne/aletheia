@@ -19,8 +19,12 @@ _LEDGER_KNOWLEDGE = ["research_note", "strategy_memory", "post_trade_review", "d
 def _build_learning_ledger() -> str:
     """A real snapshot of where the self-evolution pipeline stands.
 
-    Answers "is learning producing validated strategies, or only piling up
-    notes?" using existing repo queries — no new tables, no new page.
+    Two parts:
+      1. Counts (volume): are agents producing strategies/knowledge at all?
+      2. Quality (signal): is what they produce verifiable hypotheses, or noise?
+
+    The quality block is north-star §7 stage-1 evidence — before closing the
+    experience loop end-to-end we need to see learning *converge*, not just *write*.
     """
     from aletheia.storage.repositories import list_strategies, list_knowledge_items
 
@@ -29,26 +33,82 @@ def _build_learning_ledger() -> str:
     for row in strategies:
         st = row.get("state") or "draft"
         counts[st] = counts.get(st, 0) + 1
-    active = [f"{s}:{counts[s]}" for s in _LEDGER_STATES if counts.get(s)]
-    strat_line = ", ".join(active) if active else "none yet"
+    active_states = [f"{s}:{counts[s]}" for s in _LEDGER_STATES if counts.get(s)]
+    strat_line = ", ".join(active_states) if active_states else "none yet"
 
     know_parts = []
+    know_active_total = 0
     for t in _LEDGER_KNOWLEDGE:
         try:
             items = list_knowledge_items(t, limit=1000)
-            active = [k for k in items if k.get("status", "active") == "active"]
-            n = len(active)
+            active_items = [k for k in items if k.get("status", "active") == "active"]
+            n = len(active_items)
         except Exception:
             n = 0
+        know_active_total += n
         if n:
             know_parts.append(f"{t}:{n}")
     know_line = ", ".join(know_parts) if know_parts else "none yet"
+
+    # --- Quality block ---
+    total = len(strategies) or 1  # avoid div-by-zero
+    activated = sum(counts.get(s, 0) for s in
+                    ("paper_candidate", "paper_running", "paper_passed",
+                     "live_candidate", "live_limited"))
+    retired = counts.get("retired", 0) + counts.get("deprecated", 0)
+    activation_ratio = round(activated / total, 3)
+    retire_ratio = round(retired / total, 3)
+
+    # post_trade_review coverage: of strategies that produced trades, how many got reviewed?
+    try:
+        reviews = list_knowledge_items(item_type="post_trade_review", limit=1000)
+        reviewed_strategy_ids = {
+            r.get("strategy_id") for r in reviews
+            if r.get("strategy_id") and (r.get("status") or "active") == "active"
+        }
+    except Exception:
+        reviewed_strategy_ids = set()
+    eligible_strategies = [s for s in strategies if s.get("state") in
+                           ("paper_running", "paper_passed", "retired", "deprecated")]
+    if eligible_strategies:
+        review_coverage = round(
+            sum(1 for s in eligible_strategies if s["id"] in reviewed_strategy_ids)
+            / len(eligible_strategies), 3
+        )
+    else:
+        review_coverage = None
+
+    # Lessons-consulted: how often the experience loop actually fired in 24h.
+    # Signal that knowledge is being read back (not just piled up).
+    try:
+        from aletheia.storage.repositories import list_tool_calls
+        recent_calls = list_tool_calls(limit=2000)
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        retrieval_calls = sum(
+            1 for c in recent_calls
+            if c.get("tool_name") in ("retrieve_lessons", "load_playbooks")
+            and (c.get("created_at") or "") >= cutoff
+        )
+    except Exception:
+        retrieval_calls = 0
+
+    coverage_line = (f"{review_coverage:.0%}" if review_coverage is not None
+                     else "n/a (no strategies past paper yet)")
 
     return (
         "\n\n## Learning Ledger\n"
         f"- Strategies by state: {strat_line}\n"
         f"- Knowledge items: {know_line}\n"
         f"- Total strategies: {len(strategies)}\n"
+        "\n### Quality (stage-1 evidence)\n"
+        f"- Activation ratio: {activation_ratio:.0%} "
+        f"(strategies that reached paper_running or beyond)\n"
+        f"- Retire/deprecate ratio: {retire_ratio:.0%} "
+        "(noise being filtered — non-zero is healthy)\n"
+        f"- Post-trade review coverage: {coverage_line}\n"
+        f"- Lessons consulted (24h): {retrieval_calls} "
+        "(retrieve_lessons + load_playbooks calls; non-zero means the loop is closing)\n"
     )
 
 

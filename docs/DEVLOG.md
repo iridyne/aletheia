@@ -1,5 +1,52 @@
 # Development Log
 
+## 2026-06-08 (latest) — Three remaining real gaps closed
+
+After WEBUI_BACKEND_HANDOFF was done, three real gaps remained that I hadn't yet
+addressed (everything else was either already fixed, recorded as a future-scope
+north-star item, or banned by AGENTS.md). All three closed in one pass — they're
+small once the §1.1 causal chain and §6 experience-loop scaffolding are in place:
+
+- **Gap 1 — agent_run_steps now actually populated.** The `/api/agent-runs/{id}/steps`
+  endpoint shipped in the prior pass returned an empty array because nothing was
+  writing to the table. Hooked the write in `agents/helpers.py::log_tool` (every
+  tool call now produces a step) plus a new `record_step()` for non-tool reasoning
+  nodes. Per-run step counters live in-process and are released by the orchestrator
+  at end-of-run so the dict stays bounded. **Zero changes to the 8 agents** — they
+  already use `log_tool` everywhere, so the trace fills in automatically.
+
+- **Gap 2 — Stability monitor + `GET /api/stability`.** Bridges the gap between
+  "process alive" (existing `health.py`) and "data internally consistent"
+  (north-star §7 stage-0 evidence). New `agent_runtime/stability_monitor.py`
+  reports orphan counts (fills with no order, executed proposals with no order,
+  etc.), strategy_id drift (paper proposals without a strategy — direct §1.1
+  causal-chain signal), 24h agent failure ratio, uptime hours, and a 0-100
+  composite score with explicit reason codes. Read-only — inconsistencies are
+  REPORTED, never silently repaired. Operator can poll the endpoint through the
+  7-14 day stage-0 run and watch the score numerically.
+
+- **Gap 3 — Learning Ledger gets a quality block.** `dreaming_agent` was already
+  emitting a Learning Ledger but it only counted volume ("research_note: 12,
+  strategy_memory: 3"). Volume can be noise. Added stage-1 quality signals:
+  activation ratio (% strategies that reached paper_running or beyond),
+  retire/deprecate ratio (noise being filtered — non-zero is healthy),
+  post-trade-review coverage (%), and lessons-consulted count over 24h
+  (`retrieve_lessons` + `load_playbooks` calls — non-zero means the experience
+  loop is actually closing). This is the evidence north-star §7 stage 1 wants.
+
+Wiring is intentionally minimal: no new tables, no schema migration, no agent
+behaviour changes. Just three new read paths that surface signals already implied
+by data we already record. New `tests/test_three_gaps.py` (10 tests) including a
+red-line test that orphan fills get DETECTED, never silently fixed. Full suite
+406 passed.
+
+What this leaves on the gap list: none of the *immediate* "real" gaps. Remaining
+items are all north-star architectural work (Sophia-class long-term identity,
+RL feedback loop, cross-agent debate workflow, deeper market perception) that
+the project's stage sequencing explicitly defers until 7-14 days of clean stage-0
+evidence accumulates. The stability + ledger numbers above are the receipts that
+let "stage 0 done" become a yes/no rather than a vibe.
+
 ## 2026-06-08 — Exchange Account Sync (closes WEBUI_BACKEND_HANDOFF #3 / portfolio-sync-gap)
 
 The Portfolio dashboard was off by an entire reality: it only saw locally-managed
