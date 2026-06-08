@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { StrategyRecord } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
+import PageHeader from '../components/PageHeader'
 
 const STATES = ['draft', 'research_note', 'strategy_hypothesis', 'paper_candidate', 'paper_running', 'paper_passed', 'live_candidate', 'live_limited', 'retired']
 
@@ -74,7 +75,10 @@ export default function StrategyLifecycle() {
 
   return (
     <div>
-      <h2 className="page-title">Strategy Lifecycle</h2>
+      <PageHeader
+        title="Strategy Lifecycle"
+        role="Evolve · the promotion pipeline (draft → research → hypothesis → paper → live-limited). Click a strategy to see its promotion gates and advance or retire it."
+      />
       <div className="card">
         <DataTable
           data={rows}

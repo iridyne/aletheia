@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
+import PageHeader from '../components/PageHeader'
+import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS } from '../lib/format'
 
 const PERMISSION_MODES = ['ReadOnly', 'Research', 'PaperAuto', 'AllowEditing', 'Auto']
 const PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'codex_cli']
@@ -15,8 +17,12 @@ export default function Settings() {
 
   return (
     <div>
-      <h2 className="page-title">Settings</h2>
+      <PageHeader
+        title="Settings"
+        role="Operate · model providers, exchange credentials, permission mode, live-trading unlock, and system controls. Secrets are write-only — they are never read back to this screen."
+      />
       <EffectiveConfigCard />
+      <DisplayCard />
       <KillSwitchCard qc={qc} />
       <PermissionCard status={status} qc={qc} />
       <GatewayCard status={status} qc={qc} />
@@ -28,6 +34,32 @@ export default function Settings() {
       <TelegramCard />
       <SoftwareUpdateCard />
       <AutostartCard />
+    </div>
+  )
+}
+
+function DisplayCard() {
+  const decimals = useDecimals()
+  return (
+    <div className="card">
+      <h3>Display</h3>
+      <p className="text-muted text-sm mb-3">
+        Decimal places for monetary and continuous values across the dashboard. Counts
+        (positions, runs) always stay whole. Applies everywhere immediately.
+      </p>
+      <div className="flex items-center gap-2">
+        <label htmlFor="decimals-input" className="drawer-field-label">Decimal places</label>
+        <input
+          id="decimals-input"
+          type="number"
+          min={DECIMAL_BOUNDS.min}
+          max={DECIMAL_BOUNDS.max}
+          value={decimals}
+          onChange={e => setDecimals(Number(e.target.value))}
+          className="decimals-input"
+        />
+        <span className="text-muted text-sm mono">e.g. {fmtNum(1234.5, { decimals })} · {fmtNum(0, { decimals })}</span>
+      </div>
     </div>
   )
 }

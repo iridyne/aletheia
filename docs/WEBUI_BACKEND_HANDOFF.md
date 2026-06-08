@@ -109,3 +109,45 @@ explicit scope decision from the owner. If it is ever enabled, remove the banner
 - **§4 knowledge-item taxonomy is preserved** in the Learning page's KB sub-tabs — each tab
   queries its real `item_type` (research_note / strategy-memory / daily_review /
   dreaming-logs). Do not collapse these types backend-side expecting the UI to re-separate.
+
+---
+
+## §13 — Indices ticker (SPX / VIX / DXY in topbar)
+
+**Frontend status (already shipped):** `frontend/src/components/MarketTicker.tsx` renders
+the topbar Bloomberg-style ticker. Crypto tokens (BTC/ETH/SOL) consume the existing
+`/api/market/snapshots` endpoint with real Bitget data. **Indices slots (SPX, VIX) render
+`—` with a "feed not wired" tooltip** until the backend lands the endpoint below — this is
+deliberate UI Honesty (no fabricated quotes).
+
+**What backend needs to add:** a single read-only endpoint in non-controlled `data.py`:
+
+```
+GET /api/market/indices
+→ 200 [
+    { "symbol": "SPX", "last": 5234.56, "change_pct": 0.42, "as_of": "2026-06-08T18:30:00Z" },
+    { "symbol": "VIX", "last": 14.20,   "change_pct": -1.18, "as_of": "..." }
+  ]
+```
+
+**Implementation notes:**
+- Source: pick a free, no-auth quote API (Stooq CSV, Yahoo `query1.finance.yahoo.com`,
+  or FRED for SPX). Stooq is the simplest (single GET, CSV).
+- **Cache aggressively** — 30–60s TTL in-memory cache to stay polite to the upstream and
+  avoid rate limits; the frontend polls every 15s but degrades gracefully if backend
+  returns a stale-but-valid quote.
+- **Do not block the gateway on upstream failures** — if the upstream is down, return the
+  last cached value with `as_of` reflecting actual age, OR `null` for `last`/`change_pct`.
+  The UI already handles `null`/missing fields.
+- This is a **read-only display feed**. It must NEVER feed risk/execution paths or be
+  consumed by an agent's decision logic without an explicit scope decision (those are
+  trust-boundary additions; this endpoint is for the dashboard only).
+- No new env var / no new credentials required (free APIs).
+- No persistent table needed — this is ephemeral display data, in-memory cache only.
+
+**Frontend revival when ready:** in `MarketTicker.tsx`, replace the `INDICES.map(...)`
+placeholder block with a `useQuery` against `/api/market/indices` and render the same
+`.ticker-token` markup. The CSS / layout / spacing already accommodate it. ~10-line diff.
+
+**Touch point:** `frontend/src/components/MarketTicker.tsx` (search for "INDICES =" and
+"NOT WIRED").

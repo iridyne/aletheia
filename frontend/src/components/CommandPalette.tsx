@@ -67,19 +67,15 @@ export default function CommandPalette() {
   }, [qc])
 
   const commands: CmdAction[] = [
-    { id: 'nav-cockpit', label: 'Go to Cockpit', group: 'Navigation', action: () => navigate('/') },
-    { id: 'nav-opportunities', label: 'Go to Opportunities', group: 'Navigation', action: () => navigate('/opportunities') },
-    { id: 'nav-charts', label: 'Go to Charts', group: 'Navigation', action: () => navigate('/charts') },
+    { id: 'nav-overview', label: 'Go to Overview', group: 'Navigation', keywords: 'cockpit home dashboard', action: () => navigate('/') },
+    { id: 'nav-charts', label: 'Go to Markets', group: 'Navigation', keywords: 'charts price', action: () => navigate('/charts') },
     { id: 'nav-news', label: 'Go to News Intel', group: 'Navigation', action: () => navigate('/news') },
-    { id: 'nav-proposals', label: 'Go to Proposals', group: 'Navigation', action: () => navigate('/proposals') },
-    { id: 'nav-paper', label: 'Go to Paper Trades', group: 'Navigation', action: () => navigate('/paper-trades') },
-    { id: 'nav-positions', label: 'Go to Positions', group: 'Navigation', action: () => navigate('/positions') },
-    { id: 'nav-agents', label: 'Go to Agent Runs', group: 'Navigation', action: () => navigate('/agent-runs') },
+    { id: 'nav-proposals', label: 'Go to Approval Desk', group: 'Navigation', keywords: 'proposals approve', action: () => navigate('/proposals') },
+    { id: 'nav-agent-activity', label: 'Go to Agent Activity', group: 'Navigation', keywords: 'agent runs opportunities transparency', action: () => navigate('/agent-activity') },
+    { id: 'nav-trades', label: 'Go to Trades & Positions', group: 'Navigation', keywords: 'paper orders fills positions blotter', action: () => navigate('/trades') },
     { id: 'nav-strategies', label: 'Go to Strategies', group: 'Navigation', action: () => navigate('/strategies') },
-    { id: 'nav-knowledge', label: 'Go to Knowledge Base', group: 'Navigation', action: () => navigate('/knowledge') },
-    { id: 'nav-dreaming', label: 'Go to Dreaming', group: 'Navigation', action: () => navigate('/dreaming') },
+    { id: 'nav-learning', label: 'Go to Learning', group: 'Navigation', keywords: 'dreaming knowledge base reports memory consolidation', action: () => navigate('/learning') },
     { id: 'nav-risk', label: 'Go to Risk & Controls', group: 'Navigation', action: () => navigate('/risk') },
-    { id: 'nav-reports', label: 'Go to Reports', group: 'Navigation', action: () => navigate('/reports') },
     { id: 'nav-settings', label: 'Go to Settings', group: 'Navigation', action: () => navigate('/settings') },
 
     { id: 'sys-pause', label: 'Pause Gateway', group: 'System', keywords: 'stop halt', action: () => pauseMut.mutate() },

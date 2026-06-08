@@ -1,0 +1,262 @@
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { api } from '../api/client'
+import type { AgentRun, Opportunity, TradeProposal } from '../types'
+import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
+
+/**
+ * Agent activity feed (OVERVIEW_REDESIGN.md Decision 2).
+ *
+ * Three switchable modes, preference persisted to localStorage:
+ *   - narrative: what the AI concluded (opportunities w/ thesis, proposals w/ rationale,
+ *     dreaming outputs). OpenAlice agent-native lens.
+ *   - ops: agent run metadata (who ran, status, trigger, duration). Operational lens.
+ *   - both: run metadata + any narrative on one row.
+ *
+ * Honesty: the initial version interleaves two tracks by TIMESTAMP. It does NOT claim a
+ * strict run->output causal binding (the backend has no reverse index yet — see
+ * docs/OVERVIEW_REDESIGN.md backend TODO). We never fabricate causality.
+ */
+
+type FeedMode = 'narrative' | 'ops' | 'both'
+const MODE_KEY = 'aletheia.feedMode'
+const MODES: FeedMode[] = ['narrative', 'ops', 'both']
+const MODE_LABEL: Record<FeedMode, string> = { narrative: 'Narrative', ops: 'Ops', both: 'Both' }
+
+type FeedItem = {
+  key: string
+  ts: string
+  kind: 'run' | 'opportunity' | 'proposal'
+  agent: string
+  icon: string
+  status?: string
+  // narrative
+  headline?: string
+  detail?: string
+  // raw payloads for the drawer
+  run?: AgentRun
+  opportunity?: Opportunity
+  proposal?: TradeProposal
+}
+
+const AGENT_ICON: Record<string, string> = {
+  market_observer: '🔍',
+  research_agent: '📑',
+  strategy_designer: '📐',
+  risk_critic: '🛡',
+  portfolio_agent: '📊',
+  post_trade_reviewer: '🔧',
+  dreaming_agent: '🌙',
+}
+
+function agentIcon(name: string): string {
+  return AGENT_ICON[name] || '◈'
+}
+
+function relTime(ts?: string | null): string {
+  if (!ts) return ''
+  const t = new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime()
+  if (Number.isNaN(t)) return ts.slice(5, 16)
+  const mins = Math.floor((Date.now() - t) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
+
+function durationOf(run: AgentRun): string {
+  if (!run.started_at || !run.ended_at) return ''
+  const ms = new Date(run.ended_at + 'Z').getTime() - new Date(run.started_at + 'Z').getTime()
+  if (Number.isNaN(ms) || ms < 0) return ''
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+}
+
+function outputsCount(run: AgentRun): number {
+  try { return JSON.parse(run.outputs_created || '[]').length } catch { return 0 }
+}
+
+export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
+  const navigate = useNavigate()
+  const [mode, setMode] = useState<FeedMode>(() => {
+    try {
+      const v = localStorage.getItem(MODE_KEY) as FeedMode | null
+      return v && MODES.includes(v) ? v : 'both'
+    } catch { return 'both' }
+  })
+  const [selected, setSelected] = useState<FeedItem | null>(null)
+
+  function pickMode(m: FeedMode) {
+    setMode(m)
+    try { localStorage.setItem(MODE_KEY, m) } catch { /* ignore */ }
+  }
+
+  const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
+  const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
+  const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
+
+  const items: FeedItem[] = []
+
+  // ----- ops/both track: agent runs -----
+  if (mode === 'ops' || mode === 'both') {
+    for (const r of (runs as AgentRun[])) {
+      items.push({
+        key: `run-${r.id}`,
+        ts: r.started_at,
+        kind: 'run',
+        agent: r.agent_name,
+        icon: agentIcon(r.agent_name),
+        status: r.status,
+        headline: `${r.agent_name} ${r.status === 'completed' ? 'completed' : r.status}`,
+        run: r,
+      })
+    }
+  }
+
+  // ----- narrative/both track: outputs (opportunities + proposals) -----
+  if (mode === 'narrative' || mode === 'both') {
+    for (const o of (opportunities as Opportunity[])) {
+      const conf = o.confidence != null ? ` (${Math.round(Number(o.confidence) * (o.confidence <= 1 ? 100 : 1))}%)` : ''
+      items.push({
+        key: `opp-${o.id}`,
+        ts: o.created_at,
+        kind: 'opportunity',
+        agent: o.source_agent || 'agent',
+        icon: agentIcon(o.source_agent || ''),
+        headline: `${o.source_agent || 'Agent'} found ${o.direction_bias} opportunity on ${o.symbol}${conf}`,
+        detail: o.thesis || undefined,
+        opportunity: o,
+      })
+    }
+    for (const p of (proposals as TradeProposal[])) {
+      items.push({
+        key: `prop-${p.id}`,
+        ts: p.created_at,
+        kind: 'proposal',
+        agent: 'strategy',
+        icon: '📐',
+        status: p.status,
+        headline: `Proposal: ${p.direction} ${p.symbol} (${p.execution_mode})`,
+        detail: p.agent_rationale || undefined,
+        proposal: p,
+      })
+    }
+  }
+
+  items.sort((a, b) => new Date(b.ts + 'Z').getTime() - new Date(a.ts + 'Z').getTime())
+  const visible = items.slice(0, 40)
+
+  // When maxHeight is given, cap the card and scroll the feed list inside —
+  // this is what keeps the Overview agent-feed bottom aligned to the System card.
+  const cardStyle = maxHeight != null
+    ? { maxHeight: `${maxHeight}px`, display: 'flex', flexDirection: 'column' as const }
+    : undefined
+
+  return (
+    <div className="card agent-feed" style={cardStyle}>
+      <div className="flex items-center justify-between mb-3">
+        <h3>Agent Activity</h3>
+        <div className="seg-toggle">
+          {MODES.map(m => (
+            <button
+              key={m}
+              className={`seg-btn${m === mode ? ' active' : ''}`}
+              onClick={() => pickMode(m)}
+            >
+              {MODE_LABEL[m]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {visible.length === 0 ? (
+        <p className="text-muted text-sm">No agent activity yet.</p>
+      ) : (
+        <div className={`feed-list${maxHeight != null ? ' feed-list-scroll' : ''}`}>
+          {visible.map(it => (
+            <button key={it.key} className="feed-row" onClick={() => setSelected(it)}>
+              <span className="feed-ts mono">{relTime(it.ts)}</span>
+              <span className="feed-icon" style={{ color: it.status === 'error' ? 'var(--red)' : 'var(--accent)' }}>{it.icon}</span>
+              <span className="feed-body">
+                <span className="feed-headline">{it.headline}</span>
+                {(mode === 'narrative' || mode === 'both') && it.detail && (
+                  <span className="feed-detail">{it.detail.length > 120 ? it.detail.slice(0, 120) + '…' : it.detail}</span>
+                )}
+                {(mode === 'ops' || mode === 'both') && it.run && (
+                  <span className="feed-meta mono">
+                    {it.run.trigger_type} · {it.run.model_provider || 'no-model'}
+                    {durationOf(it.run) && ` · ${durationOf(it.run)}`}
+                    {` · ${outputsCount(it.run)} out`}
+                    {it.run.errors && it.run.errors !== '[]' && ' · errored'}
+                  </span>
+                )}
+              </span>
+              {it.status && (
+                <span className={`badge ${it.status === 'completed' || it.status === 'approved' ? 'badge-green' : it.status === 'error' || it.status === 'rejected' ? 'badge-red' : 'badge-yellow'}`}>
+                  {it.status}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <FeedDrawer item={selected} onClose={() => setSelected(null)} navigate={navigate} />
+    </div>
+  )
+}
+
+function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClose: () => void; navigate: (p: string) => void }) {
+  return (
+    <DetailDrawer open={!!item} onClose={onClose} title={item?.headline || 'Activity'}>
+      {item?.kind === 'run' && item.run && (
+        <>
+          <DrawerSection label="Agent Run">
+            <DrawerField label="Agent" value={item.run.agent_name} />
+            <DrawerField label="Status" value={item.run.status} />
+            <DrawerField label="Trigger" value={item.run.trigger_type} />
+            <DrawerField label="Model" value={item.run.model_provider} />
+            <DrawerField label="Started" value={item.run.started_at?.slice(0, 16)} />
+            <DrawerField label="Duration" value={durationOf(item.run) || null} mono />
+          </DrawerSection>
+          <div className="flex gap-2 mt-3">
+            <button className="btn-control secondary" onClick={() => { onClose(); navigate('/agent-activity') }}>Open in Agent Activity →</button>
+          </div>
+        </>
+      )}
+      {item?.kind === 'opportunity' && item.opportunity && (
+        <>
+          <DrawerSection label="Opportunity">
+            <DrawerField label="Symbol" value={item.opportunity.symbol} mono />
+            <DrawerField label="Bias" value={item.opportunity.direction_bias} />
+            <DrawerField label="Confidence" value={item.opportunity.confidence != null ? String(item.opportunity.confidence) : null} mono />
+            <DrawerField label="Source" value={item.opportunity.source_agent} />
+          </DrawerSection>
+          <DrawerSection label="Thesis">
+            <p className="feed-thesis">{item.opportunity.thesis || 'No thesis recorded.'}</p>
+          </DrawerSection>
+          <div className="flex gap-2 mt-3">
+            <button className="btn-control secondary" onClick={() => { onClose(); navigate('/agent-activity') }}>Open in Agent Activity →</button>
+          </div>
+        </>
+      )}
+      {item?.kind === 'proposal' && item.proposal && (
+        <>
+          <DrawerSection label="Proposal">
+            <DrawerField label="Symbol" value={item.proposal.symbol} mono />
+            <DrawerField label="Direction" value={item.proposal.direction} />
+            <DrawerField label="Mode" value={item.proposal.execution_mode} />
+            <DrawerField label="Status" value={item.proposal.status} />
+          </DrawerSection>
+          <DrawerSection label="Agent Rationale">
+            <p className="feed-thesis">{item.proposal.agent_rationale || 'No rationale recorded.'}</p>
+          </DrawerSection>
+          <div className="flex gap-2 mt-3">
+            <button className="btn-control" onClick={() => { onClose(); navigate('/proposals') }}>Review in Proposals →</button>
+          </div>
+        </>
+      )}
+    </DetailDrawer>
+  )
+}

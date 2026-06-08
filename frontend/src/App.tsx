@@ -1,66 +1,87 @@
-import { Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Routes, Route, NavLink } from 'react-router-dom'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from './api/client'
 import Overview from './pages/Overview'
-import AgentRuns from './pages/AgentRuns'
-import Dreaming from './pages/Dreaming'
-import KnowledgeBase from './pages/KnowledgeBase'
-import Opportunities from './pages/Opportunities'
+import AgentActivity from './pages/AgentActivity'
+import Learning from './pages/Learning'
 import Proposals from './pages/Proposals'
-import PaperTrades from './pages/PaperTrades'
-import Positions from './pages/Positions'
+import TradesPositions from './pages/TradesPositions'
 import StrategyLifecycle from './pages/StrategyLifecycle'
 import Charts from './pages/Charts'
-import Reports from './pages/Reports'
 import Settings from './pages/Settings'
 import RiskControls from './pages/RiskControls'
 import NewsIntel from './pages/NewsIntel'
-import ActivityTimeline from './components/ActivityTimeline'
+// ActivityTimeline temporarily hidden — content overlapped Overview's Agent Activity
+// card (runs duplicated) and the global-shell strip lacked viewport-follow + click
+// drill-down. To revive: restore the import + the <ActivityTimeline /> mount below,
+// and rework as a viewport-fixed audit-only ticker (kill_switch / risk_blocked /
+// config events; agent runs already covered by Agent Activity).
+// import ActivityTimeline from './components/ActivityTimeline'
 import CommandPalette from './components/CommandPalette'
+import MarketTicker from './components/MarketTicker'
 
-type NavItem = { to: string; label: string }
-type NavGroup = { group: string; items: NavItem[] }
+export type NavItem = { to: string; label: string }
+export type NavGroup = { group: string; items: NavItem[] }
 
-const NAV: NavGroup[] = [
-  { group: '', items: [{ to: '/', label: 'Cockpit' }] },
+// Nav grouped by the 5 workflow phases (docs/WEBUI_PAGE_MAP.md target IA):
+// Observe -> Decide -> Execute -> Evolve -> Operate.
+// NOTE: page MERGES (Positions+PaperTrades, AgentRuns+Opportunities, Dreaming+KB+Reports)
+// are later build steps — until those merged pages exist, nav keeps the existing routes
+// under their target phase rather than pointing at not-yet-built destinations.
+export const NAV: NavGroup[] = [
+  { group: '', items: [{ to: '/', label: 'Overview' }] },
   {
-    group: 'Markets',
+    group: 'Observe',
     items: [
-      { to: '/opportunities', label: 'Opportunities' },
-      { to: '/charts', label: 'Charts' },
-      { to: '/news', label: 'News Intel' },
+      { to: '/charts', label: 'Markets' },
     ],
   },
   {
-    group: 'Trading',
+    group: 'Decide',
     items: [
-      { to: '/proposals', label: 'Proposals' },
-      { to: '/paper-trades', label: 'Paper Trades' },
-      { to: '/positions', label: 'Positions' },
+      { to: '/proposals', label: 'Approval Desk' },
+      { to: '/agent-activity', label: 'Agent Activity' },
     ],
   },
   {
-    group: 'Intelligence',
+    group: 'Execute',
     items: [
-      { to: '/agent-runs', label: 'Agent Runs' },
+      { to: '/trades', label: 'Trades & Positions' },
+    ],
+  },
+  {
+    group: 'Evolve',
+    items: [
       { to: '/strategies', label: 'Strategies' },
-      { to: '/knowledge', label: 'Knowledge Base' },
-      { to: '/dreaming', label: 'Dreaming' },
+      { to: '/learning', label: 'Learning' },
     ],
   },
   {
-    group: 'Operations',
+    group: 'Operate',
     items: [
       { to: '/risk', label: 'Risk & Controls' },
-      { to: '/reports', label: 'Reports' },
       { to: '/settings', label: 'Settings' },
+      { to: '/news', label: 'News Intel' },
     ],
   },
 ]
 
-const ALL_ITEMS = NAV.flatMap(g => g.items)
 
+/**
+ * Topbar StatusBar — Bloomberg-style "instrument cluster" replacing the prior 5-pill row.
+ *
+ * Three semantic blocks (left → right):
+ *   1. STATUS CLUSTER  — three dots (gateway / live / kill) + heartbeat + state word.
+ *      Hover → popover with the full status detail (gateway, scheduler, exchange, model,
+ *      live-state, permission, kill-switch, last-run age). The popover replaces the
+ *      former pills' diffuse hover-titles with one focused panel.
+ *   2. SYSTEM PLATE    — small mono gray line: `bitget · demo · Research` (low-priority
+ *      context; hidden under 1200px).
+ *   3. ACTION BUTTON   — Pause / Resume.
+ *
+ * Information density goal: same data as before, ~75px narrower, far less visual noise.
+ */
 function StatusBar() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
@@ -75,8 +96,11 @@ function StatusBar() {
   const running = !!(data as any).gateway_running
   const paused = !!(data as any).paused
   const live = String((data as any).live_state || 'live_disabled')
+  const liveOn = live !== 'live_disabled'
   const mode = String((data as any).exchange_mode || '')
+  const exch = String((data as any).exchange || '')
   const perm = String((data as any).permission_mode || '')
+  const modelProv = String((data as any).model_provider || '')
   const killed = !!ks?.active
 
   const latestRun = (runs as any[])[0]
@@ -86,24 +110,83 @@ function StatusBar() {
     heartbeatText = mins < 1 ? '<1m' : `${mins}m`
   }
 
+  // Three lights — left to right by criticality.
+  const gwLight = running ? (paused ? 'yellow' : 'green') : 'red'
+  const liveLight = liveOn ? 'yellow' : 'muted'
+  const killLight = killed ? 'red' : 'muted'
+
+  // Top-line state word + tone.
+  const stateWord = killed ? 'KILL' : !running ? 'Stopped' : paused ? 'Paused' : 'Running'
+  const stateTone = killed ? 'red' : !running ? 'red' : paused ? 'yellow' : 'green'
+
   return (
     <div className="topbar-status">
-      {heartbeatText && (
-        <span className="pill pill-muted" title={`Last agent run: ${latestRun?.agent_name}`}>
-          <span className="dot dot-green heartbeat" />
-          {heartbeatText}
+      {/* Block 1 — Status cluster (lights + heartbeat + state word). Hover → popover. */}
+      <div className="status-cluster" tabIndex={0} aria-label="System status">
+        <span className="status-cluster-lights" aria-hidden="true">
+          <span className={`dot dot-${gwLight}`} />
+          <span className={`dot dot-${liveLight}`} />
+          <span className={`dot dot-${killLight}`} />
         </span>
-      )}
-      <span className={`pill ${running ? (paused ? 'pill-yellow' : 'pill-green') : 'pill-red'}`}>
-        <span className={`dot ${running ? (paused ? 'dot-yellow' : 'dot-green') : 'dot-red'}`} />
-        {running ? (paused ? 'Paused' : 'Running') : 'Stopped'}
-      </span>
-      <span className="pill pill-muted">{mode || '—'}</span>
-      <span className={`pill ${live === 'live_disabled' ? 'pill-muted' : 'pill-yellow'}`}>
-        {live.replace('live_', '')}
-      </span>
-      <span className="pill pill-blue">{perm}</span>
-      {killed && <span className="pill pill-red"><span className="dot dot-red" />kill switch</span>}
+        {heartbeatText && (
+          <span className="status-cluster-hb mono" title="Time since last agent run">
+            <span className="dot dot-green heartbeat" />{heartbeatText}
+          </span>
+        )}
+        <span className={`status-cluster-state status-cluster-${stateTone}`}>{stateWord}</span>
+
+        {/* Hover/focus popover — full status detail. */}
+        <div className="status-popover" role="tooltip">
+          <div className="status-popover-title">System Status</div>
+          <table className="status-popover-table">
+            <tbody>
+              <tr>
+                <th>Gateway</th>
+                <td><span className={`dot dot-${gwLight}`} /> {running ? (paused ? 'paused' : 'running') : 'stopped'}</td>
+              </tr>
+              <tr>
+                <th>Scheduler</th>
+                <td><span className={`dot dot-${paused ? 'yellow' : 'green'}`} /> {paused ? 'paused' : 'active'}</td>
+              </tr>
+              <tr>
+                <th>Exchange</th>
+                <td className="mono">{exch || '—'}{mode ? ` · ${mode}` : ''}</td>
+              </tr>
+              {modelProv && (
+                <tr>
+                  <th>Model</th>
+                  <td className="mono">{modelProv}</td>
+                </tr>
+              )}
+              <tr>
+                <th>Live</th>
+                <td><span className={`dot dot-${liveLight}`} /> {live.replace('live_', '')}</td>
+              </tr>
+              <tr>
+                <th>Permission</th>
+                <td className="mono">{perm || '—'}</td>
+              </tr>
+              <tr>
+                <th>Kill Switch</th>
+                <td><span className={`dot dot-${killLight}`} /> {killed ? 'engaged' : 'inactive'}</td>
+              </tr>
+              {latestRun && (
+                <tr>
+                  <th>Last Run</th>
+                  <td className="mono">{latestRun.agent_name}{heartbeatText ? ` · ${heartbeatText} ago` : ''}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Block 2 — System plate (low-priority context, hides on narrow). */}
+      <div className="system-plate mono" title="Exchange · Mode · Permission">
+        {(exch || '—')}{mode ? `·${mode}` : ''} · {perm || '—'}
+      </div>
+
+      {/* Block 3 — Pause/Resume action. */}
       <button
         className="topbar-btn secondary"
         onClick={() => paused ? resumeMut.mutate() : pauseMut.mutate()}
@@ -116,11 +199,7 @@ function StatusBar() {
 }
 
 export default function App() {
-  const location = useLocation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-  const current = ALL_ITEMS.find(i => i.to === location.pathname)
-    || (location.pathname === '/' ? ALL_ITEMS[0] : undefined)
-  const currentGroup = NAV.find(g => g.items.some(i => i.to === location.pathname))?.group
 
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }))
 
@@ -153,32 +232,36 @@ export default function App() {
       </aside>
       <div className="content">
         <header className="topbar">
-          <div className="breadcrumb">
-            {currentGroup && <span className="crumb-group">{currentGroup}</span>}
-            {currentGroup && <span className="crumb-sep">/</span>}
-            <span className="crumb-current">{current?.label || 'Cockpit'}</span>
-          </div>
+          {/* Bloomberg-style ticker replaces the breadcrumb (which duplicated brand+sidebar
+              "you-are-here" cues). The active sidebar item + each page's PageHeader title
+              cover navigation context; the topbar now adds market-state context instead. */}
+          <MarketTicker />
           <StatusBar />
         </header>
         <main className="main">
           <Routes>
             <Route path="/" element={<Overview />} />
-            <Route path="/agent-runs" element={<AgentRuns />} />
-            <Route path="/dreaming" element={<Dreaming />} />
-            <Route path="/knowledge" element={<KnowledgeBase />} />
-            <Route path="/opportunities" element={<Opportunities />} />
+            <Route path="/agent-activity" element={<AgentActivity />} />
+            {/* Legacy paths kept as redirects so existing cross-links/bookmarks resolve. */}
+            <Route path="/agent-runs" element={<AgentActivity />} />
+            <Route path="/opportunities" element={<AgentActivity />} />
+            <Route path="/learning" element={<Learning />} />
+            <Route path="/dreaming" element={<Learning />} />
+            <Route path="/knowledge" element={<Learning />} />
+            <Route path="/reports" element={<Learning />} />
             <Route path="/proposals" element={<Proposals />} />
-            <Route path="/paper-trades" element={<PaperTrades />} />
-            <Route path="/positions" element={<Positions />} />
+            <Route path="/trades" element={<TradesPositions />} />
+            {/* Legacy paths kept as redirects so existing cross-links/bookmarks resolve. */}
+            <Route path="/paper-trades" element={<TradesPositions />} />
+            <Route path="/positions" element={<TradesPositions />} />
             <Route path="/strategies" element={<StrategyLifecycle />} />
             <Route path="/charts" element={<Charts />} />
-            <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/risk" element={<RiskControls />} />
             <Route path="/news" element={<NewsIntel />} />
           </Routes>
         </main>
-        <ActivityTimeline />
+        {/* <ActivityTimeline /> — temporarily hidden, see import comment above */}
       </div>
     </div>
   )

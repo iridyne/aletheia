@@ -61,9 +61,23 @@ function statusColor(status?: string): string {
   return ''
 }
 
+const COLLAPSE_KEY = 'aletheia.activityCollapsed'
+
 export default function ActivityTimeline() {
-  const [collapsed, setCollapsed] = useState(false)
+  // Collapsed by default so the main area isn't starved of vertical space (C3).
+  // Persist the user's preference so expanding it sticks across reloads.
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem(COLLAPSE_KEY) !== 'false' } catch { return true }
+  })
   const [filter, setFilter] = useState<Filter>('all')
+
+  function toggleCollapsed() {
+    setCollapsed(c => {
+      const next = !c
+      try { localStorage.setItem(COLLAPSE_KEY, String(next)) } catch { /* ignore */ }
+      return next
+    })
+  }
 
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
   const { data: events = [] } = useQuery({ queryKey: ['audit-events'], queryFn: () => api.getAuditEvents(30) })
@@ -76,45 +90,35 @@ export default function ActivityTimeline() {
 
   return (
     <div className={`activity-timeline ${collapsed ? 'collapsed' : ''}`}>
-      <div className="activity-timeline-header" onClick={() => setCollapsed(c => !c)}>
+      <div className="activity-timeline-header" onClick={toggleCollapsed}>
         <div className="flex items-center gap-2">
-          <span style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>▶</span>
-          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            Activity
-          </span>
-          <span className="badge badge-blue" style={{ fontSize: '0.6rem', padding: '0.05rem 0.35rem' }}>
-            {items.length}
-          </span>
+          <span className="at-chev">{collapsed ? '▶' : '▼'}</span>
+          <span className="at-title">Activity</span>
+          <span className="badge badge-blue at-count">{items.length}</span>
         </div>
         <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
           {!collapsed && FILTERS.map(f => (
             <button
               key={f}
-              className={f === filter ? '' : 'secondary'}
-              style={{ padding: '0.15rem 0.4rem', fontSize: '0.6rem' }}
+              className={`at-filter ${f === filter ? '' : 'secondary'}`}
               onClick={() => setFilter(f)}
             >
               {f}
             </button>
           ))}
-          <span style={{ fontSize: '0.75rem', color: 'var(--faint)', cursor: 'pointer' }}>
-            {collapsed ? '▲' : '▼'}
-          </span>
         </div>
       </div>
       {!collapsed && (
         <div className="activity-timeline-body">
           {items.length === 0 && (
-            <div style={{ padding: '1rem', color: 'var(--faint)', fontSize: '0.78rem', textAlign: 'center' }}>
-              No activity yet
-            </div>
+            <div className="at-empty">No activity yet</div>
           )}
           {items.map(item => (
             <div key={item.id} className="timeline-event">
               <span className="timeline-ts">{formatTime(item.timestamp)}</span>
-              <span style={{ color: statusColor(item.status) || 'var(--accent)', fontSize: '0.75rem' }}>{item.icon}</span>
-              <span style={{ flex: 1, fontSize: '0.78rem' }}>{item.title}</span>
-              {item.subtitle && <span style={{ fontSize: '0.7rem', color: 'var(--faint)' }}>{item.subtitle}</span>}
+              <span className="at-icon" style={{ color: statusColor(item.status) || 'var(--accent)' }}>{item.icon}</span>
+              <span className="at-event-title">{item.title}</span>
+              {item.subtitle && <span className="at-event-sub">{item.subtitle}</span>}
             </div>
           ))}
         </div>

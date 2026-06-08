@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
+import PageHeader from '../components/PageHeader'
 
 type NewsItem = {
   id: string
@@ -55,7 +56,17 @@ export default function NewsIntel() {
 
   return (
     <div>
-      <h2 className="page-title">News Intelligence</h2>
+      <PageHeader
+        title="News Intelligence"
+        role="Operate · out-of-MVP-spec surface (§17.3 lists news ingestion as future). No automated feed runs — items are entered manually via the API."
+      />
+
+      <div className="notice-banner">
+        <span className="notice-icon">⚠</span>
+        <span className="notice-text">
+          <b>Manual entry only.</b> The automated news-ingestion pipeline is not configured (it is future scope per §17.3 / AGENTS.md). What you see here is whatever has been added by hand via <span className="mono">POST /api/news</span> — this is not a live market-news feed.
+        </span>
+      </div>
 
       <div className="flex items-center gap-2 mb-3">
         {['all', 'new', 'reviewed'].map(f => (

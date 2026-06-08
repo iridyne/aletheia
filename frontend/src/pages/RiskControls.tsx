@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import PageHeader from '../components/PageHeader'
+import { fmtSigned, useDecimals } from '../lib/format'
 
 export default function RiskControls() {
   const qc = useQueryClient()
@@ -20,6 +22,7 @@ export default function RiskControls() {
   const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
 
+  useDecimals() // re-render when the display-decimals setting changes
   const killed = !!killSwitch?.active
   const paused = !!(status as any)?.paused
   const violations = (riskStatus?.violations as string[]) || []
@@ -30,9 +33,12 @@ export default function RiskControls() {
 
   return (
     <div>
-      <h2 className="page-title">Risk & Controls</h2>
+      <PageHeader
+        title="Risk & Controls"
+        role="Operate · the brakes console. Live risk state, the kill switch, gateway pause/resume, exposure, and the configured risk boundaries — the deep counterpart to the Cockpit's glanceable risk rail."
+      />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.1rem' }}>
+      <div className="risk-grid">
         {/* Risk State */}
         <div className="card">
           <h3>Risk State</h3>
@@ -103,7 +109,7 @@ export default function RiskControls() {
                   <tr key={sym}>
                     <td className="mono">{sym}</td>
                     <td className="mono" style={{ color: val >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                      {val >= 0 ? '+' : ''}{Number(val).toFixed(2)}
+                      {fmtSigned(val)}
                     </td>
                   </tr>
                 ))}

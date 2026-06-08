@@ -3,9 +3,17 @@
   "configurations": [
     {
       "name": "frontend-vite",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "frontend", "--", "--host", "127.0.0.1", "--port", "5173"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "5173"],
+      "cwd": "frontend",
       "port": 5173
+    },
+    {
+      "name": "frontend-vite-direct",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "5190", "--strictPort"],
+      "cwd": "frontend",
+      "port": 5190
     },
     {
       "name": "gateway",
