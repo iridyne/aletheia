@@ -1,0 +1,52 @@
+"""Tests for get_market_data_provider() — the single market-data entry point.
+
+The factory consolidates the "read config → construct CCXTProvider" template
+that was previously duplicated at 3 call sites. It must:
+  - pull primary exchange + fallback from market_data config
+  - let callers override the primary (HTTP exchange= param / xStocks special case)
+    while the fallback always comes from config
+  - NOT cache (each call returns a fresh provider — CCXT binds its aiohttp
+    session to the creating event loop, and the scheduler uses a fresh loop
+    per job, so a cached provider would raise "Event loop is closed")
+
+No network: CCXTProvider does no I/O until the first fetch, so constructing one
+is cheap and offline.
+"""
+
+from types import SimpleNamespace
+
+from aletheia.config import loader
+from aletheia.data.ccxt_provider import get_market_data_provider, CCXTProvider
+
+
+def _fake_config(exchange="binance", fallback="bybit"):
+    md = SimpleNamespace(ccxt_exchange=exchange, ccxt_fallback=fallback)
+    return SimpleNamespace(market_data=md)
+
+
+def test_factory_uses_config_exchanges(monkeypatch):
+    monkeypatch.setattr(loader, "load_config",
+                        lambda: _fake_config("binance", "bybit"))
+    p = get_market_data_provider()
+    assert isinstance(p, CCXTProvider)
+    assert p._primary_name == "binance"
+    assert p._fallback_name == "bybit"
+
+
+def test_factory_exchange_override_keeps_config_fallback(monkeypatch):
+    monkeypatch.setattr(loader, "load_config",
+                        lambda: _fake_config("binance", "bybit"))
+    # Override the primary (e.g. ?exchange=kraken on the OHLCV route); the
+    # fallback still comes from config, never from the override.
+    p = get_market_data_provider("kraken")
+    assert p._primary_name == "kraken"
+    assert p._fallback_name == "bybit"
+
+
+def test_factory_returns_fresh_instance_each_call(monkeypatch):
+    monkeypatch.setattr(loader, "load_config",
+                        lambda: _fake_config("binance", "bybit"))
+    a = get_market_data_provider()
+    b = get_market_data_provider()
+    # Never cached — distinct objects so cross-event-loop reuse is impossible.
+    assert a is not b
