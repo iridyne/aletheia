@@ -2,7 +2,34 @@
 
 ## Last Updated
 
-2026-06-08 (xStocks 接入 + 管道 bug fix: confidence default / datetime tz / ticker snapshots)
+2026-06-08 (Markets K线动态加载 — scroll-back history + live tail)
+
+## Recent Change (Markets K线动态加载 — 2026-06-08)
+
+**目的**：Markets 页 K 线从「固定一段」改为主流交易所式动态加载 —— 向左滚到边缘自动续加更早历史，右沿 10s 轮询保持实时。
+
+**后端**：`ccxt_provider.py` 加 `_TF_MS` + `timeframe_ms()` + `get_ohlcv(since=)`；`/api/market/ohlcv` 加 `before`（unix 秒）参数做历史分页（`since=before-limit*tf`，过滤 `>=before` 防重叠）；缓存只服务默认最新视图。
+
+**前端**：`getOhlcv` 加 `before` 参；`PriceChart` 重写为命令式 store + refs，`subscribeVisibleLogicalRangeChange` 触发 `loadOlder()`（前插后平移逻辑区间保持视窗），`setInterval` 10s `series.update()` 实时尾部。
+
+**测试/验证**：488 passed（+2）；后端 urllib + Vite 视觉 E2E 均确认三行为触发、零重叠、零 console error。
+
+---
+
+## Recent Change (Pipeline Gap Analysis — 2026-06-08)
+
+**全自动交易闭环现状分析**：对照"全市场扫描→分析→策略→开仓→平仓→评估→学习→总结"
+完整闭环，逐环节代码核实。新文档 `docs/PIPELINE_STATUS.md` 记录完整结果。
+
+**核心发现**：
+- 管道骨架 80% 接通（扫描→分析→开仓→平仓→总结 均自动运行）
+- 三大结构性差距：经验闭环只闭 30%、agent 无协作流、策略是文字非可执行规则
+- 两个 agent (`post_trade_reviewer` / `risk_critic`) 代码完整但未排入 scheduler
+- 系统从未跑过真正的 unattended paper trading session（stage-0 尚未开始）
+
+**新增文档**：`docs/PIPELINE_STATUS.md`（逐环节现状 + 差距 + scheduler 全景 + 北极星阶段）
+
+---
 
 ## Recent Change (xStocks 接入 + 管道 bug fix — 2026-06-08)
 
@@ -248,7 +275,7 @@ hard limit relaxed. Each has a focused regression test.
 
 ## Current State Summary
 
-MVP trading system with 7 agents, 272 tests. Comprehensive bug-fix pass completed across all backend and frontend issues documented in BACKEND_ISSUES.md and FRONTEND_ISSUES.md.
+Post-MVP trading system with 8+ agents, 474 tests. Full-market observation pipeline operational (crypto + xStocks + US equities + prediction markets). Paper trading pipeline functional end-to-end. Key gap: experience loop (learning→decision feedback) only 30% closed.
 
 ## What Was Completed
 
@@ -287,12 +314,22 @@ Recent:
 
 ## Next Recommended Step
 
-Per `north_star_references.md §7` we are in **stage 0: prove stable run**. Before starting any new feature work or closing the experience loop:
+Per `docs/PIPELINE_STATUS.md` 北极星阶段图，当前处于 **stage 0 → 0.5 过渡期**：
 
-1. Run a 7–14 day unattended paper-trading session and confirm: gateway never crashes, no orphan orders, no lost state, autostart + watchdog actually self-heal (PR #7/#8 capabilities).
-2. Confirm test baseline holds: `uv run pytest -q` should report 352 passed.
-3. Re-confirm gateway health honestly: `uv run aletheia gateway status`.
-4. Only after stage 0 evidence accumulates, consider stage 1 (validate learning-ledger output quality) before opening any north-star work.
+**阶段 0.5（立即可做）**：
+1. 把 `post_trade_reviewer` + `risk_critic` 排入 scheduler（代码完整但从未自动跑）
+2. 验证测试基线：`uv run pytest -q` — 应为 474 passed
+3. 启动 gateway 并运行 72h unattended paper trading
+4. 观察 Learning Ledger 指标（lessons_consulted / activation_ratio）是否非零
+
+**阶段 1（72h 稳跑后）**：
+5. 证明学习质量——dreaming_agent 的 Learning Ledger 指标趋势向好
+6. 如果指标全零 → 先诊断（LLM 不通 / opportunity 全 neutral / 配置未开）
+
+**阶段 2（需显式授权）**：
+7. 最小经验闭环——paper_trader 读 lessons / agent 间工作流 / risk_critic 输出进入决策
+
+详见 `docs/PIPELINE_STATUS.md`。
 
 ## Commands to Run
 

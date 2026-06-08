@@ -54,7 +54,8 @@ async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
     from aletheia.data import ccxt_provider
 
     class _FakeCCXT:
-        async def get_ohlcv(self, symbol, timeframe, limit):
+        # signature mirrors the real CCXTProvider (since added for history paging)
+        async def get_ohlcv(self, symbol, timeframe, limit, since=None):
             return [Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.5, volume=10)]
         async def get_ticker(self, symbol):
             from aletheia.data.providers import Ticker
@@ -69,3 +70,44 @@ async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
     assert isinstance(data, list)
     assert data[0]["time"] == 1700000000  # ms -> s
     assert data[0]["close"] == 1.5
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_before_filters_to_history(client, monkeypatch):
+    """`before` (unix seconds) must drop any candle at/after the cutoff so a
+    scroll-back page never overlaps the chart's left-most bar."""
+    from aletheia.data.providers import Candle
+    from aletheia.data import ccxt_provider
+
+    cutoff = 1700000000  # seconds
+    captured = {}
+
+    class _FakeCCXT:
+        async def get_ohlcv(self, symbol, timeframe, limit, since=None):
+            captured["since"] = since
+            return [
+                Candle(timestamp=(cutoff - 3600) * 1000, open=1, high=2, low=0.5, close=1.4, volume=10),  # older — kept
+                Candle(timestamp=cutoff * 1000, open=1, high=2, low=0.5, close=1.5, volume=10),            # == cutoff — dropped
+                Candle(timestamp=(cutoff + 3600) * 1000, open=1, high=2, low=0.5, close=1.6, volume=10),   # newer — dropped
+            ]
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
+    resp = await client.get(f"/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=300&before={cutoff}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    # only the strictly-older candle survives the cutoff filter
+    assert [c["time"] for c in data] == [cutoff - 3600]
+    # the route asks the exchange for a window ending at the cutoff
+    assert captured["since"] == cutoff * 1000 - 300 * 3_600_000
+
+
+@pytest.mark.anyio
+async def test_ohlcv_route_unsupported_timeframe_with_before(client):
+    """A timeframe with no known duration can't form a `before` window — clean error."""
+    resp = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=3m&limit=10&before=1700000000")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("error", "").startswith("unsupported_timeframe")

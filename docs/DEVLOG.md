@@ -1,5 +1,51 @@
 # Development Log
 
+## 2026-06-08 (later⁶) — Markets K线动态加载（scroll-back history + live tail）
+
+**目的**：Markets 页（`/charts`）的 K 线图原本只加载固定一段（最新 N 根），向左滚动看不到更早历史，右沿也不自动更新。改成主流交易所体验：向左滚到边缘 → 自动续加更早历史；右沿保持实时刷新。
+
+**后端**（`aletheia/data/ccxt_provider.py` + `server/routes/data.py`）：
+- 新增 `_TF_MS` 映射 + `timeframe_ms(tf)` helper（tf→毫秒的单一真源）
+- `get_ohlcv`/`_fetch_ohlcv` 增加 `since: int|None` 参数，透传给 CCXT `fetch_ohlcv(since=)`
+- `/api/market/ohlcv` 增加 `before`（unix 秒）参数：`since_ms = before*1000 - limit*tf_ms`，并把 `>= before` 的 candle 过滤掉，保证续加页与左沿不重叠
+- 缓存策略收紧：只有默认最新视图（`before` 未设 且 `limit==100`）走 TTL 缓存；历史页与实时尾部一律 fetch fresh
+
+**前端**（`api/client.ts` + `charts/PriceChart.tsx`）：
+- `getOhlcv` 增加 `before` 参数（第 4 位）
+- `PriceChart` 重写为命令式 candle store（refs 持久化，图表不随数据重建）：
+  - 初次加载最新 `INITIAL_LIMIT=300` 根
+  - 向左滚到 `SCROLL_TRIGGER_BARS=10` 内触发 `loadOlder()`：`before=<最左根>` 取下一页、去重、前插、`setData` 后用 `setVisibleLogicalRange` 平移逻辑区间保持视窗不跳
+  - `LIVE_POLL_MS=10s` 轮询最新 2 根，`series.update()` 替换在成形/追加已收盘的 bar
+  - 守卫：`loadingOlderRef`/`exhaustedRef`/`initializedRef`；markers 在独立 effect 重挂不重建图表
+
+**验证**：488 passed（+2 新测试：`before` 过滤 + `since` 窗口数学、unsupported timeframe 干净报错）；后端 urllib E2E 确认续加页与最新视图 gap 恰为 1 个 tf、零重叠；Vite :5173 视觉 E2E 确认三种行为（初次 `limit=300`、续加 `before=...`、实时 `limit=2`）全部触发、零 console error。
+
+---
+
+## 2026-06-08 (later⁵) — Pipeline gap analysis + 文档统一
+
+**目的**：对照"全市场扫描→分析→策略→开仓→平仓→评估→学习→总结"完整预期，
+逐环节代码核实当前实现与预期的差距。
+
+**核心发现**：
+- 管道骨架 80% 接通：5 crypto + 4 xStocks + 4 stocks + prediction markets 自动扫描；
+  market_observer→paper_trader→position_manager 全链路每 15min 自动运行
+- 三大结构性差距明确定位：
+  1. **经验闭环只闭 30%**：6 agent 写 knowledge，只 2 agent（observer/designer）读回
+  2. **Agent 无协作流**：13 个 scheduler job 各自 cron，无方向性数据传递
+  3. **策略文字非规则**：designer 产出 entry_rule 自然语言，trader 不读
+- 两个 agent 代码完整但未排入 scheduler：`post_trade_reviewer` / `risk_critic`
+
+**产出文档**：
+- `docs/PIPELINE_STATUS.md`（新建）— 逐环节现状表 + 差距分析 + scheduler 全景 + 北极星阶段图
+- `docs/AI_HANDOFF.md` — 更新 current state + next steps
+- `docs/CURRENT_TASK.md` — 更新状态为 PLANNING（stage 0.5 措施待确认）
+- Memory `aletheia-mvp-status.md` — 更新 pipeline completion 表
+
+**无代码变更**。纯分析+文档整理 session。
+
+---
+
 ## 2026-06-08 (later⁴) — xStocks 接入 + 管道 bug fix 三项
 
 **本次 session 两阶段工作：**
