@@ -99,11 +99,8 @@ function StatusBar() {
 
   const restartMut = useMutation({
     mutationFn: api.restartGateway,
-    onSuccess: (r) => {
-      // Worker reloads in ~3s (warm) or ~10s (cold). Wait, then re-fire all
-      // queries — health drift will clear once the new worker boots.
-      const delay = r.mode === 'warm' ? 3500 : 11000
-      setTimeout(() => qc.invalidateQueries(), delay)
+    onSuccess: () => {
+      setTimeout(() => qc.invalidateQueries(), 8000)
     },
   })
 
