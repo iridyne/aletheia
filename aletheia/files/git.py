@@ -45,6 +45,10 @@ def is_enabled() -> bool:
 
 def _ensure_repo(data_dir) -> None:
     """Init the repo and write .gitignore if not already present."""
+    # Create data dir first so subsequent writes never hit FileNotFoundError.
+    data_dir.mkdir(parents=True, exist_ok=True)
+    # .gitignore must exist before git init so the first `git add` never
+    # accidentally stages secrets.enc, app.db, or logs/.
     gitignore = data_dir / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(_GITIGNORE, encoding="utf-8")

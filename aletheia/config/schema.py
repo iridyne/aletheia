@@ -29,8 +29,8 @@ class RuntimeConfig(BaseModel):
     # Global trading brake. When true, the risk engine rejects every proposal
     # (paper and live). Set by human action or auto-tripped on daily-loss limit.
     kill_switch_active: bool = False
-    # Optional Git versioning of data/knowledge, data/playbooks, data/reports.
-    git_enabled: bool = False
+    # Git versioning of data/knowledge, data/playbooks, data/reports.
+    git_enabled: bool = True
 
 
 class ExchangeConfig(BaseModel):
