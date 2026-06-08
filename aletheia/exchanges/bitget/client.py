@@ -114,7 +114,11 @@ class BitgetClient:
             return {"connected": False, "error": str(e), "mode": self.mode}
 
     async def get_ticker(self, symbol: str, market_type: str = "spot") -> Ticker:
-        """Get current ticker for a symbol."""
+        """Get current ticker for a symbol.
+
+        # execution-context only — use aletheia.data.ccxt_provider for market data.
+        # Valid callers: exchange_sync (account valuation), reconciliation.
+        """
         if market_type == "spot":
             path = f"/api/v2/spot/market/tickers?symbol={symbol}"
         else:
@@ -143,7 +147,10 @@ class BitgetClient:
         )
 
     async def get_ohlcv(self, symbol: str, timeframe: str = "1H", limit: int = 100, market_type: str = "spot") -> list[Candle]:
-        """Get OHLCV candles."""
+        """Get OHLCV candles.
+
+        # execution-context only — use aletheia.data.ccxt_provider for market data.
+        """
         if market_type == "spot":
             path = f"/api/v2/spot/market/candles?symbol={symbol}&granularity={timeframe}&limit={limit}"
         else:

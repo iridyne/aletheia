@@ -38,3 +38,30 @@ def close_db() -> None:
 def reset_db() -> None:
     """Reset connection for this thread (for testing)."""
     close_db()
+
+
+# ---------------------------------------------------------------------------
+# Test-compatibility shim: tests set sq._db_conn = conn to inject a test DB.
+# The production code uses threading.local, so we bridge the two via a module-
+# level descriptor that forwards reads/writes to _local.conn.
+# ---------------------------------------------------------------------------
+
+class _DbConnDescriptor:
+    """Module-level attribute that proxies to threading.local storage."""
+    def __get__(self, obj, objtype=None):
+        return getattr(_local, "conn", None)
+
+    def __set__(self, obj, value):
+        _local.conn = value
+
+    def __delete__(self, obj):
+        _local.conn = None
+
+
+import sys as _sys
+_mod = _sys.modules[__name__]
+
+class _Module(type(_mod)):
+    _db_conn = _DbConnDescriptor()
+
+_mod.__class__ = _Module

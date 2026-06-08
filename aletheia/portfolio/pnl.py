@@ -9,8 +9,9 @@ from aletheia.storage.repositories import (
 
 
 def _latest_price(symbol: str) -> float | None:
-    rows = list_market_snapshots(symbol=symbol, limit=1)
-    return rows[0]["price"] if rows else None
+    from aletheia.trading.market_data import latest_snapshot
+    snap = latest_snapshot(symbol)
+    return float(snap["price"]) if snap else None
 
 
 def mark_positions_to_market() -> list[dict]:

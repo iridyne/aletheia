@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
+from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import RiskDecision, TradeProposal
 from aletheia.storage.repositories import insert_risk_decision, list_positions
 
@@ -74,8 +75,9 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     if cfg.runtime.kill_switch_active:
         violations.append("kill_switch_active")
 
-    # 1. Symbol allowed
-    if proposal.symbol not in risk.allowed_symbols:
+    # 1. Symbol allowed (normalize both sides to canonical BTC/USDT format)
+    allowed_canonical = {to_canonical(s) for s in risk.allowed_symbols}
+    if to_canonical(proposal.symbol) not in allowed_canonical:
         violations.append(f"symbol_not_allowed:{proposal.symbol}")
 
     # 2. Market allowed

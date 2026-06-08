@@ -22,6 +22,7 @@ from aletheia.storage.repositories import (
 )
 from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.market_data import latest_snapshot
+from aletheia.data.symbols import to_canonical
 
 # Conservative fixed paper notional target (USDT) per autonomous paper trade.
 _PAPER_NOTIONAL_USDT = 25.0
@@ -50,11 +51,17 @@ async def run_paper_trader(permission_mode: str = "Research", run_id: str | None
         log_tool(run_id, "create_paper_proposal", "paper_tool", False)
         errors.append(f"create_paper_proposal not permitted in mode {permission_mode}")
         return {"outputs": outputs, "errors": errors}
-    allowed_symbols = set(tradable_symbols_from_config(cfg))
+    # tradable_symbols are Bitget format (BTCUSDT); opportunities are canonical
+    # (BTC/USDT) — normalise both sides before matching.
+    allowed_symbols = {to_canonical(s) for s in tradable_symbols_from_config(cfg)}
 
-    # Pick the most recent OPEN opportunity for an allowed symbol.
+    # Pick the most recent OPEN crypto opportunity for an allowed symbol.
+    # equity and prediction asset_classes are observation-only — never traded.
     opp = None
     for row in list_opportunities(limit=50):
+        ac = row.get("asset_class") or "crypto"  # NULL = legacy crypto row
+        if ac != "crypto":
+            continue
         if row.get("status") == "open" and row.get("symbol") in allowed_symbols:
             opp = row
             break
