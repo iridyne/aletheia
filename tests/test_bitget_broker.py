@@ -120,7 +120,7 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "Auto"
+    cfg.agent.permission_mode = "Full"
     cfg.live.state = "live_limited"
     cfg.exchange.mode = "live"
     save_config(cfg)
@@ -153,7 +153,7 @@ def test_gateway_still_blocks_live_when_disabled(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "Auto"  # but live stays disabled
+    cfg.agent.permission_mode = "Full"  # but live stays disabled
     save_config(cfg)
 
     from aletheia.execution.gateway import submit_proposal

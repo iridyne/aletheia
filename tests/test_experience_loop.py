@@ -133,7 +133,7 @@ def test_load_playbooks_reads_seeds(tmp_path, monkeypatch):
 async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "Research"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
 
     from aletheia.knowledge.manager import create_research_note
     create_research_note("BTC regime lesson",
@@ -153,7 +153,7 @@ async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkey
 async def test_designer_injects_and_survives_offline_llm(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "Research"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
     from aletheia.trading.playbooks import seed_playbooks
     seed_playbooks(tmp_path)
 

@@ -34,7 +34,7 @@ async def client(tmp_path, monkeypatch):
 async def test_approve_proposal_executes_paper(client, monkeypatch):
     # PaperAuto so paper execution is permitted
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "PaperAuto"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
 
     p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
                       quantity=0.001, price=60000, execution_mode="paper_internal")
@@ -57,7 +57,7 @@ async def test_approve_proposal_executes_paper(client, monkeypatch):
 async def test_approve_proposal_idempotent_after_execute(client, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "PaperAuto"
+    cfg.agent.permission_mode = "Paper"
     save_config(cfg)
 
     p = TradeProposal(
@@ -154,7 +154,7 @@ async def test_paper_order_persists_with_fk_enforcement(tmp_path, monkeypatch):
     run_migrations()
 
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "PaperAuto"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(symbol="BTCUSDT", market_type="spot", direction="long",

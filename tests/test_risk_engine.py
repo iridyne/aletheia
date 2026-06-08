@@ -110,7 +110,7 @@ def test_execution_gateway_paper_flow(tmp_path, monkeypatch):
     # Change permission to PaperAuto to allow paper execution
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "PaperAuto"
+    cfg.agent.permission_mode = "Paper"
     save_config(cfg)
 
     result = submit_proposal(

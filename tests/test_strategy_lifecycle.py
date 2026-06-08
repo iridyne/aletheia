@@ -423,13 +423,13 @@ def test_live_candidate_to_live_limited_requires_live_unlock_and_permission(tmp_
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "Research"
+    cfg.agent.permission_mode = "Observe"
     save_config(cfg)
     result = promote_strategy(s.id, "live_limited")
     assert result["success"] is False
     assert "permission_mode_not_live_promotion" in result["error"]
 
-    cfg.agent.permission_mode = "Auto"
+    cfg.agent.permission_mode = "Full"
     save_config(cfg)
     result = promote_strategy(s.id, "live_limited")
     assert result["success"] is False
@@ -480,7 +480,7 @@ def test_live_limited_rejects_critical_risk_violations(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "Auto"
+    cfg.agent.permission_mode = "Full"
     cfg.live.state = "live_limited"
     cfg.live.first_live_confirmation_done = True
     save_config(cfg)

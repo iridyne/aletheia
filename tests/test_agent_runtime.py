@@ -42,35 +42,30 @@ def test_tool_registry_initialized():
     assert "unlock_live" in TOOL_REGISTRY
 
 
-def test_read_tools_permitted_in_all_modes():
+def test_observe_tools_permitted_in_all_modes():
     init_tool_registry()
-    for mode in ["ReadOnly", "Research", "PaperAuto", "AllowEditing", "Auto"]:
+    for mode in ["Observe", "Paper", "Full"]:
         assert is_tool_permitted("get_market_snapshot", mode)
+        assert is_tool_permitted("create_research_note", mode)
 
 
-def test_research_tool_blocked_in_readonly():
+def test_paper_tool_blocked_in_observe():
     init_tool_registry()
-    assert not is_tool_permitted("create_research_note", "ReadOnly")
-    assert is_tool_permitted("create_research_note", "Research")
-
-
-def test_paper_tool_blocked_in_research():
-    init_tool_registry()
-    assert not is_tool_permitted("run_paper_order", "Research")
-    assert is_tool_permitted("run_paper_order", "PaperAuto")
+    assert not is_tool_permitted("run_paper_order", "Observe")
+    assert is_tool_permitted("run_paper_order", "Paper")
 
 
 def test_restricted_tools_always_blocked():
     init_tool_registry()
-    for mode in ["ReadOnly", "Research", "PaperAuto", "AllowEditing", "Auto"]:
+    for mode in ["Observe", "Paper", "Full"]:
         assert not is_tool_permitted("unlock_live", mode)
         assert not is_tool_permitted("change_hard_risk_limits", mode)
         assert not is_tool_permitted("modify_credentials", mode)
 
 
-def test_get_permitted_tools_research():
+def test_get_permitted_tools_observe():
     init_tool_registry()
-    tools = get_permitted_tools("Research")
+    tools = get_permitted_tools("Observe")
     assert "get_market_snapshot" in tools
     assert "create_research_note" in tools
     assert "run_paper_order" not in tools
@@ -125,7 +120,7 @@ async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.config.loader import save_config
     cfg = AletheiaConfig()
-    cfg.agent.permission_mode = "ReadOnly"
+    cfg.agent.permission_mode = "Observe"
     save_config(cfg)
 
     import aletheia.storage.sqlite as sq
@@ -139,8 +134,8 @@ async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
     init_tool_registry()
 
     result = await run_agent("research_agent", trigger_type="manual")
-    # Research agent can't create notes in ReadOnly
-    assert "research_note:" not in str(result["outputs"])
+    # In Observe mode, research notes ARE permitted (observe tool class)
+    assert result["status"] in _OK
     reset_db()
 
 

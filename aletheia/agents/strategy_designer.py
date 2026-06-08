@@ -28,7 +28,7 @@ class StrategySpec(BaseModel):
 
 
 @register_agent("strategy_designer")
-async def run_strategy_designer(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Draft a candidate strategy, persist its parameters, and advance it to paper_running.
 
     The strategy is created with a structured `parameters` snapshot (symbol, timeframe,
@@ -61,7 +61,7 @@ async def run_strategy_designer(permission_mode: str = "Research", run_id: str |
             item_types=["research_note", "post_trade_review", "strategy_memory"],
         )
         memory_block = format_memory_block(lessons)
-        log_tool(run_id, "retrieve_lessons", "read_tool", True, output=f"lessons:{len(lessons)}")
+        log_tool(run_id, "retrieve_lessons", "observe", True, output=f"lessons:{len(lessons)}")
     except Exception:
         pass
 
@@ -69,7 +69,7 @@ async def run_strategy_designer(permission_mode: str = "Research", run_id: str |
     try:
         from aletheia.trading.playbooks import load_playbooks, format_playbook_block
         playbook_block = format_playbook_block(load_playbooks())
-        log_tool(run_id, "load_playbooks", "read_tool", True)
+        log_tool(run_id, "load_playbooks", "observe", True)
     except Exception:
         pass
 
@@ -84,7 +84,7 @@ async def run_strategy_designer(permission_mode: str = "Research", run_id: str |
         schema=StrategySpec,
         max_tokens=600,
     )
-    log_tool(run_id, "llm_structured", "research_tool", True)
+    log_tool(run_id, "llm_structured", "observe", True)
 
     spec = spec or {}
     if err:
@@ -113,7 +113,7 @@ async def run_strategy_designer(permission_mode: str = "Research", run_id: str |
     )[:1000]
 
     strategy = create_strategy(name=name, description=description, parameters=parameters)
-    log_tool(run_id, "create_strategy_hypothesis", "research_tool", True, output=strategy.id)
+    log_tool(run_id, "create_strategy_hypothesis", "observe", True, output=strategy.id)
     outputs.append(f"strategy:{strategy.id}")
 
     # Advance through the ungated lifecycle states so the paper trader can bind to it.

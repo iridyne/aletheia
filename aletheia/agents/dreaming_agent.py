@@ -113,7 +113,7 @@ def _build_learning_ledger() -> str:
 
 
 @register_agent("dreaming_agent")
-async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Consolidate recent activity into a dreaming/learning log (guide §17.2)."""
     outputs: list[str] = []
     errors: list[str] = []
@@ -128,7 +128,7 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
         r for r in list_agent_runs(limit=200)
         if (r.get("started_at") or "") >= cutoff
     ]
-    log_tool(run_id, "get_recent_agent_runs", "read_tool", True)
+    log_tool(run_id, "get_recent_agent_runs", "observe", True)
     summary_lines = [f"- {r['agent_name']}: {r['status']} ({r.get('started_at', '')[:16]})" for r in recent_runs]
     activity = "\n".join(summary_lines) if summary_lines else "No recent agent activity."
 
@@ -139,7 +139,7 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
         user=f"Recent agent activity:\n{activity}\n\nWrite the dreaming log.",
         max_tokens=700,
     )
-    log_tool(run_id, "llm_complete", "research_tool", True)
+    log_tool(run_id, "llm_complete", "observe", True)
     if err:
         errors.append(err)
         content = f"## Daily Consolidation\n\nRecent activity:\n{activity}\n\n(LLM unavailable for synthesis.)"
@@ -147,12 +147,12 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
     # Append a real learning-progress snapshot. Never let it break the run.
     try:
         content += _build_learning_ledger()
-        log_tool(run_id, "build_learning_ledger", "read_tool", True)
+        log_tool(run_id, "build_learning_ledger", "observe", True)
     except Exception as e:
         errors.append(f"learning_ledger_failed: {e}")
 
     item = create_dreaming_log("Daily Consolidation", content)
-    log_tool(run_id, "write_dreaming_log", "research_tool", True, output=item.id)
+    log_tool(run_id, "write_dreaming_log", "observe", True, output=item.id)
     outputs.append(f"dreaming_log:{item.id}")
 
     # Only write daily_review on cron-triggered runs (not manual CLI/API triggers)
@@ -168,7 +168,7 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
         ]
         if not existing_reviews:
             review = create_daily_review("Daily Review", content)
-            log_tool(run_id, "write_daily_review", "research_tool", True, output=review.id)
+            log_tool(run_id, "write_daily_review", "observe", True, output=review.id)
             outputs.append(f"daily_review:{review.id}")
 
     # Trading-as-Git: snapshot the versioned data dirs (knowledge/playbooks/reports)
@@ -177,7 +177,7 @@ async def run_dreaming_agent(permission_mode: str = "Research", run_id: str | No
         from aletheia.files.git import commit_all
         commit = commit_all(f"daily snapshot ({item.id})")
         if commit.get("committed"):
-            log_tool(run_id, "git_commit_all", "read_tool", True, output=commit.get("message"))
+            log_tool(run_id, "git_commit_all", "observe", True, output=commit.get("message"))
             outputs.append("git_snapshot:committed")
     except Exception as e:
         errors.append(f"git_snapshot_failed: {e}")

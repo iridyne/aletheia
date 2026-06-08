@@ -38,11 +38,22 @@ def ensure_data_dirs() -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 
+_MODE_MIGRATION = {
+    "ReadOnly": "Observe", "Research": "Observe",
+    "PaperAuto": "Paper",
+    "AllowEditing": "Full", "Auto": "Full",
+}
+
+
 def load_config() -> AletheiaConfig:
     """Load config from disk or return defaults."""
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-        return AletheiaConfig.model_validate(raw)
+        cfg = AletheiaConfig.model_validate(raw)
+        if cfg.agent.permission_mode in _MODE_MIGRATION:
+            cfg.agent.permission_mode = _MODE_MIGRATION[cfg.agent.permission_mode]
+            save_config(cfg)
+        return cfg
     return AletheiaConfig()
 
 

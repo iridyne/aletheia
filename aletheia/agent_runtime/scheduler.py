@@ -89,6 +89,16 @@ def init_scheduler() -> BackgroundScheduler | None:
         _run_prediction_observer, "interval", minutes=30,
         id="prediction_observer", misfire_grace_time=120,
     )
+    # Post-trade reviewer — reviews closed positions every 4 hours.
+    _scheduler.add_job(
+        _run_post_trade_reviewer, "interval", hours=4,
+        id="post_trade_reviewer", misfire_grace_time=300,
+    )
+    # Risk critic — reviews risk decisions and writes lessons every 6 hours.
+    _scheduler.add_job(
+        _run_risk_critic, "interval", hours=6,
+        id="risk_critic", misfire_grace_time=300,
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -206,11 +216,7 @@ def _run_paper_trader():
     cfg = load_config()
     if cfg.runtime.paused:
         return
-    # Gate A: autonomous paper trading is default-OFF and must be explicitly enabled.
-    if not cfg.agent.autonomous_paper_trading:
-        return
-    # Only modes whose permission allows paper_tool (Research/ReadOnly excluded).
-    if cfg.agent.permission_mode not in ("PaperAuto", "AllowEditing", "Auto"):
+    if cfg.agent.permission_mode not in ("Paper", "Full"):
         return
     try:
         asyncio.run(_async_run("paper_trader"))
@@ -288,6 +294,26 @@ def _run_health_check():
         run_health_check()
     except Exception as e:
         logger.warning("health_check job failed: %s", e)
+
+
+def _run_post_trade_reviewer():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        asyncio.run(_async_run("post_trade_reviewer"))
+    except Exception as e:
+        logger.warning("post_trade_reviewer job failed: %s", e)
+
+
+def _run_risk_critic():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        asyncio.run(_async_run("risk_critic"))
+    except Exception as e:
+        logger.warning("risk_critic job failed: %s", e)
 
 
 async def _async_run(agent_name: str):

@@ -27,7 +27,6 @@ export const api = {
   resume: () => post('/gateway/resume'),
 
   setPermissionMode: (mode: string) => post('/settings/permission-mode', { mode }),
-  setAutonomousPaperTrading: (enabled: boolean) => post('/settings/autonomous-paper-trading', { enabled }),
   setExchangeMode: (mode: string) => post('/settings/exchange-mode', { mode }),
 
   // Model provider config

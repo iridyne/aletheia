@@ -65,7 +65,7 @@ def test_permission_status(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     result = runner.invoke(app, ["permission", "status"])
     assert result.exit_code == 0
-    assert "Research" in result.output
+    assert "Observe" in result.output
 
 
 def test_strategy_list_and_status(tmp_path, monkeypatch):

@@ -55,7 +55,8 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     # market_data + market_observer + dreaming_daily + strategy_designer_daily
     # + reconciliation + portfolio_snapshot + exchange_sync + paper_trader
     # + position_manager + cleanup + health_check + stock_observer + prediction_observer
-    assert len(s.get_jobs()) == 13
+    # + post_trade_reviewer + risk_critic
+    assert len(s.get_jobs()) == 15
     sched.stop_scheduler()
     reset_db()
 

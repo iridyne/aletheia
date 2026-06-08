@@ -242,7 +242,7 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
 
     from aletheia.agents.market_observer import run_market_observer
     from aletheia.storage import repositories as repo
-    out = asyncio.run(run_market_observer(permission_mode="Research", run_id="run-mo-1"))
+    out = asyncio.run(run_market_observer(permission_mode="Observe", run_id="run-mo-1"))
     # Observer should have completed without throwing, even though LLM failed.
     assert "llm_unavailable" in (out["errors"][0] if out["errors"] else "")
     steps = repo.list_run_steps("run-mo-1")
@@ -281,7 +281,7 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
 
     from aletheia.agents.market_observer import run_market_observer
     from aletheia.storage import repositories as repo
-    out = asyncio.run(run_market_observer(permission_mode="Auto", run_id="run-mo-2"))
+    out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-2"))
     assert any(o.startswith("opportunity:") for o in out["outputs"])
 
     opps = repo.list_opportunities(limit=5)
@@ -328,7 +328,7 @@ def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
 
     from aletheia.agents.market_observer import run_market_observer
     from aletheia.storage import repositories as repo
-    asyncio.run(run_market_observer(permission_mode="Auto", run_id="run-mo-fb"))
+    asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-fb"))
     opps = repo.list_opportunities(limit=5)
     assert opps
     opp = opps[0]
@@ -366,7 +366,7 @@ def test_observer_ignores_invalid_confidence_score(tmp_path, monkeypatch):
     monkeypatch.setattr(mc, "build_market_context", fake_builder)
 
     from aletheia.agents.market_observer import run_market_observer
-    out = asyncio.run(run_market_observer(permission_mode="Auto", run_id="run-mo-3"))
+    out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-3"))
     # Must not raise — junk inputs are dropped silently.
     assert out["outputs"]  # opportunity still created (with neutral)
 

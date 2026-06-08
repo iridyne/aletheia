@@ -83,9 +83,8 @@ class LiveConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    permission_mode: str = "Research"
+    permission_mode: str = "Observe"
     autonomous_learning: bool = True
-    autonomous_paper_trading: bool = False
 
 
 class ProviderConfig(BaseModel):

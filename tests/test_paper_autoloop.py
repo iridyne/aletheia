@@ -1,9 +1,8 @@
 """Tests for the autonomous paper-trading closed loop (Feature 1).
 
 Governance: this is the user-authorized autonomous-paper behavior. It must stay
-default-OFF (agent.autonomous_paper_trading), paper-only (paper_internal), respect
-permission mode + kill switch, never reach live, and never fake the causal chain
-(trust_and_change_control §1.1/§1.2/§1.3).
+paper-only (paper_internal), respect permission mode + kill switch, never reach
+live, and never fake the causal chain (trust_and_change_control §1.1/§1.2/§1.3).
 """
 
 import sqlite3
@@ -43,18 +42,17 @@ def _seed(symbol="BTC/USDT", price=60000.0):
     return opp
 
 
-def _set_mode(mode, autonomous=True, kill=False):
+def _set_mode(mode, kill=False, **_kwargs):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.agent.permission_mode = mode
-    cfg.agent.autonomous_paper_trading = autonomous
     cfg.runtime.kill_switch_active = kill
     save_config(cfg)
 
 
 async def test_paperauto_autoloop_executes_paper(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("PaperAuto")
+    _set_mode("Paper")
     opp = _seed()
 
     result = await run_agent("paper_trader", trigger_type="manual")
@@ -82,7 +80,7 @@ async def test_paperauto_autoloop_executes_paper(tmp_path, monkeypatch):
 
 async def test_research_mode_does_not_trade(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("Research")  # paper_tool denied in Research
+    _set_mode("Observe")  # paper_tool denied in Research
     _seed()
 
     result = await run_agent("paper_trader", trigger_type="manual")
@@ -96,9 +94,10 @@ async def test_research_mode_does_not_trade(tmp_path, monkeypatch):
     reset_db()
 
 
-def test_autonomous_flag_off_no_trade(tmp_path, monkeypatch):
+def test_observe_mode_scheduler_gate(tmp_path, monkeypatch):
+    """Scheduler gate: Observe mode must not trigger paper_trader."""
     setup_env(tmp_path, monkeypatch)
-    _set_mode("PaperAuto", autonomous=False)  # flag OFF
+    _set_mode("Observe")
     _seed()
 
     import aletheia.agent_runtime.scheduler as sched
@@ -109,26 +108,9 @@ def test_autonomous_flag_off_no_trade(tmp_path, monkeypatch):
     reset_db()
 
 
-async def test_autonomous_flag_off_blocks_direct_trigger(tmp_path, monkeypatch):
-    """§2.5: a direct CLI/API trigger bypasses the scheduler gate, so the agent body
-    must also refuse to trade when autonomous_paper_trading is OFF."""
-    setup_env(tmp_path, monkeypatch)
-    _set_mode("PaperAuto", autonomous=False)  # permission OK, but flag OFF
-    _seed()
-
-    result = await run_agent("paper_trader", trigger_type="manual")
-    assert result["status"] in ("completed", "completed_with_errors")
-    assert len(repo.list_trade_proposals()) == 0
-    assert len(repo.list_orders()) == 0
-
-    calls = repo.list_tool_calls(run_id=result["run_id"])
-    assert any(c["tool_name"] == "create_paper_proposal" and not c["permitted"] for c in calls)
-    reset_db()
-
-
 async def test_kill_switch_blocks_autoloop(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("PaperAuto", kill=True)  # kill switch engaged
+    _set_mode("Paper", kill=True)  # kill switch engaged
     _seed()
 
     await run_agent("paper_trader", trigger_type="manual")
@@ -149,7 +131,7 @@ async def test_kill_switch_blocks_autoloop(tmp_path, monkeypatch):
 
 async def test_autoloop_never_triggers_live(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("Auto")  # most permissive
+    _set_mode("Full")  # most permissive
     _seed()
 
     await run_agent("paper_trader", trigger_type="manual")
@@ -162,7 +144,7 @@ async def test_autoloop_never_triggers_live(tmp_path, monkeypatch):
 
 async def test_opportunity_id_linkage_and_idempotency(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("PaperAuto")
+    _set_mode("Paper")
     opp = _seed()
 
     await run_agent("paper_trader", trigger_type="manual")

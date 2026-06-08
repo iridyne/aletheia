@@ -43,7 +43,7 @@ async def risk_status():
         if exchange_mode == "live" and live_state == "live_disabled":
             status = "warning"
             violations.append("live_disabled_while_exchange_live")
-        if exchange_mode == "live" and permission_mode in ("Research", "ReadOnly"):
+        if exchange_mode == "live" and permission_mode == "Observe":
             status = "warning"
             violations.append(f"permission_mode_not_live_eligible:{permission_mode}")
         if latest_decision and not bool(latest_decision.get("approved")):

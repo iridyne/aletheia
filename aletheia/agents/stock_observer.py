@@ -170,10 +170,10 @@ async def _analyze_stock(
     data = await loop.run_in_executor(None, _fetch_stock_indicators, ticker)
 
     if data is None:
-        log_tool(run_id, "get_stock_snapshot", "read_tool", False, output=ticker)
+        log_tool(run_id, "get_stock_snapshot", "observe", False, output=ticker)
         return None, f"yfinance_fetch_failed:{ticker}"
 
-    log_tool(run_id, "get_stock_snapshot", "read_tool", True, output=ticker)
+    log_tool(run_id, "get_stock_snapshot", "observe", True, output=ticker)
     snapshot_text = _render_stock_snapshot(data)
 
     record_step(
@@ -188,7 +188,7 @@ async def _analyze_stock(
         schema=StockRead,
         max_tokens=500,
     )
-    log_tool(run_id, "llm_structured", "research_tool", True)
+    log_tool(run_id, "llm_structured", "observe", True)
 
     direction = "neutral"
     confidence = "speculative"
@@ -246,12 +246,12 @@ async def _analyze_stock(
         asset_class="equity",
     )
     insert_opportunity(opp)
-    log_tool(run_id, "create_opportunity", "research_tool", True, output=opp.id)
+    log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     return opp.id, llm_error
 
 
 @register_agent("stock_observer")
-async def run_stock_observer(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+async def run_stock_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Observe US equity symbols and create equity Opportunities (observation-only)."""
     outputs: list[str] = []
     errors: list[str] = []

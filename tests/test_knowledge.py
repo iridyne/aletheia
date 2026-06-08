@@ -148,7 +148,7 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
         fill_quantity=0.01,
     ))
 
-    result = await run_post_trade_reviewer(permission_mode="Research")
+    result = await run_post_trade_reviewer(permission_mode="Observe")
     review_items = repo.list_knowledge_items(item_type="post_trade_review", strategy_id=strategy.id)
     assert len(review_items) == 1
     if result["errors"]:

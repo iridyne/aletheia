@@ -65,7 +65,7 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
         return orig(title, content)
     monkeypatch.setattr(dreaming_agent, "create_daily_review", _capture)
 
-    result = await dreaming_agent.run_dreaming_agent(permission_mode="Research")
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
     assert any(o.startswith("daily_review:") for o in result["outputs"])
 
     content = captured["content"]
@@ -86,7 +86,7 @@ async def test_learning_ledger_failure_does_not_break_run(tmp_path, monkeypatch)
     monkeypatch.setattr(dreaming_agent, "_build_learning_ledger",
                         lambda: (_ for _ in ()).throw(RuntimeError("boom")))
 
-    result = await dreaming_agent.run_dreaming_agent(permission_mode="Research")
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
     # Still wrote its outputs, did not raise.
     assert any(o.startswith("daily_review:") for o in result["outputs"])
 
@@ -105,7 +105,7 @@ async def test_dreaming_triggers_git_snapshot_when_enabled(tmp_path, monkeypatch
     monkeypatch.setattr(git_mod, "commit_all", fake_commit_all)
 
     from aletheia.agents import dreaming_agent
-    result = await dreaming_agent.run_dreaming_agent(permission_mode="Research")
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
 
     assert len(calls) == 1
     assert "git_snapshot:committed" in result["outputs"]
@@ -121,6 +121,6 @@ async def test_dreaming_git_snapshot_failure_does_not_break_run(tmp_path, monkey
     monkeypatch.setattr(git_mod, "commit_all", boom)
 
     from aletheia.agents import dreaming_agent
-    result = await dreaming_agent.run_dreaming_agent(permission_mode="Research")
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
     # Run still completes and wrote its log despite git failure.
     assert any(o.startswith("dreaming_log:") for o in result["outputs"])

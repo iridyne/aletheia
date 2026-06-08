@@ -82,7 +82,7 @@ async def test_live_order_blocked_when_disabled(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "Auto"
+    cfg.agent.permission_mode = "Full"
     save_config(cfg)
 
     from aletheia.execution.gateway import submit_proposal

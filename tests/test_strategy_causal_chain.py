@@ -39,11 +39,10 @@ def setup_env(tmp_path, monkeypatch):
     init_tool_registry()
 
 
-def _set_mode(mode="PaperAuto", autonomous=True, kill=False):
+def _set_mode(mode="Paper", kill=False, **_kwargs):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.agent.permission_mode = mode
-    cfg.agent.autonomous_paper_trading = autonomous
     cfg.runtime.kill_switch_active = kill
     save_config(cfg)
 
@@ -74,7 +73,7 @@ def test_create_strategy_parameters_default_empty(tmp_path, monkeypatch):
 
 async def test_designer_creates_tradable_strategy(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("PaperAuto")  # research_tool permitted; LLM unavailable -> graceful default
+    _set_mode("Paper")  # research_tool permitted; LLM unavailable -> graceful default
 
     result = await run_agent("strategy_designer", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")
@@ -93,7 +92,7 @@ async def test_designer_creates_tradable_strategy(tmp_path, monkeypatch):
 
 async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("PaperAuto")
+    _set_mode("Paper")
 
     # Producer: a tradable strategy exists.
     await run_agent("strategy_designer", trigger_type="manual")
@@ -144,7 +143,7 @@ async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
 
 async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("PaperAuto")
+    _set_mode("Paper")
 
     await run_agent("strategy_designer", trigger_type="manual")
     strat = repo.list_strategies(limit=10)[0]

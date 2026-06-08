@@ -93,7 +93,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
 
     # 4. Permission mode
     perm = cfg.agent.permission_mode
-    if proposal.execution_mode != "paper_internal" and perm in ("ReadOnly", "Research"):
+    if proposal.execution_mode != "paper_internal" and perm == "Observe":
         violations.append(f"permission_mode_insufficient:{perm}")
 
     # 5. Max position size. Live and demo each have a notional cap so paper

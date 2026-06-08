@@ -52,7 +52,7 @@ def test_audit_event_crud(tmp_path):
 
 def test_agent_run_crud(tmp_path):
     setup_test_db(tmp_path)
-    run = AgentRun(agent_name="market_observer", permission_mode="Research")
+    run = AgentRun(agent_name="market_observer", permission_mode="Observe")
     repo.insert_agent_run(run)
     repo.update_agent_run(run.id, status="completed", ended_at="2026-01-01T00:00:00")
     result = repo.get_agent_run(run.id)

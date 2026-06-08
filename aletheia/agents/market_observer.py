@@ -99,13 +99,13 @@ async def _analyze_symbol(
         context, ctx_debug = await build_market_context(
             [symbol], market_type=market_type, provider=provider
         )
-        log_tool(run_id, "build_market_context", "read_tool", True,
+        log_tool(run_id, "build_market_context", "observe", True,
                  output=f"{symbol} fallback={ctx_debug.get('fallback')} "
                         f"errs={len(ctx_debug.get('errors', []))}")
     except Exception as e:
         from aletheia.trading.market_data import latest_snapshot
         snap = latest_snapshot(symbol)
-        log_tool(run_id, "get_market_snapshot", "read_tool", True, output=symbol)
+        log_tool(run_id, "get_market_snapshot", "observe", True, output=symbol)
         if snap:
             context = f"{symbol}: price={snap['price']} 24h_change={snap.get('change_pct_24h')}%"
         else:
@@ -124,7 +124,7 @@ async def _analyze_symbol(
         schema=MarketRead,
         max_tokens=600,
     )
-    log_tool(run_id, "llm_structured", "research_tool", True)
+    log_tool(run_id, "llm_structured", "observe", True)
 
     direction = "neutral"
     confidence = "speculative"
@@ -191,12 +191,12 @@ async def _analyze_symbol(
         asset_class=asset_class,
     )
     insert_opportunity(opp)
-    log_tool(run_id, "create_opportunity", "research_tool", True, output=opp.id)
+    log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     return opp.id, llm_error
 
 
 @register_agent("market_observer")
-async def run_market_observer(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+async def run_market_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Observe market state and create one Opportunity per symbol."""
     outputs: list[str] = []
     errors: list[str] = []
@@ -227,7 +227,7 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
             item_types=["research_note", "post_trade_review", "dreaming_log"],
         )
         memory_block = format_memory_block(lessons)
-        log_tool(run_id, "retrieve_lessons", "read_tool", True, output=f"lessons:{len(lessons)}")
+        log_tool(run_id, "retrieve_lessons", "observe", True, output=f"lessons:{len(lessons)}")
     except Exception:
         pass
 

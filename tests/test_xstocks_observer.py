@@ -112,7 +112,7 @@ def test_xstocks_opportunities_have_equity_asset_class(tmp_path, monkeypatch):
                         lambda exchange, fallback_exchange: FakeBitgetProvider())
 
     from aletheia.agents.market_observer import run_market_observer
-    out = asyncio.run(run_market_observer(permission_mode="Auto", run_id="run-xs-1"))
+    out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-xs-1"))
 
     opps = repo.list_opportunities(limit=20)
     xstock_opps = [o for o in opps if o.get("symbol") == "AAPLON/USDT"]
@@ -132,7 +132,7 @@ def test_paper_trader_ignores_xstocks_opportunities(tmp_path, monkeypatch):
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.autonomous_paper_trading = True
+    cfg.agent.permission_mode = "Paper"
     save_config(cfg)
 
     from aletheia.storage.models import Opportunity, MarketSnapshot
@@ -151,7 +151,7 @@ def test_paper_trader_ignores_xstocks_opportunities(tmp_path, monkeypatch):
     repo.insert_market_snapshot(MarketSnapshot(symbol="AAPLON/USDT", market_type="spot", price=309.0))
 
     from aletheia.agents.paper_trader import run_paper_trader
-    out = asyncio.run(run_paper_trader(permission_mode="Auto", run_id="run-xs-pt"))
+    out = asyncio.run(run_paper_trader(permission_mode="Full", run_id="run-xs-pt"))
 
     # paper_trader should find no_open_opportunity (equity skipped).
     assert "no_open_opportunity" in out["outputs"], f"Expected skip, got: {out}"

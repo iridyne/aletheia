@@ -55,7 +55,7 @@ DEFAULT_PROMOTION_GATES = {
 }
 
 # Permissions that are sufficient to permit live promotion/operation checks.
-LIVE_PROMOTION_PERMISSION_MODES = {"PaperAuto", "AllowEditing", "Auto"}
+LIVE_PROMOTION_PERMISSION_MODES = {"Paper", "Full"}
 
 # Risk violations that indicate strategy is not eligible for live-limited operation.
 CRITICAL_RISK_TOKENS = {

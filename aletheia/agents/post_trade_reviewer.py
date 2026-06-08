@@ -8,7 +8,7 @@ from aletheia.storage.repositories import get_trade_proposal, list_fills, list_o
 
 
 @register_agent("post_trade_reviewer")
-async def run_post_trade_reviewer(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Review recent fills grouped by strategy and record per-strategy reviews."""
     outputs: list[str] = []
     errors: list[str] = []
@@ -19,7 +19,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Research", run_id: str
 
     fills = list_fills(limit=200)
     orders = list_orders(limit=200)
-    log_tool(run_id, "get_positions", "read_tool", True)
+    log_tool(run_id, "get_positions", "observe", True)
 
     # Group fills by strategy_id
     strategy_fills: dict[str | None, list] = {}
@@ -50,7 +50,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Research", run_id: str
             user=f"{ctx}\n\nWrite a post-trade review.",
             max_tokens=600,
         )
-        log_tool(run_id, "llm_complete", "research_tool", True)
+        log_tool(run_id, "llm_complete", "observe", True)
         if err:
             errors.append(err)
             content = f"Post-trade review (LLM unavailable). Context: {ctx}"
@@ -61,7 +61,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Research", run_id: str
             metadata={"source": "post_trade_reviewer"},
             strategy_id=strategy_id,
         )
-        log_tool(run_id, "create_post_trade_review", "research_tool", True, output=item.id)
+        log_tool(run_id, "create_post_trade_review", "observe", True, output=item.id)
         outputs.append(f"post_trade_review:{item.id}")
 
     return {"outputs": outputs, "errors": errors}

@@ -1,11 +1,10 @@
 """Agent permission enforcement."""
 
 TOOL_CLASSES = {
-    "read_tool": {"ReadOnly", "Research", "PaperAuto", "AllowEditing", "Auto"},
-    "research_tool": {"Research", "PaperAuto", "AllowEditing", "Auto"},
-    "paper_tool": {"PaperAuto", "AllowEditing", "Auto"},
-    "editing_tool": {"AllowEditing", "Auto"},
-    "restricted_tool": set(),  # never callable by agent
+    "observe": {"Observe", "Paper", "Full"},
+    "paper": {"Paper", "Full"},
+    "system": {"Full"},
+    "restricted": set(),
 }
 
 TOOL_REGISTRY: dict[str, str] = {}

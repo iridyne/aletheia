@@ -14,10 +14,10 @@ def status():
 
 
 @permission_app.command(name="set")
-def set_mode(mode: str = typer.Argument(..., help="ReadOnly|Research|PaperAuto|AllowEditing|Auto")):
+def set_mode(mode: str = typer.Argument(..., help="Observe|Paper|Full")):
     """Set the agent permission mode."""
     from aletheia.config.loader import load_config, save_config
-    valid = {"ReadOnly", "Research", "PaperAuto", "AllowEditing", "Auto"}
+    valid = {"Observe", "Paper", "Full"}
     if mode not in valid:
         typer.echo(f"Invalid mode. Choose from: {', '.join(sorted(valid))}", err=True)
         raise typer.Exit(1)

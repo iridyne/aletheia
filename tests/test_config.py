@@ -13,7 +13,7 @@ def test_default_config_has_correct_values():
     assert cfg.app.dashboard_port == 8787
     assert cfg.exchange.mode == "demo"
     assert cfg.live.state == "live_disabled"
-    assert cfg.agent.permission_mode == "Research"
+    assert cfg.agent.permission_mode == "Observe"
     assert cfg.risk.max_daily_loss_pct == 1.0
     assert "BTCUSDT" in cfg.exchange.tradable_symbols
     assert cfg.telegram.enabled is False
@@ -26,10 +26,10 @@ def test_config_roundtrip(tmp_path):
     with patch("aletheia.config.loader.DATA_DIR", data_dir), \
          patch("aletheia.config.loader.CONFIG_PATH", config_file):
         cfg = AletheiaConfig()
-        cfg.agent.permission_mode = "PaperAuto"
+        cfg.agent.permission_mode = "Paper"
         save_config(cfg)
         loaded = load_config()
-        assert loaded.agent.permission_mode == "PaperAuto"
+        assert loaded.agent.permission_mode == "Paper"
         assert loaded.app.dashboard_port == 8787
 
 

@@ -9,7 +9,7 @@ import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS } from '../lib/format'
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PERMISSION_MODES = ['ReadOnly', 'Research', 'PaperAuto', 'AllowEditing', 'Auto']
+const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
 const PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'codex_cli']
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
@@ -138,10 +138,6 @@ function IntelligenceTab({ status, settings, qc }: any) {
     mutationFn: (mode: string) => api.setPermissionMode(mode),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['settings'] }) },
   })
-  const autoPaperMut = useMutation({
-    mutationFn: (enabled: boolean) => api.setAutonomousPaperTrading(enabled),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
-  })
   const autoLearnMut = useMutation({
     mutationFn: (enabled: boolean) => api.setAutonomousLearning(enabled),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
@@ -152,8 +148,6 @@ function IntelligenceTab({ status, settings, qc }: any) {
   })
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
-  const isPaperAuto = perm === 'PaperAuto'
-  const autoPaper = !!agent.autonomous_paper_trading
   const autoLearn = !!agent.autonomous_learning
   const schedulerEnabled = runtime.scheduler_enabled !== false
 
@@ -163,19 +157,10 @@ function IntelligenceTab({ status, settings, qc }: any) {
         title="Permission Mode"
         description="Controls how much autonomy agents have over trading decisions. Changes are audited."
       >
-        <Row label="Permission mode" hint="ReadOnly → Research → PaperAuto → AllowEditing → Auto. Increasing autonomy at each step.">
+        <Row label="Permission mode" hint="Observe → Paper → Full. Increasing autonomy at each step.">
           <select value={perm} onChange={e => permMut.mutate(e.target.value)} style={{ width: 'auto' }}>
             {PERMISSION_MODES.map(m => <option key={m}>{m}</option>)}
           </select>
-        </Row>
-        <Row
-          label="Autonomous paper trading"
-          hint={isPaperAuto && !autoPaper
-            ? '⚠ PaperAuto mode is active but this flag is OFF — the scheduler will not auto-submit orders until enabled.'
-            : 'When ON, the scheduler automatically opens paper trades in PaperAuto or higher modes without human approval.'}
-        >
-          <Toggle checked={autoPaper} onChange={v => autoPaperMut.mutate(v)} disabled={autoPaperMut.isPending} />
-          <span className={`badge ${autoPaper ? 'badge-green' : 'badge-red'}`}>{autoPaper ? 'ON' : 'OFF'}</span>
         </Row>
       </Section>
 

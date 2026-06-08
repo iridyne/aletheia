@@ -33,8 +33,7 @@ def _setup(tmp: Path):
     init_tool_registry()
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "PaperAuto"
-    cfg.agent.autonomous_paper_trading = True
+    cfg.agent.permission_mode = "Paper"
     save_config(cfg)
 
 

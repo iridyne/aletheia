@@ -56,7 +56,7 @@ async def test_ac04_storage_initialized(client):
     await c.get("/api/status")
     assert (tmp_path / "test.db").exists()  # sqlite
     # audit jsonl after an action
-    await c.post("/api/settings/permission-mode", json={"mode": "Research"})
+    await c.post("/api/settings/permission-mode", json={"mode": "Observe"})
     assert (tmp_path / "logs" / "audit.jsonl").exists()
 
 
@@ -103,7 +103,7 @@ async def test_ac08_knowledge_base(client):
 async def test_ac11_paper_trade_flow(client):
     c, _ = client
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "PaperAuto"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
     from aletheia.storage.models import TradeProposal
     p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
                       quantity=0.001, price=60000, execution_mode="paper_internal")
@@ -123,7 +123,7 @@ async def test_ac11_paper_trade_flow(client):
 async def test_ac12_risk_blocks(client):
     c, _ = client
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "PaperAuto"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
     from aletheia.execution.gateway import submit_proposal
     bad = submit_proposal(symbol="DOGEUSDT", market_type="spot", direction="long",
                           quantity=1, price=1, execution_mode="paper_internal")
@@ -134,8 +134,8 @@ async def test_ac12_risk_blocks(client):
 @pytest.mark.anyio
 async def test_ac13_permission_visible_audited(client):
     c, tmp_path = client
-    await c.post("/api/settings/permission-mode", json={"mode": "Auto"})
-    assert (await c.get("/api/status")).json()["permission_mode"] == "Auto"
+    await c.post("/api/settings/permission-mode", json={"mode": "Full"})
+    assert (await c.get("/api/status")).json()["permission_mode"] == "Full"
     events = [json.loads(l) for l in (tmp_path / "logs" / "audit.jsonl").read_text().splitlines() if l.strip()]
     assert any(e["event_type"] == "permission_changed" for e in events)
 

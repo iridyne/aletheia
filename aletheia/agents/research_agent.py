@@ -7,7 +7,7 @@ from aletheia.knowledge.manager import create_research_note
 
 
 @register_agent("research_agent")
-async def run_research_agent(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+async def run_research_agent(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Generate a research note using the model provider (graceful if unavailable)."""
     outputs: list[str] = []
     errors: list[str] = []
@@ -24,7 +24,7 @@ async def run_research_agent(permission_mode: str = "Research", run_id: str | No
         user="Write a research note on current crypto market structure.",
         max_tokens=900,
     )
-    log_tool(run_id, "llm_complete", "research_tool", True)
+    log_tool(run_id, "llm_complete", "observe", True)
     if err:
         errors.append(err)
         content = ("Research note (LLM unavailable). Configure a model provider in Settings to "
@@ -32,7 +32,7 @@ async def run_research_agent(permission_mode: str = "Research", run_id: str | No
 
     item = create_research_note(title, content, confidence="speculative",
                                 metadata={"source": "research_agent"})
-    log_tool(run_id, "create_research_note", "research_tool", True, output=item.id)
+    log_tool(run_id, "create_research_note", "observe", True, output=item.id)
     outputs.append(f"research_note:{item.id}")
 
     return {"outputs": outputs, "errors": errors}

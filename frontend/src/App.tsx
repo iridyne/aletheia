@@ -82,7 +82,7 @@ export const NAV: NavGroup[] = [
  *
  * Information density goal: same data as before, ~75px narrower, far less visual noise.
  */
-const PERMISSION_MODES = ['ReadOnly', 'Research', 'PaperAuto', 'AllowEditing', 'Auto'] as const
+const PERMISSION_MODES = ['Observe', 'Paper', 'Full'] as const
 
 function StatusBar() {
   const qc = useQueryClient()

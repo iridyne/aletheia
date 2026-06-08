@@ -52,7 +52,7 @@ def test_agent_cannot_invoke_restricted_tools():
     init_tool_registry()
     restricted = ["unlock_live", "place_live_order", "change_hard_risk_limits",
                   "modify_credentials", "modify_execution_gateway"]
-    for mode in ["ReadOnly", "Research", "PaperAuto", "AllowEditing", "Auto"]:
+    for mode in ["Observe", "Paper", "Full"]:
         for tool in restricted:
             assert not is_tool_permitted(tool, mode), f"{tool} must never be permitted ({mode})"
 
@@ -62,7 +62,7 @@ def test_agent_cannot_invoke_restricted_tools():
 def test_live_disabled_blocks_live_execution(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "Auto"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Full"; save_config(cfg)
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(symbol="BTCUSDT", market_type="spot", direction="long",
                              quantity=0.001, price=60000, execution_mode="bitget_live_limited")
@@ -120,7 +120,7 @@ async def test_secret_not_in_config_or_logs(client):
 @pytest.mark.anyio
 async def test_permission_and_live_changes_audited(client):
     c, tmp_path = client
-    await c.post("/api/settings/permission-mode", json={"mode": "PaperAuto"})
+    await c.post("/api/settings/permission-mode", json={"mode": "Paper"})
     await c.post(
         "/api/settings/live-unlock",
         json={"confirm": True, "acknowledge_first_unlock": True},

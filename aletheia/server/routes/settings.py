@@ -9,7 +9,7 @@ from aletheia.config.loader import load_config, save_config
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
-VALID_PERMISSION_MODES = {"ReadOnly", "Research", "PaperAuto", "AllowEditing", "Auto"}
+VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
 
 
 class PermissionModeRequest(BaseModel):
@@ -310,22 +310,6 @@ async def set_permission_mode(req: PermissionModeRequest):
     return {"old": old, "new": req.mode}
 
 
-class AutonomousPaperTradingRequest(BaseModel):
-    enabled: bool
-
-
-@router.post("/autonomous-paper-trading")
-async def set_autonomous_paper_trading(req: AutonomousPaperTradingRequest):
-    cfg = load_config()
-    old = cfg.agent.autonomous_paper_trading
-    cfg.agent.autonomous_paper_trading = req.enabled
-    save_config(cfg)
-    from aletheia.files.jsonl import write_audit
-    write_audit({"actor": "human", "source": "dashboard", "event_type": "autonomous_paper_trading_changed",
-                 "entity_type": "agent_config", "before": {"autonomous_paper_trading": old},
-                 "after": {"autonomous_paper_trading": req.enabled},
-                 "message": f"autonomous_paper_trading {old} -> {req.enabled}"})
-    return {"old": old, "new": req.enabled}
 
 
 @router.post("/exchange-mode")

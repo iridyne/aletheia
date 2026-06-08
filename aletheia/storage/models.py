@@ -30,7 +30,7 @@ class AgentRun(BaseModel):
     id: str = Field(default_factory=new_id)
     agent_name: str
     trigger_type: str = "scheduled"
-    permission_mode: str = "Research"
+    permission_mode: str = "Observe"
     started_at: str = Field(default_factory=_utcnow)
     ended_at: str | None = None
     status: str = "running"

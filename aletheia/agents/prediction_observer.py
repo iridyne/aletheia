@@ -80,7 +80,7 @@ This is informational analysis only — not trading advice."""
 
 
 @register_agent("prediction_observer")
-async def run_prediction_observer(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+async def run_prediction_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Fetch Polymarket data and create prediction Opportunities for tracking."""
     outputs: list[str] = []
     errors: list[str] = []
@@ -99,7 +99,7 @@ async def run_prediction_observer(permission_mode: str = "Research", run_id: str
     from aletheia.data.polymarket_provider import fetch_active_markets, format_prediction_context
     try:
         markets = await fetch_active_markets(categories=categories, limit=15)
-        log_tool(run_id, "fetch_prediction_markets", "read_tool", True,
+        log_tool(run_id, "fetch_prediction_markets", "observe", True,
                  output=f"markets:{len(markets)}")
     except Exception as e:
         errors.append(f"polymarket_fetch_failed:{e}")
@@ -137,7 +137,7 @@ async def run_prediction_observer(permission_mode: str = "Research", run_id: str
         schema=PredictionMarketRead,
         max_tokens=500,
     )
-    log_tool(run_id, "llm_structured", "research_tool", True)
+    log_tool(run_id, "llm_structured", "observe", True)
 
     direction = "neutral"
     confidence = "speculative"
@@ -207,7 +207,7 @@ async def run_prediction_observer(permission_mode: str = "Research", run_id: str
         asset_class="prediction",
     )
     insert_opportunity(opp)
-    log_tool(run_id, "create_opportunity", "research_tool", True, output=opp.id)
+    log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     outputs.append(f"opportunity:{opp.id}")
 
     return {"outputs": outputs, "errors": errors}

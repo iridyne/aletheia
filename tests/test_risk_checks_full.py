@@ -34,7 +34,7 @@ def _unlock_live_auto(tmp_path):
     """Set config to Auto + live_limited + exchange.mode=live so live checks are reachable."""
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "Auto"
+    cfg.agent.permission_mode = "Full"
     cfg.live.state = "live_limited"
     cfg.exchange.mode = "live"
     save_config(cfg)
@@ -78,7 +78,7 @@ def test_account_mode_mismatch_blocks_live_when_exchange_demo(tmp_path, monkeypa
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.agent.permission_mode = "Auto"
+    cfg.agent.permission_mode = "Full"
     cfg.live.state = "live_limited"
     cfg.exchange.mode = "demo"  # but trying a live order
     save_config(cfg)
@@ -181,7 +181,7 @@ def test_live_exposure_cap_allows_order_under_limit(tmp_path, monkeypatch):
 def test_demo_leverage_over_limit_blocks(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "PaperAuto"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
     # demo futures leverage limit default = 5
     p = TradeProposal(symbol="BTCUSDT", market_type="usdt_futures", direction="long",
                       execution_mode="bitget_demo", quantity=0.001, price=60000)
@@ -194,7 +194,7 @@ def test_demo_leverage_over_limit_blocks(tmp_path, monkeypatch):
 def test_demo_leverage_within_limit_ok(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "PaperAuto"; save_config(cfg)
+    cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
     p = TradeProposal(symbol="BTCUSDT", market_type="usdt_futures", direction="long",
                       execution_mode="bitget_demo", quantity=0.001, price=60000)
     p.leverage = 3

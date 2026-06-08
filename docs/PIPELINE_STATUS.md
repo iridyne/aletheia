@@ -57,7 +57,7 @@
 
 **实现**：`paper_trader.py` 每 15 分钟消费最新 open opportunity。
 
-- Gate A：`autonomous_paper_trading` 配置开关
+- Gate A：permission_mode ≥ Paper（Observe 模式不开仓）
 - Gate B：方向必须是 long/short（非 neutral）
 - Gate C：confidence ≥ `min_confidence_to_trade`（默认 medium）
 - 仓位：固定 25 USDT notional（非 LLM 决策）
@@ -154,11 +154,11 @@
 后果：promotion gate 验证的是"random signal + 固定仓位"的结果，不是策略规则本身的有效性
 ```
 
-### D. 两个 agent 从未自动运行
+### D. ~~两个 agent 从未自动运行~~ (已修复 2026-06-08)
 
 ```
-post_trade_reviewer：代码完整，不在 scheduler
-risk_critic：代码完整，不在 scheduler
+post_trade_reviewer：已排入 scheduler（每 4h）
+risk_critic：已排入 scheduler（每 6h）
 ```
 
 ---
@@ -180,8 +180,8 @@ risk_critic：代码完整，不在 scheduler
 | stock_observer | 工作日交易时段 / 30min | US equity 观察 | ✅ 运行 |
 | prediction_observer | 30 min | Polymarket 观察 | ✅ 运行 |
 | cleanup | 每天 03:17 | 数据修剪 | ✅ 运行 |
-| **post_trade_reviewer** | — | 交易复盘 | ❌ **未排入** |
-| **risk_critic** | — | 风险教训 | ❌ **未排入** |
+| post_trade_reviewer | 4h | 交易复盘 | ✅ 运行（Week 1 排入） |
+| risk_critic | 6h | 风险教训 | ✅ 运行（Week 1 排入） |
 
 ---
 

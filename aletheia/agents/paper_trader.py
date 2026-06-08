@@ -1,8 +1,7 @@
 """Paper Trader agent — turns open opportunities into autonomous paper proposals.
 
 USER-AUTHORIZED autonomous behavior (paper only). Containment:
-- Only runs when permission mode allows the `create_paper_proposal` paper_tool
-  (PaperAuto / AllowEditing / Auto). Denied in Research / ReadOnly.
+- Only runs when permission mode is Paper or Full. Denied in Observe.
 - Submits exclusively through the paper wrapper, which hard-codes paper_internal.
 - Every order still passes the Risk Engine (kill switch, daily loss, etc.).
 - Consumed opportunities are marked `proposed` for idempotency (no duplicates).
@@ -32,23 +31,14 @@ _CONFIDENCE_RANK = {"speculative": 0, "medium": 1, "high": 2}
 
 
 @register_agent("paper_trader")
-async def run_paper_trader(permission_mode: str = "Research", run_id: str | None = None, **kwargs) -> dict:
+async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     outputs: list[str] = []
     errors: list[str] = []
 
     cfg = load_config()
 
-    # Gate A: autonomous paper trading is default-OFF. The scheduler enforces this,
-    # but a direct CLI/API trigger (`aletheia agent run paper_trader`) bypasses the
-    # scheduler — so the same gate lives in the agent body too (defense in depth).
-    if not cfg.agent.autonomous_paper_trading:
-        log_tool(run_id, "create_paper_proposal", "paper_tool", False, output="autonomous_disabled")
-        errors.append("autonomous_paper_trading disabled")
-        return {"outputs": outputs, "errors": errors}
-
-    # Gate B: paper_tool permission. Logged even when denied so it is auditable.
     if not is_tool_permitted("create_paper_proposal", permission_mode):
-        log_tool(run_id, "create_paper_proposal", "paper_tool", False)
+        log_tool(run_id, "create_paper_proposal", "paper", False)
         errors.append(f"create_paper_proposal not permitted in mode {permission_mode}")
         return {"outputs": outputs, "errors": errors}
     # tradable_symbols are Bitget format (BTCUSDT); opportunities are canonical
@@ -82,7 +72,7 @@ async def run_paper_trader(permission_mode: str = "Research", run_id: str | None
     if direction is None or not conf_ok:
         skip_reason = "neutral_bias" if direction is None else f"confidence_below_{min_conf}:{confidence}"
         update_opportunity(opp["id"], status="reviewed")  # keep the signal, just don't trade it
-        log_tool(run_id, "create_paper_proposal", "paper_tool", False, output=skip_reason)
+        log_tool(run_id, "create_paper_proposal", "paper", False, output=skip_reason)
         outputs.append(f"skipped:{opp['id']}:{skip_reason}")
         return {"outputs": outputs, "errors": errors}
 
@@ -125,7 +115,7 @@ async def run_paper_trader(permission_mode: str = "Research", run_id: str | None
         opportunity_id=opp["id"],
         agent_rationale=rationale[:500],
     )
-    log_tool(run_id, "create_paper_proposal", "paper_tool", True, output=result.get("proposal_id"))
+    log_tool(run_id, "create_paper_proposal", "paper", True, output=result.get("proposal_id"))
 
     # Mark the opportunity consumed for idempotency regardless of risk outcome:
     # the proposal (approved or rejected) is the durable record of the attempt.

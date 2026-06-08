@@ -39,9 +39,9 @@ def _recent():
 def test_prune_agent_runs_keeps_recent_deletes_old(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     conn.execute("INSERT INTO agent_runs (id, agent_name, permission_mode, started_at, status) VALUES (?,?,?,?,?)",
-                 ("old1", "market_observer", "Research", _old(60), "completed"))
+                 ("old1", "market_observer", "Observe", _old(60), "completed"))
     conn.execute("INSERT INTO agent_runs (id, agent_name, permission_mode, started_at, status) VALUES (?,?,?,?,?)",
-                 ("new1", "market_observer", "Research", _recent(), "completed"))
+                 ("new1", "market_observer", "Observe", _recent(), "completed"))
     conn.commit()
 
     deleted = repo.prune_agent_runs(days=30)

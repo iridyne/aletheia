@@ -49,7 +49,7 @@ async def test_status(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["live_state"] == "live_disabled"
-    assert data["permission_mode"] == "Research"
+    assert data["permission_mode"] == "Observe"
     assert data["exchange_mode"] == "demo"
 
 
@@ -69,12 +69,12 @@ async def test_pause_resume(client):
 
 @pytest.mark.anyio
 async def test_permission_mode_change(client):
-    resp = await client.post("/api/settings/permission-mode", json={"mode": "PaperAuto"})
+    resp = await client.post("/api/settings/permission-mode", json={"mode": "Paper"})
     assert resp.status_code == 200
-    assert resp.json()["new"] == "PaperAuto"
+    assert resp.json()["new"] == "Paper"
 
     resp = await client.get("/api/status")
-    assert resp.json()["permission_mode"] == "PaperAuto"
+    assert resp.json()["permission_mode"] == "Paper"
 
 
 @pytest.mark.anyio

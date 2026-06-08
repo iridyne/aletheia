@@ -33,7 +33,7 @@ def setup_env(tmp_path, monkeypatch):
 
 
 def _add_run(status):
-    repo.insert_agent_run(AgentRun(agent_name="market_observer", permission_mode="Research", status=status))
+    repo.insert_agent_run(AgentRun(agent_name="market_observer", permission_mode="Observe", status=status))
 
 
 async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):
