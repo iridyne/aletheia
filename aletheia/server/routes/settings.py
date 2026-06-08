@@ -44,7 +44,250 @@ async def get_settings():
         "update": {"enabled": cfg.update.enabled, "branch": cfg.update.branch},
         "trading": cfg.trading.model_dump(mode="json"),
         "health": cfg.health.model_dump(mode="json"),
+        "retention": cfg.retention.model_dump(mode="json"),
+        "telegram": {
+            "enabled": cfg.telegram.enabled,
+            "allowed_chat_ids": cfg.telegram.allowed_chat_ids,
+        },
     }
+
+
+# ---------------------------------------------------------------------------
+# Agent config
+# ---------------------------------------------------------------------------
+
+class AutonomousLearningRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/autonomous-learning")
+async def set_autonomous_learning(req: AutonomousLearningRequest):
+    cfg = load_config()
+    old = cfg.agent.autonomous_learning
+    cfg.agent.autonomous_learning = req.enabled
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "autonomous_learning_changed",
+                 "entity_type": "agent_config", "before": {"autonomous_learning": old},
+                 "after": {"autonomous_learning": req.enabled},
+                 "message": f"autonomous_learning {old} -> {req.enabled}"})
+    return {"old": old, "new": req.enabled}
+
+
+# ---------------------------------------------------------------------------
+# Exchange markets config
+# ---------------------------------------------------------------------------
+
+class ExchangeMarketsRequest(BaseModel):
+    spot: bool
+    usdt_futures: bool
+
+
+@router.post("/exchange-markets")
+async def set_exchange_markets(req: ExchangeMarketsRequest):
+    if not req.spot and not req.usdt_futures:
+        raise HTTPException(400, "At least one market must be enabled")
+    cfg = load_config()
+    old = dict(cfg.exchange.enabled_markets)
+    cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_markets_changed",
+                 "entity_type": "exchange_config", "before": old,
+                 "after": cfg.exchange.enabled_markets,
+                 "message": f"enabled_markets updated"})
+    return {"enabled_markets": cfg.exchange.enabled_markets}
+
+
+# ---------------------------------------------------------------------------
+# Runtime config
+# ---------------------------------------------------------------------------
+
+class RuntimeConfigUpdate(BaseModel):
+    scheduler_enabled: Optional[bool] = None
+    git_enabled: Optional[bool] = None
+
+
+@router.post("/runtime")
+async def update_runtime_config(req: RuntimeConfigUpdate):
+    cfg = load_config()
+    old = cfg.runtime.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.runtime, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "runtime_config_changed",
+                 "entity_type": "runtime_config", "before": old,
+                 "after": cfg.runtime.model_dump(mode="json"),
+                 "message": f"Runtime config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# App config
+# ---------------------------------------------------------------------------
+
+class AppConfigUpdate(BaseModel):
+    auto_open_browser: Optional[bool] = None
+
+
+@router.post("/app")
+async def update_app_config(req: AppConfigUpdate):
+    cfg = load_config()
+    old = cfg.app.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.app, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "app_config_changed",
+                 "entity_type": "app_config", "before": old,
+                 "after": cfg.app.model_dump(mode="json"),
+                 "message": f"App config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# Health monitoring config
+# ---------------------------------------------------------------------------
+
+class HealthConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    alert_via_telegram: Optional[bool] = None
+    max_agent_failure_ratio: Optional[float] = None
+    llm_unavailable_alert_after: Optional[int] = None
+    market_data_max_staleness_min: Optional[int] = None
+    supervisor_max_restarts: Optional[int] = None
+    supervisor_restart_window_sec: Optional[int] = None
+    supervisor_backoff_cap_sec: Optional[int] = None
+
+
+_HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
+    "max_agent_failure_ratio": (0.0, 1.0),
+    "llm_unavailable_alert_after": (1, 100),
+    "market_data_max_staleness_min": (5, 1440),
+    "supervisor_max_restarts": (1, 50),
+    "supervisor_restart_window_sec": (60, 86400),
+    "supervisor_backoff_cap_sec": (5, 3600),
+}
+
+
+@router.post("/health-config")
+async def update_health_config(req: HealthConfigUpdate):
+    cfg = load_config()
+    old = cfg.health.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        if field in _HEALTH_BOUNDS:
+            lo, hi = _HEALTH_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        setattr(cfg.health, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "health_config_changed",
+                 "entity_type": "health_config", "before": old,
+                 "after": cfg.health.model_dump(mode="json"),
+                 "message": f"Health config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# Retention config
+# ---------------------------------------------------------------------------
+
+class RetentionConfigUpdate(BaseModel):
+    agent_runs_days: Optional[int] = None
+    tool_calls_days: Optional[int] = None
+    run_steps_days: Optional[int] = None
+    market_snapshots_days: Optional[int] = None
+    portfolio_snapshots_days: Optional[int] = None
+    jsonl_max_mb: Optional[float] = None
+
+
+_RETENTION_BOUNDS: dict[str, tuple[float, float]] = {
+    "agent_runs_days": (1, 365),
+    "tool_calls_days": (1, 365),
+    "run_steps_days": (1, 365),
+    "market_snapshots_days": (1, 365),
+    "portfolio_snapshots_days": (1, 1825),
+    "jsonl_max_mb": (10.0, 10000.0),
+}
+
+
+@router.post("/retention")
+async def update_retention_config(req: RetentionConfigUpdate):
+    cfg = load_config()
+    old = cfg.retention.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        if field in _RETENTION_BOUNDS:
+            lo, hi = _RETENTION_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        setattr(cfg.retention, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "retention_config_changed",
+                 "entity_type": "retention_config", "before": old,
+                 "after": cfg.retention.model_dump(mode="json"),
+                 "message": f"Retention config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# Telegram config
+# ---------------------------------------------------------------------------
+
+class TelegramConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    allowed_chat_ids: Optional[list[int]] = None
+
+
+@router.post("/telegram")
+async def update_telegram_config(req: TelegramConfigUpdate):
+    cfg = load_config()
+    old = cfg.telegram.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.telegram, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "telegram_config_changed",
+                 "entity_type": "telegram_config", "before": old,
+                 "after": cfg.telegram.model_dump(mode="json"),
+                 "message": f"Telegram config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# Update config
+# ---------------------------------------------------------------------------
+
+class UpdateConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    branch: Optional[str] = None
+
+
+@router.post("/update-config")
+async def update_update_config(req: UpdateConfigUpdate):
+    cfg = load_config()
+    old = {"enabled": cfg.update.enabled, "branch": cfg.update.branch}
+    if req.enabled is not None:
+        cfg.update.enabled = req.enabled
+    if req.branch is not None:
+        branch = req.branch.strip()
+        if not branch:
+            raise HTTPException(400, "branch must not be empty")
+        cfg.update.branch = branch
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "update_config_changed",
+                 "entity_type": "update_config", "before": old,
+                 "after": {"enabled": cfg.update.enabled, "branch": cfg.update.branch},
+                 "message": "Update config changed"})
+    return {"enabled": cfg.update.enabled, "branch": cfg.update.branch}
 
 
 @router.post("/permission-mode")

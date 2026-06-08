@@ -85,6 +85,29 @@ export const api = {
     max_position_hold_hours: number; min_confidence_to_trade: string
   }>) => post<{ updated: Record<string, any>; trading: Record<string, any> }>('/settings/trading', body),
 
+  setAutonomousLearning: (enabled: boolean) =>
+    post<{ old: boolean; new: boolean }>('/settings/autonomous-learning', { enabled }),
+  setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean }) =>
+    post<{ enabled_markets: Record<string, boolean> }>('/settings/exchange-markets', body),
+  updateRuntimeConfig: (body: Partial<{ scheduler_enabled: boolean; git_enabled: boolean }>) =>
+    post<{ updated: Record<string, any> }>('/settings/runtime', body),
+  updateAppConfig: (body: Partial<{ auto_open_browser: boolean }>) =>
+    post<{ updated: Record<string, any> }>('/settings/app', body),
+  updateHealthConfig: (body: Partial<{
+    enabled: boolean; alert_via_telegram: boolean; max_agent_failure_ratio: number
+    llm_unavailable_alert_after: number; market_data_max_staleness_min: number
+    supervisor_max_restarts: number; supervisor_restart_window_sec: number
+    supervisor_backoff_cap_sec: number
+  }>) => post<{ updated: Record<string, any> }>('/settings/health-config', body),
+  updateRetentionConfig: (body: Partial<{
+    agent_runs_days: number; tool_calls_days: number; run_steps_days: number
+    market_snapshots_days: number; portfolio_snapshots_days: number; jsonl_max_mb: number
+  }>) => post<{ updated: Record<string, any> }>('/settings/retention', body),
+  updateTelegramConfig: (body: Partial<{ enabled: boolean; allowed_chat_ids: number[] }>) =>
+    post<{ updated: Record<string, any> }>('/settings/telegram', body),
+  updateUpdateConfig: (body: Partial<{ enabled: boolean; branch: string }>) =>
+    post<{ enabled: boolean; branch: string }>('/settings/update-config', body),
+
   // Self-upgrade (on-demand code update)
   getUpdateStatus: () => fetchJson<{
     ok: boolean; reason?: string; has_update?: boolean; behind_count?: number
