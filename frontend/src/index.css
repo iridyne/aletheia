@@ -208,8 +208,12 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 
 /* ---------- Status popover (hover/focus from .status-cluster) ---------- */
 .status-popover {
-  position: absolute; top: calc(100% + var(--space-2)); right: 0;
-  min-width: 280px; padding: var(--space-3) var(--space-4);
+  /* top: 100% (no gap) + padding-top bridges the cluster→popover hover seam.
+     A gap here causes the hover state to break mid-transit, hiding the popover
+     before the user can click buttons inside it (e.g. ↻ Restart). */
+  position: absolute; top: 100%; right: 0;
+  min-width: 280px;
+  padding: calc(var(--space-2) + var(--space-1)) var(--space-4) var(--space-3);
   background: var(--surface); border: 1px solid var(--border-2);
   border-radius: var(--r-md); box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   opacity: 0; pointer-events: none; transform: translateY(-4px);

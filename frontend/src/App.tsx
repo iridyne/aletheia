@@ -111,8 +111,17 @@ function StatusBar() {
     return () => clearInterval(id)
   }, [])
 
-  const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
-  const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
+  const [pauseErr, setPauseErr] = useState('')
+  const pauseMut = useMutation({
+    mutationFn: api.pause,
+    onSuccess: () => { setPauseErr(''); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onError: (e: any) => setPauseErr(e.message || 'failed'),
+  })
+  const resumeMut = useMutation({
+    mutationFn: api.resume,
+    onSuccess: () => { setPauseErr(''); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onError: (e: any) => setPauseErr(e.message || 'failed'),
+  })
   const permMut = useMutation({
     mutationFn: (mode: string) => api.setPermissionMode(mode),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
@@ -249,11 +258,13 @@ function StatusBar() {
       {/* Block 3 — Pause/Resume action. */}
       <button
         className="topbar-btn secondary"
-        onClick={() => paused ? resumeMut.mutate() : pauseMut.mutate()}
+        onClick={() => { setPauseErr(''); paused ? resumeMut.mutate() : pauseMut.mutate() }}
+        disabled={pauseMut.isPending || resumeMut.isPending}
         title={paused ? 'Resume agents' : 'Pause agents'}
       >
-        {paused ? '▶' : '⏸'}
+        {(pauseMut.isPending || resumeMut.isPending) ? '…' : paused ? '▶' : '⏸'}
       </button>
+      {pauseErr && <span style={{ fontSize: '0.7rem', color: 'var(--red)', fontFamily: 'var(--mono)' }}>{pauseErr}</span>}
     </div>
   )
 }

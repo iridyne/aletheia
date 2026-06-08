@@ -10,7 +10,15 @@ import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS } from '../lib/format'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
-const PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'codex_cli']
+const ALL_PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'databricks', 'claude_cli', 'codex_cli'] as const
+const HTTP_PROVIDERS = new Set(['openai_compatible', 'anthropic_compatible', 'databricks'])
+const PROVIDER_LABELS: Record<string, string> = {
+  openai_compatible: 'OpenAI Compatible',
+  anthropic_compatible: 'Anthropic Compatible',
+  databricks: 'Databricks',
+  codex_cli: 'Codex CLI',
+  claude_cli: 'Claude Code CLI',
+}
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
 type Tab = 'intelligence' | 'execution' | 'risk' | 'infrastructure'
@@ -1078,114 +1086,301 @@ function AutostartCard({ qc }: any) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Model provider (full-width card used inside Intelligence tab)
+// Model provider — card-list design (one card per provider, inline expand)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ProviderStatusList({ data }: any) {
+function ModelProviderCard({ qc }: any) {
+  const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: health = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
-  if (!data) return null
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  if (!data) return <p className="hint">Loading providers…</p>
+
   return (
-    <div style={{ marginBottom: '0.75rem' }}>
-      {PROVIDERS.map(p => {
-        const h = (health as any[]).find(x => x.provider === p)
-        const cfg = data.providers?.[p]
-        const configured = p === 'codex_cli' ? undefined : cfg?.api_key?.configured
-        let state: ConnState = 'muted'
-        let text = 'unknown'
-        if (h?.available) { state = 'green'; text = 'connected' }
-        else if (p === 'codex_cli' && h?.error === 'not_installed') { state = 'yellow'; text = 'not configured' }
-        else if (p === 'codex_cli' && h?.error?.includes('disabled')) { state = 'muted'; text = 'disabled' }
-        else if (configured === false) { state = 'muted'; text = 'not configured' }
-        else if (h && !h.available) { state = 'red'; text = `✗ ${h.error || 'unreachable'}` }
-        const detail: string[] = []
-        if (cfg?.model && cfg.model !== 'default') detail.push(`model: ${cfg.model}`)
-        if (cfg?.api_key?.configured) detail.push(`··${cfg.api_key.last4}`)
-        return <ConnectionStatus key={p} label={p} state={state} text={text} detail={detail.join(' · ') || undefined} isDefault={p === data.default_provider} />
-      })}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      {ALL_PROVIDERS.map(p => (
+        <ProviderCard
+          key={p}
+          name={p}
+          config={data.providers?.[p]}
+          health={(health as any[]).find(x => x.provider === p)}
+          isDefault={p === data.default_provider}
+          isExpanded={expanded === p}
+          onToggle={() => setExpanded(expanded === p ? null : p)}
+          qc={qc}
+        />
+      ))}
     </div>
   )
 }
 
-function ModelProviderCard({ qc }: any) {
-  const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
-  const [provider, setProvider] = useState('openai_compatible')
+function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, qc }: {
+  name: string; config: any; health: any; isDefault: boolean
+  isExpanded: boolean; onToggle: () => void; qc: any
+}) {
+  const isHTTP = HTTP_PROVIDERS.has(name)
+  const isCLI = !isHTTP
+
+  // Status resolution — "not configured" (muted) takes priority over connection errors
+  // for HTTP providers that have no API key set.
+  let statusColor: string = 'var(--muted)'
+  let statusText = 'not configured'
+  const keyConfigured = isHTTP && config?.api_key?.configured
+  if (health?.available) { statusColor = 'var(--green)'; statusText = 'connected' }
+  else if (isCLI && health?.error === 'not_installed') { statusColor = 'var(--yellow)'; statusText = 'not installed' }
+  else if (isCLI && health?.error?.includes('disabled')) { statusColor = 'var(--muted)'; statusText = 'disabled' }
+  else if (isHTTP && !keyConfigured) { statusColor = 'var(--muted)'; statusText = 'not configured' }
+  else if (health && !health.available) { statusColor = 'var(--red)'; statusText = health.error || 'unreachable' }
+  else if (keyConfigured && !health) { statusColor = 'var(--yellow)'; statusText = 'checking…' }
+
+  // Summary line
+  const details: string[] = []
+  if (isHTTP && config?.base_url) details.push(config.base_url)
+  if (name === 'databricks' && config?.workspace_url) details.push(config.workspace_url)
+  if (config?.model && config.model !== 'default') details.push(`model: ${config.model}`)
+  if (isHTTP && config?.api_key?.configured) details.push(`key: ··${config.api_key.last4}`)
+  if (isCLI && health?.model) details.push(`model: ${health.model}`)
+
+  return (
+    <div style={{
+      border: `1px solid ${isExpanded ? 'var(--accent-dim)' : 'var(--border)'}`,
+      borderRadius: 'var(--r)',
+      background: 'var(--surface)',
+      transition: 'border-color 0.15s',
+    }}>
+      {/* Header row — always visible */}
+      <div
+        onClick={onToggle}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '0.6rem',
+          padding: '0.7rem 0.9rem', cursor: 'pointer',
+          userSelect: 'none',
+        }}
+      >
+        {/* Status dot */}
+        <span style={{
+          width: '8px', height: '8px', borderRadius: '50%',
+          background: statusColor, flexShrink: 0,
+        }} />
+        {/* Label */}
+        <span style={{ fontWeight: 600, fontSize: '0.82rem', fontFamily: 'var(--display)' }}>
+          {PROVIDER_LABELS[name] || name}
+        </span>
+        {/* Default badge */}
+        {isDefault && (
+          <span style={{
+            fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: '0.06em', color: 'var(--accent)',
+            padding: '0.1rem 0.4rem', borderRadius: '3px',
+            border: '1px solid var(--accent-dim)', background: 'rgba(34,211,238,0.06)',
+          }}>DEFAULT</span>
+        )}
+        {/* Spacer */}
+        <span style={{ flex: 1 }} />
+        {/* Status text */}
+        <span style={{ fontSize: '0.72rem', color: statusColor, fontFamily: 'var(--mono)' }}>
+          {statusText}
+        </span>
+        {/* Chevron */}
+        <span style={{ fontSize: '0.7rem', color: 'var(--muted)', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▸</span>
+      </div>
+
+      {/* Summary detail (only when collapsed and has info) */}
+      {!isExpanded && details.length > 0 && (
+        <div style={{
+          padding: '0 0.9rem 0.6rem 2.3rem',
+          fontSize: '0.72rem', color: 'var(--muted)', fontFamily: 'var(--mono)',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {details.join(' · ')}
+        </div>
+      )}
+
+      {/* Expanded content */}
+      {isExpanded && (
+        <div style={{ padding: '0 0.9rem 0.9rem', borderTop: '1px solid var(--border)' }}>
+          {isHTTP ? (
+            <HTTPProviderForm name={name} config={config} isDefault={isDefault} qc={qc} />
+          ) : name === 'codex_cli' ? (
+            <CodexCLIPanel config={config} health={health} qc={qc} />
+          ) : (
+            <ClaudeCLIPanel config={config} health={health} isDefault={isDefault} qc={qc} />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── HTTP Provider inline form ───
+
+function HTTPProviderForm({ name, config, isDefault, qc }: {
+  name: string; config: any; isDefault: boolean; qc: any
+}) {
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
-  const [protocol, setProtocol] = useState('chat_completions')
+  const [protocol, setProtocol] = useState(() => config?.protocol || 'chat_completions')
+  const [workspaceUrl, setWorkspaceUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
-
-  const cur = data?.providers?.[provider]
 
   const verifyAndSave = useMutation({
     mutationFn: async () => {
       setResult(null)
-      const test = await api.testModelCandidate({
-        provider, base_url: baseUrl || cur?.base_url || undefined,
-        model: model || cur?.model || undefined, protocol, api_key: apiKey || undefined,
-      })
+      const testBody: any = {
+        provider: name,
+        base_url: baseUrl || config?.base_url || undefined,
+        model: model || config?.model || undefined,
+        api_key: apiKey || undefined,
+      }
+      if (name === 'openai_compatible') testBody.protocol = protocol
+      if (name === 'databricks') testBody.workspace_url = workspaceUrl || config?.workspace_url || undefined
+
+      const test = await api.testModelCandidate(testBody)
       if (!test.available) throw new Error(test.error || 'provider unreachable')
-      await api.setModelProvider({
-        provider, base_url: baseUrl || undefined, model: model || undefined,
-        protocol, default: true, api_key: apiKey || undefined,
-      })
+
+      const saveBody: any = {
+        provider: name,
+        enabled: true,
+        ...(baseUrl ? { base_url: baseUrl } : {}),
+        ...(model ? { model } : {}),
+        ...(apiKey ? { api_key: apiKey } : {}),
+      }
+      if (name === 'openai_compatible') saveBody.protocol = protocol
+      if (name === 'databricks' && workspaceUrl) saveBody.workspace_url = workspaceUrl
+
+      await api.setModelProvider(saveBody)
       return test
     },
     onSuccess: (test) => {
       setApiKey('')
-      setResult({ ok: true, msg: `✓ verified & saved (${test.model || 'ok'})` })
+      setResult({ ok: true, msg: `verified & saved (${test.model || 'ok'})` })
       qc.invalidateQueries({ queryKey: ['model'] })
       qc.invalidateQueries({ queryKey: ['model-health'] })
       qc.invalidateQueries({ queryKey: ['status'] })
     },
-    onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message} — not saved` }),
+    onError: (e: any) => setResult({ ok: false, msg: `${e.message} — not saved` }),
   })
 
-  const isCodex = provider === 'codex_cli'
+  const setDefault = useMutation({
+    mutationFn: () => api.setModelProvider({ provider: name, default: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+  })
+
+  const isDatabricks = name === 'databricks'
+  const isOpenAI = name === 'openai_compatible'
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <ProviderStatusList data={data} />
-      <div className="form-grid">
-        <label>Provider
-          <select value={provider} onChange={e => { setProvider(e.target.value); setResult(null) }}>
-            {PROVIDERS.map(p => <option key={p}>{p}</option>)}
-          </select>
+    <div style={{ paddingTop: '0.75rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem 1rem' }}>
+        {isDatabricks ? (
+          <label style={{ gridColumn: '1 / -1' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Workspace URL</span>
+            <input value={workspaceUrl} placeholder={config?.workspace_url || 'https://xxx.cloud.databricks.com'} onChange={e => { setWorkspaceUrl(e.target.value); setResult(null) }} />
+          </label>
+        ) : (
+          <label style={{ gridColumn: '1 / -1' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Base URL</span>
+            <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null) }} />
+          </label>
+        )}
+        <label>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            {isDatabricks ? 'Endpoint name' : 'Model'}
+          </span>
+          <input value={model} placeholder={config?.model || 'default'} onChange={e => { setModel(e.target.value); setResult(null) }} />
         </label>
-        {!isCodex && <>
-          <label>Base URL
-            <input value={baseUrl} placeholder={cur?.base_url || 'http://localhost:8000/v1'} onChange={e => setBaseUrl(e.target.value)} />
-          </label>
-          <label>Model
-            <input value={model} placeholder={cur?.model || 'default'} onChange={e => setModel(e.target.value)} />
-          </label>
-          <label>Protocol
-            <select value={protocol} onChange={e => setProtocol(e.target.value)}>
+        {isOpenAI && (
+          <label>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Protocol</span>
+            <select value={protocol} onChange={e => { setProtocol(e.target.value); setResult(null) }}>
               <option value="chat_completions">chat_completions</option>
               <option value="responses">responses</option>
             </select>
           </label>
-          <label>API Key {cur?.api_key?.configured && <span className="badge badge-green">configured ··{cur.api_key.last4}</span>}
-            <input type="password" value={apiKey} placeholder={cur?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => setApiKey(e.target.value)} />
-          </label>
-        </>}
+        )}
+        <label style={{ gridColumn: isOpenAI ? undefined : '2 / 3' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            {isDatabricks ? 'PAT Token' : 'API Key'}
+            {config?.api_key?.configured && <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.62rem' }}>··{config.api_key.last4}</span>}
+          </span>
+          <input type="password" value={apiKey} placeholder={config?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
+        </label>
       </div>
-      {isCodex
-        ? <CodexPanel qc={qc} />
-        : <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', alignItems: 'center' }}>
-            <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
-              {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
-            </button>
-            {result && <span style={{ fontSize: '0.78rem', color: result.ok ? 'var(--green)' : 'var(--red)' }}>{result.msg}</span>}
-          </div>}
-      <p className="hint">API keys are write-only — never shown after save.</p>
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
+          {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
+        </button>
+        {!isDefault && (
+          <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}>
+            Set as Default
+          </button>
+        )}
+        {result && (
+          <span style={{ fontSize: '0.75rem', color: result.ok ? 'var(--green)' : 'var(--red)', fontFamily: 'var(--mono)' }}>
+            {result.ok ? '✓' : '✗'} {result.msg}
+          </span>
+        )}
+      </div>
+      <p style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
+        {isDatabricks ? 'PAT token' : 'API keys'} are write-only — never shown after save.
+      </p>
     </div>
   )
 }
 
-function CodexPanel({ qc }: any) {
-  const { data: health } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 5000 })
-  const cx = (health || []).find((h: any) => h.provider === 'codex_cli')
+// ─── Claude CLI panel ───
+
+function ClaudeCLIPanel({ config, health, isDefault, qc }: {
+  config: any; health: any; isDefault: boolean; qc: any
+}) {
+  const enableMut = useMutation({
+    mutationFn: () => api.setModelProvider({ provider: 'claude_cli', enabled: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['model-health'] }) },
+  })
+  const setDefault = useMutation({
+    mutationFn: () => api.setModelProvider({ provider: 'claude_cli', enabled: true, default: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+  })
+
+  const available = health?.available
+  const notInstalled = health?.error === 'not_installed'
+  const loading = !health
+
+  return (
+    <div style={{ paddingTop: '0.75rem' }}>
+      {loading ? (
+        <p className="hint">Checking CLI…</p>
+      ) : notInstalled ? (
+        <p className="hint">Claude Code CLI not found in PATH. Install it first.</p>
+      ) : available ? (
+        <div>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+            <span className="badge badge-green">connected</span>
+            {health.model && <span style={{ fontSize: '0.75rem', fontFamily: 'var(--mono)', color: 'var(--muted)' }}>model: {health.model}</span>}
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            {!isDefault && (
+              <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}>
+                Set as Default
+              </button>
+            )}
+          </div>
+          <p className="hint" style={{ marginTop: '0.5rem' }}>Auth managed by Claude Code CLI. Aletheia stores no credentials.</p>
+        </div>
+      ) : (
+        <div>
+          <p className="hint" style={{ marginBottom: '0.5rem' }}>CLI detected but not enabled or not authenticated.</p>
+          <button onClick={() => enableMut.mutate()} disabled={enableMut.isPending}>Enable</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Codex CLI panel ───
+
+function CodexCLIPanel({ config, health, qc }: { config: any; health: any; qc: any }) {
   const { data: cfg } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const selectedModel = cfg?.providers?.codex_cli?.codex_model || ''
   const [login, setLogin] = useState<{ state: string; verification_uri: string | null; user_code: string | null; error: string | null } | null>(null)
@@ -1201,41 +1396,54 @@ function CodexPanel({ qc }: any) {
 
   const start = useMutation({ mutationFn: api.codexLoginStart, onSuccess: r => setLogin(r) })
   const cancel = useMutation({ mutationFn: api.codexLoginCancel, onSuccess: () => setLogin(null) })
-  const { data: models = [] } = useQuery({ queryKey: ['codex-models'], queryFn: api.getCodexModels, enabled: cx?.available === true })
+  const { data: models = [] } = useQuery({ queryKey: ['codex-models'], queryFn: api.getCodexModels, enabled: health?.available === true })
   const pickModel = useMutation({
     mutationFn: (slug: string) => api.setModelProvider({ provider: 'codex_cli', codex_model: slug, enabled: true, default: true }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
 
-  if (!cx) return <p className="hint">Checking Codex status…</p>
-  if (cx.error === 'not_installed') return <p className="hint"><span className="badge badge-yellow">not configured</span> Codex CLI not found in PATH. Install it and log in with your ChatGPT subscription.</p>
-  if (cx.available) {
-    return (
-      <div>
-        <p><span className="badge badge-green">connected</span> via ChatGPT subscription.</p>
-        <label>Model
-          <select value={selectedModel} onChange={e => pickModel.mutate(e.target.value)}>
-            <option value="">codex default</option>
-            {models.map(m => <option key={m.slug} value={m.slug}>{m.display_name}</option>)}
-          </select>
-        </label>
-        <p className="hint">OAuth token managed by Codex CLI (~/.codex). Aletheia stores no token.</p>
-      </div>
-    )
-  }
+  const notInstalled = health?.error === 'not_installed'
+  const available = health?.available
+
   return (
-    <div>
-      <p><span className="badge badge-red">not logged in</span> Codex CLI installed but no ChatGPT login.</p>
-      {login?.state === 'awaiting_authorization' && login.verification_uri
-        ? <div>
-            <p>1. Open <a href={login.verification_uri} target="_blank" rel="noreferrer">{login.verification_uri}</a></p>
-            <p>2. Enter code: <strong>{login.user_code}</strong></p>
-            <p className="hint">Waiting… ({statusPoll.data?.state || 'polling'})</p>
-            <button className="secondary" onClick={() => cancel.mutate()}>Cancel</button>
+    <div style={{ paddingTop: '0.75rem' }}>
+      {notInstalled ? (
+        <p className="hint">Codex CLI not found in PATH. Install it and log in with your ChatGPT subscription.</p>
+      ) : available ? (
+        <div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span className="badge badge-green">connected</span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via ChatGPT subscription</span>
           </div>
-        : login?.state === 'failed'
-        ? <p className="hint"><span className="badge badge-red">failed</span> {login.error === 'device_auth_parse_failed' ? 'Run `codex login` in a terminal instead.' : login.error}</p>
-        : <button onClick={() => start.mutate()} disabled={start.isPending}>Connect Codex</button>}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', maxWidth: '240px' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Model</span>
+            <select value={selectedModel} onChange={e => pickModel.mutate(e.target.value)}>
+              <option value="">codex default</option>
+              {models.map((m: any) => <option key={m.slug} value={m.slug}>{m.display_name}</option>)}
+            </select>
+          </label>
+          <p className="hint" style={{ marginTop: '0.5rem' }}>OAuth token managed by Codex CLI (~/.codex). Aletheia stores no token.</p>
+        </div>
+      ) : (
+        <div>
+          <p style={{ marginBottom: '0.5rem' }}>
+            <span className="badge badge-red">not logged in</span>
+            <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>CLI installed but no active session.</span>
+          </p>
+          {login?.state === 'awaiting_authorization' && login.verification_uri ? (
+            <div style={{ fontSize: '0.78rem' }}>
+              <p>1. Open <a href={login.verification_uri} target="_blank" rel="noreferrer">{login.verification_uri}</a></p>
+              <p>2. Enter code: <strong style={{ fontFamily: 'var(--mono)' }}>{login.user_code}</strong></p>
+              <p className="hint">Waiting… ({statusPoll.data?.state || 'polling'})</p>
+              <button className="secondary" onClick={() => cancel.mutate()} style={{ marginTop: '0.4rem' }}>Cancel</button>
+            </div>
+          ) : login?.state === 'failed' ? (
+            <p className="hint"><span className="badge badge-red">failed</span> {login.error === 'device_auth_parse_failed' ? 'Run `codex login` in a terminal instead.' : login.error}</p>
+          ) : (
+            <button onClick={() => start.mutate()} disabled={start.isPending}>Connect Codex</button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

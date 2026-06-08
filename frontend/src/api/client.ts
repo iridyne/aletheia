@@ -35,10 +35,11 @@ export const api = {
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
     enabled?: boolean; default?: boolean; api_key?: string; codex_model?: string
+    workspace_url?: string
   }) => post('/settings/model', body),
-  // Verify-before-commit: test a candidate provider config (key NOT persisted)
   testModelCandidate: (body: {
-    provider: string; base_url?: string; protocol?: string; model?: string; api_key?: string
+    provider: string; base_url?: string; protocol?: string; model?: string
+    api_key?: string; workspace_url?: string
   }) => post<{ available: boolean; model: string; error: string | null }>('/model/test-candidate', body),
 
   // Codex subscription provider: web-triggered device-auth login + model listing
