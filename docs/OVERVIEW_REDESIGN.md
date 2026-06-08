@@ -1,4 +1,4 @@
-# Overview / Cockpit — Redesign Spec (in progress)
+# Overview / Cockpit — Redesign Spec (IMPLEMENTED 2026-06-07)
 
 > Conversational redesign with the owner, 2026-06-07. Stack locked: React + hand-written
 > CSS (no Tailwind/shadcn). Design language: Bloomberg density + TradingView chart link +

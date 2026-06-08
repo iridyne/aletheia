@@ -507,6 +507,92 @@
 
 ---
 
+---
+
+## 5. 🟠 Markets 页数据展示缺陷（2026-06-08）
+
+> 来源：用户反馈 + 数据层 CCXT 迁移后的对照检查。
+> 三个问题彼此独立，修复优先级从高到低排列。
+
+### 5.1 🟠 无数据来源标注（UI Honesty breach）
+
+**现状**：`Charts.tsx:8` 硬编码 `SYMBOLS = ['BTCUSDT', ...]`，watchlist card 显示
+`{sym.replace('USDT', '')}/USDT`，页面完全不显示数据来自哪个交易所 / provider。
+数据层迁移到 CCXT Binance 后，显示的价格是 Binance 的，但界面无任何标注。
+
+**影响**：trust §3 UI Honesty 破口——用户看到数字不知道它从哪来，无法判断数据可信度。
+
+**最小修复**：
+1. `Charts.tsx` 的 `SYMBOLS` 改为 canonical 格式 `['BTC/USDT', 'ETH/USDT', 'SOL/USDT']`，
+   `getOhlcv` / `getMarketSnapshots` 传 canonical symbol（后端 `to_canonical()` 已支持）
+2. watchlist card 右下角加数据来源 chip：`via Binance (CCXT)`，从 `/api/market/ohlcv`
+   响应头或新增 `/api/market/status` 端点读取（后端已有 `provider` 字段在 `market_ohlcv`）
+3. 如 snapshot 来自 Bitget fallback，显示不同颜色
+
+**文件**：`Charts.tsx:8,64`, `api/client.ts:155`
+
+---
+
+### 5.2 🟡 Watchlist card 数据量不足
+
+**现状**：每个 symbol card 只显示 3 个字段：`last_price` / `change_pct_24h%` / `volume_24h`。
+缺少：24h High/Low（或 spread from current）、市场状态 badge（涨/跌/横盘）。
+
+**当前 API**：`/api/market/snapshots` 返回 `{price, volume_24h, change_pct_24h}`。
+CCXT 的 `fetch_ticker` 返回 `high`, `low`, `bid`, `ask`, `percentage` 等字段，但
+`CCXTProvider.get_ticker()` 目前只提取了 3 个字段（`providers.py:Ticker` dataclass）。
+
+**最小修复**：
+- `aletheia/data/providers.py`：`Ticker` dataclass 加 `high_24h`, `low_24h` 字段（nullable）
+- `aletheia/data/ccxt_provider.py`：`_fetch_ticker()` 填充这两个字段
+- `aletheia/storage/models.py`：`MarketSnapshot` 加 `high_24h`, `low_24h`（若想持久化）
+- `Charts.tsx`：card 显示 H/L 范围
+
+**文件**：`aletheia/data/providers.py:17`, `aletheia/data/ccxt_provider.py:62`,
+`Charts.tsx:68-75`
+
+---
+
+### 5.3 🟡 数据不自动刷新
+
+**现状**：`Charts.tsx:17-18` 的所有 `useQuery` 均无 `refetchInterval`，数据只在
+页面首次加载时拉取一次。对于价格行情，这等同于永久过期数据。
+
+**最小修复**：
+```tsx
+// Charts.tsx
+const { data: snapshots = [] } = useQuery({
+  queryKey: ['market-snapshots'],
+  queryFn: () => api.getMarketSnapshots(undefined, 20),
+  refetchInterval: 30_000,  // 30s
+})
+```
+chart OHLCV 本身不需要轮询（由 PriceChart 内部管理），只需刷新 watchlist ticker。
+同时在 watchlist card 右上角加 `last updated X sec ago` 指示（参照 §4.2 H11）。
+
+**文件**：`Charts.tsx:17-18`
+
+---
+
+### 5.4 🟡 symbol 格式未跟进 CCXT 迁移
+
+**现状**：`Charts.tsx:8` 仍用 `'BTCUSDT'` Bitget 格式；API 端点 `getOhlcv` 传的也是
+`BTCUSDT`。`routes/data.py` 的 `get_market_ohlcv` 默认参数也改成了 `BTC/USDT`
+但 chart 组件还在传旧格式，依赖 `to_canonical()` 后端转换（有效，但前端不一致）。
+
+**最小修复**：
+- `Charts.tsx` `SYMBOLS` 改 `['BTC/USDT', 'ETH/USDT', 'SOL/USDT']`
+- chart symbol 选择器 `<select>` option 用 display 名和 value 分离，display 用 `BTC/USDT`，value 传 canonical
+- `getOhlcv` 调用已支持 canonical，无需后端改动
+
+**文件**：`Charts.tsx:8,84-88`, `api/client.ts:155`
+
+---
+
+**整体修复优先级**：5.3（自动刷新，一行代码）> 5.4（symbol 格式）> 5.1（来源标注，需后端 Ticker 扩展）> 5.2（H/L 字段，需 dataclass + 存储改动）
+
+---
+
 ## 备注
 
 - 本清单基于规格 §23（13 子节）+ §2/§4/§13/§15/§29 + trust §3 全文对照前端源码

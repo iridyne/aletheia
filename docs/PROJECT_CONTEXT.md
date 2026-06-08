@@ -12,7 +12,7 @@ Aletheia Trading OS is a personal AI-native trading system built for solo automa
 
 ## Current Stage
 
-MVP — functional prototype with 7 agents, 272 passing tests. Focus is trust hardening, not feature expansion.
+MVP — functional prototype with 8 agents, ~424 passing tests. Focus is trust hardening + stage-0 stable run, not feature expansion.
 
 ## Core Modules
 

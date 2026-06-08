@@ -32,7 +32,8 @@ def setup_env(tmp_path, monkeypatch):
     init_tool_registry()
 
 
-def _seed(symbol="BTCUSDT", price=60000.0):
+def _seed(symbol="BTC/USDT", price=60000.0):
+    # Snapshots are stored in canonical CCXT format (BTC/USDT) — same as collect_market_snapshots.
     repo.insert_market_snapshot(MarketSnapshot(symbol=symbol, market_type="spot", price=price))
     # Entry-logic upgrade (Component 2): paper_trader now only trades directional,
     # >=medium-confidence signals, so seed one that triggers a trade.

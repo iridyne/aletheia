@@ -101,7 +101,8 @@ async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
     assert strat["state"] == "paper_running"
 
     # A market snapshot so the trader can price the order.
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000.0))
+    # Use canonical format — market_observer and paper_trader both work in BTC/USDT.
+    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000.0))
 
     # Observer binds the opportunity to the active strategy. We assert the binding
     # directly (LLM is unavailable in tests, so drive a directional opportunity by
@@ -113,7 +114,7 @@ async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
 
     # Seed a directional, medium-confidence opportunity bound to the strategy so the
     # paper trader actually trades (observer's own read is neutral without an LLM).
-    opp = Opportunity(symbol="BTCUSDT", market="spot", direction_bias="long",
+    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
                       thesis="bound test", confidence="medium", source_agent="market_observer",
                       linked_strategy_id=strat["id"])
     repo.insert_opportunity(opp)
@@ -142,9 +143,9 @@ async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
 
     await run_agent("strategy_designer", trigger_type="manual")
     strat = repo.list_strategies(limit=10)[0]
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000.0))
+    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000.0))
 
-    opp = Opportunity(symbol="BTCUSDT", market="spot", direction_bias="long",
+    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
                       thesis="bound", confidence="medium", source_agent="market_observer",
                       linked_strategy_id=strat["id"])
     repo.insert_opportunity(opp)

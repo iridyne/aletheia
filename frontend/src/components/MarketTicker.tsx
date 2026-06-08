@@ -21,9 +21,9 @@ import { fmtNum, fmtSigned, useDecimals } from '../lib/format'
  */
 
 const CRYPTO = [
-  { sym: 'BTCUSDT', label: 'BTC' },
-  { sym: 'ETHUSDT', label: 'ETH' },
-  { sym: 'SOLUSDT', label: 'SOL' },
+  { sym: 'BTC/USDT', label: 'BTC' },
+  { sym: 'ETH/USDT', label: 'ETH' },
+  { sym: 'SOL/USDT', label: 'SOL' },
 ]
 
 const INDICES = [

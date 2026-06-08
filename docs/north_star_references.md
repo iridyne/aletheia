@@ -10,7 +10,7 @@
 > **当前阶段红线**：系统尚未被证明能连续稳跑、也未被证明"学习在产出可验证假设
 > 而非噪音"。在这两点被证明之前，本文件第 7 节列出的演进项一律**推迟**。
 
-最后更新：2026-06-05 · 维护者：Aletheia Dev
+最后更新：2026-06-08 · 维护者：Aletheia Dev
 
 ---
 
@@ -54,12 +54,12 @@
 | guard pipeline / 执行前检查 | ✅ | Risk Engine（`risk/`）+ 执行网关（`execution/`），硬限不可被 agent 改 |
 | 进程 supervisor / 自愈 | ✅ | `_gateway_runner.py` supervisor + PR #7 的 OS watchdog |
 | 多角色 agent | ✅ | **8 个已注册 agent**（见 `aletheia/agents/*.py`，`@register_agent`） |
-| 反方 / 风险批评 | 🟡 | `risk_critic` **会写**风险教训，但**没人在决策前读**（见 §6） |
+| 反方 / 风险批评 | 🟡 | `risk_critic` 会写风险教训；`knowledge/retrieval.py` FTS5 检索已通，但 risk_critic 教训尚未专门注入决策路径 |
 | 多空辩论 / 跨 agent 批评 | ❌ | agent 是独立定时任务，仅经共享 DB 单向写，无 inter-agent 数据流 |
-| dreaming / 整理 | ✅ | `dreaming_agent` 每天 2am + daily_review + Learning Ledger（PR #8） |
-| skill from experience | 🟡→❌ | playbooks 仅 `seed_playbooks` 种子写入，**0 个 agent 读**、不从经验生成 |
-| 持久记忆**反哺决策** | ❌ | **核心缺口**：5 类知识只写、几乎不读回 LLM 决策（见 §6） |
-| 可检索记忆（FTS / 向量 / 关键词） | ❌ | 仅 `list_knowledge_items(type, limit)`，无 FTS5、无 embedding |
+| dreaming / 整理 | ✅ | `dreaming_agent` 每天 2am + daily_review + Learning Ledger（含 activation_ratio / lessons_consulted 质量信号） |
+| skill from experience | 🟡 | `trading/playbooks.py` `load_playbooks()` 已接入；`strategy_designer` 在决策前读 playbook block（2026-06-07） |
+| 持久记忆**反哺决策** | 🟡 | `knowledge/retrieval.py` FTS5 + BM25×recency×importance；`market_observer` + `strategy_designer` 注入 memory block（2026-06-07）。仍是只有这两个 agent，其余 agent 未接入 |
+| 可检索记忆（FTS / 向量 / 关键词） | 🟡 | FTS5 virtual table + `retrieve_lessons()`（quality-gated：仅 high_confidence + active）；无向量/embedding |
 | 记忆 schema 进化 | ❌（固定） | Pydantic 模型 + 加列式迁移，无运行时进化 |
 | 从交易反馈优化策略（RL 式） | ❌ | 晋级门槛会算指标，但不回流改策略 |
 | 长程身份 / 自我模型 | ❌ | 无（属研究级，远期） |

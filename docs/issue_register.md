@@ -1,6 +1,7 @@
 # Aletheia Trading OS Issue Register
 
-Last updated: 2026-06-06
+Last updated: 2026-06-06  
+> **ARCHIVED SNAPSHOT** — superseded by BACKEND_ISSUES.md §1-§3 (all fixed 2026-06-06) and §10 archive. Test baseline here (351 passed) is stale; current baseline is ~424. Preserved as audit provenance only.
 
 This file is the long-lived issue register for trust hardening work. It is a
 planning and audit artifact only. Do not treat any item here as permission to

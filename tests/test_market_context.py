@@ -105,14 +105,19 @@ class _FakeCandle:
         self.volume = v
 
 
-class _FakeClient:
-    """Mock BitgetClient — no network, deterministic uptrend candles."""
+class _FakeProvider:
+    """Mock MarketDataProvider — no network, deterministic uptrend candles."""
 
     def __init__(self, *, fail_after: int | None = None):
         self.fail_after = fail_after
         self.calls = 0
 
-    async def get_ohlcv(self, symbol, timeframe, limit, market_type):
+    async def get_ticker(self, symbol):
+        from aletheia.data.providers import Ticker
+        return Ticker(symbol=symbol, last_price=100.0, volume_24h=1e6,
+                      change_pct_24h=0.5, provider="fake")
+
+    async def get_ohlcv(self, symbol, timeframe, limit):
         self.calls += 1
         if self.fail_after is not None and self.calls > self.fail_after:
             raise RuntimeError("simulated network failure")
@@ -130,11 +135,18 @@ class _FakeClient:
             for i in range(limit)
         ]
 
+    async def close(self):
+        pass
+
+
+# Keep old name as alias so any other references still work
+_FakeClient = _FakeProvider
+
 
 def test_build_context_renders_markdown_tables():
     from aletheia.trading.market_context import build_market_context
-    client = _FakeClient()
-    ctx, debug = asyncio.run(build_market_context(["BTCUSDT", "ETHUSDT"], client=client))
+    provider = _FakeProvider()
+    ctx, debug = asyncio.run(build_market_context(["BTCUSDT", "ETHUSDT"], provider=provider))
     assert "Verified market data snapshot" in ctx
     assert "BTCUSDT" in ctx and "ETHUSDT" in ctx
     # Multi-timeframe: header row should appear once per symbol.
@@ -151,15 +163,17 @@ def test_build_context_renders_markdown_tables():
 def test_build_context_falls_back_on_total_failure(tmp_path, monkeypatch):
     """If every OHLCV call fails, we degrade to the legacy 1-line context."""
     from aletheia.trading.market_context import build_market_context
-    client = _FakeClient(fail_after=0)  # fail immediately
+    from aletheia.data.cache import get_cache
+    get_cache().invalidate()  # clear any state from previous tests
+
+    provider = _FakeProvider(fail_after=0)  # fail immediately
 
     # Patch latest_snapshot to return a known shape — the fallback path uses it.
-    import aletheia.trading.market_context as mc
     monkeypatch.setattr(
         "aletheia.trading.market_data.latest_snapshot",
         lambda sym: {"price": 60000.0, "change_pct_24h": 0.05},
     )
-    ctx, debug = asyncio.run(build_market_context(["BTCUSDT"], client=client))
+    ctx, debug = asyncio.run(build_market_context(["BTCUSDT"], provider=provider))
     assert "price=60000" in ctx
     assert "Verified market data snapshot" not in ctx  # fallback skips the header
     assert debug["fallback"] is True
@@ -168,8 +182,8 @@ def test_build_context_falls_back_on_total_failure(tmp_path, monkeypatch):
 
 def test_build_context_includes_indicators_in_debug():
     from aletheia.trading.market_context import build_market_context
-    client = _FakeClient()
-    ctx, debug = asyncio.run(build_market_context(["BTCUSDT"], client=client))
+    provider = _FakeProvider()
+    ctx, debug = asyncio.run(build_market_context(["BTCUSDT"], provider=provider))
     btc = debug["symbols"]["BTCUSDT"]
     # 1h timeframe should be present with computed RSI.
     assert "1h" in btc
@@ -233,8 +247,9 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
     assert "llm_unavailable" in (out["errors"][0] if out["errors"] else "")
     steps = repo.list_run_steps("run-mo-1")
     actions = [s["action"] for s in steps]
-    assert "market_read_input" in actions
-    assert "market_read_output" in actions
+    # Actions are now per-symbol: "market_read_input:BTC/USDT"
+    assert any("market_read_input" in a for a in actions)
+    assert any("market_read_output" in a for a in actions)
 
     # Cleanup the in-process step counter.
     from aletheia.agents.helpers import _release_run_counter

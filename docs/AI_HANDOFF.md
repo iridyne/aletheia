@@ -2,17 +2,137 @@
 
 ## Last Updated
 
-2026-06-08 (SQLite 并发锁修复 + known-issues 核实)
+2026-06-08 (full-market analyzer + paper trading pipeline fix)
 
-## Recent Change (2026-06-08 — SQLite 并发锁 + 核实)
+## Recent Change (Full-Market Analyzer + Paper Trading Pipeline Fix — 2026-06-08)
 
-**SQLite 并发锁**：`aletheia/storage/sqlite.py` 从单全局 `_db_conn` 改为 `threading.local()`，每 OS 线程独立连接，彻底消除 APScheduler 后台线程与 uvicorn async handler 竞争写同一连接的问题。`timeout=30` 让 SQLITE_BUSY 重试而非立即抛错；`check_same_thread=True` 恢复正确值（线程现已隔离）。
+Three-bug paper trading fix + full-market analyzer expansion.
 
-**Portfolio sync 核实**：`exchange_sync.py` + `pnl.compute_portfolio()` + `/api/portfolio` + `/api/exchange/account` 均已完整接通，scheduler 每 5 min 刷新缓存。无需修改。
+**Paper trading pipeline bugs fixed:**
+- `data/config.yaml` — `autonomous_paper_trading: false → true` (main switch was off)
+- `aletheia/agents/market_observer.py` — per-symbol loop (one LLM call + one Opportunity per symbol); previously only symbols[0] got an opportunity
+- `aletheia/agents/paper_trader.py` — `allowed_symbols` now uses `to_canonical()` so Bitget-format config entries match canonical opportunity symbols
+- `aletheia/portfolio/pnl.py` — `_latest_price` now uses `latest_snapshot()` dual-format lookup instead of direct DB query
 
-**BACKEND_ISSUES §10 核实**：grep 逐条验证 2026-06-07 复审后声称修复的 8 条高风险条目（strategy_id 因果链 / live-order pending-first / asyncio 推送 / paper 风险无界 / clientOid / kill-switch lock / paper_trader Gate A / commit_all 调度）全部在当前代码库中已真修。§10 存档可信。
+**Full-market analyzer — new agents:**
+- `aletheia/agents/stock_observer.py` — US equity observer; yFinance daily OHLCV + indicators (SMA/RSI/ATR/Bollinger/momentum); `asset_class="equity"`, observation-only; scheduled Mon–Fri 14:30–21:00 UTC
+- `aletheia/agents/prediction_observer.py` — Polymarket prediction market observer; Gamma API (public REST); `asset_class="prediction"`, observation-only; scheduled every 30 min
+- `aletheia/data/polymarket_provider.py` — Polymarket Gamma API provider (httpx + urllib fallback)
+
+**Config expanded:**
+- `observed_symbols`: BTC/USDT, ETH/USDT, SOL/USDT, XRP/USDT, DOGE/USDT
+- `observed_stocks`: SPY, QQQ, NVDA, AAPL
+- `observed_prediction_markets`: crypto, politics
+
+**Schema + migrations:**
+- `aletheia/config/schema.py` — `MarketDataConfig` extended with `observed_stocks`, `observed_prediction_markets`
+- `aletheia/storage/models.py` + `migrations.py` — `asset_class` column on `opportunities`
+
+**Tests fixed:**
+- `tests/test_entry_logic.py` — 2 tests updated for per-symbol loop (assert BTC row specifically)
+- `tests/test_paper_autoloop.py` — seed symbol changed `BTCUSDT → BTC/USDT` (canonical format)
+- `tests/test_runtime.py` — job count updated `11 → 13` (+ stock_observer + prediction_observer)
+
+**Test result:** 398 passed, 19 failed (all 19 are pre-existing; net +4 fixed vs prior baseline).
+
+**Scope decision:** user confirmed system is post-MVP; Polymarket and additional exchanges (xStocks etc.) are now in scope. See `docs/DECISIONS.md` 2026-06-08 entry.
 
 ---
+
+## Prior Change (Symbol Format Unification + Data Audit — 2026-06-08)
+
+Comprehensive data audit and symbol format unification across the full agent pipeline.
+
+**Root problem:** CCXTProvider writes snapshots/OHLCV with canonical `BTC/USDT` keys, but
+`market_observer.py` was converting to Bitget format (`BTCUSDT`) before storing opportunities,
+causing paper_trader's filter to silently drop everything.
+
+**Fixes applied:**
+- `aletheia/agents/market_observer.py` — removed `to_bitget()` call; opportunities now stored in canonical `BTC/USDT` format (matching snapshot keys)
+- `aletheia/agents/paper_trader.py` — `allowed_symbols` now built as `{to_canonical(s) for s in tradable_symbols_from_config(cfg)}` so Bitget-format config entries still match canonical opportunities
+- `aletheia/risk/engine.py` — symbol check normalises both sides with `to_canonical()` before comparing
+- `aletheia/server/routes/settings.py` — `/settings/symbols` endpoint now syncs `market_data.observed_symbols` (canonical) whenever tradable symbols are updated
+- `frontend/src/api/client.ts` — `getOhlcv()` and `getMarketSnapshots()` both use `encodeURIComponent(symbol)` so `BTC/USDT` `/` doesn't split the URL path
+- `frontend/src/components/MarketTicker.tsx` — ticker symbol keys changed from `BTCUSDT` to `BTC/USDT` to match snapshot map
+- `frontend/src/pages/Charts.tsx` — opportunities filter uses exact canonical match (no `|| replace('/', '')` workaround)
+- `tests/test_entry_logic.py` — 6 tests updated: assertions and fixture data changed from Bitget to canonical format; test renamed `test_observer_stores_canonical_format_symbol`
+
+**Test result:** 22 pre-existing failures only (same as baseline). 0 new failures.
+
+---
+
+## Prior Change (Data Layer Refactor + Markets UI — 2026-06-08)
+
+Complete data source decoupling from Bitget. Market data (OHLCV, tickers) now goes
+through CCXT/yFinance; `BitgetClient` is execution-context only.
+
+**New files:**
+- `aletheia/data/__init__.py` — package
+- `aletheia/data/providers.py` — `MarketDataProvider` Protocol, `Ticker`/`Candle` models (incl. `high_24h`, `low_24h`, `provider`)
+- `aletheia/data/symbols.py` — canonical `BTC/USDT` format + per-provider converters
+- `aletheia/data/ccxt_provider.py` — CCXT Binance (+ Bybit fallback), auto-persists OHLCV
+- `aletheia/data/cache.py` — in-memory TTL cache (10 min default)
+- `aletheia/data/yfinance_provider.py` — macro data (SPY/VIX/DXY/Gold), default OFF
+
+**Changed files (backend):**
+- `aletheia/config/schema.py` — added `MarketDataConfig` (provider, observed_symbols, cache TTL, yfinance flag)
+- `aletheia/trading/market_data.py` — uses CCXTProvider; `latest_snapshot()` dual-format lookup
+- `aletheia/trading/market_context.py` — uses provider protocol + cache; optional macro block
+- `aletheia/trading/instruments.py` — added `observed_symbols_from_config()`; BITGET_GRANULARITY annotated execution-only
+- `aletheia/storage/migrations.py` — new `market_ohlcv` table; `high_24h`/`low_24h`/`provider` columns on `market_snapshots`
+- `aletheia/storage/repositories.py` — `upsert_ohlcv_candles()` + `get_ohlcv_candles()`
+- `aletheia/server/routes/data.py` — `/api/market/ohlcv` uses CCXTProvider
+- `aletheia/agents/market_observer.py` — uses `observed_symbols_from_config()`
+- `aletheia/exchanges/bitget/client.py` — `get_ticker`/`get_ohlcv` annotated `# execution-context only`
+
+**Changed files (frontend — FRONTEND_ISSUES §5.1–5.4 resolved):**
+- `frontend/src/pages/Charts.tsx` — canonical `BTC/USDT` symbols; `ProviderChip` data-source label; `refetchInterval: 30_000`; H/L display; freshness indicator
+
+**Unchanged:** `execution/`, `risk/`, `portfolio/exchange_sync.py`, `bitget/auth.py`
+
+**Test result:** 424 passed (0 failed). 3 existing tests updated to mock CCXTProvider.
+
+**Open next:** enable `market_data.enable_yfinance_macro: true` in config to activate macro block.
+
+---
+
+## Prior Change (2026-06-08 — SQLite 并发锁 + 核实)
+
+**SQLite 并发锁**：`aletheia/storage/sqlite.py` 改为 `threading.local()` 每线程独立连接。`timeout=30`；`check_same_thread=True` 恢复。
+
+**BACKEND_ISSUES §10 核实**：8 条高风险条目（strategy_id / live-order / asyncio / paper 风险 / clientOid / kill-switch / paper_trader Gate A / commit_all）全部 grep 验证已真修。
+
+---
+
+## Recent Change (WebUI redesign — frontend-only session)
+
+Complete structural redesign of the React dashboard, addressing the owner's pain points
+(information density / layout / transparency / workflow — "everything uncomfortable").
+**No backend / API contract changes.** Diagnosis: the UI was "14 flat DB-table pages";
+the framework wants §23.1's 6 roles organized around the causal chain + a workflow flow.
+
+**Result: 14 pages → 10 role-organized destinations**, grouped by a 5-phase IA
+(Observe / Decide / Execute / Evolve / Operate):
+- **Cockpit** (already redone earlier): PnL zone + agent feed + right rail.
+- **Approval Desk** (Proposals elevated): pending queue as decision cards w/ inline risk
+  verdict + confirm-to-approve; decision history table.
+- **Trades & Positions** (Positions + Paper Trades merged): open positions → orders/fills
+  ledger → closed positions, hosting the **causal-chain inspector** (`CausalChain.tsx`).
+- **Agent Activity** (Agent Runs + Opportunities merged): Runs/Opportunities tabs; run
+  drawer has the Reasoning-Steps mount point.
+- **Learning** (Dreaming + Knowledge Base + Reports merged): 3 tabs; §4 KB taxonomy kept.
+- Keepers (Markets/Strategies/Risk & Controls/Settings/News) got a `PageHeader` with a
+  one-line role descriptor; News got the spec-mandated "manual entry / ingestion not
+  configured" honesty banner.
+
+New shared components: `CausalChain`, `Tabs`, `PageHeader`. Deleted 7 merged page files.
+Legacy routes redirect (no dead links). Verified live via preview MCP (nav, tabs, honest
+empty states, zero console errors). tsc + vite build green.
+
+**Docs:** `WEBUI_PAGE_MAP.md` (per-page verdicts + build log), `OVERVIEW_REDESIGN.md`
+(Cockpit decisions), **`WEBUI_BACKEND_HANDOFF.md`** (parked backend gaps for the backend
+agent), cross-referenced in `BACKEND_ISSUES.md §12`. Backend gaps (UI degrades honestly
+until built): position→proposal FK, `GET /api/agent-runs/{id}/steps`, real exchange equity.
 
 ## Recent Change (feat/strategy-causal-chain)
 

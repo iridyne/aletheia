@@ -50,13 +50,20 @@ async def test_portfolio_history_route(client):
 
 @pytest.mark.anyio
 async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
-    from aletheia.exchanges.bitget.client import Candle
+    from aletheia.data.providers import Candle
+    from aletheia.data import ccxt_provider
 
-    async def fake_ohlcv(self, symbol, timeframe="1h", limit=100, market_type="spot"):
-        return [Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.5, volume=10)]
+    class _FakeCCXT:
+        async def get_ohlcv(self, symbol, timeframe, limit):
+            return [Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.5, volume=10)]
+        async def get_ticker(self, symbol):
+            from aletheia.data.providers import Ticker
+            return Ticker(symbol=symbol, last_price=1.5, volume_24h=0, change_pct_24h=0)
+        async def close(self):
+            pass
 
-    monkeypatch.setattr("aletheia.exchanges.bitget.client.BitgetClient.get_ohlcv", fake_ohlcv)
-    resp = await client.get("/api/market/ohlcv?symbol=BTCUSDT&timeframe=1h")
+    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
+    resp = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h")
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)

@@ -1,5 +1,81 @@
 # Decisions
 
+## 2026-06-08 - InstrumentId: three-part unique instrument identity
+
+### Context
+
+Multiple bugs traced back to symbol ambiguity: Binance BTC/USDT spot and Bybit BTC/USDT spot are different data sources but were stored with the same key. Spot and perpetual for the same symbol have different price series but shared the same canonical string. `paper_trader` silently dropped all opportunities because config stored Bitget format (`BTCUSDT`) while opportunities stored canonical (`BTC/USDT`).
+
+Reference systems (OpenAlice, Nautilus Trader) all use a three-part instrument identity: venue/exchange + symbol + market type.
+
+### Decision
+
+Introduce `InstrumentId` frozen dataclass in `aletheia/data/symbols.py`:
+```
+exchange : str   # CCXT exchange id: "binance", "bybit", "bitget"
+symbol   : str   # canonical CCXT: "BTC/USDT"
+market_type: str # "spot" | "perp" | "futures"
+```
+String form: `"binance:BTC/USDT:spot"`. Parsed via `InstrumentId.parse()`.
+
+Config gains `market_data.observed_instruments: list[str]` (e.g. `["binance:BTC/USDT:spot"]`). Legacy `observed_symbols` still works as fallback when the new field is empty.
+
+Storage: `market_snapshots` and `market_ohlcv` tables gain `exchange TEXT` column (additive migration, zero downtime).
+
+The entire pipeline — `CCXTProvider` → `collect_market_snapshots` → `market_observer` → `Opportunity` → `paper_trader` — now uses canonical `BTC/USDT` throughout. Only the risk engine and order router convert to Bitget format (`BTCUSDT`) at the execution boundary.
+
+### Rationale for `exchange:symbol:market_type` vs `exchange:symbol` alone
+
+Spot and perpetual of the same coin have different price series, funding rates, and risk profiles. A perp needs CCXT symbol `BTC/USDT:USDT` (settle currency suffix) while spot needs `BTC/USDT`. Encoding market_type in the identifier makes the CCXT call unambiguous without any inference.
+
+### Consequences
+
+- `aletheia/data/symbols.py` — `InstrumentId`, `to_ccxt_perp()`, `to_canonical()` strips perp suffix
+- `aletheia/config/schema.py` — `MarketDataConfig.observed_instruments`
+- `aletheia/trading/instruments.py` — `observed_instruments_from_config()`, `observed_symbols_from_config()`
+- `aletheia/data/ccxt_provider.py` — accepts `InstrumentId` or `str`; `_resolve_ccxt_symbol()` returns `(ccxt_sym, canonical)` tuple
+- `aletheia/storage/models.py` + `migrations.py` — `exchange` column on `market_snapshots`, `market_ohlcv`
+- `aletheia/storage/repositories.py` — `exchange=` param on snapshot/OHLCV queries
+- `aletheia/server/routes/data.py` — `/market/ohlcv` and `/market/snapshots` accept `exchange=` and `market_type=`
+- `aletheia/server/routes/settings.py` — `/settings/symbols` syncs `observed_instruments`; `GET /settings` exposes `market_data` block
+- `frontend/src/api/client.ts` — `getOhlcv()` uses `URLSearchParams` to encode `BTC/USDT`
+- `frontend/src/pages/Settings.tsx` — read-only "Observed instruments" chips in SymbolsCard
+- `tests/test_instrument_id.py` — 45 new tests
+- `tests/test_entry_logic.py` — fixtures changed to canonical format
+
+---
+
+## 2026-06-08 - Post-MVP scope expansion: multi-asset observation + Polymarket
+
+### Context
+
+Implementation guide §3.3 originally listed Polymarket as "roadmap only" under MVP constraints. During the full-market-analyzer session (2026-06-08), the user confirmed the system is no longer in MVP state and explicitly authorized expanding scope to include:
+
+- Additional crypto symbols beyond BTC/ETH/SOL (observation + trading)
+- US equity observation (yFinance, paper-observation only)
+- Polymarket prediction market observation (Gamma API, observation only)
+- Roadmap: additional exchanges (xStocks, etc.)
+
+### Decision
+
+**Option A selected by user.** Retain `prediction_observer.py` and `polymarket_provider.py` as shipped. The user's explicit authorization in this turn satisfies the AGENTS.md exception clause ("unless the user explicitly asks for that exact capability in the current turn"). The §3.3 constraint belongs to MVP, which is now superseded.
+
+### Boundaries preserved
+
+- `asset_class="prediction"` opportunities are observation-only — paper_trader gate confirmed to skip them.
+- No Polymarket order placement, no live trading on prediction markets, no credentials stored.
+- All new agents remain subject to full AGENTS.md safety invariants (audit logs, permission mode, kill switch).
+
+### Consequences
+
+- `aletheia/agents/prediction_observer.py` — new agent, registered in scheduler (every 30 min)
+- `aletheia/data/polymarket_provider.py` — new Gamma API provider
+- `aletheia/agents/stock_observer.py` — new US equity observer (Mon–Fri market hours)
+- Config expanded: `observed_stocks`, `observed_prediction_markets`
+- §3.3 is superseded; `docs/aletheia_trading_os_implementation_guide.md` remains as historical MVP reference, not as a current constraint.
+
+---
+
 ## 2026-06-07 - WebUI: lightweight cockpit IA fix, defer 5-zone shell
 
 ### Context

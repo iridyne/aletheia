@@ -152,8 +152,14 @@ export const api = {
   getStrategyGates: (id: string) => fetchJson<Record<string, any>>(`/strategies/${id}/gates`),
 
   // Charts
-  getOhlcv: (symbol: string, timeframe = '1h', limit = 100) =>
-    fetchJson<any>(`/market/ohlcv?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`),
+  getOhlcv: (symbol: string, timeframe = '1h', limit = 100, exchange = '', marketType = 'spot') => {
+    const params = new URLSearchParams({
+      symbol, timeframe, limit: String(limit),
+      ...(exchange ? { exchange } : {}),
+      ...(marketType !== 'spot' ? { market_type: marketType } : {}),
+    })
+    return fetchJson<any>(`/market/ohlcv?${params}`)
+  },
   getPortfolioHistory: () => fetchJson<any[]>('/market/portfolio-history'),
 
   // Audit / Activity
@@ -161,7 +167,7 @@ export const api = {
 
   // Market snapshots (watchlist)
   getMarketSnapshots: (symbol?: string, limit = 10) =>
-    fetchJson<any[]>(`/market/snapshots${symbol ? `?symbol=${symbol}&limit=${limit}` : `?limit=${limit}`}`),
+    fetchJson<any[]>(`/market/snapshots${symbol ? `?symbol=${encodeURIComponent(symbol)}&limit=${limit}` : `?limit=${limit}`}`),
 
   // News Intelligence
   getNews: (limit = 50) => fetchJson<any[]>(`/news?limit=${limit}`),

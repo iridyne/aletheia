@@ -558,6 +558,31 @@ function SymbolsCard({ settings, qc }: any) {
         Add any Bitget symbol pair (e.g. <code>SOLUSDT</code>, <code>SUIUSDT</code>, <code>DOTUSDT</code>).
         Changes take effect on the next agent cycle. Removing a symbol does not close open positions.
       </p>
+      {/* Read-only: show the derived InstrumentId keys that will be observed */}
+      {(settings?.market_data?.observed_instruments ?? []).length > 0 && (
+        <div style={{ marginTop: '0.75rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+          <span style={{ fontSize: '0.68rem', color: 'var(--muted)', marginBottom: '0.35rem', display: 'block' }}>
+            Observed instruments (auto-derived · read-only)
+          </span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+            {(settings.market_data.observed_instruments as string[]).map((id: string) => {
+              const [exch, sym, mtype] = id.split(':')
+              return (
+                <span key={id} style={{
+                  fontSize: '0.68rem', fontFamily: 'var(--mono)',
+                  padding: '0.12rem 0.45rem', borderRadius: '3px',
+                  background: 'rgba(100,100,120,0.12)', border: '1px solid rgba(100,100,120,0.25)',
+                  color: 'var(--muted)',
+                }} title={id}>
+                  <span style={{ color: 'var(--accent)', opacity: 0.7 }}>{exch}</span>
+                  {' '}{sym}{' '}
+                  <span style={{ opacity: 0.6 }}>{mtype}</span>
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-# WebUI → Backend Integration Handoff
+# WebUI → Backend Integration Handoff  [CLOSED — #1 #2 #3 done; #4 permanently banned]
 
 > 2026-06-07. Written at the end of the **frontend-only** redesign session (see
 > WEBUI_PAGE_MAP.md + OVERVIEW_REDESIGN.md). The UI redesign is structurally complete and

@@ -54,8 +54,8 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     assert sched.is_running()
     # market_data + market_observer + dreaming_daily + strategy_designer_daily
     # + reconciliation + portfolio_snapshot + exchange_sync + paper_trader
-    # + position_manager + cleanup + health_check
-    assert len(s.get_jobs()) == 11
+    # + position_manager + cleanup + health_check + stock_observer + prediction_observer
+    assert len(s.get_jobs()) == 13
     sched.stop_scheduler()
     reset_db()
 
@@ -65,18 +65,25 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.exchanges.bitget.client import Ticker
+    from aletheia.data.providers import Ticker
+    from aletheia.data import ccxt_provider
 
-    async def fake_ticker(self, symbol, market_type="spot"):
-        return Ticker(symbol=symbol, last_price=60000.0, volume_24h=123.0, change_pct_24h=1.5)
+    class _FakeCCXT:
+        async def get_ticker(self, symbol):
+            return Ticker(symbol=symbol, last_price=60000.0, volume_24h=123.0,
+                          change_pct_24h=1.5, provider="fake")
+        async def get_ohlcv(self, symbol, timeframe, limit):
+            return []
+        async def close(self):
+            pass
 
-    monkeypatch.setattr("aletheia.exchanges.bitget.client.BitgetClient.get_ticker", fake_ticker)
+    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
     from aletheia.trading.market_data import collect_market_snapshots
     result = await collect_market_snapshots()
-    # 3 symbols × 2 market types (spot + usdt_futures) = 6 snapshots.
-    assert len(result["collected"]) == 6
+    # 3 observed symbols (BTC/USDT, ETH/USDT, SOL/USDT) × 1 spot each.
+    assert len(result["collected"]) == 3
     snaps = repo.list_market_snapshots()
-    assert len(snaps) == 6
+    assert len(snaps) == 3
     assert snaps[0]["price"] == 60000.0
     reset_db()
 
