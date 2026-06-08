@@ -81,6 +81,9 @@ export interface Opportunity {
   direction_bias: string
   thesis: string | null
   confidence: number | null
+  // 0..100 numeric calibration the LLM emits alongside `confidence`.
+  // null when the model didn't supply one (older rows, parse failure).
+  confidence_score: number | null
   source_agent: string | null
   created_at: string
   status: string

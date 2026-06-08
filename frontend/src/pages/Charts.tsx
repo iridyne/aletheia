@@ -98,13 +98,16 @@ export default function Charts() {
           <h3>Open Opportunities — {symbol.replace('USDT', '')}</h3>
           <table>
             <thead>
-              <tr><th>Direction</th><th>Confidence</th><th>Source</th><th>Thesis</th></tr>
+              <tr><th>Direction</th><th>Confidence</th><th>Score</th><th>Source</th><th>Thesis</th></tr>
             </thead>
             <tbody>
               {symbolOpportunities.slice(0, 5).map((opp: any) => (
                 <tr key={opp.id}>
                   <td><span className={`badge ${opp.direction_bias === 'long' ? 'badge-green' : opp.direction_bias === 'short' ? 'badge-red' : 'badge-blue'}`}>{opp.direction_bias}</span></td>
                   <td className="mono">{opp.confidence || '—'}</td>
+                  <td className="mono" title="0..100 numeric calibration the LLM emits alongside the categorical confidence. Empty = model didn't supply one (parse failure or older row).">
+                    {opp.confidence_score != null ? `${opp.confidence_score}/100` : '—'}
+                  </td>
                   <td>{opp.source_agent || '—'}</td>
                   <td style={{ maxWidth: '30ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={opp.thesis || ''}>{opp.thesis || '—'}</td>
                 </tr>

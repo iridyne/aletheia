@@ -191,6 +191,10 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
 
         # Compose thesis: rationale (model's narrative) + observations (citations)
         # + score so a downstream reader sees the full read at a glance.
+        # When the LLM returns an empty structured read (it happens — codex_cli
+        # JSON parse can drop fields), avoid dumping the raw markdown snapshot
+        # into thesis (looks broken on the dashboard). Use a short honest stub
+        # instead so the row is self-explanatory.
         thesis_parts = []
         if rationale:
             thesis_parts.append(rationale)
@@ -198,7 +202,14 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
             thesis_parts.append("Observations: " + " | ".join(observations))
         if confidence_score is not None:
             thesis_parts.append(f"score={confidence_score}/100")
-        thesis = " ".join(thesis_parts)[:500] if thesis_parts else context[:500]
+        if thesis_parts:
+            thesis = " ".join(thesis_parts)[:500]
+        else:
+            thesis = (
+                f"No structured rationale produced (direction={direction}, "
+                f"confidence={confidence}). Likely cause: LLM unavailable or "
+                f"structured-output parse failure — see agent_runs/errors."
+            )
 
         opp = Opportunity(
             symbol=symbol,
@@ -206,6 +217,7 @@ async def run_market_observer(permission_mode: str = "Research", run_id: str | N
             direction_bias=direction,
             thesis=thesis,
             confidence=confidence,
+            confidence_score=confidence_score,
             source_agent="market_observer",
             linked_strategy_id=linked_strategy_id,
         )

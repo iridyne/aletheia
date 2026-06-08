@@ -1,5 +1,46 @@
 # Development Log
 
+## 2026-06-08 (later²) — Market context polish (thesis fallback + score persisted)
+
+After the market context layer landed, real-run inspection surfaced two
+rough edges:
+
+1. **codex_cli's structured output is not 100% reliable.** On ~1 in 3 runs
+   it returns a valid JSON shape but with empty `rationale` and empty
+   `key_observations` (the JSON parse drops fields, or the model returns a
+   minimal stub). Old code then fell back to `thesis = context[:500]`,
+   dumping the raw markdown snapshot (`## Verified market data snapshot`,
+   table headers etc.) into the dashboard thesis cell — looked broken.
+2. **`confidence_score` only lived inside the thesis text** (`score=65/100`
+   at the end). The dashboard couldn't surface it as a real column.
+
+Both fixed:
+
+- **`opportunities.confidence_score INTEGER`** column added (additive
+  migration; nullable so older rows stay valid). `Opportunity` Pydantic
+  model + frontend `Opportunity` type updated.
+- **Thesis fallback rewritten**: when rationale + observations are both
+  empty, thesis is a one-line stub citing the failure mode
+  (`"No structured rationale produced (direction=X, confidence=Y). Likely
+  cause: LLM unavailable or structured-output parse failure — see
+  agent_runs/errors."`). Raw snapshot never leaks through.
+- **Charts page Markets table** — added a `Score` column showing
+  `confidence_score/100` with a tooltip explaining what it means and why
+  it can be empty. Side-by-side with categorical confidence so the model's
+  full calibration is visible at a glance.
+
+Real e2e (3 fresh runs after migration applied):
+- `long / medium / 64/100` — full structured shape ✅
+- `neutral / speculative / 50/100` — model genuinely on the fence,
+  honestly committed a midpoint ✅
+- `neutral / speculative / —` + thesis "No structured rationale..." —
+  Codex CLI timed out, fallback stub kicked in cleanly ✅
+
+New test `test_observer_thesis_fallback_avoids_raw_snapshot`. Full suite
+**423 passed** (the 2 failures in `test_exchange_sync.py` predate this
+work — verified by stashing other working-tree mods and re-running).
+Zero change-controlled module touched.
+
 ## 2026-06-08 (later) — Market context layer (fixes "all neutral / speculative")
 
 The dashboard Markets page had been showing every market_observer opportunity

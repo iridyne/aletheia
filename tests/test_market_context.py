@@ -274,12 +274,60 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
     opp = opps[0]
     assert opp["direction_bias"] == "long"
     assert opp["confidence"] == "medium"
+    # The score is now persisted as a real column, not just embedded in thesis.
+    assert opp["confidence_score"] == 65
     # Thesis must surface the score and observations (not just rationale).
     assert "score=65" in opp["thesis"]
     assert "Observations:" in opp["thesis"]
 
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-mo-2")
+
+
+def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
+    """When LLM returns empty rationale + observations, thesis must NOT dump
+    the raw markdown snapshot (which used to leak through and look broken on
+    the dashboard). Stub explanation instead."""
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.agents.market_observer as mo
+
+    async def fake_llm_structured(*a, **kw):
+        # Model returns valid shape but every narrative field is empty —
+        # this is the codex_cli "JSON parse dropped fields" failure mode.
+        return ({
+            "direction_bias": "neutral",
+            "confidence": "speculative",
+            "rationale": "",
+            "key_observations": [],
+        }, None)
+    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
+
+    async def fake_builder(symbols, market_type="spot", client=None):
+        # Big realistic snapshot — would be ugly if it leaked into thesis.
+        return (
+            "## Verified market data snapshot\n### BTCUSDT\n| TF | Close ...",
+            {"fallback": False, "errors": [], "symbols": {}},
+        )
+    import aletheia.trading.market_context as mc
+    monkeypatch.setattr(mc, "build_market_context", fake_builder)
+
+    from aletheia.agents.market_observer import run_market_observer
+    from aletheia.storage import repositories as repo
+    asyncio.run(run_market_observer(permission_mode="Auto", run_id="run-mo-fb"))
+    opps = repo.list_opportunities(limit=5)
+    assert opps
+    opp = opps[0]
+    # The raw markdown markers must NOT appear in thesis.
+    assert "## Verified market data snapshot" not in opp["thesis"]
+    assert "###" not in opp["thesis"]
+    # The fallback explanation should reference the empty-output cause so a
+    # human reading the dashboard knows what happened.
+    assert "No structured rationale" in opp["thesis"]
+    # confidence_score is null (not provided by the model).
+    assert opp["confidence_score"] is None
+
+    from aletheia.agents.helpers import _release_run_counter
+    _release_run_counter("run-mo-fb")
 
 
 def test_observer_ignores_invalid_confidence_score(tmp_path, monkeypatch):

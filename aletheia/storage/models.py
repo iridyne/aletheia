@@ -45,6 +45,9 @@ class Opportunity(BaseModel):
     direction_bias: str | None = None
     thesis: str | None = None
     confidence: str = "medium_confidence"
+    # Numeric calibration the LLM emits alongside the categorical `confidence`.
+    # 0..100; None when the model didn't supply one — keeps older rows valid.
+    confidence_score: int | None = None
     source_agent: str | None = None
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     status: str = "open"

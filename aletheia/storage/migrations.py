@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     direction_bias TEXT,
     thesis TEXT,
     confidence TEXT NOT NULL DEFAULT 'medium_confidence',
+    confidence_score INTEGER,
     source_agent TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     status TEXT NOT NULL DEFAULT 'open',
@@ -239,6 +240,9 @@ _ADDITIVE_COLUMNS = [
     ("close_reason", "positions", "TEXT"),
     ("proposal_id", "positions", "TEXT"),
     ("order_id", "positions", "TEXT"),
+    # Numeric calibration the LLM emits alongside the categorical confidence.
+    # 0..100; NULL means the model didn't supply one (older rows or bad output).
+    ("confidence_score", "opportunities", "INTEGER"),
 ]
 
 
