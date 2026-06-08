@@ -1,31 +1,31 @@
 # Current Task
 
-## Status: PLANNING
+## Status: READY — Gateway 稳定性修复完成，Roadmap v1 待确认后进入 Week 1 执行
 
-Pipeline gap analysis 完成，准备制定阶段 0.5 具体实施计划。
+## 产出
 
-## Last Completed
+- `docs/ROADMAP.md` — 12 周按周迈步开发路线图（含观测门 + 红线 + 失败模式防线）
+- `docs/PIPELINE_STATUS.md` — 现状逐环节分析
+- Deep research 完成：102 agent, 20 sources, 19 verified claims
 
-- 2026-06-08: Pipeline Status 全面分析（`docs/PIPELINE_STATUS.md`）
-- 2026-06-08: 文档统一（AI_HANDOFF / CURRENT_TASK 更新）
-- 2026-06-08: xStocks 接入 + 管道 bug fix + InstrumentId + Full-market analyzer
+## Roadmap 摘要
 
-## 分析结论
+```
+Week 1-2   ▸ 阶段 0.5：补全基础（scheduler 补全 + 开始稳跑）
+Week 3-4   ▸ 阶段 1：稳跑验证 + 学习质量诊断
+  ──── [观测门] 72h+ 无崩，Learning Ledger 非零 ────
+Week 5-6   ▸ 阶段 2A：结构化信号 + Agent 协作流
+Week 7-8   ▸ 阶段 2B：经验闭环（记忆→决策）
+  ──── [观测门] activation_ratio > 30%, review coverage > 50% ────
+Week 9-10  ▸ 阶段 3A：自我反思 + 策略修订（walk-forward 验证）
+Week 11-12 ▸ 阶段 3B：对抗验证 + 策略退休自动化
+  ──── [观测门] 策略正期望 + 修订后 OOS 改善 ────
+Week 13+   ▸ 阶段 4：高级进化（远期，需另行授权）
+```
 
-全自动交易闭环 8 个环节中：
-- **已通**（≥80%）：全市场扫描、自动分析、自动开仓、自动平仓
-- **半通**（60-75%）：自动研究策略、自动总结
-- **薄弱**（≤40%）：自动评估、自动学习
+## Next Action
 
-三大结构性差距：
-1. 经验闭环只闭 30%（写多读少，lessons 不进入大部分 agent 决策）
-2. Agent 无协作流（各跑各的 cron，无方向性数据传递）
-3. 策略是"文字"非"可执行规则"（paper_trader 不读策略定义）
-
-## Next Steps
-
-阶段 0.5 具体措施（待确认后执行）：
-1. `post_trade_reviewer` + `risk_critic` 排入 scheduler
-2. 验证 474 test 基线
-3. 启动 72h unattended paper trading run
-4. 观测 Learning Ledger 是否产出有效信号
+等待用户确认 Roadmap，然后开始 Week 1 Day 1：
+1. `post_trade_reviewer` 排入 scheduler
+2. `risk_critic` 排入 scheduler
+3. 验证测试基线

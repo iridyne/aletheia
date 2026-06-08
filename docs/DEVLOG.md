@@ -1,5 +1,23 @@
 # Development Log
 
+## 2026-06-08 (later⁷) — Gateway 稳定性修复（ghost-socket 根治）
+
+**问题**：前端状态栏显示 "Gateway Stopped" 但页面正常访问；`gateway stop` 无法释放端口。
+
+**根因**：uvicorn multiprocessing worker 在 parent 被 kill 后变孤儿，继承 listening socket 并用旧代码运行。其 cmdline (`multiprocessing.spawn.spawn_main`) 不含 orphan detector 的标记字符串，逃脱所有清理。
+
+**修复（commit `a90ea84`）**：
+- `pidfile.py` — `find_port_holders(port)`：netstat/lsof 直接按端口查 PID（兜底）
+- `lifecycle.py` — `do_start`/`do_stop` 三层清理：PID tree-kill → cmdline orphan sweep → port holder kill
+- `health.py` — `/api/status` 自报 `gateway_running: True`（能响应 = 在运行）
+- `app.py` — lifespan 启动补写 PID + ownership 追踪（只清自己写的）
+- `gateway.py` — restart 拒绝无恢复机制时的自杀
+
+**决策**：网关端口清理改为 "one stop all" 策略——最终兜底不看进程身份，只看端口占用。
+**测试**：46 gateway/supervisor/pidfile tests 全过。
+
+---
+
 ## 2026-06-08 (later⁶) — Markets K线动态加载（scroll-back history + live tail）
 
 **目的**：Markets 页（`/charts`）的 K 线图原本只加载固定一段（最新 N 根），向左滚动看不到更早历史，右沿也不自动更新。改成主流交易所体验：向左滚到边缘 → 自动续加更早历史；右沿保持实时刷新。
@@ -19,6 +37,33 @@
   - 守卫：`loadingOlderRef`/`exhaustedRef`/`initializedRef`；markers 在独立 effect 重挂不重建图表
 
 **验证**：488 passed（+2 新测试：`before` 过滤 + `since` 窗口数学、unsupported timeframe 干净报错）；后端 urllib E2E 确认续加页与最新视图 gap 恰为 1 个 tf、零重叠；Vite :5173 视觉 E2E 确认三种行为（初次 `limit=300`、续加 `before=...`、实时 `limit=2`）全部触发、零 console error。
+
+---
+
+## 2026-06-08 (later⁵ cont.) — Deep Research + ROADMAP v1
+
+**目的**：博采众长制定按周迈步路线图。
+
+**Deep Research 执行**：102 agent / 20 sources / 25 claims → 19 verified (6 killed)
+
+**核心发现（adversarially verified）**：
+- 经验闭环有 4 层：无学习 → 记忆累积 → walk-forward 策略修改 → RL 端到端（我们在 1→2）
+- 策略必须结构化（Pydantic schema / signal+confidence 数值对），不能 free-text
+- Agent 协作主流：fan-out/fan-in + 硬风控门控；对抗辩论是加分非必须
+- walk-forward validation 是防噪音固化的唯一可靠方法（SHARP 论文 2026.05）
+- 单 agent RL vs 多 agent 辩论之争未定——我们选多 agent + 可解释性
+- TradingAgents 明确说"treat as research scaffold"——这是诚实定位
+
+**产出**：`docs/ROADMAP.md`（12 周路线图 + 4 个观测门 + 红线 + 失败模式表）
+
+**来源（核实度最高的）**：
+- TradingAgents (github.com/TauricResearch) — structured debate + Pydantic output
+- ai-hedge-fund (github.com/virattt) — fan-out/fan-in + signal/confidence
+- SHARP (arXiv 2605.06822) — walk-forward validated policy edits
+- TradingGroup (arXiv 2508.17565) — chain-based + 20-day outcome labeling
+- AlphaQuanter (ACL Findings 2026) — single RL agent, tool-augmented
+- FinRL (github.com/ai4finance-foundation) — ensemble DRL baseline
+- AutoGen/Magentic-One — actor model + stall detection
 
 ---
 

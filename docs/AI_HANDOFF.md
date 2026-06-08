@@ -2,7 +2,30 @@
 
 ## Last Updated
 
-2026-06-08 (Markets K线动态加载 — scroll-back history + live tail)
+2026-06-08 (Gateway ghost-socket + status indicator fix)
+
+## Recent Change (Gateway 稳定性修复 — ghost-socket 彻底消灭 — 2026-06-08)
+
+**问题现象**：前端顶栏状态显示 "Gateway Stopped"（红灯），但页面正常访问。
+`gateway stop` 报 "port still in use"，`gateway start` 报 "foreign process holding port"。
+
+**根因链**：
+1. 网关 supervisor 被 kill 后，uvicorn 的 multiprocessing worker 子进程变孤儿
+2. 孤儿 worker cmdline 是 `multiprocessing.spawn.spawn_main(...)`，不含 `aletheia.server.app:app` 或 `_gateway_runner` 标记
+3. `find_gateway_orphans()` 靠 cmdline 标记识别，永远找不到这些 worker
+4. Worker 继承了父进程的 listening socket，持续占端口并用旧代码响应请求
+5. `/api/status` 用 `pidfile.is_running()` 判断状态，而 PID 文件不存在 → 返回 `false`
+
+**修复（5 个文件，"one stop all" 三层策略）**：
+- `pidfile.py` — 新增 `find_port_holders(port)`：用 netstat/lsof 直接按端口找 PID，兜底所有逃逸进程
+- `lifecycle.py` — `do_start` + `do_stop` 加入端口兜底：cmdline 扫描 → port holder 扫描 → 强制 tree-kill
+- `health.py` — `/api/status` 返回 `gateway_running: True`（能响应请求 = 在运行，不依赖 PID 文件）
+- `app.py` — lifespan 启动时自动补写 PID 文件（任何启动方式都有 PID）；追踪 ownership，shutdown 只清自己写的
+- `gateway.py` — restart 端点检查 supervisor/autostart 是否活跃，无恢复机制时拒绝自杀
+
+**验证**：46 tests passed；重启后 `gateway_running: true`，PID 文件正确指向 supervisor。
+
+---
 
 ## Recent Change (Markets K线动态加载 — 2026-06-08)
 
