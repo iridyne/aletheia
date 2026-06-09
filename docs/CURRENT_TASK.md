@@ -1,6 +1,14 @@
 # Current Task
 
-## Status: Phase 0 — 切换到 Bitget demo 真实模拟盘，观察期重置（2026-06-09 cutover）
+## Status: Phase 0 基础设施已就绪，观察门卡在人工凭证输入（2026-06-10）
+
+> **本 checkout 从未运行过**（见 AI_HANDOFF 2026-06-10 顶部条目）。下方 06-09 起的所有"观察期运行中 / demo 真单"叙事是**原作者机器**状态，不是这里。本机经本会话修复后：`aletheia/data/` 包已重建（515 测试通过）、DNS resolver 已修、boot-prove 通过（15 job 构建、实时行情拉通、observer 无 LLM 优雅降级）。
+>
+> **要推进 Phase 0 观察门，必须先由人提供两样 AI 不能伪造的东西**：(1) LLM provider + API key；(2) Bitget demo API 凭证。然后 `permission_mode=Paper` → 启动 gateway → 跑 72h。详见 AI_HANDOFF 顶部 + memory `checkout-state-never-ran`。分支 `fix/restore-data-package` 待合并。
+
+---
+
+## (历史) Status: 切换到 Bitget demo 真实模拟盘，观察期重置（2026-06-09 cutover）
 
 **这次 commit 为何打破"观察期内不 commit"铁律**：因为**观察形态本身变了**——paper 交易从「本地 `paper_internal` 撮合 + 现货 spot」整体切到「Bitget demo 真实模拟盘下单 + USDT 永续合约」。旧观察基线（现货 / 本地撮合）随之作废：不是被 drift 噪音污染而重算，而是被一次**主动的、更高保真度的形态升级**取代。所以此处 commit 是正当的——它让 HEAD 前进 → 网关重启时启用 demo 代码 → 观察期在新形态下重新计时。**升级落地后，新观察窗口内仍守"不 commit"铁律。**
 

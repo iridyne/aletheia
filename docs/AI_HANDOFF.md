@@ -2,7 +2,30 @@
 
 ## Last Updated
 
-2026-06-09 (DB 锁真根因修复 + 确定性自愈层 — 消灭僵尸态)
+2026-06-10 (此 checkout 从未运行 + 重建 gitignore 吞掉的 aletheia/data/ 包 + 修复 DNS resolver + boot-prove)
+
+## Recent Change (检出态真相 + aletheia/data/ 重建 + DNS resolver 修复 — 2026-06-10)
+
+> 分支 `fix/restore-data-package`（未合并），3 个 commit。**关键：本 checkout 与文档描述的状态完全不同。**
+
+**1. 本 checkout 从未运行过**（审计发现，与下方 06-09 条目的"作者机器"状态对立）：
+无 `data/config.yaml`、无 `.secret.key`/`secrets.enc`、`app.db` 仅 2 条 audit + 1 条 strategy。
+所以本文档下方"Phase 0 观察期运行中 / 06-09 真实 demo 单 / 504 测试通过"全部是**原作者机器**的状态，不是这里。**每次会话须用 `data/` + `gateway status` 核实实况，勿信旧文档叙事。**
+
+**2. `aletheia/data/` 整个源码包缺失且从未提交**（`.gitignore` 的裸 `data/` 规则在每一级目录都匹配，连源码包一起吞掉）→ 克隆后 risk/execution/trading/agents 全部 `ModuleNotFoundError`，pytest 在 collection 阶段就 5 个 error。
+按**测试即契约**重建全部 7 个文件（committed tests + 17 处调用点完全锁定行为），`.gitignore` 改为根锚定 `/data/`。全套 **515 passed**（原文档称 504）。未改任何信任边界语义。
+
+**3. DNS resolver bug**（本 host 致命，Phase 0 基础设施）：`aiodns` 已装 → aiohttp 默认 c-ares `AsyncResolver`，本机读不到 DNS 配置 → **每个 ccxt 请求都 `ClientConnectorDNSError`**（urllib/OS resolver 却正常 200，所以症状伪装成"交易所不可用")。修复：`CCXTProvider` 注入 `ThreadedResolver`(OS getaddrinfo) 的 aiohttp session，并在 `close()` 里关闭它（注入 session 时 ccxt `own_session=False` 不会自己关，顺带消除 "Unclosed client session" 泄漏）。
+
+**4. Boot-prove 通过**（无持久进程、无 autostart、完全可逆）：config bootstrap（安全默认 `Observe`/`live_disabled`/kill_switch off）→ 15 个 scheduler job 全部构建 → 重建的数据层拉到 binance/bitget 实时 ticker+OHLCV → `collect_market_snapshots` 7 个标的 0 error → `market_observer` 无 LLM 时优雅降级产出 7 个 neutral/speculative opportunity（不崩）。
+
+**Phase 0 观察门卡在仅人能提供的输入**（CLAUDE.md 安全红线，AI 不得伪造）：
+(a) LLM provider + API key（Settings→Model Provider 或 `aletheia model set`）——没有它 opportunity 全 neutral/speculative，paper_trader 不会开仓；
+(b) Bitget demo API 凭证（`aletheia secrets set bitget.demo.*`）——没有它 `bitget_demo` 单到不了交易所（`paper_internal` 本地撮合仍可兜底）。
+两者就位后：`permission_mode=Paper` → 启动 gateway → 跑满 72h 观察窗口。
+
+---
+
 
 ## Recent Change (database is locked 真根因修复 — 2026-06-09)
 
