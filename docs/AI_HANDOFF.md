@@ -2,7 +2,36 @@
 
 ## Last Updated
 
-2026-06-08 (Gateway ghost-socket + status indicator fix)
+2026-06-09 (确定性自愈层 — 消灭僵尸态 + 假观察期纠正)
+
+## Recent Change (确定性自愈层 + Phase 0 观察期重置 — 2026-06-09)
+
+**审计发现**："72h 观察期进行中"是记账假象——网关进程活着，但功能已停摆。
+
+| 表象 | 实情 |
+|---|---|
+| 网关在跑 | 跑的是旧代码 `1aa1feb`，落后 HEAD **7 个 commit** |
+| 文档称 healthy | `/api/health` = **degraded**：`code_updated_pending_restart` + `market_data_stale:1114min` |
+| 观察期进行中 | `paper_trader` 已 **11h 未触发**；调度 cadence 残缺 |
+| 系统在交易 | 294 opportunity → **0** proposal / 0 order / 0 fill |
+
+**根因**：`run_health_check()`（每 10min）**已经算出 drift 信号、已经告警**，但**没有任何代码消费它去重启**。系统喊了 11 小时"我在跑旧码"，没有耳朵在听。这正是 ROADMAP "False confidence" 失败模式：进程活着 ≠ 系统在运行。
+
+**修复（commit `8a6e008`，501 测试通过）**：给 `run_health_check()` 加确定性（零 LLM）自愈分支。
+- `pidfile.py` — `supervisor_owns_pid()`：`read_pid()!=getpid()` 即有 supervisor 兜底（线程上下文等价于 route 的 `app.state._owns_pid`，零 subprocess）
+- `config/schema.py` — `HealthConfig` 加 `self_heal_{enabled,min_interval_sec,max_per_hour,code_drift,market_data,port_cleanup}`；`min_interval`(1800s) 刻意 > supervisor 窗口(600s)，自愈单独永不耗尽 supervisor 的 5/600 give-up 预算
+- `health.py` — `_trigger_restart`/`_can_self_restart`/`_alert_suppressed`/`_heal_port_cleanup` + `run_health_check()` 决策流。code drift / stale → 守卫+限频 `os._exit(42)` 重生；孤儿端口 → `kill_pid_tree`（**显式排除 self+supervisor**，否则误杀自己的 supervisor → 新僵尸）；LLM/kill_switch/agent_failure → 仅告警
+- `tests/test_self_heal.py` — 12 个回归测试（全部 patch `_os_exit` 不真退出）
+
+**端到端验证通过（2026-06-09）**：空 commit 制造 drift → `/api/health` 检测到 `code_updated_pending_restart` → 下个 health 周期自愈自动重启 → supervisor 重生新码 → drift 清除（audit `self_heal_restart: code_drift`）。今天那类僵尸态以后在 ≤10min 内自动消除。
+
+**两个独立的新发现（不属本任务，待诊断）**：
+1. `database is locked` — market_observer/paper_trader/exchange_sync 等 job 因 DB 锁持续失败、市场数据停更（疑似遗留 python 进程或并发抢锁）。可能是"重启后 agent 不触发"真因。
+2. `gateway restart` 早先一次实际走了 stop（audit `gateway_stopped killed=True`），网关没起来——restart 路径在本环境可能有 bug。
+
+**关于 Pi/Agent Shell 设计文档**：用户提供的 `aletheia_pi_agent_shell_integration_design.md` 主张顶层 LLM 操作员 agent。结论：方向对、v0 范围对，但**应分两层**——(A) 确定性自愈 supervisor（即本次交付，无 LLM，是稳定性根基）先做；(B) LLM Apex Agent Shell 作为"Operator Layer"排到 Phase 0/1 稳跑证明之后的平行线。本次完成了 A 的核心切片。
+
+---
 
 ## Recent Change (Gateway 稳定性修复 — ghost-socket 彻底消灭 — 2026-06-08)
 

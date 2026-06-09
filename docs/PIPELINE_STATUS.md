@@ -188,10 +188,15 @@ risk_critic：已排入 scheduler（每 6h）
 ## 当前阶段与位置
 
 ```
-[当前] Phase 0 — Stabilize & Observe (IN PROGRESS)
+[当前] Phase 0 — Stabilize & Observe (观察期 RESET 2026-06-09)
         ├─ post_trade_reviewer + risk_critic 已排入 scheduler  DONE
-        ├─ Gateway 已启动 (PID 56264, 2026-06-08)             DONE
-        └─ 72h observation period                              IN PROGRESS
+        ├─ Gateway 僵尸态修复：旧码 1aa1feb → 重启对齐新码        DONE
+        │   （首次"观察期"为假启动：进程活着但跑旧码，
+        │    paper_trader 11h 未触发，294 opp → 0 trade）
+        ├─ 确定性自愈层 (8a6e008)：drift/stale→重启, 端口清理,    DONE
+        │   LLM→告警；端到端验证 drift 自动消除 (≤10min)
+        └─ 72h observation period                              重新计时中
+            ⚠ 待解：database is locked 致 job 失败、数据停更（独立诊断）
 
   下一步  Phase 1 — Learning Quality Diagnosis
         └─ 14 天稳跑 + 学习质量人工审计
