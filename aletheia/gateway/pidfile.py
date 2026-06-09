@@ -112,6 +112,25 @@ def clear_pid() -> None:
         p.unlink(missing_ok=True)
 
 
+def supervisor_owns_pid() -> bool:
+    """True if the pidfile points at a DIFFERENT process than ours.
+
+    In supervised mode the supervisor (run_supervised) writes the pidfile with
+    its OWN pid, then spawns the inner uvicorn as a child with a different pid.
+    So inside the inner process, ``read_pid() != os.getpid()`` ⟺ a supervisor
+    owns the pidfile and will respawn us on a non-zero exit. False in
+    foreground/bare mode where our own exit is fatal (no one to respawn).
+
+    Lets the health-check job (a scheduler THREAD with no FastAPI app.state)
+    make the same "is a supervisor present" decision the restart route makes via
+    app.state._owns_pid. Never raises."""
+    try:
+        pid = read_pid()
+        return pid is not None and pid != os.getpid()
+    except Exception:
+        return False
+
+
 def _pid_alive(pid: int) -> bool:
     """Return True if a process with this PID is currently alive AND is our gateway.
 

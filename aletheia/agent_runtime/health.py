@@ -8,6 +8,8 @@ Alerts go through the existing Telegram bot when configured.
 
 import asyncio
 import logging
+import os
+import time
 
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
@@ -19,6 +21,19 @@ _FAILED_STATUSES = {"failed", "error", "completed_with_errors"}
 
 # In-process de-dupe of consecutive unhealthy alerts.
 _last_alerted_unhealthy = False
+
+# --- Deterministic self-heal state (see HealthConfig.self_heal_*) ---
+# Indirection over os._exit so tests can patch it without killing the test
+# process. The real restart is exit(42) → the supervisor respawns fresh code,
+# mirroring POST /api/gateway/restart.
+_os_exit = os._exit
+# monotonic() timestamps of self-heal restarts, for rate limiting. In-process
+# only (like _last_alerted_unhealthy): a restart empties this, but the
+# supervisor's own 5-restarts/600s budget is the disk-less backstop against a
+# fast loop, and a fresh process re-detecting drift is a genuine new event.
+_self_heal_restart_times: list[float] = []
+# De-dupe consecutive "self-heal wanted to act but was suppressed" alerts.
+_self_heal_suppressed_alerted = False
 
 # In-process count of consecutive LLM-provider failures (reset on any success).
 # Lets compute_health() detect "alive but the model backend is down" — a zombie
@@ -143,9 +158,102 @@ def _send_alert(message: str) -> None:
         logger.warning("health alert send failed: %s", e)
 
 
+def _trigger_restart(reason: str) -> None:
+    """Audit FIRST (synchronous append completes before exit), then exit(42) so
+    the supervisor respawns with fresh code. Mirrors POST /api/gateway/restart.
+
+    Only call after _can_self_restart() has confirmed a supervisor/autostart will
+    bring the process back — otherwise this would permanently kill the gateway."""
+    write_audit({
+        "actor": "system", "source": "self_heal", "event_type": "self_heal_restart",
+        "entity_type": "gateway", "entity_id": "gateway",
+        "message": f"Self-heal restart: {reason}",
+    })
+    _self_heal_restart_times.append(time.monotonic())
+    _send_alert(f"self-heal restart ({reason}) — respawning")
+    _os_exit(42)
+
+
+def _can_self_restart() -> tuple[bool, str]:
+    """Gate a self-heal restart: a supervisor/autostart must exist to respawn us,
+    and rate limits must not be exceeded. Returns (allowed, reason_if_blocked)."""
+    from aletheia.gateway.pidfile import supervisor_owns_pid
+    if not supervisor_owns_pid():
+        # No supervisor owns the pidfile — check the OS-level autostart watchdog.
+        try:
+            from aletheia.gateway import autostart
+            if not autostart.status().get("enabled"):
+                return (False, "no supervisor/autostart — restart would be fatal")
+        except Exception:
+            return (False, "no supervisor/autostart — restart would be fatal")
+
+    now = time.monotonic()
+    recent = [t for t in _self_heal_restart_times if now - t <= 3600]
+    _self_heal_restart_times[:] = recent
+    cfg = load_config()
+    if recent and (now - recent[-1]) < cfg.health.self_heal_min_interval_sec:
+        return (False, "cooldown — too soon since last self-heal restart")
+    if len(recent) >= cfg.health.self_heal_max_per_hour:
+        return (False, "hourly self-heal restart ceiling reached")
+    return (True, "")
+
+
+def _alert_suppressed(scenario: str, why: str) -> None:
+    """Self-heal wanted to act but couldn't (no supervisor / rate-limited). Never
+    silently do nothing — alert + audit once, deduped until health recovers."""
+    global _self_heal_suppressed_alerted
+    if _self_heal_suppressed_alerted:
+        return
+    msg = f"self-heal suppressed ({scenario}): {why}"
+    _send_alert(f"⚠️ {msg}")
+    write_audit({
+        "actor": "system", "source": "self_heal", "event_type": "self_heal_suppressed",
+        "entity_type": "gateway", "entity_id": "gateway", "message": msg,
+    })
+    _self_heal_suppressed_alerted = True
+
+
+def _heal_port_cleanup() -> bool:
+    """Kill orphan/port-holder gateway PIDs that aren't us or our supervisor.
+
+    Opportunistic (only called when already unhealthy). find_gateway_orphans only
+    matches OUR markers (never a foreign process); find_port_holders excludes our
+    own pid. We additionally exclude the SUPERVISOR pid (read_pid) — find_port_holders
+    does NOT, and in normal operation the supervisor also holds the port, so without
+    this guard we would kill our own supervisor and create a new zombie. Returns
+    True if anything was cleaned."""
+    from aletheia.gateway.pidfile import (
+        find_gateway_orphans, find_port_holders, kill_pid_tree, read_pid,
+    )
+    cfg = load_config()
+    keep = {os.getpid()}
+    sup = read_pid()
+    if sup:
+        keep.add(sup)
+    targets = [p for p in find_gateway_orphans() if p not in keep]
+    targets += [p for p in find_port_holders(cfg.app.dashboard_port)
+                if p not in keep and p not in targets]
+    if not targets:
+        return False
+    write_audit({
+        "actor": "system", "source": "self_heal", "event_type": "self_heal_port_cleanup",
+        "entity_type": "gateway", "entity_id": "gateway",
+        "message": f"Self-heal cleaned orphan/port-holder PIDs: {targets}",
+    })
+    for p in targets:
+        kill_pid_tree(p)
+    _send_alert(f"self-heal cleaned orphans {targets}")
+    return True
+
+
 def run_health_check() -> dict:
-    """Evaluate health; alert + audit only on transition into unhealthy."""
-    global _last_alerted_unhealthy
+    """Evaluate health; alert on transition into unhealthy, then self-heal.
+
+    Self-heal is deterministic (no LLM): it acts on the issue strings
+    compute_health() already produces. Restart-fixable signals (code drift, stale
+    feed) trigger a guarded, rate-limited exit(42) respawn; orphan PIDs get cleaned;
+    everything else (LLM down, kill switch, bad strategy runs) is alert-only."""
+    global _last_alerted_unhealthy, _self_heal_suppressed_alerted
     h = compute_health()
     if not h["healthy"]:
         if not _last_alerted_unhealthy:
@@ -157,5 +265,39 @@ def run_health_check() -> dict:
             })
             _last_alerted_unhealthy = True
     else:
-        _last_alerted_unhealthy = False  # reset so the next downturn alerts again
+        # Healthy again — reset both dedupe flags so the next downturn re-alerts.
+        _last_alerted_unhealthy = False
+        _self_heal_suppressed_alerted = False
+        return h
+
+    cfg = load_config()
+    if not cfg.health.self_heal_enabled:
+        return h  # legacy alert-only behavior
+
+    issues = h["issues"]
+    # Priority: code drift first — safest (self-terminating: boot==HEAD after
+    # respawn) and fresh code may also restore a stalled feed.
+    if cfg.health.self_heal_code_drift and any(
+        i.startswith("code_updated_pending_restart") for i in issues
+    ):
+        ok, why = _can_self_restart()
+        if ok:
+            _trigger_restart("code_drift")  # does not return
+        _alert_suppressed("code_drift", why)
+        return h
+
+    if cfg.health.self_heal_market_data and any(
+        i.startswith("market_data_stale") for i in issues
+    ):
+        ok, why = _can_self_restart()
+        if ok:
+            _trigger_restart("market_data_stale")  # does not return
+        _alert_suppressed("market_data_stale", why)
+        return h
+
+    if cfg.health.self_heal_port_cleanup:
+        _heal_port_cleanup()  # opportunistic; audits + alerts itself if it acts
+
+    # llm_unavailable / kill_switch_active / agent_failure_ratio → alert-only
+    # (already alerted above on the transition).
     return h

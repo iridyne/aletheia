@@ -175,6 +175,20 @@ class HealthConfig(BaseModel):
     supervisor_max_restarts: int = 5
     supervisor_restart_window_sec: int = 600
     supervisor_backoff_cap_sec: int = 60
+    # --- Deterministic self-heal: the health-check job ACTS on the signals it
+    # already computes (NO LLM). Closes the gap where /api/health flagged stale
+    # code for 11h but nothing consumed the signal to restart.
+    self_heal_enabled: bool = True            # master toggle
+    # min_interval (30m) is deliberately > supervisor_restart_window_sec (600s):
+    # two self-heal restarts can never fall inside one supervisor window, so
+    # self-heal alone can never exhaust the supervisor's give-up budget.
+    self_heal_min_interval_sec: int = 1800    # >= 30 min between any two self-heal restarts
+    self_heal_max_per_hour: int = 2           # hard ceiling on self-heal restarts/hour
+    self_heal_code_drift: bool = True         # restart on code_updated_pending_restart (self-terminating)
+    self_heal_market_data: bool = True        # restart on market_data_stale (rate-limited; external root cause)
+    self_heal_port_cleanup: bool = True       # clean orphan/port-holder PIDs (cleanup, not restart)
+    # LLM-unavailable / kill_switch / agent_failure are alert-only by design —
+    # a restart cannot fix an external outage, human kill switch, or bad strategy.
 
 
 class RetentionConfig(BaseModel):
