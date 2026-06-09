@@ -12,11 +12,17 @@ from aletheia.storage.models import (
 
 def _insert(table: str, data: dict) -> None:
     db = get_db()
+    # Commit when this call is NOT nested inside an open transaction() block.
+    # NB: check was_in_tx (state BEFORE the write), not db.in_transaction after —
+    # Python's sqlite3 auto-opens a tx on the INSERT, so `not db.in_transaction`
+    # is ALWAYS False here and the old `and not db.in_transaction` guard meant the
+    # write was never committed: the tx hung open holding the WAL write lock until
+    # the conn was reused, and every other thread's write hit `database is locked`.
     was_in_tx = db.in_transaction
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
     db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(data.values()))
-    if not was_in_tx and not db.in_transaction:
+    if not was_in_tx:
         db.commit()
 
 
@@ -38,10 +44,13 @@ def _select_one(table: str, id_val: str) -> dict | None:
 
 def _update(table: str, id_val: str, data: dict) -> None:
     db = get_db()
+    # See _insert: commit when not nested in a transaction(). The old
+    # `and not db.in_transaction` guard never fired (UPDATE auto-opens a tx), so
+    # the write hung open holding the lock → `database is locked` for other threads.
     was_in_tx = db.in_transaction
     sets = ", ".join(f"{k} = ?" for k in data.keys())
     db.execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*data.values(), id_val])
-    if not was_in_tx and not db.in_transaction:
+    if not was_in_tx:
         db.commit()
 
 
@@ -408,9 +417,11 @@ def _delete_old_rows(table: str, days: int) -> int:
     ts_col = _PRUNABLE[table]
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
+    # See _insert: commit when not nested in a transaction(). The old
+    # `and not db.in_transaction` guard never fired (DELETE auto-opens a tx).
     was_in_tx = db.in_transaction
     cur = db.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff,))
-    if not was_in_tx and not db.in_transaction:
+    if not was_in_tx:
         db.commit()
     return cur.rowcount if cur.rowcount is not None else 0
 

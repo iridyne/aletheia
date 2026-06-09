@@ -129,3 +129,67 @@ def test_markdown_dreaming_log(tmp_path):
         assert path.exists()
         text = path.read_text(encoding="utf-8")
         assert "Daily Consolidation" in text
+
+
+# --- Regression: writes must COMMIT (release WAL lock), not hang open ---
+# Root cause caught 2026-06-09: _insert/_update committed only when
+# `not was_in_tx and not db.in_transaction`, but sqlite3 auto-opens a tx on the
+# write so `db.in_transaction` is always True afterwards → commit never ran → the
+# write tx hung open holding the WAL lock → every other thread's write hit
+# `database is locked`. These tests use the REAL get_db() path (per-thread conn
+# on a file DB), NOT the shared injected conn that masks the bug.
+
+def _real_db_env(tmp_path, monkeypatch):
+    """Point sqlite at a real file via get_data_dir and clear any injected conn."""
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    sq.reset_db()
+    sq._db_conn = None
+    run_migrations()  # runs on the real per-thread connection
+
+
+def test_insert_commits_and_releases_lock(tmp_path, monkeypatch):
+    import sqlite3
+    from aletheia.storage.sqlite import db_path
+    _real_db_env(tmp_path, monkeypatch)
+
+    repo.insert_audit_event(AuditEvent(actor="system", source="cli",
+                                       event_type="lock_test", message="m"))
+
+    # A SEPARATE connection must see the row immediately (proves it committed) and
+    # must be able to WRITE without timing out (proves the lock was released).
+    other = sqlite3.connect(str(db_path()), timeout=2)
+    try:
+        cnt = other.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE event_type='lock_test'"
+        ).fetchone()[0]
+        assert cnt == 1, "row not visible to a second connection — write never committed"
+        other.execute("PRAGMA journal_mode=WAL")
+        other.execute(
+            "INSERT INTO audit_events (id, actor, source, event_type, message, timestamp) "
+            "VALUES ('x','system','cli','other','m','2026-01-01T00:00:00')"
+        )
+        other.commit()  # would raise OperationalError: database is locked if held
+    finally:
+        other.close()
+
+
+def test_update_commits_and_releases_lock(tmp_path, monkeypatch):
+    import sqlite3
+    from aletheia.storage.sqlite import db_path
+    _real_db_env(tmp_path, monkeypatch)
+
+    run = AgentRun(agent_name="market_observer", permission_mode="Observe")
+    repo.insert_agent_run(run)
+    repo.update_agent_run(run.id, status="completed")
+
+    other = sqlite3.connect(str(db_path()), timeout=2)
+    try:
+        row = other.execute(
+            "SELECT status FROM agent_runs WHERE id=?", (run.id,)
+        ).fetchone()
+        assert row is not None and row[0] == "completed", "update not committed"
+    finally:
+        other.close()

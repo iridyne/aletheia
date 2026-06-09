@@ -89,8 +89,18 @@ def test_compute_health_flags_high_failure_ratio(tmp_path, monkeypatch):
     assert any("agent_failure_ratio" in i for i in h["issues"])
 
 
+def _disable_self_heal(monkeypatch):
+    """These tests predate self-heal and assert only the ALERTING contract. With
+    self_heal_enabled defaulting True, run_health_check() would also run
+    _heal_port_cleanup() against the REAL process table and emit extra alerts.
+    Disable self-heal so the alert count reflects only the transition alert."""
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config(); cfg.health.self_heal_enabled = False; save_config(cfg)
+
+
 def test_health_alert_fires_on_unhealthy_transition(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    _disable_self_heal(monkeypatch)
     from aletheia.agent_runtime import health
     monkeypatch.setattr(health, "_last_alerted_unhealthy", False)  # reset leaked global
 
@@ -108,6 +118,7 @@ def test_health_alert_fires_on_unhealthy_transition(tmp_path, monkeypatch):
 
 def test_health_alert_dedupes_consecutive(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    _disable_self_heal(monkeypatch)
     from aletheia.agent_runtime import health
     monkeypatch.setattr(health, "_last_alerted_unhealthy", False)  # reset leaked global
     sent = []
