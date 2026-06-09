@@ -1,6 +1,22 @@
 # Current Task
 
-## Status: 自愈层已上线并端到端验证（2026-06-09）— 僵尸态可自动消除
+## Status: Phase 0 — 72h 无人值守观察期 已启动（2026-06-09 04:22 UTC）
+
+**无人值守保障已全部就位**：网关 detached 后台运行（supervisor 23084，boot 对齐 HEAD）；autostart 看门狗 enabled（登录自起 + PT5M 复活死掉的 supervisor）；self_heal_enabled（drift/stale 自动重启、端口清理）；scheduler 15 jobs 运行；paused=false；permission_mode=Paper（live 禁用）。可关闭对话窗口，系统持续跑。
+
+**起点基线 @ 2026-06-09 04:22 UTC**（DB 锁修复后管道已真实工作）：
+- opportunities=314, **positions=1, proposals=3, orders=3, fills=3**（修复前全 0！）, knowledge_items=6, agent_runs=203
+
+**观察门（72h 后对照，全部需通过）**：
+- [ ] 网关 72h+ 无崩（health=healthy/degraded，非 dead）
+- [ ] market_observer 每 15min 产 opportunity（>70% 非 error）
+- [ ] paper_trader 累计开仓 ≥ 5
+- [ ] position_manager 累计平仓 ≥ 2
+- [ ] post_trade_reviewer + risk_critic 有产出（knowledge_items 增长）
+
+---
+
+## 已完成：网关僵尸态修复 + 确定性自愈层 + DB 锁根因
 
 ## 2026-06-09 网关僵尸态修复 + 确定性自愈层
 
