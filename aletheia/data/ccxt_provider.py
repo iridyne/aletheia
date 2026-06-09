@@ -63,13 +63,26 @@ class CCXTProvider:
         # the exchange clients are created on first fetch, on the active loop.
         self._primary = None
         self._fallback = None
+        # Injected aiohttp sessions we own and must close (one per ccxt client).
+        self._sessions: list = []
 
     def _client(self, name: str):
+        import aiohttp
         import ccxt.async_support as ccxt
+        from aiohttp.resolver import ThreadedResolver
 
         if not hasattr(ccxt, name):
             raise ValueError(f"unknown ccxt exchange: {name}")
-        return getattr(ccxt, name)({"enableRateLimit": True})
+        # Force aiohttp's OS-resolver (getaddrinfo) instead of the c-ares
+        # AsyncResolver that aiohttp auto-selects when aiodns is installed. On
+        # Windows/locked-down hosts c-ares can't read DNS config and every fetch
+        # dies with ClientConnectorDNSError ("Could not contact DNS servers"),
+        # even though plain urllib (OS resolver) reaches the same host fine. We
+        # inject our own session so ccxt uses it (own_session=False), which means
+        # WE are responsible for closing it — done in close().
+        session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=ThreadedResolver()))
+        self._sessions.append(session)
+        return getattr(ccxt, name)({"enableRateLimit": True, "session": session})
 
     def _ensure_primary(self):
         if self._primary is None:
@@ -155,7 +168,12 @@ class CCXTProvider:
             logger.debug("ohlcv persist skipped for %s/%s: %s", canon, timeframe, e)
 
     async def close(self) -> None:
-        """Close both exchange sessions if they were opened. Idempotent."""
+        """Close exchange clients AND the aiohttp sessions we injected. Idempotent.
+
+        ccxt does not close an injected session (own_session=False), so the
+        sessions in self._sessions are ours to close — otherwise aiohttp logs
+        "Unclosed client session" and leaks connectors across scheduler loops.
+        """
         for attr in ("_primary", "_fallback"):
             client = getattr(self, attr)
             if client is not None:
@@ -164,6 +182,12 @@ class CCXTProvider:
                 except Exception as e:  # noqa: BLE001
                     logger.debug("provider close error: %s", e)
                 setattr(self, attr, None)
+        for session in self._sessions:
+            try:
+                await session.close()
+            except Exception as e:  # noqa: BLE001
+                logger.debug("session close error: %s", e)
+        self._sessions = []
 
 
 def _opt_float(value) -> float | None:
