@@ -20,9 +20,16 @@
 
 **`database is locked`(累计 1652 次、管道实际停摆的真根因)已定位并修复**：`storage/repositories.py` 的 `_insert`/`_update`/`_delete_old_rows` 提交条件写错——Python sqlite3 写后必在事务中，旧条件 `not db.in_transaction` 恒 False → commit 从不执行 → 写事务悬挂持 WAL 锁。改为 `if not was_in_tx: commit()`。504 测试通过，含真实 file DB + 独立连接的锁释放回归测试。端到端验证市场数据恢复中。
 
-## 仍待诊断（独立）
+## restart "bug" — 已澄清为误判（2026-06-09）
 
-- **`gateway restart` HTTP 端点杀 supervisor 链不重生** — 本环境复现两次，restart 后整个链死掉。与自愈用的 `os._exit(42)`（supervisor 重生 inner）路径不同，需单独查 `/api/gateway/restart`。
+先前怀疑 `gateway restart` 杀链不重生。诊断后**证实是误判**：
+- audit 显示会话开始那次是 `gateway_stopped (cli)`，根本没有 `gateway_restart` 事件——是 CLI `gateway restart`（= do_stop + do_start）里 do_start 静默失败，**因为当时网关跑旧代码 `1aa1feb` + 我同时跑测试抢 DB 锁**，叠加造成启动失败假象。
+- 三个真修复到位后实测：CLI `gateway restart` 干净成功（`03:21:28` stop → 新 supervisor 23084 重生 → health=healthy → boot 对齐 HEAD → drift 自动清除 → 市场数据持续流动）。
+- restart 命令本身无 bug。
+
+## 系统现状（2026-06-09 收尾）
+
+健康、自管理、数据实时。三个根因（僵尸态/自愈限频/DB锁）全部根除并端到端验证。具备开始 Phase 0 72h 观察期的条件。
 
 ---
 

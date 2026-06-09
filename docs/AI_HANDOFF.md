@@ -43,9 +43,9 @@
 
 **端到端测试当场抓到一个严重 bug，已修（commit `abd7773`，502 测试通过）**：观察到两次 `self_heal_restart` 正好间隔 10min（一个 health 周期），30min cooldown 没拦住。根因——限频计数器是【内存】list，而自愈动作是 `os._exit(42)`，重启清空内存，新进程永远看不到"刚重启过" → cooldown/ceiling 永不触发 → 任何"重启修不了"的持久 issue（如下方 DB 锁致 `market_data_stale`）会让网关**每 10min 无限重启**（比僵尸态更糟）。修复：限频改从【持久化 audit.jsonl】读 `self_heal_restart` 事件计数（`_recent_self_heal_restarts()`），跨重启有效。已验证：冷启动新进程读到旧进程写的 restart 记录、正确返回 cooldown 拒绝。**教训：任何"动作会重启进程"的状态必须持久化，绝不放内存。**
 
-**两个独立的新发现（不属本任务，待诊断）**：
-1. `database is locked` — market_observer/paper_trader/exchange_sync 等 job 因 DB 锁持续失败、市场数据停更（疑似遗留 python 进程或并发抢锁）。可能是"重启后 agent 不触发"真因。
-2. `gateway restart` 早先一次实际走了 stop（audit `gateway_stopped killed=True`），网关没起来——restart 路径在本环境可能有 bug。
+**两个独立的新发现**（均已在本会话解决，见下方更早条目）：
+1. `database is locked` → **真根因，已修**（`a33dc86`，见顶部条目）。这是"重启后 agent 不触发 / 数据停更"的真因。
+2. `gateway restart` 早先一次启动失败 → **诊断为误判**：当时网关跑旧码 `1aa1feb` + 测试抢 DB 锁，叠加造成 `do_start` 静默失败假象；三修复到位后实测 CLI restart 干净成功（stop→新 supervisor 重生→healthy→boot 对齐→drift 清除）。restart 无 bug。
 
 **关于 Pi/Agent Shell 设计文档**：用户提供的 `aletheia_pi_agent_shell_integration_design.md` 主张顶层 LLM 操作员 agent。结论：方向对、v0 范围对，但**应分两层**——(A) 确定性自愈 supervisor（即本次交付，无 LLM，是稳定性根基）先做；(B) LLM Apex Agent Shell 作为"Operator Layer"排到 Phase 0/1 稳跑证明之后的平行线。本次完成了 A 的核心切片。
 
