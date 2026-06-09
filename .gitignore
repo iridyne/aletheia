@@ -5,7 +5,10 @@ dist/
 build/
 .venv/
 .env
-data/
+# Runtime data dir only (repo-root anchored). A bare `data/` also matches the
+# SOURCE package aletheia/data/ at every level — which silently excluded it from
+# git and broke the checkout. Keep the leading slash so it stays root-scoped.
+/data/
 *.db
 *.pid
 .secret.key
