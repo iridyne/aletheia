@@ -2,9 +2,14 @@
 
 USER-AUTHORIZED autonomous behavior (paper only). Containment:
 - Only runs when permission mode is Paper or Full. Denied in Observe.
-- Submits exclusively through the paper wrapper, which hard-codes paper_internal.
+- Submits exclusively through the paper wrapper, which rejects any non-paper mode
+  (only paper_internal / bitget_demo allowed) — the live path is unreachable here.
 - Every order still passes the Risk Engine (kill switch, daily loss, etc.).
 - Consumed opportunities are marked `proposed` for idempotency (no duplicates).
+
+Execution target is `exchange.paper_execution_mode`: `bitget_demo` places real orders
+on Bitget's demo (simulated) API; `paper_internal` fills locally. Bitget demo only
+supports USDT futures, so paper trades are submitted as `usdt_futures`.
 
 The position size is a small fixed paper quantity from instrument config, NOT an
 LLM decision. The LLM is used only (optionally) for a short rationale string and
@@ -103,14 +108,17 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 strategy_id = s["id"]
                 break
 
+    # Bitget demo only supports USDT futures (no spot), so paper trades execute as
+    # usdt_futures. execution_mode is config-driven: bitget_demo (real demo API) or
+    # paper_internal (local sim fallback).
     result = create_paper_proposal(
         symbol=symbol,
-        market_type=opp.get("market", "spot"),
+        market_type="usdt_futures",
         direction=direction,
         quantity=quantity,
         price=price,
         stop_price=stop_price,
-        execution_mode="paper_internal",
+        execution_mode=cfg.exchange.paper_execution_mode,
         strategy_id=strategy_id,
         opportunity_id=opp["id"],
         agent_rationale=rationale[:500],

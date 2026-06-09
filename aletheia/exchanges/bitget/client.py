@@ -47,6 +47,13 @@ class OrderRequest:
     quantity: float
     price: float | None = None
     client_oid: str | None = None  # idempotency key — dedups retried submissions
+    # Hedge-mode close (USDT-futures only). The demo/live account runs in hedge
+    # ("two-way") mode, where closing is NOT `reduceOnly` — it is `tradeSide:"close"`
+    # plus `holdSide` (the side of the position being reduced), with `side` SAME as
+    # the open side (close a long = side:"buy", holdSide:"long"). When hold_side is
+    # set the mix order is built as a close; otherwise it is an open (tradeSide:"open").
+    reduce_only: bool = False
+    hold_side: str | None = None  # "long" | "short" — required for a hedge-mode close
 
 
 @dataclass
@@ -54,6 +61,11 @@ class OrderResponse:
     order_id: str
     client_oid: str | None = None
     status: str = "submitted"
+    # Real fill data resolved from the exchange (mix market orders fill synchronously;
+    # populated by a follow-up order/detail query). None when the exchange has not
+    # confirmed a fill yet — callers must NOT fabricate a fill from request values.
+    fill_price: float | None = None
+    filled_quantity: float | None = None
 
 
 @dataclass
@@ -208,14 +220,26 @@ class BitgetClient:
             }
         else:
             path = "/api/v2/mix/order/place-order"
+            # Mix v2 requires marginCoin, and (in hedge mode) tradeSide. Determined
+            # empirically against the live demo account — see DECISIONS.md 2026-06-09:
+            #   open  → tradeSide:"open"  + side:buy|sell
+            #   close → tradeSide:"close" + holdSide:long|short, side SAME as the open
+            #           side (close a long = side:"buy"). reduceOnly is NOT the
+            #           hedge-mode close mechanism; tradeSide+holdSide is.
             body_data = {
                 "symbol": order.symbol,
                 "productType": "USDT-FUTURES",
                 "marginMode": "crossed",
+                "marginCoin": "USDT",
                 "side": order.side,
                 "orderType": order.order_type,
                 "size": str(order.quantity),
             }
+            if order.hold_side:
+                body_data["tradeSide"] = "close"
+                body_data["holdSide"] = order.hold_side
+            else:
+                body_data["tradeSide"] = "open"
 
         if order.price and order.order_type == "limit":
             body_data["price"] = str(order.price)
@@ -239,10 +263,62 @@ class BitgetClient:
         if not order_id:
             raise RuntimeError("Bitget returned success but no orderId in response")
 
-        return OrderResponse(
+        resp_obj = OrderResponse(
             order_id=order_id,
             client_oid=data.get("data", {}).get("clientOid"),
         )
+
+        # Resolve the real fill status. Mix market orders fill synchronously, so a
+        # follow-up detail query returns state=filled + priceAvg immediately (verified
+        # against demo — DECISIONS.md 2026-06-09). We NEVER infer a fill from the
+        # request: if the detail query is unavailable or the order isn't filled yet,
+        # status stays "submitted" and reconciliation/operator resolves it later.
+        if order.market_type != "spot":
+            try:
+                detail = await self._get_order_detail(order_id, order.symbol)
+            except Exception:
+                detail = None
+            if detail:
+                self._apply_fill_detail(resp_obj, detail)
+
+        return resp_obj
+
+    @staticmethod
+    def _apply_fill_detail(resp: OrderResponse, detail: dict) -> None:
+        """Map a mix order/detail payload onto an OrderResponse. Only marks a fill
+        when the exchange reports one — never fabricates priceAvg/volume."""
+        state = (detail.get("state") or detail.get("status") or "").lower()
+        # Bitget mix states: live | partially_filled | filled | cancelled | ...
+        if state in ("filled", "full_fill", "fullfill"):
+            resp.status = "filled"
+        elif state in ("partially_filled", "partial_fill", "partialfill"):
+            resp.status = "partially_filled"
+        else:
+            return  # not filled yet — leave status as submitted, no fill data
+        price_avg = detail.get("priceAvg") or detail.get("priceAvgFilled") or detail.get("fillPrice")
+        base_vol = detail.get("baseVolume") or detail.get("accBaseVolume") or detail.get("filledQty")
+        try:
+            resp.fill_price = float(price_avg) if price_avg not in (None, "", "0") else None
+        except (TypeError, ValueError):
+            resp.fill_price = None
+        try:
+            resp.filled_quantity = float(base_vol) if base_vol not in (None, "") else None
+        except (TypeError, ValueError):
+            resp.filled_quantity = None
+
+    async def _get_order_detail(self, order_id: str, symbol: str) -> dict | None:
+        """Fetch a single mix order's detail (fill state + priceAvg)."""
+        path = f"/api/v2/mix/order/detail?orderId={order_id}&symbol={symbol}&productType=USDT-FUTURES"
+        headers = self._headers("GET", path)
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return None
+        d = data.get("data")
+        if isinstance(d, list):
+            return d[0] if d else None
+        return d if isinstance(d, dict) else None
 
     async def get_account(self) -> AccountSummary:
         """Get account summary (§19.3)."""

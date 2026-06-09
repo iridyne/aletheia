@@ -103,7 +103,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
     # Execute based on allowed mode
     allowed_mode = risk_result.allowed_execution_mode
     try:
-        if allowed_mode in ("paper_internal", "bitget_demo"):
+        if allowed_mode == "paper_internal":
             with transaction():
                 result = execute_paper_order(
                     proposal_id=proposal.id,
@@ -133,6 +133,56 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 ),
             })
             return {"status": "executed", "proposal_id": proposal.id, **result}
+
+        elif allowed_mode == "bitget_demo":
+            # Real Bitget demo/simulated order — exchange-side record, no live guard
+            # (live_disabled gates real funds only; demo is risk-free). On any failure
+            # we mark the proposal error and audit; we NEVER fall back to a fabricated
+            # local fill (honesty: a demo trade either hit the demo exchange or it
+            # didn't).
+            try:
+                from aletheia.execution.bitget_broker import execute_live_order
+                result = execute_live_order(
+                    proposal_id=proposal.id,
+                    risk_decision_id=risk_result.decision_id,
+                    symbol=proposal.symbol,
+                    market_type=proposal.market_type,
+                    direction=proposal.direction,
+                    order_type=proposal.order_type,
+                    quantity=proposal.quantity or 0.0,
+                    price=proposal.price or 0.0,
+                    strategy_id=proposal.strategy_id,
+                    execution_mode="bitget_demo",
+                )
+                update_trade_proposal(proposal.id, status="executed")
+                write_audit({
+                    "actor": "system", "source": "execution_gateway",
+                    "event_type": "demo_order_executed", "entity_type": "order",
+                    "entity_id": result["order_id"],
+                    "before": {"status": proposal.status},
+                    "after": {"status": "executed"},
+                    "message": (
+                        f"Demo order placed: {proposal.symbol} {proposal.direction} "
+                        f"{proposal.quantity or 0.0}@{result.get('fill_price') or proposal.price or 0.0} "
+                        f"(ex:{result['exchange_order_id']})"
+                    ),
+                })
+                return {"status": "executed", "proposal_id": proposal.id, **result}
+            except Exception as e:
+                exchange_oid = getattr(e, "exchange_order_id", None)
+                with transaction():
+                    update_trade_proposal(proposal.id, status="error")
+                msg = f"Demo order failed: {e}"
+                if exchange_oid:
+                    msg += f" (exchange_order_id={exchange_oid})"
+                write_audit({
+                    "actor": "system", "source": "execution_gateway",
+                    "event_type": "demo_order_error", "entity_type": "trade_proposal",
+                    "entity_id": proposal.id, "before": {"status": proposal.status},
+                    "after": {"status": "error"}, "message": msg,
+                })
+                return {"status": "error", "proposal_id": proposal.id, "message": str(e),
+                        "exchange_order_id": exchange_oid}
 
         elif allowed_mode == "bitget_live_limited":
             # Defense in depth: risk engine already checked live_disabled, but re-check here.

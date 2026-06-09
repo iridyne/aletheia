@@ -102,8 +102,16 @@ def evaluate_open_positions() -> dict:
             continue
         reason, exit_price = decision
         try:
-            close_position(p["id"], exit_price=exit_price, reason=reason)
+            if p.get("execution_mode") == "bitget_demo":
+                # Demo is a REAL exchange position — close it with a real hedge-mode
+                # order so the exchange and local books stay consistent (a local-only
+                # close would dangle the demo position). The broker realizes PnL via
+                # close_position internally, using the exchange's confirmed exit price.
+                from aletheia.execution.bitget_broker import close_demo_position
+                close_demo_position(p["id"], reason=reason)
+            else:
+                close_position(p["id"], exit_price=exit_price, reason=reason)
             closed += 1
         except Exception as e:
-            logger.warning("close_position failed for %s: %s", p["id"], e)
+            logger.warning("close failed for %s: %s", p["id"], e)
     return {"checked": checked, "closed": closed}

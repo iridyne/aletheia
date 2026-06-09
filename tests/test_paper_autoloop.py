@@ -47,6 +47,9 @@ def _set_mode(mode, kill=False, **_kwargs):
     cfg = load_config()
     cfg.agent.permission_mode = mode
     cfg.runtime.kill_switch_active = kill
+    # These tests validate the local paper_internal fallback path (the default is now
+    # bitget_demo, a real-exchange call). Demo routing is covered by test_demo_trading.py.
+    cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
 
 

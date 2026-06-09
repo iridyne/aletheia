@@ -1,5 +1,50 @@
 # Decisions
 
+## 2026-06-09 - Bitget demo wiring: empirical probe results (STEP 0)
+
+### Context
+
+Connecting paper trading to Bitget's real demo/simulated API (instead of local paper_broker). Web docs were unreachable (403/Cloudflare), so the v2 demo mechanism was determined by placing real minimal demo orders and inspecting raw responses (`scripts/_probe_*.py`, since deleted).
+
+### Findings (all empirically verified against the live demo account)
+
+1. **Outcome A confirmed**: demo uses `productType=USDT-FUTURES` + `paptrading:1` header. The S-prefixed `SUSDT-FUTURES` is **rejected** (`40778: does not support SUSDT currency as margin`). → No productType/symbol mapping needed; the planned STEP 5 is dropped.
+2. **Demo account is `hedge_mode`** (two-way positions), margin `crossed`, ~198 USDT available.
+3. **Mix v2 order body requires fields the current `client.py:211-218` omits** — this is a latent bug in `execute_live_order`'s path that was never caught because every live test mocks `place_order`:
+   - `marginCoin: "USDT"` (omitting → `400172 Margin Coin cannot be empty`)
+   - **Open**: `tradeSide: "open"` + `side: "buy"|"sell"` (omitting tradeSide in hedge mode → `40774 ... unilateral position type`)
+   - **Close**: `tradeSide: "close"` + `holdSide: "long"|"short"` + `side` SAME as the open side (close a long = `side:"buy", tradeSide:"close", holdSide:"long"`). `reduceOnly` is NOT the hedge-mode close mechanism; `tradeSide:close`+`holdSide` is. Omitting holdSide → `22002 No position to close`.
+4. **Market orders fill synchronously**: immediately after place-order, `GET /mix/order/detail?orderId=...` returns `state=filled, baseVolume, priceAvg`. → STEP 4 can parse fill status synchronously from a follow-up detail query; STEP 7 reconciliation does NOT need to be extended for demo.
+
+### Decision
+
+- `client.place_order` (mix branch) must add `marginCoin` + `tradeSide:"open"`, and after submit, query order/detail to resolve `filled` + `priceAvg` synchronously (don't fabricate).
+- A hedge-mode close needs `tradeSide:"close"` + `holdSide` — the demo close helper (STEP 8) and any close path must pass these.
+- STEP 5 (S-prefix) is dropped. STEP 7 reconciliation change is dropped (sync fill).
+- The hedge-mode order-shape fix lives in change-controlled `client.py`; it also fixes the never-exercised live path.
+
+### Implementation outcome (2026-06-09, all 9 steps, 514 tests green — UNCOMMITTED per observation no-commit rule)
+
+- `client.place_order` (mix): adds `marginCoin:"USDT"` + `tradeSide:"open"` (or `tradeSide:"close"`+`holdSide` when `OrderRequest.hold_side` is set), and after submit queries `/mix/order/detail` to resolve real `fill_price`/`filled_quantity` synchronously. Never fabricates a fill (stays `submitted` if detail unavailable).
+- `bitget_broker.execute_live_order` generalized with `execution_mode`/`fee_rate` params; `_find_open_position` parameterized by mode. New `close_demo_position()` places a real hedge-mode close then realizes PnL via `pnl.close_position` using the exchange's confirmed exit price; refuses to close locally if the exchange call fails (books stay consistent).
+- `gateway._execute_proposal`: split `bitget_demo` into its own branch → broker (no `live_disabled` guard), audit `demo_order_executed`/`demo_order_error`.
+- `risk/engine`: added symmetric `account_mode_mismatch:order=demo` (demo order requires `exchange.mode==demo`) + a looser demo data-freshness gate (`stale_market_data_demo`, 1800s vs live 120s, since data collects every 5 min). All other live-only checks stay live-only; `_is_live` untouched.
+- `position_manager`: `bitget_demo` exits route to `close_demo_position` (real close); `paper_internal` still local.
+- **Three latent bugs found + fixed**, all masked because every live test mocks `place_order`: (1) the mix body omitted `marginCoin`/`tradeSide`; (2) the live path never converted canonical `BTC/USDT` → Bitget `BTCUSDT` (now done at the exchange boundary, local rows stay canonical); (3) the broker recorded the *requested* price as the fill price instead of the exchange's confirmed `priceAvg`.
+- Safety: `tests/conftest.py` autouse guard makes `place_order` raise in any unmocked test (keyring creds are NOT sandboxed by the `tmp_path` DATA_DIR patch, so an unmocked demo order would otherwise hit the real API during pytest). Existing paper_trader tests pinned to `paper_internal` (they validate the fallback path); demo path covered by `tests/test_demo_trading.py` (10 tests, all mocked).
+
+### Live end-to-end verification on real Bitget demo (2026-06-09, user-authorized one round-trip)
+
+Called the broker directly (NOT the gateway — kill switch / autonomous loop untouched), min size, opened+closed in one run (net-flat), local rows in a throwaway DB:
+- **Open**: real demo order `1448153278595629057`, filled @ **62846.5** — the price came from the exchange's confirmed `priceAvg` (order/detail), not the request. Local order tagged `execution_mode=bitget_demo`, symbol stored canonical `BTC/USDT`, exchange call used `BTCUSDT`.
+- Exchange `get_positions()` confirmed `BTCUSDT long 0.0001` appeared.
+- **Close**: real hedge-mode close `1448153285251989505` (`tradeSide:close`+`holdSide:long`, `side:buy`), exit 62841.7, realized −0.008 USDT.
+- Exchange went **flat** (no dangling position); local round-trip recorded `status=closed`.
+
+Confirms the full path works against the real demo exchange and the three latent-bug fixes are correct end-to-end. Demo account ~198 USDT, BTCUSDT minTradeNum 0.0001.
+
+---
+
 ## 2026-06-08 - InstrumentId: three-part unique instrument identity
 
 ### Context

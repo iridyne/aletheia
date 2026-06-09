@@ -14,6 +14,11 @@ from aletheia.storage.repositories import insert_risk_decision, list_positions
 
 # Live market data older than this (seconds) is considered stale for live orders.
 _MAX_DATA_AGE_SECONDS = 120
+# Demo orders get a looser freshness bound: market data is collected every 5 min, so
+# the tight 120s live bound would reject most healthy demo trades. This catches only a
+# genuinely dead feed (several missed collection cycles) — a cheap anti-foot-gun so
+# autonomous demo trades aren't placed against a frozen price.
+_MAX_DEMO_DATA_AGE_SECONDS = 1800
 
 # Serialize proposal evaluation. The daily-loss check can auto-trip the kill switch
 # mid-evaluation (writes config); without serialization a concurrently-evaluated
@@ -138,9 +143,16 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             from aletheia.risk.kill_switch import activate as _trip
             _trip(reason=f"daily loss {realized} breached limit -{daily_loss_limit}", actor="system")
 
-    # 9. Account mode match — a live order requires exchange.mode == 'live' (and vice-versa).
+    # 9. Account mode match — order mode and exchange account must agree.
+    #    A live order requires exchange.mode == 'live'; a real demo order requires
+    #    exchange.mode == 'demo'. Without the demo side of this check, a bitget_demo
+    #    proposal evaluated while exchange.mode == 'live' would place a REAL live order
+    #    through the demo path (trust-boundary hole). paper_internal is local sim and
+    #    is exempt (it never touches the exchange).
     if _is_live(proposal.execution_mode) and cfg.exchange.mode != "live":
         violations.append(f"account_mode_mismatch:order=live,exchange={cfg.exchange.mode}")
+    if proposal.execution_mode == "bitget_demo" and cfg.exchange.mode != "demo":
+        violations.append(f"account_mode_mismatch:order=demo,exchange={cfg.exchange.mode}")
 
     # 10. Max leverage (futures). Demo and live have separate caps.
     if proposal.market_type == "usdt_futures" and proposal.leverage:
@@ -191,6 +203,15 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             demo_max_risk = demo_capital * (risk.max_demo_single_trade_risk_pct / 100.0)
             if demo_max_risk > 0 and demo_risk_amount > demo_max_risk:
                 violations.append(f"exceeds_demo_single_trade_risk:{demo_risk_amount}>{demo_max_risk}")
+
+        # Demo data freshness — bitget_demo places a REAL exchange order, so it must
+        # not trade against a frozen feed. paper_internal (local sim) is exempt: it has
+        # no exchange-side price and runs even when collection is paused. Looser bound
+        # than live (see _MAX_DEMO_DATA_AGE_SECONDS).
+        if proposal.execution_mode == "bitget_demo":
+            demo_age = _market_data_age_seconds(proposal.symbol)
+            if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
+                violations.append(f"stale_market_data_demo:age={demo_age}")
 
     # Determine execution mode
     if not violations:

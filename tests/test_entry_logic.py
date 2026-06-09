@@ -36,6 +36,8 @@ def _set_paperauto(monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
+    # Local paper_internal fallback path (default is now bitget_demo / real exchange).
+    cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
 
 
@@ -165,6 +167,7 @@ async def test_observer_stores_canonical_format_symbol(tmp_path, monkeypatch):
     cfg.market_data.observed_symbols = ["BTC/USDT"]
     cfg.market_data.observed_xstocks = []
     cfg.agent.permission_mode = "Full"
+    cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
 
     async def fake_structured(system, user, *, schema, max_tokens=400):
@@ -191,6 +194,7 @@ async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
     cfg.market_data.observed_symbols = ["BTC/USDT"]
     cfg.market_data.observed_xstocks = []
     cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
 
     async def fake_structured(system, user, *, schema, max_tokens=400):

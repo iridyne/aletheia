@@ -75,14 +75,26 @@ Phases are **not time-locked**. Move as fast or slow as reality permits.
 
 ### Observation Gate
 
-All must pass:
-- [ ] Gateway 72h+ no crash (health = healthy/degraded, not dead)
-- [ ] market_observer producing opportunities every 15min (>70% non-error)
-- [ ] paper_trader opened at least 5 positions
-- [ ] position_manager closed at least 2 positions
-- [ ] post_trade_reviewer + risk_critic have output (knowledge_items > 0)
+> **Timer reset 2026-06-09 (cutover)** — paper trading moved from local `paper_internal`
+> matching on **spot** to **Bitget demo** real-simulation orders on **USDT perpetuals**.
+> The prior spot/local baseline is voided by this deliberate higher-fidelity form change
+> (not by drift noise). This cutover commit is the intended exception to the no-commit rule;
+> the new window resumes the rule: **no commits during the observation window** (drift
+> compares booted commit vs `git HEAD`, not the working tree, so editing without committing
+> is safe).
 
-**If gate fails**: Diagnose (LLM unreachable / config error / data source down), fix, restart timer.
+All must pass:
+- [ ] Gateway 72h+ no crash (health = healthy/degraded, not dead) — and **no `self_heal_restart` from `code_drift`** in the window (those mean someone committed)
+- [ ] market_observer producing opportunities every 15min (>70% non-error)
+- [ ] paper_trader executed at least **5 fills** — each 15-min cycle that opens or adds counts as one trading action ("one open" by project convention); the `positions` table merges same-symbol/direction adds into one row, so count **fills**, not position rows
+- [ ] position_manager closed at least 2 positions (demo closes place a real hedge-mode reduce order; the exchange must go flat too)
+- [ ] post_trade_reviewer + risk_critic have output (knowledge_items grows beyond baseline)
+- [ ] **demo orders visible on Bitget**: `get_open_orders`/`get_positions` show paper_trader's real demo orders; exchange_sync reflects demo equity/positions
+
+> **Watch (NOT a gate)**: positions stay concentrated in one symbol because paper_trader re-picks the top opportunity each cycle and adds to the same side. **Accepted as fine for Phase 0** — the gate proves the loop *runs*. Symbol diversification is a Phase 2A concern, not a stability gate.
+
+**If gate fails**: Diagnose (LLM unreachable / config error / data source down / demo API rejecting), fix, restart timer.
+**Gate caveat**: "5 fills / 2 closes" measures that the *loop runs*, not that it's *profitable* — profitability is a separate Phase 1+ question (see "False confidence" failure mode).
 
 ---
 

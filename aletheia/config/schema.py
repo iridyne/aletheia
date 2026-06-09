@@ -45,6 +45,12 @@ class ExchangeConfig(BaseModel):
     # Trading whitelist only — which symbols may be traded via this exchange.
     # Market data observation is controlled by MarketDataConfig.observed_symbols.
     tradable_symbols: list[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+    # Where autonomous paper trades execute:
+    #   "bitget_demo"   → real Bitget demo/simulated-trading API (paptrading header,
+    #                     USDT-futures only; exchange-side record, higher fidelity).
+    #   "paper_internal"→ local simulated fills (no exchange call). Fallback when the
+    #                     demo endpoint is unavailable. Requires mode == "demo".
+    paper_execution_mode: str = "bitget_demo"
 
 
 class MarketDataConfig(BaseModel):

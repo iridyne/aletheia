@@ -1,18 +1,27 @@
 # Current Task
 
-## Status: Phase 0 — 72h 无人值守观察期 已启动（2026-06-09 04:22 UTC）
+## Status: Phase 0 — 切换到 Bitget demo 真实模拟盘，观察期重置（2026-06-09 cutover）
 
-**无人值守保障已全部就位**：网关 detached 后台运行（supervisor 23084，boot 对齐 HEAD）；autostart 看门狗 enabled（登录自起 + PT5M 复活死掉的 supervisor）；self_heal_enabled（drift/stale 自动重启、端口清理）；scheduler 15 jobs 运行；paused=false；permission_mode=Paper（live 禁用）。可关闭对话窗口，系统持续跑。
+**这次 commit 为何打破"观察期内不 commit"铁律**：因为**观察形态本身变了**——paper 交易从「本地 `paper_internal` 撮合 + 现货 spot」整体切到「Bitget demo 真实模拟盘下单 + USDT 永续合约」。旧观察基线（现货 / 本地撮合）随之作废：不是被 drift 噪音污染而重算，而是被一次**主动的、更高保真度的形态升级**取代。所以此处 commit 是正当的——它让 HEAD 前进 → 网关重启时启用 demo 代码 → 观察期在新形态下重新计时。**升级落地后，新观察窗口内仍守"不 commit"铁律。**
 
-**起点基线 @ 2026-06-09 04:22 UTC**（DB 锁修复后管道已真实工作）：
-- opportunities=314, **positions=1, proposals=3, orders=3, fills=3**（修复前全 0！）, knowledge_items=6, agent_runs=203
+**为什么切 demo**（架构原则，用户确立）：paper trading 应优先用交易所/券商自己的 demo/模拟盘接口（真实 API、交易所侧有记录），只有平台不提供时才退回本地模拟撮合。Bitget 提供 demo（`paptrading:1` header，仅 USDT 永续），所以 paper 默认走 `bitget_demo` 真实下单；`paper_internal` 保留为 demo 不可用时的秒切 fallback。详见 `docs/DECISIONS.md` 的 demo wiring 三节。
 
-**观察门（72h 后对照，全部需通过）**：
-- [ ] 网关 72h+ 无崩（health=healthy/degraded，非 dead）
+**已验证**（2026-06-09，用户授权手动一笔真单）：真实 demo 开仓单 `1448153278595629057`（@62846.5，价取交易所确认 priceAvg）+ hedge-mode 平仓单 `1448153285251989505`（@62841.7），交易所走平、本地账本一致。三个被 mock 掩盖的潜伏 bug 同时修掉（mix body 缺 marginCoin/tradeSide；canonical→Bitget symbol 未转换；记的是请求价而非成交价）。
+
+**无人值守保障已全部就位**（沿用上一轮）：autostart 看门狗 enabled（登录自起 + PT5M 复活死掉的 supervisor）；self_heal_enabled（drift/stale 自动重启、端口清理）；scheduler 运行；permission_mode=Paper（live 禁用）；kill_switch 今晨被日损自动触发，本次 cutover 第 2 步已清。
+
+**起点基线 @ cutover**：旧 spot/local 基线作废。网关在 HEAD（本次 commit）+ demo-futures 形态下重启后，以重启后首个 health 周期的计数为新起点（opportunities/positions/orders/fills 重新计）。
+
+**观察门（72h 后对照，全部需通过）**——形态为 demo-futures，判据沿用 fill 口径：
+- [ ] 网关 72h+ 无崩（health=healthy/degraded，非 dead）**且窗口内无 `code_drift` 自愈重启**（有则说明有人 commit 了，计时作废）
 - [ ] market_observer 每 15min 产 opportunity（>70% 非 error）
-- [ ] paper_trader 累计开仓 ≥ 5
-- [ ] position_manager 累计平仓 ≥ 2
-- [ ] post_trade_reviewer + risk_critic 有产出（knowledge_items 增长）
+- [ ] paper_trader 累计 **fill ≥ 5**（按项目约定：每个 15min 周期开仓/加仓 = 一次开仓动作；`positions` 表把同标的同向合并成 1 行只是展示口径，所以**计 fill 不计 position 行**）
+- [ ] position_manager 累计平仓 ≥ 2（demo 平仓走真实 hedge-mode 反向单，交易所须同步走平）
+- [ ] post_trade_reviewer + risk_critic 有产出（knowledge_items 持续增长）
+- [ ] **demo 真单在 Bitget 侧可见**：`get_open_orders`/`get_positions` 能查到 paper_trader 下的真实 demo 单，exchange_sync 反映 demo 权益/仓位
+
+> **观察项（非判据）**：持仓集中在单一标的（paper_trader 每周期挑最优 opportunity，对同标的同向加仓）。**Phase 0 视为正常**——门只证"闭环在跑"。多标的分散是 Phase 2A 的事，不作稳定性门。
+> **判据性质**：以上衡量"闭环在运转"，**不衡量盈利**——盈利是 Phase 1+ 的独立问题（见 ROADMAP "False confidence" 失败模式）。
 
 ---
 
