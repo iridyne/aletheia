@@ -14,6 +14,8 @@
 
 **端到端验证通过**：制造空 commit → drift 被检测 → 自愈自动重启 → supervisor 重生新码 → drift 清除（audit `self_heal_restart: code_drift`）。今天那类僵尸态以后会在一个 health 周期（≤10min）内自动消除。
 
+**端到端当场抓到并修复一个严重 bug（commit `abd7773`）**：限频计数器原是内存态，但 `os._exit(42)` 重启会清空它 → cooldown 永不触发 → 持久 issue 致每 10min 无限重启。改为从持久化 audit.jsonl 读 restart 计数。502 测试通过，已验证跨重启有效。
+
 ## 待诊断（独立的新发现，不属本任务）
 
 1. **`database is locked`** — errors.log 显示 market_observer/paper_trader/exchange_sync 等 job 因 DB 锁失败，市场数据停更（疑似遗留 python 进程或测试并发抢锁）。这可能是"重启后 agent 不触发"的真因。

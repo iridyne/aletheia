@@ -69,7 +69,7 @@ Phases are **not time-locked**. Move as fast or slow as reality permits.
 | 0.4 | Config: `permission_mode=Paper` (gates paper_trader via `is_tool_permitted`; the old `autonomous_paper_trading` flag was removed in `7117bdf` 5→3 mode refactor) | DONE |
 | 0.5 | Start gateway for unattended run | DONE |
 | 0.6 | Pure observation period (72h minimum) | RESET 2026-06-09 — first attempt was a false start (see note) |
-| 0.7 | Deterministic self-heal (code-drift/stale→restart, port cleanup, LLM→alert) | DONE 2026-06-09 (`8a6e008`) |
+| 0.7 | Deterministic self-heal (code-drift/stale→restart, port cleanup, LLM→alert) | DONE 2026-06-09 (`8a6e008` + rate-limit fix `abd7773`) |
 
 > **2026-06-09 false-start note**: A prior "observation period" was recorded as running, but on audit the gateway was a zombie — alive on stale code (`1aa1feb`, 7 commits behind HEAD), `/api/health` degraded with `code_updated_pending_restart` + `market_data_stale:1114min`. `paper_trader` had not fired in 11h; 294 opportunities produced **0** proposals/orders/fills. Restarted gateway → healthy, then built task 0.7 (deterministic self-heal) so this class of zombie auto-resolves within one 10-min health cycle. **Verified end-to-end 2026-06-09**: induced code drift → health flagged it → self-heal auto-restarted → supervisor respawned fresh code → drift cleared (audit `self_heal_restart: code_drift`). This was exactly the "False confidence" failure mode below — process alive ≠ system running.
 
