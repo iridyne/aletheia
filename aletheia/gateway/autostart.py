@@ -97,12 +97,23 @@ def _xml_escape(text: str) -> str:
 
 
 def _task_arguments() -> str:
-    """Build the task arguments, injecting __PYVENV_LAUNCHER__ if needed.
+    """Build the task arguments so the base pythonw.exe can see the venv's deps.
 
-    When using the real pythonw.exe (resolved through pyvenv.cfg), it needs
-    __PYVENV_LAUNCHER__ set to find the venv's site-packages. We pass a -c
-    bootstrap that sets the env var, activates the venv path, and then runs
-    the gateway CLI.
+    The task runs the base GUI-subsystem pythonw.exe (no Win11 console flash;
+    the venv's own pythonw is a Console-subsystem trampoline that WOULD flash).
+    But the base interpreter has no venv context, so we must make the venv's
+    site-packages importable from inside the -c bootstrap.
+
+    Mechanism: `site.addsitedir(<venv site-packages>)` — it takes effect the
+    instant it runs and also processes any `.pth` files, so the subsequent
+    `import aletheia.main` finds typer/fastapi/etc.
+
+    NOT `__PYVENV_LAUNCHER__`: CPython's site.py reads that env var at
+    interpreter STARTUP, before any -c code runs, so setting it inside the -c
+    string is always too late (the historical bug that made the watchdog exit 1
+    on every tick — base python launched venv-blind → `import typer` crashed).
+    Setting it via Popen env= works (spawn paths do that), but a scheduled task
+    has no such pre-launch hook, hence addsitedir here.
     """
     exe = sys.executable
     venv_dir = Path(exe).resolve().parent.parent
@@ -111,13 +122,13 @@ def _task_arguments() -> str:
 
     # If we resolved to a real python (different from venv shim), need bootstrap.
     if _exists(pyvenv_cfg) and str(Path(exe).resolve()) != str(Path(real_python).resolve()):
-        venv_python = str(Path(exe).resolve())
+        venv_site = str(venv_dir / "Lib" / "site-packages")
         project_root = str(_PROJECT_ROOT)
-        # Inline bootstrap: set __PYVENV_LAUNCHER__ so site.py finds the venv,
+        # Inline bootstrap: add the venv's site-packages (effective immediately),
         # then import and run the gateway CLI.
         return (
-            f'-c "import os,sys;'
-            f"os.environ['__PYVENV_LAUNCHER__']=r'{venv_python}';"
+            f'-c "import os,sys,site;'
+            f"site.addsitedir(r'{venv_site}');"
             f"os.chdir(r'{project_root}');"
             f"from aletheia.main import app;"
             f"sys.argv=['task','gateway','start','--no-browser'];"

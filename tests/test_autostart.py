@@ -122,6 +122,31 @@ def test_python_for_task_prefers_pythonw(monkeypatch):
     assert autostart._python_for_task() == r"C:\venv\Scripts\python.exe"
 
 
+def test_task_arguments_bootstrap_makes_venv_importable(monkeypatch):
+    """When the task runs the base pythonw (≠ venv shim), the -c bootstrap MUST
+    make the venv importable via site.addsitedir — NOT via __PYVENV_LAUNCHER__,
+    which site.py reads at interpreter startup (before -c) so setting it inside
+    the -c string is too late and leaves the base python venv-blind (the bug that
+    made the watchdog exit 1 on every tick → could never resurrect a dead gateway).
+    """
+    from aletheia.gateway import autostart
+    # venv shim as sys.executable; base pythonw as the resolved task interpreter.
+    monkeypatch.setattr(autostart.sys, "executable", r"C:\proj\.venv\Scripts\python.exe")
+    monkeypatch.setattr(autostart, "_exists", lambda p: str(p).endswith("pyvenv.cfg"))
+    monkeypatch.setattr(autostart, "_python_for_task", lambda: r"C:\base\python\pythonw.exe")
+
+    args = autostart._task_arguments()
+
+    # (a) Uses site.addsitedir pointing at the venv's site-packages (effective now).
+    assert "site.addsitedir(" in args
+    assert r"\.venv\Lib\site-packages" in args
+    # (b) Still imports + runs the gateway CLI.
+    assert "from aletheia.main import app" in args
+    assert "gateway" in args and "start" in args and "--no-browser" in args
+    # (c) Must NOT rely on __PYVENV_LAUNCHER__ (the too-late mechanism we removed).
+    assert "__PYVENV_LAUNCHER__" not in args
+
+
 # --- 3. enable audits autostart_enabled (actor=human) ---
 
 def test_enable_audits_human(tmp_path, monkeypatch):
