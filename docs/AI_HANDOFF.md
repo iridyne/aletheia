@@ -2,7 +2,23 @@
 
 ## Last Updated
 
-2026-06-09 (确定性自愈层 — 消灭僵尸态 + 假观察期纠正)
+2026-06-09 (DB 锁真根因修复 + 确定性自愈层 — 消灭僵尸态)
+
+## Recent Change (database is locked 真根因修复 — 2026-06-09)
+
+**这是整个交易管道实际停摆的真根因**(此前误以为是 LLM 不通 / agent 不触发 / 调度延迟）。
+
+**现象**：errors.log 累计 `database is locked` **1652 次**，所有写 job（ticker / exchange_sync / portfolio_snapshot / paper_trader / observer）失败，市场数据停更 90+min。
+
+**根因**（`storage/repositories.py` 的 `_insert`/`_update`/`_delete_old_rows`）：提交条件 `if not was_in_tx and not db.in_transaction: commit()`。但 Python sqlite3 默认 `isolation_level=''` 下，INSERT/UPDATE/DELETE 会**自动开启事务**，写完后 `db.in_transaction` 恒为 True → 条件恒 False → **commit 从不执行**。写事务悬挂、持有 WAL 写锁，每线程独立连接下其他写线程 `busy_timeout=10s` 后全部 locked。bug 自 `d403fcf` 存在，只在持续高频并发写下爆发。
+
+**修复（commit `a33dc86`，504 测试通过）**：三处改为 `if not was_in_tx: commit()`（看写**之前**的状态，非之后）。`transaction()` 嵌套路径不受影响（实证两种场景）。纯修复不改交易语义。
+
+**实证**：复现脚本确认 INSERT 后 in_transaction=True、旧条件求值 False；临时还原旧条件后新回归测试失败 → 证明测试真能抓 bug。新增 `test_storage.py` 两个测试用**真实 file DB + 第二个独立连接**验证写已提交、锁已释放（共享注入连接会掩盖此 bug）。
+
+**教训**：Python sqlite3 隐式事务反直觉——"写后判断要不要提交"必须看写**之前**的状态。测试陷阱:单一共享连接会掩盖锁 bug,要用真实 file DB + 独立第二连接。
+
+---
 
 ## Recent Change (确定性自愈层 + Phase 0 观察期重置 — 2026-06-09)
 

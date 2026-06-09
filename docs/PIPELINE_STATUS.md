@@ -193,10 +193,11 @@ risk_critic：已排入 scheduler（每 6h）
         ├─ Gateway 僵尸态修复：旧码 1aa1feb → 重启对齐新码        DONE
         │   （首次"观察期"为假启动：进程活着但跑旧码，
         │    paper_trader 11h 未触发，294 opp → 0 trade）
-        ├─ 确定性自愈层 (8a6e008)：drift/stale→重启, 端口清理,    DONE
-        │   LLM→告警；端到端验证 drift 自动消除 (≤10min)
+        ├─ 确定性自愈层 (8a6e008+abd7773)：drift/stale→重启,     DONE
+        │   端口清理, LLM→告警；限频持久化；端到端验证 drift 自动消除
+        ├─ DB 锁真根因修复 (a33dc86)：_insert/_update 写事务悬挂   DONE
+        │   持 WAL 锁(1652 次 locked)→ 提交条件修复;管道恢复
         └─ 72h observation period                              重新计时中
-            ⚠ 待解：database is locked 致 job 失败、数据停更（独立诊断）
 
   下一步  Phase 1 — Learning Quality Diagnosis
         └─ 14 天稳跑 + 学习质量人工审计

@@ -16,10 +16,13 @@
 
 **端到端当场抓到并修复一个严重 bug（commit `abd7773`）**：限频计数器原是内存态，但 `os._exit(42)` 重启会清空它 → cooldown 永不触发 → 持久 issue 致每 10min 无限重启。改为从持久化 audit.jsonl 读 restart 计数。502 测试通过，已验证跨重启有效。
 
-## 待诊断（独立的新发现，不属本任务）
+## DB 锁真根因 — 已修复（commit `a33dc86`）
 
-1. **`database is locked`** — errors.log 显示 market_observer/paper_trader/exchange_sync 等 job 因 DB 锁失败，市场数据停更（疑似遗留 python 进程或测试并发抢锁）。这可能是"重启后 agent 不触发"的真因。
-2. **`gateway restart` 实际走了 stop** — 早先一次 restart 的 audit 是 `gateway_stopped killed=True`，网关没起来。restart 路径在本环境可能有 bug。
+**`database is locked`(累计 1652 次、管道实际停摆的真根因)已定位并修复**：`storage/repositories.py` 的 `_insert`/`_update`/`_delete_old_rows` 提交条件写错——Python sqlite3 写后必在事务中，旧条件 `not db.in_transaction` 恒 False → commit 从不执行 → 写事务悬挂持 WAL 锁。改为 `if not was_in_tx: commit()`。504 测试通过，含真实 file DB + 独立连接的锁释放回归测试。端到端验证市场数据恢复中。
+
+## 仍待诊断（独立）
+
+- **`gateway restart` HTTP 端点杀 supervisor 链不重生** — 本环境复现两次，restart 后整个链死掉。与自愈用的 `os._exit(42)`（supervisor 重生 inner）路径不同，需单独查 `/api/gateway/restart`。
 
 ---
 
