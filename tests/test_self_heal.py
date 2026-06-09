@@ -28,12 +28,27 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
-    # Reset all module-level dedupe/rate-limit globals so suite order can't leak.
+    # Reset module-level dedupe globals so suite order can't leak. Rate limiting
+    # is NOT a global anymore — it reads from the audit log, which is fresh per
+    # tmp_path, so nothing to reset there.
     from aletheia.agent_runtime import health
     health.reset_llm_failures()
     monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
-    monkeypatch.setattr(health, "_self_heal_restart_times", [])
+
+
+def _seed_restart_audit(seconds_ago):
+    """Write a self_heal_restart audit event dated `seconds_ago` in the past, so
+    _can_self_restart() (which reads the persisted log) sees prior restart history
+    exactly as it would across a real os._exit restart."""
+    from datetime import datetime, timedelta
+    from aletheia.files.jsonl import write_audit
+    ts = (datetime.utcnow() - timedelta(seconds=seconds_ago)).isoformat()
+    write_audit({
+        "actor": "system", "source": "self_heal", "event_type": "self_heal_restart",
+        "entity_type": "gateway", "entity_id": "gateway",
+        "timestamp": ts, "message": "Self-heal restart: code_drift",
+    })
 
 
 def _patch_health(monkeypatch, issues):
@@ -114,16 +129,15 @@ def test_stale_feed_triggers_restart(tmp_path, monkeypatch):
     assert restart_rows and "market_data_stale" in restart_rows[-1]["message"]
 
 
-# --- Rate limiting ---
+# --- Rate limiting (reads PERSISTED audit log — survives restart) ---
 
 def test_cooldown_blocks_second_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
-    import time
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
-    # Seed a restart that happened "just now" — within the 1800s default cooldown.
-    monkeypatch.setattr(health, "_self_heal_restart_times", [time.monotonic()])
+    # A restart happened 60s ago — within the 1800s default cooldown.
+    _seed_restart_audit(seconds_ago=60)
 
     exits, sent = _patch_health(monkeypatch, ["code_updated_pending_restart:a..b"])
     health.run_health_check()
@@ -137,18 +151,37 @@ def test_hourly_ceiling_blocks_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
-    import time
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
     # Two restarts within the hour but BOTH older than the 1800s cooldown, so the
     # cooldown rule passes and only the per-hour ceiling (default 2) can block.
-    now = time.monotonic()
-    monkeypatch.setattr(health, "_self_heal_restart_times", [now - 3000, now - 2500])
+    _seed_restart_audit(seconds_ago=3000)
+    _seed_restart_audit(seconds_ago=2500)
 
     exits, sent = _patch_health(monkeypatch, ["code_updated_pending_restart:a..b"])
     health.run_health_check()
 
     assert exits == []
     assert any("ceiling" in m for m in sent)
+
+
+def test_rate_limit_survives_simulated_restart(tmp_path, monkeypatch):
+    """The bug end-to-end testing caught: a memory-based limit is wiped by the
+    os._exit restart, so it loops every cycle. This proves the limit is read from
+    the persisted audit log — a restart event written by a PRIOR process (here,
+    seeded directly) is honored by THIS process with no shared in-memory state."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    import aletheia.gateway.pidfile as pidfile
+    monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
+    # Prior process restarted 30s ago and then exited; only the audit row remains.
+    _seed_restart_audit(seconds_ago=30)
+
+    # A persistent, restart-resistant issue (e.g. external feed down) recurs.
+    exits, sent = _patch_health(monkeypatch, ["market_data_stale:200min"])
+    health.run_health_check()
+
+    assert exits == []  # MUST NOT restart again — cooldown read from disk
+    assert any("cooldown" in m for m in sent)
 
 
 # --- Master toggle off -> legacy alert-only ---

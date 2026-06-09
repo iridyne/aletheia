@@ -9,7 +9,6 @@ Alerts go through the existing Telegram bot when configured.
 import asyncio
 import logging
 import os
-import time
 
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
@@ -27,13 +26,16 @@ _last_alerted_unhealthy = False
 # process. The real restart is exit(42) → the supervisor respawns fresh code,
 # mirroring POST /api/gateway/restart.
 _os_exit = os._exit
-# monotonic() timestamps of self-heal restarts, for rate limiting. In-process
-# only (like _last_alerted_unhealthy): a restart empties this, but the
-# supervisor's own 5-restarts/600s budget is the disk-less backstop against a
-# fast loop, and a fresh process re-detecting drift is a genuine new event.
-_self_heal_restart_times: list[float] = []
 # De-dupe consecutive "self-heal wanted to act but was suppressed" alerts.
+# In-process is fine here: a suppressed alert does NOT restart, so the flag
+# survives across health cycles within one process; it only needs to reset when
+# health recovers (done in run_health_check).
 _self_heal_suppressed_alerted = False
+# Rate limiting reads from the PERSISTED audit log (self_heal_restart events),
+# NOT in-process memory — because the restart action (os._exit) wipes any
+# in-memory counter, so a memory-based limit can never see "I just restarted"
+# and would loop every health cycle on any restart-resistant issue. See
+# _recent_self_heal_restarts().
 
 # In-process count of consecutive LLM-provider failures (reset on any success).
 # Lets compute_health() detect "alive but the model backend is down" — a zombie
@@ -158,25 +160,61 @@ def _send_alert(message: str) -> None:
         logger.warning("health alert send failed: %s", e)
 
 
+def _recent_self_heal_restarts() -> list[float]:
+    """Ages (seconds-ago) of self_heal_restart events in the last hour, oldest→newest.
+
+    Reads from the PERSISTED audit log, so the count survives the os._exit(42)
+    that a restart performs. A memory counter cannot: the restart wipes it, so
+    the next process would see zero history and restart again every cycle. Audit
+    timestamps are naive-UTC isoformat (write_audit uses datetime.utcnow()); we
+    compare against utcnow() the same way. Best-effort: returns [] on any error
+    (fail-open is acceptable — the supervisor 5/600 budget is the last backstop)."""
+    from datetime import datetime
+    from aletheia.files.jsonl import read_jsonl
+    ages: list[float] = []
+    now = datetime.utcnow()
+    try:
+        for e in read_jsonl("audit.jsonl", limit=200):
+            if e.get("event_type") != "self_heal_restart":
+                continue
+            ts = e.get("timestamp")
+            if not ts:
+                continue
+            try:
+                dt = datetime.fromisoformat(ts)
+            except ValueError:
+                continue
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)  # normalise to naive-UTC for subtraction
+            age = (now - dt).total_seconds()
+            if 0 <= age <= 3600:
+                ages.append(age)
+    except Exception as e:
+        logger.warning("self-heal rate-limit audit read failed: %s", e)
+        return []
+    return sorted(ages, reverse=True)  # oldest (largest age) first
+
+
 def _trigger_restart(reason: str) -> None:
     """Audit FIRST (synchronous append completes before exit), then exit(42) so
     the supervisor respawns with fresh code. Mirrors POST /api/gateway/restart.
 
     Only call after _can_self_restart() has confirmed a supervisor/autostart will
-    bring the process back — otherwise this would permanently kill the gateway."""
+    bring the process back — otherwise this would permanently kill the gateway.
+    The audit write is also what the NEXT process's rate limit reads back."""
     write_audit({
         "actor": "system", "source": "self_heal", "event_type": "self_heal_restart",
         "entity_type": "gateway", "entity_id": "gateway",
         "message": f"Self-heal restart: {reason}",
     })
-    _self_heal_restart_times.append(time.monotonic())
     _send_alert(f"self-heal restart ({reason}) — respawning")
     _os_exit(42)
 
 
 def _can_self_restart() -> tuple[bool, str]:
     """Gate a self-heal restart: a supervisor/autostart must exist to respawn us,
-    and rate limits must not be exceeded. Returns (allowed, reason_if_blocked)."""
+    and rate limits (read from the persisted audit log) must not be exceeded.
+    Returns (allowed, reason_if_blocked)."""
     from aletheia.gateway.pidfile import supervisor_owns_pid
     if not supervisor_owns_pid():
         # No supervisor owns the pidfile — check the OS-level autostart watchdog.
@@ -187,11 +225,10 @@ def _can_self_restart() -> tuple[bool, str]:
         except Exception:
             return (False, "no supervisor/autostart — restart would be fatal")
 
-    now = time.monotonic()
-    recent = [t for t in _self_heal_restart_times if now - t <= 3600]
-    _self_heal_restart_times[:] = recent
+    recent = _recent_self_heal_restarts()  # ages in seconds, last hour, oldest→newest
     cfg = load_config()
-    if recent and (now - recent[-1]) < cfg.health.self_heal_min_interval_sec:
+    if recent and recent[-1] < cfg.health.self_heal_min_interval_sec:
+        # recent[-1] = smallest age = most recent restart
         return (False, "cooldown — too soon since last self-heal restart")
     if len(recent) >= cfg.health.self_heal_max_per_hour:
         return (False, "hourly self-heal restart ceiling reached")
