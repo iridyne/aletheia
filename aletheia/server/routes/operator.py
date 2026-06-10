@@ -222,8 +222,28 @@ async def operator_wake():
 async def operator_command(req: OperatorCommandRequest):
     from aletheia.agent_shell.runtime import AgentShellRuntime
 
+    cfg = load_config()
+    append_message(
+        session_id=cfg.operator.main_session_id,
+        role="user",
+        content={"text": req.input},
+        message_type="command",
+        related_event_id=None,
+    )
     runtime = AgentShellRuntime()
-    return await runtime.handle(req.input)
+    result = await runtime.handle(req.input)
+    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    append_message(
+        session_id=cfg.operator.main_session_id,
+        role="assistant",
+        content={
+            "text": payload.get("response"),
+            "intent": payload.get("intent"),
+        },
+        message_type="response",
+        related_event_id=None,
+    )
+    return result
 
 
 @router.post("/internal/heartbeat")

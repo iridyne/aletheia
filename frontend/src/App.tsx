@@ -12,6 +12,7 @@ import Charts from './pages/Charts'
 import Settings from './pages/Settings'
 import RiskControls from './pages/RiskControls'
 import NewsIntel from './pages/NewsIntel'
+import CommandCenter from './pages/CommandCenter'
 // ActivityTimeline temporarily hidden — content overlapped Overview's Agent Activity
 // card (runs duplicated) and the global-shell strip lacked viewport-follow + click
 // drill-down. To revive: restore the import + the <ActivityTimeline /> mount below,
@@ -60,6 +61,7 @@ export const NAV: NavGroup[] = [
   {
     group: 'Operate',
     items: [
+      { to: '/command-center', label: 'Command Center' },
       { to: '/risk', label: 'Risk & Controls' },
       { to: '/settings', label: 'Settings' },
       { to: '/news', label: 'News Intel' },
@@ -87,6 +89,7 @@ const PERMISSION_MODES = ['Observe', 'Paper', 'Full'] as const
 function StatusBar() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
+  const { data: operator } = useQuery({ queryKey: ['operator-status'], queryFn: api.getOperatorStatus, refetchInterval: 10000 })
   const { data: ks } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, refetchInterval: 10000 })
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.getHealth, refetchInterval: 10000 })
@@ -141,8 +144,8 @@ function StatusBar() {
 
   const latestRun = (runs as any[])[0]
   let heartbeatText = ''
-  if (latestRun?.ended_at) {
-    const ts = latestRun.ended_at
+  if ((operator as any)?.last_seen_at) {
+    const ts = String((operator as any).last_seen_at)
     const t = new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime()
     const mins = Math.floor((Date.now() - t) / 60000)
     heartbeatText = mins < 1 ? '<1m' : `${mins}m`
@@ -154,8 +157,28 @@ function StatusBar() {
   const killLight = killed ? 'red' : 'muted'
 
   // Top-line state word + tone.
-  const stateWord = killed ? 'KILL' : !running ? 'Stopped' : paused ? 'Paused' : 'Running'
-  const stateTone = killed ? 'red' : !running ? 'red' : paused ? 'yellow' : 'green'
+  const operatorStatus = String((operator as any)?.status || 'offline')
+  const operatorMode = String((operator as any)?.mode || (paused ? 'Paused' : 'Observing'))
+  const stateWord = killed
+    ? 'KILL'
+    : !running
+      ? 'Stopped'
+      : operatorStatus === 'stale'
+        ? 'Stale'
+        : paused
+          ? 'Paused'
+          : operatorMode
+  const stateTone = killed
+    ? 'red'
+    : !running
+      ? 'red'
+      : operatorStatus === 'stale'
+        ? 'yellow'
+        : operatorStatus === 'offline'
+          ? 'red'
+          : paused
+            ? 'yellow'
+            : 'green'
 
   return (
     <div className="topbar-status">
@@ -168,7 +191,7 @@ function StatusBar() {
           {driftIssue && <span className="dot dot-yellow" title={`Code drift: ${driftRange} — restart needed`} />}
         </span>
         {heartbeatText && (
-          <span className="status-cluster-hb mono" title="Time since last agent run">
+          <span className="status-cluster-hb mono" title="Time since last operator heartbeat">
             <span className="dot dot-green heartbeat" />{heartbeatText}
           </span>
         )}
@@ -206,13 +229,21 @@ function StatusBar() {
                 <td className="mono">{perm || '—'}</td>
               </tr>
               <tr>
+                <th>Operator</th>
+                <td className="mono">
+                  {operatorStatus}
+                  {operatorMode ? ` · ${operatorMode}` : ''}
+                  {(operator as any)?.session_id ? ` · ${(operator as any).session_id}` : ''}
+                </td>
+              </tr>
+              <tr>
                 <th>Kill Switch</th>
                 <td><span className={`dot dot-${killLight}`} /> {killed ? 'engaged' : 'inactive'}</td>
               </tr>
               {latestRun && (
                 <tr>
                   <th>Last Run</th>
-                  <td className="mono">{latestRun.agent_name}{heartbeatText ? ` · ${heartbeatText} ago` : ''}</td>
+                  <td className="mono">{latestRun.agent_name}</td>
                 </tr>
               )}
               {driftIssue && (
@@ -327,6 +358,7 @@ export default function App() {
             <Route path="/positions" element={<TradesPositions />} />
             <Route path="/strategies" element={<StrategyLifecycle />} />
             <Route path="/charts" element={<Charts />} />
+            <Route path="/command-center" element={<CommandCenter />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/risk" element={<RiskControls />} />
             <Route path="/news" element={<NewsIntel />} />

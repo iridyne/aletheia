@@ -21,10 +21,14 @@ export const api = {
   // topbar restart button when the health endpoint reports code_updated_pending_restart.
   restartGateway: () => post<{ mode: 'warm' | 'cold'; ok: boolean; message: string }>('/gateway/restart'),
   getStatus: () => fetchJson<Record<string, unknown>>('/status'),
+  getOperatorStatus: () => fetchJson<any>('/operator/status'),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
 
   pause: () => post('/gateway/pause'),
   resume: () => post('/gateway/resume'),
+  pauseOperator: () => post('/operator/pause'),
+  resumeOperator: () => post('/operator/resume'),
+  wakeOperator: () => post('/operator/wake'),
 
   setPermissionMode: (mode: string) => post('/settings/permission-mode', { mode }),
   setExchangeMode: (mode: string) => post('/settings/exchange-mode', { mode }),
@@ -185,4 +189,9 @@ export const api = {
   // Command Center
   sendCommand: (input: string, context?: Record<string, string>) =>
     post<any>('/command', { input, context }),
+  sendOperatorCommand: (input: string, context?: Record<string, string>) =>
+    post<any>('/operator/command', { input, context }),
+  getOperatorSessions: () => fetchJson<any[]>('/operator/sessions'),
+  getOperatorSession: (id: string) => fetchJson<any>(`/operator/sessions/${encodeURIComponent(id)}`),
+  getOperatorTasks: () => fetchJson<any[]>('/operator/tasks'),
 }

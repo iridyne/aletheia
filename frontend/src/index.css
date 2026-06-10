@@ -553,6 +553,156 @@ tr.clickable:hover { background: var(--surface-2); }
   font-size: 0.82rem; line-height: 1.5; color: var(--text); white-space: pre-wrap;
 }
 
+/* ---------- Command Center ---------- */
+.command-center-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.95fr);
+  gap: var(--space-4);
+}
+@media (max-width: 1100px) {
+  .command-center-layout { grid-template-columns: 1fr; }
+}
+.command-center-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 720px;
+}
+.command-center-side {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+}
+.command-center-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.command-stream {
+  flex: 1;
+  min-height: 360px;
+  max-height: 620px;
+  overflow-y: auto;
+  padding: var(--space-4) 0;
+}
+.command-empty {
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.02);
+  text-align: center;
+  padding: var(--space-4);
+}
+.command-msg {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.command-msg.user {
+  border-color: rgba(79, 156, 255, 0.35);
+  background: rgba(79, 156, 255, 0.08);
+}
+.command-msg.assistant {
+  border-color: rgba(122, 195, 106, 0.28);
+}
+.command-msg-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.command-msg-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.92rem;
+  color: var(--text);
+}
+.command-composer {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+.command-composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 108px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 0.9rem 1rem;
+  font: inherit;
+}
+.command-composer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+@media (max-width: 700px) {
+  .command-composer-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+.cc-guidance {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--text);
+}
+.cc-guidance li + li { margin-top: 0.55rem; }
+.cc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.cc-list-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+}
+.cc-list-item.selected {
+  border-color: var(--border-2);
+  background: rgba(79, 156, 255, 0.08);
+}
+.cc-list-item.static {
+  cursor: default;
+}
+.cc-inspector {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  background: #0d1319;
+  color: #d8e2ef;
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+
 /* ---------- Cockpit Grid ---------- */
 .cockpit-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);

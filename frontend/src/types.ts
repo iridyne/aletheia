@@ -185,3 +185,95 @@ export interface AuditEvent {
   details?: string
   created_at: string
 }
+
+export interface OperatorStatus {
+  agent_id: string
+  status: string
+  mode: string
+  permission_mode: string
+  is_busy: boolean
+  current_task_id: string | null
+  current_intent: string | null
+  queue_size: number
+  last_seen_at: string | null
+  last_success_at: string | null
+  last_error: string | null
+  model_provider: string | null
+  session_id: string
+  stale: boolean
+  stale_after_sec: number
+  heartbeat_age_sec?: number
+}
+
+export interface OperatorTask {
+  id: string
+  task_type: string
+  status: string
+  priority: string
+  created_by: string
+  assigned_to: string
+  input_data: Record<string, unknown> | unknown[]
+  output_data: Record<string, unknown> | unknown[] | null
+  error: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+}
+
+export interface OperatorMessage {
+  id: string
+  session_id: string
+  role: string
+  message_type: string
+  content: Record<string, unknown> | string
+  related_event_id: string | null
+  created_at: string
+}
+
+export interface OperatorCommandAudit {
+  id: string
+  session_id: string
+  command: string
+  parameters: Record<string, unknown>
+  permitted: boolean
+  result_summary: string | null
+  created_at: string
+}
+
+export interface OperatorArtifact {
+  id: string
+  task_id: string | null
+  session_id: string | null
+  artifact_type: string
+  title: string
+  content: Record<string, unknown> | string
+  created_at: string
+}
+
+export interface OperatorSessionSummary {
+  id: string
+  user_input: string
+  intent: string | null
+  command: string | null
+  response: string | null
+  permitted: number
+  duration_ms: number | null
+  created_at: string
+  message_count: number
+  command_count: number
+}
+
+export interface OperatorSessionDetail {
+  session: OperatorSessionSummary
+  messages: OperatorMessage[]
+  commands: OperatorCommandAudit[]
+  artifacts: OperatorArtifact[]
+}
+
+export interface OperatorCommandResponse {
+  intent: string
+  risk_level: string
+  response: string
+  action: Record<string, unknown> | null
+  needs_confirmation: boolean
+}
