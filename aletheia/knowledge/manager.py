@@ -89,14 +89,17 @@ def create_post_trade_review(
     content: str,
     metadata: dict | None = None,
     strategy_id: str | None = None,
+    confidence: str = "medium_confidence",
 ) -> KnowledgeItem:
+    if confidence not in VALID_CONFIDENCES:
+        raise ValueError(f"Invalid confidence: {confidence}")
     path = write_post_trade_review(title, content, metadata)
     item = KnowledgeItem(
         item_type="post_trade_review",
         title=title,
         file_path=str(path),
         strategy_id=strategy_id,
-        confidence="medium_confidence",
+        confidence=confidence,
     )
     try:
         insert_knowledge_item(item)

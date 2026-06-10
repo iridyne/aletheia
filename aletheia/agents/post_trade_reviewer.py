@@ -55,11 +55,16 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
             errors.append(err)
             content = f"Post-trade review (LLM unavailable). Context: {ctx}"
 
+        # Promote to high_confidence (the retrieval quality gate) only when the LLM
+        # actually produced the review AND there were real fills behind it; empty or
+        # fallback reviews stay medium so noise can't enter the experience loop.
+        confidence = "high_confidence" if (not err and strat_fills) else "medium_confidence"
         item = create_post_trade_review(
             "Post-Trade Review",
             content,
             metadata={"source": "post_trade_reviewer"},
             strategy_id=strategy_id,
+            confidence=confidence,
         )
         log_tool(run_id, "create_post_trade_review", "observe", True, output=item.id)
         outputs.append(f"post_trade_review:{item.id}")

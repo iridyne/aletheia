@@ -166,3 +166,94 @@ async def test_designer_injects_and_survives_offline_llm(tmp_path, monkeypatch):
     assert "retrieve_lessons" in names
     assert "load_playbooks" in names
     reset_db()
+
+
+# --- producer-side promotion: substantive lessons reach the retrieval gate (§6) ---
+# Producers write medium_confidence by default; only LLM-produced, evidence-backed
+# reviews/critiques are promoted to high_confidence so they actually become retrievable.
+
+def _seed_filled_short(strategy_id: str = "s1") -> None:
+    from aletheia.storage.models import TradeProposal, Order, Fill
+    repo.insert_trade_proposal(TradeProposal(id="p1", strategy_id=strategy_id, symbol="SOL/USDT",
+                                             market_type="futures", direction="short"))
+    repo.insert_order(Order(id="o1", proposal_id="p1", symbol="SOL/USDT", market_type="futures",
+                            direction="short", order_type="market", quantity=0.3,
+                            execution_mode="bitget_demo"))
+    repo.insert_fill(Fill(id="f1", order_id="o1", fill_price=140.0, fill_quantity=0.3))
+
+
+def test_post_trade_review_confidence_gates_retrieval(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.manager import create_post_trade_review
+    from aletheia.knowledge.retrieval import retrieve_lessons
+
+    # Identical bodies; only the high_confidence one may be recalled.
+    body = "Trailing stop on the SOL short would have captured more downside; the exit was early."
+    create_post_trade_review("High conf exit review", body, confidence="high_confidence")
+    create_post_trade_review("Medium conf exit review", body, confidence="medium_confidence")
+
+    res = retrieve_lessons("trailing stop downside exit", k=5)
+    assert len(res) == 1
+    assert res[0].confidence == "high_confidence"
+    assert res[0].item_type == "post_trade_review"
+    reset_db()
+
+
+async def test_post_trade_reviewer_promotes_substantive_lessons(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
+    from aletheia.knowledge.retrieval import retrieve_lessons
+    _seed_filled_short()
+
+    async def ok_llm(*a, **k):
+        return ("Trailing stop on the SOL short would have captured more downside; exit was early.", None)
+    monkeypatch.setattr("aletheia.agents.post_trade_reviewer.llm_complete", ok_llm)
+
+    result = await run_agent("post_trade_reviewer", trigger_type="manual")
+    assert result["status"] in ("completed", "completed_with_errors")
+
+    items = repo.list_knowledge_items(item_type="post_trade_review")
+    assert items and all(i["confidence"] == "high_confidence" for i in items)
+    # The promoted lesson is actually retrievable — the whole point of the loop.
+    assert len(retrieve_lessons("trailing stop downside exit", item_types=["post_trade_review"], k=5)) >= 1
+    reset_db()
+
+
+async def test_post_trade_reviewer_keeps_fallback_lessons_medium(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
+    _seed_filled_short()
+
+    async def down_llm(*a, **k):
+        return ("", "LLM unavailable")
+    monkeypatch.setattr("aletheia.agents.post_trade_reviewer.llm_complete", down_llm)
+
+    result = await run_agent("post_trade_reviewer", trigger_type="manual")
+    assert result["status"] in ("completed", "completed_with_errors")
+    items = repo.list_knowledge_items(item_type="post_trade_review")
+    # Fallback text behind an offline LLM must stay out of the retrieval gate.
+    assert items and all(i["confidence"] == "medium_confidence" for i in items)
+    reset_db()
+
+
+async def test_risk_critic_promotes_substantive_lessons(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
+    from aletheia.storage.models import TradeProposal
+    from aletheia.knowledge.retrieval import retrieve_lessons
+    repo.insert_trade_proposal(TradeProposal(id="p1", strategy_id="s1", symbol="BTC/USDT",
+                                             market_type="futures", direction="long"))
+
+    async def ok_llm(*a, **k):
+        return ("Position sizing crept up after wins; cap risk per trade to limit drawdown clustering.", None)
+    monkeypatch.setattr("aletheia.agents.risk_critic.llm_complete", ok_llm)
+
+    result = await run_agent("risk_critic", trigger_type="manual")
+    assert result["status"] in ("completed", "completed_with_errors")
+    items = repo.list_knowledge_items(item_type="research_note")
+    assert items and all(i["confidence"] == "high_confidence" for i in items)
+    assert len(retrieve_lessons("position sizing risk drawdown", item_types=["research_note"], k=5)) >= 1
+    reset_db()
