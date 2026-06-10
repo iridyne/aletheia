@@ -1,107 +1,51 @@
 # Current Task
 
-## Status: Phase 0 72h 观察期已启动（2026-06-10）— gateway 在跑、bitget_demo 真单已落交易所
-
-> **两条 blocker 全部清除**：(1) LLM = Databricks gateway 已接通；(2) Bitget demo 凭证已由用户提供并存入加密 secret store（**live 凭证用户也给了但我刻意未存**——Phase 0 无需，live 锁到 Phase 6）。分支已合并入 master（6 commit，未 push）。
->
-> **bitget_demo 真单已验证落交易所**：paper_trader 下出 `exchange_order_id=1448403690041016321`，Bitget demo 侧 `get_positions` 可见 SOLUSDT short qty0.3、demo equity≈197.97。满足 gate 的 "demo orders visible on Bitget"。
->
-> **当前运行态**：gateway running (supervised, PID 见 pidfile)、health=healthy、scheduler 15 job 自主触发（已观察到 15min cadence 自发 market_observer）、`permission_mode=Paper`、`exchange.mode=demo`、`paper_execution_mode=bitget_demo`、`live.state=live_disabled`、kill_switch off。已有一个 `paper_running` 策略供 opportunity 绑定。
->
-> **观察期计时起点**：2026-06-10（本次 gateway 启动后首个 health 周期）。判据见下方 ROADMAP Phase 0 observation gate（72h 无崩 + 无 code_drift 自愈 / observer 每 15min 产 opp / fill≥5 / 平仓≥2 / reviewer+critic 有产出 / demo 单交易所可见）。
->
-> **一个待办（非 blocker，需人决定）**：autostart 登录看门狗当前 `schtasks_error`（计划任务未注册）→ gateway 仅在本会话/本次登录存活，**重启/注销后不会自动复活**。要跨重启无人值守需注册 Windows 计划任务（持久系统变更）。当前 supervisor 自愈对"进程崩溃/code drift/端口"有效，但对"整机重启"无效。
+> **本文件只写意图(计划 / 待办 / 阶段目标),不写运行态事实。**
+> Gateway 是否在跑、凭证是否就位、观察期跑了多久、demo 单是否落交易所——这些是
+> **每台机器本地的、随时间变化的事实**,写进 git 必然在另一台机器上过期。
+> **要知道真实状态,运行 `aletheia doctor`**(只读、零副作用,是事实的唯一来源)。
+> 双机切换标准流程见 `docs/DEV_PROTOCOL.md`。
 
 ---
 
-## (历史) Status: Phase 0 全闭环已跑通(paper_internal)，待决定是否等 Bitget demo 凭证 / 启动 72h（2026-06-10 早些）
+## 当前阶段:Phase 0 — 跑通并稳定一个 72h 无人值守 paper 观察窗口
+
+**目标(机器无关,长期有效)**:让闭环在 `bitget_demo`(真实模拟盘)形态下连续无人值守
+运行 72h,证明"闭环在运转"(不是盈利)。
+
+**Phase 0 观察门(72h 后逐条对照;判据稳定,事实用 `doctor` 取):**
+- [ ] 网关 72h+ 无崩(health 非 dead)且窗口内无 `code_drift` 自愈重启
+      (有 drift 重启 = 期间有人 commit 了 → 计时作废)
+- [ ] market_observer 每 ~15min 产 opportunity(>70% 非 error)
+- [ ] paper_trader 累计 **fill ≥ 5**(计 fill 不计 position 行——同标的同向合并只是展示口径)
+- [ ] position_manager 累计平仓 ≥ 2
+- [ ] post_trade_reviewer + risk_critic 有产出(knowledge_items 持续增长)
+- [ ] demo 真单在 Bitget 侧可见(`get_open_orders`/`get_positions` 能查到)
+
+> **判据性质**:衡量"闭环在运转",**不衡量盈利**(盈利是 Phase 1+ 的独立问题)。
+> **观察项(非判据)**:持仓集中在单一标的是 Phase 0 正常现象,多标的分散是 Phase 2A。
+
+**铁律**:观察窗口期间不 commit(任何 commit 移动 HEAD → 触发 code_drift 自愈重启 →
+计时作废)。唯一例外是"观察形态本身升级"(如 paper_internal → bitget_demo),
+那是主动的更高保真度替换,不是噪音污染——升级落地后新窗口内仍守此律。
+
+## 待办(下一步可做的事 — 不含"现在状态如何")
+
+1. **战略冻结生效**:Phase 0 观察门全绿之前,roadmap 冻结,只做稳定性 +
+   `doctor` 这类"减人工"的确定性工具。地基不稳不盖楼。
+2. **Windows 无人值守加固**(Task 3):autostart 看门狗 schtasks 注册可靠性、
+   gateway 重启/注销/整机重启后的自动复活。这是 72h 真正无人值守的前提。
+3. **经验闭环质量门**(已在工作区,待提交):post_trade_reviewer / risk_critic 仅在
+   LLM 真产出 + 有真实活动时升 `high_confidence`,防噪音进检索。
+
+## 下一阶段(Phase 0 门全绿后,需显式授权才启动)
+
+见 `docs/ROADMAP.md`。Phase 1 = 稳跑验证 + 学习质量诊断;Phase 2 = 经验闭环。
+**不在 Phase 0 稳跑证明前启动任何 Phase 1+ 工作。**
 
 ---
 
-## (历史) Status: 切换到 Bitget demo 真实模拟盘，观察期重置（2026-06-09 cutover）
+## 历史交接
 
-**这次 commit 为何打破"观察期内不 commit"铁律**：因为**观察形态本身变了**——paper 交易从「本地 `paper_internal` 撮合 + 现货 spot」整体切到「Bitget demo 真实模拟盘下单 + USDT 永续合约」。旧观察基线（现货 / 本地撮合）随之作废：不是被 drift 噪音污染而重算，而是被一次**主动的、更高保真度的形态升级**取代。所以此处 commit 是正当的——它让 HEAD 前进 → 网关重启时启用 demo 代码 → 观察期在新形态下重新计时。**升级落地后，新观察窗口内仍守"不 commit"铁律。**
-
-**为什么切 demo**（架构原则，用户确立）：paper trading 应优先用交易所/券商自己的 demo/模拟盘接口（真实 API、交易所侧有记录），只有平台不提供时才退回本地模拟撮合。Bitget 提供 demo（`paptrading:1` header，仅 USDT 永续），所以 paper 默认走 `bitget_demo` 真实下单；`paper_internal` 保留为 demo 不可用时的秒切 fallback。详见 `docs/DECISIONS.md` 的 demo wiring 三节。
-
-**已验证**（2026-06-09，用户授权手动一笔真单）：真实 demo 开仓单 `1448153278595629057`（@62846.5，价取交易所确认 priceAvg）+ hedge-mode 平仓单 `1448153285251989505`（@62841.7），交易所走平、本地账本一致。三个被 mock 掩盖的潜伏 bug 同时修掉（mix body 缺 marginCoin/tradeSide；canonical→Bitget symbol 未转换；记的是请求价而非成交价）。
-
-**无人值守保障已全部就位**（沿用上一轮）：autostart 看门狗 enabled（登录自起 + PT5M 复活死掉的 supervisor）；self_heal_enabled（drift/stale 自动重启、端口清理）；scheduler 运行；permission_mode=Paper（live 禁用）；kill_switch 今晨被日损自动触发，本次 cutover 第 2 步已清。
-
-**起点基线 @ cutover**：旧 spot/local 基线作废。网关在 HEAD（本次 commit）+ demo-futures 形态下重启后，以重启后首个 health 周期的计数为新起点（opportunities/positions/orders/fills 重新计）。
-
-**观察门（72h 后对照，全部需通过）**——形态为 demo-futures，判据沿用 fill 口径：
-- [ ] 网关 72h+ 无崩（health=healthy/degraded，非 dead）**且窗口内无 `code_drift` 自愈重启**（有则说明有人 commit 了，计时作废）
-- [ ] market_observer 每 15min 产 opportunity（>70% 非 error）
-- [ ] paper_trader 累计 **fill ≥ 5**（按项目约定：每个 15min 周期开仓/加仓 = 一次开仓动作；`positions` 表把同标的同向合并成 1 行只是展示口径，所以**计 fill 不计 position 行**）
-- [ ] position_manager 累计平仓 ≥ 2（demo 平仓走真实 hedge-mode 反向单，交易所须同步走平）
-- [ ] post_trade_reviewer + risk_critic 有产出（knowledge_items 持续增长）
-- [ ] **demo 真单在 Bitget 侧可见**：`get_open_orders`/`get_positions` 能查到 paper_trader 下的真实 demo 单，exchange_sync 反映 demo 权益/仓位
-
-> **观察项（非判据）**：持仓集中在单一标的（paper_trader 每周期挑最优 opportunity，对同标的同向加仓）。**Phase 0 视为正常**——门只证"闭环在跑"。多标的分散是 Phase 2A 的事，不作稳定性门。
-> **判据性质**：以上衡量"闭环在运转"，**不衡量盈利**——盈利是 Phase 1+ 的独立问题（见 ROADMAP "False confidence" 失败模式）。
-
----
-
-## 已完成：网关僵尸态修复 + 确定性自愈层 + DB 锁根因
-
-## 2026-06-09 网关僵尸态修复 + 确定性自愈层
-
-**审计发现**：声称"72h 观察期进行中"是假象。网关进程活着，但跑旧码 `1aa1feb`（落后 HEAD 7 commit），`/api/health` 已 degraded（`code_updated_pending_restart` + `market_data_stale:1114min`）11 小时无人理会；`paper_trader` 11h 未触发；294 opportunity → 0 trade。根因：`run_health_check()` 每 10min 算出信号、发告警，却不采取任何自愈动作。
-
-**已交付**（commit `8a6e008`，501 测试通过）：
-- `pidfile.supervisor_owns_pid()` — 线程上下文判定有无 supervisor 兜底
-- `HealthConfig` 加 6 个 `self_heal_*` 字段（默认开；限频 30min/2hr 严于 supervisor 5/600）
-- `health.run_health_check()` 加确定性自愈分支：code drift / stale → 守卫+限频重启；孤儿端口 → 清理（排除 self+supervisor）；LLM/kill_switch → 仅告警
-- 12 个回归测试
-
-**端到端验证通过**：制造空 commit → drift 被检测 → 自愈自动重启 → supervisor 重生新码 → drift 清除（audit `self_heal_restart: code_drift`）。今天那类僵尸态以后会在一个 health 周期（≤10min）内自动消除。
-
-**端到端当场抓到并修复一个严重 bug（commit `abd7773`）**：限频计数器原是内存态，但 `os._exit(42)` 重启会清空它 → cooldown 永不触发 → 持久 issue 致每 10min 无限重启。改为从持久化 audit.jsonl 读 restart 计数。502 测试通过，已验证跨重启有效。
-
-## DB 锁真根因 — 已修复（commit `a33dc86`）
-
-**`database is locked`(累计 1652 次、管道实际停摆的真根因)已定位并修复**：`storage/repositories.py` 的 `_insert`/`_update`/`_delete_old_rows` 提交条件写错——Python sqlite3 写后必在事务中，旧条件 `not db.in_transaction` 恒 False → commit 从不执行 → 写事务悬挂持 WAL 锁。改为 `if not was_in_tx: commit()`。504 测试通过，含真实 file DB + 独立连接的锁释放回归测试。端到端验证市场数据恢复中。
-
-## restart "bug" — 已澄清为误判（2026-06-09）
-
-先前怀疑 `gateway restart` 杀链不重生。诊断后**证实是误判**：
-- audit 显示会话开始那次是 `gateway_stopped (cli)`，根本没有 `gateway_restart` 事件——是 CLI `gateway restart`（= do_stop + do_start）里 do_start 静默失败，**因为当时网关跑旧代码 `1aa1feb` + 我同时跑测试抢 DB 锁**，叠加造成启动失败假象。
-- 三个真修复到位后实测：CLI `gateway restart` 干净成功（`03:21:28` stop → 新 supervisor 23084 重生 → health=healthy → boot 对齐 HEAD → drift 自动清除 → 市场数据持续流动）。
-- restart 命令本身无 bug。
-
-## 系统现状（2026-06-09 收尾）
-
-健康、自管理、数据实时。三个根因（僵尸态/自愈限频/DB锁）全部根除并端到端验证。具备开始 Phase 0 72h 观察期的条件。
-
----
-
-## 旧产出（Roadmap v1，仍有效）
-
-## 产出
-
-- `docs/ROADMAP.md` — 12 周按周迈步开发路线图（含观测门 + 红线 + 失败模式防线）
-- `docs/PIPELINE_STATUS.md` — 现状逐环节分析
-- Deep research 完成：102 agent, 20 sources, 19 verified claims
-
-## Roadmap 摘要
-
-```
-Week 1-2   ▸ 阶段 0.5：补全基础（scheduler 补全 + 开始稳跑）
-Week 3-4   ▸ 阶段 1：稳跑验证 + 学习质量诊断
-  ──── [观测门] 72h+ 无崩，Learning Ledger 非零 ────
-Week 5-6   ▸ 阶段 2A：结构化信号 + Agent 协作流
-Week 7-8   ▸ 阶段 2B：经验闭环（记忆→决策）
-  ──── [观测门] activation_ratio > 30%, review coverage > 50% ────
-Week 9-10  ▸ 阶段 3A：自我反思 + 策略修订（walk-forward 验证）
-Week 11-12 ▸ 阶段 3B：对抗验证 + 策略退休自动化
-  ──── [观测门] 策略正期望 + 修订后 OOS 改善 ────
-Week 13+   ▸ 阶段 4：高级进化（远期，需另行授权）
-```
-
-## Next Action
-
-等待用户确认 Roadmap，然后开始 Week 1 Day 1：
-1. `post_trade_reviewer` 排入 scheduler
-2. `risk_critic` 排入 scheduler
-3. 验证测试基线
+详细的逐次变更记录见 `docs/AI_HANDOFF.md` 与 `docs/DEVLOG.md`。本文件只保留
+**当前阶段意图**;已完成的诊断/修复叙事不在此堆积。
