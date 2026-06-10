@@ -245,6 +245,28 @@ CREATE TABLE IF NOT EXISTS market_ohlcv (
 
 CREATE INDEX IF NOT EXISTS idx_market_ohlcv_sym_tf_ts
     ON market_ohlcv (symbol, timeframe, ts DESC);
+
+-- Agent Shell (Pi Agent, Operator Layer Track B) — session + command audit tables.
+CREATE TABLE IF NOT EXISTS agent_shell_sessions (
+    id TEXT PRIMARY KEY,
+    user_input TEXT NOT NULL,
+    intent TEXT,
+    command TEXT,
+    response TEXT,
+    permitted INTEGER NOT NULL DEFAULT 1,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_shell_commands (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES agent_shell_sessions(id),
+    command TEXT NOT NULL,
+    parameters TEXT DEFAULT '{}',
+    permitted INTEGER NOT NULL DEFAULT 1,
+    result_summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
