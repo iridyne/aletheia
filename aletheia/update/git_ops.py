@@ -71,6 +71,17 @@ def behind_count(branch: str = "master") -> int:
         return -1
 
 
+def ahead_count(branch: str = "master") -> int:
+    """How many commits HEAD is ahead of origin/<branch> (unpushed). -1 on error."""
+    r = _git("rev-list", "--count", f"origin/{branch}..HEAD")
+    if r.returncode != 0:
+        return -1
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return -1
+
+
 def is_worktree_dirty() -> bool:
     """True if there are uncommitted changes (refuse to pull over them)."""
     r = _git("status", "--porcelain")

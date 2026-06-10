@@ -1,0 +1,78 @@
+"""Tests for `aletheia doctor` ground-truth probing.
+
+Focus on the pure, deterministic logic (severity classification, age formatting,
+report aggregation) rather than re-testing the underlying health/git/pidfile
+helpers — those have their own suites. The probes are exercised end-to-end via
+build_report() with a real (empty) DB to prove they never raise.
+"""
+
+from datetime import datetime, timezone, timedelta
+
+from aletheia.diagnostics import doctor as dx
+
+
+def _iso_ago(minutes: float) -> str:
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
+# --- age helpers ---
+
+def test_age_minutes_parses_aware_and_naive():
+    assert dx._age_minutes(None) is None
+    assert dx._age_minutes("not-a-date") is None
+    aware = dx._age_minutes(_iso_ago(10))
+    assert aware is not None and 9 < aware < 12
+    # naive timestamp is treated as UTC
+    naive = (datetime.now(timezone.utc) - timedelta(minutes=10)).replace(tzinfo=None).isoformat()
+    assert dx._age_minutes(naive) is not None
+
+
+def test_fmt_age_buckets():
+    assert dx._fmt_age(None) == "unknown"
+    assert dx._fmt_age(5) == "5min ago"
+    assert dx._fmt_age(90).endswith("h ago")
+    assert dx._fmt_age(60 * 24 * 2).endswith("d ago")
+
+
+# --- Report aggregation ---
+
+def test_report_severity_partitions():
+    r = dx.Report(generated_at="t")
+    r.add("a", "ok", "fine")
+    r.add("b", "warn", "hmm")
+    r.add("c", "blocker", "stop")
+    r.add("d", "info", "fyi")
+    assert [c.name for c in r.blockers] == ["c"]
+    assert [c.name for c in r.warns] == ["b"]
+
+
+# --- end-to-end: probes must never raise, even on a fresh/empty environment ---
+
+def test_build_report_runs_and_covers_all_dimensions():
+    report = dx.build_report()
+    names = {c.name for c in report.checks}
+    # every dimension contributes at least its primary check
+    for expected in (
+        "code.sync", "process.gateway", "config.permission",
+        "config.kill_switch", "creds.bitget_demo", "data.market",
+        "loop.activity", "health.rollup",
+    ):
+        # process.autostart is also expected on Windows, but stays optional so the
+        # suite passes on CI/Linux where Task Scheduler is absent.
+        assert expected in names, f"missing probe: {expected}"
+    # generated_at is a real ISO timestamp
+    assert "T" in report.generated_at
+
+
+def test_kill_switch_active_is_a_blocker(monkeypatch):
+    """An active kill switch must surface as a blocker (it rejects every trade)."""
+    import aletheia.config.loader as loader
+    cfg = loader.load_config()
+    cfg.runtime.kill_switch_active = True
+    # _probe_config_gates imports load_config from aletheia.config.loader at call time
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_config_gates(r)
+    ks = [c for c in r.checks if c.name == "config.kill_switch"]
+    assert ks and ks[0].severity == "blocker"
