@@ -73,13 +73,22 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _verify_started(proc, cfg)
 
 
-def _verify_started(proc, cfg, *, timeout: float = 8.0) -> None:
+def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
     """Block until the detached gateway is confirmed up, or raise typer.Exit(1).
 
     Three outcomes:
       - proc exits before the gateway is up  → spawn died immediately; capture why.
       - pid file written + port listening     → confirmed up; return cleanly.
       - timeout with neither                   → never came up; capture why.
+
+    Timeout budget: this only has to cover the supervisor + inner-uvicorn process
+    startup up to the port BIND — run_migrations + init_tool_registry + init_scheduler,
+    then uvicorn opens the socket. The LLM provider probe (up to _PROBE_TIMEOUT_SEC
+    PER provider) used to run inline BEFORE the bind and routinely blew past this
+    window, causing false `gateway_spawn_failed` reports on a healthy-but-slow boot;
+    it now runs as a post-yield background task (see server/app.py _llm_startup_gate),
+    so the port binds promptly and 15s is a generous margin over real startup cost.
+    Do NOT couple this to the LLM probe budget — they are independent again.
 
     On failure, surface the tail of errors.log (the inner uvicorn's stderr sink)
     and audit a `gateway_spawn_failed` event so the death is never silent again.

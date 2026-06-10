@@ -108,6 +108,18 @@ def compute_health() -> dict:
     if cfg.runtime.kill_switch_active:
         issues.append("kill_switch_active")
 
+    # Paused-but-enabled is a degraded state, not healthy: the trading loop is
+    # not running while it is configured to. Surfacing it here is what keeps
+    # /api/health HONEST when the LLM startup gate pauses the loop — otherwise a
+    # transient record_llm_success() (a manual agent run, a Telegram-triggered
+    # completion) could zero the llm_unavailable counter and flip health green
+    # while the loop is still paused and dead (the "looks alive, is dead" zombie
+    # the gate exists to prevent). A deliberate operator pause is also genuinely
+    # "not trading" — health should say so. self-heal treats this as alert-only
+    # (no restart), so flagging it cannot trigger a respawn loop.
+    if cfg.runtime.paused and cfg.runtime.scheduler_enabled:
+        issues.append("trading_paused")
+
     stale_min = _market_data_stale_minutes(cfg)
     if stale_min is not None and stale_min > cfg.health.market_data_max_staleness_min:
         issues.append(f"market_data_stale:{stale_min:.0f}min")

@@ -76,6 +76,14 @@ class ClaudeCLIProvider(ModelProvider):
         except asyncio.TimeoutError:
             proc.kill()
             raise RuntimeError("Claude CLI timed out")
+        except asyncio.CancelledError:
+            # An OUTER wait_for/cancel (e.g. the startup gate's per-provider
+            # timeout) cancels us before our own _EXEC_TIMEOUT fires. Without
+            # this the `claude` child is orphaned and keeps running up to
+            # _EXEC_TIMEOUT seconds, invisible under a detached launch. Kill it
+            # before re-raising so cancellation actually reaps the subprocess.
+            proc.kill()
+            raise
 
         if proc.returncode != 0:
             detail = (stderr or b"").decode("utf-8", "replace").strip()[:300]
@@ -173,6 +181,11 @@ class ClaudeCLIProvider(ModelProvider):
         except asyncio.TimeoutError:
             proc.kill()
             raise RuntimeError("Claude CLI structured mode timed out")
+        except asyncio.CancelledError:
+            # Outer cancellation (see complete()): kill the orphaned child before
+            # propagating, else it lingers up to _EXEC_TIMEOUT under detached launch.
+            proc.kill()
+            raise
 
         raw_out = (stdout or b"").decode("utf-8", "replace").strip()
         if not raw_out:

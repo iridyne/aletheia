@@ -125,9 +125,20 @@ def pause_scheduler() -> None:
 
 
 def resume_scheduler() -> None:
-    if _scheduler:
-        _scheduler.resume()
-        logger.info("Scheduler resumed")
+    # If the scheduler never came up (init_scheduler raised during lifespan and
+    # was only warned, leaving _scheduler is None), a bare `if _scheduler` resume
+    # silently no-ops while the /api/gateway/resume route still reports success —
+    # so the operator thinks the loop resumed but no job is ever scheduled. Build
+    # it on demand. By now the caller has already persisted runtime.paused=False,
+    # so init_scheduler() won't boot it paused.
+    global _scheduler
+    if _scheduler is None:
+        init_scheduler()
+        if _scheduler is None:
+            logger.warning("resume_scheduler: scheduler unavailable (disabled or init failed)")
+        return  # init_scheduler starts unpaused when runtime.paused is False
+    _scheduler.resume()
+    logger.info("Scheduler resumed")
 
 
 def is_running() -> bool:

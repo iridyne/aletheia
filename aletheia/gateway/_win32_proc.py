@@ -16,9 +16,13 @@ from ctypes import byref, sizeof, POINTER, Structure, c_void_p, c_ulong
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 PROCESS_VM_READ = 0x0010
+SYNCHRONIZE = 0x00100000
 TH32CS_SNAPPROCESS = 0x00000002
 STILL_ACTIVE = 259
 STATUS_SUCCESS = 0
+# WaitForSingleObject return codes.
+WAIT_OBJECT_0 = 0x00000000   # the process has terminated (signaled)
+WAIT_TIMEOUT = 0x00000102    # still running after the (zero) wait
 ProcessCommandLineInformation = 60
 INVALID_HANDLE_VALUE = c_void_p(-1).value
 
@@ -70,6 +74,9 @@ _kernel32.Process32NextW.argtypes = [wt.HANDLE, POINTER(PROCESSENTRY32W)]
 
 _kernel32.GetExitCodeProcess.restype = wt.BOOL
 _kernel32.GetExitCodeProcess.argtypes = [wt.HANDLE, POINTER(wt.DWORD)]
+
+_kernel32.WaitForSingleObject.restype = wt.DWORD
+_kernel32.WaitForSingleObject.argtypes = [wt.HANDLE, wt.DWORD]
 
 _ntdll.NtQueryInformationProcess.restype = ctypes.c_long  # NTSTATUS
 _ntdll.NtQueryInformationProcess.argtypes = [
@@ -139,17 +146,20 @@ def pid_alive_win32(pid: int, markers: tuple[str, ...]) -> bool:
         return False
 
     handle = _kernel32.OpenProcess(
-        PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+        PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid
     )
     if not handle:
         return False
 
     try:
-        # Verify the process is still active (not a zombie with exit code set).
-        exit_code = wt.DWORD(0)
-        if not _kernel32.GetExitCodeProcess(handle, byref(exit_code)):
-            return False
-        if exit_code.value != STILL_ACTIVE:
+        # Authoritative liveness: WaitForSingleObject with a 0 timeout. A running
+        # process is non-signaled → WAIT_TIMEOUT; a terminated one is signaled →
+        # WAIT_OBJECT_0. This avoids the GetExitCodeProcess(STILL_ACTIVE=259)
+        # ambiguity: a process that genuinely exits WITH code 259 would otherwise
+        # be reported alive forever, so is_running() would never let the watchdog
+        # resurrect a dead gateway. (If SYNCHRONIZE was somehow not granted, Wait
+        # returns WAIT_FAILED — neither constant — and we fall through to dead.)
+        if _kernel32.WaitForSingleObject(handle, 0) != WAIT_TIMEOUT:
             return False
 
         # Read command line and check markers.

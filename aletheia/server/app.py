@@ -30,9 +30,17 @@ logger = logging.getLogger("aletheia")
 async def _llm_startup_gate(cfg) -> None:
     """Probe LLM providers at boot; pause the trading loop if none can do inference.
 
-    Fail-loud, but keep the process alive: setting runtime.paused stops every
-    scheduler job (they no-op on cfg.runtime.paused) and persists so the Web UI
-    shows the degraded state. We feed record_llm_failure() so /api/health reports
+    Runs as a BACKGROUND task launched AFTER the scheduler is up and the HTTP port
+    is already serving (see lifespan). Probing each provider can take up to
+    _PROBE_TIMEOUT_SEC; doing it inline before `yield` previously delayed the port
+    bind, so the spawn-verifier and OS watchdog saw a dead port and falsely
+    reported the gateway as failed. Running it post-yield means the dashboard and
+    /api/health are reachable WHILE the probe runs — the operator can see the
+    degraded state instead of a connection-refused page.
+
+    Fail-loud, but keep the process alive: when no provider works we pause the
+    scheduler AND persist runtime.paused (so the state survives a restart and the
+    Web UI shows it). We feed record_llm_failure() so /api/health reports
     `llm_unavailable:N` with no extra plumbing, and audit the decision so it is
     never silent. The process is NOT killed — that would just trigger a
     supervisor/watchdog respawn loop. Operator fixes a provider and hits
@@ -42,6 +50,8 @@ async def _llm_startup_gate(cfg) -> None:
     try:
         from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
         result = await probe_llm_providers_at_startup(cfg)
+    except asyncio.CancelledError:
+        raise  # lifespan shutdown cancelled us mid-probe — propagate, don't swallow
     except Exception as e:
         logger.warning("LLM startup gate probe errored (skipping gate): %s", e)
         return
@@ -53,9 +63,23 @@ async def _llm_startup_gate(cfg) -> None:
         return
 
     # No provider could complete a real inference call — pause the loop.
-    from aletheia.config.loader import save_config
-    cfg.runtime.paused = True
-    save_config(cfg)
+    # Pause the live scheduler too (it is already running at this point, having
+    # been started before this background task), not just the persisted flag —
+    # otherwise jobs keep firing for the gap until each one re-reads the flag.
+    try:
+        from aletheia.agent_runtime.scheduler import pause_scheduler
+        pause_scheduler()
+    except Exception:
+        pass
+    # Read-modify-write a FRESH on-disk config rather than the boot snapshot, so
+    # we only flip `paused` and don't clobber any edit made during the probe
+    # window (e.g. an operator changing settings via the dashboard, now reachable
+    # because the port is already serving). Full elimination of the last-writer
+    # race would need a file lock — tracked in docs/BACKEND_ISSUES.md.
+    from aletheia.config.loader import load_config as _load_config, save_config
+    fresh = _load_config()
+    fresh.runtime.paused = True
+    save_config(fresh)
 
     from aletheia.agent_runtime.health import record_llm_failure
     for _ in range(max(1, cfg.health.llm_unavailable_alert_after)):
@@ -108,15 +132,19 @@ async def lifespan(app: FastAPI):
     from aletheia.telegram.bot import TelegramBot
     run_migrations()
     init_tool_registry()
-    # Fail-loud LLM gate: if no provider can actually do inference, pause the
-    # trading loop BEFORE the scheduler starts (it then boots paused via the
-    # existing runtime.paused path) rather than running blind and producing
-    # neutral-only opportunities while looking alive.
-    await _llm_startup_gate(cfg)
     try:
         init_scheduler()
     except Exception as e:
         logger.warning("Scheduler failed to start: %s", e)
+    # Fail-loud LLM gate, run as a BACKGROUND task (not awaited here): if no
+    # provider can actually do inference it pauses the scheduler and persists
+    # runtime.paused. Deferring it until AFTER init_scheduler + yield means the
+    # HTTP port binds immediately, so the spawn-verifier/watchdog see a live port
+    # and the dashboard is reachable WHILE the probe runs. Booting un-paused for
+    # the few seconds the probe takes is safe: scheduler jobs themselves re-check
+    # cfg.runtime.paused, and the only time-sensitive job (market_data) is
+    # harmless to run once. See _llm_startup_gate.
+    llm_gate_task = asyncio.create_task(_llm_startup_gate(cfg))
     telegram_bot = TelegramBot()
     telegram_task = None
     if telegram_bot.configure():
@@ -131,6 +159,13 @@ async def lifespan(app: FastAPI):
     app.state.telegram_bot = telegram_bot
     app.state.telegram_task = telegram_task
     yield
+    # Cancel the LLM gate if it's still probing at shutdown (slow/hung provider).
+    if not llm_gate_task.done():
+        llm_gate_task.cancel()
+        try:
+            await llm_gate_task
+        except (asyncio.CancelledError, Exception):
+            pass
     if telegram_task is not None:
         try:
             telegram_bot.stop()

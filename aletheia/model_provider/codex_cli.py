@@ -73,6 +73,11 @@ class CodexCLIProvider(ModelProvider):
         except asyncio.TimeoutError:
             proc.kill()
             raise RuntimeError("Codex CLI timed out")
+        except asyncio.CancelledError:
+            # Outer cancellation (e.g. startup-gate per-provider timeout) would
+            # otherwise orphan the codex child up to _EXEC_TIMEOUT. Reap it.
+            proc.kill()
+            raise
 
         if proc.returncode != 0:
             detail = (stderr or b"").decode("utf-8", "replace").strip()[:300]

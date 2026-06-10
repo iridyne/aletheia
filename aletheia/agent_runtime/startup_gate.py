@@ -86,14 +86,22 @@ async def probe_llm_providers_at_startup(cfg) -> dict:
         logger.warning("LLM startup gate: no enabled providers configured")
         return {"any_usable": False, "results": [], "checked": 0}
 
-    results: list[dict] = []
-    for name in names:
-        r = await _probe_one(name)
-        results.append(r)
+    # Probe all providers CONCURRENTLY. Serial probing made total startup cost
+    # N * _PROBE_TIMEOUT_SEC — each provider's timeout added up. Combined with the
+    # gate blocking the boot path, that widened the window during which the gateway
+    # was not yet serving and the spawn-verifier / OS watchdog saw a dead port.
+    # gather() caps the wall-clock at ~_PROBE_TIMEOUT_SEC regardless of N, and
+    # preserves input order so `results` stays default-first. _probe_one never
+    # raises (it converts every error to a dict), so no return_exceptions needed.
+    results: list[dict] = list(await asyncio.gather(*(_probe_one(n) for n in names)))
+
+    # Log AFTER gather so the lines stay in default-first order — gather returns
+    # results in input order even though the probes complete in arbitrary order.
+    for r in results:
         if r["usable"]:
-            logger.info("LLM startup gate: provider '%s' usable", name)
+            logger.info("LLM startup gate: provider '%s' usable", r["provider"])
         else:
-            logger.warning("LLM startup gate: provider '%s' NOT usable (%s)", name, r["error"])
+            logger.warning("LLM startup gate: provider '%s' NOT usable (%s)", r["provider"], r["error"])
 
     any_usable = any(r["usable"] for r in results)
     return {"any_usable": any_usable, "results": results, "checked": len(names)}

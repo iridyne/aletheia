@@ -184,8 +184,11 @@ def test_startup_gate_pauses_and_audits(tmp_path, monkeypatch):
 
     asyncio.run(appmod._llm_startup_gate(cfg))
 
-    # Loop paused, persisted, and the decision audited.
-    assert cfg.runtime.paused is True
+    # Loop paused, persisted, and the decision audited. The gate persists via a
+    # fresh on-disk read-modify-write (not by mutating the boot-snapshot cfg it
+    # was handed), so assert the PERSISTED state, not the caller's stale object.
+    from aletheia.config.loader import load_config
+    assert load_config().runtime.paused is True
     from aletheia.files.jsonl import read_jsonl
     evts = [e for e in read_jsonl("audit.jsonl") if e.get("event_type") == "llm_startup_gate_paused"]
     assert evts
