@@ -2,7 +2,25 @@
 
 ## Last Updated
 
-2026-06-10 (此 checkout 从未运行 + 重建 gitignore 吞掉的 aletheia/data/ 包 + 修复 DNS resolver + boot-prove)
+2026-06-10 (LLM 接通 Databricks gateway + 全闭环跑通 paper_internal + 515 测试通过；卡在 Bitget demo 凭证 + 启动 72h 无人值守需人工决定)
+
+## Recent Change (LLM 接通 + Phase 0 全闭环验证 — 2026-06-10 第二段)
+
+> 接上一条。分支 `fix/restore-data-package` 现 5 个 commit。
+
+**1. LLM 已接通**（用户提供 Databricks AI-Gateway Anthropic 端点）：实测确认该端点是 Anthropic Messages API (`/v1/messages`) + `Authorization: Bearer`（非原生 `x-api-key`，后者 401），且 `claude-opus-4-8` **硬拒 `temperature`**（400 "temperature is deprecated"）。给 `anthropic_compatible` 加可配置 `auth_scheme`（默认 `x-api-key`，gateway 用 `bearer`）+ bearer 时省略 temperature（对齐 databricks.py）。`ProviderConfig.auth_scheme` 新字段，router 透传。端到端实测 healthcheck/complete/structured 全通；commit `aebe405`，model 测试 12 passed。**URL 进本地 gitignored config.yaml，token 进加密 secret store，repo 里无凭证。**
+
+**2. Phase 0 全闭环首次跑通**（本 checkout 历史上第一次真正交易）：observer(LLM 真分析，产出有方向/置信/分数的 opportunity，非全 neutral) → paper_trader → proposal → risk 批准 → **order → fill → open position**（SOL/USDT short qty0.39@64.15）→ position_manager(checked=1) → post_trade_reviewer + risk_critic 各产出 1 条 knowledge。**0 error。**
+
+**3. 与 roadmap 字面 gate 的唯一差距**：执行走 `paper_internal`（本地撮合）而非 `bitget_demo`（Bitget 真实模拟单），因为**本 checkout 无 Bitget demo 凭证**（`bitget.demo.{api_key,api_secret,passphrase}` 均 NOT SET）。按项目既定策略（demo 不可用→`paper_internal` 秒切兜底）这是正确兜底。当前 `permission_mode=Paper`、`paper_execution_mode=paper_internal`。
+
+**停在此处的原因（需人工决定，AI 不擅自做）**：
+- (a) 是否要等 Bitget demo 凭证就位（满足 "demo orders visible on Bitget" 这条 gate），还是先用 `paper_internal` 跑 72h；
+- (b) 启动无人值守 gateway（持久 supervised 进程 + 登录看门狗）是对外、难撤销的状态变更，按规矩须先确认。
+全套 515 passed。
+
+---
+
 
 ## Recent Change (检出态真相 + aletheia/data/ 重建 + DNS resolver 修复 — 2026-06-10)
 

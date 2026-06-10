@@ -1,10 +1,16 @@
 # Current Task
 
-## Status: Phase 0 基础设施已就绪，观察门卡在人工凭证输入（2026-06-10）
+## Status: Phase 0 全闭环已跑通(paper_internal)，待决定是否等 Bitget demo 凭证 / 启动 72h（2026-06-10）
 
-> **本 checkout 从未运行过**（见 AI_HANDOFF 2026-06-10 顶部条目）。下方 06-09 起的所有"观察期运行中 / demo 真单"叙事是**原作者机器**状态，不是这里。本机经本会话修复后：`aletheia/data/` 包已重建（515 测试通过）、DNS resolver 已修、boot-prove 通过（15 job 构建、实时行情拉通、observer 无 LLM 优雅降级）。
+> **本 checkout 从未运行过**（见 AI_HANDOFF）。本会话已修复并验证：`aletheia/data/` 重建、DNS resolver、LLM 接通 Databricks gateway。**Phase 0 全闭环首次跑通**：observer→opportunity(LLM 真分析)→proposal→risk→fill→position→review，0 error，515 测试通过。
 >
-> **要推进 Phase 0 观察门，必须先由人提供两样 AI 不能伪造的东西**：(1) LLM provider + API key；(2) Bitget demo API 凭证。然后 `permission_mode=Paper` → 启动 gateway → 跑 72h。详见 AI_HANDOFF 顶部 + memory `checkout-state-never-ran`。分支 `fix/restore-data-package` 待合并。
+> **当前配置**：`permission_mode=Paper`、`exchange.mode=demo`、`paper_execution_mode=paper_internal`（因无 Bitget demo 凭证而走本地撮合兜底）、`live.state=live_disabled`。
+>
+> **下一步需人工决定**（两条 blocker，AI 不擅自做）：
+> 1. **Bitget demo 凭证**：`bitget.demo.{api_key,api_secret,passphrase}` 均未设。设了才能把 `paper_execution_mode` 切回 `bitget_demo`、满足 "demo orders visible on Bitget" 这条 gate。命令：`! uv run aletheia secrets set bitget.demo.api_key`（×3）。
+> 2. **启动 72h 无人值守 gateway**：持久 supervised 进程 + 登录看门狗，对外/难撤销，须人确认后再起（`aletheia gateway start` / 配 autostart）。
+>
+> 分支 `fix/restore-data-package`（5 commit）待合并。
 
 ---
 
