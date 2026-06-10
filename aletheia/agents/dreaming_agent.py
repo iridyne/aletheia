@@ -78,20 +78,46 @@ def _build_learning_ledger() -> str:
     else:
         review_coverage = None
 
-    # Lessons-consulted: how often the experience loop actually fired in 24h.
-    # Signal that knowledge is being read back (not just piled up).
+    # Lessons-consulted: how often the experience loop actually MOVED information
+    # in 24h. Counts retrieve_lessons calls that returned >=1 lesson, parsed from
+    # the logged "lessons:N" output — NOT the bare call count. retrieve_lessons is
+    # logged every run even when the FTS gate is empty and it returns lessons:0, so
+    # counting calls read non-zero while zero lessons reached a decision — the
+    # ROADMAP "false confidence" mode this very metric exists to expose. Playbook
+    # reads are reported separately: load_playbooks logs no count (and reads seeded
+    # files, not FTS), so it cannot be hit-filtered and must not borrow the lesson
+    # signal's credibility.
+    lessons_consulted = 0
+    playbook_reads = 0
     try:
         from aletheia.storage.repositories import list_tool_calls
         recent_calls = list_tool_calls(limit=2000)
         from datetime import datetime, timezone, timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        retrieval_calls = sum(
+
+        def _fresh(c) -> bool:
+            return (c.get("created_at") or "") >= cutoff
+
+        def _lesson_hits(c) -> int:
+            out = c.get("output_data") or ""
+            if out.startswith("lessons:"):
+                try:
+                    return int(out.split(":", 1)[1])
+                except ValueError:
+                    return 0
+            return 0
+
+        lessons_consulted = sum(
             1 for c in recent_calls
-            if c.get("tool_name") in ("retrieve_lessons", "load_playbooks")
-            and (c.get("created_at") or "") >= cutoff
+            if c.get("tool_name") == "retrieve_lessons" and _fresh(c) and _lesson_hits(c) > 0
+        )
+        playbook_reads = sum(
+            1 for c in recent_calls
+            if c.get("tool_name") == "load_playbooks" and _fresh(c)
         )
     except Exception:
-        retrieval_calls = 0
+        lessons_consulted = 0
+        playbook_reads = 0
 
     coverage_line = (f"{review_coverage:.0%}" if review_coverage is not None
                      else "n/a (no strategies past paper yet)")
@@ -107,8 +133,9 @@ def _build_learning_ledger() -> str:
         f"- Retire/deprecate ratio: {retire_ratio:.0%} "
         "(noise being filtered — non-zero is healthy)\n"
         f"- Post-trade review coverage: {coverage_line}\n"
-        f"- Lessons consulted (24h): {retrieval_calls} "
-        "(retrieve_lessons + load_playbooks calls; non-zero means the loop is closing)\n"
+        f"- Lessons consulted (24h): {lessons_consulted} "
+        "(retrieve_lessons calls returning >=1 lesson — real FTS retrieval, not bare calls)\n"
+        f"- Playbook reads (24h): {playbook_reads} (load_playbooks calls)\n"
     )
 
 

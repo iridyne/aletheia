@@ -161,15 +161,23 @@ def test_ledger_activation_ratio_reflects_state(tmp_path, monkeypatch):
     assert "Activation ratio: 100%" in out
 
 
-def test_ledger_lessons_consulted_counts_real_calls(tmp_path, monkeypatch):
-    """Tool-call ledger entries for retrieve_lessons should surface in the 24h count."""
+def test_ledger_lessons_consulted_counts_only_hits(tmp_path, monkeypatch):
+    """Lessons-consulted counts only retrieve_lessons calls that returned >=1
+    lesson (parsed from the logged lessons:N output). A retrieve_lessons call that
+    returned lessons:0 (empty FTS gate) must NOT count — counting it would let the
+    metric read non-zero while the loop transferred nothing, the ROADMAP "false
+    confidence" mode (BACKEND_ISSUES §2.1). load_playbooks is reported as a
+    SEPARATE "Playbook reads" count, never folded into the lesson signal (it logs
+    no count to hit-filter on)."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agents.helpers import log_tool, _release_run_counter
-    log_tool("run-L", "retrieve_lessons", "read_tool", True, output="lessons:3")
-    log_tool("run-L", "load_playbooks", "read_tool", True)
-    log_tool("run-L", "get_market_snapshot", "read_tool", True)  # not counted
+    log_tool("run-L", "retrieve_lessons", "read_tool", True, output="lessons:3")  # hit
+    log_tool("run-L", "retrieve_lessons", "read_tool", True, output="lessons:0")  # empty → NOT counted
+    log_tool("run-L", "load_playbooks", "read_tool", True)                         # separate metric
+    log_tool("run-L", "get_market_snapshot", "read_tool", True)                    # not counted
 
     from aletheia.agents.dreaming_agent import _build_learning_ledger
     out = _build_learning_ledger()
-    assert "Lessons consulted (24h): 2" in out
+    assert "Lessons consulted (24h): 1" in out   # only the lessons:3 hit, not lessons:0
+    assert "Playbook reads (24h): 1" in out
     _release_run_counter("run-L")
