@@ -19,16 +19,21 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+# Bootstrap surface — keep on the CLI: these do what a not-yet-running web UI cannot.
 app.add_typer(gateway_app, name="gateway", help="Gateway lifecycle commands.")
-app.add_typer(model_app, name="model", help="Model provider commands.")
-app.add_typer(permission_app, name="permission", help="Agent permission mode.")
-app.add_typer(secrets_app, name="secrets", help="Secrets management.")
-app.add_typer(bitget_app, name="bitget", help="Bitget connection commands.")
-app.add_typer(strategy_app, name="strategy", help="Strategy lifecycle commands.")
-app.add_typer(risk_app, name="risk", help="Risk / kill-switch commands.")
-app.add_typer(update_app, name="update", help="Code self-upgrade commands.")
-app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience-loop commands.")
 app.add_typer(doctor_app, name="doctor", help="Probe this machine's real state (single source of truth).")
+
+# Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
+app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")
+app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience-loop tools (reindex, search).")
+
+# [DEPRECATED → dashboard] superseded by the web UI; still work, kept as an escape hatch.
+app.add_typer(model_app, name="model", help="[deprecated → Settings] Model provider commands.")
+app.add_typer(permission_app, name="permission", help="[deprecated → Settings] Agent permission mode.")
+app.add_typer(secrets_app, name="secrets", help="[deprecated → Settings] Secrets management.")
+app.add_typer(strategy_app, name="strategy", help="[deprecated → Strategies page] Strategy lifecycle.")
+app.add_typer(risk_app, name="risk", help="[deprecated → Risk panel] Risk / kill-switch commands.")
+app.add_typer(update_app, name="update", help="[deprecated → Settings] Code self-upgrade commands.")
 
 
 @app.command()

@@ -182,8 +182,9 @@ def _probe_config_gates(report: Report) -> None:
     if cfg.runtime.kill_switch_active:
         report.add("config.kill_switch", "blocker",
                    "kill_switch ACTIVE — every trade proposal is rejected",
-                   "if tripped by a past daily-loss and it is now a NEW UTC day, "
-                   "`aletheia risk resume` (human decision — --fix will not auto-clear)")
+                   "if tripped by a past daily-loss and it is now a NEW UTC day, release it "
+                   "from the dashboard Risk panel (or `aletheia risk resume`) — human decision, "
+                   "--fix will not auto-clear")
     else:
         report.add("config.kill_switch", "ok", "kill_switch inactive")
 
@@ -207,14 +208,14 @@ def _probe_credentials(report: Report) -> None:
     elif demo_set:
         report.add("creds.bitget_demo", "warn",
                    f"partial: {len(demo_set)}/3 demo credentials SET",
-                   "`aletheia secrets set bitget.demo.*` (set the missing ones)")
+                   "set the missing ones in Settings → Credentials (or `aletheia secrets set bitget.demo.*`)")
     else:
         # Missing demo creds only BLOCKS if the system is configured to place demo orders.
         sev: Severity = "blocker" if (mode == "demo" and pem == "bitget_demo") else "info"
         report.add("creds.bitget_demo", sev,
                    "no bitget demo credentials — bitget_demo orders cannot reach the exchange "
                    "(paper_internal local fill still works)",
-                   "`aletheia secrets set bitget.demo.api_key` (+ api_secret, passphrase)")
+                   "Settings → Credentials (or `aletheia secrets set bitget.demo.api_key` + api_secret, passphrase)")
 
     # LLM provider — without it observers emit only neutral/speculative → no entries.
     provider = getattr(cfg.model, "default_provider", "") if hasattr(cfg, "model") else ""

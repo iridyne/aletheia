@@ -6,6 +6,12 @@ import typer
 model_app = typer.Typer(no_args_is_help=True)
 
 
+@model_app.callback()
+def _deprecated():
+    from aletheia.cli._deprecated import warn_deprecated
+    warn_deprecated("Settings → Model Provider")
+
+
 @model_app.command()
 def status():
     """Show current model provider status."""

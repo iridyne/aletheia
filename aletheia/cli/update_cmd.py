@@ -5,6 +5,12 @@ import typer
 update_app = typer.Typer(no_args_is_help=True)
 
 
+@update_app.callback()
+def _deprecated():
+    from aletheia.cli._deprecated import warn_deprecated
+    warn_deprecated("Settings → Update")
+
+
 @update_app.command()
 def check():
     """Check whether a newer version is available on the configured branch."""

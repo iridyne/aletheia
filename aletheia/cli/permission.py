@@ -5,6 +5,12 @@ import typer
 permission_app = typer.Typer(no_args_is_help=True)
 
 
+@permission_app.callback()
+def _deprecated():
+    from aletheia.cli._deprecated import warn_deprecated
+    warn_deprecated("Settings → Permission Mode")
+
+
 @permission_app.command()
 def status():
     """Show current permission mode."""

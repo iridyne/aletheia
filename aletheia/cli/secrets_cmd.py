@@ -21,6 +21,12 @@ KNOWN_KEYS = [
 ]
 
 
+@secrets_app.callback()
+def _deprecated():
+    from aletheia.cli._deprecated import warn_deprecated
+    warn_deprecated("Settings → Credentials / Model Provider")
+
+
 @secrets_app.command(name="set")
 def set_cmd(key: str = typer.Argument(..., help="Secret key path, e.g. bitget.demo.api_key")):
     """Set a secret value (prompted securely, never echoed)."""

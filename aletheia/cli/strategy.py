@@ -5,6 +5,12 @@ import typer
 strategy_app = typer.Typer(no_args_is_help=True)
 
 
+@strategy_app.callback()
+def _deprecated():
+    from aletheia.cli._deprecated import warn_deprecated
+    warn_deprecated("Strategies page")
+
+
 @strategy_app.command("list")
 def list_strategies_cmd():
     """List strategies."""

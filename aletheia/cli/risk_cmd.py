@@ -5,6 +5,12 @@ import typer
 risk_app = typer.Typer(no_args_is_help=True)
 
 
+@risk_app.callback()
+def _deprecated():
+    from aletheia.cli._deprecated import warn_deprecated
+    warn_deprecated("Risk / Kill-switch panel")
+
+
 @risk_app.command()
 def status():
     """Show kill-switch state and key risk boundaries."""
