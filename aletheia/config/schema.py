@@ -93,6 +93,26 @@ class AgentConfig(BaseModel):
     autonomous_learning: bool = True
 
 
+class OperatorConfig(BaseModel):
+    enabled: bool = True
+    bind_host: str = "127.0.0.1"
+    port: int = 8791
+    permission_mode: str = "ReadOnly"
+    heartbeat_interval_sec: int = 10
+    heartbeat_stale_after_sec: int = 45
+    restart_after_sec: int = 90
+    max_restart_failures: int = 3
+    loop_enabled: bool = True
+    main_session_id: str = "operator-main"
+
+    @field_validator("bind_host")
+    @classmethod
+    def validate_bind_host(cls, v: str) -> str:
+        if v not in _LOOPBACK_HOSTS:
+            _logger.warning("operator.bind_host=%s is not loopback — operator API will be network-exposed", v)
+        return v
+
+
 class ProviderConfig(BaseModel):
     type: str = ""
     base_url: str = ""
@@ -244,6 +264,7 @@ class AletheiaConfig(BaseModel):
     market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
     live: LiveConfig = Field(default_factory=LiveConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    operator: OperatorConfig = Field(default_factory=OperatorConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
