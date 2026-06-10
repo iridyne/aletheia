@@ -12,6 +12,7 @@ from aletheia.cli.risk_cmd import risk_app
 from aletheia.cli.update_cmd import update_app
 from aletheia.cli.knowledge_cmd import knowledge_app
 from aletheia.cli.doctor_cmd import doctor_app
+from aletheia.cli.operator import agent_app
 
 app = typer.Typer(
     name="aletheia",
@@ -22,6 +23,7 @@ app = typer.Typer(
 # Bootstrap surface — keep on the CLI: these do what a not-yet-running web UI cannot.
 app.add_typer(gateway_app, name="gateway", help="Gateway lifecycle commands.")
 app.add_typer(doctor_app, name="doctor", help="Probe this machine's real state (single source of truth).")
+app.add_typer(agent_app, name="agent", help="Operator Agent control-plane commands.")
 
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")

@@ -60,6 +60,13 @@ def _decode_heartbeat(row) -> dict:
     return item
 
 
+def _decode_command(row) -> dict:
+    item = dict(row)
+    item["parameters"] = _json_load(item["parameters"]) or {}
+    item["permitted"] = bool(item["permitted"])
+    return item
+
+
 def record_heartbeat(
     *,
     agent_id: str,
@@ -257,6 +264,70 @@ def list_messages(session_id: str, limit: int = 200) -> list[dict]:
         (session_id, limit),
     ).fetchall()
     return [_decode_message(row) for row in rows]
+
+
+def list_commands(session_id: str, limit: int = 200) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        "SELECT * FROM agent_shell_commands "
+        "WHERE session_id = ? "
+        "ORDER BY created_at ASC, rowid ASC LIMIT ?",
+        (session_id, limit),
+    ).fetchall()
+    return [_decode_command(row) for row in rows]
+
+
+def list_sessions(limit: int = 50) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT
+            s.*,
+            COALESCE(msg.message_count, 0) AS message_count,
+            COALESCE(cmd.command_count, 0) AS command_count
+        FROM agent_shell_sessions s
+        LEFT JOIN (
+            SELECT session_id, COUNT(*) AS message_count
+            FROM agent_shell_messages
+            GROUP BY session_id
+        ) msg ON msg.session_id = s.id
+        LEFT JOIN (
+            SELECT session_id, COUNT(*) AS command_count
+            FROM agent_shell_commands
+            GROUP BY session_id
+        ) cmd ON cmd.session_id = s.id
+        ORDER BY s.created_at DESC, rowid DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_session(session_id: str) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        """
+        SELECT
+            s.*,
+            COALESCE(msg.message_count, 0) AS message_count,
+            COALESCE(cmd.command_count, 0) AS command_count
+        FROM agent_shell_sessions s
+        LEFT JOIN (
+            SELECT session_id, COUNT(*) AS message_count
+            FROM agent_shell_messages
+            GROUP BY session_id
+        ) msg ON msg.session_id = s.id
+        LEFT JOIN (
+            SELECT session_id, COUNT(*) AS command_count
+            FROM agent_shell_commands
+            GROUP BY session_id
+        ) cmd ON cmd.session_id = s.id
+        WHERE s.id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def create_artifact(
