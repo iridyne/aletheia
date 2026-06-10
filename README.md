@@ -24,13 +24,21 @@ Then configure everything **in the dashboard** (Settings page), OpenAlice-style:
 4. Approve paper proposals on **Proposals**; see fills/PnL on **Positions** and **Charts**.
 5. Live trading stays **disabled** until you explicitly unlock it on the Settings page.
 
-CLI equivalents exist but are secondary, e.g.:
+The CLI is the **bootstrap** surface — the things a not-yet-running web UI cannot do:
 
 ```bash
-uv run aletheia model set --provider openai_compatible --base-url URL --model NAME --api-key
-uv run aletheia secrets set bitget.demo.api_key
-uv run aletheia bitget test
-uv run aletheia gateway status | pause | resume | stop
+uv run aletheia gateway start | restart | enable-autostart   # bring the machine up
+uv run aletheia doctor                                       # single source of truth: real state
+```
+
+Operational commands also exist on the CLI but are **deprecated** — superseded by
+the dashboard, kept only as an escape hatch (they print a pointer to the web
+location when run):
+
+```bash
+uv run aletheia model set ...        # → Settings → Model Provider
+uv run aletheia secrets set ...      # → Settings → Credentials
+uv run aletheia risk kill | resume   # → Risk panel
 ```
 
 ## Architecture

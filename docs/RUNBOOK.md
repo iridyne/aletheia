@@ -65,8 +65,8 @@ clean error and keep running), but they only produce *meaningful* research and
 directional signals once a provider is configured.
 
 ```bash
-# Dashboard: Settings → Model Provider → base URL + model + API key → Test
-# or CLI:
+# Dashboard: Settings → Model Provider → base URL + model + API key → Test  (primary)
+# or CLI (deprecated — still works, dashboard is the maintained surface):
 uv run aletheia model set --provider openai_compatible --base-url URL --model NAME --api-key
 uv run aletheia model status
 uv run aletheia model test
@@ -83,8 +83,8 @@ endpoints, so the observe/research/paper loop runs out of the box. Demo
 credentials are only needed if you want authenticated demo calls.
 
 ```bash
-# Dashboard: Settings → Exchange Credentials → demo → keys → Test Connection
-# or CLI:
+# Dashboard: Settings → Exchange Credentials → demo → keys → Test Connection  (primary)
+# or CLI (deprecated — still works, dashboard is the maintained surface):
 uv run aletheia secrets set bitget.demo.api_key
 uv run aletheia secrets set bitget.demo.api_secret
 uv run aletheia secrets set bitget.demo.passphrase
@@ -97,7 +97,7 @@ Both switches are **OFF by default**. Turn them on only when you want the system
 to trade paper autonomously:
 
 1. **Permission mode** → `PaperAuto` (allows paper trades; `Research`/`ReadOnly`
-   never trade). Dashboard Settings → Permission Mode, or:
+   never trade). Dashboard Settings → Permission Mode (primary), or CLI (deprecated):
    ```bash
    uv run aletheia permission set PaperAuto
    ```
@@ -152,6 +152,7 @@ as a human; the agent can propose changes in a report but cannot apply them.
   autonomous jobs, dashboard stays up. `resume` to re-enable.
 - **Kill switch (global trading brake):** rejects *every* proposal (paper and
   live) until released. Auto-trips if the daily-loss limit is breached.
+  Primary: dashboard **Risk panel**. CLI (deprecated, still works):
   ```bash
   uv run aletheia risk status      # shows kill-switch state + key limits
   uv run aletheia risk kill        # engage
@@ -176,6 +177,8 @@ Not a daemon — you trigger it. It pulls from git, reinstalls deps only if
 **rolls back** (controlled `git reset --hard` to the pre-pull commit, audited) if
 the smoke check fails. It never auto-restarts — it tells you to.
 
+Primary: dashboard **Settings → Update**. CLI (deprecated, still works):
+
 ```bash
 uv run aletheia update check     # is a newer commit available?
 uv run aletheia update apply     # pull + verify (+ rollback on failure)
@@ -189,7 +192,8 @@ local edits).
 
 - **Dashboard:** Overview (gateway/live/permission/kill-switch state, account/PnL),
   Agent Runs, Positions, Charts, Reports, Knowledge Base.
-- **CLI:** `aletheia gateway status`, `aletheia gateway logs`, `aletheia risk status`.
+- **CLI (bootstrap):** `aletheia doctor` (full ground-truth probe), `aletheia gateway status`,
+  `aletheia gateway logs`. (`aletheia risk status` still works but the Risk panel is primary.)
 - **Files** under `data/`:
   - `logs/audit.jsonl` — every state transition (rotates at the size cap to `.1`)
   - `logs/errors.jsonl`, `logs/gateway.log`, `logs/errors.log` (inner server stderr)
