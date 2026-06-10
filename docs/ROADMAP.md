@@ -59,9 +59,18 @@ Phases are **not time-locked**. Move as fast or slow as reality permits.
 
 > **正交于 Phase 0–7。** Phase 轴衡量*交易智能成熟度*;本 track 衡量*操作/控制面*
 > ——用户能否从 Command Center 问 "现在在干什么 / 为什么失败 / 帮我修这个低风险问题"。
-> 设计全文见 [OPERATOR_LAYER_DESIGN.md](OPERATOR_LAYER_DESIGN.md);
-> 外部参考设计源见 `C:\Users\ollama\Downloads\aletheia_pi_agent_shell_integration_design.md`。
+> 概念设计见 [OPERATOR_LAYER_DESIGN.md](OPERATOR_LAYER_DESIGN.md);
+> repo-specific 双进程详细蓝图见
+> [superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md](superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md);
+> 参考文件覆盖矩阵见
+> [superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md](superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md);
+> 设计完成审计见
+> [superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md](superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md)。
+> 外部参考源文件为 `C:\Users\Administrator\Downloads\aletheia_pi_agent_implementation_plan.md`。
 > **该文的 `Stage 1–6` 是本 track 内部编号,与 Phase 0–7 是两套独立编号,不可互映。**
+> **2026-06-10 工作约定**:权威的 Phase 0 观察窗可在另一台观测机上继续跑;本仓库允许在
+> `worktree-dev` 并行推进 Track B 的设计与原型,但**合并 / 上线 / 宣称完成**仍受
+> Phase 0 门全绿 + 显式授权双重约束。
 
 本 track **拆两层**(见 [AI_HANDOFF.md](AI_HANDOFF.md) 2026-06-09 判断):
 
@@ -163,7 +172,8 @@ agent_shell_commands   — 命令审计(query_id, input, intent, command, params
 B 是 8 个新模块的能力扩张。Phase 0 战略冻结律(见 [CURRENT_TASK.md](CURRENT_TASK.md))明确:
 门全绿前只做稳定性 + doctor 类减人工确定性工具。**B 是"盖楼",72h 稳跑证明是"地基"——地基不稳不盖楼。**
 
-> **开发可提前**(worktree 分支,不合并 master);**上线需门全绿 + 显式授权。**
+> **开发可提前**(`worktree-dev` 等 worktree 分支,不合并 `master`);**上线需门全绿 +
+> 显式授权。** 这条允许的是"并行研发",不是"跳过观测门"。
 
 ### Track B Stage 1 观察门
 
@@ -473,6 +483,12 @@ All must pass:
 ROADMAP.md (this file)         — Phase-based execution plan with observation gates
 WORLD_MAP.md                   — Full architecture vision (module specs, data contracts, workflows)
 OPERATOR_LAYER_DESIGN.md       — Cross-cutting Operator Layer track design (LLM Apex Agent Shell, layer B)
+superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md
+                              — Repo-specific dual-process implementation design for Operator Layer
+superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
+                              — Coverage map from external PI plan -> local design sources
+superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md
+                              — Design-phase completion audit for the dual-process Operator Layer package
 PIPELINE_STATUS.md             — Current implementation status per pipeline stage
 north_star_references.md       — Reference systems comparison + gap analysis
 AGENTS.md                      — Governance red lines (constraints)

@@ -5,6 +5,9 @@
 > **每台机器本地的、随时间变化的事实**,写进 git 必然在另一台机器上过期。
 > **要知道真实状态,运行 `aletheia doctor`**(只读、零副作用,是事实的唯一来源)。
 > 双机切换标准流程见 `docs/DEV_PROTOCOL.md`。
+> **2026-06-10 当前协作分工**:权威的 Phase 0 72h 观察窗口在另一台观测机上运行;本 checkout
+> 的职责是沿 `worktree-dev` 推进后续开发与文档收敛,尤其是 Operator Layer / Pi Agent 的
+> 方案与实现准备。**不要用本 checkout 的进程状态推断观察窗是否达标。**
 
 ---
 
@@ -31,11 +34,13 @@
 
 ## 待办(下一步可做的事 — 不含"现在状态如何")
 
-1. **战略冻结生效**:Phase 0 观察门全绿之前,roadmap 冻结,只做稳定性 +
-   `doctor` 这类"减人工"的确定性工具。地基不稳不盖楼。
-2. **Windows 无人值守加固**(Task 3):autostart 看门狗 schtasks 注册可靠性、
+1. **观测主线继续**:Phase 0 观察门仍以观测机为准;凡涉及"72h 跑到哪了 / 是否达标"的判断,
+   一律去那台机器用 `doctor`/gateway status 取事实。
+2. **并行开发线 = `worktree-dev`**:可继续推进 post-Phase-0 能力的设计/原型,但不把这些开发
+   行为当作 Phase 0 达标证据,也不提前合并回 `master`。
+3. **Windows 无人值守加固**(观测机 Task 3):autostart 看门狗 schtasks 注册可靠性、
    gateway 重启/注销/整机重启后的自动复活。这是 72h 真正无人值守的前提。
-3. **经验闭环质量门**(已在工作区,待提交):post_trade_reviewer / risk_critic 仅在
+4. **经验闭环质量门**(已在工作区,待提交):post_trade_reviewer / risk_critic 仅在
    LLM 真产出 + 有真实活动时升 `high_confidence`,防噪音进检索。
 
 ## 下一阶段(Phase 0 门全绿后,需显式授权才启动)
@@ -45,72 +50,32 @@
 
 ---
 
-## Pi Agent (Operator Layer Track B) — Stage 1 实施计划
+## Pi Agent (Operator Layer Track B) — 当前设计源
 
-> 在 worktree `worktree-dev` 开发;合并 master 等 Phase 0 门全绿 + 显式授权。
-> 完整设计:ROADMAP.md § Operator Layer + OPERATOR_LAYER_DESIGN.md + Downloads/aletheia_pi_agent_shell_integration_design.md
+> 在 worktree `worktree-dev` 开发;合并 `master` 仍等 Phase 0 门全绿 + 显式授权。
+> **本地设计源已收口**:
+> 1. `docs/ROADMAP.md` § Cross-Cutting Track: Operator Layer
+> 2. `docs/OPERATOR_LAYER_DESIGN.md` (概念层)
+> 3. `docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md` (repo-specific 详细蓝图)
+> 4. `docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md` (参考文件覆盖矩阵)
+> 5. `docs/superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md` (设计完成审计)
 
-### 目标(§23/§24 Definition of Done)
+### 当前结论(已定)
 
-- 用户问 "what is the system doing?" → 基于实时 DB 数据的智能回答
-- 用户问 "why did this proposal fail?" → 引用具体 risk_decision 的解释
-- pause/resume 命令存在但被 PermissionPolicy 拦截(默认 Read Only)
-- create_research_note/diagnostic_todo 同理(需 Research 权限)
-- 每个查询/命令审计
-- Shell 降级不影响 Trading Core
-- 无 live/凭证/硬风控访问
+- **最终形态是双进程**,不是把现有 `POST /api/command` 继续堆成 Python 单进程壳。
+- **Python gateway 继续做交易真相层与命令执行权威**;新增 Node/TypeScript `Operator Shell`
+  负责 PI 式常驻 session runtime、operator loop、任务/修复/推荐编排。
+- **`Ctrl+K` 只保留为 launcher**,主表面是独立的 `Command Center` 页面。
+- **权限拆两层**:现有 worker/trading 权限继续保留;新增独立 `operator.permission_mode`
+  (`ReadOnly/Research/PaperAuto/AllowEditing/Auto`)。
+- **现有 `aletheia/agent_shell` 不推倒重来**,而是重构定位为 Python 侧 operator substrate /
+  compatibility layer。
 
-### 架构决策
+### 当前设计阶段待完成动作
 
-- **Fix-in-place**: 修复 `POST /api/command` 的坏 LLM 路径(错误 import `from aletheia.agents.llm`
-  + 签名不对 → 异常被吞,100% 关键词回退)。前端 `CommandPalette.tsx` 零改动。
-- **2-call LLM pattern**: call-1 结构化意图分类(~200tok) → 执行命令 → call-2 合成回答(~600tok)。
-  LLM 不可用 → 关键词+原始数据降级。
-- **全 8 模块完整架构**(对照设计文档 §24):不砍 PermissionPolicy/SessionStore/Runtime。
-  Stage 1 权限模式=ReadOnly → 非读命令被权限层拒绝(不是"代码不存在")。
-
-### 新建 `aletheia/agent_shell/` (8 模块)
-
-| 文件 | 对应设计模块 | 职责 |
-|------|-------------|------|
-| `context.py` | AppContextProvider | `build_app_context(sections)` — 按需汇总 7 个 context section(§12) |
-| `runtime.py` | AgentShellRuntime | 单回合循环:context→意图→权限检查→命令→合成→审计。Stage 1=仅 request-response(无自主循环) |
-| `registry.py` | CommandRegistry | 11 个命令(§24) + risk_level + 所需权限模式 |
-| `permissions.py` | PermissionPolicy | 权限模式→允许命令集;Forbidden 永远硬拒(§10) |
-| `sessions.py` | SessionStore | `command_session` 落 SQLite;multi-turn=Stage 2(本期 session 内只一问一答) |
-| `audit.py` | CommandAudit | best-effort 落 `agent_shell_commands` 表 + JSONL |
-| `intent.py` | (Runtime 子组件) | `classify_intent` — llm_structured,fallback=关键词映射 |
-| `synthesis.py` | (Runtime 子组件) | `synthesize_answer` — llm_complete,fallback=格式化 JSON |
-| `commands.py` | (Registry 子组件) | 11 个 handler 实现(读命令直接返回;写/操作命令走 permission gate) |
-
-### 修改现有文件
-
-- `aletheia/server/routes/command.py` — 坏 try 块替换为调用 `AgentShellRuntime.handle()`
-- `aletheia/storage/migrations.py` — 新增 3 张表(sessions/messages/commands)
-
-### 11 个命令(§24)
-
-```
-Read:        get_system_status, get_agent_activity, get_market_snapshot, get_positions,
-             explain_agent_run, explain_proposal
-Operational: pause_agents, resume_agents                        (需 Paper Auto)
-Low-write:   create_research_note, create_diagnostic_todo,
-             create_improvement_proposal                        (需 Research)
-```
-
-### 复用(不重建)
-
-- `aletheia/agents/helpers.py:llm_complete/llm_structured`
-- `aletheia/storage/repositories.py` 全部读函数
-- `aletheia/agent_runtime/health.py:compute_health()`
-- `aletheia/config/loader.py:load_config()`
-- `aletheia/knowledge/manager.py:create_research_note()`
-
-### 验证
-
-1. `uv run pytest -q` → 515 全绿 + 新增 ~15 agent_shell tests
-2. 手动 E2E:gateway 启动 → Ctrl+K → 自然语言问答 → 审计表有记录
-3. 安全: pause_agents 在 ReadOnly 模式被拒;create_research_note 在 ReadOnly 被拒
+1. 以本地 dual-process spec 为准审阅设计,不再按更早的 Stage 1 bootstrap 草案推进。
+2. 设计确认后,进入 implementation plan,把 Track 0-9 拆成逐文件、逐测试、逐提交任务。
+3. 计划批准前,不写实现代码。
 
 ---
 

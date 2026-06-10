@@ -1,5 +1,101 @@
 # Decisions
 
+## 2026-06-10 - Operator Layer 采用 dual-process: Python truth layer + Node Operator Shell
+
+### Context
+
+用户在 `worktree-dev` 上明确要求继续推进 **Pi Agent / Operator Layer** 的完整设计,并要求
+不要漏掉外部参考文件 `C:\Users\Administrator\Downloads\aletheia_pi_agent_implementation_plan.md`
+里的任何关键内容。与此同时,Phase 0 的 `72h` 观察窗继续在另一台观测机上运行,本 checkout 的职责
+是**并行设计与原型准备**,不是拿 branch 进展冒充 observation gate 达标。
+
+repo 现状也决定了不能继续含糊:
+
+- 现有 `aletheia/agent_shell/` 已存在,但它只是**单回合 request-response runtime**,不是常驻
+  PI-style operator runtime
+- `frontend/src/components/CommandPalette.tsx` 已有 `Ctrl+K` 入口,但它只是弹窗,不是完整
+  Command Center 工作面
+- 当前全局权限仍是 `Observe / Paper / Full`,与参考设计要求的
+  `ReadOnly / Research / PaperAuto / AllowEditing / Auto` 不兼容
+- 安全边界要求任何顶层 operator 都不能直接触碰 live、credentials、hard risk、execution gateway
+
+因此必须先把最终设计方向钉死,避免后续实现沿着两条互斥路线摇摆:
+
+1. 继续把现有 `/api/command` 与 Python `agent_shell` 堆成单进程大壳
+2. 采用双进程,把 PI-style 常驻 runtime 与 trading truth layer 分开
+
+### Decision
+
+Operator Layer 采用 **dual-process** 架构:
+
+1. **Python gateway 保持权威真相层**
+   - 继续拥有交易状态真相、命令执行权、审计写入权、配置真相、SQLite 持久化权
+   - 一切会改动系统状态的 Operator 命令,仍由 Python backend 校验并执行
+
+2. **新增 Node/TypeScript `Operator Shell`**
+   - 负责 PI-style 常驻 session runtime、operator loop、任务编排、修复建议、推荐生成
+   - 通过 loopback API 与 Python gateway 通信
+   - 不直接写 `app.db`,不直接调交易执行,不直接碰 secrets / live / hard risk
+
+3. **交互形态固定**
+   - `Ctrl+K` 仅保留为 launcher / quick ask
+   - 真正的主产品面是独立的 **Command Center 页面**
+
+4. **权限拆层固定**
+   - 保留现有 worker/trading 权限语义
+   - 新增独立 `operator.permission_mode`
+   - Canonical operator modes: `ReadOnly / Research / PaperAuto / AllowEditing / Auto`
+
+5. **现有 `aletheia/agent_shell` 不推倒重来**
+   - 保留并重构定位为 Python 侧 operator substrate / compatibility layer
+   - 它不再被视为最终的 Apex Agent Shell
+
+### Reasoning
+
+- 这条路线是外部参考设计与当前 repo 真实结构之间唯一不自相矛盾的落点:
+  - PI-style 常驻 runtime 需要自己的服务边界
+  - Aletheia 的 trading truth、risk、execution、audit 又必须继续集中在 Python backend
+- 若继续走 Python 单进程大壳:
+  - 会把 reasoning runtime、command execution、state truth 混进同一层
+  - 更难保持安全边界清晰
+  - 也更偏离参考 PI 设计的本质
+- 若让 Node shell 直接写 DB 或直接执行交易:
+  - 会破坏现有后端对交易/风控/审计的权威性
+  - 也会把 Windows 本地多进程 SQLite 写入风险放大
+- Command Center 必须独立成页,因为参考设计要求持久会话、trace、inspector、recommendation
+  等完整 operator workspace,这不是 `Ctrl+K` 弹窗能承载的
+
+### Consequences
+
+- 本地设计 source of truth 收口为:
+  - `docs/OPERATOR_LAYER_DESIGN.md` = 概念层
+  - `docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md` = repo-specific 双进程蓝图
+  - `docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md` = 参考文件覆盖矩阵
+- 后续 implementation plan 必须按 dual-process 拆 Track 0-9,不能回退成单进程 quick fix
+- `CURRENT_TASK.md` / `ROADMAP.md` / `AI_HANDOFF.md` / `PIPELINE_STATUS.md` 都应引用上述本地设计源
+- 这条决策**不等于**允许立即合并或上线;上线仍受 `Phase 0 门全绿 + 显式授权` 约束
+
+### Alternatives Considered
+
+- **继续扩写 Python-only `aletheia/agent_shell`**
+  - rejected: 会把 operator runtime 与 trading truth layer 混在一处,且偏离参考 PI 设计
+
+- **完全外置独立 daemon,前端直接对接**
+  - rejected: 会削弱 gateway 作为本地产品控制平面的地位,也更难保证 dashboard honesty
+
+- **把 `Ctrl+K` 弹窗继续升级成主表面**
+  - rejected: 只能承载 quick command / quick ask,承载不了 operator workspace
+
+### Supersedes / Clarifies
+
+- **Clarifies** `2026-06-07 - WebUI: lightweight cockpit IA fix, defer 5-zone shell`
+  - 该决策针对当时主分支 UI 范围控制,仍然成立
+  - 但其“global Command Center deferred”现在被限定为:
+    - 主线合并/上线仍 gated
+    - `worktree-dev` 上的 Operator Layer **设计与实现准备**已获明确授权,可以继续推进
+
+---
+
 ## 2026-06-10 - CLI 分层 + 运营命令软弃用(人类交互收口到 Web)
 
 ### Context

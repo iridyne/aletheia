@@ -188,7 +188,7 @@ risk_critic：已排入 scheduler（每 6h）
 ## 当前阶段与位置
 
 ```
-[当前] Phase 0 — Stabilize & Observe (观察期 RESET 2026-06-09)
+[当前主线] Phase 0 — Stabilize & Observe (权威观察窗在观测机)
         ├─ post_trade_reviewer + risk_critic 已排入 scheduler  DONE
         ├─ Gateway 僵尸态修复：旧码 1aa1feb → 重启对齐新码        DONE
         │   （首次"观察期"为假启动：进程活着但跑旧码，
@@ -197,7 +197,17 @@ risk_critic：已排入 scheduler（每 6h）
         │   端口清理, LLM→告警；限频持久化；端到端验证 drift 自动消除
         ├─ DB 锁真根因修复 (a33dc86)：_insert/_update 写事务悬挂   DONE
         │   持 WAL 锁(1652 次 locked)→ 提交条件修复;管道恢复
-        └─ 72h observation period                              重新计时中
+        └─ 72h observation period                              在观测机继续
+
+[并行开发线] worktree-dev — Operator Layer / Pi Agent
+        ├─ 目标:推进 Stage 1(read-only supervisor) 的方案/原型
+        ├─ 交互:Command Center 专页为主,Ctrl+K 仅作快捷入口
+        ├─ 设计源:
+        │   • OPERATOR_LAYER_DESIGN.md (概念层)
+        │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md
+        │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
+        │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md
+        └─ 约束:不作为 Phase 0 达标证据,不提前合并 master
 
   下一步  Phase 1 — Learning Quality Diagnosis
         └─ 14 天稳跑 + 学习质量人工审计

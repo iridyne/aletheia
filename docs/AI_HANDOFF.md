@@ -7,7 +7,42 @@
 
 ## Last Updated
 
-2026-06-10 (LLM 接通 Databricks gateway + 全闭环跑通 paper_internal + 515 测试通过；卡在 Bitget demo 凭证 + 启动 72h 无人值守需人工决定)
+2026-06-10 (双机职责分离确认:Phase 0 观察窗在观测机持续;本 checkout 切到 `worktree-dev` 继续推进 Operator Layer / Pi Agent)
+
+## Recent Change (Operator Layer 双进程设计收口 — 2026-06-10 第五段)
+
+**1. 本地设计源已收口**：不再让后续实现依赖外部 Downloads 文档或更早的 Stage 1 bootstrap 草案。
+当前 Operator Layer / Pi Agent 的本地 source of truth 分三层：
+- `docs/OPERATOR_LAYER_DESIGN.md` = 概念层
+- `docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md` = repo-specific 双进程详细蓝图
+- `docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md` = 外部参考文件覆盖矩阵
+- `docs/superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md` = 设计完成审计
+
+**2. 关键设计结论已经钉死**：
+- 最终形态是 **dual-process**，不是把现有 `POST /api/command` 继续堆成 Python 单进程壳
+- Python gateway 继续做交易真相层 / 命令执行权威；新增 Node/TypeScript `Operator Shell`
+  负责 PI 式常驻 session runtime、operator loop、任务/修复/推荐编排
+- `Ctrl+K` 只保留为 launcher；主产品面是独立 **Command Center** 页面
+- 权限拆成 **worker/trading** 与 **operator** 两层；新增 `operator.permission_mode`
+- 现有 `aletheia/agent_shell` 保留并重构定位为 Python 侧 operator substrate / compatibility layer
+
+**3. 当前设计阶段的下一步**：不是直接写代码，而是基于上述 spec 写 implementation plan，
+把 Track 0-9 拆成逐文件、逐测试、逐提交任务。设计未审阅前，不进入实现。
+
+## Recent Change (双机职责分离 + worktree-dev 上的 Operator Layer 研发线 — 2026-06-10 第四段)
+
+**1. 双机职责正式拆开**:Phase 0 的 `72h` 观察门继续由**另一台观测机**承担;本 checkout 不再把
+"gateway 是否在跑 / 观察窗到了第几小时 / demo 单是否落交易所"当作自己应维护的 git 事实。
+任何关于观察窗是否达标的判断,都应回观测机用 `aletheia doctor` / gateway status 取证。
+
+**2. 本 checkout 的当前职责**:切到 `worktree-dev` 作为**并行研发线**继续推进 roadmap 中被 gate
+住但已获显式讨论授权的工作,优先是 **Operator Layer / Pi Agent** 的 Stage 1(只读监督)方案与原型。
+这允许开发,**不等于允许合并/上线**,后两者仍受 `Phase 0 门全绿 + 显式授权` 约束。
+
+**3. UI 方向收敛**:现有 `Ctrl+K` Command Palette 可以保留,但它只是快捷入口,**不是 PI agent 的主
+形态**。PI agent / Apex Agent Shell 的主表面应是一个专门的 **Command Center 页面**:承载持久
+会话、证据引用、命令 trace、权限状态与 session 切换;`Ctrl+K` 只负责快速导航 / 快速发问 / 打开
+该页面。
 
 ## Recent Change (CLI 分层 + 运营命令软弃用 — 2026-06-10 第三段)
 
@@ -450,20 +485,21 @@ Recent:
 
 ## Next Recommended Step
 
-Per `docs/PIPELINE_STATUS.md` 北极星阶段图，当前处于 **stage 0 → 0.5 过渡期**：
+Per `docs/PIPELINE_STATUS.md` 北极星阶段图，当前进入**双轨推进**：
 
-**阶段 0.5（立即可做）**：
-1. 把 `post_trade_reviewer` + `risk_critic` 排入 scheduler（代码完整但从未自动跑）
-2. 验证测试基线：`uv run pytest -q` — 应为 474 passed
-3. 启动 gateway 并运行 72h unattended paper trading
-4. 观察 Learning Ledger 指标（lessons_consulted / activation_ratio）是否非零
+**观测主线（观测机）**：
+1. 继续跑 Phase 0 的 72h unattended paper trading
+2. 用 `doctor` / gateway status 审计 observation gate 是否全绿
+3. 若 gate 失败,先修观测机的稳定性问题,再重置计时
 
-**阶段 1（72h 稳跑后）**：
-5. 证明学习质量——dreaming_agent 的 Learning Ledger 指标趋势向好
-6. 如果指标全零 → 先诊断（LLM 不通 / opportunity 全 neutral / 配置未开）
+**并行开发线（本 checkout / `worktree-dev`）**：
+4. 把 Operator Layer / Pi Agent 收敛到 Stage 1(read-only supervisor) 的明确规格
+5. 把 Command Center 专页与 `Ctrl+K` launcher 的职责边界钉死
+6. 仅在 branch 上推进原型;不把 branch 进展当作 Phase 0 已完成
 
-**阶段 2（需显式授权）**：
-7. 最小经验闭环——paper_trader 读 lessons / agent 间工作流 / risk_critic 输出进入决策
+**后续（仍需 gate + 授权）**：
+7. Phase 0 门全绿后再决定合并/上线 Operator Layer
+8. Phase 1/2 的学习质量与经验闭环按 ROADMAP 继续推进
 
 详见 `docs/PIPELINE_STATUS.md`。
 
