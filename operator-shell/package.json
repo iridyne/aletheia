@@ -1,0 +1,18 @@
+{
+  "name": "aletheia-operator-shell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node node_modules/tsx/dist/cli.mjs src/index.ts",
+    "heartbeat-once": "node node_modules/tsx/dist/cli.mjs src/index.ts --once",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10"
+  }
+}
