@@ -59,7 +59,8 @@ Phases are **not time-locked**. Move as fast or slow as reality permits.
 
 > **正交于 Phase 0–7。** Phase 轴衡量*交易智能成熟度*;本 track 衡量*操作/控制面*
 > ——用户能否从 Command Center 问 "现在在干什么 / 为什么失败 / 帮我修这个低风险问题"。
-> 设计全文见 [OPERATOR_LAYER_DESIGN.md](OPERATOR_LAYER_DESIGN.md)。
+> 设计全文见 [OPERATOR_LAYER_DESIGN.md](OPERATOR_LAYER_DESIGN.md);
+> 外部参考设计源见 `C:\Users\ollama\Downloads\aletheia_pi_agent_shell_integration_design.md`。
 > **该文的 `Stage 1–6` 是本 track 内部编号,与 Phase 0–7 是两套独立编号,不可互映。**
 
 本 track **拆两层**(见 [AI_HANDOFF.md](AI_HANDOFF.md) 2026-06-09 判断):
@@ -67,20 +68,111 @@ Phases are **not time-locked**. Move as fast or slow as reality permits.
 | 层 | 内容 | 状态 | 前置 |
 |---|---|---|---|
 | **A — 确定性自愈 supervisor** | 无 LLM。code-drift/stale→重启、端口清理、限频持久化。这是稳定性根基,不是操作员。 | **DONE** (`8a6e008` + `abd7773`) | — |
-| **B — LLM Apex Agent Shell** | 本文档主体。顶层 LLM 操作员:读全局 context、答疑、解释 agent run/proposal、暂停/恢复 agent、写 research note、开诊断 todo、每个动作审计。 | **NOT STARTED** | **Phase 0 观察门全绿** |
+| **B — LLM Apex Agent Shell (Pi Agent)** | 顶层 LLM 系统操作员。下文展开。 | **NOT STARTED** | **Phase 0 观察门全绿 + 显式授权** |
 
-**为什么 B 排在 Phase 0 之后,不是现在:** B 是 8 个新模块(AppContextProvider /
-AgentShellRuntime / CommandRegistry / PermissionPolicy / SessionStore / CommandAudit /
-Command Center API / Dashboard 集成)的能力扩张。Phase 0 战略冻结律(见
-[CURRENT_TASK.md](CURRENT_TASK.md))明确:门全绿前只做稳定性 + doctor 类减人工确定性工具。
-**B 是"盖楼",72h 稳跑证明是"地基"——地基不稳不盖楼。**
+### Track B 核心架构(§8)
 
-**B 自身的安全边界(落地时以 [AGENTS.md](../AGENTS.md) 红线为准):** Agent Shell 绝不直接
-开 live / 改凭证 / 改硬风控 / 绕过 Risk Engine / 下 live 单 / 改执行网关 / 硬删知识库。
-高风险动作只能产 proposal,等人在 Dashboard/CLI 显式确认。Operator Stage 1(只读监督)
-是 B 的第一个可交付切片(见设计文档 §16 / §23)。
+```text
+┌─ User / Dashboard / Command Center ─┐
+└──────────────────────────────────────┘
+                ↓
+┌─ Aletheia Agent Shell ───────────────┐   ← 本 track 的产物
+│  App context assembly                 │
+│  Conversation/session state           │
+│  Command intent generation            │
+│  Specialist agent delegation          │
+└──────────────────────────────────────┘
+                ↓
+┌─ Command Registry + Permission Layer ┐   ← 安全边界(§10)
+│  command schemas / permission modes   │
+│  risk level classification            │
+│  audit logging / safe routing         │
+└──────────────────────────────────────┘
+                ↓
+┌─ Aletheia Trading Core ──────────────┐   ← 已存在
+│  agents / risk / execution / knowledge│
+└──────────────────────────────────────┘
+```
 
-**启动 B 需显式授权**——和所有 Phase 1+ 工作一样,不在 Phase 0 稳跑证明前启动。
+### Track B 安全不变式(§6/§7, 以 AGENTS.md 为权威)
+
+Agent Shell **绝不直接**:
+- 开 live 交易 / 改凭证 / 改硬风控限额 / 绕过 Risk Engine
+- 下 live 单 / 改 Execution Gateway 或凭证逻辑 / 硬删知识库
+
+高风险操作 → 只产生 Proposal → 等人在 Dashboard/CLI 显式确认。
+
+### Track B 必需模块(§24 — 8 个)
+
+1. **AppContextProvider** — 按需组装系统/市场/Agent/交易/策略/风控/知识的紧凑摘要
+2. **AgentShellRuntime** — LLM agent 运行循环:context→意图分类→命令执行→合成回答→审计
+3. **CommandRegistry** — 命令注册表 + risk_level + 所需权限
+4. **PermissionPolicy** — 权限模式层(Read Only / Research / Paper Auto / Allow Editing / Auto)
+5. **SessionStore** — 会话持久化(command_session / diagnostic / dreaming / strategy / review)
+6. **CommandAudit** — 每个命令/查询落审计表 + JSONL
+7. **Command Center API** — FastAPI route,接管现有 `POST /api/command` 的 LLM 路径
+8. **Dashboard 集成** — Shell 状态(idle/thinking/running/failed)、command trace、Agent Activity
+
+### Track B 初始命令清单(§24 — 11 个)
+
+| 类别 | 命令 | Stage 准入 |
+|------|------|-----------|
+| Read | `get_system_status` | Stage 1 |
+| Read | `get_agent_activity` | Stage 1 |
+| Read | `get_market_snapshot` | Stage 1 |
+| Read | `get_positions` | Stage 1 |
+| Read | `explain_agent_run` | Stage 1 |
+| Read | `explain_proposal` | Stage 1 |
+| Operational | `pause_agents` | Stage 1 (需 Paper Auto 权限) |
+| Operational | `resume_agents` | Stage 1 (需 Paper Auto 权限) |
+| Low-risk Write | `create_research_note` | Stage 1 (需 Research 权限) |
+| Low-risk Write | `create_diagnostic_todo` | Stage 1 (需 Research 权限) |
+| Low-risk Write | `create_improvement_proposal` | Stage 1 (需 Research 权限) |
+
+**默认权限模式 = Read Only**;非读命令在 PermissionPolicy 层被拦截直到人工升级权限。
+
+### Track B 内部分阶(§16 — 6 Stage)
+
+| Stage | 名称 | 交付 |
+|-------|------|------|
+| **1** | **Read-Only Supervisor + 完整架构** | 全 8 模块骨架 + 11 命令(非读命令权限拦截) + 审计 + Session。用户可问"系统在做什么/为什么提案被拒",得到基于 DB 数据的 LLM 回答。Definition of done = §24。 |
+| 2 | Low-Risk Write | 解锁 Research 权限:create_research_note / create_todo / create_improvement_proposal 实际执行 |
+| 3 | Operational Control | 解锁 Paper Auto:pause/resume、rerun failed task、run market scan、create paper experiment |
+| 4 | Specialist Delegation | Shell 委托 specialist agents 执行并跟踪进度 |
+| 5 | Pi Runtime Deep Integration | 评估嵌入 pi-agent-core 或维护 Aletheia 自有 runtime |
+| 6 | Self-Extension Sandbox | Agent 可提议新 extension → sandbox 测试 → 人工批准 → 启用 |
+
+### 现有基础设施复用(不重建)
+
+- `aletheia/agents/helpers.py:llm_complete/llm_structured` — LLM 调用(已验证 Databricks)
+- `aletheia/storage/repositories.py` — 全部读函数(list_agent_runs/positions/fills/proposals...)
+- `aletheia/agent_runtime/health.py:compute_health()` — 健康状态
+- `aletheia/config/loader.py:load_config()` — 配置读取
+- `aletheia/server/routes/command.py` — 现有 Command Center endpoint(LLM 路径坏了,修复之)
+
+### 数据模型新增(§20 — 仅 Stage 1 需要的)
+
+```sql
+agent_shell_sessions   — 会话元数据(type, started_at, ended_at)
+agent_shell_messages   — 会话内消息(session_id, role, content, created_at)
+agent_shell_commands   — 命令审计(query_id, input, intent, command, params, output, latency_ms)
+```
+
+### 为什么 B 在 Phase 0 之后
+
+B 是 8 个新模块的能力扩张。Phase 0 战略冻结律(见 [CURRENT_TASK.md](CURRENT_TASK.md))明确:
+门全绿前只做稳定性 + doctor 类减人工确定性工具。**B 是"盖楼",72h 稳跑证明是"地基"——地基不稳不盖楼。**
+
+> **开发可提前**(worktree 分支,不合并 master);**上线需门全绿 + 显式授权。**
+
+### Track B Stage 1 观察门
+
+- [ ] 用户在 Command Center 问 "what is the system doing?" 得到基于实时数据的智能回答
+- [ ] 用户问 "why did this proposal fail?" 得到具体引用 risk_decision 的解释
+- [ ] pause/resume 被权限层拦截(默认 Read Only)直到人工升级
+- [ ] 每个查询/命令有审计记录(agent_shell_commands 表)
+- [ ] Shell 降级不影响 Trading Core(LLM 不可用 → 关键词回退,不崩)
+- [ ] 无 live 交易 / 无凭证访问(安全测试通过)
 
 ---
 
