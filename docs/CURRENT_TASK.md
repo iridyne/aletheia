@@ -1,16 +1,20 @@
 # Current Task
 
-## Status: Phase 0 全闭环已跑通(paper_internal)，待决定是否等 Bitget demo 凭证 / 启动 72h（2026-06-10）
+## Status: Phase 0 72h 观察期已启动（2026-06-10）— gateway 在跑、bitget_demo 真单已落交易所
 
-> **本 checkout 从未运行过**（见 AI_HANDOFF）。本会话已修复并验证：`aletheia/data/` 重建、DNS resolver、LLM 接通 Databricks gateway。**Phase 0 全闭环首次跑通**：observer→opportunity(LLM 真分析)→proposal→risk→fill→position→review，0 error，515 测试通过。
+> **两条 blocker 全部清除**：(1) LLM = Databricks gateway 已接通；(2) Bitget demo 凭证已由用户提供并存入加密 secret store（**live 凭证用户也给了但我刻意未存**——Phase 0 无需，live 锁到 Phase 6）。分支已合并入 master（6 commit，未 push）。
 >
-> **当前配置**：`permission_mode=Paper`、`exchange.mode=demo`、`paper_execution_mode=paper_internal`（因无 Bitget demo 凭证而走本地撮合兜底）、`live.state=live_disabled`。
+> **bitget_demo 真单已验证落交易所**：paper_trader 下出 `exchange_order_id=1448403690041016321`，Bitget demo 侧 `get_positions` 可见 SOLUSDT short qty0.3、demo equity≈197.97。满足 gate 的 "demo orders visible on Bitget"。
 >
-> **下一步需人工决定**（两条 blocker，AI 不擅自做）：
-> 1. **Bitget demo 凭证**：`bitget.demo.{api_key,api_secret,passphrase}` 均未设。设了才能把 `paper_execution_mode` 切回 `bitget_demo`、满足 "demo orders visible on Bitget" 这条 gate。命令：`! uv run aletheia secrets set bitget.demo.api_key`（×3）。
-> 2. **启动 72h 无人值守 gateway**：持久 supervised 进程 + 登录看门狗，对外/难撤销，须人确认后再起（`aletheia gateway start` / 配 autostart）。
+> **当前运行态**：gateway running (supervised, PID 见 pidfile)、health=healthy、scheduler 15 job 自主触发（已观察到 15min cadence 自发 market_observer）、`permission_mode=Paper`、`exchange.mode=demo`、`paper_execution_mode=bitget_demo`、`live.state=live_disabled`、kill_switch off。已有一个 `paper_running` 策略供 opportunity 绑定。
 >
-> 分支 `fix/restore-data-package`（5 commit）待合并。
+> **观察期计时起点**：2026-06-10（本次 gateway 启动后首个 health 周期）。判据见下方 ROADMAP Phase 0 observation gate（72h 无崩 + 无 code_drift 自愈 / observer 每 15min 产 opp / fill≥5 / 平仓≥2 / reviewer+critic 有产出 / demo 单交易所可见）。
+>
+> **一个待办（非 blocker，需人决定）**：autostart 登录看门狗当前 `schtasks_error`（计划任务未注册）→ gateway 仅在本会话/本次登录存活，**重启/注销后不会自动复活**。要跨重启无人值守需注册 Windows 计划任务（持久系统变更）。当前 supervisor 自愈对"进程崩溃/code drift/端口"有效，但对"整机重启"无效。
+
+---
+
+## (历史) Status: Phase 0 全闭环已跑通(paper_internal)，待决定是否等 Bitget demo 凭证 / 启动 72h（2026-06-10 早些）
 
 ---
 
