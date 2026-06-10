@@ -198,6 +198,12 @@ class HealthConfig(BaseModel):
     self_heal_port_cleanup: bool = True       # clean orphan/port-holder PIDs (cleanup, not restart)
     # LLM-unavailable / kill_switch / agent_failure are alert-only by design —
     # a restart cannot fix an external outage, human kill switch, or bad strategy.
+    # Fail-loud LLM startup gate: at boot, probe every enabled provider with a REAL
+    # inference call; if none can actually complete one, pause the trading loop
+    # (runtime.paused=True) instead of running blind. The process stays ALIVE (it is
+    # NOT killed — that would just trigger a supervisor/watchdog respawn loop); the
+    # Web UI shows the degraded state and the operator resumes after fixing a provider.
+    require_llm_at_startup: bool = True
 
 
 class RetentionConfig(BaseModel):

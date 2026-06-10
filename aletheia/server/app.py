@@ -27,6 +27,63 @@ from aletheia.server.routes.command import router as command_router
 logger = logging.getLogger("aletheia")
 
 
+async def _llm_startup_gate(cfg) -> None:
+    """Probe LLM providers at boot; pause the trading loop if none can do inference.
+
+    Fail-loud, but keep the process alive: setting runtime.paused stops every
+    scheduler job (they no-op on cfg.runtime.paused) and persists so the Web UI
+    shows the degraded state. We feed record_llm_failure() so /api/health reports
+    `llm_unavailable:N` with no extra plumbing, and audit the decision so it is
+    never silent. The process is NOT killed — that would just trigger a
+    supervisor/watchdog respawn loop. Operator fixes a provider and hits
+    POST /api/gateway/resume. Never raises (degrades to a logged warning)."""
+    if not cfg.health.require_llm_at_startup:
+        return
+    try:
+        from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
+        result = await probe_llm_providers_at_startup(cfg)
+    except Exception as e:
+        logger.warning("LLM startup gate probe errored (skipping gate): %s", e)
+        return
+
+    if result["any_usable"]:
+        # Clear any stale failure count so /api/health starts clean.
+        from aletheia.agent_runtime.health import record_llm_success
+        record_llm_success()
+        return
+
+    # No provider could complete a real inference call — pause the loop.
+    from aletheia.config.loader import save_config
+    cfg.runtime.paused = True
+    save_config(cfg)
+
+    from aletheia.agent_runtime.health import record_llm_failure
+    for _ in range(max(1, cfg.health.llm_unavailable_alert_after)):
+        record_llm_failure()
+
+    errors = "; ".join(
+        f"{r['provider']}={r['error']}" for r in result["results"]
+    ) or "no enabled providers"
+    logger.warning(
+        "LLM startup gate: NO usable provider (%d checked) — trading loop PAUSED. "
+        "Fix a provider and resume from the dashboard. Details: %s",
+        result["checked"], errors,
+    )
+    try:
+        from aletheia.files.jsonl import write_audit
+        write_audit({
+            "actor": "system", "source": "startup_gate",
+            "event_type": "llm_startup_gate_paused",
+            "entity_type": "gateway", "entity_id": "gateway",
+            "message": (
+                f"No usable LLM provider at startup ({result['checked']} checked); "
+                f"trading loop paused. {errors}"
+            ),
+        })
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = bootstrap()
@@ -51,6 +108,11 @@ async def lifespan(app: FastAPI):
     from aletheia.telegram.bot import TelegramBot
     run_migrations()
     init_tool_registry()
+    # Fail-loud LLM gate: if no provider can actually do inference, pause the
+    # trading loop BEFORE the scheduler starts (it then boots paused via the
+    # existing runtime.paused path) rather than running blind and producing
+    # neutral-only opportunities while looking alive.
+    await _llm_startup_gate(cfg)
     try:
         init_scheduler()
     except Exception as e:
