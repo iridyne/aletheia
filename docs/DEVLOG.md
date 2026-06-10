@@ -1,5 +1,30 @@
 # Development Log
 
+## 2026-06-10 — CLI 分层 + 运营命令软弃用（人类交互收口到 Web）
+
+**背景**：评估是否完全去掉 CLI、人类交互全走 Web。结论：不去掉，分三层。
+
+**硬约束（为什么不能全删 CLI）**：Web UI 由 gateway 进程伺服，进程没起就没 UI——无法用"还不存在的 UI"启动那个进程；且 Windows 看门狗任务写死 `aletheia.main gateway start`，`doctor` 最需要时正是 gateway 挂掉、UI 够不着时。
+
+**三层划分**：
+- **bootstrap 内核（保留）**：`gateway start/restart/enable-autostart`、`doctor`、`version`。
+- **运维/调试工具（保留，无 Web 平价）**：`bitget sync`、`knowledge reindex`、`knowledge search`。
+- **运营命令（软弃用，有 `/api/*` 平价）**：`permission`/`model`/`risk`/`strategy`/`update` 整组 + `secrets` + `bitget test`。
+
+**软弃用机制（commit `16efd5b`）**：
+- `cli/_deprecated.py`（新）：`warn_deprecated()` 往 **stderr** 打一行指向 Web 的黄色提示；**stdout 不变**。
+- 整组弃用用 Typer `@callback`（子命令执行前触发）；`bitget test` 用内联提示，`sync` 保持干净。
+- `main.py`：`add_typer` 重排为 bootstrap / kept-tools / `[deprecated]` 三档，help 文本加 `[deprecated → …]` 标记。
+- `diagnostics/doctor.py`：kill_switch / demo-creds 的 fix_hint 改为 Web 首选、CLI 备选——避免"删命令后提示成谎话"。
+
+**文档同步（commit `2217510`）**：RUNBOOK / README 标 dashboard 为 primary、弃用 CLI 为 deprecated；`implementation_guide`（冻结规格）与 AI_HANDOFF 历史条目不改。
+
+**决策**：软弃用而非硬删——零回退、零功能损失、保留逃生口；物理删除留待将来 Web 路径用顺手后一次性收尾。架构决策见 `docs/DECISIONS.md`。
+
+**测试**：`uv run pytest -q` → **538 passed**（软弃用零行为变更，无回退）。
+
+---
+
 ## 2026-06-08 (later⁷) — Gateway 稳定性修复（ghost-socket 根治）
 
 **问题**：前端状态栏显示 "Gateway Stopped" 但页面正常访问；`gateway stop` 无法释放端口。

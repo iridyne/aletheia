@@ -9,6 +9,26 @@
 
 2026-06-10 (LLM 接通 Databricks gateway + 全闭环跑通 paper_internal + 515 测试通过；卡在 Bitget demo 凭证 + 启动 72h 无人值守需人工决定)
 
+## Recent Change (CLI 分层 + 运营命令软弃用 — 2026-06-10 第三段)
+
+人类交互开始收口到 Web。评估"是否完全去掉 CLI"后定论:**不去掉,分三层**——
+(1) bootstrap 内核 `gateway start/restart/enable-autostart` + `doctor` + `version`(Web
+无法替代,UI 由 gateway 进程伺服、看门狗也依赖 `gateway start`);(2) 无 Web 平价的运维
+工具 `bitget sync` / `knowledge reindex` / `knowledge search`;(3) 已有 `/api/*` 平价的运营
+命令 `permission`/`model`/`risk`/`strategy`/`update` + `secrets` + `bitget test` → **软弃用**。
+
+软弃用机制(commit `16efd5b`):新增 `cli/_deprecated.py::warn_deprecated`,弃用命令运行时往
+**stderr** 打一行指向 Web 位置的提示,**stdout 与功能不变** → 538 测试全过(无回退)。整组弃用
+用 Typer `@callback`,`bitget test` 用内联(保留 `sync`)。`main.py` help 分 bootstrap /
+kept-tools / `[deprecated]` 三档。`doctor` 的 kill_switch / demo-creds fix_hint 改为 Web 首选、
+CLI 备选(避免"删命令→提示成谎话")。文档同步(commit `2217510`):RUNBOOK/README 标 dashboard
+为 primary、CLI 为 deprecated;`implementation_guide`(冻结规格,§号交叉引用)与本 changelog 历史
+条目不改。架构决策详见 `docs/DECISIONS.md`(2026-06-10 CLI 分层条)。
+
+**未做(刻意)**:运营命令的物理删除——软弃用是渐进第一步,留待将来 Web 路径用顺手后一次性收尾。
+
+---
+
 ## Recent Change (LLM 接通 + Phase 0 全闭环验证 — 2026-06-10 第二段)
 
 > 接上一条。分支 `fix/restore-data-package` 现 5 个 commit。

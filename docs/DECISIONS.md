@@ -1,5 +1,59 @@
 # Decisions
 
+## 2026-06-10 - CLI 分层 + 运营命令软弃用(人类交互收口到 Web)
+
+### Context
+
+人类交互散落在两个面:CLI(Typer)与 Web dashboard。多数 CLI 子命令已有等价的
+`/api/*` 端点。提出"是否完全去掉 CLI、把人类交互全部走 Web UI"。
+
+排雷发现一个**鸡生蛋的硬约束**:Web UI 由 gateway **进程**伺服,进程没起就没有 UI
+——无法用"还不存在的 UI"去启动那个进程。且 Windows 看门狗任务的命令体写死
+`aletheia.main gateway start --no-browser`,`doctor` 最需要的时刻恰是 gateway 挂掉、
+UI 够不着时。这两类命令天然属于进程外的命令行。
+
+另一处雷:`doctor` 的 blocker/warn 修复提示(fix_hint)写死了 `aletheia risk resume`、
+`aletheia secrets set`、`aletheia model set`——若删命令而不改提示,提示即成谎话
+(正是本项目反复对抗的"记录-事实不符")。
+
+### Decision
+
+CLI 不去掉,而是**分三层**,人类日常交互收口到 Web:
+
+1. **Bootstrap 内核(保留,Web 无法替代)**:`gateway start/restart/enable-autostart`、
+   `doctor`、`version`。"让机器活起来 + 看它活没活"的最小集。
+2. **运维/调试工具(保留,无 Web 平价)**:`bitget sync`、`knowledge reindex`、
+   `knowledge search`。
+3. **运营命令(软弃用,已有 Web 平价)**:`permission`/`model`/`risk`/`strategy`/
+   `update` 整组 + `secrets`(set/list/test)+ `bitget test`。
+
+**软弃用 = 命令照常工作,仅在运行时往 stderr 打一行指向 Web 位置的提示**
+(`cli/_deprecated.py::warn_deprecated`);stdout 不变,脚本与现有测试零影响。
+
+### Reasoning
+
+- 选软弃用而非硬删:零回退风险、零功能损失、保留逃生口。硬删要同步删测试 +
+  清文档 + 改 doctor 提示,改动面大且与"逐步去掉"的渐进意图相悖。
+- 提示走 stderr 而非 stdout:保证 538 测试(断言 stdout/exit_code)原样通过,
+  且管道/脚本不被污染。
+- doctor fix_hint 同步改为"Web 首选、CLI 备选",维持指引指向被维护的面。
+
+### Consequences
+
+- 将来某运营命令的 Web 路径用顺手、确认无依赖后,物理删除只剩"删代码 + 删对应
+  测试"两步,无连带风险。
+- 新增运营功能应优先(或仅)做 Web 端;CLI 侧不再扩充运营命令。
+- Bootstrap 内核(`gateway start` + `doctor`)是**不可删**的——删它会切断刚稳定的
+  无人值守复活链(看门狗依赖 `gateway start`)。
+
+### Alternatives Considered
+
+- **完全去掉 CLI**:被鸡生蛋约束否决——UI 架在 gateway 进程上,无进程即无 UI;
+  看门狗也依赖 `gateway start`。
+- **立即硬删运营命令**:回退成本高、改动面大,与渐进意图相悖;留作将来一次性收尾。
+
+---
+
 ## 2026-06-09 - Bitget demo wiring: empirical probe results (STEP 0)
 
 ### Context
