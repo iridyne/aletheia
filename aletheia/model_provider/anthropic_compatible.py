@@ -12,15 +12,24 @@ from aletheia.model_provider.base import (
 class AnthropicCompatibleProvider(ModelProvider):
     name = "anthropic_compatible"
 
-    def __init__(self, base_url: str, model: str = "default", api_key: str | None = None):
+    def __init__(self, base_url: str, model: str = "default", api_key: str | None = None,
+                 auth_scheme: str = "x-api-key"):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
+        # Native Anthropic uses the x-api-key header. Gateway-fronted Anthropic
+        # endpoints (e.g. Databricks AI Gateway /ai-gateway/anthropic, which issues
+        # a `dapi…` PAT) authenticate with `Authorization: Bearer` instead and reject
+        # x-api-key with 401. Make the scheme selectable; default preserves native.
+        self.auth_scheme = auth_scheme
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
         if self.api_key:
-            h["x-api-key"] = self.api_key
+            if self.auth_scheme == "bearer":
+                h["Authorization"] = f"Bearer {self.api_key}"
+            else:
+                h["x-api-key"] = self.api_key
         return h
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
@@ -28,8 +37,15 @@ class AnthropicCompatibleProvider(ModelProvider):
             "model": self.model,
             "messages": request.messages,
             "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
         }
+        # `temperature` is omitted for gateway-fronted (bearer) endpoints. Some
+        # Databricks-hosted models (e.g. claude-opus-4-8) hard-reject temperature
+        # with HTTP 400 ("temperature is deprecated for this model"), and Aletheia
+        # agents request temperature=0 for deterministic structured output — which
+        # would fail every call. Mirrors the same omission in databricks.py. Native
+        # Anthropic (x-api-key) still honours temperature.
+        if self.auth_scheme != "bearer":
+            payload["temperature"] = request.temperature
         if request.system:
             payload["system"] = request.system
         async with httpx.AsyncClient(timeout=60) as client:

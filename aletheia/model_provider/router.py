@@ -62,6 +62,7 @@ def get_provider(name: str | None = None) -> ModelProvider:
             base_url=pcfg.base_url,
             model=pcfg.model,
             api_key=api_key,
+            auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
         )
     elif ptype == "databricks":
         provider = DatabricksProvider(
