@@ -55,6 +55,35 @@ Phases are **not time-locked**. Move as fast or slow as reality permits.
 
 ---
 
+## Cross-Cutting Track: Operator Layer (顶层 LLM 操作员)
+
+> **正交于 Phase 0–7。** Phase 轴衡量*交易智能成熟度*;本 track 衡量*操作/控制面*
+> ——用户能否从 Command Center 问 "现在在干什么 / 为什么失败 / 帮我修这个低风险问题"。
+> 设计全文见 [OPERATOR_LAYER_DESIGN.md](OPERATOR_LAYER_DESIGN.md)。
+> **该文的 `Stage 1–6` 是本 track 内部编号,与 Phase 0–7 是两套独立编号,不可互映。**
+
+本 track **拆两层**(见 [AI_HANDOFF.md](AI_HANDOFF.md) 2026-06-09 判断):
+
+| 层 | 内容 | 状态 | 前置 |
+|---|---|---|---|
+| **A — 确定性自愈 supervisor** | 无 LLM。code-drift/stale→重启、端口清理、限频持久化。这是稳定性根基,不是操作员。 | **DONE** (`8a6e008` + `abd7773`) | — |
+| **B — LLM Apex Agent Shell** | 本文档主体。顶层 LLM 操作员:读全局 context、答疑、解释 agent run/proposal、暂停/恢复 agent、写 research note、开诊断 todo、每个动作审计。 | **NOT STARTED** | **Phase 0 观察门全绿** |
+
+**为什么 B 排在 Phase 0 之后,不是现在:** B 是 8 个新模块(AppContextProvider /
+AgentShellRuntime / CommandRegistry / PermissionPolicy / SessionStore / CommandAudit /
+Command Center API / Dashboard 集成)的能力扩张。Phase 0 战略冻结律(见
+[CURRENT_TASK.md](CURRENT_TASK.md))明确:门全绿前只做稳定性 + doctor 类减人工确定性工具。
+**B 是"盖楼",72h 稳跑证明是"地基"——地基不稳不盖楼。**
+
+**B 自身的安全边界(落地时以 [AGENTS.md](../AGENTS.md) 红线为准):** Agent Shell 绝不直接
+开 live / 改凭证 / 改硬风控 / 绕过 Risk Engine / 下 live 单 / 改执行网关 / 硬删知识库。
+高风险动作只能产 proposal,等人在 Dashboard/CLI 显式确认。Operator Stage 1(只读监督)
+是 B 的第一个可交付切片(见设计文档 §16 / §23)。
+
+**启动 B 需显式授权**——和所有 Phase 1+ 工作一样,不在 Phase 0 稳跑证明前启动。
+
+---
+
 ## Phase 0 — Stabilize & Observe
 
 **Goal**: All 15 scheduler jobs run autonomously. System proves basic stability.
@@ -351,6 +380,7 @@ All must pass:
 ```
 ROADMAP.md (this file)         — Phase-based execution plan with observation gates
 WORLD_MAP.md                   — Full architecture vision (module specs, data contracts, workflows)
+OPERATOR_LAYER_DESIGN.md       — Cross-cutting Operator Layer track design (LLM Apex Agent Shell, layer B)
 PIPELINE_STATUS.md             — Current implementation status per pipeline stage
 north_star_references.md       — Reference systems comparison + gap analysis
 AGENTS.md                      — Governance red lines (constraints)
