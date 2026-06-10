@@ -148,6 +148,7 @@ def test_do_start_self_heals_orphan_then_proceeds(tmp_path, monkeypatch):
 
     spawned = []
     monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
+    monkeypatch.setattr(lifecycle, "_verify_started", lambda proc, cfg: None)
 
     lifecycle.do_start(no_browser=True)
     assert killed == [9999]
@@ -184,6 +185,7 @@ def test_do_start_proceeds_after_transient_port_clears(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
     spawned = []
     monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
+    monkeypatch.setattr(lifecycle, "_verify_started", lambda proc, cfg: None)
 
     lifecycle.do_start(no_browser=True)
     assert spawned == [True]  # transient hold tolerated
@@ -196,6 +198,7 @@ def test_do_start_proceeds_when_port_free(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
     spawned = []
     monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: spawned.append(True))
+    monkeypatch.setattr(lifecycle, "_verify_started", lambda proc, cfg: None)
 
     lifecycle.do_start(no_browser=True)
     assert spawned == [True]
@@ -296,3 +299,94 @@ def test_echo_safe_writes_stderr_when_not_headless(tmp_path, monkeypatch, capsys
     lifecycle._echo_safe("visible error")
     out = capsys.readouterr()
     assert "visible error" in out.err
+
+
+# --- Spawn verification: the watchdog's success signal must be honest ---
+#
+# Regression for the 13.5h silent-death zombie: _spawn_background returns exit 0
+# the instant it forks, even when the supervisor immediately dies, so the PT5M
+# watchdog recorded LastResult=0x0 ("success") on every tick while the gateway
+# stayed dead. _verify_started turns that signal honest.
+
+class _FakeProc:
+    """Stand-in for a Popen launcher handle. poll() returns `code` (None = alive)."""
+    def __init__(self, code=None):
+        self._code = code
+        self.returncode = code
+
+    def poll(self):
+        return self._code
+
+
+def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
+    """pid file written + port listening → confirmed up, returns cleanly."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    cfg = lifecycle.load_config()
+    monkeypatch.setattr(lifecycle, "is_running", lambda: True)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+
+    # Launcher still alive (poll None); gateway up → no raise.
+    lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=1.0)
+
+
+def test_verify_started_raises_when_launcher_dies_immediately(tmp_path, monkeypatch, capsys):
+    """Launcher exits non-zero before gateway is up → Exit(1) + spawn-failed audit."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    cfg = lifecycle.load_config()
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+
+    with pytest.raises(typer.Exit):
+        lifecycle._verify_started(_FakeProc(code=1), cfg, timeout=2.0)
+
+    # The death is no longer silent: it is audited.
+    from aletheia.files.jsonl import read_jsonl
+    assert any(e.get("event_type") == "gateway_spawn_failed" for e in read_jsonl("audit.jsonl"))
+
+
+def test_verify_started_raises_on_timeout_when_never_up(tmp_path, monkeypatch):
+    """Launcher stays alive but gateway never binds the port → Exit(1) on timeout."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    cfg = lifecycle.load_config()
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)  # exercise headless log path
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+
+    with pytest.raises(typer.Exit):
+        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.6)
+
+
+def test_verify_started_surfaces_errors_log_tail(tmp_path, monkeypatch, capsys):
+    """On failure, the inner uvicorn's errors.log tail is surfaced to the operator."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    from aletheia.gateway.logs import errors_log_path
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+    errors_log_path().write_text("Traceback: ImportError boom\n", encoding="utf-8")
+
+    with pytest.raises(typer.Exit):
+        lifecycle._verify_started(_FakeProc(code=1), cfg=lifecycle.load_config(), timeout=1.0)
+    err = capsys.readouterr().err
+    assert "ImportError boom" in err
+
+
+def test_do_start_background_raises_when_spawn_dies(tmp_path, monkeypatch):
+    """End-to-end: do_start background path now propagates a dead spawn as Exit(1),
+    instead of silently returning 0 (the false-green the watchdog used to record)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    monkeypatch.setattr(lifecycle, "is_running", lambda: False)
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
+    monkeypatch.setattr(lifecycle, "_spawn_background", lambda nb: _FakeProc(code=1))
+    # Gateway never comes up.
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
+
+    with pytest.raises(typer.Exit):
+        lifecycle.do_start(no_browser=True)

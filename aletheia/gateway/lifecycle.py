@@ -62,7 +62,70 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _run_server(cfg)
     else:
         _echo_stdout_safe(f"Starting Aletheia gateway on http://{cfg.app.bind_host}:{cfg.app.dashboard_port} (background)...")
-        _spawn_background(no_browser)
+        proc = _spawn_background(no_browser)
+        # Verify the detached gateway actually came up. Without this, Popen returns
+        # exit 0 the instant it forks — even when the supervisor immediately dies —
+        # so the PT5M watchdog records LastResult=0x0 ("success") on every tick
+        # while the gateway stays dead (the "False confidence" zombie: a dead
+        # gateway with green-looking schtasks history). Verifying turns the
+        # watchdog's success signal honest: a non-zero Exit here means the tick
+        # genuinely failed and the next tick will retry from a clean state.
+        _verify_started(proc, cfg)
+
+
+def _verify_started(proc, cfg, *, timeout: float = 8.0) -> None:
+    """Block until the detached gateway is confirmed up, or raise typer.Exit(1).
+
+    Three outcomes:
+      - proc exits before the gateway is up  → spawn died immediately; capture why.
+      - pid file written + port listening     → confirmed up; return cleanly.
+      - timeout with neither                   → never came up; capture why.
+
+    On failure, surface the tail of errors.log (the inner uvicorn's stderr sink)
+    and audit a `gateway_spawn_failed` event so the death is never silent again.
+    """
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        # The detached launcher process exiting non-zero before the gateway is up
+        # means the supervisor failed to take hold (import error, instant crash).
+        if proc is not None and proc.poll() is not None and proc.returncode != 0:
+            _fail_spawn(f"launcher exited with code {proc.returncode} before gateway came up")
+        if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+            return  # confirmed: supervisor wrote its pid and the port is listening
+        time.sleep(0.3)
+
+    if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+        return
+    _fail_spawn(f"gateway did not come up within {timeout:.0f}s (no pid file / port not listening)")
+
+
+def _fail_spawn(reason: str) -> None:
+    """Capture errors.log tail, audit the failure, surface it, and Exit(1)."""
+    from aletheia.gateway.logs import errors_log_path
+    tail = ""
+    try:
+        from aletheia.gateway.logs import _tail_file
+        tail_lines = _tail_file(errors_log_path(), 15)
+        tail = "\n".join(tail_lines)
+    except Exception:
+        pass
+
+    try:
+        from aletheia.files.jsonl import write_audit
+        write_audit({
+            "actor": "system", "source": "watchdog", "event_type": "gateway_spawn_failed",
+            "entity_type": "gateway", "entity_id": "gateway",
+            "message": f"Gateway spawn failed: {reason}",
+        })
+    except Exception:
+        pass
+
+    msg = f"Gateway failed to start: {reason}."
+    if tail:
+        msg += f"\n--- errors.log (tail) ---\n{tail}"
+    _echo_safe(msg)
+    raise typer.Exit(1)
 
 
 def _run_server(cfg) -> None:
@@ -76,8 +139,13 @@ def _run_server(cfg) -> None:
     )
 
 
-def _spawn_background(no_browser: bool) -> None:
-    """Spawn a detached background process running the gateway."""
+def _spawn_background(no_browser: bool):
+    """Spawn a detached background process running the gateway. Returns the Popen.
+
+    The returned handle lets the caller verify the launcher didn't die instantly
+    (see _verify_started). It is the launcher process, not the supervisor — the
+    supervisor writes its own pid file, which is what is_running() checks.
+    """
     import os
     script = Path(__file__).resolve().parent.parent / "_gateway_runner.py"
     real_python, env_patch = _resolve_real_python()
@@ -98,15 +166,16 @@ def _spawn_background(no_browser: bool) -> None:
             env = os.environ.copy()
             env.update(env_patch)
             popen_kwargs["env"] = env
-        subprocess.Popen(args, **popen_kwargs)
+        proc = subprocess.Popen(args, **popen_kwargs)
     else:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             args,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
     _echo_stdout_safe("Gateway started in background.")
+    return proc
 
 
 def do_stop() -> None:
