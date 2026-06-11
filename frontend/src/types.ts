@@ -185,3 +185,187 @@ export interface AuditEvent {
   details?: string
   created_at: string
 }
+
+export interface OperatorStatus {
+  agent_id: string
+  status: string
+  mode: string
+  permission_mode: string
+  is_busy: boolean
+  current_task_id: string | null
+  current_intent: string | null
+  queue_size: number
+  last_seen_at: string | null
+  last_success_at: string | null
+  last_error: string | null
+  model_provider: string | null
+  session_id: string
+  active_branch_id?: string | null
+  active_branch_kind?: string | null
+  active_branch_title?: string | null
+  stale: boolean
+  stale_after_sec: number
+  heartbeat_age_sec?: number
+}
+
+export interface OperatorTask {
+  id: string
+  task_type: string
+  status: string
+  priority: string
+  created_by: string
+  assigned_to: string
+  input_data: Record<string, unknown> | unknown[]
+  output_data: Record<string, unknown> | unknown[] | null
+  error: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+}
+
+export interface OperatorMessage {
+  id: string
+  session_id: string
+  role: string
+  message_type: string
+  content: Record<string, unknown> | string
+  related_event_id: string | null
+  created_at: string
+}
+
+export interface OperatorCommandAudit {
+  id: string
+  session_id: string
+  command: string
+  parameters: Record<string, unknown>
+  permitted: boolean
+  result_summary: string | null
+  created_at: string
+}
+
+export interface OperatorArtifact {
+  id: string
+  task_id: string | null
+  session_id: string | null
+  artifact_type: string
+  title: string
+  content: Record<string, unknown> | string
+  created_at: string
+}
+
+export interface OperatorSessionSummary {
+  id: string
+  user_input: string
+  kind?: string | null
+  parent_session_id?: string | null
+  title?: string | null
+  intent: string | null
+  command: string | null
+  response: string | null
+  permitted: number
+  duration_ms: number | null
+  created_at: string
+  message_count: number
+  command_count: number
+}
+
+export interface OperatorSessionDetail {
+  session: OperatorSessionSummary
+  messages: OperatorMessage[]
+  commands: OperatorCommandAudit[]
+  artifacts: OperatorArtifact[]
+}
+
+export interface OperatorContextSnapshot {
+  profile: string
+  session_id: string | null
+  session_kind: string | null
+  sections: string[]
+  summary: string
+  context: Record<string, unknown>
+}
+
+export interface OperatorCommandPreview {
+  session_id: string
+  input: string
+  permission_scope: string
+  permission_mode: string
+  worker_permission_mode: string
+  classification: string
+  intent: string
+  confidence: number | null
+  parameters: Record<string, unknown>
+  allowed: boolean
+  denial_reason: string | null
+  worker_allowed: boolean | null
+  worker_denial_reason: string | null
+  command: {
+    name: string
+    risk_class: string
+    risk_level: string
+    description: string
+    worker_permission_required: string
+    operator_permission_required: string
+    requires_confirmation: boolean
+    requires_proposal: boolean
+    audit_event_type: string
+    backend_handler: string
+  } | null
+  extension?: {
+    slash_command: string
+    status: string | null
+    target_command: string | null
+    extension_id: string | null
+    description: string | null
+  } | null
+}
+
+export interface OperatorCommandResponse {
+  intent: string
+  risk_level: string
+  response: string
+  action: Record<string, unknown> | null
+  needs_confirmation: boolean
+}
+
+export interface OperatorEvent {
+  id: string
+  event_type: string
+  severity: string
+  source: string
+  session_id: string | null
+  task_id: string | null
+  related_entity_type: string | null
+  related_entity_id: string | null
+  payload: Record<string, unknown> | unknown[]
+  created_at: string
+}
+
+export interface OperatorRecommendation {
+  id: string
+  kind: string
+  severity: string
+  summary: string
+  taskType?: string
+  metadata?: Record<string, unknown>
+  task_ids?: string[]
+  count?: number
+}
+
+export interface OperatorExtension {
+  id: string
+  session_id: string | null
+  extension_name: string
+  slash_command: string
+  description: string
+  target_command: string
+  manifest: Record<string, unknown>
+  status: string
+  created_by: string
+  proposal_artifact_id: string | null
+  latest_run_id: string | null
+  enabled_at: string | null
+  enabled_by: string | null
+  created_at: string
+  updated_at: string
+}

@@ -1,6 +1,7 @@
 """Tests for agent runtime: permissions, tool registry, orchestrator."""
 
 import pytest
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from aletheia.agent_runtime.permissions import (
@@ -136,6 +137,24 @@ async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
     result = await run_agent("research_agent", trigger_type="manual")
     # In Observe mode, research notes ARE permitted (observe tool class)
     assert result["status"] in _OK
+    reset_db()
+
+
+@pytest.mark.anyio
+async def test_run_agent_tolerates_non_string_default_model_provider(tmp_path, monkeypatch):
+    import aletheia.agent_runtime.orchestrator as orchestrator
+    from aletheia.config.loader import load_config
+
+    setup_test_env(tmp_path, monkeypatch)
+    cfg = load_config()
+    cfg.models.default_provider = MagicMock(name="default_provider")
+    monkeypatch.setattr(orchestrator, "load_config", lambda: cfg)
+
+    result = await run_agent("research_agent", trigger_type="manual")
+
+    assert result["status"] in _OK
+    latest = repo.list_agent_runs(limit=1)[0]
+    assert latest["model_provider"] is None
     reset_db()
 
 

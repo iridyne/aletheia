@@ -15,8 +15,6 @@ interface CmdAction {
 
 export default function CommandPalette() {
   const [open, setOpen] = useState(false)
-  const [nlResponse, setNlResponse] = useState<string | null>(null)
-  const [nlLoading, setNlLoading] = useState(false)
   const navigate = useNavigate()
   const qc = useQueryClient()
 
@@ -28,7 +26,6 @@ export default function CommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         setOpen(prev => !prev)
-        setNlResponse(null)
       }
     }
     document.addEventListener('keydown', handler)
@@ -37,36 +34,11 @@ export default function CommandPalette() {
 
   const exec = useCallback((action: () => unknown) => {
     setOpen(false)
-    setNlResponse(null)
     action()
   }, [])
 
-  const handleNlCommand = useCallback(async (input: string) => {
-    setNlLoading(true)
-    setNlResponse(null)
-    try {
-      const result = await api.sendCommand(input)
-      if (result.action && !result.needs_confirmation) {
-        setNlResponse(`${result.response}\n\nAction: ${result.intent} (executing...)`)
-        if (result.action.path) {
-          await fetch(`/api${result.action.path.replace('/api', '')}`, {
-            method: result.action.method || 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: result.action.body ? JSON.stringify(result.action.body) : undefined,
-          })
-          qc.invalidateQueries()
-        }
-      } else {
-        setNlResponse(result.response)
-      }
-    } catch (e: any) {
-      setNlResponse(`Error: ${e.message || 'Command failed'}`)
-    } finally {
-      setNlLoading(false)
-    }
-  }, [qc])
-
   const commands: CmdAction[] = [
+    { id: 'nav-command-center', label: 'Open Command Center', group: 'Navigation', keywords: 'operator chat control room shell', action: () => navigate('/command-center') },
     { id: 'nav-overview', label: 'Go to Overview', group: 'Navigation', keywords: 'cockpit home dashboard', action: () => navigate('/') },
     { id: 'nav-charts', label: 'Go to Markets', group: 'Navigation', keywords: 'charts price', action: () => navigate('/charts') },
     { id: 'nav-news', label: 'Go to News Intel', group: 'Navigation', action: () => navigate('/news') },
@@ -94,32 +66,28 @@ export default function CommandPalette() {
   if (!open) return null
 
   return (
-    <div className="cmd-backdrop" onClick={() => { setOpen(false); setNlResponse(null) }}>
+    <div className="cmd-backdrop" onClick={() => { setOpen(false) }}>
       <div className="cmd-dialog" onClick={e => e.stopPropagation()}>
         <Command
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               const input = (e.target as HTMLInputElement)?.value?.trim()
-              if (input && input.length > 20) {
+              if (input) {
                 e.preventDefault()
-                handleNlCommand(input)
+                setOpen(false)
+                navigate(`/command-center?draft=${encodeURIComponent(input)}`)
               }
             }
           }}
         >
           <Command.Input
             className="cmd-input"
-            placeholder="Type a command or ask a question..."
+            placeholder="Jump somewhere, or type a draft for Command Center..."
             autoFocus
           />
-          {nlResponse && (
-            <div className="cmd-response">
-              {nlLoading ? 'Thinking...' : nlResponse}
-            </div>
-          )}
           <Command.List className="cmd-list">
             <Command.Empty className="cmd-empty">
-              {nlLoading ? 'Processing...' : 'Press Enter to ask the AI'}
+              Press Enter to open Command Center with this draft
             </Command.Empty>
             {groups.map(group => (
               <Command.Group key={group} heading={group} className="cmd-group">

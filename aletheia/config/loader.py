@@ -32,6 +32,9 @@ def ensure_data_dirs() -> None:
         DATA_DIR / "reports" / "daily",
         DATA_DIR / "reports" / "post_trade",
         DATA_DIR / "reports" / "system_health",
+        DATA_DIR / "reports" / "trade_review",
+        DATA_DIR / "reports" / "risk",
+        DATA_DIR / "reports" / "agent_performance",
         DATA_DIR / "exports",
     ]
     for d in dirs:
@@ -44,14 +47,26 @@ _MODE_MIGRATION = {
     "AllowEditing": "Full", "Auto": "Full",
 }
 
+_OPERATOR_MODE_MIGRATION = {
+    "Observe": "ReadOnly",
+    "Paper": "PaperAuto",
+    "Full": "Auto",
+}
+
 
 def load_config() -> AletheiaConfig:
     """Load config from disk or return defaults."""
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         cfg = AletheiaConfig.model_validate(raw)
+        changed = False
         if cfg.agent.permission_mode in _MODE_MIGRATION:
             cfg.agent.permission_mode = _MODE_MIGRATION[cfg.agent.permission_mode]
+            changed = True
+        if cfg.operator.permission_mode in _OPERATOR_MODE_MIGRATION:
+            cfg.operator.permission_mode = _OPERATOR_MODE_MIGRATION[cfg.operator.permission_mode]
+            changed = True
+        if changed:
             save_config(cfg)
         return cfg
     return AletheiaConfig()

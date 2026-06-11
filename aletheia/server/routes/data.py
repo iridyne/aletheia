@@ -1,5 +1,7 @@
 """Data API routes for dashboard consumption."""
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
@@ -24,6 +26,31 @@ def _ensure_db():
     # — `executescript(SCHEMA_SQL)` + 19 ALTER probes contended with every concurrent
     # writer. Kept as a function so existing route call sites stay valid.
     pass
+
+
+def _truthy_flag(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "none", "null"}
+    return bool(value)
+
+
+def _parse_utc_timestamp(value) -> datetime | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    elif " " in text and "T" not in text:
+        text = text.replace(" ", "T", 1)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 @router.get("/agent-runs")
@@ -173,6 +200,187 @@ async def get_audit_events(limit: int = 100):
 async def get_strategies():
     _ensure_db()
     return repo.list_strategies()
+
+
+@router.get("/strategies/summary")
+async def get_strategies_summary():
+    """Aggregated strategy-governance summary for operator evaluation.
+
+    Surfaces operator-facing strategy flags plus recent strategy evaluation artifacts so the
+    operator loop can decide which strategies still need a fresh evaluation session.
+    """
+    _ensure_db()
+    from aletheia.agent_shell.operator_store import list_artifacts
+
+    cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+    strategies = repo.list_strategies(limit=200)
+
+    active_paper_strategies = [
+        item for item in strategies if item.get("state") in {"paper_candidate", "paper_running", "paper_passed"}
+    ]
+    under_review_strategies = [item for item in strategies if _truthy_flag(item.get("under_review"))]
+    paused_paper_strategies = [item for item in strategies if _truthy_flag(item.get("paper_trading_paused"))]
+    live_candidate_strategies = [
+        item for item in strategies if item.get("state") in {"live_candidate", "live_limited"}
+    ]
+
+    raw_recent_strategy_evaluations = [
+        artifact
+        for artifact in list_artifacts(limit=500)
+        if artifact.get("artifact_type") == "strategy_evaluation"
+        and (_parse_utc_timestamp(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
+        > cutoff_24h
+    ]
+    recent_strategy_evaluations = []
+    for artifact in raw_recent_strategy_evaluations:
+        content = artifact.get("content")
+        if not isinstance(content, dict):
+            content = {}
+        recent_strategy_evaluations.append(
+            {
+                "id": artifact.get("id"),
+                "task_id": artifact.get("task_id"),
+                "session_id": artifact.get("session_id"),
+                "artifact_type": artifact.get("artifact_type"),
+                "title": artifact.get("title"),
+                "created_at": artifact.get("created_at"),
+                "strategy_id": content.get("strategy_id"),
+                "strategy_name": content.get("strategy_name"),
+                "summary": content.get("summary"),
+                "evaluation": content.get("evaluation"),
+                "content": content,
+            }
+        )
+    evaluated_strategy_ids = {
+        str(item.get("strategy_id"))
+        for item in recent_strategy_evaluations
+        if item.get("strategy_id")
+    }
+    raw_recent_strategy_promotion_proposals = [
+        artifact
+        for artifact in list_artifacts(limit=500)
+        if artifact.get("artifact_type") == "strategy_promotion_proposal"
+        and (_parse_utc_timestamp(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
+        > cutoff_24h
+    ]
+    recent_strategy_promotion_proposals = []
+    for artifact in raw_recent_strategy_promotion_proposals:
+        content = artifact.get("content")
+        if not isinstance(content, dict):
+            content = {}
+        recent_strategy_promotion_proposals.append(
+            {
+                "id": artifact.get("id"),
+                "task_id": artifact.get("task_id"),
+                "session_id": artifact.get("session_id"),
+                "artifact_type": artifact.get("artifact_type"),
+                "title": artifact.get("title"),
+                "created_at": artifact.get("created_at"),
+                "strategy_id": content.get("strategy_id"),
+                "strategy_name": content.get("strategy_name"),
+                "current_state": content.get("current_state"),
+                "target_state": content.get("target_state"),
+                "gate_preview": content.get("gate_preview"),
+                "rationale": content.get("rationale"),
+                "content": content,
+            }
+        )
+    raw_recent_live_limited_enablement_proposals = [
+        artifact
+        for artifact in list_artifacts(limit=500)
+        if artifact.get("artifact_type") == "live_limited_enablement_proposal"
+        and (_parse_utc_timestamp(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
+        > cutoff_24h
+    ]
+    recent_live_limited_enablement_proposals = []
+    for artifact in raw_recent_live_limited_enablement_proposals:
+        content = artifact.get("content")
+        if not isinstance(content, dict):
+            content = {}
+        recent_live_limited_enablement_proposals.append(
+            {
+                "id": artifact.get("id"),
+                "task_id": artifact.get("task_id"),
+                "session_id": artifact.get("session_id"),
+                "artifact_type": artifact.get("artifact_type"),
+                "title": artifact.get("title"),
+                "created_at": artifact.get("created_at"),
+                "strategy_id": content.get("strategy_id"),
+                "strategy_name": content.get("strategy_name"),
+                "current_state": content.get("current_state"),
+                "target_state": content.get("target_state"),
+                "gate_preview": content.get("gate_preview"),
+                "rationale": content.get("rationale"),
+                "content": content,
+            }
+        )
+
+    flagged_strategy_ids = {
+        str(item.get("id"))
+        for item in [*under_review_strategies, *paused_paper_strategies]
+        if item.get("id")
+    }
+    needs_operator_evaluation_strategy_ids = sorted(flagged_strategy_ids - evaluated_strategy_ids)
+    promotion_ready_strategy_targets = {
+        (
+            str(item.get("strategy_id")),
+            "paper_passed"
+            if str(
+                ((item.get("evaluation") or {}).get("strategy") or {}).get("state") or ""
+            )
+            == "paper_running"
+            else "live_candidate",
+        )
+        for item in recent_strategy_evaluations
+        if item.get("strategy_id")
+        and isinstance(item.get("evaluation"), dict)
+        and isinstance(item["evaluation"].get("strategy"), dict)
+        and str(item["evaluation"]["strategy"].get("state") or "")
+        in {"paper_running", "paper_passed"}
+        and isinstance(item["evaluation"].get("promotion_gates"), dict)
+        and bool(item["evaluation"]["promotion_gates"].get("passed")) is True
+    }
+    proposed_strategy_targets = {
+        (str(item.get("strategy_id")), str(item.get("target_state") or ""))
+        for item in recent_strategy_promotion_proposals
+        if item.get("strategy_id") and item.get("target_state")
+    }
+    needs_operator_promotion_proposal_strategy_ids = sorted(
+        strategy_id
+        for strategy_id, target_state in promotion_ready_strategy_targets
+        if (strategy_id, target_state) not in proposed_strategy_targets
+    )
+    live_limited_ready_strategy_ids = {
+        str(item.get("strategy_id"))
+        for item in recent_strategy_evaluations
+        if item.get("strategy_id")
+        and isinstance(item.get("evaluation"), dict)
+        and isinstance(item["evaluation"].get("strategy"), dict)
+        and str(item["evaluation"]["strategy"].get("state") or "") == "live_candidate"
+        and isinstance(item["evaluation"].get("live_limited_gates"), dict)
+        and bool(item["evaluation"]["live_limited_gates"].get("passed")) is True
+    }
+    proposed_live_limited_strategy_ids = {
+        str(item.get("strategy_id"))
+        for item in recent_live_limited_enablement_proposals
+        if item.get("strategy_id")
+    }
+    needs_operator_live_limited_enablement_strategy_ids = sorted(
+        live_limited_ready_strategy_ids - proposed_live_limited_strategy_ids
+    )
+
+    return {
+        "active_paper_strategies": active_paper_strategies,
+        "under_review_strategies": under_review_strategies,
+        "paused_paper_strategies": paused_paper_strategies,
+        "live_candidate_strategies": live_candidate_strategies,
+        "recent_strategy_evaluations": recent_strategy_evaluations,
+        "needs_operator_evaluation_strategy_ids": needs_operator_evaluation_strategy_ids,
+        "recent_strategy_promotion_proposals": recent_strategy_promotion_proposals,
+        "needs_operator_promotion_proposal_strategy_ids": needs_operator_promotion_proposal_strategy_ids,
+        "recent_live_limited_enablement_proposals": recent_live_limited_enablement_proposals,
+        "needs_operator_live_limited_enablement_strategy_ids": needs_operator_live_limited_enablement_strategy_ids,
+    }
 
 
 @router.get("/strategies/{strategy_id}")
@@ -383,6 +591,12 @@ async def get_dreaming_summary():
         params=("dreaming_log", cutoff_24h),
         limit=10,
     )
+    recent_daily_reviews = repo._select_all(
+        "knowledge_items",
+        where="item_type = ? AND created_at > ?",
+        params=("daily_review", cutoff_24h),
+        limit=10,
+    )
     recent_runs = repo._select_all(
         "agent_runs",
         where="agent_name = ? AND started_at > ?",
@@ -395,6 +609,61 @@ async def get_dreaming_summary():
         "deprecated_memories": deprecated_memories,
         "recent_dreaming_logs": recent_dreaming_logs,
         "recent_dreaming_runs": recent_runs,
+        "recent_daily_reviews": recent_daily_reviews,
+    }
+
+
+@router.get("/reviews/summary")
+async def get_reviews_summary():
+    """Aggregated post-trade review summary for operator delegation.
+
+    Returns recent closed positions, recent post-trade reviews, recent reviewer runs,
+    and the strategy IDs that still lack fresh review coverage.
+    """
+    _ensure_db()
+    from datetime import datetime, timedelta
+
+    cutoff_24h = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+    cutoff_15m = (datetime.utcnow() - timedelta(minutes=15)).isoformat()
+
+    recent_closed_positions = repo._select_all(
+        "positions",
+        where="status = ? AND closed_at IS NOT NULL AND closed_at > ?",
+        params=("closed", cutoff_24h),
+        order="closed_at DESC",
+        limit=20,
+    )
+    recent_post_trade_reviews = repo._select_all(
+        "knowledge_items",
+        where="item_type = ? AND created_at > ?",
+        params=("post_trade_review", cutoff_24h),
+        limit=20,
+    )
+    recent_reviewer_runs = repo._select_all(
+        "agent_runs",
+        where="agent_name = ? AND started_at > ?",
+        params=("post_trade_reviewer", cutoff_15m),
+        limit=5,
+    )
+
+    reviewed_strategy_ids = {
+        str(item.get("strategy_id"))
+        for item in recent_post_trade_reviews
+        if item.get("strategy_id")
+    }
+    missing_review_strategy_ids = sorted(
+        {
+            str(position.get("strategy_id"))
+            for position in recent_closed_positions
+            if position.get("strategy_id") and str(position.get("strategy_id")) not in reviewed_strategy_ids
+        }
+    )
+
+    return {
+        "recent_closed_positions": recent_closed_positions,
+        "recent_post_trade_reviews": recent_post_trade_reviews,
+        "recent_post_trade_reviewer_runs": recent_reviewer_runs,
+        "missing_review_strategy_ids": missing_review_strategy_ids,
     }
 
 

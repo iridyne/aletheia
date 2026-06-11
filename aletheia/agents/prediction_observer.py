@@ -25,6 +25,7 @@ from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
 from aletheia.config.loader import load_config
+from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
@@ -119,7 +120,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     # Find active strategy
     linked_strategy_id = None
     for s in list_strategies(limit=50):
-        if s.get("state") in ("paper_running", "paper_candidate"):
+        if is_active_paper_strategy(s):
             linked_strategy_id = s["id"]
             break
 

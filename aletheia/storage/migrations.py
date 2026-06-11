@@ -163,6 +163,12 @@ CREATE TABLE IF NOT EXISTS strategy_records (
     description TEXT,
     state TEXT NOT NULL DEFAULT 'draft',
     parameters TEXT DEFAULT '{}',
+    under_review INTEGER NOT NULL DEFAULT 0,
+    review_notes TEXT,
+    review_updated_at TEXT,
+    paper_trading_paused INTEGER NOT NULL DEFAULT 0,
+    paper_pause_reason TEXT,
+    paper_paused_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -245,6 +251,133 @@ CREATE TABLE IF NOT EXISTS market_ohlcv (
 
 CREATE INDEX IF NOT EXISTS idx_market_ohlcv_sym_tf_ts
     ON market_ohlcv (symbol, timeframe, ts DESC);
+
+-- Agent Shell (Pi Agent, Operator Layer Track B) — session + command audit tables.
+CREATE TABLE IF NOT EXISTS agent_shell_sessions (
+    id TEXT PRIMARY KEY,
+    user_input TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'command_session',
+    parent_session_id TEXT,
+    title TEXT,
+    intent TEXT,
+    command TEXT,
+    response TEXT,
+    permitted INTEGER NOT NULL DEFAULT 1,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_shell_commands (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES agent_shell_sessions(id),
+    command TEXT NOT NULL,
+    parameters TEXT DEFAULT '{}',
+    permitted INTEGER NOT NULL DEFAULT 1,
+    result_summary TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_shell_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES agent_shell_sessions(id),
+    role TEXT NOT NULL,
+    message_type TEXT NOT NULL DEFAULT 'message',
+    content TEXT NOT NULL,
+    related_event_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_shell_tasks (
+    id TEXT PRIMARY KEY,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'normal',
+    created_by TEXT NOT NULL,
+    assigned_to TEXT NOT NULL DEFAULT 'operator',
+    input_data TEXT DEFAULT '{}',
+    output_data TEXT,
+    error TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_shell_artifacts (
+    id TEXT PRIMARY KEY,
+    task_id TEXT REFERENCES agent_shell_tasks(id),
+    session_id TEXT REFERENCES agent_shell_sessions(id),
+    artifact_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_shell_heartbeats (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    permission_mode TEXT NOT NULL,
+    is_busy INTEGER NOT NULL DEFAULT 0,
+    current_task_id TEXT,
+    current_intent TEXT,
+    queue_size INTEGER NOT NULL DEFAULT 0,
+    last_seen_at TEXT NOT NULL,
+    last_success_at TEXT,
+    last_error TEXT,
+    model_provider TEXT,
+    session_id TEXT,
+    active_branch_id TEXT,
+    active_branch_kind TEXT,
+    active_branch_title TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_shell_events (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    source TEXT NOT NULL DEFAULT 'operator',
+    session_id TEXT REFERENCES agent_shell_sessions(id),
+    task_id TEXT REFERENCES agent_shell_tasks(id),
+    related_entity_type TEXT,
+    related_entity_id TEXT,
+    payload TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS extension_registry (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES agent_shell_sessions(id),
+    extension_name TEXT NOT NULL,
+    slash_command TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    target_command TEXT NOT NULL,
+    manifest TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_by TEXT NOT NULL DEFAULT 'operator',
+    proposal_artifact_id TEXT,
+    latest_run_id TEXT,
+    enabled_at TEXT,
+    enabled_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS extension_runs (
+    id TEXT PRIMARY KEY,
+    extension_id TEXT NOT NULL REFERENCES extension_registry(id),
+    session_id TEXT REFERENCES agent_shell_sessions(id),
+    run_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    summary TEXT,
+    input_data TEXT DEFAULT '{}',
+    output_data TEXT,
+    error TEXT,
+    scratch_path TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -276,6 +409,18 @@ _ADDITIVE_COLUMNS = [
     # exchange column on OHLCV (supplement to provider — same value, explicit naming).
     # Primary key stays (symbol, timeframe, ts); exchange stored for query filtering only.
     ("exchange", "market_ohlcv", "TEXT"),
+    ("under_review", "strategy_records", "INTEGER"),
+    ("review_notes", "strategy_records", "TEXT"),
+    ("review_updated_at", "strategy_records", "TEXT"),
+    ("paper_trading_paused", "strategy_records", "INTEGER"),
+    ("paper_pause_reason", "strategy_records", "TEXT"),
+    ("paper_paused_at", "strategy_records", "TEXT"),
+    ("kind", "agent_shell_sessions", "TEXT"),
+    ("parent_session_id", "agent_shell_sessions", "TEXT"),
+    ("title", "agent_shell_sessions", "TEXT"),
+    ("active_branch_id", "agent_shell_heartbeats", "TEXT"),
+    ("active_branch_kind", "agent_shell_heartbeats", "TEXT"),
+    ("active_branch_title", "agent_shell_heartbeats", "TEXT"),
 ]
 
 

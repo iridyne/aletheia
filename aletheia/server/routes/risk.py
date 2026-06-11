@@ -5,6 +5,7 @@ import json
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from aletheia.agent_shell.operator_recommendations import build_risk_summary
 from aletheia.config.loader import load_config
 from aletheia.risk import kill_switch
 from aletheia.storage.migrations import run_migrations
@@ -60,6 +61,12 @@ async def risk_status():
         "status": status,
         "violations": violations,
     }
+
+
+@router.get("/summary")
+async def risk_summary():
+    """Operator-facing summary of recent risk rejections and pending proposal-worthy boundary changes."""
+    return build_risk_summary()
 
 
 class KillSwitchRequest(BaseModel):

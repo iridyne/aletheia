@@ -21,10 +21,14 @@ export const api = {
   // topbar restart button when the health endpoint reports code_updated_pending_restart.
   restartGateway: () => post<{ mode: 'warm' | 'cold'; ok: boolean; message: string }>('/gateway/restart'),
   getStatus: () => fetchJson<Record<string, unknown>>('/status'),
+  getOperatorStatus: () => fetchJson<any>('/operator/status'),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
 
   pause: () => post('/gateway/pause'),
   resume: () => post('/gateway/resume'),
+  pauseOperator: () => post('/operator/pause'),
+  resumeOperator: () => post('/operator/resume'),
+  wakeOperator: () => post('/operator/wake'),
 
   setPermissionMode: (mode: string) => post('/settings/permission-mode', { mode }),
   setExchangeMode: (mode: string) => post('/settings/exchange-mode', { mode }),
@@ -185,4 +189,64 @@ export const api = {
   // Command Center
   sendCommand: (input: string, context?: Record<string, string>) =>
     post<any>('/command', { input, context }),
+  sendOperatorCommand: (
+    input: string,
+    params?: { context?: Record<string, string>; sessionId?: string },
+  ) =>
+    post<any>('/operator/command', {
+      input,
+      context: params?.context,
+      session_id: params?.sessionId,
+    }),
+  previewOperatorCommand: (body: { input: string; sessionId?: string }) =>
+    post<any>('/operator/command-preview', {
+      input: body.input,
+      session_id: body.sessionId,
+    }),
+  setOperatorActiveBranch: (sessionId: string, selectedBy = 'command-center') =>
+    post<any>('/operator/active-branch', {
+      session_id: sessionId,
+      selected_by: selectedBy,
+    }),
+  createOperatorBranch: (body: {
+    title?: string
+    kind?: string
+    user_input?: string
+    parent_session_id?: string
+    activate?: boolean
+    selected_by?: string
+  }) => post<any>('/operator/branches', body),
+  getOperatorSessions: () => fetchJson<any[]>('/operator/sessions'),
+  getOperatorSession: (id: string) => fetchJson<any>(`/operator/sessions/${encodeURIComponent(id)}`),
+  getOperatorTasks: () => fetchJson<any[]>('/operator/tasks'),
+  getOperatorCommands: (params?: { sessionId?: string; query?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.sessionId) search.set('session_id', params.sessionId)
+    if (params?.query) search.set('query', params.query)
+    if (params?.limit) search.set('limit', String(params.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return fetchJson<any[]>(`/operator/commands${suffix}`)
+  },
+  getOperatorExtensions: (params?: { status?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.status) search.set('status', params.status)
+    if (params?.limit) search.set('limit', String(params.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return fetchJson<any[]>(`/operator/extensions${suffix}`)
+  },
+  getOperatorContext: (body: { sessionId?: string; profile?: string; sections?: string[] }) =>
+    post<any>('/operator/internal/context/query', {
+      session_id: body.sessionId,
+      profile: body.profile,
+      sections: body.sections,
+    }),
+  getOperatorRecommendations: () => fetchJson<any[]>('/operator/recommendations'),
+  getOperatorEvents: (params?: { sessionId?: string; taskId?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.sessionId) search.set('session_id', params.sessionId)
+    if (params?.taskId) search.set('task_id', params.taskId)
+    if (params?.limit) search.set('limit', String(params.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return fetchJson<any[]>(`/operator/events${suffix}`)
+  },
 }

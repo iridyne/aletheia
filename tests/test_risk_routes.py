@@ -6,6 +6,7 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 
 from aletheia.server.app import app
+from aletheia.agent_shell.operator_store import create_artifact
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
@@ -105,3 +106,150 @@ async def test_risk_status_warns_on_latest_rejected_decision(client):
     data = resp.json()
     assert data["status"] == "warning"
     assert "symbol_not_allowed:DOGEUSDT" in data["violations"]
+
+
+@pytest.mark.anyio
+async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustable_rejections(client):
+    first = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.005,
+        price=60000,
+    )
+    second = TradeProposal(
+        symbol="ETHUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.1,
+        price=3000,
+    )
+    repo.insert_trade_proposal(first)
+    repo.insert_trade_proposal(second)
+    repo.insert_risk_decision(
+        RiskDecision(
+            proposal_id=first.id,
+            approved=False,
+            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            message="Rejected",
+        )
+    )
+    repo.insert_risk_decision(
+        RiskDecision(
+            proposal_id=second.id,
+            approved=False,
+            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            message="Rejected",
+        )
+    )
+
+    resp = await client.get("/api/risk/summary")
+    assert resp.status_code == 200
+
+    payload = resp.json()
+    due = payload["needs_operator_risk_boundary_proposals"]
+    assert len(due) == 1
+    assert due[0]["boundary_key"] == "max_demo_position_notional_usdt"
+    assert due[0]["changes"]["max_demo_position_notional_usdt"] == 300.0
+
+
+@pytest.mark.anyio
+async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_exists(client):
+    proposal = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.005,
+        price=60000,
+    )
+    repo.insert_trade_proposal(proposal)
+    repo.insert_risk_decision(
+        RiskDecision(
+            proposal_id=proposal.id,
+            approved=False,
+            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            message="Rejected",
+        )
+    )
+    repo.insert_risk_decision(
+        RiskDecision(
+            proposal_id=proposal.id,
+            approved=False,
+            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            message="Rejected again",
+        )
+    )
+    create_artifact(
+        task_id=None,
+        session_id="operator-main",
+        artifact_type="risk_boundary_change_proposal",
+        title="Risk boundary proposal",
+        content={
+            "changes": {
+                "max_demo_position_notional_usdt": 300.0,
+            },
+            "requires_human_approval": True,
+        },
+    )
+
+    resp = await client.get("/api/risk/summary")
+    assert resp.status_code == 200
+    assert resp.json()["needs_operator_risk_boundary_proposals"] == []
+
+
+@pytest.mark.anyio
+async def test_risk_summary_surfaces_observe_only_candidate_for_repeated_rejected_symbol(client, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    cfg = loader.load_config()
+    cfg.exchange.tradable_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    loader.save_config(cfg)
+
+    first = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.01,
+        price=60000,
+    )
+    second = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="short",
+        execution_mode="paper_internal",
+        quantity=0.02,
+        price=61000,
+    )
+    repo.insert_trade_proposal(first)
+    repo.insert_trade_proposal(second)
+    repo.insert_risk_decision(
+        RiskDecision(
+            proposal_id=first.id,
+            approved=False,
+            violations='["symbol_not_allowed:BTCUSDT"]',
+            message="Rejected",
+        )
+    )
+    repo.insert_risk_decision(
+        RiskDecision(
+            proposal_id=second.id,
+            approved=False,
+            violations='["symbol_not_allowed:BTCUSDT"]',
+            message="Rejected again",
+        )
+    )
+
+    resp = await client.get("/api/risk/summary")
+    assert resp.status_code == 200
+
+    payload = resp.json()
+    due = payload["needs_operator_observe_only_symbols"]
+    assert len(due) == 1
+    assert due[0]["symbol"] == "BTC/USDT"
+    assert due[0]["rejection_count"] == 2

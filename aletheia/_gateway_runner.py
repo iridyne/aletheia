@@ -70,6 +70,9 @@ def run_supervised(spawn_fn=None) -> dict:
     write_pid()  # supervisor owns the pid file (written exactly once)
     if spawn_fn is None:
         spawn_fn = lambda: _spawn_server(cfg)
+    from aletheia.gateway.operator_shell import OperatorShellMonitor
+    operator_monitor = OperatorShellMonitor(cfg)
+    operator_monitor.start()
 
     h = cfg.health
     max_restarts = h.supervisor_max_restarts
@@ -78,24 +81,27 @@ def run_supervised(spawn_fn=None) -> dict:
 
     restarts = 0
     restart_times: list[float] = []
-    while True:
-        code = spawn_fn()
-        if code == 0:
-            return {"gave_up": False, "restarts": restarts}  # clean shutdown
+    try:
+        while True:
+            code = spawn_fn()
+            if code == 0:
+                return {"gave_up": False, "restarts": restarts}  # clean shutdown
 
-        # Abnormal exit — decide whether to respawn.
-        import time as _time
-        now = _time.monotonic()
-        restart_times.append(now)
-        recent = [t for t in restart_times if now - t <= window]
-        restart_times[:] = recent
-        if len(recent) >= max_restarts:
-            _record_give_up(restarts + 1)
-            return {"gave_up": True, "restarts": restarts + 1}
+            # Abnormal exit — decide whether to respawn.
+            import time as _time
+            now = _time.monotonic()
+            restart_times.append(now)
+            recent = [t for t in restart_times if now - t <= window]
+            restart_times[:] = recent
+            if len(recent) >= max_restarts:
+                _record_give_up(restarts + 1)
+                return {"gave_up": True, "restarts": restarts + 1}
 
-        restarts += 1
-        backoff = min(2 ** (restarts - 1), cap) if cap else 0
-        _sleep(backoff)
+            restarts += 1
+            backoff = min(2 ** (restarts - 1), cap) if cap else 0
+            _sleep(backoff)
+    finally:
+        operator_monitor.stop()
 
 
 def _record_give_up(attempts: int) -> None:

@@ -4,6 +4,7 @@ Each test maps to one of the 16 acceptance criteria in IMPLEMENTATION_GUIDE.md Â
 """
 
 import json
+from datetime import datetime, timezone
 import pytest
 from httpx import AsyncClient, ASGITransport
 from typer.testing import CliRunner
@@ -96,6 +97,148 @@ async def test_ac08_knowledge_base(client):
     await c.post("/api/agent-runs/start", json={"agent_name": "dreaming_agent"})
     assert len((await c.get("/api/knowledge/dreaming-logs")).json()) >= 1
     assert len((await c.get("/api/knowledge?type=daily_review")).json()) >= 1
+
+
+@pytest.mark.anyio
+async def test_review_summary_reports_missing_post_trade_review_coverage(client):
+    c, tmp_path = client
+    from aletheia.knowledge.manager import create_post_trade_review
+    from aletheia.storage.models import Position
+
+    for path in ("knowledge/post_trade_reviews", "knowledge/daily_reviews", "knowledge/dreaming_logs"):
+        (tmp_path / path).mkdir(parents=True, exist_ok=True)
+
+    repo.insert_position(
+        Position(
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.1,
+            entry_price=60000,
+            execution_mode="paper_internal",
+            strategy_id="strat-1",
+            status="closed",
+            opened_at=datetime.now(timezone.utc).isoformat(),
+            closed_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+
+    first = await c.get("/api/reviews/summary")
+    assert first.status_code == 200
+    first_data = first.json()
+    assert len(first_data["recent_closed_positions"]) == 1
+    assert first_data["missing_review_strategy_ids"] == ["strat-1"]
+
+    create_post_trade_review(
+        "Post-Trade Review",
+        "Reviewed the BTC paper position.",
+        strategy_id="strat-1",
+    )
+
+    second = await c.get("/api/reviews/summary")
+    assert second.status_code == 200
+    second_data = second.json()
+    assert len(second_data["recent_post_trade_reviews"]) == 1
+    assert second_data["missing_review_strategy_ids"] == []
+
+
+@pytest.mark.anyio
+async def test_strategy_summary_reports_strategies_needing_operator_evaluation(client):
+    c, _ = client
+    from aletheia.agent_shell.operator_store import create_artifact
+    from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
+
+    strategy = create_strategy("Operator Review Candidate", "paper strategy awaiting review")
+    for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
+        result = promote_strategy(strategy.id, target)
+        assert result["success"] is True
+
+    repo.update_strategy(
+        strategy.id,
+        under_review=1,
+        review_notes="drawdown needs operator review",
+        review_updated_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    first = await c.get("/api/strategies/summary")
+    assert first.status_code == 200
+    first_data = first.json()
+    assert any(item["id"] == strategy.id for item in first_data["under_review_strategies"])
+    assert strategy.id in first_data["needs_operator_evaluation_strategy_ids"]
+
+    create_artifact(
+        task_id=None,
+        session_id="operator-main",
+        artifact_type="strategy_evaluation",
+        title="Operator strategy evaluation",
+        content={"strategy_id": strategy.id, "summary": "reviewed by operator"},
+    )
+
+    second = await c.get("/api/strategies/summary")
+    assert second.status_code == 200
+    second_data = second.json()
+    assert any(item["strategy_id"] == strategy.id for item in second_data["recent_strategy_evaluations"])
+    assert strategy.id not in second_data["needs_operator_evaluation_strategy_ids"]
+
+
+@pytest.mark.anyio
+async def test_strategy_summary_reports_promotion_ready_strategies_needing_proposal(client):
+    c, _ = client
+    from aletheia.agent_shell.operator_store import create_artifact
+    from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
+
+    strategy = create_strategy("Promotion Candidate", "paper strategy ready for graduation")
+    for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
+        result = promote_strategy(strategy.id, target)
+        assert result["success"] is True
+
+    create_artifact(
+        task_id=None,
+        session_id="strategy-eval-session",
+        artifact_type="strategy_evaluation",
+        title="Promotion-ready evaluation",
+        content={
+            "strategy_id": strategy.id,
+            "strategy_name": "Promotion Candidate",
+            "summary": "Promotion gates passed for paper_running strategy.",
+            "evaluation": {
+                "strategy": {
+                    "id": strategy.id,
+                    "name": "Promotion Candidate",
+                    "state": "paper_running",
+                },
+                "promotion_gates": {
+                    "passed": True,
+                    "failures": [],
+                },
+            },
+        },
+    )
+
+    first = await c.get("/api/strategies/summary")
+    assert first.status_code == 200
+    first_data = first.json()
+    assert strategy.id in first_data["needs_operator_promotion_proposal_strategy_ids"]
+
+    create_artifact(
+        task_id=None,
+        session_id="strategy-proposal-session",
+        artifact_type="strategy_promotion_proposal",
+        title="Promote Promotion Candidate to paper_passed",
+        content={
+            "strategy_id": strategy.id,
+            "strategy_name": "Promotion Candidate",
+            "current_state": "paper_running",
+            "target_state": "paper_passed",
+            "requires_human_approval": True,
+        },
+    )
+
+    second = await c.get("/api/strategies/summary")
+    assert second.status_code == 200
+    second_data = second.json()
+    assert any(item["strategy_id"] == strategy.id for item in second_data["recent_strategy_promotion_proposals"])
+    assert strategy.id not in second_data["needs_operator_promotion_proposal_strategy_ids"]
 
 
 # #11 paper proposal -> risk -> order -> fill -> position

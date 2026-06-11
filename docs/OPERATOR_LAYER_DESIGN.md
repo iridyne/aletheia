@@ -20,6 +20,12 @@
 >
 > 本文的安全边界（§6 Pi 无权限系统、§7 能/不能做、§10 Command Registry 禁令）与
 > [AGENTS.md](../AGENTS.md) 红线一致;落地实现时以 AGENTS.md 为准。
+>
+> **2026-06-10 详细化补充**：本文继续承担**概念设计**角色。针对当前 repo / `worktree-dev`
+> 的**双进程实现转换蓝图**，权威细化文档是
+> [superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md](superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md)，
+> 其参考文件覆盖矩阵是
+> [superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md](superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md)。
 
 ---
 
@@ -170,6 +176,10 @@ Execution Gateway can execute only valid proposals.
 OpenAlice treats the AI interaction layer as central, not secondary.
 
 Aletheia’s Command Center should do the same: it should not be a generic chat box. It should be the user’s primary interface for asking, commanding, diagnosing, and delegating.
+
+Practical UI consequence: **do not treat `Ctrl+K` as the PI agent itself**. A command palette is a good
+launcher, but the real Operator surface should be a dedicated Command Center workspace/page with persistent
+sessions, evidence, trace, and state.
 
 ---
 
@@ -886,6 +896,9 @@ Auto-fix is not allowed for money, credentials, hard risk, or execution semantic
 ## 19. Dashboard Changes Needed
 
 The existing Command Center should connect to the Agent Shell.
+
+`Ctrl+K` / command palette may open or prefill this surface, but should remain a secondary shortcut rather
+than the primary long-form operating environment.
 
 ### Required UI elements
 

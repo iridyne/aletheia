@@ -148,6 +148,12 @@ class StrategyRecord(BaseModel):
     description: str | None = None
     state: str = "draft"
     parameters: str = "{}"
+    under_review: bool = False
+    review_notes: str | None = None
+    review_updated_at: str | None = None
+    paper_trading_paused: bool = False
+    paper_pause_reason: str | None = None
+    paper_paused_at: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
 
