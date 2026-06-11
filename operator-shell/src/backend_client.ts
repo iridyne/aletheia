@@ -13,6 +13,8 @@ import type {
   OperatorEventCreate,
   OperatorHeartbeat,
   OperatorMessageCreate,
+  PortfolioSnapshotRecord,
+  PortfolioSummary,
   OperatorCompactionResult,
   PersistedOperatorCommand,
   OperatorSessionCreate,
@@ -121,6 +123,16 @@ export class BackendClient implements BackendGatewayClient {
 
   async getRiskSummary(): Promise<RiskSummary> {
     return fetchJson<RiskSummary>(`${this.baseUrl}/api/risk/summary`)
+  }
+
+  async getPortfolioSummary(): Promise<PortfolioSummary> {
+    return fetchJson<PortfolioSummary>(`${this.baseUrl}/api/portfolio`)
+  }
+
+  async getPortfolioHistory(limit = 20): Promise<PortfolioSnapshotRecord[]> {
+    return fetchJson<PortfolioSnapshotRecord[]>(
+      `${this.baseUrl}/api/market/portfolio-history?limit=${encodeURIComponent(String(limit))}`,
+    )
   }
 
   async getAgentRuns(): Promise<AgentRunSummary[]> {

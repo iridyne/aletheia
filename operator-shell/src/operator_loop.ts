@@ -76,6 +76,8 @@ export class OperatorLoop {
     strategySummary: Awaited<ReturnType<BackendGatewayClient['getStrategySummary']>>
     recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
     riskSummary: Awaited<ReturnType<BackendGatewayClient['getRiskSummary']>>
+    portfolioSummary: Awaited<ReturnType<BackendGatewayClient['getPortfolioSummary']>>
+    portfolioHistory: Awaited<ReturnType<BackendGatewayClient['getPortfolioHistory']>>
   } | null = null
 
   constructor(private readonly config: OperatorShellConfig, deps: OperatorLoopDeps = {}) {
@@ -90,6 +92,7 @@ export class OperatorLoop {
   private isReviewTaskType(taskType: string | undefined): boolean {
     return (
       taskType === 'generate_review' ||
+      taskType === 'run_portfolio_snapshot' ||
       taskType === 'run_risk_critique' ||
       taskType === 'create_daily_review' ||
       taskType === 'create_review_report'
@@ -367,6 +370,7 @@ export class OperatorLoop {
       taskType === 'create_daily_review' ||
       taskType === 'create_review_report' ||
       taskType === 'create_diagnostic_report' ||
+      taskType === 'run_portfolio_snapshot' ||
       taskType === 'run_risk_critique'
     ) {
       return 'Research'
@@ -696,6 +700,8 @@ export class OperatorLoop {
     strategySummary: Awaited<ReturnType<BackendGatewayClient['getStrategySummary']>>
     recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
     riskSummary: Awaited<ReturnType<BackendGatewayClient['getRiskSummary']>>
+    portfolioSummary: Awaited<ReturnType<BackendGatewayClient['getPortfolioSummary']>>
+    portfolioHistory: Awaited<ReturnType<BackendGatewayClient['getPortfolioHistory']>>
   }> {
     if (
       this.cachedSubsystemReview &&
@@ -707,13 +713,23 @@ export class OperatorLoop {
       return this.cachedSubsystemReview
     }
 
-    const [dreamingSummary, reviewSummary, strategySummary, recentAgentRuns, riskSummary] =
+    const [
+      dreamingSummary,
+      reviewSummary,
+      strategySummary,
+      recentAgentRuns,
+      riskSummary,
+      portfolioSummary,
+      portfolioHistory,
+    ] =
       await Promise.all([
         this.backendClient.getDreamingSummary(),
         this.backendClient.getReviewSummary(),
         this.backendClient.getStrategySummary(),
         this.backendClient.getAgentRuns(),
         this.backendClient.getRiskSummary(),
+        this.backendClient.getPortfolioSummary(),
+        this.backendClient.getPortfolioHistory(),
       ])
 
     this.cachedSubsystemReview = {
@@ -722,6 +738,8 @@ export class OperatorLoop {
       strategySummary,
       recentAgentRuns,
       riskSummary,
+      portfolioSummary,
+      portfolioHistory,
     }
     this.lastSubsystemReviewAt = Date.now()
     return this.cachedSubsystemReview
@@ -773,6 +791,17 @@ export class OperatorLoop {
               warningSummary: 'Post-trade review generation completed with non-fatal warnings.',
               userInput: 'Generate post-trade review coverage for recently closed strategies.',
               title: 'Post-Trade Review Delegation',
+            } as const
+          : activeTask.taskType === 'run_portfolio_snapshot'
+          ? {
+              sessionKind: 'review_session',
+              sessionPrefix: 'portfolio-snapshot',
+              startEvent: 'portfolio_snapshot_started',
+              completedEvent: 'portfolio_snapshot_completed',
+              fallbackSummary: 'Portfolio snapshot refresh completed successfully.',
+              warningSummary: 'Portfolio snapshot refresh completed with non-fatal warnings.',
+              userInput: 'Refresh portfolio snapshot because open positions need a fresh operator view.',
+              title: 'Portfolio Snapshot Delegation',
             } as const
           : activeTask.taskType === 'run_strategy_design'
           ? {
@@ -2527,7 +2556,15 @@ export class OperatorLoop {
         this.loadSupervisionData(),
         this.loadSubsystemReviewData(),
       ])
-      const { dreamingSummary, reviewSummary, strategySummary, recentAgentRuns, riskSummary } =
+      const {
+        dreamingSummary,
+        reviewSummary,
+        strategySummary,
+        recentAgentRuns,
+        riskSummary,
+        portfolioSummary,
+        portfolioHistory,
+      } =
         subsystemReview
       const { sessionDetail, sessionSummaries, recentCommands, operatorTasks } = supervision
       this.syncPersistedActiveBranch(operatorStatus, sessionSummaries)
@@ -2543,6 +2580,8 @@ export class OperatorLoop {
         riskSummary,
         recentCommands,
         operatorTasks,
+        portfolioSummary,
+        portfolioHistory,
       )
       const taskRecommendations = this.recommendationsAllowedForTaskSync(recommendations)
       const repairDecision = this.repairEngine.evaluate(recommendations, this.config.permissionMode)

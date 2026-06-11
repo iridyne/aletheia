@@ -1442,6 +1442,56 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             }
         )
 
+    open_positions = repo.list_positions(status="open", limit=200)
+    recent_portfolio_snapshots = repo.list_portfolio_snapshots(limit=50)
+    latest_portfolio_snapshot = recent_portfolio_snapshots[-1] if recent_portfolio_snapshots else None
+    portfolio_snapshot_age_minutes = (
+        _run_age_minutes({"started_at": latest_portfolio_snapshot.get("snapshot_at"), "ended_at": None})
+        if latest_portfolio_snapshot is not None
+        else None
+    )
+    if (
+        not cfg.runtime.paused
+        and open_positions
+        and (
+            latest_portfolio_snapshot is None
+            or (
+                portfolio_snapshot_age_minutes is not None
+                and portfolio_snapshot_age_minutes >= 15
+            )
+        )
+    ):
+        recommendations.append(
+            {
+                "id": "portfolio-snapshot-refresh-due",
+                "kind": "portfolio_snapshot_refresh_due",
+                "severity": "medium",
+                "summary": (
+                    "Open positions exist but no recent portfolio snapshot is visible. Refresh portfolio state for operator review."
+                    if latest_portfolio_snapshot is None
+                    else (
+                        "Open positions exist and the latest portfolio snapshot is about "
+                        f"{int(portfolio_snapshot_age_minutes)} minutes old. Refresh portfolio state for operator review."
+                    )
+                ),
+                "taskType": "run_portfolio_snapshot",
+                "metadata": {
+                    "task_type": "run_portfolio_snapshot",
+                    "open_positions_count": len(open_positions),
+                    "last_snapshot_id": (
+                        latest_portfolio_snapshot.get("id")
+                        if latest_portfolio_snapshot
+                        else None
+                    ),
+                    "stale_minutes": (
+                        int(portfolio_snapshot_age_minutes)
+                        if portfolio_snapshot_age_minutes is not None
+                        else None
+                    ),
+                },
+            }
+        )
+
     failed_run_statuses = {"failed", "error", "completed_with_errors"}
     recent_runs_by_agent: dict[str, list[dict]] = {}
     failed_runs_by_agent: dict[str, list[dict]] = {}

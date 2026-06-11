@@ -26,6 +26,8 @@ import type {
   PersistedOperatorTask,
   OperatorSessionCreate,
   RiskSummary,
+  PortfolioSnapshotRecord,
+  PortfolioSummary,
   StrategySummary,
   OperatorTaskCreate,
   OperatorTaskUpdate,
@@ -88,6 +90,8 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
     reviewSummaryReads: 0,
     strategySummaryReads: 0,
     riskSummaryReads: 0,
+    portfolioSummaryReads: 0,
+    portfolioHistoryReads: 0,
     agentRunReads: 0,
     sessionDetailReads: 0,
     commandReads: 0,
@@ -235,6 +239,21 @@ function makeFakeBackend(snapshot: { health: GatewayHealthSnapshot; status: Gate
         recent_risk_boundary_proposals: [],
         needs_operator_risk_boundary_proposals: [],
       } satisfies RiskSummary
+    },
+    async getPortfolioSummary() {
+      calls.portfolioSummaryReads += 1
+      return {
+        total_value_usdt: 0,
+        unrealized_pnl: 0,
+        realized_pnl: 0,
+        today_pnl: 0,
+        positions_count: 0,
+        exposure_by_symbol: {},
+      } satisfies PortfolioSummary
+    },
+    async getPortfolioHistory() {
+      calls.portfolioHistoryReads += 1
+      return [] satisfies PortfolioSnapshotRecord[]
     },
     async getAgentRuns() {
       calls.agentRunReads += 1
@@ -669,6 +688,76 @@ test('recommendation engine marks market scan refresh as due when market observe
   assert.ok(marketScan)
   assert.equal(marketScan?.taskType, 'run_market_scan')
   assert.equal(marketScan?.severity, 'medium')
+})
+
+test('recommendation engine marks portfolio snapshot refresh as due when open positions lack a fresh snapshot', () => {
+  const engine = new RecommendationEngine()
+
+  const recommendations = engine.list(
+    makeSnapshot(),
+    {
+      recent_research_notes: [],
+      recent_strategy_hypotheses: [],
+      deprecated_memories: [],
+      recent_dreaming_logs: [{ id: 'dream-log-1' }],
+      recent_dreaming_runs: [{ id: 'dream-run-1' }],
+    },
+    {
+      recent_closed_positions: [],
+      recent_post_trade_reviews: [],
+      recent_post_trade_reviewer_runs: [],
+      missing_review_strategy_ids: [],
+    },
+    {
+      active_paper_strategies: [],
+      under_review_strategies: [],
+      paused_paper_strategies: [],
+      live_candidate_strategies: [],
+      recent_strategy_evaluations: [],
+      needs_operator_evaluation_strategy_ids: [],
+      recent_strategy_promotion_proposals: [],
+      needs_operator_promotion_proposal_strategy_ids: [],
+    },
+    [
+      {
+        id: 'run-market-observer-fresh',
+        agent_name: 'market_observer',
+        trigger_type: 'scheduled',
+        permission_mode: 'Observe',
+        started_at: new Date().toISOString(),
+        ended_at: new Date().toISOString(),
+        status: 'completed',
+        model_provider: null,
+        model_name: null,
+        tools_called: '[]',
+        outputs_created: '[]',
+        errors: '[]',
+        cost_estimate: null,
+      },
+    ] satisfies AgentRunSummary[],
+    [],
+    {
+      recent_rejected_decisions: [],
+      recent_risk_boundary_proposals: [],
+      needs_operator_risk_boundary_proposals: [],
+    },
+    [],
+    [],
+    {
+      total_value_usdt: 605,
+      unrealized_pnl: 5,
+      realized_pnl: 0,
+      today_pnl: 5,
+      positions_count: 1,
+      exposure_by_symbol: { BTCUSDT: 605 },
+    },
+    [],
+  )
+
+  const portfolioRefresh = recommendations.find(item => item.kind === 'portfolio_snapshot_refresh_due')
+  assert.ok(portfolioRefresh)
+  assert.equal(portfolioRefresh?.taskType, 'run_portfolio_snapshot')
+  assert.equal(portfolioRefresh?.metadata?.open_positions_count, 1)
 })
 
 test('recommendation engine marks failed agent rerun as due when one recent scheduled run failed without recovery', () => {
@@ -5046,6 +5135,54 @@ test('operator loop delegates risk critique tasks to risk_critic and closes the 
   const eventTypes = calls.createdEvents.map(item => item.event_type)
   assert.ok(eventTypes.includes('risk_critique_started'))
   assert.ok(eventTypes.includes('risk_critique_completed'))
+  assert.equal(calls.heartbeats[0].mode, 'Reviewing')
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+})
+
+test('operator loop delegates portfolio snapshot refresh tasks to portfolio_agent and closes the task', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getPortfolioSummary = async () => ({
+    total_value_usdt: 605,
+    unrealized_pnl: 5,
+    realized_pnl: 0,
+    today_pnl: 5,
+    positions_count: 1,
+    exposure_by_symbol: { BTCUSDT: 605 },
+  })
+  backend.getPortfolioHistory = async () => []
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'Research',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.ok(calls.createdTasks.some(task => task.task_type === 'run_portfolio_snapshot'))
+  assert.ok(calls.createdTasks.some(task => task.assigned_to === 'portfolio_agent'))
+  assert.deepEqual(calls.startedAgents, ['portfolio_agent'])
+  assert.equal(calls.createdSessions.length, 1)
+  assert.equal(calls.createdSessions[0].kind, 'review_session')
+  const eventTypes = calls.createdEvents.map(item => item.event_type)
+  assert.ok(eventTypes.includes('portfolio_snapshot_started'))
+  assert.ok(eventTypes.includes('portfolio_snapshot_completed'))
   assert.equal(calls.heartbeats[0].mode, 'Reviewing')
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')

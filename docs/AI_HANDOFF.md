@@ -7,7 +7,33 @@
 
 ## Last Updated
 
-2026-06-11 (Operator runtime 已补到 enabled extension slash dispatch + extension sandbox 第一层 + inspectable working-memory files + budgeted recovery folding + recovery-contract recent-error/heartbeat-intent fallback + staged queue review cadence + explicit 5-minute subsystem review tier + `market_scan_refresh_due`/`run_market_scan` + `failed_agent_rerun_due`/`rerun_failed_agent_task` + `daily_review_refresh_due`/`create_daily_review` + `pause_paper_strategy_due`/`pause_paper_strategy` + `strategy_design_due`/`run_strategy_design` + `risk_critique_due`/`run_risk_critique` + permission-aware task materialization + persisted active-branch heartbeat/recovery truth + active-branch-frozen session parent inheritance + session-targeted multi-turn command continuation + nested session-tree branch create/select + descendant-branch recovery folding + user-driven branch workspace create/select + branch bootstrap context seeding + strategy proposal ladder 扩到 `paper_passed -> live_candidate` / `live_candidate -> live_limited` + authoritative command preview + structured result cards / command trace + short-lived operator mode truth(`Repairing/Trading/Reviewing/Dreaming` 不再在同一 loop 内被统一抹回 `Observing`，同时保持 recovery 不直接进 `Trading`)；文档同步到当前实现边界)
+2026-06-11 (Operator runtime 已补到 enabled extension slash dispatch + extension sandbox 第一层 + inspectable working-memory files + budgeted recovery folding + recovery-contract recent-error/heartbeat-intent fallback + staged queue review cadence + explicit 5-minute subsystem review tier + `market_scan_refresh_due`/`run_market_scan` + `failed_agent_rerun_due`/`rerun_failed_agent_task` + `daily_review_refresh_due`/`create_daily_review` + `portfolio_snapshot_refresh_due`/`run_portfolio_snapshot`/`portfolio_agent` + `pause_paper_strategy_due`/`pause_paper_strategy` + `strategy_design_due`/`run_strategy_design` + `risk_critique_due`/`run_risk_critique` + permission-aware task materialization + persisted active-branch heartbeat/recovery truth + active-branch-frozen session parent inheritance + session-targeted multi-turn command continuation + nested session-tree branch create/select + descendant-branch recovery folding + user-driven branch workspace create/select + branch bootstrap context seeding + strategy proposal ladder 扩到 `paper_passed -> live_candidate` / `live_candidate -> live_limited` + authoritative command preview + structured result cards / command trace + short-lived operator mode truth(`Repairing/Trading/Reviewing/Dreaming` 不再在同一 loop 内被统一抹回 `Observing`，同时保持 recovery 不直接进 `Trading`)；文档同步到当前实现边界)
+
+## Recent Change (Open positions without a fresh portfolio snapshot now turn into a real specialist review task — 2026-06-11 第四十四段)
+
+**1. 这次补掉的是一个 recommendation 已经该存在、但 runtime 之前根本不会做事的真缺口**：
+- operator loop 之前已经能看到 market scan、daily review、risk critique、strategy design 这些 review cadence
+- 但对 open positions 来说，portfolio 视图是否 stale 还没有进入 recommendation truth，更没有 task materialization 或 specialist delegation
+
+**2. 现在 backend 与 Node recommendation truth 都会显式判断 portfolio snapshot 是否过期**：
+- 只要存在 open positions，且没有 recent portfolio snapshot，或者最新 snapshot 已经老化到约 15 分钟
+- 就会产出 `portfolio_snapshot_refresh_due`
+- recommendation metadata 也会带回 `open_positions_count / last_snapshot_id / stale_minutes`
+
+**3. 这条 recommendation 现在已经接成真实运行链路**：
+- `TaskRuntime` 会把它分配给 `portfolio_agent`
+- `OperatorLoop` 会在 `Research+` 下把它物化为 `run_portfolio_snapshot`
+- 然后创建 `review_session` child session，写入 `portfolio_snapshot_started / portfolio_snapshot_completed` 事件，并完成 task
+
+**4. 这条链路的边界是收敛的**：
+- 它只刷新 operator 需要的 portfolio 观察视图
+- 不触碰 execution gateway、risk approval 或 live trading 语义
+- heartbeat mode 也会把这类 fresh task 归到 `Reviewing`，而不是误报成 `Trading`
+
+**5. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_events.py -q -k "portfolio_snapshot_refresh_due"` → PASS
+- `operator-shell: npm test -- --test-name-pattern "portfolio snapshot refresh"` → PASS
+- `operator-shell: npm run build` → PASS
 
 ## Recent Change (Under-review paper strategies now materialize into real pause control, and nested active branches no longer flatten new loop sessions — 2026-06-11 第四十三段)
 

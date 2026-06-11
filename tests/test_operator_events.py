@@ -797,6 +797,40 @@ async def test_operator_recommendations_include_risk_critique_due_for_recent_rej
 
 
 @pytest.mark.anyio
+async def test_operator_recommendations_include_portfolio_snapshot_refresh_due_when_open_positions_lack_fresh_snapshot(
+    client,
+):
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position
+
+    insert_position(
+        Position(
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            entry_price=60000,
+            current_price=60500,
+            unrealized_pnl=5.0,
+            execution_mode="paper_internal",
+            status="open",
+        )
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "portfolio_snapshot_refresh_due"
+    )
+    assert due["taskType"] == "run_portfolio_snapshot"
+    assert due["metadata"]["open_positions_count"] == 1
+    assert due["metadata"]["stale_minutes"] is None
+
+
+@pytest.mark.anyio
 async def test_operator_recommendations_include_risk_boundary_change_proposal_due_for_repeated_adjustable_rejections(client):
     from aletheia.storage.models import RiskDecision, TradeProposal
     from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal

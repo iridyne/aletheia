@@ -331,6 +331,26 @@ export interface RiskSummary {
   needs_operator_observe_only_symbols?: ObserveOnlySymbolCandidate[]
 }
 
+export interface PortfolioSummary {
+  total_value_usdt: number
+  unrealized_pnl: number
+  realized_pnl: number
+  today_pnl: number
+  positions_count: number
+  exposure_by_symbol: Record<string, number>
+}
+
+export interface PortfolioSnapshotRecord {
+  id: string
+  total_value_usdt: number
+  unrealized_pnl: number
+  realized_pnl: number
+  positions_count: number
+  execution_mode: string
+  exchange_equity_usdt?: number | null
+  snapshot_at: string
+}
+
 export interface AgentRunInvocationResult {
   run_id: string
   status: string
@@ -370,6 +390,8 @@ export interface BackendGatewayClient {
   getReviewSummary(): Promise<ReviewSummary>
   getStrategySummary(): Promise<StrategySummary>
   getRiskSummary(): Promise<RiskSummary>
+  getPortfolioSummary(): Promise<PortfolioSummary>
+  getPortfolioHistory(limit?: number): Promise<PortfolioSnapshotRecord[]>
   getAgentRuns(): Promise<AgentRunSummary[]>
   postHeartbeat(heartbeat: OperatorHeartbeat): Promise<boolean>
   createMessage(payload: OperatorMessageCreate): Promise<{ id: string }>

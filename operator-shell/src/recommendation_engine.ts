@@ -2,6 +2,8 @@ import type {
   AgentRunSummary,
   DreamingSummary,
   OperatorRecommendation,
+  PortfolioSnapshotRecord,
+  PortfolioSummary,
   PersistedOperatorArtifact,
   PersistedOperatorCommand,
   PersistedOperatorTask,
@@ -169,6 +171,16 @@ export class RecommendationEngine {
     return Number.isNaN(parsed) ? 0 : parsed
   }
 
+  private snapshotAgeMinutes(
+    snapshot: Pick<PortfolioSnapshotRecord, 'snapshot_at'>,
+  ): number | null {
+    const parsed = Date.parse(snapshot.snapshot_at)
+    if (Number.isNaN(parsed)) {
+      return null
+    }
+    return (Date.now() - parsed) / (60 * 1000)
+  }
+
   private commandCenterRequestedBehavior(
     commandName: string,
     sampleResponse: string | null | undefined,
@@ -242,6 +254,8 @@ export class RecommendationEngine {
     riskSummary?: RiskSummary,
     recentCommands?: PersistedOperatorCommand[],
     operatorTasks?: PersistedOperatorTask[],
+    portfolioSummary?: PortfolioSummary,
+    portfolioHistory?: PortfolioSnapshotRecord[],
   ): OperatorRecommendation[] {
     const recommendations: OperatorRecommendation[] = []
 
@@ -413,6 +427,39 @@ export class RecommendationEngine {
           last_run_status: latestMarketObserverRun?.status || null,
           stale_minutes:
             marketObserverAgeMinutes === null ? null : Math.floor(marketObserverAgeMinutes),
+        },
+      })
+    }
+
+    const latestPortfolioSnapshot = (portfolioHistory || [])
+      .slice()
+      .sort(
+        (left, right) => Date.parse(right.snapshot_at) - Date.parse(left.snapshot_at),
+      )[0]
+    const portfolioSnapshotAgeMinutes = latestPortfolioSnapshot
+      ? this.snapshotAgeMinutes(latestPortfolioSnapshot)
+      : null
+    const portfolioSnapshotRefreshDue =
+      !snapshot.status.paused &&
+      (portfolioSummary?.positions_count || 0) > 0 &&
+      (latestPortfolioSnapshot == null ||
+        (portfolioSnapshotAgeMinutes !== null && portfolioSnapshotAgeMinutes >= 15))
+    if (portfolioSnapshotRefreshDue) {
+      recommendations.push({
+        id: 'portfolio-snapshot-refresh-due',
+        kind: 'portfolio_snapshot_refresh_due',
+        severity: 'medium',
+        summary:
+          latestPortfolioSnapshot == null
+            ? 'Open positions exist but no recent portfolio snapshot is visible. Refresh portfolio state for operator review.'
+            : `Open positions exist and the latest portfolio snapshot is about ${Math.floor(portfolioSnapshotAgeMinutes || 0)} minutes old. Refresh portfolio state for operator review.`,
+        taskType: 'run_portfolio_snapshot',
+        metadata: {
+          task_type: 'run_portfolio_snapshot',
+          open_positions_count: portfolioSummary?.positions_count || 0,
+          last_snapshot_id: latestPortfolioSnapshot?.id || null,
+          stale_minutes:
+            portfolioSnapshotAgeMinutes === null ? null : Math.floor(portfolioSnapshotAgeMinutes),
         },
       })
     }

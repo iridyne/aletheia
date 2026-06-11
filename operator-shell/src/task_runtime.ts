@@ -85,6 +85,8 @@ export class TaskRuntime {
       ? 'dreaming_agent'
       : taskType === 'generate_review'
         ? 'post_trade_reviewer'
+        : taskType === 'run_portfolio_snapshot'
+          ? 'portfolio_agent'
         : taskType === 'run_strategy_design'
           ? 'strategy_designer'
           : taskType === 'run_risk_critique'
