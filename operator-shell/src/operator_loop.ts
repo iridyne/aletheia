@@ -54,6 +54,7 @@ export class OperatorLoop {
   private recovered = false
   private recoveryIntent: string | null = null
   private recoveryMode: OperatorMode | null = null
+  private runParentSessionId: string | null = null
   private readonly compactedDates = new Set<string>()
   private readonly attemptedRepairDecisionIds = new Set<string>()
   private lastSupervisionScanAt: number | null = null
@@ -86,15 +87,77 @@ export class OperatorLoop {
     this.recommendationEngine = deps.recommendationEngine ?? new RecommendationEngine()
   }
 
+  private isReviewTaskType(taskType: string | undefined): boolean {
+    return (
+      taskType === 'generate_review' ||
+      taskType === 'run_risk_critique' ||
+      taskType === 'create_daily_review' ||
+      taskType === 'create_review_report'
+    )
+  }
+
+  private isRepairTaskType(taskType: string | undefined): boolean {
+    return taskType === 'create_repair_proposal'
+  }
+
+  private isTradingTaskType(taskType: string | undefined): boolean {
+    return (
+      taskType === 'evaluate_strategy_state' ||
+      taskType === 'run_market_scan' ||
+      taskType === 'rerun_failed_agent_task' ||
+      taskType === 'run_strategy_design' ||
+      taskType === 'set_symbol_observe_only' ||
+      taskType === 'create_paper_experiment' ||
+      taskType === 'pause_paper_strategy'
+    )
+  }
+
+  private modeForTaskType(taskType: string | undefined): OperatorMode | null {
+    if (taskType === 'run_dreaming') {
+      return 'Dreaming'
+    }
+    if (this.isReviewTaskType(taskType)) {
+      return 'Reviewing'
+    }
+    if (this.isRepairTaskType(taskType)) {
+      return 'Repairing'
+    }
+    if (this.isTradingTaskType(taskType)) {
+      return 'Trading'
+    }
+    if (taskType) {
+      return 'Investigating'
+    }
+    return null
+  }
+
+  private settleModeAfterTaskRun(
+    snapshot: OperatorSnapshot,
+    task:
+      | {
+          taskType: string
+          restoredFromRecovery: boolean
+        }
+      | null,
+  ): void {
+    if (!task || task.restoredFromRecovery) {
+      this.mode = snapshot.status.paused ? 'Paused' : 'Observing'
+      this.sessionRuntime.setCurrentIntent('monitoring system state')
+      return
+    }
+
+    this.mode = this.modeForTaskType(task.taskType) || (snapshot.status.paused ? 'Paused' : 'Observing')
+  }
+
   private deriveMode(snapshot: OperatorSnapshot, recommendations: OperatorRecommendation[]): OperatorMode {
     if (snapshot.status.paused) {
       return 'Paused'
     }
-    if (recommendations.some(item => item.taskType === 'run_dreaming')) {
-      return 'Dreaming'
-    }
-    if (recommendations.some(item => item.taskType === 'generate_review')) {
-      return 'Reviewing'
+    for (const recommendation of recommendations) {
+      const mode = this.modeForTaskType(recommendation.taskType)
+      if (mode) {
+        return mode
+      }
     }
     if (recommendations.some(item => item.taskType)) {
       return 'Investigating'
@@ -150,6 +213,46 @@ export class OperatorLoop {
     }
 
     return lines
+  }
+
+  private descendantSessionSummaries(sessionSummaries: OperatorSessionSummary[]): OperatorSessionSummary[] {
+    const children = new Map<string, OperatorSessionSummary[]>()
+    for (const session of sessionSummaries) {
+      const parent = session.parent_session_id || ''
+      if (!parent) {
+        continue
+      }
+      const items = children.get(parent) || []
+      items.push(session)
+      children.set(parent, items)
+    }
+
+    const descendants: OperatorSessionSummary[] = []
+    const seen = new Set<string>()
+    const stack = [...(children.get(this.config.mainSessionId) || [])]
+    while (stack.length > 0) {
+      const session = stack.pop()
+      if (!session || seen.has(session.id)) {
+        continue
+      }
+      seen.add(session.id)
+      descendants.push(session)
+      stack.push(...(children.get(session.id) || []))
+    }
+
+    return descendants.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+  }
+
+  private beginRunSessionParentScope(): void {
+    this.runParentSessionId = this.sessionRuntime.getActiveBranch()?.id || this.config.mainSessionId
+  }
+
+  private endRunSessionParentScope(): void {
+    this.runParentSessionId = null
+  }
+
+  private currentRunParentSessionId(): string {
+    return this.runParentSessionId || this.config.mainSessionId
   }
 
   private compactedRecoveryLines(artifacts: OperatorSessionDetail['artifacts']): string[] {
@@ -263,7 +366,8 @@ export class OperatorLoop {
     if (
       taskType === 'create_daily_review' ||
       taskType === 'create_review_report' ||
-      taskType === 'create_diagnostic_report'
+      taskType === 'create_diagnostic_report' ||
+      taskType === 'run_risk_critique'
     ) {
       return 'Research'
     }
@@ -273,6 +377,7 @@ export class OperatorLoop {
     if (
       taskType === 'run_market_scan' ||
       taskType === 'rerun_failed_agent_task' ||
+      taskType === 'run_strategy_design' ||
       taskType === 'set_symbol_observe_only' ||
       taskType === 'create_paper_experiment' ||
       taskType === 'pause_paper_strategy'
@@ -655,6 +760,8 @@ export class OperatorLoop {
               completedEvent: 'dreaming_completed',
               fallbackSummary: 'Dreaming run completed successfully.',
               warningSummary: 'Dreaming run completed with non-fatal warnings.',
+              userInput: 'Run dreaming consolidation for operator memory.',
+              title: 'Dreaming Delegation',
             } as const
           : activeTask.taskType === 'generate_review'
           ? {
@@ -664,6 +771,31 @@ export class OperatorLoop {
               completedEvent: 'review_completed',
               fallbackSummary: 'Post-trade review generation completed successfully.',
               warningSummary: 'Post-trade review generation completed with non-fatal warnings.',
+              userInput: 'Generate post-trade review coverage for recently closed strategies.',
+              title: 'Post-Trade Review Delegation',
+            } as const
+          : activeTask.taskType === 'run_strategy_design'
+          ? {
+              sessionKind: 'strategy_session',
+              sessionPrefix: 'strategy-design',
+              startEvent: 'strategy_design_started',
+              completedEvent: 'strategy_design_completed',
+              fallbackSummary: 'Strategy design delegation completed successfully.',
+              warningSummary: 'Strategy design delegation completed with non-fatal warnings.',
+              userInput:
+                'Delegate strategy design to create a fresh paper strategy from recent research inputs.',
+              title: 'Strategy Design Delegation',
+            } as const
+          : activeTask.taskType === 'run_risk_critique'
+          ? {
+              sessionKind: 'review_session',
+              sessionPrefix: 'risk-critique',
+              startEvent: 'risk_critique_started',
+              completedEvent: 'risk_critique_completed',
+              fallbackSummary: 'Risk critique delegation completed successfully.',
+              warningSummary: 'Risk critique delegation completed with non-fatal warnings.',
+              userInput: 'Delegate risk critique for recent risk rejections and guardrail lessons.',
+              title: 'Risk Critique Delegation',
             } as const
           : null
 
@@ -672,27 +804,19 @@ export class OperatorLoop {
     }
 
     const sessionId = `${delegation.sessionPrefix}-${activeTask.taskId}`
+    const parentSessionId = this.currentRunParentSessionId()
     await this.backendClient.createSession({
       id: sessionId,
-      user_input:
-        activeTask.taskType === 'run_dreaming'
-          ? 'Run dreaming consolidation for operator memory.'
-          : 'Generate post-trade review coverage for recently closed strategies.',
+      user_input: delegation.userInput,
       kind: delegation.sessionKind,
-      parent_session_id: this.config.mainSessionId,
-      title:
-        activeTask.taskType === 'run_dreaming'
-          ? 'Dreaming Delegation'
-          : 'Post-Trade Review Delegation',
+      parent_session_id: parentSessionId,
+      title: delegation.title,
     })
     this.sessionRuntime.rememberBranch({
       id: sessionId,
       kind: delegation.sessionKind,
-      title:
-        activeTask.taskType === 'run_dreaming'
-          ? 'Dreaming Delegation'
-          : 'Post-Trade Review Delegation',
-      parent_session_id: this.config.mainSessionId,
+      title: delegation.title,
+      parent_session_id: parentSessionId,
       summary: null,
     })
     await this.attachSessionContext(sessionId)
@@ -752,11 +876,8 @@ export class OperatorLoop {
       this.sessionRuntime.rememberBranch({
         id: sessionId,
         kind: delegation.sessionKind,
-        title:
-          activeTask.taskType === 'run_dreaming'
-            ? 'Dreaming Delegation'
-            : 'Post-Trade Review Delegation',
-        parent_session_id: this.config.mainSessionId,
+        title: delegation.title,
+        parent_session_id: parentSessionId,
         summary:
           result.errors.length > 0
             ? delegation.warningSummary
@@ -815,18 +936,19 @@ export class OperatorLoop {
     }
 
     const sessionId = `strategy-${activeTask.taskId}`
+    const parentSessionId = this.currentRunParentSessionId()
     await this.backendClient.createSession({
       id: sessionId,
       user_input: `Evaluate strategy state for ${strategyId}.`,
       kind: 'strategy_session',
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       title: 'Strategy Evaluation',
     })
     this.sessionRuntime.rememberBranch({
       id: sessionId,
       kind: 'strategy_session',
       title: 'Strategy Evaluation',
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       summary: null,
     })
     await this.attachSessionContext(sessionId)
@@ -899,7 +1021,7 @@ export class OperatorLoop {
         id: sessionId,
         kind: 'strategy_session',
         title: 'Strategy Evaluation',
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         summary: execution.response,
       })
       return true
@@ -915,7 +1037,10 @@ export class OperatorLoop {
     if (
       !activeTask ||
       (activeTask.taskType !== 'run_market_scan' &&
-        activeTask.taskType !== 'rerun_failed_agent_task')
+        activeTask.taskType !== 'rerun_failed_agent_task' &&
+        activeTask.taskType !== 'set_symbol_observe_only' &&
+        activeTask.taskType !== 'create_paper_experiment' &&
+        activeTask.taskType !== 'pause_paper_strategy')
     ) {
       return false
     }
@@ -939,6 +1064,7 @@ export class OperatorLoop {
       }
 
       const sessionId = `failed-rerun-${activeTask.taskId}`
+      const parentSessionId = this.currentRunParentSessionId()
       const rerunPrompt = failedRunId
         ? `Rerun failed agent task ${failedRunId}${agentName ? ` for ${agentName}` : ''}.`
         : `Rerun the latest failed agent task for ${agentName}.`
@@ -946,14 +1072,14 @@ export class OperatorLoop {
         id: sessionId,
         user_input: rerunPrompt,
         kind: 'command_session',
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         title: 'Failed Agent Task Rerun',
       })
       this.sessionRuntime.rememberBranch({
         id: sessionId,
         kind: 'command_session',
         title: 'Failed Agent Task Rerun',
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         summary: null,
       })
       await this.attachSessionContext(sessionId)
@@ -1043,25 +1169,430 @@ export class OperatorLoop {
         id: sessionId,
         kind: 'command_session',
         title: 'Failed Agent Task Rerun',
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
+        summary: execution.response,
+      })
+      return true
+    }
+
+    if (activeTask.taskType === 'set_symbol_observe_only') {
+      const symbol =
+        typeof activeTask.inputData.symbol === 'string' ? activeTask.inputData.symbol : null
+      if (!symbol) {
+        await this.taskRuntime.failActiveTask(
+          'No symbol was attached to the observe-only request.',
+        )
+        return true
+      }
+
+      const sessionId = `observe-only-${activeTask.taskId}`
+      const parentSessionId = this.currentRunParentSessionId()
+      const prompt = `Mark ${symbol} observe-only after repeated paper-side risk rejections.`
+      await this.backendClient.createSession({
+        id: sessionId,
+        user_input: prompt,
+        kind: 'command_session',
+        parent_session_id: parentSessionId,
+        title: 'Observe-Only Symbol Update',
+      })
+      this.sessionRuntime.rememberBranch({
+        id: sessionId,
+        kind: 'command_session',
+        title: 'Observe-Only Symbol Update',
+        parent_session_id: parentSessionId,
+        summary: null,
+      })
+      await this.attachSessionContext(sessionId)
+      await this.backendClient.createMessage({
+        session_id: sessionId,
+        role: 'assistant',
+        message_type: 'command',
+        related_event_id: null,
+        content: {
+          text: prompt,
+          task_id: activeTask.taskId,
+          symbol,
+        },
+      })
+
+      const execution = await this.backendClient.executeOperatorCommand('set_symbol_observe_only', {
+        session_id: sessionId,
+        user_input: prompt,
+        parameters: {
+          symbol,
+        },
+      })
+
+      await this.backendClient.createMessage({
+        session_id: sessionId,
+        role: 'assistant',
+        message_type: 'response',
+        related_event_id: null,
+        content: {
+          text: execution.response,
+          command: 'set_symbol_observe_only',
+          permitted: execution.permitted,
+          result: execution.result,
+        },
+      })
+
+      if (!execution.permitted) {
+        await this.backendClient.createEvent({
+          event_type: 'observe_only_update_failed',
+          severity: 'high',
+          source: 'operator_loop',
+          session_id: sessionId,
+          task_id: activeTask.taskId,
+          related_entity_type: 'command',
+          related_entity_id: 'set_symbol_observe_only',
+          payload: {
+            symbol,
+            response: execution.response,
+            result: execution.result,
+          },
+        })
+        await this.taskRuntime.failActiveTask(execution.response, {
+          command: 'set_symbol_observe_only',
+          symbol,
+        })
+        return true
+      }
+
+      const observeOnlyResult =
+        execution.result &&
+        typeof execution.result === 'object' &&
+        !Array.isArray(execution.result)
+          ? execution.result
+          : null
+      await this.backendClient.createEvent({
+        event_type: 'symbol_set_observe_only',
+        severity: 'info',
+        source: 'operator_loop',
+        session_id: sessionId,
+        task_id: activeTask.taskId,
+        related_entity_type: 'symbol',
+        related_entity_id:
+          typeof observeOnlyResult?.symbol === 'string' ? observeOnlyResult.symbol : symbol,
+        payload: {
+          response: execution.response,
+          result: execution.result,
+        },
+      })
+      await this.taskRuntime.completeActiveTask({
+        summary: execution.response,
+        symbol: typeof observeOnlyResult?.symbol === 'string' ? observeOnlyResult.symbol : symbol,
+        updated: typeof observeOnlyResult?.updated === 'boolean' ? observeOnlyResult.updated : null,
+        observed_symbols: Array.isArray(observeOnlyResult?.observed_symbols)
+          ? observeOnlyResult.observed_symbols
+          : null,
+        tradable_symbols: Array.isArray(observeOnlyResult?.tradable_symbols)
+          ? observeOnlyResult.tradable_symbols
+          : null,
+      })
+      this.sessionRuntime.rememberBranch({
+        id: sessionId,
+        kind: 'command_session',
+        title: 'Observe-Only Symbol Update',
+        parent_session_id: parentSessionId,
+        summary: execution.response,
+      })
+      return true
+    }
+
+    if (activeTask.taskType === 'create_paper_experiment') {
+      const title =
+        typeof activeTask.inputData.title === 'string' && activeTask.inputData.title.trim().length > 0
+          ? activeTask.inputData.title.trim()
+          : 'Paper Experiment'
+      const content =
+        typeof activeTask.inputData.content === 'string' && activeTask.inputData.content.trim().length > 0
+          ? activeTask.inputData.content.trim()
+          : ''
+      const parameters =
+        activeTask.inputData.parameters &&
+        typeof activeTask.inputData.parameters === 'object' &&
+        !Array.isArray(activeTask.inputData.parameters)
+          ? (activeTask.inputData.parameters as Record<string, unknown>)
+          : {}
+      const sessionId = `paper-experiment-${activeTask.taskId}`
+      const parentSessionId = this.currentRunParentSessionId()
+      const symbol =
+        typeof parameters.symbol === 'string' && parameters.symbol.trim().length > 0
+          ? parameters.symbol.trim()
+          : null
+      const prompt = symbol
+        ? `Create a new paper experiment for ${symbol}: ${title}.`
+        : `Create a new paper experiment: ${title}.`
+      await this.backendClient.createSession({
+        id: sessionId,
+        user_input: prompt,
+        kind: 'command_session',
+        parent_session_id: parentSessionId,
+        title: 'Create Paper Experiment',
+      })
+      this.sessionRuntime.rememberBranch({
+        id: sessionId,
+        kind: 'command_session',
+        title: 'Create Paper Experiment',
+        parent_session_id: parentSessionId,
+        summary: null,
+      })
+      await this.attachSessionContext(sessionId)
+      await this.backendClient.createMessage({
+        session_id: sessionId,
+        role: 'assistant',
+        message_type: 'command',
+        related_event_id: null,
+        content: {
+          text: prompt,
+          task_id: activeTask.taskId,
+          title,
+          content,
+          parameters,
+        },
+      })
+
+      const execution = await this.backendClient.executeOperatorCommand('create_paper_experiment', {
+        session_id: sessionId,
+        user_input: prompt,
+        parameters: {
+          title,
+          content,
+          parameters,
+        },
+      })
+
+      await this.backendClient.createMessage({
+        session_id: sessionId,
+        role: 'assistant',
+        message_type: 'response',
+        related_event_id: null,
+        content: {
+          text: execution.response,
+          command: 'create_paper_experiment',
+          permitted: execution.permitted,
+          result: execution.result,
+        },
+      })
+
+      if (!execution.permitted) {
+        await this.backendClient.createEvent({
+          event_type: 'paper_experiment_creation_failed',
+          severity: 'high',
+          source: 'operator_loop',
+          session_id: sessionId,
+          task_id: activeTask.taskId,
+          related_entity_type: 'command',
+          related_entity_id: 'create_paper_experiment',
+          payload: {
+            response: execution.response,
+            result: execution.result,
+            title,
+            parameters,
+          },
+        })
+        await this.taskRuntime.failActiveTask(execution.response, {
+          command: 'create_paper_experiment',
+          title,
+        })
+        return true
+      }
+
+      const experimentResult =
+        execution.result &&
+        typeof execution.result === 'object' &&
+        !Array.isArray(execution.result)
+          ? execution.result
+          : null
+      const strategyId =
+        typeof experimentResult?.id === 'string' ? experimentResult.id : null
+      await this.backendClient.createEvent({
+        event_type: 'paper_experiment_created',
+        severity: 'info',
+        source: 'operator_loop',
+        session_id: sessionId,
+        task_id: activeTask.taskId,
+        related_entity_type: 'strategy',
+        related_entity_id: strategyId || title,
+        payload: {
+          response: execution.response,
+          result: execution.result,
+        },
+      })
+      await this.taskRuntime.completeActiveTask({
+        summary: execution.response,
+        strategy_id: strategyId,
+        title:
+          typeof experimentResult?.title === 'string' ? experimentResult.title : title,
+        state:
+          typeof experimentResult?.state === 'string' ? experimentResult.state : null,
+        strategy_memory_id:
+          typeof experimentResult?.strategy_memory_id === 'string'
+            ? experimentResult.strategy_memory_id
+            : null,
+        created: typeof experimentResult?.created === 'boolean' ? experimentResult.created : null,
+      })
+      this.sessionRuntime.rememberBranch({
+        id: sessionId,
+        kind: 'command_session',
+        title: 'Create Paper Experiment',
+        parent_session_id: parentSessionId,
+        summary: execution.response,
+      })
+      return true
+    }
+
+    if (activeTask.taskType === 'pause_paper_strategy') {
+      const strategyId =
+        typeof activeTask.inputData.strategy_id === 'string'
+          ? activeTask.inputData.strategy_id
+          : null
+      const strategyName =
+        typeof activeTask.inputData.strategy_name === 'string'
+          ? activeTask.inputData.strategy_name
+          : null
+      const reason =
+        typeof activeTask.inputData.reason === 'string' && activeTask.inputData.reason.trim().length > 0
+          ? activeTask.inputData.reason.trim()
+          : 'strategy marked under review'
+      if (!strategyId) {
+        await this.taskRuntime.failActiveTask(
+          'No strategy_id was attached to the paper-strategy pause request.',
+        )
+        return true
+      }
+
+      const sessionId = `paper-pause-${activeTask.taskId}`
+      const parentSessionId = this.currentRunParentSessionId()
+      const pausePrompt = `Pause paper trading for ${strategyName || strategyId} because it is under review.`
+      await this.backendClient.createSession({
+        id: sessionId,
+        user_input: pausePrompt,
+        kind: 'command_session',
+        parent_session_id: parentSessionId,
+        title: 'Pause Paper Strategy',
+      })
+      this.sessionRuntime.rememberBranch({
+        id: sessionId,
+        kind: 'command_session',
+        title: 'Pause Paper Strategy',
+        parent_session_id: parentSessionId,
+        summary: null,
+      })
+      await this.attachSessionContext(sessionId)
+      await this.backendClient.createMessage({
+        session_id: sessionId,
+        role: 'assistant',
+        message_type: 'command',
+        related_event_id: null,
+        content: {
+          text: pausePrompt,
+          task_id: activeTask.taskId,
+          strategy_id: strategyId,
+          reason,
+        },
+      })
+
+      const execution = await this.backendClient.executeOperatorCommand('pause_paper_strategy', {
+        session_id: sessionId,
+        user_input: pausePrompt,
+        parameters: {
+          strategy_id: strategyId,
+          reason,
+        },
+      })
+
+      await this.backendClient.createMessage({
+        session_id: sessionId,
+        role: 'assistant',
+        message_type: 'response',
+        related_event_id: null,
+        content: {
+          text: execution.response,
+          command: 'pause_paper_strategy',
+          permitted: execution.permitted,
+          result: execution.result,
+        },
+      })
+
+      if (!execution.permitted) {
+        await this.backendClient.createEvent({
+          event_type: 'paper_strategy_pause_failed',
+          severity: 'high',
+          source: 'operator_loop',
+          session_id: sessionId,
+          task_id: activeTask.taskId,
+          related_entity_type: 'command',
+          related_entity_id: 'pause_paper_strategy',
+          payload: {
+            strategy_id: strategyId,
+            reason,
+            response: execution.response,
+            result: execution.result,
+          },
+        })
+        await this.taskRuntime.failActiveTask(execution.response, {
+          command: 'pause_paper_strategy',
+          strategy_id: strategyId,
+        })
+        return true
+      }
+
+      const pauseResult =
+        execution.result &&
+        typeof execution.result === 'object' &&
+        !Array.isArray(execution.result)
+          ? execution.result
+          : null
+      const reviewedOpenOpportunityCount =
+        typeof pauseResult?.reviewed_open_opportunity_count === 'number'
+          ? pauseResult.reviewed_open_opportunity_count
+          : null
+      await this.backendClient.createEvent({
+        event_type: 'paper_strategy_paused',
+        severity: 'info',
+        source: 'operator_loop',
+        session_id: sessionId,
+        task_id: activeTask.taskId,
+        related_entity_type: 'strategy',
+        related_entity_id: strategyId,
+        payload: {
+          reason,
+          response: execution.response,
+          result: execution.result,
+        },
+      })
+      await this.taskRuntime.completeActiveTask({
+        summary: execution.response,
+        strategy_id:
+          typeof pauseResult?.strategy_id === 'string' ? pauseResult.strategy_id : strategyId,
+        paused: typeof pauseResult?.paused === 'boolean' ? pauseResult.paused : null,
+        reviewed_open_opportunity_count: reviewedOpenOpportunityCount,
+      })
+      this.sessionRuntime.rememberBranch({
+        id: sessionId,
+        kind: 'command_session',
+        title: 'Pause Paper Strategy',
+        parent_session_id: parentSessionId,
         summary: execution.response,
       })
       return true
     }
 
     const sessionId = `market-scan-${activeTask.taskId}`
+    const parentSessionId = this.currentRunParentSessionId()
     await this.backendClient.createSession({
       id: sessionId,
       user_input: 'Refresh market scan because recent market observer activity is stale.',
       kind: 'command_session',
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       title: 'Market Scan Refresh',
     })
     this.sessionRuntime.rememberBranch({
       id: sessionId,
       kind: 'command_session',
       title: 'Market Scan Refresh',
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       summary: null,
     })
     await this.attachSessionContext(sessionId)
@@ -1146,7 +1677,7 @@ export class OperatorLoop {
       id: sessionId,
       kind: 'command_session',
       title: 'Market Scan Refresh',
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       summary: execution.response,
     })
     return true
@@ -1184,18 +1715,19 @@ export class OperatorLoop {
             ? this.buildRiskReviewReportContent({ riskSummary: params.riskSummary })
             : this.buildAgentPerformanceReportContent({ recentAgentRuns: params.recentAgentRuns })
       const sessionId = `review-report-${activeTask.taskId}`
+      const parentSessionId = this.currentRunParentSessionId()
       await this.backendClient.createSession({
         id: sessionId,
         user_input: `Refresh ${reportType.replaceAll('_', ' ')} report.`,
         kind: 'review_session',
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         title,
       })
       this.sessionRuntime.rememberBranch({
         id: sessionId,
         kind: 'review_session',
         title,
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         summary: null,
       })
       await this.attachSessionContext(sessionId)
@@ -1286,7 +1818,7 @@ export class OperatorLoop {
         id: sessionId,
         kind: 'review_session',
         title,
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         summary: execution.response,
       })
       return true
@@ -1307,18 +1839,19 @@ export class OperatorLoop {
         recentAgentRuns: params.recentAgentRuns,
       })
       const sessionId = `diagnostic-report-${activeTask.taskId}`
+      const parentSessionId = this.currentRunParentSessionId()
       await this.backendClient.createSession({
         id: sessionId,
         user_input: `Refresh ${reportType.replaceAll('_', ' ')} diagnostic report.`,
         kind: 'diagnostic_session',
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         title,
       })
       this.sessionRuntime.rememberBranch({
         id: sessionId,
         kind: 'diagnostic_session',
         title,
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         summary: null,
       })
       await this.attachSessionContext(sessionId)
@@ -1409,7 +1942,7 @@ export class OperatorLoop {
         id: sessionId,
         kind: 'diagnostic_session',
         title,
-        parent_session_id: this.config.mainSessionId,
+        parent_session_id: parentSessionId,
         summary: execution.response,
       })
       return true
@@ -1425,18 +1958,19 @@ export class OperatorLoop {
         : `Operator Daily Review ${targetDate}`
     const content = this.buildDailyReviewContent(params)
     const sessionId = `daily-review-${activeTask.taskId}`
+    const parentSessionId = this.currentRunParentSessionId()
     await this.backendClient.createSession({
       id: sessionId,
       user_input: `Refresh operator daily review for ${targetDate}.`,
       kind: 'review_session',
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       title: 'Daily Review Refresh',
     })
     this.sessionRuntime.rememberBranch({
       id: sessionId,
       kind: 'review_session',
       title: 'Daily Review Refresh',
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       summary: null,
     })
     await this.attachSessionContext(sessionId)
@@ -1524,7 +2058,7 @@ export class OperatorLoop {
       id: sessionId,
       kind: 'review_session',
       title: 'Daily Review Refresh',
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       summary: execution.response,
     })
     return true
@@ -1542,6 +2076,12 @@ export class OperatorLoop {
       return {
         kind: 'strategy_session',
         title: 'Strategy Promotion Proposal',
+      }
+    }
+    if (decision.commandName === 'propose_live_limited_enablement') {
+      return {
+        kind: 'strategy_session',
+        title: 'Live-Limited Enablement Proposal',
       }
     }
     return {
@@ -1616,18 +2156,19 @@ export class OperatorLoop {
 
     const sessionId = this.repairSessionId(decision.id)
     const sessionShape = this.repairSessionShape(decision)
+    const parentSessionId = this.currentRunParentSessionId()
     await this.backendClient.createSession({
       id: sessionId,
       user_input: decision.summary,
       kind: sessionShape.kind,
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       title: sessionShape.title,
     })
     this.sessionRuntime.rememberBranch({
       id: sessionId,
       kind: sessionShape.kind,
       title: sessionShape.title,
-      parent_session_id: this.config.mainSessionId,
+      parent_session_id: parentSessionId,
       summary: decision.summary,
     })
     await this.attachSessionContext(sessionId)
@@ -1699,12 +2240,12 @@ export class OperatorLoop {
               : null,
         })
         this.sessionRuntime.rememberBranch({
-          id: sessionId,
-          kind: sessionShape.kind,
-          title: sessionShape.title,
-          parent_session_id: this.config.mainSessionId,
-          summary: execution.response,
-        })
+        id: sessionId,
+        kind: sessionShape.kind,
+        title: sessionShape.title,
+        parent_session_id: parentSessionId,
+        summary: execution.response,
+      })
       } else {
         await this.backendClient.createEvent({
           event_type: execution.permitted ? 'repair_executed' : 'repair_failed',
@@ -1918,9 +2459,7 @@ export class OperatorLoop {
       this.backendClient.getOperatorEvents(20).catch(() => []),
     ])
 
-    const childSessionSummaries = sessionSummaries
-      .filter(session => session.parent_session_id === this.config.mainSessionId)
-      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
+    const childSessionSummaries = this.descendantSessionSummaries(sessionSummaries)
       .slice(0, OperatorLoop.RECOVERY_BRANCH_FETCH_LIMIT)
     const childSessionDetails = (
       await Promise.all(
@@ -1992,6 +2531,7 @@ export class OperatorLoop {
         subsystemReview
       const { sessionDetail, sessionSummaries, recentCommands, operatorTasks } = supervision
       this.syncPersistedActiveBranch(operatorStatus, sessionSummaries)
+      this.beginRunSessionParentScope()
       const snapshot: OperatorSnapshot = { status, health }
       const recommendations = this.recommendationEngine.list(
         snapshot,
@@ -2031,16 +2571,17 @@ export class OperatorLoop {
       } else if (!resumedRecoveredRepair) {
         await this.maybeApplyRepairDecision(repairDecision)
       }
+      const activeTaskBeforeEvaluation = this.taskRuntime.getActiveTask()
       const evaluatedStrategyTask = await this.maybeEvaluateStrategyTask()
       if (evaluatedStrategyTask && this.taskRuntime.snapshot().currentTaskId === null) {
-        this.mode = snapshot.status.paused ? 'Paused' : 'Observing'
-        this.sessionRuntime.setCurrentIntent('monitoring system state')
+        this.settleModeAfterTaskRun(snapshot, activeTaskBeforeEvaluation)
       }
+      const activeTaskBeforeOperationalControl = this.taskRuntime.getActiveTask()
       const operationalTask = await this.maybeRunOperationalControlTask()
       if (operationalTask && this.taskRuntime.snapshot().currentTaskId === null) {
-        this.mode = snapshot.status.paused ? 'Paused' : 'Observing'
-        this.sessionRuntime.setCurrentIntent('monitoring system state')
+        this.settleModeAfterTaskRun(snapshot, activeTaskBeforeOperationalControl)
       }
+      const activeTaskBeforeReportRefresh = this.taskRuntime.getActiveTask()
       const refreshedReportTask = await this.maybeRefreshReportTask({
         snapshot,
         recommendations,
@@ -2050,13 +2591,12 @@ export class OperatorLoop {
         recentAgentRuns,
       })
       if (refreshedReportTask && this.taskRuntime.snapshot().currentTaskId === null) {
-        this.mode = snapshot.status.paused ? 'Paused' : 'Observing'
-        this.sessionRuntime.setCurrentIntent('monitoring system state')
+        this.settleModeAfterTaskRun(snapshot, activeTaskBeforeReportRefresh)
       }
+      const activeTaskBeforeDelegation = this.taskRuntime.getActiveTask()
       const delegatedTask = await this.maybeDelegateSpecialistTask()
       if (delegatedTask && this.taskRuntime.snapshot().currentTaskId === null) {
-        this.mode = snapshot.status.paused ? 'Paused' : 'Observing'
-        this.sessionRuntime.setCurrentIntent('monitoring system state')
+        this.settleModeAfterTaskRun(snapshot, activeTaskBeforeDelegation)
       }
       const heartbeat = buildHeartbeat({
         mode: this.mode,
@@ -2077,6 +2617,8 @@ export class OperatorLoop {
       this.mode = 'Degraded'
       this.sessionRuntime.setCurrentIntent(this.lastError)
       return false
+    } finally {
+      this.endRunSessionParentScope()
     }
   }
 

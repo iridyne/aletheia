@@ -634,6 +634,40 @@ tr.clickable:hover { background: var(--surface-2); }
   font-size: 0.92rem;
   color: var(--text);
 }
+.command-trace-card,
+.command-result-card {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+}
+.command-trace-card {
+  border-color: rgba(79, 156, 255, 0.28);
+}
+.command-result-card {
+  border-color: rgba(122, 195, 106, 0.24);
+}
+.command-result-card .badge.badge-red {
+  background: rgba(255, 107, 107, 0.12);
+}
+.command-trace-head,
+.command-result-head,
+.command-result-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+.command-trace-summary {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.command-result-facts {
+  margin-top: var(--space-2);
+}
 .command-composer {
   border-top: 1px solid var(--border);
   padding-top: var(--space-3);
@@ -648,6 +682,47 @@ tr.clickable:hover { background: var(--surface-2); }
   color: var(--text);
   padding: 0.9rem 1rem;
   font: inherit;
+}
+.command-preview {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+}
+.command-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+.command-preview-summary {
+  margin-top: var(--space-2);
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.command-preview-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.command-preview-warning {
+  margin-top: var(--space-2);
+  color: var(--yellow);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.command-preview-params {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .command-composer-actions {
   display: flex;
@@ -712,6 +787,21 @@ tr.clickable:hover { background: var(--surface-2); }
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
+}
+.cc-branch-form {
+  margin-bottom: var(--space-3);
+}
+.cc-branch-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+@media (max-width: 700px) {
+  .cc-branch-actions {
+    grid-template-columns: 1fr;
+  }
 }
 .cc-list {
   display: flex;

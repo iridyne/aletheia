@@ -285,6 +285,41 @@ export interface OperatorContextSnapshot {
   context: Record<string, unknown>
 }
 
+export interface OperatorCommandPreview {
+  session_id: string
+  input: string
+  permission_scope: string
+  permission_mode: string
+  worker_permission_mode: string
+  classification: string
+  intent: string
+  confidence: number | null
+  parameters: Record<string, unknown>
+  allowed: boolean
+  denial_reason: string | null
+  worker_allowed: boolean | null
+  worker_denial_reason: string | null
+  command: {
+    name: string
+    risk_class: string
+    risk_level: string
+    description: string
+    worker_permission_required: string
+    operator_permission_required: string
+    requires_confirmation: boolean
+    requires_proposal: boolean
+    audit_event_type: string
+    backend_handler: string
+  } | null
+  extension?: {
+    slash_command: string
+    status: string | null
+    target_command: string | null
+    extension_id: string | null
+    description: string | null
+  } | null
+}
+
 export interface OperatorCommandResponse {
   intent: string
   risk_level: string

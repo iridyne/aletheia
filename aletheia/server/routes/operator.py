@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -51,6 +52,7 @@ DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND = {
     "strategy_session": "trading_context",
     "review_session": "trading_context",
 }
+OPERATOR_SESSION_KINDS = tuple(DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND.keys())
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -227,6 +229,20 @@ class OperatorCommandRequest(BaseModel):
     session_id: str | None = None
 
 
+class OperatorCommandPreviewRequest(BaseModel):
+    input: str
+    session_id: str | None = None
+
+
+class OperatorBranchCreateRequest(BaseModel):
+    title: str | None = None
+    kind: str = "command_session"
+    user_input: str | None = None
+    parent_session_id: str | None = None
+    activate: bool = True
+    selected_by: str = "command-center"
+
+
 class OperatorActiveBranchSelectRequest(BaseModel):
     session_id: str
     selected_by: str = "human"
@@ -299,6 +315,39 @@ def _summary_artifact_for_date(session_id: str, target_date: str) -> dict[str, A
         if content.get("date") == target_date:
             return artifact
     return None
+
+
+def _normalize_session_kind(kind: str) -> str:
+    normalized = kind.strip()
+    if normalized not in OPERATOR_SESSION_KINDS:
+        raise HTTPException(400, f"Unknown operator session kind: {kind}")
+    return normalized
+
+
+def _generated_branch_session_id(kind: str) -> str:
+    prefixes = {
+        "command_session": "command-session",
+        "diagnostic_session": "diagnostic-session",
+        "dreaming_session": "dreaming-session",
+        "strategy_session": "strategy-session",
+        "review_session": "review-session",
+    }
+    prefix = prefixes.get(kind, "command-session")
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def _session_belongs_to_operator_tree(session_id: str, main_session_id: str) -> bool:
+    current_session_id = session_id.strip()
+    visited: set[str] = set()
+    while current_session_id and current_session_id not in visited:
+        if current_session_id == main_session_id:
+            return True
+        visited.add(current_session_id)
+        session = get_session(current_session_id)
+        if session is None:
+            return False
+        current_session_id = str(session.get("parent_session_id") or "").strip()
+    return False
 
 
 def _write_active_branch_selection(
@@ -428,12 +477,252 @@ def _resolve_context_query(
     }
 
 
+def _seed_branch_workspace(session_id: str, opening_text: str) -> None:
+    snapshot = _resolve_context_query(
+        session_id=session_id,
+        profile=None,
+        sections=None,
+    )
+    append_message(
+        session_id=session_id,
+        role="assistant",
+        content={
+            "text": snapshot["summary"],
+            "profile": snapshot["profile"],
+            "session_kind": snapshot["session_kind"],
+            "sections": snapshot["sections"],
+            "context": snapshot["context"],
+        },
+        message_type="context",
+        related_event_id=None,
+    )
+    append_message(
+        session_id=session_id,
+        role="user",
+        content={"text": opening_text},
+        message_type="message",
+        related_event_id=None,
+    )
+
+
+def _command_def_payload(command_name: str) -> dict[str, Any] | None:
+    from aletheia.agent_shell.registry import COMMANDS
+
+    cmd = COMMANDS.get(command_name)
+    if cmd is None:
+        return None
+    return {
+        "name": cmd.name,
+        "risk_class": cmd.risk_class,
+        "risk_level": cmd.risk_level,
+        "description": cmd.description,
+        "worker_permission_required": cmd.worker_permission_required,
+        "operator_permission_required": cmd.operator_permission_required,
+        "requires_confirmation": cmd.requires_confirmation,
+        "requires_proposal": cmd.requires_proposal,
+        "audit_event_type": cmd.audit_event_type,
+        "backend_handler": cmd.backend_handler,
+    }
+
+
+async def _preview_operator_command(req: OperatorCommandPreviewRequest) -> dict[str, Any]:
+    from aletheia.agent_shell.intent import classify_intent
+    from aletheia.agent_shell.operator_store import get_extension_by_slash_command
+    from aletheia.agent_shell.permissions import check_permission
+    from aletheia.agent_shell.runtime import AgentShellRuntime
+
+    cfg = load_config()
+    session_id = req.session_id or cfg.operator.main_session_id
+    permission_mode = cfg.operator.permission_mode
+    text = req.input.strip()
+    payload: dict[str, Any] = {
+        "session_id": session_id,
+        "input": req.input,
+        "permission_scope": "operator",
+        "permission_mode": permission_mode,
+        "worker_permission_mode": cfg.agent.permission_mode,
+        "classification": "empty",
+        "intent": "empty",
+        "confidence": None,
+        "parameters": {},
+        "allowed": False,
+        "denial_reason": "Please type a question or command.",
+        "worker_allowed": None,
+        "worker_denial_reason": None,
+        "command": None,
+        "extension": None,
+    }
+    if not text:
+        return payload
+
+    extension_invocation = AgentShellRuntime._split_extension_invocation(text)
+    if extension_invocation is not None:
+        slash_command, raw_tail = extension_invocation
+        extension = get_extension_by_slash_command(slash_command)
+        payload["extension"] = {
+            "slash_command": slash_command,
+            "status": None if extension is None else extension.get("status"),
+            "target_command": None if extension is None else extension.get("target_command"),
+            "extension_id": None if extension is None else extension.get("id"),
+            "description": None if extension is None else extension.get("description"),
+        }
+        if extension is None:
+            payload.update(
+                classification="extension_unknown",
+                intent="extension_unknown",
+                denial_reason=f"Unknown slash command: {slash_command}",
+            )
+            return payload
+
+        parameters, parameter_error = AgentShellRuntime._extension_parameters(extension, raw_tail)
+        payload["parameters"] = parameters
+        payload["command"] = _command_def_payload(str(extension.get("target_command") or ""))
+        if parameter_error:
+            payload.update(
+                classification="extension_invalid_arguments",
+                intent="extension_invalid_arguments",
+                denial_reason=parameter_error,
+            )
+            return payload
+        if extension.get("status") != "enabled":
+            payload.update(
+                classification="extension_not_enabled",
+                intent="extension_not_enabled",
+                denial_reason=(
+                    f"Extension {slash_command} exists but is not enabled yet "
+                    f"(current status: {extension.get('status')})."
+                ),
+            )
+            return payload
+
+        command_name = str(extension.get("target_command") or "").strip()
+        payload["intent"] = command_name or "extension_unknown"
+        payload["classification"] = "typed_command"
+    else:
+        ctx = build_app_context(["system", "market", "agents", "trading"])
+        summary = context_summary_text(ctx)
+        intent = await classify_intent(text, summary)
+        payload["intent"] = intent.command
+        payload["confidence"] = intent.confidence
+        payload["parameters"] = intent.parameters if isinstance(intent.parameters, dict) else {}
+        if intent.command == "query":
+            payload.update(
+                classification="query",
+                allowed=True,
+                denial_reason=None,
+            )
+            return payload
+        if intent.command == "forbidden":
+            payload.update(
+                classification="forbidden",
+                denial_reason=(
+                    "That action is permanently forbidden. The Agent Shell cannot "
+                    "access live trading, credentials, or hard risk limits."
+                ),
+            )
+            return payload
+        command_name = intent.command
+        payload["classification"] = "typed_command"
+
+    payload["command"] = _command_def_payload(command_name)
+    if payload["command"] is None:
+        payload.update(
+            classification="unknown_command",
+            allowed=False,
+            denial_reason=f"Unknown command: {command_name}",
+        )
+        return payload
+
+    allowed, denial_reason = check_permission(
+        command_name,
+        permission_mode,
+        permission_scope="operator",
+    )
+    worker_allowed: bool | None = None
+    worker_denial_reason: str | None = None
+    if allowed:
+        worker_allowed, worker_denial_reason = check_permission(
+            command_name,
+            cfg.agent.permission_mode,
+            permission_scope="worker",
+        )
+        if not worker_allowed:
+            allowed = False
+            denial_reason = (
+                "This command is currently blocked by worker/global safety. "
+                f"{worker_denial_reason or 'Permission denied.'}"
+            )
+    payload["allowed"] = allowed
+    payload["denial_reason"] = denial_reason
+    payload["worker_allowed"] = worker_allowed
+    payload["worker_denial_reason"] = worker_denial_reason
+    return payload
+
+
 @router.get("/status")
 async def operator_status():
     heartbeat = get_latest_heartbeat()
     if heartbeat is None:
         return _operator_status_defaults()
     return _apply_stale_status(heartbeat)
+
+
+@router.post("/branches")
+async def operator_create_branch(payload: OperatorBranchCreateRequest):
+    kind = _normalize_session_kind(payload.kind)
+    title = (payload.title or payload.user_input or "").strip()
+    if not title:
+        raise HTTPException(400, "Branch title or user_input is required")
+
+    user_input = (payload.user_input or title).strip()
+    if not user_input:
+        raise HTTPException(400, "Branch user_input cannot be empty")
+
+    main_session_id = load_config().operator.main_session_id
+    parent_session_id = (payload.parent_session_id or main_session_id).strip()
+    if not parent_session_id:
+        parent_session_id = main_session_id
+    if parent_session_id != main_session_id and not _session_belongs_to_operator_tree(
+        parent_session_id,
+        main_session_id,
+    ):
+        raise HTTPException(400, "Branch parent must belong to the operator session tree")
+    session_id = _generated_branch_session_id(kind)
+    create_session_record(
+        session_id=session_id,
+        user_input=user_input,
+        kind=kind,
+        parent_session_id=parent_session_id,
+        title=title,
+    )
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(500, "Branch create failed")
+    _seed_branch_workspace(session_id, user_input)
+
+    create_event(
+        event_type="branch_created",
+        source="operator_branch_route",
+        session_id=session_id,
+        related_entity_type="session",
+        related_entity_id=session_id,
+        payload={
+            "kind": kind,
+            "title": title,
+            "parent_session_id": parent_session_id,
+            "selected_by": payload.selected_by,
+            "activate": payload.activate,
+        },
+    )
+    if payload.activate:
+        _write_active_branch_selection(
+            target_session=session,
+            selected_by=payload.selected_by,
+        )
+    updated = get_session(session_id)
+    if updated is None:
+        raise HTTPException(500, "Branch create failed")
+    return updated
 
 
 @router.post("/active-branch")
@@ -452,8 +741,8 @@ async def operator_select_active_branch(payload: OperatorActiveBranchSelectReque
     session = get_session(requested_session_id)
     if session is None:
         raise HTTPException(404, "Session not found")
-    if session.get("parent_session_id") != main_session_id:
-        raise HTTPException(400, "Active branch must be a direct child of the operator main session")
+    if not _session_belongs_to_operator_tree(requested_session_id, main_session_id):
+        raise HTTPException(400, "Active branch must belong to the operator session tree")
 
     return _write_active_branch_selection(
         target_session=session,
@@ -621,6 +910,11 @@ async def operator_wake():
     return _set_paused(False, event_type="operator_woken", message="Operator wake requested via API")
 
 
+@router.post("/command-preview")
+async def operator_command_preview(req: OperatorCommandPreviewRequest):
+    return await _preview_operator_command(req)
+
+
 @router.post("/command")
 async def operator_command(req: OperatorCommandRequest):
     from aletheia.agent_shell.runtime import AgentShellRuntime
@@ -650,12 +944,28 @@ async def operator_command(req: OperatorCommandRequest):
         session_id=target_session_id,
     )
     payload = result.model_dump() if hasattr(result, "model_dump") else result
+    command_name = None
+    intent_name = payload.get("intent")
+    if isinstance(intent_name, str) and _command_def_payload(intent_name) is not None:
+        command_name = intent_name
+    command_meta = _command_def_payload(command_name) if command_name else None
+    permitted = not _looks_like_command_rejection(payload.get("intent", ""), payload.get("response"))
     append_message(
         session_id=target_session_id,
         role="assistant",
         content={
             "text": payload.get("response"),
             "intent": payload.get("intent"),
+            "command": command_name,
+            "command_meta": command_meta,
+            "risk_level": payload.get("risk_level"),
+            "needs_confirmation": (
+                bool(command_meta.get("requires_confirmation"))
+                if isinstance(command_meta, dict)
+                else bool(payload.get("needs_confirmation"))
+            ),
+            "permitted": permitted,
+            "action": payload.get("action"),
         },
         message_type="response",
         related_event_id=None,
@@ -663,7 +973,7 @@ async def operator_command(req: OperatorCommandRequest):
     create_event(
         event_type=(
             "command_rejected"
-            if _looks_like_command_rejection(payload.get("intent", ""), payload.get("response"))
+            if not permitted
             else "command_executed"
         ),
         source="operator_command_route",

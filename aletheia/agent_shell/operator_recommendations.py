@@ -13,6 +13,7 @@ from aletheia.agent_shell.operator_store import (
     list_tasks,
 )
 from aletheia.config.loader import load_config
+from aletheia.data.symbols import to_canonical
 from aletheia.storage import repositories as repo
 
 
@@ -620,10 +621,71 @@ def build_risk_summary(limit: int = 20, *, cfg=None) -> dict:
         reverse=True,
     )
 
+    tradable_symbols = {to_canonical(symbol) for symbol in cfg.exchange.tradable_symbols}
+    allowed_symbols = {to_canonical(symbol) for symbol in cfg.risk.allowed_symbols}
+    symbol_rejections: dict[str, dict] = {}
+    for decision in recent_rejected_decisions:
+        symbol = to_canonical(str(decision.get("symbol") or ""))
+        execution_mode = str(decision.get("execution_mode") or "").strip().lower()
+        if not symbol or not execution_mode.startswith("paper"):
+            continue
+        if symbol not in tradable_symbols and symbol not in allowed_symbols:
+            continue
+        if (symbol in tradable_symbols and len(tradable_symbols) <= 1) or (
+            symbol in allowed_symbols and len(allowed_symbols) <= 1
+        ):
+            continue
+        bucket = symbol_rejections.get(symbol)
+        if bucket is None:
+            bucket = {
+                "symbol": symbol,
+                "rejection_count": 0,
+                "decision_ids": [],
+                "execution_modes": [],
+                "latest_created_at": decision.get("created_at"),
+            }
+            symbol_rejections[symbol] = bucket
+        bucket["rejection_count"] += 1
+        decision_id = decision.get("id")
+        if decision_id and decision_id not in bucket["decision_ids"]:
+            bucket["decision_ids"].append(decision_id)
+        if execution_mode and execution_mode not in bucket["execution_modes"]:
+            bucket["execution_modes"].append(execution_mode)
+        created_at = _parse_utc_timestamp(decision.get("created_at"))
+        if created_at and (
+            _parse_utc_timestamp(bucket.get("latest_created_at")) is None
+            or created_at > _parse_utc_timestamp(bucket.get("latest_created_at"))
+        ):
+            bucket["latest_created_at"] = decision.get("created_at")
+
+    due_observe_only_symbols = [
+        {
+            "symbol": candidate["symbol"],
+            "rejection_count": candidate["rejection_count"],
+            "decision_ids": candidate["decision_ids"][:limit],
+            "execution_modes": candidate["execution_modes"][:limit],
+            "summary": (
+                f"{candidate['symbol']} triggered {candidate['rejection_count']} recent paper-side risk rejections "
+                "and should be left observe-only until setup quality improves."
+            ),
+            "latest_created_at": candidate["latest_created_at"],
+        }
+        for candidate in symbol_rejections.values()
+        if int(candidate.get("rejection_count") or 0) >= 2
+    ]
+    due_observe_only_symbols.sort(
+        key=lambda item: (
+            int(item.get("rejection_count") or 0),
+            str(item.get("latest_created_at") or ""),
+        ),
+        reverse=True,
+    )
+
     return {
         "recent_rejected_decisions": recent_rejected_decisions[:limit],
         "recent_risk_boundary_proposals": recent_risk_boundary_proposals[:limit],
         "needs_operator_risk_boundary_proposals": due_boundary_changes[:limit],
+        "needs_operator_observe_only_symbols": due_observe_only_symbols[:limit],
     }
 
 
@@ -909,6 +971,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         )
 
     cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cutoff_6h = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
     cutoff_15m = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
 
     recent_dreaming_logs = repo._select_all(
@@ -921,6 +984,30 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         "agent_runs",
         where="agent_name = ? AND started_at > ?",
         params=("dreaming_agent", cutoff_24h),
+        limit=5,
+    )
+    recent_research_notes = repo._select_all(
+        "knowledge_items",
+        where="item_type = ? AND created_at > ?",
+        params=("research_note", cutoff_24h),
+        limit=20,
+    )
+    recent_strategy_hypotheses = repo._select_all(
+        "knowledge_items",
+        where="item_type = ? AND created_at > ?",
+        params=("strategy_memory", cutoff_24h),
+        limit=20,
+    )
+    recent_strategy_designer_runs = repo._select_all(
+        "agent_runs",
+        where="agent_name = ? AND started_at > ?",
+        params=("strategy_designer", cutoff_24h),
+        limit=5,
+    )
+    recent_risk_critic_runs = repo._select_all(
+        "agent_runs",
+        where="agent_name = ? AND started_at > ?",
+        params=("risk_critic", cutoff_6h),
         limit=5,
     )
     if not cfg.runtime.paused and not recent_dreaming_logs and not recent_dreaming_runs:
@@ -1083,6 +1170,59 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             }
         )
 
+    if (
+        not cfg.runtime.paused
+        and not active_paper_strategies
+        and (recent_research_notes or recent_strategy_hypotheses)
+        and not recent_strategy_designer_runs
+    ):
+        recommendations.append(
+            {
+                "id": "strategy-design-due",
+                "kind": "strategy_design_due",
+                "severity": "medium",
+                "summary": (
+                    "Recent research inputs exist but no active paper strategy is visible. "
+                    "Delegate strategy_designer to turn current hypotheses into a fresh paper strategy."
+                ),
+                "taskType": "run_strategy_design",
+                "metadata": {
+                    "task_type": "run_strategy_design",
+                    "recent_research_note_count": len(recent_research_notes),
+                    "recent_strategy_hypothesis_count": len(recent_strategy_hypotheses),
+                },
+            }
+        )
+
+    pause_paper_strategy_candidates = [
+        item
+        for item in under_review_strategies
+        if str(item.get("state") or "") in {"paper_running", "paper_passed"}
+        and not _truthy_flag(item.get("paper_trading_paused"))
+    ]
+    if not cfg.runtime.paused and pause_paper_strategy_candidates:
+        first_pause_candidate = pause_paper_strategy_candidates[0]
+        strategy_id = str(first_pause_candidate.get("id") or "")
+        strategy_name = first_pause_candidate.get("name") or strategy_id
+        review_notes = str(first_pause_candidate.get("review_notes") or "").strip()
+        recommendations.append(
+            {
+                "id": f"pause-paper-strategy:{strategy_id}",
+                "kind": "pause_paper_strategy_due",
+                "severity": "medium",
+                "summary": (
+                    f"Strategy {strategy_name} is under review while paper trading remains active. Pause paper trading until review completes."
+                ),
+                "taskType": "pause_paper_strategy",
+                "metadata": {
+                    "task_type": "pause_paper_strategy",
+                    "strategy_id": strategy_id,
+                    "strategy_name": strategy_name,
+                    "reason": review_notes or "strategy marked under review",
+                },
+            }
+        )
+
     raw_recent_strategy_promotion_proposals = [
         artifact
         for artifact in list_artifacts(limit=500)
@@ -1098,25 +1238,52 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         recent_strategy_promotion_proposals.append(
             {
                 "strategy_id": content.get("strategy_id"),
+                "target_state": content.get("target_state"),
             }
         )
-    promotion_ready_strategy_ids = {
-        str(item.get("strategy_id"))
+    recent_live_limited_enablement_proposals = []
+    for artifact in list_artifacts(limit=500):
+        if artifact.get("artifact_type") != "live_limited_enablement_proposal":
+            continue
+        created_at = _parse_utc_timestamp(artifact.get("created_at"))
+        if created_at is None or created_at <= datetime.now(timezone.utc) - timedelta(hours=24):
+            continue
+        content = artifact.get("content")
+        if not isinstance(content, dict):
+            content = {}
+        recent_live_limited_enablement_proposals.append(
+            {
+                "strategy_id": content.get("strategy_id"),
+            }
+        )
+    promotion_ready_strategy_targets = {
+        (
+            str(item.get("strategy_id")),
+            "paper_passed"
+            if str(
+                ((item.get("evaluation") or {}).get("strategy") or {}).get("state") or ""
+            )
+            == "paper_running"
+            else "live_candidate",
+        )
         for item in recent_strategy_evaluations
         if item.get("strategy_id")
         and isinstance(item.get("evaluation"), dict)
         and isinstance(item["evaluation"].get("strategy"), dict)
-        and str(item["evaluation"]["strategy"].get("state") or "") == "paper_running"
+        and str(item["evaluation"]["strategy"].get("state") or "")
+        in {"paper_running", "paper_passed"}
         and isinstance(item["evaluation"].get("promotion_gates"), dict)
         and bool(item["evaluation"]["promotion_gates"].get("passed")) is True
     }
-    proposed_strategy_ids = {
-        str(item.get("strategy_id"))
+    proposed_strategy_targets = {
+        (str(item.get("strategy_id")), str(item.get("target_state") or ""))
         for item in recent_strategy_promotion_proposals
-        if item.get("strategy_id")
+        if item.get("strategy_id") and item.get("target_state")
     }
     needs_operator_promotion_proposal_strategy_ids = sorted(
-        promotion_ready_strategy_ids - proposed_strategy_ids
+        strategy_id
+        for strategy_id, target_state in promotion_ready_strategy_targets
+        if (strategy_id, target_state) not in proposed_strategy_targets
     )
     if not cfg.runtime.paused and needs_operator_promotion_proposal_strategy_ids:
         first_candidate = next(
@@ -1128,13 +1295,31 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             None,
         )
         strategy_name = first_candidate.get("name") if first_candidate else None
+        first_evaluation = next(
+            (
+                item
+                for item in recent_strategy_evaluations
+                if str(item.get("strategy_id") or "")
+                == needs_operator_promotion_proposal_strategy_ids[0]
+            ),
+            None,
+        )
+        target_state = (
+            "paper_passed"
+            if str(
+                ((first_evaluation or {}).get("evaluation") or {}).get("strategy", {}).get("state")
+                or ""
+            )
+            == "paper_running"
+            else "live_candidate"
+        )
         recommendations.append(
             {
                 "id": "strategy-promotion-proposal-due",
                 "kind": "strategy_promotion_proposal_due",
                 "severity": "medium",
                 "summary": (
-                    f"Strategy {strategy_name or needs_operator_promotion_proposal_strategy_ids[0]} passed recent promotion checks and should be proposed for paper_passed human review."
+                    f"Strategy {strategy_name or needs_operator_promotion_proposal_strategy_ids[0]} passed recent promotion checks and should be proposed for {target_state} human review."
                     if len(needs_operator_promotion_proposal_strategy_ids) == 1
                     else f"{len(needs_operator_promotion_proposal_strategy_ids)} strategies passed recent promotion checks and should be proposed for human review."
                 ),
@@ -1143,8 +1328,57 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                     "strategy_ids": needs_operator_promotion_proposal_strategy_ids,
                     "strategy_id": needs_operator_promotion_proposal_strategy_ids[0],
                     "strategy_name": strategy_name,
-                    "target_state": "paper_passed",
+                    "target_state": target_state,
                     "proposal_command": "propose_strategy_promotion",
+                },
+            }
+        )
+    live_limited_ready_strategy_ids = {
+        str(item.get("strategy_id"))
+        for item in recent_strategy_evaluations
+        if item.get("strategy_id")
+        and isinstance(item.get("evaluation"), dict)
+        and isinstance(item["evaluation"].get("strategy"), dict)
+        and str(item["evaluation"]["strategy"].get("state") or "") == "live_candidate"
+        and isinstance(item["evaluation"].get("live_limited_gates"), dict)
+        and bool(item["evaluation"]["live_limited_gates"].get("passed")) is True
+    }
+    proposed_live_limited_strategy_ids = {
+        str(item.get("strategy_id"))
+        for item in recent_live_limited_enablement_proposals
+        if item.get("strategy_id")
+    }
+    needs_operator_live_limited_enablement_strategy_ids = sorted(
+        live_limited_ready_strategy_ids - proposed_live_limited_strategy_ids
+    )
+    if not cfg.runtime.paused and needs_operator_live_limited_enablement_strategy_ids:
+        first_live_candidate = next(
+            (
+                item
+                for item in strategies
+                if str(item.get("id") or "")
+                == needs_operator_live_limited_enablement_strategy_ids[0]
+            ),
+            None,
+        )
+        strategy_name = first_live_candidate.get("name") if first_live_candidate else None
+        recommendations.append(
+            {
+                "id": "live-limited-enablement-proposal-due",
+                "kind": "live_limited_enablement_proposal_due",
+                "severity": "medium",
+                "summary": (
+                    f"Strategy {strategy_name or needs_operator_live_limited_enablement_strategy_ids[0]} passed live-limited safety checks and should create a human-reviewed live-limited enablement proposal."
+                    if len(needs_operator_live_limited_enablement_strategy_ids) == 1
+                    else f"{len(needs_operator_live_limited_enablement_strategy_ids)} live-candidate strategies passed live-limited safety checks and should create enablement proposals for human review."
+                ),
+                "taskType": "create_repair_proposal",
+                "metadata": {
+                    "strategy_ids": needs_operator_live_limited_enablement_strategy_ids,
+                    "strategy_id": needs_operator_live_limited_enablement_strategy_ids[0],
+                    "strategy_name": strategy_name,
+                    "proposal_command": "propose_live_limited_enablement",
+                    "target_state": "live_limited",
                 },
             }
         )
@@ -1460,6 +1694,28 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     if (
         not cfg.runtime.paused
         and risk_summary["recent_rejected_decisions"]
+        and not recent_risk_critic_runs
+    ):
+        recommendations.append(
+            {
+                "id": "risk-critique-due",
+                "kind": "risk_critique_due",
+                "severity": "medium",
+                "summary": (
+                    "Recent risk rejections exist without a fresh risk-critic pass. "
+                    "Delegate risk_critic to record a new risk lesson note."
+                ),
+                "taskType": "run_risk_critique",
+                "metadata": {
+                    "task_type": "run_risk_critique",
+                    "rejected_decision_count": len(risk_summary["recent_rejected_decisions"]),
+                },
+            }
+        )
+
+    if (
+        not cfg.runtime.paused
+        and risk_summary["recent_rejected_decisions"]
         and not _has_fresh_report_artifact(
             recent_artifacts,
             artifact_type="review_report",
@@ -1510,6 +1766,26 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                     "affected_symbols": first_candidate["affected_symbols"][:5],
                     "execution_modes": first_candidate["execution_modes"],
                     "proposal_command": "propose_risk_boundary_change",
+                },
+            }
+        )
+
+    due_observe_only_symbols = risk_summary.get("needs_operator_observe_only_symbols") or []
+    if not cfg.runtime.paused and due_observe_only_symbols:
+        first_candidate = due_observe_only_symbols[0]
+        recommendations.append(
+            {
+                "id": f"symbol-observe-only:{first_candidate['symbol']}",
+                "kind": "symbol_observe_only_due",
+                "severity": "medium",
+                "summary": first_candidate["summary"],
+                "taskType": "set_symbol_observe_only",
+                "metadata": {
+                    "task_type": "set_symbol_observe_only",
+                    "symbol": first_candidate["symbol"],
+                    "rejection_count": first_candidate["rejection_count"],
+                    "decision_ids": first_candidate["decision_ids"][:5],
+                    "execution_modes": first_candidate.get("execution_modes", [])[:5],
                 },
             }
         )

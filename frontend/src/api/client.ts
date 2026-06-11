@@ -198,11 +198,24 @@ export const api = {
       context: params?.context,
       session_id: params?.sessionId,
     }),
+  previewOperatorCommand: (body: { input: string; sessionId?: string }) =>
+    post<any>('/operator/command-preview', {
+      input: body.input,
+      session_id: body.sessionId,
+    }),
   setOperatorActiveBranch: (sessionId: string, selectedBy = 'command-center') =>
     post<any>('/operator/active-branch', {
       session_id: sessionId,
       selected_by: selectedBy,
     }),
+  createOperatorBranch: (body: {
+    title?: string
+    kind?: string
+    user_input?: string
+    parent_session_id?: string
+    activate?: boolean
+    selected_by?: string
+  }) => post<any>('/operator/branches', body),
   getOperatorSessions: () => fetchJson<any[]>('/operator/sessions'),
   getOperatorSession: (id: string) => fetchJson<any>(`/operator/sessions/${encodeURIComponent(id)}`),
   getOperatorTasks: () => fetchJson<any[]>('/operator/tasks'),

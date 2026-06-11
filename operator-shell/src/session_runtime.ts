@@ -59,6 +59,34 @@ function sessionTimestamp(session: Pick<OperatorSessionSummary, 'created_at'>): 
   return Number.isNaN(parsed) ? 0 : parsed
 }
 
+function descendantSessionIds(
+  mainSessionId: string,
+  sessions: Array<Pick<OperatorSessionSummary, 'id' | 'parent_session_id'>>,
+): Set<string> {
+  const children = new Map<string, string[]>()
+  for (const session of sessions) {
+    const parent = session.parent_session_id || ''
+    if (!parent) {
+      continue
+    }
+    const items = children.get(parent) || []
+    items.push(session.id)
+    children.set(parent, items)
+  }
+
+  const descendants = new Set<string>()
+  const stack = [...(children.get(mainSessionId) || [])]
+  while (stack.length > 0) {
+    const sessionId = stack.pop()
+    if (!sessionId || descendants.has(sessionId)) {
+      continue
+    }
+    descendants.add(sessionId)
+    stack.push(...(children.get(sessionId) || []))
+  }
+  return descendants
+}
+
 export class SessionRuntime {
   private readonly mainSession: OperatorSessionState
   private readonly branches = new Map<string, OperatorSessionBranchState>()
@@ -98,9 +126,17 @@ export class SessionRuntime {
     this.branches.clear()
     this.activeBranchId = null
 
+    const sessionRecords = new Map<string, OperatorSessionSummary>()
+    for (const session of sessions) {
+      sessionRecords.set(session.id, session)
+    }
+    for (const branch of branchDetails) {
+      sessionRecords.set(branch.session.id, branch.session)
+    }
+    const descendantIds = descendantSessionIds(this.mainSession.id, [...sessionRecords.values()])
     const branchStates = new Map<string, OperatorSessionBranchState>()
     for (const branch of branchDetails) {
-      if (branch.session.parent_session_id !== this.mainSession.id) {
+      if (!descendantIds.has(branch.session.id)) {
         continue
       }
       branchStates.set(branch.session.id, {
@@ -114,7 +150,7 @@ export class SessionRuntime {
     }
 
     for (const session of sessions) {
-      if (session.parent_session_id !== this.mainSession.id || branchStates.has(session.id)) {
+      if (!descendantIds.has(session.id) || branchStates.has(session.id)) {
         continue
       }
       branchStates.set(session.id, {

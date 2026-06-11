@@ -2488,6 +2488,178 @@ test('operator loop restores child session branch context into recovery intent',
   assert.match(calls.heartbeats[0].current_intent || '', /Momentum A/i)
 })
 
+test('operator loop folds nested descendant branch context into recovery intent', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const createdAt = new Date().toISOString()
+  backend.getOperatorStatus = async () => ({
+    agent_id: 'operator',
+    status: 'online',
+    mode: 'Observing',
+    permission_mode: 'ReadOnly',
+    is_busy: false,
+    current_task_id: null,
+    current_intent: null,
+    queue_size: 0,
+    last_seen_at: createdAt,
+    last_success_at: createdAt,
+    last_error: null,
+    model_provider: 'pi-shell',
+    session_id: 'operator-main',
+    stale: false,
+    stale_after_sec: 45,
+  })
+  backend.getOperatorSessions = async () => [
+    {
+      id: 'operator-main',
+      user_input: '[operator session]',
+      intent: null,
+      command: null,
+      response: null,
+      permitted: 1,
+      duration_ms: 0,
+      created_at: createdAt,
+      message_count: 0,
+      command_count: 0,
+      kind: 'command_session',
+      parent_session_id: null,
+      title: 'Operator Main',
+    },
+    {
+      id: 'strategy-parent-1',
+      user_input: 'Investigate Momentum root.',
+      intent: null,
+      command: null,
+      response: null,
+      permitted: 1,
+      duration_ms: 0,
+      created_at: createdAt,
+      message_count: 0,
+      command_count: 0,
+      kind: 'strategy_session',
+      parent_session_id: 'operator-main',
+      title: 'Momentum Root',
+    },
+    {
+      id: 'review-child-1',
+      user_input: 'Review nested drawdown branch.',
+      intent: null,
+      command: null,
+      response: null,
+      permitted: 1,
+      duration_ms: 0,
+      created_at: createdAt,
+      message_count: 1,
+      command_count: 0,
+      kind: 'review_session',
+      parent_session_id: 'strategy-parent-1',
+      title: 'Nested Drawdown Review',
+    },
+  ]
+  backend.getOperatorSession = async sessionId => {
+    if (sessionId === 'review-child-1') {
+      return {
+        session: {
+          id: 'review-child-1',
+          user_input: 'Review nested drawdown branch.',
+          intent: null,
+          command: null,
+          response: null,
+          permitted: 1,
+          duration_ms: 0,
+          created_at: createdAt,
+          message_count: 1,
+          command_count: 0,
+          kind: 'review_session',
+          parent_session_id: 'strategy-parent-1',
+          title: 'Nested Drawdown Review',
+        },
+        messages: [
+          {
+            id: 'message-nested-1',
+            session_id: 'review-child-1',
+            role: 'assistant',
+            message_type: 'result',
+            related_event_id: null,
+            content: {
+              text: 'Nested drawdown review found persistent losses that still need follow-up.',
+            },
+            created_at: createdAt,
+          },
+        ],
+        commands: [],
+        artifacts: [],
+      } satisfies OperatorSessionDetail
+    }
+    if (sessionId === 'strategy-parent-1') {
+      return {
+        session: {
+          id: 'strategy-parent-1',
+          user_input: 'Investigate Momentum root.',
+          intent: null,
+          command: null,
+          response: null,
+          permitted: 1,
+          duration_ms: 0,
+          created_at: createdAt,
+          message_count: 0,
+          command_count: 0,
+          kind: 'strategy_session',
+          parent_session_id: 'operator-main',
+          title: 'Momentum Root',
+        },
+        messages: [],
+        commands: [],
+        artifacts: [],
+      } satisfies OperatorSessionDetail
+    }
+
+    return {
+      session: {
+        id: 'operator-main',
+        user_input: '[operator session]',
+        intent: null,
+        command: null,
+        response: null,
+        permitted: 1,
+        duration_ms: 0,
+        created_at: createdAt,
+        message_count: 0,
+        command_count: 0,
+      },
+      messages: [],
+      commands: [],
+      artifacts: [],
+    } satisfies OperatorSessionDetail
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  await loop.recoverState()
+  const restored = await loop.runOnce()
+
+  assert.equal(restored, true)
+  assert.match(calls.heartbeats[0].current_intent || '', /persistent losses/i)
+  assert.match(calls.heartbeats[0].current_intent || '', /follow-up/i)
+})
+
 test('operator loop folds multiple recent child session branches into recovery intent', async () => {
   const snapshot = makeSnapshot()
   const { backend, calls } = makeFakeBackend(snapshot)
@@ -3483,12 +3655,468 @@ test('operator loop refreshes stale market observer activity through typed run_m
   assert.equal(calls.createdSessions[0].kind, 'command_session')
   assert.equal(calls.executedCommands.length, 1)
   assert.equal(calls.executedCommands[0].commandName, 'run_market_scan')
+  assert.equal(calls.heartbeats[0].mode, 'Trading')
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
   assert.match(
     String(calls.updatedTasks[0].payload.output_data?.summary || ''),
     /Triggered manual market scan/i,
   )
+})
+
+test('operator loop parents market-scan task sessions under the persisted active branch', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const createdAt = new Date().toISOString()
+  const fiftyMinutesAgo = new Date(Date.now() - 50 * 60 * 1000).toISOString()
+  backend.getOperatorStatus = async () => ({
+    agent_id: 'operator',
+    status: 'online',
+    mode: 'Observing',
+    permission_mode: 'PaperAuto',
+    is_busy: false,
+    current_task_id: null,
+    current_intent: 'Continue investigating Momentum root.',
+    queue_size: 0,
+    last_seen_at: createdAt,
+    last_success_at: createdAt,
+    last_error: null,
+    model_provider: 'pi-shell',
+    session_id: 'operator-main',
+    active_branch_id: 'strategy-session-parent',
+    active_branch_kind: 'strategy_session',
+    active_branch_title: 'Momentum Root',
+    stale: false,
+    stale_after_sec: 45,
+  })
+  backend.getOperatorSessions = async () => [
+    {
+      id: 'operator-main',
+      user_input: '[operator session]',
+      intent: null,
+      command: null,
+      response: null,
+      permitted: 1,
+      duration_ms: 0,
+      created_at: createdAt,
+      message_count: 0,
+      command_count: 0,
+      kind: 'command_session',
+      parent_session_id: null,
+      title: 'Operator Main',
+    },
+    {
+      id: 'strategy-session-parent',
+      user_input: 'Investigate Momentum root.',
+      intent: null,
+      command: null,
+      response: 'Momentum root branch is still active.',
+      permitted: 1,
+      duration_ms: 0,
+      created_at: createdAt,
+      message_count: 2,
+      command_count: 1,
+      kind: 'strategy_session',
+      parent_session_id: 'operator-main',
+      title: 'Momentum Root',
+    },
+  ]
+  backend.getAgentRuns = async () =>
+    [
+      {
+        id: 'run-market-observer-stale-parented',
+        agent_name: 'market_observer',
+        trigger_type: 'scheduled',
+        permission_mode: 'Observe',
+        started_at: fiftyMinutesAgo,
+        ended_at: fiftyMinutesAgo,
+        status: 'completed',
+        model_provider: null,
+        model_name: null,
+        tools_called: '[]',
+        outputs_created: '[]',
+        errors: '[]',
+        cost_estimate: null,
+      },
+    ] satisfies AgentRunSummary[]
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'Triggered manual market scan for active branch context.',
+      result: {
+        message: 'Triggered manual market scan for active branch context.',
+        run: {
+          agent_name: 'market_observer',
+          run_id: 'run-market-refresh-parented-1',
+          status: 'completed',
+          errors: [],
+          outputs: ['opportunity:eth'],
+        },
+      },
+      action: null,
+      risk_level: 'operational',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.createdSessions.length, 1)
+  assert.equal(calls.createdSessions[0].parent_session_id, 'strategy-session-parent')
+})
+
+test('operator loop pauses under-review paper strategies through typed pause_paper_strategy', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+  const today = new Date().toISOString().slice(0, 10)
+  backend.getDreamingSummary = async () => ({
+    recent_research_notes: [],
+    recent_strategy_hypotheses: [],
+    deprecated_memories: [],
+    recent_dreaming_logs: [{ id: 'dream-log-fresh' }],
+    recent_dreaming_runs: [{ id: 'dream-run-fresh' }],
+    recent_daily_reviews: [{ id: 'daily-review-today', created_at: `${today}T01:00:00Z` }],
+  })
+  backend.getStrategySummary = async () => ({
+    active_paper_strategies: [
+      {
+        id: 'strat-pause-1',
+        name: 'Pause Candidate',
+        state: 'paper_running',
+        under_review: 1,
+        review_notes: 'paper drawdown breached review threshold',
+      },
+    ],
+    under_review_strategies: [
+      {
+        id: 'strat-pause-1',
+        name: 'Pause Candidate',
+        state: 'paper_running',
+        under_review: 1,
+        review_notes: 'paper drawdown breached review threshold',
+      },
+    ],
+    paused_paper_strategies: [],
+    live_candidate_strategies: [],
+    recent_strategy_evaluations: [],
+    needs_operator_evaluation_strategy_ids: [],
+    recent_strategy_promotion_proposals: [],
+    needs_operator_promotion_proposal_strategy_ids: [],
+  })
+  backend.getAgentRuns = async () =>
+    [
+      {
+        id: 'run-market-observer-fresh-pause',
+        agent_name: 'market_observer',
+        trigger_type: 'scheduled',
+        permission_mode: 'Observe',
+        started_at: fiveMinutesAgo,
+        ended_at: fiveMinutesAgo,
+        status: 'completed',
+        model_provider: null,
+        model_name: null,
+        tools_called: '[]',
+        outputs_created: '[]',
+        errors: '[]',
+        cost_estimate: null,
+      },
+    ] satisfies AgentRunSummary[]
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'Pause Candidate paused for paper trading. Reviewed 1 open linked opportunit(ies).',
+      result: {
+        paused: true,
+        strategy_id: 'strat-pause-1',
+        message: 'Pause Candidate paused for paper trading. Reviewed 1 open linked opportunit(ies).',
+        reviewed_open_opportunity_count: 1,
+      },
+      action: null,
+      risk_level: 'operational',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.createdTasks.length, 1)
+  assert.equal(calls.createdTasks[0].task_type, 'pause_paper_strategy')
+  assert.equal(calls.createdSessions.length, 1)
+  assert.equal(calls.createdSessions[0].kind, 'command_session')
+  assert.equal(calls.executedCommands.length, 1)
+  assert.equal(calls.executedCommands[0].commandName, 'pause_paper_strategy')
+  assert.equal(calls.executedCommands[0].payload.parameters?.strategy_id, 'strat-pause-1')
+  assert.equal(calls.heartbeats[0].mode, 'Trading')
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data?.strategy_id, 'strat-pause-1')
+})
+
+test('operator loop marks a repeatedly rejected symbol observe-only through typed set_symbol_observe_only', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+  const today = new Date().toISOString().slice(0, 10)
+  backend.getDreamingSummary = async () => ({
+    recent_research_notes: [],
+    recent_strategy_hypotheses: [],
+    deprecated_memories: [],
+    recent_dreaming_logs: [{ id: 'dream-log-fresh-observe-only' }],
+    recent_dreaming_runs: [{ id: 'dream-run-fresh-observe-only' }],
+    recent_daily_reviews: [{ id: 'daily-review-today', created_at: `${today}T01:00:00Z` }],
+  })
+  backend.getAgentRuns = async () =>
+    [
+      {
+        id: 'run-market-observer-fresh-observe-only',
+        agent_name: 'market_observer',
+        trigger_type: 'scheduled',
+        permission_mode: 'Observe',
+        started_at: fiveMinutesAgo,
+        ended_at: fiveMinutesAgo,
+        status: 'completed',
+        model_provider: null,
+        model_name: null,
+        tools_called: '[]',
+        outputs_created: '[]',
+        errors: '[]',
+        cost_estimate: null,
+      },
+    ] satisfies AgentRunSummary[]
+  backend.getRiskSummary = async () => ({
+    recent_rejected_decisions: [
+      {
+        id: 'risk-btc-1',
+        symbol: 'BTC/USDT',
+        execution_mode: 'paper_internal',
+      },
+      {
+        id: 'risk-btc-2',
+        symbol: 'BTC/USDT',
+        execution_mode: 'paper_internal',
+      },
+    ],
+    recent_risk_boundary_proposals: [],
+    needs_operator_risk_boundary_proposals: [],
+    needs_operator_observe_only_symbols: [
+      {
+        symbol: 'BTC/USDT',
+        rejection_count: 2,
+        summary:
+          'BTC/USDT triggered repeated paper-side risk rejections and should be left observe-only until setup quality improves.',
+        decision_ids: ['risk-btc-1', 'risk-btc-2'],
+        execution_modes: ['paper_internal'],
+      },
+    ],
+  })
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'BTC/USDT is now observe-only.',
+      result: {
+        updated: true,
+        symbol: 'BTC/USDT',
+        message: 'BTC/USDT is now observe-only.',
+        tradable_symbols: ['ETHUSDT', 'SOLUSDT'],
+        observed_symbols: ['BTC/USDT', 'ETH/USDT'],
+      },
+      action: null,
+      risk_level: 'operational',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.ok(calls.createdTasks.some(task => task.task_type === 'set_symbol_observe_only'))
+  assert.equal(calls.createdSessions.length, 1)
+  assert.equal(calls.createdSessions[0].kind, 'command_session')
+  assert.equal(calls.executedCommands.length, 1)
+  assert.equal(calls.executedCommands[0].commandName, 'set_symbol_observe_only')
+  assert.equal(calls.executedCommands[0].payload.parameters?.symbol, 'BTC/USDT')
+  assert.equal(calls.heartbeats[0].mode, 'Trading')
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data?.symbol, 'BTC/USDT')
+})
+
+test('operator loop re-enters a recovered in-flight create_paper_experiment task and executes the typed command', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getOperatorStatus = async () => ({
+    agent_id: 'operator',
+    status: 'online',
+    mode: 'Observing',
+    permission_mode: 'PaperAuto',
+    is_busy: true,
+    current_task_id: 'task-recovered-paper-experiment',
+    current_intent: 'Recover paper experiment creation',
+    queue_size: 1,
+    last_seen_at: new Date().toISOString(),
+    last_success_at: new Date().toISOString(),
+    last_error: null,
+    model_provider: 'pi-shell',
+    session_id: 'operator-main',
+    stale: false,
+    stale_after_sec: 45,
+  })
+  backend.getOperatorTasks = async status => {
+    if (status === 'running') {
+      return [
+        {
+          id: 'task-recovered-paper-experiment',
+          task_type: 'create_paper_experiment',
+          status: 'running',
+          priority: 'normal',
+          created_by: 'operator_loop',
+          assigned_to: 'operator',
+          input_data: {
+            title: 'Momentum Experiment',
+            content: 'Probe breakout continuation with paper-only sizing.',
+            parameters: {
+              symbol: 'ETHUSDT',
+              timeframe: '1h',
+            },
+          },
+          output_data: null,
+          error: null,
+          started_at: new Date().toISOString(),
+          completed_at: null,
+          created_at: new Date().toISOString(),
+        },
+      ]
+    }
+    return []
+  }
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'Created paper experiment Momentum Experiment and advanced it to paper_candidate.',
+      result: {
+        created: true,
+        id: 'strat-paper-exp-1',
+        title: 'Momentum Experiment',
+        state: 'paper_candidate',
+        strategy_memory_id: 'memory-paper-exp-1',
+      },
+      action: null,
+      risk_level: 'operational',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  await loop.recoverState()
+  const restored = await loop.runOnce()
+
+  assert.equal(restored, true)
+  assert.equal(calls.createdTasks.length, 0)
+  assert.equal(calls.createdSessions.length, 1)
+  assert.equal(calls.createdSessions[0].kind, 'command_session')
+  assert.equal(calls.executedCommands.length, 1)
+  assert.equal(calls.executedCommands[0].commandName, 'create_paper_experiment')
+  assert.equal(calls.executedCommands[0].payload.parameters?.title, 'Momentum Experiment')
+  assert.equal(calls.executedCommands[0].payload.parameters?.content, 'Probe breakout continuation with paper-only sizing.')
+  assert.deepEqual(calls.executedCommands[0].payload.parameters?.parameters, {
+    symbol: 'ETHUSDT',
+    timeframe: '1h',
+  })
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].taskId, 'task-recovered-paper-experiment')
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data?.strategy_id, 'strat-paper-exp-1')
+  assert.equal(calls.updatedTasks[0].payload.output_data?.state, 'paper_candidate')
 })
 
 test('operator loop reruns a recent failed agent task through typed rerun_failed_agent_task', async () => {
@@ -3671,6 +4299,7 @@ test('operator loop refreshes the non-critical daily review report through typed
   assert.equal(calls.executedCommands[0].commandName, 'create_daily_review')
   assert.equal(calls.executedCommands[0].payload.parameters?.title, `Operator Daily Review ${today}`)
   assert.match(String(calls.executedCommands[0].payload.parameters?.content || ''), /## System/i)
+  assert.equal(calls.heartbeats[0].mode, 'Reviewing')
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
   assert.equal(calls.updatedTasks[0].payload.output_data?.review_id, 'daily-review-1')
@@ -4257,6 +4886,7 @@ test('operator loop delegates dreaming tasks to dreaming_agent and closes the ta
   const eventTypes = calls.createdEvents.map(item => item.event_type)
   assert.ok(eventTypes.includes('dreaming_started'))
   assert.ok(eventTypes.includes('dreaming_completed'))
+  assert.equal(calls.heartbeats[0].mode, 'Dreaming')
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
 })
@@ -4310,6 +4940,117 @@ test('operator loop delegates review tasks to post_trade_reviewer and closes the
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
 })
 
+test('operator loop delegates strategy design tasks to strategy_designer and closes the task', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getDreamingSummary = async () => ({
+    recent_research_notes: [{ id: 'research-1' }],
+    recent_strategy_hypotheses: [{ id: 'hypothesis-1' }],
+    deprecated_memories: [],
+    recent_dreaming_logs: [{ id: 'dream-log-fresh' }],
+    recent_dreaming_runs: [{ id: 'dream-run-fresh' }],
+    recent_daily_reviews: [{ id: 'daily-review-today', created_at: `${new Date().toISOString().slice(0, 10)}T01:00:00Z` }],
+  })
+  backend.getStrategySummary = async () => ({
+    active_paper_strategies: [],
+    under_review_strategies: [],
+    paused_paper_strategies: [],
+    live_candidate_strategies: [],
+    recent_strategy_evaluations: [],
+    needs_operator_evaluation_strategy_ids: [],
+    recent_strategy_promotion_proposals: [],
+    needs_operator_promotion_proposal_strategy_ids: [],
+  })
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.createdTasks.length, 1)
+  assert.equal(calls.createdTasks[0].task_type, 'run_strategy_design')
+  assert.equal(calls.createdTasks[0].assigned_to, 'strategy_designer')
+  assert.deepEqual(calls.startedAgents, ['strategy_designer'])
+  assert.equal(calls.createdSessions.length, 1)
+  assert.equal(calls.createdSessions[0].kind, 'strategy_session')
+  assert.equal(calls.createdSessions[0].parent_session_id, 'operator-main')
+  const eventTypes = calls.createdEvents.map(item => item.event_type)
+  assert.ok(eventTypes.includes('strategy_design_started'))
+  assert.ok(eventTypes.includes('strategy_design_completed'))
+  assert.equal(calls.heartbeats[0].mode, 'Trading')
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+})
+
+test('operator loop delegates risk critique tasks to risk_critic and closes the task', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getDreamingSummary = async () => ({
+    recent_research_notes: [],
+    recent_strategy_hypotheses: [],
+    deprecated_memories: [],
+    recent_dreaming_logs: [{ id: 'dream-log-fresh-risk' }],
+    recent_dreaming_runs: [{ id: 'dream-run-fresh-risk' }],
+    recent_daily_reviews: [{ id: 'daily-review-today', created_at: `${new Date().toISOString().slice(0, 10)}T01:00:00Z` }],
+  })
+  backend.getRiskSummary = async () => ({
+    recent_rejected_decisions: [{ id: 'risk-1', symbol: 'BTC/USDT', execution_mode: 'paper_internal' }],
+    recent_risk_boundary_proposals: [],
+    needs_operator_risk_boundary_proposals: [],
+  })
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'Research',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.ok(calls.createdTasks.some(task => task.task_type === 'run_risk_critique'))
+  assert.ok(calls.createdTasks.some(task => task.assigned_to === 'risk_critic'))
+  assert.deepEqual(calls.startedAgents, ['risk_critic'])
+  assert.equal(calls.createdSessions.length, 1)
+  assert.equal(calls.createdSessions[0].kind, 'review_session')
+  const eventTypes = calls.createdEvents.map(item => item.event_type)
+  assert.ok(eventTypes.includes('risk_critique_started'))
+  assert.ok(eventTypes.includes('risk_critique_completed'))
+  assert.equal(calls.heartbeats[0].mode, 'Reviewing')
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+})
+
 test('operator loop materializes and executes low-risk repair decisions through typed operator commands', async () => {
   const snapshot = makeSnapshot({
     health: {
@@ -4352,6 +5093,94 @@ test('operator loop materializes and executes low-risk repair decisions through 
   const eventTypes = calls.createdEvents.map(item => item.event_type)
   assert.ok(eventTypes.includes('repair_attempted'))
   assert.ok(eventTypes.includes('repair_executed'))
+})
+
+test('operator loop parents repair-decision sessions under the persisted active branch', async () => {
+  const snapshot = makeSnapshot({
+    health: {
+      status: 'degraded',
+      issues: ['market_data_stale:45m'],
+    },
+  })
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const createdAt = new Date().toISOString()
+  backend.getOperatorStatus = async () => ({
+    agent_id: 'operator',
+    status: 'online',
+    mode: 'Observing',
+    permission_mode: 'Research',
+    is_busy: false,
+    current_task_id: null,
+    current_intent: 'Keep working inside the nested diagnostic branch.',
+    queue_size: 0,
+    last_seen_at: createdAt,
+    last_success_at: createdAt,
+    last_error: null,
+    model_provider: 'pi-shell',
+    session_id: 'operator-main',
+    active_branch_id: 'diagnostic-parent-1',
+    active_branch_kind: 'diagnostic_session',
+    active_branch_title: 'Nested Diagnostic Parent',
+    stale: false,
+    stale_after_sec: 45,
+  })
+  backend.getOperatorSessions = async () => [
+    {
+      id: 'operator-main',
+      user_input: '[operator session]',
+      intent: null,
+      command: null,
+      response: null,
+      permitted: 1,
+      duration_ms: 0,
+      created_at: createdAt,
+      message_count: 0,
+      command_count: 0,
+      kind: 'command_session',
+      parent_session_id: null,
+      title: 'Operator Main',
+    },
+    {
+      id: 'diagnostic-parent-1',
+      user_input: 'Inspect stale gateway branch.',
+      intent: null,
+      command: null,
+      response: 'Nested diagnostic branch is still in progress.',
+      permitted: 1,
+      duration_ms: 0,
+      created_at: createdAt,
+      message_count: 1,
+      command_count: 0,
+      kind: 'diagnostic_session',
+      parent_session_id: 'operator-main',
+      title: 'Nested Diagnostic Parent',
+    },
+  ]
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'Research',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.createdSessions.length, 1)
+  assert.equal(calls.createdSessions[0].parent_session_id, 'diagnostic-parent-1')
 })
 
 test('operator loop evaluates flagged strategies into a strategy session and artifact', async () => {
@@ -4518,11 +5347,100 @@ test('operator loop materializes proposal-only strategy promotion decisions thro
   assert.equal(calls.createdArtifacts[0].artifact_type, 'repair_decision')
   assert.equal(calls.executedCommands.length, 1)
   assert.equal(calls.executedCommands[0].commandName, 'propose_strategy_promotion')
+  assert.equal(calls.heartbeats[0].mode, 'Repairing')
   assert.equal(calls.updatedTasks.length, 1)
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
   const eventTypes = calls.createdEvents.map(item => item.event_type)
   assert.ok(eventTypes.includes('repair_attempted'))
   assert.ok(eventTypes.includes('proposal_created'))
+})
+
+test('operator loop materializes live-candidate promotion proposals for paper_passed strategies', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getStrategySummary = async () => ({
+    active_paper_strategies: [{ id: 'strat-3', name: 'Trend C', state: 'paper_passed' }],
+    under_review_strategies: [],
+    paused_paper_strategies: [],
+    live_candidate_strategies: [],
+    recent_strategy_evaluations: [
+      {
+        id: 'artifact-eval-3',
+        task_id: 'task-eval-3',
+        session_id: 'strategy-session-3',
+        artifact_type: 'strategy_evaluation',
+        title: 'Strategy Evaluation: Trend C',
+        created_at: new Date().toISOString(),
+        strategy_id: 'strat-3',
+        strategy_name: 'Trend C',
+        summary: 'Promotion gates passed for paper_passed strategy.',
+        evaluation: {
+          strategy: { id: 'strat-3', name: 'Trend C', state: 'paper_passed' },
+          promotion_gates: { passed: true, failures: [] },
+        },
+        content: {
+          strategy_id: 'strat-3',
+        },
+      },
+    ],
+    needs_operator_evaluation_strategy_ids: [],
+    recent_strategy_promotion_proposals: [],
+    needs_operator_promotion_proposal_strategy_ids: ['strat-3'],
+  })
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'Created a promotion proposal for Trend C -> live_candidate.',
+      result: {
+        proposed: true,
+        artifact_id: 'artifact-proposal-live-candidate-1',
+        message: 'Created a promotion proposal for Trend C -> live_candidate.',
+        proposal: {
+          strategy_id: 'strat-3',
+          strategy_name: 'Trend C',
+          current_state: 'paper_passed',
+          target_state: 'live_candidate',
+          requires_human_approval: true,
+        },
+      },
+      action: null,
+      risk_level: 'proposal_only',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'AllowEditing',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.executedCommands.length, 1)
+  assert.equal(calls.executedCommands[0].commandName, 'propose_strategy_promotion')
+  assert.equal(
+    (calls.executedCommands[0].payload.parameters as Record<string, unknown>).target_state,
+    'live_candidate',
+  )
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
 })
 
 test('operator loop materializes proposal-only prompt change decisions through typed proposal commands', async () => {
@@ -4704,6 +5622,94 @@ test('operator loop materializes proposal-only schedule change decisions through
   assert.equal(calls.executedCommands.length, 1)
   assert.equal(calls.executedCommands[0].commandName, 'propose_schedule_change')
   assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  const eventTypes = calls.createdEvents.map(item => item.event_type)
+  assert.ok(eventTypes.includes('repair_attempted'))
+  assert.ok(eventTypes.includes('proposal_created'))
+})
+
+test('operator loop materializes live-limited enablement proposals through typed proposal commands', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getStrategySummary = async () => ({
+    active_paper_strategies: [],
+    under_review_strategies: [],
+    paused_paper_strategies: [],
+    live_candidate_strategies: [{ id: 'strat-live-1', name: 'Live Ready D', state: 'live_candidate' }],
+    recent_strategy_evaluations: [
+      {
+        id: 'artifact-eval-live-1',
+        task_id: 'task-eval-live-1',
+        session_id: 'strategy-session-live-1',
+        artifact_type: 'strategy_evaluation',
+        title: 'Strategy Evaluation: Live Ready D',
+        created_at: new Date().toISOString(),
+        strategy_id: 'strat-live-1',
+        strategy_name: 'Live Ready D',
+        summary: 'Live-limited gates passed for live_candidate strategy.',
+        evaluation: {
+          strategy: { id: 'strat-live-1', name: 'Live Ready D', state: 'live_candidate' },
+          live_limited_gates: { passed: true, failures: [] },
+        },
+        content: {
+          strategy_id: 'strat-live-1',
+        },
+      },
+    ],
+    needs_operator_evaluation_strategy_ids: [],
+    recent_strategy_promotion_proposals: [],
+    needs_operator_promotion_proposal_strategy_ids: [],
+    needs_operator_live_limited_enablement_strategy_ids: ['strat-live-1'],
+    recent_live_limited_enablement_proposals: [],
+  })
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'Created a live-limited enablement proposal for Live Ready D.',
+      result: {
+        proposed: true,
+        artifact_id: 'artifact-proposal-live-limited-1',
+        message: 'Created a live-limited enablement proposal for Live Ready D.',
+        proposal: {
+          strategy_id: 'strat-live-1',
+          strategy_name: 'Live Ready D',
+          target_state: 'live_limited',
+          requires_human_approval: true,
+        },
+      },
+      action: null,
+      risk_level: 'proposal_only',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'AllowEditing',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.executedCommands.length, 1)
+  assert.equal(calls.executedCommands[0].commandName, 'propose_live_limited_enablement')
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
   const eventTypes = calls.createdEvents.map(item => item.event_type)
   assert.ok(eventTypes.includes('repair_attempted'))

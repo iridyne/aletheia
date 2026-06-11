@@ -18,7 +18,8 @@ async def run_agent(agent_name: str, trigger_type: str = "scheduled") -> dict:
     init_tool_registry()
     cfg = load_config()
     permission_mode = cfg.agent.permission_mode
-    provider_name = cfg.models.default_provider
+    raw_provider_name = getattr(getattr(cfg, "models", None), "default_provider", None)
+    provider_name = raw_provider_name if isinstance(raw_provider_name, str) else None
 
     run = start_run(agent_name, trigger_type, permission_mode, provider_name)
     outputs = []

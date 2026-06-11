@@ -7,7 +7,219 @@
 
 ## Last Updated
 
-2026-06-11 (Operator runtime 已补到 enabled extension slash dispatch + extension sandbox 第一层 + inspectable working-memory files + budgeted recovery folding + recovery-contract recent-error/heartbeat-intent fallback + staged queue review cadence + explicit 5-minute subsystem review tier + `market_scan_refresh_due`/`run_market_scan` + `failed_agent_rerun_due`/`rerun_failed_agent_task` + `daily_review_refresh_due`/`create_daily_review` + permission-aware task materialization + persisted active-branch heartbeat/recovery truth + session-targeted multi-turn command continuation;文档同步到当前实现边界)
+2026-06-11 (Operator runtime 已补到 enabled extension slash dispatch + extension sandbox 第一层 + inspectable working-memory files + budgeted recovery folding + recovery-contract recent-error/heartbeat-intent fallback + staged queue review cadence + explicit 5-minute subsystem review tier + `market_scan_refresh_due`/`run_market_scan` + `failed_agent_rerun_due`/`rerun_failed_agent_task` + `daily_review_refresh_due`/`create_daily_review` + `pause_paper_strategy_due`/`pause_paper_strategy` + `strategy_design_due`/`run_strategy_design` + `risk_critique_due`/`run_risk_critique` + permission-aware task materialization + persisted active-branch heartbeat/recovery truth + active-branch-frozen session parent inheritance + session-targeted multi-turn command continuation + nested session-tree branch create/select + descendant-branch recovery folding + user-driven branch workspace create/select + branch bootstrap context seeding + strategy proposal ladder 扩到 `paper_passed -> live_candidate` / `live_candidate -> live_limited` + authoritative command preview + structured result cards / command trace + short-lived operator mode truth(`Repairing/Trading/Reviewing/Dreaming` 不再在同一 loop 内被统一抹回 `Observing`，同时保持 recovery 不直接进 `Trading`)；文档同步到当前实现边界)
+
+## Recent Change (Under-review paper strategies now materialize into real pause control, and nested active branches no longer flatten new loop sessions — 2026-06-11 第四十三段)
+
+**1. 这次补了两条仍然会让 runtime“看起来对、实际不对”的小缺口**：
+- 一条是 nested active branch 明明已经持久化了，但同一轮 operator loop 新开的 task session 还是会错误地 parent 回 `operator-main`
+- 另一条是 strategy governance 虽然已经有 `under_review` / `paper_trading_paused` 真字段和 typed `pause_paper_strategy` 命令，但 recommendation truth 还不会把“under review 但仍在跑 paper”变成真实 operational-control task
+
+**2. parent 继承这次已经收口成 frozen-per-run truth**：
+- `OperatorLoop.runOnce()` 现在会先同步 persisted active branch，再冻结本轮的 parent session
+- 所以本轮内新开的 `run_market_scan` / repair decision / 其他 loop-created side-task session 都会继承当时的 active branch
+- 同时又不会在同一轮里被新长出来的 child branch 反过来污染 parent，避免 session tree 在一个 loop 内不断漂移
+
+**3. `pause_paper_strategy_due` 现在也接成真实链路了**：
+- backend recommendation truth 与 Node `RecommendationEngine` 都会识别：`paper_running / paper_passed` strategy 已被标成 `under_review`，但还没 `paper_trading_paused`
+- 在 `PaperAuto+` 下，`operator-shell` 会把它物化成 `pause_paper_strategy` task
+- 然后创建 `command_session` child session，执行 typed `pause_paper_strategy`，写回 result / event / task completion
+
+**4. 这条新链路的效果是确定性的**：
+- 不会直接改 live 状态
+- 只会暂停该 strategy 的 paper trading，并把仍然挂着该 strategy 的 open opportunities 收口为 reviewed
+- recommendation 一旦转成 paused truth，就会自然消失，不会继续重复提示同一件事
+
+**5. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_events.py -q` → `26 passed`
+- `operator-shell: npm test` → `68 passed`
+- `operator-shell: npm run build` → PASS
+
+## Recent Change (Nested session-tree branches now work as real operator runtime state — 2026-06-11 第四十二段)
+
+**1. 这次补掉的是“UI 看起来像 session tree，但 runtime 其实还是单层”的真缺口**：
+- Command Center 之前虽然能递归显示 session tree
+- 但 public branch create 固定只会把新 branch 挂到 `operator-main`
+- active-branch route 也只接受 `operator-main` 的 direct child
+- `operator-shell recoverState()` 读回 branch context 时也只抓 direct child detail
+
+**2. 现在 nested branch 已经进入真实运行面**：
+- `POST /api/operator/branches` 新增 `parent_session_id`
+- 用户从当前选中的 session 再开 branch 时，新 branch 会真正挂到这个 parent 下，而不是被悄悄扁平化回 main
+- `POST /api/operator/active-branch` 现在接受整个 operator session tree 内的 descendant session，不再只接受 direct child
+
+**3. Node shell 的恢复语义也一起补上了**：
+- `SessionRuntime.restore()` 不再只恢复 main 下第一层 branch
+- `recoverState()` 现在会把整个 descendant session tree 的 recent branch detail 一起纳入 recovery folding
+- 所以 nested review/diagnostic/strategy branch 的真实总结，终于能重新进入 heartbeat `current_intent`
+
+**4. 前端也接上了这层 parent truth**：
+- Command Center 创建 branch 时，现在会把当前 `selectedSessionId` 作为 `parent_session_id`
+- UI 提示文案也从“开 side-task session”改成了“挂到当前选中 session 下的 side-task session”
+
+**5. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_routes.py -q` → `24 passed`
+- `operator-shell: npm test` → `65 passed`
+- `operator-shell: npm run build` → PASS
+- `frontend: npm run build` → PASS
+
+## Recent Change (Operator heartbeat mode now preserves real short-lived task modes — 2026-06-11 第四十一段)
+
+**1. `OperatorLoop` 的 mode state 这次终于不再被短任务吞掉了**：
+- 之前 fresh task 即使真的在这一轮 loop 里执行成功，heartbeat 也常常在收尾阶段被统一擦回 `Observing`
+- 结果就是 `Repairing / Trading / Reviewing / Dreaming` 这些 mode 很多时候根本不会稳定出现在 heartbeat 真值里
+
+**2. 现在的规则更接近 spec 想要的 operator mode 语义**：
+- fresh `create_repair_proposal` 会显式报 `Repairing`
+- fresh `run_market_scan / rerun_failed_agent_task / evaluate_strategy_state / set_symbol_observe_only / create_paper_experiment / pause_paper_strategy` 会显式报 `Trading`
+- fresh `create_daily_review / create_review_report / generate_review` 会保留 `Reviewing`
+- fresh `run_dreaming` 会保留 `Dreaming`
+
+**3. 恢复红线没有被破坏**：
+- 这次不是简单地“只要 task type 是 trading 就报 Trading”
+- recovered in-flight task 仍然会在恢复轮次里回到 `Observing / Paused / Degraded`
+- 所以原本那条 crash recovery 永远不直接恢复进 `Trading` 的约束仍然成立
+
+**4. 实现落点**：
+- `operator-shell/src/operator_loop.ts` 新增 task-type -> mode 映射
+- 同时把“fresh task 完成后的 mode 收口”和“recovered task 的 fail-safe 回落”显式拆开
+
+**5. 当前验证结果（本轮后）**：
+- `operator-shell: npm test` → `64 passed`
+- `operator-shell: npm run build` → PASS
+
+## Recent Change (Command Center now renders structured result cards from real operator message truth — 2026-06-11 第四十段)
+
+**1. result cards 这次终于不是 UI 想象物了**：
+- `/api/operator/command` 现在会把 structured response metadata 一起写进 assistant response message
+- 包括 `command / command_meta / risk_level / needs_confirmation / permitted / action`
+- 所以 Command Center 不再只能把 response 当一段普通文本塞进消息流
+
+**2. 这条链接的是 backend 真值，不是前端本地推断**：
+- direct natural-language operator command 的 response message 现在会明确记录是否被 permission gate 拦下
+- side-effect command 若真的执行，还会把 structured `action` 一起落回 session
+- internal typed command 原本已有 `command / permitted / result`，现在前端也开始统一消费这层结构
+
+**3. Command Center 的消息流现在开始像真正的 operator workspace**：
+- `command` message 会显示 trace card
+- `response` message 会显示 result card
+- 用户现在能在长消息流里直接看见“执行了什么 / 被什么权限拦下 / 是否需要 confirmation / 有什么 structured action”
+
+**4. 当前边界要说准**：
+- 已接通：
+  - structured response metadata persistence
+  - command trace card
+  - result card
+  - blocked vs executed visual distinction
+- 仍未接通：
+  - 更深的 multi-step approval choreography
+  - 更丰富的 result artifact decomposition
+
+**5. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_routes.py -q` → `21 passed`
+- `uv run pytest tests/test_operator_routes.py tests/test_operator_events.py -q` → `46 passed`
+- `frontend npm run build` → PASS
+
+## Recent Change (Command Center now shows authoritative command preview — 2026-06-11 第三十九段)
+
+**1. 输入框现在不再是“发出去才知道会发生什么”**：
+- backend 新增 `POST /api/operator/command-preview`
+- 它会在 **不创建 session side effect、不执行 command、不写 audit** 的前提下，返回当前输入会被解释成什么
+- preview 会显式给出 `intent / classification / command metadata / parsed parameters / current permission truth`
+
+**2. 这次 preview 不是前端猜测，而是 backend authoritative truth**：
+- 它复用现有 intent classifier、extension slash resolution 与双层 permission 检查
+- 所以不只是 operator ladder，worker/global safety 也会在 preview 阶段被显式判定出来
+- read/query、blocked command、forbidden input、slash extension 都会得到一致的 backend 判定
+- Command Center 现在直接展示 `Ready / Blocked / Query / Forbidden` 等状态，而不是等命令真正发出后才暴露权限问题
+
+**3. UI 现在会把最关键的执行前信息直接摊开**：
+- typed command 名称
+- risk class
+- 当前 operator permission vs required permission
+- proposal-only / confirmation 标志
+- 已解析 parameters
+
+**4. 当前边界要说准**：
+- 已接通：
+  - authoritative command preview route
+  - Command Center composer preview card
+  - permission denial surfaced before execution
+- 仍未接通：
+  - 更深的 multi-step preview / approval choreography
+  - richer command trace/result-card decomposition
+
+**5. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_routes.py -q` → `19 passed`
+- `uv run pytest tests/test_operator_routes.py tests/test_operator_events.py -q` → `44 passed`
+- `frontend npm run build` → PASS
+
+## Recent Change (Strategy proposal ladder now reaches live_candidate + live_limited, and user-created branches seed bootstrap context — 2026-06-11 第三十八段)
+
+**1. strategy proposal ladder 不再只停在 `paper_running -> paper_passed`**：
+- backend `/api/strategies/summary` 现在会区分 promotion target，而不是把所有 proposal 都混成一类
+- `paper_running -> paper_passed` 与 `paper_passed -> live_candidate` 都会通过 typed `propose_strategy_promotion` 落真实 proposal artifact
+- `live_candidate -> live_limited` 也已接通 recommendation truth、repair-decision materialization 与 typed `propose_live_limited_enablement`
+
+**2. 这次补上的是真实运行链，而不是只多了 command 名字**：
+- backend recommendation truth 与 Node recommendation truth 现在都会显式产出相应 due signal
+- `operator-shell` 会把这些 recommendation 物化成 `create_repair_proposal` task
+- 最终写回 proposal artifact + `proposal_created` event，而不是偷偷改 strategy lifecycle state
+
+**3. human-created branch 也不再只是“空 session”**：
+- `POST /api/operator/branches` 现在创建 branch 后会立即 seed 一份 context snapshot
+- 同时会为新 branch 预写 opening user message
+- 所以新的 direct-child workspace 从创建时就带着可继续的上下文，而不是只有一条孤立 session 记录
+
+**4. 当前边界要说准**：
+- 已接通：
+  - strategy proposal ladder 三段真实路径
+  - live-limited enablement proposal materialization
+  - user-created branch bootstrap context seeding
+  - opening user message seed for new branch workspaces
+- 仍未接通：
+  - 更深的 PI-style branch orchestration
+  - 更广的 scheduled scan/review opportunity 面
+
+**5. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_events.py -q` → `25 passed`
+- `npm test -- operator_loop.test.ts` → `64 passed`
+- `uv run pytest tests/test_agent_runtime.py -q` → `10 passed`
+- `uv run pytest tests/test_agent_shell.py tests/test_operator_events.py tests/test_acceptance.py -q` → `120 passed`
+- `uv run pytest -q` → `696 passed`
+- `operator-shell npm run build` → PASS
+- `frontend npm run build` → PASS
+
+## Recent Change (Operator branch workspace is now user-driven — 2026-06-11 第三十七段)
+
+**1. Command Center 现在终于能主动开 branch 了**：
+- backend 新增公开 `POST /api/operator/branches`
+- 它会创建 direct-child operator session，而不是要求 UI 走 internal route 或等 operator loop 自动长出 child session
+- 当前支持五类 branch：`command_session / diagnostic_session / dreaming_session / strategy_session / review_session`
+
+**2. 这次不是只“建了一条 session 记录”，而是把 branch 真值也一起补齐了**：
+- 创建 branch 后会写 `branch_created` event
+- 若 `activate=true`，会立即把新 session 回写成 authoritative active branch
+- 所以同一个动作还会产生 `active_branch_selected` event，并更新 `/api/operator/status`
+
+**3. 前端也已经接上这条能力**：
+- Command Center 的 Sessions 卡片现在有显式 branch title + kind 控件
+- 用户可以直接新建一个 persistent side-task session，并立刻切到这条 branch
+- 这让“persistent workspace / session tree / branching side-task sessions”不再只是 inspect-only 或 loop-generated trace
+
+**4. 当前边界要说准**：
+- 已接通：
+  - public branch creation
+  - five explicit session kinds for human-created branches
+  - branch-created event + authoritative active-branch selection
+  - Command Center branch-create UI
+- 仍未接通：
+  - 更深的 PI-style branch seeding / richer branch bootstrap context
+  - 更深的 PI-style multi-turn branch orchestration
+
+**5. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_routes.py -q` → `17 passed`
+- `frontend npm run build` → PASS
 
 ## Recent Change (Operator selected-session continuation is now real — 2026-06-11 第三十六段)
 
@@ -71,6 +283,61 @@
 - `operator-shell npm test -- operator_loop.test.ts` → PASS（61 tests）
 - `operator-shell npm run build` → PASS
 - `frontend npm run build` → PASS
+
+## Recent Change (Operator specialist delegation expands to strategy_designer + risk_critic — 2026-06-11 第四十四段)
+
+**1. 这次补的是两条真正的 specialist delegation 缺口，不是再多一条普通 report refresh**：
+- `strategy_designer` 和 `risk_critic` 这两个 agent 之前都已经存在
+- 但 operator runtime 里没有真正把它们接成 recommendation → task → delegated run 的闭环
+- 结果就是 design package 里写着有 strategy architect / risk critic，实际 operator loop 只能调 dreaming、review、strategy evaluation 三条链
+
+**2. `strategy_designer` 现在进入了真实 delegation 链**：
+- backend 与 Node recommendation truth 现在都会检查：
+  - recent `research_note` / `strategy_memory` 输入是否存在
+  - 当前是否没有 active paper strategy
+  - 最近 24h 是否没有 fresh `strategy_designer` run
+- 满足时会产出 `strategy_design_due`
+- `operator-shell` 会把它物化成 `run_strategy_design` task，委托 `strategy_designer`
+- loop 会创建 `strategy_session` child session，写 delegation message，记录 `strategy_design_started / strategy_design_completed` event，并完成 task
+
+**3. `risk_critic` 也接上了真实 delegation 链**：
+- backend 与 Node recommendation truth 现在都会检查 recent rejected `risk_decisions`
+- 若最近 6h 没有 fresh `risk_critic` run，就会产出 `risk_critique_due`
+- `operator-shell` 会优先把它物化成 `run_risk_critique` task，委托 `risk_critic`
+- 这条 specialist 现在会先于 non-critical `risk_review_report_refresh_due` 执行，避免 summary report 抢占更有价值的 critique pass
+
+**4. operator mode / permission / task routing 也一起收口了**：
+- `run_strategy_design` 现在按 `PaperAuto` 权限 gating，并在 heartbeat mode 上记为 `Trading`
+- `run_risk_critique` 现在按 `Research` 权限 gating，并在 heartbeat mode 上记为 `Reviewing`
+- `TaskRuntime` 也已经把它们分别路由到 `strategy_designer` / `risk_critic`
+
+**5. 这轮验证**：
+- `uv run pytest tests/test_operator_events.py -q -k "strategy_design_due or risk_critique_due"` → `2 passed`
+- `uv run pytest tests/test_operator_events.py tests/test_operator_routes.py tests/test_agent_runtime.py tests/test_risk_routes.py -q` → `72 passed`
+- `operator-shell npm test` → PASS（72 tests）
+- `operator-shell npm run build` → PASS
+
+## Recent Change (Operator observe-only trigger + create-paper-experiment runtime 收口 — 2026-06-11 第三十五段)
+
+**1. `set_symbol_observe_only` 现在终于不是孤立命令了**：
+- backend `/api/risk/summary` 现在会基于 recent rejected `risk_decisions` 计算 `needs_operator_observe_only_symbols`
+- 触发条件不是拍脑袋：
+  - 最近 24h 同一 symbol 至少两次 `paper_*` execution mode rejection
+  - 且把该 symbol 从 `risk.allowed_symbols` / `exchange.tradable_symbols` 拿掉不会把当前 universe 清空
+- backend 与 Node recommendation truth 会把这层真值提升为 `symbol_observe_only_due`
+- `operator-shell` 会在 `PaperAuto+` 下把它物化成 `set_symbol_observe_only` command-session task，并执行 typed command 回写 event/task completion
+
+**2. `create_paper_experiment` 这条 task type 之前有个真实空洞，现在已经补上**：
+- 之前它虽然被归类为 `PaperAuto` / `Trading` task type，但 `OperatorLoop` 没有实际 execution branch
+- 结果就是 recovered/manual in-flight `create_paper_experiment` task 会挂着不动，只能停留在“名字被识别了”
+- 现在 loop 已新增 `create_paper_experiment` command-session path：会开 child session、写 command/response message、执行 typed command，并把 `strategy_id / state / strategy_memory_id` 写回 task completion
+
+**3. 这轮验证**：
+- `uv run pytest tests/test_risk_routes.py tests/test_operator_events.py -q` → `36 passed`
+- `uv run pytest tests/test_operator_routes.py tests/test_agent_runtime.py tests/test_risk_routes.py tests/test_operator_events.py -q` → `70 passed`
+- `operator-shell npm test -- --test-name-pattern "operator loop re-enters a recovered in-flight create_paper_experiment task and executes the typed command"` → PASS
+- `operator-shell npm test` → PASS（70 tests）
+- `operator-shell npm run build` → PASS
 
 ## Recent Change (Operator failed-agent rerun + daily-review refresh 接线 — 2026-06-11 第三十四段)
 

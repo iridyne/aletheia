@@ -18,6 +18,7 @@ export class RepairEngine {
       'health_attention_needed',
       'gateway_offline',
       'strategy_promotion_proposal_due',
+      'live_limited_enablement_proposal_due',
       'agent_prompt_change_proposal_due',
       'agent_schedule_change_proposal_due',
       'risk_boundary_change_proposal_due',
@@ -72,6 +73,30 @@ export class RepairEngine {
             typeof actionable.metadata?.target_state === 'string'
               ? actionable.metadata.target_state
               : 'paper_passed',
+          rationale: actionable.summary,
+        },
+      }
+    }
+    if (
+      actionable &&
+      canCreateProposals &&
+      actionable.kind === 'live_limited_enablement_proposal_due'
+    ) {
+      return {
+        id: `repair:${actionable.id}`,
+        shouldExecute: true,
+        classification: 'proposal_only',
+        title: 'Live-limited enablement proposal decision',
+        summary: actionable.summary,
+        rationale:
+          'Create a typed live-limited enablement proposal for human review rather than changing live strategy state directly.',
+        recommendationId: actionable.id,
+        commandName: 'propose_live_limited_enablement',
+        parameters: {
+          strategy_id:
+            typeof actionable.metadata?.strategy_id === 'string'
+              ? actionable.metadata.strategy_id
+              : '',
           rationale: actionable.summary,
         },
       }

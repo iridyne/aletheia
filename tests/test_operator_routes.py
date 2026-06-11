@@ -139,6 +139,139 @@ async def test_operator_active_branch_selection_updates_operator_status_truth(cl
 
 
 @pytest.mark.anyio
+async def test_operator_public_branch_create_generates_child_session_and_selects_it(client):
+    created = await client.post(
+        "/api/operator/branches",
+        json={
+            "title": "Investigate stale fills",
+            "kind": "diagnostic_session",
+            "user_input": "investigate stale fills on BTC/USDT",
+            "selected_by": "command-center",
+        },
+    )
+
+    assert created.status_code == 200
+    session = created.json()
+    assert session["kind"] == "diagnostic_session"
+    assert session["parent_session_id"] == "operator-main"
+    assert session["title"] == "Investigate stale fills"
+    assert session["id"].startswith("diagnostic-session-")
+
+    detail = await client.get(f"/api/operator/sessions/{session['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["session"]["user_input"] == "investigate stale fills on BTC/USDT"
+    messages = detail.json()["messages"]
+    assert len(messages) == 2
+    assert messages[0]["message_type"] == "context"
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"]["profile"] == "repair_context"
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"] == {"text": "investigate stale fills on BTC/USDT"}
+
+    status = await client.get("/api/operator/status")
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["active_branch_id"] == session["id"]
+    assert payload["active_branch_kind"] == "diagnostic_session"
+    assert payload["active_branch_title"] == "Investigate stale fills"
+
+    events = await client.get(f"/api/operator/events?session_id={session['id']}")
+    assert events.status_code == 200
+    event_types = {event["event_type"] for event in events.json()}
+    assert "branch_created" in event_types
+    assert "active_branch_selected" in event_types
+
+
+@pytest.mark.anyio
+async def test_operator_public_branch_create_supports_nested_parent_session(client):
+    parent = await client.post(
+        "/api/operator/internal/sessions",
+        json={
+            "id": "strategy-session-parent",
+            "user_input": "review strategy root",
+            "kind": "strategy_session",
+            "parent_session_id": "operator-main",
+            "title": "Momentum Root Review",
+        },
+    )
+    assert parent.status_code == 200
+
+    created = await client.post(
+        "/api/operator/branches",
+        json={
+            "title": "Review nested drawdown",
+            "kind": "review_session",
+            "user_input": "review nested drawdown on momentum branch",
+            "parent_session_id": "strategy-session-parent",
+            "selected_by": "command-center",
+        },
+    )
+
+    assert created.status_code == 200
+    session = created.json()
+    assert session["kind"] == "review_session"
+    assert session["parent_session_id"] == "strategy-session-parent"
+    assert session["title"] == "Review nested drawdown"
+
+    status = await client.get("/api/operator/status")
+    assert status.status_code == 200
+    payload = status.json()
+    assert payload["active_branch_id"] == session["id"]
+    assert payload["active_branch_kind"] == "review_session"
+    assert payload["active_branch_title"] == "Review nested drawdown"
+
+
+@pytest.mark.anyio
+async def test_operator_active_branch_selection_accepts_nested_branch_session(client):
+    created = await client.post(
+        "/api/operator/internal/sessions",
+        json={
+            "id": "strategy-session-parent-2",
+            "user_input": "review strategy parent",
+            "kind": "strategy_session",
+            "parent_session_id": "operator-main",
+            "title": "Momentum Parent Review",
+        },
+    )
+    assert created.status_code == 200
+    nested = await client.post(
+        "/api/operator/internal/sessions",
+        json={
+            "id": "review-session-child-2",
+            "user_input": "review nested branch",
+            "kind": "review_session",
+            "parent_session_id": "strategy-session-parent-2",
+            "title": "Nested Trade Review",
+        },
+    )
+    assert nested.status_code == 200
+
+    selected = await client.post(
+        "/api/operator/active-branch",
+        json={"session_id": "review-session-child-2", "selected_by": "command-center"},
+    )
+    assert selected.status_code == 200
+    payload = selected.json()
+    assert payload["active_branch_id"] == "review-session-child-2"
+    assert payload["active_branch_kind"] == "review_session"
+    assert payload["active_branch_title"] == "Nested Trade Review"
+
+
+@pytest.mark.anyio
+async def test_operator_public_branch_create_rejects_unknown_kind(client):
+    created = await client.post(
+        "/api/operator/branches",
+        json={
+            "title": "Bad branch",
+            "kind": "unknown_session",
+        },
+    )
+
+    assert created.status_code == 400
+    assert "Unknown operator session kind" in created.text
+
+
+@pytest.mark.anyio
 async def test_operator_task_create_update_and_list(client):
     create = await client.post(
         "/api/operator/internal/tasks",
@@ -386,6 +519,151 @@ async def test_operator_command_history_route_searches_across_sessions(client):
     scoped_payload = scoped.json()
     assert len(scoped_payload) == 1
     assert scoped_payload[0]["command"] == "get_operator_status"
+
+
+@pytest.mark.anyio
+async def test_operator_command_preview_returns_authoritative_typed_command_truth(client):
+    response = await client.post(
+        "/api/operator/command-preview",
+        json={"input": "show the operator heartbeat"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_id"] == "operator-main"
+    assert payload["classification"] == "typed_command"
+    assert payload["intent"] == "get_operator_status"
+    assert payload["allowed"] is True
+    assert payload["permission_scope"] == "operator"
+    assert payload["permission_mode"] == "ReadOnly"
+    assert payload["command"]["name"] == "get_operator_status"
+    assert payload["command"]["risk_class"] == "read"
+    assert payload["command"]["operator_permission_required"] == "ReadOnly"
+
+
+@pytest.mark.anyio
+async def test_operator_command_preview_surfaces_permission_denial_before_execution(client):
+    response = await client.post(
+        "/api/operator/command-preview",
+        json={"input": "pause all agents"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["classification"] == "typed_command"
+    assert payload["intent"] == "pause_agents"
+    assert payload["allowed"] is False
+    assert "PaperAuto" in payload["denial_reason"]
+    assert payload["command"]["name"] == "pause_agents"
+    assert payload["command"]["risk_class"] == "controlled_operational"
+    assert payload["command"]["requires_confirmation"] is True
+
+
+@pytest.mark.anyio
+async def test_operator_command_preview_accounts_for_worker_global_safety(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Observe"
+    cfg.operator.permission_mode = "PaperAuto"
+    save_config(cfg)
+
+    response = await client.post(
+        "/api/operator/command-preview",
+        json={"input": "resume agents please"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["classification"] == "typed_command"
+    assert payload["intent"] == "resume_agents"
+    assert payload["allowed"] is False
+    assert payload["worker_allowed"] is False
+    assert payload["worker_permission_mode"] == "Observe"
+    assert payload["worker_denial_reason"].startswith("Command 'resume_agents' requires worker permission mode 'Paper'")
+    assert payload["denial_reason"].startswith("This command is currently blocked by worker/global safety.")
+    assert payload["command"]["worker_permission_required"] == "Paper"
+    assert payload["command"]["operator_permission_required"] == "PaperAuto"
+
+
+@pytest.mark.anyio
+async def test_operator_command_persists_structured_response_metadata_for_result_cards(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.operator.permission_mode = "PaperAuto"
+    save_config(cfg)
+    baseline = await client.get("/api/operator/sessions/operator-main")
+    baseline_ids = (
+        {message["id"] for message in baseline.json()["messages"]}
+        if baseline.status_code == 200
+        else set()
+    )
+
+    response = await client.post(
+        "/api/operator/command",
+        json={"input": "resume agents please", "session_id": "operator-main"},
+    )
+    assert response.status_code == 200
+    assert response.json()["intent"] == "resume_agents"
+
+    detail = await client.get("/api/operator/sessions/operator-main")
+    assert detail.status_code == 200
+    messages = detail.json()["messages"]
+    assistant_response = next(
+        message
+        for message in messages
+        if message["id"] not in baseline_ids
+        and message["message_type"] == "response"
+        and message.get("content", {}).get("intent") == "resume_agents"
+    )
+    assert assistant_response["message_type"] == "response"
+    assert assistant_response["content"]["intent"] == "resume_agents"
+    assert assistant_response["content"]["command"] == "resume_agents"
+    assert assistant_response["content"]["risk_level"] == "operational"
+    assert assistant_response["content"]["needs_confirmation"] is True
+    assert assistant_response["content"]["permitted"] is True
+    assert assistant_response["content"]["action"] == {
+        "type": "state_change",
+        "key": "paused",
+        "value": False,
+    }
+
+
+@pytest.mark.anyio
+async def test_operator_command_persists_blocked_result_metadata_for_result_cards(client):
+    baseline = await client.get("/api/operator/sessions/operator-main")
+    baseline_ids = (
+        {message["id"] for message in baseline.json()["messages"]}
+        if baseline.status_code == 200
+        else set()
+    )
+
+    response = await client.post(
+        "/api/operator/command",
+        json={"input": "pause all agents", "session_id": "operator-main"},
+    )
+    assert response.status_code == 200
+    assert response.json()["intent"] == "pause_agents"
+
+    detail = await client.get("/api/operator/sessions/operator-main")
+    assert detail.status_code == 200
+    messages = detail.json()["messages"]
+    assistant_response = next(
+        message
+        for message in messages
+        if message["id"] not in baseline_ids
+        and message["message_type"] == "response"
+        and message.get("content", {}).get("intent") == "pause_agents"
+    )
+    assert assistant_response["message_type"] == "response"
+    assert assistant_response["content"]["intent"] == "pause_agents"
+    assert assistant_response["content"]["command"] == "pause_agents"
+    assert assistant_response["content"]["permitted"] is False
+    assert assistant_response["content"]["risk_level"] == "operational"
+    assert assistant_response["content"]["needs_confirmation"] is True
+    assert assistant_response["content"]["action"] is None
 
 
 @pytest.mark.anyio

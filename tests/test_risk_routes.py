@@ -198,3 +198,58 @@ async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_
     resp = await client.get("/api/risk/summary")
     assert resp.status_code == 200
     assert resp.json()["needs_operator_risk_boundary_proposals"] == []
+
+
+@pytest.mark.anyio
+async def test_risk_summary_surfaces_observe_only_candidate_for_repeated_rejected_symbol(client, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.storage.models import RiskDecision, TradeProposal
+
+    cfg = loader.load_config()
+    cfg.exchange.tradable_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    loader.save_config(cfg)
+
+    first = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.01,
+        price=60000,
+    )
+    second = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="short",
+        execution_mode="paper_internal",
+        quantity=0.02,
+        price=61000,
+    )
+    repo.insert_trade_proposal(first)
+    repo.insert_trade_proposal(second)
+    repo.insert_risk_decision(
+        RiskDecision(
+            proposal_id=first.id,
+            approved=False,
+            violations='["symbol_not_allowed:BTCUSDT"]',
+            message="Rejected",
+        )
+    )
+    repo.insert_risk_decision(
+        RiskDecision(
+            proposal_id=second.id,
+            approved=False,
+            violations='["symbol_not_allowed:BTCUSDT"]',
+            message="Rejected again",
+        )
+    )
+
+    resp = await client.get("/api/risk/summary")
+    assert resp.status_code == 200
+
+    payload = resp.json()
+    due = payload["needs_operator_observe_only_symbols"]
+    assert len(due) == 1
+    assert due[0]["symbol"] == "BTC/USDT"
+    assert due[0]["rejection_count"] == 2

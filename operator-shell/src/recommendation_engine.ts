@@ -189,6 +189,17 @@ export class RecommendationEngine {
     return `Improve Command Center behavior around \`${commandName}\` so repeated failed attempts to ${label} surface clearer guidance and a better next action.`
   }
 
+  private promotionTargetState(strategyState: string | null | undefined): string | null {
+    const normalized = String(strategyState || '').trim()
+    if (normalized === 'paper_running') {
+      return 'paper_passed'
+    }
+    if (normalized === 'paper_passed') {
+      return 'live_candidate'
+    }
+    return null
+  }
+
   private artifactFreshnessMinutes(artifact: PersistedOperatorArtifact): number | null {
     const parsed = Date.parse(artifact.created_at)
     if (Number.isNaN(parsed)) {
@@ -481,6 +492,39 @@ export class RecommendationEngine {
       })
     }
 
+    const recentDesignInputCount =
+      (dreamingSummary?.recent_research_notes.length || 0) +
+      (dreamingSummary?.recent_strategy_hypotheses.length || 0)
+    const recentStrategyDesignerRun = (recentAgentRuns || []).some(run => {
+      if (run.agent_name !== 'strategy_designer') {
+        return false
+      }
+      const age = this.runAgeMinutes(run)
+      return age !== null && age < 24 * 60
+    })
+    const activePaperStrategyCount = strategySummary?.active_paper_strategies.length || 0
+    if (
+      !snapshot.status.paused &&
+      activePaperStrategyCount === 0 &&
+      recentDesignInputCount > 0 &&
+      !recentStrategyDesignerRun
+    ) {
+      recommendations.push({
+        id: 'strategy-design-due',
+        kind: 'strategy_design_due',
+        severity: 'medium',
+        summary:
+          'Recent research inputs exist but no active paper strategy is visible. Delegate strategy_designer to turn current hypotheses into a fresh paper strategy.',
+        taskType: 'run_strategy_design',
+        metadata: {
+          task_type: 'run_strategy_design',
+          recent_research_note_count: dreamingSummary?.recent_research_notes.length || 0,
+          recent_strategy_hypothesis_count:
+            dreamingSummary?.recent_strategy_hypotheses.length || 0,
+        },
+      })
+    }
+
     const missingReviewStrategyIds = reviewSummary?.missing_review_strategy_ids || []
     const reviewRecentlyAttempted = (reviewSummary?.recent_post_trade_reviewer_runs.length || 0) > 0
     if (!snapshot.status.paused && missingReviewStrategyIds.length > 0 && !reviewRecentlyAttempted) {
@@ -528,6 +572,39 @@ export class RecommendationEngine {
       })
     }
 
+    const pausePaperStrategyCandidate =
+      strategySummary?.under_review_strategies.find(item => {
+        const state = String(item.state || '')
+        return (
+          ['paper_running', 'paper_passed'].includes(state) &&
+          !Boolean(Number(item.paper_trading_paused || 0))
+        )
+      }) || null
+    if (!snapshot.status.paused && pausePaperStrategyCandidate) {
+      const strategyId = String(pausePaperStrategyCandidate.id || '').trim()
+      const strategyName =
+        typeof pausePaperStrategyCandidate.name === 'string'
+          ? pausePaperStrategyCandidate.name
+          : strategyId
+      const reviewNotes =
+        typeof pausePaperStrategyCandidate.review_notes === 'string'
+          ? pausePaperStrategyCandidate.review_notes.trim()
+          : ''
+      recommendations.push({
+        id: `pause-paper-strategy:${strategyId}`,
+        kind: 'pause_paper_strategy_due',
+        severity: 'medium',
+        summary: `Strategy ${strategyName} is under review while paper trading remains active. Pause paper trading until review completes.`,
+        taskType: 'pause_paper_strategy',
+        metadata: {
+          task_type: 'pause_paper_strategy',
+          strategy_id: strategyId,
+          strategy_name: strategyName,
+          reason: reviewNotes || 'strategy marked under review',
+        },
+      })
+    }
+
     const needsPromotionProposalIds =
       strategySummary?.needs_operator_promotion_proposal_strategy_ids || []
     if (!snapshot.status.paused && needsPromotionProposalIds.length > 0) {
@@ -535,25 +612,77 @@ export class RecommendationEngine {
         strategySummary?.active_paper_strategies.find(
           item => String(item.id || '') === needsPromotionProposalIds[0],
         ) || null
+      const firstEvaluation =
+        strategySummary?.recent_strategy_evaluations.find(
+          item => String(item.strategy_id || '') === needsPromotionProposalIds[0],
+        ) || null
       const strategyName =
         firstCandidate && typeof firstCandidate.name === 'string'
           ? firstCandidate.name
           : null
+      const evaluationStrategy =
+        firstEvaluation &&
+        typeof firstEvaluation.evaluation === 'object' &&
+        firstEvaluation.evaluation &&
+        !Array.isArray(firstEvaluation.evaluation) &&
+        typeof (firstEvaluation.evaluation as Record<string, unknown>).strategy === 'object' &&
+        (firstEvaluation.evaluation as Record<string, unknown>).strategy &&
+        !Array.isArray((firstEvaluation.evaluation as Record<string, unknown>).strategy)
+          ? ((firstEvaluation.evaluation as Record<string, unknown>).strategy as Record<string, unknown>)
+          : null
+      const targetState =
+        this.promotionTargetState(
+          typeof evaluationStrategy?.state === 'string'
+            ? evaluationStrategy.state
+            : typeof firstCandidate?.state === 'string'
+              ? firstCandidate.state
+              : null,
+        ) || 'paper_passed'
       recommendations.push({
         id: 'strategy-promotion-proposal-due',
         kind: 'strategy_promotion_proposal_due',
         severity: 'medium',
         summary:
           needsPromotionProposalIds.length === 1
-            ? `Strategy ${strategyName || needsPromotionProposalIds[0]} passed recent promotion checks and should be proposed for paper_passed human review.`
+            ? `Strategy ${strategyName || needsPromotionProposalIds[0]} passed recent promotion checks and should be proposed for ${targetState} human review.`
             : `${needsPromotionProposalIds.length} strategies passed recent promotion checks and should be proposed for human review.`,
         taskType: 'create_repair_proposal',
         metadata: {
           strategy_ids: needsPromotionProposalIds,
           strategy_id: needsPromotionProposalIds[0],
           strategy_name: strategyName,
-          target_state: 'paper_passed',
+          target_state: targetState,
           proposal_command: 'propose_strategy_promotion',
+        },
+      })
+    }
+
+    const liveLimitedEnablementIds =
+      strategySummary?.needs_operator_live_limited_enablement_strategy_ids || []
+    if (!snapshot.status.paused && liveLimitedEnablementIds.length > 0) {
+      const firstCandidate =
+        strategySummary?.live_candidate_strategies.find(
+          item => String(item.id || '') === liveLimitedEnablementIds[0],
+        ) || null
+      const strategyName =
+        firstCandidate && typeof firstCandidate.name === 'string'
+          ? firstCandidate.name
+          : null
+      recommendations.push({
+        id: 'live-limited-enablement-proposal-due',
+        kind: 'live_limited_enablement_proposal_due',
+        severity: 'medium',
+        summary:
+          liveLimitedEnablementIds.length === 1
+            ? `Strategy ${strategyName || liveLimitedEnablementIds[0]} passed live-limited safety checks and should create a human-reviewed live-limited enablement proposal.`
+            : `${liveLimitedEnablementIds.length} live-candidate strategies passed live-limited safety checks and should create enablement proposals for human review.`,
+        taskType: 'create_repair_proposal',
+        metadata: {
+          strategy_ids: liveLimitedEnablementIds,
+          strategy_id: liveLimitedEnablementIds[0],
+          strategy_name: strategyName,
+          target_state: 'live_limited',
+          proposal_command: 'propose_live_limited_enablement',
         },
       })
     }
@@ -750,6 +879,48 @@ export class RecommendationEngine {
     }
 
     const dueRiskBoundaryChange = riskSummary?.needs_operator_risk_boundary_proposals?.[0]
+    const dueObserveOnlySymbol = riskSummary?.needs_operator_observe_only_symbols?.[0]
+    if (!snapshot.status.paused && dueObserveOnlySymbol) {
+      recommendations.push({
+        id: `symbol-observe-only:${dueObserveOnlySymbol.symbol}`,
+        kind: 'symbol_observe_only_due',
+        severity: 'medium',
+        summary: dueObserveOnlySymbol.summary,
+        taskType: 'set_symbol_observe_only',
+        metadata: {
+          task_type: 'set_symbol_observe_only',
+          symbol: dueObserveOnlySymbol.symbol,
+          rejection_count: dueObserveOnlySymbol.rejection_count,
+          decision_ids: dueObserveOnlySymbol.decision_ids.slice(0, 5),
+          execution_modes: dueObserveOnlySymbol.execution_modes?.slice(0, 5) || [],
+        },
+      })
+    }
+    const recentRiskCriticRun = (recentAgentRuns || []).some(run => {
+      if (run.agent_name !== 'risk_critic') {
+        return false
+      }
+      const age = this.runAgeMinutes(run)
+      return age !== null && age < 6 * 60
+    })
+    if (
+      !snapshot.status.paused &&
+      (riskSummary?.recent_rejected_decisions?.length || 0) > 0 &&
+      !recentRiskCriticRun
+    ) {
+      recommendations.push({
+        id: 'risk-critique-due',
+        kind: 'risk_critique_due',
+        severity: 'medium',
+        summary:
+          'Recent risk rejections exist without a fresh risk-critic pass. Delegate risk_critic to record a new risk lesson note.',
+        taskType: 'run_risk_critique',
+        metadata: {
+          task_type: 'run_risk_critique',
+          rejected_decision_count: riskSummary?.recent_rejected_decisions?.length || 0,
+        },
+      })
+    }
     if (
       !snapshot.status.paused &&
       (riskSummary?.recent_rejected_decisions?.length || 0) > 0 &&

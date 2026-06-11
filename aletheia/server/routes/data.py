@@ -285,6 +285,35 @@ async def get_strategies_summary():
                 "content": content,
             }
         )
+    raw_recent_live_limited_enablement_proposals = [
+        artifact
+        for artifact in list_artifacts(limit=500)
+        if artifact.get("artifact_type") == "live_limited_enablement_proposal"
+        and (_parse_utc_timestamp(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
+        > cutoff_24h
+    ]
+    recent_live_limited_enablement_proposals = []
+    for artifact in raw_recent_live_limited_enablement_proposals:
+        content = artifact.get("content")
+        if not isinstance(content, dict):
+            content = {}
+        recent_live_limited_enablement_proposals.append(
+            {
+                "id": artifact.get("id"),
+                "task_id": artifact.get("task_id"),
+                "session_id": artifact.get("session_id"),
+                "artifact_type": artifact.get("artifact_type"),
+                "title": artifact.get("title"),
+                "created_at": artifact.get("created_at"),
+                "strategy_id": content.get("strategy_id"),
+                "strategy_name": content.get("strategy_name"),
+                "current_state": content.get("current_state"),
+                "target_state": content.get("target_state"),
+                "gate_preview": content.get("gate_preview"),
+                "rationale": content.get("rationale"),
+                "content": content,
+            }
+        )
 
     flagged_strategy_ids = {
         str(item.get("id"))
@@ -292,23 +321,52 @@ async def get_strategies_summary():
         if item.get("id")
     }
     needs_operator_evaluation_strategy_ids = sorted(flagged_strategy_ids - evaluated_strategy_ids)
-    promotion_ready_strategy_ids = {
+    promotion_ready_strategy_targets = {
+        (
+            str(item.get("strategy_id")),
+            "paper_passed"
+            if str(
+                ((item.get("evaluation") or {}).get("strategy") or {}).get("state") or ""
+            )
+            == "paper_running"
+            else "live_candidate",
+        )
+        for item in recent_strategy_evaluations
+        if item.get("strategy_id")
+        and isinstance(item.get("evaluation"), dict)
+        and isinstance(item["evaluation"].get("strategy"), dict)
+        and str(item["evaluation"]["strategy"].get("state") or "")
+        in {"paper_running", "paper_passed"}
+        and isinstance(item["evaluation"].get("promotion_gates"), dict)
+        and bool(item["evaluation"]["promotion_gates"].get("passed")) is True
+    }
+    proposed_strategy_targets = {
+        (str(item.get("strategy_id")), str(item.get("target_state") or ""))
+        for item in recent_strategy_promotion_proposals
+        if item.get("strategy_id") and item.get("target_state")
+    }
+    needs_operator_promotion_proposal_strategy_ids = sorted(
+        strategy_id
+        for strategy_id, target_state in promotion_ready_strategy_targets
+        if (strategy_id, target_state) not in proposed_strategy_targets
+    )
+    live_limited_ready_strategy_ids = {
         str(item.get("strategy_id"))
         for item in recent_strategy_evaluations
         if item.get("strategy_id")
         and isinstance(item.get("evaluation"), dict)
         and isinstance(item["evaluation"].get("strategy"), dict)
-        and str(item["evaluation"]["strategy"].get("state") or "") == "paper_running"
-        and isinstance(item["evaluation"].get("promotion_gates"), dict)
-        and bool(item["evaluation"]["promotion_gates"].get("passed")) is True
+        and str(item["evaluation"]["strategy"].get("state") or "") == "live_candidate"
+        and isinstance(item["evaluation"].get("live_limited_gates"), dict)
+        and bool(item["evaluation"]["live_limited_gates"].get("passed")) is True
     }
-    proposed_strategy_ids = {
+    proposed_live_limited_strategy_ids = {
         str(item.get("strategy_id"))
-        for item in recent_strategy_promotion_proposals
+        for item in recent_live_limited_enablement_proposals
         if item.get("strategy_id")
     }
-    needs_operator_promotion_proposal_strategy_ids = sorted(
-        promotion_ready_strategy_ids - proposed_strategy_ids
+    needs_operator_live_limited_enablement_strategy_ids = sorted(
+        live_limited_ready_strategy_ids - proposed_live_limited_strategy_ids
     )
 
     return {
@@ -320,6 +378,8 @@ async def get_strategies_summary():
         "needs_operator_evaluation_strategy_ids": needs_operator_evaluation_strategy_ids,
         "recent_strategy_promotion_proposals": recent_strategy_promotion_proposals,
         "needs_operator_promotion_proposal_strategy_ids": needs_operator_promotion_proposal_strategy_ids,
+        "recent_live_limited_enablement_proposals": recent_live_limited_enablement_proposals,
+        "needs_operator_live_limited_enablement_strategy_ids": needs_operator_live_limited_enablement_strategy_ids,
     }
 
 

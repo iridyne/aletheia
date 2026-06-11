@@ -380,6 +380,37 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
 
 
 @pytest.mark.anyio
+async def test_operator_recommendations_include_pause_paper_strategy_due_for_under_review_active_paper_strategy(
+    client,
+):
+    from datetime import datetime, timezone
+
+    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.repositories import insert_strategy
+
+    strategy = StrategyRecord(
+        name="Pause Candidate",
+        state="paper_running",
+        under_review=True,
+        review_notes="paper drawdown breached review threshold",
+        review_updated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    insert_strategy(strategy)
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "pause_paper_strategy_due"
+    )
+    assert due["metadata"]["strategy_id"] == strategy.id
+    assert due["metadata"]["task_type"] == "pause_paper_strategy"
+    assert "under review" in due["summary"].lower()
+
+
+@pytest.mark.anyio
 async def test_operator_recommendations_include_prompt_change_proposal_due_for_repeated_agent_failures(client):
     from aletheia.storage.models import AgentRun
     from aletheia.storage.repositories import insert_agent_run
@@ -404,6 +435,102 @@ async def test_operator_recommendations_include_prompt_change_proposal_due_for_r
 
     kinds = {item["kind"] for item in recommendations.json()}
     assert "agent_prompt_change_proposal_due" in kinds
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_live_candidate_promotion_due_for_paper_passed_strategy(client):
+    from aletheia.agent_shell.operator_store import create_artifact
+    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.repositories import insert_strategy
+
+    strategy = StrategyRecord(
+        name="Live Candidate Candidate",
+        state="paper_passed",
+    )
+    insert_strategy(strategy)
+
+    create_artifact(
+        task_id=None,
+        session_id="strategy-eval-session",
+        artifact_type="strategy_evaluation",
+        title="Live-candidate-ready evaluation",
+        content={
+            "strategy_id": strategy.id,
+            "strategy_name": "Live Candidate Candidate",
+            "summary": "Promotion gates passed for paper_passed strategy.",
+            "evaluation": {
+                "strategy": {
+                    "id": strategy.id,
+                    "name": "Live Candidate Candidate",
+                    "state": "paper_passed",
+                },
+                "promotion_gates": {
+                    "passed": True,
+                    "failures": [],
+                },
+            },
+        },
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    proposal_due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "strategy_promotion_proposal_due"
+    )
+    assert proposal_due["metadata"]["target_state"] == "live_candidate"
+    assert proposal_due["metadata"]["proposal_command"] == "propose_strategy_promotion"
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_live_limited_enablement_due_for_live_candidate_strategy(
+    client,
+):
+    from aletheia.agent_shell.operator_store import create_artifact
+    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.repositories import insert_strategy
+
+    strategy = StrategyRecord(
+        name="Live Limited Candidate",
+        state="live_candidate",
+    )
+    insert_strategy(strategy)
+
+    create_artifact(
+        task_id=None,
+        session_id="strategy-eval-session",
+        artifact_type="strategy_evaluation",
+        title="Live-limited-ready evaluation",
+        content={
+            "strategy_id": strategy.id,
+            "strategy_name": "Live Limited Candidate",
+            "summary": "Live-limited gates passed for live_candidate strategy.",
+            "evaluation": {
+                "strategy": {
+                    "id": strategy.id,
+                    "name": "Live Limited Candidate",
+                    "state": "live_candidate",
+                },
+                "live_limited_gates": {
+                    "passed": True,
+                    "failures": [],
+                },
+            },
+        },
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    proposal_due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "live_limited_enablement_proposal_due"
+    )
+    assert proposal_due["metadata"]["proposal_command"] == "propose_live_limited_enablement"
+    assert proposal_due["metadata"]["strategy_id"] == strategy.id
 
 
 @pytest.mark.anyio
@@ -609,6 +736,67 @@ async def test_operator_recommendations_include_agent_performance_report_refresh
 
 
 @pytest.mark.anyio
+async def test_operator_recommendations_include_strategy_design_due_when_recent_strategy_inputs_exist_without_active_paper_strategy(
+    client,
+):
+    from aletheia.knowledge.manager import create_research_note, create_strategy_memory
+    from aletheia.trading.strategy_lifecycle import create_strategy
+
+    create_research_note("Breakout Research", "Recent market structure favors breakout continuation.")
+    strategy = create_strategy("Draft Strategy Anchor", "anchor strategy for memory path")
+    create_strategy_memory(strategy.id, "Momentum Hypothesis", "Probe ETH continuation on 1h.")
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "strategy_design_due"
+    )
+    assert due["taskType"] == "run_strategy_design"
+    assert due["metadata"]["recent_research_note_count"] == 1
+    assert due["metadata"]["recent_strategy_hypothesis_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_risk_critique_due_for_recent_rejections_without_recent_risk_critic_run(
+    client,
+):
+    from aletheia.storage.models import RiskDecision, TradeProposal
+    from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal
+
+    proposal = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.005,
+        price=60000,
+    )
+    insert_trade_proposal(proposal)
+    insert_risk_decision(
+        RiskDecision(
+            proposal_id=proposal.id,
+            approved=False,
+            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            message="Rejected",
+        )
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "risk_critique_due"
+    )
+    assert due["taskType"] == "run_risk_critique"
+    assert due["metadata"]["rejected_decision_count"] == 1
+
+
+@pytest.mark.anyio
 async def test_operator_recommendations_include_risk_boundary_change_proposal_due_for_repeated_adjustable_rejections(client):
     from aletheia.storage.models import RiskDecision, TradeProposal
     from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal
@@ -690,6 +878,66 @@ async def test_operator_recommendations_include_risk_review_report_refresh_due_w
     assert due[0]["taskType"] == "create_review_report"
     assert due[0]["metadata"]["report_type"] == "risk_review"
     assert due[0]["metadata"]["rejected_decision_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_symbol_observe_only_due_for_repeated_rejected_symbol(
+    client, monkeypatch
+):
+    import aletheia.config.loader as loader
+    from aletheia.storage.models import RiskDecision, TradeProposal
+    from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal
+
+    cfg = loader.load_config()
+    cfg.exchange.tradable_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    loader.save_config(cfg)
+
+    first = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.005,
+        price=60000,
+    )
+    second = TradeProposal(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="short",
+        execution_mode="paper_internal",
+        quantity=0.006,
+        price=61000,
+    )
+    insert_trade_proposal(first)
+    insert_trade_proposal(second)
+    insert_risk_decision(
+        RiskDecision(
+            proposal_id=first.id,
+            approved=False,
+            violations='["symbol_not_allowed:BTCUSDT"]',
+            message="Rejected",
+        )
+    )
+    insert_risk_decision(
+        RiskDecision(
+            proposal_id=second.id,
+            approved=False,
+            violations='["symbol_not_allowed:BTCUSDT"]',
+            message="Rejected again",
+        )
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "symbol_observe_only_due"
+    )
+    assert due["taskType"] == "set_symbol_observe_only"
+    assert due["metadata"]["symbol"] == "BTC/USDT"
 
 
 @pytest.mark.anyio

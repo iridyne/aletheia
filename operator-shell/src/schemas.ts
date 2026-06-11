@@ -297,6 +297,8 @@ export interface StrategySummary {
   needs_operator_evaluation_strategy_ids: string[]
   recent_strategy_promotion_proposals: Array<Record<string, unknown>>
   needs_operator_promotion_proposal_strategy_ids: string[]
+  recent_live_limited_enablement_proposals?: Array<Record<string, unknown>>
+  needs_operator_live_limited_enablement_strategy_ids?: string[]
 }
 
 export interface RiskBoundaryProposalCandidate {
@@ -313,10 +315,20 @@ export interface RiskBoundaryProposalCandidate {
   execution_modes?: string[]
 }
 
+export interface ObserveOnlySymbolCandidate {
+  symbol: string
+  rejection_count: number
+  summary: string
+  decision_ids: string[]
+  execution_modes?: string[]
+  latest_created_at?: string
+}
+
 export interface RiskSummary {
   recent_rejected_decisions: Array<Record<string, unknown>>
   recent_risk_boundary_proposals: Array<Record<string, unknown>>
   needs_operator_risk_boundary_proposals: RiskBoundaryProposalCandidate[]
+  needs_operator_observe_only_symbols?: ObserveOnlySymbolCandidate[]
 }
 
 export interface AgentRunInvocationResult {

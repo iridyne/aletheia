@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
 import type {
   OperatorCommandAudit,
+  OperatorCommandPreview,
   OperatorContextSnapshot,
   OperatorEvent,
   OperatorExtension,
@@ -52,6 +53,23 @@ function messageText(content: unknown): string {
   return JSON.stringify(content, null, 2)
 }
 
+function messageObject(content: unknown): Record<string, unknown> | null {
+  return content && typeof content === 'object' && !Array.isArray(content)
+    ? content as Record<string, unknown>
+    : null
+}
+
+function formatActionSummary(action: unknown): string | null {
+  if (!action || typeof action !== 'object' || Array.isArray(action)) {
+    return null
+  }
+  const payload = action as Record<string, unknown>
+  if (payload.type === 'state_change') {
+    return `${String(payload.key || 'state')} -> ${String(payload.value)}`
+  }
+  return typeof payload.type === 'string' ? payload.type : 'structured action'
+}
+
 function sessionKindLabel(kind: string | null | undefined): string {
   switch (kind) {
     case 'dreaming_session':
@@ -82,6 +100,14 @@ function sessionKindBadge(kind: string | null | undefined): string {
   }
 }
 
+const BRANCH_KIND_OPTIONS = [
+  { value: 'command_session', label: 'Command' },
+  { value: 'diagnostic_session', label: 'Diagnostic' },
+  { value: 'dreaming_session', label: 'Dreaming' },
+  { value: 'strategy_session', label: 'Strategy' },
+  { value: 'review_session', label: 'Review' },
+] as const
+
 function severityBadge(severity: string): string {
   switch (severity) {
     case 'high':
@@ -108,6 +134,34 @@ function eventDetail(event: OperatorEvent): string {
 
 function sessionDisplayTitle(session: OperatorSessionSummary): string {
   return session.title || session.id
+}
+
+function previewBadge(preview: OperatorCommandPreview | null | undefined): string {
+  if (!preview) return 'badge-blue'
+  if (preview.classification === 'query') return 'badge-blue'
+  if (preview.allowed) return 'badge-green'
+  if (preview.classification === 'typed_command') return 'badge-yellow'
+  return 'badge-red'
+}
+
+function previewLabel(preview: OperatorCommandPreview | null | undefined): string {
+  if (!preview) return 'Preview'
+  switch (preview.classification) {
+    case 'query':
+      return 'Query'
+    case 'typed_command':
+      return preview.allowed ? 'Ready' : 'Blocked'
+    case 'forbidden':
+      return 'Forbidden'
+    case 'extension_not_enabled':
+      return 'Disabled'
+    case 'extension_invalid_arguments':
+      return 'Args'
+    case 'extension_unknown':
+      return 'Unknown'
+    default:
+      return 'Preview'
+  }
 }
 
 function sortSessions(sessions: OperatorSessionSummary[]): OperatorSessionSummary[] {
@@ -159,8 +213,11 @@ export default function CommandCenter() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [input, setInput] = useState('')
   const [selectedSessionId, setSelectedSessionId] = useState<string>('operator-main')
+  const [branchTitle, setBranchTitle] = useState('')
+  const [branchKind, setBranchKind] = useState<string>('command_session')
   const [historyFilter, setHistoryFilter] = useState('')
   const [inspectorFocus, setInspectorFocus] = useState<InspectorFocus>({ kind: 'session', id: 'operator-main' })
+  const deferredPreviewInput = useDeferredValue(input)
   const deferredHistoryFilter = useDeferredValue(historyFilter)
 
   const draft = searchParams.get('draft') || ''
@@ -239,6 +296,12 @@ export default function CommandCenter() {
     queryFn: () => api.getOperatorContext({ sessionId: selectedSessionId }),
     enabled: !!selectedSessionId,
   })
+  const previewInput = deferredPreviewInput.trim()
+  const { data: commandPreview, isFetching: commandPreviewFetching } = useQuery<OperatorCommandPreview>({
+    queryKey: ['operator-command-preview', selectedSessionId, previewInput],
+    queryFn: () => api.previewOperatorCommand({ input: previewInput, sessionId: selectedSessionId }),
+    enabled: previewInput.length > 0,
+  })
 
   const focusedTaskId = inspectorFocus?.kind === 'task' ? inspectorFocus.id : null
   const { data: focusedTaskEvents = [] } = useQuery<OperatorEvent[]>({
@@ -295,6 +358,27 @@ export default function CommandCenter() {
   const activeBranchMut = useMutation({
     mutationFn: (sessionId: string) => api.setOperatorActiveBranch(sessionId),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['operator-status'] })
+      qc.invalidateQueries({ queryKey: ['operator-sessions'] })
+      qc.invalidateQueries({ queryKey: ['operator-session'] })
+      qc.invalidateQueries({ queryKey: ['operator-events'] })
+      qc.invalidateQueries({ queryKey: ['operator-context'] })
+    },
+  })
+  const createBranchMut = useMutation({
+    mutationFn: () =>
+      api.createOperatorBranch({
+        title: branchTitle.trim(),
+        kind: branchKind,
+        user_input: branchTitle.trim(),
+        parent_session_id: selectedSessionId || 'operator-main',
+        activate: true,
+        selected_by: 'command-center',
+      }),
+    onSuccess: session => {
+      setBranchTitle('')
+      setSelectedSessionId(session.id)
+      setInspectorFocus({ kind: 'session', id: session.id })
       qc.invalidateQueries({ queryKey: ['operator-status'] })
       qc.invalidateQueries({ queryKey: ['operator-sessions'] })
       qc.invalidateQueries({ queryKey: ['operator-session'] })
@@ -533,13 +617,79 @@ export default function CommandCenter() {
               </div>
             )}
             {filteredMessages.map(message => (
-              <div key={message.id} className={`command-msg ${message.role === 'assistant' ? 'assistant' : 'user'}`}>
-                <div className="command-msg-meta">
-                  <span>{message.role}</span>
-                  <span className="mono">{formatTimestamp(message.created_at)}</span>
-                </div>
-                <pre className="command-msg-body">{messageText(message.content)}</pre>
-              </div>
+              (() => {
+                const content = messageObject(message.content)
+                const commandName =
+                  typeof content?.command === 'string'
+                    ? content.command
+                    : typeof content?.intent === 'string' && content.intent !== 'query'
+                      ? content.intent
+                      : null
+                const permitted =
+                  typeof content?.permitted === 'boolean' ? content.permitted : null
+                const riskLevel =
+                  typeof content?.risk_level === 'string' ? content.risk_level : null
+                const needsConfirmation =
+                  typeof content?.needs_confirmation === 'boolean'
+                    ? content.needs_confirmation
+                    : false
+                const actionSummary = formatActionSummary(content?.action)
+                const parameters =
+                  content?.parameters && typeof content.parameters === 'object' && !Array.isArray(content.parameters)
+                    ? content.parameters
+                    : null
+                const commandMeta =
+                  content?.command_meta && typeof content.command_meta === 'object' && !Array.isArray(content.command_meta)
+                    ? content.command_meta as Record<string, unknown>
+                    : null
+                const commandDescription =
+                  typeof commandMeta?.description === 'string' ? commandMeta.description : null
+                const showTraceCard = message.message_type === 'command' && !!commandName
+                const showResultCard = message.message_type === 'response' && (!!commandName || permitted !== null || !!actionSummary)
+                return (
+                  <div key={message.id} className={`command-msg ${message.role === 'assistant' ? 'assistant' : 'user'}`}>
+                    <div className="command-msg-meta">
+                      <span>{message.role}</span>
+                      <span className="mono">{formatTimestamp(message.created_at)}</span>
+                    </div>
+                    {showTraceCard && (
+                      <div className="command-trace-card">
+                        <div className="command-trace-head">
+                          <span className="badge badge-blue">Trace</span>
+                          <span className="mono">{commandName}</span>
+                        </div>
+                        {(parameters || commandDescription) && (
+                          <div className="command-trace-summary">
+                            {commandDescription || 'Typed command prepared for execution.'}
+                          </div>
+                        )}
+                        {parameters && Object.keys(parameters).length > 0 && (
+                          <pre className="command-preview-params">{JSON.stringify(parameters, null, 2)}</pre>
+                        )}
+                      </div>
+                    )}
+                    {showResultCard && (
+                      <div className="command-result-card">
+                        <div className="command-result-head">
+                          <span className={`badge ${permitted === false ? 'badge-red' : 'badge-green'}`}>
+                            {permitted === false ? 'Blocked' : 'Executed'}
+                          </span>
+                          <span className="mono">{commandName || 'response'}</span>
+                          {riskLevel && <span className="mono">risk: {riskLevel}</span>}
+                        </div>
+                        <div className="command-result-facts">
+                          {needsConfirmation && <span className="mono">confirmation</span>}
+                          {actionSummary && <span className="mono">{actionSummary}</span>}
+                          {typeof commandMeta?.operator_permission_required === 'string' && (
+                            <span className="mono">needs {commandMeta.operator_permission_required}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <pre className="command-msg-body">{messageText(message.content)}</pre>
+                  </div>
+                )
+              })()
             ))}
           </div>
 
@@ -550,6 +700,61 @@ export default function CommandCenter() {
               placeholder="Ask the operator to explain state, inspect a run, review a proposal, pause background activity, or run an enabled slash command."
               rows={4}
             />
+            {previewInput.length > 0 && (
+              <div className="command-preview">
+                <div className="command-preview-head">
+                  <span className={`badge ${previewBadge(commandPreview)}`}>
+                    {commandPreviewFetching && !commandPreview ? 'Checking…' : previewLabel(commandPreview)}
+                  </span>
+                  <span className="mono">
+                    {commandPreview?.command?.name || commandPreview?.intent || 'preview'}
+                  </span>
+                  {commandPreview?.command && (
+                    <span className="mono">risk: {commandPreview.command.risk_class}</span>
+                  )}
+                  {commandPreview?.extension?.slash_command && (
+                    <span className="mono">{commandPreview.extension.slash_command}</span>
+                  )}
+                </div>
+                {commandPreview && (
+                  <>
+                    <div className="command-preview-summary">
+                      {commandPreview.command?.description
+                        || commandPreview.extension?.description
+                        || (commandPreview.classification === 'query'
+                          ? 'The operator will answer directly without mapping this input to a typed command.'
+                          : commandPreview.denial_reason
+                            || 'No command preview is available for this input.')}
+                    </div>
+                    {commandPreview.command && (
+                      <div className="command-preview-facts">
+                        <span className="mono">operator {commandPreview.permission_mode}</span>
+                        <span className="mono">needs {commandPreview.command.operator_permission_required}</span>
+                        <span className="mono">worker {commandPreview.worker_permission_mode}</span>
+                        <span className="mono">needs {commandPreview.command.worker_permission_required}</span>
+                        {commandPreview.command.requires_confirmation && (
+                          <span className="mono">confirmation</span>
+                        )}
+                        {commandPreview.command.requires_proposal && (
+                          <span className="mono">proposal-only</span>
+                        )}
+                      </div>
+                    )}
+                    {!commandPreview.allowed && commandPreview.denial_reason && (
+                      <div className="command-preview-warning">{commandPreview.denial_reason}</div>
+                    )}
+                    {commandPreview.worker_allowed === false && commandPreview.worker_denial_reason && (
+                      <div className="command-preview-warning">{commandPreview.worker_denial_reason}</div>
+                    )}
+                    {Object.keys(commandPreview.parameters || {}).length > 0 && (
+                      <pre className="command-preview-params">
+                        {JSON.stringify(commandPreview.parameters, null, 2)}
+                      </pre>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
             <div className="command-composer-actions">
               <span className="text-muted text-sm">Long-form interaction lives here. Ctrl+K is a launcher; child sessions carry specialist traces.</span>
               <button
@@ -680,6 +885,31 @@ export default function CommandCenter() {
             <div className="cc-card-header">
               <h3>Sessions</h3>
               <span className="mono text-muted">{sessions.length}</span>
+            </div>
+            <div className="cc-branch-form">
+              <label className="cc-filter-label" htmlFor="branch-title">New branch</label>
+              <input
+                id="branch-title"
+                className="cc-filter-input"
+                value={branchTitle}
+                onChange={event => setBranchTitle(event.target.value)}
+                placeholder="Investigate stale market data"
+              />
+              <div className="cc-branch-actions">
+                <select value={branchKind} onChange={event => setBranchKind(event.target.value)}>
+                  {BRANCH_KIND_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button
+                  className="btn-control secondary"
+                  disabled={createBranchMut.isPending || branchTitle.trim().length === 0}
+                  onClick={() => createBranchMut.mutate()}
+                >
+                  {createBranchMut.isPending ? 'Creating…' : 'Create Branch'}
+                </button>
+              </div>
+              <div className="text-muted text-sm">Start a persistent side-task session under the currently selected session and make it the active operator branch.</div>
             </div>
             <div className="cc-list">
               {sessions.length === 0 && <div className="text-muted text-sm">No sessions yet.</div>}

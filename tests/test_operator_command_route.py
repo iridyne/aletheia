@@ -94,7 +94,13 @@ async def test_operator_command_persists_main_session_messages(operator_env):
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == {"text": "status"}
     assert messages[1]["role"] == "assistant"
-    assert messages[1]["content"] == {"text": "System healthy", "intent": "get_system_status"}
+    assert messages[1]["content"]["text"] == "System healthy"
+    assert messages[1]["content"]["intent"] == "get_system_status"
+    assert messages[1]["content"]["command"] == "get_system_status"
+    assert messages[1]["content"]["risk_level"] == "read"
+    assert messages[1]["content"]["needs_confirmation"] is False
+    assert messages[1]["content"]["permitted"] is True
+    assert messages[1]["content"]["action"] is None
 
 
 @pytest.mark.anyio
@@ -139,10 +145,13 @@ async def test_operator_command_can_continue_selected_child_session(operator_env
     messages = list_messages("strategy-session-1")
     assert len(messages) == 2
     assert messages[0]["content"] == {"text": "continue this review"}
-    assert messages[1]["content"] == {
-        "text": "Strategy session continued",
-        "intent": "get_strategy_lifecycle",
-    }
+    assert messages[1]["content"]["text"] == "Strategy session continued"
+    assert messages[1]["content"]["intent"] == "get_strategy_lifecycle"
+    assert messages[1]["content"]["command"] == "get_strategy_lifecycle"
+    assert messages[1]["content"]["risk_level"] == "read"
+    assert messages[1]["content"]["needs_confirmation"] is False
+    assert messages[1]["content"]["permitted"] is True
+    assert messages[1]["content"]["action"] is None
 
 
 @pytest.mark.anyio
