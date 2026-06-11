@@ -17,12 +17,15 @@ export class RepairEngine {
     const repairEligibleKinds = new Set([
       'health_attention_needed',
       'gateway_offline',
+      'mark_strategy_under_review_due',
+      'pause_paper_strategy_due',
       'strategy_promotion_proposal_due',
       'live_limited_enablement_proposal_due',
       'agent_prompt_change_proposal_due',
       'agent_schedule_change_proposal_due',
       'risk_boundary_change_proposal_due',
       'command_center_behavior_change_proposal_due',
+      'extension_enablement_proposal_due',
     ])
     const actionable = recommendations.find(
       item => item.taskType && repairEligibleKinds.has(item.kind),
@@ -46,6 +49,64 @@ export class RepairEngine {
         parameters: {
           title: 'Operator diagnostic',
           content: actionable.summary,
+        },
+      }
+    }
+    if (
+      actionable &&
+      canAutoExecute &&
+      actionable.kind === 'mark_strategy_under_review_due'
+    ) {
+      const strategyId =
+        typeof actionable.metadata?.strategy_id === 'string'
+          ? actionable.metadata.strategy_id
+          : ''
+      const reviewNotes =
+        typeof actionable.metadata?.review_notes === 'string'
+          ? actionable.metadata.review_notes
+          : actionable.summary
+      return {
+        id: `repair:${actionable.id}`,
+        shouldExecute: true,
+        classification: 'auto_execute',
+        title: 'Strategy review repair decision',
+        summary: actionable.summary,
+        rationale:
+          'Mark the paper strategy under review before further paper automation continues.',
+        recommendationId: actionable.id,
+        commandName: 'mark_strategy_under_review',
+        parameters: {
+          strategy_id: strategyId,
+          review_notes: reviewNotes,
+        },
+      }
+    }
+    if (
+      actionable &&
+      canAutoExecute &&
+      actionable.kind === 'pause_paper_strategy_due'
+    ) {
+      const strategyId =
+        typeof actionable.metadata?.strategy_id === 'string'
+          ? actionable.metadata.strategy_id
+          : ''
+      const reason =
+        typeof actionable.metadata?.reason === 'string'
+          ? actionable.metadata.reason
+          : actionable.summary
+      return {
+        id: `repair:${actionable.id}`,
+        shouldExecute: true,
+        classification: 'auto_execute',
+        title: 'Paper strategy pause repair decision',
+        summary: actionable.summary,
+        rationale:
+          'Pause the malfunctioning paper strategy before additional paper automation continues.',
+        recommendationId: actionable.id,
+        commandName: 'pause_paper_strategy',
+        parameters: {
+          strategy_id: strategyId,
+          reason,
         },
       }
     }
@@ -236,6 +297,31 @@ export class RepairEngine {
               ? actionable.metadata.command_ids.map(item => String(item))
               : [],
           },
+        },
+      }
+    }
+    if (
+      actionable &&
+      canCreateProposals &&
+      actionable.kind === 'extension_enablement_proposal_due'
+    ) {
+      const extensionId =
+        typeof actionable.metadata?.extension_id === 'string'
+          ? actionable.metadata.extension_id
+          : ''
+      return {
+        id: `repair:${actionable.id}`,
+        shouldExecute: true,
+        classification: 'proposal_only',
+        title: 'Extension enablement proposal decision',
+        summary: actionable.summary,
+        rationale:
+          'Create a typed extension enablement proposal for human review rather than enabling the extension directly.',
+        recommendationId: actionable.id,
+        commandName: 'propose_extension_enablement',
+        parameters: {
+          extension_id: extensionId,
+          rationale: actionable.summary,
         },
       }
     }

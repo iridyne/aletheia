@@ -1,6 +1,7 @@
 import type {
   AgentRunSummary,
   DreamingSummary,
+  OperatorExtensionRecord,
   OperatorRecommendation,
   PortfolioSnapshotRecord,
   PortfolioSummary,
@@ -256,6 +257,7 @@ export class RecommendationEngine {
     operatorTasks?: PersistedOperatorTask[],
     portfolioSummary?: PortfolioSummary,
     portfolioHistory?: PortfolioSnapshotRecord[],
+    operatorExtensions?: OperatorExtensionRecord[],
   ): OperatorRecommendation[] {
     const recommendations: OperatorRecommendation[] = []
 
@@ -323,6 +325,91 @@ export class RecommendationEngine {
           report_type: 'system_health',
           title: 'System Health Diagnostic Report',
           health_issues: healthIssues,
+          refresh_window_minutes: 60,
+        },
+      })
+    }
+
+    const workerHealthIssues = healthIssues.filter(issue => issue.startsWith('agent_failure_ratio:'))
+    if (
+      workerHealthIssues.length > 0 &&
+      !this.hasFreshReportArtifact(
+        recentArtifacts || [],
+        'diagnostic_report',
+        'worker_health',
+        60,
+      )
+    ) {
+      recommendations.push({
+        id: 'worker-health-review',
+        kind: 'worker_health_review_due',
+        severity: 'medium',
+        summary:
+          'Worker health is degraded and no recent worker-health diagnostic report exists. Refresh a diagnostic report for operator follow-up.',
+        taskType: 'create_diagnostic_report',
+        metadata: {
+          task_type: 'create_diagnostic_report',
+          report_type: 'worker_health',
+          title: 'Worker Health Diagnostic Report',
+          health_issues: workerHealthIssues,
+          refresh_window_minutes: 60,
+        },
+      })
+    }
+
+    const modelRuntimeHealthIssues = healthIssues.filter(
+      issue =>
+        issue.startsWith('llm_unavailable:') ||
+        issue.startsWith('code_updated_pending_restart:'),
+    )
+    if (
+      modelRuntimeHealthIssues.length > 0 &&
+      !this.hasFreshReportArtifact(
+        recentArtifacts || [],
+        'diagnostic_report',
+        'model_runtime_health',
+        60,
+      )
+    ) {
+      recommendations.push({
+        id: 'model-runtime-health-review',
+        kind: 'model_runtime_health_review_due',
+        severity: 'medium',
+        summary:
+          'Model/runtime health is degraded and no recent model-runtime diagnostic report exists. Refresh a diagnostic report for operator follow-up.',
+        taskType: 'create_diagnostic_report',
+        metadata: {
+          task_type: 'create_diagnostic_report',
+          report_type: 'model_runtime_health',
+          title: 'Model Runtime Health Diagnostic Report',
+          health_issues: modelRuntimeHealthIssues,
+          refresh_window_minutes: 60,
+        },
+      })
+    }
+
+    const dataSourceHealthIssues = healthIssues.filter(issue => issue.startsWith('market_data_stale:'))
+    if (
+      dataSourceHealthIssues.length > 0 &&
+      !this.hasFreshReportArtifact(
+        recentArtifacts || [],
+        'diagnostic_report',
+        'data_source_health',
+        60,
+      )
+    ) {
+      recommendations.push({
+        id: 'data-source-health-review',
+        kind: 'data_source_health_review_due',
+        severity: 'medium',
+        summary:
+          'Data-source health is degraded and no recent data-source diagnostic report exists. Refresh a diagnostic report for operator follow-up.',
+        taskType: 'create_diagnostic_report',
+        metadata: {
+          task_type: 'create_diagnostic_report',
+          report_type: 'data_source_health',
+          title: 'Data Source Health Diagnostic Report',
+          health_issues: dataSourceHealthIssues,
           refresh_window_minutes: 60,
         },
       })
@@ -460,6 +547,31 @@ export class RecommendationEngine {
           last_snapshot_id: latestPortfolioSnapshot?.id || null,
           stale_minutes:
             portfolioSnapshotAgeMinutes === null ? null : Math.floor(portfolioSnapshotAgeMinutes),
+        },
+      })
+    }
+
+    const readyExtension = (operatorExtensions || []).find(
+      extension =>
+        extension.status === 'sandbox_passed' &&
+        !extension.proposal_artifact_id &&
+        !!extension.latest_run_id,
+    )
+    if (!snapshot.status.paused && readyExtension) {
+      const slashCommand = readyExtension.slash_command || readyExtension.id
+      recommendations.push({
+        id: `extension-enable:${readyExtension.id}`,
+        kind: 'extension_enablement_proposal_due',
+        severity: 'medium',
+        summary: `Extension ${slashCommand} passed sandbox validation and is ready for a human-reviewed enablement proposal.`,
+        taskType: 'create_repair_proposal',
+        metadata: {
+          extension_id: readyExtension.id,
+          extension_name: readyExtension.extension_name,
+          slash_command: readyExtension.slash_command,
+          target_command: readyExtension.target_command,
+          latest_sandbox_run_id: readyExtension.latest_run_id,
+          proposal_command: 'propose_extension_enablement',
         },
       })
     }
@@ -615,6 +727,78 @@ export class RecommendationEngine {
           strategy_ids: needsStrategyEvaluationIds,
           strategy_id: needsStrategyEvaluationIds[0],
           strategy_name: strategyName,
+        },
+      })
+    }
+
+    const underReviewStrategyIds = new Set(
+      (strategySummary?.under_review_strategies || [])
+        .map(item => String(item.id || '').trim())
+        .filter(Boolean),
+    )
+    const failedUnderReviewCandidate = (strategySummary?.recent_strategy_evaluations || [])
+      .map(item => {
+        const evaluation =
+          item &&
+          typeof item === 'object' &&
+          !Array.isArray(item) &&
+          typeof item.evaluation === 'object' &&
+          item.evaluation &&
+          !Array.isArray(item.evaluation)
+            ? (item.evaluation as Record<string, unknown>)
+            : null
+        const strategy =
+          evaluation &&
+          typeof evaluation.strategy === 'object' &&
+          evaluation.strategy &&
+          !Array.isArray(evaluation.strategy)
+            ? (evaluation.strategy as Record<string, unknown>)
+            : null
+        const promotionGates =
+          evaluation &&
+          typeof evaluation.promotion_gates === 'object' &&
+          evaluation.promotion_gates &&
+          !Array.isArray(evaluation.promotion_gates)
+            ? (evaluation.promotion_gates as Record<string, unknown>)
+            : null
+        const strategyId = String(item.strategy_id || '').trim()
+        const failedGates = Array.isArray(promotionGates?.failures)
+          ? promotionGates?.failures.map(failure => String(failure)).filter(Boolean)
+          : []
+        return {
+          strategyId,
+          strategyName: typeof item.strategy_name === 'string' ? item.strategy_name : '',
+          state: typeof strategy?.state === 'string' ? strategy.state : '',
+          passed: Boolean(promotionGates?.passed),
+          failedGates,
+        }
+      })
+      .find(item =>
+        item.strategyId &&
+        !underReviewStrategyIds.has(item.strategyId) &&
+        ['paper_running', 'paper_passed'].includes(item.state) &&
+        item.passed === false,
+      )
+    if (!snapshot.status.paused && failedUnderReviewCandidate) {
+      const gateSummary =
+        failedUnderReviewCandidate.failedGates.length > 0
+          ? failedUnderReviewCandidate.failedGates.slice(0, 3).join(', ')
+          : 'promotion checks failed'
+      recommendations.push({
+        id: `mark-strategy-under-review:${failedUnderReviewCandidate.strategyId}`,
+        kind: 'mark_strategy_under_review_due',
+        severity: 'medium',
+        summary: `Strategy ${failedUnderReviewCandidate.strategyName || failedUnderReviewCandidate.strategyId} failed recent promotion gates (${gateSummary}) and should be marked under review before paper automation continues.`,
+        taskType: 'create_repair_proposal',
+        metadata: {
+          strategy_id: failedUnderReviewCandidate.strategyId,
+          strategy_name: failedUnderReviewCandidate.strategyName || null,
+          failed_gates: failedUnderReviewCandidate.failedGates,
+          review_notes:
+            failedUnderReviewCandidate.failedGates.length > 0
+              ? `Promotion gates failed: ${gateSummary}`
+              : 'Promotion gates failed during recent operator evaluation',
+          repair_command: 'mark_strategy_under_review',
         },
       })
     }

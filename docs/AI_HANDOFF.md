@@ -7,7 +7,162 @@
 
 ## Last Updated
 
-2026-06-11 (Operator runtime 已补到 enabled extension slash dispatch + extension sandbox 第一层 + inspectable working-memory files + budgeted recovery folding + recovery-contract recent-error/heartbeat-intent fallback + staged queue review cadence + explicit 5-minute subsystem review tier + `market_scan_refresh_due`/`run_market_scan` + `failed_agent_rerun_due`/`rerun_failed_agent_task` + `daily_review_refresh_due`/`create_daily_review` + `portfolio_snapshot_refresh_due`/`run_portfolio_snapshot`/`portfolio_agent` + `pause_paper_strategy_due`/`pause_paper_strategy` + `strategy_design_due`/`run_strategy_design` + `risk_critique_due`/`run_risk_critique` + permission-aware task materialization + persisted active-branch heartbeat/recovery truth + active-branch-frozen session parent inheritance + session-targeted multi-turn command continuation + nested session-tree branch create/select + descendant-branch recovery folding + user-driven branch workspace create/select + branch bootstrap context seeding + strategy proposal ladder 扩到 `paper_passed -> live_candidate` / `live_candidate -> live_limited` + authoritative command preview + structured result cards / command trace + short-lived operator mode truth(`Repairing/Trading/Reviewing/Dreaming` 不再在同一 loop 内被统一抹回 `Observing`，同时保持 recovery 不直接进 `Trading`)；文档同步到当前实现边界)
+2026-06-11 (Operator runtime 已补到 enabled extension slash dispatch + extension sandbox 第一层 + inspectable working-memory files + budgeted recovery folding + recovery-contract recent-error/heartbeat-intent fallback + staged queue review cadence + explicit 5-minute subsystem review tier + `market_scan_refresh_due`/`run_market_scan` + `failed_agent_rerun_due`/`rerun_failed_agent_task` + `daily_review_refresh_due`/`create_daily_review` + `portfolio_snapshot_refresh_due`/`run_portfolio_snapshot`/`portfolio_agent` + `pause_paper_strategy_due`/`pause_paper_strategy` + `strategy_design_due`/`run_strategy_design` + `risk_critique_due`/`run_risk_critique` + `extension_enablement_proposal_due`/`propose_extension_enablement` + permission-aware task materialization + persisted active-branch heartbeat/recovery truth + active-branch-frozen session parent inheritance + active-branch-outside-fetch-window detail recovery + session-targeted multi-turn command continuation + session-kind-scoped continuation/preview context + persisted branch context/result trace folded into continuation summaries + parent-branch trace folded into nested continuation summaries + nested session-tree branch create/select + descendant-branch recovery folding + user-driven branch workspace create/select + branch bootstrap context seeding + strategy proposal ladder 扩到 `paper_passed -> live_candidate` / `live_candidate -> live_limited` + authoritative command preview + structured result cards / command trace + short-lived operator mode truth(`Repairing/Trading/Reviewing/Dreaming` 不再在同一 loop 内被统一抹回 `Observing`，同时保持 recovery 不直接进 `Trading`)；文档同步到当前实现边界)
+
+## Recent Change (Authoritative active branch now recovers its own detail even outside the default recent-branch window — 2026-06-11 第四十六段)
+
+**1. 这次补的是 persisted active branch recovery 的一个真实漏口**：
+- 之前 `active_branch_id` 虽然已经是 authoritative truth
+- 但 `recoverState()` 只会抓固定窗口内的 recent branch detail
+- 如果当前 active branch 比那批 recent branch 更旧,恢复回来就只剩 branch title / summary 壳
+
+**2. 现在恢复会优先保住当前 active branch 的 detail**：
+- `OperatorLoop.recoverState()` 仍保持有限的 branch-detail 抓取窗口
+- 但会先把 authoritative `active_branch_id` 提前到 detail fetch 优先级最前
+- 所以当前 branch 即使掉出默认 recent-window,也会把它自己的 assistant/result/artifact 语义拉回
+
+**3. 这次修的是 PI-style branch runtime 的一致性,不是文案润色**：
+- 当前 active branch 代表“正在工作的那条分支”
+- 如果 crash recovery 只记住它的标题,而忘了它自己的最近结论,那就不是真正的 branch continuation
+- 现在这条边界至少已经收住:active branch 不会因为 recency slicing 被恢复成空壳
+
+**4. 当前验证结果（本轮后）**：
+- `operator-shell npm test -- --test-name-pattern "authoritative active branch detail even when it falls outside the recent branch detail window"` → PASS
+- `operator-shell npm test` → PASS（76 tests）
+- `operator-shell npm run build` → PASS
+
+## Recent Change (Selected child-session continuation now carries session-kind-specific context instead of a generic summary — 2026-06-11 第四十七段)
+
+**1. 这次补的是 selected-session continuation 里的一个真实 runtime 失真**：
+- 之前 child session 虽然已经可以被真正继续
+- 但 Python compatibility runtime 与 `/api/operator/command-preview` 仍然一律拼通用 `system / market / agents / trading` 摘要
+- 结果就是 `diagnostic / dreaming / strategy / review` branch 虽然“写回到对的 session”，却没有真的带着 branch 自己的 context lane 继续
+
+**2. 现在 continuation 与 preview 都开始按 session kind 选 context profile**：
+- `strategy_session / review_session` 会吃 `trading_context`
+- `diagnostic_session` 会吃 `repair_context`
+- `dreaming_session` 会吃 `knowledge_context`
+- 这条选择同时进入 `AgentShellRuntime.handle()` 与 `/api/operator/command-preview`
+
+**3. 这次修的是 PI-style multi-turn branch runtime 的第一层一致性**：
+- preview 和实际执行现在不再是两套上下文
+- selected-session continuation 也不再只是“复用 session_id”
+- branch continuation 开始真正尊重 branch 自己的上下文类型
+
+**4. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_agent_shell.py -q -k "session_kind_context_profile_for_selected_branch"` → PASS
+- `uv run pytest tests/test_operator_routes.py -q -k "selected_session_kind_context_profile"` → PASS
+- `uv run pytest tests/test_agent_shell.py tests/test_operator_routes.py tests/test_operator_command_route.py -q` → `113 passed`
+
+## Recent Change (Selected child-session continuation now also reads persisted branch context/result trace — 2026-06-11 第四十八段)
+
+**1. 这次补的是 branch bootstrap context 仍然停在“只给 UI 看”的真缺口**：
+- 之前 branch 创建时已经会 seed `context` message
+- branch 内上一轮 assistant/result 也已经会被持久化
+- 但 Python runtime 与 `/api/operator/command-preview` 做下一轮分类时，并不会把这些已存下来的 branch 线索读回来
+
+**2. 现在 continuation summary 会 deterministic 地吸收这批 session trace**：
+- 会优先读取该 session 最近的 `context` message
+- 也会折入最近一条 assistant/result 结论
+- 如有需要，还会带回最近 user note
+- 这条拼接同时进入 `AgentShellRuntime.handle()` 与 `/api/operator/command-preview`
+
+**3. 这次修的是更深一层的 PI-style multi-turn branch continuity**：
+- 上一轮已经补了“按 session kind 选 profile”
+- 这轮继续补“把 branch 已记录的上下文与最近结论真正带入下一轮 summary”
+- 所以 branch bootstrap context 不再只是 inspector 可见，而开始成为 continuation 的真实输入
+
+**4. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_agent_shell.py -q -k "recent_session_context_and_trace_in_branch_summary"` → PASS
+- `uv run pytest tests/test_operator_routes.py -q -k "includes_recent_session_context_and_trace"` → PASS
+- `uv run pytest tests/test_agent_shell.py tests/test_operator_routes.py tests/test_operator_command_route.py -q` → `115 passed`
+
+## Recent Change (Nested child-session continuation now also inherits parent-branch trace — 2026-06-11 第四十九段)
+
+**1. 这次补的是 nested session tree 里的上游语义继承缺口**：
+- 上一轮已经补了“本 session 的 context/result trace 会进入 continuation summary”
+- 但如果当前 branch 本身很薄、真正的工作背景在 parent strategy/diagnostic branch，上下文仍然会断层
+- 结果就是 nested branch 虽然挂在对的树上，实际 continuation 还是缺上游语义
+
+**2. 现在 runtime / preview 会沿 `parent_session_id` 折回有限层数 ancestor trace**：
+- 会顺着 parent chain 读取上游 session
+- 提取 parent branch 最近的 context/result 摘要
+- 然后把这批 ancestor trace 折进当前 nested branch 的 continuation summary
+
+**3. 这次修的是更深一层的 PI-style branch orchestration**：
+- nested branch 不再只依赖“自己这一层”的 message
+- parent strategy/root branch 的最近结论开始真正传递到 child review/diagnostic continuation
+- session tree 的层级关系因此不再只是 UI 结构,而开始成为 runtime 语义
+
+**4. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_agent_shell.py -q -k "parent_branch_trace_for_nested_session_summary"` → PASS
+- `uv run pytest tests/test_operator_routes.py -q -k "parent_branch_trace_for_nested_session"` → PASS
+- `uv run pytest tests/test_agent_shell.py tests/test_operator_routes.py tests/test_operator_command_route.py -q` → `117 passed`
+
+## Recent Change (Specialized 1–5 minute health diagnostics now land as dedicated diagnostic reports — 2026-06-11 第五十段)
+
+**1. 这次补掉的是 1–5 分钟 health review 仍然只剩一个总括 system-health 报告的缺口**：
+- backend `build_recommendations()` 与 Node `RecommendationEngine` 现在会继续把 health issue 拆成三条专门 truth：
+  - `worker_health_review_due`
+  - `model_runtime_health_review_due`
+  - `data_source_health_review_due`
+- 触发条件直接绑定现有真实信号，而不是新造状态：
+  - `agent_failure_ratio:*`
+  - `llm_unavailable:*` / `code_updated_pending_restart:*`
+  - `market_data_stale:*`
+
+**2. 这三条 review 现在都是完整闭环，而不是 recommendation-only**：
+- `create_diagnostic_report` 已支持 `worker_health / model_runtime_health / data_source_health` 三种 report type
+- `OperatorLoop` 会在 `Research+` 下把它们物化成 typed `create_diagnostic_report` task
+- 会创建 dedicated diagnostic session、写专门 Markdown、落 `diagnostic_report` artifact，并把 result/task completion 回写到 operator truth layer
+
+**3. 这次边界要说准**：
+- 已接通：
+  - 1–5 分钟层的 specialized health diagnostics
+  - specialized report type → typed command → artifact → diagnostic session
+- 仍未接通：
+  - 更广的 scheduled scan/review opportunities
+  - 更深的 PI-style session runtime
+
+**4. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_events.py tests/test_agent_shell.py tests/test_operator_routes.py tests/test_operator_command_route.py -q` → `154 passed`
+- `operator-shell npm test` → PASS（80 tests）
+- `operator-shell npm run build` → PASS
+
+## Historical Note (Phase 2A planning folded back into ROADMAP — 2026-06-11)
+
+- `phase-2a` 不再保留为单独的规划分支/文档面。
+- `docs/ROADMAP.md` 现为 Phase 2A（structured executable strategy signals）的权威规划源。
+
+## Recent Change (Sandbox-passed extensions now turn into real enablement proposals — 2026-06-11 第四十五段)
+
+**1. 这次补掉的是 extension sandbox 还停在“手动三段命令”的真缺口**：
+- `draft_extension_manifest / test_extension_sandbox / propose_extension_enablement` 这三条 typed command 之前都已经存在
+- 但 operator runtime 并不会主动发现“某个 extension 已经 sandbox 通过、现在该进入 proposal”
+- 结果就是 extension sandbox 虽然能手动跑通，但没有 recommendation truth，也没有 proposal-only materialization
+
+**2. 现在 backend 与 Node recommendation truth 都会显式识别这类机会**：
+- 只要 extension registry 里存在 `sandbox_passed` extension
+- 且它还没有 enablement proposal artifact
+- 就会产出 `extension_enablement_proposal_due`
+- recommendation metadata 会带回 `extension_id / extension_name / slash_command / target_command / latest_sandbox_run_id`
+
+**3. 这条 recommendation 现在已经接成真实 proposal-only 链路**：
+- `RepairEngine` 会把它转成 `create_repair_proposal` decision
+- `operator-shell` 会执行 typed `propose_extension_enablement`
+- 最终落出 `extension_enablement_proposal` artifact，并写 `proposal_created` 事件，而不是直接启用 extension
+
+**4. 这条链路的边界是收敛的**：
+- 它不会绕过人类审批直接 enable extension
+- 也不改变 worker/trading permission、execution gateway 或 live 语义
+- 它只是把“sandbox 已通过、值得进入审批”这一步拉进 operator runtime 的真实闭环
+
+**5. 当前验证结果（本轮后）**：
+- `uv run pytest tests/test_operator_events.py -q -k "extension_enablement_proposal_due"` → PASS
+- `uv run pytest tests/test_operator_events.py tests/test_operator_routes.py tests/test_operator_command_route.py tests/test_agent_shell.py -q` → `142 passed`
+- `operator-shell: npm test -- --test-name-pattern "extension enablement proposals"` → PASS
+- `operator-shell: npm test` → `75 passed`
+- `operator-shell: npm run build` → PASS
 
 ## Recent Change (Open positions without a fresh portfolio snapshot now turn into a real specialist review task — 2026-06-11 第四十四段)
 

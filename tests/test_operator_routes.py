@@ -4,8 +4,11 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from unittest.mock import AsyncMock, patch
 
 from aletheia.server.app import app
+from aletheia.agent_shell.context import sections_for_profile
+from aletheia.agent_shell.intent import CommandIntent
 
 
 @pytest.fixture
@@ -584,6 +587,193 @@ async def test_operator_command_preview_accounts_for_worker_global_safety(client
     assert payload["denial_reason"].startswith("This command is currently blocked by worker/global safety.")
     assert payload["command"]["worker_permission_required"] == "Paper"
     assert payload["command"]["operator_permission_required"] == "PaperAuto"
+
+
+@pytest.mark.anyio
+async def test_operator_command_preview_uses_selected_session_kind_context_profile(client):
+    created = await client.post(
+        "/api/operator/internal/sessions",
+        json={
+            "id": "diagnostic-preview-session",
+            "user_input": "Investigate stale market data.",
+            "kind": "diagnostic_session",
+            "parent_session_id": "operator-main",
+            "title": "Diagnostic Preview Session",
+        },
+    )
+    assert created.status_code == 200
+
+    captured_sections: list[list[str]] = []
+
+    def fake_build_app_context(sections=None):
+        captured_sections.append(list(sections or []))
+        return {"system": {"healthy": False, "issues": ["market_data_stale:45m"]}}
+
+    with patch(
+        "aletheia.server.routes.operator.build_app_context",
+        side_effect=fake_build_app_context,
+    ), patch(
+        "aletheia.server.routes.operator.context_summary_text",
+        return_value="repair summary",
+    ), patch(
+        "aletheia.agent_shell.intent.classify_intent",
+        new_callable=AsyncMock,
+        return_value=CommandIntent(command="query", parameters={}, confidence=0.9),
+    ):
+        response = await client.post(
+            "/api/operator/command-preview",
+            json={
+                "input": "what should this diagnostic branch do next?",
+                "session_id": "diagnostic-preview-session",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["classification"] == "query"
+    assert payload["intent"] == "query"
+    assert captured_sections == [sections_for_profile("repair_context")]
+
+
+@pytest.mark.anyio
+async def test_operator_command_preview_includes_recent_session_context_and_trace(client):
+    created = await client.post(
+        "/api/operator/internal/sessions",
+        json={
+            "id": "strategy-preview-session",
+            "user_input": "Review promotion blockers for Momentum A.",
+            "kind": "strategy_session",
+            "parent_session_id": "operator-main",
+            "title": "Momentum A Review",
+        },
+    )
+    assert created.status_code == 200
+
+    await client.post(
+        "/api/operator/internal/messages",
+        json={
+            "session_id": "strategy-preview-session",
+            "role": "assistant",
+            "message_type": "context",
+            "content": {
+                "text": "Strategy branch context: Momentum A is under review until promotion blockers clear."
+            },
+        },
+    )
+    await client.post(
+        "/api/operator/internal/messages",
+        json={
+            "session_id": "strategy-preview-session",
+            "role": "assistant",
+            "message_type": "response",
+            "content": {
+                "text": "Previous strategy result: do not widen live-risk permissions for Momentum A yet."
+            },
+        },
+    )
+
+    captured_summary: dict[str, str] = {}
+
+    async def fake_classify_intent(text, summary):
+        captured_summary["value"] = summary
+        return CommandIntent(command="query", parameters={}, confidence=0.9)
+
+    response = None
+    with patch(
+        "aletheia.agent_shell.intent.classify_intent",
+        side_effect=fake_classify_intent,
+    ):
+        response = await client.post(
+            "/api/operator/command-preview",
+            json={
+                "input": "what is this strategy branch still waiting on?",
+                "session_id": "strategy-preview-session",
+            },
+        )
+
+    assert response is not None
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["classification"] == "query"
+    assert payload["intent"] == "query"
+    assert "Strategy branch context: Momentum A is under review until promotion blockers clear." in captured_summary["value"]
+    assert "Previous strategy result: do not widen live-risk permissions for Momentum A yet." in captured_summary["value"]
+
+
+@pytest.mark.anyio
+async def test_operator_command_preview_includes_parent_branch_trace_for_nested_session(client):
+    created_parent = await client.post(
+        "/api/operator/internal/sessions",
+        json={
+            "id": "strategy-parent-preview",
+            "user_input": "Investigate Momentum root.",
+            "kind": "strategy_session",
+            "parent_session_id": "operator-main",
+            "title": "Momentum Root",
+        },
+    )
+    assert created_parent.status_code == 200
+    created_child = await client.post(
+        "/api/operator/internal/sessions",
+        json={
+            "id": "review-child-preview",
+            "user_input": "Review nested drawdown branch.",
+            "kind": "review_session",
+            "parent_session_id": "strategy-parent-preview",
+            "title": "Nested Drawdown Review",
+        },
+    )
+    assert created_child.status_code == 200
+
+    await client.post(
+        "/api/operator/internal/messages",
+        json={
+            "session_id": "strategy-parent-preview",
+            "role": "assistant",
+            "message_type": "context",
+            "content": {
+                "text": "Parent preview context: Momentum root still controls promotion sequencing."
+            },
+        },
+    )
+    await client.post(
+        "/api/operator/internal/messages",
+        json={
+            "session_id": "strategy-parent-preview",
+            "role": "assistant",
+            "message_type": "response",
+            "content": {
+                "text": "Parent preview result: clear the promotion backlog before asking for live-candidate escalation."
+            },
+        },
+    )
+
+    captured_summary: dict[str, str] = {}
+
+    async def fake_classify_intent(text, summary):
+        captured_summary["value"] = summary
+        return CommandIntent(command="query", parameters={}, confidence=0.9)
+
+    response = None
+    with patch(
+        "aletheia.agent_shell.intent.classify_intent",
+        side_effect=fake_classify_intent,
+    ):
+        response = await client.post(
+            "/api/operator/command-preview",
+            json={
+                "input": "what is this nested review branch blocked on?",
+                "session_id": "review-child-preview",
+            },
+        )
+
+    assert response is not None
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["classification"] == "query"
+    assert payload["intent"] == "query"
+    assert "Parent preview context: Momentum root still controls promotion sequencing." in captured_summary["value"]
+    assert "Parent preview result: clear the promotion backlog before asking for live-candidate escalation." in captured_summary["value"]
 
 
 @pytest.mark.anyio

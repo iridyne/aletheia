@@ -1,7 +1,12 @@
 """AppContextProvider — assembles compact system context for LLM prompts."""
 
 from aletheia.config.loader import load_config
-from aletheia.agent_shell.operator_store import get_latest_heartbeat, list_tasks
+from aletheia.agent_shell.operator_store import (
+    get_latest_heartbeat,
+    get_session,
+    list_messages,
+    list_tasks,
+)
 from aletheia.storage.repositories import (
     list_agent_runs,
     list_trade_proposals,
@@ -26,6 +31,14 @@ ALL_SECTIONS = (
     "operator_state",
 )
 
+DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND: dict[str, str] = {
+    "command_session": "operational_context",
+    "diagnostic_session": "repair_context",
+    "dreaming_session": "knowledge_context",
+    "strategy_session": "trading_context",
+    "review_session": "trading_context",
+}
+
 CONTEXT_PROFILES: dict[str, tuple[str, ...]] = {
     "minimal_context": ("system", "operator_state"),
     "operational_context": ("system", "agents", "proposals", "errors", "operator_state"),
@@ -37,6 +50,120 @@ CONTEXT_PROFILES: dict[str, tuple[str, ...]] = {
 
 def sections_for_profile(profile: str) -> list[str]:
     return list(CONTEXT_PROFILES.get(profile, CONTEXT_PROFILES["operational_context"]))
+
+
+def profile_for_session_kind(session_kind: str | None) -> str:
+    return DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND.get(
+        str(session_kind or "command_session"),
+        "operational_context",
+    )
+
+
+def sections_for_session_kind(session_kind: str | None) -> list[str]:
+    return sections_for_profile(profile_for_session_kind(session_kind))
+
+
+def _message_text(content) -> str | None:
+    if isinstance(content, str):
+        text = content.strip()
+        return text or None
+    if isinstance(content, dict):
+        text = content.get("text")
+        if isinstance(text, str):
+            text = text.strip()
+            return text or None
+    return None
+
+
+def session_trace_summary(
+    session_id: str | None,
+    *,
+    pending_user_input: str | None = None,
+    limit: int = 50,
+) -> str:
+    if not session_id:
+        return ""
+
+    latest_context: str | None = None
+    latest_assistant: str | None = None
+    latest_user: str | None = None
+    normalized_pending = (pending_user_input or "").strip()
+
+    for message in reversed(list_messages(session_id, limit=limit)):
+        text = _message_text(message.get("content"))
+        if not text:
+            continue
+        if normalized_pending and text == normalized_pending:
+            continue
+
+        message_type = str(message.get("message_type") or "message")
+        role = str(message.get("role") or "assistant")
+        if latest_context is None and message_type == "context":
+            latest_context = text
+            continue
+        if latest_assistant is None and role == "assistant" and message_type != "context":
+            latest_assistant = text
+            continue
+        if latest_user is None and role == "user":
+            latest_user = text
+
+        if latest_context and latest_assistant and latest_user:
+            break
+
+    parts: list[str] = []
+    if latest_context:
+        parts.append(f"Session context: {latest_context}")
+    if latest_assistant:
+        parts.append(f"Recent assistant result: {latest_assistant}")
+    if latest_user:
+        parts.append(f"Recent user note: {latest_user}")
+    return " ".join(parts)
+
+
+def session_lineage_trace_summary(
+    session_id: str | None,
+    *,
+    max_ancestors: int = 3,
+) -> str:
+    if not session_id:
+        return ""
+
+    parts: list[str] = []
+    seen = {session_id}
+    current = get_session(session_id)
+    parent_session_id = str(current.get("parent_session_id") or "").strip() if current else ""
+    depth = 0
+
+    while parent_session_id and depth < max_ancestors and parent_session_id not in seen:
+        seen.add(parent_session_id)
+        parent_session = get_session(parent_session_id)
+        if not parent_session:
+            break
+        summary = session_trace_summary(parent_session_id, limit=50)
+        if summary:
+            title = str(parent_session.get("title") or parent_session_id).strip() or parent_session_id
+            parts.append(f"Parent branch {title}: {summary}")
+        parent_session_id = str(parent_session.get("parent_session_id") or "").strip()
+        depth += 1
+
+    return " ".join(parts)
+
+
+def extend_summary_with_session_trace(
+    summary: str,
+    session_id: str | None,
+    *,
+    pending_user_input: str | None = None,
+) -> str:
+    traces = [
+        session_trace_summary(session_id, pending_user_input=pending_user_input),
+        session_lineage_trace_summary(session_id),
+    ]
+    trace = " ".join(item for item in traces if item)
+    if not trace:
+        return summary
+    base = summary.strip()
+    return f"{base} {trace}".strip()
 
 
 def build_app_context(sections: list[str] | None = None) -> dict:

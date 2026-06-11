@@ -75,9 +75,18 @@ class AgentShellRuntime:
         permission_scope: str = "worker",
         session_id: str | None = None,
     ) -> CommandResponse:
-        from aletheia.agent_shell.context import build_app_context, context_summary_text
+        from aletheia.agent_shell.context import (
+            build_app_context,
+            context_summary_text,
+            extend_summary_with_session_trace,
+            sections_for_session_kind,
+        )
         from aletheia.agent_shell.intent import classify_intent
-        from aletheia.agent_shell.operator_store import create_event, get_extension_by_slash_command
+        from aletheia.agent_shell.operator_store import (
+            create_event,
+            get_extension_by_slash_command,
+            get_session,
+        )
         from aletheia.agent_shell.permissions import check_permission
         from aletheia.agent_shell.commands import HANDLERS
         from aletheia.agent_shell.registry import COMMANDS, FORBIDDEN_INTENTS
@@ -103,8 +112,19 @@ class AgentShellRuntime:
             current_mode = cfg.agent.permission_mode
 
         try:
-            ctx = build_app_context(["system", "market", "agents", "trading"])
-            summary = context_summary_text(ctx)
+            session = get_session(session_id) if session_id else None
+            session_kind = str(session.get("kind") or "command_session") if session else "command_session"
+            context_sections = (
+                sections_for_session_kind(session_kind)
+                if session and session_kind != "command_session"
+                else ["system", "market", "agents", "trading"]
+            )
+            ctx = build_app_context(context_sections)
+            summary = extend_summary_with_session_trace(
+                context_summary_text(ctx),
+                session_id,
+                pending_user_input=text,
+            )
 
             extension_invocation = self._split_extension_invocation(text)
             if extension_invocation is not None:

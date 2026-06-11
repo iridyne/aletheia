@@ -411,6 +411,60 @@ async def test_operator_recommendations_include_pause_paper_strategy_due_for_und
 
 
 @pytest.mark.anyio
+async def test_operator_recommendations_include_mark_strategy_under_review_due_for_failed_promotion_gates(
+    client,
+):
+    from aletheia.agent_shell.operator_store import create_artifact
+    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.repositories import insert_strategy
+
+    strategy = StrategyRecord(
+        name="Review Candidate",
+        state="paper_running",
+    )
+    insert_strategy(strategy)
+
+    create_artifact(
+        task_id=None,
+        session_id="strategy-eval-session",
+        artifact_type="strategy_evaluation",
+        title="Failed promotion-gate evaluation",
+        content={
+            "strategy_id": strategy.id,
+            "strategy_name": "Review Candidate",
+            "summary": "Promotion gates failed for paper strategy.",
+            "evaluation": {
+                "strategy": {
+                    "id": strategy.id,
+                    "name": "Review Candidate",
+                    "state": "paper_running",
+                },
+                "promotion_gates": {
+                    "passed": False,
+                    "failures": ["drawdown_too_high", "win_rate_below_threshold"],
+                },
+            },
+        },
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "mark_strategy_under_review_due"
+    )
+    assert due["taskType"] == "create_repair_proposal"
+    assert due["metadata"]["strategy_id"] == strategy.id
+    assert due["metadata"]["failed_gates"] == [
+        "drawdown_too_high",
+        "win_rate_below_threshold",
+    ]
+    assert due["metadata"]["repair_command"] == "mark_strategy_under_review"
+
+
+@pytest.mark.anyio
 async def test_operator_recommendations_include_prompt_change_proposal_due_for_repeated_agent_failures(client):
     from aletheia.storage.models import AgentRun
     from aletheia.storage.repositories import insert_agent_run
@@ -670,6 +724,60 @@ async def test_operator_recommendations_include_system_health_report_refresh_due
     assert len(due) == 1
     assert due[0]["taskType"] == "create_diagnostic_report"
     assert due[0]["metadata"]["report_type"] == "system_health"
+    assert due[0]["metadata"]["refresh_window_minutes"] == 60
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_worker_health_review_due_when_agent_failure_ratio_is_degraded(client):
+    with patch(
+        "aletheia.agent_runtime.health.compute_health",
+        return_value={"healthy": False, "issues": ["agent_failure_ratio:0.40>0.25"]},
+    ):
+        recommendations = await client.get("/api/operator/recommendations")
+
+    assert recommendations.status_code == 200
+
+    payload = recommendations.json()
+    due = [item for item in payload if item["kind"] == "worker_health_review_due"]
+    assert len(due) == 1
+    assert due[0]["taskType"] == "create_diagnostic_report"
+    assert due[0]["metadata"]["report_type"] == "worker_health"
+    assert due[0]["metadata"]["refresh_window_minutes"] == 60
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_model_runtime_health_review_due_when_llm_health_is_degraded(client):
+    with patch(
+        "aletheia.agent_runtime.health.compute_health",
+        return_value={"healthy": False, "issues": ["llm_unavailable:3"]},
+    ):
+        recommendations = await client.get("/api/operator/recommendations")
+
+    assert recommendations.status_code == 200
+
+    payload = recommendations.json()
+    due = [item for item in payload if item["kind"] == "model_runtime_health_review_due"]
+    assert len(due) == 1
+    assert due[0]["taskType"] == "create_diagnostic_report"
+    assert due[0]["metadata"]["report_type"] == "model_runtime_health"
+    assert due[0]["metadata"]["refresh_window_minutes"] == 60
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_data_source_health_review_due_when_market_data_is_stale(client):
+    with patch(
+        "aletheia.agent_runtime.health.compute_health",
+        return_value={"healthy": False, "issues": ["market_data_stale:45m"]},
+    ):
+        recommendations = await client.get("/api/operator/recommendations")
+
+    assert recommendations.status_code == 200
+
+    payload = recommendations.json()
+    due = [item for item in payload if item["kind"] == "data_source_health_review_due"]
+    assert len(due) == 1
+    assert due[0]["taskType"] == "create_diagnostic_report"
+    assert due[0]["metadata"]["report_type"] == "data_source_health"
     assert due[0]["metadata"]["refresh_window_minutes"] == 60
 
 
@@ -1077,6 +1185,41 @@ async def test_operator_recommendations_suppress_command_center_behavior_change_
         item["kind"] == "command_center_behavior_change_proposal_due"
         for item in recommendations.json()
     )
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_include_extension_enablement_proposal_due_for_passed_sandbox_extension(
+    client,
+):
+    from aletheia.agent_shell.commands import (
+        draft_extension_manifest,
+        test_extension_sandbox,
+    )
+
+    draft = await draft_extension_manifest(
+        {
+            "extension_name": "Explain Proposal",
+            "slash_command": "/explain-proposal",
+            "description": "Open a structured explanation flow for the latest proposal.",
+            "target_command": "explain_proposal",
+            "capabilities": ["operator_command_proxy"],
+        }
+    )
+    sandbox = await test_extension_sandbox({"extension_id": draft["extension_id"]})
+    assert sandbox["passed"] is True
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    due = next(
+        item
+        for item in recommendations.json()
+        if item["kind"] == "extension_enablement_proposal_due"
+    )
+    assert due["taskType"] == "create_repair_proposal"
+    assert due["metadata"]["proposal_command"] == "propose_extension_enablement"
+    assert due["metadata"]["extension_id"] == draft["extension_id"]
+    assert due["metadata"]["slash_command"] == "/explain-proposal"
 
 
 @pytest.mark.anyio

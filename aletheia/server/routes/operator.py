@@ -13,9 +13,13 @@ from pydantic import BaseModel
 from aletheia.agent_shell.context import (
     ALL_SECTIONS,
     CONTEXT_PROFILES,
+    DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND,
     build_app_context,
     context_summary_text,
+    extend_summary_with_session_trace,
+    profile_for_session_kind,
     sections_for_profile,
+    sections_for_session_kind,
 )
 from aletheia.agent_shell.operator_recommendations import build_recommendations
 from aletheia.agent_shell.operator_store import (
@@ -45,13 +49,6 @@ from aletheia.config.loader import load_config, save_config
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 
-DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND = {
-    "command_session": "operational_context",
-    "diagnostic_session": "repair_context",
-    "dreaming_session": "knowledge_context",
-    "strategy_session": "trading_context",
-    "review_session": "trading_context",
-}
 OPERATOR_SESSION_KINDS = tuple(DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND.keys())
 
 
@@ -454,10 +451,7 @@ def _resolve_context_query(
         if session and session.get("kind")
         else "command_session"
     )
-    effective_profile = profile or DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND.get(
-        session_kind,
-        "operational_context",
-    )
+    effective_profile = profile or profile_for_session_kind(session_kind)
     if effective_profile not in CONTEXT_PROFILES:
         raise HTTPException(400, f"Unknown context profile: {effective_profile}")
 
@@ -599,8 +593,22 @@ async def _preview_operator_command(req: OperatorCommandPreviewRequest) -> dict[
         payload["intent"] = command_name or "extension_unknown"
         payload["classification"] = "typed_command"
     else:
-        ctx = build_app_context(["system", "market", "agents", "trading"])
-        summary = context_summary_text(ctx)
+        session_kind = "command_session"
+        if payload["session_id"]:
+            session = get_session(payload["session_id"])
+            if session and session.get("kind"):
+                session_kind = str(session.get("kind"))
+        effective_sections = (
+            sections_for_session_kind(session_kind)
+            if session_kind != "command_session"
+            else ["system", "market", "agents", "trading"]
+        )
+        ctx = build_app_context(effective_sections)
+        summary = extend_summary_with_session_trace(
+            context_summary_text(ctx),
+            payload["session_id"],
+            pending_user_input=text,
+        )
         intent = await classify_intent(text, summary)
         payload["intent"] = intent.command
         payload["confidence"] = intent.confidence

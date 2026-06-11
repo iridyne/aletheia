@@ -241,6 +241,7 @@ risk_critic：已排入 scheduler（每 6h）
         │   • stale `market_observer` activity now surfaces `market_scan_refresh_due`, and in `PaperAuto+` the shell materializes it into a real `run_market_scan` command-session task instead of leaving scheduled scan refresh as a pure recommendation
         │   • unresolved recent failed worker runs now surface `failed_agent_rerun_due`, and in `PaperAuto+` the shell materializes them into real `rerun_failed_agent_task` command-session tasks instead of leaving one-off failures as pure passive diagnostics
         │   • missing same-day UTC daily review now surfaces `daily_review_refresh_due`, and in `Research+` the shell materializes it into a real `create_daily_review` review-session task with deterministic operator-summary content
+        │   • specialized 1–5 minute health reviews now surface `worker_health_review_due` / `model_runtime_health_review_due` / `data_source_health_review_due`, and in `Research+` the shell materializes them into typed `create_diagnostic_report` tasks with dedicated Markdown artifacts
         │   • task materialization is now permission-aware, so `ReadOnly/Research` no longer spawn higher-permission proposal or operational-control tasks that can only get stuck in backlog
         ├─ 设计源:
         │   • OPERATOR_LAYER_DESIGN.md (概念层)
@@ -250,7 +251,7 @@ risk_critic：已排入 scheduler（每 6h）
         ├─ 仍缺:
         │   • 更深的 PI-style session runtime
         │   • 更广的 15–60 分钟层 scheduled scan/review opportunities
-        │   • 当前这批专门报告已落地；下一层仍是更深的 session/runtime 行为
+        │   • 当前这批专门报告与 1–5 分钟层 specialized health diagnostics 已落地；下一层仍是更深的 session/runtime 行为
         └─ 约束:不作为 Phase 0 达标证据,不提前合并 master
 
   下一步  Phase 1 — Learning Quality Diagnosis

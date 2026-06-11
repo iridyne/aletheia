@@ -78,6 +78,7 @@ export class OperatorLoop {
     riskSummary: Awaited<ReturnType<BackendGatewayClient['getRiskSummary']>>
     portfolioSummary: Awaited<ReturnType<BackendGatewayClient['getPortfolioSummary']>>
     portfolioHistory: Awaited<ReturnType<BackendGatewayClient['getPortfolioHistory']>>
+    operatorExtensions: Awaited<ReturnType<BackendGatewayClient['getOperatorExtensions']>>
   } | null = null
 
   constructor(private readonly config: OperatorShellConfig, deps: OperatorLoopDeps = {}) {
@@ -555,6 +556,102 @@ export class OperatorLoop {
     ].join('\n')
   }
 
+  private parseErrorList(raw: string | null | undefined): string[] {
+    if (!raw) {
+      return []
+    }
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed.map(item => String(item)) : [String(parsed)]
+    } catch {
+      return [String(raw)]
+    }
+  }
+
+  private buildWorkerHealthDiagnosticContent(params: {
+    snapshot: OperatorSnapshot
+    recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
+  }): string {
+    const failedRuns = params.recentAgentRuns.filter(run =>
+      ['failed', 'error', 'completed_with_errors'].includes(String(run.status || '')),
+    )
+    const lines = failedRuns.slice(0, 5).map(run => {
+      const sampleError = this.parseErrorList(run.errors)[0] || 'no error sample recorded'
+      return `- ${run.agent_name}: status=${run.status}, provider=${run.model_provider || 'unknown'}, error=${sampleError}`
+    })
+
+    return [
+      `# Worker Health Diagnostic Report ${new Date().toISOString().slice(0, 10)}`,
+      '',
+      '## Worker Health Signals',
+      ...(params.snapshot.health.issues.length > 0
+        ? params.snapshot.health.issues.map(issue => `- ${issue}`)
+        : ['- no worker health issues recorded']),
+      '',
+      '## Recent Failed Worker Runs',
+      `- Failed/error runs in memory window: ${failedRuns.length}`,
+      ...(lines.length > 0 ? lines : ['- no failed worker runs captured in the current memory window']),
+    ].join('\n')
+  }
+
+  private buildModelRuntimeHealthDiagnosticContent(params: {
+    snapshot: OperatorSnapshot
+    recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
+  }): string {
+    const relevantIssues = params.snapshot.health.issues.filter(
+      issue =>
+        issue.startsWith('llm_unavailable:') ||
+        issue.startsWith('code_updated_pending_restart:'),
+    )
+    const providers = [...new Set(
+      params.recentAgentRuns
+        .map(run => (typeof run.model_provider === 'string' ? run.model_provider.trim() : ''))
+        .filter(Boolean),
+    )]
+
+    return [
+      `# Model Runtime Health Diagnostic Report ${new Date().toISOString().slice(0, 10)}`,
+      '',
+      '## Runtime Signals',
+      ...(relevantIssues.length > 0
+        ? relevantIssues.map(issue => `- ${issue}`)
+        : ['- no model/runtime issues recorded']),
+      '',
+      '## Recent Model Providers',
+      ...(providers.length > 0 ? providers.map(provider => `- ${provider}`) : ['- no recent model provider usage recorded']),
+    ].join('\n')
+  }
+
+  private buildDataSourceHealthDiagnosticContent(params: {
+    snapshot: OperatorSnapshot
+    recentAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
+  }): string {
+    const relevantIssues = params.snapshot.health.issues.filter(issue =>
+      issue.startsWith('market_data_stale:'),
+    )
+    const marketObserverRuns = params.recentAgentRuns
+      .filter(run => run.agent_name === 'market_observer')
+      .sort(
+        (left, right) =>
+          Date.parse(right.ended_at || right.started_at) - Date.parse(left.ended_at || left.started_at),
+      )
+    const latestMarketObserverRun = marketObserverRuns[0] || null
+
+    return [
+      `# Data Source Health Diagnostic Report ${new Date().toISOString().slice(0, 10)}`,
+      '',
+      '## Data Source Signals',
+      ...(relevantIssues.length > 0
+        ? relevantIssues.map(issue => `- ${issue}`)
+        : ['- no data-source health issues recorded']),
+      '',
+      '## Market Observer Coverage',
+      latestMarketObserverRun
+        ? `- Latest market_observer run: ${latestMarketObserverRun.status} @ ${latestMarketObserverRun.ended_at || latestMarketObserverRun.started_at}`
+        : '- Latest market_observer run: none recorded',
+    ].join('\n')
+  }
+
   private buildSystemHealthDiagnosticContent(params: {
     snapshot: OperatorSnapshot
     recommendations: OperatorRecommendation[]
@@ -601,6 +698,12 @@ export class OperatorLoop {
 
   private diagnosticReportTitle(reportType: string): string {
     switch (reportType) {
+      case 'worker_health':
+        return 'Worker Health Diagnostic Report'
+      case 'model_runtime_health':
+        return 'Model Runtime Health Diagnostic Report'
+      case 'data_source_health':
+        return 'Data Source Health Diagnostic Report'
       case 'system_health':
         return 'System Health Diagnostic Report'
       default:
@@ -702,6 +805,7 @@ export class OperatorLoop {
     riskSummary: Awaited<ReturnType<BackendGatewayClient['getRiskSummary']>>
     portfolioSummary: Awaited<ReturnType<BackendGatewayClient['getPortfolioSummary']>>
     portfolioHistory: Awaited<ReturnType<BackendGatewayClient['getPortfolioHistory']>>
+    operatorExtensions: Awaited<ReturnType<BackendGatewayClient['getOperatorExtensions']>>
   }> {
     if (
       this.cachedSubsystemReview &&
@@ -721,6 +825,7 @@ export class OperatorLoop {
       riskSummary,
       portfolioSummary,
       portfolioHistory,
+      operatorExtensions,
     ] =
       await Promise.all([
         this.backendClient.getDreamingSummary(),
@@ -730,6 +835,7 @@ export class OperatorLoop {
         this.backendClient.getRiskSummary(),
         this.backendClient.getPortfolioSummary(),
         this.backendClient.getPortfolioHistory(),
+        this.backendClient.getOperatorExtensions('sandbox_passed'),
       ])
 
     this.cachedSubsystemReview = {
@@ -740,6 +846,7 @@ export class OperatorLoop {
       riskSummary,
       portfolioSummary,
       portfolioHistory,
+      operatorExtensions,
     }
     this.lastSubsystemReviewAt = Date.now()
     return this.cachedSubsystemReview
@@ -1862,11 +1969,27 @@ export class OperatorLoop {
         typeof activeTask.inputData.title === 'string' && activeTask.inputData.title.trim().length > 0
           ? activeTask.inputData.title.trim()
           : this.diagnosticReportTitle(reportType)
-      const content = this.buildSystemHealthDiagnosticContent({
-        snapshot: params.snapshot,
-        recommendations: params.recommendations,
-        recentAgentRuns: params.recentAgentRuns,
-      })
+      const content =
+        reportType === 'worker_health'
+          ? this.buildWorkerHealthDiagnosticContent({
+              snapshot: params.snapshot,
+              recentAgentRuns: params.recentAgentRuns,
+            })
+          : reportType === 'model_runtime_health'
+            ? this.buildModelRuntimeHealthDiagnosticContent({
+                snapshot: params.snapshot,
+                recentAgentRuns: params.recentAgentRuns,
+              })
+            : reportType === 'data_source_health'
+              ? this.buildDataSourceHealthDiagnosticContent({
+                  snapshot: params.snapshot,
+                  recentAgentRuns: params.recentAgentRuns,
+                })
+              : this.buildSystemHealthDiagnosticContent({
+                  snapshot: params.snapshot,
+                  recommendations: params.recommendations,
+                  recentAgentRuns: params.recentAgentRuns,
+                })
       const sessionId = `diagnostic-report-${activeTask.taskId}`
       const parentSessionId = this.currentRunParentSessionId()
       await this.backendClient.createSession({
@@ -2101,6 +2224,18 @@ export class OperatorLoop {
     kind: 'diagnostic_session' | 'strategy_session'
     title: string
   } {
+    if (decision.commandName === 'pause_paper_strategy') {
+      return {
+        kind: 'strategy_session',
+        title: 'Paper Strategy Pause Decision',
+      }
+    }
+    if (decision.commandName === 'mark_strategy_under_review') {
+      return {
+        kind: 'strategy_session',
+        title: 'Strategy Review Decision',
+      }
+    }
     if (decision.commandName === 'propose_strategy_promotion') {
       return {
         kind: 'strategy_session',
@@ -2183,6 +2318,19 @@ export class OperatorLoop {
       return
     }
 
+    const activeTask = this.taskRuntime.getActiveTask()
+    const repairTask =
+      decision.recommendationId
+        ? this.taskRuntime.getTaskForRecommendation(decision.recommendationId)
+        : activeTask &&
+            activeTask.taskType === 'create_repair_proposal'
+          ? activeTask
+          : null
+    const repairTaskMatches = repairTask?.taskType === 'create_repair_proposal'
+    if (decision.classification === 'proposal_only' && !repairTaskMatches) {
+      return
+    }
+
     const sessionId = this.repairSessionId(decision.id)
     const sessionShape = this.repairSessionShape(decision)
     const parentSessionId = this.currentRunParentSessionId()
@@ -2260,21 +2408,23 @@ export class OperatorLoop {
             result: execution.result,
           },
         })
-        await this.taskRuntime.completeActiveTask({
-          summary: execution.response,
-          proposal_artifact_id: proposalArtifactId,
-          strategy_id:
-            typeof decision.parameters?.strategy_id === 'string'
-              ? decision.parameters.strategy_id
-              : null,
-        })
+        if (repairTaskMatches && decision.recommendationId) {
+          await this.taskRuntime.completeTaskForRecommendation(decision.recommendationId, {
+            summary: execution.response,
+            proposal_artifact_id: proposalArtifactId,
+            strategy_id:
+              typeof decision.parameters?.strategy_id === 'string'
+                ? decision.parameters.strategy_id
+                : null,
+          })
+        }
         this.sessionRuntime.rememberBranch({
-        id: sessionId,
-        kind: sessionShape.kind,
-        title: sessionShape.title,
-        parent_session_id: parentSessionId,
-        summary: execution.response,
-      })
+          id: sessionId,
+          kind: sessionShape.kind,
+          title: sessionShape.title,
+          parent_session_id: parentSessionId,
+          summary: execution.response,
+        })
       } else {
         await this.backendClient.createEvent({
           event_type: execution.permitted ? 'repair_executed' : 'repair_failed',
@@ -2291,6 +2441,35 @@ export class OperatorLoop {
             result: execution.result,
           },
         })
+        if (execution.permitted) {
+          if (decision.recommendationId) {
+            await this.taskRuntime.completeTaskForRecommendation(decision.recommendationId, {
+              summary: execution.response,
+              command: decision.commandName,
+              strategy_id:
+                typeof decision.parameters?.strategy_id === 'string'
+                  ? decision.parameters.strategy_id
+                  : null,
+            })
+          }
+          this.sessionRuntime.rememberBranch({
+            id: sessionId,
+            kind: sessionShape.kind,
+            title: sessionShape.title,
+            parent_session_id: parentSessionId,
+            summary: execution.response,
+          })
+        } else {
+          if (decision.recommendationId) {
+            await this.taskRuntime.failTaskForRecommendation(decision.recommendationId, execution.response, {
+              command: decision.commandName,
+              strategy_id:
+                typeof decision.parameters?.strategy_id === 'string'
+                  ? decision.parameters.strategy_id
+                  : null,
+            })
+          }
+        }
       }
     }
 
@@ -2488,11 +2667,26 @@ export class OperatorLoop {
       this.backendClient.getOperatorEvents(20).catch(() => []),
     ])
 
-    const childSessionSummaries = this.descendantSessionSummaries(sessionSummaries)
-      .slice(0, OperatorLoop.RECOVERY_BRANCH_FETCH_LIMIT)
+    const descendantSummaries = this.descendantSessionSummaries(sessionSummaries)
+    const prioritizedChildSessionSummaries = (() => {
+      const activeBranchId = operatorStatus.active_branch_id?.trim() || ''
+      if (!activeBranchId) {
+        return descendantSummaries.slice(0, OperatorLoop.RECOVERY_BRANCH_FETCH_LIMIT)
+      }
+
+      const activeBranchSummary = descendantSummaries.find(session => session.id === activeBranchId)
+      if (!activeBranchSummary) {
+        return descendantSummaries.slice(0, OperatorLoop.RECOVERY_BRANCH_FETCH_LIMIT)
+      }
+
+      return [
+        activeBranchSummary,
+        ...descendantSummaries.filter(session => session.id !== activeBranchId),
+      ].slice(0, OperatorLoop.RECOVERY_BRANCH_FETCH_LIMIT)
+    })()
     const childSessionDetails = (
       await Promise.all(
-        childSessionSummaries.map(session =>
+        prioritizedChildSessionSummaries.map(session =>
           this.backendClient.getOperatorSession(session.id).catch(() => null),
         ),
       )
@@ -2560,10 +2754,11 @@ export class OperatorLoop {
         dreamingSummary,
         reviewSummary,
         strategySummary,
-        recentAgentRuns,
-        riskSummary,
-        portfolioSummary,
-        portfolioHistory,
+      recentAgentRuns,
+      riskSummary,
+      portfolioSummary,
+      portfolioHistory,
+      operatorExtensions,
       } =
         subsystemReview
       const { sessionDetail, sessionSummaries, recentCommands, operatorTasks } = supervision
@@ -2582,6 +2777,7 @@ export class OperatorLoop {
         operatorTasks,
         portfolioSummary,
         portfolioHistory,
+        operatorExtensions,
       )
       const taskRecommendations = this.recommendationsAllowedForTaskSync(recommendations)
       const repairDecision = this.repairEngine.evaluate(recommendations, this.config.permissionMode)

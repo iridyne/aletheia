@@ -61,6 +61,21 @@ _DIAGNOSTIC_REPORT_SPECS = {
         "report_dir": "system_health",
         "default_title": "System Health Diagnostic Report",
     },
+    "worker_health": {
+        "artifact_type": "diagnostic_report",
+        "report_dir": "worker_health",
+        "default_title": "Worker Health Diagnostic Report",
+    },
+    "model_runtime_health": {
+        "artifact_type": "diagnostic_report",
+        "report_dir": "model_runtime_health",
+        "default_title": "Model Runtime Health Diagnostic Report",
+    },
+    "data_source_health": {
+        "artifact_type": "diagnostic_report",
+        "report_dir": "data_source_health",
+        "default_title": "Data Source Health Diagnostic Report",
+    },
 }
 
 

@@ -155,6 +155,39 @@ export class TaskRuntime {
     return this.activeTask ? { ...this.activeTask } : null
   }
 
+  getTaskForRecommendation(
+    recommendationId: string,
+  ):
+    | {
+        recommendationId: string | null
+        taskId: string
+        taskType: string
+        assignedTo: string
+        inputData: Record<string, unknown>
+        priority: string
+        createdAt: string | null
+        restoredFromRecovery: boolean
+        active: boolean
+      }
+    | null {
+    if (this.activeTask?.recommendationId === recommendationId) {
+      return {
+        ...this.activeTask,
+        active: true,
+      }
+    }
+
+    const queuedTask = this.queuedTasks.find(task => task.recommendationId === recommendationId)
+    if (!queuedTask) {
+      return null
+    }
+
+    return {
+      ...queuedTask,
+      active: false,
+    }
+  }
+
   restore(tasks: PersistedOperatorTask[]): void {
     const active = tasks.find(task => task.status === 'running')
     const queued = tasks.filter(task => task.status === 'queued')
@@ -187,6 +220,29 @@ export class TaskRuntime {
     this.syncState()
   }
 
+  async completeTaskForRecommendation(
+    recommendationId: string,
+    output_data: Record<string, unknown>,
+  ): Promise<boolean> {
+    if (this.activeTask?.recommendationId === recommendationId) {
+      await this.completeActiveTask(output_data)
+      return true
+    }
+
+    const queuedIndex = this.queuedTasks.findIndex(task => task.recommendationId === recommendationId)
+    if (queuedIndex === -1) {
+      return false
+    }
+
+    const [task] = this.queuedTasks.splice(queuedIndex, 1)
+    await this.backendClient.updateTask(task.taskId, {
+      status: 'completed',
+      output_data,
+    })
+    this.syncState()
+    return true
+  }
+
   async failActiveTask(error: string, output_data?: Record<string, unknown>): Promise<void> {
     if (!this.activeTask) {
       return
@@ -199,6 +255,31 @@ export class TaskRuntime {
     })
     this.activeTask = null
     this.syncState()
+  }
+
+  async failTaskForRecommendation(
+    recommendationId: string,
+    error: string,
+    output_data?: Record<string, unknown>,
+  ): Promise<boolean> {
+    if (this.activeTask?.recommendationId === recommendationId) {
+      await this.failActiveTask(error, output_data)
+      return true
+    }
+
+    const queuedIndex = this.queuedTasks.findIndex(task => task.recommendationId === recommendationId)
+    if (queuedIndex === -1) {
+      return false
+    }
+
+    const [task] = this.queuedTasks.splice(queuedIndex, 1)
+    await this.backendClient.updateTask(task.taskId, {
+      status: 'failed',
+      error,
+      output_data,
+    })
+    this.syncState()
+    return true
   }
 
   async sync(recommendations: OperatorRecommendation[]): Promise<void> {

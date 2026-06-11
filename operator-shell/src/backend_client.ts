@@ -11,6 +11,7 @@ import type {
   GatewayHealthSnapshot,
   GatewayStatusSnapshot,
   OperatorEventCreate,
+  OperatorExtensionRecord,
   OperatorHeartbeat,
   OperatorMessageCreate,
   PortfolioSnapshotRecord,
@@ -133,6 +134,11 @@ export class BackendClient implements BackendGatewayClient {
     return fetchJson<PortfolioSnapshotRecord[]>(
       `${this.baseUrl}/api/market/portfolio-history?limit=${encodeURIComponent(String(limit))}`,
     )
+  }
+
+  async getOperatorExtensions(status?: string): Promise<OperatorExtensionRecord[]> {
+    const suffix = status ? `?status=${encodeURIComponent(status)}` : ''
+    return fetchJson<OperatorExtensionRecord[]>(`${this.baseUrl}/api/operator/extensions${suffix}`)
   }
 
   async getAgentRuns(): Promise<AgentRunSummary[]> {

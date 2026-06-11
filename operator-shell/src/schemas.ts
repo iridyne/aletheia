@@ -351,6 +351,24 @@ export interface PortfolioSnapshotRecord {
   snapshot_at: string
 }
 
+export interface OperatorExtensionRecord {
+  id: string
+  session_id: string | null
+  extension_name: string
+  slash_command: string
+  description: string
+  target_command: string
+  manifest: Record<string, unknown>
+  status: string
+  created_by: string | null
+  proposal_artifact_id: string | null
+  latest_run_id: string | null
+  enabled_at: string | null
+  enabled_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface AgentRunInvocationResult {
   run_id: string
   status: string
@@ -392,6 +410,7 @@ export interface BackendGatewayClient {
   getRiskSummary(): Promise<RiskSummary>
   getPortfolioSummary(): Promise<PortfolioSummary>
   getPortfolioHistory(limit?: number): Promise<PortfolioSnapshotRecord[]>
+  getOperatorExtensions(status?: string): Promise<OperatorExtensionRecord[]>
   getAgentRuns(): Promise<AgentRunSummary[]>
   postHeartbeat(heartbeat: OperatorHeartbeat): Promise<boolean>
   createMessage(payload: OperatorMessageCreate): Promise<{ id: string }>

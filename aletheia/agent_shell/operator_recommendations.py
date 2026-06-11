@@ -8,6 +8,8 @@ from aletheia.agent_shell.operator_store import (
     get_latest_heartbeat,
     list_artifacts,
     list_commands,
+    list_extensions,
+    list_extension_runs,
     list_events,
     list_sessions,
     list_tasks,
@@ -887,6 +889,96 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             }
         )
 
+    worker_health_issues = [
+        issue for issue in health_issues if issue.startswith("agent_failure_ratio:")
+    ]
+    if worker_health_issues and not _has_fresh_report_artifact(
+        recent_artifacts,
+        artifact_type="diagnostic_report",
+        report_type="worker_health",
+        within_minutes=60,
+    ):
+        recommendations.append(
+            {
+                "id": "worker-health-review",
+                "kind": "worker_health_review_due",
+                "severity": "medium",
+                "summary": (
+                    "Worker health is degraded and no recent worker-health diagnostic report exists. "
+                    "Refresh a diagnostic report for operator follow-up."
+                ),
+                "taskType": "create_diagnostic_report",
+                "metadata": {
+                    "task_type": "create_diagnostic_report",
+                    "report_type": "worker_health",
+                    "title": "Worker Health Diagnostic Report",
+                    "health_issues": worker_health_issues,
+                    "refresh_window_minutes": 60,
+                },
+            }
+        )
+
+    model_runtime_health_issues = [
+        issue
+        for issue in health_issues
+        if issue.startswith("llm_unavailable:")
+        or issue.startswith("code_updated_pending_restart:")
+    ]
+    if model_runtime_health_issues and not _has_fresh_report_artifact(
+        recent_artifacts,
+        artifact_type="diagnostic_report",
+        report_type="model_runtime_health",
+        within_minutes=60,
+    ):
+        recommendations.append(
+            {
+                "id": "model-runtime-health-review",
+                "kind": "model_runtime_health_review_due",
+                "severity": "medium",
+                "summary": (
+                    "Model/runtime health is degraded and no recent model-runtime diagnostic report exists. "
+                    "Refresh a diagnostic report for operator follow-up."
+                ),
+                "taskType": "create_diagnostic_report",
+                "metadata": {
+                    "task_type": "create_diagnostic_report",
+                    "report_type": "model_runtime_health",
+                    "title": "Model Runtime Health Diagnostic Report",
+                    "health_issues": model_runtime_health_issues,
+                    "refresh_window_minutes": 60,
+                },
+            }
+        )
+
+    data_source_health_issues = [
+        issue for issue in health_issues if issue.startswith("market_data_stale:")
+    ]
+    if data_source_health_issues and not _has_fresh_report_artifact(
+        recent_artifacts,
+        artifact_type="diagnostic_report",
+        report_type="data_source_health",
+        within_minutes=60,
+    ):
+        recommendations.append(
+            {
+                "id": "data-source-health-review",
+                "kind": "data_source_health_review_due",
+                "severity": "medium",
+                "summary": (
+                    "Data-source health is degraded and no recent data-source diagnostic report exists. "
+                    "Refresh a diagnostic report for operator follow-up."
+                ),
+                "taskType": "create_diagnostic_report",
+                "metadata": {
+                    "task_type": "create_diagnostic_report",
+                    "report_type": "data_source_health",
+                    "title": "Data Source Health Diagnostic Report",
+                    "health_issues": data_source_health_issues,
+                    "refresh_window_minutes": 60,
+                },
+            }
+        )
+
     if failed_tasks:
         recommendations.append(
             {
@@ -1135,6 +1227,11 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         for item in [*under_review_strategies, *paused_paper_strategies]
         if item.get("id")
     }
+    under_review_strategy_ids = {
+        str(item.get("id"))
+        for item in under_review_strategies
+        if item.get("id")
+    }
     evaluated_strategy_ids = {
         str(item.get("strategy_id"))
         for item in recent_strategy_evaluations
@@ -1166,6 +1263,55 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                     "strategy_ids": needs_operator_evaluation_strategy_ids,
                     "strategy_id": needs_operator_evaluation_strategy_ids[0],
                     "strategy_name": strategy_name,
+                },
+            }
+        )
+
+    failed_under_review_candidate = next(
+        (
+            (
+                str(item.get("strategy_id") or ""),
+                str(item.get("strategy_name") or "") or None,
+                [
+                    str(failure)
+                    for failure in (((item.get("evaluation") or {}).get("promotion_gates") or {}).get("failures") or [])
+                    if str(failure).strip()
+                ],
+            )
+            for item in recent_strategy_evaluations
+            if item.get("strategy_id")
+            and str(item.get("strategy_id")) not in under_review_strategy_ids
+            and isinstance(item.get("evaluation"), dict)
+            and isinstance(item["evaluation"].get("strategy"), dict)
+            and str(item["evaluation"]["strategy"].get("state") or "") in {"paper_running", "paper_passed"}
+            and isinstance(item["evaluation"].get("promotion_gates"), dict)
+            and bool(item["evaluation"]["promotion_gates"].get("passed")) is False
+        ),
+        None,
+    )
+    if not cfg.runtime.paused and failed_under_review_candidate:
+        strategy_id, strategy_name, failed_gates = failed_under_review_candidate
+        gate_summary = ", ".join(failed_gates[:3]) if failed_gates else "promotion checks failed"
+        review_notes = (
+            f"Promotion gates failed: {gate_summary}"
+            if failed_gates
+            else "Promotion gates failed during recent operator evaluation"
+        )
+        recommendations.append(
+            {
+                "id": f"mark-strategy-under-review:{strategy_id}",
+                "kind": "mark_strategy_under_review_due",
+                "severity": "medium",
+                "summary": (
+                    f"Strategy {strategy_name or strategy_id} failed recent promotion gates ({gate_summary}) and should be marked under review before paper automation continues."
+                ),
+                "taskType": "create_repair_proposal",
+                "metadata": {
+                    "strategy_id": strategy_id,
+                    "strategy_name": strategy_name,
+                    "failed_gates": failed_gates,
+                    "review_notes": review_notes,
+                    "repair_command": "mark_strategy_under_review",
                 },
             }
         )
@@ -1865,6 +2011,46 @@ def build_recommendations(limit: int = 10) -> list[dict]:
                 },
             }
         )
+
+    passed_extensions = list_extensions(status="sandbox_passed", limit=20)
+    if not cfg.runtime.paused and passed_extensions:
+        ready_extensions = []
+        for extension in passed_extensions:
+            if extension.get("proposal_artifact_id"):
+                continue
+            latest_run = next(
+                iter(list_extension_runs(extension_id=str(extension["id"]), limit=1)),
+                None,
+            )
+            if latest_run is None or str(latest_run.get("status") or "") != "passed":
+                continue
+            ready_extensions.append((extension, latest_run))
+
+        if ready_extensions:
+            extension, latest_run = ready_extensions[0]
+            slash_command = str(extension.get("slash_command") or extension["id"])
+            recommendations.append(
+                {
+                    "id": f"extension-enable:{extension['id']}",
+                    "kind": "extension_enablement_proposal_due",
+                    "severity": "medium",
+                    "summary": (
+                        f"Extension {slash_command} passed sandbox validation and is ready "
+                        "for a human-reviewed enablement proposal."
+                    ),
+                    "taskType": "create_repair_proposal",
+                    "metadata": {
+                        "extension_id": extension["id"],
+                        "extension_name": extension.get("extension_name"),
+                        "slash_command": extension.get("slash_command"),
+                        "target_command": extension.get("target_command"),
+                        "latest_sandbox_run_id": latest_run.get("id"),
+                        "latest_sandbox_status": latest_run.get("status"),
+                        "latest_sandbox_summary": latest_run.get("summary"),
+                        "proposal_command": "propose_extension_enablement",
+                    },
+                }
+            )
 
     archived_ids = _archived_recommendation_ids(cfg.operator.main_session_id)
     if archived_ids:

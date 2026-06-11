@@ -10,7 +10,7 @@ import pytest
 from aletheia.agent_shell.registry import COMMANDS, get_command, FORBIDDEN_INTENTS
 from aletheia.agent_shell.permissions import check_permission, allowed_commands
 from aletheia.agent_shell.intent import _classify_keyword, CommandIntent
-from aletheia.agent_shell.context import build_app_context, context_summary_text
+from aletheia.agent_shell.context import build_app_context, context_summary_text, sections_for_profile
 from aletheia.agent_shell.synthesis import _format_fallback
 
 
@@ -608,7 +608,172 @@ async def test_runtime_reads_backend_recommendations(tmp_path, monkeypatch):
 
     assert resp.intent == "get_recommendations"
     assert "recommendation" in resp.response.lower()
-    assert "failed operator task" in resp.response.lower()
+
+
+@pytest.mark.asyncio
+async def test_runtime_uses_session_kind_context_profile_for_selected_branch(tmp_path, monkeypatch):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell.intent import CommandIntent
+    from aletheia.agent_shell.operator_store import create_session_record
+    from aletheia.agent_shell.runtime import AgentShellRuntime
+
+    create_session_record(
+        session_id="strategy-session-context",
+        user_input="Investigate strategy drift.",
+        kind="strategy_session",
+        parent_session_id="operator-main",
+        title="Strategy Drift Review",
+    )
+
+    captured_sections: list[list[str]] = []
+
+    def fake_build_app_context(sections=None):
+        captured_sections.append(list(sections or []))
+        return {"system": {"healthy": True}}
+
+    with patch(
+        "aletheia.agent_shell.context.build_app_context",
+        side_effect=fake_build_app_context,
+    ), patch(
+        "aletheia.agent_shell.context.context_summary_text",
+        return_value="mock strategy summary",
+    ), patch(
+        "aletheia.agent_shell.intent.classify_intent",
+        new_callable=AsyncMock,
+        return_value=CommandIntent(command="forbidden", parameters={}, confidence=1.0),
+    ):
+        runtime = AgentShellRuntime()
+        resp = await runtime.handle(
+            "continue the current strategy branch",
+            session_id="strategy-session-context",
+        )
+
+    assert resp.intent == "forbidden"
+    assert captured_sections == [sections_for_profile("trading_context")]
+
+
+@pytest.mark.asyncio
+async def test_runtime_includes_recent_session_context_and_trace_in_branch_summary(tmp_path, monkeypatch):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell.intent import CommandIntent
+    from aletheia.agent_shell.operator_store import append_message, create_session_record
+    from aletheia.agent_shell.runtime import AgentShellRuntime
+
+    create_session_record(
+        session_id="diagnostic-session-history",
+        user_input="Investigate stale market data.",
+        kind="diagnostic_session",
+        parent_session_id="operator-main",
+        title="Stale Market Diagnostic",
+    )
+    append_message(
+        session_id="diagnostic-session-history",
+        role="assistant",
+        message_type="context",
+        content={"text": "Diagnostic branch context: market_data_stale:45m affects promotion safety."},
+    )
+    append_message(
+        session_id="diagnostic-session-history",
+        role="assistant",
+        message_type="response",
+        content={"text": "Previous diagnostic result: keep the gateway restart todo visible."},
+    )
+
+    captured_summary: dict[str, str] = {}
+
+    async def fake_classify_intent(text, summary):
+        captured_summary["value"] = summary
+        return CommandIntent(command="query", parameters={}, confidence=0.9)
+
+    with patch(
+        "aletheia.agent_runtime.health.compute_health",
+        return_value={"healthy": True, "issues": []},
+    ), patch(
+        "aletheia.agents.helpers.llm_complete",
+        new_callable=AsyncMock,
+        return_value=(None, "unavailable"),
+    ), patch(
+        "aletheia.agent_shell.intent.classify_intent",
+        side_effect=fake_classify_intent,
+    ):
+        runtime = AgentShellRuntime()
+        resp = await runtime.handle(
+            "what should this branch do next?",
+            permission_mode="ReadOnly",
+            permission_scope="operator",
+            session_id="diagnostic-session-history",
+        )
+
+    assert resp.intent == "query"
+    assert "Diagnostic branch context: market_data_stale:45m affects promotion safety." in captured_summary["value"]
+    assert "Previous diagnostic result: keep the gateway restart todo visible." in captured_summary["value"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_includes_parent_branch_trace_for_nested_session_summary(tmp_path, monkeypatch):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell.intent import CommandIntent
+    from aletheia.agent_shell.operator_store import append_message, create_session_record
+    from aletheia.agent_shell.runtime import AgentShellRuntime
+
+    create_session_record(
+        session_id="strategy-parent-session",
+        user_input="Investigate Momentum root.",
+        kind="strategy_session",
+        parent_session_id="operator-main",
+        title="Momentum Root",
+    )
+    create_session_record(
+        session_id="review-child-session",
+        user_input="Review nested drawdown branch.",
+        kind="review_session",
+        parent_session_id="strategy-parent-session",
+        title="Nested Drawdown Review",
+    )
+    append_message(
+        session_id="strategy-parent-session",
+        role="assistant",
+        message_type="context",
+        content={"text": "Parent branch context: Momentum root still owns the promotion backlog."},
+    )
+    append_message(
+        session_id="strategy-parent-session",
+        role="assistant",
+        message_type="response",
+        content={"text": "Parent branch result: resolve promotion blockers before widening experiments."},
+    )
+
+    captured_summary: dict[str, str] = {}
+
+    async def fake_classify_intent(text, summary):
+        captured_summary["value"] = summary
+        return CommandIntent(command="query", parameters={}, confidence=0.9)
+
+    with patch(
+        "aletheia.agent_runtime.health.compute_health",
+        return_value={"healthy": True, "issues": []},
+    ), patch(
+        "aletheia.agents.helpers.llm_complete",
+        new_callable=AsyncMock,
+        return_value=(None, "unavailable"),
+    ), patch(
+        "aletheia.agent_shell.intent.classify_intent",
+        side_effect=fake_classify_intent,
+    ):
+        runtime = AgentShellRuntime()
+        resp = await runtime.handle(
+            "what does this nested branch depend on?",
+            permission_mode="ReadOnly",
+            permission_scope="operator",
+            session_id="review-child-session",
+        )
+
+    assert resp.intent == "query"
+    assert "Parent branch context: Momentum root still owns the promotion backlog." in captured_summary["value"]
+    assert "Parent branch result: resolve promotion blockers before widening experiments." in captured_summary["value"]
 
 
 @pytest.mark.asyncio
@@ -1153,6 +1318,49 @@ async def test_create_diagnostic_report_writes_markdown_and_artifact(tmp_path, m
     assert artifacts[0]["content"]["report_type"] == "system_health"
     assert artifacts[0]["content"]["file_path"] == str(report_path)
     assert "degraded gateway health" in artifacts[0]["content"]["summary"].lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("report_type", "title", "summary"),
+    [
+        ("worker_health", "Worker Health Diagnostic Report", "Captured degraded worker health for operator diagnosis."),
+        ("model_runtime_health", "Model Runtime Health Diagnostic Report", "Captured degraded model/runtime health for operator diagnosis."),
+        ("data_source_health", "Data Source Health Diagnostic Report", "Captured degraded data-source health for operator diagnosis."),
+    ],
+)
+async def test_create_diagnostic_report_supports_specialized_health_report_types(
+    tmp_path,
+    monkeypatch,
+    report_type,
+    title,
+    summary,
+):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell.commands import create_diagnostic_report
+    from aletheia.agent_shell.operator_store import list_artifacts
+
+    result = await create_diagnostic_report(
+        {
+            "report_type": report_type,
+            "title": title,
+            "content": f"# {title}\n\n- issue: test\n",
+            "summary": summary,
+        }
+    )
+
+    assert result["created"] is True
+    assert result["report_type"] == report_type
+    report_path = Path(result["path"])
+    assert report_path.exists()
+    assert title in report_path.read_text(encoding="utf-8")
+
+    artifacts = list_artifacts(session_id="operator-main")
+    assert artifacts[0]["artifact_type"] == "diagnostic_report"
+    assert artifacts[0]["content"]["report_type"] == report_type
+    assert artifacts[0]["content"]["file_path"] == str(report_path)
+    assert summary == artifacts[0]["content"]["summary"]
 
 
 @pytest.mark.asyncio

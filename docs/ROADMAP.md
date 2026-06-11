@@ -165,7 +165,7 @@ Agent Shell **绝不直接**:
 - **已落地的 inspectable working-memory 第一层**：`data/agent_shell/...` 已开始承载可直接检查的 operator 文件工件；当前 session 会写 append-only JSONL，operator task 会写 Markdown，`create_diagnostic_todo` 会产出 todo Markdown，extension sandbox 也会落 scratch Markdown 与 extension manifest JSON，因此 operator 工作不再只留在 SQLite 和 knowledge side effects 里。
 - **已落地的 recovery/session runtime 第二层深化**：`operator-shell recoverState()` 现在不只会拉回 `operator-main` 下最近的 child sessions，把 latest branch summary 恢复进 session runtime；还支持 recovered in-flight `evaluate_strategy_state` / `create_repair_proposal` task 在 recommendation 已经消失时，仍可从 task payload 自动再进入，而不是被 `sync()` 提前清空。
 - **已落地的 nested session-tree runtime 第一层**：public branch create 现在不再强制把所有新 branch 都挂回 `operator-main`；`/api/operator/branches` 已支持 `parent_session_id`，`/api/operator/active-branch` 也接受整个 operator session tree 内的 descendant session，而不再只接受 direct child。与此同时，`SessionRuntime.restore()` 与 `OperatorLoop.recoverState()` 现在会把 descendant branch detail 一起恢复进 runtime / recovery folding，所以 nested review/diagnostic/strategy branch 不再只是 UI 上的树状视觉效果，而开始成为真实可恢复的 operator state。
-- **已落地的 long-history folding 第三层深化**：crash recovery 现在不再只读 latest `operator_daily_summary.summary_excerpt`，也不再只看 latest branch；它会把最近多条 child-session branch context 与多日 `operator_daily_summary` 的 `major_user_instructions / important_repair_decisions / proposal_outcomes / strategy_state_changes / unresolved_issues / follow_up_recommendations` 折叠进 recovery intent，并在有上限的 recovery intent budget 内继续吸收更多 recent branch / summary 线索，而不是硬编码只保留两条。
+- **已落地的 long-history folding 第三层深化**：crash recovery 现在不再只读 latest `operator_daily_summary.summary_excerpt`，也不再只看 latest branch；它会把最近多条 child-session branch context 与多日 `operator_daily_summary` 的 `major_user_instructions / important_repair_decisions / proposal_outcomes / strategy_state_changes / unresolved_issues / follow_up_recommendations` 折叠进 recovery intent，并在有上限的 recovery intent budget 内继续吸收更多 recent branch / summary 线索，而不是硬编码只保留两条。与此同时，即便 authoritative active branch 已掉出 recent branch detail 的默认抓取窗口，恢复也会优先把这条 branch 的 detail 拉回，不再只剩 branch title / summary 壳。
 - **已落地的 recovery contract 收口**：Node shell 恢复时现在还会把 recent operator error events 一起折回 recovery intent，并在没有更“新鲜”的 failed task / unresolved proposal / compacted-memory 线索时，回收 latest heartbeat 的 `current_intent`。也就是说，本地 spec 里 recovery contract 的六项要求现在都已有真实接线，而不是只恢复 session/task 轮廓。
 - **已落地的 task supervision truth 第一层深化**：backend `build_recommendations()` 与 Node `RecommendationEngine` 现在都会显式 surface `failed_tasks_present / stuck_tasks_present`，因此 Command Center 与 shell 本地 loop 都开始覆盖 spec 里的 failed/stuck task scan，而不只看 offline/paused/health。
 - **已落地的 operator task queue 第二层深化**：`TaskRuntime` 现在不再只有一个 running task 壳；它会把额外 actionable recommendation 物化成 `queued` task，恢复 queued backlog，并在当前 task 清掉后优先提升 higher-priority queued task。backend 与 Node recommendation truth 现在都会显式 surface `queued_tasks_present`，并在 queued backlog 老化或堆积时给出分层 `queue_review_needed` 信号：`attention`（约 3 条 backlog / 15 分钟）与 `urgent`（更深 backlog、约 30 分钟 oldest age，或高优先级 queued task 老化），同时带回建议 review cadence 元数据，因此 queue review 不再只是设计术语。
@@ -173,6 +173,7 @@ Agent Shell **绝不直接**:
 - **已落地的 operator mode truth 收口**：heartbeat 现在不再把 fresh short-lived task 在同一轮 loop 收尾时统一抹回 `Observing`。fresh `create_repair_proposal` 会显式报 `Repairing`；fresh `run_market_scan / rerun_failed_agent_task / evaluate_strategy_state / set_symbol_observe_only / create_paper_experiment / pause_paper_strategy` 会显式报 `Trading`；fresh review/dreaming task 也会保留 `Reviewing / Dreaming`。与此同时，recovered in-flight task 仍然只会在恢复轮次里回到 `Observing / Paused / Degraded`，因此 crash recovery 不直接恢复进 `Trading` 的红线保持不变。
 - **已落地的 15–60 分钟层五条真实接线**：一条是 stale `market_observer` 会显式产出 `market_scan_refresh_due`，并在 `PaperAuto+` 下走 `run_market_scan` command-session task；一条是最近一次 failed/error/completed_with_errors agent run 若约 15 分钟后仍无恢复、且还没升级成 repeated-failure prompt proposal，会显式产出 `failed_agent_rerun_due`，并在 `PaperAuto+` 下走 `rerun_failed_agent_task` command-session task；另一条是当天 UTC 还没有 `daily_review`、但近 12 小时已有实际 agent activity 时，会显式产出 `daily_review_refresh_due`，并在 `Research+` 下走 `create_daily_review` review-session task，写回确定性的 non-critical operator summary report；这次又补上一条 risk-governance operational-control：当最近 24 小时同一 symbol 连续命中至少两次 paper-side risk rejection、且把它移出 `allowed/tradable` 不会把当前 symbol universe 清空时，backend `/api/risk/summary` 会显式产出 `needs_operator_observe_only_symbols`，backend 与 Node recommendation truth 会进一步产出 `symbol_observe_only_due`，并在 `PaperAuto+` 下走 `set_symbol_observe_only` command-session task，把该 symbol 调整为 observe-only；此外，`paper_running / paper_passed` strategy 若已被标为 `under_review` 但尚未 `paper_trading_paused`，backend 与 Node recommendation truth 也会显式产出 `pause_paper_strategy_due`，并在 `PaperAuto+` 下走 `pause_paper_strategy` command-session task，调用 typed pause 命令暂停 paper trading 并收口该 strategy 上仍然 open 的 opportunities。与此同时，task materialization 也开始按 operator permission mode 过滤，所以 `create_repair_proposal` / `run_market_scan` / `rerun_failed_agent_task` / `set_symbol_observe_only` / `pause_paper_strategy` 这类更高权限 task 不会再在 `ReadOnly/Research` 下被提前物化成注定卡死的 backlog，而 `create_daily_review` 这类 Research 权限动作也不会再在 `ReadOnly` 下误生成 backlog。
 - **已落地的 specialist delegation 基础链路**：`operator-shell` 现在会读取 `/api/dreaming/summary`、`/api/reviews/summary`、`/api/strategies/summary`、`/api/risk/summary`，以及当前 portfolio summary/history 真值。最近 24h 没有 dreaming run/log 时会生成 `dreaming_due` recommendation，创建 `run_dreaming` task，委托 `dreaming_agent` 执行；最近 24h 有 closed strategy 但缺 post-trade review 覆盖时会生成 `review_due` recommendation，创建 `generate_review` task，委托 `post_trade_reviewer` 执行；flagged strategy 缺 fresh evaluation 时会生成 `strategy_review_due` recommendation，创建 `evaluate_strategy_state` task，落到 `strategy_session` child session 执行 `get_strategy_lifecycle`；最近 research/hypothesis 输入存在但没有 active paper strategy、且没有 recent `strategy_designer` run 时，会生成 `strategy_design_due` recommendation，创建 `run_strategy_design` task，委托 `strategy_designer` 产出 fresh paper strategy；recent risk rejections 存在且没有 fresh `risk_critic` run 时，会生成 `risk_critique_due` recommendation，创建 `run_risk_critique` task，委托 `risk_critic` 写新的 risk lesson note；存在 open position 且缺 fresh portfolio snapshot 时，会生成 `portfolio_snapshot_refresh_due` recommendation，创建 `run_portfolio_snapshot` task，委托 `portfolio_agent` 刷新 portfolio snapshot。这些链路都会把 started/completed event、artifact 或 task completion 回写到 operator truth layer。
+- **已落地的 1–5 分钟 specialized health diagnostics**：backend `build_recommendations()` 与 Node `RecommendationEngine` 现在会把 health issue 继续拆成 `worker_health_review_due / model_runtime_health_review_due / data_source_health_review_due` 三条专门 review truth：`agent_failure_ratio:*` 会触发 worker health 诊断，`llm_unavailable:*` 与 `code_updated_pending_restart:*` 会触发 model/runtime health 诊断，`market_data_stale:*` 会触发 data-source health 诊断；三者都会在 `Research+` 下物化为 `create_diagnostic_report` task，写出专门 Markdown 与 `diagnostic_report` artifact，而不再只剩一个笼统的 system-health 报告。
 - **已落地的 session-kind / child-session 骨架**：`agent_shell_sessions` 现在开始承载 `kind / parent_session_id / title`；operator 内部也有了 `/api/operator/internal/sessions`。当前 dreaming / review delegation 会各自创建 `dreaming_session` / `review_session` 子会话，并把 delegation start/result 作为 message trace 写进去，主 session 继续保留 operator 总览。
 - **已落地的 typed repair path 第一段**：backend 现在已有 `/api/operator/internal/commands/{command_name}` 与 `/api/operator/internal/artifacts`。`operator-shell` 在 `Research+` operator 权限下会把高严重度 health recommendation 物化成 `diagnostic_session` + `repair_decision` artifact，并执行第一条 low-risk repair `create_diagnostic_todo`，同时写 `repair_attempted / repair_executed / repair_failed` 事件。
 - **已落地的 strategy-governance specialist 路径**：backend 新增 `/api/strategies/summary`；operator-shell 会把 `strategy_review_due` recommendation 物化为 `evaluate_strategy_state` task，创建 `strategy_session` child session，执行 typed command `get_strategy_lifecycle`，并把结果写成 `strategy_evaluation` artifact。
@@ -182,12 +183,15 @@ Agent Shell **绝不直接**:
 - **已落地的 schedule proposal specialist 第一条真实路径**：recent `agent_runs` 中若同一 agent 在 24h 内重复出现 manual run，且尚无 recent `schedule_change_proposal`，backend recommendation 与 operator-shell 都会产出 `agent_schedule_change_proposal_due`；shell 会把它物化为 `create_repair_proposal` task，创建 `proposal_only` repair decision，并执行 typed `propose_schedule_change`，最终落出 `schedule_change_proposal` artifact + `proposal_created` event，而不是静默改 scheduler cadence。
 - **已落地的 risk-boundary proposal specialist 第一条真实路径**：backend 新增 `/api/risk/summary`，会从 recent rejected `risk_decisions` 中识别“最近 24h 内同一可调整风险边界被重复命中，且最近尚无对应 `risk_boundary_change_proposal`”的情况；backend recommendation 与 operator-shell 都会产出 `risk_boundary_change_proposal_due`，shell 会把它物化为 `create_repair_proposal` task，创建 `proposal_only` repair decision，并执行 typed `propose_risk_boundary_change`，最终落出 `risk_boundary_change_proposal` artifact + `proposal_created` event，而不是静默改硬风控配置。
 - **已落地的 Command Center behavior proposal specialist 第一条真实路径**：recent `command_session` command audit 中若同一命令在 24h 内重复被拒绝，且尚无 recent `command_center_behavior_proposal`，backend recommendation 与 operator-shell 都会产出 `command_center_behavior_change_proposal_due`；shell 会把它物化为 `create_repair_proposal` task，创建 `proposal_only` repair decision，并执行 typed `propose_command_center_behavior_change`，最终落出 `command_center_behavior_proposal` artifact + `proposal_created` event，而不是静默改 Command Center 行为。
-- **已落地的 extension sandbox 第二层**：backend 现有 `extension_registry / extension_runs` 真表与 `data/agent_shell/extensions/*.json + scratch/*.md` 文件工件；typed command 已有 `draft_extension_manifest / test_extension_sandbox / propose_extension_enablement`；更关键的是 enabled extension 现在也真正进入运行面了：`AgentShellRuntime` 与 `/api/operator/command` 会先解析 slash command，再把已启用 extension 分发到对应 typed target command，并写 `extension_invoked` 事件；Command Center 也会直接展示 enabled extensions，不再要求用户靠记忆输入。
+- **已落地的 extension sandbox 第二层**：backend 现有 `extension_registry / extension_runs` 真表与 `data/agent_shell/extensions/*.json + scratch/*.md` 文件工件；typed command 已有 `draft_extension_manifest / test_extension_sandbox / propose_extension_enablement`；现在 backend 与 Node recommendation truth 也会对 recent `sandbox_passed` extension 产出 `extension_enablement_proposal_due`，`operator-shell` 会把它物化为 `create_repair_proposal` task、创建 `proposal_only` repair decision，并执行 typed `propose_extension_enablement`；更关键的是 enabled extension 现在也真正进入运行面了：`AgentShellRuntime` 与 `/api/operator/command` 会先解析 slash command，再把已启用 extension 分发到对应 typed target command，并写 `extension_invoked` 事件；Command Center 也会直接展示 enabled extensions，不再要求用户靠记忆输入。
 - **已落地的 context model 第一条真实消费链**：backend 新增 `/api/operator/internal/context/query`，会按 session kind 自动选择 `operational / repair / knowledge / trading` context profile，并返回安全的 `system / agents / trading / proposals / strategies / risk / errors / operator_state` curated snapshot；operator-shell 会把该 context snapshot 写入 child session，Command Center 也新增 `Context Inspector` 直接显示这条 backend 真值。
+- **已落地的 selected-session context continuity 第一层**：Python compatibility runtime 与 `/api/operator/command-preview` 现在在继续已有 child session 时，不再一律退回通用 `system/market/agents/trading` 摘要；对于 `diagnostic / dreaming / strategy / review` branch，它们会按 session kind 选择对应 context profile，再做 intent classification / preview。这意味着 selected-session continuation 已经不只是“写回同一条 session”，而开始带着 branch 自己的 context lane 继续。
+- **已落地的 selected-session context continuity 第二层**：branch 创建时已经写入的 `context` message，以及该 session 最近的 assistant/result trace，现在也会被 deterministic 地折进 runtime / preview summary；也就是说，selected-session continuation 不再只知道“这是什么 kind 的 branch”，还会把这条 branch 最近已经记录下来的 context snapshot 与上一轮结论一起带入下一轮分类。
+- **已落地的 selected-session ancestry continuity 第一层**：对于 nested branch，runtime / preview 现在还会顺着 `parent_session_id` 向上折回有限层数的 ancestor trace，把 parent branch 的 context/result 摘要也带入 continuation summary。也就是说，nested review/diagnostic branch 不再只看自己这一层，而开始真正承接上游 strategy/root branch 已记录的结论。
 - **已落地的用户驱动 branch workspace**：backend 新增公开 `POST /api/operator/branches`，可直接创建 `command / diagnostic / dreaming / strategy / review` 五类 direct-child session，并同步写 `branch_created` 与 `active_branch_selected` 事件；新 branch 创建时还会 seed `context_snapshot` 与 opening user message；Command Center 也新增了显式的 branch title + kind 控件，所以“persistent workspace / session tree / branching side-task sessions”不再只依赖 operator loop 自动生成子会话。
 - **已落地的 authoritative command preview**：backend 新增 `POST /api/operator/command-preview`，会在不执行命令的前提下返回当前输入的 `intent / classification / command metadata / parsed parameters / permission truth`；这份 truth 现在既覆盖 operator permission ladder，也覆盖 worker/global safety；Command Center composer 直接显示 `Ready / Blocked / Query / Forbidden`、risk class、operator/worker 两层 required permission、proposal/confirmation 标记与 parsed parameters，所以用户不再需要“先发出去才能知道会不会被拒绝”。
 - **已落地的 structured result cards / command trace**：`/api/operator/command` 现在会把 `command / command_meta / risk_level / needs_confirmation / permitted / action` 一起写进 response message；Command Center 会对 structured `command` message 渲染 trace card，对 structured `response` message 渲染 result card，并明确区分 executed vs blocked，而不再把所有 operator 输出都压成普通文本。
-- **仍未完成,因此不能声称 Track B Stage 1 完成**：更深的 PI-style session runtime 仍未完成；当前活跃缺口已进一步收窄到更广的 scheduled scan/review opportunities，以及更深的 PI-style session runtime。专门的 non-critical report refresh（system health / agent performance / risk / trade review）现在已经接上 typed command + artifact + report-file 全链路。
+- **仍未完成,因此不能声称 Track B Stage 1 完成**：更深的 PI-style session runtime 仍未完成；当前活跃缺口已进一步收窄到更广的 scheduled scan/review opportunities，以及更深的 PI-style session runtime。专门的 non-critical report refresh（system health / agent performance / risk / trade review）与 1–5 分钟层的 specialized health diagnostics（worker / model-runtime / data-source）现在都已经接上 typed command + artifact + report-file 全链路。
 
 ### 现有基础设施复用(不重建)
 
@@ -296,21 +300,69 @@ All must pass:
 
 **Goal**: Strategy output becomes machine-readable. Paper_trader actually executes strategy rules.
 
+This phase closes the current honesty gap in the paper loop: `strategy_designer`
+stores free-text `entry_rule` / `exit_rule`, but `paper_trader` still trades on
+opportunity direction + confidence only. Until that changes, promotion gates are
+measuring "opportunity-direction luck + fixed sizing," not whether the strategy's
+own rules were ever executed.
+
 ### Tasks
 
 | ID | Task | Reference |
 |---|---|---|
-| 2A.1 | Extend `MarketRead` -> `TradingSignal` with `entry_trigger: list[Condition]` | WORLD_MAP 4.5 |
-| 2A.2 | Define `Condition` Pydantic schema (`indicator`, `op`, `value`, `timeframe`) | TradingAgents structured output |
-| 2A.3 | `strategy_designer` outputs structured conditions (JSON), not free-text | WORLD_MAP 4.6 |
-| 2A.4 | `paper_trader` reads and checks entry_trigger conditions against market data | Fixes gap C in PIPELINE_STATUS |
-| 2A.5 | Add condition evaluator utility (compare indicator value to threshold) | — |
+| 2A.1 | Define declarative `ConditionClause` / `Condition` models for `entry_conditions` stored in strategy parameters | TradingAgents structured output |
+| 2A.2 | Lock `entry_conditions` to the currently computed indicator/timeframe vocabulary and reject unsupported references at parse time | Fixes gap C in PIPELINE_STATUS |
+| 2A.3 | `strategy_designer` emits `entry_conditions` alongside legacy free-text `entry_rule` / `exit_rule` | WORLD_MAP 4.6 |
+| 2A.4 | `paper_trader` evaluates `entry_conditions` against current market context before opening paper positions | Fixes gap C in PIPELINE_STATUS |
+| 2A.5 | Add a condition evaluator plus a structured market-context indicator snapshot for auditable rule checks | — |
 | 2A.6 | Strategy lifecycle: promotion gate now checks "strategy rules were actually tested" | WORLD_MAP 4.6 |
+
+### Design Constraints
+
+- **2A is entry-side only**: declarative exit logic stays out of scope here and remains a
+  **Phase 2B** follow-up.
+- **Fixed vocabulary only**: `entry_conditions` may reference only indicators the system
+  already computes. Timeframes stay fixed at `1h`, `4h`, `1d`; indicator surface stays fixed
+  at `last_close`, `sma_20`, `sma_50`, `rsi_14`, `atr_14`, `bb_lower`, `bb_upper`,
+  `bb_pct_b`, `momentum_10`, `volume_zscore_20`.
+- **No executable strategy code**: `entry_conditions` remain pure declarative JSON data.
+  No `eval`, no `exec`, no generated Python, no dynamic dispatch that would smuggle code
+  execution back into the trading path.
+- **No schema migration required**: `StrategyRecord.parameters` remains the storage home for
+  `entry_conditions`, alongside the existing free-text `entry_rule` / `exit_rule`.
+- **Backward compatibility is mandatory**: strategies without `entry_conditions` keep the
+  current direction+confidence behavior until they are upgraded.
+
+### Implementation Shape & Sequence
+
+1. Add declarative `ConditionClause` / `Condition` models with explicit `Literal`
+   validation for indicator, timeframe, and operator.
+2. Add a condition evaluator that reads the structured market-context snapshot and returns
+   an auditable result per clause, per condition, and for the final entry decision.
+3. Expose a compact `{timeframe -> indicator -> value}` market-context snapshot builder so
+   the evaluator consumes the exact indicator surface the system already computes.
+4. Wire `paper_trader` so it evaluates `entry_conditions` before proposal creation; if the
+   rules do not pass, mark the opportunity as reviewed instead of creating a trade proposal.
+5. Extend `strategy_designer` so new strategies emit `entry_conditions` alongside the
+   existing natural-language rule text, preserving human-readable strategy rationale.
+6. Tighten `check_promotion_gates()` so strategies that carry `entry_conditions` must show
+   evidence that those rules were actually evaluated during paper trading.
+
+### Phase 2A Implementation Notes
+
+- Operator handling in the evaluator stays on an explicit whitelist via `Literal`, with
+  hardcoded `if/elif` dispatch only.
+- Audit output must distinguish `market_data_unavailable` from `entry_trigger_not_met`;
+  missing inputs must not masquerade as a failed signal.
+- Promotion-gate evidence must prove a real rule evaluation happened during paper trading,
+  not just that a strategy had free-text rules attached to it.
+- For legacy strategies with no `entry_conditions`, the evaluator step is skipped and the
+  current autonomous paper loop remains unchanged.
 
 ### Observation Gate
 
-- [ ] paper_trader decision logs show entry_trigger evaluation (not just direction+confidence)
-- [ ] At least 3 strategies have machine-readable entry/exit conditions
+- [ ] paper_trader decision logs show `entry_conditions` evaluation (not just direction+confidence)
+- [ ] At least 3 strategies have machine-readable `entry_conditions`
 - [ ] Promotion gate distinguishes "strategy rule validated" vs "random signal luck"
 
 ---
