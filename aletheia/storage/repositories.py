@@ -7,6 +7,8 @@ from aletheia.storage.sqlite import get_db
 from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
     RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
+    SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
+    SerenityReplaySnapshot, SerenityPostMortem,
 )
 
 
@@ -312,6 +314,108 @@ def list_knowledge_items(item_type: str | None = None, limit: int = 50, strategy
         params_list.append(status)
     where = " AND ".join(conditions) if conditions else None
     return _select_all("knowledge_items", where=where, params=tuple(params_list), limit=limit)
+
+
+# --- Serenity Lens ---
+
+def insert_serenity_theme(t: SerenityTheme) -> None:
+    _insert("serenity_themes", t.model_dump())
+
+
+def get_serenity_theme(theme_id: str) -> dict | None:
+    return _select_one("serenity_themes", theme_id)
+
+
+def list_serenity_themes(status: str | None = "active", limit: int = 100) -> list[dict]:
+    where: str | None = None
+    params: list = []
+    if status:
+        where = "status = ?"
+        params.append(status)
+    return _select_all("serenity_themes", where=where, params=tuple(params), limit=limit)
+
+
+def update_serenity_theme(theme_id: str, **kwargs) -> None:
+    _update("serenity_themes", theme_id, kwargs)
+
+
+def insert_serenity_evidence(e: SerenityEvidence) -> None:
+    _insert("serenity_evidence", e.model_dump())
+
+
+def list_serenity_evidence(theme_id: str | None = None, limit: int = 100) -> list[dict]:
+    where: str | None = None
+    params: list = []
+    if theme_id is not None:
+        where = "theme_id = ?"
+        params.append(theme_id)
+    return _select_all("serenity_evidence", where=where, params=tuple(params), limit=limit)
+
+
+def get_serenity_evidence(evidence_id: str) -> dict | None:
+    return _select_one("serenity_evidence", evidence_id)
+
+
+def insert_serenity_opportunity(o: SerenityOpportunity) -> None:
+    _insert("serenity_opportunities", o.model_dump())
+
+
+def get_serenity_opportunity(opportunity_id: str) -> dict | None:
+    return _select_one("serenity_opportunities", opportunity_id)
+
+
+def list_serenity_opportunities(
+    theme_id: str | None = None,
+    status: str | None = None,
+    stage: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    conditions: list[str] = []
+    params: list = []
+    if theme_id is not None:
+        conditions.append("theme_id = ?")
+        params.append(theme_id)
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+    if stage is not None:
+        conditions.append("stage = ?")
+        params.append(stage)
+    where = " AND ".join(conditions) if conditions else None
+    return _select_all("serenity_opportunities", where=where, params=tuple(params), limit=limit)
+
+
+def update_serenity_opportunity(opp_id: str, **kwargs) -> None:
+    _update("serenity_opportunities", opp_id, kwargs)
+
+
+def insert_serenity_risk_gate(g: SerenityRiskGate) -> None:
+    _insert("serenity_risk_gates", g.model_dump())
+
+
+def list_serenity_risk_gates(opportunity_id: str, limit: int = 100) -> list[dict]:
+    return _select_all("serenity_risk_gates", where="opportunity_id = ?", params=(opportunity_id,), limit=limit)
+
+
+def insert_serenity_replay_snapshot(s: SerenityReplaySnapshot) -> None:
+    _insert("serenity_replay_snapshots", s.model_dump())
+
+
+def list_serenity_replay_snapshots(opportunity_id: str, limit: int = 200) -> list[dict]:
+    return _select_all("serenity_replay_snapshots", where="opportunity_id = ?", params=(opportunity_id,), order="created_at DESC", limit=limit)
+
+
+def insert_serenity_post_mortem(p: SerenityPostMortem) -> None:
+    _insert("serenity_post_mortems", p.model_dump())
+
+
+def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 100) -> list[dict]:
+    where: str | None = None
+    params: list = []
+    if opportunity_id is not None:
+        where = "opportunity_id = ?"
+        params.append(opportunity_id)
+    return _select_all("serenity_post_mortems", where=where, params=tuple(params), limit=limit)
 
 
 # --- Market Snapshots ---

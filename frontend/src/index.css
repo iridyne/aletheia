@@ -446,6 +446,41 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 .mt-3 { margin-top: 0.75rem; }
 .mb-2 { margin-bottom: 0.5rem; }
 .mb-3 { margin-bottom: 0.75rem; }
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.card-head-space { margin-bottom: 0; }
+.lens-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+@media (max-width: 1180px) {
+  .lens-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 700px) {
+  .lens-grid { grid-template-columns: 1fr; }
+}
+.lens-module p { color: var(--muted); margin-bottom: 0; }
+.lens-module h3 { margin-bottom: 0.6rem; }
+.lens-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.lens-search { min-width: 190px; background: var(--bg); }
+.lens-table-wrap { overflow-x: auto; }
+.lens-detail { display: grid; gap: var(--space-2); }
+.serenity-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--space-3) 0;
+}
 
 /* ---------- Clickable row ---------- */
 tr.clickable { cursor: pointer; }

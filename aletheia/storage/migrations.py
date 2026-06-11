@@ -147,6 +147,92 @@ CREATE TABLE IF NOT EXISTS positions (
     closed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS serenity_themes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    demand_wave TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    objective TEXT,
+    description TEXT,
+    strategy_notes TEXT,
+    tags TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS serenity_evidence (
+    id TEXT PRIMARY KEY,
+    theme_id TEXT NOT NULL REFERENCES serenity_themes(id),
+    symbol TEXT,
+    source TEXT NOT NULL DEFAULT 'manual',
+    source_ref TEXT,
+    title TEXT NOT NULL,
+    summary TEXT DEFAULT '',
+    tier TEXT NOT NULL DEFAULT 'speculative',
+    supports INTEGER NOT NULL DEFAULT 1,
+    evidence_type TEXT DEFAULT 'thesis',
+    event_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    actor TEXT,
+    confidence TEXT DEFAULT 'speculative',
+    tags TEXT DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS serenity_opportunities (
+    id TEXT PRIMARY KEY,
+    theme_id TEXT NOT NULL REFERENCES serenity_themes(id),
+    symbol TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    thesis TEXT,
+    evidence_tier TEXT NOT NULL DEFAULT 'speculative',
+    stage TEXT NOT NULL DEFAULT 'research',
+    average_mode TEXT NOT NULL DEFAULT 'none',
+    action_intent TEXT NOT NULL DEFAULT 'watch',
+    status TEXT NOT NULL DEFAULT 'active',
+    risk_flags TEXT DEFAULT '[]',
+    risk_metrics TEXT DEFAULT '{}',
+    confidence_score INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS serenity_risk_gates (
+    id TEXT PRIMARY KEY,
+    opportunity_id TEXT NOT NULL REFERENCES serenity_opportunities(id),
+    gate_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'warn',
+    metric TEXT NOT NULL,
+    observed TEXT,
+    threshold TEXT,
+    message TEXT,
+    checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS serenity_replay_snapshots (
+    id TEXT PRIMARY KEY,
+    opportunity_id TEXT NOT NULL REFERENCES serenity_opportunities(id),
+    as_of TEXT NOT NULL,
+    evidence_count INTEGER NOT NULL DEFAULT 0,
+    score_total INTEGER NOT NULL DEFAULT 0,
+    stage TEXT NOT NULL DEFAULT 'research',
+    event_type TEXT NOT NULL DEFAULT 'snapshot',
+    event_title TEXT NOT NULL DEFAULT 'snapshot',
+    payload TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS serenity_post_mortems (
+    id TEXT PRIMARY KEY,
+    opportunity_id TEXT NOT NULL REFERENCES serenity_opportunities(id),
+    outcome TEXT NOT NULL,
+    failure_bucket TEXT,
+    score_delta INTEGER,
+    attribution TEXT,
+    summary TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT 'system',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     id TEXT PRIMARY KEY,
     total_value_usdt REAL NOT NULL,

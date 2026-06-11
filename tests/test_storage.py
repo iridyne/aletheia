@@ -9,6 +9,8 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
     RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
+    SerenityTheme, SerenityEvidence, SerenityOpportunity,
+    SerenityRiskGate, SerenityReplaySnapshot, SerenityPostMortem,
 )
 from aletheia.storage import repositories as repo
 from aletheia.files.jsonl import append_jsonl, read_jsonl, write_audit
@@ -34,7 +36,9 @@ def test_migrations_create_tables(tmp_path):
     db = get_db()
     tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     expected = ["audit_events", "agent_runs", "opportunities", "orders", "fills",
-                "positions", "strategy_records", "knowledge_items", "trade_proposals", "risk_decisions"]
+                "positions", "strategy_records", "knowledge_items", "trade_proposals", "risk_decisions",
+                "serenity_themes", "serenity_evidence", "serenity_opportunities",
+                "serenity_risk_gates", "serenity_replay_snapshots", "serenity_post_mortems"]
     for t in expected:
         assert t in tables, f"Missing table: {t}"
     reset_db()
@@ -91,6 +95,65 @@ def test_trade_proposal_to_order_flow(tmp_path):
     fills = repo.list_fills()
     assert len(fills) == 1
     assert fills[0]["fill_price"] == 3000.0
+    reset_db()
+
+
+def test_serenity_repo_crud(tmp_path):
+    setup_test_db(tmp_path)
+    theme = SerenityTheme(name="AI Supply Chain")
+    repo.insert_serenity_theme(theme)
+    themes = repo.list_serenity_themes()
+    assert len(themes) == 1
+    assert themes[0]["name"] == "AI Supply Chain"
+
+    evidence = SerenityEvidence(theme_id=themes[0]["id"], title="Substack Article", source="manual")
+    repo.insert_serenity_evidence(evidence)
+    evidence_rows = repo.list_serenity_evidence(theme_id=themes[0]["id"])
+    assert len(evidence_rows) == 1
+    assert evidence_rows[0]["title"] == "Substack Article"
+
+    opp = SerenityOpportunity(
+        theme_id=themes[0]["id"],
+        symbol="NVDA",
+        direction="long",
+        stage="research",
+    )
+    repo.insert_serenity_opportunity(opp)
+    opp_rows = repo.list_serenity_opportunities(theme_id=themes[0]["id"])
+    assert len(opp_rows) == 1
+    assert opp_rows[0]["symbol"] == "NVDA"
+
+    gate = SerenityRiskGate(
+        opportunity_id=opp_rows[0]["id"],
+        gate_name="liquidity",
+        status="warn",
+        metric="adv",
+        observed=0.1,
+        threshold=0.2,
+        message="monitor",
+    )
+    repo.insert_serenity_risk_gate(gate)
+    gates = repo.list_serenity_risk_gates(opportunity_id=opp_rows[0]["id"])
+    assert len(gates) == 1
+    assert gates[0]["status"] == "warn"
+
+    snapshot = SerenityReplaySnapshot(
+        opportunity_id=opp_rows[0]["id"],
+        as_of="2026-06-11T00:00:00",
+        event_type="snapshot",
+    )
+    repo.insert_serenity_replay_snapshot(snapshot)
+    snapshots = repo.list_serenity_replay_snapshots(opportunity_id=opp_rows[0]["id"])
+    assert len(snapshots) == 1
+
+    post_mortem = SerenityPostMortem(
+        opportunity_id=opp_rows[0]["id"],
+        outcome="hold",
+        summary="no thesis drift observed",
+    )
+    repo.insert_serenity_post_mortem(post_mortem)
+    post_mortems = repo.list_serenity_post_mortems(opportunity_id=opp_rows[0]["id"])
+    assert len(post_mortems) == 1
     reset_db()
 
 

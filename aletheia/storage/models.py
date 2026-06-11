@@ -194,3 +194,89 @@ class PortfolioSnapshot(BaseModel):
     execution_mode: str = "paper_internal"
     exchange_equity_usdt: float | None = None
     snapshot_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityTheme(BaseModel):
+    id: str = Field(default_factory=new_id)
+    name: str
+    demand_wave: str | None = None
+    status: str = "active"
+    objective: str | None = None
+    description: str | None = None
+    strategy_notes: str | None = None
+    tags: str = "[]"
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityEvidence(BaseModel):
+    id: str = Field(default_factory=new_id)
+    theme_id: str
+    symbol: str | None = None
+    source: str = "manual"
+    source_ref: str | None = None
+    title: str
+    summary: str = ""
+    tier: str = "speculative"
+    supports: bool = True
+    evidence_type: str = "thesis"
+    event_at: str = Field(default_factory=_utcnow)
+    created_at: str = Field(default_factory=_utcnow)
+    actor: str | None = None
+    confidence: str = "speculative"
+    tags: str = "[]"
+
+
+class SerenityOpportunity(BaseModel):
+    id: str = Field(default_factory=new_id)
+    theme_id: str
+    symbol: str
+    direction: str
+    thesis: str | None = None
+    evidence_tier: str = "speculative"
+    stage: str = "research"
+    average_mode: str = "none"
+    action_intent: str = "watch"
+    status: str = "active"
+    risk_flags: str = "[]"
+    risk_metrics: str = "{}"
+    confidence_score: int | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityRiskGate(BaseModel):
+    id: str = Field(default_factory=new_id)
+    opportunity_id: str
+    gate_name: str
+    status: str = "unknown"      # pass | warn | fail
+    metric: str
+    observed: str | float | int | None = None
+    threshold: str | float | int | None = None
+    message: str | None = None
+    checked_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityReplaySnapshot(BaseModel):
+    id: str = Field(default_factory=new_id)
+    opportunity_id: str
+    as_of: str
+    evidence_count: int = 0
+    score_total: int = 0
+    stage: str = "research"
+    event_type: str = "snapshot"
+    event_title: str = "snapshot"
+    payload: str = "{}"
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityPostMortem(BaseModel):
+    id: str = Field(default_factory=new_id)
+    opportunity_id: str
+    outcome: str
+    failure_bucket: str | None = None
+    score_delta: int | None = None
+    attribution: str | None = None
+    summary: str
+    created_by: str = "system"
+    created_at: str = Field(default_factory=_utcnow)

@@ -15,6 +15,129 @@ function post<T>(path: string, body?: unknown): Promise<T> {
 
 export interface KeyStatus { configured: boolean; last4: string | null }
 
+export interface SerenityTheme {
+  id: string
+  name: string
+  demand_wave: string | null
+  status: string
+  objective: string | null
+  description: string | null
+  strategy_notes: string | null
+  tags: string[] | string
+  created_at: string
+  updated_at: string
+}
+
+export interface SerenityEvidence {
+  id: string
+  theme_id: string
+  symbol?: string | null
+  source: string
+  source_ref?: string | null
+  title: string
+  summary: string | null
+  tier: string
+  supports: boolean
+  evidence_type: string
+  event_at: string
+  created_at: string
+  actor?: string | null
+  confidence: string
+  tags: string[] | string
+}
+
+export interface SerenityRiskGate {
+  id: string
+  opportunity_id: string
+  gate_name: string
+  status: string
+  metric: string
+  observed: string | number | null
+  threshold: string | number | null
+  message?: string | null
+  checked_at: string
+}
+
+export interface SerenityOpportunity {
+  id: string
+  theme_id: string
+  symbol: string
+  direction: string
+  thesis: string | null
+  evidence_tier: string
+  stage: string
+  average_mode: string
+  action_intent: string
+  status: string
+  risk_flags: string[] | string
+  risk_metrics: Record<string, unknown> | string
+  confidence_score: number | null
+  created_at: string
+  updated_at: string
+  serenity_score?: {
+    opportunity_id: string
+    score: number
+    bucket: string
+    evidence_score: number
+    stage_score: number
+    average_score: number
+    confidence_component: number
+    stage_index: number
+    evidence_count: number
+    risk_fail_gates: number
+    risk_warn_gates: number
+    risk_flag_count: number
+    average_engine?: {
+      mode: string
+      active: boolean
+      dca_ladder?: Record<string, unknown>
+      historical_mismatch?: Record<string, unknown>
+      signals?: Record<string, unknown>
+    }
+    reasons: Record<string, unknown>
+  }
+  risk_gates?: SerenityRiskGate[]
+}
+
+export interface SerenityTimelinePoint {
+  id: string
+  as_of: string
+  created_at: string
+  event_type: string
+  event_title: string
+  stage: string
+  score_total: number
+  bucket?: string
+  evidence_count?: number
+  risk_fail_gates?: number
+  risk_warn_gates?: number
+}
+
+export interface SerenityResearchCycle {
+  opportunity: SerenityOpportunity & {
+    serenity_score: SerenityOpportunity['serenity_score']
+  }
+  timeline: SerenityTimelinePoint[]
+  risk_gates: SerenityRiskGate[]
+  risk_gate_summary: Record<string, number>
+  post_mortems: Record<string, unknown>[]
+  post_mortem_summary: {
+    count: number
+    failure_bucket: Record<string, number>
+  }
+}
+
+export interface SerenityThemeOverview {
+  theme: SerenityTheme
+  metrics: {
+    opportunity_count: number
+    evidence_count: number
+    stage_counts: Record<string, number>
+    average_mode_counts: Record<string, number>
+    pipeline_order: string[]
+  }
+}
+
 export const api = {
   getHealth: () => fetchJson<{ status: string; issues: string[]; version: string }>('/health'),
   // Restart the gateway worker (warm) or full process (cold). Issued from the
@@ -157,6 +280,62 @@ export const api = {
   getPostTradeReviews: () => fetchJson<any[]>('/knowledge?type=post_trade_review'),
   getKnowledgeContent: (id: string) => fetchJson<{ id: string; content: string; error?: string }>(`/knowledge/${id}/content`),
   getStrategyGates: (id: string) => fetchJson<Record<string, any>>(`/strategies/${id}/gates`),
+
+  // Serenity Lens endpoints (research-first investigation pipeline)
+  getSerenityThemes: () => fetchJson<SerenityTheme[]>('/serenity/themes'),
+  getSerenityTheme: (id: string) => fetchJson<SerenityTheme & { tags: string[] }>(`/serenity/themes/${id}`),
+  getSerenityThemeOverview: (id: string) => fetchJson<SerenityThemeOverview>(`/serenity/themes/${id}/overview`),
+  createSerenityTheme: (body: Partial<SerenityTheme> & { name: string }) =>
+    post<{ id: string }>(`/serenity/themes`, body),
+  getSerenityEvidence: (themeId?: string, limit = 100) =>
+    fetchJson<SerenityEvidence[]>(`/serenity/evidence${themeId ? `?theme_id=${encodeURIComponent(themeId)}&limit=${limit}` : `?limit=${limit}`}`),
+  createSerenityEvidence: (body: Partial<SerenityEvidence> & { theme_id: string; title: string }) =>
+    post<{ id: string }>('/serenity/evidence', body as never),
+  getSerenityOpportunities: (themeId?: string, status?: string, stage?: string, includeScores = true, limit = 100) => {
+    const qs = new URLSearchParams()
+    if (themeId) qs.set('theme_id', themeId)
+    if (status) qs.set('status', status)
+    if (stage) qs.set('stage', stage)
+    qs.set('include_scores', String(includeScores))
+    qs.set('limit', String(limit))
+    return fetchJson<SerenityOpportunity[]>(`/serenity/opportunities?${qs.toString()}`)
+  },
+  createSerenityOpportunity: (body: Partial<SerenityOpportunity> & {
+    theme_id: string
+    symbol: string
+    direction: string
+  }) => post<{ id: string }>('/serenity/opportunities', body as never),
+  getSerenityOpportunity: (id: string, includeScores = true) =>
+    fetchJson<SerenityOpportunity>(`/serenity/opportunities/${id}?include_scores=${includeScores}`),
+  scoreSerenityOpportunity: (id: string) =>
+    fetchJson<Record<string, unknown>>(`/serenity/opportunities/${id}/score`),
+  getSerenityResearchCycle: (id: string) => fetchJson<SerenityResearchCycle>(`/serenity/opportunities/${id}/research-cycle`),
+  getSerenityOpportunityRiskGates: (id: string) => fetchJson<SerenityRiskGate[]>(`/serenity/opportunities/${id}/risk-gates`),
+  createSerenityOpportunityRiskGate: (id: string, body: {
+    gate_name: string
+    status: string
+    metric: string
+    observed?: string | number | null
+    threshold?: string | number | null
+    message?: string | null
+  }) => post<{ id: string }>(`/serenity/opportunities/${id}/risk-gates`, body),
+  getSerenityReplay: (id: string) => fetchJson<Record<string, unknown>[]>(`/serenity/opportunities/${id}/replay`),
+  createSerenityReplaySnapshot: (id: string, body: {
+    as_of: string
+    stage?: string
+    event_type?: string
+    event_title?: string
+    payload?: Record<string, unknown>
+  }) => post<{ id: string }>(`/serenity/opportunities/${id}/replay`, body),
+  getSerenityPostMortems: (id: string) => fetchJson<Record<string, unknown>[]>(`/serenity/opportunities/${id}/post-mortems`),
+  createSerenityPostMortem: (id: string, body: {
+    outcome: string
+    summary: string
+    failure_bucket?: string | null
+    score_delta?: number | null
+    attribution?: string | null
+    created_by?: string
+  }) => post<{ id: string }>(`/serenity/opportunities/${id}/post-mortems`, body),
 
   // Charts
   // `before` (unix seconds) requests the page of candles strictly older than that

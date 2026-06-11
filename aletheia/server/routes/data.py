@@ -1,13 +1,27 @@
 """Data API routes for dashboard consumption."""
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
+from datetime import datetime, timezone
 
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import (
+    SerenityTheme,
+    SerenityEvidence,
+    SerenityOpportunity,
+    SerenityRiskGate,
+    SerenityReplaySnapshot,
+    SerenityPostMortem,
+)
+from aletheia.trading.serenity_scoring import (
+    make_replay_snapshot_payload,
+    score_serenity_opportunity,
+)
 
 router = APIRouter(prefix="/api", tags=["data"])
 
@@ -51,6 +65,136 @@ def _parse_utc_timestamp(value) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _to_json(value, fallback):
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list, tuple)):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return fallback
+        return parsed
+    return fallback
+
+
+def _dump_json(value, fallback="[]"):
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        # already serialized string
+        return value
+    return json.dumps(value)
+
+
+PIPELINE_STAGE_ORDER = [
+    "research",
+    "validation",
+    "demand_wave",
+    "supply_chain",
+    "ramp",
+    "order_night",
+    "candidate_position",
+]
+
+
+def _summarize_failure_buckets(post_mortems: list[dict]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for row in post_mortems:
+        bucket = row.get("failure_bucket") or "unclassified"
+        if bucket is None:
+            bucket = "unclassified"
+        bucket = str(bucket).strip() or "unclassified"
+        summary[bucket] = summary.get(bucket, 0) + 1
+    return summary
+
+
+def _summarize_gate_status(gates: list[dict]) -> dict[str, int]:
+    status_counts = {"pass": 0, "warn": 0, "fail": 0, "unknown": 0}
+    for g in gates:
+        status = str(g.get("status", "")).strip().lower()
+        if status not in status_counts:
+            status_counts["unknown"] += 1
+        else:
+            status_counts[status] += 1
+    return status_counts
+
+
+def _normalize_stage_for_pipeline(stage: str | None) -> str:
+    stage_value = str(stage or "research").strip().lower()
+    if stage_value in {"design_in", "design-in", "sample"}:
+        return "supply_chain"
+    if stage_value in {"order"}:
+        return "order_night"
+    if stage_value == "candidate":
+        return "candidate_position"
+    return stage_value if stage_value in PIPELINE_STAGE_ORDER else "research"
+
+
+def _parse_replay_payload(payload: str | None) -> dict:
+    parsed = _to_json(payload, {})
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _score_serenity_opportunity_payload(opportunity: dict, include_evidence=True, include_gates=True) -> dict:
+    evidence: list[dict] = []
+    risk_gates: list[dict] = []
+    if include_evidence and opportunity.get("theme_id"):
+        evidence = repo.list_serenity_evidence(theme_id=opportunity["theme_id"], limit=200)
+    if include_gates:
+        risk_gates = repo.list_serenity_risk_gates(opportunity_id=opportunity["id"], limit=200)
+    score = score_serenity_opportunity(opportunity, evidence=evidence, risk_gates=risk_gates)
+    payload = dict(opportunity)
+    payload["risk_gates"] = risk_gates
+    payload["risk_flags"] = _to_json(opportunity.get("risk_flags"), [])
+    payload["risk_metrics"] = _to_json(opportunity.get("risk_metrics"), {})
+    payload["serenity_score"] = score
+    return payload
+
+
+def _build_research_cycle_payload(opportunity: dict) -> dict:
+    evidence = repo.list_serenity_evidence(theme_id=opportunity.get("theme_id"), limit=200)
+    risk_gates = repo.list_serenity_risk_gates(opportunity_id=opportunity["id"], limit=200)
+    snapshots = repo.list_serenity_replay_snapshots(opportunity_id=opportunity["id"], limit=200)
+    post_mortems = repo.list_serenity_post_mortems(opportunity_id=opportunity["id"], limit=200)
+
+    score = score_serenity_opportunity(opportunity, evidence=evidence, risk_gates=risk_gates)
+
+    gate_status = _summarize_gate_status(risk_gates)
+    timeline = []
+    for snap in snapshots:
+        snap_payload = _parse_replay_payload(snap.get("payload"))
+        timeline.append({
+            "id": snap["id"],
+            "as_of": snap["as_of"],
+            "created_at": snap["created_at"],
+            "event_type": snap.get("event_type"),
+            "event_title": snap.get("event_title"),
+            "stage": snap.get("stage"),
+            "score_total": snap.get("score_total"),
+            "bucket": snap_payload.get("bucket"),
+            "evidence_count": snap.get("evidence_count"),
+            "risk_fail_gates": snap.get("risk_fail_gates"),
+            "risk_warn_gates": snap.get("risk_warn_gates"),
+        })
+
+    payload = _score_serenity_opportunity_payload(opportunity, include_evidence=False, include_gates=False)
+    payload["serenity_score"] = score
+    payload["evidence_count"] = len(evidence)
+    return {
+        "opportunity": payload,
+        "timeline": list(reversed(timeline)),
+        "risk_gates": risk_gates,
+        "risk_gate_summary": gate_status,
+        "post_mortems": post_mortems,
+        "post_mortem_summary": {
+            "count": len(post_mortems),
+            "failure_bucket": _summarize_failure_buckets(post_mortems),
+        },
+    }
 
 
 @router.get("/agent-runs")
@@ -99,6 +243,319 @@ async def start_agent_run(req: StartAgentRequest):
 async def get_opportunities():
     _ensure_db()
     return repo.list_opportunities()
+
+
+class SerenityThemeCreate(BaseModel):
+    name: str
+    demand_wave: str | None = None
+    objective: str | None = None
+    description: str | None = None
+    strategy_notes: str | None = None
+    tags: list[str] = []
+    status: str = "active"
+
+
+@router.get("/serenity/themes")
+async def get_serenity_themes(status: str = Query(default="active")):
+    _ensure_db()
+    items = repo.list_serenity_themes(status=status)
+    for item in items:
+        item["tags"] = _to_json(item.get("tags"), [])
+    return items
+
+
+@router.post("/serenity/themes")
+async def create_serenity_theme(payload: SerenityThemeCreate):
+    _ensure_db()
+    theme = SerenityTheme(
+        name=payload.name,
+        demand_wave=payload.demand_wave,
+        objective=payload.objective,
+        description=payload.description,
+        strategy_notes=payload.strategy_notes,
+        tags=_dump_json(payload.tags),
+        status=payload.status,
+    )
+    repo.insert_serenity_theme(theme)
+    return {"id": theme.id}
+
+
+@router.get("/serenity/themes/{theme_id}/overview")
+async def get_serenity_theme_overview(theme_id: str):
+    _ensure_db()
+    row = repo.get_serenity_theme(theme_id)
+    if row is None:
+        raise HTTPException(404, "Theme not found")
+    evidence = repo.list_serenity_evidence(theme_id=theme_id, limit=1000)
+    opportunities = repo.list_serenity_opportunities(theme_id=theme_id, status=None, limit=1000)
+
+    stage_counts: dict[str, int] = {}
+    avg_mode_counts: dict[str, int] = {}
+    for opp in opportunities:
+        stage = _normalize_stage_for_pipeline(opp.get("stage"))
+        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+        mode = opp.get("average_mode") or "none"
+        avg_mode_counts[str(mode)] = avg_mode_counts.get(str(mode), 0) + 1
+
+    return {
+        "theme": row,
+        "metrics": {
+            "opportunity_count": len(opportunities),
+            "evidence_count": len(evidence),
+            "stage_counts": stage_counts,
+            "average_mode_counts": avg_mode_counts,
+            "pipeline_order": PIPELINE_STAGE_ORDER,
+        },
+    }
+
+
+@router.get("/serenity/themes/{theme_id}")
+async def get_serenity_theme(theme_id: str):
+    _ensure_db()
+    row = repo.get_serenity_theme(theme_id)
+    if row is None:
+        raise HTTPException(404, "Theme not found")
+    row["tags"] = _to_json(row.get("tags"), [])
+    return row
+
+
+class SerenityEvidenceCreate(BaseModel):
+    theme_id: str
+    symbol: str | None = None
+    source: str = "manual"
+    source_ref: str | None = None
+    title: str
+    summary: str = ""
+    tier: str = "speculative"
+    supports: bool = True
+    evidence_type: str = "thesis"
+    event_at: str | None = None
+    actor: str | None = None
+    confidence: str = "speculative"
+    tags: list[str] = []
+
+
+@router.get("/serenity/evidence")
+async def get_serenity_evidence(theme_id: str | None = None, limit: int = 100):
+    _ensure_db()
+    items = repo.list_serenity_evidence(theme_id=theme_id, limit=limit)
+    for item in items:
+        item["tags"] = _to_json(item.get("tags"), [])
+    return items
+
+
+@router.post("/serenity/evidence")
+async def create_serenity_evidence(payload: SerenityEvidenceCreate):
+    _ensure_db()
+    evidence = SerenityEvidence(
+        theme_id=payload.theme_id,
+        symbol=payload.symbol,
+        source=payload.source,
+        source_ref=payload.source_ref,
+        title=payload.title,
+        summary=payload.summary,
+        tier=payload.tier,
+        supports=payload.supports,
+        evidence_type=payload.evidence_type,
+        event_at=payload.event_at or datetime.now(timezone.utc).isoformat(),
+        actor=payload.actor,
+        confidence=payload.confidence,
+        tags=_dump_json(payload.tags),
+    )
+    repo.insert_serenity_evidence(evidence)
+    return {"id": evidence.id}
+
+
+class SerenityOpportunityCreate(BaseModel):
+    theme_id: str
+    symbol: str
+    direction: str
+    thesis: str | None = None
+    evidence_tier: str = "speculative"
+    stage: str = "research"
+    average_mode: str = "none"
+    action_intent: str = "watch"
+    status: str = "active"
+    risk_flags: list[str] = []
+    risk_metrics: dict | None = None
+    confidence_score: int | None = None
+
+
+@router.get("/serenity/opportunities")
+async def get_serenity_opportunities(
+    theme_id: str | None = None,
+    status: str | None = None,
+    stage: str | None = None,
+    include_scores: bool = True,
+    limit: int = 100,
+):
+    _ensure_db()
+    opportunities = repo.list_serenity_opportunities(theme_id=theme_id, status=status, stage=stage, limit=limit)
+    if not include_scores:
+        return opportunities
+    return [_score_serenity_opportunity_payload(opportunity=o) for o in opportunities]
+
+
+@router.post("/serenity/opportunities")
+async def create_serenity_opportunity(payload: SerenityOpportunityCreate):
+    _ensure_db()
+    opp = SerenityOpportunity(
+        theme_id=payload.theme_id,
+        symbol=payload.symbol,
+        direction=payload.direction,
+        thesis=payload.thesis,
+        evidence_tier=payload.evidence_tier,
+        stage=payload.stage,
+        average_mode=payload.average_mode,
+        action_intent=payload.action_intent,
+        status=payload.status,
+        risk_flags=_dump_json(payload.risk_flags),
+        risk_metrics=json.dumps(payload.risk_metrics or {}),
+        confidence_score=payload.confidence_score,
+    )
+    repo.insert_serenity_opportunity(opp)
+    return {"id": opp.id}
+
+
+@router.get("/serenity/opportunities/{opportunity_id}")
+async def get_serenity_opportunity(opportunity_id: str, include_scores: bool = True):
+    _ensure_db()
+    row = repo.get_serenity_opportunity(opportunity_id)
+    if row is None:
+        raise HTTPException(404, "Opportunity not found")
+    if include_scores:
+        return _score_serenity_opportunity_payload(opportunity=row)
+    row["risk_flags"] = _to_json(row.get("risk_flags"), [])
+    row["risk_metrics"] = _to_json(row.get("risk_metrics"), {})
+    return row
+
+
+@router.get("/serenity/opportunities/{opportunity_id}/research-cycle")
+async def get_serenity_opportunity_research_cycle(opportunity_id: str):
+    _ensure_db()
+    opp = _ensure_serenity_opportunity_exists(opportunity_id)
+    return _build_research_cycle_payload(opp)
+
+
+@router.get("/serenity/opportunities/{opportunity_id}/score")
+async def score_serenity_opportunity_endpoint(opportunity_id: str):
+    _ensure_db()
+    opp = repo.get_serenity_opportunity(opportunity_id)
+    if opp is None:
+        raise HTTPException(404, "Opportunity not found")
+    evidence = repo.list_serenity_evidence(theme_id=opp.get("theme_id"), limit=200)
+    gates = repo.list_serenity_risk_gates(opportunity_id=opportunity_id, limit=200)
+    return score_serenity_opportunity(opp, evidence=evidence, risk_gates=gates)
+
+
+class SerenityRiskGateCreate(BaseModel):
+    gate_name: str
+    status: str
+    metric: str
+    observed: str | int | float | None = None
+    threshold: str | int | float | None = None
+    message: str | None = None
+
+
+@router.get("/serenity/opportunities/{opportunity_id}/risk-gates")
+async def get_serenity_opportunity_risk_gates(opportunity_id: str):
+    _ensure_db()
+    _ensure_serenity_opportunity_exists(opportunity_id)
+    return repo.list_serenity_risk_gates(opportunity_id=opportunity_id, limit=200)
+
+
+@router.post("/serenity/opportunities/{opportunity_id}/risk-gates")
+async def create_serenity_opportunity_risk_gate(opportunity_id: str, payload: SerenityRiskGateCreate):
+    _ensure_db()
+    _ensure_serenity_opportunity_exists(opportunity_id)
+    gate = SerenityRiskGate(
+        opportunity_id=opportunity_id,
+        gate_name=payload.gate_name,
+        status=payload.status,
+        metric=payload.metric,
+        observed=payload.observed,
+        threshold=payload.threshold,
+        message=payload.message,
+    )
+    repo.insert_serenity_risk_gate(gate)
+    return {"id": gate.id}
+
+
+class SerenityReplaySnapshotCreate(BaseModel):
+    as_of: str
+    stage: str | None = None
+    event_type: str = "snapshot"
+    event_title: str = "snapshot"
+    payload: dict | None = None
+
+
+@router.get("/serenity/opportunities/{opportunity_id}/replay")
+async def get_serenity_replay(opportunity_id: str, limit: int = 50):
+    _ensure_db()
+    _ensure_serenity_opportunity_exists(opportunity_id)
+    return repo.list_serenity_replay_snapshots(opportunity_id=opportunity_id, limit=limit)
+
+
+@router.post("/serenity/opportunities/{opportunity_id}/replay")
+async def create_serenity_replay_snapshot(opportunity_id: str, payload: SerenityReplaySnapshotCreate):
+    _ensure_db()
+    opp = _ensure_serenity_opportunity_exists(opportunity_id)
+    evidence = repo.list_serenity_evidence(theme_id=opp.get("theme_id"), limit=200)
+    gates = repo.list_serenity_risk_gates(opportunity_id=opportunity_id, limit=200)
+    score = score_serenity_opportunity(opp, evidence=evidence, risk_gates=gates)
+    extra = payload.payload or make_replay_snapshot_payload(opp, score=score)
+    row = SerenityReplaySnapshot(
+        opportunity_id=opportunity_id,
+        as_of=payload.as_of,
+        evidence_count=score["evidence_count"],
+        score_total=score["score"],
+        stage=payload.stage or opp.get("stage", "research"),
+        event_type=payload.event_type,
+        event_title=payload.event_title,
+        payload=json.dumps(extra),
+    )
+    repo.insert_serenity_replay_snapshot(row)
+    return {"id": row.id, "score": score}
+
+
+class SerenityPostMortemCreate(BaseModel):
+    outcome: str
+    failure_bucket: str | None = None
+    score_delta: int | None = None
+    attribution: str | None = None
+    summary: str
+    created_by: str = "system"
+
+
+@router.get("/serenity/opportunities/{opportunity_id}/post-mortems")
+async def get_serenity_post_mortems(opportunity_id: str):
+    _ensure_db()
+    _ensure_serenity_opportunity_exists(opportunity_id)
+    return repo.list_serenity_post_mortems(opportunity_id=opportunity_id, limit=200)
+
+
+@router.post("/serenity/opportunities/{opportunity_id}/post-mortems")
+async def create_serenity_post_mortem(opportunity_id: str, payload: SerenityPostMortemCreate):
+    _ensure_db()
+    _ensure_serenity_opportunity_exists(opportunity_id)
+    row = SerenityPostMortem(
+        opportunity_id=opportunity_id,
+        outcome=payload.outcome,
+        failure_bucket=payload.failure_bucket,
+        score_delta=payload.score_delta,
+        attribution=payload.attribution,
+        summary=payload.summary,
+        created_by=payload.created_by,
+    )
+    repo.insert_serenity_post_mortem(row)
+    return {"id": row.id}
+
+
+def _ensure_serenity_opportunity_exists(opportunity_id: str) -> dict:
+    row = repo.get_serenity_opportunity(opportunity_id)
+    if row is None:
+        raise HTTPException(404, "Opportunity not found")
+    return row
 
 
 @router.get("/proposals")
