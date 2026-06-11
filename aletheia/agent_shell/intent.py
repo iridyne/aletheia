@@ -13,17 +13,43 @@ Classify the user's natural-language input into exactly ONE command from the lis
 or "query" if it's a general question that doesn't map to a specific command.
 
 Available commands:
+- pause_paper_strategy: user wants to pause a paper strategy
+- archive_low_value_notification: user wants to archive or dismiss a low-value operator recommendation
+- mark_strategy_under_review: user wants to mark a strategy under review
 - get_system_status: user asks about system health, status, what's running
+- get_operator_status: user asks about operator heartbeat, mode, or what the operator is doing
 - get_agent_activity: user asks about agent runs, what agents did
 - get_market_snapshot: user asks about prices, market data
 - get_positions: user asks about open trades, positions, PnL
 - explain_agent_run: user asks why an agent did something, explain a run
 - explain_proposal: user asks about a trade proposal or why it was rejected
+- get_strategy_lifecycle: user asks about strategy state, promotion readiness, or lifecycle
+- get_failed_tasks: user asks what failed, which tasks failed, or what errors need review
+- get_recommendations: user asks what the operator recommends or suggests doing next
 - pause_agents: user wants to pause/stop/halt agents
 - resume_agents: user wants to resume/start/continue agents
 - create_research_note: user wants to create a research note
+- create_strategy_draft: user wants to create a strategy draft
+- create_dreaming_log: user wants to create or write a dreaming log
 - create_diagnostic_todo: user wants to log a diagnostic issue or todo
+- mark_task_done: user wants to mark an operator task done
 - create_improvement_proposal: user wants to suggest an improvement
+- draft_extension_manifest: user wants to draft a new extension manifest
+- test_extension_sandbox: user wants to validate a drafted extension in a sandbox
+- create_daily_review: user wants to create or write a daily review
+- create_review_report: user wants to create a non-trading review report
+- create_diagnostic_report: user wants to create a diagnostic or system health report
+- run_market_scan: user wants to run a manual market scan
+- rerun_failed_agent_task: user wants to retry or rerun a failed task
+- set_symbol_observe_only: user wants a symbol observed but not tradable
+- create_paper_experiment: user wants to create a paper experiment
+- propose_strategy_promotion: user wants to create a promotion proposal for a strategy
+- propose_prompt_change: user wants to propose changing a prompt or playbook
+- propose_schedule_change: user wants to propose a scheduler cadence change
+- propose_live_limited_enablement: user wants to propose human review for live-limited enablement
+- propose_risk_boundary_change: user wants to propose a risk boundary change
+- propose_command_center_behavior_change: user wants to propose a Command Center behavior change
+- propose_extension_enablement: user wants to propose human approval for enabling an extension
 
 Output the command name and any parameters you can extract (run_id, proposal_id, title, content).
 If the user asks about something dangerous (enable live, change credentials, bypass risk), classify as "forbidden".
@@ -40,21 +66,116 @@ class CommandIntent(BaseModel):
 _KEYWORD_MAP: dict[str, list[str]] = {
     # Operational commands first — their keywords are high-specificity and should
     # take priority over broad read-command keywords like "agent" or "open".
+    "pause_paper_strategy": ["pause paper strategy", "pause strategy", "halt this strategy"],
     "pause_agents": ["pause", "stop", "halt"],
     "resume_agents": ["resume", "unpause", "continue"],
+    "run_market_scan": ["run market scan", "scan the market", "run scanner", "trigger market scan"],
+    "rerun_failed_agent_task": ["rerun failed task", "retry failed task", "rerun failed agent", "retry last failure"],
+    "set_symbol_observe_only": ["observe only", "mark symbol observe only", "set observe only"],
+    "propose_strategy_promotion": ["propose strategy promotion", "promotion proposal", "propose promotion"],
+    "propose_prompt_change": ["propose prompt change", "prompt change proposal", "propose playbook change"],
+    "propose_schedule_change": ["propose schedule change", "schedule change proposal", "propose cadence change"],
+    "propose_live_limited_enablement": [
+        "propose live limited enablement",
+        "live limited enablement proposal",
+        "propose live-limited enablement",
+    ],
+    "propose_risk_boundary_change": [
+        "propose risk boundary change",
+        "risk boundary proposal",
+        "propose risk change",
+    ],
+    "propose_command_center_behavior_change": [
+        "propose command center behavior change",
+        "command center behavior proposal",
+        "propose command center improvement",
+    ],
+    "propose_extension_enablement": [
+        "propose extension enablement",
+        "extension enablement proposal",
+        "propose enabling extension",
+    ],
+    "create_review_report": [
+        "review report",
+        "risk review report",
+        "trade review report",
+        "agent performance report",
+    ],
+    "create_diagnostic_report": [
+        "diagnostic report",
+        "system health report",
+        "system health diagnostic report",
+    ],
     "create_research_note": ["research", "note", "write note"],
+    "create_strategy_draft": ["strategy draft", "create strategy draft", "draft strategy"],
+    "create_dreaming_log": ["dreaming log", "write dreaming log", "dream log"],
+    "create_paper_experiment": ["paper experiment", "create paper experiment", "new paper experiment"],
     "create_diagnostic_todo": ["diagnostic", "todo", "issue", "bug"],
-    "create_improvement_proposal": ["improvement", "improve", "suggest"],
-    # Read commands — broader keywords, lower priority.
-    "get_system_status": ["status", "health", "running", "state", "doing", "system"],
+    "mark_task_done": ["mark task done", "complete task", "task done"],
+    "archive_low_value_notification": [
+        "archive low value notification",
+        "archive recommendation",
+        "archive this recommendation",
+        "archive notification",
+        "dismiss recommendation",
+    ],
+    "mark_strategy_under_review": [
+        "mark strategy under review",
+        "strategy under review",
+        "review this strategy",
+    ],
+    "create_improvement_proposal": [
+        "improvement proposal",
+        "create improvement proposal",
+        "propose improvement",
+        "suggest improvement",
+        "improve this",
+    ],
+    "draft_extension_manifest": [
+        "draft extension",
+        "create extension manifest",
+        "draft extension manifest",
+    ],
+    "test_extension_sandbox": [
+        "test extension sandbox",
+        "run extension sandbox",
+        "validate extension manifest",
+    ],
+    "create_daily_review": ["daily review", "write review"],
+    # Read commands — specific intents first, broad system-status fallback last.
+    "get_operator_status": [
+        "operator heartbeat",
+        "operator status",
+        "operator health",
+        "operator mode",
+        "what is the operator doing",
+    ],
+    "get_strategy_lifecycle": ["strategy lifecycle", "strategy state", "strategy status", "promotion gate", "live candidate"],
+    "get_failed_tasks": ["failed task", "failed tasks", "what failed", "operator task", "errors to review"],
+    "get_recommendations": ["recommendations", "recommendation", "suggestion", "suggestions", "what should i do"],
     "get_agent_activity": ["agent activity", "agent run", "agents", "runs", "activity", "jobs"],
     "get_market_snapshot": ["market", "price", "prices", "btc", "eth", "sol", "snapshot"],
     "get_positions": ["position", "positions", "pnl"],
+    "explain_proposal": ["proposal", "proposal fail", "rejected", "approved", "risk decision", "why did this proposal"],
     "explain_agent_run": ["explain", "why did", "what did"],
-    "explain_proposal": ["proposal", "rejected", "approved", "risk decision"],
+    "get_system_status": ["status", "health", "running", "state", "doing", "system"],
 }
 
-_FORBIDDEN_KEYWORDS = ["live", "credential", "password", "api key", "secret", "bypass risk"]
+_FORBIDDEN_KEYWORDS = [
+    "enable live",
+    "unlock live",
+    "start live trading",
+    "place live order",
+    "modify credentials",
+    "change credentials",
+    "api key",
+    "secret key",
+    "password",
+    "bypass risk",
+    "disable risk",
+    "change risk limits",
+    "modify execution gateway",
+]
 
 
 def _classify_keyword(text: str) -> CommandIntent:

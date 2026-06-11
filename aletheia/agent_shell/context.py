@@ -1,18 +1,42 @@
 """AppContextProvider — assembles compact system context for LLM prompts."""
 
 from aletheia.config.loader import load_config
+from aletheia.agent_shell.operator_store import get_latest_heartbeat, list_tasks
 from aletheia.storage.repositories import (
     list_agent_runs,
+    list_trade_proposals,
     list_fills,
     list_knowledge_items,
     list_market_snapshots,
     list_orders,
     list_positions,
     list_strategies,
-    list_portfolio_snapshots,
 )
 
-ALL_SECTIONS = ("system", "market", "agents", "trading", "risk", "knowledge", "strategies")
+ALL_SECTIONS = (
+    "system",
+    "market",
+    "agents",
+    "trading",
+    "proposals",
+    "risk",
+    "knowledge",
+    "strategies",
+    "errors",
+    "operator_state",
+)
+
+CONTEXT_PROFILES: dict[str, tuple[str, ...]] = {
+    "minimal_context": ("system", "operator_state"),
+    "operational_context": ("system", "agents", "proposals", "errors", "operator_state"),
+    "trading_context": ("system", "market", "trading", "proposals", "strategies", "risk", "errors", "operator_state"),
+    "knowledge_context": ("system", "agents", "knowledge", "strategies", "operator_state"),
+    "repair_context": ("system", "agents", "trading", "proposals", "strategies", "risk", "errors", "operator_state"),
+}
+
+
+def sections_for_profile(profile: str) -> list[str]:
+    return list(CONTEXT_PROFILES.get(profile, CONTEXT_PROFILES["operational_context"]))
 
 
 def build_app_context(sections: list[str] | None = None) -> dict:
@@ -71,6 +95,23 @@ def build_app_context(sections: list[str] | None = None) -> dict:
             "recent_fills": len(fills),
         }
 
+    if "proposals" in wanted:
+        proposals = list_trade_proposals(limit=10)
+        ctx["proposals"] = {
+            "recent": [
+                {
+                    "id": p["id"],
+                    "symbol": p["symbol"],
+                    "direction": p["direction"],
+                    "status": p["status"],
+                    "strategy_id": p.get("strategy_id"),
+                    "created_at": p.get("created_at"),
+                }
+                for p in proposals
+            ],
+            "pending_count": sum(1 for p in proposals if p.get("status") == "pending"),
+        }
+
     if "risk" in wanted:
         ctx["risk"] = {
             "kill_switch": cfg.runtime.kill_switch_active,
@@ -93,6 +134,69 @@ def build_app_context(sections: list[str] | None = None) -> dict:
             for s in strats
         ]
 
+    if "errors" in wanted:
+        from aletheia.agent_runtime.health import compute_health
+
+        health = compute_health()
+        failed_runs = [
+            r
+            for r in list_agent_runs(limit=10)
+            if r.get("status") in {"failed", "error"}
+        ]
+        failed_tasks = [
+            {
+                "id": task["id"],
+                "task_type": task["task_type"],
+                "error": task.get("error"),
+                "completed_at": task.get("completed_at"),
+            }
+            for task in list_tasks(limit=10, status="failed")
+        ]
+        ctx["errors"] = {
+            "health_issues": health["issues"],
+            "recent_failed_runs": [
+                {
+                    "agent": run["agent_name"],
+                    "status": run["status"],
+                    "started_at": run["started_at"],
+                    "ended_at": run.get("ended_at"),
+                }
+                for run in failed_runs[:5]
+            ],
+            "recent_failed_operator_tasks": failed_tasks,
+        }
+
+    if "operator_state" in wanted:
+        heartbeat = get_latest_heartbeat()
+        running_tasks = list_tasks(limit=10, status="running")
+        ctx["operator_state"] = {
+            "heartbeat": (
+                {
+                    "status": heartbeat["status"],
+                    "mode": heartbeat["mode"],
+                    "permission_mode": heartbeat["permission_mode"],
+                    "current_intent": heartbeat.get("current_intent"),
+                    "queue_size": heartbeat["queue_size"],
+                    "last_seen_at": heartbeat.get("last_seen_at"),
+                    "session_id": heartbeat.get("session_id"),
+                    "active_branch_id": heartbeat.get("active_branch_id"),
+                    "active_branch_kind": heartbeat.get("active_branch_kind"),
+                    "active_branch_title": heartbeat.get("active_branch_title"),
+                }
+                if heartbeat
+                else None
+            ),
+            "running_tasks": [
+                {
+                    "id": task["id"],
+                    "task_type": task["task_type"],
+                    "assigned_to": task["assigned_to"],
+                    "started_at": task.get("started_at"),
+                }
+                for task in running_tasks
+            ],
+        }
+
     return ctx
 
 
@@ -112,4 +216,24 @@ def context_summary_text(ctx: dict) -> str:
     if "trading" in ctx:
         t = ctx["trading"]
         parts.append(f"Trading: {len(t['open_positions'])} open positions")
+    if "proposals" in ctx:
+        p = ctx["proposals"]
+        parts.append(f"Proposals: {p['pending_count']} pending")
+    if "errors" in ctx:
+        e = ctx["errors"]
+        issues = e.get("health_issues") or []
+        failed_tasks = e.get("recent_failed_operator_tasks") or []
+        parts.append(
+            f"Errors: {len(issues)} health issue(s), {len(failed_tasks)} failed operator task(s)"
+        )
+    if "operator_state" in ctx:
+        operator_state = ctx["operator_state"]
+        heartbeat = operator_state.get("heartbeat") if isinstance(operator_state, dict) else None
+        if heartbeat:
+            parts.append(
+                "Operator: "
+                f"status={heartbeat.get('status')}, "
+                f"mode={heartbeat.get('mode')}, "
+                f"intent={heartbeat.get('current_intent') or 'monitoring system state'}"
+            )
     return ". ".join(parts) + "."

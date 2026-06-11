@@ -162,3 +162,50 @@ async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
     # The headline regression: paper_trades is no longer structurally stuck at 0.
     assert gates["metrics"]["paper_trades"] >= 1
     reset_db()
+
+
+async def test_paused_strategy_is_not_linked_or_traded(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _set_mode("Paper")
+
+    strat = create_strategy("Paused Momentum", "paper strategy")
+    for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
+        from aletheia.trading.strategy_lifecycle import promote_strategy
+
+        promote_strategy(strat.id, target)
+    repo.update_strategy(
+        strat.id,
+        paper_trading_paused=1,
+        paper_pause_reason="operator pause",
+    )
+
+    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000.0))
+
+    await run_agent("market_observer", trigger_type="manual")
+    observed = [
+        o for o in repo.list_opportunities(limit=20)
+        if o.get("source_agent") == "market_observer"
+        and (o.get("asset_class") or "crypto") == "crypto"
+    ]
+    assert observed, "observer should still create a crypto opportunity"
+    assert observed[0]["linked_strategy_id"] is None
+
+    opp = Opportunity(
+        symbol="BTC/USDT",
+        market="spot",
+        direction_bias="long",
+        thesis="paused strategy should not trade",
+        confidence="medium",
+        source_agent="market_observer",
+        linked_strategy_id=strat.id,
+    )
+    repo.insert_opportunity(opp)
+
+    await run_agent("paper_trader", trigger_type="manual")
+
+    proposals = [p for p in repo.list_trade_proposals() if p.get("opportunity_id") == opp.id]
+    assert proposals == []
+    updated = repo.get_opportunity(opp.id)
+    assert updated is not None
+    assert updated["status"] == "reviewed"
+    reset_db()

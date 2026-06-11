@@ -32,6 +32,9 @@ def ensure_data_dirs() -> None:
         DATA_DIR / "reports" / "daily",
         DATA_DIR / "reports" / "post_trade",
         DATA_DIR / "reports" / "system_health",
+        DATA_DIR / "reports" / "trade_review",
+        DATA_DIR / "reports" / "risk",
+        DATA_DIR / "reports" / "agent_performance",
         DATA_DIR / "exports",
     ]
     for d in dirs:

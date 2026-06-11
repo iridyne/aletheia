@@ -189,9 +189,51 @@ export const api = {
   // Command Center
   sendCommand: (input: string, context?: Record<string, string>) =>
     post<any>('/command', { input, context }),
-  sendOperatorCommand: (input: string, context?: Record<string, string>) =>
-    post<any>('/operator/command', { input, context }),
+  sendOperatorCommand: (
+    input: string,
+    params?: { context?: Record<string, string>; sessionId?: string },
+  ) =>
+    post<any>('/operator/command', {
+      input,
+      context: params?.context,
+      session_id: params?.sessionId,
+    }),
+  setOperatorActiveBranch: (sessionId: string, selectedBy = 'command-center') =>
+    post<any>('/operator/active-branch', {
+      session_id: sessionId,
+      selected_by: selectedBy,
+    }),
   getOperatorSessions: () => fetchJson<any[]>('/operator/sessions'),
   getOperatorSession: (id: string) => fetchJson<any>(`/operator/sessions/${encodeURIComponent(id)}`),
   getOperatorTasks: () => fetchJson<any[]>('/operator/tasks'),
+  getOperatorCommands: (params?: { sessionId?: string; query?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.sessionId) search.set('session_id', params.sessionId)
+    if (params?.query) search.set('query', params.query)
+    if (params?.limit) search.set('limit', String(params.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return fetchJson<any[]>(`/operator/commands${suffix}`)
+  },
+  getOperatorExtensions: (params?: { status?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.status) search.set('status', params.status)
+    if (params?.limit) search.set('limit', String(params.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return fetchJson<any[]>(`/operator/extensions${suffix}`)
+  },
+  getOperatorContext: (body: { sessionId?: string; profile?: string; sections?: string[] }) =>
+    post<any>('/operator/internal/context/query', {
+      session_id: body.sessionId,
+      profile: body.profile,
+      sections: body.sections,
+    }),
+  getOperatorRecommendations: () => fetchJson<any[]>('/operator/recommendations'),
+  getOperatorEvents: (params?: { sessionId?: string; taskId?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.sessionId) search.set('session_id', params.sessionId)
+    if (params?.taskId) search.set('task_id', params.taskId)
+    if (params?.limit) search.set('limit', String(params.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return fetchJson<any[]>(`/operator/events${suffix}`)
+  },
 }

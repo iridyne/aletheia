@@ -200,6 +200,9 @@ export interface OperatorStatus {
   last_error: string | null
   model_provider: string | null
   session_id: string
+  active_branch_id?: string | null
+  active_branch_kind?: string | null
+  active_branch_title?: string | null
   stale: boolean
   stale_after_sec: number
   heartbeat_age_sec?: number
@@ -253,6 +256,9 @@ export interface OperatorArtifact {
 export interface OperatorSessionSummary {
   id: string
   user_input: string
+  kind?: string | null
+  parent_session_id?: string | null
+  title?: string | null
   intent: string | null
   command: string | null
   response: string | null
@@ -270,10 +276,61 @@ export interface OperatorSessionDetail {
   artifacts: OperatorArtifact[]
 }
 
+export interface OperatorContextSnapshot {
+  profile: string
+  session_id: string | null
+  session_kind: string | null
+  sections: string[]
+  summary: string
+  context: Record<string, unknown>
+}
+
 export interface OperatorCommandResponse {
   intent: string
   risk_level: string
   response: string
   action: Record<string, unknown> | null
   needs_confirmation: boolean
+}
+
+export interface OperatorEvent {
+  id: string
+  event_type: string
+  severity: string
+  source: string
+  session_id: string | null
+  task_id: string | null
+  related_entity_type: string | null
+  related_entity_id: string | null
+  payload: Record<string, unknown> | unknown[]
+  created_at: string
+}
+
+export interface OperatorRecommendation {
+  id: string
+  kind: string
+  severity: string
+  summary: string
+  taskType?: string
+  metadata?: Record<string, unknown>
+  task_ids?: string[]
+  count?: number
+}
+
+export interface OperatorExtension {
+  id: string
+  session_id: string | null
+  extension_name: string
+  slash_command: string
+  description: string
+  target_command: string
+  manifest: Record<string, unknown>
+  status: string
+  created_by: string
+  proposal_artifact_id: string | null
+  latest_run_id: string | null
+  enabled_at: string | null
+  enabled_by: string | null
+  created_at: string
+  updated_at: string
 }

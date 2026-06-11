@@ -14,14 +14,70 @@ class CommandResponse(BaseModel):
     response: str
     action: dict | None = None
     needs_confirmation: bool = False
+    session_id: str | None = None
 
 
 class AgentShellRuntime:
     """Single request-response cycle: input → intent → permission → execute → synthesize → audit."""
 
-    async def handle(self, user_input: str) -> CommandResponse:
+    @staticmethod
+    def _split_extension_invocation(text: str) -> tuple[str, str] | None:
+        if not text.startswith("/"):
+            return None
+        slash_command, _, raw_tail = text.partition(" ")
+        return slash_command.strip(), raw_tail.strip()
+
+    @staticmethod
+    def _extension_parameters(extension: dict, raw_tail: str) -> tuple[dict, str | None]:
+        manifest = extension.get("manifest")
+        manifest = dict(manifest) if isinstance(manifest, dict) else {}
+        params = manifest.get("default_parameters")
+        params = dict(params) if isinstance(params, dict) else {}
+        if not raw_tail:
+            params["_extension"] = {
+                "extension_id": extension.get("id"),
+                "slash_command": extension.get("slash_command"),
+            }
+            return params, None
+
+        try:
+            parsed = json.loads(raw_tail)
+        except Exception:
+            parsed = None
+
+        if isinstance(parsed, dict):
+            params.update(parsed)
+            params["_extension"] = {
+                "extension_id": extension.get("id"),
+                "slash_command": extension.get("slash_command"),
+            }
+            return params, None
+
+        text_parameter = str(manifest.get("text_parameter") or "").strip()
+        if text_parameter:
+            params[text_parameter] = raw_tail
+            params["_extension"] = {
+                "extension_id": extension.get("id"),
+                "slash_command": extension.get("slash_command"),
+            }
+            return params, None
+
+        return {}, (
+            f"Extension {extension.get('slash_command')} requires either JSON object arguments "
+            "or a manifest text_parameter binding."
+        )
+
+    async def handle(
+        self,
+        user_input: str,
+        *,
+        permission_mode: str | None = None,
+        permission_scope: str = "worker",
+        session_id: str | None = None,
+    ) -> CommandResponse:
         from aletheia.agent_shell.context import build_app_context, context_summary_text
         from aletheia.agent_shell.intent import classify_intent
+        from aletheia.agent_shell.operator_store import create_event, get_extension_by_slash_command
         from aletheia.agent_shell.permissions import check_permission
         from aletheia.agent_shell.commands import HANDLERS
         from aletheia.agent_shell.registry import COMMANDS, FORBIDDEN_INTENTS
@@ -37,15 +93,95 @@ class AgentShellRuntime:
                 response="Please type a question or command.",
             )
 
-        session_id, start_time = create_session(text)
+        session_id, start_time = create_session(text, session_id=session_id)
         cfg = load_config()
-        current_mode = cfg.agent.permission_mode
+        if permission_mode is not None:
+            current_mode = permission_mode
+        elif permission_scope == "operator":
+            current_mode = cfg.operator.permission_mode
+        else:
+            current_mode = cfg.agent.permission_mode
 
         try:
             ctx = build_app_context(["system", "market", "agents", "trading"])
             summary = context_summary_text(ctx)
 
-            intent = await classify_intent(text, summary)
+            extension_invocation = self._split_extension_invocation(text)
+            if extension_invocation is not None:
+                slash_command, raw_tail = extension_invocation
+                extension = get_extension_by_slash_command(slash_command)
+                if extension is None:
+                    response = f"Unknown slash command: {slash_command}"
+                    record_command(session_id, slash_command, {}, False, response)
+                    close_session(
+                        session_id,
+                        intent="extension_unknown",
+                        command=slash_command,
+                        response=response,
+                        permitted=False,
+                        start_time=start_time,
+                    )
+                    return CommandResponse(
+                        intent="extension_unknown",
+                        risk_level="read",
+                        response=response,
+                        session_id=session_id,
+                    )
+
+                if extension.get("status") != "enabled":
+                    response = (
+                        f"Extension {slash_command} exists but is not enabled yet "
+                        f"(current status: {extension.get('status')})."
+                    )
+                    record_command(session_id, slash_command, {}, False, response)
+                    close_session(
+                        session_id,
+                        intent="extension_not_enabled",
+                        command=slash_command,
+                        response=response,
+                        permitted=False,
+                        start_time=start_time,
+                    )
+                    return CommandResponse(
+                        intent="extension_not_enabled",
+                        risk_level="read",
+                        response=response,
+                        session_id=session_id,
+                    )
+
+                intent = type("ResolvedIntent", (), {})()
+                intent.command = str(extension.get("target_command") or "").strip()
+                intent.parameters, parameter_error = self._extension_parameters(extension, raw_tail)
+                if parameter_error:
+                    record_command(session_id, slash_command, {}, False, parameter_error)
+                    close_session(
+                        session_id,
+                        intent="extension_invalid_arguments",
+                        command=slash_command,
+                        response=parameter_error,
+                        permitted=False,
+                        start_time=start_time,
+                    )
+                    return CommandResponse(
+                        intent="extension_invalid_arguments",
+                        risk_level="read",
+                        response=parameter_error,
+                        session_id=session_id,
+                    )
+                create_event(
+                    event_type="extension_invoked",
+                    source="agent_shell_runtime",
+                    session_id=session_id,
+                    related_entity_type="extension",
+                    related_entity_id=str(extension.get("id") or slash_command),
+                    payload={
+                        "slash_command": slash_command,
+                        "target_command": intent.command,
+                        "raw_tail": raw_tail or None,
+                    },
+                )
+            else:
+                intent = await classify_intent(text, summary)
 
             if intent.command == "forbidden":
                 response = (
@@ -58,6 +194,7 @@ class AgentShellRuntime:
                 return CommandResponse(
                     intent="forbidden", risk_level="high",
                     response=response, needs_confirmation=False,
+                    session_id=session_id,
                 )
 
             if intent.command == "query":
@@ -66,7 +203,7 @@ class AgentShellRuntime:
                 close_session(session_id, intent="query", command=None,
                               response=response, permitted=True, start_time=start_time)
                 return CommandResponse(
-                    intent="query", risk_level="read", response=response,
+                    intent="query", risk_level="read", response=response, session_id=session_id,
                 )
 
             cmd_def = COMMANDS.get(intent.command)
@@ -75,10 +212,14 @@ class AgentShellRuntime:
                 close_session(session_id, intent=intent.command, command=None,
                               response=response, permitted=False, start_time=start_time)
                 return CommandResponse(
-                    intent=intent.command, risk_level="read", response=response,
+                    intent=intent.command, risk_level="read", response=response, session_id=session_id,
                 )
 
-            allowed, denial = check_permission(intent.command, current_mode)
+            allowed, denial = check_permission(
+                intent.command,
+                current_mode,
+                permission_scope=permission_scope,
+            )
             if not allowed:
                 record_command(session_id, intent.command, intent.parameters, False, denial or "")
                 close_session(session_id, intent=intent.command, command=intent.command,
@@ -87,7 +228,36 @@ class AgentShellRuntime:
                     intent=intent.command, risk_level=cmd_def.risk_level,
                     response=denial or "Permission denied.",
                     needs_confirmation=False,
+                    session_id=session_id,
                 )
+
+            if permission_scope == "operator":
+                worker_allowed, worker_denial = check_permission(
+                    intent.command,
+                    cfg.agent.permission_mode,
+                    permission_scope="worker",
+                )
+                if not worker_allowed:
+                    response = (
+                        "This command is currently blocked by worker/global safety. "
+                        f"{worker_denial or 'Permission denied.'}"
+                    )
+                    record_command(session_id, intent.command, intent.parameters, False, response)
+                    close_session(
+                        session_id,
+                        intent=intent.command,
+                        command=intent.command,
+                        response=response,
+                        permitted=False,
+                        start_time=start_time,
+                    )
+                    return CommandResponse(
+                        intent=intent.command,
+                        risk_level=cmd_def.risk_level,
+                        response=response,
+                        needs_confirmation=False,
+                        session_id=session_id,
+                    )
 
             handler = HANDLERS.get(intent.command)
             if not handler:
@@ -95,7 +265,7 @@ class AgentShellRuntime:
                 close_session(session_id, intent=intent.command, command=intent.command,
                               response=response, permitted=True, start_time=start_time)
                 return CommandResponse(
-                    intent=intent.command, risk_level=cmd_def.risk_level, response=response,
+                    intent=intent.command, risk_level=cmd_def.risk_level, response=response, session_id=session_id,
                 )
 
             result = await handler(intent.parameters)
@@ -112,7 +282,8 @@ class AgentShellRuntime:
                 risk_level=cmd_def.risk_level,
                 response=response,
                 action=action,
-                needs_confirmation=cmd_def.risk_level == "operational",
+                needs_confirmation=cmd_def.requires_confirmation,
+                session_id=session_id,
             )
 
         except Exception as e:
@@ -124,7 +295,7 @@ class AgentShellRuntime:
             except Exception:
                 pass
             return CommandResponse(
-                intent="error", risk_level="read", response=response,
+                intent="error", risk_level="read", response=response, session_id=session_id,
             )
 
     async def _handle_general_query(self, text: str, ctx: dict, summary: str) -> str:

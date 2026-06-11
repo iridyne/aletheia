@@ -1,6 +1,6 @@
 # Pipeline Status — 全自动交易闭环实现现状
 
-> 最后更新：2026-06-08 · 基于代码 grep 逐项核实
+> 最后更新：2026-06-11 · 基于代码 grep + 当前 `worktree-dev` 实现核实
 
 ## 预期完整流程
 
@@ -83,18 +83,17 @@
 - 无动态止盈（如按波动率调整）
 - 无部分平仓 / 分批出场
 
-### 6. 自动评估 — 40%
+### 6. 自动评估 — 60%
 
-**实现**：`post_trade_reviewer.py` 存在但**未排入 scheduler**。
+**实现**：`post_trade_reviewer.py` 与 `risk_critic.py` 已排入 scheduler。
 
 - 逻辑：按 strategy_id 分组 fills → LLM 写文字复盘 → `create_post_trade_review()`
 - 策略晋升门：`strategy_lifecycle.py` 检查 paper_trades / expectancy / drawdown / reviews
 
 **缺口**：
-- `post_trade_reviewer` 不自动跑（需手动 `aletheia agent run post_trade_reviewer`）
-- `risk_critic` 同样不在 scheduler（从未被定时触发）
 - 评估只产出文字，无量化指标表（Sharpe / win rate / avg hold time）
 - 无策略间对比排名
+- review/risk 结果还没有形成更强的 operator-facing explain / lifecycle feedback
 
 ### 7. 自动学习 — 35%
 
@@ -163,7 +162,7 @@ risk_critic：已排入 scheduler（每 6h）
 
 ---
 
-## Scheduler 全景（13 个 job）
+## Scheduler 全景（15 个 job）
 
 | Job | 频率 | 功能 | 状态 |
 |---|---|---|---|
@@ -200,13 +199,58 @@ risk_critic：已排入 scheduler（每 6h）
         └─ 72h observation period                              在观测机继续
 
 [并行开发线] worktree-dev — Operator Layer / Pi Agent
-        ├─ 目标:推进 Stage 1(read-only supervisor) 的方案/原型
+        ├─ 目标:推进 Stage 1(read-only supervisor) 的实现
         ├─ 交互:Command Center 专页为主,Ctrl+K 仅作快捷入口
+        ├─ 已落地:
+        │   • operator config / store / routes / CLI
+        │   • worker-vs-operator permission split
+        │   • Command Center backend truth: recommendations/events
+        │   • Node Operator Shell supervision + heartbeat + diagnostic task/event loop
+        │   • ask/explain baseline strengthened for "system status" and "proposal failure"
+        │   • restart recovery now restores session/task shell + recent failed tasks + unresolved proposal artifacts
+        │   • operator started/stopped lifecycle events
+        │   • auto daily compaction for the previous UTC day + manual `aletheia agent compact`
+        │   • typed command surface expanded to 32 commands
+        │   • real write-back for recommendation archive / strategy under review / paper-strategy pause
+        │   • paused strategies no longer bind new opportunities or paper trades
+        │   • real specialist delegation paths: dreaming_due -> dreaming_agent, review_due -> post_trade_reviewer
+        │   • session-kind / child-session skeleton: dreaming_session + review_session traces under operator-main
+        │   • typed internal command path + repair artifact path: `/api/operator/internal/commands/{command}` and `/api/operator/internal/artifacts`
+        │   • first repair execution path: high-severity health issue -> diagnostic_session + repair_decision + create_diagnostic_todo
+        │   • strategy governance path: `/api/strategies/summary` -> `evaluate_strategy_state` -> `strategy_session` + `strategy_evaluation`
+        │   • first proposal-only specialist path: promotion-ready `paper_running` strategy -> `create_repair_proposal` -> `propose_strategy_promotion` -> `proposal_created`
+        │   • prompt/playbook proposal specialist path: repeated failed `agent_runs` for one agent -> `agent_prompt_change_proposal_due` -> `create_repair_proposal` -> `propose_prompt_change` -> `proposal_created`
+        │   • schedule proposal specialist path: repeated manual `agent_runs` for one agent -> `agent_schedule_change_proposal_due` -> `create_repair_proposal` -> `propose_schedule_change` -> `proposal_created`
+        │   • risk-boundary proposal specialist path: repeated adjustable `risk_decisions` for one boundary -> `/api/risk/summary` -> `risk_boundary_change_proposal_due` -> `create_repair_proposal` -> `propose_risk_boundary_change` -> `proposal_created`
+        │   • Command Center behavior proposal specialist path: repeated denied `command_session` commands for one command -> command audit truth -> `command_center_behavior_change_proposal_due` -> `create_repair_proposal` -> `propose_command_center_behavior_change` -> `proposal_created`
+        │   • context model real path: `/api/operator/internal/context/query` + child-session context snapshot + Command Center `Context Inspector`
+        │   • canonical loopback control routes now live: `/internal/commands/execute`, `/internal/decisions`, `/internal/repair-decisions`, `/internal/command-intents`
+        │   • inspectable working-memory files now live under `data/agent_shell/`: session JSONL, task markdown, diagnostic todo markdown, extension sandbox scratch markdown, and extension manifest JSON
+        │   • extension sandbox first layer now lives in real persistence: `extension_registry / extension_runs` + typed `draft_extension_manifest / test_extension_sandbox / propose_extension_enablement`
+        │   • extension inspect + human enable gate now exists at `/api/operator/extensions`
+        │   • enabled slash extensions now really dispatch through `/api/operator/command` and `AgentShellRuntime`, writing `extension_invoked` events instead of stopping at manifest/proposal persistence
+        │   • backend recommendations now surface dreaming/review/strategy/proposal specialist work from real DB state
+        │   • Command Center event feed now uses SSE-first, and history filter can search command audit across sessions
+        │   • compaction artifacts now persist `summary_excerpt + sections`, and recovery now folds recent multi-day summaries back into intent instead of only reading the latest excerpt
+        │   • recovery now also restores recent child-session branch context under `operator-main`, using a bounded intent budget instead of hardcoding only two branch/summary snippets
+        │   • recovered in-flight `evaluate_strategy_state` / `create_repair_proposal` tasks can auto re-enter from task payload after restart
+        │   • recovery contract now also folds recent operator error events back into intent and falls back to latest heartbeat `current_intent` when no fresher backlog context exists
+        │   • backend + Node recommendation truth now surface `failed_tasks_present` / `stuck_tasks_present`
+        │   • TaskRuntime now persists a real queued backlog, promotes higher-priority queued work first, and recommendation truth now surfaces `queued_tasks_present` + staged `queue_review_needed` (`attention` / `urgent`) with suggested review cadence metadata
+        │   • subsystem review inputs (dreaming/review/strategy/risk/agent-runs) now refresh on an explicit 5-minute cadence instead of riding every 10-second heartbeat
+        │   • stale `market_observer` activity now surfaces `market_scan_refresh_due`, and in `PaperAuto+` the shell materializes it into a real `run_market_scan` command-session task instead of leaving scheduled scan refresh as a pure recommendation
+        │   • unresolved recent failed worker runs now surface `failed_agent_rerun_due`, and in `PaperAuto+` the shell materializes them into real `rerun_failed_agent_task` command-session tasks instead of leaving one-off failures as pure passive diagnostics
+        │   • missing same-day UTC daily review now surfaces `daily_review_refresh_due`, and in `Research+` the shell materializes it into a real `create_daily_review` review-session task with deterministic operator-summary content
+        │   • task materialization is now permission-aware, so `ReadOnly/Research` no longer spawn higher-permission proposal or operational-control tasks that can only get stuck in backlog
         ├─ 设计源:
         │   • OPERATOR_LAYER_DESIGN.md (概念层)
         │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md
         │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
         │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md
+        ├─ 仍缺:
+        │   • 更深的 PI-style session runtime
+        │   • 更广的 15–60 分钟层 scheduled scan/review opportunities
+        │   • 当前这批专门报告已落地；下一层仍是更深的 session/runtime 行为
         └─ 约束:不作为 Phase 0 达标证据,不提前合并 master
 
   下一步  Phase 1 — Learning Quality Diagnosis

@@ -1,6 +1,11 @@
 # PI Operator Agent Design Completion Audit
 
-Purpose: prove that the **design phase** for the dual-process PI Operator Agent is complete in the current repo, without claiming that implementation has started.
+Purpose: prove that the **design phase** for the dual-process PI Operator Agent is complete in the current repo, without judging implementation completeness.
+
+> **2026-06-11 status note**: This file remains a design-phase audit artifact. Any statements below
+> about implementation not yet existing were true for the design checkpoint only and are now
+> superseded by current implementation status in `ROADMAP.md`, `CURRENT_TASK.md`, and
+> `AI_HANDOFF.md`.
 
 Design scope only:
 
@@ -268,7 +273,8 @@ The following are deliberately excluded from the “design complete” claim:
 5. tests pass for the operator runtime
 6. implementation plan has been written
 
-Those belong to the next phase.
+Those belonged to the next phase of work. Some now exist in partial form, but this file does not
+attempt to re-audit implementation completeness.
 
 ## Final Audit Result
 
@@ -278,4 +284,4 @@ Judgment:
 - The architecture direction is frozen.
 - The external reference file has explicit coverage proof.
 - The repo-level docs now point to the same local source of truth.
-- Remaining work is **implementation planning and implementation**, not additional design discovery.
+- Remaining work after this audit was **implementation planning and implementation**, not additional design discovery.

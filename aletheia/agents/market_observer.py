@@ -16,6 +16,7 @@ from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
 from aletheia.trading.instruments import observed_instruments_from_config, xstocks_instruments_from_config
+from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 from aletheia.config.loader import load_config
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
@@ -213,7 +214,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # Find an active strategy to link all opportunities from this run.
     linked_strategy_id = None
     for s in list_strategies(limit=50):
-        if s.get("state") in ("paper_running", "paper_candidate"):
+        if is_active_paper_strategy(s):
             linked_strategy_id = s["id"]
             break
 

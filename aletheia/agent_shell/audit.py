@@ -3,6 +3,7 @@
 import json
 import uuid
 
+from aletheia.agent_shell.file_artifacts import append_session_log
 from aletheia.storage.sqlite import get_db
 
 
@@ -19,6 +20,17 @@ def record_command(session_id: str, command: str, parameters: dict,
          result_summary[:500]),
     )
     db.commit()
+    append_session_log(
+        session_id,
+        {
+            "type": "command",
+            "command_id": cmd_id,
+            "command": command,
+            "parameters": parameters,
+            "permitted": permitted,
+            "result_summary": result_summary[:500],
+        },
+    )
 
     try:
         from aletheia.files.jsonl import write_audit

@@ -2,6 +2,11 @@
 
 Purpose: prove that the repo-specific dual-process design fully covers `C:\Users\Administrator\Downloads\aletheia_pi_agent_implementation_plan.md`, and identify the exact local design section that carries each requirement.
 
+> **2026-06-11 status note**: This crosswalk remains the coverage proof for the frozen design package.
+> Execution planning now exists at
+> `docs/superpowers/plans/2026-06-10-pi-operator-agent-foundation.md`, and implementation is
+> in progress on `worktree-dev`. The coverage mapping below is still authoritative for design intent.
+
 Primary local design sources:
 
 - [2026-06-10-pi-operator-agent-dual-process-design.md](./2026-06-10-pi-operator-agent-dual-process-design.md)
@@ -59,10 +64,14 @@ The reference file is now split into three local layers:
    - exact process model, APIs, permissions, storage, supervision, UI, recovery, and rollout
 
 3. **Execution planning**
-   - not written yet
-   - starts only after the design spec is reviewed and approved
+   - `docs/superpowers/plans/2026-06-10-pi-operator-agent-foundation.md`
+   - later worktree-dev implementation extends beyond that initial foundation slice
 
 ## Remaining Design Risks
+
+> **2026-06-11 note**: these were the design-phase risks to clear before implementation. They are
+> kept here as historical guardrails; current execution status lives in `ROADMAP.md`,
+> `CURRENT_TASK.md`, and `AI_HANDOFF.md`.
 
 These are not missing sections; they are the remaining design-phase risks to be checked before implementation planning:
 

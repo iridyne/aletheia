@@ -1,6 +1,7 @@
 """Operator Agent CLI commands."""
 
 import json
+from datetime import datetime, timezone
 
 import typer
 
@@ -29,6 +30,9 @@ def _status_payload() -> dict:
             "session_id": cfg.operator.main_session_id,
             "current_intent": None,
             "is_busy": False,
+            "active_branch_id": None,
+            "active_branch_kind": None,
+            "active_branch_title": None,
         }
     return heartbeat
 
@@ -47,6 +51,9 @@ def status():
     typer.echo(f"Mode: {data.get('mode')}")
     typer.echo(f"Permission: {data.get('permission_mode')}")
     typer.echo(f"Session: {data.get('session_id')}")
+    if data.get("active_branch_id"):
+        branch_label = data.get("active_branch_title") or data["active_branch_id"]
+        typer.echo(f"Active branch: {branch_label}")
     if data.get("current_intent"):
         typer.echo(f"Intent: {data['current_intent']}")
 
@@ -151,6 +158,16 @@ def session_show(session_id: str):
         typer.echo("Artifacts:")
         for item in artifacts:
             typer.echo(f"- {item['artifact_type']}: {item['title']}")
+
+
+@agent_app.command("compact")
+def compact(date: str | None = typer.Option(None, "--date", help="Target UTC date in YYYY-MM-DD format.")):
+    """Compact operator session history into a daily markdown summary."""
+    from aletheia.agent_shell.compaction import build_operator_daily_summary
+
+    target_date = date or datetime.now(timezone.utc).date().isoformat()
+    result = build_operator_daily_summary(date_str=target_date)
+    typer.echo(f"Wrote {result['path']}")
 
 
 agent_app.add_typer(session_app, name="session", help="Inspect a single operator session.")

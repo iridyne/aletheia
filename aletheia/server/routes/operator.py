@@ -1,28 +1,56 @@
 """Operator control-plane routes."""
 
-from datetime import datetime, timezone
+import asyncio
+import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from aletheia.agent_shell.context import (
+    ALL_SECTIONS,
+    CONTEXT_PROFILES,
+    build_app_context,
+    context_summary_text,
+    sections_for_profile,
+)
+from aletheia.agent_shell.operator_recommendations import build_recommendations
 from aletheia.agent_shell.operator_store import (
     append_message,
+    create_session_record,
+    create_artifact,
+    create_event,
     get_latest_heartbeat,
+    get_extension,
+    get_extension_run,
     get_session,
     get_task,
     list_artifacts,
     list_commands,
+    list_events,
+    list_extensions,
+    list_extension_runs,
     list_messages,
     list_sessions,
     list_tasks,
     record_heartbeat,
     update_task,
+    update_extension,
     create_task,
 )
 from aletheia.config.loader import load_config, save_config
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
+
+DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND = {
+    "command_session": "operational_context",
+    "diagnostic_session": "repair_context",
+    "dreaming_session": "knowledge_context",
+    "strategy_session": "trading_context",
+    "review_session": "trading_context",
+}
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -48,6 +76,9 @@ def _operator_status_defaults() -> dict[str, Any]:
         "last_error": None,
         "model_provider": None,
         "session_id": cfg.operator.main_session_id,
+        "active_branch_id": None,
+        "active_branch_kind": None,
+        "active_branch_title": None,
         "stale": False,
         "stale_after_sec": cfg.operator.heartbeat_stale_after_sec,
     }
@@ -70,6 +101,34 @@ def _apply_stale_status(heartbeat: dict[str, Any]) -> dict[str, Any]:
     heartbeat["stale_after_sec"] = cfg.operator.heartbeat_stale_after_sec
     heartbeat["heartbeat_age_sec"] = max(0, int(age))
     return heartbeat
+
+
+def _task_event_type(status: str) -> str | None:
+    if status == "running":
+        return "task_started"
+    if status == "completed":
+        return "task_completed"
+    if status == "failed":
+        return "task_failed"
+    return None
+
+
+def _looks_like_command_rejection(intent: str, response: str | None) -> bool:
+    if intent in {"forbidden", "error"}:
+        return True
+    text = (response or "").lower()
+    markers = [
+        "requires worker permission mode",
+        "requires operator permission mode",
+        "permission denied",
+        "unknown command",
+        "permanently forbidden",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def _sse_block(event_name: str, data: dict[str, Any]) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _set_paused(paused: bool, *, event_type: str, message: str) -> dict[str, Any]:
@@ -117,6 +176,9 @@ class OperatorHeartbeatIn(BaseModel):
     last_error: str | None = None
     model_provider: str | None = None
     session_id: str | None = None
+    active_branch_id: str | None = None
+    active_branch_kind: str | None = None
+    active_branch_title: str | None = None
 
 
 class OperatorTaskCreate(BaseModel):
@@ -151,9 +213,219 @@ class OperatorMessageCreate(BaseModel):
     related_event_id: str | None = None
 
 
+class OperatorSessionCreate(BaseModel):
+    id: str
+    user_input: str = "[operator session]"
+    kind: str = "command_session"
+    parent_session_id: str | None = None
+    title: str | None = None
+
+
 class OperatorCommandRequest(BaseModel):
     input: str
     context: dict[str, Any] | None = None
+    session_id: str | None = None
+
+
+class OperatorActiveBranchSelectRequest(BaseModel):
+    session_id: str
+    selected_by: str = "human"
+
+
+class OperatorEventCreate(BaseModel):
+    event_type: str
+    severity: str = "info"
+    source: str = "operator"
+    session_id: str | None = None
+    task_id: str | None = None
+    related_entity_type: str | None = None
+    related_entity_id: str | None = None
+    payload: dict[str, Any] | list[Any] | None = None
+
+
+class OperatorArtifactCreate(BaseModel):
+    task_id: str | None = None
+    session_id: str | None = None
+    artifact_type: str
+    title: str
+    content: Any
+
+
+class OperatorExtensionEnableRequest(BaseModel):
+    approved_by: str = "human"
+    session_id: str | None = None
+
+
+class OperatorDecisionCreate(BaseModel):
+    task_id: str | None = None
+    session_id: str | None = None
+    title: str
+    content: Any
+
+
+class OperatorCommandIntentCreate(BaseModel):
+    task_id: str | None = None
+    session_id: str | None = None
+    command_name: str
+    user_input: str | None = None
+    classification: str | None = None
+    summary: str | None = None
+    parameters: dict[str, Any] | list[Any] | None = None
+
+
+class OperatorInternalCommandRequest(BaseModel):
+    session_id: str | None = None
+    user_input: str | None = None
+    parameters: dict[str, Any] | list[Any] | None = None
+
+
+class OperatorExecuteCommandRequest(OperatorInternalCommandRequest):
+    command_name: str
+
+
+class OperatorContextQueryRequest(BaseModel):
+    session_id: str | None = None
+    profile: str | None = None
+    sections: list[str] | None = None
+
+
+def _summary_artifact_for_date(session_id: str, target_date: str) -> dict[str, Any] | None:
+    for artifact in list_artifacts(session_id=session_id, limit=500):
+        if artifact.get("artifact_type") != "operator_daily_summary":
+            continue
+        content = artifact.get("content") or {}
+        if not isinstance(content, dict):
+            continue
+        if content.get("date") == target_date:
+            return artifact
+    return None
+
+
+def _write_active_branch_selection(
+    *,
+    target_session: dict[str, Any] | None,
+    selected_by: str,
+) -> dict[str, Any]:
+    cfg = load_config()
+    main_session_id = cfg.operator.main_session_id
+    latest = get_latest_heartbeat("operator") or _operator_status_defaults()
+
+    active_branch_id = None
+    active_branch_kind = None
+    active_branch_title = None
+    event_type = "active_branch_cleared"
+    event_session_id = main_session_id
+    event_entity_id = main_session_id
+
+    if target_session is not None and target_session.get("id") != main_session_id:
+        active_branch_id = str(target_session["id"])
+        active_branch_kind = str(target_session.get("kind") or "command_session")
+        active_branch_title = str(target_session.get("title") or target_session["id"])
+        event_type = "active_branch_selected"
+        event_session_id = active_branch_id
+        event_entity_id = active_branch_id
+
+    record_heartbeat(
+        agent_id=str(latest.get("agent_id") or "operator"),
+        status=str(latest.get("status") or "offline"),
+        mode=str(latest.get("mode") or "Observing"),
+        permission_mode=str(latest.get("permission_mode") or cfg.operator.permission_mode),
+        is_busy=bool(latest.get("is_busy")),
+        current_task_id=latest.get("current_task_id"),
+        current_intent=latest.get("current_intent"),
+        queue_size=int(latest.get("queue_size") or 0),
+        last_error=latest.get("last_error"),
+        model_provider=latest.get("model_provider"),
+        session_id=str(latest.get("session_id") or main_session_id),
+        active_branch_id=active_branch_id,
+        active_branch_kind=active_branch_kind,
+        active_branch_title=active_branch_title,
+        last_seen_at=latest.get("last_seen_at"),
+        last_success_at=latest.get("last_success_at"),
+    )
+    create_event(
+        event_type=event_type,
+        source="operator_branch_route",
+        session_id=event_session_id,
+        related_entity_type="session",
+        related_entity_id=event_entity_id,
+        payload={
+            "selected_by": selected_by,
+            "active_branch_id": active_branch_id,
+            "active_branch_kind": active_branch_kind,
+            "active_branch_title": active_branch_title,
+        },
+    )
+    heartbeat = get_latest_heartbeat("operator")
+    if heartbeat is None:
+        raise HTTPException(500, "Active branch write failed")
+    return _apply_stale_status(heartbeat)
+
+
+def _create_typed_artifact(
+    *,
+    artifact_type: str,
+    title: str,
+    content: Any,
+    task_id: str | None,
+    session_id: str | None,
+) -> dict[str, Any]:
+    artifact_id = create_artifact(
+        task_id=task_id,
+        session_id=session_id,
+        artifact_type=artifact_type,
+        title=title,
+        content=content,
+    )
+    artifacts = list_artifacts(
+        task_id=task_id,
+        session_id=session_id,
+        limit=200,
+    )
+    artifact = next((item for item in artifacts if item["id"] == artifact_id), None)
+    if artifact is None:
+        raise HTTPException(500, "Artifact write failed")
+    return artifact
+
+
+def _resolve_context_query(
+    *,
+    session_id: str | None,
+    profile: str | None,
+    sections: list[str] | None,
+) -> dict[str, Any]:
+    cfg = load_config()
+    target_session_id = session_id or cfg.operator.main_session_id
+    session = get_session(target_session_id)
+    if session is None and target_session_id != cfg.operator.main_session_id:
+        raise HTTPException(404, "Session not found")
+
+    session_kind = (
+        str(session.get("kind"))
+        if session and session.get("kind")
+        else "command_session"
+    )
+    effective_profile = profile or DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND.get(
+        session_kind,
+        "operational_context",
+    )
+    if effective_profile not in CONTEXT_PROFILES:
+        raise HTTPException(400, f"Unknown context profile: {effective_profile}")
+
+    effective_sections = list(sections or sections_for_profile(effective_profile))
+    unknown_sections = sorted(set(effective_sections) - set(ALL_SECTIONS))
+    if unknown_sections:
+        raise HTTPException(400, f"Unknown context sections: {', '.join(unknown_sections)}")
+
+    context = build_app_context(effective_sections)
+    return {
+        "profile": effective_profile,
+        "session_id": target_session_id,
+        "session_kind": session_kind,
+        "sections": effective_sections,
+        "summary": context_summary_text(context),
+        "context": context,
+    }
 
 
 @router.get("/status")
@@ -162,6 +434,31 @@ async def operator_status():
     if heartbeat is None:
         return _operator_status_defaults()
     return _apply_stale_status(heartbeat)
+
+
+@router.post("/active-branch")
+async def operator_select_active_branch(payload: OperatorActiveBranchSelectRequest):
+    requested_session_id = payload.session_id.strip()
+    if not requested_session_id:
+        raise HTTPException(400, "Session id is required")
+
+    main_session_id = load_config().operator.main_session_id
+    if requested_session_id == main_session_id:
+        return _write_active_branch_selection(
+            target_session=None,
+            selected_by=payload.selected_by,
+        )
+
+    session = get_session(requested_session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    if session.get("parent_session_id") != main_session_id:
+        raise HTTPException(400, "Active branch must be a direct child of the operator main session")
+
+    return _write_active_branch_selection(
+        target_session=session,
+        selected_by=payload.selected_by,
+    )
 
 
 @router.get("/sessions")
@@ -203,6 +500,112 @@ async def operator_task_detail(task_id: str):
     return task
 
 
+@router.get("/commands")
+async def operator_commands(limit: int = 100, session_id: str | None = None, query: str | None = None):
+    return list_commands(session_id=session_id, limit=limit, query=query)
+
+
+@router.get("/extensions")
+async def operator_extensions(limit: int = 100, status: str | None = None):
+    return list_extensions(status=status, limit=limit)
+
+
+@router.get("/extensions/{extension_id}")
+async def operator_extension_detail(extension_id: str):
+    extension = get_extension(extension_id)
+    if extension is None:
+        raise HTTPException(404, "Extension not found")
+    return {
+        "extension": extension,
+        "runs": list_extension_runs(extension_id=extension_id, limit=100),
+    }
+
+
+@router.post("/extensions/{extension_id}/enable")
+async def operator_enable_extension(extension_id: str, payload: OperatorExtensionEnableRequest):
+    extension = get_extension(extension_id)
+    if extension is None:
+        raise HTTPException(404, "Extension not found")
+    if extension.get("status") != "proposed":
+        raise HTTPException(409, "Extension is not waiting for human approval")
+
+    latest_run = None
+    latest_run_id = extension.get("latest_run_id")
+    if latest_run_id:
+        latest_run = get_extension_run(str(latest_run_id))
+    if latest_run is None:
+        recent_runs = list_extension_runs(extension_id=extension_id, limit=1)
+        latest_run = recent_runs[0] if recent_runs else None
+    if latest_run is None or latest_run.get("status") != "passed":
+        raise HTTPException(409, "Extension has no passing sandbox test")
+    if not extension.get("proposal_artifact_id"):
+        raise HTTPException(409, "Extension has no enablement proposal artifact")
+
+    enabled_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    session_id = payload.session_id or str(extension.get("session_id") or load_config().operator.main_session_id)
+    update_extension(
+        extension_id,
+        status="enabled",
+        enabled_at=enabled_at,
+        enabled_by=payload.approved_by,
+        session_id=session_id,
+    )
+    create_event(
+        event_type="extension_enabled",
+        source="operator_extension_route",
+        session_id=session_id,
+        related_entity_type="extension",
+        related_entity_id=extension_id,
+        payload={
+            "slash_command": extension.get("slash_command"),
+            "approved_by": payload.approved_by,
+            "proposal_artifact_id": extension.get("proposal_artifact_id"),
+        },
+    )
+    updated = get_extension(extension_id)
+    if updated is None:
+        raise HTTPException(500, "Extension enable failed")
+    return updated
+
+
+@router.get("/recommendations")
+async def operator_recommendations(limit: int = 10):
+    return build_recommendations(limit=limit)
+
+
+@router.get("/events")
+async def operator_events(
+    limit: int = 100,
+    session_id: str | None = None,
+    task_id: str | None = None,
+):
+    return list_events(limit=limit, session_id=session_id, task_id=task_id)
+
+
+@router.get("/events/stream")
+async def operator_events_stream(limit: int = 50, once: bool = False):
+    async def _stream():
+        seen_ids: set[str] = set()
+        backlog = list_events(limit=limit)
+        for event in reversed(backlog):
+            seen_ids.add(event["id"])
+            yield _sse_block("operator_event", event)
+        if once:
+            return
+
+        while True:
+            await asyncio.sleep(1.0)
+            latest = list_events(limit=limit)
+            fresh = [event for event in reversed(latest) if event["id"] not in seen_ids]
+            for event in fresh:
+                seen_ids.add(event["id"])
+                yield _sse_block("operator_event", event)
+            if not fresh:
+                yield ": keep-alive\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
 @router.post("/pause")
 async def operator_pause():
     return _set_paused(True, event_type="operator_paused", message="Operator paused via API")
@@ -223,18 +626,32 @@ async def operator_command(req: OperatorCommandRequest):
     from aletheia.agent_shell.runtime import AgentShellRuntime
 
     cfg = load_config()
+    target_session_id = req.session_id or cfg.operator.main_session_id
     append_message(
-        session_id=cfg.operator.main_session_id,
+        session_id=target_session_id,
         role="user",
         content={"text": req.input},
         message_type="command",
         related_event_id=None,
     )
+    create_event(
+        event_type="command_received",
+        source="operator_command_route",
+        session_id=target_session_id,
+        related_entity_type="command",
+        related_entity_id=target_session_id,
+        payload={"input": req.input},
+    )
     runtime = AgentShellRuntime()
-    result = await runtime.handle(req.input)
+    result = await runtime.handle(
+        req.input,
+        permission_mode=cfg.operator.permission_mode,
+        permission_scope="operator",
+        session_id=target_session_id,
+    )
     payload = result.model_dump() if hasattr(result, "model_dump") else result
     append_message(
-        session_id=cfg.operator.main_session_id,
+        session_id=target_session_id,
         role="assistant",
         content={
             "text": payload.get("response"),
@@ -243,7 +660,153 @@ async def operator_command(req: OperatorCommandRequest):
         message_type="response",
         related_event_id=None,
     )
+    create_event(
+        event_type=(
+            "command_rejected"
+            if _looks_like_command_rejection(payload.get("intent", ""), payload.get("response"))
+            else "command_executed"
+        ),
+        source="operator_command_route",
+        session_id=target_session_id,
+        related_entity_type="command",
+        related_entity_id=target_session_id,
+        payload={
+            "input": req.input,
+            "intent": payload.get("intent"),
+            "response": payload.get("response"),
+        },
+    )
     return result
+
+
+async def _execute_internal_command(command_name: str, payload: OperatorInternalCommandRequest):
+    from aletheia.agent_shell.executor import execute_typed_command
+
+    cfg = load_config()
+    target_session_id = payload.session_id or cfg.operator.main_session_id
+    command_text = payload.user_input or command_name
+    append_message(
+        session_id=target_session_id,
+        role="assistant",
+        content={
+            "text": command_text,
+            "command": command_name,
+            "parameters": payload.parameters or {},
+        },
+        message_type="command",
+        related_event_id=None,
+    )
+    create_event(
+        event_type="command_received",
+        source="operator_internal_command_route",
+        session_id=target_session_id,
+        related_entity_type="command",
+        related_entity_id=command_name,
+        payload={
+            "input": command_text,
+            "command": command_name,
+            "parameters": payload.parameters or {},
+        },
+    )
+    result = await execute_typed_command(
+        command_name,
+        payload.parameters if isinstance(payload.parameters, dict) else {},
+        permission_mode=cfg.operator.permission_mode,
+        permission_scope="operator",
+        session_id=target_session_id,
+        user_input=command_text,
+    )
+    append_message(
+        session_id=target_session_id,
+        role="assistant",
+        content={
+            "text": result.response,
+            "command": command_name,
+            "permitted": result.permitted,
+            "result": result.result,
+        },
+        message_type="response",
+        related_event_id=None,
+    )
+    create_event(
+        event_type="command_executed" if result.permitted else "command_rejected",
+        source="operator_internal_command_route",
+        session_id=target_session_id,
+        related_entity_type="command",
+        related_entity_id=command_name,
+        payload={
+            "input": command_text,
+            "command": command_name,
+            "permitted": result.permitted,
+            "response": result.response,
+        },
+    )
+    return result.model_dump()
+
+
+@router.post("/internal/decisions")
+async def operator_create_decision(payload: OperatorDecisionCreate):
+    return _create_typed_artifact(
+        artifact_type="operator_decision",
+        title=payload.title,
+        content=payload.content,
+        task_id=payload.task_id,
+        session_id=payload.session_id,
+    )
+
+
+@router.post("/internal/repair-decisions")
+async def operator_create_repair_decision(payload: OperatorDecisionCreate):
+    return _create_typed_artifact(
+        artifact_type="repair_decision",
+        title=payload.title,
+        content=payload.content,
+        task_id=payload.task_id,
+        session_id=payload.session_id,
+    )
+
+
+@router.post("/internal/command-intents")
+async def operator_create_command_intent(payload: OperatorCommandIntentCreate):
+    return _create_typed_artifact(
+        artifact_type="command_intent",
+        title=payload.summary or f"Command intent: {payload.command_name}",
+        content={
+            "command_name": payload.command_name,
+            "user_input": payload.user_input,
+            "classification": payload.classification,
+            "summary": payload.summary,
+            "parameters": payload.parameters or {},
+        },
+        task_id=payload.task_id,
+        session_id=payload.session_id,
+    )
+
+
+@router.post("/internal/commands/execute")
+async def operator_execute_internal_command(payload: OperatorExecuteCommandRequest):
+    return await _execute_internal_command(
+        payload.command_name,
+        OperatorInternalCommandRequest(
+            session_id=payload.session_id,
+            user_input=payload.user_input,
+            parameters=payload.parameters,
+        ),
+    )
+
+
+@router.post("/internal/commands/{command_name}")
+async def operator_internal_command(command_name: str, payload: OperatorInternalCommandRequest):
+    return await _execute_internal_command(command_name, payload)
+
+
+@router.post("/internal/context/query")
+async def operator_context_query(payload: OperatorContextQueryRequest):
+    return _resolve_context_query(
+        session_id=payload.session_id,
+        profile=payload.profile,
+        sections=payload.sections,
+    )
 
 
 @router.post("/internal/heartbeat")
@@ -261,6 +824,16 @@ async def operator_create_task(payload: OperatorTaskCreate):
     task = get_task(task_id)
     if task is None:
         raise HTTPException(500, "Task write failed")
+    event_type = _task_event_type(task["status"])
+    if event_type:
+        create_event(
+            event_type=event_type,
+            source="operator_task_route",
+            task_id=task_id,
+            related_entity_type="task",
+            related_entity_id=task_id,
+            payload={"task_type": task["task_type"], "status": task["status"]},
+        )
     return task
 
 
@@ -273,6 +846,16 @@ async def operator_update_task(task_id: str, payload: OperatorTaskUpdate):
     task = get_task(task_id)
     if task is None:
         raise HTTPException(500, "Task update failed")
+    event_type = _task_event_type(task["status"])
+    if event_type:
+        create_event(
+            event_type=event_type,
+            source="operator_task_route",
+            task_id=task_id,
+            related_entity_type="task",
+            related_entity_id=task_id,
+            payload={"task_type": task["task_type"], "status": task["status"]},
+        )
     return task
 
 
@@ -284,3 +867,88 @@ async def operator_create_message(payload: OperatorMessageCreate):
     if message is None:
         raise HTTPException(500, "Message write failed")
     return message
+
+
+@router.post("/internal/sessions")
+async def operator_create_session(payload: OperatorSessionCreate):
+    create_session_record(
+        session_id=payload.id,
+        user_input=payload.user_input,
+        kind=payload.kind,
+        parent_session_id=payload.parent_session_id,
+        title=payload.title,
+    )
+    session = get_session(payload.id)
+    if session is None:
+        raise HTTPException(500, "Session write failed")
+    return session
+
+
+@router.post("/internal/events")
+async def operator_create_event(payload: OperatorEventCreate):
+    event_id = create_event(**payload.model_dump())
+    events = list_events(limit=200)
+    event = next((item for item in events if item["id"] == event_id), None)
+    if event is None:
+        raise HTTPException(500, "Event write failed")
+    return event
+
+
+@router.post("/internal/artifacts")
+async def operator_create_artifact(payload: OperatorArtifactCreate):
+    artifact_id = create_artifact(**payload.model_dump())
+    artifacts = list_artifacts(
+        task_id=payload.task_id,
+        session_id=payload.session_id,
+        limit=200,
+    )
+    artifact = next((item for item in artifacts if item["id"] == artifact_id), None)
+    if artifact is None:
+        raise HTTPException(500, "Artifact write failed")
+    return artifact
+
+
+@router.post("/internal/compact")
+async def operator_compact(date: str | None = None):
+    from aletheia.agent_shell.compaction import build_operator_daily_summary
+
+    cfg = load_config()
+    target_date = date or (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    existing = _summary_artifact_for_date(cfg.operator.main_session_id, target_date)
+    if existing is not None:
+        content = existing.get("content") or {}
+        path = content.get("path") if isinstance(content, dict) else None
+        return {
+            "date": target_date,
+            "path": str(path or ""),
+            "artifact_id": existing["id"],
+            "created": False,
+        }
+
+    result = build_operator_daily_summary(date_str=target_date)
+    artifact_id = create_artifact(
+        task_id=None,
+        session_id=cfg.operator.main_session_id,
+        artifact_type="operator_daily_summary",
+        title=f"Operator Daily Summary {target_date}",
+        content={
+            "date": target_date,
+            "path": str(result["path"]),
+            "summary_excerpt": result.get("summary_excerpt", ""),
+            "sections": result.get("sections", {}),
+        },
+    )
+    create_event(
+        event_type="session_compacted",
+        source="operator_compaction_route",
+        session_id=cfg.operator.main_session_id,
+        related_entity_type="operator_memory",
+        related_entity_id=artifact_id,
+        payload={"date": target_date, "path": str(result["path"])},
+    )
+    return {
+        "date": target_date,
+        "path": str(result["path"]),
+        "artifact_id": artifact_id,
+        "created": True,
+    }

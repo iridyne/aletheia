@@ -1,4 +1,10 @@
-import type { OperatorHeartbeat, OperatorMode, OperatorSessionState, OperatorTaskState } from './schemas.js'
+import type {
+  OperatorHeartbeat,
+  OperatorMode,
+  OperatorSessionBranchState,
+  OperatorSessionState,
+  OperatorTaskState,
+} from './schemas.js'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -9,6 +15,7 @@ export function buildHeartbeat(input: {
   permissionMode: string
   session: OperatorSessionState
   tasks: OperatorTaskState
+  activeBranch: OperatorSessionBranchState | null
   modelProvider: string
   lastError: string | null
   lastSuccessAt: string | null
@@ -27,5 +34,8 @@ export function buildHeartbeat(input: {
     last_error: input.lastError,
     model_provider: input.modelProvider,
     session_id: input.session.id,
+    active_branch_id: input.activeBranch?.id || null,
+    active_branch_kind: input.activeBranch?.kind || null,
+    active_branch_title: input.activeBranch?.title || null,
   }
 }

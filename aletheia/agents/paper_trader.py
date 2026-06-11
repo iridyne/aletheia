@@ -22,10 +22,14 @@ from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.execution.paper_tools import create_paper_proposal
 from aletheia.storage.repositories import (
-    list_opportunities, update_opportunity, list_strategies,
+    get_strategy,
+    list_opportunities,
+    update_opportunity,
+    list_strategies,
 )
 from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.market_data import latest_snapshot
+from aletheia.trading.strategy_lifecycle import is_active_paper_strategy, is_paper_trading_paused
 from aletheia.data.symbols import to_canonical
 
 # Conservative fixed paper notional target (USDT) per autonomous paper trade.
@@ -101,10 +105,17 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # Resolve strategy_id: prefer opportunity's linked_strategy_id, else find an
     # active (paper_running/paper_candidate) strategy to bind this trade to.
     strategy_id = opp.get("linked_strategy_id")
+    if strategy_id:
+        linked_strategy = get_strategy(strategy_id)
+        if linked_strategy and is_paper_trading_paused(linked_strategy):
+            update_opportunity(opp["id"], status="reviewed")
+            skip_reason = f"paused_strategy:{strategy_id}"
+            log_tool(run_id, "create_paper_proposal", "paper", False, output=skip_reason)
+            outputs.append(f"skipped:{opp['id']}:{skip_reason}")
+            return {"outputs": outputs, "errors": errors}
     if not strategy_id:
-        active_states = {"paper_candidate", "paper_running"}
         for s in list_strategies(limit=50):
-            if s.get("state") in active_states:
+            if is_active_paper_strategy(s):
                 strategy_id = s["id"]
                 break
 
