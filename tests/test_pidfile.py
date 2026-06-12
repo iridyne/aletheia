@@ -237,3 +237,93 @@ def test_find_gateway_orphans_empty_on_error(monkeypatch):
         raise RuntimeError("ps failed")
     monkeypatch.setattr(pidfile, "_list_processes", boom)
     assert pidfile.find_gateway_orphans() == []
+
+
+# --- _resolve_real_python: venv graft for BOTH spawn-launch contexts ---------
+#
+# Regression for the silent "autostart watchdog never revives the gateway" bug:
+# the watchdog runs the BASE pythonw.exe and grafts the venv at runtime via
+# site.addsitedir. _resolve_real_python must still hand spawned children a
+# venv graft (__PYVENV_LAUNCHER__), or every 5-minute tick spawns a venv-blind
+# supervisor that dies with `ModuleNotFoundError: No module named 'aletheia'`
+# (launcher exits 1 before the gateway comes up).
+
+def _force_windows(monkeypatch):
+    from aletheia.gateway import pidfile
+    monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
+
+
+def _make_fake_venv(root):
+    """Create a minimal venv layout: pyvenv.cfg + Lib/site-packages + Scripts/python.exe."""
+    venv = root / "venv"
+    (venv / "Lib" / "site-packages").mkdir(parents=True)
+    (venv / "Scripts").mkdir(parents=True)
+    (venv / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text("home = C:\base\n", encoding="utf-8")
+    return venv
+
+
+def test_resolve_real_python_case_b_base_interp_grafts_venv_from_syspath(tmp_path, monkeypatch):
+    """Case B (watchdog): sys.executable is the BASE interpreter (no sibling
+    pyvenv.cfg) but a venv site-packages is on sys.path → graft via that venv's
+    shim so the spawned child reactivates the venv at its own startup."""
+    import sys
+    from aletheia.gateway import pidfile
+    _force_windows(monkeypatch)
+
+    base = tmp_path / "basepy"
+    base.mkdir()
+    base_exe = base / "python.exe"   # parent.parent = tmp_path, no pyvenv.cfg there
+    base_exe.write_text("", encoding="utf-8")
+    venv = _make_fake_venv(tmp_path)
+
+    monkeypatch.setattr(sys, "executable", str(base_exe))
+    monkeypatch.setattr(sys, "path", [str(venv / "Lib" / "site-packages")])
+
+    real_python, env_patch = pidfile._resolve_real_python()
+    assert env_patch.get("__PYVENV_LAUNCHER__") == str(venv / "Scripts" / "python.exe")
+
+
+def test_resolve_real_python_case_b_no_venv_on_syspath_returns_empty_patch(tmp_path, monkeypatch):
+    """Base interpreter with no venv anywhere on sys.path → empty patch (the
+    pre-existing honest behavior, preserved)."""
+    import sys
+    from aletheia.gateway import pidfile
+    _force_windows(monkeypatch)
+
+    base = tmp_path / "basepy"
+    base.mkdir()
+    base_exe = base / "python.exe"
+    base_exe.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "executable", str(base_exe))
+    monkeypatch.setattr(sys, "path", [str(tmp_path / "nowhere")])
+
+    real_python, env_patch = pidfile._resolve_real_python()
+    assert env_patch == {}
+
+
+def test_resolve_real_python_case_a_venv_shim_resolves_to_base(tmp_path, monkeypatch):
+    """Case A (manual / uv run): sys.executable IS the venv shim → resolve to
+    base python via pyvenv.cfg 'home' and graft via the shim itself."""
+    import sys
+    from aletheia.gateway import pidfile
+    _force_windows(monkeypatch)
+
+    # Real base python the shim resolves to.
+    realpy_dir = tmp_path / "realpy"
+    realpy_dir.mkdir()
+    (realpy_dir / "python.exe").write_text("", encoding="utf-8")
+
+    # Venv whose shim is sys.executable; pyvenv.cfg home points at realpy_dir.
+    venv = tmp_path / "venv"
+    (venv / "Scripts").mkdir(parents=True)
+    shim = venv / "Scripts" / "python.exe"
+    shim.write_text("", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text(f"home = {realpy_dir}\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "executable", str(shim))
+
+    real_python, env_patch = pidfile._resolve_real_python()
+    assert real_python == str(realpy_dir / "python.exe")
+    assert env_patch.get("__PYVENV_LAUNCHER__") == str(shim.resolve())

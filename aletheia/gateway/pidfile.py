@@ -44,6 +44,37 @@ def _no_window_kwargs() -> dict:
     return {}
 
 
+def _venv_shim_from_syspath() -> Path | None:
+    """Find the venv's python shim from sys.path entries, or None.
+
+    The autostart watchdog (autostart._task_arguments) launches the BASE
+    pythonw.exe and grafts the venv at runtime via site.addsitedir(<venv>/Lib/
+    site-packages). Scan sys.path for that site-packages dir — identified by a
+    sibling pyvenv.cfg at the venv root — and return <venv>/Scripts/python.exe,
+    the launcher that __PYVENV_LAUNCHER__ should point at so a spawned child
+    reactivates the venv at its own startup. Base (non-venv) site-packages dirs
+    carry no pyvenv.cfg, so they are correctly skipped.
+
+    Windows-only by construction (the sole caller returns early on POSIX), hence
+    the hardcoded Scripts/python.exe layout.
+    """
+    import sys as _sys
+
+    for entry in _sys.path:
+        try:
+            p = Path(entry)
+        except (TypeError, ValueError):
+            continue
+        if p.name != "site-packages":
+            continue
+        venv_root = p.parent.parent  # <venv>/Lib/site-packages → <venv>
+        if (venv_root / "pyvenv.cfg").exists():
+            shim = venv_root / "Scripts" / "python.exe"
+            if shim.exists():
+                return shim
+    return None
+
+
 def _resolve_real_python() -> tuple[str, dict]:
     """Resolve the real Python interpreter, bypassing uv venv trampoline shims.
 
@@ -54,7 +85,19 @@ def _resolve_real_python() -> tuple[str, dict]:
 
     Returns (real_python_path, env_patch) where env_patch contains
     __PYVENV_LAUNCHER__ so the real Python still finds the venv's site-packages.
-    On POSIX or if no shim is detected, returns (sys.executable, {}).
+    On POSIX or if no venv is detected, returns (sys.executable, {}).
+
+    Two Windows cases — and BOTH must hand the child a venv graft, or the child
+    dies with `ModuleNotFoundError: No module named 'aletheia'` → exit 1:
+      A) sys.executable IS a venv shim (manual `aletheia gateway start` / `uv
+         run`): resolve to base python via pyvenv.cfg, graft via the shim.
+      B) sys.executable is the BASE interpreter (the autostart watchdog: Task
+         Scheduler runs base pythonw.exe + site.addsitedir): that runtime graft
+         lives only in THIS process's sys.path, not in the environment, so a
+         spawned child inherits nothing. Recover the venv from sys.path and
+         graft via its shim. Missing this case was the silent
+         "watchdog-never-revives-the-gateway" bug — every 5-minute tick spawned
+         a venv-blind supervisor that exited 1 before the gateway came up.
     """
     import sys as _sys
 
@@ -66,9 +109,14 @@ def _resolve_real_python() -> tuple[str, dict]:
     pyvenv_cfg = venv_dir / "pyvenv.cfg"
 
     if not pyvenv_cfg.exists():
+        # Case B: base interpreter (watchdog). Graft the venv recovered from
+        # sys.path so the spawned child is not venv-blind.
+        venv_shim = _venv_shim_from_syspath()
+        if venv_shim is not None:
+            return (str(exe), {"__PYVENV_LAUNCHER__": str(venv_shim)})
         return (str(exe), {})
 
-    # Parse pyvenv.cfg for the 'home' key (points to real Python directory).
+    # Case A: venv shim. Parse pyvenv.cfg 'home' for the real Python directory.
     home = None
     for line in pyvenv_cfg.read_text(encoding="utf-8").splitlines():
         if line.lower().startswith("home"):
