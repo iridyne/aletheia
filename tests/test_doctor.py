@@ -76,3 +76,63 @@ def test_kill_switch_active_is_a_blocker(monkeypatch):
     dx._probe_config_gates(r)
     ks = [c for c in r.checks if c.name == "config.kill_switch"]
     assert ks and ks[0].severity == "blocker"
+
+
+def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    import aletheia.config.secrets as secrets
+
+    cfg = AletheiaConfig()
+    cfg.models.default_provider = "anthropic_compatible"
+    cfg.models.providers["anthropic_compatible"].enabled = True
+    cfg.models.providers["anthropic_compatible"].api_key_secret_ref = "model.gateway.api_key"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(secrets, "get_secret", lambda key: "secret" if key == "model.gateway.api_key" else None)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_credentials(r)
+
+    llm = next(c for c in r.checks if c.name == "creds.llm")
+    assert llm.severity == "ok"
+    assert "anthropic_compatible" in llm.detail
+
+
+def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    import aletheia.config.secrets as secrets
+
+    cfg = AletheiaConfig()
+    cfg.models.default_provider = "anthropic_compatible"
+    cfg.models.providers["anthropic_compatible"].enabled = True
+    cfg.models.providers["anthropic_compatible"].api_key_secret_ref = "model.gateway.api_key"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(secrets, "get_secret", lambda key: None)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_credentials(r)
+
+    llm = next(c for c in r.checks if c.name == "creds.llm")
+    assert llm.severity == "warn"
+    assert "model.gateway.api_key" in llm.detail
+
+
+def test_llm_credentials_do_not_require_api_key_for_cli_provider(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    import aletheia.config.secrets as secrets
+
+    cfg = AletheiaConfig()
+    cfg.models.default_provider = "codex_cli"
+    cfg.models.providers["codex_cli"].enabled = True
+    cfg.models.providers["codex_cli"].api_key_secret_ref = None
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(secrets, "get_secret", lambda key: None)
+
+    r = dx.Report(generated_at="t")
+    dx._probe_credentials(r)
+
+    llm = next(c for c in r.checks if c.name == "creds.llm")
+    assert llm.severity == "ok"
+    assert "codex_cli" in llm.detail

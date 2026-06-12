@@ -454,7 +454,32 @@ def insert_portfolio_snapshot(snap) -> None:
 
 
 def list_portfolio_snapshots(limit: int = 100) -> list[dict]:
-    return _select_all("portfolio_snapshots", order="snapshot_at ASC", limit=limit)
+    """Return the latest snapshot window in chronological order.
+
+    UI chart consumers need ascending timestamps, but the window itself must be
+    selected from the newest rows so long-lived databases do not show stale
+    history forever once the table grows beyond `limit`.
+    """
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT *
+        FROM (
+            SELECT *
+            FROM portfolio_snapshots
+            ORDER BY snapshot_at DESC, id DESC
+            LIMIT ?
+        )
+        ORDER BY snapshot_at ASC, id ASC
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_latest_portfolio_snapshot() -> dict | None:
+    rows = _select_all("portfolio_snapshots", order="snapshot_at DESC, id DESC", limit=1)
+    return rows[0] if rows else None
 
 
 # --- Agent Tool Calls ---

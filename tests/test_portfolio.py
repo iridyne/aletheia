@@ -1,9 +1,9 @@
 """Tests for portfolio PnL computation."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import Position, MarketSnapshot
+from aletheia.storage.models import Position, MarketSnapshot, PortfolioSnapshot
 from aletheia.storage import repositories as repo
 from aletheia.portfolio.pnl import compute_portfolio, compute_and_store_snapshot
 
@@ -61,6 +61,27 @@ def test_snapshot_persisted(tmp_path, monkeypatch):
     snap = compute_and_store_snapshot()
     assert snap.positions_count == 1
     assert len(repo.list_portfolio_snapshots()) == 1
+    reset_db()
+
+
+def test_portfolio_snapshots_return_latest_window_in_ascending_order(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for i in range(61):
+        repo.insert_portfolio_snapshot(
+            PortfolioSnapshot(
+                total_value_usdt=1000 + i,
+                snapshot_at=(base + timedelta(minutes=i)).isoformat(),
+            )
+        )
+
+    rows = repo.list_portfolio_snapshots(limit=50)
+
+    assert len(rows) == 50
+    assert rows[0]["total_value_usdt"] == 1011
+    assert rows[-1]["total_value_usdt"] == 1060
+    assert [row["snapshot_at"] for row in rows] == sorted(row["snapshot_at"] for row in rows)
+    assert repo.get_latest_portfolio_snapshot()["total_value_usdt"] == 1060
     reset_db()
 
 

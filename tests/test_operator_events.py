@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -936,6 +937,51 @@ async def test_operator_recommendations_include_portfolio_snapshot_refresh_due_w
     assert due["taskType"] == "run_portfolio_snapshot"
     assert due["metadata"]["open_positions_count"] == 1
     assert due["metadata"]["stale_minutes"] is None
+
+
+@pytest.mark.anyio
+async def test_operator_recommendations_use_latest_portfolio_snapshot_not_oldest_window(client):
+    from aletheia.storage.models import PortfolioSnapshot, Position
+    from aletheia.storage.repositories import insert_portfolio_snapshot, insert_position
+
+    insert_position(
+        Position(
+            symbol="BTCUSDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.01,
+            entry_price=60000,
+            current_price=60500,
+            unrealized_pnl=5.0,
+            execution_mode="paper_internal",
+            status="open",
+        )
+    )
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for i in range(60):
+        insert_portfolio_snapshot(
+            PortfolioSnapshot(
+                total_value_usdt=1000 + i,
+                positions_count=1,
+                snapshot_at=(base + timedelta(minutes=i)).isoformat(),
+            )
+        )
+    insert_portfolio_snapshot(
+        PortfolioSnapshot(
+            total_value_usdt=2000,
+            positions_count=1,
+            snapshot_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+
+    recommendations = await client.get("/api/operator/recommendations")
+
+    assert recommendations.status_code == 200
+    assert not [
+        item
+        for item in recommendations.json()
+        if item["kind"] == "portfolio_snapshot_refresh_due"
+    ]
 
 
 @pytest.mark.anyio

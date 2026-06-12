@@ -1,5 +1,7 @@
 """Phase 5 tests: market/chart data routes."""
 
+from datetime import datetime, timezone, timedelta
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 
@@ -46,6 +48,25 @@ async def test_portfolio_history_route(client):
     resp = await client.get("/api/market/portfolio-history")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+@pytest.mark.anyio
+async def test_portfolio_history_route_returns_latest_window_in_ascending_order(client):
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for i in range(3):
+        repo.insert_portfolio_snapshot(
+            PortfolioSnapshot(
+                total_value_usdt=1000 + i,
+                snapshot_at=(base + timedelta(minutes=i)).isoformat(),
+            )
+        )
+
+    resp = await client.get("/api/market/portfolio-history?limit=2")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [row["total_value_usdt"] for row in data] == [1001, 1002]
+    assert [row["snapshot_at"] for row in data] == sorted(row["snapshot_at"] for row in data)
 
 
 @pytest.mark.anyio

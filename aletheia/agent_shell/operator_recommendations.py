@@ -1589,8 +1589,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         )
 
     open_positions = repo.list_positions(status="open", limit=200)
-    recent_portfolio_snapshots = repo.list_portfolio_snapshots(limit=50)
-    latest_portfolio_snapshot = recent_portfolio_snapshots[-1] if recent_portfolio_snapshots else None
+    latest_portfolio_snapshot = repo.get_latest_portfolio_snapshot()
     portfolio_snapshot_age_minutes = (
         _run_age_minutes({"started_at": latest_portfolio_snapshot.get("snapshot_at"), "ended_at": None})
         if latest_portfolio_snapshot is not None

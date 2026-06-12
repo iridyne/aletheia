@@ -217,15 +217,54 @@ def _probe_credentials(report: Report) -> None:
                    "(paper_internal local fill still works)",
                    "Settings → Credentials (or `aletheia secrets set bitget.demo.api_key` + api_secret, passphrase)")
 
-    # LLM provider — without it observers emit only neutral/speculative → no entries.
-    provider = getattr(cfg.model, "default_provider", "") if hasattr(cfg, "model") else ""
-    llm_key = get_secret("model.anthropic_compatible.api_key") or get_secret("model.openai_compatible.api_key")
-    if provider in ("claude_cli",) or llm_key:
-        report.add("creds.llm", "ok", f"LLM provider configured (default={provider or 'see config'})")
+    provider = getattr(cfg.models, "default_provider", "")
+    pcfg = cfg.models.providers.get(provider) if provider else None
+    if pcfg is None:
+        report.add("creds.llm", "warn",
+                   f"default LLM provider not found: {provider or 'not configured'}",
+                   "Settings -> Model Provider, or `aletheia model set`")
+        return
+    if not pcfg.enabled:
+        report.add("creds.llm", "warn",
+                   f"default LLM provider disabled (default={provider})",
+                   "Settings -> Model Provider, or `aletheia model set`")
+        return
+
+    ptype = pcfg.type or provider
+    if ptype in {"codex_cli", "claude_cli"}:
+        report.add("creds.llm", "ok", f"LLM provider configured (default={provider}, type={ptype})")
+        return
+
+    secret_ref = pcfg.api_key_secret_ref
+    if secret_ref:
+        if get_secret(secret_ref):
+            report.add("creds.llm", "ok",
+                       f"LLM provider configured (default={provider}, secret_ref={secret_ref})")
+        else:
+            report.add("creds.llm", "warn",
+                       f"LLM provider secret missing (default={provider}, secret_ref={secret_ref})",
+                       "Settings -> Model Provider, or set the configured model secret")
+        return
+
+    endpoint = pcfg.workspace_url or pcfg.base_url
+    if _is_local_model_endpoint(endpoint):
+        report.add("creds.llm", "ok",
+                   f"LLM provider configured without API key (default={provider}, local endpoint)")
     else:
         report.add("creds.llm", "warn",
-                   "no LLM API key found — observers will emit only neutral/speculative opportunities",
-                   "Settings → Model Provider, or `aletheia model set`")
+                   f"LLM provider has no api_key_secret_ref (default={provider}, type={ptype})",
+                   "Settings -> Model Provider, or configure api_key_secret_ref for the provider")
+
+
+def _is_local_model_endpoint(endpoint: str | None) -> bool:
+    if not endpoint:
+        return False
+    lowered = endpoint.lower()
+    return (
+        "localhost" in lowered
+        or "127.0.0.1" in lowered
+        or lowered.startswith("http://0.0.0.0")
+    )
 
 
 def _probe_market_data(report: Report) -> None:
