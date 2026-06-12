@@ -36,6 +36,11 @@ class RuntimeConfig(BaseModel):
     # a manual `aletheia gateway restart`. The supervisor PID does not change, so
     # single-instance mutex (pidfile) is preserved. Set False before going live.
     auto_reload: bool = True
+    # Experimental PI runtime continuity. When false, the legacy update/gateway
+    # behavior stays the default; operator routes can still inspect recorded state.
+    runtime_continuity_enabled: bool = False
+    runtime_continuity_lock_ttl_sec: int = 300
+    runtime_continuity_shadow_port_offset: int = 100
 
 
 class ExchangeConfig(BaseModel):

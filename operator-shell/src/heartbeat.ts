@@ -19,10 +19,16 @@ export function buildHeartbeat(input: {
   modelProvider: string
   lastError: string | null
   lastSuccessAt: string | null
+  runtimeId?: string | null
+  runtimeMode?: 'current' | 'shadow' | string | null
+  runtimeState?: string | null
 }): OperatorHeartbeat {
   return {
     agent_id: 'operator',
     status: 'online',
+    runtime_id: input.runtimeId || 'runtime-local-current',
+    runtime_mode: input.runtimeMode || 'current',
+    runtime_state: input.runtimeState || (input.runtimeMode === 'shadow' ? 'shadowing' : 'current'),
     mode: input.mode,
     permission_mode: input.permissionMode,
     is_busy: input.tasks.currentTaskId !== null,

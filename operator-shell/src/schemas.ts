@@ -18,6 +18,9 @@ export type OperatorSessionKind =
 export interface OperatorHeartbeat {
   agent_id: string
   status: 'online' | 'offline' | 'stale'
+  runtime_id?: string | null
+  runtime_mode?: 'current' | 'shadow' | string | null
+  runtime_state?: string | null
   mode: OperatorMode
   permission_mode: string
   is_busy: boolean
@@ -82,6 +85,7 @@ export interface PersistedOperatorMessage {
 
 export interface PersistedOperatorTask {
   id: string
+  runtime_id?: string | null
   task_type: string
   status: string
   priority: string
@@ -97,6 +101,7 @@ export interface PersistedOperatorTask {
 
 export interface PersistedOperatorEvent {
   id: string
+  runtime_id?: string | null
   event_type: string
   severity: string
   source: string

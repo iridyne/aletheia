@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -24,8 +25,32 @@ from aletheia.server.routes.telegram import router as telegram_router
 from aletheia.server.routes.news import router as news_router
 from aletheia.server.routes.command import router as command_router
 from aletheia.server.routes.operator import router as operator_router
+from aletheia.server.routes.runtime import router as runtime_router
 
 logger = logging.getLogger("aletheia")
+
+
+def runtime_process_context(environ: dict[str, str] | None = None) -> dict:
+    env = environ or os.environ
+    raw_port = env.get("ALETHEIA_RUNTIME_PORT")
+    try:
+        port = int(raw_port) if raw_port else None
+    except ValueError:
+        port = None
+    return {
+        "runtime_id": env.get("ALETHEIA_RUNTIME_ID", "runtime-local-current"),
+        "runtime_mode": env.get("ALETHEIA_RUNTIME_MODE", "current"),
+        "runtime_state": env.get("ALETHEIA_RUNTIME_STATE", "current"),
+        "port": port,
+    }
+
+
+def should_start_background_services(context: dict) -> bool:
+    return context.get("runtime_mode") == "current"
+
+
+def should_write_gateway_pidfile(context: dict) -> bool:
+    return context.get("runtime_mode") == "current"
 
 
 async def _llm_startup_gate(cfg) -> None:
@@ -112,31 +137,37 @@ async def _llm_startup_gate(cfg) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = bootstrap()
+    runtime_context = runtime_process_context()
+    app.state.runtime_context = runtime_context
+    background_services_enabled = should_start_background_services(runtime_context)
     # Ensure PID file exists regardless of how we were launched (background
     # supervisor, foreground CLI, or bare uvicorn). Without this, /api/status
     # and /api/gateway/restart break when the supervisor PID file is missing.
     from aletheia.gateway.pidfile import write_pid, read_pid
-    _owns_pid = read_pid() is None
+    _owns_pid = should_write_gateway_pidfile(runtime_context) and read_pid() is None
     if _owns_pid:
         write_pid()
     app.state._owns_pid = _owns_pid
     # Record the source commit this process booted on, BEFORE any scheduler
     # thread starts — lets /api/health flag "code updated, restart needed".
-    from aletheia.agent_runtime.build_info import record_boot_commit
-    record_boot_commit()
+    if background_services_enabled:
+        from aletheia.agent_runtime.build_info import record_boot_commit
+        record_boot_commit()
     logger.info("Aletheia Trading OS v%s starting", __version__)
-    logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, cfg.app.dashboard_port)
+    logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
     # Ensure DB schema + register agents/tools, then start the scheduler.
     from aletheia.storage.migrations import run_migrations
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
-    from aletheia.telegram.bot import TelegramBot
     run_migrations()
     init_tool_registry()
-    try:
-        init_scheduler()
-    except Exception as e:
-        logger.warning("Scheduler failed to start: %s", e)
+    if background_services_enabled:
+        try:
+            init_scheduler()
+        except Exception as e:
+            logger.warning("Scheduler failed to start: %s", e)
+    else:
+        logger.info("Runtime mode %s: background services disabled", runtime_context["runtime_mode"])
     # Fail-loud LLM gate, run as a BACKGROUND task (not awaited here): if no
     # provider can actually do inference it pauses the scheduler and persists
     # runtime.paused. Deferring it until AFTER init_scheduler + yield means the
@@ -145,29 +176,32 @@ async def lifespan(app: FastAPI):
     # the few seconds the probe takes is safe: scheduler jobs themselves re-check
     # cfg.runtime.paused, and the only time-sensitive job (market_data) is
     # harmless to run once. See _llm_startup_gate.
-    llm_gate_task = asyncio.create_task(_llm_startup_gate(cfg))
-    telegram_bot = TelegramBot()
+    llm_gate_task = asyncio.create_task(_llm_startup_gate(cfg)) if background_services_enabled else None
+    telegram_bot = None
     telegram_task = None
-    if telegram_bot.configure():
-        if telegram_bot.allowed_chat_ids:
-            try:
-                telegram_task = asyncio.create_task(telegram_bot.run())
-            except Exception as e:
-                logger.warning("Telegram polling startup failed: %s", e)
-                telegram_task = None
-        else:
-            logger.warning("Telegram enabled but no allowed_chat_ids configured; skipping Telegram polling.")
+    if background_services_enabled:
+        from aletheia.telegram.bot import TelegramBot
+        telegram_bot = TelegramBot()
+        if telegram_bot.configure():
+            if telegram_bot.allowed_chat_ids:
+                try:
+                    telegram_task = asyncio.create_task(telegram_bot.run())
+                except Exception as e:
+                    logger.warning("Telegram polling startup failed: %s", e)
+                    telegram_task = None
+            else:
+                logger.warning("Telegram enabled but no allowed_chat_ids configured; skipping Telegram polling.")
     app.state.telegram_bot = telegram_bot
     app.state.telegram_task = telegram_task
     yield
     # Cancel the LLM gate if it's still probing at shutdown (slow/hung provider).
-    if not llm_gate_task.done():
+    if llm_gate_task is not None and not llm_gate_task.done():
         llm_gate_task.cancel()
         try:
             await llm_gate_task
         except (asyncio.CancelledError, Exception):
             pass
-    if telegram_task is not None:
+    if telegram_task is not None and telegram_bot is not None:
         try:
             telegram_bot.stop()
             telegram_task.cancel()
@@ -177,10 +211,11 @@ async def lifespan(app: FastAPI):
                 pass
         except Exception:
             pass
-    try:
-        stop_scheduler()
-    except Exception:
-        pass
+    if background_services_enabled:
+        try:
+            stop_scheduler()
+        except Exception:
+            pass
     # Only clean PID file if we wrote it (bare uvicorn / foreground mode).
     # In supervised mode the PID belongs to the supervisor — don't touch it.
     if getattr(app.state, "_owns_pid", False):
@@ -212,6 +247,7 @@ app.include_router(telegram_router)
 app.include_router(news_router)
 app.include_router(command_router)
 app.include_router(operator_router)
+app.include_router(runtime_router)
 
 # Serve static dashboard if the directory exists
 _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"
