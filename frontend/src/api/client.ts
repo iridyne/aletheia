@@ -29,58 +29,6 @@ function post<T>(path: string, body?: unknown): Promise<T> {
 
 export interface KeyStatus { configured: boolean; last4: string | null }
 
-export interface SerenityWorkbenchStatus {
-  engineStatus: string
-  currentRun: SerenityRunSummary | null
-  lastAttemptedRun: SerenityRunSummary | null
-  lastSuccessfulRun: SerenityRunSummary | null
-  nextScheduledRunAt: string | null
-  profileSummary: string | null
-  artifactCounts: {
-    activeThemes: number
-    watchingThemes: number
-    recentOpportunities: number
-  }
-}
-
-export interface SerenityRunSummary {
-  id: string
-  triggerType: string | null
-  mode: string | null
-  status: string | null
-  stage: string | null
-  startedAt: string | null
-  finishedAt: string | null
-  errorType: string | null
-  errorMessage: string | null
-  artifactCounts: Record<string, number>
-  createdAt: string | null
-}
-
-export interface SerenityRunEventItem {
-  id: string
-  run_id: string
-  event_type: string
-  stage: string | null
-  status: string | null
-  message: string | null
-  payload: string
-  created_at: string
-}
-
-export interface SerenityProfile {
-  id?: string
-  includeTopics?: string[]
-  excludeTopics?: string[]
-  includeAssets?: string[]
-  excludeAssets?: string[]
-  marketTypes?: string[]
-  timeHorizon?: string | null
-  riskBias?: string | null
-  sourcePreferences?: string[]
-  rawNotes?: string | null
-}
-
 export interface SerenityTheme {
   id: string
   name: string
@@ -387,28 +335,6 @@ export const api = {
   getPostTradeReviews: () => fetchJson<any[]>('/knowledge?type=post_trade_review'),
   getKnowledgeContent: (id: string) => fetchJson<{ id: string; content: string; error?: string }>(`/knowledge/${id}/content`),
   getStrategyGates: (id: string) => fetchJson<Record<string, any>>(`/strategies/${id}/gates`),
-
-  // Serenity Research Workbench
-  getSerenityStatus: () => fetchJson<SerenityWorkbenchStatus>('/serenity/status'),
-  createSerenityRun: (body: {
-    mode?: string; triggerType?: string; brief?: string | null
-    saveToProfile?: boolean; focusThemeId?: string | null; idempotencyKey?: string | null
-  }) => post<{ runId: string; status: string; deduplicated?: boolean }>('/serenity/runs', body),
-  getSerenityRuns: (params?: { status?: string; triggerType?: string; limit?: number }) => {
-    const qs = new URLSearchParams()
-    if (params?.status) qs.set('status', params.status)
-    if (params?.triggerType) qs.set('triggerType', params.triggerType)
-    if (params?.limit) qs.set('limit', String(params.limit))
-    return fetchJson<{ items: SerenityRunSummary[] }>(`/serenity/runs?${qs.toString()}`)
-  },
-  getSerenityRunDetail: (runId: string) => fetchJson<{ run: SerenityRunSummary; events: SerenityRunEventItem[] }>(`/serenity/runs/${runId}`),
-  retrySerenityRun: (runId: string) => post<{ runId: string; parentRunId: string; status: string }>(`/serenity/runs/${runId}/retry`),
-  getSerenityProfile: () => fetchJson<{ profile: SerenityProfile | null }>('/serenity/profile'),
-  updateSerenityProfile: (body: Partial<SerenityProfile>) => fetchJson<{ ok: boolean }>('/serenity/profile', { method: 'PATCH', body: JSON.stringify(body) }),
-  parseSerenityBrief: (brief: string) => post<{ parsed: Record<string, unknown>; warnings: string[] }>('/serenity/profile/parse', { brief }),
-  updateSerenityThemeStatus: (themeId: string, status: string) => fetchJson<{ id: string; status: string }>(`/serenity/themes/${themeId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
-  createSerenityThemeFeedback: (themeId: string, action: string, value?: Record<string, unknown>) => post<{ id: string }>(`/serenity/themes/${themeId}/feedback`, { action, value }),
-  createSerenityThemeDeepDive: (themeId: string, brief?: string) => post<{ runId: string; status: string }>(`/serenity/themes/${themeId}/deep-dive`, brief ? { brief } : {}),
 
   // Serenity Lens endpoints (research-first investigation pipeline)
   getSerenityThemes: () => fetchJson<SerenityTheme[]>('/serenity/themes'),

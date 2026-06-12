@@ -175,18 +175,9 @@ def _run_dreaming_agent():
     if cfg.runtime.paused:
         return
     try:
-        from aletheia.storage.models import SerenityResearchRun
-        from aletheia.storage import repositories as repo
-        from aletheia.agents.research_worker import enqueue_research_run
-        run = SerenityResearchRun(trigger_type="scheduled", mode="standard", status="queued")
-        repo.insert_serenity_research_run(run)
-        enqueue_research_run(run.id)
+        asyncio.run(_async_run("dreaming_agent"))
     except Exception as e:
-        logger.warning("dreaming_agent scheduled run creation failed: %s", e)
-        try:
-            asyncio.run(_async_run("dreaming_agent"))
-        except Exception as e2:
-            logger.warning("dreaming_agent fallback also failed: %s", e2)
+        logger.warning("dreaming_agent job failed: %s", e)
 
 
 def _run_strategy_designer():

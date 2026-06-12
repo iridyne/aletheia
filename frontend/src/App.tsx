@@ -369,7 +369,6 @@ export default function App() {
             <Route path="/risk" element={<RiskControls />} />
             <Route path="/news" element={<NewsIntel />} />
             <Route path="/serenity-lens" element={<SerenityLens />} />
-            <Route path="/serenity-lens/workbench" element={<SerenityLens />} />
           </Routes>
         </main>
         {/* <ActivityTimeline /> — temporarily hidden, see import comment above */}

@@ -9,8 +9,6 @@ from aletheia.storage.models import (
     RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
     SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
     SerenityReplaySnapshot, SerenityPostMortem,
-    SerenityResearchRun, SerenityRunEvent, SerenityUserProfile,
-    SerenityProfileSnapshot, SerenityFeedbackEvent,
 )
 
 
@@ -418,106 +416,6 @@ def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 1
         where = "opportunity_id = ?"
         params.append(opportunity_id)
     return _select_all("serenity_post_mortems", where=where, params=tuple(params), limit=limit)
-
-
-# --- Serenity Research Runs ---
-
-def insert_serenity_research_run(r: SerenityResearchRun) -> None:
-    _insert("serenity_research_runs", r.model_dump())
-
-
-def get_serenity_research_run(run_id: str) -> dict | None:
-    return _select_one("serenity_research_runs", run_id)
-
-
-def list_serenity_research_runs(
-    status: str | None = None,
-    trigger_type: str | None = None,
-    limit: int = 20,
-) -> list[dict]:
-    conditions: list[str] = []
-    params: list = []
-    if status is not None:
-        conditions.append("status = ?")
-        params.append(status)
-    if trigger_type is not None:
-        conditions.append("trigger_type = ?")
-        params.append(trigger_type)
-    where = " AND ".join(conditions) if conditions else None
-    return _select_all("serenity_research_runs", where=where, params=tuple(params),
-                       order="created_at DESC", limit=limit)
-
-
-def update_serenity_research_run(run_id: str, **kwargs) -> None:
-    _update("serenity_research_runs", run_id, kwargs)
-
-
-def get_active_serenity_research_run() -> dict | None:
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM serenity_research_runs WHERE status IN ('queued', 'running', 'waiting_retry') "
-        "ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
-    return dict(row) if row else None
-
-
-def get_serenity_research_run_by_idempotency_key(key: str) -> dict | None:
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM serenity_research_runs WHERE idempotency_key = ?", (key,)
-    ).fetchone()
-    return dict(row) if row else None
-
-
-# --- Serenity Run Events ---
-
-def insert_serenity_run_event(e: SerenityRunEvent) -> None:
-    _insert("serenity_run_events", e.model_dump())
-
-
-def list_serenity_run_events(run_id: str, limit: int = 200) -> list[dict]:
-    return _select_all("serenity_run_events", where="run_id = ?", params=(run_id,),
-                       order="created_at ASC", limit=limit)
-
-
-# --- Serenity User Profiles ---
-
-def insert_serenity_user_profile(p: SerenityUserProfile) -> None:
-    _insert("serenity_user_profiles", p.model_dump())
-
-
-def get_serenity_user_profile() -> dict | None:
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM serenity_user_profiles ORDER BY updated_at DESC LIMIT 1"
-    ).fetchone()
-    return dict(row) if row else None
-
-
-def update_serenity_user_profile(profile_id: str, **kwargs) -> None:
-    _update("serenity_user_profiles", profile_id, kwargs)
-
-
-# --- Serenity Profile Snapshots ---
-
-def insert_serenity_profile_snapshot(s: SerenityProfileSnapshot) -> None:
-    _insert("serenity_profile_snapshots", s.model_dump())
-
-
-def get_serenity_profile_snapshot(snapshot_id: str) -> dict | None:
-    return _select_one("serenity_profile_snapshots", snapshot_id)
-
-
-# --- Serenity Feedback Events ---
-
-def insert_serenity_feedback_event(f: SerenityFeedbackEvent) -> None:
-    _insert("serenity_feedback_events", f.model_dump())
-
-
-def list_serenity_feedback_events(target_type: str, target_id: str, limit: int = 50) -> list[dict]:
-    return _select_all("serenity_feedback_events",
-                       where="target_type = ? AND target_id = ?",
-                       params=(target_type, target_id), limit=limit)
 
 
 # --- Market Snapshots ---
