@@ -313,6 +313,7 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 .card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
   padding: var(--space-4); margin-bottom: var(--space-4); box-shadow: var(--shadow);
+  min-width: 0; overflow: hidden;
 }
 .card h3 {
   margin-bottom: var(--space-3); font-size: 0.8rem; font-weight: 600; color: var(--muted);
@@ -456,7 +457,7 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 .card-head-space { margin-bottom: 0; }
 .lens-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
@@ -1115,7 +1116,7 @@ tr.clickable:hover { background: var(--surface-2); }
 
 /* dense role grid: approval desk | agent activity | risk+market */
 .cockpit-grid-3 {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4);
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4);
   margin-bottom: var(--space-4);
 }
 @media (max-width: 1100px) { .cockpit-grid-3 { grid-template-columns: 1fr 1fr; } }
@@ -1136,7 +1137,7 @@ tr.clickable:hover { background: var(--surface-2); }
 .panel-divider { border: none; border-top: 1px solid var(--border); margin: var(--space-3) 0; }
 
 /* watchlist mini-grid */
-.market-watch { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); }
+.market-watch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
 .market-watch-cell { min-width: 0; }
 .market-watch-sym { font-size: 0.7rem; color: var(--faint); }
 .market-watch-price { font-family: var(--mono); font-size: 0.85rem; }
@@ -1183,7 +1184,7 @@ tr.clickable:hover { background: var(--surface-2); }
 @media (max-width: 900px) { .pnl-cluster { grid-template-columns: 1fr; } }
 .pnl-hero {
   margin-bottom: 0; display: flex; flex-direction: column; justify-content: center;
-  position: relative;
+  position: relative; min-width: 0;
 }
 .pnl-hero-inner {
   display: flex; align-items: center; gap: var(--space-4);
@@ -1217,7 +1218,7 @@ tr.clickable:hover { background: var(--surface-2); }
 .asset-value { flex: 1; font-family: var(--mono); color: var(--text); }
 .asset-pct { color: var(--muted); font-size: 0.72rem; min-width: 38px; text-align: right; }
 .pnl-tiles {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3);
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3);
 }
 @media (max-width: 1100px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 480px) { .pnl-tiles { grid-template-columns: 1fr; } }
@@ -1246,7 +1247,7 @@ tr.clickable:hover { background: var(--surface-2); }
   align-items: start;
 }
 @media (max-width: 1000px) { .cockpit-main { grid-template-columns: 1fr; } }
-.cockpit-rail { display: flex; flex-direction: column; gap: var(--space-4); }
+.cockpit-rail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
 .cockpit-rail .card { margin-bottom: 0; }
 
 /* Right-rail cards each get a preset max-height + internal scroll so the rail's total
@@ -1438,9 +1439,9 @@ tr.clickable:hover { background: var(--surface-2); }
 
 /* ---------- Account Snapshot row + MetricTile ---------- */
 .account-snapshot {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); margin-bottom: var(--space-4);
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4);
 }
-@media (max-width: 900px) { .account-snapshot { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) { .account-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .metric-tile { margin-bottom: 0; padding: var(--space-3) var(--space-4); min-height: 84px; }
 .metric-label {
   font-size: 0.65rem; font-weight: 600; color: var(--muted);
