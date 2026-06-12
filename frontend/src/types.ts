@@ -369,3 +369,85 @@ export interface OperatorExtension {
   created_at: string
   updated_at: string
 }
+
+export interface RuntimeRecord {
+  runtime_id: string
+  state: string
+  code_version: string | null
+  config_version: string | null
+  schema_version: string | null
+  build_git_sha: string | null
+  release_bundle_hash: string | null
+  artifact_path: string | null
+  mode: string | null
+  started_at: string | null
+  promoted_at: string | null
+  drained_at: string | null
+  failed_at?: string | null
+  rolled_back_at?: string | null
+  last_error: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeEvent {
+  id: string
+  runtime_id: string | null
+  event_type: string
+  phase: string
+  severity: string
+  actor: string
+  cause: string | null
+  kind: string
+  status: string
+  operation_id: string | null
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export interface RuntimeLock {
+  lock_name: string
+  runtime_id: string | null
+  owner: string
+  token: string
+  acquired_at: string
+  expires_at: string
+  released_at: string | null
+  metadata: Record<string, unknown>
+}
+
+export interface RuntimeStatus {
+  runtime_id: string | null
+  phase: string
+  actor: string
+  cause: string | null
+  started_at: string | null
+  expires_at: string | null
+  lock_owner: string | null
+  can_promote: boolean
+  can_rollback: boolean
+  can_drain: boolean
+  activation: Record<string, unknown> | null
+  activation_required: boolean
+  enabled: boolean
+  current: RuntimeRecord | null
+  candidate: RuntimeRecord | null
+  shadow: RuntimeRecord | null
+  draining: RuntimeRecord | null
+  locks: RuntimeLock[]
+  events: RuntimeEvent[]
+  ownership_summary: Record<string, number>
+  metrics: {
+    state_counts: Record<string, number>
+    active_lock_count: number
+    recent_event_count: number
+    ownership_active_count: number
+    failed_runtime_count: number
+  }
+  guidance: {
+    action: string
+    reason: string
+    runtime_id: string | null
+  }
+}

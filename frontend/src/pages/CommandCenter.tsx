@@ -10,6 +10,9 @@ import type {
   OperatorEvent,
   OperatorExtension,
   OperatorRecommendation,
+  RuntimeEvent,
+  RuntimeRecord,
+  RuntimeStatus,
   OperatorSessionDetail,
   OperatorSessionSummary,
   OperatorStatus,
@@ -208,6 +211,204 @@ function mergeEvents(existing: OperatorEvent[], incoming: OperatorEvent): Operat
     .slice(0, 100)
 }
 
+function runtimeBadge(state: string | null | undefined): string {
+  switch (state) {
+    case 'current':
+    case 'ready_to_promote':
+      return 'badge-green'
+    case 'shadowing':
+    case 'candidate':
+    case 'draining':
+      return 'badge-yellow'
+    case 'failed':
+    case 'rolled_back':
+      return 'badge-red'
+    default:
+      return 'badge-blue'
+  }
+}
+
+function RuntimeSlot({ title, record }: { title: string; record: RuntimeRecord | null | undefined }) {
+  return (
+    <div className="runtime-slot">
+      <div className="runtime-slot-head">
+        <span>{title}</span>
+        <span className={`badge ${runtimeBadge(record?.state)}`}>{record?.state || 'not configured'}</span>
+      </div>
+      <div className="runtime-slot-id mono">{record?.runtime_id || '—'}</div>
+      <table className="status-board compact">
+        <tbody>
+          <tr><th>Code</th><td>{record?.code_version || record?.build_git_sha || '—'}</td></tr>
+          <tr><th>Schema</th><td>{record?.schema_version || '—'}</td></tr>
+          <tr><th>Bundle</th><td>{record?.release_bundle_hash || '—'}</td></tr>
+          <tr><th>Started</th><td>{formatTimestamp(record?.started_at)}</td></tr>
+          <tr><th>Promoted</th><td>{formatTimestamp(record?.promoted_at)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function RuntimeContinuityPanel({
+  status,
+  events,
+  onCandidate,
+  onShadow,
+  onPromote,
+  onDrain,
+  onRollback,
+  pendingAction,
+}: {
+  status: RuntimeStatus | undefined
+  events: RuntimeEvent[]
+  onCandidate: () => void
+  onShadow: () => void
+  onPromote: () => void
+  onDrain: () => void
+  onRollback: () => void
+  pendingAction: string | null
+}) {
+  const candidateId = status?.candidate?.runtime_id
+  const locks = status?.locks || []
+  const ownershipSummary = status?.ownership_summary || {}
+  const metrics = status?.metrics
+  const guidance = status?.guidance
+  return (
+    <div className="runtime-continuity-panel">
+      <div className="runtime-summary-strip">
+        <span className={`badge ${status?.enabled ? 'badge-green' : 'badge-yellow'}`}>
+          {status?.enabled ? 'enabled' : 'disabled'}
+        </span>
+        <span className="mono">phase: {status?.phase || 'not configured'}</span>
+        <span className="mono">lock: {status?.lock_owner || 'none'}</span>
+        {status?.activation_required && (
+          <span className="badge badge-yellow">restart required</span>
+        )}
+        <span className="mono">current: {status?.runtime_id || '—'}</span>
+      </div>
+
+      <div className="runtime-grid">
+        <RuntimeSlot title="Current" record={status?.current} />
+        <RuntimeSlot title="Candidate" record={status?.candidate} />
+        <RuntimeSlot title="Shadow" record={status?.shadow} />
+        <RuntimeSlot title="Draining" record={status?.draining} />
+      </div>
+
+      <div className="runtime-action-row">
+        <button className="btn-control" onClick={onCandidate} disabled={pendingAction !== null}>
+          {pendingAction === 'candidate' ? 'Creating…' : 'Create Candidate'}
+        </button>
+        <button
+          className="btn-control secondary"
+          onClick={onShadow}
+          disabled={!candidateId || pendingAction !== null}
+        >
+          {pendingAction === 'shadow' ? 'Validating…' : 'Start Shadow'}
+        </button>
+        <button
+          className="btn-control secondary"
+          onClick={onPromote}
+          disabled={!status?.can_promote || pendingAction !== null}
+        >
+          {pendingAction === 'promote' ? 'Promoting…' : 'Promote'}
+        </button>
+        <button
+          className="btn-control danger"
+          onClick={onDrain}
+          disabled={!status?.can_drain || pendingAction !== null}
+        >
+          {pendingAction === 'drain' ? 'Draining…' : 'Drain'}
+        </button>
+        <button
+          className="btn-control danger"
+          onClick={onRollback}
+          disabled={!status?.can_rollback || pendingAction !== null}
+        >
+          {pendingAction === 'rollback' ? 'Rolling Back…' : 'Rollback'}
+        </button>
+      </div>
+
+      <div className="runtime-ops-grid">
+        <section className="runtime-ops-section">
+          <div className="cc-card-header">
+            <h3>Locks</h3>
+            <span className="mono text-muted">{locks.length}</span>
+          </div>
+          {locks.length === 0 && <div className="text-muted text-sm">No active runtime lock.</div>}
+          {locks.map(lock => (
+            <div className="runtime-lock-row" key={lock.lock_name}>
+              <span className="mono">{lock.lock_name}</span>
+              <span>{lock.owner}</span>
+              <span className="mono">{formatTimestamp(lock.expires_at)}</span>
+            </div>
+          ))}
+        </section>
+
+        <section className="runtime-ops-section">
+          <div className="cc-card-header">
+            <h3>Ownership</h3>
+            <span className="mono text-muted">{Object.keys(ownershipSummary).length}</span>
+          </div>
+          {Object.keys(ownershipSummary).length === 0 && (
+            <div className="text-muted text-sm">No runtime-owned operator task records yet.</div>
+          )}
+          {Object.entries(ownershipSummary).map(([key, count]) => (
+            <div className="runtime-lock-row" key={key}>
+              <span className="mono">{key}</span>
+              <span>{count}</span>
+            </div>
+          ))}
+        </section>
+
+        <section className="runtime-ops-section">
+          <div className="cc-card-header">
+            <h3>Guidance</h3>
+            <span className="mono text-muted">{guidance?.action || 'observe'}</span>
+          </div>
+          <div className="runtime-guidance">
+            <span className={`badge ${runtimeBadge(guidance?.action)}`}>{guidance?.action || 'observe'}</span>
+            <span>{guidance?.reason?.replace(/_/g, ' ') || 'No runtime action suggested.'}</span>
+            {guidance?.runtime_id && <span className="mono">{guidance.runtime_id}</span>}
+          </div>
+        </section>
+
+        <section className="runtime-ops-section">
+          <div className="cc-card-header">
+            <h3>Metrics</h3>
+            <span className="mono text-muted">{metrics?.recent_event_count ?? 0} events</span>
+          </div>
+          <div className="runtime-metric-grid">
+            <span className="mono">locks {metrics?.active_lock_count ?? 0}</span>
+            <span className="mono">ownership {metrics?.ownership_active_count ?? 0}</span>
+            <span className="mono">failed {metrics?.failed_runtime_count ?? 0}</span>
+            {Object.entries(metrics?.state_counts || {}).map(([state, count]) => (
+              <span className="mono" key={state}>{state} {count}</span>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <section className="runtime-events-section">
+        <div className="cc-card-header">
+          <h3>Continuity Timeline</h3>
+          <span className="mono text-muted">{events.length}</span>
+        </div>
+        <div className="runtime-event-list">
+          {events.length === 0 && <div className="text-muted text-sm">No runtime continuity events yet.</div>}
+          {events.map(event => (
+            <div className="runtime-event-row" key={event.id}>
+              <span className={`badge ${runtimeBadge(event.phase)}`}>{event.phase}</span>
+              <span>{event.event_type.replace(/_/g, ' ')}</span>
+              <span className="mono">{event.runtime_id || '—'}</span>
+              <span className="mono">{formatTimestamp(event.created_at)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 export default function CommandCenter() {
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -216,6 +417,7 @@ export default function CommandCenter() {
   const [branchTitle, setBranchTitle] = useState('')
   const [branchKind, setBranchKind] = useState<string>('command_session')
   const [historyFilter, setHistoryFilter] = useState('')
+  const [activePane, setActivePane] = useState<'conversation' | 'runtime'>('conversation')
   const [inspectorFocus, setInspectorFocus] = useState<InspectorFocus>({ kind: 'session', id: 'operator-main' })
   const deferredPreviewInput = useDeferredValue(input)
   const deferredHistoryFilter = useDeferredValue(historyFilter)
@@ -253,6 +455,16 @@ export default function CommandCenter() {
   const { data: operatorEvents = [] } = useQuery<OperatorEvent[]>({
     queryKey: ['operator-events'],
     queryFn: () => api.getOperatorEvents({ limit: 100 }),
+  })
+  const { data: runtimeStatus } = useQuery<RuntimeStatus>({
+    queryKey: ['operator-runtime'],
+    queryFn: api.getRuntimeStatus,
+    refetchInterval: 5000,
+  })
+  const { data: runtimeEvents = [] } = useQuery<RuntimeEvent[]>({
+    queryKey: ['operator-runtime-events'],
+    queryFn: () => api.getRuntimeEvents(100),
+    refetchInterval: 5000,
   })
   const statusSelectedSessionId =
     operatorStatus?.active_branch_id || operatorStatus?.session_id || 'operator-main'
@@ -408,8 +620,69 @@ export default function CommandCenter() {
       qc.invalidateQueries({ queryKey: ['operator-status'] })
     },
   })
+  const runtimeCandidateMut = useMutation({
+    mutationFn: () => {
+      const stamp = Date.now().toString(36)
+      return api.createRuntimeCandidate({
+        code_version: `dashboard-candidate-${stamp}`,
+        config_version: 'dashboard',
+        schema_version: 'sqlite-runtime-continuity-v1',
+        build_git_sha: `dashboard-${stamp}`,
+        release_bundle_hash: `dashboard-${stamp}`,
+        cause: 'command_center_candidate',
+      })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['operator-runtime'] })
+      qc.invalidateQueries({ queryKey: ['operator-runtime-events'] })
+    },
+  })
+  const runtimeShadowMut = useMutation({
+    mutationFn: () => api.startRuntimeShadow(runtimeStatus?.candidate?.runtime_id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['operator-runtime'] })
+      qc.invalidateQueries({ queryKey: ['operator-runtime-events'] })
+      qc.invalidateQueries({ queryKey: ['operator-status'] })
+    },
+  })
+  const runtimePromoteMut = useMutation({
+    mutationFn: () => api.promoteRuntime(runtimeStatus?.candidate?.runtime_id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['operator-runtime'] })
+      qc.invalidateQueries({ queryKey: ['operator-runtime-events'] })
+      qc.invalidateQueries({ queryKey: ['operator-status'] })
+    },
+  })
+  const runtimeDrainMut = useMutation({
+    mutationFn: () => api.drainRuntime(runtimeStatus?.draining?.runtime_id, true),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['operator-runtime'] })
+      qc.invalidateQueries({ queryKey: ['operator-runtime-events'] })
+      qc.invalidateQueries({ queryKey: ['operator-status'] })
+    },
+  })
+  const runtimeRollbackMut = useMutation({
+    mutationFn: api.rollbackRuntime,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['operator-runtime'] })
+      qc.invalidateQueries({ queryKey: ['operator-runtime-events'] })
+      qc.invalidateQueries({ queryKey: ['operator-status'] })
+    },
+  })
 
   const activeTask = tasks.find(task => task.id === operatorStatus?.current_task_id) || null
+  const pendingRuntimeAction =
+    runtimeCandidateMut.isPending
+      ? 'candidate'
+      : runtimeShadowMut.isPending
+        ? 'shadow'
+      : runtimePromoteMut.isPending
+        ? 'promote'
+        : runtimeDrainMut.isPending
+          ? 'drain'
+          : runtimeRollbackMut.isPending
+            ? 'rollback'
+            : null
   const filterText = deferredHistoryFilter.trim().toLowerCase()
   const sessionMessages = sessionDetail?.messages || []
   const sessionCommands = sessionDetail?.commands || []
@@ -605,6 +878,23 @@ export default function CommandCenter() {
             </span>
           </div>
 
+          <div className="command-center-tabs">
+            <button
+              className={activePane === 'conversation' ? 'active' : ''}
+              onClick={() => setActivePane('conversation')}
+            >
+              Conversation
+            </button>
+            <button
+              className={activePane === 'runtime' ? 'active' : ''}
+              onClick={() => setActivePane('runtime')}
+            >
+              Runtime Continuity
+            </button>
+          </div>
+
+          {activePane === 'conversation' ? (
+            <>
           <div className="command-stream">
             {sessionMessages.length === 0 && (
               <div className="command-empty">
@@ -766,6 +1056,31 @@ export default function CommandCenter() {
               </button>
             </div>
           </div>
+            </>
+          ) : (
+            <RuntimeContinuityPanel
+              status={runtimeStatus}
+              events={runtimeEvents}
+              pendingAction={pendingRuntimeAction}
+              onCandidate={() => runtimeCandidateMut.mutate()}
+              onShadow={() => runtimeShadowMut.mutate()}
+              onPromote={() => {
+                if (window.confirm('Promote the ready shadow runtime to current?')) {
+                  runtimePromoteMut.mutate()
+                }
+              }}
+              onDrain={() => {
+                if (window.confirm('Mark the previous runtime as drained/legacy?')) {
+                  runtimeDrainMut.mutate()
+                }
+              }}
+              onRollback={() => {
+                if (window.confirm('Rollback to the latest pre-promote checkpoint?')) {
+                  runtimeRollbackMut.mutate()
+                }
+              }}
+            />
+          )}
         </section>
 
         <aside className="command-center-side">

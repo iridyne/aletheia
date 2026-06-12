@@ -75,6 +75,9 @@ def _operator_status_defaults() -> dict[str, Any]:
         "last_error": None,
         "model_provider": None,
         "session_id": cfg.operator.main_session_id,
+        "runtime_id": "runtime-local-current",
+        "runtime_mode": "current",
+        "runtime_state": "current",
         "active_branch_id": None,
         "active_branch_kind": None,
         "active_branch_title": None,
@@ -166,6 +169,9 @@ class OperatorHeartbeatIn(BaseModel):
     status: str
     mode: str
     permission_mode: str
+    runtime_id: str | None = None
+    runtime_mode: str = "current"
+    runtime_state: str = "current"
     is_busy: bool = False
     current_task_id: str | None = None
     current_intent: str | None = None
@@ -186,6 +192,7 @@ class OperatorTaskCreate(BaseModel):
     priority: str = "normal"
     created_by: str
     assigned_to: str = "operator"
+    runtime_id: str | None = None
     input_data: dict[str, Any] | list[Any] | None = None
     output_data: dict[str, Any] | list[Any] | None = None
     error: str | None = None
@@ -249,6 +256,7 @@ class OperatorEventCreate(BaseModel):
     event_type: str
     severity: str = "info"
     source: str = "operator"
+    runtime_id: str | None = None
     session_id: str | None = None
     task_id: str | None = None
     related_entity_type: str | None = None
@@ -383,6 +391,9 @@ def _write_active_branch_selection(
         last_error=latest.get("last_error"),
         model_provider=latest.get("model_provider"),
         session_id=str(latest.get("session_id") or main_session_id),
+        runtime_id=latest.get("runtime_id"),
+        runtime_mode=str(latest.get("runtime_mode") or "current"),
+        runtime_state=str(latest.get("runtime_state") or "current"),
         active_branch_id=active_branch_id,
         active_branch_kind=active_branch_kind,
         active_branch_title=active_branch_title,

@@ -145,6 +145,37 @@ export const api = {
   restartGateway: () => post<{ mode: 'warm' | 'cold'; ok: boolean; message: string }>('/gateway/restart'),
   getStatus: () => fetchJson<Record<string, unknown>>('/status'),
   getOperatorStatus: () => fetchJson<any>('/operator/status'),
+  getRuntimeStatus: () => fetchJson<any>('/operator/runtime'),
+  createRuntimeCandidate: (body: {
+    code_version?: string
+    config_version?: string
+    schema_version?: string
+    build_git_sha?: string
+    release_bundle_hash?: string
+    artifact_path?: string
+    cause?: string
+  }) => post<any>('/operator/runtime/candidate', body),
+  startRuntimeShadow: (runtimeId?: string) =>
+    post<any>('/operator/runtime/shadow', {
+      runtime_id: runtimeId,
+      cause: 'command_center_shadow',
+    }),
+  promoteRuntime: (runtimeId?: string) =>
+    post<any>('/operator/runtime/promote', {
+      runtime_id: runtimeId,
+      cause: 'command_center_promote',
+    }),
+  drainRuntime: (runtimeId?: string, force = true) =>
+    post<any>('/operator/runtime/drain', {
+      runtime_id: runtimeId,
+      force,
+      cause: 'command_center_drain',
+    }),
+  rollbackRuntime: () =>
+    post<any>('/operator/runtime/rollback', {
+      cause: 'command_center_rollback',
+    }),
+  getRuntimeEvents: (limit = 100) => fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
 
   pause: () => post('/gateway/pause'),
@@ -219,7 +250,13 @@ export const api = {
     post<{ old: boolean; new: boolean }>('/settings/autonomous-learning', { enabled }),
   setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean }) =>
     post<{ enabled_markets: Record<string, boolean> }>('/settings/exchange-markets', body),
-  updateRuntimeConfig: (body: Partial<{ scheduler_enabled: boolean; git_enabled: boolean }>) =>
+  updateRuntimeConfig: (body: Partial<{
+    scheduler_enabled: boolean
+    git_enabled: boolean
+    runtime_continuity_enabled: boolean
+    runtime_continuity_lock_ttl_sec: number
+    runtime_continuity_shadow_port_offset: number
+  }>) =>
     post<{ updated: Record<string, any> }>('/settings/runtime', body),
   updateAppConfig: (body: Partial<{ auto_open_browser: boolean }>) =>
     post<{ updated: Record<string, any> }>('/settings/app', body),

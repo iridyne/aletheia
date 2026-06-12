@@ -338,6 +338,116 @@ CREATE TABLE IF NOT EXISTS market_ohlcv (
 CREATE INDEX IF NOT EXISTS idx_market_ohlcv_sym_tf_ts
     ON market_ohlcv (symbol, timeframe, ts DESC);
 
+-- Runtime Continuity (PI runtime lifecycle): candidate -> shadow -> promote -> rollback.
+CREATE TABLE IF NOT EXISTS runtime_registry (
+    runtime_id TEXT PRIMARY KEY,
+    state TEXT NOT NULL CHECK (
+        state IN (
+            'installed',
+            'candidate',
+            'shadowing',
+            'ready_to_promote',
+            'current',
+            'draining',
+            'legacy_position_manager',
+            'failed',
+            'rolled_back'
+        )
+    ),
+    code_version TEXT,
+    config_version TEXT,
+    schema_version TEXT,
+    build_git_sha TEXT,
+    release_bundle_hash TEXT,
+    artifact_path TEXT,
+    mode TEXT,
+    started_at TEXT,
+    promoted_at TEXT,
+    drained_at TEXT,
+    failed_at TEXT,
+    rolled_back_at TEXT,
+    last_error TEXT,
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_single_current
+    ON runtime_registry (state)
+    WHERE state = 'current';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_registry_single_shadowing
+    ON runtime_registry (state)
+    WHERE state = 'shadowing';
+
+CREATE TABLE IF NOT EXISTS runtime_checkpoints (
+    id TEXT PRIMARY KEY,
+    runtime_id TEXT NOT NULL,
+    checkpoint_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'available',
+    payload TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    restored_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_checkpoints_runtime
+    ON runtime_checkpoints (runtime_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS runtime_events (
+    id TEXT PRIMARY KEY,
+    runtime_id TEXT,
+    event_type TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    actor TEXT NOT NULL DEFAULT 'system',
+    cause TEXT,
+    kind TEXT NOT NULL DEFAULT 'runtime_transition',
+    status TEXT NOT NULL DEFAULT 'recorded',
+    operation_id TEXT,
+    payload TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_events_created
+    ON runtime_events (created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_events_idempotency
+    ON runtime_events (kind, status, operation_id)
+    WHERE operation_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS runtime_exclusive_lock (
+    lock_name TEXT PRIMARY KEY,
+    runtime_id TEXT,
+    owner TEXT NOT NULL,
+    token TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    released_at TEXT,
+    metadata TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_lock_expires
+    ON runtime_exclusive_lock (expires_at);
+
+CREATE TABLE IF NOT EXISTS runtime_ownership (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    runtime_id TEXT NOT NULL,
+    ownership_kind TEXT NOT NULL DEFAULT 'operator_task',
+    status TEXT NOT NULL DEFAULT 'active',
+    acquired_at TEXT NOT NULL DEFAULT (datetime('now')),
+    released_at TEXT,
+    metadata TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_ownership_runtime
+    ON runtime_ownership (runtime_id, status);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_ownership_single_active
+    ON runtime_ownership (entity_type, entity_id, status)
+    WHERE status = 'active';
+
 -- Agent Shell (Pi Agent, Operator Layer Track B) — session + command audit tables.
 CREATE TABLE IF NOT EXISTS agent_shell_sessions (
     id TEXT PRIMARY KEY,
@@ -345,6 +455,7 @@ CREATE TABLE IF NOT EXISTS agent_shell_sessions (
     kind TEXT NOT NULL DEFAULT 'command_session',
     parent_session_id TEXT,
     title TEXT,
+    runtime_id TEXT DEFAULT 'runtime-local-current',
     intent TEXT,
     command TEXT,
     response TEXT,
@@ -356,6 +467,7 @@ CREATE TABLE IF NOT EXISTS agent_shell_sessions (
 CREATE TABLE IF NOT EXISTS agent_shell_commands (
     id TEXT PRIMARY KEY,
     session_id TEXT REFERENCES agent_shell_sessions(id),
+    runtime_id TEXT DEFAULT 'runtime-local-current',
     command TEXT NOT NULL,
     parameters TEXT DEFAULT '{}',
     permitted INTEGER NOT NULL DEFAULT 1,
@@ -366,6 +478,7 @@ CREATE TABLE IF NOT EXISTS agent_shell_commands (
 CREATE TABLE IF NOT EXISTS agent_shell_messages (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES agent_shell_sessions(id),
+    runtime_id TEXT DEFAULT 'runtime-local-current',
     role TEXT NOT NULL,
     message_type TEXT NOT NULL DEFAULT 'message',
     content TEXT NOT NULL,
@@ -375,6 +488,7 @@ CREATE TABLE IF NOT EXISTS agent_shell_messages (
 
 CREATE TABLE IF NOT EXISTS agent_shell_tasks (
     id TEXT PRIMARY KEY,
+    runtime_id TEXT DEFAULT 'runtime-local-current',
     task_type TEXT NOT NULL,
     status TEXT NOT NULL,
     priority TEXT NOT NULL DEFAULT 'normal',
@@ -392,6 +506,7 @@ CREATE TABLE IF NOT EXISTS agent_shell_artifacts (
     id TEXT PRIMARY KEY,
     task_id TEXT REFERENCES agent_shell_tasks(id),
     session_id TEXT REFERENCES agent_shell_sessions(id),
+    runtime_id TEXT DEFAULT 'runtime-local-current',
     artifact_type TEXT NOT NULL,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -401,6 +516,9 @@ CREATE TABLE IF NOT EXISTS agent_shell_artifacts (
 CREATE TABLE IF NOT EXISTS agent_shell_heartbeats (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
+    runtime_id TEXT DEFAULT 'runtime-local-current',
+    runtime_mode TEXT NOT NULL DEFAULT 'current',
+    runtime_state TEXT NOT NULL DEFAULT 'current',
     status TEXT NOT NULL,
     mode TEXT NOT NULL,
     permission_mode TEXT NOT NULL,
@@ -421,6 +539,7 @@ CREATE TABLE IF NOT EXISTS agent_shell_heartbeats (
 
 CREATE TABLE IF NOT EXISTS agent_shell_events (
     id TEXT PRIMARY KEY,
+    runtime_id TEXT DEFAULT 'runtime-local-current',
     event_type TEXT NOT NULL,
     severity TEXT NOT NULL DEFAULT 'info',
     source TEXT NOT NULL DEFAULT 'operator',
@@ -504,6 +623,15 @@ _ADDITIVE_COLUMNS = [
     ("kind", "agent_shell_sessions", "TEXT"),
     ("parent_session_id", "agent_shell_sessions", "TEXT"),
     ("title", "agent_shell_sessions", "TEXT"),
+    ("runtime_id", "agent_shell_sessions", "TEXT DEFAULT 'runtime-local-current'"),
+    ("runtime_id", "agent_shell_commands", "TEXT DEFAULT 'runtime-local-current'"),
+    ("runtime_id", "agent_shell_messages", "TEXT DEFAULT 'runtime-local-current'"),
+    ("runtime_id", "agent_shell_tasks", "TEXT DEFAULT 'runtime-local-current'"),
+    ("runtime_id", "agent_shell_artifacts", "TEXT DEFAULT 'runtime-local-current'"),
+    ("runtime_id", "agent_shell_events", "TEXT DEFAULT 'runtime-local-current'"),
+    ("runtime_id", "agent_shell_heartbeats", "TEXT DEFAULT 'runtime-local-current'"),
+    ("runtime_mode", "agent_shell_heartbeats", "TEXT DEFAULT 'current'"),
+    ("runtime_state", "agent_shell_heartbeats", "TEXT DEFAULT 'current'"),
     ("active_branch_id", "agent_shell_heartbeats", "TEXT"),
     ("active_branch_kind", "agent_shell_heartbeats", "TEXT"),
     ("active_branch_title", "agent_shell_heartbeats", "TEXT"),
@@ -555,10 +683,73 @@ def _ensure_knowledge_fts(db) -> None:
     )
 
 
+def _ensure_runtime_baseline(db) -> None:
+    """Seed the local current runtime and attach legacy operator rows to it."""
+    try:
+        from aletheia import __version__
+    except Exception:
+        __version__ = "unknown"
+
+    db.execute(
+        """
+        INSERT OR IGNORE INTO runtime_registry (
+            runtime_id, state, code_version, config_version, schema_version,
+            build_git_sha, release_bundle_hash, mode, started_at, promoted_at, metadata
+        ) VALUES (
+            'runtime-local-current',
+            'current',
+            ?,
+            'local-config',
+            'sqlite-runtime-continuity-v1',
+            '',
+            'local-bootstrap',
+            'current',
+            datetime('now'),
+            datetime('now'),
+            '{"source":"migration"}'
+        )
+        """,
+        (__version__,),
+    )
+    current = db.execute(
+        "SELECT runtime_id FROM runtime_registry WHERE state = 'current' "
+        "ORDER BY COALESCE(promoted_at, created_at) DESC, rowid DESC LIMIT 1"
+    ).fetchone()
+    current_id = current["runtime_id"] if current else "runtime-local-current"
+    for table in (
+        "agent_shell_sessions",
+        "agent_shell_commands",
+        "agent_shell_messages",
+        "agent_shell_tasks",
+        "agent_shell_artifacts",
+        "agent_shell_events",
+        "agent_shell_heartbeats",
+    ):
+        existing = {r["name"] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "runtime_id" in existing:
+            db.execute(
+                f"UPDATE {table} SET runtime_id = ? "
+                "WHERE runtime_id IS NULL OR runtime_id = ''",
+                (current_id,),
+            )
+    heartbeat_cols = {r["name"] for r in db.execute("PRAGMA table_info(agent_shell_heartbeats)").fetchall()}
+    if "runtime_mode" in heartbeat_cols:
+        db.execute(
+            "UPDATE agent_shell_heartbeats SET runtime_mode = 'current' "
+            "WHERE runtime_mode IS NULL OR runtime_mode = ''"
+        )
+    if "runtime_state" in heartbeat_cols:
+        db.execute(
+            "UPDATE agent_shell_heartbeats SET runtime_state = 'current' "
+            "WHERE runtime_state IS NULL OR runtime_state = ''"
+        )
+
+
 def run_migrations() -> None:
     """Run all idempotent schema creation statements."""
     db = get_db()
     db.executescript(SCHEMA_SQL)
     _ensure_columns(db)
+    _ensure_runtime_baseline(db)
     _ensure_knowledge_fts(db)
     db.commit()

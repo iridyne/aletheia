@@ -26,6 +26,50 @@ def _json_load(value):
     return json.loads(value)
 
 
+def _current_runtime_id() -> str:
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT runtime_id FROM runtime_registry WHERE state = 'current' "
+            "ORDER BY COALESCE(promoted_at, created_at) DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            return str(row["runtime_id"])
+    except Exception:
+        pass
+    return "runtime-local-current"
+
+
+def _attach_runtime_ownership(
+    *,
+    entity_type: str,
+    entity_id: str,
+    runtime_id: str,
+    ownership_kind: str,
+    metadata: dict | None = None,
+) -> None:
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO runtime_ownership (
+            id, entity_type, entity_id, runtime_id, ownership_kind, status, metadata
+        ) VALUES (?, ?, ?, ?, ?, 'active', ?)
+        ON CONFLICT(entity_type, entity_id, status) WHERE status = 'active'
+        DO UPDATE SET runtime_id = excluded.runtime_id,
+            ownership_kind = excluded.ownership_kind,
+            metadata = excluded.metadata
+        """,
+        (
+            str(uuid.uuid4()),
+            entity_type,
+            entity_id,
+            runtime_id,
+            ownership_kind,
+            _json_dump(metadata or {}),
+        ),
+    )
+
+
 def _commit_if_needed(db, was_in_tx: bool) -> None:
     if not was_in_tx:
         db.commit()
@@ -38,13 +82,14 @@ def _ensure_session(
     kind: str = "command_session",
     parent_session_id: str | None = None,
     title: str | None = None,
+    runtime_id: str | None = None,
 ) -> None:
     db = get_db()
     db.execute(
         "INSERT OR IGNORE INTO agent_shell_sessions "
-        "(id, user_input, kind, parent_session_id, title, created_at) "
-        "VALUES (?, ?, ?, ?, ?, datetime('now'))",
-        (session_id, user_input, kind, parent_session_id, title),
+        "(id, user_input, kind, parent_session_id, title, runtime_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+        (session_id, user_input, kind, parent_session_id, title, runtime_id or _current_runtime_id()),
     )
 
 
@@ -157,6 +202,9 @@ def record_heartbeat(
     last_error: str | None,
     model_provider: str | None,
     session_id: str | None,
+    runtime_id: str | None = None,
+    runtime_mode: str = "current",
+    runtime_state: str = "current",
     active_branch_id: str | None = None,
     active_branch_kind: str | None = None,
     active_branch_title: str | None = None,
@@ -165,20 +213,24 @@ def record_heartbeat(
 ) -> str:
     db = get_db()
     was_in_tx = db.in_transaction
+    effective_runtime_id = runtime_id or _current_runtime_id()
     if session_id:
-        _ensure_session(session_id)
+        _ensure_session(session_id, runtime_id=effective_runtime_id)
     heartbeat_id = str(uuid.uuid4())
     seen_at = last_seen_at or _utc_now()
     success_at = last_success_at or (seen_at if status == "online" else None)
     db.execute(
         "INSERT INTO agent_shell_heartbeats ("
-        "id, agent_id, status, mode, permission_mode, is_busy, current_task_id, "
+        "id, agent_id, runtime_id, runtime_mode, runtime_state, status, mode, permission_mode, is_busy, current_task_id, "
         "current_intent, queue_size, last_seen_at, last_success_at, last_error, "
         "model_provider, session_id, active_branch_id, active_branch_kind, active_branch_title, created_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
         (
             heartbeat_id,
             agent_id,
+            effective_runtime_id,
+            runtime_mode,
+            runtime_state,
             status,
             mode,
             permission_mode,
@@ -223,21 +275,24 @@ def create_task(
     error: str | None = None,
     started_at: str | None = None,
     completed_at: str | None = None,
+    runtime_id: str | None = None,
 ) -> str:
     db = get_db()
     was_in_tx = db.in_transaction
     task_id = str(uuid.uuid4())
+    effective_runtime_id = runtime_id or _current_runtime_id()
     effective_started_at = started_at or (_utc_now() if status == "running" else None)
     effective_completed_at = completed_at or (
         _utc_now() if status in {"completed", "failed"} else None
     )
     db.execute(
         "INSERT INTO agent_shell_tasks ("
-        "id, task_type, status, priority, created_by, assigned_to, input_data, "
+        "id, runtime_id, task_type, status, priority, created_by, assigned_to, input_data, "
         "output_data, error, started_at, completed_at, created_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
         (
             task_id,
+            effective_runtime_id,
             task_type,
             status,
             priority,
@@ -249,6 +304,13 @@ def create_task(
             effective_started_at,
             effective_completed_at,
         ),
+    )
+    _attach_runtime_ownership(
+        entity_type="agent_shell_task",
+        entity_id=task_id,
+        runtime_id=effective_runtime_id,
+        ownership_kind="operator_task",
+        metadata={"task_type": task_type, "status": status},
     )
     _commit_if_needed(db, was_in_tx)
     task = get_task(task_id)
@@ -542,19 +604,22 @@ def create_event(
     related_entity_type: str | None = None,
     related_entity_id: str | None = None,
     payload=None,
+    runtime_id: str | None = None,
 ) -> str:
     db = get_db()
     was_in_tx = db.in_transaction
+    effective_runtime_id = runtime_id or _current_runtime_id()
     if session_id:
-        _ensure_session(session_id)
+        _ensure_session(session_id, runtime_id=effective_runtime_id)
     event_id = str(uuid.uuid4())
     db.execute(
         "INSERT INTO agent_shell_events ("
-        "id, event_type, severity, source, session_id, task_id, related_entity_type, "
+        "id, runtime_id, event_type, severity, source, session_id, task_id, related_entity_type, "
         "related_entity_id, payload, created_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
         (
             event_id,
+            effective_runtime_id,
             event_type,
             severity,
             source,

@@ -420,6 +420,50 @@ test('recommendation engine converts degraded health into actionable diagnostics
   assert.equal(healthRecommendation?.eventType, 'operator_degraded')
 })
 
+test('operator loop in shadow runtime emits runtime-aware heartbeat and suppresses side-effect tasks', async () => {
+  const snapshot = makeSnapshot({
+    health: {
+      status: 'degraded',
+      issues: ['market_data_stale:45m'],
+    },
+  })
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+      runtimeId: 'runtime-shadow-1',
+      runtimeMode: 'shadow',
+      runtimeState: 'shadowing',
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.createdTasks.length, 0)
+  assert.equal(calls.createdEvents.length, 0)
+  assert.equal(calls.executedCommands.length, 0)
+  assert.equal(calls.heartbeats.length, 1)
+  assert.equal(calls.heartbeats[0].runtime_id, 'runtime-shadow-1')
+  assert.equal(calls.heartbeats[0].runtime_mode, 'shadow')
+  assert.equal(calls.heartbeats[0].runtime_state, 'shadowing')
+  assert.equal(calls.gatewayStatusReads, 1)
+  assert.equal(calls.healthReads, 1)
+})
+
 test('recommendation engine marks dreaming as due when no recent dreaming activity exists', () => {
   const engine = new RecommendationEngine()
 

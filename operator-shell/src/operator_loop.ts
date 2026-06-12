@@ -392,6 +392,49 @@ export class OperatorLoop {
     return null
   }
 
+  private runtimeId(): string {
+    return this.config.runtimeId || 'runtime-local-current'
+  }
+
+  private runtimeMode(): 'current' | 'shadow' {
+    return this.config.runtimeMode === 'shadow' ? 'shadow' : 'current'
+  }
+
+  private runtimeState(): string {
+    return this.config.runtimeState || (this.runtimeMode() === 'shadow' ? 'shadowing' : 'current')
+  }
+
+  private isShadowRuntime(): boolean {
+    return this.runtimeMode() === 'shadow'
+  }
+
+  private async runShadowOnce(): Promise<boolean> {
+    const [status, health] = await Promise.all([
+      this.backendClient.getGatewayStatus(),
+      this.backendClient.getHealth(),
+    ])
+    this.mode = status.paused ? 'Paused' : health.status === 'healthy' ? 'Observing' : 'Degraded'
+    const issueSummary = health.issues.length > 0 ? health.issues.join(', ') : health.status
+    this.sessionRuntime.setCurrentIntent(`shadow validation: ${issueSummary}`)
+    const heartbeat = buildHeartbeat({
+      mode: this.mode,
+      permissionMode: this.config.permissionMode,
+      session: this.sessionRuntime.getMainSession(),
+      tasks: { currentTaskId: null, queueSize: 0 },
+      activeBranch: this.sessionRuntime.getActiveBranch(),
+      modelProvider: this.config.modelProvider,
+      lastError: this.lastError,
+      lastSuccessAt: this.lastSuccessAt,
+      runtimeId: this.runtimeId(),
+      runtimeMode: this.runtimeMode(),
+      runtimeState: this.runtimeState(),
+    })
+    await this.backendClient.postHeartbeat(heartbeat)
+    this.lastSuccessAt = heartbeat.last_seen_at
+    this.lastError = null
+    return true
+  }
+
   private buildDailyReviewContent(params: {
     snapshot: OperatorSnapshot
     recommendations: OperatorRecommendation[]
@@ -2742,6 +2785,9 @@ export class OperatorLoop {
 
   async runOnce(): Promise<boolean> {
     try {
+      if (this.isShadowRuntime()) {
+        return await this.runShadowOnce()
+      }
       await this.maybeCompactPreviousDay()
       const [operatorStatus, status, health, supervision, subsystemReview] = await Promise.all([
         this.backendClient.getOperatorStatus(),
@@ -2842,6 +2888,9 @@ export class OperatorLoop {
         modelProvider: this.config.modelProvider,
         lastError: this.lastError,
         lastSuccessAt: this.lastSuccessAt,
+        runtimeId: this.runtimeId(),
+        runtimeMode: this.runtimeMode(),
+        runtimeState: this.runtimeState(),
       })
       await this.backendClient.postHeartbeat(heartbeat)
       this.lastSuccessAt = heartbeat.last_seen_at
@@ -2868,6 +2917,9 @@ export class OperatorLoop {
       related_entity_id: 'operator',
       payload: {
         mode: this.mode,
+        runtime_id: this.runtimeId(),
+        runtime_mode: this.runtimeMode(),
+        runtime_state: this.runtimeState(),
       },
     })
 
@@ -2899,6 +2951,9 @@ export class OperatorLoop {
       related_entity_id: 'operator',
       payload: {
         mode: this.mode,
+        runtime_id: this.runtimeId(),
+        runtime_mode: this.runtimeMode(),
+        runtime_state: this.runtimeState(),
       },
     })
   }

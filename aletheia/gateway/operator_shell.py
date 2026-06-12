@@ -26,12 +26,31 @@ def build_operator_shell_command(cfg) -> list[str] | None:
     return ["node", str(cli), str(entry)]
 
 
-def _build_operator_shell_env(cfg) -> dict[str, str]:
+def _current_runtime_id() -> str:
+    try:
+        from aletheia.runtime_continuity.service import RuntimeContinuityService
+
+        return RuntimeContinuityService().current_runtime_id()
+    except Exception:
+        return "runtime-local-current"
+
+
+def _build_operator_shell_env(
+    cfg,
+    *,
+    runtime_id: str | None = None,
+    runtime_mode: str = "current",
+    runtime_state: str = "current",
+) -> dict[str, str]:
+    effective_runtime_id = runtime_id or _current_runtime_id()
     return {
         "ALETHEIA_GATEWAY_BASE_URL": f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}",
         "ALETHEIA_OPERATOR_PERMISSION_MODE": cfg.operator.permission_mode,
         "ALETHEIA_OPERATOR_HEARTBEAT_SEC": str(cfg.operator.heartbeat_interval_sec),
         "ALETHEIA_OPERATOR_MAIN_SESSION_ID": cfg.operator.main_session_id,
+        "ALETHEIA_RUNTIME_ID": effective_runtime_id,
+        "ALETHEIA_RUNTIME_MODE": runtime_mode,
+        "ALETHEIA_RUNTIME_STATE": runtime_state,
     }
 
 
@@ -39,15 +58,33 @@ def operator_shell_log_path() -> Path:
     return get_data_dir() / "logs" / "operator-shell-errors.log"
 
 
-def spawn_operator_shell(cfg):
+def spawn_operator_shell(
+    cfg,
+    *,
+    runtime_id: str | None = None,
+    runtime_mode: str = "current",
+    runtime_state: str = "current",
+    once: bool = False,
+):
     cmd = build_operator_shell_command(cfg)
     if cmd is None:
         return None
+    if once and "--once" not in cmd:
+        cmd = [*cmd, "--once"]
 
     log_path = operator_shell_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env.update(_build_operator_shell_env(cfg))
+    env.update(
+        _build_operator_shell_env(
+            cfg,
+            runtime_id=runtime_id,
+            runtime_mode=runtime_mode,
+            runtime_state=runtime_state,
+        )
+    )
+    if once:
+        env["ALETHEIA_OPERATOR_ONCE"] = "1"
     popen_kwargs: dict = {
         "cwd": str(operator_shell_root()),
         "stdout": subprocess.DEVNULL,
@@ -59,6 +96,16 @@ def spawn_operator_shell(cfg):
     with log_path.open("a", encoding="utf-8") as log_file:
         popen_kwargs["stderr"] = log_file
         return subprocess.Popen(cmd, **popen_kwargs)
+
+
+def spawn_shadow_operator_shell(cfg, runtime_id: str):
+    return spawn_operator_shell(
+        cfg,
+        runtime_id=runtime_id,
+        runtime_mode="shadow",
+        runtime_state="shadowing",
+        once=True,
+    )
 
 
 def _default_record_event(kind: str, payload: dict) -> None:

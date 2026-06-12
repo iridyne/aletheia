@@ -19,6 +19,7 @@ import time
 from aletheia.config.loader import bootstrap, get_data_dir
 from aletheia.gateway.pidfile import write_pid, _resolve_real_python
 from aletheia.gateway.browser import open_browser
+from aletheia.runtime_continuity.processes import current_gateway_launch_context, runtime_process_env
 
 # Win32: forbid the OS from allocating a console for the inner uvicorn process.
 # Without this, Win11 hosts the console via Windows Terminal and a wt window pops
@@ -39,21 +40,31 @@ def _spawn_server(cfg) -> int:
     from aletheia.gateway.logs import rotate_if_needed
     rotate_if_needed(errors_log)
     real_python, env_patch = _resolve_real_python()
+    runtime_context = current_gateway_launch_context(cfg)
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
-        "--host", cfg.app.bind_host, "--port", str(cfg.app.dashboard_port),
+        "--host", runtime_context["host"], "--port", str(runtime_context["port"]),
         "--log-level", "info",
     ]
     # NOTE: --reload intentionally removed. On Windows with CREATE_NO_WINDOW,
     # watchfiles' ReadDirectoryChangesW silently fails. The dashboard Restart
     # button calls os._exit() and this supervisor respawns the process.
-    popen_kwargs: dict = {"stdout": subprocess.DEVNULL}
+    env = runtime_process_env(
+        base_env=os.environ.copy(),
+        runtime_id=runtime_context["runtime_id"],
+        runtime_mode=runtime_context["runtime_mode"],
+        runtime_state=runtime_context["runtime_state"],
+        port=runtime_context["port"],
+        workdir=runtime_context["workdir"],
+        env_patch=env_patch,
+    )
+    popen_kwargs: dict = {
+        "stdout": subprocess.DEVNULL,
+        "cwd": str(runtime_context["workdir"]),
+        "env": env,
+    }
     if platform.system() == "Windows":
         popen_kwargs["creationflags"] = CREATE_NO_WINDOW
-    if env_patch:
-        env = os.environ.copy()
-        env.update(env_patch)
-        popen_kwargs["env"] = env
     with errors_log.open("a", encoding="utf-8") as ef:
         popen_kwargs["stderr"] = ef
         proc = subprocess.Popen(cmd, **popen_kwargs)

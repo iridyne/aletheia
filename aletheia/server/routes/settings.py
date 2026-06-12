@@ -111,6 +111,9 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
 class RuntimeConfigUpdate(BaseModel):
     scheduler_enabled: Optional[bool] = None
     git_enabled: Optional[bool] = None
+    runtime_continuity_enabled: Optional[bool] = None
+    runtime_continuity_lock_ttl_sec: Optional[int] = None
+    runtime_continuity_shadow_port_offset: Optional[int] = None
 
 
 @router.post("/runtime")
@@ -119,6 +122,10 @@ async def update_runtime_config(req: RuntimeConfigUpdate):
     old = cfg.runtime.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
     for field, value in updates.items():
+        if field == "runtime_continuity_lock_ttl_sec" and not (30 <= int(value) <= 3600):
+            raise HTTPException(400, "runtime_continuity_lock_ttl_sec must be between 30 and 3600")
+        if field == "runtime_continuity_shadow_port_offset" and not (1 <= int(value) <= 10000):
+            raise HTTPException(400, "runtime_continuity_shadow_port_offset must be between 1 and 10000")
         setattr(cfg.runtime, field, value)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit

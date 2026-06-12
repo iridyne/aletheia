@@ -4,6 +4,9 @@ export interface OperatorShellConfig {
   permissionMode: string
   mainSessionId: string
   modelProvider: string
+  runtimeId: string
+  runtimeMode: 'current' | 'shadow'
+  runtimeState: string
   once: boolean
 }
 
@@ -23,6 +26,9 @@ export function loadConfig(args: string[] = process.argv.slice(2)): OperatorShel
     permissionMode: process.env.ALETHEIA_OPERATOR_PERMISSION_MODE || 'ReadOnly',
     mainSessionId: process.env.ALETHEIA_OPERATOR_MAIN_SESSION_ID || 'operator-main',
     modelProvider: process.env.ALETHEIA_OPERATOR_MODEL_PROVIDER || 'pi-shell',
+    runtimeId: process.env.ALETHEIA_RUNTIME_ID || 'runtime-local-current',
+    runtimeMode: process.env.ALETHEIA_RUNTIME_MODE === 'shadow' ? 'shadow' : 'current',
+    runtimeState: process.env.ALETHEIA_RUNTIME_STATE || (process.env.ALETHEIA_RUNTIME_MODE === 'shadow' ? 'shadowing' : 'current'),
     once: process.env.ALETHEIA_OPERATOR_ONCE === '1' || args.includes('--once'),
   }
 }
