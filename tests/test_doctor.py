@@ -136,3 +136,36 @@ def test_llm_credentials_do_not_require_api_key_for_cli_provider(monkeypatch):
     llm = next(c for c in r.checks if c.name == "creds.llm")
     assert llm.severity == "ok"
     assert "codex_cli" in llm.detail
+
+
+def test_process_autostart_warns_when_watchdog_never_ran(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    import aletheia.gateway.pidfile as pidfile
+    import aletheia.gateway.autostart as autostart
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(pidfile, "is_running", lambda: False)
+    monkeypatch.setattr(pidfile, "read_pid", lambda: None)
+    monkeypatch.setattr(pidfile, "port_in_use", lambda port, host: False)
+    monkeypatch.setattr(
+        autostart,
+        "status",
+        lambda: {
+            "supported": True,
+            "enabled": True,
+            "task_name": autostart.TASK_NAME,
+            "status": "Ready",
+            "last_run_time": "1999/11/30 0:00:00",
+            "last_result": "267011",
+            "primed": False,
+        },
+    )
+
+    r = dx.Report(generated_at="t")
+    dx._probe_process(r)
+
+    autostart_check = next(c for c in r.checks if c.name == "process.autostart")
+    assert autostart_check.severity == "warn"
+    assert "not run" in autostart_check.detail.lower()

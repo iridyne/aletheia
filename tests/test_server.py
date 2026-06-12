@@ -54,7 +54,14 @@ async def test_status(client):
 
 
 @pytest.mark.anyio
-async def test_pause_resume(client):
+async def test_pause_resume(client, monkeypatch):
+    from aletheia.agent_runtime import resume_gate
+
+    async def fake_resume(*, actor: str, source: str, cause: str = "manual_resume"):
+        return {"allowed": True, "reason": None, "checked": 1, "results": []}
+
+    monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
+
     resp = await client.post("/api/gateway/pause")
     assert resp.status_code == 200
     assert resp.json()["paused"] is True
@@ -65,6 +72,31 @@ async def test_pause_resume(client):
     resp = await client.post("/api/gateway/resume")
     assert resp.status_code == 200
     assert resp.json()["paused"] is False
+
+
+@pytest.mark.anyio
+async def test_gateway_resume_blocks_when_llm_unavailable(client, monkeypatch):
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.config.loader import load_config
+
+    async def fake_resume(*, actor: str, source: str, cause: str = "manual_resume"):
+        return {
+            "allowed": False,
+            "reason": "llm_unavailable",
+            "checked": 1,
+            "results": [{"provider": "anthropic_compatible", "usable": False, "error": "429"}],
+        }
+
+    monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
+
+    pause = await client.post("/api/gateway/pause")
+    assert pause.status_code == 200
+
+    resp = await client.post("/api/gateway/resume")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["reason"] == "llm_unavailable"
+    assert load_config().runtime.paused is True
 
 
 @pytest.mark.anyio

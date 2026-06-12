@@ -1,6 +1,6 @@
 """Health and status API routes."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from aletheia import __version__
 from aletheia.config.loader import load_config, save_config
@@ -62,14 +62,15 @@ async def pause():
 
 @router.post("/gateway/resume")
 async def resume():
-    cfg = load_config()
-    cfg.runtime.paused = False
-    save_config(cfg)
-    try:
-        from aletheia.agent_runtime.scheduler import resume_scheduler
-        resume_scheduler()
-    except Exception:
-        pass
+    from aletheia.agent_runtime import resume_gate
+
+    result = await resume_gate.resume_if_llm_available(
+        actor="human",
+        source="dashboard",
+        cause="gateway_resume_api",
+    )
+    if not result["allowed"]:
+        raise HTTPException(status_code=409, detail=result)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "gateway_resumed",
                  "message": "Gateway resumed"})

@@ -289,6 +289,37 @@ def test_keyword_resume():
     assert intent.command == "resume_agents"
 
 
+@pytest.mark.asyncio
+async def test_resume_agents_blocks_when_llm_unavailable(tmp_path, monkeypatch):
+    _init_agent_shell_db(tmp_path, monkeypatch)
+
+    import aletheia.config.loader as loader
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.agent_shell.commands import resume_agents
+
+    cfg = loader.load_config()
+    cfg.runtime.paused = True
+    loader.save_config(cfg)
+    monkeypatch.setattr(
+        resume_gate,
+        "resume_if_llm_available",
+        AsyncMock(
+            return_value={
+                "allowed": False,
+                "reason": "llm_unavailable",
+                "checked": 1,
+                "results": [{"provider": "anthropic_compatible", "usable": False, "error": "429"}],
+            }
+        ),
+    )
+
+    result = await resume_agents({})
+
+    assert result["error"].startswith("Resume blocked")
+    assert result["resume_gate"]["reason"] == "llm_unavailable"
+    assert loader.load_config().runtime.paused is True
+
+
 # --- Synthesis fallback tests ---
 
 def test_fallback_error():

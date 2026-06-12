@@ -390,3 +390,25 @@ def test_do_start_background_raises_when_spawn_dies(tmp_path, monkeypatch):
 
     with pytest.raises(typer.Exit):
         lifecycle.do_start(no_browser=True)
+
+
+def test_do_resume_prefers_running_gateway_api(tmp_path, monkeypatch):
+    """When the gateway is running, CLI resume must wake the in-process scheduler."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    from aletheia.agent_runtime import resume_gate
+
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: True)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    calls = []
+    monkeypatch.setattr(lifecycle, "_post_gateway_resume_api", lambda cfg: calls.append("api") or {"paused": False})
+    monkeypatch.setattr(
+        resume_gate,
+        "resume_if_llm_available_sync",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("local gate should not run")),
+    )
+
+    lifecycle.do_resume()
+
+    assert calls == ["api"]

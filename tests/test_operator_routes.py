@@ -364,7 +364,14 @@ async def test_operator_internal_session_create_preserves_kind_and_parent(client
 
 
 @pytest.mark.anyio
-async def test_operator_pause_resume_and_wake(client):
+async def test_operator_pause_resume_and_wake(client, monkeypatch):
+    from aletheia.agent_runtime import resume_gate
+
+    async def fake_resume(*, actor: str, source: str, cause: str = "manual_resume"):
+        return {"allowed": True, "reason": None, "checked": 1, "results": []}
+
+    monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
+
     pause = await client.post("/api/operator/pause")
     assert pause.status_code == 200
     assert pause.json()["paused"] is True
@@ -380,6 +387,35 @@ async def test_operator_pause_resume_and_wake(client):
     resume = await client.post("/api/operator/resume")
     assert resume.status_code == 200
     assert resume.json()["paused"] is False
+
+
+@pytest.mark.anyio
+async def test_operator_resume_and_wake_block_when_llm_unavailable(client, monkeypatch):
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.config.loader import load_config
+
+    async def fake_resume(*, actor: str, source: str, cause: str = "manual_resume"):
+        return {
+            "allowed": False,
+            "reason": "llm_unavailable",
+            "checked": 1,
+            "results": [{"provider": "anthropic_compatible", "usable": False, "error": "429"}],
+        }
+
+    monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
+
+    pause = await client.post("/api/operator/pause")
+    assert pause.status_code == 200
+
+    wake = await client.post("/api/operator/wake")
+    assert wake.status_code == 409
+    assert wake.json()["detail"]["reason"] == "llm_unavailable"
+    assert load_config().runtime.paused is True
+
+    resume = await client.post("/api/operator/resume")
+    assert resume.status_code == 409
+    assert resume.json()["detail"]["reason"] == "llm_unavailable"
+    assert load_config().runtime.paused is True
 
 
 @pytest.mark.anyio

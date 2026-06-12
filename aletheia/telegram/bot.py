@@ -74,7 +74,7 @@ class TelegramBot:
         elif cmd == "/pause":
             return self._cmd_pause()
         elif cmd == "/resume":
-            return self._cmd_resume()
+            return await self._cmd_resume()
         elif cmd == "/latest":
             return self._cmd_latest()
         elif cmd in ("/help", "/start"):
@@ -104,10 +104,16 @@ class TelegramBot:
         })
         return "Gateway paused. All autonomous jobs suspended."
 
-    def _cmd_resume(self) -> str:
-        cfg = load_config()
-        cfg.runtime.paused = False
-        save_config(cfg)
+    async def _cmd_resume(self) -> str:
+        from aletheia.agent_runtime import resume_gate
+
+        gate = await resume_gate.resume_if_llm_available(
+            actor="telegram",
+            source="telegram",
+            cause="telegram_resume",
+        )
+        if not gate["allowed"]:
+            return f"Resume blocked: {resume_gate.summarize_resume_gate(gate)}"
         write_audit({
             "actor": "telegram",
             "source": "telegram",

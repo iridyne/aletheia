@@ -103,3 +103,20 @@ def test():
         if h.available and h.models:
             detail += f" ({len(h.models)} models)"
         typer.echo(f"  {icon} {h.provider}: {detail}")
+
+
+@model_app.command()
+def probe():
+    """Probe enabled providers with a real minimal inference call."""
+    from aletheia.config.loader import load_config
+    from aletheia.agent_runtime import startup_gate
+
+    result = asyncio.run(startup_gate.probe_llm_providers_at_startup(load_config()))
+    for row in result.get("results") or []:
+        if row.get("usable"):
+            typer.echo(f"  ✓ {row['provider']}: usable")
+        else:
+            typer.echo(f"  ✗ {row['provider']}: {row.get('error') or 'not usable'}")
+    if not result.get("any_usable"):
+        typer.echo("No enabled LLM provider could complete real inference.", err=True)
+        raise typer.Exit(1)

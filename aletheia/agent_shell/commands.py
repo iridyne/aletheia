@@ -812,14 +812,18 @@ async def pause_agents(params: dict) -> dict:
 
 
 async def resume_agents(params: dict) -> dict:
-    cfg = config_loader.load_config()
-    cfg.runtime.paused = False
-    config_loader.save_config(cfg)
-    try:
-        from aletheia.agent_runtime.scheduler import resume_scheduler
-        resume_scheduler()
-    except Exception:
-        pass
+    from aletheia.agent_runtime import resume_gate
+
+    gate = await resume_gate.resume_if_llm_available(
+        actor="agent_shell",
+        source="command_center",
+        cause="resume_agents_command",
+    )
+    if not gate["allowed"]:
+        return {
+            "error": f"Resume blocked: {resume_gate.summarize_resume_gate(gate)}",
+            "resume_gate": gate,
+        }
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "agent_shell", "source": "command_center",
                  "event_type": "gateway_resumed", "message": "Agents resumed via Agent Shell"})

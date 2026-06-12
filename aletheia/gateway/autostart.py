@@ -26,6 +26,7 @@ import platform
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from aletheia.config.loader import _PROJECT_ROOT
@@ -150,6 +151,7 @@ def _build_task_xml() -> str:
     command = _xml_escape(_python_for_task())
     arguments = _xml_escape(_task_arguments())
     workdir = _xml_escape(str(_PROJECT_ROOT))
+    start_boundary = (datetime.now() + timedelta(minutes=1)).replace(microsecond=0).isoformat()
     return (
         '<?xml version="1.0" encoding="UTF-16"?>\n'
         f'<Task version="1.2" xmlns="{_XML_NS}">\n'
@@ -167,6 +169,14 @@ def _build_task_xml() -> str:
         "        <StopAtDurationEnd>false</StopAtDurationEnd>\n"
         "      </Repetition>\n"
         "    </LogonTrigger>\n"
+        "    <TimeTrigger>\n"
+        "      <Enabled>true</Enabled>\n"
+        f"      <StartBoundary>{start_boundary}</StartBoundary>\n"
+        "      <Repetition>\n"
+        f"        <Interval>{WATCHDOG_INTERVAL}</Interval>\n"
+        "        <StopAtDurationEnd>false</StopAtDurationEnd>\n"
+        "      </Repetition>\n"
+        "    </TimeTrigger>\n"
         "  </Triggers>\n"
         "  <Principals>\n"
         '    <Principal id="Author">\n'
@@ -215,6 +225,11 @@ def _classify_stderr(stderr: str) -> str:
     return "schtasks_error"
 
 
+def _schtasks_text_kwargs() -> dict:
+    """Decode localized schtasks output without surfacing codec noise."""
+    return {"text": True, "errors": "replace"}
+
+
 def enable(source: str = "api") -> dict:
     """Register (or replace) the autostart+watchdog scheduled task. Never raises."""
     if not _is_windows():
@@ -231,7 +246,8 @@ def enable(source: str = "api") -> dict:
             tmp = f.name
         proc = subprocess.run(
             ["schtasks", "/Create", "/TN", TASK_NAME, "/XML", tmp, "/F"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, timeout=30,
+            **_schtasks_text_kwargs(),
             **_no_window_kwargs(),
         )
     except FileNotFoundError:
@@ -248,12 +264,13 @@ def enable(source: str = "api") -> dict:
                 pass
 
     if proc.returncode == 0:
+        prime = _prime_task()
         write_audit({
             "actor": "human", "source": source, "event_type": "autostart_enabled",
             "entity_type": "gateway_autostart", "entity_id": TASK_NAME,
             "message": f"Autostart scheduled task created (logon + {WATCHDOG_INTERVAL} watchdog).",
         })
-        return {"supported": True, "enabled": True, "ok": True}
+        return {"supported": True, "enabled": True, "ok": True, **prime}
 
     reason = _classify_stderr(proc.stderr)
     write_audit({
@@ -273,7 +290,8 @@ def disable(source: str = "api") -> dict:
     try:
         proc = subprocess.run(
             ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, timeout=30,
+            **_schtasks_text_kwargs(),
             **_no_window_kwargs(),
         )
     except FileNotFoundError:
@@ -305,6 +323,46 @@ def _parse_trigger(stdout: str) -> str:
     return ""
 
 
+def _parse_field(stdout: str, label: str) -> str:
+    prefix = label.strip().lower()
+    for line in (stdout or "").splitlines():
+        if line.strip().lower().startswith(prefix):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def _task_primed(*, last_run_time: str, last_result: str) -> bool | None:
+    if not last_run_time and not last_result:
+        return None
+    never_run_markers = ("1999/11/30", "11/30/1999", "N/A", "Never")
+    if not last_run_time or any(last_run_time.startswith(marker) for marker in never_run_markers):
+        return False
+    return last_result in {"", "0", "0x0"}
+
+
+def _prime_task() -> dict:
+    """Best-effort immediate run so the current login session is protected too."""
+    try:
+        proc = subprocess.run(
+            ["schtasks", "/Run", "/TN", TASK_NAME],
+            capture_output=True,
+            timeout=30,
+            **_schtasks_text_kwargs(),
+            **_no_window_kwargs(),
+        )
+    except FileNotFoundError:
+        return {"primed": False, "prime_reason": "schtasks_unavailable"}
+    except Exception as e:
+        return {"primed": False, "prime_reason": "schtasks_error", "prime_detail": str(e)[:200]}
+    if proc.returncode == 0:
+        return {"primed": True}
+    return {
+        "primed": False,
+        "prime_reason": _classify_stderr(proc.stderr),
+        "prime_detail": (proc.stderr or "").strip()[:200],
+    }
+
+
 def status() -> dict:
     """Live read of whether the autostart task exists. Read-only; never audits.
 
@@ -319,7 +377,8 @@ def status() -> dict:
     try:
         proc = subprocess.run(
             ["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, timeout=30,
+            **_schtasks_text_kwargs(),
             **_no_window_kwargs(),
         )
     except FileNotFoundError:
@@ -330,8 +389,15 @@ def status() -> dict:
                 "reason": "schtasks_error", "detail": str(e)[:200]}
 
     if proc.returncode == 0:
+        last_run_time = _parse_field(proc.stdout, "Last Run Time")
+        last_result = _parse_field(proc.stdout, "Last Result")
         return {"supported": True, "enabled": True, "task_name": TASK_NAME,
-                "trigger": _parse_trigger(proc.stdout), "interval": WATCHDOG_INTERVAL}
+                "trigger": _parse_trigger(proc.stdout), "interval": WATCHDOG_INTERVAL,
+                "status": _parse_field(proc.stdout, "Status"),
+                "scheduled_task_state": _parse_field(proc.stdout, "Scheduled Task State"),
+                "last_run_time": last_run_time,
+                "last_result": last_result,
+                "primed": _task_primed(last_run_time=last_run_time, last_result=last_result)}
 
     reason = _classify_stderr(proc.stderr)
     if reason == "not_found":

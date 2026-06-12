@@ -231,3 +231,60 @@ def test_startup_gate_respects_disable_flag(tmp_path, monkeypatch):
 
     asyncio.run(appmod._llm_startup_gate(cfg))
     assert cfg.runtime.paused is False  # gate skipped entirely
+
+
+def test_resume_gate_blocks_when_no_provider_usable(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.runtime.paused = True
+    save_config(cfg)
+
+    async def fake_probe(_cfg):
+        return {
+            "any_usable": False,
+            "checked": 1,
+            "results": [
+                {"provider": "anthropic_compatible", "usable": False, "error": "429 Too Many Requests"}
+            ],
+        }
+
+    monkeypatch.setattr(resume_gate, "probe_llm_providers_at_startup", fake_probe)
+
+    result = asyncio.run(resume_gate.resume_if_llm_available(actor="human", source="test"))
+
+    assert result["allowed"] is False
+    assert result["reason"] == "llm_unavailable"
+    assert load_config().runtime.paused is True
+    from aletheia.files.jsonl import read_jsonl
+    events = [e for e in read_jsonl("audit.jsonl") if e.get("event_type") == "gateway_resume_blocked"]
+    assert events
+
+
+def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = _cfg_with({"anthropic_compatible": True, "openai_compatible": True}, "anthropic_compatible")
+    cfg.runtime.paused = True
+    save_config(cfg)
+
+    async def fake_probe(_cfg):
+        return {
+            "any_usable": True,
+            "checked": 2,
+            "results": [
+                {"provider": "anthropic_compatible", "usable": True, "error": None},
+                {"provider": "openai_compatible", "usable": False, "error": "down"},
+            ],
+        }
+
+    monkeypatch.setattr(resume_gate, "probe_llm_providers_at_startup", fake_probe)
+
+    result = asyncio.run(resume_gate.resume_if_llm_available(actor="human", source="test"))
+
+    assert result["allowed"] is True
+    assert load_config().runtime.paused is False

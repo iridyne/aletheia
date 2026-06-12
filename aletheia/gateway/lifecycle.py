@@ -17,6 +17,15 @@ from aletheia.gateway.browser import open_browser
 from aletheia.gateway.logs import tail_logs, log_path
 
 
+class GatewayResumeApiError(RuntimeError):
+    """Raised when an in-process gateway resume request cannot complete."""
+
+    def __init__(self, message: str, *, blocked: bool = False, payload: dict | None = None):
+        super().__init__(message)
+        self.blocked = blocked
+        self.payload = payload or {}
+
+
 def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     """Start the gateway (foreground or background)."""
     cfg = bootstrap()
@@ -370,7 +379,89 @@ def do_pause() -> None:
 
 def do_resume() -> None:
     """Resume paused jobs."""
-    cfg = load_config()
-    cfg.runtime.paused = False
-    save_config(cfg)
+    from aletheia.agent_runtime import resume_gate
+
+    try:
+        if resume_running_gateway_via_api_if_running():
+            _echo_stdout_safe("Gateway resumed.")
+            return
+    except GatewayResumeApiError as exc:
+        _echo_safe(str(exc))
+        raise typer.Exit(1)
+
+    result = resume_gate.resume_if_llm_available_sync(
+        actor="human",
+        source="cli",
+        cause="gateway_resume_cli",
+    )
+    if not result["allowed"]:
+        typer.echo(f"Gateway resume blocked: {resume_gate.summarize_resume_gate(result)}", err=True)
+        raise typer.Exit(1)
     _echo_stdout_safe("Gateway resumed.")
+
+
+def resume_running_gateway_via_api_if_running() -> bool:
+    """Resume through the live gateway process when it is already running.
+
+    The scheduler lives inside the gateway process. A CLI-only config write can
+    clear runtime.paused while leaving that in-process scheduler paused, which is
+    the exact false-recovery state this guard prevents.
+    """
+    cfg = load_config()
+    if not (is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)):
+        return False
+    _post_gateway_resume_api(cfg)
+    return True
+
+
+def _post_gateway_resume_api(cfg) -> dict:
+    """Call the running gateway's own resume endpoint and return its JSON body."""
+    import urllib.error
+    import urllib.request
+
+    url = f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}/api/gateway/resume"
+    req = urllib.request.Request(
+        url,
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30.0) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        payload = _decode_resume_api_payload(body)
+        if exc.code == 409:
+            detail = payload.get("detail", payload) if isinstance(payload, dict) else {}
+            reason = detail.get("reason") or "llm_unavailable"
+            raise GatewayResumeApiError(
+                f"Gateway resume blocked: {reason}",
+                blocked=True,
+                payload=detail,
+            ) from exc
+        raise GatewayResumeApiError(
+            f"Gateway resume API failed: HTTP {exc.code} {body.strip()}",
+            payload=payload if isinstance(payload, dict) else {},
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise GatewayResumeApiError(f"Gateway resume API unavailable: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise GatewayResumeApiError("Gateway resume API timed out") from exc
+
+    payload = _decode_resume_api_payload(body)
+    if not isinstance(payload, dict):
+        raise GatewayResumeApiError("Gateway resume API returned a non-JSON response")
+    if payload.get("paused") is not False:
+        raise GatewayResumeApiError(f"Gateway resume API did not confirm resumed: {payload}")
+    return payload
+
+
+def _decode_resume_api_payload(body: str) -> dict:
+    import json
+
+    try:
+        data = json.loads(body or "{}")
+    except json.JSONDecodeError:
+        return {"raw": body}
+    return data if isinstance(data, dict) else {"raw": data}

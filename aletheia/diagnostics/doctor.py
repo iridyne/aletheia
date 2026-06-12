@@ -156,9 +156,18 @@ def _probe_process(report: Report) -> None:
         if not a.get("supported"):
             report.add("process.autostart", "info", f"not supported ({a.get('reason')})")
         elif a.get("enabled") is True:
-            report.add("process.autostart", "ok",
-                       "watchdog registered (logon + 5-min repetition). "
-                       "NOTE: logon trigger does not fire after a full reboot until you log in.")
+            if a.get("primed") is False:
+                last_run = a.get("last_run_time") or "unknown"
+                last_result = a.get("last_result") or "unknown"
+                report.add("process.autostart", "warn",
+                           f"watchdog registered but not run successfully yet "
+                           f"(last_run={last_run}, last_result={last_result})",
+                           "`aletheia gateway enable-autostart` to re-prime, or `schtasks /Run /TN \"Aletheia Trading OS Gateway\"`")
+            else:
+                detail = "watchdog registered (logon + time-triggered 5-min repetition)"
+                if a.get("last_run_time"):
+                    detail += f", last_run={a.get('last_run_time')}"
+                report.add("process.autostart", "ok", detail)
         elif a.get("enabled") is False:
             report.add("process.autostart", "warn",
                        "watchdog NOT registered — a dead supervisor won't be resurrected",

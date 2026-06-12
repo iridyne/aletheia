@@ -43,6 +43,30 @@ def _set_paused(paused: bool) -> None:
     save_config(cfg)
 
 
+def _resume_or_exit(cause: str) -> None:
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.gateway.lifecycle import (
+        GatewayResumeApiError,
+        resume_running_gateway_via_api_if_running,
+    )
+
+    try:
+        if resume_running_gateway_via_api_if_running():
+            return
+    except GatewayResumeApiError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+
+    result = resume_gate.resume_if_llm_available_sync(
+        actor="human",
+        source="cli",
+        cause=cause,
+    )
+    if not result["allowed"]:
+        typer.echo(f"Operator resume blocked: {resume_gate.summarize_resume_gate(result)}", err=True)
+        raise typer.Exit(1)
+
+
 @agent_app.command("status")
 def status():
     """Show operator status."""
@@ -68,14 +92,14 @@ def pause():
 @agent_app.command("resume")
 def resume():
     """Resume operator-managed work."""
-    _set_paused(False)
+    _resume_or_exit("agent_resume_cli")
     typer.echo("Operator resumed.")
 
 
 @agent_app.command("wake")
 def wake():
     """Wake the operator loop."""
-    _set_paused(False)
+    _resume_or_exit("agent_wake_cli")
     typer.echo("Operator wake requested.")
 
 

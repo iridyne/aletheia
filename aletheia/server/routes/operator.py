@@ -133,21 +133,27 @@ def _sse_block(event_name: str, data: dict[str, Any]) -> str:
     return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _set_paused(paused: bool, *, event_type: str, message: str) -> dict[str, Any]:
+async def _set_paused(paused: bool, *, event_type: str, message: str) -> dict[str, Any]:
     cfg = load_config()
-    cfg.runtime.paused = paused
-    save_config(cfg)
-    try:
-        if paused:
+    if paused:
+        cfg.runtime.paused = True
+        save_config(cfg)
+        try:
             from aletheia.agent_runtime.scheduler import pause_scheduler
 
             pause_scheduler()
-        else:
-            from aletheia.agent_runtime.scheduler import resume_scheduler
+        except Exception:
+            pass
+    else:
+        from aletheia.agent_runtime import resume_gate
 
-            resume_scheduler()
-    except Exception:
-        pass
+        result = await resume_gate.resume_if_llm_available(
+            actor="human",
+            source="dashboard",
+            cause=event_type,
+        )
+        if not result["allowed"]:
+            raise HTTPException(status_code=409, detail=result)
 
     from aletheia.files.jsonl import write_audit
 
@@ -916,17 +922,17 @@ async def operator_events_stream(limit: int = 50, once: bool = False):
 
 @router.post("/pause")
 async def operator_pause():
-    return _set_paused(True, event_type="operator_paused", message="Operator paused via API")
+    return await _set_paused(True, event_type="operator_paused", message="Operator paused via API")
 
 
 @router.post("/resume")
 async def operator_resume():
-    return _set_paused(False, event_type="operator_resumed", message="Operator resumed via API")
+    return await _set_paused(False, event_type="operator_resumed", message="Operator resumed via API")
 
 
 @router.post("/wake")
 async def operator_wake():
-    return _set_paused(False, event_type="operator_woken", message="Operator wake requested via API")
+    return await _set_paused(False, event_type="operator_woken", message="Operator wake requested via API")
 
 
 @router.post("/command-preview")

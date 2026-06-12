@@ -59,6 +59,55 @@ def test_gateway_enable_disable_autostart_smoke(tmp_path, monkeypatch):
     assert "Autostart disabled" in r2.output
 
 
+def test_gateway_resume_blocks_when_llm_unavailable(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    from aletheia.agent_runtime import resume_gate
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    cfg = loader.load_config()
+    cfg.runtime.paused = True
+    loader.save_config(cfg)
+    monkeypatch.setattr(
+        resume_gate,
+        "resume_if_llm_available_sync",
+        lambda **kwargs: {
+            "allowed": False,
+            "reason": "llm_unavailable",
+            "checked": 1,
+            "results": [{"provider": "anthropic_compatible", "usable": False, "error": "429"}],
+        },
+    )
+
+    result = runner.invoke(app, ["gateway", "resume"])
+
+    assert result.exit_code == 1
+    assert "llm_unavailable" in result.output
+    assert loader.load_config().runtime.paused is True
+
+
+def test_model_probe_reports_real_inference_result(monkeypatch):
+    from aletheia.agent_runtime import startup_gate
+
+    async def fake_probe(_cfg):
+        return {
+            "any_usable": True,
+            "checked": 2,
+            "results": [
+                {"provider": "anthropic_compatible", "usable": True, "error": None},
+                {"provider": "openai_compatible", "usable": False, "error": "down"},
+            ],
+        }
+
+    monkeypatch.setattr(startup_gate, "probe_llm_providers_at_startup", fake_probe)
+
+    result = runner.invoke(app, ["model", "probe"])
+
+    assert result.exit_code == 0
+    assert "anthropic_compatible" in result.output
+    assert "usable" in result.output
+
+
 def test_permission_status(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

@@ -84,6 +84,7 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     xml = rec.xml_bytes.decode("utf-16")
     assert 'xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"' in xml
     assert "<LogonTrigger>" in xml
+    assert "<TimeTrigger>" in xml
     assert "<Interval>PT5M</Interval>" in xml
     assert "<StopAtDurationEnd>false</StopAtDurationEnd>" in xml
     assert "<LogonType>InteractiveToken</LogonType>" in xml
@@ -98,6 +99,8 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     # schtasks /Create itself must not flash a console window when called from a
     # detached parent (e.g. the inner uvicorn API route serving /api/gateway/autostart).
     assert rec.calls[0][1].get("creationflags", 0) & 0x08000000 == 0x08000000
+    assert any("/Run" in call[0] for call in rec.calls)
+    assert result["primed"] is True
 
 
 # --- 2. python resolution: prefer pythonw sibling, fall back to sys.executable ---
@@ -162,6 +165,32 @@ def test_enable_audits_human(tmp_path, monkeypatch):
     assert events[0]["actor"] == "human"
     assert events[0]["source"] == "cli"
     assert events[0]["entity_type"] == "gateway_autostart"
+
+
+def test_enable_still_succeeds_when_prime_run_fails(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+    _force_windows(monkeypatch, autostart)
+
+    class PrimeFails(_Recorder):
+        def __call__(self, args, **kwargs):
+            self.calls.append((list(args), kwargs))
+            if "/XML" in args:
+                xml_path = args[args.index("/XML") + 1]
+                self.xml_bytes = Path(xml_path).read_bytes()
+            if "/Run" in args:
+                return _FakeProc(returncode=1, stderr="ERROR: cannot run")
+            return _FakeProc(returncode=0, stdout="SUCCESS")
+
+    rec = PrimeFails()
+    monkeypatch.setattr(autostart.subprocess, "run", rec)
+
+    result = autostart.enable(source="cli")
+
+    assert result["ok"] is True
+    assert result["enabled"] is True
+    assert result["primed"] is False
+    assert result["prime_reason"] == "schtasks_error"
 
 
 # --- 4. enable access-denied → honest dict + audit, never crashes ---
@@ -229,6 +258,8 @@ def test_status_installed(tmp_path, monkeypatch):
         "TaskName:      \\Aletheia Trading OS Gateway\r\n"
         "Status:        Ready\r\n"
         "Schedule Type: At logon time\r\n"
+        "Last Run Time: 2026/6/12 14:31:00\r\n"
+        "Last Result:   0\r\n"
     )
     rec = _Recorder(returncode=0, stdout=stdout)
     monkeypatch.setattr(autostart.subprocess, "run", rec)
@@ -238,8 +269,31 @@ def test_status_installed(tmp_path, monkeypatch):
     assert result["enabled"] is True
     assert result["task_name"] == autostart.TASK_NAME
     assert result["trigger"]  # best-effort trigger summary present
+    assert result["status"] == "Ready"
+    assert result["last_run_time"] == "2026/6/12 14:31:00"
+    assert result["last_result"] == "0"
+    assert result["primed"] is True
     # schtasks /Query must not flash a console window from API-route detached caller.
     assert rec.calls[0][1].get("creationflags", 0) & 0x08000000 == 0x08000000
+
+
+def test_status_installed_but_never_run_is_not_primed(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import autostart
+    monkeypatch.setattr(autostart.platform, "system", lambda: "Windows")
+    stdout = (
+        "TaskName:      \\Aletheia Trading OS Gateway\r\n"
+        "Status:        Ready\r\n"
+        "Last Run Time: 1999/11/30 0:00:00\r\n"
+        "Last Result:   267011\r\n"
+    )
+    monkeypatch.setattr(autostart.subprocess, "run", _Recorder(returncode=0, stdout=stdout))
+
+    result = autostart.status()
+
+    assert result["enabled"] is True
+    assert result["primed"] is False
+    assert result["last_result"] == "267011"
 
 
 # --- 8. status: task not installed → enabled False (disabled) ---
