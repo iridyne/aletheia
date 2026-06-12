@@ -138,6 +138,8 @@ async def test_runtime_operator_surface_respects_operator_permission_mode():
     with patch("aletheia.agent_shell.sessions.create_session", return_value=("session-1", 0.0)), \
          patch("aletheia.agent_shell.sessions.close_session"), \
          patch("aletheia.agent_shell.audit.record_command"), \
+         patch("aletheia.agent_shell.operator_store.get_session", return_value=None), \
+         patch("aletheia.agent_shell.context.extend_summary_with_session_trace", return_value="summary"), \
          patch("aletheia.config.loader.load_config", return_value=cfg), \
          patch("aletheia.agent_shell.context.build_app_context", return_value={}), \
          patch("aletheia.agent_shell.context.context_summary_text", return_value="summary"), \
@@ -181,6 +183,8 @@ async def test_runtime_operator_surface_is_still_bounded_by_worker_global_safety
     with patch("aletheia.agent_shell.sessions.create_session", return_value=("session-1", 0.0)), \
          patch("aletheia.agent_shell.sessions.close_session"), \
          patch("aletheia.agent_shell.audit.record_command"), \
+         patch("aletheia.agent_shell.operator_store.get_session", return_value=None), \
+         patch("aletheia.agent_shell.context.extend_summary_with_session_trace", return_value="summary"), \
          patch("aletheia.config.loader.load_config", return_value=cfg), \
          patch("aletheia.agent_shell.context.build_app_context", return_value={}), \
          patch("aletheia.agent_shell.context.context_summary_text", return_value="summary"), \
@@ -227,6 +231,8 @@ async def test_runtime_operator_surface_executes_only_when_operator_and_worker_a
     with patch("aletheia.agent_shell.sessions.create_session", return_value=("session-1", 0.0)), \
          patch("aletheia.agent_shell.sessions.close_session"), \
          patch("aletheia.agent_shell.audit.record_command"), \
+         patch("aletheia.agent_shell.operator_store.get_session", return_value=None), \
+         patch("aletheia.agent_shell.context.extend_summary_with_session_trace", return_value="summary"), \
          patch("aletheia.config.loader.load_config", return_value=cfg), \
          patch("aletheia.agent_shell.context.build_app_context", return_value={}), \
          patch("aletheia.agent_shell.context.context_summary_text", return_value="summary"), \

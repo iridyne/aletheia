@@ -6631,3 +6631,62 @@ test('operator loop materializes extension enablement proposals after a passing 
   assert.ok(eventTypes.includes('repair_attempted'))
   assert.ok(eventTypes.includes('proposal_created'))
 })
+
+test('pi runtime adapter returns structured result from llm-session endpoint', async () => {
+  const { PiRuntimeAdapter } = await import('../src/pi_runtime_adapter.js')
+
+  let capturedBody: unknown = null
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
+    capturedBody = JSON.parse(init?.body as string)
+    return new Response(JSON.stringify({
+      status: 'completed',
+      turns_used: 2,
+      commands_executed: [{ command: 'get_system_status', permitted: true, response: 'all ok' }],
+      final_answer: 'System is healthy. No issues detected.',
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  try {
+    const adapter = new PiRuntimeAdapter({} as any, 'http://localhost:8787')
+    const result = await adapter.runSession({
+      goal: 'Diagnose system health status',
+      allowedCommands: ['get_system_status', 'get_agent_activity'],
+      maxTurns: 5,
+    })
+
+    assert.equal(result.status, 'completed')
+    assert.equal(result.turnsUsed, 2)
+    assert.equal(result.commandsExecuted.length, 1)
+    assert.equal(result.commandsExecuted[0].command, 'get_system_status')
+    assert.equal(result.finalAnswer, 'System is healthy. No issues detected.')
+
+    const body = capturedBody as Record<string, unknown>
+    assert.equal(body.goal, 'Diagnose system health status')
+    assert.equal(body.max_turns, 5)
+    assert.deepEqual(body.allowed_commands, ['get_system_status', 'get_agent_activity'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('pi runtime adapter handles fetch errors gracefully', async () => {
+  const { PiRuntimeAdapter } = await import('../src/pi_runtime_adapter.js')
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => {
+    throw new Error('connection refused')
+  }
+
+  try {
+    const adapter = new PiRuntimeAdapter({} as any, 'http://localhost:8787')
+    const result = await adapter.runSession({ goal: 'test' })
+
+    assert.equal(result.status, 'error')
+    assert.equal(result.turnsUsed, 0)
+    assert.equal(result.finalAnswer, null)
+    assert.ok(result.error?.includes('connection refused'))
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

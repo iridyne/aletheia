@@ -316,6 +316,14 @@ class OperatorContextQueryRequest(BaseModel):
     sections: list[str] | None = None
 
 
+class LlmSessionRequest(BaseModel):
+    goal: str
+    session_id: str | None = None
+    context_sections: list[str] | None = None
+    allowed_commands: list[str] | None = None
+    max_turns: int = 8
+
+
 def _summary_artifact_for_date(session_id: str, target_date: str) -> dict[str, Any] | None:
     for artifact in list_artifacts(session_id=session_id, limit=500):
         if artifact.get("artifact_type") != "operator_daily_summary":
@@ -1287,3 +1295,143 @@ async def operator_compact(date: str | None = None):
         "artifact_id": artifact_id,
         "created": True,
     }
+
+
+@router.post("/internal/llm-session")
+async def operator_llm_session(payload: LlmSessionRequest):
+    """Multi-turn LLM session for PI-style operator reasoning.
+
+    Runs a goal-directed loop: build context → LLM → tool_call → execute → repeat.
+    Returns when the LLM produces a final answer or max_turns is reached.
+    """
+    from aletheia.agents.helpers import llm_complete
+    from aletheia.agent_shell.executor import execute_typed_command
+    from aletheia.agent_shell.registry import COMMANDS
+    from aletheia.agent_shell.permissions import check_permission
+
+    cfg = load_config()
+    session_id = payload.session_id or cfg.operator.main_session_id
+    max_turns = min(payload.max_turns, 10)
+    permission_mode = cfg.operator.permission_mode
+
+    allowed = set(payload.allowed_commands or [])
+    if not allowed:
+        allowed = {
+            name for name, cmd in COMMANDS.items()
+            if cmd.risk_class == "read"
+        }
+
+    tool_descriptions = []
+    for name in sorted(allowed):
+        cmd = COMMANDS.get(name)
+        if cmd:
+            tool_descriptions.append(f"- {name}: {cmd.description}")
+    tools_block = "\n".join(tool_descriptions)
+
+    sections = payload.context_sections or ["system", "market", "agents", "trading"]
+    ctx = build_app_context(sections)
+    context_text = context_summary_text(ctx)
+
+    system_prompt = (
+        "You are the Aletheia operator reasoning engine. You accomplish goals by "
+        "reading system state and calling commands. Your available commands:\n"
+        f"{tools_block}\n\n"
+        "To call a command, respond with EXACTLY this format on its own line:\n"
+        "TOOL_CALL: command_name {\"param\": \"value\"}\n\n"
+        "When you have enough information to answer the goal, respond with:\n"
+        "FINAL_ANSWER: <your conclusion>\n\n"
+        "Rules:\n"
+        "- Only call commands from the list above\n"
+        "- One TOOL_CALL per response\n"
+        "- Be concise in your reasoning\n"
+        "- If a command fails or is not permitted, adjust your approach"
+    )
+
+    messages: list[dict[str, str]] = [
+        {"role": "user", "content": f"System context:\n{context_text}\n\nGoal: {payload.goal}"},
+    ]
+    commands_executed: list[dict[str, Any]] = []
+    turns_used = 0
+
+    for _ in range(max_turns):
+        turns_used += 1
+        content, error = await llm_complete(system_prompt, _messages_to_prompt(messages), max_tokens=800)
+        if error:
+            return {
+                "status": "llm_unavailable",
+                "error": error,
+                "turns_used": turns_used,
+                "commands_executed": commands_executed,
+                "final_answer": None,
+            }
+
+        if "FINAL_ANSWER:" in content:
+            answer = content.split("FINAL_ANSWER:", 1)[1].strip()
+            return {
+                "status": "completed",
+                "turns_used": turns_used,
+                "commands_executed": commands_executed,
+                "final_answer": answer,
+            }
+
+        if "TOOL_CALL:" in content:
+            call_line = content.split("TOOL_CALL:", 1)[1].strip()
+            parts = call_line.split(" ", 1)
+            cmd_name = parts[0].strip()
+            params: dict[str, Any] = {}
+            if len(parts) > 1:
+                try:
+                    params = json.loads(parts[1].strip())
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            if cmd_name not in allowed:
+                messages.append({"role": "assistant", "content": content})
+                messages.append({"role": "user", "content": f"Error: command '{cmd_name}' not in allowed set."})
+                continue
+
+            ok, reason = check_permission(cmd_name, permission_mode, permission_scope="operator")
+            if not ok:
+                messages.append({"role": "assistant", "content": content})
+                messages.append({"role": "user", "content": f"Permission denied: {reason}"})
+                commands_executed.append({"command": cmd_name, "permitted": False, "reason": reason})
+                continue
+
+            result = await execute_typed_command(
+                cmd_name, params,
+                permission_mode=permission_mode,
+                permission_scope="operator",
+                session_id=session_id,
+                user_input=cmd_name,
+            )
+            commands_executed.append({
+                "command": cmd_name,
+                "permitted": result.permitted,
+                "response": result.response[:500],
+            })
+            messages.append({"role": "assistant", "content": content})
+            messages.append({"role": "user", "content": f"Result of {cmd_name}: {result.response[:800]}"})
+            continue
+
+        return {
+            "status": "completed",
+            "turns_used": turns_used,
+            "commands_executed": commands_executed,
+            "final_answer": content,
+        }
+
+    return {
+        "status": "max_turns_reached",
+        "turns_used": turns_used,
+        "commands_executed": commands_executed,
+        "final_answer": None,
+    }
+
+
+def _messages_to_prompt(messages: list[dict[str, str]]) -> str:
+    """Flatten multi-turn messages into a single user prompt for llm_complete."""
+    parts = []
+    for msg in messages:
+        role = msg["role"].upper()
+        parts.append(f"[{role}]: {msg['content']}")
+    return "\n\n".join(parts)

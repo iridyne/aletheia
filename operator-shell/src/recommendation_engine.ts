@@ -1262,6 +1262,91 @@ export class RecommendationEngine {
       })
     }
 
+    // --- Knowledge consolidation due ---
+    // If dreaming has no recent activity AND research notes exist but are aging,
+    // suggest a consolidation pass to compact knowledge into actionable insights.
+    const hasResearchMaterial =
+      (dreamingSummary?.recent_research_notes.length || 0) > 0 ||
+      (dreamingSummary?.recent_strategy_hypotheses.length || 0) > 0
+    const hasDreamingActivity =
+      (dreamingSummary?.recent_dreaming_logs.length || 0) > 0 ||
+      (dreamingSummary?.recent_dreaming_runs.length || 0) > 0
+    if (!snapshot.status.paused && hasResearchMaterial && !hasDreamingActivity) {
+      const noteCount =
+        (dreamingSummary?.recent_research_notes.length || 0) +
+        (dreamingSummary?.recent_strategy_hypotheses.length || 0)
+      recommendations.push({
+        id: 'knowledge-consolidation-due',
+        kind: 'knowledge_consolidation_due',
+        severity: 'info',
+        summary: `${noteCount} research notes/hypotheses exist without recent dreaming consolidation. Run knowledge consolidation to extract actionable patterns.`,
+        taskType: 'run_dreaming',
+        metadata: {
+          reason: 'unconsolidated_research_material',
+          note_count: noteCount,
+        },
+      })
+    }
+
+    // --- Stale strategy review due ---
+    // Active paper strategies that haven't had a recent evaluation deserve a review.
+    // Exclude strategies already under review (they have an active repair path).
+    const activePaperStrategies = strategySummary?.active_paper_strategies || []
+    const recentEvaluations = strategySummary?.recent_strategy_evaluations || []
+    const underReviewIds = new Set(
+      (strategySummary?.under_review_strategies || [])
+        .map(s => typeof (s as Record<string, unknown>).id === 'string' ? (s as Record<string, unknown>).id as string : null)
+        .filter((id): id is string => id !== null),
+    )
+    const evaluatedIds = new Set(
+      recentEvaluations
+        .map(ev => typeof (ev as Record<string, unknown>).strategy_id === 'string' ? (ev as Record<string, unknown>).strategy_id as string : null)
+        .filter((id): id is string => id !== null),
+    )
+    const staleStrategies = activePaperStrategies.filter(s => {
+      const id = typeof (s as Record<string, unknown>).id === 'string' ? (s as Record<string, unknown>).id as string : null
+      return id && !evaluatedIds.has(id) && !underReviewIds.has(id)
+    })
+    if (!snapshot.status.paused && staleStrategies.length > 0) {
+      const staleIds = staleStrategies
+        .map(s => (s as Record<string, unknown>).id as string)
+        .filter(Boolean)
+      recommendations.push({
+        id: 'stale-strategy-review-due',
+        kind: 'stale_strategy_review_due',
+        severity: 'medium',
+        summary:
+          staleStrategies.length === 1
+            ? `Paper strategy ${staleIds[0]} has no recent evaluation. Schedule a performance review.`
+            : `${staleStrategies.length} active paper strategies have no recent evaluation. Schedule performance reviews.`,
+        taskType: 'evaluate_strategy_state',
+        metadata: {
+          strategy_ids: staleIds,
+          strategy_id: staleIds[0],
+          reason: 'no_recent_evaluation',
+        },
+      })
+    }
+
+    // --- Opportunity quality audit due ---
+    // When risk rejects a high proportion of recent decisions, the opportunity generation
+    // pipeline itself may be producing low-quality signals.
+    const recentRejections = riskSummary?.recent_rejected_decisions || []
+    if (!snapshot.status.paused && recentRejections.length >= 5) {
+      recommendations.push({
+        id: 'opportunity-quality-audit-due',
+        kind: 'opportunity_quality_audit_due',
+        severity: 'medium',
+        summary: `${recentRejections.length} recent risk rejections detected. Audit opportunity generation quality to reduce noise.`,
+        taskType: 'pi_reasoning_session',
+        metadata: {
+          reason: 'high_rejection_rate',
+          rejection_count: recentRejections.length,
+          goal: 'Analyze recent risk rejections to identify patterns in low-quality opportunities. Determine if market_observer parameters need adjustment.',
+        },
+      })
+    }
+
     return recommendations
   }
 }

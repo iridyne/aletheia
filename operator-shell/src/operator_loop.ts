@@ -19,6 +19,7 @@ import { TaskRuntime } from './task_runtime.js'
 import { EventRouter } from './event_router.js'
 import { RecommendationEngine } from './recommendation_engine.js'
 import { RepairEngine } from './repair_engine.js'
+import { PiRuntimeAdapter } from './pi_runtime_adapter.js'
 
 interface OperatorLoopDeps {
   backendClient?: BackendGatewayClient
@@ -47,6 +48,7 @@ export class OperatorLoop {
   private readonly eventRouter: EventRouter
   private readonly repairEngine: RepairEngine
   private readonly recommendationEngine: RecommendationEngine
+  private readonly piRuntime: PiRuntimeAdapter
   private intervalHandle: NodeJS.Timeout | null = null
   private mode: OperatorMode = 'Observing'
   private lastError: string | null = null
@@ -88,6 +90,7 @@ export class OperatorLoop {
     this.eventRouter = deps.eventRouter ?? new EventRouter(this.backendClient)
     this.repairEngine = deps.repairEngine ?? new RepairEngine()
     this.recommendationEngine = deps.recommendationEngine ?? new RecommendationEngine()
+    this.piRuntime = new PiRuntimeAdapter(this.backendClient, config.gatewayBaseUrl)
   }
 
   private isReviewTaskType(taskType: string | undefined): boolean {
@@ -372,7 +375,8 @@ export class OperatorLoop {
       taskType === 'create_review_report' ||
       taskType === 'create_diagnostic_report' ||
       taskType === 'run_portfolio_snapshot' ||
-      taskType === 'run_risk_critique'
+      taskType === 'run_risk_critique' ||
+      taskType === 'pi_reasoning_session'
     ) {
       return 'Research'
     }
@@ -2259,6 +2263,113 @@ export class OperatorLoop {
     return true
   }
 
+  private async maybeRunPiSession(): Promise<boolean> {
+    const activeTask = this.taskRuntime.getActiveTask()
+    if (!activeTask || activeTask.taskType !== 'pi_reasoning_session') {
+      return false
+    }
+
+    const goal = typeof activeTask.inputData.goal === 'string' ? activeTask.inputData.goal : null
+    if (!goal) {
+      await this.taskRuntime.failActiveTask('No goal specified for PI reasoning session.')
+      return true
+    }
+
+    const allowedCommands = Array.isArray(activeTask.inputData.allowed_commands)
+      ? activeTask.inputData.allowed_commands.filter((c): c is string => typeof c === 'string')
+      : undefined
+    const contextSections = Array.isArray(activeTask.inputData.context_sections)
+      ? activeTask.inputData.context_sections.filter((s): s is string => typeof s === 'string')
+      : undefined
+
+    const sessionId = `pi-session-${activeTask.taskId}`
+    const parentSessionId = this.currentRunParentSessionId()
+    await this.backendClient.createSession({
+      id: sessionId,
+      user_input: goal,
+      kind: 'diagnostic_session',
+      parent_session_id: parentSessionId,
+      title: `PI Session: ${goal.slice(0, 60)}`,
+    })
+    this.sessionRuntime.rememberBranch({
+      id: sessionId,
+      kind: 'diagnostic_session',
+      title: `PI Session: ${goal.slice(0, 60)}`,
+      parent_session_id: parentSessionId,
+      summary: null,
+    })
+
+    const result = await this.piRuntime.runSession({
+      goal,
+      sessionId,
+      contextSections,
+      allowedCommands,
+      maxTurns: typeof activeTask.inputData.max_turns === 'number' ? activeTask.inputData.max_turns : 8,
+    })
+
+    await this.backendClient.createMessage({
+      session_id: sessionId,
+      role: 'assistant',
+      message_type: 'response',
+      related_event_id: null,
+      content: {
+        text: result.finalAnswer || `Session ended: ${result.status}`,
+        status: result.status,
+        turns_used: result.turnsUsed,
+        commands_executed: result.commandsExecuted,
+      },
+    })
+
+    if (result.status === 'completed' && result.finalAnswer) {
+      await this.backendClient.createEvent({
+        event_type: 'pi_session_completed',
+        severity: 'info',
+        source: 'operator_loop',
+        session_id: sessionId,
+        task_id: activeTask.taskId,
+        related_entity_type: 'pi_session',
+        related_entity_id: sessionId,
+        payload: {
+          goal,
+          turns_used: result.turnsUsed,
+          commands_executed: result.commandsExecuted.length,
+        },
+      })
+      await this.taskRuntime.completeActiveTask({
+        summary: result.finalAnswer,
+        pi_session_id: sessionId,
+        turns_used: result.turnsUsed,
+      })
+    } else {
+      const errorMsg = result.error || `PI session ended with status: ${result.status}`
+      await this.backendClient.createEvent({
+        event_type: 'pi_session_failed',
+        severity: 'high',
+        source: 'operator_loop',
+        session_id: sessionId,
+        task_id: activeTask.taskId,
+        related_entity_type: 'pi_session',
+        related_entity_id: sessionId,
+        payload: {
+          goal,
+          status: result.status,
+          error: result.error,
+          turns_used: result.turnsUsed,
+        },
+      })
+      await this.taskRuntime.failActiveTask(errorMsg, { pi_session_id: sessionId })
+    }
+
+    this.sessionRuntime.rememberBranch({
+      id: sessionId,
+      kind: 'diagnostic_session',
+      title: `PI Session: ${goal.slice(0, 60)}`,
+      parent_session_id: parentSessionId,
+      summary: result.finalAnswer || result.error || null,
+    })
+    return true
+  }
+
   private repairSessionId(decisionId: string): string {
     return `diagnostic-${decisionId.replace(/[^a-z0-9-]+/gi, '-')}`
   }
@@ -2878,6 +2989,11 @@ export class OperatorLoop {
       const delegatedTask = await this.maybeDelegateSpecialistTask()
       if (delegatedTask && this.taskRuntime.snapshot().currentTaskId === null) {
         this.settleModeAfterTaskRun(snapshot, activeTaskBeforeDelegation)
+      }
+      const activeTaskBeforePiSession = this.taskRuntime.getActiveTask()
+      const piSessionRan = await this.maybeRunPiSession()
+      if (piSessionRan && this.taskRuntime.snapshot().currentTaskId === null) {
+        this.settleModeAfterTaskRun(snapshot, activeTaskBeforePiSession)
       }
       const heartbeat = buildHeartbeat({
         mode: this.mode,
