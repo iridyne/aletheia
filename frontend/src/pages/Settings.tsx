@@ -96,7 +96,7 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
 
 function SaveMsg({ msg }: { msg: { ok: boolean; text: string } | null }) {
   if (!msg) return null
-  return <span style={{ fontSize: '0.78rem', color: msg.ok ? 'var(--green)' : 'var(--red)' }}>{msg.text}</span>
+  return <span style={{ fontSize: '0.78rem', color: msg.ok ? 'var(--green)' : 'var(--red)', maxWidth: '360px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'middle' }} title={msg.text}>{msg.text}</span>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

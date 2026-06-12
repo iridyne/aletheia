@@ -1,11 +1,25 @@
 const BASE = '/api'
 
+function extractApiError(status: number, body: string): string {
+  try {
+    const obj = JSON.parse(body)
+    const detail = obj.detail
+    if (typeof detail === 'string') return detail
+    if (detail && typeof detail === 'object') {
+      if (detail.reason) return detail.reason.replace(/_/g, ' ')
+      if (detail.message) return detail.message
+    }
+  } catch { /* not JSON, fall through */ }
+  if (body.length > 80) return `${status} error`
+  return body || `${status} error`
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })
-  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`)
+  if (!res.ok) throw new Error(extractApiError(res.status, await res.text()))
   return res.json()
 }
 

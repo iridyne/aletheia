@@ -89,20 +89,7 @@ export const NAV: NavGroup[] = [
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full'] as const
 
 function extractResumeError(e: any): string {
-  const raw = String(e?.message || 'failed')
-  try {
-    const match = raw.match(/\{.*\}/)
-    if (match) {
-      const obj = JSON.parse(match[0])
-      const detail = obj.detail || obj
-      if (detail.reason === 'llm_unavailable') {
-        return 'LLM unavailable — cannot resume'
-      }
-      if (detail.reason) return detail.reason
-    }
-  } catch { /* fall through */ }
-  if (raw.length > 60) return raw.slice(0, 57) + '…'
-  return raw
+  return String(e?.message || 'failed')
 }
 
 function StatusBar() {
