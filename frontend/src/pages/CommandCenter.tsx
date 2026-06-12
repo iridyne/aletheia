@@ -865,6 +865,7 @@ export default function CommandCenter() {
       />
 
       <div className="command-center-layout">
+        <div className="command-center-main">
         <section className="card command-center-shell">
           <div className="command-center-strip">
             <span className={`badge ${operatorStatus?.status === 'online' ? 'badge-green' : operatorStatus?.status === 'stale' ? 'badge-yellow' : 'badge-red'}`}>
@@ -1083,119 +1084,6 @@ export default function CommandCenter() {
           )}
         </section>
 
-        <aside className="command-center-side">
-          <div className="card">
-            <h3>Quick Actions</h3>
-            <div className="cc-action-grid">
-              {quickActions.map(action => (
-                <button
-                  key={action.id}
-                  className="cc-action-btn"
-                  onClick={() => setInput(action.draft)}
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="cc-card-header">
-              <h3>Enabled Extensions</h3>
-              <span className="mono text-muted">{enabledExtensions.length}</span>
-            </div>
-            <div className="cc-list">
-              {enabledExtensions.length === 0 && (
-                <div className="text-muted text-sm">No enabled slash extensions yet.</div>
-              )}
-              {enabledExtensions.map(extension => {
-                const textParameter =
-                  typeof extension.manifest?.['text_parameter'] === 'string'
-                    ? String(extension.manifest['text_parameter'])
-                    : ''
-                const draft = textParameter ? `${extension.slash_command} ` : extension.slash_command
-                return (
-                  <button
-                    key={extension.id}
-                    className="cc-list-item"
-                    onClick={() => setInput(draft)}
-                  >
-                    <span className="cc-list-copy">
-                      <span>{extension.extension_name}</span>
-                      <span className="cc-item-subtle">
-                        {extension.slash_command} · {extension.target_command}
-                      </span>
-                      <span className="cc-item-subtle">{extension.description}</span>
-                    </span>
-                    <span className="badge badge-green">enabled</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          <div className="card">
-            <h3>Operator State</h3>
-            <table className="status-board">
-              <tbody>
-                <tr><th>Status</th><td>{operatorStatus?.status || 'offline'}</td></tr>
-                <tr><th>Mode</th><td>{operatorStatus?.mode || 'Observing'}</td></tr>
-                <tr><th>Intent</th><td>{operatorStatus?.current_intent || '—'}</td></tr>
-                <tr><th>Active Branch</th><td>{operatorStatus?.active_branch_title || operatorStatus?.active_branch_id || '—'}</td></tr>
-                <tr><th>Heartbeat</th><td>{formatTimestamp(operatorStatus?.last_seen_at)}</td></tr>
-                <tr><th>Error</th><td>{operatorStatus?.last_error || '—'}</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div className="card">
-            <div className="cc-card-header">
-              <h3>Recommendations</h3>
-              <span className="mono text-muted">{filteredRecommendations.length}/{recommendations.length}</span>
-            </div>
-            <div className="cc-list">
-              {recommendations.length === 0 && <div className="text-muted text-sm">No backend recommendations right now.</div>}
-              {recommendations.length > 0 && filteredRecommendations.length === 0 && <div className="text-muted text-sm">No recommendations match the filter.</div>}
-              {filteredRecommendations.map(item => (
-                <button
-                  key={item.id}
-                  className={`cc-list-item ${inspectorFocus?.kind === 'recommendation' && inspectorFocus.id === item.id ? 'selected' : ''}`}
-                  onClick={() => setInspectorFocus({ kind: 'recommendation', id: item.id })}
-                >
-                  <span className="cc-list-copy">
-                    <span>{item.summary}</span>
-                    <span className="cc-item-subtle">{item.kind.replace(/_/g, ' ')}</span>
-                  </span>
-                  <span className={`badge ${severityBadge(item.severity)}`}>{item.severity}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="cc-card-header">
-              <h3>Active Tasks</h3>
-              <span className="mono text-muted">{filteredTasks.length}/{tasks.length}</span>
-            </div>
-            <div className="cc-list">
-              {tasks.length === 0 && <div className="text-muted text-sm">No operator tasks yet.</div>}
-              {tasks.length > 0 && filteredTasks.length === 0 && <div className="text-muted text-sm">No tasks match the filter.</div>}
-              {filteredTasks.map(task => (
-                <button
-                  key={task.id}
-                  className={`cc-list-item ${inspectorFocus?.kind === 'task' && inspectorFocus.id === task.id ? 'selected' : activeTask?.id === task.id ? 'selected' : ''}`}
-                  onClick={() => setInspectorFocus({ kind: 'task', id: task.id })}
-                >
-                  <span className="cc-list-copy">
-                    <span>{task.task_type.replace(/_/g, ' ')}</span>
-                    <span className="cc-item-subtle">{task.assigned_to} · {task.status}</span>
-                  </span>
-                  <span className="mono">{task.priority}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
           <div className="card">
             <div className="cc-card-header">
               <h3>Sessions</h3>
@@ -1310,6 +1198,120 @@ export default function CommandCenter() {
                     {filterText.length > 0 && <span className="mono">{command.session_id}</span>}
                     {command.result_summary && <span>{command.result_summary}</span>}
                   </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <aside className="command-center-side">
+          <div className="card">
+            <h3>Quick Actions</h3>
+            <div className="cc-action-grid">
+              {quickActions.map(action => (
+                <button
+                  key={action.id}
+                  className="cc-action-btn"
+                  onClick={() => setInput(action.draft)}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="cc-card-header">
+              <h3>Enabled Extensions</h3>
+              <span className="mono text-muted">{enabledExtensions.length}</span>
+            </div>
+            <div className="cc-list">
+              {enabledExtensions.length === 0 && (
+                <div className="text-muted text-sm">No enabled slash extensions yet.</div>
+              )}
+              {enabledExtensions.map(extension => {
+                const textParameter =
+                  typeof extension.manifest?.['text_parameter'] === 'string'
+                    ? String(extension.manifest['text_parameter'])
+                    : ''
+                const draft = textParameter ? `${extension.slash_command} ` : extension.slash_command
+                return (
+                  <button
+                    key={extension.id}
+                    className="cc-list-item"
+                    onClick={() => setInput(draft)}
+                  >
+                    <span className="cc-list-copy">
+                      <span>{extension.extension_name}</span>
+                      <span className="cc-item-subtle">
+                        {extension.slash_command} · {extension.target_command}
+                      </span>
+                      <span className="cc-item-subtle">{extension.description}</span>
+                    </span>
+                    <span className="badge badge-green">enabled</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="card">
+            <h3>Operator State</h3>
+            <table className="status-board">
+              <tbody>
+                <tr><th>Status</th><td>{operatorStatus?.status || 'offline'}</td></tr>
+                <tr><th>Mode</th><td>{operatorStatus?.mode || 'Observing'}</td></tr>
+                <tr><th>Intent</th><td>{operatorStatus?.current_intent || '—'}</td></tr>
+                <tr><th>Active Branch</th><td>{operatorStatus?.active_branch_title || operatorStatus?.active_branch_id || '—'}</td></tr>
+                <tr><th>Heartbeat</th><td>{formatTimestamp(operatorStatus?.last_seen_at)}</td></tr>
+                <tr><th>Error</th><td>{operatorStatus?.last_error || '—'}</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card">
+            <div className="cc-card-header">
+              <h3>Recommendations</h3>
+              <span className="mono text-muted">{filteredRecommendations.length}/{recommendations.length}</span>
+            </div>
+            <div className="cc-list">
+              {recommendations.length === 0 && <div className="text-muted text-sm">No backend recommendations right now.</div>}
+              {recommendations.length > 0 && filteredRecommendations.length === 0 && <div className="text-muted text-sm">No recommendations match the filter.</div>}
+              {filteredRecommendations.map(item => (
+                <button
+                  key={item.id}
+                  className={`cc-list-item ${inspectorFocus?.kind === 'recommendation' && inspectorFocus.id === item.id ? 'selected' : ''}`}
+                  onClick={() => setInspectorFocus({ kind: 'recommendation', id: item.id })}
+                >
+                  <span className="cc-list-copy">
+                    <span>{item.summary}</span>
+                    <span className="cc-item-subtle">{item.kind.replace(/_/g, ' ')}</span>
+                  </span>
+                  <span className={`badge ${severityBadge(item.severity)}`}>{item.severity}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="cc-card-header">
+              <h3>Active Tasks</h3>
+              <span className="mono text-muted">{filteredTasks.length}/{tasks.length}</span>
+            </div>
+            <div className="cc-list">
+              {tasks.length === 0 && <div className="text-muted text-sm">No operator tasks yet.</div>}
+              {tasks.length > 0 && filteredTasks.length === 0 && <div className="text-muted text-sm">No tasks match the filter.</div>}
+              {filteredTasks.map(task => (
+                <button
+                  key={task.id}
+                  className={`cc-list-item ${inspectorFocus?.kind === 'task' && inspectorFocus.id === task.id ? 'selected' : activeTask?.id === task.id ? 'selected' : ''}`}
+                  onClick={() => setInspectorFocus({ kind: 'task', id: task.id })}
+                >
+                  <span className="cc-list-copy">
+                    <span>{task.task_type.replace(/_/g, ' ')}</span>
+                    <span className="cc-item-subtle">{task.assigned_to} · {task.status}</span>
+                  </span>
+                  <span className="mono">{task.priority}</span>
                 </button>
               ))}
             </div>

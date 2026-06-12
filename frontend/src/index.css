@@ -598,10 +598,15 @@ tr.clickable:hover { background: var(--surface-2); }
 @media (max-width: 1100px) {
   .command-center-layout { grid-template-columns: 1fr; }
 }
+.command-center-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
 .command-center-shell {
   display: flex;
   flex-direction: column;
-  min-height: 720px;
   min-width: 0;
 }
 .command-center-side {
