@@ -88,12 +88,37 @@ class OpenAICompatibleProvider(ModelProvider):
         resp = await self.complete(mr)
         return json.loads(resp.content)
 
+    async def list_models(self) -> list[dict]:
+        """Fetch available models from the OpenAI-compatible /models endpoint."""
+        try:
+            async with httpx.AsyncClient(timeout=4) as client:
+                resp = await client.get(f"{self.base_url}/models", headers=self._headers())
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+        except Exception:
+            return []
+        models = []
+        if isinstance(data, list):
+            items = data
+        else:
+            items = data.get("data") or []
+        for item in items:
+            if isinstance(item, dict) and item.get("id"):
+                mid = item["id"]
+                models.append({"slug": mid, "display_name": mid})
+            elif isinstance(item, str):
+                models.append({"slug": item, "display_name": item})
+        return models
+
     async def healthcheck(self) -> ModelHealth:
         try:
             async with httpx.AsyncClient(timeout=4) as client:
                 resp = await client.get(f"{self.base_url}/models", headers=self._headers())
                 if resp.status_code == 200:
-                    return ModelHealth(provider=self.name, available=True, model=self.model)
+                    models = await self.list_models()
+                    slugs = [m["slug"] for m in models]
+                    return ModelHealth(provider=self.name, available=True, model=self.model, models=slugs)
                 return ModelHealth(provider=self.name, available=False, error=f"HTTP {resp.status_code}")
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=str(e))

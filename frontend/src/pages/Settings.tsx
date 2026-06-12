@@ -1223,6 +1223,26 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
   const [workspaceUrl, setWorkspaceUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [detectedModels, setDetectedModels] = useState<{ slug: string; display_name: string }[] | null>(null)
+  const [useCustomModel, setUseCustomModel] = useState(false)
+
+  const detectMut = useMutation({
+    mutationFn: async () => {
+      const body: any = { provider: name }
+      if (name === 'databricks') body.workspace_url = workspaceUrl || config?.workspace_url || undefined
+      else body.base_url = baseUrl || config?.base_url || undefined
+      if (apiKey) body.api_key = apiKey
+      return api.detectModels(body)
+    },
+    onSuccess: (data) => {
+      const models = data.models || []
+      setDetectedModels(models)
+      if (models.length > 0 && !model) {
+        setModel(models[0].slug)
+        setUseCustomModel(false)
+      }
+    },
+  })
 
   const verifyAndSave = useMutation({
     mutationFn: async () => {
@@ -1232,6 +1252,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
         base_url: baseUrl || config?.base_url || undefined,
         model: model || config?.model || undefined,
         api_key: apiKey || undefined,
+        probe: true,
       }
       if (name === 'openai_compatible') testBody.protocol = protocol
       if (name === 'databricks') testBody.workspace_url = workspaceUrl || config?.workspace_url || undefined
@@ -1269,6 +1290,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
 
   const isDatabricks = name === 'databricks'
   const isOpenAI = name === 'openai_compatible'
+  const showDropdown = detectedModels && detectedModels.length > 0 && !useCustomModel
 
   return (
     <div style={{ paddingTop: '0.75rem' }}>
@@ -1276,19 +1298,29 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
         {isDatabricks ? (
           <label style={{ gridColumn: '1 / -1' }}>
             <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Workspace URL</span>
-            <input value={workspaceUrl} placeholder={config?.workspace_url || 'https://xxx.cloud.databricks.com'} onChange={e => { setWorkspaceUrl(e.target.value); setResult(null) }} />
+            <input value={workspaceUrl} placeholder={config?.workspace_url || 'https://xxx.cloud.databricks.com'} onChange={e => { setWorkspaceUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
           </label>
         ) : (
           <label style={{ gridColumn: '1 / -1' }}>
             <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Base URL</span>
-            <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null) }} />
+            <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
           </label>
         )}
         <label>
           <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             {isDatabricks ? 'Endpoint name' : 'Model'}
           </span>
-          <input value={model} placeholder={config?.model || 'default'} onChange={e => { setModel(e.target.value); setResult(null) }} />
+          {showDropdown ? (
+            <select value={model} onChange={e => {
+              if (e.target.value === '__custom__') { setUseCustomModel(true); setModel('') }
+              else { setModel(e.target.value); setResult(null) }
+            }}>
+              {detectedModels.map(m => <option key={m.slug} value={m.slug}>{m.display_name}</option>)}
+              <option value="__custom__">(custom)</option>
+            </select>
+          ) : (
+            <input value={model} placeholder={config?.model || 'default'} onChange={e => { setModel(e.target.value); setResult(null) }} />
+          )}
         </label>
         {isOpenAI && (
           <label>
@@ -1307,7 +1339,11 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
           <input type="password" value={apiKey} placeholder={config?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
         </label>
       </div>
+      {/* Model detection + action buttons */}
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="secondary" onClick={() => detectMut.mutate()} disabled={detectMut.isPending}>
+          {detectMut.isPending ? 'Detecting…' : 'Detect Models'}
+        </button>
         <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
           {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
         </button>
@@ -1321,9 +1357,28 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
             {result.ok ? '✓' : '✗'} {result.msg}
           </span>
         )}
+        {detectMut.isError && (
+          <span style={{ fontSize: '0.75rem', color: 'var(--red)', fontFamily: 'var(--mono)' }}>
+            ✗ detection failed
+          </span>
+        )}
       </div>
+      {/* Detected models summary */}
+      {detectedModels !== null && (
+        <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '0.4rem' }}>
+          {detectedModels.length > 0
+            ? `${detectedModels.length} model${detectedModels.length > 1 ? 's' : ''} detected`
+            : 'No models detected — enter a model name manually'}
+          {useCustomModel && detectedModels.length > 0 && (
+            <button
+              onClick={() => { setUseCustomModel(false); if (detectedModels.length) setModel(detectedModels[0].slug) }}
+              style={{ marginLeft: '0.5rem', background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.72rem', padding: 0, textDecoration: 'underline' }}
+            >back to list</button>
+          )}
+        </div>
+      )}
       <p style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
-        {isDatabricks ? 'PAT token' : 'API keys'} are write-only — never shown after save.
+        {isDatabricks ? 'PAT token' : 'API keys'} are write-only — never shown after save. Verify & Save runs a real inference test before persisting.
       </p>
     </div>
   )

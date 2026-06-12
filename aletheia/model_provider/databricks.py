@@ -45,6 +45,29 @@ class DatabricksProvider(OpenAICompatibleProvider):
         super().__init__(base_url=base_url, model=model, protocol="chat_completions", api_key=api_key)
         self.workspace_url = workspace_url
 
+    async def list_models(self) -> list[dict]:
+        """Fetch serving endpoints from Databricks workspace."""
+        try:
+            async with httpx.AsyncClient(timeout=4) as client:
+                resp = await client.get(
+                    f"{self.workspace_url}/api/2.0/serving-endpoints",
+                    headers=self._headers(),
+                )
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+        except Exception:
+            return []
+        models = []
+        for ep in data.get("endpoints") or []:
+            name = ep.get("name")
+            if not name:
+                continue
+            state = ep.get("state", {}).get("ready", "")
+            display = name if state == "READY" else f"{name} ({state.lower()})"
+            models.append({"slug": name, "display_name": display})
+        return models
+
     async def healthcheck(self) -> ModelHealth:
         try:
             async with httpx.AsyncClient(timeout=4) as client:
@@ -53,7 +76,9 @@ class DatabricksProvider(OpenAICompatibleProvider):
                     headers=self._headers(),
                 )
                 if resp.status_code == 200:
-                    return ModelHealth(provider=self.name, available=True, model=self.model)
+                    models = await self.list_models()
+                    slugs = [m["slug"] for m in models]
+                    return ModelHealth(provider=self.name, available=True, model=self.model, models=slugs)
                 return ModelHealth(provider=self.name, available=False,
                                    error=f"HTTP {resp.status_code}")
         except Exception as e:

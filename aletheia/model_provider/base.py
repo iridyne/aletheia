@@ -48,5 +48,9 @@ class ModelProvider:
     async def structured(self, request: StructuredModelRequest, schema: type) -> Any:
         raise NotImplementedError
 
+    async def list_models(self) -> list[dict]:
+        """Return [{slug, display_name}] of available models. Never raises."""
+        return []
+
     async def healthcheck(self) -> ModelHealth:
         raise NotImplementedError

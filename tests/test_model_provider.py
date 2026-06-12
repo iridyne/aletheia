@@ -192,3 +192,116 @@ async def test_databricks_complete_omits_temperature():
         resp = await p.complete(ModelRequest(messages=[{"role": "user", "content": "hi"}], temperature=0.9))
     assert resp.content == "OK"
     assert "temperature" not in sent["payload"]
+
+
+# ── list_models tests ───────────────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_openai_list_models_parses_data_array():
+    provider = OpenAICompatibleProvider(base_url="http://gw/v1", model="m")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        models = await provider.list_models()
+    assert len(models) == 2
+    assert models[0] == {"slug": "gpt-4o", "display_name": "gpt-4o"}
+    assert models[1] == {"slug": "gpt-4o-mini", "display_name": "gpt-4o-mini"}
+
+
+@pytest.mark.anyio
+async def test_openai_list_models_returns_empty_on_failure():
+    provider = OpenAICompatibleProvider(base_url="http://localhost:19999/v1", model="m")
+    models = await provider.list_models()
+    assert models == []
+
+
+@pytest.mark.anyio
+async def test_anthropic_list_models_parses_data_array():
+    provider = AnthropicCompatibleProvider(base_url="http://gw", model="m")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": [{"id": "claude-sonnet-4-20250514"}, {"id": "claude-haiku-4-5-20251001"}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        models = await provider.list_models()
+    assert len(models) == 2
+    assert models[0]["slug"] == "claude-sonnet-4-20250514"
+
+
+@pytest.mark.anyio
+async def test_anthropic_list_models_handles_plain_list():
+    """Some gateways return a flat list of model IDs."""
+    provider = AnthropicCompatibleProvider(base_url="http://gw", model="m")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return ["claude-opus-4", "claude-sonnet-4"]
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        models = await provider.list_models()
+    assert len(models) == 2
+    assert models[0] == {"slug": "claude-opus-4", "display_name": "claude-opus-4"}
+
+
+@pytest.mark.anyio
+async def test_anthropic_list_models_returns_empty_on_failure():
+    provider = AnthropicCompatibleProvider(base_url="http://localhost:19999", model="m")
+    models = await provider.list_models()
+    assert models == []
+
+
+@pytest.mark.anyio
+async def test_databricks_list_models_parses_endpoints():
+    p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"endpoints": [
+                {"name": "databricks-claude-opus-4-8", "state": {"ready": "READY"}},
+                {"name": "databricks-meta-llama-3", "state": {"ready": "NOT_READY"}},
+            ]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        models = await p.list_models()
+    assert len(models) == 2
+    assert models[0] == {"slug": "databricks-claude-opus-4-8", "display_name": "databricks-claude-opus-4-8"}
+    assert models[1] == {"slug": "databricks-meta-llama-3", "display_name": "databricks-meta-llama-3 (not_ready)"}
+
+
+@pytest.mark.anyio
+async def test_databricks_list_models_returns_empty_on_failure():
+    p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
+    models = await p.list_models()
+    assert models == []

@@ -211,8 +211,11 @@ export const api = {
   }) => post('/settings/model', body),
   testModelCandidate: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
-    api_key?: string; workspace_url?: string
-  }) => post<{ available: boolean; model: string; error: string | null }>('/model/test-candidate', body),
+    api_key?: string; workspace_url?: string; probe?: boolean
+  }) => post<{ available: boolean; model: string; error: string | null; models?: string[] }>('/model/test-candidate', body),
+  detectModels: (body: {
+    provider: string; base_url?: string; api_key?: string; workspace_url?: string
+  }) => post<{ models: { slug: string; display_name: string }[] }>('/model/detect-models', body),
 
   // Codex subscription provider: web-triggered device-auth login + model listing
   codexLoginStart: () => post<{ state: string; verification_uri: string | null; user_code: string | null; error: string | null }>('/model/codex/login-start'),
