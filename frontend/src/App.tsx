@@ -88,6 +88,23 @@ export const NAV: NavGroup[] = [
  */
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full'] as const
 
+function extractResumeError(e: any): string {
+  const raw = String(e?.message || 'failed')
+  try {
+    const match = raw.match(/\{.*\}/)
+    if (match) {
+      const obj = JSON.parse(match[0])
+      const detail = obj.detail || obj
+      if (detail.reason === 'llm_unavailable') {
+        return 'LLM unavailable — cannot resume'
+      }
+      if (detail.reason) return detail.reason
+    }
+  } catch { /* fall through */ }
+  if (raw.length > 60) return raw.slice(0, 57) + '…'
+  return raw
+}
+
 function StatusBar() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
@@ -120,12 +137,12 @@ function StatusBar() {
   const pauseMut = useMutation({
     mutationFn: api.pause,
     onSuccess: () => { setPauseErr(''); qc.invalidateQueries({ queryKey: ['status'] }) },
-    onError: (e: any) => setPauseErr(e.message || 'failed'),
+    onError: (e: any) => setPauseErr(extractResumeError(e)),
   })
   const resumeMut = useMutation({
     mutationFn: api.resume,
     onSuccess: () => { setPauseErr(''); qc.invalidateQueries({ queryKey: ['status'] }) },
-    onError: (e: any) => setPauseErr(e.message || 'failed'),
+    onError: (e: any) => setPauseErr(extractResumeError(e)),
   })
   const permMut = useMutation({
     mutationFn: (mode: string) => api.setPermissionMode(mode),
@@ -297,7 +314,7 @@ function StatusBar() {
       >
         {(pauseMut.isPending || resumeMut.isPending) ? '…' : paused ? '▶' : '⏸'}
       </button>
-      {pauseErr && <span style={{ fontSize: '0.7rem', color: 'var(--red)', fontFamily: 'var(--mono)' }}>{pauseErr}</span>}
+      {pauseErr && <span className="topbar-err" title={pauseErr}>{pauseErr}</span>}
     </div>
   )
 }

@@ -1508,6 +1508,10 @@ tr.clickable:hover { background: var(--surface-2); }
   border-color: rgba(255,93,108,0.45);
   color: var(--red);
 }
+.topbar-err {
+  font-size: 0.7rem; color: var(--red); font-family: var(--mono);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .heartbeat { animation: pulse 2s ease infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
