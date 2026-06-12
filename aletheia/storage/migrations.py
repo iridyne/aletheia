@@ -586,6 +586,92 @@ CREATE TABLE IF NOT EXISTS extension_runs (
     completed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Serenity Research Workbench: research runs, events, profiles, feedback
+CREATE TABLE IF NOT EXISTS serenity_research_runs (
+    id TEXT PRIMARY KEY,
+    trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+    mode TEXT NOT NULL DEFAULT 'standard',
+    status TEXT NOT NULL DEFAULT 'queued',
+    stage TEXT,
+    parent_run_id TEXT,
+    idempotency_key TEXT,
+    profile_snapshot_id TEXT,
+    brief_snapshot TEXT,
+    focus_theme_id TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    next_retry_at TEXT,
+    error_type TEXT,
+    error_message TEXT,
+    error_stage TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    model_used TEXT,
+    token_usage TEXT DEFAULT '{}',
+    artifact_counts TEXT DEFAULT '{"themes":0,"opportunities":0,"evidence":0,"claims":0}',
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_serenity_research_runs_status
+    ON serenity_research_runs (status);
+CREATE INDEX IF NOT EXISTS idx_serenity_research_runs_created
+    ON serenity_research_runs (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS serenity_run_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES serenity_research_runs(id),
+    event_type TEXT NOT NULL,
+    stage TEXT,
+    status TEXT,
+    message TEXT,
+    payload TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_serenity_run_events_run
+    ON serenity_run_events (run_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS serenity_user_profiles (
+    id TEXT PRIMARY KEY,
+    include_topics TEXT DEFAULT '[]',
+    exclude_topics TEXT DEFAULT '[]',
+    include_assets TEXT DEFAULT '[]',
+    exclude_assets TEXT DEFAULT '[]',
+    market_types TEXT DEFAULT '[]',
+    time_horizon TEXT,
+    risk_bias TEXT,
+    source_preferences TEXT DEFAULT '[]',
+    raw_notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS serenity_profile_snapshots (
+    id TEXT PRIMARY KEY,
+    profile_id TEXT,
+    run_id TEXT,
+    snapshot TEXT NOT NULL DEFAULT '{}',
+    raw_brief TEXT,
+    parser_version TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_serenity_profile_snapshots_profile
+    ON serenity_profile_snapshots (profile_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS serenity_feedback_events (
+    id TEXT PRIMARY KEY,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    value TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_serenity_feedback_target
+    ON serenity_feedback_events (target_type, target_id);
 """
 
 

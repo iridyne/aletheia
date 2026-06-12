@@ -286,3 +286,74 @@ class SerenityPostMortem(BaseModel):
     summary: str
     created_by: str = "system"
     created_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityResearchRun(BaseModel):
+    id: str = Field(default_factory=new_id)
+    trigger_type: str = "scheduled"
+    mode: str = "standard"
+    status: str = "queued"
+    stage: str | None = None
+    parent_run_id: str | None = None
+    idempotency_key: str | None = None
+    profile_snapshot_id: str | None = None
+    brief_snapshot: str | None = None
+    focus_theme_id: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    next_retry_at: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    error_stage: str | None = None
+    retry_count: int = 0
+    model_used: str | None = None
+    token_usage: str = "{}"
+    artifact_counts: str = '{"themes":0,"opportunities":0,"evidence":0,"claims":0}'
+    metadata: str = "{}"
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityRunEvent(BaseModel):
+    id: str = Field(default_factory=new_id)
+    run_id: str
+    event_type: str
+    stage: str | None = None
+    status: str | None = None
+    message: str | None = None
+    payload: str = "{}"
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityUserProfile(BaseModel):
+    id: str = Field(default_factory=new_id)
+    include_topics: str = "[]"
+    exclude_topics: str = "[]"
+    include_assets: str = "[]"
+    exclude_assets: str = "[]"
+    market_types: str = "[]"
+    time_horizon: str | None = None
+    risk_bias: str | None = None
+    source_preferences: str = "[]"
+    raw_notes: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityProfileSnapshot(BaseModel):
+    id: str = Field(default_factory=new_id)
+    profile_id: str | None = None
+    run_id: str | None = None
+    snapshot: str = "{}"
+    raw_brief: str | None = None
+    parser_version: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityFeedbackEvent(BaseModel):
+    id: str = Field(default_factory=new_id)
+    target_type: str
+    target_id: str
+    action: str
+    value: str = "{}"
+    created_at: str = Field(default_factory=_utcnow)

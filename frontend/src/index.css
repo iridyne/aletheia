@@ -483,6 +483,71 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
   margin: var(--space-3) 0;
 }
 
+/* ---------- Serenity Workbench ---------- */
+.lens-engine-status {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.95rem;
+}
+.lens-status-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2); margin-top: var(--space-2);
+}
+.lens-status-grid > div { display: flex; flex-direction: column; gap: 0.2rem; }
+.lens-status-label { color: var(--muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.lens-progress-bar {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-2); padding: 0.5rem 0.8rem;
+  background: var(--surface-2); border-radius: var(--radius);
+}
+.lens-tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-3); margin-top: var(--space-2);
+}
+.lens-tab {
+  padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;
+  color: var(--muted); font-weight: 500; border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.lens-tab:hover { color: var(--fg); }
+.lens-tab-active { color: var(--accent); border-bottom-color: var(--accent); }
+.lens-brief-input {
+  width: 100%; min-height: 60px; resize: vertical;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 0.6rem 0.8rem;
+  font: inherit; color: var(--fg);
+}
+.lens-brief-options {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin-top: var(--space-2); flex-wrap: wrap;
+}
+.lens-brief-options label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+.lens-theme-cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+.lens-theme-card {
+  background: var(--surface-2); border-radius: var(--radius);
+  padding: var(--space-3); border: 1px solid var(--border);
+}
+.lens-theme-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; }
+.lens-theme-card p { color: var(--muted); margin: 0.2rem 0; font-size: 0.9rem; }
+.lens-theme-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; flex-wrap: wrap; }
+.lens-theme-actions button { font-size: 0.78rem; padding: 0.2rem 0.5rem; }
+.lens-run-meta p { margin: 0.2rem 0; }
+.lens-events-log { display: flex; flex-direction: column; gap: 0.3rem; max-height: 300px; overflow-y: auto; }
+.lens-event-row { display: flex; align-items: center; gap: var(--space-2); font-size: 0.88rem; }
+.lens-event-time { font-size: 0.78rem; color: var(--muted); min-width: 120px; }
+.lens-profile-display p { margin: 0.2rem 0; }
+.lens-parse-preview { margin-top: var(--space-3); }
+.lens-parse-preview pre {
+  background: var(--bg); padding: var(--space-2);
+  border-radius: var(--radius); overflow-x: auto; font-size: 0.82rem;
+}
+.lens-warnings { margin-top: var(--space-2); }
+.lens-distribution { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.3rem; }
+tr.selected-row { background: var(--surface-2); }
+.error-text { color: var(--red, #e55); font-size: 0.88rem; }
+
 /* ---------- Clickable row ---------- */
 tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: var(--surface-2); }
