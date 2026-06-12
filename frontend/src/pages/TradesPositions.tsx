@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
-import type { Order, Position, PortfolioSummary } from '../types'
+import type { Order, Position, PortfolioSummary, ReconcileItem } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import AccountSnapshot from '../components/AccountSnapshot'
@@ -77,6 +77,7 @@ export default function TradesPositions() {
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   const { data: orders = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
+  const { data: reconciliation } = useQuery({ queryKey: ['positions-reconciliation'], queryFn: api.getPositionsReconciliation })
   const [sel, setSel] = useState<Selection>(null)
   useDecimals() // re-render tables when the display-decimals setting changes
 
@@ -119,11 +120,22 @@ export default function TradesPositions() {
         ))
       )}
 
+      {/* ACCOUNT RECONCILIATION — positions on the exchange that Aletheia did not open,
+          plus locally-open positions the exchange no longer has. Discovery only here;
+          adoption / close are separate, gated actions (later phases). */}
+      <ReconciliationCard
+        external={reconciliation?.external ?? []}
+        orphaned={reconciliation?.orphaned ?? []}
+        syncStatus={reconciliation?.sync_status}
+      />
+
       {exposure && Object.keys(exposure).length > 0 && (
         <div className="card">
           <h4 className="blotter-group-label">Exposure by Symbol</h4>
           <p className="text-muted text-sm" style={{ marginTop: 0 }}>
-            aletheia-managed open notional · exchange sync pending (local view may drift from the exchange)
+            {reconciliation?.sync_status === 'ok' || reconciliation?.sync_status === 'stale'
+              ? 'Open notional from the live exchange account view.'
+              : 'aletheia-managed open notional · exchange sync unavailable (local view may drift from the exchange)'}
           </p>
           <table>
             <tbody>
@@ -175,6 +187,78 @@ export default function TradesPositions() {
   )
 }
 
+function ReconciliationCard({
+  external,
+  orphaned,
+  syncStatus,
+}: {
+  external: ReconcileItem[]
+  orphaned: ReconcileItem[]
+  syncStatus?: string
+}) {
+  // Nothing to surface when there is no drift and the sync is healthy.
+  if (external.length === 0 && orphaned.length === 0) return null
+
+  return (
+    <div className="card">
+      <div className="blotter-section-head" style={{ marginTop: 0 }}>
+        <h4 className="blotter-group-label" style={{ marginBottom: 0 }}>Account Reconciliation</h4>
+        {external.length > 0 && <span className="badge badge-amber">{external.length} unmanaged</span>}
+        {orphaned.length > 0 && <span className="badge badge-muted">{orphaned.length} orphaned</span>}
+      </div>
+
+      {external.length > 0 && (
+        <>
+          <p className="text-muted text-sm" style={{ marginTop: 8, marginBottom: 4 }}>
+            On the exchange but <strong>not opened by Aletheia</strong> — adoption candidates.
+            {syncStatus === 'stale' && ' (exchange view is stale)'}
+          </p>
+          <table>
+            <thead>
+              <tr><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>uPnL</th></tr>
+            </thead>
+            <tbody>
+              {external.map((i, idx) => (
+                <tr key={`ext-${i.symbol}-${i.direction}-${idx}`}>
+                  <td className="mono">{i.symbol}</td>
+                  <td>{i.direction}</td>
+                  <td className="mono">{fmtNum(i.exchange?.quantity)}</td>
+                  <td className="mono">{fmtNum(i.exchange?.entry_price)}</td>
+                  <td>{pnlCell(i.exchange?.unrealized_pnl)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {orphaned.length > 0 && (
+        <>
+          <p className="text-muted text-sm" style={{ marginTop: 12, marginBottom: 4 }}>
+            Open in Aletheia's books but <strong>no longer on the exchange</strong> — reconcile-close candidates.
+          </p>
+          <table>
+            <thead>
+              <tr><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Mode</th></tr>
+            </thead>
+            <tbody>
+              {orphaned.map((i, idx) => (
+                <tr key={`orph-${i.symbol}-${i.direction}-${idx}`}>
+                  <td className="mono">{i.symbol}</td>
+                  <td>{i.direction}</td>
+                  <td className="mono">{fmtNum(i.local?.quantity)}</td>
+                  <td className="mono">{fmtNum(i.local?.entry_price)}</td>
+                  <td>{i.local?.execution_mode}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
 function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) => void }) {
   return (
     <>
@@ -214,6 +298,9 @@ function PositionDetail({ position }: { position: Position }) {
         <DrawerField label="Direction" value={position.direction} />
         <DrawerField label="Mode" value={position.execution_mode} />
         <DrawerField label="Status" value={<StatusBadge status={position.status} />} />
+        {position.source === 'adopted' && (
+          <DrawerField label="Source" value={<span className="badge badge-amber">adopted</span>} />
+        )}
       </DrawerSection>
       <DrawerSection label="Pricing">
         <DrawerField label="Quantity" value={position.quantity} mono />

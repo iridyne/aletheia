@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS trade_proposals (
     execution_mode TEXT NOT NULL DEFAULT 'paper_internal',
     agent_rationale TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
+    source TEXT NOT NULL DEFAULT 'native',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -111,6 +112,7 @@ CREATE TABLE IF NOT EXISTS orders (
     execution_mode TEXT NOT NULL,
     exchange_order_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
+    source TEXT NOT NULL DEFAULT 'native',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     filled_at TEXT
 );
@@ -143,6 +145,7 @@ CREATE TABLE IF NOT EXISTS positions (
     stop_price REAL,
     take_profit_price REAL,
     close_reason TEXT,
+    source TEXT NOT NULL DEFAULT 'native',
     opened_at TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at TEXT
 );
@@ -597,6 +600,13 @@ _ADDITIVE_COLUMNS = [
     ("close_reason", "positions", "TEXT"),
     ("proposal_id", "positions", "TEXT"),
     ("order_id", "positions", "TEXT"),
+    # Provenance of the causal-chain row: 'native' (Aletheia opened it normally) or
+    # 'adopted' (reconciler adopted a pre-existing/external exchange position into the
+    # local books with a synthetic-but-honest chain). Amends trust §1.1 — see
+    # docs/DECISIONS.md (2026-06-12) and position_reconciler.adopt_position.
+    ("source", "positions", "TEXT DEFAULT 'native'"),
+    ("source", "orders", "TEXT DEFAULT 'native'"),
+    ("source", "trade_proposals", "TEXT DEFAULT 'native'"),
     # Numeric calibration the LLM emits alongside the categorical confidence.
     # 0..100; NULL means the model didn't supply one (older rows or bad output).
     ("confidence_score", "opportunities", "INTEGER"),

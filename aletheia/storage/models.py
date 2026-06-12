@@ -77,6 +77,10 @@ class TradeProposal(BaseModel):
     execution_mode: str = "paper_internal"
     agent_rationale: str | None = None
     status: str = "pending"
+    # Provenance: "native" (Aletheia generated it) or "adopted" (synthetic chain the
+    # reconciler built to bring a pre-existing/external exchange position under
+    # management). See docs/DECISIONS.md (2026-06-12) / position_reconciler.
+    source: str = "native"
     created_at: str = Field(default_factory=_utcnow)
 
 
@@ -104,6 +108,7 @@ class Order(BaseModel):
     execution_mode: str
     exchange_order_id: str | None = None
     status: str = "pending"
+    source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     created_at: str = Field(default_factory=_utcnow)
     filled_at: str | None = None
 
@@ -138,6 +143,7 @@ class Position(BaseModel):
     stop_price: float | None = None
     take_profit_price: float | None = None
     close_reason: str | None = None
+    source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     opened_at: str = Field(default_factory=_utcnow)
     closed_at: str | None = None
 

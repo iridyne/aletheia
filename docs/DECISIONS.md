@@ -1,6 +1,66 @@
 # Decisions
 
-## 2026-06-10 - Operator Layer 采用 dual-process: Python truth layer + Node Operator Shell
+## 2026-06-12 - 修订 trust §1.1:外部仓位可经"合成诚实因果链"纳入本地账本(adopted)
+
+### Context
+
+Aletheia 原先只管理**自己开的**仓位(proposal → risk → order → position 完整因果链)。
+交易所账户上**先于 Aletheia 存在**或在系统外开出的仓位,对管理层完全不可见:`exchange_sync`
+只读地把它们拉进缓存,仅向 UI 暴露一个 drift *计数*。当前 demo 账户就坐实了这个缺口——
+2 个外部仓位(BTC 空、SOL 空 0.2)持续产生浮亏,却没有止损、没有策略、无人管理。
+
+项目所有者(2026-06-12)做出明确立场决策:**Aletheia 一旦启动接管账户,人就很难再与 AI
+并行管理仓位,因此账户上的全部仓位(含外部仓位)都应统一交由 AI agent 管理**("接管即纳管")。
+
+这与旧的 trust §1.1 铁律直接冲突——原铁律规定"外部仓位**永不**写入本地 positions 表,因为
+它们没有 proposal 因果链回链,会破坏因果链诚实性",并有一条红线测试
+`test_external_positions_not_written_to_local_table` 强制执行。
+
+### Decision
+
+修订 trust §1.1:外部仓位**可以**进入本地 `positions` 表,但**必须**经由一条
+**合成但诚实**的因果链被"纳管(adopt)":
+
+1. 新增 `source` 列(`positions` / `orders` / `trade_proposals`),取值 `native`(Aletheia
+   正常开出)或 `adopted`(reconciler 纳管外部仓位时合成)。已有行一律 `native`。
+2. `position_reconciler.adopt_position()` 在单个 `transaction()` 内合成
+   proposal → order(filled) → position,全部 `source="adopted"`,position 的
+   `proposal_id`/`order_id` 回链非空,入场价/数量取自交易所(真相),不伪造。
+3. 合成的 proposal/order 语义上断言的是**"Aletheia 纳管了一个既存仓位"**,**不是**
+   "Aletheia 决定开这笔交易"——`source=adopted` 与 rationale 文案显式说明这一点。
+4. 纳管仓位的 `execution_mode` 由账户模式映射:demo → `bitget_demo`,live →
+   `bitget_live_limited`。这一个映射点同时决定了管理策略:`position_manager` 自动管理
+   `bitget_demo`、**跳过** `bitget_live_limited`——**live 仍是人工专属,由架构强制保证**。
+5. 红线测试 `test_external_positions_not_written_to_local_table` 改写为
+   `test_adopted_positions_carry_synthetic_chain`:断言纳管行带 `source="adopted"` 且
+   回链非空(从"禁止入表"改为"入表必须带诚实链")。
+
+### Reasoning
+
+- 并行的人+AI 仓位管理在实践中不可行;单一权威比双头管理更安全(符合优先级
+  State consistency > Safety)。
+- 旧铁律的**目的**是保持因果链诚实——而非永久禁止纳管。合成诚实因果链同时满足两者:
+  外部仓位进入管理,且每个仓位仍有完整、如实标注的链,可审计。
+- demo 自动 / live 人工 的拆分不靠散落的 if 判断,而由 `execution_mode` 一处如实设置
+  后被既有的 `position_manager` 守卫(`_PAPER_MODES`)免费强制执行,改动面最小。
+- live 真实资金的纳管与平仓**始终需人工确认**,当前绝不自动;但架构预留了清晰的、
+  默认关闭的接缝,未来 `Full` 模式 + live-unlock 下可由顶层 LLM agents 接管 live(P4)。
+
+### 补充决策(2026-06-12):demo 自动纳管任务 **默认开启**
+
+项目所有者明确要求:Phase 3 的 demo 自动纳管定时任务 **默认开启**(`auto_adopt_enabled`
+默认 `true`),而非默认关闭后手动启用。理由:所有者的立场是"接管即纳管,全账户统一交由
+AI 管理";若默认关闭,外部仓位会被静默地继续无人管理,正好违背初衷。该开关只作为
+**关闭行为的 kill-switch 存在**,不是"选择性加入"的开关。
+
+> ⚠️ **行为警告(务必知晓)**:此任务默认开启意味着——一旦 gateway 在 demo 模式下启动,
+> 账户上**任何系统外的 demo 仓位都会被自动纳管**,随即 `position_manager` 会按
+> `cfg.trading.default_stop_loss_pct` / `default_take_profit_pct` 给它们加默认止损/止盈,
+> 并可能据此**自动平仓**(平仓会下真实 demo 单)。这是"接管即纳管"的预期行为,但它是系统
+> 第一次对真实 demo 仓位**主动下手**而非仅观察。Live 仓位不受影响(始终人工确认)。
+> 要临时停用,把 `auto_adopt_enabled` 设为 `false`。
+
+
 
 ### Context
 

@@ -307,6 +307,7 @@ export const api = {
   getProposalRiskDecision: (id: string) => fetchJson<{ proposal_id: string; decision: any }>(`/proposals/${id}/risk-decision`),
   getTrades: () => fetchJson<any[]>('/trades'),
   getPositions: () => fetchJson<any[]>('/positions'),
+  getPositionsReconciliation: () => fetchJson<import('../types').PositionsReconciliation>('/positions/reconciliation'),
   getPortfolio: () => fetchJson<Record<string, any>>('/portfolio'),
   getStrategies: () => fetchJson<any[]>('/strategies'),
   promoteStrategy: (id: string, target_state: string) => post(`/strategies/${id}/promote`, { target_state }),

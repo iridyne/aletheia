@@ -134,6 +134,14 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
     final_positions_count = len(positions)
     final_exposure = exposure
     final_today_pnl = total_unrealized + total_today_realized
+    # The headline "total value". Defaults to locally-managed notional, but is
+    # overridden with real account equity when the exchange cache is live — so the
+    # hero number (and the stored snapshot series) is true account value, not a
+    # notional sum that jumps by one position's size on every fill. When no
+    # exchange view is available it degrades to notional; callers read
+    # `exchange_sync_status` to know which meaning applies.
+    final_total_value = total_notional
+    exchange_external_summary: list = []
     try:
         from aletheia.portfolio import exchange_sync
         cached = exchange_sync.get_cached_state()
@@ -141,9 +149,22 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
         if cached is not None and sync_status in ("ok", "stale"):
             exchange_equity_usdt = cached.get("equity_usdt")
             exchange_state_age_sec = cached.get("age_seconds")
-            local_open = len(positions)
-            ext_total = int(cached.get("open_positions_count") or 0)
-            exchange_external_positions = max(0, ext_total - local_open)
+            # Real account equity is the authoritative total value when present.
+            if exchange_equity_usdt is not None:
+                final_total_value = float(exchange_equity_usdt)
+            # Accurate external-position classification via a pair-based (symbol,
+            # direction) join — the crude `exchange_count - local_count` count is
+            # wrong under hedge mode (a symbol can be long AND short at once). The
+            # back-compat int is derived from the precise list below.
+            try:
+                from aletheia.portfolio.position_reconciler import classify_positions
+                _recon = classify_positions()
+                exchange_external_summary = [i.to_dict() for i in _recon.external]
+                exchange_external_positions = len(_recon.external)
+            except Exception:
+                local_open = len(positions)
+                ext_total = int(cached.get("open_positions_count") or 0)
+                exchange_external_positions = max(0, ext_total - local_open)
             exchange_asset_breakdown = cached.get("asset_breakdown") or []
 
             # Override PnL/exposure metrics with real exchange data when available.
@@ -166,7 +187,7 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
         sync_status = "error"
 
     return {
-        "total_value_usdt": round(total_notional, 4),
+        "total_value_usdt": round(final_total_value, 4),
         "unrealized_pnl": round(final_unrealized, 4),
         "realized_pnl": round(total_realized, 4),
         "today_pnl": round(final_today_pnl, 4),
@@ -178,6 +199,7 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
         "exchange_equity_usdt": exchange_equity_usdt,
         "exchange_state_age_sec": exchange_state_age_sec,
         "exchange_external_positions": exchange_external_positions,
+        "exchange_external_summary": exchange_external_summary,
         "exchange_sync_status": sync_status,
         "exchange_asset_breakdown": exchange_asset_breakdown,
     }

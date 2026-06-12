@@ -70,6 +70,7 @@ export interface Position {
   stop_price: number | null
   take_profit_price: number | null
   close_reason: string | null
+  source?: string  // "native" | "adopted"
   opened_at: string
   closed_at: string | null
 }
@@ -153,6 +154,35 @@ export interface PortfolioSummary {
   unrealized_pnl: number | null
   realized_pnl: number | null
   exposure_by_symbol: Record<string, number> | null
+}
+
+// One exchange position as reported by the live account view.
+export interface ExchangePosition {
+  symbol: string
+  side: string
+  quantity: number
+  entry_price: number
+  unrealized_pnl: number
+  leverage?: number | null
+  mark_price?: number
+}
+
+// One classified position from /api/positions/reconciliation.
+export interface ReconcileItem {
+  symbol: string
+  direction: string
+  classification: 'managed' | 'external' | 'orphaned'
+  local: Position | null
+  exchange: ExchangePosition | null
+  qty_drift: number | null
+}
+
+export interface PositionsReconciliation {
+  sync_status: 'ok' | 'stale' | 'unconfigured' | 'error'
+  counts: { managed: number; external: number; orphaned: number }
+  managed: ReconcileItem[]
+  external: ReconcileItem[]
+  orphaned: ReconcileItem[]
 }
 
 export interface RiskStatus {

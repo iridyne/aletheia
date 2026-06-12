@@ -37,9 +37,10 @@ class _FakeBalance:
 
 
 class _FakePosition:
-    def __init__(self, symbol="ETHUSDT", quantity=1.0, unrealized_pnl=12.5):
-        self.symbol = symbol; self.side = "long"; self.quantity = quantity
+    def __init__(self, symbol="ETHUSDT", quantity=1.0, unrealized_pnl=12.5, side="long"):
+        self.symbol = symbol; self.side = side; self.quantity = quantity
         self.entry_price = 3000.0; self.unrealized_pnl = unrealized_pnl; self.leverage = 2
+        self.mark_price = 3010.0
 
 
 def _patch_client(monkeypatch, *, balances=None, positions=None, orders=None,
@@ -156,8 +157,10 @@ def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):
     assert out["exchange_equity_usdt"] == 10000.0
     assert out["exchange_sync_status"] == "ok"
     assert out["exchange_state_age_sec"] is not None
-    # Hero number for managed notional is still present (UI shows both).
-    assert "total_value_usdt" in out
+    # total_value_usdt is the authoritative account equity when the exchange
+    # view is live — not the locally-managed notional. With no local positions
+    # the notional is 0, so this proves the override (not just a fallthrough).
+    assert out["total_value_usdt"] == 10000.0
 
 
 def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):
@@ -206,11 +209,35 @@ async def test_exchange_account_endpoint(tmp_path, monkeypatch):
     assert body["state"]["equity_usdt"] == 10000.0
 
 
-# --- red line: external positions never get written into the local positions table ---
+@pytest.mark.anyio
+async def test_positions_reconciliation_endpoint(tmp_path, monkeypatch):
+    """GET /api/positions/reconciliation classifies external positions the system
+    did not open."""
+    setup_env(tmp_path, monkeypatch)
+    es = _patch_client(monkeypatch,
+                       positions=[_FakePosition(symbol="BTCUSDT", side="short")])
+    es.sync_exchange_account()
 
-def test_external_positions_not_written_to_local_table(tmp_path, monkeypatch):
-    """trust §1.1: external positions have no proposal back-link, so they MUST stay
-    out of the local positions table to keep the causal chain honest."""
+    from httpx import AsyncClient, ASGITransport
+    from aletheia.server.app import app
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get("/api/positions/reconciliation")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sync_status"] == "ok"
+    assert body["counts"]["external"] == 1
+    assert body["external"][0]["symbol"] == "BTC/USDT"
+    assert body["external"][0]["direction"] == "short"
+
+
+# --- trust §1.1 (AS AMENDED 2026-06-12): sync stays read-only; adoption carries an
+# honest synthetic chain. ---
+
+def test_sync_alone_never_writes_local_positions(tmp_path, monkeypatch):
+    """exchange_sync itself is purely read-only — pulling the exchange view must NOT
+    write anything into the local positions table. Only an explicit adopt_position
+    call does that (see the adoption test below)."""
     setup_env(tmp_path, monkeypatch)
     es = _patch_client(monkeypatch,
                        positions=[_FakePosition(), _FakePosition(symbol="ETHUSDT")])
@@ -218,3 +245,62 @@ def test_external_positions_not_written_to_local_table(tmp_path, monkeypatch):
 
     # Local positions table must remain untouched by the sync.
     assert repo.list_positions() == []
+
+
+def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
+    """trust §1.1 amendment: an external position MAY enter the local table, but only
+    via adopt_position, which must build a complete `source="adopted"` causal chain
+    (proposal → order → position) with non-null back-links — keeping the chain honest
+    instead of forbidding entry. See docs/DECISIONS.md (2026-06-12)."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    ex = {"symbol": "BTCUSDT", "side": "short", "quantity": 0.0004,
+          "entry_price": 61524.3, "unrealized_pnl": -0.87, "mark_price": 63713.9}
+    result = adopt_position(ex, "demo")
+
+    pos = repo._select_one("positions", result["position_id"])
+    order = repo._select_one("orders", result["order_id"])
+    prop = repo._select_one("trade_proposals", result["proposal_id"])
+
+    # The whole chain is tagged adopted, and the back-links are non-null + consistent.
+    assert pos["source"] == "adopted"
+    assert order["source"] == "adopted"
+    assert prop["source"] == "adopted"
+    assert pos["proposal_id"] == prop["id"]
+    assert pos["order_id"] == order["id"]
+    # Honest mapping: demo account → bitget_demo (so position_manager auto-manages it).
+    assert pos["execution_mode"] == "bitget_demo"
+    # Entry/qty come from the exchange truth, not fabricated.
+    assert pos["entry_price"] == 61524.3
+    assert pos["quantity"] == 0.0004
+    assert order["status"] == "filled"
+
+
+def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypatch):
+    """An adopted LIVE position must get execution_mode=bitget_live_limited, which
+    position_manager skips — so live stays human-only by construction."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.portfolio import position_manager as pm
+
+    ex = {"symbol": "ETHUSDT", "side": "long", "quantity": 0.5,
+          "entry_price": 3000.0, "unrealized_pnl": 5.0, "mark_price": 3010.0}
+    result = adopt_position(ex, "live")
+    pos = repo._select_one("positions", result["position_id"])
+    assert pos["execution_mode"] == "bitget_live_limited"
+    assert pos["execution_mode"] not in pm._PAPER_MODES  # position_manager will skip it
+
+
+def test_adopt_refuses_zero_entry_or_quantity(tmp_path, monkeypatch):
+    """Never synthesize a chain off a missing size/entry — that would fabricate the
+    very causal facts the design exists to keep honest."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.position_reconciler import adopt_position
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        adopt_position({"symbol": "BTCUSDT", "side": "short", "quantity": 0.001,
+                        "entry_price": 0.0}, "demo")
+    with _pytest.raises(ValueError):
+        adopt_position({"symbol": "BTCUSDT", "side": "short", "quantity": 0.0,
+                        "entry_price": 60000.0}, "demo")

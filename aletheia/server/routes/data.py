@@ -646,6 +646,20 @@ async def get_exchange_account():
     return {"status": status, "state": state}
 
 
+@router.get("/positions/reconciliation")
+async def get_positions_reconciliation():
+    """Classify every account position as managed / external / orphaned.
+
+    Read-only. Joins the cached exchange position view against locally-tracked open
+    positions so the UI/operator can see which positions Aletheia did NOT open
+    (external — adoption candidates) and which it tracks but the exchange no longer
+    has (orphaned — reconcile-close candidates). Never hits Bitget synchronously.
+    """
+    _ensure_db()
+    from aletheia.portfolio.position_reconciler import classify_positions
+    return classify_positions().to_dict()
+
+
 @router.get("/audit/events")
 async def get_audit_events(limit: int = 100):
     _ensure_db()

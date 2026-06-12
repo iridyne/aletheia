@@ -1,5 +1,46 @@
 # Development Log
 
+## 2026-06-12 — 账户级仓位发现 + 纳管(Phase 1-2 落地,Phase 3-4 设计在册)
+
+**背景**:所有者立场——Aletheia 启动接管账户后,人难以再与 AI 并行管仓,故全账户仓位
+(含系统外开出的)应统一交由 AI 统一管理("接管即纳管")。这是把 ROADMAP Phase 6 的
+"live-read reconciliation / position-mismatch"思想**提前、且以 demo 优先**落地。
+
+**修复(顺带,先于一切)**:`total_value_usdt` 之前返回持仓名义市值(口径错,会随每笔
+fill 跳变),现在交易所缓存可用时用真实账户权益覆盖,与同一 summary 里其它字段一致
+(`pnl.py`)。另修 `client.get_positions()`:Bitget v2 mix all-position 的入场价字段是
+`openPriceAvg`,旧代码读的 `averageOpenPrice` 根本不存在 → 一直静默为 0;现已读对,并
+补 `markPrice`/`leverage`。无真实入场价就无法合成诚实因果链,这是纳管的前置。
+
+**Phase 1 — 发现(只读,已完成)**:新增 `portfolio/position_reconciler.py`
+`classify_positions()`,把交易所缓存仓位与本地 open 仓位按 `(canonical symbol, direction)`
+配对(hedge 模式下同标的多空并存,故必须按"对"匹配),分类为 managed / external / orphaned。
+新增 `GET /api/positions/reconciliation`;`compute_portfolio` 增 `exchange_external_summary`
+(并把旧的、hedge 模式下会算错的 external 计数改为按对精确)。前端 `TradesPositions.tsx`
+新增 "Account Reconciliation" 卡片(此前 drift 信号无任何前端消费者)。
+
+**Phase 2 — 纳管(已完成,改动受控)**:新增 `source` 列(`native`/`adopted`)到
+positions/orders/trade_proposals(CREATE TABLE + `_ADDITIVE_COLUMNS` 双覆盖)。
+`adopt_position()` 在单事务内合成 proposal→order(filled)→position 完整链,全部
+`source="adopted"`,入场价/数量取自交易所,零入场价/零数量则拒绝纳管(不伪造)。关键设计:
+纳管仓位的 `execution_mode` 按账户模式映射(demo→`bitget_demo`,live→`bitget_live_limited`),
+于是 `position_manager` 自动管理 demo、跳过 live——**demo 自动 / live 人工的拆分由
+`execution_mode` 一处如实设置后被既有守卫免费强制**,无需特殊判断。
+
+**治理(trust §1.1 修订)**:旧铁律"外部仓位永不入本地表"修订为"可入表,但必须带
+`source=adopted` 的诚实合成链"。红线测试 `test_external_positions_not_written_to_local_table`
+拆为 `test_sync_alone_never_writes_local_positions`(sync 仍只读)+
+`test_adopted_positions_carry_synthetic_chain`(纳管必带诚实链)。决策记录见 DECISIONS.md。
+
+**Phase 3-4(设计在册,未实现)**:P3 = 定时 reconcile 任务(demo 自动纳管 + 孤儿平仓,
+**默认开启**,见 DECISIONS.md 行为警告)、operator 命令(`reconcile_positions`/`adopt_position`/
+`close_position`,live 需人工确认)、手动触发 API。P4 = live 人工确认平仓路径
+(`close_live_position`,过 Execution Gateway)+ Full 模式接缝(默认关闭)。
+
+**测试**:`uv run pytest -q` → **777 passed**。前端 `tsc` 干净,bundle 已重建。
+
+---
+
 ## 2026-06-10 — CLI 分层 + 运营命令软弃用（人类交互收口到 Web）
 
 **背景**：评估是否完全去掉 CLI、人类交互全走 Web。结论：不去掉，分三层。

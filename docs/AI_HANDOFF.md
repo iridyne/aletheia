@@ -7,7 +7,43 @@
 
 ## Last Updated
 
-2026-06-11 (Operator runtime 已补到 enabled extension slash dispatch + extension sandbox 第一层 + inspectable working-memory files + budgeted recovery folding + recovery-contract recent-error/heartbeat-intent fallback + staged queue review cadence + explicit 5-minute subsystem review tier + `market_scan_refresh_due`/`run_market_scan` + `failed_agent_rerun_due`/`rerun_failed_agent_task` + `daily_review_refresh_due`/`create_daily_review` + `portfolio_snapshot_refresh_due`/`run_portfolio_snapshot`/`portfolio_agent` + `pause_paper_strategy_due`/`pause_paper_strategy` + `strategy_design_due`/`run_strategy_design` + `risk_critique_due`/`run_risk_critique` + `extension_enablement_proposal_due`/`propose_extension_enablement` + permission-aware task materialization + persisted active-branch heartbeat/recovery truth + active-branch-frozen session parent inheritance + active-branch-outside-fetch-window detail recovery + session-targeted multi-turn command continuation + session-kind-scoped continuation/preview context + persisted branch context/result trace folded into continuation summaries + parent-branch trace folded into nested continuation summaries + nested session-tree branch create/select + descendant-branch recovery folding + user-driven branch workspace create/select + branch bootstrap context seeding + strategy proposal ladder 扩到 `paper_passed -> live_candidate` / `live_candidate -> live_limited` + authoritative command preview + structured result cards / command trace + short-lived operator mode truth(`Repairing/Trading/Reviewing/Dreaming` 不再在同一 loop 内被统一抹回 `Observing`，同时保持 recovery 不直接进 `Trading`)；文档同步到当前实现边界)
+2026-06-12 (账户级仓位发现 + 纳管 Phase 1-2 落地:`total_value_usdt` 改用真实权益、
+修 `get_positions` 入场价字段 `openPriceAvg`、`position_reconciler.classify_positions/adopt_position`、
+`source` 列与 trust §1.1 修订、demo 自动纳管默认开启决策在册;777 passed。详见下方条目与 DEVLOG。)
+
+## Recent Change (账户级仓位发现 + 纳管:Phase 1-2 — 2026-06-12)
+
+**1. 背景与立场**:
+- 所有者决策:Aletheia 接管账户后,全账户仓位(含系统外开出的)统一交由 AI 管理("接管即纳管")。
+- 这把 ROADMAP Phase 6 的 live-read reconciliation / position-mismatch 思想提前、以 demo 优先落地。
+
+**2. 顺带修的两个真实 bug**:
+- `total_value_usdt` 之前是持仓名义市值(口径错,随每笔 fill 跳变);现在交易所缓存可用时
+  用真实账户权益覆盖,与同一 summary 其它字段一致(`portfolio/pnl.py`)。
+- `client.get_positions()` 读的入场价字段 `averageOpenPrice` 在 Bitget v2 mix all-position
+  里**不存在** → 一直静默为 0;真实字段是 `openPriceAvg`。现已读对,并补 `markPrice`/`leverage`。
+  无真实入场价就无法合成诚实因果链,这是纳管前置。
+
+**3. Phase 1 发现(只读)**:`portfolio/position_reconciler.py` `classify_positions()` 把交易所
+缓存仓位与本地 open 仓位按 `(canonical symbol, direction)` 配对(hedge 模式按"对"匹配),分类
+managed/external/orphaned;`GET /api/positions/reconciliation`;`compute_portfolio` 增
+`exchange_external_summary`;前端 `TradesPositions.tsx` 新增 Account Reconciliation 卡片。
+
+**4. Phase 2 纳管(改动受控)**:`source` 列(native/adopted)加到 positions/orders/trade_proposals;
+`adopt_position()` 单事务合成 proposal→order(filled)→position 完整 `source=adopted` 链,入场价
+取自交易所,零值拒绝纳管;`execution_mode` 按账户模式映射(demo→bitget_demo / live→
+bitget_live_limited),使 `position_manager` 自动管 demo、跳过 live。
+
+**5. 治理(trust §1.1 修订)**:旧"外部仓位永不入表"→"可入表但必带诚实合成链";红线测试拆为
+`test_sync_alone_never_writes_local_positions` + `test_adopted_positions_carry_synthetic_chain`;
+DECISIONS.md 记两条(含 demo 自动纳管**默认开启**的行为警告)。
+
+**6. Phase 3-4 设计在册未实现**:P3 定时 reconcile 任务(demo 自动纳管默认开启)+ operator
+命令(live 需人工确认)+ 手动触发;P4 live 人工确认平仓 + Full 模式接缝(默认关闭)。
+
+**7. 验证**:`uv run pytest -q` → **777 passed**;前端 `tsc` 干净,bundle 重建。**尚未 commit**。
+
+## (历史) 2026-06-11 (Operator runtime 已补到 enabled extension slash dispatch + extension sandbox 第一层 + inspectable working-memory files + budgeted recovery folding + recovery-contract recent-error/heartbeat-intent fallback + staged queue review cadence + explicit 5-minute subsystem review tier + `market_scan_refresh_due`/`run_market_scan` + `failed_agent_rerun_due`/`rerun_failed_agent_task` + `daily_review_refresh_due`/`create_daily_review` + `portfolio_snapshot_refresh_due`/`run_portfolio_snapshot`/`portfolio_agent` + `pause_paper_strategy_due`/`pause_paper_strategy` + `strategy_design_due`/`run_strategy_design` + `risk_critique_due`/`run_risk_critique` + `extension_enablement_proposal_due`/`propose_extension_enablement` + permission-aware task materialization + persisted active-branch heartbeat/recovery truth + active-branch-frozen session parent inheritance + active-branch-outside-fetch-window detail recovery + session-targeted multi-turn command continuation + session-kind-scoped continuation/preview context + persisted branch context/result trace folded into continuation summaries + parent-branch trace folded into nested continuation summaries + nested session-tree branch create/select + descendant-branch recovery folding + user-driven branch workspace create/select + branch bootstrap context seeding + strategy proposal ladder 扩到 `paper_passed -> live_candidate` / `live_candidate -> live_limited` + authoritative command preview + structured result cards / command trace + short-lived operator mode truth(`Repairing/Trading/Reviewing/Dreaming` 不再在同一 loop 内被统一抹回 `Observing`，同时保持 recovery 不直接进 `Trading`)；文档同步到当前实现边界)
 
 ## Recent Change (Authoritative active branch now recovers its own detail even outside the default recent-branch window — 2026-06-11 第四十六段)
 

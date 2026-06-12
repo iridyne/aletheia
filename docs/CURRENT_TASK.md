@@ -32,6 +32,21 @@
 计时作废)。唯一例外是"观察形态本身升级"(如 paper_internal → bitget_demo),
 那是主动的更高保真度替换,不是噪音污染——升级落地后新窗口内仍守此律。
 
+## 并行开发线:账户级仓位发现 + 纳管("接管即纳管")
+
+> 所有者立场决策:Aletheia 接管账户后全账户仓位(含系统外仓位)统一交由 AI 管理。
+> 设计与治理见 `docs/DECISIONS.md`(2026-06-12 两条),进度叙事见 `docs/DEVLOG.md`。
+> 这是把 ROADMAP Phase 6 的 reconciliation 思想提前、以 demo 优先落地。
+
+- **P1 发现(只读)** — 完成:`position_reconciler.classify_positions()` +
+  `GET /api/positions/reconciliation` + 前端 Account Reconciliation 卡片。
+- **P2 纳管(合成诚实因果链)** — 完成:`source` 列 + `adopt_position()`;trust §1.1 已修订。
+- **P3 定时任务 + operator 命令 + 手动触发** — 待实现。demo 自动纳管任务**默认开启**
+  (`auto_adopt_enabled` 默认 true,见 DECISIONS.md 行为警告);live 纳管/平仓需人工确认。
+- **P4 live 人工确认平仓 + Full 模式接缝** — 待实现(最敏感,触 `execution/`,最后做)。
+
+> **合并边界**:此线与 Operator Layer 同样受"合并 `master` 需 Phase 0 门全绿 + 显式授权"约束。
+
 ## 待办(下一步可做的事 — 不含"现在状态如何")
 
 1. **观测主线继续**:Phase 0 观察门仍以观测机为准;凡涉及"72h 跑到哪了 / 是否达标"的判断,

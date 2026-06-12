@@ -83,6 +83,7 @@ class Position:
     entry_price: float
     unrealized_pnl: float = 0.0
     leverage: int | None = None
+    mark_price: float = 0.0  # current exchange mark price (for honest valuation)
 
 
 class BitgetClient:
@@ -348,13 +349,19 @@ class BitgetClient:
         positions = []
         for p in data.get("data", []) or []:
             lev = p.get("leverage")
+            # Bitget v2 mix all-position reports the average open price under
+            # `openPriceAvg`. The pre-v2 field name `averageOpenPrice` does NOT
+            # exist in this response, so the old mapping silently produced 0.0 —
+            # kept as a defensive fallback only.
+            entry = p.get("openPriceAvg") or p.get("averageOpenPrice") or 0
             positions.append(Position(
                 symbol=p.get("symbol", ""),
                 side=p.get("holdSide", ""),
                 quantity=float(p.get("total", 0) or 0),
-                entry_price=float(p.get("averageOpenPrice", 0) or 0),
+                entry_price=float(entry or 0),
                 unrealized_pnl=float(p.get("unrealizedPL", 0) or 0),
                 leverage=int(lev) if lev not in (None, "") else None,
+                mark_price=float(p.get("markPrice", 0) or 0),
             ))
         return positions
 

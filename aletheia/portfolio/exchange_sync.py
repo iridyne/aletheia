@@ -6,9 +6,12 @@ positions, so the dashboard hero number was zero even when the real demo account
 held 10,000 USDT. This module fetches the truth and caches it.
 
 Governance:
-- READ-ONLY against the exchange. We never modify external positions, never place
-  orders here, never reconcile externals into the local positions table (they have
-  no proposal back-link, so they would violate trust §1.1).
+- READ-ONLY against the exchange. This module never modifies external positions and
+  never places orders. It also does not, by itself, write externals into the local
+  positions table. Adoption of an external position into the local books (trust §1.1,
+  AS AMENDED 2026-06-12) happens only via `position_reconciler.adopt_position`, which
+  builds a synthetic-but-honest `source="adopted"` causal chain — see docs/DECISIONS.md.
+  This module's job is purely to surface the truth so the reconciler can act on it.
 - DEGRADES HONESTLY. Missing creds → `unconfigured`. API error → `error` + last
   good cache stays available. Stale cache → `stale`. Never fakes a positive state.
 - CACHED. The HTTP API path reads cache only (no synchronous Bitget call); the
@@ -232,6 +235,8 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
                     "quantity": p.quantity,
                     "entry_price": p.entry_price,
                     "unrealized_pnl": float(p.unrealized_pnl or 0),
+                    "leverage": p.leverage,
+                    "mark_price": float(p.mark_price or 0),
                 }
                 for p in futures
             ]
