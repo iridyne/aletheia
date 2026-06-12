@@ -314,3 +314,113 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         "symbol": symbol,
         "direction": direction,
     }
+
+
+def reconcile_close_orphan(item: ReconcileItem) -> dict:
+    """Close an orphaned position (local open, exchange gone) via local bookkeeping.
+
+    Uses the last known price (current_price or entry_price) as exit. This is a
+    pure local close — no exchange call — same pattern as position_manager's
+    internal close path. Returns the close result dict from pnl.close_position.
+
+    Only call on DEMO orphans. Live orphans are alert-only (caller enforces).
+    """
+    from aletheia.portfolio.pnl import close_position
+
+    local = item.local
+    if local is None:
+        raise ValueError("reconcile_close_orphan: item has no local position")
+
+    position_id = local["id"]
+    exit_price = float(local.get("current_price") or local.get("entry_price") or 0)
+    if exit_price <= 0:
+        exit_price = float(local.get("entry_price") or 0)
+    if exit_price <= 0:
+        raise ValueError(
+            f"reconcile_close_orphan: cannot close {position_id} — no price available"
+        )
+
+    result = close_position(position_id, exit_price, reason="reconciled_gone")
+    logger.info(
+        "Reconcile-closed orphan %s %s %s @ %.6f (realized=%.4f)",
+        position_id, item.symbol, item.direction, exit_price,
+        result.get("realized_pnl", 0),
+    )
+    return result
+
+
+def run_reconcile(mode: str | None = None) -> dict:
+    """Full reconcile cycle: classify → auto-adopt externals → close orphans (demo).
+
+    Behavior depends on the exchange mode:
+      - demo: auto-adopt externals (if auto_adopt_enabled) + reconcile-close orphans.
+      - live: classify only + alert (never autonomous adoption or close).
+
+    Returns a summary dict suitable for agent-run outputs / API response.
+    """
+    from aletheia.config.loader import load_config
+    from aletheia.files.jsonl import write_audit
+
+    cfg = load_config()
+    account_mode = mode or cfg.exchange.mode
+
+    result = classify_positions(account_mode)
+    summary: dict = {
+        "account_mode": account_mode,
+        "sync_status": result.sync_status,
+        "counts": {
+            "managed": len(result.managed),
+            "external": len(result.external),
+            "orphaned": len(result.orphaned),
+        },
+        "adopted": [],
+        "closed_orphans": [],
+        "errors": [],
+    }
+
+    if account_mode != "demo":
+        if result.external or result.orphaned:
+            logger.warning(
+                "Live reconcile: %d external, %d orphaned — alert only (no autonomous action)",
+                len(result.external), len(result.orphaned),
+            )
+        return summary
+
+    # Demo mode: auto-adopt + orphan close
+    if cfg.trading.auto_adopt_enabled:
+        for item in result.external:
+            try:
+                adopted = adopt_position(item.exchange, account_mode)
+                summary["adopted"].append(adopted)
+            except Exception as e:
+                err = f"adopt {item.symbol} {item.direction}: {e}"
+                logger.warning("Reconcile adopt failed: %s", err)
+                summary["errors"].append(err)
+
+    for item in result.orphaned:
+        try:
+            closed = reconcile_close_orphan(item)
+            summary["closed_orphans"].append(closed)
+        except Exception as e:
+            err = f"close orphan {item.symbol} {item.direction}: {e}"
+            logger.warning("Reconcile close failed: %s", err)
+            summary["errors"].append(err)
+
+    if summary["adopted"] or summary["closed_orphans"]:
+        write_audit({
+            "actor": "system",
+            "source": "position_reconciler",
+            "event_type": "reconcile_cycle",
+            "entity_type": "portfolio",
+            "message": (
+                f"Reconcile: adopted={len(summary['adopted'])}, "
+                f"closed_orphans={len(summary['closed_orphans'])}, "
+                f"errors={len(summary['errors'])}"
+            ),
+            "after": {
+                "adopted_ids": [a["position_id"] for a in summary["adopted"]],
+                "closed_ids": [c["position_id"] for c in summary["closed_orphans"]],
+            },
+        })
+
+    return summary

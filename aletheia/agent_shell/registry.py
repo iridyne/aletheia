@@ -300,6 +300,16 @@ COMMANDS: dict[str, CommandDef] = {
         audit_event_type="operator_create_paper_experiment",
         backend_handler="create_paper_experiment",
     ),
+    "reconcile_positions": CommandDef(
+        name="reconcile_positions",
+        risk_class="controlled_operational",
+        worker_permission_required="Paper",
+        operator_permission_required="PaperAuto",
+        description="Trigger position reconciliation: classify, auto-adopt externals, close orphans (demo)",
+        requires_confirmation=True,
+        audit_event_type="operator_reconcile_positions",
+        backend_handler="reconcile_positions",
+    ),
     "pause_paper_strategy": CommandDef(
         name="pause_paper_strategy",
         risk_class="controlled_operational",

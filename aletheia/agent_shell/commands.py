@@ -1291,6 +1291,31 @@ async def mark_strategy_under_review(params: dict) -> dict:
     }
 
 
+async def reconcile_positions(params: dict) -> dict:
+    from aletheia.portfolio.position_reconciler import run_reconcile
+
+    summary = run_reconcile()
+    adopted_count = len(summary.get("adopted", []))
+    closed_count = len(summary.get("closed_orphans", []))
+    errors = summary.get("errors", [])
+
+    parts = [f"sync_status={summary['sync_status']}"]
+    parts.append(f"managed={summary['counts']['managed']}")
+    parts.append(f"external={summary['counts']['external']}")
+    parts.append(f"orphaned={summary['counts']['orphaned']}")
+    if adopted_count:
+        parts.append(f"adopted={adopted_count}")
+    if closed_count:
+        parts.append(f"closed_orphans={closed_count}")
+    if errors:
+        parts.append(f"errors={len(errors)}")
+
+    return {
+        "message": f"Position reconciliation complete: {', '.join(parts)}",
+        "summary": summary,
+    }
+
+
 async def run_market_scan(params: dict) -> dict:
     from aletheia.agent_shell.operator_store import create_event
 
@@ -1800,6 +1825,7 @@ HANDLERS: dict[str, callable] = {
     "create_diagnostic_report": create_diagnostic_report,
     "archive_low_value_notification": archive_low_value_notification,
     "mark_strategy_under_review": mark_strategy_under_review,
+    "reconcile_positions": reconcile_positions,
     "run_market_scan": run_market_scan,
     "rerun_failed_agent_task": rerun_failed_agent_task,
     "set_symbol_observe_only": set_symbol_observe_only,

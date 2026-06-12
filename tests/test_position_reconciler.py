@@ -173,3 +173,136 @@ def test_zero_quantity_exchange_rows_ignored(tmp_path, monkeypatch):
     r = classify_positions()
     assert len(r.external) == 0
     assert len(r.managed) == 0
+
+
+# --- P3 tests: orphan close + run_reconcile orchestration ---
+
+
+def test_reconcile_close_orphan_closes_local_position(tmp_path, monkeypatch):
+    """Orphaned position (local open, exchange gone) gets closed with reason='reconciled_gone'."""
+    setup_env(tmp_path, monkeypatch)
+    pos = Position(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="long",
+        quantity=2.0, entry_price=3000.0, current_price=3100.0,
+        execution_mode="bitget_demo",
+    )
+    repo.insert_position(pos)
+    _stub_cache(monkeypatch, [])
+
+    from aletheia.portfolio.position_reconciler import classify_positions, reconcile_close_orphan
+    result = classify_positions()
+    assert len(result.orphaned) == 1
+
+    # Stub the audit writer so it doesn't hit real filesystem
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **kw: None)
+
+    close_result = reconcile_close_orphan(result.orphaned[0])
+    assert close_result["position_id"] == pos.id
+    assert close_result["reason"] == "reconciled_gone"
+    assert close_result["exit_price"] == 3100.0
+
+    # Verify position is now closed in DB
+    closed = repo.list_positions(status="closed")
+    assert len(closed) == 1
+    assert closed[0]["close_reason"] == "reconciled_gone"
+
+
+def test_run_reconcile_demo_adopts_and_closes(tmp_path, monkeypatch):
+    """run_reconcile in demo mode: auto-adopts externals + closes orphans."""
+    setup_env(tmp_path, monkeypatch)
+
+    # Write a config file so load_config works
+    import yaml
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump({
+        "exchange": {"mode": "demo"},
+        "trading": {"auto_adopt_enabled": True},
+    }), encoding="utf-8")
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._cached_config = None
+
+    # Local orphan: open locally, gone from exchange
+    orphan = Position(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=3000.0, current_price=3050.0,
+        execution_mode="bitget_demo",
+    )
+    repo.insert_position(orphan)
+
+    # Exchange has an external position not tracked locally
+    _stub_cache(monkeypatch, [_ex("SOLUSDT", "short", 0.5, 150.0, upnl=-2.0)])
+
+    # Stub audit/jsonl so it doesn't hit real filesystem
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **kw: None)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **kw: None)
+
+    from aletheia.portfolio.position_reconciler import run_reconcile
+    summary = run_reconcile()
+
+    assert summary["account_mode"] == "demo"
+    assert len(summary["adopted"]) == 1
+    assert summary["adopted"][0]["symbol"] == "SOL/USDT"
+    assert summary["adopted"][0]["execution_mode"] == "bitget_demo"
+    assert len(summary["closed_orphans"]) == 1
+    assert summary["closed_orphans"][0]["position_id"] == orphan.id
+    assert summary["closed_orphans"][0]["reason"] == "reconciled_gone"
+
+
+def test_run_reconcile_live_never_adopts(tmp_path, monkeypatch):
+    """run_reconcile in live mode: classifies only, never adopts or closes."""
+    setup_env(tmp_path, monkeypatch)
+
+    import yaml
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump({
+        "exchange": {"mode": "live"},
+        "trading": {"auto_adopt_enabled": True},
+    }), encoding="utf-8")
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._cached_config = None
+
+    # Local orphan
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.01, entry_price=60000.0, current_price=61000.0,
+        execution_mode="bitget_live_limited",
+    ))
+    # External on exchange
+    _stub_cache(monkeypatch, [_ex("ETHUSDT", "long", 1.0, 3000.0)])
+
+    from aletheia.portfolio.position_reconciler import run_reconcile
+    summary = run_reconcile()
+
+    assert summary["account_mode"] == "live"
+    assert summary["adopted"] == []
+    assert summary["closed_orphans"] == []
+    assert summary["counts"]["external"] == 1
+    assert summary["counts"]["orphaned"] == 1
+
+
+def test_run_reconcile_respects_auto_adopt_disabled(tmp_path, monkeypatch):
+    """When auto_adopt_enabled=False, externals are NOT adopted (kill switch)."""
+    setup_env(tmp_path, monkeypatch)
+
+    import yaml
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump({
+        "exchange": {"mode": "demo"},
+        "trading": {"auto_adopt_enabled": False},
+    }), encoding="utf-8")
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._cached_config = None
+
+    _stub_cache(monkeypatch, [_ex("BTCUSDT", "short", 0.001, 62000.0)])
+
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **kw: None)
+
+    from aletheia.portfolio.position_reconciler import run_reconcile
+    summary = run_reconcile()
+
+    # No adoption (disabled), but orphan close still runs
+    assert summary["adopted"] == []
+    assert summary["counts"]["external"] == 1

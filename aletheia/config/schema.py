@@ -251,6 +251,16 @@ class TradingConfig(BaseModel):
     # (high | medium | speculative). Below this, the opportunity is recorded but
     # not traded.
     min_confidence_to_trade: str = "medium"
+    # Account-wide position adoption ("接管即纳管"). When ON, the periodic
+    # reconcile job AUTO-ADOPTS external DEMO positions (positions on the demo
+    # account that Aletheia did not open) into local management, and
+    # reconcile-closes demo orphans. Owner decision 2026-06-12: DEFAULT ON — the
+    # mandate is unified AI management of the whole account, so leaving externals
+    # unmanaged would defeat the point. This flag is a KILL-SWITCH to DISABLE the
+    # behavior, not an opt-in. ⚠️ Consequence when ON: pre-existing demo positions
+    # get default stops/TP from position_manager and MAY be auto-closed. LIVE
+    # positions are NEVER auto-adopted regardless of this flag (human-confirmed only).
+    auto_adopt_enabled: bool = True
 
 
 class UpdateConfig(BaseModel):

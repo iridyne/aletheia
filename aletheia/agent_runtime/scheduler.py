@@ -69,6 +69,10 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=60,
     )
     _scheduler.add_job(
+        _run_position_reconcile, "interval", minutes=5, id="position_reconcile",
+        misfire_grace_time=60, next_run_time=datetime.now(),
+    )
+    _scheduler.add_job(
         _run_cleanup, "cron", hour=3, minute=17, id="cleanup",
         misfire_grace_time=600,
     )
@@ -244,6 +248,33 @@ def _run_position_manager():
         evaluate_open_positions()
     except Exception as e:
         logger.warning("position_manager job failed: %s", e)
+
+
+def _run_position_reconcile():
+    """Periodic position reconciliation: adopt externals + close orphans (demo)."""
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        from aletheia.agent_runtime.run_logger import start_run, end_run
+        from aletheia.portfolio.position_reconciler import run_reconcile
+
+        run = start_run("position_reconciler", "scheduled", cfg.agent.permission_mode)
+        try:
+            summary = run_reconcile()
+            outputs = []
+            if summary["adopted"]:
+                outputs.append(f"adopted {len(summary['adopted'])} positions")
+            if summary["closed_orphans"]:
+                outputs.append(f"closed {len(summary['closed_orphans'])} orphans")
+            if not outputs:
+                outputs.append("no action needed")
+            end_run(run, status="completed", outputs=outputs, errors=summary.get("errors") or None)
+        except Exception as e:
+            end_run(run, status="failed", errors=[str(e)])
+            raise
+    except Exception as e:
+        logger.warning("position_reconcile job failed: %s", e)
 
 
 def _run_stock_observer():

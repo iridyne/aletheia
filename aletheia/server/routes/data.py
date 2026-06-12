@@ -660,6 +660,18 @@ async def get_positions_reconciliation():
     return classify_positions().to_dict()
 
 
+@router.post("/positions/reconcile")
+async def run_positions_reconcile():
+    """Manual trigger: classify → auto-adopt externals → close orphans (demo only).
+
+    Same logic as the scheduled job but on-demand. Live mode returns classification
+    only (no autonomous action). Surfaces in /api/agent-runs for observability.
+    """
+    _ensure_db()
+    from aletheia.portfolio.position_reconciler import run_reconcile
+    return run_reconcile()
+
+
 @router.get("/audit/events")
 async def get_audit_events(limit: int = 100):
     _ensure_db()
