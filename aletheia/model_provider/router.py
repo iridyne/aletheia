@@ -6,14 +6,12 @@ from aletheia.config.loader import load_config
 from aletheia.model_provider.base import ModelProvider, ModelHealth
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.databricks import DatabricksProvider
 from aletheia.model_provider.codex_cli import CodexCLIProvider
 from aletheia.model_provider.claude_cli import ClaudeCLIProvider
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
     "anthropic_compatible": AnthropicCompatibleProvider,
-    "databricks": DatabricksProvider,
     "codex_cli": CodexCLIProvider,
     "claude_cli": ClaudeCLIProvider,
 }
@@ -64,12 +62,6 @@ def get_provider(name: str | None = None) -> ModelProvider:
             api_key=api_key,
             auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
         )
-    elif ptype == "databricks":
-        provider = DatabricksProvider(
-            workspace_url=pcfg.workspace_url or pcfg.base_url,
-            model=pcfg.model,
-            api_key=api_key,
-        )
     elif ptype == "codex_cli":
         provider = CodexCLIProvider(
             command=pcfg.command,
@@ -95,7 +87,7 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-_HTTP_TYPES = {"openai_compatible", "anthropic_compatible", "databricks"}
+_HTTP_TYPES = {"openai_compatible", "anthropic_compatible"}
 _DEFAULT_URLS = {"http://localhost:8000/v1", "http://localhost:8001", ""}
 
 
@@ -109,12 +101,7 @@ async def healthcheck_all() -> list[ModelHealth]:
         ptype = pcfg.type or name
         if ptype in _HTTP_TYPES:
             has_key = bool(pcfg.api_key_secret_ref)
-            # For Databricks the canonical URL is workspace_url, not base_url.
-            # Check the right field to avoid skipping a configured-but-keyless instance.
-            if ptype == "databricks":
-                is_default_url = not (pcfg.workspace_url or pcfg.base_url)
-            else:
-                is_default_url = pcfg.base_url in _DEFAULT_URLS
+            is_default_url = pcfg.base_url in _DEFAULT_URLS
             if not has_key and is_default_url:
                 continue
         tasks.append(_safe_healthcheck(name))

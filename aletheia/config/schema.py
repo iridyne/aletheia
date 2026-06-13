@@ -148,12 +148,6 @@ class ModelsConfig(BaseModel):
             base_url="http://localhost:8001",
             model="default",
         ),
-        "databricks": ProviderConfig(
-            type="databricks",
-            enabled=False,
-            workspace_url="",
-            model="default",
-        ),
         "codex_cli": ProviderConfig(
             type="codex_cli",
             enabled=False,

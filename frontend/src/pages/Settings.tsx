@@ -10,12 +10,11 @@ import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS } from '../lib/format'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
-const ALL_PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'databricks', 'claude_cli', 'codex_cli'] as const
-const HTTP_PROVIDERS = new Set(['openai_compatible', 'anthropic_compatible', 'databricks'])
+const ALL_PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'claude_cli', 'codex_cli'] as const
+const HTTP_PROVIDERS = new Set(['openai_compatible', 'anthropic_compatible'])
 const PROVIDER_LABELS: Record<string, string> = {
   openai_compatible: 'OpenAI Compatible',
   anthropic_compatible: 'Anthropic Compatible',
-  databricks: 'Databricks',
   codex_cli: 'Codex CLI',
   claude_cli: 'Claude Code CLI',
 }
@@ -1136,7 +1135,6 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
   // Summary line
   const details: string[] = []
   if (isHTTP && config?.base_url) details.push(config.base_url)
-  if (name === 'databricks' && config?.workspace_url) details.push(config.workspace_url)
   if (config?.model && config.model !== 'default') details.push(`model: ${config.model}`)
   if (isHTTP && config?.api_key?.configured) details.push(`key: ··${config.api_key.last4}`)
   if (isCLI && health?.model) details.push(`model: ${health.model}`)
@@ -1220,18 +1218,20 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
   const [baseUrl, setBaseUrl] = useState('')
   const [model, setModel] = useState('')
   const [protocol, setProtocol] = useState(() => config?.protocol || 'chat_completions')
-  const [workspaceUrl, setWorkspaceUrl] = useState('')
+  const [authScheme, setAuthScheme] = useState(() => config?.auth_scheme || 'x-api-key')
   const [apiKey, setApiKey] = useState('')
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [detectedModels, setDetectedModels] = useState<{ slug: string; display_name: string }[] | null>(null)
   const [useCustomModel, setUseCustomModel] = useState(false)
 
+  const isAnthropic = name === 'anthropic_compatible'
+  const isOpenAI = name === 'openai_compatible'
+
   const detectMut = useMutation({
     mutationFn: async () => {
-      const body: any = { provider: name }
-      if (name === 'databricks') body.workspace_url = workspaceUrl || config?.workspace_url || undefined
-      else body.base_url = baseUrl || config?.base_url || undefined
+      const body: any = { provider: name, base_url: baseUrl || config?.base_url || undefined }
       if (apiKey) body.api_key = apiKey
+      if (isAnthropic) body.auth_scheme = authScheme
       return api.detectModels(body)
     },
     onSuccess: (data) => {
@@ -1244,6 +1244,12 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
     },
   })
 
+  // Auto-detect models on mount when API key is already configured
+  useEffect(() => {
+    if (config?.api_key?.configured) detectMut.mutate()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const verifyAndSave = useMutation({
     mutationFn: async () => {
       setResult(null)
@@ -1254,8 +1260,8 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
         api_key: apiKey || undefined,
         probe: true,
       }
-      if (name === 'openai_compatible') testBody.protocol = protocol
-      if (name === 'databricks') testBody.workspace_url = workspaceUrl || config?.workspace_url || undefined
+      if (isOpenAI) testBody.protocol = protocol
+      if (isAnthropic) testBody.auth_scheme = authScheme
 
       const test = await api.testModelCandidate(testBody)
       if (!test.available) throw new Error(test.error || 'provider unreachable')
@@ -1267,8 +1273,8 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
         ...(model ? { model } : {}),
         ...(apiKey ? { api_key: apiKey } : {}),
       }
-      if (name === 'openai_compatible') saveBody.protocol = protocol
-      if (name === 'databricks' && workspaceUrl) saveBody.workspace_url = workspaceUrl
+      if (isOpenAI) saveBody.protocol = protocol
+      if (isAnthropic) saveBody.auth_scheme = authScheme
 
       await api.setModelProvider(saveBody)
       return test
@@ -1288,28 +1294,17 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
 
-  const isDatabricks = name === 'databricks'
-  const isOpenAI = name === 'openai_compatible'
   const showDropdown = detectedModels && detectedModels.length > 0 && !useCustomModel
 
   return (
     <div style={{ paddingTop: '0.75rem' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem 1rem' }}>
-        {isDatabricks ? (
-          <label style={{ gridColumn: '1 / -1' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Workspace URL</span>
-            <input value={workspaceUrl} placeholder={config?.workspace_url || 'https://xxx.cloud.databricks.com'} onChange={e => { setWorkspaceUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
-          </label>
-        ) : (
-          <label style={{ gridColumn: '1 / -1' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Base URL</span>
-            <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
-          </label>
-        )}
+        <label style={{ gridColumn: '1 / -1' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Base URL</span>
+          <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
+        </label>
         <label>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            {isDatabricks ? 'Endpoint name' : 'Model'}
-          </span>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Model</span>
           {showDropdown ? (
             <select value={model} onChange={e => {
               if (e.target.value === '__custom__') { setUseCustomModel(true); setModel('') }
@@ -1331,18 +1326,27 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
             </select>
           </label>
         )}
-        <label style={{ gridColumn: isOpenAI ? undefined : '2 / 3' }}>
+        {isAnthropic && (
+          <label>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Auth Scheme</span>
+            <select value={authScheme} onChange={e => { setAuthScheme(e.target.value); setResult(null); setDetectedModels(null) }}>
+              <option value="x-api-key">X-API-Key (Native Anthropic)</option>
+              <option value="bearer">Bearer (Gateway / Databricks)</option>
+            </select>
+          </label>
+        )}
+        <label style={{ gridColumn: (isOpenAI || isAnthropic) ? undefined : '2 / 3' }}>
           <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            {isDatabricks ? 'PAT Token' : 'API Key'}
+            API Key
             {config?.api_key?.configured && <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.62rem' }}>··{config.api_key.last4}</span>}
           </span>
           <input type="password" value={apiKey} placeholder={config?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
         </label>
       </div>
-      {/* Model detection + action buttons */}
+      {/* Action buttons */}
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button className="secondary" onClick={() => detectMut.mutate()} disabled={detectMut.isPending}>
-          {detectMut.isPending ? 'Detecting…' : 'Detect Models'}
+        <button className="secondary" onClick={() => detectMut.mutate()} disabled={detectMut.isPending} title="Re-detect models">
+          {detectMut.isPending ? '↻ …' : '↻'}
         </button>
         <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
           {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
@@ -1378,7 +1382,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
         </div>
       )}
       <p style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
-        {isDatabricks ? 'PAT token' : 'API keys'} are write-only — never shown after save. Verify & Save runs a real inference test before persisting.
+        API keys are write-only — never shown after save. Verify & Save runs a real inference test before persisting.
       </p>
     </div>
   )

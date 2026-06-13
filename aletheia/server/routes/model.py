@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api", tags=["model"])
 
 VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
 
-HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "databricks"}
+HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible"}
 CLI_PROVIDERS = {"codex_cli", "claude_cli"}
 
 
@@ -46,8 +46,8 @@ async def get_model_config():
         if ptype in HTTP_PROVIDERS:
             entry["base_url"] = pcfg.base_url
             entry["protocol"] = pcfg.protocol
-        if ptype == "databricks":
-            entry["workspace_url"] = pcfg.workspace_url or ""
+        if ptype == "anthropic_compatible":
+            entry["auth_scheme"] = getattr(pcfg, "auth_scheme", "x-api-key")
         if ptype in CLI_PROVIDERS:
             entry["command"] = pcfg.command
             entry["mode"] = pcfg.mode
@@ -80,11 +80,6 @@ async def get_provider_types():
             "category": "http",
             "fields": ["base_url", "model", "api_key"],
         },
-        "databricks": {
-            "label": "Databricks",
-            "category": "http",
-            "fields": ["workspace_url", "model", "api_key"],
-        },
         "codex_cli": {
             "label": "Codex CLI",
             "category": "cli",
@@ -102,7 +97,7 @@ class DetectModelsRequest(BaseModel):
     provider: str
     base_url: str | None = None
     api_key: str | None = None
-    workspace_url: str | None = None
+    auth_scheme: str | None = None
 
 
 @router.post("/model/detect-models")
@@ -116,7 +111,6 @@ async def detect_models(req: DetectModelsRequest):
 
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-    from aletheia.model_provider.databricks import DatabricksProvider
     from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
 
@@ -134,15 +128,10 @@ async def detect_models(req: DetectModelsRequest):
         )
     elif req.provider == "anthropic_compatible":
         base_url = req.base_url or (pcfg.base_url if pcfg else "") or ""
-        auth_scheme = getattr(pcfg, "auth_scheme", "x-api-key") if pcfg else "x-api-key"
+        auth_scheme = req.auth_scheme or (getattr(pcfg, "auth_scheme", "x-api-key") if pcfg else "x-api-key")
         provider = AnthropicCompatibleProvider(
             base_url=base_url, model="default", api_key=api_key, auth_scheme=auth_scheme,
         )
-    elif req.provider == "databricks":
-        ws_url = req.workspace_url or (pcfg.workspace_url if pcfg else "") or ""
-        if not ws_url:
-            raise HTTPException(400, "workspace_url is required for Databricks")
-        provider = DatabricksProvider(workspace_url=ws_url, model="default", api_key=api_key)
     else:
         raise HTTPException(400, f"No detect-models support for {req.provider}")
 
@@ -156,7 +145,7 @@ class TestCandidateRequest(BaseModel):
     protocol: str | None = None
     model: str | None = None
     api_key: str | None = None
-    workspace_url: str | None = None
+    auth_scheme: str | None = None
     probe: bool = False
 
 
@@ -172,7 +161,6 @@ async def test_model_candidate(req: TestCandidateRequest):
 
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-    from aletheia.model_provider.databricks import DatabricksProvider
     from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
 
@@ -193,27 +181,12 @@ async def test_model_candidate(req: TestCandidateRequest):
             api_key=api_key,
         )
     elif req.provider == "anthropic_compatible":
-        auth_scheme = getattr(pcfg, "auth_scheme", "x-api-key") if pcfg else "x-api-key"
+        auth_scheme = req.auth_scheme or (getattr(pcfg, "auth_scheme", "x-api-key") if pcfg else "x-api-key")
         provider = AnthropicCompatibleProvider(
             base_url=req.base_url or (pcfg.base_url if pcfg else "") or "",
             model=model,
             api_key=api_key,
             auth_scheme=auth_scheme,
-        )
-    elif req.provider == "databricks":
-        ws_url = req.workspace_url or req.base_url or (pcfg.workspace_url if pcfg else "") or ""
-        if not ws_url:
-            raise HTTPException(400, "workspace_url is required for Databricks")
-        if not ws_url.startswith(("https://", "http://")):
-            raise HTTPException(
-                400,
-                "workspace_url must start with https:// — "
-                "e.g. https://xxx.cloud.databricks.com",
-            )
-        provider = DatabricksProvider(
-            workspace_url=ws_url,
-            model=model,
-            api_key=api_key,
         )
     else:
         raise HTTPException(400, f"No test-candidate support for {req.provider}")
@@ -289,6 +262,7 @@ class ModelConfigRequest(BaseModel):
     workspace_url: str | None = None
     default: bool | None = None
     api_key: str | None = None
+    auth_scheme: str | None = None
 
 
 @router.post("/settings/model")
@@ -322,6 +296,8 @@ async def set_model(req: ModelConfigRequest):
         pcfg.codex_model = req.codex_model
     if req.workspace_url is not None:
         pcfg.workspace_url = req.workspace_url
+    if req.auth_scheme is not None:
+        pcfg.auth_scheme = req.auth_scheme
     if req.default:
         cfg.models.default_provider = req.provider
 

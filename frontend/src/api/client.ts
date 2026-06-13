@@ -207,14 +207,14 @@ export const api = {
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
     enabled?: boolean; default?: boolean; api_key?: string; codex_model?: string
-    workspace_url?: string
+    workspace_url?: string; auth_scheme?: string
   }) => post('/settings/model', body),
   testModelCandidate: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
-    api_key?: string; workspace_url?: string; probe?: boolean
+    api_key?: string; auth_scheme?: string; probe?: boolean
   }) => post<{ available: boolean; model: string; error: string | null; models?: string[] }>('/model/test-candidate', body),
   detectModels: (body: {
-    provider: string; base_url?: string; api_key?: string; workspace_url?: string
+    provider: string; base_url?: string; api_key?: string; auth_scheme?: string
   }) => post<{ models: { slug: string; display_name: string }[] }>('/model/detect-models', body),
 
   // Codex subscription provider: web-triggered device-auth login + model listing
@@ -482,5 +482,40 @@ export const api = {
     if (params?.limit) search.set('limit', String(params.limit))
     const suffix = search.size > 0 ? `?${search.toString()}` : ''
     return fetchJson<any[]>(`/operator/events${suffix}`)
+  },
+
+  // --- Serenity Research Workbench ---
+  getSerenityStatus: () => fetchJson<any>('/serenity/status'),
+  createSerenityRun: (body: { mode?: string; triggerType?: string; brief?: string; saveToProfile?: boolean; idempotencyKey?: string }) =>
+    post<any>('/serenity/runs', body),
+  getSerenityRuns: (params?: { status?: string; limit?: number }) => {
+    const search = new URLSearchParams()
+    if (params?.status) search.set('status', params.status)
+    if (params?.limit) search.set('limit', String(params.limit))
+    const suffix = search.size > 0 ? `?${search.toString()}` : ''
+    return fetchJson<any>(`/serenity/runs${suffix}`)
+  },
+  getSerenityRunDetail: (runId: string) => fetchJson<any>(`/serenity/runs/${runId}`),
+  retrySerenityRun: (runId: string) => post<any>(`/serenity/runs/${runId}/retry`, {}),
+  getSerenityProfile: () => fetchJson<any>('/serenity/profile'),
+  updateSerenityProfile: (body: any) =>
+    fetchJson<any>('/serenity/profile', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  parseSerenityBrief: (brief: string) => post<any>('/serenity/profile/parse', { brief }),
+  updateSerenityThemeStatus: (themeId: string, status: string) =>
+    fetchJson<any>(`/serenity/themes/${themeId}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }),
+  createSerenityThemeFeedback: (themeId: string, action: string, value?: any) =>
+    post<any>(`/serenity/themes/${themeId}/feedback`, { action, value }),
+  createSerenityThemeDeepDive: (themeId: string, brief?: string) =>
+    post<any>(`/serenity/themes/${themeId}/deep-dive`, { brief }),
+  cancelSerenityRun: (runId: string) => post<any>(`/serenity/runs/${runId}/cancel`, {}),
+  promoteSerenityTheme: (themeId: string) => post<any>(`/serenity/themes/${themeId}/promote`, {}),
+  getSerenityThemeDetail: (themeId: string) => fetchJson<any>(`/serenity/themes/${themeId}/detail`),
+  getSerenityThemeClaims: (themeId: string) => fetchJson<any>(`/serenity/themes/${themeId}/claims`),
+  getSerenityRunArtifacts: (runId: string) => fetchJson<any>(`/serenity/runs/${runId}/artifacts`),
+  getSereniyClaims: (params?: { run_id?: string; price_relevant?: boolean }) => {
+    const qs = new URLSearchParams()
+    if (params?.run_id) qs.set('run_id', params.run_id)
+    if (params?.price_relevant !== undefined) qs.set('price_relevant', String(params.price_relevant))
+    return fetchJson<any>(`/serenity/claims?${qs}`)
   },
 }
