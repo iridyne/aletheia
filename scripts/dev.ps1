@@ -1,14 +1,12 @@
-# Aletheia dev launcher — full auto-reload stack.
+# Aletheia dev launcher — auto-reload stack on :8787 only.
 #
 # Architecture:
-#   browser  → http://localhost:5173        (Vite dev, HMR — fastest feedback)
-#   browser  → http://127.0.0.1:8787       (gateway, auto-refreshes on build)
+#   browser  → http://127.0.0.1:8787  (gateway serves everything — API + static)
 #
 # Processes managed:
 #   1. Gateway (persistent, background — starts if not running)
-#   2. vite build --watch → dashboard_static/ (auto-rebuilds for :8787)
+#   2. vite build --watch → dashboard_static/ (auto-rebuilds; gateway auto-restarts)
 #   3. watch_backend.py (auto-restarts gateway on .py changes)
-#   4. vite dev :5173 (foreground, HMR)
 #
 # Usage:  pwsh -File scripts\dev.ps1   (or just  .\scripts\dev.ps1)
 
@@ -75,39 +73,26 @@ $buildWatch = Start-Job -ScriptBlock {
 } -ArgumentList $Frontend
 Write-Host "[ok] vite build --watch running (job $($buildWatch.Id))" -ForegroundColor Green
 
-# --- 4. Start backend watcher (background) ------------------------------------
+# --- 4. Start backend watcher (foreground) ------------------------------------
 $Python = Join-Path $ProjectRoot '.venv\Scripts\python.exe'
 $WatchScript = Join-Path $ProjectRoot 'scripts\watch_backend.py'
 
-Write-Host "[..] starting backend watcher (background)..." -ForegroundColor Yellow
-$backendWatch = Start-Job -ScriptBlock {
-    param($PythonExe, $Script, $Root)
-    $env:ALETHEIA_DEV_RELOAD = "1"
-    Set-Location $Root
-    & $PythonExe $Script 2>&1
-} -ArgumentList $Python, $WatchScript, $ProjectRoot
-Write-Host "[ok] backend watcher running (job $($backendWatch.Id))" -ForegroundColor Green
-
-# --- 5. Launch Vite dev server (foreground) -----------------------------------
 Write-Host ""
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host "  Dev stack ready:" -ForegroundColor Cyan
-Write-Host "    HMR dev    → http://127.0.0.1:5173/" -ForegroundColor Cyan
-Write-Host "    Gateway    → http://127.0.0.1:8787/ (auto-refresh)" -ForegroundColor Cyan
-Write-Host "    Ctrl+C     → stops Vite dev + watchers" -ForegroundColor Cyan
+Write-Host "    Dashboard  → http://127.0.0.1:8787/" -ForegroundColor Cyan
+Write-Host "    Auto-reload: .py changes + vite rebuilds" -ForegroundColor Cyan
+Write-Host "    Ctrl+C     → stops watchers" -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host ""
 
-Push-Location $Frontend
 try {
-    & node node_modules\vite\bin\vite.js --host 127.0.0.1 --port 5173
+    $env:ALETHEIA_DEV_RELOAD = "1"
+    & $Python $WatchScript
 } finally {
-    Pop-Location
     # Cleanup background jobs on exit
     Write-Host "`n[..] stopping background jobs..." -ForegroundColor Yellow
     Stop-Job $buildWatch -ErrorAction SilentlyContinue
     Remove-Job $buildWatch -Force -ErrorAction SilentlyContinue
-    Stop-Job $backendWatch -ErrorAction SilentlyContinue
-    Remove-Job $backendWatch -Force -ErrorAction SilentlyContinue
     Write-Host "[ok] dev stack stopped. Gateway continues running." -ForegroundColor Green
 }
