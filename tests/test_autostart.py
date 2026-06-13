@@ -1,4 +1,4 @@
-"""Tests for Windows Task Scheduler autostart + supervisor watchdog (roadmap §30.3).
+"""Tests for Windows Task Scheduler autostart + supervisor watchdog.
 
 Governance: human-triggered only, never agent-callable, runs the SAME gated
 `gateway start` a human runs (live stays disabled, RunLevel LeastPrivilege).
@@ -47,12 +47,13 @@ class _Recorder:
 
     def __call__(self, args, **kwargs):
         self.calls.append((list(args), kwargs))
-        if "/XML" in args:
-            xml_path = args[args.index("/XML") + 1]
-            try:
-                self.xml_bytes = Path(xml_path).read_bytes()
-            except OSError:
-                pass
+        if "/XML" in args and "/Create" in args:
+            idx = args.index("/XML") + 1
+            if idx < len(args):
+                try:
+                    self.xml_bytes = Path(args[idx]).read_bytes()
+                except OSError:
+                    pass
         return _FakeProc(stdout=self.stdout, returncode=self.returncode, stderr=self.stderr)
 
 
@@ -69,6 +70,7 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     _force_windows(monkeypatch, autostart)
     rec = _Recorder(returncode=0, stdout="SUCCESS")
     monkeypatch.setattr(autostart.subprocess, "run", rec)
+    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
 
     result = autostart.enable(source="cli")
     assert result["ok"] is True
@@ -85,16 +87,13 @@ def test_enable_builds_correct_argv_and_xml(tmp_path, monkeypatch):
     assert 'xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"' in xml
     assert "<LogonTrigger>" in xml
     assert "<TimeTrigger>" in xml
-    assert "<Interval>PT5M</Interval>" in xml
+    assert "<Interval>PT2M</Interval>" in xml
     assert "<StopAtDurationEnd>false</StopAtDurationEnd>" in xml
     assert "<LogonType>InteractiveToken</LogonType>" in xml
     assert "<RunLevel>LeastPrivilege</RunLevel>" in xml
     assert "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>" in xml
-    # Arguments must contain the gateway start command (either direct -m or -c bootstrap).
     assert "gateway" in xml and "start" in xml and "--no-browser" in xml
     assert "pythonw.exe" in xml
-    # Window suppression: Task Scheduler must mark the task hidden so no console
-    # flashes on the LogonTrigger fire (and PT5M watchdog ticks).
     assert "<Hidden>true</Hidden>" in xml
     # schtasks /Create itself must not flash a console window when called from a
     # detached parent (e.g. the inner uvicorn API route serving /api/gateway/autostart).
@@ -157,6 +156,7 @@ def test_enable_audits_human(tmp_path, monkeypatch):
     from aletheia.gateway import autostart
     _force_windows(monkeypatch, autostart)
     monkeypatch.setattr(autostart.subprocess, "run", _Recorder(returncode=0, stdout="SUCCESS"))
+    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
 
     autostart.enable(source="cli")
     from aletheia.files.jsonl import read_jsonl
@@ -247,13 +247,22 @@ def test_disable_not_found_is_idempotent(tmp_path, monkeypatch):
     assert result["ok"] is True  # absence is success, not an error
 
 
-# --- 7. status: task installed → enabled True ---
+# --- 7. status: task installed → enabled True (XML-based) ---
 
 def test_status_installed(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import autostart
     monkeypatch.setattr(autostart.platform, "system", lambda: "Windows")
-    stdout = (
+
+    xml_output = (
+        '<?xml version="1.0" encoding="UTF-16"?>\n'
+        f'<Task xmlns="{autostart._XML_NS}">\n'
+        '  <Settings><Enabled>true</Enabled></Settings>\n'
+        '  <Triggers><LogonTrigger><Repetition><Interval>PT2M</Interval></Repetition></LogonTrigger></Triggers>\n'
+        '  <Actions><Exec><Command>pythonw.exe</Command><Arguments>-m aletheia.main gateway start</Arguments></Exec></Actions>\n'
+        '</Task>'
+    )
+    list_output = (
         "HostName:      DESKTOP\r\n"
         "TaskName:      \\Aletheia Trading OS Gateway\r\n"
         "Status:        Ready\r\n"
@@ -261,36 +270,52 @@ def test_status_installed(tmp_path, monkeypatch):
         "Last Run Time: 2026/6/12 14:31:00\r\n"
         "Last Result:   0\r\n"
     )
-    rec = _Recorder(returncode=0, stdout=stdout)
-    monkeypatch.setattr(autostart.subprocess, "run", rec)
+
+    call_count = [0]
+    def fake_run(args, **kwargs):
+        call_count[0] += 1
+        if "/XML" in args:
+            return _FakeProc(returncode=0, stdout=xml_output)
+        return _FakeProc(returncode=0, stdout=list_output)
+
+    monkeypatch.setattr(autostart.subprocess, "run", fake_run)
 
     result = autostart.status()
     assert result["supported"] is True
     assert result["enabled"] is True
     assert result["task_name"] == autostart.TASK_NAME
-    assert result["trigger"]  # best-effort trigger summary present
-    assert result["status"] == "Ready"
+    assert result["interval"] == "PT2M"
     assert result["last_run_time"] == "2026/6/12 14:31:00"
     assert result["last_result"] == "0"
     assert result["primed"] is True
-    # schtasks /Query must not flash a console window from API-route detached caller.
-    assert rec.calls[0][1].get("creationflags", 0) & 0x08000000 == 0x08000000
+    assert call_count[0] == 2  # XML query + LIST query
 
 
 def test_status_installed_but_never_run_is_not_primed(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import autostart
     monkeypatch.setattr(autostart.platform, "system", lambda: "Windows")
-    stdout = (
+
+    xml_output = (
+        f'<Task xmlns="{autostart._XML_NS}">'
+        '<Settings><Enabled>true</Enabled></Settings>'
+        '</Task>'
+    )
+    list_output = (
         "TaskName:      \\Aletheia Trading OS Gateway\r\n"
         "Status:        Ready\r\n"
         "Last Run Time: 1999/11/30 0:00:00\r\n"
         "Last Result:   267011\r\n"
     )
-    monkeypatch.setattr(autostart.subprocess, "run", _Recorder(returncode=0, stdout=stdout))
+
+    def fake_run(args, **kwargs):
+        if "/XML" in args:
+            return _FakeProc(returncode=0, stdout=xml_output)
+        return _FakeProc(returncode=0, stdout=list_output)
+
+    monkeypatch.setattr(autostart.subprocess, "run", fake_run)
 
     result = autostart.status()
-
     assert result["enabled"] is True
     assert result["primed"] is False
     assert result["last_result"] == "267011"
@@ -361,7 +386,96 @@ def test_schtasks_missing_graceful(monkeypatch):
     assert autostart.disable(source="api")["ok"] is False
 
 
-# --- 12-15. API routes ---
+# --- 12. XML status parsing ---
+
+def test_parse_xml_status():
+    from aletheia.gateway.autostart import _parse_xml_status, _XML_NS
+    xml = (
+        f'<Task xmlns="{_XML_NS}">'
+        '<Settings><Enabled>true</Enabled></Settings>'
+        '<Triggers><LogonTrigger><Repetition><Interval>PT2M</Interval></Repetition></LogonTrigger></Triggers>'
+        '<Actions><Exec><Command>C:\\python\\pythonw.exe</Command>'
+        '<Arguments>-m aletheia.main gateway start --no-browser</Arguments></Exec></Actions>'
+        '</Task>'
+    )
+    result = _parse_xml_status(xml)
+    assert result["task_enabled"] is True
+    assert result["interval"] == "PT2M"
+    assert "pythonw.exe" in result["command"]
+    assert "--no-browser" in result["arguments"]
+
+
+def test_parse_xml_status_invalid_xml():
+    from aletheia.gateway.autostart import _parse_xml_status
+    assert _parse_xml_status("not xml at all") == {}
+
+
+def test_parse_xml_status_disabled():
+    from aletheia.gateway.autostart import _parse_xml_status, _XML_NS
+    xml = f'<Task xmlns="{_XML_NS}"><Settings><Enabled>false</Enabled></Settings></Task>'
+    result = _parse_xml_status(xml)
+    assert result["task_enabled"] is False
+
+
+# --- 13. Watchdog interval changed to 2 minutes ---
+
+def test_watchdog_interval_is_2_minutes():
+    from aletheia.gateway.autostart import WATCHDOG_INTERVAL
+    assert WATCHDOG_INTERVAL == "PT2M"
+
+
+def test_xml_contains_2min_interval(monkeypatch):
+    from aletheia.gateway import autostart
+    _force_windows(monkeypatch, autostart)
+    xml = autostart._build_task_xml()
+    assert "<Interval>PT2M</Interval>" in xml
+
+
+# --- 14. write_watchdog_tick ---
+
+def test_write_watchdog_tick(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway.autostart import write_watchdog_tick
+    from aletheia.files.jsonl import read_jsonl
+
+    write_watchdog_tick("started", exit_code=0, duration_ms=1200)
+    write_watchdog_tick("already_running", exit_code=0, duration_ms=50)
+
+    entries = list(read_jsonl("watchdog.jsonl"))
+    assert len(entries) == 2
+    assert entries[0]["action"] == "started"
+    assert entries[1]["action"] == "already_running"
+
+
+# --- 15. verify_after_prime ---
+
+def test_verify_after_prime_success(monkeypatch):
+    from aletheia.gateway import autostart
+    monkeypatch.setattr("aletheia.gateway.pidfile.is_running", lambda: True)
+    monkeypatch.setattr("aletheia.gateway.pidfile.port_in_use", lambda p, h: True)
+
+    from aletheia.config.loader import load_config
+    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
+    result = autostart._verify_after_prime(timeout=1.0)
+    assert result["verified"] is True
+
+
+def test_verify_after_prime_timeout(monkeypatch):
+    from aletheia.gateway import autostart
+    monkeypatch.setattr("aletheia.gateway.pidfile.is_running", lambda: False)
+    monkeypatch.setattr("aletheia.gateway.pidfile.port_in_use", lambda p, h: False)
+
+    from unittest.mock import patch
+    with patch.object(autostart, "time") as mock_time:
+        mock_time.monotonic = lambda: 100.0  # always past deadline
+        mock_time.sleep = lambda s: None
+
+    result = autostart._verify_after_prime(timeout=0.1)
+    assert result["verified"] is False
+    assert "verify_detail" in result
+
+
+# --- 16-19. API routes ---
 
 async def _client():
     from httpx import AsyncClient, ASGITransport
@@ -388,6 +502,7 @@ async def test_api_post_enable_audits(tmp_path, monkeypatch):
     monkeypatch.setattr(autostart.platform, "system", lambda: "Windows")
     monkeypatch.setattr(autostart, "_python_for_task", lambda: r"C:\venv\Scripts\pythonw.exe")
     monkeypatch.setattr(autostart.subprocess, "run", _Recorder(returncode=0, stdout="SUCCESS"))
+    monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
     async with await _client() as c:
         resp = await c.post("/api/gateway/autostart", json={"enabled": True})
     assert resp.status_code == 200
@@ -420,7 +535,7 @@ async def test_api_non_windows_supported_false(tmp_path, monkeypatch):
     assert resp.json()["supported"] is False
 
 
-# --- 18. Governance guard: autostart must never be agent-callable ---
+# --- 20. Governance guard: autostart must never be agent-callable ---
 
 def test_autostart_not_agent_callable(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)

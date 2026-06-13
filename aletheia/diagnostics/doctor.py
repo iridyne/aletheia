@@ -147,12 +147,13 @@ def _probe_process(report: Report) -> None:
         except Exception:
             pass
 
-    # Autostart watchdog: logon-trigger + 5-min repetition that resurrects a dead
+    # Autostart watchdog: logon-trigger + 2-min repetition that resurrects a dead
     # supervisor. status() does a live `schtasks /Query`, so this is real state,
     # not a persisted flag. enabled=None means the query itself failed (unknown).
     try:
-        from aletheia.gateway.autostart import status as autostart_status
+        from aletheia.gateway.autostart import status as autostart_status, WATCHDOG_INTERVAL
         a = autostart_status()
+        interval_desc = WATCHDOG_INTERVAL.replace("PT", "").replace("M", "-min")
         if not a.get("supported"):
             report.add("process.autostart", "info", f"not supported ({a.get('reason')})")
         elif a.get("enabled") is True:
@@ -164,14 +165,14 @@ def _probe_process(report: Report) -> None:
                            f"(last_run={last_run}, last_result={last_result})",
                            "`aletheia gateway enable-autostart` to re-prime, or `schtasks /Run /TN \"Aletheia Trading OS Gateway\"`")
             else:
-                detail = "watchdog registered (logon + time-triggered 5-min repetition)"
+                detail = f"watchdog registered (logon + time-triggered {interval_desc} repetition)"
                 if a.get("last_run_time"):
                     detail += f", last_run={a.get('last_run_time')}"
                 report.add("process.autostart", "ok", detail)
         elif a.get("enabled") is False:
             report.add("process.autostart", "warn",
                        "watchdog NOT registered — a dead supervisor won't be resurrected",
-                       "`aletheia gateway enable-autostart`")
+                       "`aletheia gateway enable-autostart` (or start the gateway — it auto-registers)")
         else:
             report.add("process.autostart", "warn",
                        f"watchdog state unknown ({a.get('reason')})",

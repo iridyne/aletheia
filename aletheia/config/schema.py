@@ -38,6 +38,8 @@ class RuntimeConfig(BaseModel):
     auto_reload: bool = True
     # Experimental PI runtime continuity. When false, the legacy update/gateway
     # behavior stays the default; operator routes can still inspect recorded state.
+    # Automatically register the Windows Task Scheduler watchdog on gateway start.
+    autostart_on_start: bool = True
     runtime_continuity_enabled: bool = False
     runtime_continuity_lock_ttl_sec: int = 300
     runtime_continuity_shadow_port_offset: int = 100

@@ -32,6 +32,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
 
     if is_running():
         _echo_stdout_safe(f"Gateway already running (PID {read_pid()}).")
+        _write_watchdog_tick("already_running")
         raise typer.Exit(0)
 
     # Port guard: if the port stays held throughout a short grace window with no
@@ -74,12 +75,14 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         proc = _spawn_background(no_browser)
         # Verify the detached gateway actually came up. Without this, Popen returns
         # exit 0 the instant it forks — even when the supervisor immediately dies —
-        # so the PT5M watchdog records LastResult=0x0 ("success") on every tick
+        # so the PT2M watchdog records LastResult=0x0 ("success") on every tick
         # while the gateway stays dead (the "False confidence" zombie: a dead
         # gateway with green-looking schtasks history). Verifying turns the
         # watchdog's success signal honest: a non-zero Exit here means the tick
         # genuinely failed and the next tick will retry from a clean state.
         _verify_started(proc, cfg)
+        _write_watchdog_tick("started")
+        _auto_register_watchdog(cfg)
 
 
 def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
@@ -144,6 +147,39 @@ def _fail_spawn(reason: str) -> None:
         msg += f"\n--- errors.log (tail) ---\n{tail}"
     _echo_safe(msg)
     raise typer.Exit(1)
+
+
+def _write_watchdog_tick(action: str) -> None:
+    """Record a watchdog tick for diagnostics. Best-effort, never raises."""
+    try:
+        from aletheia.gateway.autostart import write_watchdog_tick
+        write_watchdog_tick(action)
+    except Exception:
+        pass
+
+
+def _auto_register_watchdog(cfg) -> None:
+    """Auto-register the autostart watchdog after a successful start.
+
+    Controlled by `runtime.autostart_on_start` (default True). This makes the
+    watchdog opt-out instead of opt-in — users no longer need to run
+    `enable-autostart` separately after `gateway start`.
+    """
+    if not getattr(cfg.runtime, "autostart_on_start", True):
+        return
+    try:
+        from aletheia.gateway import autostart
+        if not autostart._is_windows():
+            return
+        # Skip if already registered (avoid re-register on every watchdog tick).
+        current = autostart.status()
+        if current.get("enabled"):
+            return
+        result = autostart.enable(source="auto")
+        if result.get("ok"):
+            _echo_stdout_safe("Autostart watchdog registered automatically.")
+    except Exception:
+        pass  # auto-register is best-effort; never block gateway start
 
 
 def _run_server(cfg) -> None:
