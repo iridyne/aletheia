@@ -356,6 +356,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             source_agent="prediction_observer",
             linked_strategy_id=linked_strategy_id,
             asset_class="prediction",
+            execution_eligible=False,
             metadata=_build_market_metadata(market, markets_scanned=len(markets)),
         )
         insert_opportunity(opp)

@@ -3,7 +3,7 @@
 import pytest
 from aletheia.universe.scanners import (
     score_momentum, score_mean_reversion, score_volatility,
-    score_derivatives, run_all_scanners,
+    score_derivatives, score_event, run_all_scanners,
 )
 
 
@@ -109,3 +109,17 @@ def test_run_all_scanners_momentum_wins():
     feat = _base_feat(return_1h=5.0, return_4h=8.0, rsi_14=65, atr_pct=4.0)
     result = run_all_scanners(feat)
     assert result["scanner_family"] == "momentum"
+
+
+def test_event_scanner_placeholder():
+    feat = _base_feat()
+    score, reasons = score_event(feat)
+    assert score == 0.0
+    assert reasons == []
+
+
+def test_run_all_scanners_includes_event():
+    feat = _base_feat()
+    result = run_all_scanners(feat)
+    assert "event" in result["all_scores"]
+    assert result["all_scores"]["event"] == 0.0

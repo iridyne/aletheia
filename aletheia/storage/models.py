@@ -61,6 +61,7 @@ class Opportunity(BaseModel):
     asset_class: str = "crypto"
     # JSON-encoded prediction/equity-specific metadata (event title, probabilities, etc.)
     metadata: str = "{}"
+    execution_eligible: bool = True
     universe_snapshot_id: str | None = None
     universe_member_id: str | None = None
     scanner_family: str | None = None

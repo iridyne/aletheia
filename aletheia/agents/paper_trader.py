@@ -61,9 +61,14 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     now_iso = datetime.now(timezone.utc).isoformat()
 
     opp = None
+    skipped_reasons: list[str] = []
     for row in list_opportunities(limit=50):
         ac = row.get("asset_class") or "crypto"  # NULL = legacy crypto row
         if ac != "crypto":
+            skipped_reasons.append(f"skip:{row.get('symbol','?')}:asset_class={ac}")
+            continue
+        if not row.get("execution_eligible", True):
+            skipped_reasons.append(f"skip:{row.get('symbol','?')}:execution_eligible=False")
             continue
         if row.get("status") != "open" or row.get("symbol") not in allowed_symbols:
             continue
@@ -73,11 +78,15 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             member = get_universe_member(row["universe_member_id"])
             if member:
                 if not member.get("execution_eligible", True):
+                    skipped_reasons.append(f"skip:{row.get('symbol','?')}:execution_eligible=False")
                     continue
                 if member.get("expires_at") and member["expires_at"] < now_iso:
+                    skipped_reasons.append(f"skip:{row.get('symbol','?')}:ttl_expired")
                     continue
         opp = row
         break
+    if skipped_reasons:
+        outputs.extend(skipped_reasons)
     if opp is None:
         outputs.append("no_open_opportunity")
         return {"outputs": outputs, "errors": errors}

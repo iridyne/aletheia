@@ -196,6 +196,17 @@ def score_derivatives(feat: dict) -> tuple[float, list[str]]:
     return min(100.0, score), reasons
 
 
+def score_event(feat: dict) -> tuple[float, list[str]]:
+    """Score event/catalyst opportunity — placeholder for Phase 2.
+
+    Will incorporate: scheduled events (listings, unlocks, upgrades),
+    cross-market catalysts, and prediction-market-sourced signals.
+    Currently returns 0 so the family participates in allocation quotas
+    without distorting the scoring of other families.
+    """
+    return 0.0, []
+
+
 def run_all_scanners(feat: dict) -> dict:
     """Run all scanner families and return best result.
 
@@ -206,6 +217,7 @@ def run_all_scanners(feat: dict) -> dict:
         "mean_reversion": score_mean_reversion(feat),
         "volatility": score_volatility(feat),
         "derivatives": score_derivatives(feat),
+        "event": score_event(feat),
     }
 
     best_family = max(results, key=lambda k: results[k][0])

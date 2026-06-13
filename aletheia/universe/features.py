@@ -128,7 +128,7 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
                     "quote_volume_24h": quote_volume_24h,
                     "volume_1h": volume_1h,
                     "spread_bps": spread,
-                    "depth_10bps_usd": None,  # requires orderbook fetch, skip in MVP
+                    "depth_10bps_usd": None,  # Phase 2: fetch_order_book → sum within 10bps; cfg.universe.min_depth_10bps_usd gate
                     "atr_pct": atr_val,
                     "rsi_14": rsi_val,
                     "return_1h": return_1h,
