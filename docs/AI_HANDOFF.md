@@ -7,10 +7,65 @@
 
 ## Last Updated
 
-2026-06-13 (Persistence / Sync / Recovery 子系统完整实现:EventStore, ArtifactStore, Gateway
-StateMachine + StateStore + Lock + Session + Recovery + Reconciliation, Agent Checkpoints,
-Export/Import, Backup/Restore, Lesson/Skill/PolicyVersion stores, API endpoints. 15 new `ps_*`
-tables, 18 new modules, `/api/persistence/*` route family. No existing tests broken.)
+2026-06-13 (开发体验 + 能力批次:single-port :8787 dev 自动重载收口、状态浮层重设计、LLM
+startup gate 3 次重试 + Windows toast、风控单列 symbol_list 双模式过滤、Anthropic/OpenAI 原生
+provider + 流式、universe plan 缺口补齐、design-doc 合规修复、Clustr100 社区知识库。18 个提交,
+均为 2026-06-13 当日。会话结束:本机实例停机,开发切换到另一台机器。)
+
+## Recent Change (DX + 能力批次 + 机器交接 — 2026-06-13)
+
+> 本批次 = origin/master `1075c8e`(Persistence 子系统,下一节)之后的 18 个当日提交。
+> 末尾在本机停机、准备切换开发机时推送。所有条目机器无关。
+
+**1. Dev 体验:single-port :8787 + 全自动重载(`e3a143a` `ba06f5c` `f99c747` `cbbab00`
+`3433c48` `d695564` `8af04f4`)**:
+- dev.ps1 不再单独起 Vite dev server(:5173);唯一端点是 gateway :8787,同时服务 API +
+  静态资源。`vite build --watch`(sibling 进程)+ backend uvicorn `--reload` 接管热重载。
+- backend 用 `--reload` + `WATCHFILES_FORCE_POLLING`(Windows 兼容),watch `aletheia/`。
+  SSE 端点监测 manifest.json mtime,向浏览器推 `frontend-built` 事件;`dev-reload.ts` 客户端
+  自动刷新,断连时显示 "Gateway restarting…" 浮层并轮询 `/api/health` 恢复。
+- **安全门**:所有 dev-reload 行为门控在 `ALETHEIA_DEV_RELOAD=1`(仅 dev.ps1 设置)+
+  `live_state==live_disabled`;生产模式恢复 supervisor 崩溃保护。sentinel 路径统一为
+  `aletheia/server/dev_reload.py` 的 `RELOAD_SENTINEL` 常量,消除 health.py/gateway.py 分叉。
+- "Restart" 按钮改名 "Cold Restart"(明确是杀进程冷启,非热重载),新增 `/api/version` 内省。
+  新增 `scripts/watch_backend.py`(watchfiles + preflight + debounce + storm control)。
+
+**2. 状态浮层重设计 + Operator 模式更名(`031bd0f` `a033a77`)**:
+- 系统状态浮层从扁平 `<table>` 改为分区 flex 布局(Health / Infrastructure / Operator /
+  Code-Drift 四区),修复 code-drift 行溢出与 operator 行换行,遵循 `docs/UI_DESIGN_SYSTEM.md`。
+- Operator 模式 `Investigating` → `Working`;`current_intent` 现在浮层与 Command Center strip 都显示。
+
+**3. LLM startup gate 重试 + Windows toast(`7d48e13`)**:Databricks AI-Gateway 偶发不稳会让
+单次探测超时误暂停交易环。现在 gate 最多重试 3 次(`health.startup_gate_max_retries` /
+`startup_gate_retry_delay_sec` 可配)后才判失败;暂停时弹 Windows toast。新配置项已进 Web UI
+(Settings > Infrastructure > Health)。
+
+**4. 风控:单列 `symbol_list` 双模式过滤(`45d9837` → `0ec5897`)**:先加 whitelist/blacklist
+双模式过滤(默认 blacklist + 空列表,移除旧的 BTC/ETH/SOL 硬编码限制),再统一为**单个
+`symbol_list` 字段** + `symbol_filter_mode` 开关决定语义("只这些可交易" vs "这些被禁")。
+
+**5. 原生 Anthropic + OpenAI provider + 流式(`ceba99d` `aa64fba`)**:`api.anthropic.com` /
+`api.openai.com` 直连 provider,SSE 流式(httpx async stream + aiter_lines)、富模型元数据
+(tier/context_window/capabilities)、`llm_stream()` agent 流式消费助手、Settings UI 简化表单
+(native 无 base_url)。36 个单测。
+> 注意:本项目实际 LLM 仍是 Databricks AI-Gateway(anthropic_compatible + bearer),见
+> memory `databricks-llm-endpoint`;native provider 是新增能力,非默认切换。
+
+**6. Universe plan 缺口补齐(`0bc5d62`)**:`universe_members` 加 `quote_volume_24h` /
+`spread_bps` 列;`GET /universe/members/{id}` 返回 `{member, features, opportunities}`;
+Universe.tsx 加 Volume 24h / Spread 列、Refreshed 卡片、Feature Snapshot 与 Linked
+Opportunities 抽屉区。
+
+**7. Design-doc 合规修复(`f6b821a`,源自 2026-06-11 设计评审 4 条)**:paper_trader 记录
+skip 原因(asset_class / execution_eligible / ttl_expired);prediction_observer 显式置
+`execution_eligible=False`(字段 + migration);event/catalyst scanner 占位接进
+`run_all_scanners` 参与配额;`depth_10bps_usd` gap 注释澄清。
+
+**8. Clustr100 社区知识库(`95dab0c`,direction-only)**:外部 Telegram 量化群聊天记录提炼的
+10 篇文档,定位同 `north_star_references.md`——方向参考、**非施工授权**;原始记录/截图未入库。
+
+**9. 未跟踪入库**:`docs/plans/`(5 篇 implementation plan / 设计报告,机器无关意图)+
+`frontend/public/favicon.svg`(构建源资产)随本批次提交。已扫描确认无 secret。
 
 ## Recent Change (Persistence / Sync / Recovery — Full Implementation — 2026-06-13)
 

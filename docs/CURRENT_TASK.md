@@ -5,9 +5,10 @@
 > **每台机器本地的、随时间变化的事实**,写进 git 必然在另一台机器上过期。
 > **要知道真实状态,运行 `aletheia doctor`**(只读、零副作用,是事实的唯一来源)。
 > 双机切换标准流程见 `docs/DEV_PROTOCOL.md`。
-> **2026-06-10 当前协作分工**:权威的 Phase 0 72h 观察窗口在另一台观测机上运行;本 checkout
-> 的职责是沿 `worktree-dev` 推进后续开发与文档收敛,尤其是 Operator Layer / Pi Agent 的
-> 方案冻结后实现。**不要用本 checkout 的进程状态推断观察窗是否达标。**
+> **2026-06-13 会话末机器交接**:本次开发会话在 UM790Pro 上结束并**停机本机实例**,开发切换到
+> 另一台机器。哪台机器承载 Phase 0 观察窗、autostart 看门狗是否仍注册、gateway 是否在跑——
+> 全是随时间/机器变化的运行态事实,**不在此断言**;接手机器**第一步一律 `git pull --ff-only`
+> + `aletheia doctor` 取真实事实**(事实唯一来源是机器本身,不是本文叙事)。
 
 ---
 
@@ -47,10 +48,21 @@
 
 > **合并边界**:此线与 Operator Layer 同样受"合并 `master` 需 Phase 0 门全绿 + 显式授权"约束。
 
+## 接手机器第一步(机器交接后)
+
+0. **接手机器开机第一步**(2026-06-13 交接后,机器无关流程):
+   1. `git pull --ff-only` —— 拿最新意图(本日 18 提交 + docs/plans 已在 origin/master)。
+   2. `uv run aletheia doctor`(本机 GBK 控制台需 `PYTHONIOENCODING=utf-8`)—— 取真实事实:
+      gateway 是否在跑、autostart 是否注册、凭证、loop 活动。**不要**用本文或任何 git 文档
+      推断这些。
+   3. 需要本地跑闭环时:`uv run aletheia gateway start`(或 dev 迭代用 `scripts/dev.ps1`);
+      若需无人值守自动复活:`aletheia gateway enable-autostart`。
+   4. `uv run pytest -q` 确认 515+ 测试基线绿(克隆后还应跑 `import aletheia.risk.engine` sanity)。
+
 ## 待办(下一步可做的事 — 不含"现在状态如何")
 
-1. **观测主线继续**:Phase 0 观察门仍以观测机为准;凡涉及"72h 跑到哪了 / 是否达标"的判断,
-   一律去那台机器用 `doctor`/gateway status 取事实。
+1. **观测主线继续**:Phase 0 观察门仍以承载观察窗的机器为准;凡涉及"72h 跑到哪了 / 是否达标"
+   的判断,一律去那台机器用 `doctor`/gateway status 取事实。
 2. **并行开发线 = `worktree-dev`**:可继续推进 post-Phase-0 能力的实现/验证,但不把这些开发
    行为当作 Phase 0 达标证据,也不提前合并回 `master`。
 3. **Windows 无人值守加固**(观测机 Task 3):autostart 看门狗 schtasks 注册可靠性、

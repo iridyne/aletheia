@@ -1,5 +1,38 @@
 # Development Log
 
+## 2026-06-13 — DX 收口 + 能力批次(18 提交)+ 机器交接
+
+> 本日批次紧跟 `1075c8e`(Persistence/Sync/Recovery 子系统,已在 origin/master)。会话结束时
+> 在本机停机、准备切换到另一台开发机前推送。逐条根因见 `docs/AI_HANDOFF.md` 同日条目。
+
+### Changed — Dev 体验收口到 single-port :8787
+- dev.ps1 不再起独立 Vite dev server(:5173);gateway :8787 同时服务 API + 静态资源。
+  `vite build --watch` + backend `uvicorn --reload`(+ `WATCHFILES_FORCE_POLLING` Windows 兼容)
+  接管热重载;SSE 推 `frontend-built` 事件,`dev-reload.ts` 自动刷新浏览器。
+- 所有 dev-reload 行为门控 `ALETHEIA_DEV_RELOAD=1` + `live_disabled`,生产恢复 supervisor 崩溃保护。
+  sentinel 路径统一为 `RELOAD_SENTINEL` 常量。新增 `scripts/watch_backend.py`、`/api/version`。
+- "Restart" → "Cold Restart"(明确冷启 vs 热重载)。状态浮层从扁平 table 改为四区 flex 布局。
+
+### Added
+- LLM startup gate 重试(默认 3 次,可配 `health.startup_gate_max_retries` /
+  `startup_gate_retry_delay_sec`)+ 暂停时 Windows toast,治 Databricks 端点偶发误暂停。
+- 原生 Anthropic + OpenAI provider(SSE 流式 + 富元数据 + `llm_stream()` + Settings UI),36 单测。
+  本项目默认 LLM 仍是 Databricks AI-Gateway,native 为新增能力非默认切换。
+- Universe:`quote_volume_24h` / `spread_bps` 列、enriched detail drawer(features + linked opportunities)。
+- `docs/plans/`(5 篇 implementation plan / 设计报告)+ `frontend/public/favicon.svg` 入库。
+- Clustr100 社区知识库 10 篇(`docs/research/clustr100_community_kb/`,direction-only 非施工授权)。
+
+### Changed — 风控
+- symbol 过滤统一为单个 `symbol_list` + `symbol_filter_mode`(whitelist/blacklist)开关决定语义;
+  默认 blacklist + 空列表,移除旧的 BTC/ETH/SOL 硬编码白名单。
+
+### Fixed — design-doc 合规(2026-06-11 评审 4 条)
+- paper_trader 记录 skip 原因;prediction_observer 显式 `execution_eligible=False`(+ migration);
+  event/catalyst scanner 接进 `run_all_scanners` 参与配额;`depth_10bps_usd` gap 注释澄清。
+
+### Operator
+- 模式 `Investigating` → `Working`;`current_intent` 现于浮层 + Command Center strip 显示。
+
 ## 2026-06-12 — 账户级仓位发现 + 纳管(Phase 1-2 落地,Phase 3-4 设计在册)
 
 **背景**:所有者立场——Aletheia 启动接管账户后,人难以再与 AI 并行管仓,故全账户仓位

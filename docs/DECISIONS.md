@@ -1,5 +1,40 @@
 # Decisions
 
+## 2026-06-13 - Dev 栈统一到 single-port :8787,移除独立 Vite dev server
+
+### Context
+
+此前本地开发跑两个端点:Vite dev server(:5173,HMR)+ gateway(:8787,API + 生产静态)。
+两端口导致 dev 与生产形态分叉:dev 下前端走 Vite proxy、生产下走 gateway 的 StaticFiles,
+路径/CORS/资源解析行为不一致,且 SSE 触发的 `static 404` bug(`ba06f5c`)正源于此分叉。
+
+### Decision
+
+dev 与生产**统一为单端点 :8787**。dev.ps1 不再起 Vite dev server;改用
+`vite build --watch`(产物落 `aletheia/dashboard_static/`)+ gateway StaticFiles 服务,
+backend `uvicorn --reload` 提供后端热重载,SSE(`frontend-built` 事件)驱动浏览器自动刷新。
+
+### Reasoning
+
+- dev 形态 ≡ 生产形态:同一个 gateway 服务 API + 静态,消除 proxy/StaticFiles 行为分叉。
+- 单端点 = 单一可信地址,符合项目 "localhost 单控制面" 的定位(CLAUDE.md frontend 段)。
+- Starlette StaticFiles 每请求 `os.stat()`,无目录缓存,故前端 rebuild 无需重启 worker——
+  SSE 事件单独触发浏览器刷新即可(`cbbab00` 据此移除了多余的 worker restart)。
+
+### Consequences
+
+- 所有 dev-reload 能力门控 `ALETHEIA_DEV_RELOAD=1`(仅 dev.ps1 设)+ `live_disabled`;
+  生产模式 supervisor 崩溃保护不受影响。
+- UI 迭代统一用 `scripts/dev.ps1`,**不要**在紧循环里手动 rebuild `dashboard_static/`
+  (已写入 CLAUDE.md frontend 规则)。
+
+### Alternatives Considered
+
+- 保留双端口 + 修 proxy 配置:治标,dev/prod 分叉根因仍在。
+- 纯 HMR(不落静态):dev 与生产形态进一步分叉,且 gateway 需感知 Vite 内部协议,耦合加重。
+
+---
+
 ## 2026-06-12 - 修订 trust §1.1:外部仓位可经"合成诚实因果链"纳入本地账本(adopted)
 
 ### Context
