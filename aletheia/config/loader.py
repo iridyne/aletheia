@@ -36,6 +36,23 @@ def ensure_data_dirs() -> None:
         DATA_DIR / "reports" / "risk",
         DATA_DIR / "reports" / "agent_performance",
         DATA_DIR / "exports",
+        # Persistence / Sync / Recovery workspace directories
+        DATA_DIR / "events",
+        DATA_DIR / "backups",
+        DATA_DIR / "artifacts" / "evidence",
+        DATA_DIR / "artifacts" / "claims",
+        DATA_DIR / "artifacts" / "market_snapshots",
+        DATA_DIR / "artifacts" / "analyses",
+        DATA_DIR / "artifacts" / "opportunities",
+        DATA_DIR / "artifacts" / "strategy_specs",
+        DATA_DIR / "artifacts" / "validation_reports",
+        DATA_DIR / "artifacts" / "proposals",
+        DATA_DIR / "artifacts" / "paper_runs",
+        DATA_DIR / "artifacts" / "live_runs",
+        DATA_DIR / "artifacts" / "reconciliation_reports",
+        DATA_DIR / "artifacts" / "reviews",
+        DATA_DIR / "artifacts" / "lessons",
+        DATA_DIR / "artifacts" / "skills",
     ]
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)

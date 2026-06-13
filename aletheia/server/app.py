@@ -26,6 +26,7 @@ from aletheia.server.routes.news import router as news_router
 from aletheia.server.routes.command import router as command_router
 from aletheia.server.routes.operator import router as operator_router
 from aletheia.server.routes.runtime import router as runtime_router
+from aletheia.server.routes.persistence import router as persistence_router
 
 logger = logging.getLogger("aletheia")
 
@@ -248,6 +249,7 @@ app.include_router(news_router)
 app.include_router(command_router)
 app.include_router(operator_router)
 app.include_router(runtime_router)
+app.include_router(persistence_router)
 
 # Serve static dashboard if the directory exists
 _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"

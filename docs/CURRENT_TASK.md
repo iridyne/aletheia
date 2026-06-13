@@ -57,6 +57,10 @@
    gateway 重启/注销/整机重启后的自动复活。这是 72h 真正无人值守的前提。
 4. **经验闭环质量门**(已在工作区,待提交):post_trade_reviewer / risk_critic 仅在
    LLM 真产出 + 有真实活动时升 `high_confidence`,防噪音进检索。
+5. **Persistence/Sync/Recovery 集成(2026-06-13 新增)**:子系统代码已完整实现,
+   下一步 = 将 `GatewayRecoveryService` 接入现有 `gateway/lifecycle.py` 启动流程、
+   为 paper_trader 的 fill/position 流程接 `GatewayStateStore` 双写、
+   为 agents 接入 `CheckpointStore` 实现可恢复长任务。专用集成测试待编写。
 
 ## 下一阶段(Phase 0 门全绿后,需显式授权才启动)
 

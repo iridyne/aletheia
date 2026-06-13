@@ -7,11 +7,53 @@
 
 ## Last Updated
 
-2026-06-12 (账户级仓位发现 + 纳管 Phase 1-2 落地:`total_value_usdt` 改用真实权益、
-修 `get_positions` 入场价字段 `openPriceAvg`、`position_reconciler.classify_positions/adopt_position`、
-`source` 列与 trust §1.1 修订、demo 自动纳管默认开启决策在册;777 passed。详见下方条目与 DEVLOG。)
+2026-06-13 (Persistence / Sync / Recovery 子系统完整实现:EventStore, ArtifactStore, Gateway
+StateMachine + StateStore + Lock + Session + Recovery + Reconciliation, Agent Checkpoints,
+Export/Import, Backup/Restore, Lesson/Skill/PolicyVersion stores, API endpoints. 15 new `ps_*`
+tables, 18 new modules, `/api/persistence/*` route family. No existing tests broken.)
 
-## Recent Change (账户级仓位发现 + 纳管:Phase 1-2 — 2026-06-12)
+## Recent Change (Persistence / Sync / Recovery — Full Implementation — 2026-06-13)
+
+**1. 子系统概述**:
+完整实现了 Aletheia 持久化/同步/恢复子系统,覆盖交易状态安全恢复、事件溯源、
+内容寻址存储、网关状态机、领导锁、对账协议、Agent 检查点、导出/导入、备份/恢复、
+经验循环持久化(Lesson/Skill/PolicyVersion)。
+
+**2. 新增模块(18 个文件)**:
+- `aletheia/storage/hashing.py` — canonical JSON + SHA-256
+- `aletheia/storage/event_store.py` — append-only 双写(DB + JSONL)
+- `aletheia/storage/artifact_store.py` — 内容寻址文件存储
+- `aletheia/gateway/state_machine.py` — 7 状态网关 FSM
+- `aletheia/gateway/client_order_id.py` — 确定性 order ID 生成
+- `aletheia/gateway/state_store.py` — order/fill/position 持久层
+- `aletheia/gateway/locks.py` — lease-based 领导锁
+- `aletheia/gateway/session.py` — gateway session 跟踪
+- `aletheia/gateway/exchange_adapter.py` — 交易所适配器协议
+- `aletheia/gateway/reconciliation.py` — fill/order/position 对账
+- `aletheia/gateway/recovery.py` — 启动恢复协议
+- `aletheia/agents/checkpoints.py` — Agent 运行检查点
+- `aletheia/sync/exporter.py` — 多模式导出
+- `aletheia/sync/importer.py` — dry-run + merge 导入
+- `aletheia/sync/conflicts.py` — 策略冲突检测
+- `aletheia/backup/service.py` + `verify.py` + `restore.py` — 备份/恢复
+- `aletheia/learning/lessons.py` + `skills.py` — 经验循环
+- `aletheia/policies/store.py` + `diff.py` — 版本化策略管理
+- `aletheia/server/routes/persistence.py` — API 路由
+
+**3. Schema 变更(additive overlay)**:
+15 张 `ps_*` 前缀新表追加到 `migrations.py`,不修改任何已有表。
+
+**4. 安全不变量**:
+- 密钥永不导出(`_SECRET_PATTERNS` 排除)
+- Skill `FORBIDDEN_LAYERS` 阻止触碰执行/风控/凭证层
+- Policy 版本不可变(只能追加新版本)
+- 网关 SAFE_FREEZE 在对账异常时阻止交易
+
+**5. 已有测试未破坏**,新系统等待专用测试覆盖。
+
+## (历史) 2026-06-12 (账户级仓位发现 + 纳管 Phase 1-2 落地)
+
+## (历史原文) Recent Change (账户级仓位发现 + 纳管:Phase 1-2 — 2026-06-12)
 
 **1. 背景与立场**:
 - 所有者决策:Aletheia 接管账户后,全账户仓位(含系统外开出的)统一交由 AI 管理("接管即纳管")。

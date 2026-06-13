@@ -395,3 +395,213 @@ class SerenityClaim(BaseModel):
     support_level: str | None = None
     metadata: str = "{}"
     created_at: str = Field(default_factory=_utcnow)
+
+
+# ====================================================================
+# Persistence / Sync / Recovery Layer Models
+# ====================================================================
+
+class PSEvent(BaseModel):
+    event_id: str = Field(default_factory=new_id)
+    event_type: str
+    aggregate_type: str
+    aggregate_id: str
+    actor_type: str
+    actor_id: str
+    run_id: str | None = None
+    causation_id: str | None = None
+    correlation_id: str | None = None
+    idempotency_key: str | None = None
+    payload_json: str = "{}"
+    payload_hash: str = ""
+    created_at: str = Field(default_factory=_utcnow)
+    machine_id: str = ""
+    schema_version: str = "v1"
+
+
+class PSArtifactRef(BaseModel):
+    path: str
+    sha256: str
+    content_type: str
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class PSGatewaySession(BaseModel):
+    gateway_session_id: str = Field(default_factory=new_id)
+    gateway_id: str
+    mode: str
+    status: str
+    started_at: str = Field(default_factory=_utcnow)
+    ended_at: str | None = None
+    heartbeat_at: str | None = None
+    machine_id: str = ""
+    recovery_report_id: str | None = None
+    freeze_reason: str | None = None
+    config_hash: str | None = None
+
+
+class PSGatewayLock(BaseModel):
+    lock_name: str
+    owner_id: str
+    lease_until: str
+    heartbeat_at: str = Field(default_factory=_utcnow)
+
+
+class PSReconciliationDiff(BaseModel):
+    diff_type: str
+    severity: str  # info | warning | critical
+    local_ref: dict | None = None
+    remote_ref: dict | None = None
+    message: str
+    recommended_action: str
+
+
+class PSReconciliationReport(BaseModel):
+    reconciliation_report_id: str = Field(default_factory=new_id)
+    gateway_session_id: str
+    status: str  # ok | diff_found | frozen | failed
+    local_state_hash: str | None = None
+    remote_state_hash: str | None = None
+    diffs_json: str = "[]"
+    actions_json: str = "[]"
+    artifact_path: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class PSExecutionIntent(BaseModel):
+    execution_intent_id: str = Field(default_factory=new_id)
+    proposal_id: str
+    mode: str  # paper | live
+    status: str = "draft"  # draft | approved | submitted | cancelled | failed
+    risk_check_json: str | None = None
+    unlock_token_hash: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class PSOrderIntent(BaseModel):
+    intent_id: str = Field(default_factory=new_id)
+    execution_intent_id: str | None = None
+    proposal_id: str
+    strategy_id: str
+    mode: str  # paper | live
+    venue: str
+    symbol: str
+    side: str  # buy | sell
+    order_type: str
+    quantity: str
+    limit_price: str | None = None
+    reduce_only: int = 0
+    status: str = "created"  # created | submitted | cancelled | failed | completed
+    client_order_id: str = ""
+    idempotency_key: str = ""
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class PSOrder(BaseModel):
+    order_id: str = Field(default_factory=new_id)
+    intent_id: str
+    mode: str
+    venue: str
+    venue_order_id: str | None = None
+    client_order_id: str
+    symbol: str
+    side: str
+    order_type: str
+    quantity: str
+    price: str | None = None
+    status: str = "submitted"
+    submitted_at: str | None = None
+    acknowledged_at: str | None = None
+    updated_at: str = Field(default_factory=_utcnow)
+    raw_json: str | None = None
+
+
+class PSFill(BaseModel):
+    fill_id: str = Field(default_factory=new_id)
+    order_id: str | None = None
+    mode: str
+    venue: str
+    venue_trade_id: str | None = None
+    client_order_id: str | None = None
+    symbol: str
+    side: str
+    quantity: str
+    price: str
+    fee: str | None = None
+    fee_currency: str | None = None
+    filled_at: str = Field(default_factory=_utcnow)
+    raw_json: str | None = None
+
+
+class PSPosition(BaseModel):
+    position_id: str = Field(default_factory=new_id)
+    mode: str
+    strategy_id: str
+    proposal_id: str | None = None
+    venue: str
+    symbol: str
+    side: str  # long | short | flat
+    quantity: str
+    avg_entry_price: str | None = None
+    realized_pnl: str | None = None
+    unrealized_pnl: str | None = None
+    status: str = "open"  # open | closed | orphan | unknown
+    opened_at: str | None = None
+    closed_at: str | None = None
+    updated_at: str = Field(default_factory=_utcnow)
+    raw_json: str | None = None
+
+
+class PSCheckpoint(BaseModel):
+    checkpoint_id: str = Field(default_factory=new_id)
+    run_id: str
+    step_name: str
+    state_json: str = "{}"
+    artifact_path: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class PSLesson(BaseModel):
+    lesson_id: str = Field(default_factory=new_id)
+    source_type: str
+    source_id: str
+    category: str
+    severity: str
+    summary: str
+    evidence_json: str = "{}"
+    recommendation_json: str | None = None
+    status: str = "proposed"  # proposed | accepted | rejected | applied | archived
+    artifact_path: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    applied_policy_version: str | None = None
+
+
+class PSSkill(BaseModel):
+    skill_id: str = Field(default_factory=new_id)
+    name: str
+    scope: str  # research | validation | review | execution_helper
+    description: str
+    inputs_json: str = "[]"
+    outputs_json: str = "[]"
+    risk_level: str = "low"
+    allowed_layers_json: str = "[]"
+    forbidden_layers_json: str = "[]"
+    created_from_lessons_json: str | None = None
+    version: int = 1
+    artifact_path: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    status: str = "draft"  # draft | active | deprecated
+
+
+class PSPolicyVersion(BaseModel):
+    policy_version_id: str = Field(default_factory=new_id)
+    parent_policy_version_id: str | None = None
+    policy_type: str
+    policy_json: str = "{}"
+    policy_hash: str = ""
+    diff_json: str | None = None
+    created_by: str = "system"
+    created_at: str = Field(default_factory=_utcnow)
+    status: str = "draft"  # draft | active | deprecated | rejected

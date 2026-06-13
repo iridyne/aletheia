@@ -228,6 +228,37 @@ B 是 8 个新模块的能力扩张。Phase 0 战略冻结律(见 [CURRENT_TASK.
 
 ---
 
+## Cross-Cutting Track: Persistence / Sync / Recovery (2026-06-13 实现)
+
+**目标**: 网关/Agent/Worker 进程可以随时重启而不丢失 orders, positions, fills, proposals,
+market analysis, claims, lessons, skills, policy versions。
+
+**状态**: 代码完整实现(18 模块 + 15 张 ps_* 新表 + API 路由),待集成到运行时流程。
+
+| 层 | 模块 | 状态 |
+|---|---|---|
+| EventStore | `storage/event_store.py` | 完成 |
+| ArtifactStore | `storage/artifact_store.py` | 完成 |
+| Gateway FSM | `gateway/state_machine.py` | 完成 |
+| Gateway StateStore | `gateway/state_store.py` + `client_order_id.py` | 完成 |
+| Leader Lock | `gateway/locks.py` | 完成 |
+| Session Tracking | `gateway/session.py` | 完成 |
+| Reconciliation | `gateway/reconciliation.py` + `recovery.py` + `exchange_adapter.py` | 完成 |
+| Agent Checkpoint | `agents/checkpoints.py` | 完成 |
+| Export/Import | `sync/exporter.py` + `importer.py` + `conflicts.py` | 完成 |
+| Backup/Restore | `backup/service.py` + `verify.py` + `restore.py` | 完成 |
+| Lesson/Skill | `learning/lessons.py` + `skills.py` | 完成 |
+| PolicyVersion | `policies/store.py` + `diff.py` | 完成 |
+| API | `server/routes/persistence.py` | 完成 |
+
+**下一步(需显式授权)**:
+- 将 `GatewayRecoveryService` 接入 `gateway/lifecycle.py` 启动流程
+- 为 `paper_trader` 的 fill/position 流程接 `GatewayStateStore` 双写
+- 为 agents 接入 `CheckpointStore` 实现可恢复长任务
+- 编写专用集成测试
+
+---
+
 ## Phase 0 — Stabilize & Observe
 
 **Goal**: All 15 scheduler jobs run autonomously. System proves basic stability.

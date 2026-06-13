@@ -695,6 +695,248 @@ CREATE TABLE IF NOT EXISTS serenity_agent_locks (
     acquired_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT NOT NULL
 );
+
+-- ====================================================================
+-- Persistence / Sync / Recovery Layer (Plan §7)
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS ps_event_log (
+    event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    aggregate_type TEXT NOT NULL,
+    aggregate_id TEXT NOT NULL,
+    actor_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    run_id TEXT,
+    causation_id TEXT,
+    correlation_id TEXT,
+    idempotency_key TEXT,
+    payload_json TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    schema_version TEXT NOT NULL DEFAULT 'v1'
+);
+
+CREATE INDEX IF NOT EXISTS idx_ps_event_aggregate
+ON ps_event_log (aggregate_type, aggregate_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_ps_event_correlation
+ON ps_event_log (correlation_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_event_idempotency
+ON ps_event_log (idempotency_key)
+WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS ps_gateway_sessions (
+    gateway_session_id TEXT PRIMARY KEY,
+    gateway_id TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    heartbeat_at TEXT,
+    machine_id TEXT NOT NULL,
+    recovery_report_id TEXT,
+    freeze_reason TEXT,
+    config_hash TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ps_gateway_locks (
+    lock_name TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    lease_until TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ps_reconciliation_reports (
+    reconciliation_report_id TEXT PRIMARY KEY,
+    gateway_session_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    local_state_hash TEXT,
+    remote_state_hash TEXT,
+    diffs_json TEXT NOT NULL,
+    actions_json TEXT NOT NULL,
+    artifact_path TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ps_execution_intents (
+    execution_intent_id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    risk_check_json TEXT,
+    unlock_token_hash TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ps_order_intents (
+    intent_id TEXT PRIMARY KEY,
+    execution_intent_id TEXT,
+    proposal_id TEXT NOT NULL,
+    strategy_id TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    order_type TEXT NOT NULL,
+    quantity TEXT NOT NULL,
+    limit_price TEXT,
+    reduce_only INTEGER DEFAULT 0,
+    status TEXT NOT NULL,
+    client_order_id TEXT NOT NULL UNIQUE,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ps_orders (
+    order_id TEXT PRIMARY KEY,
+    intent_id TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    venue_order_id TEXT,
+    client_order_id TEXT NOT NULL UNIQUE,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    order_type TEXT NOT NULL,
+    quantity TEXT NOT NULL,
+    price TEXT,
+    status TEXT NOT NULL,
+    submitted_at TEXT,
+    acknowledged_at TEXT,
+    updated_at TEXT NOT NULL,
+    raw_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ps_orders_status
+ON ps_orders (status, updated_at);
+
+CREATE TABLE IF NOT EXISTS ps_fills (
+    fill_id TEXT PRIMARY KEY,
+    order_id TEXT,
+    mode TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    venue_trade_id TEXT,
+    client_order_id TEXT,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity TEXT NOT NULL,
+    price TEXT NOT NULL,
+    fee TEXT,
+    fee_currency TEXT,
+    filled_at TEXT NOT NULL,
+    raw_json TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_fills_venue_trade
+ON ps_fills (venue, venue_trade_id)
+WHERE venue_trade_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS ps_positions (
+    position_id TEXT PRIMARY KEY,
+    mode TEXT NOT NULL,
+    strategy_id TEXT NOT NULL,
+    proposal_id TEXT,
+    venue TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity TEXT NOT NULL,
+    avg_entry_price TEXT,
+    realized_pnl TEXT,
+    unrealized_pnl TEXT,
+    status TEXT NOT NULL,
+    opened_at TEXT,
+    closed_at TEXT,
+    updated_at TEXT NOT NULL,
+    raw_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ps_positions_status
+ON ps_positions (status, updated_at);
+
+CREATE TABLE IF NOT EXISTS ps_checkpoints (
+    checkpoint_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    step_name TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    artifact_path TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (run_id, step_name)
+);
+
+CREATE TABLE IF NOT EXISTS ps_lessons (
+    lesson_id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    recommendation_json TEXT,
+    status TEXT NOT NULL,
+    artifact_path TEXT,
+    created_at TEXT NOT NULL,
+    applied_policy_version TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ps_skills (
+    skill_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    description TEXT NOT NULL,
+    inputs_json TEXT NOT NULL,
+    outputs_json TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    allowed_layers_json TEXT NOT NULL,
+    forbidden_layers_json TEXT NOT NULL,
+    created_from_lessons_json TEXT,
+    version INTEGER NOT NULL,
+    artifact_path TEXT,
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ps_policy_versions (
+    policy_version_id TEXT PRIMARY KEY,
+    parent_policy_version_id TEXT,
+    policy_type TEXT NOT NULL,
+    policy_json TEXT NOT NULL,
+    policy_hash TEXT NOT NULL,
+    diff_json TEXT,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ps_policy_versions_type_status
+ON ps_policy_versions (policy_type, status, created_at);
+
+CREATE TABLE IF NOT EXISTS ps_scheduled_jobs (
+    job_id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    schedule_expr TEXT NOT NULL,
+    status TEXT NOT NULL,
+    next_run_at TEXT NOT NULL,
+    last_run_at TEXT,
+    lease_owner TEXT,
+    lease_until TEXT,
+    config_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ps_job_runs (
+    job_run_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    attempt INTEGER NOT NULL,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    result_json TEXT,
+    error_json TEXT
+);
 """
 
 
