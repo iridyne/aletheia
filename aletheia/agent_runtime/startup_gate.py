@@ -67,39 +67,10 @@ async def _probe_one(name: str) -> dict:
         return {"provider": name, "usable": False, "error": str(e)[:200]}
 
 
-async def probe_llm_providers_at_startup(cfg) -> dict:
-    """Probe all enabled providers with a real inference call. Never raises.
-
-    CONTRACT: `cfg` must be the live, on-disk config (i.e. `bootstrap()`/
-    `load_config()` result). We enumerate provider NAMES from `cfg`, but
-    `get_provider(name)` instantiates from the on-disk config it loads itself —
-    so passing a cfg whose providers differ from disk would probe the wrong
-    instances. The only production caller (server lifespan) passes the bootstrap
-    cfg, so they always match.
-
-    Returns:
-        {
-          "any_usable": bool,   # at least one provider completed a real call
-          "results": [ {provider, usable, error}, ... ],
-          "checked": int,       # number of enabled providers probed
-        }
-    """
-    names = _ordered_enabled_providers(cfg)
-    if not names:
-        logger.warning("LLM startup gate: no enabled providers configured")
-        return {"any_usable": False, "results": [], "checked": 0}
-
-    # Probe all providers CONCURRENTLY. Serial probing made total startup cost
-    # N * _PROBE_TIMEOUT_SEC — each provider's timeout added up. Combined with the
-    # gate blocking the boot path, that widened the window during which the gateway
-    # was not yet serving and the spawn-verifier / OS watchdog saw a dead port.
-    # gather() caps the wall-clock at ~_PROBE_TIMEOUT_SEC regardless of N, and
-    # preserves input order so `results` stays default-first. _probe_one never
-    # raises (it converts every error to a dict), so no return_exceptions needed.
+async def _probe_all_once(names: list[str]) -> dict:
+    """Single round: probe all providers concurrently. Returns verdict dict."""
     results: list[dict] = list(await asyncio.gather(*(_probe_one(n) for n in names)))
 
-    # Log AFTER gather so the lines stay in default-first order — gather returns
-    # results in input order even though the probes complete in arbitrary order.
     for r in results:
         if r["usable"]:
             logger.info("LLM startup gate: provider '%s' usable", r["provider"])
@@ -108,3 +79,43 @@ async def probe_llm_providers_at_startup(cfg) -> dict:
 
     any_usable = any(r["usable"] for r in results)
     return {"any_usable": any_usable, "results": results, "checked": len(names)}
+
+
+async def probe_llm_providers_at_startup(cfg) -> dict:
+    """Probe all enabled providers with a real inference call, retrying on failure.
+
+    Retries up to `cfg.health.startup_gate_max_retries` times (default 3) with
+    `cfg.health.startup_gate_retry_delay_sec` (default 15) between attempts.
+    Returns as soon as any attempt finds a usable provider.
+
+    Returns:
+        {
+          "any_usable": bool,
+          "results": [ {provider, usable, error}, ... ],
+          "checked": int,
+          "attempts": int,   # how many rounds were actually run
+        }
+    """
+    names = _ordered_enabled_providers(cfg)
+    if not names:
+        logger.warning("LLM startup gate: no enabled providers configured")
+        return {"any_usable": False, "results": [], "checked": 0, "attempts": 0}
+
+    max_retries = getattr(cfg.health, "startup_gate_max_retries", 3)
+    retry_delay = getattr(cfg.health, "startup_gate_retry_delay_sec", 15)
+
+    result: dict = {}
+    for attempt in range(1, max_retries + 1):
+        result = await _probe_all_once(names)
+        if result["any_usable"]:
+            result["attempts"] = attempt
+            return result
+        if attempt < max_retries:
+            logger.warning(
+                "LLM startup gate: attempt %d/%d failed, retrying in %ds...",
+                attempt, max_retries, retry_delay,
+            )
+            await asyncio.sleep(retry_delay)
+
+    result["attempts"] = max_retries
+    return result

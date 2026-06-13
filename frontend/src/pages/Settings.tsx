@@ -602,43 +602,85 @@ function RiskTab({ settings, qc }: any) {
 // ─── Symbols ───
 
 function SymbolsCard({ settings, qc }: any) {
-  const symbols: string[] = settings?.risk?.allowed_symbols ?? []
-  const [draft, setDraft] = useState<string[]>([])
+  const serverMode: string = settings?.risk?.symbol_filter_mode ?? 'whitelist'
+  const serverAllowed: string[] = settings?.risk?.allowed_symbols ?? []
+  const serverBlocked: string[] = settings?.risk?.blocked_symbols ?? []
+
+  const [mode, setMode] = useState<'whitelist' | 'blacklist'>(serverMode as any)
+  const [draftAllowed, setDraftAllowed] = useState<string[]>([])
+  const [draftBlocked, setDraftBlocked] = useState<string[]>([])
   const [input, setInput] = useState('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => { if (symbols.length) setDraft(symbols) }, [settings])
+  useEffect(() => {
+    setMode(serverMode as any)
+    setDraftAllowed(serverAllowed)
+    setDraftBlocked(serverBlocked)
+  }, [settings])
+
+  const activeList = mode === 'whitelist' ? draftAllowed : draftBlocked
+  const setActiveList = mode === 'whitelist' ? setDraftAllowed : setDraftBlocked
 
   const mut = useMutation({
-    mutationFn: () => api.updateTradableSymbols(draft),
+    mutationFn: () => api.updateSymbolFilter({ mode, allowed: draftAllowed, blocked: draftBlocked }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
   const add = () => {
     const s = input.trim().toUpperCase()
-    if (!s || draft.includes(s)) return
-    setDraft(prev => [...prev, s]); setInput(''); setMsg(null)
+    if (!s || activeList.includes(s)) return
+    setActiveList(prev => [...prev, s]); setInput(''); setMsg(null)
   }
-  const remove = (s: string) => { setDraft(prev => prev.filter(x => x !== s)); setMsg(null) }
-  const dirty = JSON.stringify(draft.slice().sort()) !== JSON.stringify(symbols.slice().sort())
+  const remove = (s: string) => { setActiveList(prev => prev.filter(x => x !== s)); setMsg(null) }
+
+  const dirty = mode !== serverMode
+    || JSON.stringify(draftAllowed.slice().sort()) !== JSON.stringify(serverAllowed.slice().sort())
+    || JSON.stringify(draftBlocked.slice().sort()) !== JSON.stringify(serverBlocked.slice().sort())
+
+  const canSave = mode === 'blacklist' || draftAllowed.length > 0
+
+  const chipBg = mode === 'whitelist' ? 'rgba(34,211,238,0.1)' : 'rgba(239,68,68,0.1)'
+  const chipBorder = mode === 'whitelist' ? 'rgba(34,211,238,0.25)' : 'rgba(239,68,68,0.25)'
 
   return (
     <div className="card" style={{ marginBottom: 0 }}>
+      {/* Mode toggle */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', alignItems: 'center' }}>
+        <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Mode:</span>
+        <button
+          className={mode === 'whitelist' ? '' : 'secondary'}
+          onClick={() => { setMode('whitelist'); setMsg(null) }}
+          style={{ fontSize: '0.72rem', padding: '0.2rem 0.6rem' }}
+        >Whitelist</button>
+        <button
+          className={mode === 'blacklist' ? '' : 'secondary'}
+          onClick={() => { setMode('blacklist'); setMsg(null) }}
+          style={{ fontSize: '0.72rem', padding: '0.2rem 0.6rem' }}
+        >Blacklist</button>
+      </div>
+
+      {/* Symbol chips */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.75rem', minHeight: '2rem' }}>
-        {draft.map(s => (
+        {activeList.map(s => (
           <span key={s} style={{
             display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
             padding: '0.18rem 0.5rem', borderRadius: '4px',
-            background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.25)',
+            background: chipBg, border: `1px solid ${chipBorder}`,
             fontSize: '0.79rem', fontFamily: 'var(--mono)',
           }}>
             {s}
             <button onClick={() => remove(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '0 0.1rem', lineHeight: 1, fontSize: '0.9rem' }} title={`Remove ${s}`}>×</button>
           </span>
         ))}
-        {draft.length === 0 && <span className="hint" style={{ margin: 0 }}>No symbols — add at least one.</span>}
+        {activeList.length === 0 && (
+          <span className="hint" style={{ margin: 0 }}>
+            {mode === 'whitelist' ? 'No symbols — add at least one.' : 'No blocked symbols — all symbols are tradable.'}
+          </span>
+        )}
       </div>
+
+      {/* Input + save */}
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
         <input
           value={input} placeholder="e.g. SUIUSDT"
@@ -648,18 +690,21 @@ function SymbolsCard({ settings, qc }: any) {
         />
         <button className="secondary" onClick={add}>Add</button>
         {dirty && (
-          <button onClick={() => mut.mutate()} disabled={mut.isPending || draft.length === 0}>
+          <button onClick={() => mut.mutate()} disabled={mut.isPending || !canSave}>
             {mut.isPending ? 'Saving…' : 'Save changes'}
           </button>
         )}
         <SaveMsg msg={msg} />
       </div>
       <p className="hint">
-        Add any Bitget symbol pair (e.g. <code>SOLUSDT</code>, <code>SUIUSDT</code>, <code>DOTUSDT</code>).
-        Changes take effect on the next agent cycle. Removing a symbol does not close open positions.
+        {mode === 'whitelist'
+          ? 'Only these symbols can be traded. Add any Bitget pair (e.g. SOLUSDT, SUIUSDT).'
+          : 'These symbols are blocked from trading. All other symbols are allowed.'}
+        {' '}Changes take effect on the next agent cycle.
       </p>
+
       {/* Read-only: show the derived InstrumentId keys that will be observed */}
-      {(settings?.market_data?.observed_instruments ?? []).length > 0 && (
+      {mode === 'whitelist' && (settings?.market_data?.observed_instruments ?? []).length > 0 && (
         <div style={{ marginTop: '0.75rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
           <span style={{ fontSize: '0.68rem', color: 'var(--muted)', marginBottom: '0.35rem', display: 'block' }}>
             Observed instruments (auto-derived · read-only)
@@ -908,6 +953,8 @@ function HealthCard({ settings, qc }: any) {
     { key: 'supervisor_max_restarts',      label: 'Supervisor max restarts',  unit: '',    min: 1,  max: 50,    step: 1, isInt: true },
     { key: 'supervisor_restart_window_sec',label: 'Restart window',           unit: 'sec', min: 60, max: 86400, step: 60, isInt: true },
     { key: 'supervisor_backoff_cap_sec',   label: 'Backoff cap',              unit: 'sec', min: 5,  max: 3600,  step: 1, isInt: true },
+    { key: 'startup_gate_max_retries',     label: 'LLM gate retries',         unit: '',    min: 1,  max: 10,    step: 1, isInt: true },
+    { key: 'startup_gate_retry_delay_sec', label: 'LLM gate retry delay',     unit: 'sec', min: 5,  max: 120,   step: 5, isInt: true },
   ]
 
   return (
@@ -920,6 +967,10 @@ function HealthCard({ settings, qc }: any) {
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
           <input type="checkbox" checked={!!vals.alert_via_telegram} onChange={e => set('alert_via_telegram', e.target.checked)} />
           Alert via Telegram
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={vals.require_llm_at_startup !== false} onChange={e => set('require_llm_at_startup', e.target.checked)} />
+          Require LLM at startup
         </label>
       </div>
       <NumGrid fields={HEALTH_FIELDS} vals={vals} set={set} />

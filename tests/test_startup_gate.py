@@ -233,6 +233,78 @@ def test_startup_gate_respects_disable_flag(tmp_path, monkeypatch):
     assert cfg.runtime.paused is False  # gate skipped entirely
 
 
+# --- 6. retry: first attempt fails, second succeeds → any_usable True ---
+
+def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import startup_gate
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.health.startup_gate_max_retries = 3
+    cfg.health.startup_gate_retry_delay_sec = 1
+
+    call_count = {"n": 0}
+    orig_probe_one = startup_gate._probe_one
+
+    async def flaky_probe_one(name):
+        call_count["n"] += 1
+        if call_count["n"] <= 1:
+            return {"provider": name, "usable": False, "error": "timeout>20s"}
+        return {"provider": name, "usable": True, "error": None}
+
+    monkeypatch.setattr(startup_gate, "_probe_one", flaky_probe_one)
+
+    result = asyncio.run(startup_gate.probe_llm_providers_at_startup(cfg))
+    assert result["any_usable"] is True
+    assert result["attempts"] == 2
+    assert call_count["n"] == 2
+
+
+# --- 7. retry: all attempts fail → any_usable False, attempts == max ---
+
+def test_retry_all_attempts_fail(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import startup_gate
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.health.startup_gate_max_retries = 3
+    cfg.health.startup_gate_retry_delay_sec = 0
+
+    _patch_providers(monkeypatch, {
+        "anthropic_compatible": _FakeProvider(exc=RuntimeError("timeout")),
+    })
+
+    result = asyncio.run(startup_gate.probe_llm_providers_at_startup(cfg))
+    assert result["any_usable"] is False
+    assert result["attempts"] == 3
+
+
+# --- 8. notification is called on pause ---
+
+def test_notification_called_on_pause(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.server import app as appmod
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.runtime.paused = False
+    cfg.health.startup_gate_max_retries = 1
+    cfg.health.startup_gate_retry_delay_sec = 0
+    _patch_providers(monkeypatch, {
+        "anthropic_compatible": _FakeProvider(exc=RuntimeError("connection failed")),
+    })
+
+    toast_calls = []
+    monkeypatch.setattr(
+        "aletheia.notifications.send_windows_toast",
+        lambda title, msg: toast_calls.append((title, msg)),
+    )
+
+    asyncio.run(appmod._llm_startup_gate(cfg))
+
+    assert len(toast_calls) == 1
+    assert "Paused" in toast_calls[0][0]
+
+
 def test_resume_gate_blocks_when_no_provider_usable(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import resume_gate

@@ -174,6 +174,9 @@ class HealthConfigUpdate(BaseModel):
     supervisor_max_restarts: Optional[int] = None
     supervisor_restart_window_sec: Optional[int] = None
     supervisor_backoff_cap_sec: Optional[int] = None
+    require_llm_at_startup: Optional[bool] = None
+    startup_gate_max_retries: Optional[int] = None
+    startup_gate_retry_delay_sec: Optional[int] = None
 
 
 _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
@@ -183,6 +186,8 @@ _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
     "supervisor_max_restarts": (1, 50),
     "supervisor_restart_window_sec": (60, 86400),
     "supervisor_backoff_cap_sec": (5, 3600),
+    "startup_gate_max_retries": (1, 10),
+    "startup_gate_retry_delay_sec": (5, 120),
 }
 
 
@@ -401,51 +406,67 @@ async def update_risk_config(req: RiskConfigUpdate):
 
 
 # ---------------------------------------------------------------------------
-# Tradable symbols (risk.allowed_symbols + exchange.tradable_symbols)
+# Symbol filter (whitelist/blacklist mode + allowed/blocked lists)
 # ---------------------------------------------------------------------------
 
+VALID_SYMBOL_FILTER_MODES = {"whitelist", "blacklist"}
+
+
 class SymbolsUpdate(BaseModel):
-    symbols: list[str]
+    mode: str = "whitelist"
+    allowed: list[str] = []
+    blocked: list[str] = []
 
 
 @router.post("/symbols")
 async def update_tradable_symbols(req: SymbolsUpdate):
-    """Update allowed trading symbols. Both risk and exchange lists are updated atomically."""
-    if not req.symbols:
-        raise HTTPException(400, "symbols list must not be empty")
-    # Normalize: uppercase, strip whitespace, deduplicate, keep order
-    normalized = list(dict.fromkeys(s.strip().upper() for s in req.symbols if s.strip()))
-    if not normalized:
-        raise HTTPException(400, "No valid symbols provided")
+    """Update symbol filter mode and lists. Both risk and exchange are updated atomically."""
+    if req.mode not in VALID_SYMBOL_FILTER_MODES:
+        raise HTTPException(400, f"mode must be one of {sorted(VALID_SYMBOL_FILTER_MODES)}")
+    if req.mode == "whitelist" and not req.allowed:
+        raise HTTPException(400, "whitelist mode requires at least one allowed symbol")
+
+    def _normalize(syms: list[str]) -> list[str]:
+        return list(dict.fromkeys(s.strip().upper() for s in syms if s.strip()))
+
+    allowed = _normalize(req.allowed)
+    blocked = _normalize(req.blocked)
 
     cfg = load_config()
-    old_risk = list(cfg.risk.allowed_symbols)
-    old_exchange = list(cfg.exchange.tradable_symbols)
+    old = {
+        "mode": cfg.risk.symbol_filter_mode,
+        "allowed": list(cfg.risk.allowed_symbols),
+        "blocked": list(cfg.risk.blocked_symbols),
+    }
 
-    cfg.risk.allowed_symbols = normalized
-    cfg.exchange.tradable_symbols = normalized
-    # Keep observed_symbols + observed_instruments in sync so new symbols
-    # are actually fetched by the market data collection loop.
+    cfg.risk.symbol_filter_mode = req.mode
+    cfg.risk.allowed_symbols = allowed
+    cfg.risk.blocked_symbols = blocked
+    cfg.exchange.tradable_symbols = allowed
+    cfg.exchange.blocked_symbols = blocked
+
+    # Keep observed_symbols + observed_instruments in sync.
+    # In whitelist mode, observe the allowed list. In blacklist mode, observation
+    # is driven by universe/market_data config — we don't alter it here.
     from aletheia.data.symbols import to_canonical, InstrumentId, MARKET_SPOT
-    canonical_symbols = [to_canonical(s) for s in normalized]
-    cfg.market_data.observed_symbols = canonical_symbols
-    # Rebuild observed_instruments using the configured primary exchange + spot.
-    # If user has manually configured perp instruments those will be wiped here —
-    # acceptable for MVP; advanced users edit config.yaml directly.
-    exchange = cfg.market_data.ccxt_exchange or "binance"
-    cfg.market_data.observed_instruments = [
-        str(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
-        for sym in canonical_symbols
-    ]
+    if req.mode == "whitelist" and allowed:
+        canonical_symbols = [to_canonical(s) for s in allowed]
+        cfg.market_data.observed_symbols = canonical_symbols
+        exchange = cfg.market_data.ccxt_exchange or "binance"
+        cfg.market_data.observed_instruments = [
+            str(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
+            for sym in canonical_symbols
+        ]
+
     save_config(cfg)
 
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "symbols_changed",
                  "entity_type": "symbols",
-                 "before": {"risk": old_risk, "exchange": old_exchange},
-                 "after": {"risk": normalized, "exchange": normalized},
-                 "message": f"Tradable symbols updated: {normalized}"})
-    return {"symbols": normalized}
+                 "before": old,
+                 "after": {"mode": req.mode, "allowed": allowed, "blocked": blocked},
+                 "message": f"Symbol filter updated: mode={req.mode}"})
+    return {"mode": req.mode, "allowed": allowed, "blocked": blocked}
 
 
 # ---------------------------------------------------------------------------

@@ -50,6 +50,7 @@ class ExchangeConfig(BaseModel):
     # Trading whitelist only — which symbols may be traded via this exchange.
     # Market data observation is controlled by MarketDataConfig.observed_symbols.
     tradable_symbols: list[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+    blocked_symbols: list[str] = Field(default_factory=list)
     # Where autonomous paper trades execute:
     #   "bitget_demo"   → real Bitget demo/simulated-trading API (paptrading header,
     #                     USDT-futures only; exchange-side record, higher fidelity).
@@ -179,7 +180,10 @@ class RiskConfig(BaseModel):
     max_futures_leverage_demo: int = 5
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 6
+    # "whitelist" = only allowed_symbols may trade; "blacklist" = all except blocked_symbols.
+    symbol_filter_mode: str = "whitelist"
     allowed_symbols: list[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+    blocked_symbols: list[str] = Field(default_factory=list)
     allowed_exchange: str = "bitget"
     allow_short_demo: bool = True
     allow_short_live: bool = True
@@ -223,6 +227,8 @@ class HealthConfig(BaseModel):
     # NOT killed — that would just trigger a supervisor/watchdog respawn loop); the
     # Web UI shows the degraded state and the operator resumes after fixing a provider.
     require_llm_at_startup: bool = True
+    startup_gate_max_retries: int = 3
+    startup_gate_retry_delay_sec: int = 15
 
 
 class RetentionConfig(BaseModel):

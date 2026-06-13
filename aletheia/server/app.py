@@ -124,15 +124,26 @@ async def _llm_startup_gate(cfg) -> None:
     )
     try:
         from aletheia.files.jsonl import write_audit
+        attempts = result.get("attempts", 1)
         write_audit({
             "actor": "system", "source": "startup_gate",
             "event_type": "llm_startup_gate_paused",
             "entity_type": "gateway", "entity_id": "gateway",
             "message": (
-                f"No usable LLM provider at startup ({result['checked']} checked); "
-                f"trading loop paused. {errors}"
+                f"No usable LLM provider at startup ({result['checked']} checked, "
+                f"{attempts} attempts); trading loop paused. {errors}"
             ),
         })
+    except Exception:
+        pass
+
+    try:
+        from aletheia.notifications import send_windows_toast
+        attempts = result.get("attempts", 1)
+        send_windows_toast(
+            "Aletheia Gateway Paused",
+            f"LLM unavailable ({result['checked']} providers, {attempts} retries). Check Databricks/network.",
+        )
     except Exception:
         pass
 
