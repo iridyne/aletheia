@@ -140,6 +140,7 @@ def main():
             and path.endswith(".py")
             and "dashboard_static" not in path
             and "__pycache__" not in path
+            and "_reload_sentinel.py" not in path
         ),
     ):
         if storm_disabled:

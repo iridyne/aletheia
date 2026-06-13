@@ -208,8 +208,13 @@ def _recent_self_heal_restarts() -> list[float]:
 
 
 def _trigger_restart(reason: str) -> None:
-    """Audit FIRST (synchronous append completes before exit), then exit(42) so
-    the supervisor respawns with fresh code. Mirrors POST /api/gateway/restart.
+    """Audit FIRST (synchronous append completes before exit), then restart.
+
+    Under --reload mode: touches a sentinel file so uvicorn's file-watcher
+    triggers a clean reload (os._exit would kill the worker but the reloader
+    wouldn't respawn it — it only acts on file changes).
+
+    Without --reload: exit(42) so the supervisor respawns with fresh code.
 
     Only call after _can_self_restart() has confirmed a supervisor/autostart will
     bring the process back — otherwise this would permanently kill the gateway.
@@ -220,6 +225,14 @@ def _trigger_restart(reason: str) -> None:
         "message": f"Self-heal restart: {reason}",
     })
     _send_alert(f"self-heal restart ({reason}) — respawning")
+
+    if os.environ.get("ALETHEIA_DEV_RELOAD") == "1":
+        from pathlib import Path
+        import time
+        sentinel = Path(__file__).resolve().parent.parent / "_reload_sentinel.py"
+        sentinel.write_text(f"# self-heal touch at {time.time()}\n")
+        return
+
     _os_exit(42)
 
 
@@ -331,7 +344,8 @@ def run_health_check() -> dict:
     ):
         ok, why = _can_self_restart()
         if ok:
-            _trigger_restart("code_drift")  # does not return
+            _trigger_restart("code_drift")
+            return h
         _alert_suppressed("code_drift", why)
         return h
 
@@ -340,7 +354,8 @@ def run_health_check() -> dict:
     ):
         ok, why = _can_self_restart()
         if ok:
-            _trigger_restart("market_data_stale")  # does not return
+            _trigger_restart("market_data_stale")
+            return h
         _alert_suppressed("market_data_stale", why)
         return h
 

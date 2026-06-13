@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+# Touched by restart endpoint to trigger uvicorn --reload (dev mode)
+aletheia/_reload_sentinel.py
 *.egg-info/
 dist/
 build/
