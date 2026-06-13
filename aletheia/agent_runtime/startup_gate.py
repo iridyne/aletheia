@@ -61,6 +61,9 @@ async def _probe_one(name: str) -> dict:
     except asyncio.TimeoutError:
         return {"provider": name, "usable": False, "error": f"timeout>{_PROBE_TIMEOUT_SEC}s"}
     except Exception as e:  # unknown provider type, network, auth, etc.
+        # 429 means the provider is alive but rate-limiting — not truly unavailable.
+        if "429" in str(e):
+            return {"provider": name, "usable": True, "error": None}
         return {"provider": name, "usable": False, "error": str(e)[:200]}
 
 
