@@ -7,6 +7,8 @@ import type { TradeProposal } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
+import { formatViolation, formatViolationText } from '../lib/riskViolations'
+import { humanize, fmtTimestamp } from '../lib/format'
 
 /**
  * Approval Desk (WEBUI_PAGE_MAP.md — Proposals ELEVATED).
@@ -24,12 +26,12 @@ import PageHeader from '../components/PageHeader'
 const col = createColumnHelper<TradeProposal>()
 
 const historyColumns = [
-  col.accessor('symbol', { header: 'Symbol' }),
-  col.accessor('market_type', { header: 'Market' }),
-  col.accessor('direction', { header: 'Direction' }),
-  col.accessor('execution_mode', { header: 'Mode' }),
+  col.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  col.accessor('market_type', { header: 'Market', cell: info => humanize(info.getValue()) }),
+  col.accessor('direction', { header: 'Direction', cell: info => humanize(info.getValue()) }),
+  col.accessor('execution_mode', { header: 'Mode', cell: info => humanize(info.getValue()) }),
   col.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
-  col.accessor('created_at', { header: 'Created', cell: info => info.getValue()?.slice(0, 16) || '—' }),
+  col.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
 export default function Proposals() {
@@ -109,10 +111,10 @@ export default function Proposals() {
           <>
             <DrawerSection label="Trade">
               <DrawerField label="Symbol" value={selected.symbol} mono />
-              <DrawerField label="Market" value={selected.market_type} />
-              <DrawerField label="Direction" value={selected.direction} />
-              <DrawerField label="Mode" value={selected.execution_mode} />
-              <DrawerField label="Order Type" value={selected.order_type} />
+              <DrawerField label="Market" value={humanize(selected.market_type)} />
+              <DrawerField label="Direction" value={humanize(selected.direction)} />
+              <DrawerField label="Mode" value={humanize(selected.execution_mode)} />
+              <DrawerField label="Order Type" value={humanize(selected.order_type)} />
               <DrawerField label="Quantity" value={selected.quantity} mono />
               <DrawerField label="Price" value={selected.price} mono />
               <DrawerField label="Leverage" value={selected.leverage ? `${selected.leverage}x` : null} mono />
@@ -132,7 +134,7 @@ export default function Proposals() {
             </DrawerSection>
             <DrawerSection label="Status">
               <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
-              <DrawerField label="Created" value={selected.created_at?.slice(0, 16)} />
+              <DrawerField label="Created" value={fmtTimestamp(selected.created_at)} mono />
             </DrawerSection>
             <div className="flex gap-2 mt-3">
               {selected.status === 'pending' && (
@@ -168,10 +170,10 @@ function ProposalCard({
         <div className="flex items-center gap-2">
           <span className={`dir-tag ${dirClass}`}>{p.direction.toUpperCase()}</span>
           <span className="proposal-symbol mono">{p.symbol}</span>
-          <span className="badge badge-blue">{p.market_type}</span>
-          <span className="badge badge-yellow">{p.execution_mode}</span>
+          <span className="badge badge-blue">{humanize(p.market_type)}</span>
+          <span className="badge badge-yellow">{humanize(p.execution_mode)}</span>
         </div>
-        <span className="text-muted text-sm">{p.created_at?.slice(0, 16)}</span>
+        <span className="text-muted text-sm mono">{fmtTimestamp(p.created_at)}</span>
       </div>
 
       <div className="proposal-params mono">
@@ -179,7 +181,7 @@ function ProposalCard({
         <span>px <b>{p.price ?? 'mkt'}</b></span>
         {p.leverage ? <span>lev <b>{p.leverage}x</b></span> : null}
         <span>stop <b>{p.stop_price ?? '—'}</b></span>
-        <span>{p.order_type}</span>
+        <span>{humanize(p.order_type)}</span>
       </div>
 
       {p.agent_rationale && (
@@ -226,7 +228,7 @@ function RiskVerdictInline({ proposalId }: { proposalId: string }) {
         {d.risk_score != null && <span className="mono"> · score {d.risk_score}</span>}
       </span>
       {violations.length > 0 && (
-        <span className="proposal-risk-violations">{violations.slice(0, 2).join(', ')}{violations.length > 2 && ` +${violations.length - 2}`}</span>
+        <span className="proposal-risk-violations">{violations.slice(0, 2).map(formatViolationText).join(' · ')}{violations.length > 2 && ` +${violations.length - 2}`}</span>
       )}
       {d.message && violations.length === 0 && <span className="proposal-risk-msg">{d.message}</span>}
     </div>
@@ -255,12 +257,18 @@ function RiskDecisionSection({ proposalId }: { proposalId: string }) {
     <DrawerSection label="Risk Decision">
       <DrawerField label="Decision" value={<StatusBadge status={d.decision || (d.approved ? 'approved' : 'rejected')} />} />
       <DrawerField label="Risk Score" value={d.risk_score} mono />
-      <DrawerField label="Message" value={d.message} />
+      {/* The backend message is `Rejected: <raw codes>` when there are violations — redundant
+          with (and uglier than) the humanized Violations list below. Show it only when it
+          adds something the list doesn't, i.e. no violations (e.g. "Approved"). */}
+      {violations.length === 0 && <DrawerField label="Message" value={d.message} />}
       {violations.length > 0 && (
         <div className="mt-2">
           <span className="text-muted text-sm">Violations:</span>
           <ul className="proposal-violations-list">
-            {violations.map((v, i) => <li key={i}>{v}</li>)}
+            {violations.map((v, i) => {
+              const f = formatViolation(v)
+              return <li key={i}>{f.label}{f.detail && <span className="text-muted"> — {f.detail}</span>}</li>
+            })}
           </ul>
         </div>
       )}

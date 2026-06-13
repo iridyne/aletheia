@@ -8,6 +8,7 @@ import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
+import { humanize, fmtTimestamp } from '../lib/format'
 
 /**
  * Agent Activity (WEBUI_PAGE_MAP.md — Agent Runs + Opportunities MERGED).
@@ -39,25 +40,25 @@ function parseJson(raw: string | null): any[] {
 }
 
 const runColumns = [
-  runCol.accessor('agent_name', { header: 'Agent' }),
+  runCol.accessor('agent_name', { header: 'Agent', cell: info => humanize(info.getValue()) }),
   runCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
-  runCol.accessor('trigger_type', { header: 'Trigger' }),
+  runCol.accessor('trigger_type', { header: 'Trigger', cell: info => humanize(info.getValue()) }),
   runCol.accessor('model_provider', { header: 'Provider', cell: info => info.getValue() || '—' }),
   runCol.accessor('outputs_created', {
     header: 'Outputs',
-    cell: info => { try { return JSON.parse(info.getValue() || '[]').length } catch { return 0 } },
+    cell: info => { try { return <span className="mono">{JSON.parse(info.getValue() || '[]').length}</span> } catch { return <span className="mono">0</span> } },
   }),
-  runCol.accessor('started_at', { header: 'Started', cell: info => info.getValue()?.slice(0, 16) || '—' }),
+  runCol.accessor('started_at', { header: 'Started', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
 const oppColumns = [
-  oppCol.accessor('symbol', { header: 'Symbol' }),
-  oppCol.accessor('market', { header: 'Market' }),
-  oppCol.accessor('direction_bias', { header: 'Direction' }),
-  oppCol.accessor('confidence_score', { header: 'Confidence', cell: info => info.getValue() != null ? `${info.getValue()}%` : '—' }),
-  oppCol.accessor('source_agent', { header: 'Source', cell: info => info.getValue() || '—' }),
+  oppCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  oppCol.accessor('market', { header: 'Market', cell: info => humanize(info.getValue()) }),
+  oppCol.accessor('direction_bias', { header: 'Direction', cell: info => humanize(info.getValue()) }),
+  oppCol.accessor('confidence_score', { header: 'Confidence', cell: info => <span className="mono">{info.getValue() != null ? `${info.getValue()}%` : '—'}</span> }),
+  oppCol.accessor('source_agent', { header: 'Source', cell: info => info.getValue() ? humanize(info.getValue()) : '—' }),
   oppCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
-  oppCol.accessor('created_at', { header: 'Created', cell: info => info.getValue()?.slice(0, 16) || '—' }),
+  oppCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
 export default function AgentActivity() {
@@ -110,13 +111,13 @@ function RunsTab({ runs }: { runs: AgentRun[] }) {
         {selected && (
           <>
             <DrawerSection label="Run Info">
-              <DrawerField label="Agent" value={selected.agent_name} />
+              <DrawerField label="Agent" value={humanize(selected.agent_name)} />
               <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
-              <DrawerField label="Trigger" value={selected.trigger_type} />
+              <DrawerField label="Trigger" value={humanize(selected.trigger_type)} />
               <DrawerField label="Provider" value={selected.model_provider} />
-              <DrawerField label="Model" value={selected.model_name} />
-              <DrawerField label="Started" value={selected.started_at?.slice(0, 16)} />
-              <DrawerField label="Ended" value={selected.ended_at?.slice(0, 16)} />
+              <DrawerField label="Model" value={selected.model_name} mono />
+              <DrawerField label="Started" value={fmtTimestamp(selected.started_at)} mono />
+              <DrawerField label="Ended" value={fmtTimestamp(selected.ended_at)} mono />
               <DrawerField label="Cost" value={selected.cost_estimate != null ? `$${selected.cost_estimate.toFixed(4)}` : null} mono />
             </DrawerSection>
             <ReasoningStepsSection runId={selected.id} fallback={selected.tools_called} />
@@ -184,21 +185,21 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
           <>
             <DrawerSection label="Market Signal">
               <DrawerField label="Symbol" value={selected.symbol} mono />
-              <DrawerField label="Market" value={selected.market} />
+              <DrawerField label="Market" value={humanize(selected.market)} />
               <DrawerField label="Asset Class" value={
                 <span className={`badge ${selected.asset_class === 'prediction' ? 'badge-blue' : selected.asset_class === 'equity' ? 'badge-yellow' : 'badge-green'}`}>
-                  {selected.asset_class || 'crypto'}
+                  {humanize(selected.asset_class || 'crypto')}
                 </span>
               } />
-              <DrawerField label="Direction Bias" value={selected.direction_bias} />
-              <DrawerField label="Confidence" value={selected.confidence_score != null ? `${selected.confidence_score}%` : selected.confidence ?? null} />
-              <DrawerField label="Source Agent" value={selected.source_agent} />
+              <DrawerField label="Direction Bias" value={humanize(selected.direction_bias)} />
+              <DrawerField label="Confidence" value={selected.confidence_score != null ? `${selected.confidence_score}%` : selected.confidence ?? null} mono />
+              <DrawerField label="Source Agent" value={selected.source_agent ? humanize(selected.source_agent) : null} />
               <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
             </DrawerSection>
             {(selected.asset_class === 'prediction' || selected.asset_class === 'equity') && (
               <DrawerSection label="Observation Only">
                 <p className="text-muted text-sm">
-                  This {selected.asset_class} opportunity is observation-only and will not be routed to Paper Trader.
+                  This {humanize(selected.asset_class)} opportunity is observation-only and will not be routed to Paper Trader.
                 </p>
               </DrawerSection>
             )}
@@ -209,7 +210,7 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
               <DrawerField label="Linked Strategy" value={selected.linked_strategy_id ? (
                 <a href="#" onClick={e => { e.preventDefault(); navigate('/strategies') }} className="mono">{selected.linked_strategy_id}</a>
               ) : null} />
-              <DrawerField label="Created" value={selected.created_at?.slice(0, 16)} />
+              <DrawerField label="Created" value={fmtTimestamp(selected.created_at)} mono />
             </DrawerSection>
             <div className="mt-2 flex gap-1">
               {selected.asset_class === 'prediction' ? (
@@ -252,9 +253,9 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
             {(toolCalls as any[]).map((tc: any, i: number) => (
               <tr key={tc.id || i}>
                 <td className="mono">{tc.tool_name}</td>
-                <td>{tc.tool_class}</td>
-                <td><span className={`badge ${tc.permitted ? 'badge-green' : 'badge-red'}`}>{tc.permitted ? 'yes' : 'no'}</span></td>
-                <td>{tc.created_at?.slice(11, 19) || '—'}</td>
+                <td>{humanize(tc.tool_class)}</td>
+                <td><span className={`badge ${tc.permitted ? 'badge-green' : 'badge-red'}`}>{tc.permitted ? 'Yes' : 'No'}</span></td>
+                <td className="mono">{tc.created_at?.slice(11, 19) || '—'}</td>
               </tr>
             ))}
           </tbody>

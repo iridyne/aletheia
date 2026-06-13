@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
-import { fmtSigned, useDecimals } from '../lib/format'
+import { fmtSigned, useDecimals, humanize } from '../lib/format'
+import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 
 export default function RiskControls() {
   const qc = useQueryClient()
@@ -44,10 +45,27 @@ export default function RiskControls() {
           <h3>Risk State</h3>
           <table>
             <tbody>
-              <tr><th>Status</th><td><span className={`badge ${riskBadge}`}>{riskState}</span></td></tr>
-              <tr><th>Violations</th><td>{violations.length > 0 ? violations.map((v, i) => <span key={i} className="badge badge-red" style={{ marginRight: '0.3rem' }}>{v}</span>) : <span className="text-muted">none</span>}</td></tr>
-              <tr><th>Permission Mode</th><td><span className="badge badge-blue">{String((status as any)?.permission_mode || '—')}</span></td></tr>
-              <tr><th>Live State</th><td>{String((status as any)?.live_state || '—')}</td></tr>
+              <tr><th>Status</th><td><span className={`badge ${riskBadge}`}>{riskStateLabel(riskState)}</span></td></tr>
+              <tr><th>Violations</th><td>
+                {violations.length > 0 ? (
+                  <ul className="risk-violations">
+                    {violations.map((v, i) => {
+                      const f = formatViolation(v)
+                      return (
+                        <li key={i} className="risk-violation">
+                          <span className={`risk-dot risk-dot-${f.severity}`} />
+                          <div className="risk-violation-body">
+                            <span className="risk-violation-label">{f.label}</span>
+                            {f.detail && <span className="risk-violation-detail">{f.detail}</span>}
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : <span className="text-muted">none</span>}
+              </td></tr>
+              <tr><th>Permission Mode</th><td><span className="badge badge-blue">{humanize(String((status as any)?.permission_mode || '—'))}</span></td></tr>
+              <tr><th>Live State</th><td><span className={`badge ${(status as any)?.live_state === 'live_disabled' ? 'badge-muted' : 'badge-yellow'}`}>{humanize(String((status as any)?.live_state || '—'))}</span></td></tr>
             </tbody>
           </table>
         </div>
@@ -55,12 +73,12 @@ export default function RiskControls() {
         {/* Kill Switch */}
         <div className="card">
           <h3>Kill Switch</h3>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.8rem' }}>
-            <span className={`badge ${killed ? 'badge-red' : 'badge-green'}`} style={{ fontSize: '0.85rem', padding: '0.3rem 0.7rem' }}>
+          <div className="flex items-center gap-3 mb-3">
+            <span className={`badge badge-lg ${killed ? 'badge-red' : 'badge-green'}`}>
               {killed ? 'ENGAGED' : 'INACTIVE'}
             </span>
           </div>
-          <p style={{ fontSize: '0.78rem', color: 'var(--muted)', marginBottom: '0.8rem' }}>
+          <p className="text-sm text-muted mb-3">
             {killed
               ? 'All trading is halted. No new proposals will be executed until released.'
               : 'Kill switch is inactive. The system can execute approved proposals.'}
@@ -68,8 +86,7 @@ export default function RiskControls() {
           <div className="flex gap-2">
             {!killed && (
               <button
-                className="secondary"
-                style={{ borderColor: 'rgba(255,93,108,0.4)', color: 'var(--red)' }}
+                className="secondary danger"
                 onClick={() => { if (confirm('Engage kill switch? All trading will halt immediately.')) engageKill.mutate() }}
               >
                 Engage Kill Switch
@@ -108,7 +125,7 @@ export default function RiskControls() {
                 {Object.entries(exposure).map(([sym, val]) => (
                   <tr key={sym}>
                     <td className="mono">{sym}</td>
-                    <td className="mono" style={{ color: val >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    <td className={`mono ${val >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
                       {fmtSigned(val)}
                     </td>
                   </tr>
@@ -125,18 +142,28 @@ export default function RiskControls() {
       <div className="card">
         <h3>Risk Boundaries (configured limits)</h3>
         {boundaries ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem 1.5rem' }}>
+          <div className="boundaries-grid">
             {Object.entries(boundaries as Record<string, any>).map(([key, val]) => (
               <div key={key} className="drawer-field">
-                <span className="drawer-field-label">{key.replace(/_/g, ' ')}</span>
-                <span className="drawer-field-value mono">{typeof val === 'object' ? JSON.stringify(val) : String(val)}</span>
+                <span className="drawer-field-label">{humanize(key)}</span>
+                <span className="drawer-field-value mono">{fmtBoundary(val)}</span>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-muted text-sm">Loading...</p>
+          <p className="text-muted text-sm">Loading…</p>
         )}
       </div>
     </div>
   )
+}
+
+/** Render a risk-boundary value: scalars as-is, objects as readable "key: value" pairs
+ *  (not a raw JSON.stringify dump). */
+function fmtBoundary(val: any): string {
+  if (val == null) return '—'
+  if (typeof val === 'object') {
+    return Object.entries(val).map(([k, v]) => `${humanize(k)}: ${v}`).join(' · ')
+  }
+  return String(val)
 }

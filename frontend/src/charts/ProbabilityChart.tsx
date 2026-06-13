@@ -19,15 +19,15 @@ export default function ProbabilityChart({ data, height = 200 }: Props) {
       width: containerRef.current.clientWidth,
       height,
       grid: chartTheme.grid,
-      rightPriceScale: { borderColor: '#232c36' },
-      timeScale: { borderColor: '#232c36', timeVisible: true },
+      rightPriceScale: { borderColor: chartTheme.borderColor },
+      timeScale: { borderColor: chartTheme.borderColor, timeVisible: true },
     })
     chartRef.current = chart
 
     const series = chart.addAreaSeries({
-      lineColor: '#22d3ee',
-      topColor: 'rgba(34, 211, 238, 0.3)',
-      bottomColor: 'rgba(34, 211, 238, 0.02)',
+      lineColor: chartTheme.lineColor,
+      topColor: chartTheme.areaTopColor,
+      bottomColor: chartTheme.areaBottomColor,
       lineWidth: 2,
       priceFormat: { type: 'custom', formatter: (v: number) => `${(v * 100).toFixed(1)}%` },
     })

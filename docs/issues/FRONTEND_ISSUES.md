@@ -593,6 +593,180 @@ chart OHLCV 本身不需要轮询（由 PriceChart 内部管理），只需刷�
 
 ---
 
+## 6. 🔴🟠🟡 全前端设计系统对照审计（2026-06-13）
+
+> 来源：用户要求"把所有前端页面的设计风格与排版规范跟 UI/UX 设计文档完整比对"。
+> 方法：5 路并行 Explore agent 各审一组文件，对照 `docs/UI_DESIGN_SYSTEM.md` + 已实现
+> 的 `frontend/src/index.css` token 系统；关键结论已用 grep 实测复核（不轻信 agent 叙述，
+> 遵循 "verify-before-cite" 纪律）。覆盖 14 页 + 16 组件 + index.css(1864 行) + 3 chart。
+> 修复进度逐条更新；修好移入 §10。
+
+### 6.1 🔴 CSS 系统级 BUG（已 grep 实测确认，影响全站或整页）
+
+- 🔴 **`Universe.tsx` 整页用 Tailwind class，本项目无 Tailwind → 整页样式失效**
+  - 实测：`package.json` 无 tailwind 依赖、`src/` 无 `@tailwind` 指令；`Universe.tsx:119-194`
+    全是 `bg-zinc-800 / text-zinc-400 / grid grid-cols-5 / space-y-6 / font-mono /
+    px-4 py-2 bg-blue-600 / rounded-lg / text-red-400 / text-orange-400` 等
+  - 影响：summary tiles 无卡片背景、无 muted 色、grid 不成列、refresh 按钮无样式、
+    数字非 mono、family 颜色意图含 off-palette 紫/橙——**整页排版崩坏**
+  - 修复：用设计系统 class 重写（`.card`/`.metric-tile`/`.mono`/`.account-snapshot` grid/
+    原生 `<button>`），familyColor 返回 `var(--blue/green/yellow/muted)`，去掉紫橙
+
+- 🔴 **`index.css` 三处 `.badge-red` 定义冲突，最低者(行1717)按级联胜出 → 全站红 badge 变色掉边框**
+  - 实测：`368`(规范红 `rgba(255,93,108,.20)`+border)、`754`(command-card 限定
+    `rgba(255,107,107,.12)`)、`1717`(`rgba(255,80,80,.15)`+`var(--red,#f55)`+**无 border**)
+  - 影响：行 1717 在最下方，覆盖全站所有 `.badge-red`——红 badge 用错红、丢边框
+  - 修复：删除 1717 的重定义；754 收敛到 token 红
+
+- 🔴 **整个 Lens CSS 块(~1592-1772)引用 4 个未定义 token → 静默渲染失败**
+  - 实测：`--radius`(7处)、`--text-muted`(7处)、`--font-mono`(1处:577)、`--surface-hover`(1处:1772)
+    在 `:root` **均未定义**（真 token 是 `--r`/`--r-sm`、`--muted`、`--mono`、`--surface-2`）
+  - 影响：Lens 全部卡片**直角**(border-radius 解析为空)、"muted"文字**无色**、
+    markdown code 非 IBM Plex Mono、clickable hover 落到 `--bg`(过暗)
+  - 修复：`--radius`→`--r`/`--r-sm`、`--text-muted`→`--muted`、`--font-mono`→`--mono`、
+    `--surface-hover`→`--surface-2`
+
+- 🔴 **off-palette 紫色 `#b864ff`(`.badge-purple` 行1718 / `.btn-promote` 行1769-1770)**
+  - 规格：只允许 ONE accent(cyan) + red/yellow/green/blue 语义色；紫色违规
+  - 影响：SerenityLens `promoted` 主题 badge + Promote 按钮引入第二强调色
+  - 修复：promoted→`badge-blue`/`badge-green`；删 `.badge-purple`/`.btn-promote` 紫，改 token
+
+- 🔴 **`Settings.tsx:1343` `var(--purple, #a78bfa)`(reasoning tier)、`:639` `rgba(239,68,68)`
+    (外来红 #ef4444)、`:715` `rgba(100,100,120)`(无 token 灰)**——硬编码 off-token 颜色
+  - 修复：reasoning→`var(--blue)`；红→token 红；灰→`var(--surface-2)/var(--border)`
+
+- 🟠 **`ProbabilityChart.tsx:22-30` 硬编码 hex(`#232c36` 边框、`#22d3ee` 线、cyan rgba 填充)**
+    ——唯一绕过 `charts/theme.ts` 的 chart
+  - 修复：theme.ts 加 borderColor/area-fill 字段，引用 `chartTheme`
+
+### 6.2 🔴 跨页/raw 机器码展示（UI Honesty + 一致性）
+
+- 🔴 **lifecycle state 一律 `badge-blue` 且 raw enum**：`StrategyLifecycle.tsx:28,99`、
+  `Learning.tsx:286`——draft/paper_running/live_limited/retired 全蓝、显示原始下划线串
+  - 修复：state→语义色(live_*绿/paper_*黄/retired红/draft蓝) + Title-Case 人性化
+
+- 🔴 **未定义 badge class `badge-amber`/`badge-muted`**：`TradesPositions.tsx:207,208,307`、
+  `Overview.tsx:111`——渲染成无色裸 badge
+  - 修复：`badge-amber`→`badge-yellow`；`badge-muted`→`badge-blue` 或新增 `.badge-muted` token
+
+- 🔴 **raw 机器枚举直接显示给用户**（rule 7 humanize 违规，多页）：
+  - `RiskControls.tsx:67,68,149,150`(permission_mode/live_state raw、boundary key 小写、
+    `JSON.stringify(val)` 裸 dump)
+  - `Settings.tsx:194,420,809`("active"/"disabled"、`live_disabled`、`String(bool)`="true")
+  - `Overview.tsx:180,192`(raw exchange、`replace('live_','live: ')` 半humanize)
+  - `Proposals.tsx:172,173`、`AgentActivity.tsx`(status/trigger/asset_class)、
+    `NewsIntel.tsx:114-142`(sentiment/status/event_type)、`Learning.tsx:132,156`(item_type)
+  - 修复：统一 humanizer（snake_case→Title Case、bool→ON/OFF），集中成 lib helper
+
+- 🟠 **跨组件 badge 状态→颜色不一致**：`DataTable StatusBadge`(running→yellow) vs
+  `SerenityLens RunStatusBadge`(running→blue)——同状态两色
+  - 修复：删 RunStatusBadge，统一走共享 `StatusBadge`（或导出共享 `statusToBadgeClass()`）
+
+### 6.3 🟡 工程基础（内联样式 / 时间戳 / 失效 class / mono）
+
+- 🟡 **未定义 utility class 被使用 → 样式静默缺失**：`.mt-1`(`PredictionLens:280,307`)、
+  独立 `.pnl-positive/.pnl-negative`(仅在 `.hero-value`/`.metric-value` 下定义，
+  `PredictionLens:39,118,201` 独立用 → 无色)
+  - 修复：补 `.mt-1`、补独立 `.pnl-positive/negative{color:var(--green/red)}`
+
+- 🟡 **off-grid 间距泛滥**：`--space-1..8` 已定义但 ~70-80 处声明用 ad-hoc rem
+  (0.3/0.35/0.42/0.45/0.55/0.65/0.7/0.85/1.1/1.25rem 等 ~25 种)，集中在 legacy +
+  CommandCenter + Lens 块；cockpit/account 块已正确用 token
+  - 修复：迁移到 `var(--space-N)`，无对应的就近 snap
+
+- 🟡 **时间戳格式不统一**：`.slice(0,16)`(Universe/StrategyLifecycle/Learning/Charts) vs
+  `toLocaleString`(NewsIntel) vs `.slice(5,16)`(Overview:121) vs 相对 `timeAgo`
+  - 修复：抽一个共享 `fmtTimestamp()` helper，全站统一
+
+- 🟡 **内联 style 重复已有 class**：`RiskControls.tsx:76-90,146`、`Settings`(多处)、
+  `Charts.tsx:19-26,96-177`、`ConnectionStatus.tsx:33-38`、`ObjectDetail.tsx:45`
+  (后者还漏传 danger class)、`ActivityTimeline.tsx:123`、`Universe.tsx:282`
+  - 修复：换 `.flex/.gap-N/.text-sm/.text-muted/.btn-control.danger`；补缺失 utility
+    (`.items-baseline/.flex-col/.gap-4/.mt-1/.mb-1/.text-xs`)
+
+- 🟡 **重复/冲突 CSS 规则**：`tr.clickable:hover`(525 vs 1772)、`.card-head-space`(488 vs 1726)
+  - 修复：删重复定义
+
+- 🟡 **data 值缺 `.mono`**：`TradesPositions.tsx:35`(PnL span)、`SerenityLens`(confidence/score
+  多处)、`Learning.tsx:176,209`(confidence)、`NewsIntel.tsx:106`(timestamp)
+  - 修复：补 `.mono`
+
+- 🟡 **文本 `.slice(0,N)` 截词**：`NewsIntel.tsx:124`(`summary.slice(0,150)`)切到词中间
+  - 修复：CSS line-clamp 或按词边界截断
+
+### 6.4 修复批次规划（按"系统级根因优先"）
+
+1. **批次 A — CSS 系统根因**（一次性消除整类问题，收益最高）：补/改 token、删冲突
+   `.badge-red`、删紫色、补 `.mt-1`/独立 pnl 色/缺失 utility class、删重复规则。
+2. **批次 B — Universe.tsx 整页重写**到设计系统 class（单页最严重）。
+3. **批次 C — 共享 humanizer + 共享 StatusBadge 收敛**：raw enum/bool/lifecycle-state
+   一次性人性化 + 统一 badge 配色 + 统一时间戳 helper。
+4. **批次 D — 逐页内联样式/mono/截词清理**（机械、低风险）。
+
+> 每批次后 `npm run build` + preview 端到端验证（实测渲染，非截图臆断）。
+
+### 6.5 ✅ 已修复（2026-06-14，A–D 四批次落地，build 绿 + preview 实测）
+
+**批次 A — CSS 系统根因（`index.css`）**：
+- `--radius`(7)→`--r`/`--r-sm`、`--text-muted`(7)→`--muted`、`--font-mono`(1:589)→`--mono`、
+  `--surface-hover`(1772)→删重复 `tr.clickable:hover`（保留 526 的 `--surface-2` 版）。
+  preview 实测：`.lens-module` border-radius 0→**8px**，`.lens-status-label` 颜色→`--muted`。
+- 删除行 1717 冲突 `.badge-red`（曾覆盖全站、用错红、丢边框）；行 766 command-card 红收敛到 token 红。
+  preview 实测：`badge-red` 边框已恢复 `rgba(255,93,108,0.35)`。
+- 删紫色 `#b864ff`：`.badge-purple`→蓝 token；`.btn-promote`→accent cyan。preview 实测全站 0 紫色元素。
+- `.cc-inspector` `#0d1319`/`#d8e2ef`→`--bg-2`/`--text`；`.asset-tooltip` 删 stale hex fallback。
+- 新增 utility：`.flex-col/.gap-4/.items-baseline/.mt-1/.mt-4/.mb-1/.mb-4/.text-xs` +
+  独立 `.pnl-positive/.pnl-negative`（修复 PredictionLens 静默死样式）；`.badge` radius→`--r-sm`。
+  新增 `.badge-muted`、`button.danger`、`.badge-lg`、`.boundaries-grid`、`.news-*`。
+
+**批次 B — Universe.tsx 整页重写**：全部 Tailwind class → 设计系统(`MetricTile`/`.account-snapshot`
+grid/`.card`/`.mono`/原生 button/token familyColor)。preview 实测：tile 背景 `--surface`、
+grid 4 列、数字 IBM Plex Mono、**0 个残留 Tailwind class**。
+
+**批次 C — 共享 humanizer + StatusBadge 收敛**：
+- `lib/format.ts` 新增 `humanize()`（snake_case→Title Case + 域内覆盖表）、`humanizeBool()`、
+  `fmtTimestamp()`（全站统一 "MMM D, HH:mm"）。
+- `StatusBadge` 升级为唯一权威：humanize 标签 + `statusBadgeClass()` 语义配色（覆盖 lifecycle/
+  run/proposal/position 全状态）；删 SerenityLens 本地 `RunStatusBadge`（曾 running→蓝冲突）。
+- 接入 8 文件：StrategyLifecycle(lifecycle 语义色)/SerenityLens/Learning/NewsIntel/RiskControls/
+  Overview/Proposals/AgentActivity。preview 实测 6 页 raw-enum 泄漏 = **0**；Proposals 抽屉
+  `usdt_futures`→"USDT Futures"、`bitget_demo`→"Bitget Demo"。
+- 修 SerenityLens `ElapsedTimer` render 内 `setTimeout` 死循环（曾致 preview 渲染卡死）。
+
+**批次 D — 逐页 polish**：
+- TradesPositions：`badge-amber`→`badge-yellow`、PnL/数据 cell 补 `.mono`、`pnlCell` 用语义类、
+  时间戳→`fmtTimestamp`、group 标题 + dir/mode/close_reason humanize、删冗余内联 margin、
+  exposure `{v} USDT`→`fmtNum`。
+- ProbabilityChart：硬编码 hex → `chartTheme`（theme.ts 新增 `borderColor`/area-fill 字段）。
+- ObjectDetail：danger 按钮内联 rgba → `button.danger` class（且修了 danger class 从未生效的 bug）。
+
+### 6.6 ✅ Settings.tsx 已修复（2026-06-14，build 绿 + preview 四 tab 实测）
+
+- **Layout primitives 抽类**：`Section`/`Row`/`Toggle`/`SaveMsg` 从全内联样式改为
+  `.settings-section`/`.settings-row`/`.settings-toggle`/`.settings-save-msg` CSS 类，
+  off-grid rem（2.5/1.25/0.7/0.85rem 等）改 `var(--space-N)`。
+- **form-grid 合规**：universe-config 数字网格改 `.settings-field-grid`/`.settings-field`，
+  输入框去掉 `width:80px/120px` 改 **填满列**（preview 实测 100%），单位并入 label 文本
+  （"Refresh Interval (Min)" / "Min 24h Volume (USDT)" / "Max Spread (Bps)"）。
+- **硬编码色清零**：reasoning tier `var(--purple,#a78bfa)`→`var(--blue)`；symbol chip
+  `rgba(239,68,68)`→`.symbol-chip.allow/.deny`（token 红/青）；observed-instrument chip
+  `rgba(100,100,120)`→`.instrument-chip`（token）。preview 实测四 tab **0 紫色 / 0 外来色**。
+- **bool/enum 人性化**：`String(require_risk_check)`="true"→`humanizeBool()`="ON"/"OFF"；
+  `live_state`="live_disabled"→`humanize()`="Disabled"；scheduler "active"/"disabled"→
+  "ACTIVE"/"DISABLED"；model enabled/disabled badge 补 `badge-muted` 色 + Title Case。
+  preview 实测四 tab **0 raw bool / 0 raw-enum badge**。
+- 副作用：移除大量内联 style 对象后 JS bundle 略减（800→797KB）。
+
+### 6.7 ⏳ 仍待处理（低优先 polish，未做，诚实记录）
+
+- **off-grid 间距存量**：CommandCenter（1380 行）+ Lens 块仍有 ad-hoc rem 未逐一 snap 到
+  `var(--space-N)`。关键 utility class 已补齐，新代码可直接用；存量迁移属机械低价值工作。
+- **CommandCenter / Charts 内联样式**：ProviderChip、Charts 布局内联 rem、ConnectionStatus/
+  ActivityTimeline 内联色尚未全部抽类（功能正常，纯一致性）。
+- **响应式断点收敛**：23 个 `@media` 散在 700/768/900/1100/1180/1200，未统一到一套尺度。
+
+---
+
 ## 备注
 
 - 本清单基于规格 §23（13 子节）+ §2/§4/§13/§15/§29 + trust §3 全文对照前端源码

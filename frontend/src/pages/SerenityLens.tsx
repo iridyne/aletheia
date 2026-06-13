@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
+import { StatusBadge } from '../components/DataTable'
+import { fmtTimestamp, humanize } from '../lib/format'
 
 type Tab = 'overview' | 'runs' | 'themes' | 'evidence' | 'profile'
 
 const STATUS_COLORS: Record<string, string> = {
-  idle: 'var(--text-muted)',
+  idle: 'var(--muted)',
   healthy: 'var(--green)',
   running: 'var(--blue)',
   rate_limited: 'var(--yellow)',
@@ -14,33 +16,28 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 function StatusDot({ status }: { status: string }) {
-  return <span className="dot" style={{ background: STATUS_COLORS[status] || 'var(--text-muted)' }} />
+  return <span className="dot" style={{ background: STATUS_COLORS[status] || 'var(--muted)' }} />
 }
 
+// Run status uses the shared canonical StatusBadge (humanized label + consistent color
+// across the whole dashboard). The old local RunStatusBadge disagreed with it (running→blue
+// vs the shared running→yellow) and is removed.
 function RunStatusBadge({ status }: { status: string }) {
-  const cls = status === 'completed' ? 'badge-green'
-    : status === 'completed_empty' ? 'badge-green'
-    : status === 'running' || status === 'queued' ? 'badge-blue'
-    : status === 'rate_limited' ? 'badge-yellow'
-    : status === 'cancelled' ? 'badge-yellow'
-    : status === 'failed' ? 'badge-red'
-    : 'badge-yellow'
-  const label = status === 'completed_empty' ? 'completed (no themes)' : status
-  return <span className={`badge ${cls}`}>{label}</span>
+  return <StatusBadge status={status} />
 }
 
-function shortDate(s: string | null | undefined) {
-  if (!s) return '—'
-  return s.slice(0, 16).replace('T', ' ')
-}
+const shortDate = (s: string | null | undefined) => fmtTimestamp(s)
 
 function ElapsedTimer({ startedAt }: { startedAt: string }) {
-  const [, setTick] = useState(0)
-  const start = new Date(startedAt).getTime()
-  const elapsed = Math.floor((Date.now() - start) / 1000)
+  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
+  useEffect(() => {
+    const id = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [startedAt])
   const mins = Math.floor(elapsed / 60)
   const secs = elapsed % 60
-  setTimeout(() => setTick(t => t + 1), 1000)
   return <span className="text-muted">Elapsed: {mins}m {secs}s</span>
 }
 
@@ -225,11 +222,11 @@ function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: st
               onClick={() => onSelect?.(r.id)}
             >
               <td><RunStatusBadge status={r.status} /></td>
-              <td>{r.triggerType || r.trigger_type || '—'}</td>
-              <td>{r.mode || '—'}</td>
-              <td>{shortDate(r.startedAt || r.started_at)}</td>
-              <td>{shortDate(r.finishedAt || r.finished_at)}</td>
-              <td>{r.artifactCounts?.themes ?? JSON.parse(r.artifact_counts || '{}').themes ?? 0}</td>
+              <td>{r.triggerType || r.trigger_type ? humanize(r.triggerType || r.trigger_type) : '—'}</td>
+              <td>{r.mode ? humanize(r.mode) : '—'}</td>
+              <td className="mono">{shortDate(r.startedAt || r.started_at)}</td>
+              <td className="mono">{shortDate(r.finishedAt || r.finished_at)}</td>
+              <td className="mono">{r.artifactCounts?.themes ?? JSON.parse(r.artifact_counts || '{}').themes ?? 0}</td>
               <td>{r.artifactCounts?.claims ?? JSON.parse(r.artifact_counts || '{}').claims ?? 0}</td>
             </tr>
           ))}
@@ -303,11 +300,11 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
         </div>
         <div className="lens-status-item">
           <span className="lens-status-label">Trigger</span>
-          <span className="lens-status-value">{run.triggerType || run.trigger_type}</span>
+          <span className="lens-status-value">{humanize(run.triggerType || run.trigger_type)}</span>
         </div>
         <div className="lens-status-item">
           <span className="lens-status-label">Mode</span>
-          <span className="lens-status-value">{run.mode}</span>
+          <span className="lens-status-value">{humanize(run.mode)}</span>
         </div>
         <div className="lens-status-item">
           <span className="lens-status-label">Started</span>
@@ -369,8 +366,8 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
       <div className="lens-events-log">
         {events.length > 0 ? events.map((e: any) => (
           <div key={e.id} className="lens-event-row">
-            <span className="lens-event-time">{shortDate(e.createdAt || e.created_at)}</span>
-            <span className="lens-event-type">{e.eventType || e.event_type}</span>
+            <span className="lens-event-time mono">{shortDate(e.createdAt || e.created_at)}</span>
+            <span className="lens-event-type">{humanize(e.eventType || e.event_type)}</span>
             <span className="lens-event-msg">{e.message || ''}</span>
           </div>
         )) : <p className="text-muted">No events recorded yet.</p>}
@@ -433,8 +430,8 @@ function ThemesTab() {
         <div key={t.id} className="lens-theme-card">
           <div className="lens-theme-header">
             <h4 className="clickable" onClick={() => setSelectedTheme(t.id)}>{t.name}</h4>
-            <span className={`badge badge-${t.status === 'active' ? 'green' : t.status === 'watching' ? 'blue' : t.status === 'promoted' ? 'purple' : 'yellow'}`}>
-              {t.status}
+            <span className={`badge badge-${t.status === 'active' ? 'green' : t.status === 'watching' || t.status === 'promoted' ? 'blue' : 'yellow'}`}>
+              {humanize(t.status)}
             </span>
           </div>
           {t.thesis && <p className="lens-theme-thesis">{t.thesis}</p>}
@@ -585,8 +582,8 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
           <div className="lens-events-log">
             {feedback.map((f: any) => (
               <div key={f.id} className="lens-event-row">
-                <span className="lens-event-time">{shortDate(f.created_at)}</span>
-                <span className="lens-event-type">{f.action}</span>
+                <span className="lens-event-time mono">{shortDate(f.created_at)}</span>
+                <span className="lens-event-type">{humanize(f.action)}</span>
               </div>
             ))}
           </div>

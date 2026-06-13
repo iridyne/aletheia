@@ -84,3 +84,76 @@ export function fmtSigned(
   if (!Number.isFinite(n)) return dash
   return `${n >= 0 ? '+' : ''}${fmtNum(n, opts)}`
 }
+
+// ---------- Machine-code humanization ----------
+// Backend enums/states arrive as snake_case machine tokens (e.g. "paper_running",
+// "live_disabled", "mean_reversion"). The design system requires humanized display.
+// A small override map handles domain acronyms/phrases; everything else gets a generic
+// snake_case → Title Case transform. One source of truth for the whole dashboard.
+
+const HUMANIZE_OVERRIDES: Record<string, string> = {
+  // lifecycle states
+  draft: 'Draft',
+  paper_candidate: 'Paper Candidate',
+  paper_running: 'Paper Running',
+  paper_passed: 'Paper Passed',
+  live_candidate: 'Live Candidate',
+  live_limited: 'Live Limited',
+  retired: 'Retired',
+  deprecated: 'Deprecated',
+  // live / permission / exchange modes
+  live_disabled: 'Disabled',
+  live_enabled: 'Enabled',
+  paper_internal: 'Paper (internal)',
+  bitget_demo: 'Bitget Demo',
+  bitget_live_limited: 'Bitget Live (limited)',
+  usdt_futures: 'USDT Futures',
+  // run / task statuses
+  completed_empty: 'Completed (no output)',
+  completed_with_errors: 'Completed (errors)',
+  rate_limited: 'Rate Limited',
+  in_progress: 'In Progress',
+}
+
+/**
+ * Humanize a raw machine code/enum for display.
+ * `paper_running` → "Paper Running", `live_disabled` → "Disabled", `RSI` stays upper if all-caps.
+ * Returns the dash placeholder for null/empty.
+ */
+export function humanize(value: string | null | undefined, dash = '—'): string {
+  if (value == null || value === '') return dash
+  const key = String(value).trim()
+  if (HUMANIZE_OVERRIDES[key]) return HUMANIZE_OVERRIDES[key]
+  // Preserve already-spaced/cased free text but still title-case snake_case tokens.
+  return key
+    .replace(/_/g, ' ')
+    .split(' ')
+    .map(w => (w.length > 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(' ')
+}
+
+/** ON/OFF for booleans (design rule: never show literal true/false). */
+export function humanizeBool(value: unknown): string {
+  return value ? 'ON' : 'OFF'
+}
+
+/**
+ * Consistent timestamp formatting across the whole dashboard.
+ * Backend sends ISO strings (sometimes without timezone). Output: "MMM D, HH:mm"
+ * (local), e.g. "Jun 14, 09:32". Returns dash for null/invalid.
+ * Pass {dateOnly:true} for "MMM D, YYYY".
+ */
+export function fmtTimestamp(
+  iso: string | null | undefined,
+  opts?: { dash?: string; dateOnly?: boolean },
+): string {
+  const dash = opts?.dash ?? '—'
+  if (!iso) return dash
+  const norm = iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`
+  const d = new Date(norm)
+  if (Number.isNaN(d.getTime())) return dash
+  if (opts?.dateOnly) {
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}

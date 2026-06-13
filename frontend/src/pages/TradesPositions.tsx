@@ -9,7 +9,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import AccountSnapshot from '../components/AccountSnapshot'
 import CausalChain from '../components/CausalChain'
 import PageHeader from '../components/PageHeader'
-import { fmtNum, fmtSigned, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp } from '../lib/format'
 
 /**
  * Trades & Positions (WEBUI_PAGE_MAP.md — Positions + Paper Trades MERGED).
@@ -32,40 +32,40 @@ const ordCol = createColumnHelper<Order>()
 
 const pnlCell = (v: number | null | undefined) => {
   const n = v ?? 0
-  return <span style={{ color: n >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmtSigned(v)}</span>
+  return <span className={`mono ${n >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>{fmtSigned(v)}</span>
 }
 
 const openColumns = [
-  posCol.accessor('symbol', { header: 'Symbol' }),
-  posCol.accessor('direction', { header: 'Dir' }),
-  posCol.accessor('quantity', { header: 'Qty', cell: info => fmtNum(info.getValue()) }),
-  posCol.accessor('entry_price', { header: 'Entry', cell: info => fmtNum(info.getValue()) }),
-  posCol.accessor('current_price', { header: 'Current', cell: info => fmtNum(info.getValue()) }),
-  posCol.accessor('stop_price', { header: 'Stop', cell: info => fmtNum(info.getValue()) }),
-  posCol.accessor('take_profit_price', { header: 'TP', cell: info => fmtNum(info.getValue()) }),
+  posCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  posCol.accessor('direction', { header: 'Dir', cell: info => humanize(info.getValue()) }),
+  posCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
+  posCol.accessor('entry_price', { header: 'Entry', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
+  posCol.accessor('current_price', { header: 'Current', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
+  posCol.accessor('stop_price', { header: 'Stop', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
+  posCol.accessor('take_profit_price', { header: 'TP', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('unrealized_pnl', { header: 'uPnL', cell: info => pnlCell(info.getValue()) }),
 ]
 
 const closedColumns = [
-  posCol.accessor('symbol', { header: 'Symbol' }),
-  posCol.accessor('direction', { header: 'Dir' }),
-  posCol.accessor('quantity', { header: 'Qty', cell: info => fmtNum(info.getValue()) }),
-  posCol.accessor('entry_price', { header: 'Entry', cell: info => fmtNum(info.getValue()) }),
+  posCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  posCol.accessor('direction', { header: 'Dir', cell: info => humanize(info.getValue()) }),
+  posCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
+  posCol.accessor('entry_price', { header: 'Entry', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('realized_pnl', { header: 'Realized PnL', cell: info => pnlCell(info.getValue()) }),
-  posCol.accessor('close_reason', { header: 'Reason', cell: info => info.getValue() ?? '—' }),
-  posCol.accessor('closed_at', { header: 'Closed', cell: info => info.getValue()?.slice(0, 16) ?? '—' }),
+  posCol.accessor('close_reason', { header: 'Reason', cell: info => info.getValue() ? humanize(info.getValue()!) : '—' }),
+  posCol.accessor('closed_at', { header: 'Closed', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
 const orderColumns = [
-  ordCol.accessor('symbol', { header: 'Symbol' }),
-  ordCol.accessor('direction', { header: 'Dir' }),
-  ordCol.accessor('quantity', { header: 'Qty', cell: info => fmtNum(info.getValue()) }),
-  ordCol.accessor('price', { header: 'Price', cell: info => fmtNum(info.getValue()) }),
-  ordCol.accessor('execution_mode', { header: 'Mode' }),
+  ordCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  ordCol.accessor('direction', { header: 'Dir', cell: info => humanize(info.getValue()) }),
+  ordCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
+  ordCol.accessor('price', { header: 'Price', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
+  ordCol.accessor('execution_mode', { header: 'Mode', cell: info => humanize(info.getValue()) }),
   ordCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
   ordCol.accessor('error_reason', { header: 'Error', cell: info => info.getValue() || '—' }),
-  ordCol.accessor('filled_at', { header: 'Filled', cell: info => info.getValue()?.slice(0, 16) ?? '—' }),
-  ordCol.accessor('created_at', { header: 'Created', cell: info => info.getValue()?.slice(0, 16) || '—' }),
+  ordCol.accessor('filled_at', { header: 'Filled', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
+  ordCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
 type Selection =
@@ -89,7 +89,7 @@ export default function TradesPositions() {
 
   const openGroups: Record<string, Position[]> = {}
   for (const p of open) {
-    const key = `${p.execution_mode} · ${p.market_type}`
+    const key = `${humanize(p.execution_mode)} · ${humanize(p.market_type)}`
     ;(openGroups[key] ||= []).push(p)
   }
 
@@ -133,7 +133,7 @@ export default function TradesPositions() {
       {exposure && Object.keys(exposure).length > 0 && (
         <div className="card">
           <h4 className="blotter-group-label">Exposure by Symbol</h4>
-          <p className="text-muted text-sm" style={{ marginTop: 0 }}>
+          <p className="text-muted text-sm mt-1">
             {reconciliation?.sync_status === 'ok' || reconciliation?.sync_status === 'stale'
               ? 'Open notional from the live exchange account view.'
               : 'aletheia-managed open notional · exchange sync unavailable (local view may drift from the exchange)'}
@@ -141,7 +141,7 @@ export default function TradesPositions() {
           <table>
             <tbody>
               {Object.entries(exposure).map(([sym, v]) => (
-                <tr key={sym}><th>{sym}</th><td className="mono">{v} USDT</td></tr>
+                <tr key={sym}><th>{sym}</th><td className="mono">{fmtNum(v)} USDT</td></tr>
               ))}
             </tbody>
           </table>
@@ -202,15 +202,15 @@ function ReconciliationCard({
 
   return (
     <div className="card">
-      <div className="blotter-section-head" style={{ marginTop: 0 }}>
-        <h4 className="blotter-group-label" style={{ marginBottom: 0 }}>Account Reconciliation</h4>
-        {external.length > 0 && <span className="badge badge-amber">{external.length} unmanaged</span>}
+      <div className="blotter-section-head">
+        <h4 className="blotter-group-label">Account Reconciliation</h4>
+        {external.length > 0 && <span className="badge badge-yellow">{external.length} unmanaged</span>}
         {orphaned.length > 0 && <span className="badge badge-muted">{orphaned.length} orphaned</span>}
       </div>
 
       {external.length > 0 && (
         <>
-          <p className="text-muted text-sm" style={{ marginTop: 8, marginBottom: 4 }}>
+          <p className="text-muted text-sm mb-1">
             On the exchange but <strong>not opened by Aletheia</strong> — adoption candidates.
             {syncStatus === 'stale' && ' (exchange view is stale)'}
           </p>
@@ -222,7 +222,7 @@ function ReconciliationCard({
               {external.map((i, idx) => (
                 <tr key={`ext-${i.symbol}-${i.direction}-${idx}`}>
                   <td className="mono">{i.symbol}</td>
-                  <td>{i.direction}</td>
+                  <td>{humanize(i.direction)}</td>
                   <td className="mono">{fmtNum(i.exchange?.quantity)}</td>
                   <td className="mono">{fmtNum(i.exchange?.entry_price)}</td>
                   <td>{pnlCell(i.exchange?.unrealized_pnl)}</td>
@@ -235,7 +235,7 @@ function ReconciliationCard({
 
       {orphaned.length > 0 && (
         <>
-          <p className="text-muted text-sm" style={{ marginTop: 12, marginBottom: 4 }}>
+          <p className="text-muted text-sm mt-3 mb-1">
             Open in Aletheia's books but <strong>no longer on the exchange</strong> — reconcile-close candidates.
           </p>
           <table>
@@ -246,10 +246,10 @@ function ReconciliationCard({
               {orphaned.map((i, idx) => (
                 <tr key={`orph-${i.symbol}-${i.direction}-${idx}`}>
                   <td className="mono">{i.symbol}</td>
-                  <td>{i.direction}</td>
+                  <td>{humanize(i.direction)}</td>
                   <td className="mono">{fmtNum(i.local?.quantity)}</td>
                   <td className="mono">{fmtNum(i.local?.entry_price)}</td>
-                  <td>{i.local?.execution_mode}</td>
+                  <td>{humanize(i.local?.execution_mode)}</td>
                 </tr>
               ))}
             </tbody>
@@ -265,10 +265,10 @@ function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) 
     <>
       <DrawerSection label="Order">
         <DrawerField label="Symbol" value={order.symbol} mono />
-        <DrawerField label="Market" value={order.market_type} />
-        <DrawerField label="Direction" value={order.direction} />
-        <DrawerField label="Order Type" value={order.order_type} />
-        <DrawerField label="Mode" value={order.execution_mode} />
+        <DrawerField label="Market" value={humanize(order.market_type)} />
+        <DrawerField label="Direction" value={humanize(order.direction)} />
+        <DrawerField label="Order Type" value={humanize(order.order_type)} />
+        <DrawerField label="Mode" value={humanize(order.execution_mode)} />
         <DrawerField label="Status" value={<StatusBadge status={order.status} />} />
         {order.error_reason && (
           <DrawerField label="Error Reason" value={order.error_reason} />
@@ -278,8 +278,8 @@ function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) 
         <DrawerField label="Quantity" value={order.quantity} mono />
         <DrawerField label="Price" value={order.price} mono />
         <DrawerField label="Exchange Order ID" value={order.exchange_order_id} mono />
-        <DrawerField label="Filled At" value={order.filled_at?.slice(0, 16)} />
-        <DrawerField label="Created" value={order.created_at?.slice(0, 16)} />
+        <DrawerField label="Filled At" value={fmtTimestamp(order.filled_at)} mono />
+        <DrawerField label="Created" value={fmtTimestamp(order.created_at)} mono />
       </DrawerSection>
       <DrawerSection label="Causal Chain">
         <CausalChain anchor={{ kind: 'order', order }} />
@@ -298,12 +298,12 @@ function PositionDetail({ position }: { position: Position }) {
     <>
       <DrawerSection label="Position">
         <DrawerField label="Symbol" value={position.symbol} mono />
-        <DrawerField label="Market" value={position.market_type} />
-        <DrawerField label="Direction" value={position.direction} />
-        <DrawerField label="Mode" value={position.execution_mode} />
+        <DrawerField label="Market" value={humanize(position.market_type)} />
+        <DrawerField label="Direction" value={humanize(position.direction)} />
+        <DrawerField label="Mode" value={humanize(position.execution_mode)} />
         <DrawerField label="Status" value={<StatusBadge status={position.status} />} />
         {position.source === 'adopted' && (
-          <DrawerField label="Source" value={<span className="badge badge-amber">adopted</span>} />
+          <DrawerField label="Source" value={<span className="badge badge-yellow">Adopted</span>} />
         )}
       </DrawerSection>
       <DrawerSection label="Pricing">
@@ -319,9 +319,9 @@ function PositionDetail({ position }: { position: Position }) {
       </DrawerSection>
       <DrawerSection label="Metadata">
         <DrawerField label="Strategy ID" value={position.strategy_id} mono />
-        <DrawerField label="Close Reason" value={position.close_reason} />
-        <DrawerField label="Opened" value={position.opened_at?.slice(0, 16)} />
-        <DrawerField label="Closed" value={position.closed_at?.slice(0, 16)} />
+        <DrawerField label="Close Reason" value={position.close_reason ? humanize(position.close_reason) : null} />
+        <DrawerField label="Opened" value={fmtTimestamp(position.opened_at)} mono />
+        <DrawerField label="Closed" value={fmtTimestamp(position.closed_at)} mono />
       </DrawerSection>
       <DrawerSection label="Causal Chain">
         <CausalChain anchor={{ kind: 'position', position }} />

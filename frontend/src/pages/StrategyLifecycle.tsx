@@ -6,6 +6,7 @@ import type { StrategyRecord } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
+import { humanize, fmtTimestamp } from '../lib/format'
 
 const STATES = ['draft', 'research_note', 'strategy_hypothesis', 'paper_candidate', 'paper_running', 'paper_passed', 'live_candidate', 'live_limited', 'retired']
 
@@ -25,11 +26,11 @@ const columns = [
   col.accessor('name', { header: 'Name' }),
   col.accessor('state', {
     header: 'State',
-    cell: info => <span className="badge badge-blue">{info.getValue()}</span>,
+    cell: info => <StatusBadge status={info.getValue()} />,
   }),
   col.accessor('created_at', {
     header: 'Created',
-    cell: info => info.getValue()?.slice(0, 16) || '—',
+    cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span>,
   }),
 ]
 
@@ -40,7 +41,7 @@ function PipelineStepper({ currentState }: { currentState: string }) {
       {STATES.filter(s => s !== 'retired').map((s, i) => (
         <div key={s} className={`pipeline-step ${i < idx ? 'step-done' : i === idx ? 'step-active' : 'step-future'}`}>
           <div className="step-dot" />
-          <span className="step-label">{s.replace(/_/g, ' ')}</span>
+          <span className="step-label">{humanize(s)}</span>
         </div>
       ))}
     </div>
@@ -96,10 +97,10 @@ export default function StrategyLifecycle() {
             </DrawerSection>
             <DrawerSection label="Details">
               <DrawerField label="Name" value={selected.name} />
-              <DrawerField label="State" value={<span className="badge badge-blue">{selected.state}</span>} />
+              <DrawerField label="State" value={<StatusBadge status={selected.state} />} />
               <DrawerField label="Description" value={selected.description} />
-              <DrawerField label="Created" value={selected.created_at?.slice(0, 16)} />
-              <DrawerField label="Updated" value={selected.updated_at?.slice(0, 16)} />
+              <DrawerField label="Created" value={fmtTimestamp(selected.created_at)} mono />
+              <DrawerField label="Updated" value={fmtTimestamp(selected.updated_at)} mono />
             </DrawerSection>
             <PromotionGates strategyId={selected.id} />
             {promoteError && (
@@ -112,7 +113,7 @@ export default function StrategyLifecycle() {
             <div className="flex gap-2 mt-3">
               {NEXT_STATE[selected.state] && (
                 <button onClick={handlePromote} disabled={promote.isPending}>
-                  Promote → {NEXT_STATE[selected.state]?.replace(/_/g, ' ')}
+                  Promote → {humanize(NEXT_STATE[selected.state])}
                 </button>
               )}
               {selected.state !== 'retired' && selected.state !== 'deprecated' && (
@@ -142,24 +143,24 @@ function PromotionGates({ strategyId }: { strategyId: string }) {
   if (!metrics) return null
   return (
     <DrawerSection label="Promotion Gates">
-      <p style={{ marginBottom: '0.4rem' }}>
+      <p className="mb-2">
         <span className={`badge ${passed ? 'badge-green' : 'badge-red'}`}>{passed ? 'All gates pass' : `${failures.length} gate(s) failed`}</span>
       </p>
-      <table style={{ fontSize: '0.78rem' }}>
+      <table className="drawer-table">
         <thead>
           <tr><th>Metric</th><th>Value</th></tr>
         </thead>
         <tbody>
           {Object.entries(metrics).map(([k, v]) => (
             <tr key={k}>
-              <td>{k.replace(/_/g, ' ')}</td>
+              <td>{humanize(k)}</td>
               <td className="mono">{v != null ? String(v) : '—'}</td>
             </tr>
           ))}
         </tbody>
       </table>
       {failures.length > 0 && (
-        <ul style={{ paddingLeft: '1rem', marginTop: '0.4rem', fontSize: '0.75rem', color: 'var(--red)' }}>
+        <ul className="drawer-list drawer-list-error mt-2">
           {failures.map((f, i) => <li key={i}>{f}</li>)}
         </ul>
       )}
@@ -175,12 +176,12 @@ function parsePromotionError(raw: string): React.ReactNode {
       if (obj.detail) {
         const failures = typeof obj.detail === 'string' ? obj.detail.split(', ') : [obj.detail]
         return (
-          <ul style={{ paddingLeft: '1rem', fontSize: '0.8rem', color: 'var(--red)' }}>
+          <ul className="drawer-list drawer-list-error">
             {failures.map((f: string, i: number) => <li key={i}>{f}</li>)}
           </ul>
         )
       }
     } catch { /* fall through */ }
   }
-  return <p style={{ fontSize: '0.8rem', color: 'var(--red)' }}>{raw}</p>
+  return <p className="text-sm pnl-negative">{raw}</p>
 }

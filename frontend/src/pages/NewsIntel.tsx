@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
+import { humanize, fmtTimestamp } from '../lib/format'
 
 type NewsItem = {
   id: string
@@ -48,12 +49,6 @@ export default function NewsIntel() {
     return true
   })
 
-  function formatTime(ts: string): string {
-    try {
-      return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-    } catch { return ts }
-  }
-
   return (
     <div>
       <PageHeader
@@ -72,14 +67,13 @@ export default function NewsIntel() {
         {['all', 'new', 'reviewed'].map(f => (
           <button
             key={f}
-            className={f === filter ? '' : 'secondary'}
-            style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+            className={`btn-sm ${f === filter ? '' : 'secondary'}`}
             onClick={() => setFilter(f)}
           >
-            {f}
+            {humanize(f)}
           </button>
         ))}
-        <span className="text-muted text-sm" style={{ marginLeft: '0.5rem' }}>
+        <span className="text-muted text-sm">
           {items.length} items
         </span>
       </div>
@@ -89,40 +83,35 @@ export default function NewsIntel() {
           <p className="text-muted">No news items yet. News will appear here once the ingestion pipeline is configured or items are added manually via the API.</p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        <div className="news-list">
           {items.map(item => (
             <div
               key={item.id}
-              className="card"
-              style={{ cursor: 'pointer', padding: '0.8rem 1rem', marginBottom: 0 }}
+              className="card news-card clickable"
               onClick={() => { setSelected(item); setAnalysis(null) }}
             >
-              <div className="flex justify-between items-center">
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 500, marginBottom: '0.2rem' }}>
-                    {item.title}
-                  </div>
-                  <div className="flex items-center gap-2">
+              <div className="flex justify-between items-center gap-2">
+                <div className="news-card-main">
+                  <div className="news-title">{item.title}</div>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-muted text-sm">{item.source}</span>
-                    <span className="text-muted text-sm">{formatTime(item.published_at)}</span>
+                    <span className="text-muted text-sm mono">{fmtTimestamp(item.published_at)}</span>
                     {item.symbols_mentioned?.map(s => (
-                      <span key={s} className="badge badge-blue" style={{ fontSize: '0.6rem', padding: '0.05rem 0.3rem' }}>{s}</span>
+                      <span key={s} className="badge badge-blue">{s}</span>
                     ))}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`badge ${SENTIMENT_BADGE[item.sentiment] || 'badge-blue'}`}>
-                    {item.sentiment}
+                    {humanize(item.sentiment)}
                   </span>
-                  <span className={`badge ${item.status === 'new' ? 'badge-yellow' : 'badge-green'}`}>
-                    {item.status}
+                  <span className={`badge ${item.status === 'new' ? 'badge-yellow' : 'badge-muted'}`}>
+                    {humanize(item.status)}
                   </span>
                 </div>
               </div>
               {item.summary && (
-                <p className="text-muted text-sm mt-2" style={{ maxWidth: '80ch' }}>
-                  {item.summary.length > 150 ? item.summary.slice(0, 150) + '...' : item.summary}
-                </p>
+                <p className="text-muted text-sm mt-2 news-summary">{item.summary}</p>
               )}
             </div>
           ))}
@@ -135,11 +124,11 @@ export default function NewsIntel() {
             <DrawerSection label="Summary">
               <DrawerField label="Title" value={selected.title} />
               <DrawerField label="Source" value={selected.source} />
-              <DrawerField label="Published" value={formatTime(selected.published_at)} mono />
-              <DrawerField label="Event Type" value={selected.event_type} />
-              <DrawerField label="Sentiment" value={<span className={`badge ${SENTIMENT_BADGE[selected.sentiment] || 'badge-blue'}`}>{selected.sentiment}</span>} />
+              <DrawerField label="Published" value={fmtTimestamp(selected.published_at)} mono />
+              <DrawerField label="Event Type" value={humanize(selected.event_type)} />
+              <DrawerField label="Sentiment" value={<span className={`badge ${SENTIMENT_BADGE[selected.sentiment] || 'badge-blue'}`}>{humanize(selected.sentiment)}</span>} />
               <DrawerField label="Relevance" value={`${(selected.relevance_score * 100).toFixed(0)}%`} mono />
-              <DrawerField label="Status" value={selected.status} />
+              <DrawerField label="Status" value={<span className={`badge ${selected.status === 'new' ? 'badge-yellow' : 'badge-muted'}`}>{humanize(selected.status)}</span>} />
             </DrawerSection>
 
             {selected.symbols_mentioned?.length > 0 && (
@@ -154,13 +143,13 @@ export default function NewsIntel() {
 
             {selected.summary && (
               <DrawerSection label="Content">
-                <p style={{ fontSize: '0.82rem', lineHeight: 1.6 }}>{selected.summary}</p>
+                <p className="text-sm news-prose">{selected.summary}</p>
               </DrawerSection>
             )}
 
             {selected.url && (
               <DrawerSection label="Source Link">
-                <a href={selected.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.8rem' }}>
+                <a href={selected.url} target="_blank" rel="noopener noreferrer" className="text-sm">
                   {selected.url}
                 </a>
               </DrawerSection>
@@ -168,14 +157,14 @@ export default function NewsIntel() {
 
             <DrawerSection label="AI Analysis">
               {analysis ? (
-                <p style={{ fontSize: '0.82rem', lineHeight: 1.6 }}>{analysis}</p>
+                <p className="text-sm news-prose">{analysis}</p>
               ) : (
                 <button
+                  className="btn-sm"
                   onClick={() => analyzeMut.mutate(selected.id)}
                   disabled={analyzeMut.isPending}
-                  style={{ fontSize: '0.78rem' }}
                 >
-                  {analyzeMut.isPending ? 'Analyzing...' : 'Analyze Impact'}
+                  {analyzeMut.isPending ? 'Analyzing…' : 'Analyze Impact'}
                 </button>
               )}
             </DrawerSection>

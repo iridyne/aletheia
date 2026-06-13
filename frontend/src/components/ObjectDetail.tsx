@@ -41,8 +41,7 @@ export function ObjectDetail({ schema }: { schema: ObjectDetailSchema }) {
           {schema.actions.map(a => (
             <button
               key={a.label}
-              className={a.variant === 'danger' ? 'secondary' : a.variant === 'secondary' ? 'secondary' : ''}
-              style={a.variant === 'danger' ? { borderColor: 'rgba(255,93,108,0.4)', color: 'var(--red)' } : undefined}
+              className={a.variant === 'danger' ? 'secondary danger' : a.variant === 'secondary' ? 'secondary' : ''}
               onClick={a.onClick}
               disabled={a.disabled}
             >

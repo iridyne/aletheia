@@ -2,6 +2,7 @@ import { startTransition, useDeferredValue, useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
+import { humanize } from '../lib/format'
 import PageHeader from '../components/PageHeader'
 import type {
   OperatorCommandAudit,
@@ -367,7 +368,7 @@ function RuntimeContinuityPanel({
           </div>
           <div className="runtime-guidance">
             <span className={`badge ${runtimeBadge(guidance?.action)}`}>{guidance?.action || 'observe'}</span>
-            <span>{guidance?.reason?.replace(/_/g, ' ') || 'No runtime action suggested.'}</span>
+            <span>{guidance?.reason ? humanize(guidance.reason) : 'No runtime action suggested.'}</span>
             {guidance?.runtime_id && <span className="mono">{guidance.runtime_id}</span>}
           </div>
         </section>
@@ -398,7 +399,7 @@ function RuntimeContinuityPanel({
           {events.map(event => (
             <div className="runtime-event-row" key={event.id}>
               <span className={`badge ${runtimeBadge(event.phase)}`}>{event.phase}</span>
-              <span>{event.event_type.replace(/_/g, ' ')}</span>
+              <span>{humanize(event.event_type)}</span>
               <span className="mono">{event.runtime_id || '—'}</span>
               <span className="mono">{formatTimestamp(event.created_at)}</span>
             </div>
@@ -732,7 +733,7 @@ export default function CommandCenter() {
     .map(event => ({
       id: event.id,
       ts: event.created_at,
-      title: event.event_type.replace(/_/g, ' '),
+      title: humanize(event.event_type),
       detail: eventDetail(event),
       event,
     }))
@@ -770,7 +771,7 @@ export default function CommandCenter() {
   const inspectorModel = (() => {
     if (selectedTask) {
       return {
-        title: selectedTask.task_type.replace(/_/g, ' '),
+        title: humanize(selectedTask.task_type),
         subtitle: `Assigned to ${selectedTask.assigned_to}`,
         facts: [
           ['Status', selectedTask.status],
@@ -790,7 +791,7 @@ export default function CommandCenter() {
 
     if (selectedRecommendation) {
       return {
-        title: selectedRecommendation.kind.replace(/_/g, ' '),
+        title: humanize(selectedRecommendation.kind),
         subtitle: selectedRecommendation.summary,
         facts: [
           ['Severity', selectedRecommendation.severity],
@@ -816,7 +817,7 @@ export default function CommandCenter() {
 
     if (selectedEvent) {
       return {
-        title: selectedEvent.event_type.replace(/_/g, ' '),
+        title: humanize(selectedEvent.event_type),
         subtitle: eventDetail(selectedEvent),
         facts: [
           ['Severity', selectedEvent.severity],
@@ -869,7 +870,7 @@ export default function CommandCenter() {
         <section className="card command-center-shell">
           <div className="command-center-strip">
             <span className={`badge ${operatorStatus?.status === 'online' ? 'badge-green' : operatorStatus?.status === 'stale' ? 'badge-yellow' : 'badge-red'}`}>
-              {operatorStatus?.status || 'offline'}
+              {humanize(operatorStatus?.status || 'offline')}
             </span>
             <span className="mono">mode: {operatorStatus?.mode || 'Observing'}{operatorStatus?.mode === 'Working' && operatorStatus?.current_intent ? ` — ${operatorStatus.current_intent}` : ''}</span>
             <span className="mono">perm: {operatorStatus?.permission_mode || 'ReadOnly'}</span>
@@ -1259,7 +1260,7 @@ export default function CommandCenter() {
             <h3>Operator State</h3>
             <table className="status-board">
               <tbody>
-                <tr><th>Status</th><td>{operatorStatus?.status || 'offline'}</td></tr>
+                <tr><th>Status</th><td>{humanize(operatorStatus?.status || 'offline')}</td></tr>
                 <tr><th>Mode</th><td>{operatorStatus?.mode || 'Observing'}</td></tr>
                 <tr><th>Intent</th><td>{operatorStatus?.current_intent || '—'}</td></tr>
                 <tr><th>Active Branch</th><td>{operatorStatus?.active_branch_title || operatorStatus?.active_branch_id || '—'}</td></tr>
@@ -1285,9 +1286,9 @@ export default function CommandCenter() {
                 >
                   <span className="cc-list-copy">
                     <span>{item.summary}</span>
-                    <span className="cc-item-subtle">{item.kind.replace(/_/g, ' ')}</span>
+                    <span className="cc-item-subtle">{humanize(item.kind)}</span>
                   </span>
-                  <span className={`badge ${severityBadge(item.severity)}`}>{item.severity}</span>
+                  <span className={`badge ${severityBadge(item.severity)}`}>{humanize(item.severity)}</span>
                 </button>
               ))}
             </div>
@@ -1308,10 +1309,10 @@ export default function CommandCenter() {
                   onClick={() => setInspectorFocus({ kind: 'task', id: task.id })}
                 >
                   <span className="cc-list-copy">
-                    <span>{task.task_type.replace(/_/g, ' ')}</span>
-                    <span className="cc-item-subtle">{task.assigned_to} · {task.status}</span>
+                    <span>{humanize(task.task_type)}</span>
+                    <span className="cc-item-subtle">{task.assigned_to} · {humanize(task.status)}</span>
                   </span>
-                  <span className="mono">{task.priority}</span>
+                  <span className="mono">{humanize(task.priority)}</span>
                 </button>
               ))}
             </div>
@@ -1320,13 +1321,13 @@ export default function CommandCenter() {
           <div className="card">
             <div className="cc-card-header">
               <h3>Context Inspector</h3>
-              <span className="mono text-muted">{sessionContext?.profile?.replace(/_/g, ' ') || '—'}</span>
+              <span className="mono text-muted">{sessionContext?.profile ? humanize(sessionContext.profile) : '—'}</span>
             </div>
             {!sessionContext && <div className="text-muted text-sm">Loading context snapshot…</div>}
             {sessionContext && (
               <div className="cc-inspector-panel">
                 <div className="cc-inspector-head">
-                  <div className="cc-inspector-title">{sessionContext.session_kind?.replace(/_/g, ' ') || 'command session'}</div>
+                  <div className="cc-inspector-title">{sessionContext.session_kind ? humanize(sessionContext.session_kind) : 'Command Session'}</div>
                   <div className="cc-item-subtle">{sessionContext.summary}</div>
                 </div>
                 <div className="cc-inspector-facts">

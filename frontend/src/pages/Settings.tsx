@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
 import PageHeader from '../components/PageHeader'
-import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS } from '../lib/format'
+import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS, humanize, humanizeBool } from '../lib/format'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -40,27 +40,12 @@ function Section({ title, description, children }: {
   title: string; description?: string; children: React.ReactNode
 }) {
   return (
-    <section style={{ marginBottom: '2.5rem' }}>
-      {/* Section header — display font + accent-dim left bar to distinguish from row labels */}
-      <div style={{
-        display: 'flex', flexDirection: 'column', gap: '0.2rem',
-        paddingLeft: '0.75rem', borderLeft: '2px solid var(--accent-dim)',
-        marginBottom: '1rem',
-      }}>
-        <h3 style={{
-          margin: 0, fontFamily: 'var(--display)', fontSize: '0.88rem',
-          fontWeight: 600, color: 'var(--text)', letterSpacing: '0.01em',
-        }}>
-          {title}
-        </h3>
-        {description && (
-          <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--muted)', lineHeight: 1.45 }}>
-            {description}
-          </p>
-        )}
+    <section className="settings-section">
+      <div className="settings-section-head">
+        <h3>{title}</h3>
+        {description && <p className="settings-section-desc">{description}</p>}
       </div>
-      {/* Heavier rule seals the header from the rows — visually heavier than row separators (which are gone) */}
-      <div style={{ borderTop: '1px solid var(--border-2)', marginBottom: '0.25rem' }} />
+      <div className="settings-section-rule" />
       {children}
     </section>
   )
@@ -73,15 +58,12 @@ function Row({ label, hint, children, danger }: {
   label: string; hint?: string; children: React.ReactNode; danger?: boolean
 }) {
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', alignItems: 'start',
-      padding: '0.7rem 0',
-    }}>
+    <div className="settings-row">
       <div>
-        <div style={{ fontSize: '0.82rem', fontWeight: 500, color: danger ? 'var(--red)' : 'var(--text)' }}>{label}</div>
-        {hint && <div style={{ fontSize: '0.73rem', color: 'var(--muted)', marginTop: '0.2rem', lineHeight: 1.4 }}>{hint}</div>}
+        <div className={`settings-row-label${danger ? ' danger' : ''}`}>{label}</div>
+        {hint && <div className="settings-row-hint">{hint}</div>}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <div className="settings-row-control">
         {children}
       </div>
     </div>
@@ -90,7 +72,7 @@ function Row({ label, hint, children, danger }: {
 
 function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+    <label className="settings-toggle">
       <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} disabled={disabled} />
       {checked ? 'Enabled' : 'Disabled'}
     </label>
@@ -99,7 +81,7 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
 
 function SaveMsg({ msg }: { msg: { ok: boolean; text: string } | null }) {
   if (!msg) return null
-  return <span style={{ fontSize: '0.78rem', color: msg.ok ? 'var(--green)' : 'var(--red)', maxWidth: '360px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', verticalAlign: 'middle' }} title={msg.text}>{msg.text}</span>
+  return <span className={`settings-save-msg ${msg.ok ? 'ok' : 'err'}`} title={msg.text}>{msg.text}</span>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +94,7 @@ export default function Settings() {
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
   const [tab, setTab] = useState<Tab>('intelligence')
 
-  if (!status || !settings) return <p style={{ padding: '1rem', color: 'var(--muted)' }}>Loading…</p>
+  if (!status || !settings) return <p className="hint">Loading…</p>
 
   return (
     <div>
@@ -192,7 +174,7 @@ function IntelligenceTab({ status, settings, qc }: any) {
             onChange={v => runtimeMut.mutate({ scheduler_enabled: v })}
             disabled={runtimeMut.isPending}
           />
-          <span className={`badge ${schedulerEnabled ? 'badge-green' : 'badge-yellow'}`}>{schedulerEnabled ? 'active' : 'disabled'}</span>
+          <span className={`badge ${schedulerEnabled ? 'badge-green' : 'badge-yellow'}`}>{schedulerEnabled ? 'ACTIVE' : 'DISABLED'}</span>
         </Row>
       </Section>
 
@@ -249,59 +231,44 @@ function UniverseConfigCard({ settings, qc }: any) {
 
   return (
     <div className="card" style={{ marginBottom: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.85rem' }}>
+      <div className="flex items-center gap-3 mb-3">
         <Toggle checked={enabled} onChange={v => { setEnabled(v); setMsg(null) }} />
-        <span className={`badge ${enabled ? 'badge-green' : 'badge-red'}`}>{enabled ? 'ACTIVE' : 'OFF'}</span>
+        <span className={`badge ${enabled ? 'badge-green' : 'badge-muted'}`}>{enabled ? 'ACTIVE' : 'OFF'}</span>
         {!enabled && <span className="hint" style={{ margin: 0 }}>Agents use static symbol list (BTC/ETH/SOL) when disabled.</span>}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.5rem 1.5rem', marginBottom: '0.75rem' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Refresh interval</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <input type="number" min={1} max={60} step={1} value={refreshMin}
-              onChange={e => { setRefreshMin(e.target.value); setMsg(null) }}
-              style={{ width: '80px', fontFamily: 'var(--mono)' }} />
-            <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>min</span>
-          </div>
+      <div className="settings-field-grid">
+        <label className="settings-field">
+          <span>Refresh interval (min)</span>
+          <input type="number" min={1} max={60} step={1} value={refreshMin}
+            onChange={e => { setRefreshMin(e.target.value); setMsg(null) }} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Max candidates</span>
+        <label className="settings-field">
+          <span>Max candidates</span>
           <input type="number" min={5} max={100} step={1} value={maxCandidates}
-            onChange={e => { setMaxCandidates(e.target.value); setMsg(null) }}
-            style={{ width: '80px', fontFamily: 'var(--mono)' }} />
+            onChange={e => { setMaxCandidates(e.target.value); setMsg(null) }} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Core pool size</span>
+        <label className="settings-field">
+          <span>Core pool size</span>
           <input type="number" min={1} max={50} step={1} value={corePool}
-            onChange={e => { setCorePool(e.target.value); setMsg(null) }}
-            style={{ width: '80px', fontFamily: 'var(--mono)' }} />
+            onChange={e => { setCorePool(e.target.value); setMsg(null) }} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Min 24h volume</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <input type="number" min={100000} max={500000000} step={100000} value={minVolume}
-              onChange={e => { setMinVolume(e.target.value); setMsg(null) }}
-              style={{ width: '120px', fontFamily: 'var(--mono)' }} />
-            <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>USDT</span>
-          </div>
+        <label className="settings-field">
+          <span>Min 24h volume (USDT)</span>
+          <input type="number" min={100000} max={500000000} step={100000} value={minVolume}
+            onChange={e => { setMinVolume(e.target.value); setMsg(null) }} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Max spread</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <input type="number" min={1} max={200} step={1} value={maxSpread}
-              onChange={e => { setMaxSpread(e.target.value); setMsg(null) }}
-              style={{ width: '80px', fontFamily: 'var(--mono)' }} />
-            <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>bps</span>
-          </div>
+        <label className="settings-field">
+          <span>Max spread (bps)</span>
+          <input type="number" min={1} max={200} step={1} value={maxSpread}
+            onChange={e => { setMaxSpread(e.target.value); setMsg(null) }} />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Explore ratio</span>
+        <label className="settings-field">
+          <span>Explore ratio</span>
           <input type="number" min={0} max={0.5} step={0.05} value={exploreRatio}
-            onChange={e => { setExploreRatio(e.target.value); setMsg(null) }}
-            style={{ width: '80px', fontFamily: 'var(--mono)' }} />
+            onChange={e => { setExploreRatio(e.target.value); setMsg(null) }} />
         </label>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div className="flex items-center gap-2">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
         <SaveMsg msg={msg} />
       </div>
@@ -418,7 +385,7 @@ function LiveStateRow({ status, qc }: any) {
 
   return (
     <Row label="Live trading state" hint="Disabled by default. Unlocking runs a credential pre-flight, requires confirmation, and is audited. Use Kill Switch on Risk & Controls to halt immediately." danger={!isDisabled}>
-      <span className={`badge ${isDisabled ? 'badge-red' : 'badge-yellow'}`}>{String(status.live_state)}</span>
+      <span className={`badge ${isDisabled ? 'badge-muted' : 'badge-yellow'}`}>{humanize(String(status.live_state))}</span>
       <button onClick={preflightUnlock} disabled={!isDisabled}>Unlock Live-Limited</button>
       <button className="secondary" onClick={() => lock.mutate()} disabled={isDisabled}>Lock</button>
       {warning && <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>⚠ {warning}</span>}
@@ -637,37 +604,23 @@ function SymbolsCard({ settings, qc }: any) {
 
   const canSave = mode === 'blacklist' || draft.length > 0
 
-  const chipBg = mode === 'whitelist' ? 'rgba(34,211,238,0.1)' : 'rgba(239,68,68,0.1)'
-  const chipBorder = mode === 'whitelist' ? 'rgba(34,211,238,0.25)' : 'rgba(239,68,68,0.25)'
+  const chipTone = mode === 'whitelist' ? 'allow' : 'deny'
 
   return (
     <div className="card" style={{ marginBottom: 0 }}>
       {/* Mode toggle */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', alignItems: 'center' }}>
-        <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Mode:</span>
-        <button
-          className={mode === 'whitelist' ? '' : 'secondary'}
-          onClick={() => { setMode('whitelist'); setMsg(null) }}
-          style={{ fontSize: '0.72rem', padding: '0.2rem 0.6rem' }}
-        >Whitelist</button>
-        <button
-          className={mode === 'blacklist' ? '' : 'secondary'}
-          onClick={() => { setMode('blacklist'); setMsg(null) }}
-          style={{ fontSize: '0.72rem', padding: '0.2rem 0.6rem' }}
-        >Blacklist</button>
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-sm text-muted">Mode:</span>
+        <button className={`btn-sm ${mode === 'whitelist' ? '' : 'secondary'}`} onClick={() => { setMode('whitelist'); setMsg(null) }}>Whitelist</button>
+        <button className={`btn-sm ${mode === 'blacklist' ? '' : 'secondary'}`} onClick={() => { setMode('blacklist'); setMsg(null) }}>Blacklist</button>
       </div>
 
       {/* Symbol chips */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.75rem', minHeight: '2rem' }}>
+      <div className="flex flex-wrap gap-1 mb-3" style={{ minHeight: '2rem' }}>
         {draft.map(s => (
-          <span key={s} style={{
-            display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
-            padding: '0.18rem 0.5rem', borderRadius: '4px',
-            background: chipBg, border: `1px solid ${chipBorder}`,
-            fontSize: '0.79rem', fontFamily: 'var(--mono)',
-          }}>
+          <span key={s} className={`symbol-chip ${chipTone}`}>
             {s}
-            <button onClick={() => remove(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '0 0.1rem', lineHeight: 1, fontSize: '0.9rem' }} title={`Remove ${s}`}>×</button>
+            <button onClick={() => remove(s)} title={`Remove ${s}`}>×</button>
           </span>
         ))}
         {draft.length === 0 && (
@@ -678,7 +631,7 @@ function SymbolsCard({ settings, qc }: any) {
       </div>
 
       {/* Input + save */}
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="flex items-center gap-2 flex-wrap">
         <input
           value={input} placeholder="e.g. SUIUSDT"
           onChange={e => setInput(e.target.value.toUpperCase())}
@@ -702,23 +655,18 @@ function SymbolsCard({ settings, qc }: any) {
 
       {/* Read-only: show the derived InstrumentId keys that will be observed */}
       {mode === 'whitelist' && (settings?.market_data?.observed_instruments ?? []).length > 0 && (
-        <div style={{ marginTop: '0.75rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
-          <span style={{ fontSize: '0.68rem', color: 'var(--muted)', marginBottom: '0.35rem', display: 'block' }}>
+        <div style={{ marginTop: 'var(--space-3)', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--border)' }}>
+          <span className="text-xs text-muted mb-1" style={{ display: 'block' }}>
             Observed instruments (auto-derived · read-only)
           </span>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+          <div className="flex flex-wrap gap-1">
             {(settings.market_data.observed_instruments as string[]).map((id: string) => {
               const [exch, sym, mtype] = id.split(':')
               return (
-                <span key={id} style={{
-                  fontSize: '0.68rem', fontFamily: 'var(--mono)',
-                  padding: '0.12rem 0.45rem', borderRadius: '3px',
-                  background: 'rgba(100,100,120,0.12)', border: '1px solid rgba(100,100,120,0.25)',
-                  color: 'var(--muted)',
-                }} title={id}>
-                  <span style={{ color: 'var(--accent)', opacity: 0.7 }}>{exch}</span>
+                <span key={id} className="instrument-chip" title={id}>
+                  <span className="exch">{exch}</span>
                   {' '}{sym}{' '}
-                  <span style={{ opacity: 0.6 }}>{mtype}</span>
+                  <span className="mtype">{mtype}</span>
                 </span>
               )
             })}
@@ -807,8 +755,8 @@ function RiskCard({ settings, qc }: any) {
           allowed_exchange: <span style={{ fontFamily: 'var(--mono)', color: 'var(--text)' }}>{risk.allowed_exchange}</span>
         </span>
         <span style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>
-          require_risk_check: <span className={`badge ${risk.require_risk_check_for_all_orders ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.68rem' }}>{String(risk.require_risk_check_for_all_orders)}</span>
-          <span style={{ marginLeft: '0.3rem', fontSize: '0.67rem' }}>locked</span>
+          require_risk_check: <span className={`badge ${risk.require_risk_check_for_all_orders ? 'badge-green' : 'badge-red'}`}>{humanizeBool(risk.require_risk_check_for_all_orders)}</span>
+          <span className="text-xs" style={{ marginLeft: 'var(--space-1)' }}>locked</span>
         </span>
       </div>
 
@@ -1182,10 +1130,10 @@ function AutostartCard({ qc }: any) {
 
   let badge = <span className="badge">checking…</span>
   if (!isLoading && data) {
-    if (!supported) badge = <span className="badge badge-yellow">not available</span>
-    else if (enabled === true) badge = <span className="badge badge-green">enabled</span>
-    else if (enabled === false) badge = <span className="badge">disabled</span>
-    else badge = <span className="badge badge-red">unknown</span>
+    if (!supported) badge = <span className="badge badge-yellow">Not Available</span>
+    else if (enabled === true) badge = <span className="badge badge-green">Enabled</span>
+    else if (enabled === false) badge = <span className="badge badge-muted">Disabled</span>
+    else badge = <span className="badge badge-red">Unknown</span>
   }
 
   return (
@@ -1346,7 +1294,7 @@ const TIER_COLORS: Record<string, string> = {
   flagship: 'var(--accent)',
   standard: 'var(--green)',
   fast: 'var(--yellow)',
-  reasoning: 'var(--purple, #a78bfa)',
+  reasoning: 'var(--blue)',
 }
 
 function HTTPProviderForm({ name, config, isDefault, qc }: {
