@@ -27,7 +27,7 @@ from aletheia.storage.repositories import (
     update_opportunity,
     list_strategies,
 )
-from aletheia.trading.instruments import tradable_symbols_from_config
+from aletheia.trading.instruments import tradable_symbols_from_config, blocked_symbols_from_config
 from aletheia.trading.market_data import latest_snapshot
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy, is_paper_trading_paused
 from aletheia.data.symbols import to_canonical
@@ -50,9 +50,16 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         log_tool(run_id, "create_paper_proposal", "paper", False)
         errors.append(f"create_paper_proposal not permitted in mode {permission_mode}")
         return {"outputs": outputs, "errors": errors}
-    # tradable_symbols are Bitget format (BTCUSDT); opportunities are canonical
-    # (BTC/USDT) — normalise both sides before matching.
-    allowed_symbols = {to_canonical(s) for s in tradable_symbols_from_config(cfg)}
+    # Symbol filter: whitelist mode uses tradable_symbols; blacklist mode blocks specific symbols.
+    filter_mode = cfg.risk.symbol_filter_mode
+    if filter_mode == "blacklist":
+        blocked_set = {to_canonical(s) for s in blocked_symbols_from_config(cfg)}
+        def _symbol_allowed(sym: str) -> bool:
+            return to_canonical(sym) not in blocked_set
+    else:
+        allowed_set = {to_canonical(s) for s in tradable_symbols_from_config(cfg)}
+        def _symbol_allowed(sym: str) -> bool:
+            return to_canonical(sym) in allowed_set
 
     # Pick the most recent OPEN crypto opportunity for an allowed symbol.
     # equity and prediction asset_classes are observation-only — never traded.
@@ -70,7 +77,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         if not row.get("execution_eligible", True):
             skipped_reasons.append(f"skip:{row.get('symbol','?')}:execution_eligible=False")
             continue
-        if row.get("status") != "open" or row.get("symbol") not in allowed_symbols:
+        if row.get("status") != "open" or not _symbol_allowed(row.get("symbol", "")):
             continue
         # Universe guards: skip non-eligible or TTL-expired universe members
         if row.get("universe_member_id"):

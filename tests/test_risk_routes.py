@@ -38,7 +38,8 @@ async def test_get_risk_boundaries(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["max_daily_loss_pct"] == 1.0
-    assert data["allowed_symbols"] == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    assert data["allowed_symbols"] == []
+    assert data["symbol_filter_mode"] == "blacklist"
 
 
 @pytest.mark.anyio

@@ -47,9 +47,9 @@ class ExchangeConfig(BaseModel):
     name: str = "bitget"
     mode: str = "demo"
     enabled_markets: dict[str, bool] = Field(default_factory=lambda: {"spot": True, "usdt_futures": True})
-    # Trading whitelist only — which symbols may be traded via this exchange.
+    # Trading whitelist — used when symbol_filter_mode == "whitelist".
     # Market data observation is controlled by MarketDataConfig.observed_symbols.
-    tradable_symbols: list[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+    tradable_symbols: list[str] = Field(default_factory=list)
     blocked_symbols: list[str] = Field(default_factory=list)
     # Where autonomous paper trades execute:
     #   "bitget_demo"   → real Bitget demo/simulated-trading API (paptrading header,
@@ -181,8 +181,8 @@ class RiskConfig(BaseModel):
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 6
     # "whitelist" = only allowed_symbols may trade; "blacklist" = all except blocked_symbols.
-    symbol_filter_mode: str = "whitelist"
-    allowed_symbols: list[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+    symbol_filter_mode: str = "blacklist"
+    allowed_symbols: list[str] = Field(default_factory=list)
     blocked_symbols: list[str] = Field(default_factory=list)
     allowed_exchange: str = "bitget"
     allow_short_demo: bool = True

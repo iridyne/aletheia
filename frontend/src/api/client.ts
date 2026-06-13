@@ -256,8 +256,8 @@ export const api = {
     max_open_positions_live: number; max_open_positions_demo: number
     allow_short_demo: boolean; allow_short_live: boolean
   }>) => post<{ updated: Record<string, any>; risk: Record<string, any> }>('/settings/risk', body),
-  updateTradableSymbols: (symbols: string[]) =>
-    post<{ symbols: string[] }>('/settings/symbols', { symbols }),
+  updateSymbolFilter: (body: { mode: string; allowed: string[]; blocked: string[] }) =>
+    post<{ mode: string; allowed: string[]; blocked: string[] }>('/settings/symbols', body),
   updateTradingConfig: (body: Partial<{
     default_stop_loss_pct: number; default_take_profit_pct: number
     max_position_hold_hours: number; min_confidence_to_trade: string

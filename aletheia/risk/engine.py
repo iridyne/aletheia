@@ -80,10 +80,16 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     if cfg.runtime.kill_switch_active:
         violations.append("kill_switch_active")
 
-    # 1. Symbol allowed (normalize both sides to canonical BTC/USDT format)
-    allowed_canonical = {to_canonical(s) for s in risk.allowed_symbols}
-    if to_canonical(proposal.symbol) not in allowed_canonical:
-        violations.append(f"symbol_not_allowed:{proposal.symbol}")
+    # 1. Symbol filter (whitelist or blacklist mode)
+    sym_canonical = to_canonical(proposal.symbol)
+    if risk.symbol_filter_mode == "blacklist":
+        blocked_canonical = {to_canonical(s) for s in risk.blocked_symbols}
+        if sym_canonical in blocked_canonical:
+            violations.append(f"symbol_blocked:{proposal.symbol}")
+    else:
+        allowed_canonical = {to_canonical(s) for s in risk.allowed_symbols}
+        if sym_canonical not in allowed_canonical:
+            violations.append(f"symbol_not_allowed:{proposal.symbol}")
 
     # 2. Market allowed
     if proposal.market_type == "spot" and not cfg.exchange.enabled_markets.get("spot"):

@@ -43,6 +43,11 @@ def test_risk_approves_valid_paper_proposal(tmp_path, monkeypatch):
 
 def test_risk_rejects_disallowed_symbol(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    save_config(cfg)
     proposal = TradeProposal(
         symbol="DOGEUSDT", market_type="spot", direction="long",
         execution_mode="paper_internal",
@@ -51,6 +56,44 @@ def test_risk_rejects_disallowed_symbol(tmp_path, monkeypatch):
     result = evaluate_proposal(proposal)
     assert result.approved is False
     assert any("symbol_not_allowed" in v for v in result.violations)
+    reset_db()
+
+
+def test_risk_blacklist_mode_allows_non_blocked(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.symbol_filter_mode = "blacklist"
+    cfg.risk.blocked_symbols = ["DOGEUSDT"]
+    cfg.agent.permission_mode = "Paper"
+    save_config(cfg)
+    proposal = TradeProposal(
+        symbol="XRPUSDT", market_type="spot", direction="long",
+        execution_mode="paper_internal", quantity=0.1, price=1.0,
+    )
+    repo.insert_trade_proposal(proposal)
+    result = evaluate_proposal(proposal)
+    assert result.approved is True
+    assert not any("symbol_blocked" in v for v in result.violations)
+    reset_db()
+
+
+def test_risk_blacklist_mode_rejects_blocked(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.symbol_filter_mode = "blacklist"
+    cfg.risk.blocked_symbols = ["DOGEUSDT", "SHIBUSDT"]
+    cfg.agent.permission_mode = "Paper"
+    save_config(cfg)
+    proposal = TradeProposal(
+        symbol="DOGEUSDT", market_type="spot", direction="long",
+        execution_mode="paper_internal", quantity=100, price=0.1,
+    )
+    repo.insert_trade_proposal(proposal)
+    result = evaluate_proposal(proposal)
+    assert result.approved is False
+    assert any("symbol_blocked" in v for v in result.violations)
     reset_db()
 
 
@@ -128,6 +171,11 @@ def test_execution_gateway_paper_flow(tmp_path, monkeypatch):
 
 def test_execution_gateway_rejects_disallowed(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    save_config(cfg)
     result = submit_proposal(
         symbol="XRPUSDT", market_type="spot", direction="long",
         quantity=10.0, price=0.5, execution_mode="paper_internal",
