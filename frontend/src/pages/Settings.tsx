@@ -1309,9 +1309,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
 
       {/* Row 2: Model (combobox) + secondary field */}
       <label style={{ position: 'relative' }}>
-        Model {detectedModels && detectedModels.length > 0 && (
-          <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>({detectedModels.length})</span>
-        )}
+        <span>Model{detectedModels && detectedModels.length > 0 && ` (${detectedModels.length})`}</span>
         <input
           value={model}
           placeholder={config?.model || 'default'}
