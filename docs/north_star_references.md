@@ -19,7 +19,11 @@
 > 我们已经把交易侧的"形"（OpenAlice 那一类）基本做齐了——**本地优先、
 > Trading-as-Git 式可追溯、多角色 agent、可见推理**。我们真正缺的、且 Hermes /
 > ALMA / AlphaQuanter 共同指向的，是**同一个东西：经验闭环**——写进记忆的东西
-> 要能反哺下一次决策。今天我们的学习机制是一本**只写不读的账本**。
+> 要能反哺下一次决策。
+>
+> **2026-06-13 更正**：经验闭环**已从"只写不读"推进到"软闭环"**——记忆已经过 FTS5 检索
+> 注入 market_observer / strategy_designer 的 LLM prompt（见 §6）。但反馈仍是"软"的（改 prompt），
+> 尚未变"硬"（改 scanner 权重 / TTL / 参数）。真正的剩余差距是**参数化反馈**，不再是"完全开环"。
 >
 > 这张地图把这一点钉死，但**明确推迟动工**，直到稳定性与学习质量被证明。
 
@@ -58,7 +62,7 @@
 | 多空辩论 / 跨 agent 批评 | ❌ | agent 是独立定时任务，仅经共享 DB 单向写，无 inter-agent 数据流 |
 | dreaming / 整理 | ✅ | `dreaming_agent` 每天 2am + daily_review + Learning Ledger（含 activation_ratio / lessons_consulted 质量信号） |
 | skill from experience | 🟡 | `trading/playbooks.py` `load_playbooks()` 已接入；`strategy_designer` 在决策前读 playbook block（2026-06-07） |
-| 持久记忆**反哺决策** | 🟡 | `knowledge/retrieval.py` FTS5 + BM25×recency×importance；`market_observer` + `strategy_designer` 注入 memory block（2026-06-07）。仍是只有这两个 agent，其余 agent 未接入 |
+| 持久记忆**反哺决策** | 🟡 | `knowledge/retrieval.py:177-228` FTS5 + BM25×recency×importance；`market_observer.py:251-263` + `strategy_designer.py:60-70` 注入 memory block。**软闭环已通**（影响 LLM prompt），但不改确定性参数；仍只这两个 agent 接入。详见 [EXECUTION_PATH_HONESTY.md](EXECUTION_PATH_HONESTY.md) §6 |
 | 可检索记忆（FTS / 向量 / 关键词） | 🟡 | FTS5 virtual table + `retrieve_lessons()`（quality-gated：仅 high_confidence + active）；无向量/embedding |
 | 记忆 schema 进化 | ❌（固定） | Pydantic 模型 + 加列式迁移，无运行时进化 |
 | 从交易反馈优化策略（RL 式） | ❌ | 晋级门槛会算指标，但不回流改策略 |
@@ -174,6 +178,12 @@ Hermes 指向的闭环是我们的真缺口，但**正因为它会放大一切**
 - **AlphaQuanter**（工具编排 RL + 从反馈优化）：透明工具调用我们已有（`log_tool`）；
   "从反馈优化策略"= 经验闭环的强化学习版，属远期。
 
+> **外部综述独立佐证（2026-06-13）**：用户提供的《Agent Framework Research Report 2025–2026》
+> 收敛出的"赢家架构 = 最可审计 + 最确定性 + LLM 影响力最小 + 职责分解最彻底"，逐条对上我们
+> 的红线与原则——是对本地图方向的独立验证，**非新需求源**。该报告的 "Hermes" 与本文 §4 同源；
+> 其 §7 推荐的重型栈（Postgres / 向量库 / Redis / LangGraph）恰好命中我们写死的红线，已显式拒绝。
+> 完整对照见 [REFERENCE_agent_framework_research_2025_2026.md](REFERENCE_agent_framework_research_2025_2026.md)。
+
 ---
 
 ## 6. 核心综合 — 经验闭环：现在是"开环"
@@ -186,21 +196,25 @@ Hermes 指向的闭环是我们的真缺口，但**正因为它会放大一切**
 - `dreaming_agent` 写每日整理 + Learning Ledger（PR #8）。
 - 5 类知识双存储（SQLite `knowledge_items` + Markdown），齐全。
 
-**但几乎不读回决策：**
-- `paper_trader`：纯规则，`llm_complete` 是 **dead import**（`agents/paper_trader.py`）。
-- `market_observer`：LLM 只看 `latest_snapshot`，**不读**任何历史/教训（`agents/market_observer.py`）。
-- `strategy_designer` / `research_agent`：通用 prompt，无过往模式注入。
-- `dreaming_agent`：只 **数** 知识条数（`list_knowledge_items(t, limit=1000)` 取 `len`），**不读内容**。
-- `create_strategy_memory`（`knowledge/manager.py:75`）**从未被任何 agent 调用**——定义了却不用。
-- playbooks：仅 `seed_playbooks` 种子，**0 个 agent 读**（`grep playbook aletheia/agents/` 空）。
-- **无任何检索原语**：无 FTS5 / 向量 / 关键词搜索。
+**部分已读回决策（2026-06-13 更正——下列旧表述已过时）：**
+- `paper_trader`：纯规则（确定性下单），无 LLM 决策。✅ 仍准确。
+- ~~`market_observer`：LLM 只看 `latest_snapshot`，不读任何历史/教训~~ —— **已过时**：
+  现在 `market_observer.py:251-263` 与 `strategy_designer.py:60-70` **已注入 memory block 进 LLM prompt**
+  （`knowledge/retrieval.py:177-228` FTS5 + BM25×recency×importance，quality-gated）。经验闭环**已闭合**。
+- `dreaming_agent`：仍以计数为主（需复核内容读取）。
+- playbooks：`strategy_designer` 已读 playbook block（`strategy_designer.py:72-78`，2026-06-07 起）。
+- **检索原语已具备**：FTS5 virtual table + `retrieve_lessons()`（仅 high_confidence + active）。
 
-**一个诚实的例外（不能overclaim）**：`strategy_lifecycle.py:154` 在晋级门槛里**会读**
-`post_trade_review` 的**条数**作为 gate。所以严格说不是 100% 开环——而是
-**"读来计数/门控，从不读进 LLM 决策 prompt"**。经验影响不了下一笔交易的判断。
+**但闭环只到"prompt 注入"为止，不改确定性参数（这才是真正的结构性边界）：**
+注入的 lesson 只影响 LLM 的下一次"读/产出方向"，**不调 scanner 权重 / 不调 TTL / 不改 risk 限额**——
+与原始设计 §3.9 的参数化反馈（"scanner weight updates / TTL tuning"）有明确差距。
+`strategy_lifecycle.py:184-273` 晋级门会**读** post_trade_review 等作为 gate，但那是计数/门控，
+不进 LLM 决策 prompt 的参数控制。
 
-→ 这正是 **Hermes（记忆注入决策）/ ALMA（记忆影响检索）/ AlphaQuanter（从反馈优化）**
-共同指向的同一缺口。**它是我们与"会学习的生命体"之间最本质、也是唯一的结构性差距。**
+→ 所以现状是：**经验闭环已闭合（advisory 文本注入），但反馈是"软"的（改 prompt）而非"硬"的（改参数）。**
+这与 **Hermes（记忆注入决策）/ ALMA（记忆影响检索）/ AlphaQuanter（从反馈优化）** 的差距已从
+"完全开环"收窄到"软闭环 vs 参数化闭环"。**另见 [EXECUTION_PATH_HONESTY.md](EXECUTION_PATH_HONESTY.md) §6——
+它用 file:line 钉死了这一点，并揭示了一个更尖锐的相关事实：LLM 的 direction_bias 才是真正驱动交易方向的决策。**
 
 ---
 

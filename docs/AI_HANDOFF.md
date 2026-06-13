@@ -7,10 +7,70 @@
 
 ## Last Updated
 
-2026-06-13 (开发体验 + 能力批次:single-port :8787 dev 自动重载收口、状态浮层重设计、LLM
+2026-06-13 (本次会话:① Gateway 静态文件启动可靠性修复 + preflight/doctor 加固[commit db2423f];
+② 执行路径语义诚实文档化[纯文档]——新增 EXECUTION_PATH_HONESTY.md,核实并钉死"LLM 在方向决策回路、
+下单机制确定性、strategy rule 悬空"三类真相,更正 north_star 过时表述,BACKEND_ISSUES 加 §4。)
+
+前一批次 (开发体验 + 能力批次:single-port :8787 dev 自动重载收口、状态浮层重设计、LLM
 startup gate 3 次重试 + Windows toast、风控单列 symbol_list 双模式过滤、Anthropic/OpenAI 原生
 provider + 流式、universe plan 缺口补齐、design-doc 合规修复、Clustr100 社区知识库。18 个提交,
 均为 2026-06-13 当日。会话结束:本机实例停机,开发切换到另一台机器。)
+
+## Recent Change (执行路径语义诚实 — 2026-06-13, 纯文档)
+
+> 触发:用户要求"学习吸收其他 Agentic Trading 框架经验"。核实后发现外部框架研究已做完
+> (north_star + REFERENCE_openalice_prism + REFERENCE_agent_framework 三份齐备),真正的净增量是
+> **把通读当前代码得到的一手事实钉死**——现有文档对"LLM 在决策回路精确位置"的表述已过时/不够锐利。
+> 用户明确本轮范围:补文档/认知,不改代码;对"LLM 是否在执行路径"选「诚实记录 + 诚实化认知」。
+>
+> **结论(根因 / 一手核实)**:Aletheia 的真相既不是原始设计 v1 宣称的"LLM 不在执行路径 + 确定性 DSL",
+> 也不是 Prism 式"假 LLM 真规则",而是**第三种状态:真 LLM 决策方向(market_observer 的
+> `direction_bias` 直接驱动 paper_trader 做多/做空)+ 真确定性管控下单(固定 notional/止损/Risk Engine)
+> + 悬空死字符串策略层(strategy_designer 的 entry_rule/exit_rule 从不被解析执行)**。
+
+- 新增 `docs/EXECUTION_PATH_HONESTY.md`:三类拆解(确定性/LLM/悬空,带 file:line)+ 与原始设计 v1
+  差距对照 + 与 Prism"反向"对照 + 验证层现状(仅 paper 1/5 层)+ 审计无 hash 链 + 经验闭环"软闭环"
+  现状 + 三条诚实化路径(A 命名/B 验证 gate/C 真 DSL,仅记录非授权)。
+- `docs/north_star_references.md`:更正 §0/§2/§6 过时表述——"market_observer 不读历史"已不成立
+  (现已注入 memory block);经验闭环从"只写不读"更正为"软闭环已通,缺参数化反馈";交叉引用新文档。
+- `docs/BACKEND_ISSUES.md`:新增 §4(2026-06-13 结构性发现,未修复待授权)——strategy rule 悬空死字符串、
+  验证层仅 paper 一层、audit 无 hash 链;更新 header/阅读顺序标注 §4 为新增未修复区。
+- **未做**:不改任何代码;不执行 openalice_prism 蓝图 P0/P1/P2(仍待授权);不引入 DSL 引擎/回测框架。
+
+## Recent Change (Gateway 静态文件启动可靠性 — 2026-06-13, commit db2423f)
+
+> 触发:用户访问 WebUI 得到 `{"detail":"Not Found"}` JSON 404。
+> **结论(根因)**:后台 Gateway 启动时 `_gateway_runner.py` 同时拉起 Vite watch + uvicorn,
+> uvicorn 在模块导入时检查 `dashboard_static/index.html` 是否存在并 mount,但 Vite 首次构建尚未完成,
+> 文件不存在 → 静态文件 mount 被跳过 → WebUI 404(API 正常)。这是构建与服务启动的竞态。
+
+- `aletheia/_gateway_runner.py`:禁用内嵌 Vite watch(`_start_vite_build_watch` 直接 return None)——
+  后台启动改为依赖预构建的 `dashboard_static/`(提交到 Git);开发迭代仍用 `scripts/dev.ps1`。
+- `aletheia/server/app.py`:静态文件 mount 从模块顶层移到 lifespan startup(调度器初始化后),
+  新增 `_mount_static_dashboard()`,缺失时 logger.warning 而非静默跳过。
+- 新增 `aletheia/gateway/preflight.py`:启动前预检(静态文件/数据库/配置),失败给明确修复建议并拒绝启动;
+  集成进 `gateway/lifecycle.py` `do_start`(fail-fast)+ `_verify_webui_accessible`(启动后验证 GET / 返回 HTML)。
+- `aletheia/diagnostics/doctor.py`:新增 `webui.static` 诊断维度(检查 index.html + JS bundles,缺失标 BLOCKER)。
+- `CLAUDE.md`:补充 WebUI 静态文件构建规则(预构建提交、Vite watch 禁用、preflight 保障)。
+
+## Recent Change (外部框架综述参考分析 — 2026-06-13, 纯文档)
+
+> 触发:用户提供外部《Agent Framework Research Report 2025–2026》(OpenClaw/Lobster/Hermes/
+> Agentic Trading 四类框架综述),要求结合项目更新 roadmap 及辅助文档。
+> **结论(根因)**:该报告是一面"验证镜"而非新需求源——它收敛的"赢家架构 = 最可审计 +
+> 最确定性 + LLM 影响力最小 + 职责分解最彻底"逐条等同我们 AGENTS.md 红线 + ROADMAP 原则;
+> 它唯一"新"的处方(§7 Postgres/向量库/Redis/LangGraph 重型栈)恰好命中我们写死的红线。
+> 故按 `REFERENCE_openalice_prism_review.md` / north_star §10 先例,**只做文档,不动代码、不加能力、
+> 不改 Phase 0 优先级**(遵守"trust hardening, not feature expansion" + "参考≠施工授权")。
+
+- 新增 `docs/REFERENCE_agent_framework_research_2025_2026.md`:报告忠实摘要 + 收敛最佳实践 vs
+  Aletheia 现状逐条核对(6 条最佳实践 5 条我们已做且更硬) + §7 重型栈逐条拒绝(附红线引用) +
+  唯一净增量(两条失败模式意识) + 治理红线 + 一句话结论。
+- `docs/ROADMAP.md`:Sources 行加引该报告(标注 validation only);Common Failure Modes 补两行
+  (Lookahead bias / Execution-slippage mismatch,均说明我们已有的天然防御);File Relationships 加新文件。
+- `docs/north_star_references.md` §5 末加"外部综述独立佐证"指针,标注报告 Hermes ≡ 本文 §4、
+  §7 重型栈已拒绝,交叉链到新参考文件。
+- **未做**:不引入任何报告推荐的依赖/框架;不新增 phase/能力;不触 trust 边界。
 
 ## Recent Change (DX + 能力批次 + 机器交接 — 2026-06-13)
 

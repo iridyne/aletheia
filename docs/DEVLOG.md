@@ -1,5 +1,64 @@
 # Development Log
 
+## 2026-06-13 — 执行路径语义诚实文档化(纯文档,不动代码)
+
+> 用户要求学习吸收外部 Agentic Trading 框架经验。核实后发现外部框架研究已做完(三份参考文档齐备),
+> 真正净增量是通读当前代码、把"LLM 在决策回路精确位置"的一手事实钉死。用户明确:补文档/认知,不改代码。
+
+### 核实结论(一手,2026-06-13 通读代码)
+- **下单机制确定性**:`paper_trader.py:124` 固定 notional/价、`:126-130` 固定止损%、Risk Engine 硬限。
+- **但交易方向 = LLM**:`market_observer.py:125-152` LLM 输出 `direction_bias` → `paper_trader.py:104-108` 直接照做。
+- **strategy rule 悬空**:`strategy_designer.py:102-113` 产出 entry_rule/exit_rule 文本存 `parameters` JSON,
+  全仓无 DSL parser,`paper_trader.py:136-149` 从不读 rule——策略层对交易零影响。
+- **验证仅 paper 一层**:`strategy_lifecycle.py:184-273` gates 严格但基于真实 paper 统计,无 backtest/walk-forward/PBO。
+- **audit 无 hash 链**:`jsonl.py:25-69` append-only 但每条独立,无 parent_hash。
+
+### Added
+- `docs/EXECUTION_PATH_HONESTY.md`:三类拆解(确定性/LLM/悬空,file:line)+ 原始设计 v1 差距对照 +
+  Prism"反向"对照 + 验证层/审计链/经验闭环现状 + 三条诚实化路径(命名/验证 gate/真 DSL,仅记录)。
+
+### Changed
+- `docs/north_star_references.md`:更正 §0/§2/§6——"market_observer 不读历史"已过时(现注入 memory block);
+  经验闭环从"只写不读"更正为"软闭环已通,缺参数化反馈";交叉引用新文档。
+- `docs/BACKEND_ISSUES.md`:新增 §4(2026-06-13 结构性发现,未修复待授权)——strategy rule 悬空、
+  验证层仅 paper、audit 无 hash 链;header/阅读顺序标注 §4。
+
+### 不做(留痕)
+- 不改任何代码;不执行 openalice_prism 蓝图 P0/P1/P2(待授权);不引入 DSL 引擎/回测框架(红线)。
+
+## 2026-06-13 — Gateway 静态文件启动可靠性(commit db2423f)
+
+> 用户访问 WebUI 得到 JSON 404。根因:后台启动时 Vite watch 与 uvicorn 竞态——uvicorn 模块导入时
+> 检查 `dashboard_static/index.html` 并 mount,但 Vite 首次构建未完成,文件缺失 → mount 跳过 → 404。
+
+### Changed
+- `aletheia/_gateway_runner.py`:禁用内嵌 Vite watch(后台启动依赖预构建静态文件;开发用 dev.ps1)。
+- `aletheia/server/app.py`:静态 mount 从模块顶层移到 lifespan startup,新增 `_mount_static_dashboard()`。
+- `aletheia/gateway/lifecycle.py`:`do_start` 集成 preflight(fail-fast)+ `_verify_webui_accessible` 启动后验证。
+- `aletheia/diagnostics/doctor.py`:新增 `webui.static` 诊断维度。
+- `CLAUDE.md`:补 WebUI 静态文件构建规则。
+
+### Added
+- `aletheia/gateway/preflight.py`:启动前预检(静态文件/数据库/配置),失败给修复建议并拒绝启动。
+
+## 2026-06-13 — 外部框架综述参考分析(纯文档,不动代码)
+
+> 用户提供外部《Agent Framework Research Report 2025–2026》并要求结合项目更新 roadmap。
+> 判断:报告是验证镜非新需求源,其重型栈处方命中红线 → 按参考文件先例只做文档分析。
+
+### Added
+- `docs/REFERENCE_agent_framework_research_2025_2026.md`:报告摘要 + 收敛最佳实践 vs Aletheia
+  逐条核对 + §7 重型栈(Postgres/向量库/Redis/LangGraph)逐条拒绝附红线 + 净增量 + 治理红线。
+
+### Changed
+- `docs/ROADMAP.md`:Sources 引该报告(validation only);Common Failure Modes 补 Lookahead bias +
+  Execution/slippage mismatch 两行;File Relationships 加新参考文件。
+- `docs/north_star_references.md` §5 末加外部综述独立佐证指针(Hermes ≡ §4、重型栈已拒绝)。
+
+### 不做(留痕)
+- 不引入报告推荐的任何依赖/框架(Postgres/vector/Redis/NATS/LangGraph 均违反红线)。
+- 不新增 phase/能力,不改 Phase 0 优先级,不触 trust 边界。
+
 ## 2026-06-13 — DX 收口 + 能力批次(18 提交)+ 机器交接
 
 > 本日批次紧跟 `1075c8e`(Persistence/Sync/Recovery 子系统,已在 origin/master)。会话结束时

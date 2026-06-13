@@ -1,7 +1,8 @@
 # Aletheia Trading OS — Phased Development Roadmap
 
-> Last updated: 2026-06-11
+> Last updated: 2026-06-13
 > Sources: PIPELINE_STATUS.md + deep research (102 agents, 20 sources) + WORLD_MAP.md (full architecture vision)
+>   + external Agent Framework Research Report 2025–2026 (validation only — see [REFERENCE_agent_framework_research_2025_2026.md](REFERENCE_agent_framework_research_2025_2026.md))
 > Nature: **Guiding document, not automatic authorization** — each phase requires explicit confirmation before starting
 
 ---
@@ -582,6 +583,8 @@ own rules were ever executed.
 | False confidence | "Ran 2 weeks without crash" != "can profit" | Separate stability and profitability verification |
 | Strategy text-only trap | Beautiful text strategies that are never actually executed | Structured Condition schema (Phase 2A) |
 | Feedback echo chamber | Agent reads own bad advice, amplifies mistakes | Adversarial critic + walk-forward validation |
+| Lookahead bias | Decision "sees" data it could not have had at decision time | Paper is real-time forward (no backtest tuning); Phase 2A `entry_conditions` evaluate only current+historical snapshot, never a future bar |
+| Execution/slippage mismatch | Paper fills at prices live never gives, inflating expectancy | Paper runs on Bitget **demo** real-simulation (not local `paper_internal` matching) — see demo-cutover decision |
 
 ---
 
@@ -612,6 +615,8 @@ superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md
                               — Design-phase completion audit for the dual-process Operator Layer package
 PIPELINE_STATUS.md             — Current implementation status per pipeline stage
 north_star_references.md       — Reference systems comparison + gap analysis
+REFERENCE_agent_framework_research_2025_2026.md
+                              — External framework survey analyzed against Aletheia (validation; declines heavy-infra stack)
 AGENTS.md                      — Governance red lines (constraints)
 DECISIONS.md                   — Architectural decision records
 AI_HANDOFF.md                  — Session handoff state
