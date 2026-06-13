@@ -305,3 +305,414 @@ async def test_databricks_list_models_returns_empty_on_failure():
     p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
     models = await p.list_models()
     assert models == []
+
+
+# ── Anthropic Native provider ────────────────────────────────────────────────
+
+from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
+
+
+def test_anthropic_native_headers():
+    provider = AnthropicNativeProvider(model="claude-sonnet-4-6", api_key="sk-ant-test123")
+    headers = provider._headers()
+    assert headers["x-api-key"] == "sk-ant-test123"
+    assert headers["anthropic-version"] == "2023-06-01"
+    assert "Authorization" not in headers
+
+
+@pytest.mark.anyio
+async def test_anthropic_native_complete_mock():
+    provider = AnthropicNativeProvider(model="claude-sonnet-4-6", api_key="sk-test")
+    mock_response = {
+        "content": [{"type": "text", "text": "Hello from Anthropic"}],
+        "model": "claude-sonnet-4-6",
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+    }
+
+    class FakeResponse:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return mock_response
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
+        req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
+        resp = await provider.complete(req)
+        assert resp.content == "Hello from Anthropic"
+        assert resp.model == "claude-sonnet-4-6"
+
+
+@pytest.mark.anyio
+async def test_anthropic_native_list_models():
+    provider = AnthropicNativeProvider(api_key="sk-test")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": [
+                {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "type": "model"},
+                {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "type": "model"},
+            ]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        models = await provider.list_models()
+    assert len(models) == 2
+    assert models[0]["slug"] == "claude-opus-4-8"
+    assert models[0]["display_name"] == "Claude Opus 4.8"
+    assert models[1]["slug"] == "claude-sonnet-4-6"
+
+
+@pytest.mark.anyio
+async def test_anthropic_native_healthcheck_success():
+    provider = AnthropicNativeProvider(model="claude-sonnet-4-6", api_key="sk-test")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": [{"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6"}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        health = await provider.healthcheck()
+    assert health.available is True
+    assert "claude-sonnet-4-6" in health.models
+
+
+@pytest.mark.anyio
+async def test_anthropic_native_healthcheck_failure():
+    provider = AnthropicNativeProvider(model="claude-sonnet-4-6")
+    health = await provider.healthcheck()
+    assert health.available is False
+
+
+# ── OpenAI Native provider ───────────────────────────────────────────────────
+
+from aletheia.model_provider.openai_native import OpenAINativeProvider
+
+
+def test_openai_native_headers():
+    provider = OpenAINativeProvider(model="gpt-4o", api_key="sk-openai-test123")
+    headers = provider._headers()
+    assert headers["Authorization"] == "Bearer sk-openai-test123"
+    assert "x-api-key" not in headers
+
+
+@pytest.mark.anyio
+async def test_openai_native_complete_mock():
+    provider = OpenAINativeProvider(model="gpt-4o", api_key="sk-test")
+    mock_response = {
+        "choices": [{"message": {"content": "Hello from OpenAI"}}],
+        "model": "gpt-4o",
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    }
+
+    class FakeResponse:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return mock_response
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
+        req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
+        resp = await provider.complete(req)
+        assert resp.content == "Hello from OpenAI"
+        assert resp.model == "gpt-4o"
+
+
+@pytest.mark.anyio
+async def test_openai_native_list_models_filters_chat_models():
+    provider = OpenAINativeProvider(api_key="sk-test")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": [
+                {"id": "gpt-4o"},
+                {"id": "gpt-4o-mini"},
+                {"id": "dall-e-3"},
+                {"id": "text-embedding-3-large"},
+                {"id": "o3-mini"},
+            ]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        models = await provider.list_models()
+    slugs = [m["slug"] for m in models]
+    assert "gpt-4o" in slugs
+    assert "gpt-4o-mini" in slugs
+    assert "o3-mini" in slugs
+    assert "dall-e-3" not in slugs
+    assert "text-embedding-3-large" not in slugs
+
+
+@pytest.mark.anyio
+async def test_openai_native_healthcheck_success():
+    provider = OpenAINativeProvider(model="gpt-4o", api_key="sk-test")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        health = await provider.healthcheck()
+    assert health.available is True
+    assert "gpt-4o" in health.models
+
+
+@pytest.mark.anyio
+async def test_openai_native_healthcheck_failure():
+    provider = OpenAINativeProvider(model="gpt-4o")
+    health = await provider.healthcheck()
+    assert health.available is False
+
+
+def test_router_returns_anthropic_native(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+    clear_cache()
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.models.providers["anthropic_native"] = ProviderConfig(
+        type="anthropic_native", model="claude-sonnet-4-6",
+        api_key_secret_ref="model.anthropic_native.api_key",
+    )
+    save_config(cfg)
+    set_secret("model.anthropic_native.api_key", "sk-ant-test")
+
+    provider = get_provider("anthropic_native")
+    assert isinstance(provider, AnthropicNativeProvider)
+    assert provider.model == "claude-sonnet-4-6"
+    assert provider.api_key == "sk-ant-test"
+    clear_cache()
+
+
+def test_router_returns_openai_native(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+    clear_cache()
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.models.providers["openai_native"] = ProviderConfig(
+        type="openai_native", model="gpt-4o",
+        api_key_secret_ref="model.openai_native.api_key",
+    )
+    save_config(cfg)
+    set_secret("model.openai_native.api_key", "sk-openai-test")
+
+    provider = get_provider("openai_native")
+    assert isinstance(provider, OpenAINativeProvider)
+    assert provider.model == "gpt-4o"
+    assert provider.api_key == "sk-openai-test"
+    clear_cache()
+
+
+# ── Streaming tests ──────────────────────────────────────────────────────────
+
+from aletheia.model_provider.base import StreamChunk
+
+
+@pytest.mark.anyio
+async def test_anthropic_native_stream():
+    """Verify SSE parsing yields correct StreamChunks."""
+    provider = AnthropicNativeProvider(model="claude-sonnet-4-6", api_key="sk-test")
+
+    sse_lines = [
+        'event: content_block_start',
+        'data: {"type":"content_block_start","index":0}',
+        '',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}',
+        '',
+        'event: content_block_delta',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}',
+        '',
+        'event: message_delta',
+        'data: {"type":"message_delta","usage":{"output_tokens":5}}',
+        '',
+        'event: message_stop',
+        'data: {"type":"message_stop"}',
+        '',
+    ]
+
+    class FakeStreamResp:
+        status_code = 200
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            for line in sse_lines:
+                yield line
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        def stream(self, method, url, json=None, headers=None):
+            return FakeStreamResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        chunks = []
+        async for chunk in provider.stream(ModelRequest(messages=[{"role": "user", "content": "hi"}])):
+            chunks.append(chunk)
+
+    assert chunks[0].content == "Hello"
+    assert chunks[1].content == " world"
+    assert any(c.done for c in chunks)
+    assert any(c.usage is not None for c in chunks)
+
+
+@pytest.mark.anyio
+async def test_openai_native_stream():
+    """Verify SSE parsing yields correct StreamChunks."""
+    provider = OpenAINativeProvider(model="gpt-4o", api_key="sk-test")
+
+    sse_lines = [
+        'data: {"choices":[{"delta":{"content":"Hi"}}]}',
+        'data: {"choices":[{"delta":{"content":" there"}}]}',
+        'data: [DONE]',
+    ]
+
+    class FakeStreamResp:
+        status_code = 200
+        def raise_for_status(self): pass
+        async def aiter_lines(self):
+            for line in sse_lines:
+                yield line
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        def stream(self, method, url, json=None, headers=None):
+            return FakeStreamResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        chunks = []
+        async for chunk in provider.stream(ModelRequest(messages=[{"role": "user", "content": "hi"}])):
+            chunks.append(chunk)
+
+    assert chunks[0].content == "Hi"
+    assert chunks[1].content == " there"
+    assert chunks[-1].done is True
+
+
+@pytest.mark.anyio
+async def test_base_stream_fallback():
+    """Base ModelProvider.stream() falls back to complete() and yields one chunk."""
+    from aletheia.model_provider.base import ModelProvider, ModelResponse as MR
+
+    class FakeProvider(ModelProvider):
+        async def complete(self, request):
+            return MR(content="full response", model="m", usage={"total": 10})
+
+    provider = FakeProvider()
+    chunks = []
+    async for chunk in provider.stream(ModelRequest(messages=[{"role": "user", "content": "hi"}])):
+        chunks.append(chunk)
+    assert len(chunks) == 1
+    assert chunks[0].content == "full response"
+    assert chunks[0].done is True
+    assert chunks[0].usage == {"total": 10}
+
+
+# ── Enriched model metadata tests ────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_anthropic_native_list_models_enriched():
+    provider = AnthropicNativeProvider(api_key="sk-test")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": [
+                {"id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "created_at": "2025-05-01"},
+                {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6"},
+                {"id": "claude-haiku-4-5", "display_name": "Claude Haiku 4.5"},
+            ]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        models = await provider.list_models()
+
+    assert models[0]["tier"] == "flagship"
+    assert models[0]["context_window"] == 1_000_000
+    assert "vision" in models[0]["capabilities"]
+    assert models[0]["created_at"] == "2025-05-01"
+
+    assert models[1]["tier"] == "standard"
+    assert models[2]["tier"] == "fast"
+    assert models[2]["context_window"] == 200_000
+
+
+@pytest.mark.anyio
+async def test_openai_native_list_models_enriched():
+    provider = OpenAINativeProvider(api_key="sk-test")
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": [
+                {"id": "gpt-4o", "created": 1700000000},
+                {"id": "gpt-4o-mini", "created": 1700000001},
+                {"id": "o3-mini", "created": 1700000002},
+            ]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None): return FakeResp()
+
+    with patch("httpx.AsyncClient", FakeClient):
+        models = await provider.list_models()
+
+    gpt4o = next(m for m in models if m["slug"] == "gpt-4o")
+    assert gpt4o["tier"] == "flagship"
+    assert gpt4o["context_window"] == 128_000
+    assert "vision" in gpt4o["capabilities"]
+
+    mini = next(m for m in models if m["slug"] == "gpt-4o-mini")
+    assert mini["tier"] == "standard"
+
+    o3 = next(m for m in models if m["slug"] == "o3-mini")
+    assert o3["tier"] == "reasoning"

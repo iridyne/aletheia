@@ -6,12 +6,16 @@ from aletheia.config.loader import load_config
 from aletheia.model_provider.base import ModelProvider, ModelHealth
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
+from aletheia.model_provider.openai_native import OpenAINativeProvider
 from aletheia.model_provider.codex_cli import CodexCLIProvider
 from aletheia.model_provider.claude_cli import ClaudeCLIProvider
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
     "anthropic_compatible": AnthropicCompatibleProvider,
+    "anthropic_native": AnthropicNativeProvider,
+    "openai_native": OpenAINativeProvider,
     "codex_cli": CodexCLIProvider,
     "claude_cli": ClaudeCLIProvider,
 }
@@ -69,6 +73,10 @@ def get_provider(name: str | None = None) -> ModelProvider:
             enabled=pcfg.enabled,
             model=pcfg.codex_model,
         )
+    elif ptype == "anthropic_native":
+        provider = AnthropicNativeProvider(model=pcfg.model, api_key=api_key)
+    elif ptype == "openai_native":
+        provider = OpenAINativeProvider(model=pcfg.model, api_key=api_key)
     elif ptype == "claude_cli":
         provider = ClaudeCLIProvider(
             command=pcfg.command or "claude",
@@ -87,7 +95,7 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-_HTTP_TYPES = {"openai_compatible", "anthropic_compatible"}
+_HTTP_TYPES = {"openai_compatible", "anthropic_compatible", "anthropic_native", "openai_native"}
 _DEFAULT_URLS = {"http://localhost:8000/v1", "http://localhost:8001", ""}
 
 

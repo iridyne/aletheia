@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api", tags=["model"])
 
 VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
 
-HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible"}
+HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "anthropic_native", "openai_native"}
 CLI_PROVIDERS = {"codex_cli", "claude_cli"}
 
 
@@ -90,6 +90,16 @@ async def get_provider_types():
             "category": "cli",
             "fields": ["command", "model"],
         },
+        "anthropic_native": {
+            "label": "Anthropic (Direct)",
+            "category": "http",
+            "fields": ["model", "api_key"],
+        },
+        "openai_native": {
+            "label": "OpenAI (Direct)",
+            "category": "http",
+            "fields": ["model", "api_key"],
+        },
     }
 
 
@@ -111,6 +121,8 @@ async def detect_models(req: DetectModelsRequest):
 
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
+    from aletheia.model_provider.openai_native import OpenAINativeProvider
     from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
 
@@ -132,6 +144,10 @@ async def detect_models(req: DetectModelsRequest):
         provider = AnthropicCompatibleProvider(
             base_url=base_url, model="default", api_key=api_key, auth_scheme=auth_scheme,
         )
+    elif req.provider == "anthropic_native":
+        provider = AnthropicNativeProvider(model="default", api_key=api_key)
+    elif req.provider == "openai_native":
+        provider = OpenAINativeProvider(model="default", api_key=api_key)
     else:
         raise HTTPException(400, f"No detect-models support for {req.provider}")
 
@@ -161,6 +177,8 @@ async def test_model_candidate(req: TestCandidateRequest):
 
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
+    from aletheia.model_provider.openai_native import OpenAINativeProvider
     from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
 
@@ -188,6 +206,10 @@ async def test_model_candidate(req: TestCandidateRequest):
             api_key=api_key,
             auth_scheme=auth_scheme,
         )
+    elif req.provider == "anthropic_native":
+        provider = AnthropicNativeProvider(model=model, api_key=api_key)
+    elif req.provider == "openai_native":
+        provider = OpenAINativeProvider(model=model, api_key=api_key)
     else:
         raise HTTPException(400, f"No test-candidate support for {req.provider}")
 

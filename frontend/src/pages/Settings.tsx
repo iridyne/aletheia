@@ -10,11 +10,14 @@ import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS } from '../lib/format'
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
-const ALL_PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'claude_cli', 'codex_cli'] as const
-const HTTP_PROVIDERS = new Set(['openai_compatible', 'anthropic_compatible'])
+const ALL_PROVIDERS = ['openai_compatible', 'anthropic_compatible', 'anthropic_native', 'openai_native', 'claude_cli', 'codex_cli'] as const
+const HTTP_PROVIDERS = new Set(['openai_compatible', 'anthropic_compatible', 'anthropic_native', 'openai_native'])
+const NATIVE_PROVIDERS = new Set(['anthropic_native', 'openai_native'])
 const PROVIDER_LABELS: Record<string, string> = {
   openai_compatible: 'OpenAI Compatible',
   anthropic_compatible: 'Anthropic Compatible',
+  anthropic_native: 'Anthropic (Direct)',
+  openai_native: 'OpenAI (Direct)',
   codex_cli: 'Codex CLI',
   claude_cli: 'Claude Code CLI',
 }
@@ -1255,7 +1258,7 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
 
   // Summary line
   const details: string[] = []
-  if (isHTTP && config?.base_url) details.push(config.base_url)
+  if (isHTTP && !NATIVE_PROVIDERS.has(name) && config?.base_url) details.push(config.base_url)
   if (config?.model && config.model !== 'default') details.push(`model: ${config.model}`)
   if (isHTTP && config?.api_key?.configured) details.push(`key: ··${config.api_key.last4}`)
   if (isCLI && health?.model) details.push(`model: ${health.model}`)
@@ -1333,6 +1336,13 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
 
 // ─── HTTP Provider inline form ───
 
+const TIER_COLORS: Record<string, string> = {
+  flagship: 'var(--accent)',
+  standard: 'var(--green)',
+  fast: 'var(--yellow)',
+  reasoning: 'var(--purple, #a78bfa)',
+}
+
 function HTTPProviderForm({ name, config, isDefault, qc }: {
   name: string; config: any; isDefault: boolean; qc: any
 }) {
@@ -1342,16 +1352,18 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
   const [authScheme, setAuthScheme] = useState(() => config?.auth_scheme || 'x-api-key')
   const [apiKey, setApiKey] = useState('')
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
-  const [detectedModels, setDetectedModels] = useState<{ slug: string; display_name: string }[] | null>(null)
+  const [detectedModels, setDetectedModels] = useState<{ slug: string; display_name: string; tier?: string; context_window?: number }[] | null>(null)
   const [modelFocused, setModelFocused] = useState(false)
   const [modelEditing, setModelEditing] = useState(false)
 
+  const isNative = NATIVE_PROVIDERS.has(name)
   const isAnthropic = name === 'anthropic_compatible'
   const isOpenAI = name === 'openai_compatible'
 
   const detectMut = useMutation({
     mutationFn: async () => {
-      const body: any = { provider: name, base_url: baseUrl || config?.base_url || undefined }
+      const body: any = { provider: name }
+      if (!isNative) body.base_url = baseUrl || config?.base_url || undefined
       if (apiKey) body.api_key = apiKey
       if (isAnthropic) body.auth_scheme = authScheme
       return api.detectModels(body)
@@ -1376,11 +1388,11 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
       setResult(null)
       const testBody: any = {
         provider: name,
-        base_url: baseUrl || config?.base_url || undefined,
         model: model || config?.model || undefined,
         api_key: apiKey || undefined,
         probe: true,
       }
+      if (!isNative) testBody.base_url = baseUrl || config?.base_url || undefined
       if (isOpenAI) testBody.protocol = protocol
       if (isAnthropic) testBody.auth_scheme = authScheme
 
@@ -1390,10 +1402,10 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
       const saveBody: any = {
         provider: name,
         enabled: true,
-        ...(baseUrl ? { base_url: baseUrl } : {}),
         ...(model ? { model } : {}),
         ...(apiKey ? { api_key: apiKey } : {}),
       }
+      if (!isNative && baseUrl) saveBody.base_url = baseUrl
       if (isOpenAI) saveBody.protocol = protocol
       if (isAnthropic) saveBody.auth_scheme = authScheme
 
@@ -1422,11 +1434,13 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
 
   return (
     <div className="form-grid" style={{ paddingTop: '0.75rem', gridTemplateColumns: '1fr 1fr' }}>
-      {/* Row 1: Base URL — full width */}
-      <label style={{ gridColumn: '1 / -1' }}>
-        Base URL
-        <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
-      </label>
+      {/* Row 1: Base URL — full width (hidden for native providers) */}
+      {!isNative && (
+        <label style={{ gridColumn: '1 / -1' }}>
+          Base URL
+          <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
+        </label>
+      )}
 
       {/* Row 2: Model (combobox) + secondary field */}
       <label style={{ position: 'relative' }}>
@@ -1454,11 +1468,26 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
                   padding: '0.4rem 0.6rem', cursor: 'pointer', fontSize: '0.78rem',
                   fontFamily: 'var(--mono)',
                   background: m.slug === model ? 'var(--accent-dim)' : 'transparent',
+                  display: 'flex', alignItems: 'center', gap: '0.4rem',
                 }}
                 onMouseEnter={e => (e.currentTarget.style.background = 'var(--accent-dim)')}
                 onMouseLeave={e => (e.currentTarget.style.background = m.slug === model ? 'var(--accent-dim)' : 'transparent')}
               >
-                {m.display_name}
+                <span style={{ flex: 1 }}>{m.display_name}</span>
+                {(m as any).tier && (
+                  <span style={{
+                    fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase',
+                    padding: '0.05rem 0.3rem', borderRadius: '3px',
+                    color: TIER_COLORS[(m as any).tier] || 'var(--muted)',
+                    border: `1px solid ${TIER_COLORS[(m as any).tier] || 'var(--border)'}`,
+                    opacity: 0.8,
+                  }}>{(m as any).tier}</span>
+                )}
+                {(m as any).context_window && (
+                  <span style={{ fontSize: '0.62rem', color: 'var(--muted)' }}>
+                    {Math.round((m as any).context_window / 1000)}K
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -1482,7 +1511,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
           </select>
         </label>
       )}
-      {!isOpenAI && !isAnthropic && <div />}
+      {!isOpenAI && !isAnthropic && !isNative && <div />}
 
       {/* Row 3: API Key — full width */}
       <label style={{ gridColumn: '1 / -1' }}>

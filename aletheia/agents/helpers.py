@@ -1,8 +1,9 @@
 """Shared helpers for agents: LLM calls with graceful degradation + tool logging."""
 
 import logging
+from collections.abc import AsyncIterator
 
-from aletheia.model_provider.base import ModelRequest, StructuredModelRequest
+from aletheia.model_provider.base import ModelRequest, StructuredModelRequest, StreamChunk
 from aletheia.model_provider.router import get_provider
 
 logger = logging.getLogger("aletheia.agents")
@@ -51,6 +52,27 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 40
         logger.warning("LLM structured call failed: %s", e)
         _record_llm(False)
         return None, f"llm_unavailable: {e}"
+
+
+async def llm_stream(system: str, user: str, *, max_tokens: int = 800) -> AsyncIterator[StreamChunk]:
+    """Stream response chunks from the default provider.
+
+    Yields StreamChunk objects. On failure yields a single chunk with done=True.
+    Callers should iterate with `async for chunk in llm_stream(...)`.
+    """
+    try:
+        provider = get_provider()
+        async for chunk in provider.stream(ModelRequest(
+            messages=[{"role": "user", "content": user}],
+            system=system,
+            max_tokens=max_tokens,
+        )):
+            yield chunk
+        _record_llm(True)
+    except Exception as e:
+        logger.warning("LLM stream failed: %s", e)
+        _record_llm(False)
+        yield StreamChunk(content="", done=True)
 
 
 def _record_llm(success: bool) -> None:
