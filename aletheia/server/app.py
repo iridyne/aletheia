@@ -255,6 +255,12 @@ app.include_router(persistence_router)
 app.include_router(prediction_router)
 app.include_router(universe_router)
 
+# Dev-reload routes — only mounted when ALETHEIA_DEV_RELOAD=1 and live is disabled.
+from aletheia.server.dev_reload import is_dev_reload_enabled
+if is_dev_reload_enabled():
+    from aletheia.server.routes.dev_reload import router as dev_reload_router
+    app.include_router(dev_reload_router)
+
 # Serve static dashboard if the directory exists
 _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"
 if _static_dir.exists() and (_static_dir / "index.html").exists():

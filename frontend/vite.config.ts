@@ -7,6 +7,7 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, '../aletheia/dashboard_static'),
     emptyOutDir: true,
+    manifest: true,
   },
   server: {
     proxy: {

@@ -7,8 +7,9 @@ POST /api/gateway/restart     — kill inner uvicorn so supervisor respawns with
 
 import asyncio
 import os
+from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
 from pydantic import BaseModel
 
 from aletheia.files.jsonl import write_audit
@@ -19,6 +20,11 @@ router = APIRouter(prefix="/api/gateway", tags=["gateway"])
 
 class AutostartRequest(BaseModel):
     enabled: bool
+
+
+class RestartRequest(BaseModel):
+    reason: str = "manual"
+    changed_files: list[str] = []
 
 
 @router.get("/autostart")
@@ -42,7 +48,7 @@ async def set_autostart(req: AutostartRequest):
 
 
 @router.post("/restart")
-async def restart_gateway(request: Request):
+async def restart_gateway(request: Request, body: Optional[RestartRequest] = Body(default=None)):
     """Terminate the uvicorn process so the supervisor (or watchdog/autostart) respawns fresh.
 
     os._exit(42) kills this process unconditionally. If a supervisor is running,
@@ -56,15 +62,20 @@ async def restart_gateway(request: Request):
         return {"mode": "cold", "ok": False,
                 "message": "No supervisor or autostart active — restart would kill the gateway permanently."}
 
+    reason = body.reason if body else "manual"
+    changed = body.changed_files[:10] if body and body.changed_files else []
+    source = "dev_watcher" if reason == "file_change" else "dashboard"
+
     async def _delayed_exit():
         await asyncio.sleep(0.5)
         os._exit(42)
 
     asyncio.create_task(_delayed_exit())
     write_audit({
-        "actor": "human", "source": "dashboard", "event_type": "gateway_restart",
+        "actor": "human", "source": source, "event_type": "gateway_restart",
         "entity_type": "gateway", "entity_id": "gateway",
-        "message": "Restart requested via dashboard",
+        "message": f"Restart requested ({reason})",
+        "after": {"reason": reason, "changed_files": changed} if changed else {"reason": reason},
     })
     return {"mode": "cold", "ok": True,
             "message": "Restarting. Page will reconnect in ~10s."}

@@ -4,6 +4,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
+import { initDevReload } from './dev-reload'
+
+window.addEventListener('vite:preloadError', (e) => {
+  e.preventDefault()
+  window.location.reload()
+})
+
+initDevReload()
 
 const queryClient = new QueryClient({
   defaultOptions: {

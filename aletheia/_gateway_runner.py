@@ -15,6 +15,7 @@ import platform
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from aletheia.config.loader import bootstrap, get_data_dir
 from aletheia.gateway.pidfile import write_pid, _resolve_real_python
@@ -36,19 +37,20 @@ def _spawn_server(cfg) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code."""
     errors_log = get_data_dir() / "logs" / "errors.log"
     errors_log.parent.mkdir(parents=True, exist_ok=True)
-    # Size-cap the log before each spawn so a crash loop can't fill the disk.
     from aletheia.gateway.logs import rotate_if_needed
     rotate_if_needed(errors_log)
     real_python, env_patch = _resolve_real_python()
     runtime_context = current_gateway_launch_context(cfg)
+    project_root = Path(__file__).resolve().parent.parent
+    aletheia_dir = project_root / "aletheia"
+
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
         "--host", runtime_context["host"], "--port", str(runtime_context["port"]),
         "--log-level", "info",
+        "--reload",
+        "--reload-dir", str(aletheia_dir),
     ]
-    # NOTE: --reload intentionally removed. On Windows with CREATE_NO_WINDOW,
-    # watchfiles' ReadDirectoryChangesW silently fails. The dashboard Restart
-    # button calls os._exit() and this supervisor respawns the process.
     env = runtime_process_env(
         base_env=os.environ.copy(),
         runtime_id=runtime_context["runtime_id"],
@@ -58,6 +60,12 @@ def _spawn_server(cfg) -> int:
         workdir=runtime_context["workdir"],
         env_patch=env_patch,
     )
+    # Force polling mode so watchfiles works under CREATE_NO_WINDOW on Windows
+    # (ReadDirectoryChangesW silently fails without a console handle).
+    env["WATCHFILES_FORCE_POLLING"] = "true"
+    # Enable dev-reload SSE endpoint so the browser auto-refreshes on build.
+    env["ALETHEIA_DEV_RELOAD"] = "1"
+
     popen_kwargs: dict = {
         "stdout": subprocess.DEVNULL,
         "cwd": str(runtime_context["workdir"]),
@@ -69,6 +77,43 @@ def _spawn_server(cfg) -> int:
         popen_kwargs["stderr"] = ef
         proc = subprocess.Popen(cmd, **popen_kwargs)
         return proc.wait()
+
+
+def _start_vite_build_watch() -> subprocess.Popen | None:
+    """Start `vite build --watch` as a sibling process. Returns Popen or None."""
+    project_root = Path(__file__).resolve().parent.parent
+    frontend_dir = project_root / "frontend"
+    vite_bin = frontend_dir / "node_modules" / "vite" / "bin" / "vite.js"
+    if not vite_bin.exists():
+        return None
+    try:
+        popen_kwargs: dict = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "cwd": str(frontend_dir),
+        }
+        if platform.system() == "Windows":
+            popen_kwargs["creationflags"] = CREATE_NO_WINDOW
+        proc = subprocess.Popen(
+            ["node", str(vite_bin), "build", "--watch"],
+            **popen_kwargs,
+        )
+        return proc
+    except Exception:
+        return None
+
+
+def _stop_vite_watch(proc: subprocess.Popen | None) -> None:
+    if proc is None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def run_supervised(spawn_fn=None) -> dict:
@@ -84,6 +129,7 @@ def run_supervised(spawn_fn=None) -> dict:
     from aletheia.gateway.operator_shell import OperatorShellMonitor
     operator_monitor = OperatorShellMonitor(cfg)
     operator_monitor.start()
+    vite_proc = _start_vite_build_watch()
 
     h = cfg.health
     max_restarts = h.supervisor_max_restarts
@@ -112,6 +158,7 @@ def run_supervised(spawn_fn=None) -> dict:
             backoff = min(2 ** (restarts - 1), cap) if cap else 0
             _sleep(backoff)
     finally:
+        _stop_vite_watch(vite_proc)
         operator_monitor.stop()
 
 

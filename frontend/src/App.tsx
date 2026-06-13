@@ -273,10 +273,13 @@ function StatusBar() {
                       style={{ padding: '0.1rem 0.5rem', fontSize: '0.78rem', marginLeft: '0.4rem' }}
                       onClick={() => restartMut.mutate()}
                       disabled={restartMut.isPending}
-                      title="Reload worker so the new code takes effect"
+                      title="Kill the current gateway process and cold-restart from disk. Use when git pull brought new commits that --reload didn't pick up, or when the process is in a bad state."
                     >
-                      {restartMut.isPending ? 'restarting…' : '↻ Restart'}
+                      {restartMut.isPending ? 'restarting…' : '↻ Cold Restart'}
                     </button>
+                    <span className="mono" style={{ fontSize: '0.68rem', color: 'var(--muted)', marginLeft: '0.4rem' }}>
+                      new commits on disk, process running old code
+                    </span>
                   </td>
                 </tr>
               )}

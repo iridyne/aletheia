@@ -1,11 +1,16 @@
 """Health and status API routes."""
 
+import os
+import time
+
 from fastapi import APIRouter, HTTPException
 
 from aletheia import __version__
 from aletheia.config.loader import load_config, save_config
 
 router = APIRouter(prefix="/api", tags=["system"])
+
+_boot_time = time.time()
 
 
 @router.get("/health")
@@ -16,6 +21,17 @@ async def health():
         "status": "healthy" if h["healthy"] else "degraded",
         "issues": h["issues"],
         "version": __version__,
+    }
+
+
+@router.get("/version")
+async def version():
+    from aletheia.agent_runtime.build_info import get_boot_commit
+    return {
+        "version": __version__,
+        "boot_commit": get_boot_commit(),
+        "pid": os.getpid(),
+        "uptime_sec": round(time.time() - _boot_time, 1),
     }
 
 
