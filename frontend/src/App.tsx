@@ -207,84 +207,106 @@ function StatusBar() {
         )}
         <span className={`status-cluster-state status-cluster-${stateTone}`}>{stateWord}</span>
 
-        {/* Hover/focus popover — full status detail. */}
+        {/* Hover/focus popover — full status detail, sectioned layout. */}
         <div className="status-popover" role="tooltip">
           <div className="status-popover-title">System Status</div>
-          <table className="status-popover-table">
-            <tbody>
-              <tr>
-                <th>Gateway</th>
-                <td><span className={`dot dot-${gwLight}`} /> {running ? (paused ? 'paused' : 'running') : 'stopped'}</td>
-              </tr>
-              <tr>
-                <th>Scheduler</th>
-                <td><span className={`dot dot-${paused ? 'yellow' : 'green'}`} /> {paused ? 'paused' : 'active'}</td>
-              </tr>
-              <tr>
-                <th>Exchange</th>
-                <td className="mono">{exch || '—'}{mode ? ` · ${mode}` : ''}</td>
-              </tr>
-              {modelProv && (
-                <tr>
-                  <th>Model</th>
-                  <td className="mono">{modelProv}</td>
-                </tr>
-              )}
-              <tr>
-                <th>Live</th>
-                <td><span className={`dot dot-${liveLight}`} /> {live.replace('live_', '')}</td>
-              </tr>
-              <tr>
-                <th>Permission</th>
-                <td className="mono">{perm || '—'}</td>
-              </tr>
-              <tr>
-                <th>Operator</th>
-                <td className="mono">
-                  {operatorStatus}
-                  {operatorMode ? ` · ${operatorMode}` : ''}
-                  {(operator as any)?.session_id ? ` · ${(operator as any).session_id}` : ''}
-                </td>
-              </tr>
-              {operatorMode === 'Working' && (operator as any)?.current_intent && (
-                <tr>
-                  <th>Doing</th>
-                  <td className="mono">{(operator as any).current_intent}</td>
-                </tr>
-              )}
-              <tr>
-                <th>Kill Switch</th>
-                <td><span className={`dot dot-${killLight}`} /> {killed ? 'engaged' : 'inactive'}</td>
-              </tr>
-              {latestRun && (
-                <tr>
-                  <th>Last Run</th>
-                  <td className="mono">{latestRun.agent_name}</td>
-                </tr>
-              )}
-              {driftIssue && (
-                <tr>
-                  <th>Code</th>
-                  <td>
-                    <span className="dot dot-yellow" />
-                    <span className="mono" style={{ fontSize: '0.78rem' }}>{driftRange}</span>{' '}
-                    <button
-                      className="topbar-btn secondary"
-                      style={{ padding: '0.1rem 0.5rem', fontSize: '0.78rem', marginLeft: '0.4rem' }}
-                      onClick={() => restartMut.mutate()}
-                      disabled={restartMut.isPending}
-                      title="Kill the current gateway process and cold-restart from disk. Use when git pull brought new commits that --reload didn't pick up, or when the process is in a bad state."
-                    >
-                      {restartMut.isPending ? 'restarting…' : '↻ Cold Restart'}
-                    </button>
-                    <span className="mono" style={{ fontSize: '0.68rem', color: 'var(--muted)', marginLeft: '0.4rem' }}>
-                      new commits on disk, process running old code
-                    </span>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+
+          {/* Section 1: Health signals */}
+          <div className="sp-section">
+            <div className="sp-row">
+              <span className={`dot dot-${gwLight}`} />
+              <span className="sp-label">Gateway</span>
+              <span className="sp-value">{running ? (paused ? 'paused' : 'running') : 'stopped'}</span>
+            </div>
+            <div className="sp-row">
+              <span className={`dot dot-${paused ? 'yellow' : 'green'}`} />
+              <span className="sp-label">Scheduler</span>
+              <span className="sp-value">{paused ? 'paused' : 'active'}</span>
+            </div>
+            <div className="sp-row">
+              <span className={`dot dot-${liveLight}`} />
+              <span className="sp-label">Live</span>
+              <span className="sp-value">{live.replace('live_', '')}</span>
+            </div>
+            <div className="sp-row">
+              <span className={`dot dot-${killLight}`} />
+              <span className="sp-label">Kill Switch</span>
+              <span className="sp-value">{killed ? 'engaged' : 'inactive'}</span>
+            </div>
+          </div>
+
+          {/* Section 2: Infrastructure */}
+          <div className="sp-section">
+            <div className="sp-section-label">Infrastructure</div>
+            <div className="sp-row">
+              <span className="sp-label">Exchange</span>
+              <span className="sp-value">{exch || '—'}{mode ? ` · ${mode}` : ''}</span>
+            </div>
+            <div className="sp-row">
+              <span className="sp-label">Permission</span>
+              <span className="sp-value">{perm || '—'}</span>
+            </div>
+            {modelProv && (
+              <div className="sp-row">
+                <span className="sp-label">Model</span>
+                <span className="sp-value">{modelProv}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Section 3: Operator */}
+          <div className="sp-section">
+            <div className="sp-section-label">Operator</div>
+            <div className="sp-row">
+              <span className="sp-label">Status</span>
+              <span className="sp-value">{operatorStatus}</span>
+            </div>
+            <div className="sp-row">
+              <span className="sp-label">Mode</span>
+              <span className="sp-value">{operatorMode}</span>
+            </div>
+            {operatorMode === 'Working' && (operator as any)?.current_intent && (
+              <div className="sp-row">
+                <span className="sp-label">Intent</span>
+                <span className="sp-value sp-value-wrap">{(operator as any).current_intent}</span>
+              </div>
+            )}
+            {(operator as any)?.session_id && (
+              <div className="sp-row">
+                <span className="sp-label">Session</span>
+                <span className="sp-value">{(operator as any).session_id}</span>
+              </div>
+            )}
+            {heartbeatText && (
+              <div className="sp-row">
+                <span className="sp-label">Heartbeat</span>
+                <span className="sp-value">{heartbeatText} ago</span>
+              </div>
+            )}
+            {latestRun && (
+              <div className="sp-row">
+                <span className="sp-label">Last Run</span>
+                <span className="sp-value">{latestRun.agent_name}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Section 4: Code drift warning (conditional) */}
+          {driftIssue && (
+            <div className="sp-drift">
+              <div className="sp-section-label sp-drift-label">⚠ Code Drift</div>
+              <span className="sp-value">{driftRange}</span>
+              <button
+                className="topbar-btn secondary"
+                onClick={() => restartMut.mutate()}
+                disabled={restartMut.isPending}
+                title="Kill the current gateway process and cold-restart from disk. Use when git pull brought new commits that --reload didn't pick up, or when the process is in a bad state."
+              >
+                {restartMut.isPending ? 'restarting…' : '↻ Cold Restart'}
+              </button>
+              <p className="sp-drift-hint">Hot-reload missed these commits. Cold restart loads the new code.</p>
+            </div>
+          )}
         </div>
       </div>
 
