@@ -17,6 +17,11 @@ from aletheia.storage.models import (
     SerenityRiskGate,
     SerenityReplaySnapshot,
     SerenityPostMortem,
+    SerenityResearchRun,
+    SerenityRunEvent,
+    SerenityUserProfile,
+    SerenityProfileSnapshot,
+    SerenityFeedbackEvent,
 )
 from aletheia.trading.serenity_scoring import (
     make_replay_snapshot_payload,
@@ -1180,3 +1185,526 @@ async def get_strategy_gates(strategy_id: str):
         raise HTTPException(404, "Strategy not found")
     from aletheia.trading.strategy_lifecycle import check_promotion_gates
     return check_promotion_gates(strategy_id)
+
+
+# ---------------------------------------------------------------------------
+# Serenity Research Workbench endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/serenity/status")
+async def get_serenity_status():
+    """Workbench status: engine state, current/last runs, artifact counts."""
+    _ensure_db()
+    active = repo.get_active_serenity_research_run()
+    all_runs = repo.list_serenity_research_runs(limit=10)
+    themes = repo.list_serenity_themes(status="active")
+
+    last_attempted = all_runs[0] if all_runs else None
+    last_successful = next(
+        (r for r in all_runs if r["status"] in ("completed", "completed_empty")), None
+    )
+
+    if active:
+        engine_status = "running"
+    elif last_attempted and last_attempted["status"] == "rate_limited":
+        engine_status = "rate_limited"
+    elif last_attempted and last_attempted["status"] == "failed":
+        engine_status = "error"
+    elif last_successful:
+        engine_status = "healthy"
+    else:
+        engine_status = "idle"
+
+    def _run_summary(r):
+        if not r:
+            return None
+        return {
+            "id": r["id"],
+            "status": r["status"],
+            "triggerType": r.get("trigger_type"),
+            "mode": r.get("mode"),
+            "startedAt": r.get("started_at"),
+            "finishedAt": r.get("finished_at"),
+            "errorType": r.get("error_type"),
+            "errorMessage": r.get("error_message"),
+            "artifactCounts": json.loads(r.get("artifact_counts") or "{}"),
+        }
+
+    return {
+        "engineStatus": engine_status,
+        "currentRun": _run_summary(active),
+        "lastAttemptedRun": _run_summary(last_attempted),
+        "lastSuccessfulRun": _run_summary(last_successful),
+        "artifactCounts": {
+            "activeThemes": len(themes),
+        },
+    }
+
+
+@router.post("/serenity/runs", status_code=202)
+async def create_serenity_run(body: dict):
+    """Create a new research run. Returns 409 if one is already active."""
+    _ensure_db()
+    mode = body.get("mode", "standard")
+    trigger_type = body.get("triggerType", "manual")
+    brief = body.get("brief")
+    save_to_profile = body.get("saveToProfile", False)
+    idempotency_key = body.get("idempotencyKey")
+
+    if idempotency_key:
+        existing = repo.get_serenity_research_run_by_idempotency_key(idempotency_key)
+        if existing:
+            return {"runId": existing["id"], "status": existing["status"], "deduplicated": True}
+
+    active = repo.get_active_serenity_research_run()
+    if active:
+        raise HTTPException(409, "A research run is already active")
+
+    profile_snapshot_id = None
+    if brief:
+        parsed = _parse_brief_to_profile(brief)
+        snap = SerenityProfileSnapshot(
+            include_topics=parsed["include_topics"],
+            exclude_topics=parsed["exclude_topics"],
+            include_assets=parsed["include_assets"],
+            exclude_assets=parsed["exclude_assets"],
+            market_types=parsed["market_types"],
+            time_horizon=parsed.get("time_horizon"),
+            raw_brief=brief,
+        )
+        repo.insert_serenity_profile_snapshot(snap)
+        profile_snapshot_id = snap.id
+
+        if save_to_profile:
+            existing_profile = repo.get_serenity_user_profile()
+            if existing_profile:
+                repo.update_serenity_user_profile_fields(
+                    existing_profile["id"],
+                    include_topics=parsed["include_topics"],
+                    exclude_topics=parsed["exclude_topics"],
+                    time_horizon=parsed.get("time_horizon"),
+                    raw_brief=brief,
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
+            else:
+                profile = SerenityUserProfile(
+                    include_topics=parsed["include_topics"],
+                    exclude_topics=parsed["exclude_topics"],
+                    time_horizon=parsed.get("time_horizon"),
+                    raw_brief=brief,
+                )
+                repo.upsert_serenity_user_profile(profile)
+
+    run = SerenityResearchRun(
+        trigger_type=trigger_type,
+        mode=mode,
+        status="queued",
+        idempotency_key=idempotency_key,
+        profile_snapshot_id=profile_snapshot_id,
+        brief_snapshot=brief,
+    )
+    repo.insert_serenity_research_run(run)
+
+    from aletheia.agents.research_worker import enqueue_research_run
+    enqueue_research_run(run.id)
+
+    return {"runId": run.id, "status": "queued"}
+
+
+@router.get("/serenity/runs")
+async def list_serenity_runs(
+    status: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    _ensure_db()
+    items = repo.list_serenity_research_runs(status=status, limit=limit)
+    return {
+        "items": [
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "triggerType": r.get("trigger_type"),
+                "mode": r.get("mode"),
+                "startedAt": r.get("started_at"),
+                "finishedAt": r.get("finished_at"),
+                "errorType": r.get("error_type"),
+                "artifactCounts": json.loads(r.get("artifact_counts") or "{}"),
+                "createdAt": r.get("created_at"),
+            }
+            for r in items
+        ]
+    }
+
+
+@router.get("/serenity/runs/{run_id}")
+async def get_serenity_run_detail(run_id: str):
+    _ensure_db()
+    run = repo.get_serenity_research_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    events = repo.list_serenity_run_events(run_id)
+    return {
+        "run": {
+            "id": run["id"],
+            "status": run["status"],
+            "triggerType": run.get("trigger_type"),
+            "mode": run.get("mode"),
+            "stage": run.get("stage"),
+            "startedAt": run.get("started_at"),
+            "finishedAt": run.get("finished_at"),
+            "errorType": run.get("error_type"),
+            "errorMessage": run.get("error_message"),
+            "retryCount": run.get("retry_count", 0),
+            "artifactCounts": json.loads(run.get("artifact_counts") or "{}"),
+            "briefSnapshot": run.get("brief_snapshot"),
+            "parentRunId": run.get("parent_run_id"),
+        },
+        "events": [
+            {
+                "id": e["id"],
+                "eventType": e["event_type"],
+                "stage": e.get("stage"),
+                "message": e.get("message"),
+                "createdAt": e.get("created_at"),
+            }
+            for e in events
+        ],
+    }
+
+
+@router.post("/serenity/runs/{run_id}/retry")
+async def retry_serenity_run(run_id: str):
+    _ensure_db()
+    run = repo.get_serenity_research_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run["status"] not in ("failed", "rate_limited"):
+        raise HTTPException(400, "Only failed or rate_limited runs can be retried")
+
+    new_run = SerenityResearchRun(
+        trigger_type=run.get("trigger_type", "manual"),
+        mode=run.get("mode", "standard"),
+        status="queued",
+        parent_run_id=run_id,
+        profile_snapshot_id=run.get("profile_snapshot_id"),
+        brief_snapshot=run.get("brief_snapshot"),
+        focus_theme_id=run.get("focus_theme_id"),
+        retry_count=(run.get("retry_count") or 0) + 1,
+    )
+    repo.insert_serenity_research_run(new_run)
+
+    from aletheia.agents.research_worker import enqueue_research_run
+    enqueue_research_run(new_run.id)
+
+    return {"runId": new_run.id, "status": "queued", "parentRunId": run_id}
+
+
+@router.post("/serenity/runs/{run_id}/cancel")
+async def cancel_serenity_run(run_id: str):
+    _ensure_db()
+    run = repo.get_serenity_research_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run["status"] not in ("queued", "running"):
+        raise HTTPException(400, "Only queued or running runs can be cancelled")
+
+    from aletheia.storage.models import SerenityRunEvent
+    now = datetime.now(timezone.utc).isoformat()
+    repo.update_serenity_research_run(run_id, status="cancelled", finished_at=now, updated_at=now)
+    repo.insert_serenity_run_event(SerenityRunEvent(
+        run_id=run_id, event_type="run.cancelled", message="Cancelled by user"))
+    return {"runId": run_id, "status": "cancelled"}
+
+
+@router.get("/serenity/profile")
+async def get_serenity_profile():
+    _ensure_db()
+    profile = repo.get_serenity_user_profile()
+    if not profile:
+        return {"profile": None}
+    return {
+        "profile": {
+            "id": profile["id"],
+            "includeTopics": json.loads(profile.get("include_topics") or "[]"),
+            "excludeTopics": json.loads(profile.get("exclude_topics") or "[]"),
+            "includeAssets": json.loads(profile.get("include_assets") or "[]"),
+            "excludeAssets": json.loads(profile.get("exclude_assets") or "[]"),
+            "marketTypes": json.loads(profile.get("market_types") or "[]"),
+            "timeHorizon": profile.get("time_horizon"),
+            "rawBrief": profile.get("raw_brief"),
+        }
+    }
+
+
+@router.patch("/serenity/profile")
+async def patch_serenity_profile(body: dict):
+    _ensure_db()
+    existing = repo.get_serenity_user_profile()
+    now = datetime.now(timezone.utc).isoformat()
+
+    if existing:
+        updates = {"updated_at": now}
+        if "includeTopics" in body:
+            updates["include_topics"] = json.dumps(body["includeTopics"])
+        if "excludeTopics" in body:
+            updates["exclude_topics"] = json.dumps(body["excludeTopics"])
+        if "includeAssets" in body:
+            updates["include_assets"] = json.dumps(body["includeAssets"])
+        if "excludeAssets" in body:
+            updates["exclude_assets"] = json.dumps(body["excludeAssets"])
+        if "marketTypes" in body:
+            updates["market_types"] = json.dumps(body["marketTypes"])
+        if "timeHorizon" in body:
+            updates["time_horizon"] = body["timeHorizon"]
+        if "rawBrief" in body:
+            updates["raw_brief"] = body["rawBrief"]
+        repo.update_serenity_user_profile_fields(existing["id"], **updates)
+    else:
+        profile = SerenityUserProfile(
+            include_topics=json.dumps(body.get("includeTopics", [])),
+            exclude_topics=json.dumps(body.get("excludeTopics", [])),
+            include_assets=json.dumps(body.get("includeAssets", [])),
+            exclude_assets=json.dumps(body.get("excludeAssets", [])),
+            market_types=json.dumps(body.get("marketTypes", [])),
+            time_horizon=body.get("timeHorizon"),
+            raw_brief=body.get("rawBrief"),
+        )
+        repo.upsert_serenity_user_profile(profile)
+
+    return {"ok": True}
+
+
+@router.post("/serenity/profile/parse")
+async def parse_serenity_brief(body: dict):
+    _ensure_db()
+    brief = body.get("brief", "")
+    if len(brief) > 2000:
+        raise HTTPException(400, "Brief too long (max 2000 chars)")
+    parsed = _parse_brief_to_profile(brief)
+    warnings = parsed.pop("_warnings", [])
+    return {
+        "parsed": {
+            "includeTopics": json.loads(parsed["include_topics"]),
+            "excludeTopics": json.loads(parsed["exclude_topics"]),
+            "timeHorizon": parsed.get("time_horizon"),
+        },
+        "warnings": warnings,
+    }
+
+
+@router.patch("/serenity/themes/{theme_id}/status")
+async def patch_serenity_theme_status(theme_id: str, body: dict):
+    _ensure_db()
+    new_status = body.get("status")
+    valid = {"active", "watching", "dismissed", "promoted", "expired"}
+    if new_status not in valid:
+        raise HTTPException(400, f"Invalid status. Must be one of: {', '.join(sorted(valid))}")
+    theme = repo.get_serenity_theme(theme_id)
+    if not theme:
+        raise HTTPException(404, "Theme not found")
+    repo.update_serenity_theme(theme_id, status=new_status,
+                               updated_at=datetime.now(timezone.utc).isoformat())
+    return {"id": theme_id, "status": new_status}
+
+
+@router.post("/serenity/themes/{theme_id}/feedback")
+async def post_serenity_theme_feedback(theme_id: str, body: dict):
+    _ensure_db()
+    theme = repo.get_serenity_theme(theme_id)
+    if not theme:
+        raise HTTPException(404, "Theme not found")
+    event = SerenityFeedbackEvent(
+        target_type="theme",
+        target_id=theme_id,
+        action=body.get("action", "unspecified"),
+        value=json.dumps(body.get("value", {})),
+    )
+    repo.insert_serenity_feedback_event(event)
+    return {"id": event.id}
+
+
+@router.post("/serenity/themes/{theme_id}/deep-dive")
+async def post_serenity_theme_deep_dive(theme_id: str, body: dict):
+    _ensure_db()
+    theme = repo.get_serenity_theme(theme_id)
+    if not theme:
+        raise HTTPException(404, "Theme not found")
+
+    active = repo.get_active_serenity_research_run()
+    if active:
+        raise HTTPException(409, "A research run is already active")
+
+    brief = body.get("brief", f"Deep dive into theme: {theme['name']}")
+    run = SerenityResearchRun(
+        trigger_type="focused",
+        mode="focused",
+        status="queued",
+        focus_theme_id=theme_id,
+        brief_snapshot=brief,
+    )
+    repo.insert_serenity_research_run(run)
+
+    from aletheia.agents.research_worker import enqueue_research_run
+    enqueue_research_run(run.id)
+
+    return {"runId": run.id, "status": "queued"}
+
+
+@router.post("/serenity/themes/{theme_id}/promote")
+async def promote_serenity_theme(theme_id: str):
+    _ensure_db()
+    theme = repo.get_serenity_theme(theme_id)
+    if not theme:
+        raise HTTPException(404, "Theme not found")
+    if theme["status"] == "promoted":
+        raise HTTPException(400, "Theme already promoted")
+
+    from aletheia.storage.models import StrategyRecord
+    now = datetime.now(timezone.utc).isoformat()
+
+    claims = repo.list_serenity_claims_for_theme(theme_id, limit=50)
+    claim_ids = [c["id"] for c in claims]
+
+    parameters = json.dumps({
+        "source": "serenity_promote",
+        "theme_id": theme_id,
+        "theme_name": theme["name"],
+        "thesis": theme.get("thesis") or theme.get("description") or "",
+        "related_assets": json.loads(theme.get("related_assets") or "[]"),
+        "claim_ids": claim_ids,
+        "confidence": theme.get("confidence"),
+        "evidence_strength": theme.get("evidence_strength"),
+    })
+
+    strategy = StrategyRecord(
+        name=f"[Serenity] {theme['name']}",
+        description=theme.get("thesis") or theme.get("description") or f"Promoted from theme: {theme['name']}",
+        state="draft",
+        parameters=parameters,
+    )
+    repo.insert_strategy(strategy)
+    repo.update_serenity_theme(theme_id, status="promoted", promoted_at=now, updated_at=now)
+
+    return {
+        "proposalCandidateId": strategy.id,
+        "status": "draft",
+        "message": "Theme promoted to proposal candidate. Validation pipeline not executed yet.",
+    }
+
+
+@router.get("/serenity/claims")
+async def list_serenity_claims(
+    run_id: str | None = Query(None),
+    price_relevant: bool | None = Query(None),
+    limit: int = Query(200, le=500),
+):
+    _ensure_db()
+    items = repo.list_serenity_claims(run_id=run_id, price_relevant=price_relevant, limit=limit)
+    return {"items": items}
+
+
+@router.get("/serenity/themes/{theme_id}/claims")
+async def get_serenity_theme_claims(theme_id: str, limit: int = Query(200, le=500)):
+    _ensure_db()
+    theme = repo.get_serenity_theme(theme_id)
+    if not theme:
+        raise HTTPException(404, "Theme not found")
+    claims = repo.list_serenity_claims_for_theme(theme_id, limit=limit)
+    return {"items": claims, "count": len(claims)}
+
+
+@router.get("/serenity/themes/{theme_id}/detail")
+async def get_serenity_theme_detail(theme_id: str):
+    _ensure_db()
+    theme = repo.get_serenity_theme(theme_id)
+    if not theme:
+        raise HTTPException(404, "Theme not found")
+    claims = repo.list_serenity_claims_for_theme(theme_id, limit=100)
+    evidence = repo.list_serenity_evidence(theme_id=theme_id, limit=100)
+    feedback = repo.list_serenity_feedback_events("theme", theme_id, limit=50)
+    opportunities = repo.list_serenity_opportunities(theme_id=theme_id, limit=50)
+    return {
+        "theme": theme,
+        "claims": claims,
+        "evidence": evidence,
+        "feedback": feedback,
+        "opportunities": opportunities,
+    }
+
+
+@router.get("/serenity/runs/{run_id}/artifacts")
+async def get_serenity_run_artifacts(run_id: str):
+    _ensure_db()
+    run = repo.get_serenity_research_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    themes = repo.list_serenity_themes(status=None, limit=100)
+    run_themes = [t for t in themes if t.get("run_id") == run_id]
+    claims = repo.list_serenity_claims(run_id=run_id, limit=500)
+    evidence = repo.list_serenity_evidence(limit=500)
+    run_evidence = [e for e in evidence if e.get("run_id") == run_id]
+    return {
+        "themes": run_themes,
+        "claims": claims,
+        "evidence": run_evidence,
+        "counts": {
+            "themes": len(run_themes),
+            "claims": len(claims),
+            "evidence": len(run_evidence),
+        },
+    }
+
+
+def _parse_brief_to_profile(brief: str) -> dict:
+    """Simple keyword-based parser for research briefs. No LLM call in MVP."""
+    include_topics: list[str] = []
+    exclude_topics: list[str] = []
+    warnings: list[str] = []
+
+    danger_patterns = ["buy", "sell", "trade", "order", "execute", "ignore previous",
+                       "bypass", "unlock", "disable risk"]
+    brief_lower = brief.lower()
+    for pattern in danger_patterns:
+        if pattern in brief_lower:
+            warnings.append(f"Instruction '{pattern}' ignored. Serenity Lens only supports research preferences.")
+
+    lines = brief.replace("，", ",").replace("、", ",").split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if any(kw in line.lower() for kw in ["avoid", "exclude", "不要", "避开", "排除"]):
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            for part in parts:
+                cleaned = part.strip()
+                for prefix in ["avoid", "exclude", "不要", "避开", "排除"]:
+                    cleaned = cleaned.replace(prefix, "").strip(" :：")
+                if cleaned:
+                    exclude_topics.append(cleaned)
+        elif any(kw in line.lower() for kw in ["focus", "include", "关注", "优先", "prioritize"]):
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            for part in parts:
+                cleaned = part.strip()
+                for prefix in ["focus on", "focus", "include", "关注", "优先看", "优先", "prioritize"]:
+                    cleaned = cleaned.replace(prefix, "").strip(" :：")
+                if cleaned:
+                    include_topics.append(cleaned)
+        else:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            include_topics.extend(parts)
+
+    time_horizon = None
+    for hint in ["1-7d", "1-7天", "intraday", "1-4w", "long-term"]:
+        if hint in brief_lower:
+            time_horizon = hint.replace("天", "d")
+            break
+
+    return {
+        "include_topics": json.dumps(include_topics) if include_topics else "[]",
+        "exclude_topics": json.dumps(exclude_topics) if exclude_topics else "[]",
+        "include_assets": "[]",
+        "exclude_assets": "[]",
+        "market_types": "[]",
+        "time_horizon": time_horizon,
+        "_warnings": warnings,
+    }

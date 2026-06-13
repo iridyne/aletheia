@@ -586,6 +586,115 @@ CREATE TABLE IF NOT EXISTS extension_runs (
     completed_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS serenity_research_runs (
+    id TEXT PRIMARY KEY,
+    trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+    mode TEXT NOT NULL DEFAULT 'standard',
+    status TEXT NOT NULL DEFAULT 'queued',
+    stage TEXT,
+    parent_run_id TEXT,
+    idempotency_key TEXT,
+    profile_snapshot_id TEXT,
+    brief_snapshot TEXT,
+    focus_theme_id TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    next_retry_at TEXT,
+    error_type TEXT,
+    error_message TEXT,
+    error_stage TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    model_used TEXT,
+    token_usage TEXT DEFAULT '{}',
+    artifact_counts TEXT DEFAULT '{"themes":0,"opportunities":0,"evidence":0,"claims":0}',
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_research_runs_status ON serenity_research_runs(status);
+CREATE INDEX IF NOT EXISTS idx_research_runs_idempotency ON serenity_research_runs(idempotency_key);
+
+CREATE TABLE IF NOT EXISTS serenity_run_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES serenity_research_runs(id),
+    event_type TEXT NOT NULL,
+    stage TEXT,
+    message TEXT,
+    data TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_run_events_run_id ON serenity_run_events(run_id);
+
+CREATE TABLE IF NOT EXISTS serenity_user_profiles (
+    id TEXT PRIMARY KEY,
+    include_topics TEXT DEFAULT '[]',
+    exclude_topics TEXT DEFAULT '[]',
+    include_assets TEXT DEFAULT '[]',
+    exclude_assets TEXT DEFAULT '[]',
+    market_types TEXT DEFAULT '[]',
+    time_horizon TEXT,
+    risk_appetite TEXT,
+    raw_brief TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS serenity_profile_snapshots (
+    id TEXT PRIMARY KEY,
+    profile_id TEXT,
+    include_topics TEXT DEFAULT '[]',
+    exclude_topics TEXT DEFAULT '[]',
+    include_assets TEXT DEFAULT '[]',
+    exclude_assets TEXT DEFAULT '[]',
+    market_types TEXT DEFAULT '[]',
+    time_horizon TEXT,
+    raw_brief TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS serenity_feedback_events (
+    id TEXT PRIMARY KEY,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    value TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_target ON serenity_feedback_events(target_type, target_id);
+
+CREATE TABLE IF NOT EXISTS serenity_claims (
+    id TEXT PRIMARY KEY,
+    run_id TEXT REFERENCES serenity_research_runs(id),
+    evidence_doc_id TEXT,
+    claim_text TEXT NOT NULL,
+    subject TEXT,
+    predicate TEXT,
+    object TEXT,
+    claim_time TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    price_relevant INTEGER NOT NULL DEFAULT 0,
+    evidence_hash TEXT,
+    support_level TEXT,
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_serenity_claims_run ON serenity_claims(run_id);
+CREATE INDEX IF NOT EXISTS idx_serenity_claims_price_relevant ON serenity_claims(price_relevant);
+
+CREATE TABLE IF NOT EXISTS serenity_theme_claims (
+    theme_id TEXT NOT NULL REFERENCES serenity_themes(id),
+    claim_id TEXT NOT NULL REFERENCES serenity_claims(id),
+    relevance_score REAL,
+    PRIMARY KEY (theme_id, claim_id)
+);
+
+CREATE TABLE IF NOT EXISTS serenity_agent_locks (
+    lock_key TEXT PRIMARY KEY,
+    owner_run_id TEXT NOT NULL,
+    acquired_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+);
 """
 
 
@@ -645,6 +754,28 @@ _ADDITIVE_COLUMNS = [
     ("active_branch_id", "agent_shell_heartbeats", "TEXT"),
     ("active_branch_kind", "agent_shell_heartbeats", "TEXT"),
     ("active_branch_title", "agent_shell_heartbeats", "TEXT"),
+    # Serenity themes: enhanced fields for research workbench (Plan §7.7)
+    ("run_id", "serenity_themes", "TEXT"),
+    ("thesis", "serenity_themes", "TEXT"),
+    ("confidence", "serenity_themes", "REAL"),
+    ("novelty_score", "serenity_themes", "REAL"),
+    ("actionability_score", "serenity_themes", "REAL"),
+    ("evidence_strength", "serenity_themes", "REAL"),
+    ("related_assets", "serenity_themes", "TEXT DEFAULT '[]'"),
+    ("related_topics", "serenity_themes", "TEXT DEFAULT '[]'"),
+    ("market_types", "serenity_themes", "TEXT DEFAULT '[]'"),
+    ("expires_at", "serenity_themes", "TEXT"),
+    ("promoted_at", "serenity_themes", "TEXT"),
+    ("dismissed_at", "serenity_themes", "TEXT"),
+    ("metadata", "serenity_themes", "TEXT DEFAULT '{}'"),
+    # Serenity evidence: enhanced fields for research workbench (Plan §7.5)
+    ("run_id", "serenity_evidence", "TEXT"),
+    ("content_hash", "serenity_evidence", "TEXT"),
+    ("quality_score", "serenity_evidence", "REAL"),
+    ("url", "serenity_evidence", "TEXT"),
+    ("published_at", "serenity_evidence", "TEXT"),
+    ("fetched_at", "serenity_evidence", "TEXT"),
+    ("metadata", "serenity_evidence", "TEXT DEFAULT '{}'"),
 ]
 
 

@@ -8,7 +8,7 @@ from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
     RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
     SerenityTheme, SerenityEvidence, SerenityOpportunity, SerenityRiskGate,
-    SerenityReplaySnapshot, SerenityPostMortem,
+    SerenityReplaySnapshot, SerenityPostMortem, SerenityClaim,
 )
 
 
@@ -416,6 +416,237 @@ def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 1
         where = "opportunity_id = ?"
         params.append(opportunity_id)
     return _select_all("serenity_post_mortems", where=where, params=tuple(params), limit=limit)
+
+
+# --- Serenity Research Runs ---
+
+def insert_serenity_research_run(r) -> None:
+    _insert("serenity_research_runs", r.model_dump())
+
+
+def get_serenity_research_run(run_id: str) -> dict | None:
+    return _select_one("serenity_research_runs", run_id)
+
+
+def list_serenity_research_runs(
+    status: str | None = None,
+    trigger_type: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    conditions: list[str] = []
+    params: list = []
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+    if trigger_type:
+        conditions.append("trigger_type = ?")
+        params.append(trigger_type)
+    where = " AND ".join(conditions) if conditions else None
+    return _select_all("serenity_research_runs", where=where, params=tuple(params),
+                       order="created_at DESC", limit=limit)
+
+
+def update_serenity_research_run(run_id: str, **kwargs) -> None:
+    _update("serenity_research_runs", run_id, kwargs)
+
+
+def get_active_serenity_research_run() -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM serenity_research_runs WHERE status IN ('queued', 'running', 'waiting_retry') "
+        "ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_serenity_research_run_by_idempotency_key(key: str) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM serenity_research_runs WHERE idempotency_key = ?", (key,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+# --- Serenity Run Events ---
+
+def insert_serenity_run_event(e) -> None:
+    _insert("serenity_run_events", e.model_dump())
+
+
+def list_serenity_run_events(run_id: str, limit: int = 200) -> list[dict]:
+    return _select_all("serenity_run_events", where="run_id = ?", params=(run_id,),
+                       order="created_at ASC", limit=limit)
+
+
+# --- Serenity User Profiles ---
+
+def get_serenity_user_profile() -> dict | None:
+    rows = _select_all("serenity_user_profiles", order="updated_at DESC", limit=1)
+    return rows[0] if rows else None
+
+
+def upsert_serenity_user_profile(profile) -> None:
+    existing = get_serenity_user_profile()
+    if existing:
+        _update("serenity_user_profiles", existing["id"], profile.model_dump())
+    else:
+        _insert("serenity_user_profiles", profile.model_dump())
+
+
+def update_serenity_user_profile_fields(profile_id: str, **kwargs) -> None:
+    _update("serenity_user_profiles", profile_id, kwargs)
+
+
+# --- Serenity Profile Snapshots ---
+
+def insert_serenity_profile_snapshot(snap) -> None:
+    _insert("serenity_profile_snapshots", snap.model_dump())
+
+
+def get_serenity_profile_snapshot(snapshot_id: str) -> dict | None:
+    return _select_one("serenity_profile_snapshots", snapshot_id)
+
+
+# --- Serenity Feedback Events ---
+
+def insert_serenity_feedback_event(e) -> None:
+    _insert("serenity_feedback_events", e.model_dump())
+
+
+def list_serenity_feedback_events(target_type: str, target_id: str, limit: int = 50) -> list[dict]:
+    return _select_all("serenity_feedback_events",
+                       where="target_type = ? AND target_id = ?",
+                       params=(target_type, target_id), limit=limit)
+
+
+# --- Serenity Claims ---
+
+def insert_serenity_claim(c) -> None:
+    data = c.model_dump()
+    data["price_relevant"] = int(data.get("price_relevant", False))
+    _insert("serenity_claims", data)
+
+
+def insert_serenity_claims_bulk(claims: list) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    for c in claims:
+        data = c.model_dump()
+        data["price_relevant"] = int(data.get("price_relevant", False))
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join(["?"] * len(data))
+        db.execute(f"INSERT INTO serenity_claims ({cols}) VALUES ({placeholders})", list(data.values()))
+    if not was_in_tx:
+        db.commit()
+
+
+def get_serenity_claim(claim_id: str) -> dict | None:
+    return _select_one("serenity_claims", claim_id)
+
+
+def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None = None, limit: int = 200) -> list[dict]:
+    where_parts = []
+    params: list = []
+    if run_id:
+        where_parts.append("run_id = ?")
+        params.append(run_id)
+    if price_relevant is not None:
+        where_parts.append("price_relevant = ?")
+        params.append(int(price_relevant))
+    where = " AND ".join(where_parts) if where_parts else None
+    return _select_all("serenity_claims", where=where, params=tuple(params), limit=limit)
+
+
+# --- Serenity Theme-Claims Link ---
+
+def insert_serenity_theme_claim(theme_id: str, claim_id: str, relevance_score: float | None = None) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
+        (theme_id, claim_id, relevance_score),
+    )
+    if not was_in_tx:
+        db.commit()
+
+
+def insert_serenity_theme_claims_bulk(links: list[tuple[str, str, float | None]]) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    for theme_id, claim_id, relevance_score in links:
+        db.execute(
+            "INSERT OR IGNORE INTO serenity_theme_claims (theme_id, claim_id, relevance_score) VALUES (?, ?, ?)",
+            (theme_id, claim_id, relevance_score),
+        )
+    if not was_in_tx:
+        db.commit()
+
+
+def list_serenity_claims_for_theme(theme_id: str, limit: int = 200) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        "SELECT c.*, tc.relevance_score FROM serenity_claims c "
+        "JOIN serenity_theme_claims tc ON tc.claim_id = c.id "
+        "WHERE tc.theme_id = ? ORDER BY c.created_at DESC LIMIT ?",
+        (theme_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_serenity_themes_for_claim(claim_id: str) -> list[dict]:
+    db = get_db()
+    rows = db.execute(
+        "SELECT t.* FROM serenity_themes t "
+        "JOIN serenity_theme_claims tc ON tc.theme_id = t.id "
+        "WHERE tc.claim_id = ?",
+        (claim_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- Serenity Agent Locks ---
+
+def acquire_serenity_lock(lock_key: str, owner_run_id: str, ttl_seconds: int = 600) -> bool:
+    from datetime import datetime, timezone, timedelta
+    db = get_db()
+    was_in_tx = db.in_transaction
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
+
+    existing = db.execute("SELECT * FROM serenity_agent_locks WHERE lock_key = ?", (lock_key,)).fetchone()
+    if existing:
+        if existing["expires_at"] < now.isoformat():
+            db.execute("DELETE FROM serenity_agent_locks WHERE lock_key = ?", (lock_key,))
+        else:
+            if not was_in_tx:
+                db.commit()
+            return False
+
+    db.execute(
+        "INSERT INTO serenity_agent_locks (lock_key, owner_run_id, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+        (lock_key, owner_run_id, now.isoformat(), expires_at),
+    )
+    if not was_in_tx:
+        db.commit()
+    return True
+
+
+def release_serenity_lock(lock_key: str, owner_run_id: str) -> bool:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    result = db.execute(
+        "DELETE FROM serenity_agent_locks WHERE lock_key = ? AND owner_run_id = ?",
+        (lock_key, owner_run_id),
+    )
+    if not was_in_tx:
+        db.commit()
+    return result.rowcount > 0
+
+
+def get_serenity_lock(lock_key: str) -> dict | None:
+    db = get_db()
+    row = db.execute("SELECT * FROM serenity_agent_locks WHERE lock_key = ?", (lock_key,)).fetchone()
+    return dict(row) if row else None
 
 
 # --- Market Snapshots ---

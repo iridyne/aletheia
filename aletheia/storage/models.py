@@ -211,6 +211,19 @@ class SerenityTheme(BaseModel):
     description: str | None = None
     strategy_notes: str | None = None
     tags: str = "[]"
+    run_id: str | None = None
+    thesis: str | None = None
+    confidence: float | None = None
+    novelty_score: float | None = None
+    actionability_score: float | None = None
+    evidence_strength: float | None = None
+    related_assets: str = "[]"
+    related_topics: str = "[]"
+    market_types: str = "[]"
+    expires_at: str | None = None
+    promoted_at: str | None = None
+    dismissed_at: str | None = None
+    metadata: str = "{}"
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
 
@@ -231,6 +244,13 @@ class SerenityEvidence(BaseModel):
     actor: str | None = None
     confidence: str = "speculative"
     tags: str = "[]"
+    run_id: str | None = None
+    content_hash: str | None = None
+    quality_score: float | None = None
+    url: str | None = None
+    published_at: str | None = None
+    fetched_at: str | None = None
+    metadata: str = "{}"
 
 
 class SerenityOpportunity(BaseModel):
@@ -285,4 +305,93 @@ class SerenityPostMortem(BaseModel):
     attribution: str | None = None
     summary: str
     created_by: str = "system"
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityResearchRun(BaseModel):
+    id: str = Field(default_factory=new_id)
+    trigger_type: str = "scheduled"
+    mode: str = "standard"
+    status: str = "queued"
+    stage: str | None = None
+    parent_run_id: str | None = None
+    idempotency_key: str | None = None
+    profile_snapshot_id: str | None = None
+    brief_snapshot: str | None = None
+    focus_theme_id: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    next_retry_at: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    error_stage: str | None = None
+    retry_count: int = 0
+    model_used: str | None = None
+    token_usage: str = "{}"
+    artifact_counts: str = '{"themes":0,"opportunities":0,"evidence":0,"claims":0}'
+    metadata: str = "{}"
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityRunEvent(BaseModel):
+    id: str = Field(default_factory=new_id)
+    run_id: str
+    event_type: str
+    stage: str | None = None
+    message: str | None = None
+    data: str = "{}"
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityUserProfile(BaseModel):
+    id: str = Field(default_factory=new_id)
+    include_topics: str = "[]"
+    exclude_topics: str = "[]"
+    include_assets: str = "[]"
+    exclude_assets: str = "[]"
+    market_types: str = "[]"
+    time_horizon: str | None = None
+    risk_appetite: str | None = None
+    raw_brief: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityProfileSnapshot(BaseModel):
+    id: str = Field(default_factory=new_id)
+    profile_id: str | None = None
+    include_topics: str = "[]"
+    exclude_topics: str = "[]"
+    include_assets: str = "[]"
+    exclude_assets: str = "[]"
+    market_types: str = "[]"
+    time_horizon: str | None = None
+    raw_brief: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityFeedbackEvent(BaseModel):
+    id: str = Field(default_factory=new_id)
+    target_type: str
+    target_id: str
+    action: str
+    value: str = "{}"
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class SerenityClaim(BaseModel):
+    id: str = Field(default_factory=new_id)
+    run_id: str | None = None
+    evidence_doc_id: str | None = None
+    claim_text: str
+    subject: str | None = None
+    predicate: str | None = None
+    object: str | None = None
+    claim_time: str | None = None
+    confidence: float = 0.5
+    price_relevant: bool = False
+    evidence_hash: str | None = None
+    support_level: str | None = None
+    metadata: str = "{}"
     created_at: str = Field(default_factory=_utcnow)
