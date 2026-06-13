@@ -1300,78 +1300,80 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
   const showSuggestions = modelFocused && filteredModels.length > 0
 
   return (
-    <div style={{ paddingTop: '0.75rem' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem 1rem' }}>
-        <label style={{ gridColumn: '1 / -1' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Base URL</span>
-          <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
-        </label>
-        <label style={{ position: 'relative' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Model</span>
-          <input
-            value={model}
-            placeholder={config?.model || 'default'}
-            onChange={e => { setModel(e.target.value); setModelEditing(true); setResult(null) }}
-            onFocus={() => { setModelFocused(true); setModelEditing(false) }}
-            onBlur={() => setTimeout(() => setModelFocused(false), 150)}
-            autoComplete="off"
-          />
-          {showSuggestions && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20,
-              background: 'var(--surface)', border: '1px solid var(--border)',
-              borderRadius: '0 0 var(--r) var(--r)', maxHeight: '10rem', overflowY: 'auto',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-            }}>
-              {filteredModels.map(m => (
-                <div
-                  key={m.slug}
-                  onMouseDown={() => { setModel(m.slug); setResult(null) }}
-                  style={{
-                    padding: '0.4rem 0.6rem', cursor: 'pointer', fontSize: '0.78rem',
-                    fontFamily: 'var(--mono)',
-                    background: m.slug === model ? 'var(--accent-dim)' : 'transparent',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--accent-dim)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = m.slug === model ? 'var(--accent-dim)' : 'transparent')}
-                >
-                  {m.display_name}
-                </div>
-              ))}
-            </div>
-          )}
-        </label>
-        {isOpenAI && (
-          <label>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Protocol</span>
-            <select value={protocol} onChange={e => { setProtocol(e.target.value); setResult(null) }}>
-              <option value="chat_completions">chat_completions</option>
-              <option value="responses">responses</option>
-            </select>
-          </label>
+    <div className="form-grid" style={{ paddingTop: '0.75rem', gridTemplateColumns: '1fr 1fr' }}>
+      {/* Row 1: Base URL — full width */}
+      <label style={{ gridColumn: '1 / -1' }}>
+        Base URL
+        <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
+      </label>
+
+      {/* Row 2: Model (combobox) + secondary field */}
+      <label style={{ position: 'relative' }}>
+        Model {detectedModels && detectedModels.length > 0 && (
+          <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>({detectedModels.length})</span>
         )}
-        {isAnthropic && (
-          <label>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Auth Scheme</span>
-            <select value={authScheme} onChange={e => { setAuthScheme(e.target.value); setResult(null); setDetectedModels(null) }}>
-              <option value="x-api-key">X-API-Key (Native Anthropic)</option>
-              <option value="bearer">Bearer (Gateway / Databricks)</option>
-            </select>
-          </label>
+        <input
+          value={model}
+          placeholder={config?.model || 'default'}
+          onChange={e => { setModel(e.target.value); setModelEditing(true); setResult(null) }}
+          onFocus={() => { setModelFocused(true); setModelEditing(false) }}
+          onBlur={() => setTimeout(() => setModelFocused(false), 150)}
+          autoComplete="off"
+        />
+        {showSuggestions && (
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20,
+            background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: '0 0 var(--r) var(--r)', maxHeight: '10rem', overflowY: 'auto',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          }}>
+            {filteredModels.map(m => (
+              <div
+                key={m.slug}
+                onMouseDown={() => { setModel(m.slug); setResult(null) }}
+                style={{
+                  padding: '0.4rem 0.6rem', cursor: 'pointer', fontSize: '0.78rem',
+                  fontFamily: 'var(--mono)',
+                  background: m.slug === model ? 'var(--accent-dim)' : 'transparent',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--accent-dim)')}
+                onMouseLeave={e => (e.currentTarget.style.background = m.slug === model ? 'var(--accent-dim)' : 'transparent')}
+              >
+                {m.display_name}
+              </div>
+            ))}
+          </div>
         )}
-        <label style={{ gridColumn: (isOpenAI || isAnthropic) ? undefined : '2 / 3' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            API Key
-            {config?.api_key?.configured && <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.62rem' }}>··{config.api_key.last4}</span>}
-          </span>
-          <input type="password" value={apiKey} placeholder={config?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
+      </label>
+      {isOpenAI && (
+        <label>
+          Protocol
+          <select value={protocol} onChange={e => { setProtocol(e.target.value); setResult(null) }}>
+            <option value="chat_completions">chat_completions</option>
+            <option value="responses">responses</option>
+          </select>
         </label>
-      </div>
-      {/* Action buttons */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button className="secondary" onClick={() => detectMut.mutate()} disabled={detectMut.isPending} title="Re-detect models">
-          {detectMut.isPending ? '↻ …' : '↻'}
-        </button>
+      )}
+      {isAnthropic && (
+        <label>
+          Auth Scheme
+          <select value={authScheme} onChange={e => { setAuthScheme(e.target.value); setResult(null); setDetectedModels(null) }}>
+            <option value="x-api-key">X-API-Key (Native Anthropic)</option>
+            <option value="bearer">Bearer (Gateway / Databricks)</option>
+          </select>
+        </label>
+      )}
+      {!isOpenAI && !isAnthropic && <div />}
+
+      {/* Row 3: API Key — full width */}
+      <label style={{ gridColumn: '1 / -1' }}>
+        API Key
+        {config?.api_key?.configured && <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.62rem' }}>··{config.api_key.last4}</span>}
+        <input type="password" value={apiKey} placeholder={config?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
+      </label>
+
+      {/* Row 4: Actions — full width */}
+      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
           {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
         </button>
@@ -1380,6 +1382,9 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
             Set as Default
           </button>
         )}
+        <button className="secondary" onClick={() => detectMut.mutate()} disabled={detectMut.isPending} title="Re-detect models" style={{ marginLeft: 'auto', padding: '0.42rem 0.55rem' }}>
+          {detectMut.isPending ? '↻ …' : '↻'}
+        </button>
         {result && (
           <span style={{ fontSize: '0.75rem', color: result.ok ? 'var(--green)' : 'var(--red)', fontFamily: 'var(--mono)' }}>
             {result.ok ? '✓' : '✗'} {result.msg}
@@ -1391,17 +1396,6 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
           </span>
         )}
       </div>
-      {/* Detected models hint */}
-      {detectedModels !== null && (
-        <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '0.4rem' }}>
-          {detectedModels.length > 0
-            ? `${detectedModels.length} model${detectedModels.length > 1 ? 's' : ''} available — type to filter`
-            : 'No models detected — enter a model name manually'}
-        </div>
-      )}
-      <p style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
-        API keys are write-only — never shown after save. Verify & Save runs a real inference test before persisting.
-      </p>
     </div>
   )
 }
