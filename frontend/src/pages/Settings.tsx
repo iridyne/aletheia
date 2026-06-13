@@ -602,43 +602,36 @@ function RiskTab({ settings, qc }: any) {
 // ─── Symbols ───
 
 function SymbolsCard({ settings, qc }: any) {
-  const serverMode: string = settings?.risk?.symbol_filter_mode ?? 'whitelist'
-  const serverAllowed: string[] = settings?.risk?.allowed_symbols ?? []
-  const serverBlocked: string[] = settings?.risk?.blocked_symbols ?? []
+  const serverMode: string = settings?.risk?.symbol_filter_mode ?? 'blacklist'
+  const serverSymbols: string[] = settings?.risk?.symbol_list ?? []
 
   const [mode, setMode] = useState<'whitelist' | 'blacklist'>(serverMode as any)
-  const [draftAllowed, setDraftAllowed] = useState<string[]>([])
-  const [draftBlocked, setDraftBlocked] = useState<string[]>([])
+  const [draft, setDraft] = useState<string[]>([])
   const [input, setInput] = useState('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     setMode(serverMode as any)
-    setDraftAllowed(serverAllowed)
-    setDraftBlocked(serverBlocked)
+    setDraft(serverSymbols)
   }, [settings])
 
-  const activeList = mode === 'whitelist' ? draftAllowed : draftBlocked
-  const setActiveList = mode === 'whitelist' ? setDraftAllowed : setDraftBlocked
-
   const mut = useMutation({
-    mutationFn: () => api.updateSymbolFilter({ mode, allowed: draftAllowed, blocked: draftBlocked }),
+    mutationFn: () => api.updateSymbolFilter({ mode, symbols: draft }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
   const add = () => {
     const s = input.trim().toUpperCase()
-    if (!s || activeList.includes(s)) return
-    setActiveList(prev => [...prev, s]); setInput(''); setMsg(null)
+    if (!s || draft.includes(s)) return
+    setDraft(prev => [...prev, s]); setInput(''); setMsg(null)
   }
-  const remove = (s: string) => { setActiveList(prev => prev.filter(x => x !== s)); setMsg(null) }
+  const remove = (s: string) => { setDraft(prev => prev.filter(x => x !== s)); setMsg(null) }
 
   const dirty = mode !== serverMode
-    || JSON.stringify(draftAllowed.slice().sort()) !== JSON.stringify(serverAllowed.slice().sort())
-    || JSON.stringify(draftBlocked.slice().sort()) !== JSON.stringify(serverBlocked.slice().sort())
+    || JSON.stringify(draft.slice().sort()) !== JSON.stringify(serverSymbols.slice().sort())
 
-  const canSave = mode === 'blacklist' || draftAllowed.length > 0
+  const canSave = mode === 'blacklist' || draft.length > 0
 
   const chipBg = mode === 'whitelist' ? 'rgba(34,211,238,0.1)' : 'rgba(239,68,68,0.1)'
   const chipBorder = mode === 'whitelist' ? 'rgba(34,211,238,0.25)' : 'rgba(239,68,68,0.25)'
@@ -662,7 +655,7 @@ function SymbolsCard({ settings, qc }: any) {
 
       {/* Symbol chips */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.75rem', minHeight: '2rem' }}>
-        {activeList.map(s => (
+        {draft.map(s => (
           <span key={s} style={{
             display: 'inline-flex', alignItems: 'center', gap: '0.2rem',
             padding: '0.18rem 0.5rem', borderRadius: '4px',
@@ -673,9 +666,9 @@ function SymbolsCard({ settings, qc }: any) {
             <button onClick={() => remove(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '0 0.1rem', lineHeight: 1, fontSize: '0.9rem' }} title={`Remove ${s}`}>×</button>
           </span>
         ))}
-        {activeList.length === 0 && (
+        {draft.length === 0 && (
           <span className="hint" style={{ margin: 0 }}>
-            {mode === 'whitelist' ? 'No symbols — add at least one.' : 'No blocked symbols — all symbols are tradable.'}
+            {mode === 'whitelist' ? 'No symbols — add at least one.' : 'Empty — all symbols are tradable.'}
           </span>
         )}
       </div>

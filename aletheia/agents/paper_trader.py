@@ -27,7 +27,7 @@ from aletheia.storage.repositories import (
     update_opportunity,
     list_strategies,
 )
-from aletheia.trading.instruments import tradable_symbols_from_config, blocked_symbols_from_config
+from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.market_data import latest_snapshot
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy, is_paper_trading_paused
 from aletheia.data.symbols import to_canonical
@@ -50,16 +50,15 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         log_tool(run_id, "create_paper_proposal", "paper", False)
         errors.append(f"create_paper_proposal not permitted in mode {permission_mode}")
         return {"outputs": outputs, "errors": errors}
-    # Symbol filter: whitelist mode uses tradable_symbols; blacklist mode blocks specific symbols.
+    # Symbol filter: single list, semantics depend on mode.
     filter_mode = cfg.risk.symbol_filter_mode
+    filter_set = {to_canonical(s) for s in tradable_symbols_from_config(cfg)}
     if filter_mode == "blacklist":
-        blocked_set = {to_canonical(s) for s in blocked_symbols_from_config(cfg)}
         def _symbol_allowed(sym: str) -> bool:
-            return to_canonical(sym) not in blocked_set
+            return to_canonical(sym) not in filter_set
     else:
-        allowed_set = {to_canonical(s) for s in tradable_symbols_from_config(cfg)}
         def _symbol_allowed(sym: str) -> bool:
-            return to_canonical(sym) in allowed_set
+            return not filter_set or to_canonical(sym) in filter_set
 
     # Pick the most recent OPEN crypto opportunity for an allowed symbol.
     # equity and prediction asset_classes are observation-only — never traded.

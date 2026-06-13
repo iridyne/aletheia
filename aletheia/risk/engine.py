@@ -80,15 +80,14 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     if cfg.runtime.kill_switch_active:
         violations.append("kill_switch_active")
 
-    # 1. Symbol filter (whitelist or blacklist mode)
+    # 1. Symbol filter (whitelist or blacklist mode, single list)
     sym_canonical = to_canonical(proposal.symbol)
+    filter_set = {to_canonical(s) for s in risk.symbol_list}
     if risk.symbol_filter_mode == "blacklist":
-        blocked_canonical = {to_canonical(s) for s in risk.blocked_symbols}
-        if sym_canonical in blocked_canonical:
+        if sym_canonical in filter_set:
             violations.append(f"symbol_blocked:{proposal.symbol}")
     else:
-        allowed_canonical = {to_canonical(s) for s in risk.allowed_symbols}
-        if sym_canonical not in allowed_canonical:
+        if filter_set and sym_canonical not in filter_set:
             violations.append(f"symbol_not_allowed:{proposal.symbol}")
 
     # 2. Market allowed

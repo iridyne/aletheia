@@ -1468,8 +1468,8 @@ export class OperatorLoop {
         observed_symbols: Array.isArray(observeOnlyResult?.observed_symbols)
           ? observeOnlyResult.observed_symbols
           : null,
-        tradable_symbols: Array.isArray(observeOnlyResult?.tradable_symbols)
-          ? observeOnlyResult.tradable_symbols
+        symbol_list: Array.isArray(observeOnlyResult?.symbol_list)
+          ? observeOnlyResult.symbol_list
           : null,
       })
       this.sessionRuntime.rememberBranch({

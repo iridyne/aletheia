@@ -1077,8 +1077,9 @@ async def test_operator_recommendations_include_symbol_observe_only_due_for_repe
     from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal
 
     cfg = loader.load_config()
-    cfg.exchange.tradable_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.exchange.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     loader.save_config(cfg)
 
     first = TradeProposal(

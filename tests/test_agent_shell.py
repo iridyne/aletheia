@@ -1205,8 +1205,9 @@ async def test_set_symbol_observe_only_removes_trading_but_keeps_observation(tmp
     from aletheia.agent_shell.commands import set_symbol_observe_only
 
     cfg = loader.load_config()
-    cfg.exchange.tradable_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.exchange.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     cfg.market_data.observed_symbols = ["BTC/USDT", "ETH/USDT"]
     cfg.market_data.observed_instruments = []
     loader.save_config(cfg)
@@ -1215,8 +1216,8 @@ async def test_set_symbol_observe_only_removes_trading_but_keeps_observation(tmp
 
     assert result["updated"] is True
     updated = loader.load_config()
-    assert "BTCUSDT" not in updated.exchange.tradable_symbols
-    assert "BTCUSDT" not in updated.risk.allowed_symbols
+    assert "BTCUSDT" not in updated.exchange.symbol_list
+    assert "BTCUSDT" not in updated.risk.symbol_list
     assert "BTC/USDT" in updated.market_data.observed_symbols
 
 

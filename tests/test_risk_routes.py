@@ -38,7 +38,7 @@ async def test_get_risk_boundaries(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["max_daily_loss_pct"] == 1.0
-    assert data["allowed_symbols"] == []
+    assert data["symbol_list"] == []
     assert data["symbol_filter_mode"] == "blacklist"
 
 
@@ -207,8 +207,9 @@ async def test_risk_summary_surfaces_observe_only_candidate_for_repeated_rejecte
     from aletheia.storage.models import RiskDecision, TradeProposal
 
     cfg = loader.load_config()
-    cfg.exchange.tradable_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.exchange.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     loader.save_config(cfg)
 
     first = TradeProposal(

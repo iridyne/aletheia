@@ -4397,7 +4397,7 @@ test('operator loop marks a repeatedly rejected symbol observe-only through type
         updated: true,
         symbol: 'BTC/USDT',
         message: 'BTC/USDT is now observe-only.',
-        tradable_symbols: ['ETHUSDT', 'SOLUSDT'],
+        symbol_list: ['ETHUSDT', 'SOLUSDT'],
         observed_symbols: ['BTC/USDT', 'ETH/USDT'],
       },
       action: null,

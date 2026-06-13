@@ -46,7 +46,7 @@ def test_risk_rejects_disallowed_symbol(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.symbol_filter_mode = "whitelist"
-    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     save_config(cfg)
     proposal = TradeProposal(
         symbol="DOGEUSDT", market_type="spot", direction="long",
@@ -64,7 +64,7 @@ def test_risk_blacklist_mode_allows_non_blocked(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.symbol_filter_mode = "blacklist"
-    cfg.risk.blocked_symbols = ["DOGEUSDT"]
+    cfg.risk.symbol_list = ["DOGEUSDT"]
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
     proposal = TradeProposal(
@@ -83,7 +83,7 @@ def test_risk_blacklist_mode_rejects_blocked(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.symbol_filter_mode = "blacklist"
-    cfg.risk.blocked_symbols = ["DOGEUSDT", "SHIBUSDT"]
+    cfg.risk.symbol_list = ["DOGEUSDT", "SHIBUSDT"]
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
     proposal = TradeProposal(
@@ -174,7 +174,7 @@ def test_execution_gateway_rejects_disallowed(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.symbol_filter_mode = "whitelist"
-    cfg.risk.allowed_symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     save_config(cfg)
     result = submit_proposal(
         symbol="XRPUSDT", market_type="spot", direction="long",

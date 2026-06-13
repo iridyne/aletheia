@@ -6,7 +6,7 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
-from aletheia.trading.instruments import tradable_symbols_from_config
+from aletheia.trading.instruments import tradable_symbols_from_config, observed_symbols_from_config
 from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
 
 # States the designer walks a fresh strategy through so it becomes tradable.
@@ -47,8 +47,12 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         return {"outputs": outputs, "errors": errors}
 
     cfg = load_config()
-    symbols = tradable_symbols_from_config(cfg)
-    default_symbol = symbols[0] if symbols else "BTCUSDT"
+    # In whitelist mode, use the symbol_list. In blacklist mode, use observed symbols.
+    if cfg.risk.symbol_filter_mode == "whitelist":
+        symbols = tradable_symbols_from_config(cfg)
+    else:
+        symbols = observed_symbols_from_config(cfg)
+    default_symbol = symbols[0] if symbols else "BTC/USDT"
 
     # Experience loop (§6): consult prior high-confidence lessons + playbooks as
     # ADVISORY design inputs. Both are read-only and quality-gated; degrade to nothing.

@@ -19,7 +19,9 @@ def status():
     cfg = load_config()
     typer.echo(f"Kill switch: {'ACTIVE' if kill_switch.is_active() else 'inactive'}")
     typer.echo(f"Max daily loss: {cfg.risk.max_daily_loss_pct}%")
-    typer.echo(f"Allowed symbols: {', '.join(cfg.risk.allowed_symbols)}")
+    mode = cfg.risk.symbol_filter_mode
+    syms = ', '.join(cfg.risk.symbol_list) or '(none)'
+    typer.echo(f"Symbol filter: {mode} — {syms}")
     typer.echo(f"Live state: {cfg.live.state}")
 
 

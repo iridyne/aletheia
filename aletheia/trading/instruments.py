@@ -23,18 +23,8 @@ BITGET_GRANULARITY = {
 
 
 def tradable_symbols_from_config(cfg) -> list[str]:
-    """Return the configured tradable symbols (Bitget format)."""
-    return cfg.exchange.tradable_symbols
-
-
-def blocked_symbols_from_config(cfg) -> list[str]:
-    """Return the configured blocked symbols (Bitget format)."""
-    return cfg.exchange.blocked_symbols
-
-
-def symbol_filter_mode_from_config(cfg) -> str:
-    """Return 'whitelist' or 'blacklist'."""
-    return cfg.risk.symbol_filter_mode
+    """Return the symbol_list from exchange config (Bitget format)."""
+    return cfg.exchange.symbol_list
 
 
 def observed_symbols_from_config(cfg) -> list[str]:

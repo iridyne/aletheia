@@ -623,20 +623,23 @@ def build_risk_summary(limit: int = 20, *, cfg=None) -> dict:
         reverse=True,
     )
 
-    tradable_symbols = {to_canonical(symbol) for symbol in cfg.exchange.tradable_symbols}
-    allowed_symbols = {to_canonical(symbol) for symbol in cfg.risk.allowed_symbols}
+    symbol_list_canonical = {to_canonical(symbol) for symbol in cfg.risk.symbol_list}
     symbol_rejections: dict[str, dict] = {}
     for decision in recent_rejected_decisions:
         symbol = to_canonical(str(decision.get("symbol") or ""))
         execution_mode = str(decision.get("execution_mode") or "").strip().lower()
         if not symbol or not execution_mode.startswith("paper"):
             continue
-        if symbol not in tradable_symbols and symbol not in allowed_symbols:
-            continue
-        if (symbol in tradable_symbols and len(tradable_symbols) <= 1) or (
-            symbol in allowed_symbols and len(allowed_symbols) <= 1
-        ):
-            continue
+        # In whitelist mode, only consider symbols currently in the list.
+        # In blacklist mode, only consider symbols NOT in the blocked list.
+        if cfg.risk.symbol_filter_mode == "whitelist":
+            if symbol not in symbol_list_canonical:
+                continue
+            if len(symbol_list_canonical) <= 1:
+                continue
+        else:
+            if symbol in symbol_list_canonical:
+                continue
         bucket = symbol_rejections.get(symbol)
         if bucket is None:
             bucket = {

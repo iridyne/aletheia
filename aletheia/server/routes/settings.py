@@ -406,51 +406,38 @@ async def update_risk_config(req: RiskConfigUpdate):
 
 
 # ---------------------------------------------------------------------------
-# Symbol filter (whitelist/blacklist mode + allowed/blocked lists)
+# Symbol filter (whitelist/blacklist mode + single symbol list)
 # ---------------------------------------------------------------------------
 
 VALID_SYMBOL_FILTER_MODES = {"whitelist", "blacklist"}
 
 
 class SymbolsUpdate(BaseModel):
-    mode: str = "whitelist"
-    allowed: list[str] = []
-    blocked: list[str] = []
+    mode: str = "blacklist"
+    symbols: list[str] = []
 
 
 @router.post("/symbols")
 async def update_tradable_symbols(req: SymbolsUpdate):
-    """Update symbol filter mode and lists. Both risk and exchange are updated atomically."""
+    """Update symbol filter mode and list. Risk and exchange are updated atomically."""
     if req.mode not in VALID_SYMBOL_FILTER_MODES:
         raise HTTPException(400, f"mode must be one of {sorted(VALID_SYMBOL_FILTER_MODES)}")
-    if req.mode == "whitelist" and not req.allowed:
-        raise HTTPException(400, "whitelist mode requires at least one allowed symbol")
+    if req.mode == "whitelist" and not req.symbols:
+        raise HTTPException(400, "whitelist mode requires at least one symbol")
 
-    def _normalize(syms: list[str]) -> list[str]:
-        return list(dict.fromkeys(s.strip().upper() for s in syms if s.strip()))
-
-    allowed = _normalize(req.allowed)
-    blocked = _normalize(req.blocked)
+    normalized = list(dict.fromkeys(s.strip().upper() for s in req.symbols if s.strip()))
 
     cfg = load_config()
-    old = {
-        "mode": cfg.risk.symbol_filter_mode,
-        "allowed": list(cfg.risk.allowed_symbols),
-        "blocked": list(cfg.risk.blocked_symbols),
-    }
+    old = {"mode": cfg.risk.symbol_filter_mode, "symbols": list(cfg.risk.symbol_list)}
 
     cfg.risk.symbol_filter_mode = req.mode
-    cfg.risk.allowed_symbols = allowed
-    cfg.risk.blocked_symbols = blocked
-    cfg.exchange.tradable_symbols = allowed
-    cfg.exchange.blocked_symbols = blocked
+    cfg.risk.symbol_list = normalized
+    cfg.exchange.symbol_list = normalized
 
-    # Keep observed_symbols + observed_instruments in sync.
-    # In whitelist mode, observe the allowed list. In blacklist mode, observation
-    # is driven by universe/market_data config — we don't alter it here.
+    # In whitelist mode, sync observed_symbols so the data layer fetches them.
     from aletheia.data.symbols import to_canonical, InstrumentId, MARKET_SPOT
-    if req.mode == "whitelist" and allowed:
-        canonical_symbols = [to_canonical(s) for s in allowed]
+    if req.mode == "whitelist" and normalized:
+        canonical_symbols = [to_canonical(s) for s in normalized]
         cfg.market_data.observed_symbols = canonical_symbols
         exchange = cfg.market_data.ccxt_exchange or "binance"
         cfg.market_data.observed_instruments = [
@@ -462,11 +449,10 @@ async def update_tradable_symbols(req: SymbolsUpdate):
 
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "symbols_changed",
-                 "entity_type": "symbols",
-                 "before": old,
-                 "after": {"mode": req.mode, "allowed": allowed, "blocked": blocked},
+                 "entity_type": "symbols", "before": old,
+                 "after": {"mode": req.mode, "symbols": normalized},
                  "message": f"Symbol filter updated: mode={req.mode}"})
-    return {"mode": req.mode, "allowed": allowed, "blocked": blocked}
+    return {"mode": req.mode, "symbols": normalized}
 
 
 # ---------------------------------------------------------------------------

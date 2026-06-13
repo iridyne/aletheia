@@ -1407,13 +1407,19 @@ async def set_symbol_observe_only(params: dict) -> dict:
     canonical = to_canonical(str(symbol))
     exchange_symbol = canonical.replace("/", "")
     cfg = config_loader.load_config()
-    updated_tradable = [item for item in cfg.exchange.tradable_symbols if item != exchange_symbol]
-    updated_allowed = [item for item in cfg.risk.allowed_symbols if item != exchange_symbol]
-    if not updated_tradable or not updated_allowed:
-        return {"error": "Cannot mark the last tradable symbol observe-only."}
 
-    cfg.exchange.tradable_symbols = updated_tradable
-    cfg.risk.allowed_symbols = updated_allowed
+    # In whitelist mode: remove from list. In blacklist mode: add to list.
+    if cfg.risk.symbol_filter_mode == "blacklist":
+        if exchange_symbol not in cfg.risk.symbol_list:
+            cfg.risk.symbol_list = [*cfg.risk.symbol_list, exchange_symbol]
+            cfg.exchange.symbol_list = list(cfg.risk.symbol_list)
+    else:
+        updated = [s for s in cfg.risk.symbol_list if s != exchange_symbol]
+        if not updated:
+            return {"error": "Cannot mark the last tradable symbol observe-only."}
+        cfg.risk.symbol_list = updated
+        cfg.exchange.symbol_list = updated
+
     observed_symbols = list(dict.fromkeys([*cfg.market_data.observed_symbols, canonical]))
     cfg.market_data.observed_symbols = observed_symbols
 
@@ -1439,7 +1445,7 @@ async def set_symbol_observe_only(params: dict) -> dict:
         "updated": True,
         "symbol": canonical,
         "message": f"{canonical} is now observe-only.",
-        "tradable_symbols": updated_tradable,
+        "symbol_list": list(cfg.risk.symbol_list),
         "observed_symbols": observed_symbols,
     }
 

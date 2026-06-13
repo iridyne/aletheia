@@ -16,8 +16,8 @@ def test_default_config_has_correct_values():
     assert cfg.agent.permission_mode == "Observe"
     assert cfg.risk.max_daily_loss_pct == 1.0
     assert cfg.risk.symbol_filter_mode == "blacklist"
-    assert cfg.exchange.tradable_symbols == []
-    assert cfg.risk.blocked_symbols == []
+    assert cfg.risk.symbol_list == []
+    assert cfg.exchange.symbol_list == []
     assert cfg.telegram.enabled is False
 
 
