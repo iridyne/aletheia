@@ -147,20 +147,20 @@ def _fail_spawn(reason: str) -> None:
 
 
 def _run_server(cfg) -> None:
-    """Run uvicorn in-process (foreground mode)."""
+    """Run uvicorn in-process (foreground mode) with auto-reload."""
     import os
     import uvicorn
-    dev_reload = os.environ.get("ALETHEIA_DEV_RELOAD") == "1"
-    kwargs: dict = {
-        "host": cfg.app.bind_host,
-        "port": cfg.app.dashboard_port,
-        "log_level": "info",
-    }
-    if dev_reload:
-        project_root = Path(__file__).resolve().parent.parent.parent
-        kwargs["reload"] = True
-        kwargs["reload_dirs"] = [str(project_root / "aletheia")]
-    uvicorn.run("aletheia.server.app:app", **kwargs)
+    project_root = Path(__file__).resolve().parent.parent.parent
+    aletheia_dir = str(project_root / "aletheia")
+    os.environ.setdefault("ALETHEIA_DEV_RELOAD", "1")
+    uvicorn.run(
+        "aletheia.server.app:app",
+        host=cfg.app.bind_host,
+        port=cfg.app.dashboard_port,
+        log_level="info",
+        reload=True,
+        reload_dirs=[aletheia_dir],
+    )
 
 
 def _spawn_background(no_browser: bool):

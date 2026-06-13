@@ -41,7 +41,6 @@ def _spawn_server(cfg) -> int:
     rotate_if_needed(errors_log)
     real_python, env_patch = _resolve_real_python()
     runtime_context = current_gateway_launch_context(cfg)
-    dev_reload = os.environ.get("ALETHEIA_DEV_RELOAD") == "1"
     project_root = Path(__file__).resolve().parent.parent
     aletheia_dir = project_root / "aletheia"
 
@@ -49,10 +48,9 @@ def _spawn_server(cfg) -> int:
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
         "--host", runtime_context["host"], "--port", str(runtime_context["port"]),
         "--log-level", "info",
+        "--reload",
+        "--reload-dir", str(aletheia_dir),
     ]
-    if dev_reload:
-        cmd += ["--reload", "--reload-dir", str(aletheia_dir)]
-
     env = runtime_process_env(
         base_env=os.environ.copy(),
         runtime_id=runtime_context["runtime_id"],
@@ -62,9 +60,8 @@ def _spawn_server(cfg) -> int:
         workdir=runtime_context["workdir"],
         env_patch=env_patch,
     )
-    if dev_reload:
-        env["WATCHFILES_FORCE_POLLING"] = "true"
-        env["ALETHEIA_DEV_RELOAD"] = "1"
+    env["WATCHFILES_FORCE_POLLING"] = "true"
+    env["ALETHEIA_DEV_RELOAD"] = "1"
 
     popen_kwargs: dict = {
         "stdout": subprocess.DEVNULL,
@@ -129,7 +126,7 @@ def run_supervised(spawn_fn=None) -> dict:
     from aletheia.gateway.operator_shell import OperatorShellMonitor
     operator_monitor = OperatorShellMonitor(cfg)
     operator_monitor.start()
-    vite_proc = _start_vite_build_watch() if os.environ.get("ALETHEIA_DEV_RELOAD") == "1" else None
+    vite_proc = _start_vite_build_watch()
 
     h = cfg.health
     max_restarts = h.supervisor_max_restarts
