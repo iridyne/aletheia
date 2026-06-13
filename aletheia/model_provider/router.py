@@ -1,8 +1,10 @@
 """Model provider router — creates and caches provider instances from config."""
 
 import asyncio
+import logging
+import time
 
-from aletheia.config.loader import load_config
+from aletheia.config.loader import load_config, save_config
 from aletheia.model_provider.base import ModelProvider, ModelHealth
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
@@ -10,6 +12,8 @@ from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
 from aletheia.model_provider.openai_native import OpenAINativeProvider
 from aletheia.model_provider.codex_cli import CodexCLIProvider
 from aletheia.model_provider.claude_cli import ClaudeCLIProvider
+
+logger = logging.getLogger("aletheia.model_provider.router")
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
@@ -21,6 +25,72 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
 }
 
 _cache: dict[str, ModelProvider] = {}
+
+_REFRESH_MARGIN_MS = 5 * 60 * 1000  # refresh 5 min before expiry
+
+
+def _resolve_oauth_token(name: str, pcfg) -> str | None:
+    """Load OAuth token from secrets, auto-refreshing if near expiry."""
+    if pcfg.auth_type != "oauth" or not pcfg.oauth_token_ref:
+        return None
+
+    from aletheia.config.secrets import get_secret, set_secret
+
+    token = get_secret(pcfg.oauth_token_ref)
+    if not token:
+        return None
+
+    # Check expiry — refresh proactively
+    now_ms = int(time.time() * 1000)
+    if pcfg.oauth_expires_at and now_ms > (pcfg.oauth_expires_at - _REFRESH_MARGIN_MS):
+        refresh_val = get_secret(pcfg.oauth_refresh_ref) if pcfg.oauth_refresh_ref else None
+        if refresh_val:
+            try:
+                token = _do_refresh(name, pcfg, refresh_val)
+            except Exception as e:
+                logger.warning("OAuth token refresh failed for %s: %s", name, e)
+    return token
+
+
+def _do_refresh(name: str, pcfg, refresh_val: str) -> str | None:
+    """Synchronously run async refresh (called from get_provider hot path)."""
+    import asyncio
+    from aletheia.config.secrets import set_secret
+
+    loop = None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+
+    # If we're already in an async context, can't block — return stale token
+    if loop and loop.is_running():
+        logger.debug("Skipping sync refresh for %s (in async context)", name)
+        return None
+
+    if name == "openai_native":
+        from aletheia.model_provider.openai_oauth import refresh_openai_tokens
+        result = asyncio.run(refresh_openai_tokens(refresh_val))
+        new_token = result.get("api_key")
+    elif name == "anthropic_native":
+        from aletheia.model_provider.claude_oauth import refresh_claude_tokens
+        result = asyncio.run(refresh_claude_tokens(refresh_val))
+        new_token = result.get("access_token")
+    else:
+        return None
+
+    if new_token:
+        set_secret(pcfg.oauth_token_ref, new_token)
+        if result.get("refresh_token") and pcfg.oauth_refresh_ref:
+            set_secret(pcfg.oauth_refresh_ref, result["refresh_token"])
+        if result.get("expires_at"):
+            pcfg.oauth_expires_at = result["expires_at"]
+            cfg = load_config()
+            if name in cfg.models.providers:
+                cfg.models.providers[name].oauth_expires_at = result["expires_at"]
+                save_config(cfg)
+        return new_token
+    return None
 
 
 def _resolve_type(name: str, pcfg) -> str:
@@ -74,9 +144,11 @@ def get_provider(name: str | None = None) -> ModelProvider:
             model=pcfg.codex_model,
         )
     elif ptype == "anthropic_native":
-        provider = AnthropicNativeProvider(model=pcfg.model, api_key=api_key)
+        oauth_token = _resolve_oauth_token(name, pcfg)
+        provider = AnthropicNativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
     elif ptype == "openai_native":
-        provider = OpenAINativeProvider(model=pcfg.model, api_key=api_key)
+        oauth_token = _resolve_oauth_token(name, pcfg)
+        provider = OpenAINativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
     elif ptype == "claude_cli":
         provider = ClaudeCLIProvider(
             command=pcfg.command or "claude",

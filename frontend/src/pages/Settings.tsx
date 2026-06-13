@@ -16,11 +16,12 @@ const NATIVE_PROVIDERS = new Set(['anthropic_native', 'openai_native'])
 const PROVIDER_LABELS: Record<string, string> = {
   openai_compatible: 'OpenAI Compatible',
   anthropic_compatible: 'Anthropic Compatible',
-  anthropic_native: 'Anthropic (Direct)',
-  openai_native: 'OpenAI (Direct)',
+  anthropic_native: 'Claude (Subscription)',
+  openai_native: 'OpenAI (Subscription)',
   codex_cli: 'Codex CLI',
   claude_cli: 'Claude Code CLI',
 }
+const OAUTH_PROVIDERS = new Set(['anthropic_native', 'openai_native'])
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
 type Tab = 'intelligence' | 'execution' | 'risk' | 'infrastructure'
@@ -1242,17 +1243,18 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
   isExpanded: boolean; onToggle: () => void; qc: any
 }) {
   const isHTTP = HTTP_PROVIDERS.has(name)
+  const isOAuth = OAUTH_PROVIDERS.has(name)
   const isCLI = !isHTTP
 
-  // Status resolution — "not configured" (muted) takes priority over connection errors
-  // for HTTP providers that have no API key set.
+  // Status resolution
   let statusColor: string = 'var(--muted)'
   let statusText = 'not configured'
   const keyConfigured = isHTTP && config?.api_key?.configured
   if (health?.available) { statusColor = 'var(--green)'; statusText = 'connected' }
   else if (isCLI && health?.error === 'not_installed') { statusColor = 'var(--yellow)'; statusText = 'not installed' }
   else if (isCLI && health?.error?.includes('disabled')) { statusColor = 'var(--muted)'; statusText = 'disabled' }
-  else if (isHTTP && !keyConfigured) { statusColor = 'var(--muted)'; statusText = 'not configured' }
+  else if (isOAuth && !keyConfigured) { statusColor = 'var(--muted)'; statusText = 'not connected' }
+  else if (isHTTP && !isOAuth && !keyConfigured) { statusColor = 'var(--muted)'; statusText = 'not configured' }
   else if (health && !health.available) { statusColor = 'var(--red)'; statusText = health.error || 'unreachable' }
   else if (keyConfigured && !health) { statusColor = 'var(--yellow)'; statusText = 'checking…' }
 
@@ -1321,7 +1323,11 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
       {/* Expanded content */}
       {isExpanded && (
         <div style={{ padding: '0 0.9rem 0.9rem', borderTop: '1px solid var(--border)' }}>
-          {isHTTP ? (
+          {name === 'openai_native' ? (
+            <OpenAIOAuthPanel config={config} health={health} qc={qc} />
+          ) : name === 'anthropic_native' ? (
+            <ClaudeOAuthPanel config={config} health={health} qc={qc} />
+          ) : isHTTP ? (
             <HTTPProviderForm name={name} config={config} isDefault={isDefault} qc={qc} />
           ) : name === 'codex_cli' ? (
             <CodexCLIPanel config={config} health={health} qc={qc} />
@@ -1663,6 +1669,188 @@ function CodexCLIPanel({ config, health, qc }: { config: any; health: any; qc: a
           ) : (
             <button onClick={() => start.mutate()} disabled={start.isPending}>Connect Codex</button>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── OpenAI OAuth panel (ChatGPT Plus/Pro subscription) ───
+
+function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc: any }) {
+  const [oauthState, setOauthState] = useState<{ state: string; auth_url?: string | null; error?: string | null } | null>(null)
+
+  const statusPoll = useQuery({
+    queryKey: ['openai-oauth-status'], queryFn: api.openaiOAuthStatus,
+    enabled: oauthState?.state === 'awaiting', refetchInterval: 2000,
+  })
+  if (statusPoll.data?.state === 'completed' && oauthState?.state !== 'completed') {
+    setOauthState(statusPoll.data)
+    qc.invalidateQueries({ queryKey: ['model-health'] })
+    qc.invalidateQueries({ queryKey: ['model'] })
+  }
+
+  const start = useMutation({
+    mutationFn: api.openaiOAuthStart,
+    onSuccess: r => {
+      setOauthState(r)
+      if (r.auth_url) window.open(r.auth_url, '_blank')
+    },
+  })
+  const cancel = useMutation({ mutationFn: api.openaiOAuthCancel, onSuccess: () => setOauthState(null) })
+  const pickModel = useMutation({
+    mutationFn: (slug: string) => api.setModelProvider({ provider: 'openai_native', model: slug, enabled: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['model-health'] }) },
+  })
+  const setDefault = useMutation({
+    mutationFn: () => api.setModelProvider({ provider: 'openai_native', default: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+  })
+
+  const available = health?.available
+  const models: string[] = health?.models || []
+  const currentModel = config?.model && config.model !== 'default' ? config.model : null
+
+  return (
+    <div style={{ paddingTop: '0.75rem' }}>
+      {available ? (
+        <div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span className="badge badge-green">connected</span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via ChatGPT subscription</span>
+          </div>
+          {models.length > 0 && (
+            <div style={{ marginBottom: '0.5rem' }}>
+              <label style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Model</label>
+              <select
+                value={currentModel || ''}
+                onChange={e => pickModel.mutate(e.target.value)}
+                style={{ width: '100%', fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
+              >
+                {!currentModel && <option value="">Select a model</option>}
+                {models.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}
+              style={{ fontSize: '0.72rem' }}>Set as default</button>
+            <p className="hint" style={{ margin: 0 }}>Auto-refreshes before expiry.</p>
+          </div>
+        </div>
+      ) : oauthState?.state === 'awaiting' ? (
+        <div style={{ fontSize: '0.78rem' }}>
+          <p>Waiting for authorization in browser...</p>
+          <p className="hint">Complete login at auth.openai.com, then return here.</p>
+          <button className="secondary" onClick={() => cancel.mutate()} style={{ marginTop: '0.4rem' }}>Cancel</button>
+        </div>
+      ) : oauthState?.state === 'failed' ? (
+        <div>
+          <p className="hint"><span className="badge badge-red">failed</span> {oauthState.error}</p>
+          <button onClick={() => start.mutate()} disabled={start.isPending} style={{ marginTop: '0.4rem' }}>Retry</button>
+        </div>
+      ) : (
+        <div>
+          <p style={{ fontSize: '0.78rem', marginBottom: '0.5rem', color: 'var(--muted)' }}>
+            Sign in with your ChatGPT Plus or Pro subscription. No API key needed.
+          </p>
+          <button onClick={() => start.mutate()} disabled={start.isPending}>Connect ChatGPT</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Claude OAuth panel (Claude Max/Pro subscription) ───
+
+function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc: any }) {
+  const [oauthState, setOauthState] = useState<{ state: string; auth_url?: string | null; error?: string | null } | null>(null)
+  const [code, setCode] = useState('')
+
+  const start = useMutation({
+    mutationFn: api.claudeOAuthStart,
+    onSuccess: r => {
+      setOauthState(r)
+      if (r.auth_url) window.open(r.auth_url, '_blank')
+    },
+  })
+  const complete = useMutation({
+    mutationFn: () => api.claudeOAuthComplete({ code: code.trim() }),
+    onSuccess: r => {
+      setOauthState(r)
+      if (r.state === 'completed') {
+        qc.invalidateQueries({ queryKey: ['model-health'] })
+        qc.invalidateQueries({ queryKey: ['model'] })
+      }
+    },
+  })
+  const cancel = useMutation({ mutationFn: api.claudeOAuthCancel, onSuccess: () => { setOauthState(null); setCode('') } })
+  const pickModel = useMutation({
+    mutationFn: (slug: string) => api.setModelProvider({ provider: 'anthropic_native', model: slug, enabled: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['model-health'] }) },
+  })
+  const setDefault = useMutation({
+    mutationFn: () => api.setModelProvider({ provider: 'anthropic_native', default: true }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+  })
+
+  const available = health?.available
+  const models: string[] = health?.models || []
+  const currentModel = config?.model && config.model !== 'default' ? config.model : null
+
+  return (
+    <div style={{ paddingTop: '0.75rem' }}>
+      {available ? (
+        <div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span className="badge badge-green">connected</span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via Claude subscription</span>
+          </div>
+          {models.length > 0 && (
+            <div style={{ marginBottom: '0.5rem' }}>
+              <label style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Model</label>
+              <select
+                value={currentModel || ''}
+                onChange={e => pickModel.mutate(e.target.value)}
+                style={{ width: '100%', fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
+              >
+                {!currentModel && <option value="">Select a model</option>}
+                {models.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}
+              style={{ fontSize: '0.72rem' }}>Set as default</button>
+            <p className="hint" style={{ margin: 0 }}>Auto-refreshes before expiry.</p>
+          </div>
+        </div>
+      ) : oauthState?.state === 'awaiting_code' ? (
+        <div style={{ fontSize: '0.78rem' }}>
+          <p style={{ marginBottom: '0.4rem' }}>1. Complete login at claude.ai in your browser</p>
+          <p style={{ marginBottom: '0.4rem' }}>2. Copy the authorization code shown on the page</p>
+          <p style={{ marginBottom: '0.5rem' }}>3. Paste it below:</p>
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+            <input
+              type="text" value={code} onChange={e => setCode(e.target.value)}
+              placeholder="Paste authorization code"
+              style={{ flex: 1, fontFamily: 'var(--mono)', fontSize: '0.78rem' }}
+            />
+            <button onClick={() => complete.mutate()} disabled={!code.trim() || complete.isPending}>Submit</button>
+          </div>
+          <button className="secondary" onClick={() => cancel.mutate()} style={{ marginTop: '0.4rem' }}>Cancel</button>
+        </div>
+      ) : oauthState?.state === 'failed' ? (
+        <div>
+          <p className="hint"><span className="badge badge-red">failed</span> {oauthState.error}</p>
+          <button onClick={() => start.mutate()} disabled={start.isPending} style={{ marginTop: '0.4rem' }}>Retry</button>
+        </div>
+      ) : (
+        <div>
+          <p style={{ fontSize: '0.78rem', marginBottom: '0.5rem', color: 'var(--muted)' }}>
+            Sign in with your Claude Max or Pro subscription. No API key needed.
+          </p>
+          <button onClick={() => start.mutate()} disabled={start.isPending}>Connect Claude</button>
         </div>
       )}
     </div>

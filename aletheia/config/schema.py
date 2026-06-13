@@ -134,6 +134,11 @@ class ProviderConfig(BaseModel):
     # Auth header for anthropic_compatible: "x-api-key" (native Anthropic, default)
     # or "bearer" (gateway-fronted endpoints e.g. Databricks AI Gateway).
     auth_scheme: str = "x-api-key"
+    # OAuth subscription auth (openai_native / anthropic_native)
+    auth_type: str = "api_key"  # "api_key" | "oauth" | "none"
+    oauth_token_ref: str | None = None
+    oauth_refresh_ref: str | None = None
+    oauth_expires_at: int | None = None  # Unix ms timestamp
 
 
 class ModelsConfig(BaseModel):

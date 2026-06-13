@@ -56,14 +56,17 @@ def _infer_capabilities(model_id: str) -> list[str]:
 class OpenAINativeProvider(ModelProvider):
     name = "openai_native"
 
-    def __init__(self, model: str = "gpt-4o", api_key: str | None = None):
+    def __init__(self, model: str = "gpt-4o", api_key: str | None = None,
+                 oauth_token: str | None = None):
         self.model = model
         self.api_key = api_key
+        self.oauth_token = oauth_token
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
-        if self.api_key:
-            h["Authorization"] = f"Bearer {self.api_key}"
+        token = self.oauth_token or self.api_key
+        if token:
+            h["Authorization"] = f"Bearer {token}"
         return h
 
     async def complete(self, request: ModelRequest) -> ModelResponse:

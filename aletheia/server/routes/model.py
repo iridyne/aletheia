@@ -343,3 +343,130 @@ async def set_model(req: ModelConfigRequest):
 
     return {"provider": req.provider, "default_provider": cfg.models.default_provider,
             "api_key": _key_status(pcfg.api_key_secret_ref)}
+
+
+# --- OpenAI subscription OAuth ---
+
+@router.post("/model/openai-oauth/start")
+async def openai_oauth_start():
+    """Begin OpenAI OAuth PKCE flow. Returns {auth_url} for frontend to open."""
+    from aletheia.model_provider import openai_oauth
+    result = await openai_oauth.start_login()
+    return result
+
+
+@router.get("/model/openai-oauth/status")
+async def openai_oauth_status():
+    """Poll OpenAI OAuth login status. No tokens exposed."""
+    from aletheia.model_provider import openai_oauth
+    status = openai_oauth.get_status()
+    # If completed, persist tokens and update config
+    if status["state"] == "completed":
+        tokens = openai_oauth.get_tokens()
+        if tokens:
+            _persist_openai_oauth(tokens)
+    return status
+
+
+@router.post("/model/openai-oauth/cancel")
+async def openai_oauth_cancel():
+    from aletheia.model_provider import openai_oauth
+    return await openai_oauth.cancel()
+
+
+def _persist_openai_oauth(tokens: dict) -> None:
+    """Save OpenAI OAuth tokens to secrets + update config."""
+    cfg = load_config()
+    pcfg = cfg.models.providers.get("openai_native")
+    if pcfg is None:
+        from aletheia.config.schema import ProviderConfig
+        pcfg = ProviderConfig(type="openai_native")
+        cfg.models.providers["openai_native"] = pcfg
+
+    pcfg.auth_type = "oauth"
+    pcfg.enabled = True
+
+    if tokens.get("api_key"):
+        ref = "model.openai_native.oauth_token"
+        set_secret(ref, tokens["api_key"])
+        pcfg.oauth_token_ref = ref
+
+    if tokens.get("refresh_token"):
+        ref = "model.openai_native.oauth_refresh"
+        set_secret(ref, tokens["refresh_token"])
+        pcfg.oauth_refresh_ref = ref
+
+    if tokens.get("expires_at"):
+        pcfg.oauth_expires_at = tokens["expires_at"]
+
+    save_config(cfg)
+    clear_cache()
+
+
+# --- Claude subscription OAuth ---
+
+@router.post("/model/claude-oauth/start")
+async def claude_oauth_start():
+    """Begin Claude OAuth PKCE flow. Returns {auth_url} for frontend to open."""
+    from aletheia.model_provider import claude_oauth
+    result = await claude_oauth.start_login()
+    return result
+
+
+class ClaudeOAuthCompleteRequest(BaseModel):
+    code: str
+
+
+@router.post("/model/claude-oauth/complete")
+async def claude_oauth_complete(req: ClaudeOAuthCompleteRequest):
+    """Complete Claude OAuth by exchanging user-provided code."""
+    from aletheia.model_provider import claude_oauth
+    result = await claude_oauth.complete_login(req.code)
+    # If completed, persist tokens
+    if result.get("state") == "completed":
+        tokens = claude_oauth.get_tokens()
+        if tokens:
+            _persist_claude_oauth(tokens)
+    return result
+
+
+@router.get("/model/claude-oauth/status")
+async def claude_oauth_status():
+    """Poll Claude OAuth login status."""
+    from aletheia.model_provider import claude_oauth
+    return claude_oauth.get_status()
+
+
+@router.post("/model/claude-oauth/cancel")
+async def claude_oauth_cancel():
+    from aletheia.model_provider import claude_oauth
+    return claude_oauth.cancel()
+
+
+def _persist_claude_oauth(tokens: dict) -> None:
+    """Save Claude OAuth tokens to secrets + update config."""
+    cfg = load_config()
+    pcfg = cfg.models.providers.get("anthropic_native")
+    if pcfg is None:
+        from aletheia.config.schema import ProviderConfig
+        pcfg = ProviderConfig(type="anthropic_native")
+        cfg.models.providers["anthropic_native"] = pcfg
+
+    pcfg.auth_type = "oauth"
+    pcfg.enabled = True
+
+    if tokens.get("access_token"):
+        ref = "model.anthropic_native.oauth_token"
+        set_secret(ref, tokens["access_token"])
+        pcfg.oauth_token_ref = ref
+
+    if tokens.get("refresh_token"):
+        ref = "model.anthropic_native.oauth_refresh"
+        set_secret(ref, tokens["refresh_token"])
+        pcfg.oauth_refresh_ref = ref
+
+    if tokens.get("expires_at"):
+        pcfg.oauth_expires_at = tokens["expires_at"]
+
+    save_config(cfg)
+    clear_cache()

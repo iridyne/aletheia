@@ -223,6 +223,17 @@ export const api = {
   codexLoginCancel: () => post('/model/codex/login-cancel'),
   getCodexModels: () => fetchJson<{ slug: string; display_name: string }[]>('/model/codex/models'),
 
+  // OpenAI subscription OAuth (ChatGPT Plus/Pro)
+  openaiOAuthStart: () => post<{ state: string; auth_url: string | null; error: string | null }>('/model/openai-oauth/start'),
+  openaiOAuthStatus: () => fetchJson<{ state: string; auth_url: string | null; error: string | null }>('/model/openai-oauth/status'),
+  openaiOAuthCancel: () => post('/model/openai-oauth/cancel'),
+
+  // Claude subscription OAuth (Claude Max/Pro)
+  claudeOAuthStart: () => post<{ state: string; auth_url: string | null; error: string | null }>('/model/claude-oauth/start'),
+  claudeOAuthComplete: (body: { code: string }) => post<{ state: string; error: string | null }>('/model/claude-oauth/complete', body),
+  claudeOAuthStatus: () => fetchJson<{ state: string; auth_url: string | null; error: string | null }>('/model/claude-oauth/status'),
+  claudeOAuthCancel: () => post('/model/claude-oauth/cancel'),
+
   // Bitget credentials + connection test (write-only secrets)
   getBitgetCredStatus: () => fetchJson<{ demo: any; live: any }>('/bitget/credentials-status'),
   setExchangeCredentials: (body: {

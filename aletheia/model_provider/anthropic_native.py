@@ -35,16 +35,20 @@ def _infer_context(model_id: str) -> int | None:
 class AnthropicNativeProvider(ModelProvider):
     name = "anthropic_native"
 
-    def __init__(self, model: str = "claude-sonnet-4-6", api_key: str | None = None):
+    def __init__(self, model: str = "claude-sonnet-4-6", api_key: str | None = None,
+                 oauth_token: str | None = None):
         self.model = model
         self.api_key = api_key
+        self.oauth_token = oauth_token
 
     def _headers(self) -> dict:
         h = {
             "Content-Type": "application/json",
             "anthropic-version": API_VERSION,
         }
-        if self.api_key:
+        if self.oauth_token:
+            h["Authorization"] = f"Bearer {self.oauth_token}"
+        elif self.api_key:
             h["x-api-key"] = self.api_key
         return h
 
