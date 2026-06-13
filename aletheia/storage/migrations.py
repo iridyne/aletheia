@@ -937,6 +937,201 @@ CREATE TABLE IF NOT EXISTS ps_job_runs (
     result_json TEXT,
     error_json TEXT
 );
+
+-- ====================================================================
+-- Universe Generator tables
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS universe_registry (
+    id TEXT PRIMARY KEY,
+    venue TEXT NOT NULL,
+    market_type TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    base_asset TEXT,
+    quote_asset TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    min_notional REAL,
+    price_precision INTEGER,
+    amount_precision INTEGER,
+    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    is_blacklisted INTEGER DEFAULT 0,
+    blacklist_reason TEXT,
+    metadata TEXT DEFAULT '{}'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_universe_registry_venue_symbol
+    ON universe_registry (venue, symbol, market_type);
+
+CREATE TABLE IF NOT EXISTS universe_feature_snapshots (
+    id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL REFERENCES universe_registry(id),
+    ts TEXT NOT NULL DEFAULT (datetime('now')),
+    quote_volume_24h REAL,
+    volume_1h REAL,
+    spread_bps REAL,
+    depth_10bps_usd REAL,
+    atr_pct REAL,
+    rsi_14 REAL,
+    return_1h REAL,
+    return_4h REAL,
+    return_24h REAL,
+    funding_rate REAL,
+    open_interest REAL,
+    oi_delta_1h REAL,
+    data_freshness_sec INTEGER,
+    raw TEXT DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_universe_features_asset_ts
+    ON universe_feature_snapshots (asset_id, ts DESC);
+
+CREATE TABLE IF NOT EXISTS universe_scanner_runs (
+    id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    policy_id TEXT,
+    assets_scanned INTEGER DEFAULT 0,
+    assets_passed INTEGER DEFAULT 0,
+    snapshot_id TEXT,
+    errors TEXT DEFAULT '[]',
+    metrics TEXT DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS universe_snapshots (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    market_type TEXT NOT NULL DEFAULT 'crypto',
+    policy_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    expires_at TEXT,
+    summary TEXT DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_universe_snapshots_status
+    ON universe_snapshots (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS universe_members (
+    id TEXT PRIMARY KEY,
+    snapshot_id TEXT NOT NULL REFERENCES universe_snapshots(id),
+    asset_id TEXT NOT NULL REFERENCES universe_registry(id),
+    symbol TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    total_score REAL NOT NULL,
+    opportunity_score REAL,
+    tradability_score REAL,
+    liquidity_score REAL,
+    estimated_cost REAL,
+    crowding_risk REAL,
+    late_entry_penalty REAL,
+    scanner_family TEXT,
+    ttl_sec INTEGER NOT NULL DEFAULT 3600,
+    expires_at TEXT NOT NULL,
+    inclusion_reason TEXT DEFAULT '[]',
+    risk_flags TEXT DEFAULT '[]',
+    execution_eligible INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_universe_members_snapshot
+    ON universe_members (snapshot_id, rank);
+
+CREATE TABLE IF NOT EXISTS universe_policies (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by TEXT NOT NULL DEFAULT 'system',
+    active INTEGER DEFAULT 0,
+    market_type TEXT NOT NULL DEFAULT 'crypto',
+    family_quota TEXT NOT NULL DEFAULT '{}',
+    scoring_weights TEXT NOT NULL DEFAULT '{}',
+    filters TEXT NOT NULL DEFAULT '{}',
+    ttl_policy TEXT NOT NULL DEFAULT '{}',
+    explore_ratio REAL NOT NULL DEFAULT 0.2,
+    max_weight_step REAL DEFAULT 0.15,
+    change_reason TEXT,
+    previous_policy_id TEXT
+);
+"""
+
+_PREDICTION_OBSERVER_RUNS_DDL = """
+CREATE TABLE IF NOT EXISTS prediction_observer_runs (
+    id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    markets_scanned INTEGER DEFAULT 0,
+    opportunities_created INTEGER DEFAULT 0,
+    errors TEXT DEFAULT '[]',
+    categories TEXT DEFAULT '[]'
+);
+"""
+
+_PREDICTION_NORMALIZED_DDL = """
+CREATE TABLE IF NOT EXISTS prediction_events (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL DEFAULT 'polymarket',
+    external_event_id TEXT NOT NULL,
+    slug TEXT,
+    title TEXT NOT NULL,
+    description TEXT,
+    category TEXT,
+    tags TEXT DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active',
+    starts_at TEXT,
+    ends_at TEXT,
+    resolution_at TEXT,
+    liquidity REAL,
+    volume_24h REAL,
+    raw TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS prediction_markets (
+    id TEXT PRIMARY KEY,
+    event_id TEXT REFERENCES prediction_events(id),
+    source TEXT NOT NULL DEFAULT 'polymarket',
+    external_market_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    condition_id TEXT,
+    outcomes TEXT DEFAULT '[]',
+    outcome_prices TEXT DEFAULT '[]',
+    yes_probability REAL,
+    no_probability REAL,
+    probability_change_24h REAL,
+    enable_orderbook INTEGER DEFAULT 0,
+    best_bid REAL,
+    best_ask REAL,
+    spread_bps REAL,
+    liquidity REAL,
+    volume_24h REAL,
+    status TEXT NOT NULL DEFAULT 'active',
+    raw TEXT DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS prediction_probability_snapshots (
+    id TEXT PRIMARY KEY,
+    market_id TEXT NOT NULL REFERENCES prediction_markets(id),
+    ts TEXT NOT NULL,
+    yes_probability REAL,
+    no_probability REAL,
+    liquidity REAL,
+    volume_24h REAL,
+    source_latency_ms INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_pred_snap_market_ts ON prediction_probability_snapshots(market_id, ts);
+
+CREATE TABLE IF NOT EXISTS prediction_market_claims (
+    id TEXT PRIMARY KEY,
+    market_id TEXT NOT NULL REFERENCES prediction_markets(id),
+    run_id TEXT,
+    claim_text TEXT NOT NULL,
+    claim_type TEXT NOT NULL DEFAULT 'observation',
+    direction TEXT,
+    confidence REAL DEFAULT 0.5,
+    source TEXT DEFAULT 'prediction_observer',
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_pred_claims_market ON prediction_market_claims(market_id);
 """
 
 
@@ -1018,6 +1213,13 @@ _ADDITIVE_COLUMNS = [
     ("published_at", "serenity_evidence", "TEXT"),
     ("fetched_at", "serenity_evidence", "TEXT"),
     ("metadata", "serenity_evidence", "TEXT DEFAULT '{}'"),
+    ("error_reason", "orders", "TEXT"),
+    # Prediction Market Lens: structured metadata for prediction/equity opportunities
+    ("metadata", "opportunities", "TEXT DEFAULT '{}'"),
+    # Universe Generator: link opportunities back to the universe snapshot that sourced them
+    ("universe_snapshot_id", "opportunities", "TEXT"),
+    ("universe_member_id", "opportunities", "TEXT"),
+    ("scanner_family", "opportunities", "TEXT"),
 ]
 
 
@@ -1132,6 +1334,8 @@ def run_migrations() -> None:
     """Run all idempotent schema creation statements."""
     db = get_db()
     db.executescript(SCHEMA_SQL)
+    db.executescript(_PREDICTION_OBSERVER_RUNS_DDL)
+    db.executescript(_PREDICTION_NORMALIZED_DDL)
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts(db)

@@ -117,6 +117,170 @@ def update_opportunity(oid: str, **kwargs) -> None:
     _update("opportunities", oid, kwargs)
 
 
+def list_opportunities_by_asset_class(asset_class: str, limit: int = 50) -> list[dict]:
+    return _select_all("opportunities", where="asset_class = ?", params=(asset_class,), limit=limit)
+
+
+# --- Prediction Observer Runs ---
+
+def insert_prediction_run(run_id: str, categories: list) -> None:
+    import json as _json
+    from aletheia.storage.models import _utcnow
+    _insert("prediction_observer_runs", {
+        "id": run_id,
+        "started_at": _utcnow(),
+        "status": "running",
+        "categories": _json.dumps(categories),
+    })
+
+
+def update_prediction_run(run_id: str, *, status: str = "completed",
+                          markets_scanned: int = 0, opportunities_created: int = 0,
+                          errors: list | None = None) -> None:
+    import json as _json
+    from aletheia.storage.models import _utcnow
+    data: dict = {
+        "status": status,
+        "completed_at": _utcnow(),
+        "markets_scanned": markets_scanned,
+        "opportunities_created": opportunities_created,
+    }
+    if errors:
+        data["errors"] = _json.dumps(errors)
+    _update("prediction_observer_runs", run_id, data)
+
+
+def list_prediction_runs(limit: int = 20) -> list[dict]:
+    return _select_all("prediction_observer_runs", limit=limit)
+
+
+def get_latest_prediction_run() -> dict | None:
+    rows = _select_all("prediction_observer_runs", order="started_at DESC", limit=1)
+    return rows[0] if rows else None
+
+
+# --- Prediction Normalized Tables ---
+
+def upsert_prediction_event(data: dict) -> str:
+    """Insert or update a prediction event by external_event_id."""
+    from aletheia.storage.models import new_id, _utcnow
+    db = get_db()
+    was_in_tx = db.in_transaction
+    ext_id = data["external_event_id"]
+    existing = db.execute(
+        "SELECT id FROM prediction_events WHERE external_event_id = ? AND source = ?",
+        (ext_id, data.get("source", "polymarket")),
+    ).fetchone()
+    if existing:
+        row_id = existing["id"]
+        data["updated_at"] = _utcnow()
+        data.pop("id", None)
+        data.pop("created_at", None)
+        sets = ", ".join(f"{k} = ?" for k in data.keys())
+        db.execute(f"UPDATE prediction_events SET {sets} WHERE id = ?", [*data.values(), row_id])
+    else:
+        row_id = data.get("id") or new_id()
+        data["id"] = row_id
+        data.setdefault("created_at", _utcnow())
+        data.setdefault("updated_at", _utcnow())
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" * len(data))
+        db.execute(f"INSERT INTO prediction_events ({cols}) VALUES ({placeholders})", list(data.values()))
+    if not was_in_tx:
+        db.commit()
+    return row_id
+
+
+def upsert_prediction_market(data: dict) -> str:
+    """Insert or update a prediction market by external_market_id."""
+    from aletheia.storage.models import new_id, _utcnow
+    db = get_db()
+    was_in_tx = db.in_transaction
+    ext_id = data["external_market_id"]
+    existing = db.execute(
+        "SELECT id FROM prediction_markets WHERE external_market_id = ? AND source = ?",
+        (ext_id, data.get("source", "polymarket")),
+    ).fetchone()
+    if existing:
+        row_id = existing["id"]
+        data["updated_at"] = _utcnow()
+        data.pop("id", None)
+        sets = ", ".join(f"{k} = ?" for k in data.keys())
+        db.execute(f"UPDATE prediction_markets SET {sets} WHERE id = ?", [*data.values(), row_id])
+    else:
+        row_id = data.get("id") or new_id()
+        data["id"] = row_id
+        data.setdefault("updated_at", _utcnow())
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join("?" * len(data))
+        db.execute(f"INSERT INTO prediction_markets ({cols}) VALUES ({placeholders})", list(data.values()))
+    if not was_in_tx:
+        db.commit()
+    return row_id
+
+
+def insert_probability_snapshot(snapshot: dict) -> None:
+    from aletheia.storage.models import new_id, _utcnow
+    snapshot.setdefault("id", new_id())
+    snapshot.setdefault("created_at", _utcnow())
+    _insert("prediction_probability_snapshots", snapshot)
+
+
+def list_prediction_events(category: str | None = None, status: str = "active", limit: int = 50) -> list[dict]:
+    parts = []
+    params: list = []
+    if status:
+        parts.append("status = ?")
+        params.append(status)
+    if category:
+        parts.append("category LIKE ?")
+        params.append(f"%{category}%")
+    where = " AND ".join(parts) if parts else None
+    return _select_all("prediction_events", where=where, params=tuple(params), order="updated_at DESC", limit=limit)
+
+
+def get_prediction_event(event_id: str) -> dict | None:
+    return _select_one("prediction_events", event_id)
+
+
+def list_prediction_markets_for_event(event_id: str, limit: int = 50) -> list[dict]:
+    return _select_all("prediction_markets", where="event_id = ?", params=(event_id,), limit=limit)
+
+
+def get_prediction_market_by_id(market_id: str) -> dict | None:
+    return _select_one("prediction_markets", market_id)
+
+
+def list_probability_snapshots(market_id: str, since: str | None = None, limit: int = 200) -> list[dict]:
+    parts = ["market_id = ?"]
+    params: list = [market_id]
+    if since:
+        parts.append("ts >= ?")
+        params.append(since)
+    where = " AND ".join(parts)
+    return _select_all("prediction_probability_snapshots", where=where, params=tuple(params), order="ts ASC", limit=limit)
+
+
+def insert_prediction_claim(data: dict) -> None:
+    from aletheia.storage.models import new_id, _utcnow
+    data.setdefault("id", new_id())
+    data.setdefault("created_at", _utcnow())
+    _insert("prediction_market_claims", data)
+
+
+def list_prediction_claims(market_id: str | None = None, claim_type: str | None = None, limit: int = 100) -> list[dict]:
+    parts = []
+    params: list = []
+    if market_id:
+        parts.append("market_id = ?")
+        params.append(market_id)
+    if claim_type:
+        parts.append("claim_type = ?")
+        params.append(claim_type)
+    where = " AND ".join(parts) if parts else None
+    return _select_all("prediction_market_claims", where=where, params=tuple(params), order="created_at DESC", limit=limit)
+
+
 # --- Trade Proposals ---
 
 def insert_trade_proposal(p: TradeProposal) -> None:
@@ -883,3 +1047,152 @@ def get_ohlcv_candles(
         ).fetchall()
     # Reverse so callers get oldest→newest
     return [dict(r) for r in reversed(rows)]
+
+
+# --- Universe Generator ---
+
+from aletheia.storage.models import (
+    UniverseAsset, UniverseFeatureSnapshot, UniverseScannerRun,
+    UniverseSnapshot, UniverseMember, UniversePolicy,
+)
+
+
+def insert_universe_asset(asset: UniverseAsset) -> None:
+    _insert("universe_registry", asset.model_dump())
+
+
+def upsert_universe_asset(asset: UniverseAsset) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    row = db.execute(
+        "SELECT id FROM universe_registry WHERE venue = ? AND symbol = ? AND market_type = ?",
+        (asset.venue, asset.symbol, asset.market_type),
+    ).fetchone()
+    if row:
+        db.execute(
+            "UPDATE universe_registry SET status = ?, last_seen_at = ?, "
+            "min_notional = ?, price_precision = ?, amount_precision = ?, metadata = ? "
+            "WHERE id = ?",
+            (asset.status, asset.last_seen_at, asset.min_notional,
+             asset.price_precision, asset.amount_precision, asset.metadata, row["id"]),
+        )
+    else:
+        data = asset.model_dump()
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join(["?"] * len(data))
+        db.execute(f"INSERT INTO universe_registry ({cols}) VALUES ({placeholders})", list(data.values()))
+    if not was_in_tx:
+        db.commit()
+
+
+def get_universe_asset_by_symbol(venue: str, symbol: str, market_type: str) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM universe_registry WHERE venue = ? AND symbol = ? AND market_type = ?",
+        (venue, symbol, market_type),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_universe_assets(venue: str | None = None, active_only: bool = True, limit: int = 500) -> list[dict]:
+    db = get_db()
+    sql = "SELECT * FROM universe_registry"
+    params: list = []
+    conditions = []
+    if venue:
+        conditions.append("venue = ?")
+        params.append(venue)
+    if active_only:
+        conditions.append("status = 'active'")
+        conditions.append("is_blacklisted = 0")
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+    sql += f" ORDER BY last_seen_at DESC LIMIT {limit}"
+    return [dict(r) for r in db.execute(sql, params).fetchall()]
+
+
+def insert_universe_feature_snapshot(snap: UniverseFeatureSnapshot) -> None:
+    _insert("universe_feature_snapshots", snap.model_dump())
+
+
+def insert_universe_scanner_run(run: UniverseScannerRun) -> None:
+    _insert("universe_scanner_runs", run.model_dump())
+
+
+def update_universe_scanner_run(run_id: str, **kwargs) -> None:
+    _update("universe_scanner_runs", run_id, kwargs)
+
+
+def insert_universe_snapshot(snap: UniverseSnapshot) -> None:
+    _insert("universe_snapshots", snap.model_dump())
+
+
+def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM universe_snapshots WHERE status = 'active' AND market_type = ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (market_type,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def expire_universe_snapshots(market_type: str = "crypto", except_id: str | None = None) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    if except_id:
+        db.execute(
+            "UPDATE universe_snapshots SET status = 'superseded' "
+            "WHERE status = 'active' AND market_type = ? AND id != ?",
+            (market_type, except_id),
+        )
+    else:
+        db.execute(
+            "UPDATE universe_snapshots SET status = 'superseded' "
+            "WHERE status = 'active' AND market_type = ?",
+            (market_type,),
+        )
+    if not was_in_tx:
+        db.commit()
+
+
+def insert_universe_member(member: UniverseMember) -> None:
+    _insert("universe_members", member.model_dump())
+
+
+def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
+    return _select_all(
+        "universe_members",
+        where="snapshot_id = ?",
+        params=(snapshot_id,),
+        order="rank ASC",
+        limit=limit,
+    )
+
+
+def get_universe_member(member_id: str) -> dict | None:
+    return _select_one("universe_members", member_id)
+
+
+def insert_universe_policy(policy: UniversePolicy) -> None:
+    _insert("universe_policies", policy.model_dump())
+
+
+def get_active_universe_policy(market_type: str = "crypto") -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM universe_policies WHERE active = 1 AND market_type = ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (market_type,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_universe_snapshots(market_type: str = "crypto", limit: int = 20) -> list[dict]:
+    return _select_all(
+        "universe_snapshots",
+        where="market_type = ?",
+        params=(market_type,),
+        order="created_at DESC",
+        limit=limit,
+    )

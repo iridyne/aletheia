@@ -36,7 +36,7 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
 # --- Registry tests ---
 
 def test_registry_has_32_commands():
-    assert len(COMMANDS) == 37
+    assert len(COMMANDS) == 38
 
 
 def test_registry_all_read_commands_require_observe():
@@ -48,7 +48,7 @@ def test_registry_all_read_commands_require_observe():
 
 def test_registry_operational_commands_require_paper():
     ops = [c for c in COMMANDS.values() if c.risk_level == "operational"]
-    assert len(ops) == 14
+    assert len(ops) == 15
     observe_ops = {c.name for c in ops if c.required_permission == "Observe"}
     paper_ops = {c.name for c in ops if c.required_permission == "Paper"}
     assert observe_ops == {
@@ -61,6 +61,7 @@ def test_registry_operational_commands_require_paper():
         "resume_agents",
         "set_symbol_observe_only",
         "create_paper_experiment",
+        "reconcile_positions",
         "pause_paper_strategy",
         "propose_strategy_promotion",
         "propose_prompt_change",
@@ -124,7 +125,7 @@ def test_allowed_commands_observe():
 
 def test_allowed_commands_paper():
     cmds = allowed_commands("Paper")
-    assert len(cmds) == 37
+    assert len(cmds) == 38
 
 
 # --- Intent keyword fallback tests ---

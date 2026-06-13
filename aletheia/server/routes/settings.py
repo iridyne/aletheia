@@ -54,6 +54,7 @@ async def get_settings():
             "observed_instruments": cfg.market_data.observed_instruments,
             "ccxt_exchange": cfg.market_data.ccxt_exchange,
         },
+        "universe": cfg.universe.model_dump(mode="json"),
     }
 
 
@@ -490,3 +491,51 @@ async def update_trading_config(req: TradingConfigUpdate):
                  "after": cfg.trading.model_dump(mode="json"),
                  "message": f"Trading config updated: {list(updates.keys())}"})
     return {"updated": updates, "trading": cfg.trading.model_dump(mode="json")}
+
+
+# ---------------------------------------------------------------------------
+# Universe config
+# ---------------------------------------------------------------------------
+
+class UniverseConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    refresh_interval_min: Optional[int] = None
+    max_candidates: Optional[int] = None
+    core_pool_size: Optional[int] = None
+    min_volume_24h_usdt: Optional[float] = None
+    max_spread_bps: Optional[float] = None
+    explore_ratio: Optional[float] = None
+    blacklist: Optional[list[str]] = None
+
+
+_UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
+    "refresh_interval_min": (1, 60),
+    "max_candidates": (5, 100),
+    "core_pool_size": (1, 50),
+    "min_volume_24h_usdt": (100_000, 500_000_000),
+    "max_spread_bps": (1, 200),
+    "explore_ratio": (0.0, 0.5),
+}
+
+
+@router.post("/universe")
+async def update_universe_config(req: UniverseConfigUpdate):
+    """Update universe generator parameters."""
+    cfg = load_config()
+    old = cfg.universe.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+
+    for field, value in updates.items():
+        if field in _UNIVERSE_BOUNDS:
+            lo, hi = _UNIVERSE_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        setattr(cfg.universe, field, value)
+
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "universe_config_changed",
+                 "entity_type": "universe_config", "before": old,
+                 "after": cfg.universe.model_dump(mode="json"),
+                 "message": f"Universe config updated: {list(updates.keys())}"})
+    return {"updated": updates, "universe": cfg.universe.model_dump(mode="json")}

@@ -103,6 +103,11 @@ def init_scheduler() -> BackgroundScheduler | None:
         _run_risk_critic, "interval", hours=6,
         id="risk_critic", misfire_grace_time=300,
     )
+    # Universe Generator — dynamic asset pool refresh.
+    _scheduler.add_job(
+        _run_universe_refresh, "interval", minutes=10,
+        id="universe_refresh", misfire_grace_time=120,
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -365,6 +370,24 @@ def _run_risk_critic():
         asyncio.run(_async_run("risk_critic"))
     except Exception as e:
         logger.warning("risk_critic job failed: %s", e)
+
+
+def _run_universe_refresh():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    if not cfg.universe.enabled:
+        return
+    try:
+        asyncio.run(_async_universe_refresh())
+    except Exception as e:
+        logger.warning("universe_refresh job failed: %s", e)
+
+
+async def _async_universe_refresh():
+    from aletheia.universe.service import UniverseService
+    svc = UniverseService()
+    await svc.refresh()
 
 
 async def _async_run(agent_name: str):

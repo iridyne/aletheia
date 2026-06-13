@@ -266,6 +266,24 @@ class UpdateConfig(BaseModel):
     current_commit: str | None = None
 
 
+class UniverseConfig(BaseModel):
+    enabled: bool = False
+    refresh_interval_min: int = 10
+    market_type: str = "crypto"
+    max_candidates: int = 30
+    core_pool_size: int = 10
+    min_volume_24h_usdt: float = 5_000_000
+    max_spread_bps: float = 25.0
+    min_depth_10bps_usd: float = 25_000
+    explore_ratio: float = 0.2
+    family_quota: dict[str, float] = Field(default_factory=lambda: {
+        "momentum": 0.30, "mean_reversion": 0.20,
+        "derivatives": 0.30, "event": 0.20,
+    })
+    blacklist: list[str] = Field(default_factory=list)
+    fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -281,3 +299,4 @@ class AletheiaConfig(BaseModel):
     trading: TradingConfig = Field(default_factory=TradingConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
+    universe: UniverseConfig = Field(default_factory=UniverseConfig)

@@ -56,14 +56,28 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
 
     # Pick the most recent OPEN crypto opportunity for an allowed symbol.
     # equity and prediction asset_classes are observation-only — never traded.
+    # Universe-sourced opportunities with expired TTL or execution_eligible=False are skipped.
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+
     opp = None
     for row in list_opportunities(limit=50):
         ac = row.get("asset_class") or "crypto"  # NULL = legacy crypto row
         if ac != "crypto":
             continue
-        if row.get("status") == "open" and row.get("symbol") in allowed_symbols:
-            opp = row
-            break
+        if row.get("status") != "open" or row.get("symbol") not in allowed_symbols:
+            continue
+        # Universe guards: skip non-eligible or TTL-expired universe members
+        if row.get("universe_member_id"):
+            from aletheia.storage.repositories import get_universe_member
+            member = get_universe_member(row["universe_member_id"])
+            if member:
+                if not member.get("execution_eligible", True):
+                    continue
+                if member.get("expires_at") and member["expires_at"] < now_iso:
+                    continue
+        opp = row
+        break
     if opp is None:
         outputs.append("no_open_opportunity")
         return {"outputs": outputs, "errors": errors}

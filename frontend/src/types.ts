@@ -42,6 +42,7 @@ export interface Order {
   status: string
   created_at: string
   filled_at: string | null
+  error_reason: string | null
 }
 
 export interface Fill {
@@ -75,6 +76,8 @@ export interface Position {
   closed_at: string | null
 }
 
+export type AssetClass = 'crypto' | 'equity' | 'prediction'
+
 export interface Opportunity {
   id: string
   symbol: string
@@ -87,6 +90,101 @@ export interface Opportunity {
   created_at: string
   status: string
   linked_strategy_id: string | null
+  asset_class: AssetClass
+  metadata: string | null
+}
+
+export interface PredictionMarket {
+  id: string
+  event_title: string
+  yes_probability: number | null
+  probability_change_24h: number | null
+  volume_24h: number | null
+  liquidity: number | null
+  resolution_at: string | null
+  category: string
+  direction_bias: string | null
+  confidence: string | null
+  confidence_score: number | null
+  status: string | null
+  created_at: string | null
+  market_id: string
+  enable_orderbook: boolean
+  source: string
+}
+
+export interface PredictionObserverRun {
+  id: string
+  started_at: string
+  completed_at: string | null
+  status: string
+  markets_scanned: number
+  opportunities_created: number
+  errors: string[]
+  categories: string[]
+}
+
+export interface PredictionStatus {
+  last_run: PredictionObserverRun | null
+  categories: string[]
+  total_opportunities: number
+  open_opportunities: number
+  observer_interval_minutes: number
+}
+
+export interface PredictionEvent {
+  id: string
+  source: string
+  external_event_id: string
+  slug: string | null
+  title: string
+  description: string | null
+  category: string | null
+  status: string
+  starts_at: string | null
+  ends_at: string | null
+  resolution_at: string | null
+  liquidity: number | null
+  volume_24h: number | null
+  created_at: string
+}
+
+export interface PredictionMarketDetail {
+  id: string
+  event_id: string | null
+  external_market_id: string
+  question: string
+  yes_probability: number | null
+  no_probability: number | null
+  probability_change_24h: number | null
+  enable_orderbook: boolean | number
+  liquidity: number | null
+  volume_24h: number | null
+  status: string
+}
+
+export interface ProbabilitySnapshot {
+  ts: string
+  yes_probability: number
+  no_probability: number | null
+  liquidity: number | null
+}
+
+export interface PredictionClaim {
+  id: string
+  market_id: string
+  run_id: string | null
+  claim_text: string
+  claim_type: string
+  direction: string | null
+  confidence: number
+  source: string
+  created_at: string
+}
+
+export interface PredictionPreferences {
+  categories: string[]
+  observer_interval_minutes: number
 }
 
 export interface StrategyRecord {
@@ -480,4 +578,44 @@ export interface RuntimeStatus {
     reason: string
     runtime_id: string | null
   }
+}
+
+// Universe Generator types
+
+export interface UniverseMember {
+  id: string
+  snapshot_id: string
+  asset_id: string
+  symbol: string
+  rank: number
+  total_score: number
+  opportunity_score: number | null
+  tradability_score: number | null
+  liquidity_score: number | null
+  estimated_cost: number | null
+  crowding_risk: number | null
+  late_entry_penalty: number | null
+  scanner_family: string | null
+  ttl_sec: number
+  expires_at: string
+  inclusion_reason: string
+  risk_flags: string
+  execution_eligible: number
+}
+
+export interface UniverseSnapshot {
+  id: string
+  created_at: string
+  market_type: string
+  policy_id: string | null
+  status: string
+  expires_at: string | null
+  summary: string
+}
+
+export interface UniverseCurrentResponse {
+  snapshot: UniverseSnapshot | null
+  members: UniverseMember[]
+  enabled: boolean
+  fallback: boolean
 }

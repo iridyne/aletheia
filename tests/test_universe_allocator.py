@@ -1,0 +1,139 @@
+"""Tests for universe allocator — scoring, quota, TTL, explore/exploit."""
+
+import pytest
+from aletheia.universe.allocator import (
+    compute_total_score, allocate_universe, compute_late_entry_penalty,
+)
+from aletheia.config.schema import UniverseConfig
+
+
+@pytest.fixture
+def cfg():
+    return UniverseConfig(
+        max_candidates=10,
+        core_pool_size=5,
+        explore_ratio=0.2,
+        family_quota={"momentum": 0.30, "mean_reversion": 0.30, "volatility": 0.20, "derivatives": 0.20},
+    )
+
+
+def _scored_item(symbol, family, score, **kwargs):
+    item = {
+        "asset_id": f"id_{symbol}",
+        "symbol": symbol,
+        "scanner_family": family,
+        "opportunity_score": score,
+        "total_score": score,
+        "tradability_score": 70.0,
+        "quote_volume_24h": 10_000_000,
+        "spread_bps": 5.0,
+        "rsi_14": 55.0,
+        "return_1h": 1.0,
+        "return_4h": 2.0,
+        "data_freshness_sec": 300,
+    }
+    item.update(kwargs)
+    return item
+
+
+def test_family_quota_enforcement(cfg):
+    items = []
+    for i in range(15):
+        items.append(_scored_item(f"MOM{i}", "momentum", 90 - i))
+    for i in range(5):
+        items.append(_scored_item(f"MR{i}", "mean_reversion", 80 - i))
+
+    result = allocate_universe(items, cfg)
+    momentum_count = sum(1 for r in result if r["scanner_family"] == "momentum")
+    # Exploit quota is 30% of 10 = 3, explore may randomly add more from remainder
+    # But exploit-only should be capped; total with explore should stay reasonable
+    exploit_count = int(cfg.max_candidates * (1 - cfg.explore_ratio))  # 8
+    exploit_momentum = min(3, exploit_count)  # at most 3 in exploit phase
+    assert momentum_count <= exploit_momentum + cfg.max_candidates - exploit_count  # 3 + 2 = 5 max from explore
+
+
+def test_explore_exploit_split(cfg):
+    items = [_scored_item(f"S{i}", "momentum", 90 - i * 5) for i in range(20)]
+    result = allocate_universe(items, cfg)
+    assert len(result) <= cfg.max_candidates
+
+
+def test_ttl_assignment_by_family(cfg):
+    items = [
+        _scored_item("MOM1", "momentum", 80),
+        _scored_item("MR1", "mean_reversion", 75),
+        _scored_item("VOL1", "volatility", 70),
+        _scored_item("DER1", "derivatives", 65),
+    ]
+    result = allocate_universe(items, cfg)
+    ttls = {r["scanner_family"]: r["ttl_sec"] for r in result}
+    assert ttls.get("momentum", 0) < ttls.get("derivatives", 0)
+
+
+def test_late_entry_penalty_extreme_return():
+    feat = {"return_1h": 7.0, "return_4h": 12.0, "rsi_14": 87}
+    penalty = compute_late_entry_penalty(feat)
+    assert penalty >= 25
+
+
+def test_late_entry_penalty_normal():
+    feat = {"return_1h": 0.5, "return_4h": 1.0, "rsi_14": 55}
+    penalty = compute_late_entry_penalty(feat)
+    assert penalty == 0.0
+
+
+def test_total_score_formula(cfg):
+    feat = {
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "rsi_14": 55.0,
+        "return_1h": 1.0,
+        "return_4h": 2.0,
+        "data_freshness_sec": 200,
+    }
+    scanner_result = {"opportunity_score": 70.0}
+    score = compute_total_score(feat, scanner_result, cfg)
+    assert 0.0 <= score <= 100.0
+    assert score > 20  # should be decent with good inputs
+
+
+def test_total_score_penalizes_stale_data(cfg):
+    feat_fresh = {
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "rsi_14": 55.0,
+        "return_1h": 1.0,
+        "return_4h": 2.0,
+        "data_freshness_sec": 100,
+    }
+    feat_stale = {**feat_fresh, "data_freshness_sec": 5000}
+    scanner = {"opportunity_score": 70.0}
+    score_fresh = compute_total_score(feat_fresh, scanner, cfg)
+    score_stale = compute_total_score(feat_stale, scanner, cfg)
+    assert score_fresh > score_stale
+
+
+def test_max_candidates_cap(cfg):
+    items = [_scored_item(f"S{i}", "momentum", 90 - i) for i in range(50)]
+    result = allocate_universe(items, cfg)
+    assert len(result) <= cfg.max_candidates
+
+
+def test_empty_input():
+    cfg = UniverseConfig()
+    result = allocate_universe([], cfg)
+    assert result == []
+
+
+def test_core_vs_rotating_split(cfg):
+    items = [
+        _scored_item(f"HIGH{i}", "momentum", 90 - i) for i in range(5)
+    ] + [
+        _scored_item(f"MED{i}", "mean_reversion", 50 - i) for i in range(10)
+    ]
+    result = allocate_universe(items, cfg)
+    # Top items by score should be in the result
+    top_symbols = {r["symbol"] for r in result[:3]}
+    assert "HIGH0" in top_symbols

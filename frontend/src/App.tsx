@@ -14,6 +14,7 @@ import RiskControls from './pages/RiskControls'
 import NewsIntel from './pages/NewsIntel'
 import CommandCenter from './pages/CommandCenter'
 import SerenityLens from './pages/SerenityLens'
+import Universe from './pages/Universe'
 // ActivityTimeline temporarily hidden — content overlapped Overview's Agent Activity
 // card (runs duplicated) and the global-shell strip lacked viewport-follow + click
 // drill-down. To revive: restore the import + the <ActivityTimeline /> mount below,
@@ -37,6 +38,7 @@ export const NAV: NavGroup[] = [
     group: 'Observe',
     items: [
       { to: '/charts', label: 'Markets' },
+      { to: '/universe', label: 'Universe' },
     ],
   },
   {
@@ -369,6 +371,7 @@ export default function App() {
             <Route path="/risk" element={<RiskControls />} />
             <Route path="/news" element={<NewsIntel />} />
             <Route path="/serenity-lens" element={<SerenityLens />} />
+            <Route path="/universe" element={<Universe />} />
           </Routes>
         </main>
         {/* <ActivityTimeline /> — temporarily hidden, see import comment above */}

@@ -59,6 +59,11 @@ class Opportunity(BaseModel):
     # Asset class: "crypto" | "equity" | "prediction". Default "crypto" keeps
     # older rows valid. paper_trader only acts on "crypto" opportunities.
     asset_class: str = "crypto"
+    # JSON-encoded prediction/equity-specific metadata (event title, probabilities, etc.)
+    metadata: str = "{}"
+    universe_snapshot_id: str | None = None
+    universe_member_id: str | None = None
+    scanner_family: str | None = None
 
 
 class TradeProposal(BaseModel):
@@ -111,6 +116,7 @@ class Order(BaseModel):
     source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     created_at: str = Field(default_factory=_utcnow)
     filled_at: str | None = None
+    error_reason: str | None = None
 
 
 class Fill(BaseModel):
@@ -605,3 +611,105 @@ class PSPolicyVersion(BaseModel):
     created_by: str = "system"
     created_at: str = Field(default_factory=_utcnow)
     status: str = "draft"  # draft | active | deprecated | rejected
+
+
+# ====================================================================
+# Universe Generator Models
+# ====================================================================
+
+class UniverseAsset(BaseModel):
+    id: str = Field(default_factory=new_id)
+    venue: str
+    market_type: str
+    symbol: str
+    base_asset: str | None = None
+    quote_asset: str | None = None
+    status: str = "active"
+    min_notional: float | None = None
+    price_precision: int | None = None
+    amount_precision: int | None = None
+    first_seen_at: str = Field(default_factory=_utcnow)
+    last_seen_at: str = Field(default_factory=_utcnow)
+    is_blacklisted: bool = False
+    blacklist_reason: str | None = None
+    metadata: str = "{}"
+
+
+class UniverseFeatureSnapshot(BaseModel):
+    id: str = Field(default_factory=new_id)
+    asset_id: str
+    ts: str = Field(default_factory=_utcnow)
+    quote_volume_24h: float | None = None
+    volume_1h: float | None = None
+    spread_bps: float | None = None
+    depth_10bps_usd: float | None = None
+    atr_pct: float | None = None
+    rsi_14: float | None = None
+    return_1h: float | None = None
+    return_4h: float | None = None
+    return_24h: float | None = None
+    funding_rate: float | None = None
+    open_interest: float | None = None
+    oi_delta_1h: float | None = None
+    data_freshness_sec: int | None = None
+    raw: str = "{}"
+
+
+class UniverseScannerRun(BaseModel):
+    id: str = Field(default_factory=new_id)
+    started_at: str = Field(default_factory=_utcnow)
+    completed_at: str | None = None
+    status: str = "running"
+    policy_id: str | None = None
+    assets_scanned: int = 0
+    assets_passed: int = 0
+    snapshot_id: str | None = None
+    errors: str = "[]"
+    metrics: str = "{}"
+
+
+class UniverseSnapshot(BaseModel):
+    id: str = Field(default_factory=new_id)
+    created_at: str = Field(default_factory=_utcnow)
+    market_type: str = "crypto"
+    policy_id: str | None = None
+    status: str = "active"
+    expires_at: str | None = None
+    summary: str = "{}"
+
+
+class UniverseMember(BaseModel):
+    id: str = Field(default_factory=new_id)
+    snapshot_id: str
+    asset_id: str
+    symbol: str
+    rank: int
+    total_score: float
+    opportunity_score: float | None = None
+    tradability_score: float | None = None
+    liquidity_score: float | None = None
+    estimated_cost: float | None = None
+    crowding_risk: float | None = None
+    late_entry_penalty: float | None = None
+    scanner_family: str | None = None
+    ttl_sec: int = 3600
+    expires_at: str = Field(default_factory=_utcnow)
+    inclusion_reason: str = "[]"
+    risk_flags: str = "[]"
+    execution_eligible: bool = True
+
+
+class UniversePolicy(BaseModel):
+    id: str = Field(default_factory=new_id)
+    created_at: str = Field(default_factory=_utcnow)
+    created_by: str = "system"
+    active: bool = False
+    market_type: str = "crypto"
+    family_quota: str = "{}"
+    scoring_weights: str = "{}"
+    filters: str = "{}"
+    ttl_policy: str = "{}"
+    explore_ratio: float = 0.2
+    max_weight_step: float = 0.15
+    change_reason: str | None = None
+    previous_policy_id: str | None = None

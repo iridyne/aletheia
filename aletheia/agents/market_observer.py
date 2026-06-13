@@ -88,6 +88,9 @@ async def _analyze_symbol(
     memory_block: str,
     asset_class: str = "crypto",
     provider=None,
+    universe_snapshot_id: str | None = None,
+    universe_member_id: str | None = None,
+    scanner_family: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Run market context build + LLM read for a single symbol.
 
@@ -190,6 +193,9 @@ async def _analyze_symbol(
         source_agent="market_observer",
         linked_strategy_id=linked_strategy_id,
         asset_class=asset_class,
+        universe_snapshot_id=universe_snapshot_id,
+        universe_member_id=universe_member_id,
+        scanner_family=scanner_family,
     )
     insert_opportunity(opp)
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
@@ -207,7 +213,31 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         return {"outputs": outputs, "errors": errors}
 
     cfg = load_config()
-    instruments = observed_instruments_from_config(cfg)
+
+    # Universe-driven path: if enabled, get symbols from the dynamic pool
+    universe_members: list[dict] = []
+    universe_snapshot_id: str | None = None
+    if cfg.universe.enabled:
+        from aletheia.universe.service import UniverseService
+        svc = UniverseService()
+        universe_members = svc.get_current_universe(limit=cfg.universe.max_candidates)
+        if universe_members and universe_members[0].get("snapshot_id"):
+            universe_snapshot_id = universe_members[0]["snapshot_id"]
+
+    if universe_members and universe_snapshot_id:
+        from aletheia.data.symbols import InstrumentId, MARKET_SPOT
+        instruments = []
+        for m in universe_members:
+            sym = m.get("symbol", "")
+            if not sym:
+                continue
+            instruments.append(InstrumentId.from_parts(
+                cfg.market_data.ccxt_exchange, sym, MARKET_SPOT
+            ))
+    else:
+        instruments = observed_instruments_from_config(cfg)
+        universe_members = []
+
     xstocks = xstocks_instruments_from_config(cfg)
     symbols = [i.symbol for i in instruments]  # canonical list for memory query
 
@@ -232,10 +262,27 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     except Exception:
         pass
 
+    # Prediction market catalyst context (observation-only enrichment)
+    try:
+        from aletheia.storage.repositories import list_prediction_claims
+        pred_claims = list_prediction_claims(claim_type="probability_momentum", limit=5)
+        if pred_claims:
+            pred_lines = ["\n\n## Prediction Market Context (observation-only)"]
+            for pc in pred_claims[:5]:
+                direction = pc.get("direction", "")
+                pred_lines.append(f"- {pc['claim_text']} [{direction}]")
+            memory_block += "\n".join(pred_lines)
+    except Exception:
+        pass
+
+    # Build a lookup for universe member metadata (symbol → member dict)
+    _universe_lookup = {m["symbol"]: m for m in universe_members} if universe_members else {}
+
     # Per-instrument loop: each instrument gets its own LLM call + Opportunity row.
     # instrument.market_type is the authoritative type; no more config-derived guessing.
     for instrument in instruments:
         try:
+            u_member = _universe_lookup.get(instrument.symbol)
             opp_id, err = await _analyze_symbol(
                 symbol=instrument.symbol,
                 market_type=instrument.market_type,
@@ -244,6 +291,9 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 linked_strategy_id=linked_strategy_id,
                 memory_block=memory_block,
                 asset_class="crypto",
+                universe_snapshot_id=universe_snapshot_id,
+                universe_member_id=u_member.get("id") if u_member else None,
+                scanner_family=u_member.get("scanner_family") if u_member else None,
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")

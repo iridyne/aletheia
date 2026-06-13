@@ -336,6 +336,20 @@ export const api = {
   getKnowledgeContent: (id: string) => fetchJson<{ id: string; content: string; error?: string }>(`/knowledge/${id}/content`),
   getStrategyGates: (id: string) => fetchJson<Record<string, any>>(`/strategies/${id}/gates`),
 
+  // Prediction Market Lens endpoints
+  getPredictionOpportunities: () => fetchJson<import('../types').PredictionMarket[]>('/prediction/opportunities'),
+  getPredictionStatus: () => fetchJson<import('../types').PredictionStatus>('/prediction/status'),
+  getPredictionMarkets: () => fetchJson<import('../types').PredictionMarket[]>('/prediction/markets'),
+  getPredictionRuns: () => fetchJson<import('../types').PredictionObserverRun[]>('/prediction/runs'),
+  refreshPrediction: () => post('/prediction/refresh'),
+  getPredictionEvents: (category?: string) => fetchJson<import('../types').PredictionEvent[]>(`/prediction/events${category ? `?category=${category}` : ''}`),
+  getPredictionEventDetail: (id: string) => fetchJson<{ event: import('../types').PredictionEvent; markets: import('../types').PredictionMarketDetail[] }>(`/prediction/events/${id}`),
+  getPredictionMarketDetail: (id: string) => fetchJson<import('../types').PredictionMarketDetail>(`/prediction/markets/${id}/detail`),
+  getPredictionMarketHistory: (id: string) => fetchJson<{ source: string; points: import('../types').ProbabilitySnapshot[] }>(`/prediction/markets/${id}/history`),
+  getPredictionMarketClaims: (id: string) => fetchJson<import('../types').PredictionClaim[]>(`/prediction/markets/${id}/claims`),
+  getPredictionPreferences: () => fetchJson<import('../types').PredictionPreferences>('/prediction/preferences'),
+  updatePredictionPreferences: (body: { categories?: string[] }) => post<any>('/prediction/preferences', body),
+
   // Serenity Lens endpoints (research-first investigation pipeline)
   getSerenityThemes: () => fetchJson<SerenityTheme[]>('/serenity/themes'),
   getSerenityTheme: (id: string) => fetchJson<SerenityTheme & { tags: string[] }>(`/serenity/themes/${id}`),
@@ -518,4 +532,22 @@ export const api = {
     if (params?.price_relevant !== undefined) qs.set('price_relevant', String(params.price_relevant))
     return fetchJson<any>(`/serenity/claims?${qs}`)
   },
+
+  // Universe Generator endpoints
+  getUniverseCurrent: () => fetchJson<import('../types').UniverseCurrentResponse>('/universe/current'),
+  getUniverseSnapshots: () => fetchJson<import('../types').UniverseSnapshot[]>('/universe/snapshots'),
+  getUniverseSnapshot: (id: string) => fetchJson<any>(`/universe/snapshots/${id}`),
+  getUniverseMember: (id: string) => fetchJson<import('../types').UniverseMember>(`/universe/members/${id}`),
+  refreshUniverse: () => post<{ snapshot_id: string; status: string }>('/universe/refresh'),
+  getUniversePolicy: () => fetchJson<any>('/universe/policy'),
+  getUniverseRegistryStats: () => fetchJson<{ total: number; active: number; blacklisted: number }>('/universe/registry/stats'),
+  updateUniverseConfig: (body: Partial<{
+    enabled: boolean; refresh_interval_min: number; max_candidates: number;
+    core_pool_size: number; min_volume_24h_usdt: number; max_spread_bps: number;
+    explore_ratio: number; blacklist: string[];
+  }>) => post<any>('/settings/universe', body),
+
+  // Generic helpers for pages that need simple get/post
+  get: <T = any>(path: string) => fetchJson<T>(path),
+  post: <T = any>(path: string, body?: unknown) => post<T>(path, body),
 }
