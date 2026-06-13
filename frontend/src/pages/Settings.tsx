@@ -1222,7 +1222,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
   const [apiKey, setApiKey] = useState('')
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [detectedModels, setDetectedModels] = useState<{ slug: string; display_name: string }[] | null>(null)
-  const [useCustomModel, setUseCustomModel] = useState(false)
+  const [modelFocused, setModelFocused] = useState(false)
 
   const isAnthropic = name === 'anthropic_compatible'
   const isOpenAI = name === 'openai_compatible'
@@ -1239,7 +1239,6 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
       setDetectedModels(models)
       if (models.length > 0 && !model) {
         setModel(models[0].slug)
-        setUseCustomModel(false)
       }
     },
   })
@@ -1294,7 +1293,10 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
 
-  const showDropdown = detectedModels && detectedModels.length > 0 && !useCustomModel
+  const filteredModels = detectedModels?.filter(m =>
+    !model || m.slug.toLowerCase().includes(model.toLowerCase()) || m.display_name.toLowerCase().includes(model.toLowerCase())
+  ) ?? []
+  const showSuggestions = modelFocused && filteredModels.length > 0
 
   return (
     <div style={{ paddingTop: '0.75rem' }}>
@@ -1303,18 +1305,39 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
           <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Base URL</span>
           <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
         </label>
-        <label>
+        <label style={{ position: 'relative' }}>
           <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Model</span>
-          {showDropdown ? (
-            <select value={model} onChange={e => {
-              if (e.target.value === '__custom__') { setUseCustomModel(true); setModel('') }
-              else { setModel(e.target.value); setResult(null) }
+          <input
+            value={model}
+            placeholder={config?.model || 'default'}
+            onChange={e => { setModel(e.target.value); setResult(null) }}
+            onFocus={() => setModelFocused(true)}
+            onBlur={() => setTimeout(() => setModelFocused(false), 150)}
+            autoComplete="off"
+          />
+          {showSuggestions && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20,
+              background: 'var(--surface)', border: '1px solid var(--border)',
+              borderRadius: '0 0 var(--r) var(--r)', maxHeight: '10rem', overflowY: 'auto',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
             }}>
-              {detectedModels.map(m => <option key={m.slug} value={m.slug}>{m.display_name}</option>)}
-              <option value="__custom__">(custom)</option>
-            </select>
-          ) : (
-            <input value={model} placeholder={config?.model || 'default'} onChange={e => { setModel(e.target.value); setResult(null) }} />
+              {filteredModels.map(m => (
+                <div
+                  key={m.slug}
+                  onMouseDown={() => { setModel(m.slug); setResult(null) }}
+                  style={{
+                    padding: '0.4rem 0.6rem', cursor: 'pointer', fontSize: '0.78rem',
+                    fontFamily: 'var(--mono)',
+                    background: m.slug === model ? 'var(--accent-dim)' : 'transparent',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--accent-dim)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = m.slug === model ? 'var(--accent-dim)' : 'transparent')}
+                >
+                  {m.display_name}
+                </div>
+              ))}
+            </div>
           )}
         </label>
         {isOpenAI && (
@@ -1367,18 +1390,12 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
           </span>
         )}
       </div>
-      {/* Detected models summary */}
+      {/* Detected models hint */}
       {detectedModels !== null && (
         <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '0.4rem' }}>
           {detectedModels.length > 0
-            ? `${detectedModels.length} model${detectedModels.length > 1 ? 's' : ''} detected`
+            ? `${detectedModels.length} model${detectedModels.length > 1 ? 's' : ''} available — type to filter`
             : 'No models detected — enter a model name manually'}
-          {useCustomModel && detectedModels.length > 0 && (
-            <button
-              onClick={() => { setUseCustomModel(false); if (detectedModels.length) setModel(detectedModels[0].slug) }}
-              style={{ marginLeft: '0.5rem', background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.72rem', padding: 0, textDecoration: 'underline' }}
-            >back to list</button>
-          )}
         </div>
       )}
       <p style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: '0.5rem' }}>
