@@ -1223,6 +1223,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [detectedModels, setDetectedModels] = useState<{ slug: string; display_name: string }[] | null>(null)
   const [modelFocused, setModelFocused] = useState(false)
+  const [modelEditing, setModelEditing] = useState(false)
 
   const isAnthropic = name === 'anthropic_compatible'
   const isOpenAI = name === 'openai_compatible'
@@ -1293,9 +1294,9 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
 
-  const filteredModels = detectedModels?.filter(m =>
-    !model || m.slug.toLowerCase().includes(model.toLowerCase()) || m.display_name.toLowerCase().includes(model.toLowerCase())
-  ) ?? []
+  const filteredModels = (!modelEditing || !model) ? (detectedModels ?? []) : (detectedModels?.filter(m =>
+    m.slug.toLowerCase().includes(model.toLowerCase()) || m.display_name.toLowerCase().includes(model.toLowerCase())
+  ) ?? [])
   const showSuggestions = modelFocused && filteredModels.length > 0
 
   return (
@@ -1310,8 +1311,8 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
           <input
             value={model}
             placeholder={config?.model || 'default'}
-            onChange={e => { setModel(e.target.value); setResult(null) }}
-            onFocus={() => setModelFocused(true)}
+            onChange={e => { setModel(e.target.value); setModelEditing(true); setResult(null) }}
+            onFocus={() => { setModelFocused(true); setModelEditing(false) }}
             onBlur={() => setTimeout(() => setModelFocused(false), 150)}
             autoComplete="off"
           />
