@@ -1788,7 +1788,7 @@ test('operator loop emits one event, tracks one task, and returns to observing a
   assert.equal(second, true)
   assert.equal(calls.createdEvents.length, 1)
   assert.equal(calls.createdTasks.length, 1)
-  assert.equal(calls.heartbeats[0].mode, 'Investigating')
+  assert.equal(calls.heartbeats[0].mode, 'Working')
   assert.equal(calls.heartbeats[0].current_task_id, 'task-1')
   assert.match(calls.heartbeats[0].current_intent || '', /Gateway health issue/)
 

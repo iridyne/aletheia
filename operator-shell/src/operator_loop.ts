@@ -133,7 +133,7 @@ export class OperatorLoop {
       return 'Trading'
     }
     if (taskType) {
-      return 'Investigating'
+      return 'Working'
     }
     return null
   }
@@ -167,7 +167,7 @@ export class OperatorLoop {
       }
     }
     if (recommendations.some(item => item.taskType)) {
-      return 'Investigating'
+      return 'Working'
     }
     if (recommendations.some(item => item.severity === 'high')) {
       return 'Degraded'

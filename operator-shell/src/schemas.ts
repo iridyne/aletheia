@@ -1,6 +1,6 @@
 export type OperatorMode =
   | 'Observing'
-  | 'Investigating'
+  | 'Working'
   | 'Repairing'
   | 'Trading'
   | 'Reviewing'

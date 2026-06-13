@@ -246,6 +246,12 @@ function StatusBar() {
                   {(operator as any)?.session_id ? ` · ${(operator as any).session_id}` : ''}
                 </td>
               </tr>
+              {operatorMode === 'Working' && (operator as any)?.current_intent && (
+                <tr>
+                  <th>Doing</th>
+                  <td className="mono">{(operator as any).current_intent}</td>
+                </tr>
+              )}
               <tr>
                 <th>Kill Switch</th>
                 <td><span className={`dot dot-${killLight}`} /> {killed ? 'engaged' : 'inactive'}</td>

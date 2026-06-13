@@ -435,7 +435,7 @@ async def test_runtime_reads_operator_status_from_heartbeat(tmp_path, monkeypatc
     record_heartbeat(
         agent_id="operator",
         status="online",
-        mode="Investigating",
+        mode="Working",
         permission_mode="ReadOnly",
         is_busy=True,
         current_task_id=task_id,
@@ -464,7 +464,7 @@ async def test_runtime_reads_operator_status_from_heartbeat(tmp_path, monkeypatc
         resp = await runtime.handle("show the operator heartbeat")
 
     assert resp.intent == "get_operator_status"
-    assert "Investigating" in resp.response
+    assert "Working" in resp.response
     assert "queue" in resp.response.lower()
 
 
@@ -510,7 +510,7 @@ async def test_runtime_handles_what_is_the_system_doing_with_operator_evidence(t
     record_heartbeat(
         agent_id="operator",
         status="online",
-        mode="Investigating",
+        mode="Working",
         permission_mode="ReadOnly",
         is_busy=True,
         current_task_id=task_id,
@@ -540,7 +540,7 @@ async def test_runtime_handles_what_is_the_system_doing_with_operator_evidence(t
 
     assert resp.intent == "get_system_status"
     assert "market_data_stale:15m" in resp.response
-    assert "Investigating" in resp.response
+    assert "Working" in resp.response
     assert "1 failed recent agent run" in resp.response
     assert "1 open position" in resp.response
 

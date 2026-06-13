@@ -871,7 +871,7 @@ export default function CommandCenter() {
             <span className={`badge ${operatorStatus?.status === 'online' ? 'badge-green' : operatorStatus?.status === 'stale' ? 'badge-yellow' : 'badge-red'}`}>
               {operatorStatus?.status || 'offline'}
             </span>
-            <span className="mono">mode: {operatorStatus?.mode || 'Observing'}</span>
+            <span className="mono">mode: {operatorStatus?.mode || 'Observing'}{operatorStatus?.mode === 'Working' && operatorStatus?.current_intent ? ` — ${operatorStatus.current_intent}` : ''}</span>
             <span className="mono">perm: {operatorStatus?.permission_mode || 'ReadOnly'}</span>
             <span className="mono">session: {operatorStatus?.session_id || 'operator-main'}</span>
             <span className="mono">
