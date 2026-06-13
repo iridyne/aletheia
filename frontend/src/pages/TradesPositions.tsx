@@ -63,6 +63,7 @@ const orderColumns = [
   ordCol.accessor('price', { header: 'Price', cell: info => fmtNum(info.getValue()) }),
   ordCol.accessor('execution_mode', { header: 'Mode' }),
   ordCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
+  ordCol.accessor('error_reason', { header: 'Error', cell: info => info.getValue() || '—' }),
   ordCol.accessor('filled_at', { header: 'Filled', cell: info => info.getValue()?.slice(0, 16) ?? '—' }),
   ordCol.accessor('created_at', { header: 'Created', cell: info => info.getValue()?.slice(0, 16) || '—' }),
 ]
@@ -269,6 +270,9 @@ function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) 
         <DrawerField label="Order Type" value={order.order_type} />
         <DrawerField label="Mode" value={order.execution_mode} />
         <DrawerField label="Status" value={<StatusBadge status={order.status} />} />
+        {order.error_reason && (
+          <DrawerField label="Error Reason" value={order.error_reason} />
+        )}
       </DrawerSection>
       <DrawerSection label="Execution">
         <DrawerField label="Quantity" value={order.quantity} mono />

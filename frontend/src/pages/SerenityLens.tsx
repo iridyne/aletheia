@@ -631,9 +631,20 @@ function EvidenceTab() {
             {evidence.map((e: any) => (
               <tr key={e.id}>
                 <td>{e.symbol || '—'}</td>
-                <td>{e.title}</td>
+                <td>
+                  {e.title}
+                  {e.source === 'prediction_market' && (
+                    <a href="/prediction" className="lens-cross-link" title="View in Prediction Lens">
+                      → Prediction Lens
+                    </a>
+                  )}
+                </td>
                 <td>{e.tier}</td>
-                <td>{e.source}</td>
+                <td>
+                  {e.source === 'prediction_market'
+                    ? <span className="badge badge-blue">prediction</span>
+                    : e.source}
+                </td>
                 <td>{e.confidence}</td>
                 <td>{shortDate(e.created_at)}</td>
               </tr>

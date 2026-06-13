@@ -29,6 +29,11 @@ class PolymarketMarket:
     volume_usd: float
     prob_change_24h: float = 0.0
     resolution_date: str = ""
+    market_id: str = ""
+    slug: str = ""
+    category: str = ""
+    liquidity: float = 0.0
+    enable_orderbook: bool = False
 
 
 def _parse_market(raw: dict) -> PolymarketMarket | None:
@@ -53,12 +58,22 @@ def _parse_market(raw: dict) -> PolymarketMarket | None:
         volume = float(raw.get("volume24hr") or raw.get("volume") or 0.0)
         change = float(raw.get("oneDayPriceChange") or 0.0)
         end = str(raw.get("endDate") or raw.get("end_date_iso") or "")
+        market_id = str(raw.get("id") or raw.get("conditionId") or "")
+        slug = str(raw.get("slug") or "")
+        category = str(raw.get("category") or "")
+        liquidity = float(raw.get("liquidity") or 0.0)
+        enable_ob = bool(raw.get("enableOrderBook", False))
         return PolymarketMarket(
             question=question,
             yes_probability=yes_prob,
             volume_usd=volume,
             prob_change_24h=change,
             resolution_date=end,
+            market_id=market_id,
+            slug=slug,
+            category=category,
+            liquidity=liquidity,
+            enable_orderbook=enable_ob,
         )
     except (ValueError, TypeError) as e:
         logger.debug("skipping unparseable market: %s", e)
@@ -114,6 +129,35 @@ async def fetch_active_markets(categories: list[str], limit: int = 15) -> list[P
             markets.append(m)
     markets.sort(key=lambda m: m.volume_usd, reverse=True)
     return markets[:limit]
+
+
+async def fetch_market_history(token_id: str, interval: str = "1h", fidelity: int = 60) -> list[dict]:
+    """Fetch price history from Polymarket CLOB API for a market token.
+
+    Returns list of {ts: str, yes_probability: float} sorted by time ascending.
+    Falls back to empty list on any error (non-critical).
+    """
+    clob_url = "https://clob.polymarket.com/prices-history"
+    params = f"market={token_id}&interval=all&fidelity={fidelity}"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(f"{clob_url}?{params}")
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict):
+                history = data.get("history", [])
+            elif isinstance(data, list):
+                history = data
+            else:
+                return []
+            return [
+                {"ts": str(pt.get("t", "")), "yes_probability": float(pt.get("p", 0))}
+                for pt in history if isinstance(pt, dict)
+            ]
+    except Exception as e:
+        logger.debug("fetch_market_history failed for %s: %s", token_id, e)
+        return []
 
 
 def format_prediction_context(markets: list[PolymarketMarket]) -> str:

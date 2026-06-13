@@ -245,8 +245,10 @@ async def start_agent_run(req: StartAgentRequest):
 
 
 @router.get("/opportunities")
-async def get_opportunities():
+async def get_opportunities(asset_class: str | None = None):
     _ensure_db()
+    if asset_class:
+        return repo.list_opportunities_by_asset_class(asset_class)
     return repo.list_opportunities()
 
 

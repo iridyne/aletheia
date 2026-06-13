@@ -14,6 +14,7 @@ import RiskControls from './pages/RiskControls'
 import NewsIntel from './pages/NewsIntel'
 import CommandCenter from './pages/CommandCenter'
 import SerenityLens from './pages/SerenityLens'
+import PredictionLens from './pages/PredictionLens'
 import Universe from './pages/Universe'
 // ActivityTimeline temporarily hidden — content overlapped Overview's Agent Activity
 // card (runs duplicated) and the global-shell strip lacked viewport-follow + click
@@ -38,6 +39,7 @@ export const NAV: NavGroup[] = [
     group: 'Observe',
     items: [
       { to: '/charts', label: 'Markets' },
+      { to: '/prediction-markets', label: 'Prediction Markets' },
       { to: '/universe', label: 'Universe' },
     ],
   },
@@ -366,6 +368,7 @@ export default function App() {
             <Route path="/positions" element={<TradesPositions />} />
             <Route path="/strategies" element={<StrategyLifecycle />} />
             <Route path="/charts" element={<Charts />} />
+            <Route path="/prediction-markets" element={<PredictionLens />} />
             <Route path="/command-center" element={<CommandCenter />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/risk" element={<RiskControls />} />

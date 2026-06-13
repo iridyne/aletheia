@@ -103,10 +103,8 @@ def execute_live_order(
             price=price if order_type == "limit" else None,
             client_oid=proposal_id,
         )))
-    except Exception:
-        # Exchange call failed (or never confirmed). Leave the pending row so
-        # reconciliation/operator can investigate; do not infer a fill.
-        update_order(order.id, status="error")
+    except Exception as e:
+        update_order(order.id, status="error", error_reason=str(e)[:500])
         raise
 
     exchange_order_id = order_resp.order_id or ""
@@ -240,9 +238,8 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
             client_oid=f"close-{position_id}",
             hold_side=hold_side,
         )))
-    except Exception:
-        update_order(close_order.id, status="error")
-        # Do NOT close locally — exchange position is still open; books stay consistent.
+    except Exception as e:
+        update_order(close_order.id, status="error", error_reason=str(e)[:500])
         raise
 
     exchange_order_id = order_resp.order_id or ""

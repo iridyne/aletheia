@@ -13,8 +13,10 @@ Design choices:
 - symbol = market question slug (truncated to 80 chars for readability)
 - market = "prediction"
 - Degrades fully: any Polymarket API error → logs and returns empty.
+- Each notable market gets its own Opportunity with structured metadata.
 """
 
+import json
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -23,7 +25,12 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
-from aletheia.storage.repositories import insert_opportunity, list_strategies
+from aletheia.storage.repositories import (
+    insert_opportunity, list_strategies,
+    upsert_prediction_event, upsert_prediction_market,
+    insert_probability_snapshot, insert_prediction_claim,
+    insert_serenity_evidence, list_serenity_themes,
+)
 from aletheia.config.loader import load_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
@@ -80,6 +87,117 @@ Focus on markets most relevant to financial/macro themes when possible.
 This is informational analysis only — not trading advice."""
 
 
+def _persist_normalized(markets: list, *, run_id: str | None = None) -> dict[str, str]:
+    """Write normalized prediction_events + prediction_markets + snapshots.
+
+    Returns a mapping of market.market_id -> internal prediction_markets.id
+    so callers can reference the normalized row.
+    """
+    from aletheia.storage.models import _utcnow
+    market_id_map: dict[str, str] = {}
+    for market in markets:
+        ext_market_id = market.market_id or market.slug or market.question[:40]
+        slug = market.slug or ""
+        event_id = upsert_prediction_event({
+            "external_event_id": ext_market_id,
+            "slug": slug,
+            "title": market.question,
+            "category": market.category,
+            "resolution_at": market.resolution_date or None,
+            "liquidity": market.liquidity,
+            "volume_24h": market.volume_usd,
+            "source": "polymarket",
+            "status": "active",
+        })
+        internal_market_id = upsert_prediction_market({
+            "event_id": event_id,
+            "external_market_id": ext_market_id,
+            "question": market.question,
+            "yes_probability": market.yes_probability,
+            "no_probability": round(1.0 - market.yes_probability, 4),
+            "probability_change_24h": market.prob_change_24h,
+            "enable_orderbook": int(market.enable_orderbook),
+            "liquidity": market.liquidity,
+            "volume_24h": market.volume_usd,
+            "source": "polymarket",
+            "status": "active",
+        })
+        market_id_map[ext_market_id] = internal_market_id
+        insert_probability_snapshot({
+            "market_id": internal_market_id,
+            "ts": _utcnow(),
+            "yes_probability": market.yes_probability,
+            "no_probability": round(1.0 - market.yes_probability, 4),
+            "liquidity": market.liquidity,
+            "volume_24h": market.volume_usd,
+        })
+    return market_id_map
+
+
+def _generate_heuristic_claims(market, *, internal_market_id: str, run_id: str | None = None, median_volume: float = 0) -> None:
+    """Write heuristic claims for notable market conditions."""
+    if abs(market.prob_change_24h) > 0.10:
+        direction = "long" if market.prob_change_24h > 0 else "short"
+        insert_prediction_claim({
+            "market_id": internal_market_id,
+            "run_id": run_id,
+            "claim_text": f"Probability moved {market.prob_change_24h*100:+.1f}pp in 24h — strong momentum signal",
+            "claim_type": "probability_momentum",
+            "direction": direction,
+            "confidence": min(0.9, 0.5 + abs(market.prob_change_24h)),
+        })
+    if median_volume > 0 and market.volume_usd > median_volume * 2:
+        insert_prediction_claim({
+            "market_id": internal_market_id,
+            "run_id": run_id,
+            "claim_text": f"Volume ${market.volume_usd:,.0f} is >2x median (${median_volume:,.0f}) — unusual activity",
+            "claim_type": "volume_spike",
+            "confidence": 0.7,
+        })
+    if market.liquidity < 5000 and market.liquidity > 0:
+        insert_prediction_claim({
+            "market_id": internal_market_id,
+            "run_id": run_id,
+            "claim_text": f"Liquidity only ${market.liquidity:,.0f} — thin market, prices may be unreliable",
+            "claim_type": "liquidity_warning",
+            "confidence": 0.8,
+        })
+    if market.resolution_date:
+        from datetime import datetime, timezone
+        try:
+            end = datetime.fromisoformat(market.resolution_date.replace("Z", "+00:00"))
+            days_left = (end - datetime.now(timezone.utc)).days
+            if 0 < days_left < 7:
+                insert_prediction_claim({
+                    "market_id": internal_market_id,
+                    "run_id": run_id,
+                    "claim_text": f"Resolves in {days_left} days — approaching resolution, volatility expected",
+                    "claim_type": "resolution_risk",
+                    "confidence": 0.6,
+                })
+        except (ValueError, TypeError):
+            pass
+
+
+def _build_market_metadata(market, *, markets_scanned: int = 0) -> str:
+    """Serialize prediction-specific fields into the Opportunity.metadata JSON."""
+    return json.dumps({
+        "event_title": market.question,
+        "market_id": market.market_id,
+        "slug": market.slug,
+        "category": market.category,
+        "yes_probability": market.yes_probability,
+        "no_probability": round(1.0 - market.yes_probability, 4),
+        "probability_change_24h": market.prob_change_24h,
+        "volume_24h": market.volume_usd,
+        "liquidity": market.liquidity,
+        "resolution_at": market.resolution_date,
+        "enable_orderbook": market.enable_orderbook,
+        "markets_scanned": markets_scanned,
+        "source": "polymarket",
+    })
+
+
 @register_agent("prediction_observer")
 async def run_prediction_observer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Fetch Polymarket data and create prediction Opportunities for tracking."""
@@ -96,6 +214,14 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
         outputs.append("no_prediction_markets_configured")
         return {"outputs": outputs, "errors": errors}
 
+    # Start observer run record
+    from aletheia.storage.repositories import (
+        insert_prediction_run, update_prediction_run,
+    )
+    from aletheia.storage.models import new_id as _new_id
+    obs_run_id = _new_id()
+    insert_prediction_run(obs_run_id, categories)
+
     # Fetch markets from Polymarket
     from aletheia.data.polymarket_provider import fetch_active_markets, format_prediction_context
     try:
@@ -104,11 +230,20 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
                  output=f"markets:{len(markets)}")
     except Exception as e:
         errors.append(f"polymarket_fetch_failed:{e}")
+        update_prediction_run(obs_run_id, status="failed", errors=errors)
         return {"outputs": outputs, "errors": errors}
 
     if not markets:
         outputs.append("no_active_markets")
+        update_prediction_run(obs_run_id, status="completed", markets_scanned=0)
         return {"outputs": outputs, "errors": errors}
+
+    # Write normalized tables (events + markets + probability snapshots)
+    try:
+        market_id_map = _persist_normalized(markets, run_id=run_id)
+    except Exception as e:
+        errors.append(f"normalized_persist_partial:{e}")
+        market_id_map = {}
 
     context = format_prediction_context(markets)
     record_step(
@@ -124,10 +259,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
             linked_strategy_id = s["id"]
             break
 
-    # Ask LLM to identify notable markets — returns a list of reads
-    # We ask for a single structured read summarizing the most notable market
-    # to keep token cost low. If multiple markets are notable, the agent can
-    # be extended to loop.
+    # Ask LLM to identify notable markets
     read, err = await llm_structured(
         system=_SYSTEM_PROMPT,
         user=(
@@ -170,45 +302,136 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     )
 
     if not is_tool_permitted("create_opportunity", permission_mode):
+        update_prediction_run(obs_run_id, status="completed",
+                             markets_scanned=len(markets), opportunities_created=0)
         return {"outputs": outputs, "errors": errors}
 
-    # Use the top market question as symbol (truncated slug)
-    top_market = markets[0] if markets else None
-    symbol_slug = "POLYMARKET"
-    if top_market:
-        q = top_market.question
+    # Create one Opportunity per notable market (top 5 by volume).
+    # The LLM read applies to the top market; others get a heuristic bias.
+    opps_created = 0
+    for i, market in enumerate(markets[:5]):
+        q = market.question
         symbol_slug = (q[:77] + "...") if len(q) > 80 else q
 
-    thesis_parts = []
-    if rationale:
-        thesis_parts.append(rationale)
-    if observations:
-        thesis_parts.append("Observations: " + " | ".join(observations))
-    if confidence_score is not None:
-        thesis_parts.append(f"score={confidence_score}/100")
-    if top_market:
-        thesis_parts.append(
-            f"Top market YES={top_market.yes_probability * 100:.1f}% "
-            f"vol=${top_market.volume_usd:,.0f}"
+        if i == 0:
+            # Top market gets the LLM-derived signal
+            m_direction = direction
+            m_confidence = confidence
+            m_score = confidence_score
+            thesis_parts = []
+            if rationale:
+                thesis_parts.append(rationale)
+            if observations:
+                thesis_parts.append("Observations: " + " | ".join(observations))
+            thesis_parts.append(
+                f"YES={market.yes_probability * 100:.1f}% "
+                f"Δ24h={market.prob_change_24h * 100:+.1f}pp "
+                f"vol=${market.volume_usd:,.0f}"
+            )
+            thesis = " | ".join(thesis_parts)
+        else:
+            # Heuristic: derive direction from 24h probability change
+            change = market.prob_change_24h
+            if change > 0.05:
+                m_direction = "long"
+            elif change < -0.05:
+                m_direction = "short"
+            else:
+                m_direction = "neutral"
+            m_confidence = "medium" if abs(change) > 0.03 and market.volume_usd > 10000 else "speculative"
+            m_score = min(100, max(0, int(50 + change * 200)))
+            thesis = (
+                f"YES={market.yes_probability * 100:.1f}% "
+                f"Δ24h={market.prob_change_24h * 100:+.1f}pp "
+                f"vol=${market.volume_usd:,.0f}"
+            )
+
+        opp = Opportunity(
+            symbol=symbol_slug,
+            market="prediction",
+            direction_bias=m_direction,
+            thesis=thesis,
+            confidence=m_confidence,
+            confidence_score=m_score,
+            source_agent="prediction_observer",
+            linked_strategy_id=linked_strategy_id,
+            asset_class="prediction",
+            metadata=_build_market_metadata(market, markets_scanned=len(markets)),
         )
-    thesis = " ".join(thesis_parts) if thesis_parts else (
-        f"Prediction market observation (direction={direction}, "
-        f"confidence={confidence})"
-    )
+        insert_opportunity(opp)
+        log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
+        outputs.append(f"opportunity:{opp.id}")
+        opps_created += 1
 
-    opp = Opportunity(
-        symbol=symbol_slug,
-        market="prediction",
-        direction_bias=direction,
-        thesis=thesis,
-        confidence=confidence,
-        confidence_score=confidence_score,
-        source_agent="prediction_observer",
-        linked_strategy_id=linked_strategy_id,
-        asset_class="prediction",
-    )
-    insert_opportunity(opp)
-    log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
-    outputs.append(f"opportunity:{opp.id}")
+    # Generate claims for each market (heuristic + LLM observations for top market)
+    median_vol = sorted(m.volume_usd for m in markets)[len(markets) // 2] if markets else 0
+    for i, market in enumerate(markets[:5]):
+        ext_id = market.market_id or market.slug or market.question[:40]
+        internal_id = market_id_map.get(ext_id)
+        if not internal_id:
+            continue
+        _generate_heuristic_claims(market, internal_market_id=internal_id,
+                                   run_id=obs_run_id, median_volume=median_vol)
+        if i == 0 and observations:
+            for obs_text in observations:
+                insert_prediction_claim({
+                    "market_id": internal_id,
+                    "run_id": obs_run_id,
+                    "claim_text": obs_text,
+                    "claim_type": "observation",
+                    "direction": direction,
+                    "confidence": (confidence_score or 50) / 100.0,
+                    "source": "prediction_observer_llm",
+                })
 
+    # Phase 4: Write serenity_evidence for high-signal prediction markets
+    # Criteria: |Δ24h| > 10pp AND volume > $50k AND question references crypto/macro
+    _CRYPTO_KEYWORDS = {"bitcoin", "btc", "ethereum", "eth", "crypto", "solana", "sol",
+                        "defi", "fed", "rate", "inflation", "macro", "recession",
+                        "tariff", "gdp", "cpi", "fomc", "treasury"}
+    try:
+        themes = list_serenity_themes(status="active", limit=50)
+        for market in markets[:5]:
+            if abs(market.prob_change_24h) < 0.10 or market.volume_usd < 50000:
+                continue
+            q_lower = market.question.lower()
+            if not any(kw in q_lower for kw in _CRYPTO_KEYWORDS):
+                continue
+            matched_theme = None
+            for theme in themes:
+                theme_title = (theme.get("title") or "").lower()
+                if any(kw in q_lower and kw in theme_title for kw in _CRYPTO_KEYWORDS):
+                    matched_theme = theme
+                    break
+            if not matched_theme and themes:
+                matched_theme = themes[0]
+            if matched_theme:
+                from aletheia.storage.models import SerenityEvidence
+                ext_id = market.market_id or market.slug or market.question[:40]
+                internal_id = market_id_map.get(ext_id, ext_id)
+                ev = SerenityEvidence(
+                    theme_id=matched_theme["id"],
+                    symbol=None,
+                    source="prediction_market",
+                    source_ref=internal_id,
+                    title=f"Prediction signal: {market.question[:80]}",
+                    summary=(
+                        f"YES={market.yes_probability*100:.1f}% "
+                        f"Δ24h={market.prob_change_24h*100:+.1f}pp "
+                        f"vol=${market.volume_usd:,.0f}"
+                    ),
+                    tier="medium" if abs(market.prob_change_24h) > 0.15 else "speculative",
+                    supports=market.prob_change_24h > 0,
+                    evidence_type="catalyst",
+                    actor="prediction_observer",
+                    confidence="medium" if market.volume_usd > 100000 else "speculative",
+                )
+                insert_serenity_evidence(ev)
+                outputs.append(f"serenity_evidence:{ev.id}")
+    except Exception as e:
+        errors.append(f"serenity_evidence_link:{e}")
+
+    update_prediction_run(obs_run_id, status="completed",
+                         markets_scanned=len(markets),
+                         opportunities_created=opps_created)
     return {"outputs": outputs, "errors": errors}

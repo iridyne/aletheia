@@ -43,6 +43,7 @@ export default function CommandPalette() {
     { id: 'nav-charts', label: 'Go to Markets', group: 'Navigation', keywords: 'charts price', action: () => navigate('/charts') },
     { id: 'nav-news', label: 'Go to News Intel', group: 'Navigation', action: () => navigate('/news') },
     { id: 'nav-serenity-lens', label: 'Go to Serenity Lens', group: 'Navigation', keywords: 'research lens chokepoint opportunities', action: () => navigate('/serenity-lens') },
+    { id: 'nav-prediction', label: 'Go to Prediction Markets', group: 'Navigation', keywords: 'prediction polymarket probability events', action: () => navigate('/prediction-markets') },
     { id: 'nav-proposals', label: 'Go to Approval Desk', group: 'Navigation', keywords: 'proposals approve', action: () => navigate('/proposals') },
     { id: 'nav-agent-activity', label: 'Go to Agent Activity', group: 'Navigation', keywords: 'agent runs opportunities transparency', action: () => navigate('/agent-activity') },
     { id: 'nav-trades', label: 'Go to Trades & Positions', group: 'Navigation', keywords: 'paper orders fills positions blotter', action: () => navigate('/trades') },

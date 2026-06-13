@@ -30,6 +30,7 @@ const oppCol = createColumnHelper<Opportunity>()
 const AGENTS = [
   'market_observer', 'research_agent', 'strategy_designer',
   'risk_critic', 'portfolio_agent', 'post_trade_reviewer', 'dreaming_agent',
+  'prediction_observer', 'stock_observer',
 ]
 
 function parseJson(raw: string | null): any[] {
@@ -145,11 +146,37 @@ function RunsTab({ runs }: { runs: AgentRun[] }) {
 function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
   const navigate = useNavigate()
   const [selected, setSelected] = useState<Opportunity | null>(null)
+  const [filter, setFilter] = useState<'all' | 'crypto' | 'equity' | 'prediction'>('all')
+
+  const filtered = filter === 'all' ? opps : opps.filter(o => (o.asset_class || 'crypto') === filter)
+  const counts = {
+    crypto: opps.filter(o => (o.asset_class || 'crypto') === 'crypto').length,
+    equity: opps.filter(o => o.asset_class === 'equity').length,
+    prediction: opps.filter(o => o.asset_class === 'prediction').length,
+  }
 
   return (
     <>
       <div className="card">
-        <DataTable data={opps} columns={oppColumns} onRowClick={setSelected} emptyMessage="No opportunities yet." />
+        <div className="flex flex-wrap gap-1 mb-2">
+          <button className={`secondary ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
+            All ({opps.length})
+          </button>
+          <button className={`secondary ${filter === 'crypto' ? 'active' : ''}`} onClick={() => setFilter('crypto')}>
+            Crypto ({counts.crypto})
+          </button>
+          {counts.equity > 0 && (
+            <button className={`secondary ${filter === 'equity' ? 'active' : ''}`} onClick={() => setFilter('equity')}>
+              Equity ({counts.equity})
+            </button>
+          )}
+          {counts.prediction > 0 && (
+            <button className={`secondary ${filter === 'prediction' ? 'active' : ''}`} onClick={() => setFilter('prediction')}>
+              Prediction ({counts.prediction})
+            </button>
+          )}
+        </div>
+        <DataTable data={filtered} columns={oppColumns} onRowClick={setSelected} emptyMessage="No opportunities yet." />
       </div>
 
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Opportunity Detail">
@@ -158,11 +185,23 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
             <DrawerSection label="Market Signal">
               <DrawerField label="Symbol" value={selected.symbol} mono />
               <DrawerField label="Market" value={selected.market} />
+              <DrawerField label="Asset Class" value={
+                <span className={`badge ${selected.asset_class === 'prediction' ? 'badge-blue' : selected.asset_class === 'equity' ? 'badge-yellow' : 'badge-green'}`}>
+                  {selected.asset_class || 'crypto'}
+                </span>
+              } />
               <DrawerField label="Direction Bias" value={selected.direction_bias} />
               <DrawerField label="Confidence" value={selected.confidence_score != null ? `${selected.confidence_score}%` : selected.confidence ?? null} />
               <DrawerField label="Source Agent" value={selected.source_agent} />
               <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
             </DrawerSection>
+            {(selected.asset_class === 'prediction' || selected.asset_class === 'equity') && (
+              <DrawerSection label="Observation Only">
+                <p className="text-muted text-sm">
+                  This {selected.asset_class} opportunity is observation-only and will not be routed to Paper Trader.
+                </p>
+              </DrawerSection>
+            )}
             <DrawerSection label="Thesis">
               <p className="opp-thesis">{selected.thesis || 'No thesis provided.'}</p>
             </DrawerSection>
@@ -172,8 +211,12 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
               ) : null} />
               <DrawerField label="Created" value={selected.created_at?.slice(0, 16)} />
             </DrawerSection>
-            <div className="mt-2">
-              <button className="secondary" onClick={() => navigate('/charts')}>View on Chart</button>
+            <div className="mt-2 flex gap-1">
+              {selected.asset_class === 'prediction' ? (
+                <button className="secondary" onClick={() => navigate('/prediction-markets')}>View in Prediction Lens</button>
+              ) : (
+                <button className="secondary" onClick={() => navigate('/charts')}>View on Chart</button>
+              )}
             </div>
           </>
         )}

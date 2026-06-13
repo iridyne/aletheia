@@ -6,6 +6,23 @@ from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.knowledge.manager import create_research_note
 
 
+def _prediction_context_block() -> str:
+    """Gather recent high-signal prediction market observations for LLM context."""
+    try:
+        from aletheia.storage.repositories import list_prediction_claims
+        claims = list_prediction_claims(claim_type="probability_momentum", limit=5)
+        if not claims:
+            return ""
+        lines = ["## Prediction Market Catalyst Signals (observation-only)"]
+        for c in claims[:5]:
+            direction_str = f" [{c.get('direction', '')}]" if c.get("direction") else ""
+            lines.append(f"- {c['claim_text']}{direction_str}")
+        lines.append("")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 @register_agent("research_agent")
 async def run_research_agent(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Generate a research note using the model provider (graceful if unavailable)."""
@@ -16,12 +33,21 @@ async def run_research_agent(permission_mode: str = "Observe", run_id: str | Non
         errors.append("create_research_note not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
+    pred_context = _prediction_context_block()
+
     title = "Market Structure Analysis"
+    system_prompt = (
+        "You are a trading research analyst. Write a concise research note (markdown) on "
+        "current crypto market structure for BTC/ETH/SOL: key concepts, a trading hypothesis, "
+        "counterarguments, and a confidence level. Keep it under 300 words."
+    )
+    user_prompt = "Write a research note on current crypto market structure."
+    if pred_context:
+        user_prompt += f"\n\n{pred_context}\nIncorporate any relevant prediction market signals as catalysts in your analysis."
+
     content, err = await llm_complete(
-        system="You are a trading research analyst. Write a concise research note (markdown) on "
-               "current crypto market structure for BTC/ETH/SOL: key concepts, a trading hypothesis, "
-               "counterarguments, and a confidence level. Keep it under 300 words.",
-        user="Write a research note on current crypto market structure.",
+        system=system_prompt,
+        user=user_prompt,
         max_tokens=900,
     )
     log_tool(run_id, "llm_complete", "observe", True)
@@ -31,7 +57,8 @@ async def run_research_agent(permission_mode: str = "Observe", run_id: str | Non
                    "enable real analysis.")
 
     item = create_research_note(title, content, confidence="speculative",
-                                metadata={"source": "research_agent"})
+                                metadata={"source": "research_agent",
+                                          "prediction_context_included": bool(pred_context)})
     log_tool(run_id, "create_research_note", "observe", True, output=item.id)
     outputs.append(f"research_note:{item.id}")
 
