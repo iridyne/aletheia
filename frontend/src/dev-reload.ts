@@ -26,6 +26,21 @@ function hideStatus() {
   if (statusEl) statusEl.style.display = 'none'
 }
 
+async function waitThenReload() {
+  // Give the server ~1s to restart, then poll until healthy.
+  await new Promise(r => setTimeout(r, 1000))
+  const deadline = Date.now() + 15000
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch('/api/health', { cache: 'no-store' })
+      if (r.ok) { window.location.reload(); return }
+    } catch { /* still restarting */ }
+    await new Promise(r => setTimeout(r, 500))
+  }
+  // Fallback: reload anyway (server might be up but health degraded)
+  window.location.reload()
+}
+
 function connect() {
   if (es) {
     es.close()
@@ -40,8 +55,10 @@ function connect() {
   })
 
   es.addEventListener('frontend-built', () => {
-    showStatus('Build updated — reloading…')
-    setTimeout(() => window.location.reload(), 300)
+    showStatus('Build updated — restarting server…')
+    // Server touches the reload sentinel after this event, so the worker will
+    // restart momentarily. Wait for it to come back before reloading.
+    waitThenReload()
   })
 
   es.onerror = () => {

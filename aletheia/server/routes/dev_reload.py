@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api/dev/reload", tags=["dev-reload"])
 
 _static_dir = Path(__file__).resolve().parent.parent.parent / "dashboard_static"
 _manifest_path = _static_dir / ".vite" / "manifest.json"
+_sentinel_path = Path(__file__).resolve().parent.parent / "_reload_sentinel.py"
 
 _last_manifest_mtime: float = 0.0
 _event_id: int = 0
@@ -52,6 +53,12 @@ async def reload_events():
                         _event_id += 1
                         data = json.dumps({"type": "frontend-built", "mtime": mtime})
                         yield f"id: {_event_id}\nevent: frontend-built\ndata: {data}\n\n"
+                        # Touch sentinel so uvicorn --reload restarts the worker.
+                        # StaticFiles caches the directory listing at mount time;
+                        # without a worker restart, new hashed asset filenames 404.
+                        _sentinel_path.write_text(
+                            f"# frontend rebuild at {time.time()}\n"
+                        )
             except (OSError, IOError):
                 pass
 
