@@ -4,7 +4,7 @@
 > Gateway 是否在跑、凭证是否就位、观察期跑了多久、demo 单是否落交易所——这些是
 > **每台机器本地的、随时间变化的事实**,写进 git 必然在另一台机器上过期。
 > **要知道真实状态,运行 `aletheia doctor`**(只读、零副作用,是事实的唯一来源)。
-> 双机切换标准流程见 `docs/DEV_PROTOCOL.md`。
+> 双机切换标准流程见 `docs/_ai/DEV_PROTOCOL.md`。
 > **2026-06-13 会话末机器交接**:本次开发会话在 UM790Pro 上结束并**停机本机实例**,开发切换到
 > 另一台机器。哪台机器承载 Phase 0 观察窗、autostart 看门狗是否仍注册、gateway 是否在跑——
 > 全是随时间/机器变化的运行态事实,**不在此断言**;接手机器**第一步一律 `git pull --ff-only`
@@ -36,7 +36,7 @@
 ## 并行开发线:账户级仓位发现 + 纳管("接管即纳管")
 
 > 所有者立场决策:Aletheia 接管账户后全账户仓位(含系统外仓位)统一交由 AI 管理。
-> 设计与治理见 `docs/DECISIONS.md`(2026-06-12 两条),进度叙事见 `docs/DEVLOG.md`。
+> 设计与治理见 `docs/_ai/DECISIONS.md`(2026-06-12 两条),进度叙事见 `docs/_ai/DEVLOG.md`。
 > 这是把 ROADMAP Phase 6 的 reconciliation 思想提前、以 demo 优先落地。
 
 - **P1 发现(只读)** — 完成:`position_reconciler.classify_positions()` +
@@ -119,5 +119,5 @@
 
 ## 历史交接
 
-详细的逐次变更记录见 `docs/AI_HANDOFF.md` 与 `docs/DEVLOG.md`。本文件只保留
+详细的逐次变更记录见 `docs/_ai/AI_HANDOFF.md` 与 `docs/_ai/DEVLOG.md`。本文件只保留
 **当前阶段意图**;已完成的诊断/修复叙事不在此堆积。

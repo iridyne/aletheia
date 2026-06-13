@@ -7,7 +7,7 @@ trading stays disabled until you explicitly unlock it — see [Live trading](#8-
 > Safety posture (always true): live is `live_disabled` by default; the agent
 > cannot unlock live, place live orders, modify risk limits, credentials, or the
 > execution gateway; every order flows through the Risk Engine; every important
-> action is audited. See `AGENTS.md` and `docs/trust_and_change_control.md`.
+> action is audited. See `AGENTS.md` and `docs/governance/trust_and_change_control.md`.
 
 ---
 

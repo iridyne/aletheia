@@ -8,18 +8,18 @@
 > ## 落锚说明（2026-06-10 — 治理对接）
 >
 > 本文是 **Operator Layer（顶层 LLM 操作员）** 的设计参考，**不是自动授权**。它已在
-> [ROADMAP.md](ROADMAP.md) 挂为一条**贯穿性并行 track**（与 Phase 0–7 的交易成熟度轴正交）。
+> [ROADMAP.md](../status/ROADMAP.md) 挂为一条**贯穿性并行 track**（与 Phase 0–7 的交易成熟度轴正交）。
 >
 > **两条铁律先于本文一切内容：**
 > 1. **拆两层**：(A) 确定性自愈 supervisor（无 LLM，稳定性根基）= **已交付**（`8a6e008` + `abd7773`）;
 >    (B) 本文描述的 **LLM Apex Agent Shell** = 尚未开始,前置依赖 = **Phase 0 观察门全绿**。
->    地基(稳跑证明)不稳前不动 (B)。见 [CURRENT_TASK.md](CURRENT_TASK.md) 战略冻结律。
+>    地基(稳跑证明)不稳前不动 (B)。见 [CURRENT_TASK.md](../_ai/CURRENT_TASK.md) 战略冻结律。
 > 2. **编号防混淆**：本文内部的 `Stage 1–6`（§16）指 **Operator track 内部里程碑**，
->    与 [ROADMAP.md](ROADMAP.md) 的 `Phase 0–7`（交易成熟度）是**两套独立编号**，不可互相映射。
+>    与 [ROADMAP.md](../status/ROADMAP.md) 的 `Phase 0–7`（交易成熟度）是**两套独立编号**，不可互相映射。
 >    引用时一律说 "Operator Stage N",不说裸 "Stage N"。
 >
 > 本文的安全边界（§6 Pi 无权限系统、§7 能/不能做、§10 Command Registry 禁令）与
-> [AGENTS.md](../AGENTS.md) 红线一致;落地实现时以 AGENTS.md 为准。
+> [AGENTS.md](../../AGENTS.md) 红线一致;落地实现时以 AGENTS.md 为准。
 >
 > **2026-06-10 详细化补充**：本文继续承担**概念设计**角色。针对当前 repo / `worktree-dev`
 > 的**双进程实现转换蓝图**，权威细化文档是

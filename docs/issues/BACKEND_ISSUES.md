@@ -1,7 +1,7 @@
 # Backend Issues — 代码层结构性问题清单
 
 > 本文件记录后端**已声明但未接通 / 自相矛盾 / 与 trust 不变量隐性冲突**的具体
-> 问题。**与 `docs/north_star_references.md` 不同**：北极星是"方向地图"（与
+> 问题。**与 `docs/references/north_star.md` 不同**：北极星是"方向地图"（与
 > OpenAlice/Hermes 等参考系对照后的范式差距，长期参考），本文件是"屋内问题
 > 清单"——具体 bug、contract 偏移、dead code、audit 漏写——随代码状态变化频繁。
 >

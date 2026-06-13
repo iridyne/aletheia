@@ -182,14 +182,14 @@ Aletheia 是**镜像的另一半**：
 - 🟡 引用本文件结论时，务必保留"确定性 / LLM / 悬空"三类的区分——
   **不要**再简化成"LLM 不在执行路径"（半假）或"LLM 直接交易"（也不准确）。
 - 区分"声称 vs 已证实"：本文件所有 file:line 断言均来自 2026-06-13 通读当前代码，
-  与 `docs/BACKEND_ISSUES.md`（2026-06-08 快照，部分条目已过时）相比是更新的一手事实。
+  与 `docs/issues/BACKEND_ISSUES.md`（2026-06-08 快照，部分条目已过时）相比是更新的一手事实。
 
 ---
 
 ## 9. 相关文档
 
-- `docs/north_star_references.md` — 方向地图（§6 经验闭环主题已更正）
-- `docs/REFERENCE_openalice_prism_review.md` — OpenAlice/Prism 对照（蓝图 B = 审计链，与本文 §5 呼应）
-- `docs/REFERENCE_agent_framework_research_2025_2026.md` — 外部综述验证镜（"确定性优先 + LLM 影响最小"佐证）
-- `docs/BACKEND_ISSUES.md` — 代码层问题清单（本文 §1.3 / §3 的发现已追加）
+- `docs/references/north_star.md` — 方向地图（§6 经验闭环主题已更正）
+- `docs/references/openalice_prism_review.md` — OpenAlice/Prism 对照（蓝图 B = 审计链，与本文 §5 呼应）
+- `docs/references/agent_framework_research_2025_2026.md` — 外部综述验证镜（"确定性优先 + LLM 影响最小"佐证）
+- `docs/issues/BACKEND_ISSUES.md` — 代码层问题清单（本文 §1.3 / §3 的发现已追加）
 - `C:\Users\ollama\Downloads\Aletheia_Implementation_Plan_v1.md` — 原始设计蓝图（仓库外，§2 对照来源）

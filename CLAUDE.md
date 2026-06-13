@@ -40,13 +40,13 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 
 ## AI Collaboration Rules
 
-- **意图 / 事实分离铁律(双机开发,见 `docs/DEV_PROTOCOL.md`)**:git 同步的是*意图*(代码 + 文档);它**不**同步*运行态事实*(本地 `app.db`/`config.yaml`/secrets/gateway 进程)。**绝不把"gateway 在跑 / 凭证已存 / 观察期第 N 小时 / demo 单已落"这类运行态事实写进任何 git 文档**——它在另一台机器上必然过期。文档只写机器无关、长期有效的意图。
-- **会话开始**:(1) `git pull --ff-only` 拿最新意图;(2) 运行 `aletheia doctor` 拿真实事实——**事实的唯一来源是机器本身,不是文档叙事**;(3) 再读 CLAUDE.md, AGENTS.md, docs/PROJECT_CONTEXT.md, docs/CURRENT_TASK.md(纯计划), docs/AI_HANDOFF.md(变更史)。
-- End each session by updating: docs/AI_HANDOFF.md, docs/DEVLOG.md, docs/CURRENT_TASK.md(只更新计划/意图,不写运行态)
-- Log architectural decisions in: docs/DECISIONS.md
+- **意图 / 事实分离铁律(双机开发,见 `docs/_ai/DEV_PROTOCOL.md`)**:git 同步的是*意图*(代码 + 文档);它**不**同步*运行态事实*(本地 `app.db`/`config.yaml`/secrets/gateway 进程)。**绝不把"gateway 在跑 / 凭证已存 / 观察期第 N 小时 / demo 单已落"这类运行态事实写进任何 git 文档**——它在另一台机器上必然过期。文档只写机器无关、长期有效的意图。
+- **会话开始**:(1) `git pull --ff-only` 拿最新意图;(2) 运行 `aletheia doctor` 拿真实事实——**事实的唯一来源是机器本身,不是文档叙事**;(3) 再读 CLAUDE.md, AGENTS.md, docs/_ai/PROJECT_CONTEXT.md, docs/_ai/CURRENT_TASK.md(纯计划), docs/_ai/AI_HANDOFF.md(变更史)。
+- End each session by updating: docs/_ai/AI_HANDOFF.md, docs/_ai/DEVLOG.md, docs/_ai/CURRENT_TASK.md(只更新计划/意图,不写运行态)
+- Log architectural decisions in: docs/_ai/DECISIONS.md
 - AGENTS.md contains detailed governance rules — always defer to it for safety boundaries
-- **Backend issues** (specific bugs / contract drift / dead code with file:line): `docs/BACKEND_ISSUES.md`. Append new findings here, not in `north_star_references.md` (which is the long-term direction map).
-- **Frontend issues** (§23 spec gaps / UI honesty breaches / engineering basics with file:line): `docs/FRONTEND_ISSUES.md`. Same severity legend as backend issues; do not bypass backend gaps with fake frontend data — entries that depend on backend fixes are explicitly cross-referenced.
+- **Backend issues** (specific bugs / contract drift / dead code with file:line): `docs/issues/BACKEND_ISSUES.md`. Append new findings here, not in `docs/references/north_star.md` (which is the long-term direction map).
+- **Frontend issues** (§23 spec gaps / UI honesty breaches / engineering basics with file:line): `docs/issues/FRONTEND_ISSUES.md`. Same severity legend as backend issues; do not bypass backend gaps with fake frontend data — entries that depend on backend fixes are explicitly cross-referenced.
 
 ## Safety Rules
 

@@ -2,7 +2,7 @@
 
 > Last updated: 2026-06-13
 > Sources: PIPELINE_STATUS.md + deep research (102 agents, 20 sources) + WORLD_MAP.md (full architecture vision)
->   + external Agent Framework Research Report 2025–2026 (validation only — see [REFERENCE_agent_framework_research_2025_2026.md](REFERENCE_agent_framework_research_2025_2026.md))
+>   + external Agent Framework Research Report 2025–2026 (validation only — see [agent_framework_research_2025_2026.md](../references/agent_framework_research_2025_2026.md))
 > Nature: **Guiding document, not automatic authorization** — each phase requires explicit confirmation before starting
 
 ---
@@ -604,20 +604,17 @@ own rules were ever executed.
 ## File Relationships
 
 ```
-ROADMAP.md (this file)         — Phase-based execution plan with observation gates
-WORLD_MAP.md                   — Full architecture vision (module specs, data contracts, workflows)
-OPERATOR_LAYER_DESIGN.md       — Cross-cutting Operator Layer track design (LLM Apex Agent Shell, layer B)
-superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md
-                              — Repo-specific dual-process implementation design for Operator Layer
-superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
-                              — Coverage map from external PI plan -> local design sources
-superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md
-                              — Design-phase completion audit for the dual-process Operator Layer package
-PIPELINE_STATUS.md             — Current implementation status per pipeline stage
-north_star_references.md       — Reference systems comparison + gap analysis
-REFERENCE_agent_framework_research_2025_2026.md
-                              — External framework survey analyzed against Aletheia (validation; declines heavy-infra stack)
-AGENTS.md                      — Governance red lines (constraints)
-DECISIONS.md                   — Architectural decision records
-AI_HANDOFF.md                  — Session handoff state
+docs/status/ROADMAP.md                 — Phase-based execution plan with observation gates (this file)
+docs/status/WORLD_MAP.md               — Full architecture vision (module specs, data contracts, workflows)
+docs/status/PIPELINE_STATUS.md         — Current implementation status per pipeline stage
+docs/design/operator_layer.md          — Cross-cutting Operator Layer track design (LLM Apex Agent Shell)
+docs/references/north_star.md          — Reference systems comparison + gap analysis
+docs/references/agent_framework_research_2025_2026.md
+                                       — External framework survey (validation; declines heavy-infra stack)
+docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md
+docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
+docs/superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md
+AGENTS.md                              — Governance red lines (constraints)
+docs/_ai/DECISIONS.md                  — Architectural decision records
+docs/_ai/AI_HANDOFF.md                 — Session handoff state
 ```

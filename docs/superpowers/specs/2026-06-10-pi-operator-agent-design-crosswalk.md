@@ -10,7 +10,7 @@ Purpose: prove that the repo-specific dual-process design fully covers `C:\Users
 Primary local design sources:
 
 - [2026-06-10-pi-operator-agent-dual-process-design.md](./2026-06-10-pi-operator-agent-dual-process-design.md)
-- [../../OPERATOR_LAYER_DESIGN.md](../../OPERATOR_LAYER_DESIGN.md)
+- [../../design/operator_layer.md](../../design/operator_layer.md)
 
 ## Coverage Rule
 

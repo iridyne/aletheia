@@ -8,7 +8,7 @@ a working MVP that needs trust hardening, not as a blank canvas.
 
 The main design reference is:
 
-- `docs/aletheia_trading_os_implementation_guide.md`
+- `docs/governance/implementation_guide.md`
 
 The implementation guide is a target and constraint document, not permission to
 implement every future idea in it. Prefer closing gaps in the current MVP over

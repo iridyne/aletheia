@@ -1,7 +1,7 @@
 # Frontend Issues — 前端结构性问题清单
 
 > 本文件记录前端**与规格 §23 / trust §3 UI Honesty 的差距**——字段缺失、
-> 角色弱化、设计方向偏差、工程基础缺位。**与 `docs/BACKEND_ISSUES.md` 平行**：
+> 角色弱化、设计方向偏差、工程基础缺位。**与 `docs/issues/BACKEND_ISSUES.md` 平行**：
 > 那一份是后端"已声明但未接通"，这一份是前端"应该呈现但没呈现 / 呈现得不诚实"。
 >
 > 每条都给出 `frontend/src/path:LINE` 佐证 + 规格依据 + 影响等级 + 最小修复建议。

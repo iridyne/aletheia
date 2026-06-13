@@ -3,7 +3,7 @@
 > **本文件是 append-only 变更史**(记录"做了什么改动 + 根因",机器无关)。
 > 其中任何"当时机器状态"(gateway 在跑 / 观察期第 N 小时 / 凭证已存 / demo 单已落)
 > 都是**写入时刻的快照,不代表当前**。要知道当前真实状态,运行 **`aletheia doctor`**。
-> 双机意图/事实分离的金标准见 `docs/DEV_PROTOCOL.md`。
+> 双机意图/事实分离的金标准见 `docs/_ai/DEV_PROTOCOL.md`。
 
 ## Last Updated
 

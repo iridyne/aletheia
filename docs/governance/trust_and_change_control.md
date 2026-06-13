@@ -1,7 +1,7 @@
 # Aletheia Trust and Change Control
 
 This document defines the implementation control layer for Aletheia Trading OS.
-It complements `docs/aletheia_trading_os_implementation_guide.md`.
+It complements `docs/governance/implementation_guide.md`.
 
 The implementation guide defines what the system should become. This document
 defines what must remain true while the system changes.
