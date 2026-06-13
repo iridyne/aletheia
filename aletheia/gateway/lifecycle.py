@@ -30,6 +30,11 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     """Start the gateway (foreground or background)."""
     cfg = bootstrap()
 
+    # Preflight checks — fail fast if environment is broken
+    from aletheia.gateway.preflight import run_preflight_checks, assert_preflight_or_exit
+    preflight_result = run_preflight_checks()
+    assert_preflight_or_exit(preflight_result)  # exits on failure
+
     if is_running():
         _echo_stdout_safe(f"Gateway already running (PID {read_pid()}).")
         _write_watchdog_tick("already_running")
@@ -85,13 +90,31 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _auto_register_watchdog(cfg)
 
 
+def _verify_webui_accessible(cfg) -> bool:
+    """验证 WebUI 根路径返回 HTML（不是 JSON 404）。
+
+    Quick check: GET / 应返回 200 + text/html。如果返回 404 + application/json，
+    说明静态文件 mount 失败（虽然 preflight 应该已经捕获这个问题）。
+    """
+    import urllib.request
+    try:
+        url = f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}/"
+        req = urllib.request.Request(url, headers={"User-Agent": "aletheia-preflight"})
+        with urllib.request.urlopen(req, timeout=2) as response:
+            content_type = response.getheader("Content-Type", "")
+            return response.status == 200 and "text/html" in content_type
+    except Exception:
+        return False
+
+
 def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
     """Block until the detached gateway is confirmed up, or raise typer.Exit(1).
 
-    Three outcomes:
+    Four outcomes:
       - proc exits before the gateway is up  → spawn died immediately; capture why.
-      - pid file written + port listening     → confirmed up; return cleanly.
+      - pid file written + port listening     → confirmed up; verify WebUI accessible.
       - timeout with neither                   → never came up; capture why.
+      - WebUI returns 404                      → static files missing (should be caught by preflight).
 
     Timeout budget: this only has to cover the supervisor + inner-uvicorn process
     startup up to the port BIND — run_migrations + init_tool_registry + init_scheduler,
@@ -113,7 +136,18 @@ def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
         if proc is not None and proc.poll() is not None and proc.returncode != 0:
             _fail_spawn(f"launcher exited with code {proc.returncode} before gateway came up")
         if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
-            return  # confirmed: supervisor wrote its pid and the port is listening
+            # Port is up — verify WebUI is actually accessible (not just API)
+            try:
+                if _verify_webui_accessible(cfg):
+                    return  # Gateway confirmed fully operational
+            except Exception:
+                pass  # Verification failed, but don't block startup — API still works
+            # WebUI may be 404 but API works — log and proceed
+            logger.warning(
+                "Gateway started but WebUI may be inaccessible. "
+                "Check aletheia/dashboard_static/ exists."
+            )
+            return
         time.sleep(0.3)
 
     if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):

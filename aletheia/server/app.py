@@ -3,6 +3,7 @@
 import logging
 import asyncio
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -31,6 +32,44 @@ from aletheia.server.routes.prediction import router as prediction_router
 from aletheia.server.routes.universe import router as universe_router
 
 logger = logging.getLogger("aletheia")
+
+
+def _mount_static_dashboard() -> None:
+    """Mount static dashboard files at root path.
+
+    Called during lifespan startup, AFTER Vite watch has had time to build.
+    Mounting at module-top previously hit a race: uvicorn loaded app.py before
+    Vite finished its first build, so index.html was missing and the mount failed.
+    """
+    _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"
+    if not (_static_dir.exists() and (_static_dir / "index.html").exists()):
+        logger.warning(f"Static dashboard not mounted: {_static_dir} / index.html missing")
+        return
+
+    class _StaticCacheHeaders(StaticFiles):
+        """StaticFiles wrapper that adds correct Cache-Control headers.
+
+        Two cache profiles, picked by URL path:
+          /assets/* — vite emits hashed filenames (index-B8SVnxU1.js); the bytes
+                      at a given path are immutable forever, so cache aggressively.
+          everything else (index.html, /favicon, fallback routes) — must be
+                      revalidated every time so the dashboard picks up new builds
+                      without ctrl+shift+R. ETag (already added by StaticFiles)
+                      keeps revalidations cheap (304 Not Modified).
+        """
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            # `path` arg uses OS separator on Windows ("assets\\foo.js"), so match
+            # against scope["path"] (the original URL) which is always forward-slash.
+            url_path = scope.get("path", "")
+            if url_path.startswith("/assets/"):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return response
+
+    app.mount("/", _StaticCacheHeaders(directory=str(_static_dir), html=True), name="dashboard")
+    logger.info(f"Static dashboard mounted from {_static_dir}")
 
 
 def runtime_process_context(environ: dict[str, str] | None = None) -> dict:
@@ -207,6 +246,11 @@ async def lifespan(app: FastAPI):
                 logger.warning("Telegram enabled but no allowed_chat_ids configured; skipping Telegram polling.")
     app.state.telegram_bot = telegram_bot
     app.state.telegram_task = telegram_task
+    # Mount static files AFTER scheduler init — by this point Vite watch (if running)
+    # has had time to build dashboard_static/. Mounting at module-top hits a race:
+    # uvicorn loads app.py before Vite finishes its first build, so index.html is
+    # missing and the mount never happens. Deferred mount fixes the issue.
+    _mount_static_dashboard()
     yield
     # Cancel the LLM gate if it's still probing at shutdown (slow/hung provider).
     if llm_gate_task is not None and not llm_gate_task.done():
@@ -272,30 +316,4 @@ if is_dev_reload_enabled():
     from aletheia.server.routes.dev_reload import router as dev_reload_router
     app.include_router(dev_reload_router)
 
-# Serve static dashboard if the directory exists
-_static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"
-if _static_dir.exists() and (_static_dir / "index.html").exists():
-
-    class _StaticCacheHeaders(StaticFiles):
-        """StaticFiles wrapper that adds correct Cache-Control headers.
-
-        Two cache profiles, picked by URL path:
-          /assets/* — vite emits hashed filenames (index-B8SVnxU1.js); the bytes
-                      at a given path are immutable forever, so cache aggressively.
-          everything else (index.html, /favicon, fallback routes) — must be
-                      revalidated every time so the dashboard picks up new builds
-                      without ctrl+shift+R. ETag (already added by StaticFiles)
-                      keeps revalidations cheap (304 Not Modified).
-        """
-        async def get_response(self, path, scope):
-            response = await super().get_response(path, scope)
-            # `path` arg uses OS separator on Windows ("assets\\foo.js"), so match
-            # against scope["path"] (the original URL) which is always forward-slash.
-            url_path = scope.get("path", "")
-            if url_path.startswith("/assets/"):
-                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-            else:
-                response.headers["Cache-Control"] = "no-cache, must-revalidate"
-            return response
-
-    app.mount("/", _StaticCacheHeaders(directory=str(_static_dir), html=True), name="dashboard")
+# Static dashboard is mounted during lifespan startup (see _mount_static_dashboard)

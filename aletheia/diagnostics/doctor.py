@@ -357,6 +357,38 @@ def _probe_health(report: Report) -> None:
         report.add("health.rollup", "warn", f"degraded: {issues}")
 
 
+def _probe_webui_static(report: Report) -> None:
+    """WebUI 静态文件完整性检查（新增诊断维度）。"""
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parent.parent.parent
+    static_dir = project_root / "aletheia" / "dashboard_static"
+    index_html = static_dir / "index.html"
+
+    if not static_dir.exists():
+        report.add("webui.static", "blocker", "dashboard_static/ missing",
+                   fix_hint="Run: cd frontend && npm install && npm run build")
+        return
+    if not index_html.exists():
+        report.add("webui.static", "blocker", "index.html missing",
+                   fix_hint="Run: cd frontend && npm run build")
+        return
+
+    size = index_html.stat().st_size
+    if size < 100:
+        report.add("webui.static", "warn", f"index.html suspiciously small ({size} bytes)",
+                   fix_hint="Rebuild: cd frontend && npm run build")
+        return
+
+    assets_dir = static_dir / "assets"
+    js_count = len(list(assets_dir.glob("*.js"))) if assets_dir.exists() else 0
+    if js_count == 0:
+        report.add("webui.static", "warn", "No JS bundles in assets/",
+                   fix_hint="Run: cd frontend && npm run build")
+        return
+
+    report.add("webui.static", "ok", f"{size} bytes index, {js_count} JS bundles")
+
+
 def build_report() -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing."""
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -368,6 +400,7 @@ def build_report() -> Report:
         _probe_market_data,
         _probe_trading_loop,
         _probe_health,
+        _probe_webui_static,  # 新增维度
     ):
         try:
             probe(report)

@@ -26,6 +26,12 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 - Symbol format: canonical `BTC/USDT` everywhere internally (storage, risk, PnL, opportunities); the concatenated `BTCUSDT` exists ONLY at the execution adapter boundary via `to_bitget()`. Converters/`InstrumentId` live in `aletheia/data/symbols.py`. A mismatch silently drops opportunities at `paper_trader`'s filter.
 - SQLite concurrency (do not break): APScheduler's `ThreadPoolExecutor` and uvicorn async handlers race on one `data/app.db`. Three pillars must all hold — (1) WAL + `busy_timeout` (`storage/sqlite.py`); (2) one connection per thread via `threading.local` (never cache a connection across threads); (3) `was_in_tx = db.in_transaction` captured **before** every write in `repositories.py`, committing only `if not was_in_tx` — sqlite3 auto-opens a tx on INSERT/UPDATE/DELETE, so checking *after* the write never commits and hangs the WAL lock (the historical `database is locked` bug). Scheduler is capped at `max_workers=3` on purpose; don't raise it or add a 4th writer pattern.
 - Config ↔ UI rule: every new field in `aletheia/config/schema.py` MUST have a corresponding control in the Web frontend settings page. Users never edit `data/config.yaml` directly — all operational config is managed through the dashboard UI.
+- **WebUI 静态文件构建规则**:
+  - `aletheia/dashboard_static/` 必须提交到 Git(预构建，确保克隆后即可用)
+  - 修改前端后运行 `cd frontend && npm run build` 更新静态文件并提交
+  - Gateway 后台启动依赖已构建的静态文件(**不**自动运行 Vite watch)
+  - 开发迭代用 `scripts/dev.ps1`(独立 Vite watch + 后端 watcher)
+  - 启动前会运行 preflight checks，静态文件缺失时**拒绝启动并给出修复建议**
 - Priority: State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy
 
 ## Repo Setup

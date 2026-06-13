@@ -77,7 +77,15 @@ def _spawn_server(cfg) -> int:
 
 
 def _start_vite_build_watch() -> subprocess.Popen | None:
-    """Start `vite build --watch` as a sibling process. Returns Popen or None."""
+    """Start `vite build --watch` as a sibling process. Returns Popen or None.
+
+    DISABLED: Vite watch creates a race with app.py's static file mount — uvicorn
+    loads before Vite finishes its first build, so dashboard_static/ is incomplete
+    and the mount fails. For dev iteration use scripts/dev.ps1 instead (runs Vite
+    watch + backend watcher separately). Background Gateway startup relies on a
+    pre-built dashboard_static/ (committed or built via `npm run build`).
+    """
+    return None  # Disabled — see docstring above
     project_root = Path(__file__).resolve().parent.parent
     frontend_dir = project_root / "frontend"
     vite_bin = frontend_dir / "node_modules" / "vite" / "bin" / "vite.js"
