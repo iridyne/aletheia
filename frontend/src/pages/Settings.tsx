@@ -192,9 +192,119 @@ function IntelligenceTab({ status, settings, qc }: any) {
         </Row>
       </Section>
 
+      <Section title="Universe Generator" description="Dynamic candidate selection — automatically discovers and scores tradable symbols beyond the static list. When enabled, agents observe the top 20–30 assets by opportunity score.">
+        <UniverseConfigCard settings={settings} qc={qc} />
+      </Section>
+
       <Section title="AI Model Providers" description="LLM endpoints used by all agents. Verify & Save tests the connection before persisting. API keys are write-only.">
         <ModelProviderCard qc={qc} />
       </Section>
+    </div>
+  )
+}
+
+// ─── Universe config ───
+
+function UniverseConfigCard({ settings, qc }: any) {
+  const universe = settings?.universe as any
+  const [enabled, setEnabled] = useState(false)
+  const [refreshMin, setRefreshMin] = useState('10')
+  const [maxCandidates, setMaxCandidates] = useState('30')
+  const [corePool, setCorePool] = useState('10')
+  const [minVolume, setMinVolume] = useState('5000000')
+  const [maxSpread, setMaxSpread] = useState('25')
+  const [exploreRatio, setExploreRatio] = useState('0.2')
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!universe) return
+    setEnabled(!!universe.enabled)
+    setRefreshMin(String(universe.refresh_interval_min ?? 10))
+    setMaxCandidates(String(universe.max_candidates ?? 30))
+    setCorePool(String(universe.core_pool_size ?? 10))
+    setMinVolume(String(universe.min_volume_24h_usdt ?? 5000000))
+    setMaxSpread(String(universe.max_spread_bps ?? 25))
+    setExploreRatio(String(universe.explore_ratio ?? 0.2))
+  }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateUniverseConfig({
+      enabled,
+      refresh_interval_min: parseInt(refreshMin),
+      max_candidates: parseInt(maxCandidates),
+      core_pool_size: parseInt(corePool),
+      min_volume_24h_usdt: parseFloat(minVolume),
+      max_spread_bps: parseFloat(maxSpread),
+      explore_ratio: parseFloat(exploreRatio),
+    }),
+    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  if (!universe) return null
+
+  return (
+    <div className="card" style={{ marginBottom: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.85rem' }}>
+        <Toggle checked={enabled} onChange={v => { setEnabled(v); setMsg(null) }} />
+        <span className={`badge ${enabled ? 'badge-green' : 'badge-red'}`}>{enabled ? 'ACTIVE' : 'OFF'}</span>
+        {!enabled && <span className="hint" style={{ margin: 0 }}>Agents use static symbol list (BTC/ETH/SOL) when disabled.</span>}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.5rem 1.5rem', marginBottom: '0.75rem' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Refresh interval</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <input type="number" min={1} max={60} step={1} value={refreshMin}
+              onChange={e => { setRefreshMin(e.target.value); setMsg(null) }}
+              style={{ width: '80px', fontFamily: 'var(--mono)' }} />
+            <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>min</span>
+          </div>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Max candidates</span>
+          <input type="number" min={5} max={100} step={1} value={maxCandidates}
+            onChange={e => { setMaxCandidates(e.target.value); setMsg(null) }}
+            style={{ width: '80px', fontFamily: 'var(--mono)' }} />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Core pool size</span>
+          <input type="number" min={1} max={50} step={1} value={corePool}
+            onChange={e => { setCorePool(e.target.value); setMsg(null) }}
+            style={{ width: '80px', fontFamily: 'var(--mono)' }} />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Min 24h volume</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <input type="number" min={100000} max={500000000} step={100000} value={minVolume}
+              onChange={e => { setMinVolume(e.target.value); setMsg(null) }}
+              style={{ width: '120px', fontFamily: 'var(--mono)' }} />
+            <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>USDT</span>
+          </div>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Max spread</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <input type="number" min={1} max={200} step={1} value={maxSpread}
+              onChange={e => { setMaxSpread(e.target.value); setMsg(null) }}
+              style={{ width: '80px', fontFamily: 'var(--mono)' }} />
+            <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>bps</span>
+          </div>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Explore ratio</span>
+          <input type="number" min={0} max={0.5} step={0.05} value={exploreRatio}
+            onChange={e => { setExploreRatio(e.target.value); setMsg(null) }}
+            style={{ width: '80px', fontFamily: 'var(--mono)' }} />
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
+        <SaveMsg msg={msg} />
+      </div>
+      <p className="hint">
+        When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
+        and feeds the top {maxCandidates} to agents. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.
+      </p>
     </div>
   )
 }
@@ -373,13 +483,16 @@ function ExchangeCredentialsCard({ qc }: any) {
         ))}
       </div>
       <div className="form-grid">
-        <label>API Key {cur?.api_key?.configured && <span className="badge badge-green">··{cur.api_key.last4}</span>}
+        <label>
+          <span>API Key{cur?.api_key?.configured ? ` (··${cur.api_key.last4})` : ''}</span>
           <input type="password" value={apiKey} placeholder={cur?.api_key?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiKey(e.target.value)} />
         </label>
-        <label>API Secret {cur?.api_secret?.configured && <span className="badge badge-green">set</span>}
+        <label>
+          <span>API Secret{cur?.api_secret?.configured ? ' (set)' : ''}</span>
           <input type="password" value={apiSecret} placeholder={cur?.api_secret?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiSecret(e.target.value)} />
         </label>
-        <label>Passphrase {cur?.passphrase?.configured && <span className="badge badge-green">set</span>}
+        <label>
+          <span>Passphrase{cur?.passphrase?.configured ? ' (set)' : ''}</span>
           <input type="password" value={passphrase} placeholder={cur?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} />
         </label>
       </div>
@@ -428,31 +541,26 @@ function TradingParamsCard({ settings, qc }: any) {
   return (
     <div className="card" style={{ marginBottom: 0 }}>
       <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
-        <label>Default stop-loss
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <input type="number" min={0.1} max={50} step={0.1} value={stopLoss}
-              onChange={e => { setStopLoss(e.target.value); setMsg(null) }}
-              style={{ width: '90px', fontFamily: 'var(--mono)' }} />
-            <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>%</span>
-          </div>
+        <label>
+          <span>Default stop-loss (%)</span>
+          <input type="number" min={0.1} max={50} step={0.1} value={stopLoss}
+            onChange={e => { setStopLoss(e.target.value); setMsg(null) }}
+            style={{ fontFamily: 'var(--mono)' }} />
         </label>
-        <label>Default take-profit
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <input type="number" min={0.1} max={100} step={0.1} value={takeProfit}
-              onChange={e => { setTakeProfit(e.target.value); setMsg(null) }}
-              style={{ width: '90px', fontFamily: 'var(--mono)' }} />
-            <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>%</span>
-          </div>
+        <label>
+          <span>Default take-profit (%)</span>
+          <input type="number" min={0.1} max={100} step={0.1} value={takeProfit}
+            onChange={e => { setTakeProfit(e.target.value); setMsg(null) }}
+            style={{ fontFamily: 'var(--mono)' }} />
         </label>
-        <label>Max hold time
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <input type="number" min={1} max={8760} step={1} value={holdHours}
-              onChange={e => { setHoldHours(e.target.value); setMsg(null) }}
-              style={{ width: '90px', fontFamily: 'var(--mono)' }} />
-            <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>hours</span>
-          </div>
+        <label>
+          <span>Max hold time (hours)</span>
+          <input type="number" min={1} max={8760} step={1} value={holdHours}
+            onChange={e => { setHoldHours(e.target.value); setMsg(null) }}
+            style={{ fontFamily: 'var(--mono)' }} />
         </label>
-        <label>Min confidence to trade
+        <label>
+          <span>Min confidence to trade</span>
           <select value={confidence} onChange={e => { setConfidence(e.target.value); setMsg(null) }}>
             {CONFIDENCE_LEVELS.map(c => <option key={c}>{c}</option>)}
           </select>
@@ -609,16 +717,13 @@ const RISK_BOOLS: BoolField[] = [
 
 function NumGrid({ fields, vals, set }: { fields: NumField[]; vals: Record<string, any>; set: (k: string, v: any) => void }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '0.5rem 1.5rem', marginBottom: '0.5rem' }}>
+    <div className="form-grid" style={{ marginBottom: '0.5rem' }}>
       {fields.map(f => (
-        <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{f.label}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <input type="number" min={f.min} max={f.max} step={f.step} value={vals[f.key] ?? ''}
-              onChange={e => set(f.key, f.isInt ? parseInt(e.target.value) : parseFloat(e.target.value))}
-              style={{ width: '100px', fontFamily: 'var(--mono)' }} />
-            {f.unit && <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>{f.unit}</span>}
-          </div>
+        <label key={f.key}>
+          <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
+          <input type="number" min={f.min} max={f.max} step={f.step} value={vals[f.key] ?? ''}
+            onChange={e => set(f.key, f.isInt ? parseInt(e.target.value) : parseFloat(e.target.value))}
+            style={{ fontFamily: 'var(--mono)' }} />
         </label>
       ))}
     </div>
@@ -796,17 +901,14 @@ function HealthCard({ settings, qc }: any) {
 
   if (!health) return null
 
-  const numField = (key: string, label: string, unit: string, min: number, max: number, step: number) => (
-    <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-      <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-        <input type="number" min={min} max={max} step={step} value={vals[key] ?? ''}
-          onChange={e => set(key, parseFloat(e.target.value))}
-          style={{ width: '90px', fontFamily: 'var(--mono)' }} />
-        {unit && <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>{unit}</span>}
-      </div>
-    </label>
-  )
+  const HEALTH_FIELDS: NumField[] = [
+    { key: 'max_agent_failure_ratio',      label: 'Max agent failure ratio',  unit: '',    min: 0,  max: 1,     step: 0.01 },
+    { key: 'llm_unavailable_alert_after',  label: 'LLM alert after N failures', unit: '', min: 1,  max: 100,   step: 1, isInt: true },
+    { key: 'market_data_max_staleness_min',label: 'Market data staleness',    unit: 'min', min: 5,  max: 1440,  step: 1, isInt: true },
+    { key: 'supervisor_max_restarts',      label: 'Supervisor max restarts',  unit: '',    min: 1,  max: 50,    step: 1, isInt: true },
+    { key: 'supervisor_restart_window_sec',label: 'Restart window',           unit: 'sec', min: 60, max: 86400, step: 60, isInt: true },
+    { key: 'supervisor_backoff_cap_sec',   label: 'Backoff cap',              unit: 'sec', min: 5,  max: 3600,  step: 1, isInt: true },
+  ]
 
   return (
     <div className="card" style={{ marginBottom: 0 }}>
@@ -820,14 +922,7 @@ function HealthCard({ settings, qc }: any) {
           Alert via Telegram
         </label>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem 1.5rem', marginBottom: '0.75rem' }}>
-        {numField('max_agent_failure_ratio',     'Max agent failure ratio',      '',    0,    1,    0.01)}
-        {numField('llm_unavailable_alert_after', 'LLM alert after N failures',  '',    1,    100,  1)}
-        {numField('market_data_max_staleness_min','Market data staleness',       'min', 5,    1440, 1)}
-        {numField('supervisor_max_restarts',     'Supervisor max restarts',      '',    1,    50,   1)}
-        {numField('supervisor_restart_window_sec','Restart window',             'sec', 60,   86400,60)}
-        {numField('supervisor_backoff_cap_sec',  'Backoff cap',                 'sec', 5,    3600, 1)}
-      </div>
+      <NumGrid fields={HEALTH_FIELDS} vals={vals} set={set} />
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
         <SaveMsg msg={msg} />
@@ -858,30 +953,18 @@ function RetentionCard({ settings, qc }: any) {
 
   if (!retention) return null
 
-  const fields: { key: string; label: string; unit: string; step: number }[] = [
-    { key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', step: 1 },
-    { key: 'tool_calls_days',          label: 'Tool calls',          unit: 'days', step: 1 },
-    { key: 'run_steps_days',           label: 'Run steps',           unit: 'days', step: 1 },
-    { key: 'market_snapshots_days',    label: 'Market snapshots',    unit: 'days', step: 1 },
-    { key: 'portfolio_snapshots_days', label: 'Portfolio snapshots', unit: 'days', step: 1 },
-    { key: 'jsonl_max_mb',             label: 'JSONL max size',      unit: 'MB',   step: 10 },
+  const RETENTION_FIELDS: NumField[] = [
+    { key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
+    { key: 'tool_calls_days',          label: 'Tool calls',          unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
+    { key: 'run_steps_days',           label: 'Run steps',           unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
+    { key: 'market_snapshots_days',    label: 'Market snapshots',    unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
+    { key: 'portfolio_snapshots_days', label: 'Portfolio snapshots', unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
+    { key: 'jsonl_max_mb',             label: 'JSONL max size',      unit: 'MB',   min: 1, max: 99999, step: 10, isInt: true },
   ]
 
   return (
     <div className="card" style={{ marginBottom: 0 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.5rem 1.5rem', marginBottom: '0.75rem' }}>
-        {fields.map(f => (
-          <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{f.label}</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-              <input type="number" min={1} step={f.step} value={vals[f.key] ?? ''}
-                onChange={e => set(f.key, parseFloat(e.target.value))}
-                style={{ width: '90px', fontFamily: 'var(--mono)' }} />
-              <span style={{ fontSize: '0.74rem', color: 'var(--muted)' }}>{f.unit}</span>
-            </div>
-          </label>
-        ))}
-      </div>
+      <NumGrid fields={RETENTION_FIELDS} vals={vals} set={set} />
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
         <SaveMsg msg={msg} />
@@ -1484,13 +1567,15 @@ function CodexCLIPanel({ config, health, qc }: { config: any; health: any; qc: a
             <span className="badge badge-green">connected</span>
             <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via ChatGPT subscription</span>
           </div>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', maxWidth: '240px' }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Model</span>
-            <select value={selectedModel} onChange={e => pickModel.mutate(e.target.value)}>
-              <option value="">codex default</option>
-              {models.map((m: any) => <option key={m.slug} value={m.slug}>{m.display_name}</option>)}
-            </select>
-          </label>
+          <div className="form-grid" style={{ maxWidth: '320px' }}>
+            <label>
+              <span>Model</span>
+              <select value={selectedModel} onChange={e => pickModel.mutate(e.target.value)}>
+                <option value="">codex default</option>
+                {models.map((m: any) => <option key={m.slug} value={m.slug}>{m.display_name}</option>)}
+              </select>
+            </label>
+          </div>
           <p className="hint" style={{ marginTop: '0.5rem' }}>OAuth token managed by Codex CLI (~/.codex). Aletheia stores no token.</p>
         </div>
       ) : (
