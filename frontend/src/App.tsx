@@ -110,10 +110,29 @@ function StatusBar() {
   const driftIssue = (health?.issues || []).find(i => i.startsWith('code_updated_pending_restart:')) || ''
   const driftRange = driftIssue ? driftIssue.replace('code_updated_pending_restart:', '') : ''
 
+  const [restarting, setRestarting] = useState(false)
   const restartMut = useMutation({
     mutationFn: api.restartGateway,
+    onMutate: () => setRestarting(true),
     onSuccess: () => {
-      setTimeout(() => qc.invalidateQueries(), 8000)
+      // Process dies 0.5s after responding — poll health until it's back
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch('/api/health')
+          if (r.ok) { clearInterval(poll); setRestarting(false); qc.invalidateQueries() }
+        } catch { /* still down */ }
+      }, 2000)
+      setTimeout(() => { clearInterval(poll); setRestarting(false) }, 30000)
+    },
+    onError: () => {
+      // fetch failed (process died before response) — same polling logic
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch('/api/health')
+          if (r.ok) { clearInterval(poll); setRestarting(false); qc.invalidateQueries() }
+        } catch { /* still down */ }
+      }, 2000)
+      setTimeout(() => { clearInterval(poll); setRestarting(false) }, 30000)
     },
   })
 
@@ -299,10 +318,10 @@ function StatusBar() {
               <button
                 className="topbar-btn secondary"
                 onClick={() => restartMut.mutate()}
-                disabled={restartMut.isPending}
+                disabled={restarting}
                 title="Kill the current gateway process and cold-restart from disk. Use when git pull brought new commits that --reload didn't pick up, or when the process is in a bad state."
               >
-                {restartMut.isPending ? 'restarting…' : '↻ Cold Restart'}
+                {restarting ? 'restarting…' : '↻ Cold Restart'}
               </button>
               <p className="sp-drift-hint">Hot-reload missed these commits. Cold restart loads the new code.</p>
             </div>
