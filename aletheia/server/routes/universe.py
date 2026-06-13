@@ -48,11 +48,13 @@ def get_snapshot(snapshot_id: str):
 
 @router.get("/members/{member_id}")
 def get_member(member_id: str):
-    """Get a single universe member with full explanation."""
+    """Get a single universe member with full explanation, features, and linked opportunities."""
     member = repo.get_universe_member(member_id)
     if not member:
         raise HTTPException(404, "Member not found")
-    return member
+    features = repo.get_latest_feature_snapshot(member["asset_id"])
+    opportunities = repo.list_opportunities_by_member(member_id, limit=5)
+    return {"member": member, "features": features, "opportunities": opportunities}
 
 
 @router.post("/refresh")

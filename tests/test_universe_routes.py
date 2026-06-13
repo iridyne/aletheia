@@ -100,11 +100,18 @@ def test_get_member_not_found(client):
 
 
 def test_get_member_found(client):
-    member = {"id": "m1", "symbol": "BTC/USDT", "scanner_family": "momentum", "rank": 1}
-    with patch("aletheia.server.routes.universe.repo.get_universe_member", return_value=member):
+    member = {"id": "m1", "asset_id": "a1", "symbol": "BTC/USDT", "scanner_family": "momentum", "rank": 1}
+    features = {"id": "f1", "asset_id": "a1", "rsi_14": 55.0, "atr_pct": 2.1}
+    opps = [{"id": "o1", "symbol": "BTC/USDT", "status": "open", "direction_bias": "long", "created_at": "2026-01-01T00:00:00"}]
+    with patch("aletheia.server.routes.universe.repo.get_universe_member", return_value=member), \
+         patch("aletheia.server.routes.universe.repo.get_latest_feature_snapshot", return_value=features), \
+         patch("aletheia.server.routes.universe.repo.list_opportunities_by_member", return_value=opps):
         resp = client.get("/api/universe/members/m1")
     assert resp.status_code == 200
-    assert resp.json()["symbol"] == "BTC/USDT"
+    body = resp.json()
+    assert body["member"]["symbol"] == "BTC/USDT"
+    assert body["features"]["rsi_14"] == 55.0
+    assert len(body["opportunities"]) == 1
 
 
 def test_registry_stats(client):

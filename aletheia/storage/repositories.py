@@ -1174,6 +1174,25 @@ def get_universe_member(member_id: str) -> dict | None:
     return _select_one("universe_members", member_id)
 
 
+def get_latest_feature_snapshot(asset_id: str) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM universe_feature_snapshots WHERE asset_id = ? ORDER BY ts DESC LIMIT 1",
+        (asset_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_opportunities_by_member(member_id: str, limit: int = 5) -> list[dict]:
+    return _select_all(
+        "opportunities",
+        where="universe_member_id = ?",
+        params=(member_id,),
+        order="created_at DESC",
+        limit=limit,
+    )
+
+
 def insert_universe_policy(policy: UniversePolicy) -> None:
     _insert("universe_policies", policy.model_dump())
 

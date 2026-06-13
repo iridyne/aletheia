@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
-import type { UniverseMember, UniverseCurrentResponse } from '../types'
+import type { UniverseMember, UniverseCurrentResponse, UniverseMemberDetail } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
@@ -24,6 +24,24 @@ function familyColor(family: string | null): string {
   }
 }
 
+function formatVolume(v: number | null): string {
+  if (v == null) return '—'
+  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}B`
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K`
+  return v.toFixed(0)
+}
+
+function timeAgo(isoStr: string | null | undefined): string {
+  if (!isoStr) return '—'
+  const ts = new Date(isoStr.endsWith('Z') || isoStr.includes('+') ? isoStr : isoStr + 'Z').getTime()
+  const diff = Math.floor((Date.now() - ts) / 1000)
+  if (diff < 60) return '<1m ago'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
 const columns = [
   col.accessor('rank', { header: '#', cell: info => info.getValue() }),
   col.accessor('symbol', { header: 'Symbol' }),
@@ -31,13 +49,21 @@ const columns = [
     header: 'Family',
     cell: info => (
       <span className={familyColor(info.getValue())}>
-        {info.getValue() || '—'}
+        {info.getValue()?.replace('_', ' ') || '—'}
       </span>
     ),
   }),
   col.accessor('total_score', {
     header: 'Score',
     cell: info => info.getValue()?.toFixed(1) ?? '—',
+  }),
+  col.accessor('quote_volume_24h', {
+    header: 'Volume 24h',
+    cell: info => formatVolume(info.getValue()),
+  }),
+  col.accessor('spread_bps', {
+    header: 'Spread',
+    cell: info => info.getValue() != null ? `${info.getValue()!.toFixed(1)} bps` : '—',
   }),
   col.accessor('tradability_score', {
     header: 'Tradability',
@@ -103,7 +129,7 @@ export default function Universe() {
       />
 
       {/* Summary row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-zinc-800 rounded-lg p-4">
           <div className="text-sm text-zinc-400">Candidates</div>
           <div className="text-2xl font-mono">{members.length}</div>
@@ -121,6 +147,10 @@ export default function Universe() {
           <div className="text-2xl font-mono">
             {!enabled ? 'OFF' : isFallback ? 'FALLBACK' : 'ACTIVE'}
           </div>
+        </div>
+        <div className="bg-zinc-800 rounded-lg p-4">
+          <div className="text-sm text-zinc-400">Refreshed</div>
+          <div className="text-2xl font-mono">{timeAgo(snapshot?.created_at)}</div>
         </div>
       </div>
 
@@ -175,40 +205,87 @@ export default function Universe() {
 
       {/* Detail drawer */}
       {selected && (
-        <DetailDrawer open={true} title={`${selected.symbol} — Rank #${selected.rank}`} onClose={() => setSelected(null)}>
-          <DrawerSection label="Scores">
-            <DrawerField label="Total Score" value={selected.total_score?.toFixed(1)} />
-            <DrawerField label="Opportunity" value={selected.opportunity_score?.toFixed(1) ?? '—'} />
-            <DrawerField label="Tradability" value={selected.tradability_score?.toFixed(0) ?? '—'} />
-            <DrawerField label="Liquidity" value={selected.liquidity_score?.toFixed(0) ?? '—'} />
-            <DrawerField label="Est. Cost" value={selected.estimated_cost?.toFixed(1) ?? '—'} />
-            <DrawerField label="Crowding Risk" value={selected.crowding_risk?.toFixed(1) ?? '—'} />
-            <DrawerField label="Late Entry Penalty" value={selected.late_entry_penalty?.toFixed(1) ?? '—'} />
-          </DrawerSection>
-          <DrawerSection label="Classification">
-            <DrawerField label="Family" value={selected.scanner_family ?? '—'} />
-            <DrawerField label="TTL" value={`${selected.ttl_sec}s`} />
-            <DrawerField label="Expires" value={selected.expires_at?.slice(0, 16) ?? '—'} />
-            <DrawerField label="Eligible" value={selected.execution_eligible ? 'Yes' : 'No'} />
-          </DrawerSection>
-          <DrawerSection label="Reasons">
-            {parseJson(selected.inclusion_reason).map((r: string, i: number) => (
-              <div key={i} className="text-sm text-zinc-300">• {r}</div>
-            ))}
-            {parseJson(selected.inclusion_reason).length === 0 && (
-              <div className="text-sm text-zinc-500">No reasons recorded</div>
-            )}
-          </DrawerSection>
-          <DrawerSection label="Risk Flags">
-            {parseJson(selected.risk_flags).map((f: string, i: number) => (
-              <div key={i} className="text-sm text-orange-400">⚠ {f}</div>
-            ))}
-            {parseJson(selected.risk_flags).length === 0 && (
-              <div className="text-sm text-zinc-500">No risk flags</div>
-            )}
-          </DrawerSection>
-        </DetailDrawer>
+        <MemberDrawer member={selected} onClose={() => setSelected(null)} />
       )}
     </div>
+  )
+}
+
+function MemberDrawer({ member, onClose }: { member: UniverseMember; onClose: () => void }) {
+  const { data } = useQuery<UniverseMemberDetail>({
+    queryKey: ['universe-member', member.id],
+    queryFn: () => api.getUniverseMember(member.id),
+  })
+
+  const features = data?.features
+  const opportunities = data?.opportunities ?? []
+
+  return (
+    <DetailDrawer open={true} title={`${member.symbol} — Rank #${member.rank}`} onClose={onClose}>
+      <DrawerSection label="Scores">
+        <DrawerField label="Total Score" value={member.total_score?.toFixed(1)} />
+        <DrawerField label="Opportunity" value={member.opportunity_score?.toFixed(1) ?? '—'} />
+        <DrawerField label="Tradability" value={member.tradability_score?.toFixed(0) ?? '—'} />
+        <DrawerField label="Liquidity" value={member.liquidity_score?.toFixed(0) ?? '—'} />
+        <DrawerField label="Est. Cost" value={member.estimated_cost?.toFixed(1) ?? '—'} />
+        <DrawerField label="Crowding Risk" value={member.crowding_risk?.toFixed(1) ?? '—'} />
+        <DrawerField label="Late Entry Penalty" value={member.late_entry_penalty?.toFixed(1) ?? '—'} />
+      </DrawerSection>
+
+      <DrawerSection label="Market Data">
+        <DrawerField label="Volume 24h" value={formatVolume(member.quote_volume_24h)} />
+        <DrawerField label="Spread" value={member.spread_bps != null ? `${member.spread_bps.toFixed(1)} bps` : '—'} />
+      </DrawerSection>
+
+      <DrawerSection label="Classification">
+        <DrawerField label="Family" value={member.scanner_family?.replace('_', ' ') ?? '—'} />
+        <DrawerField label="TTL" value={`${member.ttl_sec}s`} />
+        <DrawerField label="Expires" value={member.expires_at?.slice(0, 16) ?? '—'} />
+        <DrawerField label="Eligible" value={member.execution_eligible ? 'Yes' : 'No'} />
+      </DrawerSection>
+
+      {features && (
+        <DrawerSection label="Feature Snapshot">
+          <DrawerField label="RSI (14)" value={features.rsi_14?.toFixed(1) ?? '—'} />
+          <DrawerField label="ATR %" value={features.atr_pct?.toFixed(2) ?? '—'} />
+          <DrawerField label="Return 1h" value={features.return_1h != null ? `${features.return_1h.toFixed(2)}%` : '—'} />
+          <DrawerField label="Return 4h" value={features.return_4h != null ? `${features.return_4h.toFixed(2)}%` : '—'} />
+          <DrawerField label="Return 24h" value={features.return_24h != null ? `${features.return_24h.toFixed(2)}%` : '—'} />
+          <DrawerField label="Funding Rate" value={features.funding_rate != null ? `${(features.funding_rate * 100).toFixed(4)}%` : '—'} />
+          <DrawerField label="Open Interest" value={features.open_interest != null ? formatVolume(features.open_interest) : '—'} />
+          <DrawerField label="OI Delta 1h" value={features.oi_delta_1h != null ? formatVolume(features.oi_delta_1h) : '—'} />
+          <DrawerField label="Data Age" value={features.data_freshness_sec != null ? `${features.data_freshness_sec}s` : '—'} />
+        </DrawerSection>
+      )}
+
+      <DrawerSection label="Reasons">
+        {parseJson(member.inclusion_reason).map((r: string, i: number) => (
+          <div key={i} className="text-sm text-zinc-300">• {r}</div>
+        ))}
+        {parseJson(member.inclusion_reason).length === 0 && (
+          <div className="text-sm text-zinc-500">No reasons recorded</div>
+        )}
+      </DrawerSection>
+
+      <DrawerSection label="Risk Flags">
+        {parseJson(member.risk_flags).map((f: string, i: number) => (
+          <div key={i} className="text-sm text-orange-400">⚠ {f}</div>
+        ))}
+        {parseJson(member.risk_flags).length === 0 && (
+          <div className="text-sm text-zinc-500">No risk flags</div>
+        )}
+      </DrawerSection>
+
+      {opportunities.length > 0 && (
+        <DrawerSection label="Linked Opportunities">
+          {opportunities.map((opp) => (
+            <div key={opp.id} className="text-sm text-zinc-300" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>{opp.symbol} · {opp.direction_bias || '—'}</span>
+              <span className="text-zinc-500">{opp.status} · {opp.created_at?.slice(0, 16)}</span>
+            </div>
+          ))}
+        </DrawerSection>
+      )}
+    </DetailDrawer>
   )
 }

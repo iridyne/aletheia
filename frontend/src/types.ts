@@ -596,6 +596,8 @@ export interface UniverseMember {
   crowding_risk: number | null
   late_entry_penalty: number | null
   scanner_family: string | null
+  quote_volume_24h: number | null
+  spread_bps: number | null
   ttl_sec: number
   expires_at: string
   inclusion_reason: string
@@ -618,4 +620,29 @@ export interface UniverseCurrentResponse {
   members: UniverseMember[]
   enabled: boolean
   fallback: boolean
+}
+
+export interface UniverseFeatureSnapshot {
+  id: string
+  asset_id: string
+  ts: string
+  quote_volume_24h: number | null
+  volume_1h: number | null
+  spread_bps: number | null
+  depth_10bps_usd: number | null
+  atr_pct: number | null
+  rsi_14: number | null
+  return_1h: number | null
+  return_4h: number | null
+  return_24h: number | null
+  funding_rate: number | null
+  open_interest: number | null
+  oi_delta_1h: number | null
+  data_freshness_sec: number | null
+}
+
+export interface UniverseMemberDetail {
+  member: UniverseMember
+  features: UniverseFeatureSnapshot | null
+  opportunities: Array<{ id: string; symbol: string; status: string; direction_bias: string | null; created_at: string }>
 }

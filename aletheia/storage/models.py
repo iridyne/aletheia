@@ -692,6 +692,8 @@ class UniverseMember(BaseModel):
     crowding_risk: float | None = None
     late_entry_penalty: float | None = None
     scanner_family: str | None = None
+    quote_volume_24h: float | None = None
+    spread_bps: float | None = None
     ttl_sec: int = 3600
     expires_at: str = Field(default_factory=_utcnow)
     inclusion_reason: str = "[]"

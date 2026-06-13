@@ -1220,6 +1220,8 @@ _ADDITIVE_COLUMNS = [
     ("universe_snapshot_id", "opportunities", "TEXT"),
     ("universe_member_id", "opportunities", "TEXT"),
     ("scanner_family", "opportunities", "TEXT"),
+    ("quote_volume_24h", "universe_members", "REAL"),
+    ("spread_bps", "universe_members", "REAL"),
 ]
 
 
