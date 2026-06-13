@@ -1014,14 +1014,7 @@ function TelegramCard({ settings, qc }: any) {
         <ConnectionStatus label="telegram bot" state={state} text={connText} />
       </div>
       <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
-        <label>
-          <span>Bot status</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.3rem' }}>
-            <Toggle checked={enabled} onChange={v => { setEnabled(v); setMsg(null) }} />
-            <span className={`badge ${enabled ? 'badge-green' : 'badge-red'}`}>{enabled ? 'ON' : 'OFF'}</span>
-          </div>
-        </label>
-        <label>
+        <label style={{ gridColumn: '1 / -1' }}>
           <span>Allowed chat IDs</span>
           <input
             value={chatIdsInput}
@@ -1030,6 +1023,10 @@ function TelegramCard({ settings, qc }: any) {
             style={{ fontFamily: 'var(--mono)' }}
           />
         </label>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+        <Toggle checked={enabled} onChange={v => { setEnabled(v); setMsg(null) }} />
+        <span className={`badge ${enabled ? 'badge-green' : 'badge-red'}`}>{enabled ? 'ON' : 'OFF'}</span>
       </div>
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
@@ -1102,13 +1099,10 @@ function UpdateCard({ settings, qc }: any) {
       {applyMsg && <p className="hint" style={{ marginBottom: '0.75rem' }}>{applyMsg}</p>}
 
       {/* Config */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+        <Toggle checked={enabled} onChange={v => { setEnabled(v); setCfgMsg(null) }} />
+      </div>
       <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
-        <label>
-          <span>Self-update enabled</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.3rem' }}>
-            <Toggle checked={enabled} onChange={v => { setEnabled(v); setCfgMsg(null) }} />
-          </div>
-        </label>
         <label>
           <span>Branch</span>
           <input value={branch} onChange={e => { setBranch(e.target.value); setCfgMsg(null) }} style={{ fontFamily: 'var(--mono)' }} />
