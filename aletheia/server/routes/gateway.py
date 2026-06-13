@@ -53,14 +53,9 @@ def _is_reload_mode() -> bool:
 
 
 def _trigger_reload_via_touch() -> None:
-    """Touch a sentinel .py file so uvicorn's file-watcher triggers a reload.
-
-    Under --reload mode, os._exit(42) kills the worker but the reloader process
-    doesn't notice (it only respawns on file changes). Touching a watched .py
-    file makes the reloader detect a change and do a proper worker restart."""
-    from pathlib import Path
-    sentinel = Path(__file__).resolve().parent.parent / "_reload_sentinel.py"
-    sentinel.write_text(f"# touched by restart endpoint at {__import__('time').time()}\n")
+    """Touch the sentinel .py file so uvicorn's file-watcher triggers a reload."""
+    from aletheia.server.dev_reload import touch_reload_sentinel
+    touch_reload_sentinel("restart_endpoint")
 
 
 @router.post("/restart")

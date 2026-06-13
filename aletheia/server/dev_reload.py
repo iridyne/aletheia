@@ -6,9 +6,14 @@ being disabled. This module is the single source of truth for that decision.
 
 import os
 import time
+from pathlib import Path
 
 _boot_time = time.time()
 _reload_counter = 0
+
+# Canonical sentinel file path — touched to trigger uvicorn --reload.
+# ALL code that needs to trigger a reload MUST use this constant.
+RELOAD_SENTINEL = Path(__file__).resolve().parent.parent / "_reload_sentinel.py"
 
 
 def is_dev_reload_enabled() -> bool:
@@ -22,6 +27,11 @@ def is_dev_reload_enabled() -> bool:
     except Exception:
         return False
     return True
+
+
+def touch_reload_sentinel(reason: str = "unknown") -> None:
+    """Touch the sentinel file to trigger a uvicorn --reload worker restart."""
+    RELOAD_SENTINEL.write_text(f"# {reason} at {time.time()}\n")
 
 
 def record_reload() -> str:

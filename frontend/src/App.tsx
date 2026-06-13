@@ -1,5 +1,5 @@
 import { Routes, Route, NavLink } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from './api/client'
 import Overview from './pages/Overview'
@@ -111,28 +111,49 @@ function StatusBar() {
   const driftRange = driftIssue ? driftIssue.replace('code_updated_pending_restart:', '') : ''
 
   const [restarting, setRestarting] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
+  }, [])
+
+  const startHealthPoll = (initialDelay: number) => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    timeoutRef.current = setTimeout(() => {
+      pollRef.current = setInterval(async () => {
+        try {
+          const r = await fetch('/api/health')
+          if (r.ok) {
+            if (pollRef.current) clearInterval(pollRef.current)
+            setRestarting(false)
+            qc.invalidateQueries()
+          }
+        } catch { /* still down */ }
+      }, 2000)
+      timeoutRef.current = setTimeout(() => {
+        if (pollRef.current) clearInterval(pollRef.current)
+        setRestarting(false)
+      }, 30000)
+    }, initialDelay)
+  }
+
   const restartMut = useMutation({
     mutationFn: api.restartGateway,
     onMutate: () => setRestarting(true),
-    onSuccess: () => {
-      // Process dies 0.5s after responding — poll health until it's back
-      const poll = setInterval(async () => {
-        try {
-          const r = await fetch('/api/health')
-          if (r.ok) { clearInterval(poll); setRestarting(false); qc.invalidateQueries() }
-        } catch { /* still down */ }
-      }, 2000)
-      setTimeout(() => { clearInterval(poll); setRestarting(false) }, 30000)
+    onSuccess: (data: any) => {
+      // Warm reload: worker stays alive ~2s before uvicorn kills it.
+      // Cold restart: process dies 0.5s after response.
+      const delay = data?.mode === 'warm' ? 3000 : 1000
+      startHealthPoll(delay)
     },
     onError: () => {
-      // fetch failed (process died before response) — same polling logic
-      const poll = setInterval(async () => {
-        try {
-          const r = await fetch('/api/health')
-          if (r.ok) { clearInterval(poll); setRestarting(false); qc.invalidateQueries() }
-        } catch { /* still down */ }
-      }, 2000)
-      setTimeout(() => { clearInterval(poll); setRestarting(false) }, 30000)
+      // fetch failed (process died before response) — poll immediately
+      startHealthPoll(0)
     },
   })
 

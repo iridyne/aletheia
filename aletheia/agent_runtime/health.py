@@ -227,10 +227,8 @@ def _trigger_restart(reason: str) -> None:
     _send_alert(f"self-heal restart ({reason}) — respawning")
 
     if os.environ.get("ALETHEIA_DEV_RELOAD") == "1":
-        from pathlib import Path
-        import time
-        sentinel = Path(__file__).resolve().parent.parent / "_reload_sentinel.py"
-        sentinel.write_text(f"# self-heal touch at {time.time()}\n")
+        from aletheia.server.dev_reload import touch_reload_sentinel
+        touch_reload_sentinel(f"self_heal_{reason}")
         return
 
     _os_exit(42)
