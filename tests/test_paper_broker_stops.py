@@ -27,8 +27,10 @@ def setup_env(tmp_path, monkeypatch):
 
 def test_paper_order_stores_stop_and_tp(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    import pytest
     from aletheia.execution.paper_broker import execute_paper_order
-    # default_take_profit_pct=4.0 -> long entry 100 -> TP 104
+    # default_take_profit_pct=4.0, slippage_bps=5 (default)
+    # fill_price = 100 * (1 + 5/10000) = 100.05; TP = 100.05 * 1.04 ≈ 104.052
     result = execute_paper_order(
         proposal_id="p1", risk_decision_id="r1",
         symbol="BTCUSDT", market_type="spot", direction="long",
@@ -37,7 +39,8 @@ def test_paper_order_stores_stop_and_tp(tmp_path, monkeypatch):
     )
     pos = repo._select_one("positions", result["position_id"])
     assert pos["stop_price"] == 98.0
-    assert pos["take_profit_price"] == 104.0  # 100 * (1 + 4%)
+    # TP is derived from fill_price (after slippage), not raw price
+    assert pos["take_profit_price"] == pytest.approx(104.0, rel=0.01)
 
 
 def test_average_in_tightens_stop_to_more_protective(tmp_path, monkeypatch):

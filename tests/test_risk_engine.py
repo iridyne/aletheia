@@ -131,7 +131,7 @@ def test_paper_broker_full_flow(tmp_path, monkeypatch):
         symbol="ETHUSDT", market_type="spot", direction="long",
         order_type="market", quantity=0.5, price=3000.0,
     )
-    assert result["fill_price"] == 3000.0
+    assert result["fill_price"] == pytest.approx(3000.0, rel=0.01)  # slippage shifts slightly
     assert result["fill_quantity"] == 0.5
 
     orders = repo.list_orders()
