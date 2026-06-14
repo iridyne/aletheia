@@ -59,6 +59,22 @@
       若需无人值守自动复活:`aletheia gateway enable-autostart`。
    4. `uv run pytest -q` 确认 515+ 测试基线绿(克隆后还应跑 `import aletheia.risk.engine` sanity)。
 
+## 9域数据收集层 P0 — 完成 (84a66fd, 2026-06-14)
+
+**已实现**: microstructure/derivatives/macro 3类 collector + normalizer + context_builder +
+scheduler job (2min tick) + 5张新 DB 表 + repositories + features.py 占位符填空 +
+market_observer 追加 enriched context block + 16个离线单元测试。
+
+**效果**: score_derivatives() scanner 数据 non-None 后自动激活；LLM prompt 追加
+Microstructure/Derivatives/Macro 三表段，平均每个 symbol 多 ~200 token 高密度信号。
+
+**下一步 (P1, 可选)**:
+- OI delta 跨快照计算 (现在 oi_change_1h_pct 恒为 None，需用前后两个 OI 快照算)
+- 跨交易所 premium tracking
+- 新闻 RSS + LLM 摘要 (Domain 6)
+
+---
+
 ## 待办(下一步可做的事 — 不含"现在状态如何")
 
 1. **观测主线继续**:Phase 0 观察门仍以承载观察窗的机器为准;凡涉及"72h 跑到哪了 / 是否达标"
