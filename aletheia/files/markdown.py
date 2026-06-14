@@ -44,6 +44,21 @@ def write_post_trade_review(title: str, content: str, metadata: dict | None = No
     return _write_knowledge_file("post_trade_reviews", title, content, metadata)
 
 
+def write_trade_case_study(title: str, content: str, metadata: dict | None = None) -> Path:
+    """Write a trade case study markdown."""
+    return _write_knowledge_file("case_studies", title, content, metadata)
+
+
+def write_trading_guard(title: str, content: str, metadata: dict | None = None) -> Path:
+    """Write a trading guard markdown."""
+    return _write_knowledge_file("guards", title, content, metadata)
+
+
+def write_guard_candidate(title: str, content: str, metadata: dict | None = None) -> Path:
+    """Write a guard candidate markdown."""
+    return _write_knowledge_file("guard_candidates", title, content, metadata)
+
+
 def _write_knowledge_file(subdir: str, title: str, content: str, metadata: dict | None = None) -> Path:
     base = get_data_dir() / "knowledge" / subdir
     base.mkdir(parents=True, exist_ok=True)

@@ -7,9 +7,12 @@ from aletheia.storage.repositories import (
 from aletheia.files.markdown import (
     write_daily_review,
     write_dreaming_log,
+    write_guard_candidate,
     write_post_trade_review,
     write_research_note,
     write_strategy_doc,
+    write_trade_case_study,
+    write_trading_guard,
 )
 
 VALID_CONFIDENCES = {"high_confidence", "medium_confidence", "speculative", "deprecated"}
@@ -119,6 +122,86 @@ def create_strategy_memory(strategy_id: str, title: str, content: str) -> Knowle
         confidence="medium_confidence",
     )
     insert_knowledge_item(item)
+    _index(item, content)
+    return item
+
+
+def create_trade_case_study(
+    title: str,
+    content: str,
+    metadata: dict | None = None,
+    strategy_id: str | None = None,
+    confidence: str = "high_confidence",
+    tags: list[str] | None = None,
+) -> KnowledgeItem:
+    """Create a structured trade case study from a closed position."""
+    if confidence not in VALID_CONFIDENCES:
+        raise ValueError(f"Invalid confidence: {confidence}")
+    path = write_trade_case_study(title, content, metadata)
+    item = KnowledgeItem(
+        item_type="trade_case_study",
+        title=title,
+        file_path=str(path),
+        strategy_id=strategy_id,
+        confidence=confidence,
+    )
+    try:
+        insert_knowledge_item(item)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    _index(item, content)
+    return item
+
+
+def create_trading_guard(
+    title: str,
+    content: str,
+    metadata: dict | None = None,
+    confidence: str = "high_confidence",
+    tags: list[str] | None = None,
+) -> KnowledgeItem:
+    """Create an active trading guard (seed or human-confirmed)."""
+    if confidence not in VALID_CONFIDENCES:
+        raise ValueError(f"Invalid confidence: {confidence}")
+    path = write_trading_guard(title, content, metadata)
+    item = KnowledgeItem(
+        item_type="trading_guard",
+        title=title,
+        file_path=str(path),
+        confidence=confidence,
+    )
+    try:
+        insert_knowledge_item(item)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    _index(item, content)
+    return item
+
+
+def create_guard_candidate(
+    title: str,
+    content: str,
+    metadata: dict | None = None,
+    strategy_id: str | None = None,
+    tags: list[str] | None = None,
+) -> KnowledgeItem:
+    """Create a guard candidate (medium_confidence, not retrievable)."""
+    path = write_guard_candidate(title, content, metadata)
+    item = KnowledgeItem(
+        item_type="guard_candidate",
+        title=title,
+        file_path=str(path),
+        strategy_id=strategy_id,
+        confidence="medium_confidence",
+    )
+    try:
+        insert_knowledge_item(item)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    # guard_candidate is medium_confidence → _index skips it (quality gate)
     _index(item, content)
     return item
 

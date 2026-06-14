@@ -520,10 +520,6 @@ def list_serenity_evidence(theme_id: str | None = None, limit: int = 100) -> lis
     return _select_all("serenity_evidence", where=where, params=tuple(params), limit=limit)
 
 
-def get_serenity_evidence(evidence_id: str) -> dict | None:
-    return _select_one("serenity_evidence", evidence_id)
-
-
 def insert_serenity_opportunity(o: SerenityOpportunity) -> None:
     _insert("serenity_opportunities", o.model_dump())
 
@@ -695,6 +691,10 @@ def insert_serenity_claim(c) -> None:
     _insert("serenity_claims", data)
 
 
+def get_serenity_claim(claim_id: str) -> dict | None:
+    return _select_one("serenity_claims", claim_id)
+
+
 def insert_serenity_claims_bulk(claims: list) -> None:
     db = get_db()
     was_in_tx = db.in_transaction
@@ -706,10 +706,6 @@ def insert_serenity_claims_bulk(claims: list) -> None:
         db.execute(f"INSERT INTO serenity_claims ({cols}) VALUES ({placeholders})", list(data.values()))
     if not was_in_tx:
         db.commit()
-
-
-def get_serenity_claim(claim_id: str) -> dict | None:
-    return _select_one("serenity_claims", claim_id)
 
 
 def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None = None, limit: int = 200) -> list[dict]:
@@ -761,17 +757,6 @@ def list_serenity_claims_for_theme(theme_id: str, limit: int = 200) -> list[dict
     return [dict(r) for r in rows]
 
 
-def list_serenity_themes_for_claim(claim_id: str) -> list[dict]:
-    db = get_db()
-    rows = db.execute(
-        "SELECT t.* FROM serenity_themes t "
-        "JOIN serenity_theme_claims tc ON tc.theme_id = t.id "
-        "WHERE tc.claim_id = ?",
-        (claim_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
 # --- Serenity Agent Locks ---
 
 def acquire_serenity_lock(lock_key: str, owner_run_id: str, ttl_seconds: int = 600) -> bool:
@@ -809,12 +794,6 @@ def release_serenity_lock(lock_key: str, owner_run_id: str) -> bool:
     if not was_in_tx:
         db.commit()
     return result.rowcount > 0
-
-
-def get_serenity_lock(lock_key: str) -> dict | None:
-    db = get_db()
-    row = db.execute("SELECT * FROM serenity_agent_locks WHERE lock_key = ?", (lock_key,)).fetchone()
-    return dict(row) if row else None
 
 
 # --- Market Snapshots ---
@@ -1089,15 +1068,6 @@ def upsert_universe_asset(asset: UniverseAsset) -> None:
         db.commit()
 
 
-def get_universe_asset_by_symbol(venue: str, symbol: str, market_type: str) -> dict | None:
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM universe_registry WHERE venue = ? AND symbol = ? AND market_type = ?",
-        (venue, symbol, market_type),
-    ).fetchone()
-    return dict(row) if row else None
-
-
 def list_universe_assets(venue: str | None = None, active_only: bool = True, limit: int = 500) -> list[dict]:
     db = get_db()
     sql = "SELECT * FROM universe_registry"
@@ -1365,3 +1335,37 @@ def prune_macro_snapshots(days: int = 90) -> int:
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
+
+
+# ── Edge Lab: Shadow Trades ──────────────────────────────────────────────────
+
+def insert_shadow_trade(shadow) -> None:
+    from aletheia.storage.models import ShadowTrade
+    data = shadow.model_dump() if hasattr(shadow, "model_dump") else dict(shadow)
+    _insert("shadow_trades", data)
+
+
+def update_shadow_trade(shadow_id: str, **kwargs) -> None:
+    _update("shadow_trades", shadow_id, kwargs)
+
+
+def list_shadow_trades(
+    batch_id: str | None = None,
+    scanner_family: str | None = None,
+    resolved: bool | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    conditions: list[str] = []
+    params: list = []
+    if batch_id is not None:
+        conditions.append("batch_id = ?")
+        params.append(batch_id)
+    if scanner_family is not None:
+        conditions.append("scanner_family = ?")
+        params.append(scanner_family)
+    if resolved is True:
+        conditions.append("resolved_at IS NOT NULL")
+    elif resolved is False:
+        conditions.append("resolved_at IS NULL")
+    where = " AND ".join(conditions) if conditions else None
+    return _select_all("shadow_trades", where=where, params=tuple(params), limit=limit)

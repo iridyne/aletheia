@@ -6,6 +6,14 @@ from aletheia.storage.repositories import (
 )
 
 
+def _apply_slippage(price: float, direction: str, slippage_bps: float) -> float:
+    """Apply adverse slippage: worse fill for the trader."""
+    slip = slippage_bps / 10_000.0
+    if direction in ("long", "buy"):
+        return round(price * (1 + slip), 8)
+    return round(price * (1 - slip), 8)
+
+
 def execute_paper_order(
     proposal_id: str,
     risk_decision_id: str,
@@ -25,6 +33,12 @@ def execute_paper_order(
     config TP% are recorded on a newly-opened position so the position_manager can
     act on them. Averaging into an existing position preserves its original stop/TP.
     """
+    from aletheia.config.loader import load_config
+    cfg = load_config()
+    slippage_bps = cfg.trading.slippage_bps
+    fee_rate = cfg.trading.execution_fee_pct / 100.0
+
+    fill_price = _apply_slippage(price, direction, slippage_bps)
 
     order = Order(
         proposal_id=proposal_id,
@@ -34,7 +48,7 @@ def execute_paper_order(
         direction=direction,
         order_type=order_type,
         quantity=quantity,
-        price=price,
+        price=fill_price,
         execution_mode=execution_mode,
         status="filled",
     )
@@ -42,9 +56,9 @@ def execute_paper_order(
 
     fill = Fill(
         order_id=order.id,
-        fill_price=price,
+        fill_price=fill_price,
         fill_quantity=quantity,
-        fee=quantity * price * 0.001,  # 0.1% simulated fee
+        fee=quantity * fill_price * fee_rate,
     )
     insert_fill(fill)
 
@@ -52,8 +66,8 @@ def execute_paper_order(
     existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
     if existing:
         new_qty = existing["quantity"] + quantity
-        new_entry = (existing["entry_price"] * existing["quantity"] + price * quantity) / new_qty
-        update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": price}
+        new_entry = (existing["entry_price"] * existing["quantity"] + fill_price * quantity) / new_qty
+        update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": fill_price}
         if stop_price is not None:
             old_stop = existing.get("stop_price")
             if old_stop is not None:
@@ -63,21 +77,26 @@ def execute_paper_order(
         update_position(existing["id"], **update_kwargs)
         position_id = existing["id"]
     else:
-        take_profit_price = _take_profit_for(direction, price)
+        take_profit_price = _take_profit_for(direction, fill_price)
+        # BTC benchmark: record BTC price at entry for alpha/beta separation
+        btc_entry_price = _btc_price_now()
+        # Regime tag at entry time
+        regime_tag = _current_regime()
         position = Position(
             symbol=symbol,
             market_type=market_type,
             direction=direction,
             quantity=quantity,
-            entry_price=price,
-            current_price=price,
+            entry_price=fill_price,
+            current_price=fill_price,
             execution_mode=execution_mode,
             strategy_id=strategy_id,
-            # Causal-chain back-link (trust §1.1): the proposal/order that opened it.
             proposal_id=proposal_id,
             order_id=order.id,
             stop_price=stop_price,
             take_profit_price=take_profit_price,
+            btc_entry_price=btc_entry_price,
+            regime_tag=regime_tag,
         )
         insert_position(position)
         position_id = position.id
@@ -86,9 +105,31 @@ def execute_paper_order(
         "order_id": order.id,
         "fill_id": fill.id,
         "position_id": position_id,
-        "fill_price": price,
+        "fill_price": fill_price,
         "fill_quantity": quantity,
     }
+
+
+def _btc_price_now() -> float | None:
+    """Fetch current BTC/USDT price for benchmark tracking."""
+    try:
+        from aletheia.trading.market_data import latest_snapshot
+        snap = latest_snapshot("BTC/USDT")
+        return float(snap["price"]) if snap else None
+    except Exception:
+        return None
+
+
+def _current_regime() -> str:
+    """Read current macro regime tag."""
+    try:
+        from aletheia.storage.repositories import latest_macro_snapshot
+        macro = latest_macro_snapshot()
+        if macro and macro.get("risk_regime"):
+            return macro["risk_regime"]
+    except Exception:
+        pass
+    return "unknown"
 
 
 def _take_profit_for(direction: str, entry_price: float) -> float | None:

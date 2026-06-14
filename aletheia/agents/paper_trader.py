@@ -66,6 +66,15 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         outputs.append(f"skip:{c.get('symbol','?')}:{c['skip_reason']}")
 
     selected = select_best_candidate(candidates)
+
+    # Edge Lab: persist top-N candidates as shadow trades for counterfactual analysis.
+    try:
+        from aletheia.analytics.shadow_trades import persist_shadow_batch
+        eligible = [c for c in candidates if not c.get("skip_reason")]
+        persist_shadow_batch(eligible, selected, top_n=5)
+    except Exception as _shadow_err:
+        logger.debug("shadow trade persistence failed: %s", _shadow_err)
+
     if selected is None:
         outputs.append("no_ranked_candidate")
         return {"outputs": outputs, "errors": errors}

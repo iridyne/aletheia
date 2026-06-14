@@ -65,6 +65,30 @@ class Opportunity(BaseModel):
     universe_snapshot_id: str | None = None
     universe_member_id: str | None = None
     scanner_family: str | None = None
+    # Edge Lab: structured execution hints from LLM signal generation
+    valid_until: str | None = None       # ISO timestamp — signal expiry
+    entry_zone: str | None = None        # JSON: {"low": x, "high": y}
+    stop_loss_hint: float | None = None
+    tp_hint: float | None = None
+
+
+class ShadowTrade(BaseModel):
+    id: str = Field(default_factory=new_id)
+    batch_id: str | None = None
+    opportunity_id: str
+    symbol: str
+    direction: str
+    scanner_family: str | None = None
+    trade_score: float = -999.0
+    rank: int = 0
+    entry_price: float | None = None
+    regime_tag: str | None = None
+    was_selected: bool = False
+    created_at: str = Field(default_factory=_utcnow)
+    exit_price: float | None = None
+    pnl_pct: float | None = None
+    btc_return_pct: float | None = None
+    resolved_at: str | None = None
 
 
 class TradeProposal(BaseModel):
@@ -153,6 +177,11 @@ class Position(BaseModel):
     source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     opened_at: str = Field(default_factory=_utcnow)
     closed_at: str | None = None
+    # Edge Lab: BTC benchmark at entry/exit to separate alpha from market beta.
+    btc_entry_price: float | None = None
+    btc_exit_price: float | None = None
+    # Regime tag at entry time: "risk_on" | "risk_off" | "unknown".
+    regime_tag: str | None = None
 
 
 class StrategyRecord(BaseModel):

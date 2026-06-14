@@ -252,6 +252,9 @@ class TradingConfig(BaseModel):
     default_stop_loss_pct: float = 2.0
     default_take_profit_pct: float = 4.0
     max_position_hold_hours: float = 72.0
+    # Edge Lab: realistic paper fill simulation
+    slippage_bps: float = 5.0        # basis points of adverse slippage on paper fills
+    execution_fee_pct: float = 0.1   # % fee per side (replaces hardcoded 0.1%)
     # Minimum LLM confidence for paper_trader to open a position
     # (high | medium | speculative). Below this, the opportunity is recorded but
     # not traded.
@@ -295,6 +298,14 @@ class UniverseConfig(BaseModel):
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
 
 
+class GuardConfig(BaseModel):
+    enabled: bool = True
+    enforce_in_paper_ranker: bool = True
+    auto_promote_enabled: bool = False
+    min_matching_trades: int = 3
+    max_score_penalty: float = 40.0
+
+
 class TunnelConfig(BaseModel):
     enabled: bool = False
     tunnel_id: str = ""
@@ -320,4 +331,5 @@ class AletheiaConfig(BaseModel):
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
+    guard: GuardConfig = Field(default_factory=GuardConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)

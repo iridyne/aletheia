@@ -1710,3 +1710,30 @@ def _parse_brief_to_profile(brief: str) -> dict:
         "time_horizon": time_horizon,
         "_warnings": warnings,
     }
+
+
+# ── Edge Lab: analytics endpoints ───────────────────────────────────────────
+
+@router.get("/analytics/family-scorecard")
+async def get_family_scorecard():
+    """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
+    _ensure_db()
+    from aletheia.analytics.family_scorecard import compute_family_scorecard
+    return compute_family_scorecard()
+
+
+@router.get("/analytics/shadow-trades")
+async def get_shadow_trades(
+    batch_id: str | None = None,
+    scanner_family: str | None = None,
+    resolved: bool | None = None,
+    limit: int = 100,
+):
+    """List shadow trade records for counterfactual analysis."""
+    _ensure_db()
+    return repo.list_shadow_trades(
+        batch_id=batch_id,
+        scanner_family=scanner_family,
+        resolved=resolved,
+        limit=limit,
+    )

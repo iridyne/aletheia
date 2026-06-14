@@ -150,6 +150,29 @@ CREATE TABLE IF NOT EXISTS positions (
     closed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS shadow_trades (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT,
+    opportunity_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    scanner_family TEXT,
+    trade_score REAL NOT NULL DEFAULT -999,
+    rank INTEGER NOT NULL DEFAULT 0,
+    entry_price REAL,
+    regime_tag TEXT,
+    was_selected INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    exit_price REAL,
+    pnl_pct REAL,
+    btc_return_pct REAL,
+    resolved_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_shadow_trades_batch ON shadow_trades(batch_id);
+CREATE INDEX IF NOT EXISTS idx_shadow_trades_opportunity ON shadow_trades(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_shadow_trades_family ON shadow_trades(scanner_family);
+
 CREATE TABLE IF NOT EXISTS serenity_themes (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -1300,6 +1323,15 @@ _ADDITIVE_COLUMNS = [
     ("execution_eligible", "opportunities", "INTEGER DEFAULT 1"),
     ("quote_volume_24h", "universe_members", "REAL"),
     ("spread_bps", "universe_members", "REAL"),
+    # Edge Lab: structured execution hints on opportunities (signal expiry, zones)
+    ("valid_until", "opportunities", "TEXT"),
+    ("entry_zone", "opportunities", "TEXT"),
+    ("stop_loss_hint", "opportunities", "REAL"),
+    ("tp_hint", "opportunities", "REAL"),
+    # Edge Lab: BTC benchmark + regime tag on positions for alpha/beta separation
+    ("btc_entry_price", "positions", "REAL"),
+    ("btc_exit_price", "positions", "REAL"),
+    ("regime_tag", "positions", "TEXT"),
 ]
 
 

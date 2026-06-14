@@ -14,6 +14,16 @@ def _latest_price(symbol: str) -> float | None:
     return float(snap["price"]) if snap else None
 
 
+def _btc_price_at_close() -> float | None:
+    """Fetch BTC/USDT price for benchmark recording on position close."""
+    try:
+        from aletheia.trading.market_data import latest_snapshot
+        snap = latest_snapshot("BTC/USDT")
+        return float(snap["price"]) if snap else None
+    except Exception:
+        return None
+
+
 def mark_positions_to_market() -> list[dict]:
     """Update unrealized PnL on open positions using the latest market price."""
     positions = list_positions(status="open")
@@ -61,6 +71,10 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     entry_fee = row["entry_price"] * row["quantity"] * fee_rate
     exit_fee = exit_price * row["quantity"] * fee_rate
     realized = gross_pnl - entry_fee - exit_fee
+
+    # BTC benchmark at exit for alpha/beta separation
+    btc_exit = _btc_price_at_close()
+
     update_position(
         position_id,
         status="closed",
@@ -69,6 +83,7 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         unrealized_pnl=0.0,
         close_reason=reason,
         closed_at=datetime.now(timezone.utc).isoformat(),
+        btc_exit_price=btc_exit,
     )
     write_audit({
         "actor": "system",
