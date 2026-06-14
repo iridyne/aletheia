@@ -1,5 +1,26 @@
 # Development Log
 
+## 2026-06-14 — Edge Lab 全量落地(commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
+
+> 来源:Clustr100 社区交易群知识提炼 → 用户批准 implementation plan → 两个并发 session 分工落地。
+
+### 实现内容
+- **P0**: `Opportunity` 新增 `valid_until / entry_zone / stop_loss_hint / tp_hint`(schema + migration)
+- **P0.5**: `paper_broker` 可配置滑点(`slippage_bps=5bps`, 多头高填 / 空头低填) + `execution_fee_pct` 去硬编码
+- **P1**: `ShadowTrade` 模型 + `shadow_trades` 表 + `persist_shadow_batch()` + `paper_trader` 每 tick 入库 Top-5
+- **P1.5**: `Position` 新增 `btc_entry_price / btc_exit_price`；开仓时从 latest_snapshot 抓 BTC 价写入；平仓时 pnl.py 写 exit
+- **P2**: `Position` 新增 `regime_tag`；开仓时从 `latest_macro_snapshot()` 读 `risk_regime`；risk_off 惩罚 -20→-35
+- **P2.5**: `compute_family_scorecard()` + `GET /api/analytics/family-scorecard`
+- **tests**: `test_edge_lab.py`(11 个新测试全绿) + 回归修复 2 处精确断言(`pytest.approx`)
+
+### 关键修复(本 session 负责)
+- `family_scorecard.py` SQL bug：`positions` 无 `scanner_family`，原查询空返回。改为 LEFT JOIN `trade_proposals→opportunities`。
+- `models.py` 重复 `ShadowTrade` class：并发 session 各写一份，移除重复定义。
+- `test_paper_broker_stops.py` + `test_risk_engine.py`：slippage 导致填价偏移，精确断言失败。改 `pytest.approx(rel=0.01)`。
+
+### 测试状态
+`uv run pytest -q`：仅 3 个预存失败留存(test_ac12_risk_blocks, test_self_heal x2)，均与本批次无关。1170+ 通过。
+
 ## 2026-06-13 — 执行路径语义诚实文档化(纯文档,不动代码)
 
 > 用户要求学习吸收外部 Agentic Trading 框架经验。核实后发现外部框架研究已做完(三份参考文档齐备),

@@ -59,6 +59,17 @@
       若需无人值守自动复活:`aletheia gateway enable-autostart`。
    4. `uv run pytest -q` 确认 515+ 测试基线绿(克隆后还应跑 `import aletheia.risk.engine` sanity)。
 
+## Edge Lab — 完成 (2026-06-14, commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
+
+信号→PnL 可量化消除层全量落地：P0–P2.5 六项全部完成。
+- Shadow Trades 持久化(Top-5 反事实候选入库)
+- 可配置滑点(5bps，adversarial 填价)
+- BTC benchmark(开仓/平仓时抓 BTC 价，alpha/beta 分离用)
+- Regime tag(每笔交易的宏观环境标签)
+- Family Scorecard API(`GET /api/analytics/family-scorecard`)
+- 11 个新测试全绿；3 个预存失败与本批次无关。
+- 待办:P3(虚拟部分 TP、家族自动杀闸、Edge Lab 仪表盘 UI)——留待后续授权。
+
 ## 9域数据收集层 P0 — 完成 (84a66fd, 2026-06-14)
 
 **已实现**: microstructure/derivatives/macro 3类 collector + normalizer + context_builder +

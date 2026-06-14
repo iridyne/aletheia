@@ -7,6 +7,9 @@
 
 ## Last Updated
 
+2026-06-14 (本次会话:Edge Lab — 信号→PnL 可量化消除层全量落地 [commits 9fe5c5f, 8532280, c90d2eb, ab2ba5c, ab4a522])
+
+前一批次: Gateway 静态文件启动可靠性修复 + preflight/doctor 加固[commit db2423f];
 2026-06-13 (本次会话:① Gateway 静态文件启动可靠性修复 + preflight/doctor 加固[commit db2423f];
 ② 执行路径语义诚实文档化[纯文档]——新增 EXECUTION_PATH_HONESTY.md,核实并钉死"LLM 在方向决策回路、
 下单机制确定性、strategy rule 悬空"三类真相,更正 north_star 过时表述,BACKEND_ISSUES 加 §4。)
@@ -15,6 +18,31 @@
 startup gate 3 次重试 + Windows toast、风控单列 symbol_list 双模式过滤、Anthropic/OpenAI 原生
 provider + 流式、universe plan 缺口补齐、design-doc 合规修复、Clustr100 社区知识库。18 个提交,
 均为 2026-06-13 当日。会话结束:本机实例停机,开发切换到另一台机器。)
+
+## Recent Change (Edge Lab — 2026-06-14, commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
+
+> 触发:用户提交 Clustr100 社区交易群知识提炼方案,要求把"信号→PnL 的可量化消除层"补全。
+> 两个并行 session 同时在跑,交叉落地了各自负责的模块。本 session 负责:
+> Shadow Trade 持久化层、family_scorecard SQL 修复、测试回归修复、migrations DDL。
+
+**根因**:paper_trader 每 tick 排序 50 个候选但只保留冠军——无反事实数据(无法判断"换 #2 会不会更好");
+填价用原始 LLM price 无滑点——模拟收益虚高;无 regime 标注——无法区分 alpha/beta;
+无 scanner_family 统计——无法判断哪类信号真正有效。
+
+**结果**:
+- P0 (`valid_until / entry_zone / stop_loss_hint / tp_hint` on Opportunity) — 完成
+- P0.5 (configurable `slippage_bps=5` + `execution_fee_pct` in paper_broker) — 完成
+- P1 (ShadowTrade 模型 + `shadow_trades` 表 + `persist_shadow_batch` + paper_trader hook) — 完成
+- P1.5 (`btc_entry_price / btc_exit_price` on Position，close 时自动写入) — 完成
+- P2 (`regime_tag` on Position，入场时从 `latest_macro_snapshot()` 读取；risk_off 惩罚 -20→-35) — 完成
+- P2.5 (`compute_family_scorecard()` + `GET /api/analytics/family-scorecard`) — 完成；修复了原 SQL 错误地在 positions 查 scanner_family（该列实际在 opportunities），改为 LEFT JOIN trade_proposals→opportunities
+
+**关键修复**:
+- `family_scorecard.py` SQL：原实现 `FROM positions WHERE scanner_family IS NOT NULL` 会空返回或报错。修为 `FROM positions p LEFT JOIN trade_proposals tp ... LEFT JOIN opportunities o ...` 正确取 scanner_family。
+- `test_paper_broker_stops.py` & `test_risk_engine.py`：slippage 导致填价偏移，两处精确断言失败。改为 `pytest.approx(rel=0.01)` 正确表达"fill 可有滑点"的意图。
+- `models.py`：移除并发 session 写入的重复 ShadowTrade class 定义。
+
+**未做**:P3(虚拟部分 TP、家族自动杀闸、Edge Lab 仪表盘 UI)留待后续。
 
 ## Recent Change (执行路径语义诚实 — 2026-06-13, 纯文档)
 
