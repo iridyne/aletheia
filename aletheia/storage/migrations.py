@@ -1333,6 +1333,17 @@ def _ensure_runtime_baseline(db) -> None:
         )
 
 
+_CORE_INDEXES_SQL = """
+CREATE INDEX IF NOT EXISTS idx_proposals_strategy_id ON trade_proposals(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_orders_proposal_id ON orders(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_fills_order_id ON fills(order_id);
+CREATE INDEX IF NOT EXISTS idx_risk_decisions_proposal_id ON risk_decisions(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_positions_strategy_id ON positions(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_items_type_status ON knowledge_items(item_type, status);
+"""
+
+
 def run_migrations() -> None:
     """Run all idempotent schema creation statements."""
     db = get_db()
@@ -1342,4 +1353,5 @@ def run_migrations() -> None:
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts(db)
+    db.executescript(_CORE_INDEXES_SQL)
     db.commit()

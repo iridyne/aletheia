@@ -16,8 +16,8 @@ const NATIVE_PROVIDERS = new Set(['anthropic_native', 'openai_native'])
 const PROVIDER_LABELS: Record<string, string> = {
   openai_compatible: 'OpenAI Compatible',
   anthropic_compatible: 'Anthropic Compatible',
-  anthropic_native: 'Claude (Subscription)',
-  openai_native: 'OpenAI (Subscription)',
+  anthropic_native: 'Claude OAuth (Experimental)',
+  openai_native: 'OpenAI OAuth (Experimental)',
   codex_cli: 'Codex CLI',
   claude_cli: 'Claude Code CLI',
 }
@@ -1198,13 +1198,15 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
   let statusColor: string = 'var(--muted)'
   let statusText = 'not configured'
   const keyConfigured = isHTTP && config?.api_key?.configured
+  const oauthConfigured = isOAuth && config?.oauth?.configured
+  const hasCredential = keyConfigured || oauthConfigured
   if (health?.available) { statusColor = 'var(--green)'; statusText = 'connected' }
   else if (isCLI && health?.error === 'not_installed') { statusColor = 'var(--yellow)'; statusText = 'not installed' }
   else if (isCLI && health?.error?.includes('disabled')) { statusColor = 'var(--muted)'; statusText = 'disabled' }
-  else if (isOAuth && !keyConfigured) { statusColor = 'var(--muted)'; statusText = 'not connected' }
+  else if (isOAuth && !hasCredential) { statusColor = 'var(--muted)'; statusText = 'not connected' }
   else if (isHTTP && !isOAuth && !keyConfigured) { statusColor = 'var(--muted)'; statusText = 'not configured' }
   else if (health && !health.available) { statusColor = 'var(--red)'; statusText = health.error || 'unreachable' }
-  else if (keyConfigured && !health) { statusColor = 'var(--yellow)'; statusText = 'checking…' }
+  else if (hasCredential && !health) { statusColor = 'var(--yellow)'; statusText = 'checking…' }
 
   // Summary line
   const details: string[] = []
@@ -1627,15 +1629,22 @@ function CodexCLIPanel({ config, health, qc }: { config: any; health: any; qc: a
 
 function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc: any }) {
   const [oauthState, setOauthState] = useState<{ state: string; auth_url?: string | null; error?: string | null } | null>(null)
+  const [manualModel, setManualModel] = useState('')
 
+  const finalize = useMutation({
+    mutationFn: api.openaiOAuthFinalize,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['model-health'] })
+      qc.invalidateQueries({ queryKey: ['model'] })
+    },
+  })
   const statusPoll = useQuery({
     queryKey: ['openai-oauth-status'], queryFn: api.openaiOAuthStatus,
     enabled: oauthState?.state === 'awaiting', refetchInterval: 2000,
   })
   if (statusPoll.data?.state === 'completed' && oauthState?.state !== 'completed') {
     setOauthState(statusPoll.data)
-    qc.invalidateQueries({ queryKey: ['model-health'] })
-    qc.invalidateQueries({ queryKey: ['model'] })
+    finalize.mutate()
   }
 
   const start = useMutation({
@@ -1654,9 +1663,14 @@ function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc
     mutationFn: () => api.setModelProvider({ provider: 'openai_native', default: true }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
+  const disconnect = useMutation({
+    mutationFn: api.openaiOAuthDisconnect,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['model-health'] }) },
+  })
 
   const available = health?.available
   const models: string[] = health?.models || []
+  const modelMeta: Array<{ slug: string; display_name?: string; tier?: string; context_window?: number }> = health?.model_metadata || []
   const currentModel = config?.model && config.model !== 'default' ? config.model : null
 
   return (
@@ -1665,24 +1679,46 @@ function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc
         <div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
             <span className="badge badge-green">connected</span>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via ChatGPT subscription</span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via ChatGPT OAuth (experimental)</span>
           </div>
-          {models.length > 0 && (
-            <div style={{ marginBottom: '0.5rem' }}>
-              <label style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Model</label>
+          <div style={{ marginBottom: '0.5rem' }}>
+            <label style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Model</label>
+            {models.length > 0 ? (
               <select
                 value={currentModel || ''}
                 onChange={e => pickModel.mutate(e.target.value)}
                 style={{ width: '100%', fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
               >
                 {!currentModel && <option value="">Select a model</option>}
-                {models.map(m => <option key={m} value={m}>{m}</option>)}
+                {modelMeta.length > 0
+                  ? modelMeta.map(m => (
+                    <option key={m.slug} value={m.slug}>
+                      {m.display_name || m.slug}{m.tier ? ` [${m.tier}]` : ''}{m.context_window ? ` (${Math.round(m.context_window / 1000)}k)` : ''}
+                    </option>
+                  ))
+                  : models.map(m => <option key={m} value={m}>{m}</option>)
+                }
               </select>
-            </div>
-          )}
+            ) : (
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <input
+                  type="text" value={manualModel}
+                  onChange={e => setManualModel(e.target.value)}
+                  placeholder={currentModel || 'gpt-4o'}
+                  style={{ flex: 1, fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
+                />
+                <button className="secondary" onClick={() => { if (manualModel.trim()) pickModel.mutate(manualModel.trim()) }}
+                  disabled={!manualModel.trim() || pickModel.isPending}
+                  style={{ fontSize: '0.72rem' }}>Save</button>
+              </div>
+            )}
+            {currentModel && <span style={{ fontSize: '0.68rem', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>current: {currentModel}</span>}
+          </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}
               style={{ fontSize: '0.72rem' }}>Set as default</button>
+            <button className="secondary" onClick={() => { if (confirm('Disconnect OpenAI OAuth?')) disconnect.mutate() }}
+              disabled={disconnect.isPending} style={{ fontSize: '0.72rem', color: 'var(--red)' }}>Disconnect</button>
             <p className="hint" style={{ margin: 0 }}>Auto-refreshes before expiry.</p>
           </div>
         </div>
@@ -1700,9 +1736,10 @@ function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc
       ) : (
         <div>
           <p style={{ fontSize: '0.78rem', marginBottom: '0.5rem', color: 'var(--muted)' }}>
-            Sign in with your ChatGPT Plus or Pro subscription. No API key needed.
+            Sign in with your ChatGPT Plus or Pro account via OAuth. Availability depends on your subscription entitlement.
           </p>
           <button onClick={() => start.mutate()} disabled={start.isPending}>Connect ChatGPT</button>
+          <p className="hint" style={{ marginTop: '0.4rem' }}>If this fails, use an API key via OpenAI Compatible provider instead.</p>
         </div>
       )}
     </div>
@@ -1714,6 +1751,7 @@ function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc
 function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc: any }) {
   const [oauthState, setOauthState] = useState<{ state: string; auth_url?: string | null; error?: string | null } | null>(null)
   const [code, setCode] = useState('')
+  const [manualModel, setManualModel] = useState('')
 
   const start = useMutation({
     mutationFn: api.claudeOAuthStart,
@@ -1741,9 +1779,14 @@ function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc
     mutationFn: () => api.setModelProvider({ provider: 'anthropic_native', default: true }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
+  const disconnect = useMutation({
+    mutationFn: api.claudeOAuthDisconnect,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['model-health'] }) },
+  })
 
   const available = health?.available
   const models: string[] = health?.models || []
+  const modelMeta: Array<{ slug: string; display_name?: string; tier?: string; context_window?: number }> = health?.model_metadata || []
   const currentModel = config?.model && config.model !== 'default' ? config.model : null
 
   return (
@@ -1752,24 +1795,46 @@ function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc
         <div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
             <span className="badge badge-green">connected</span>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via Claude subscription</span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via Claude OAuth (experimental)</span>
           </div>
-          {models.length > 0 && (
-            <div style={{ marginBottom: '0.5rem' }}>
-              <label style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Model</label>
+          <div style={{ marginBottom: '0.5rem' }}>
+            <label style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Model</label>
+            {models.length > 0 ? (
               <select
                 value={currentModel || ''}
                 onChange={e => pickModel.mutate(e.target.value)}
                 style={{ width: '100%', fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
               >
                 {!currentModel && <option value="">Select a model</option>}
-                {models.map(m => <option key={m} value={m}>{m}</option>)}
+                {modelMeta.length > 0
+                  ? modelMeta.map(m => (
+                    <option key={m.slug} value={m.slug}>
+                      {m.display_name || m.slug}{m.tier ? ` [${m.tier}]` : ''}{m.context_window ? ` (${Math.round(m.context_window / 1000)}k)` : ''}
+                    </option>
+                  ))
+                  : models.map(m => <option key={m} value={m}>{m}</option>)
+                }
               </select>
-            </div>
-          )}
+            ) : (
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <input
+                  type="text" value={manualModel}
+                  onChange={e => setManualModel(e.target.value)}
+                  placeholder={currentModel || 'claude-sonnet-4-6'}
+                  style={{ flex: 1, fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
+                />
+                <button className="secondary" onClick={() => { if (manualModel.trim()) pickModel.mutate(manualModel.trim()) }}
+                  disabled={!manualModel.trim() || pickModel.isPending}
+                  style={{ fontSize: '0.72rem' }}>Save</button>
+              </div>
+            )}
+            {currentModel && <span style={{ fontSize: '0.68rem', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>current: {currentModel}</span>}
+          </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}
               style={{ fontSize: '0.72rem' }}>Set as default</button>
+            <button className="secondary" onClick={() => { if (confirm('Disconnect Claude OAuth?')) disconnect.mutate() }}
+              disabled={disconnect.isPending} style={{ fontSize: '0.72rem', color: 'var(--red)' }}>Disconnect</button>
             <p className="hint" style={{ margin: 0 }}>Auto-refreshes before expiry.</p>
           </div>
         </div>
@@ -1796,9 +1861,10 @@ function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc
       ) : (
         <div>
           <p style={{ fontSize: '0.78rem', marginBottom: '0.5rem', color: 'var(--muted)' }}>
-            Sign in with your Claude Max or Pro subscription. No API key needed.
+            Sign in with your Claude Max or Pro account via OAuth. Availability depends on your subscription entitlement.
           </p>
           <button onClick={() => start.mutate()} disabled={start.isPending}>Connect Claude</button>
+          <p className="hint" style={{ marginTop: '0.4rem' }}>If this fails, use an API key via Anthropic Compatible provider instead.</p>
         </div>
       )}
     </div>

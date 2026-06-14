@@ -716,3 +716,199 @@ async def test_openai_native_list_models_enriched():
 
     o3 = next(m for m in models if m["slug"] == "o3-mini")
     assert o3["tier"] == "reasoning"
+
+
+# ── OAuth subscription provider regression tests ────────────────────────────
+
+
+def test_anthropic_native_oauth_headers():
+    """OAuth token takes priority over api_key and uses Bearer scheme."""
+    provider = AnthropicNativeProvider(
+        model="claude-sonnet-4-6", api_key="sk-ant-key", oauth_token="oat_token123"
+    )
+    headers = provider._headers()
+    assert headers["Authorization"] == "Bearer oat_token123"
+    assert "x-api-key" not in headers
+
+
+def test_openai_native_oauth_headers():
+    """OAuth token takes priority over api_key."""
+    provider = OpenAINativeProvider(model="gpt-4o", api_key="sk-key", oauth_token="oat_openai")
+    headers = provider._headers()
+    assert headers["Authorization"] == "Bearer oat_openai"
+
+
+def test_router_passes_oauth_token_to_provider(tmp_path, monkeypatch):
+    """When auth_type=oauth and oauth_token_ref is set, router passes oauth_token."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+    clear_cache()
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.models.providers["anthropic_native"] = ProviderConfig(
+        type="anthropic_native", model="claude-sonnet-4-6",
+        auth_type="oauth", oauth_token_ref="model.anthropic_native.oauth_token",
+    )
+    save_config(cfg)
+    set_secret("model.anthropic_native.oauth_token", "oat_test_tok")
+
+    provider = get_provider("anthropic_native")
+    assert isinstance(provider, AnthropicNativeProvider)
+    assert provider.oauth_token == "oat_test_tok"
+    assert provider._headers()["Authorization"] == "Bearer oat_test_tok"
+    clear_cache()
+
+
+def test_router_oauth_token_takes_priority_over_api_key(tmp_path, monkeypatch):
+    """When both api_key and oauth_token are configured, oauth_token wins."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+    clear_cache()
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.models.providers["openai_native"] = ProviderConfig(
+        type="openai_native", model="gpt-4o",
+        api_key_secret_ref="model.openai_native.api_key",
+        auth_type="oauth", oauth_token_ref="model.openai_native.oauth_token",
+    )
+    save_config(cfg)
+    set_secret("model.openai_native.api_key", "sk-fallback")
+    set_secret("model.openai_native.oauth_token", "oat_primary")
+
+    provider = get_provider("openai_native")
+    assert provider.oauth_token == "oat_primary"
+    assert provider._headers()["Authorization"] == "Bearer oat_primary"
+    clear_cache()
+
+
+@pytest.mark.anyio
+async def test_healthcheck_all_includes_oauth_provider(tmp_path, monkeypatch):
+    """OAuth providers must NOT be skipped by healthcheck_all()."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+    clear_cache()
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.config.secrets import set_secret
+    from aletheia.model_provider.router import healthcheck_all
+    cfg = load_config()
+    cfg.models.providers["openai_native"] = ProviderConfig(
+        type="openai_native", model="gpt-4o", enabled=True,
+        auth_type="oauth", oauth_token_ref="model.openai_native.oauth_token",
+    )
+    save_config(cfg)
+    set_secret("model.openai_native.oauth_token", "oat_test")
+
+    results = await healthcheck_all()
+    provider_names = [r.provider for r in results]
+    assert "openai_native" in provider_names
+    clear_cache()
+
+
+def test_resolve_oauth_token_preserves_old_token_on_async_skip(monkeypatch):
+    """When refresh is skipped (async context), old token must be preserved."""
+    from aletheia.model_provider.router import _resolve_oauth_token
+    from aletheia.config.schema import ProviderConfig
+    import time
+
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+
+    pcfg = ProviderConfig(
+        type="openai_native", auth_type="oauth",
+        oauth_token_ref="model.openai_native.oauth_token",
+        oauth_refresh_ref="model.openai_native.oauth_refresh",
+        oauth_expires_at=int(time.time() * 1000) - 1000,  # already expired
+    )
+
+    monkeypatch.setattr(
+        "aletheia.config.secrets.get_secret",
+        lambda ref: "old_valid_token" if "oauth_token" in ref else "refresh_val",
+    )
+
+    import asyncio
+    async def _test():
+        return _resolve_oauth_token("openai_native", pcfg)
+
+    token = asyncio.run(_test())
+    assert token == "old_valid_token"
+
+
+def test_persist_openai_oauth_sets_default_model(tmp_path, monkeypatch):
+    """_persist_openai_oauth sets model=gpt-4o when current is 'default'."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    cfg = load_config()
+    cfg.models.providers["openai_native"] = ProviderConfig(type="openai_native", model="default")
+    save_config(cfg)
+
+    from aletheia.server.routes.model import _persist_openai_oauth
+    _persist_openai_oauth({"api_key": "sk-oauth-key", "refresh_token": "rt", "expires_at": 999999})
+
+    cfg = load_config()
+    assert cfg.models.providers["openai_native"].model == "gpt-4o"
+    assert cfg.models.providers["openai_native"].auth_type == "oauth"
+
+
+def test_persist_claude_oauth_sets_default_model(tmp_path, monkeypatch):
+    """_persist_claude_oauth sets model=claude-sonnet-4-6 when current is 'default'."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    cfg = load_config()
+    cfg.models.providers["anthropic_native"] = ProviderConfig(type="anthropic_native", model="default")
+    save_config(cfg)
+
+    from aletheia.server.routes.model import _persist_claude_oauth
+    _persist_claude_oauth({"access_token": "at", "refresh_token": "rt", "expires_at": 999999})
+
+    cfg = load_config()
+    assert cfg.models.providers["anthropic_native"].model == "claude-sonnet-4-6"
+    assert cfg.models.providers["anthropic_native"].auth_type == "oauth"
+
+
+def test_persist_oauth_does_not_override_user_model(tmp_path, monkeypatch):
+    """If user already selected a model, persist should not overwrite it."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    cfg = load_config()
+    cfg.models.providers["openai_native"] = ProviderConfig(type="openai_native", model="o3-mini")
+    save_config(cfg)
+
+    from aletheia.server.routes.model import _persist_openai_oauth
+    _persist_openai_oauth({"api_key": "sk-oauth-key", "refresh_token": "rt", "expires_at": 999999})
+
+    cfg = load_config()
+    assert cfg.models.providers["openai_native"].model == "o3-mini"

@@ -783,3 +783,30 @@ grid 4 列、数字 IBM Plex Mono、**0 个残留 Tailwind class**。
 - **change-controlled 模块的 UI 镜像**：`server/routes/live.py` / `risk/engine.py`
   / `config/secrets.py` 对应的 UI 操作（live unlock / kill switch / 凭据轮换）
   必须保持现有 `Verify-before-commit` + 二次确认 + audit 模式不退化（trust §6.3）
+
+---
+
+## §4. 🟡 OAuth Provider UI — 已知未修复项（2026-06-14）
+
+> OAuth subscription provider 前端审计中发现但因 scope / 并发安全原因未在本轮修复
+> 的改进项。已修复项：状态判断改用 oauth.configured、模型选择 fallback 到手动输入、
+> label 改为 experimental。
+
+### 4.1 🟡 模型下拉只显示 slug，无 tier / context window 提示
+
+- 佐证：`frontend/src/pages/Settings.tsx:1671-1679`（OpenAI）、`:1758-1766`（Claude）
+  — `<select>` 的 `<option>` 只渲染 `{m}`（裸 slug）
+- 影响：用户在 OAuth panel 选模型时看不到质量层级、上下文窗口、是否 vision 等信息，
+  只能靠记忆选；HTTPProviderForm 的模型 combobox 已经有 tier badge + context_window
+- 依赖：后端 §5.4（health endpoint 需返回 model_metadata，或新增专用 route）
+- 最小修复：后端解决 §5.4 后，OAuth panel 复用 HTTPProviderForm 的 model combobox
+  带 tier badge 与 context_window 显示
+
+### 4.2 🟡 OAuth panel 无 disconnect / re-login 操作
+
+- 佐证：`frontend/src/pages/Settings.tsx:1663-1708`（OpenAI）、`:1749-1806`（Claude）
+  — connected 状态下只有 "Set as default" 按钮，无法主动断开或重新登录
+- 影响：用户如需切换账户（如从 Plus 切到 Pro），只能手动清 secrets 或等 token 过期
+- 最小修复：connected 状态增加 "Disconnect" 按钮，后端新增
+  `POST /model/{openai,claude}-oauth/disconnect`（清 oauth_token_ref + oauth_refresh_ref
+  + 设 auth_type 回 api_key）

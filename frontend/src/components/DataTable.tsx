@@ -74,8 +74,10 @@ export function DataTable<T>({ data, columns, onRowClick, pageSize = 25, emptyMe
           {table.getRowModel().rows.map(row => (
             <tr
               key={row.id}
+              className={onRowClick ? 'clickable' : undefined}
               onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-              style={{ cursor: onRowClick ? 'pointer' : 'default' }}
+              onKeyDown={onRowClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(row.original) } } : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
             >
               {row.getVisibleCells().map(cell => (
                 <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>

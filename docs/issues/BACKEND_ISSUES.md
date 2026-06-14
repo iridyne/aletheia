@@ -667,3 +667,49 @@
 | 覆盖范围超出本清单（如 docs 不一致、性能、CVE） | 不进本文件——另起对应文档 |
 
 修复完的条目移至 §10 历史区，保留 file:line 与修复 commit hash。
+
+---
+
+## §5. 🟠 OAuth Subscription Provider — 已知未修复项（2026-06-14）
+
+> 本节记录 OAuth subscription provider 审计中发现但因 scope / 并发安全原因未在
+> 本轮修复的问题。已修复项：healthcheck 跳过、token refresh 丢 token、默认模型
+> "default"、API 状态不返回 OAuth configured、provider-types 过旧。
+
+### 5.1 🟠 OpenAI OAuth persist 挂在 GET status 上（副作用 GET）
+
+- 佐证：`aletheia/server/routes/model.py:364-367` — `GET /model/openai-oauth/status`
+  在 `state == "completed"` 时调用 `_persist_openai_oauth(tokens)`
+- 影响：(1) GET 有写副作用，不符 REST 语义；(2) 如果 UI 在登录完成后没有继续 poll，
+  token 只在内存 `_session` 对象里，进程重启即丢失
+- 最小修复：方案 A — background task `_await_and_exchange()` 完成后直接 persist
+  （需引入 config/secrets 依赖到 openai_oauth.py，或 event callback）；方案 B —
+  新增 `POST /model/openai-oauth/finalize` 由前端显式触发。两种方案都需加幂等保护
+  （检查 `oauth_token_ref` 是否已写，避免重复覆盖）
+
+### 5.2 🟡 aiohttp 为 transitive dependency，无显式声明
+
+- 佐证：`aletheia/model_provider/oauth.py:19` — `from aiohttp import web`；
+  `pyproject.toml` 无 `aiohttp` 条目（当前通过 ccxt 或其他间接依赖拉入）
+- 影响：若某次依赖升级移除了间接 aiohttp，`CallbackServer` 会 ImportError，
+  OpenAI OAuth flow 直接不可用
+- 最小修复：`pyproject.toml` [project.dependencies] 加 `aiohttp>=3.9`，跑 `uv lock`
+
+### 5.3 🟡 OAuth token refresh 无 async path
+
+- 佐证：`aletheia/model_provider/router.py:67-69` — `_do_refresh()` 检测到 running
+  event loop 时跳过刷新，返回旧 token（已修为不丢 token，但仍然不刷新）
+- 影响：在 uvicorn async context（healthcheck / inference）中，即将过期的 token
+  只能等下次 sync 调用（如 scheduler thread）才能真正 refresh。极端情况：如果全部
+  调用路径都是 async（无 scheduler thread），token 过期后会一直用旧 token 直到 401
+- 最小修复：新增 `async _do_refresh_async()`，healthcheck / get_provider 的 async
+  调用路径中 await 它。需注意不能让 config save 阻塞 event loop
+
+### 5.4 🟡 healthcheck / model 列表只返回 slug，丢失 metadata
+
+- 佐证：`aletheia/server/routes/model.py:62-66` — `/api/model/health` 只返回
+  `models: h.models`（`list[str]`）；但 `list_models()` 返回 rich dict
+  `{slug, display_name, tier, context_window, capabilities}`
+- 影响：OAuth panel 的模型下拉只能显示裸 slug，无法展示 tier / context window 信息
+- 最小修复：health endpoint 增加 `model_metadata` 字段，或新增
+  `GET /api/model/{provider}/models` 返回完整 metadata

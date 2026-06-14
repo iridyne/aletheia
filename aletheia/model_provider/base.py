@@ -43,6 +43,7 @@ class ModelHealth:
     model: str = ""
     error: str | None = None
     models: list[str] = field(default_factory=list)
+    model_metadata: list[dict] = field(default_factory=list)
 
 
 class ModelProvider:

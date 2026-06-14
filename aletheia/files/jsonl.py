@@ -1,10 +1,16 @@
 """JSONL event stream writer/reader."""
 
+import hashlib
 import json
+import threading
 from pathlib import Path
 from datetime import datetime
 
 from aletheia.config.loader import get_data_dir
+
+_GENESIS_HASH = "0" * 64
+_audit_hash_lock = threading.Lock()
+_last_audit_hash: str | None = None
 
 
 def _log_dir() -> Path:
@@ -57,11 +63,51 @@ def read_jsonl(filename: str, limit: int = 100) -> list[dict]:
     return result
 
 
+def _hash_record(line: str) -> str:
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()
+
+
+def _get_last_audit_hash() -> str:
+    """Return the hash of the last audit record (reads from file on first call)."""
+    global _last_audit_hash
+    if _last_audit_hash is not None:
+        return _last_audit_hash
+    path = _log_dir() / "audit.jsonl"
+    if not path.exists():
+        _last_audit_hash = _GENESIS_HASH
+        return _last_audit_hash
+    last_line = ""
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    last_line = line.strip()
+    except OSError:
+        _last_audit_hash = _GENESIS_HASH
+        return _last_audit_hash
+    if not last_line:
+        _last_audit_hash = _GENESIS_HASH
+        return _last_audit_hash
+    _last_audit_hash = _hash_record(last_line)
+    return _last_audit_hash
+
+
 def write_audit(event: dict) -> None:
-    """Write an audit event to audit.jsonl."""
+    """Write an audit event to audit.jsonl with hash chain.
+
+    Each record includes `_prev_hash` — the SHA-256 of the previous line on disk.
+    Verification: re-hash each line and confirm it matches the next line's _prev_hash.
+    """
+    global _last_audit_hash
     if "timestamp" not in event:
         event["timestamp"] = datetime.utcnow().isoformat()
-    # Keep the JSONL audit stream as the canonical external log format.
+
+    with _audit_hash_lock:
+        prev_hash = _get_last_audit_hash()
+        event["_prev_hash"] = prev_hash
+        line = json.dumps(event, default=str, ensure_ascii=False)
+        _last_audit_hash = _hash_record(line)
+
     append_jsonl("audit.jsonl", event)
 
     # Also persist into sqlite.audit_events for structured querying when DB is
@@ -106,6 +152,47 @@ def _serialize_state(value: object) -> str:
 def write_agent_run_log(record: dict) -> None:
     """Write an agent run event to agent_runs.jsonl."""
     append_jsonl("agent_runs.jsonl", record)
+
+
+def verify_audit_chain() -> dict:
+    """Verify the integrity of audit.jsonl hash chain.
+
+    Returns {"valid": bool, "records": int, "errors": list[str]}.
+    """
+    path = _log_dir() / "audit.jsonl"
+    if not path.exists():
+        return {"valid": True, "records": 0, "errors": []}
+
+    errors: list[str] = []
+    prev_hash = _GENESIS_HASH
+    count = 0
+
+    with path.open("r", encoding="utf-8") as f:
+        for i, raw_line in enumerate(f, 1):
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            count += 1
+            try:
+                record = json.loads(raw_line)
+            except json.JSONDecodeError:
+                errors.append(f"line {i}: invalid JSON")
+                prev_hash = _GENESIS_HASH
+                continue
+
+            record_prev = record.get("_prev_hash")
+            if record_prev is None:
+                # Legacy record before hash chain was added — reset chain
+                prev_hash = _hash_record(raw_line)
+                continue
+
+            if record_prev != prev_hash:
+                errors.append(
+                    f"line {i}: _prev_hash mismatch (expected {prev_hash[:16]}…, got {record_prev[:16]}…)"
+                )
+            prev_hash = _hash_record(raw_line)
+
+    return {"valid": len(errors) == 0, "records": count, "errors": errors}
 
 
 def write_error(record: dict) -> None:

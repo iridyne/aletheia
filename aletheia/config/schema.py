@@ -295,6 +295,15 @@ class UniverseConfig(BaseModel):
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
 
 
+class TunnelConfig(BaseModel):
+    enabled: bool = False
+    tunnel_id: str = ""
+    hostname: str = ""
+    credentials_path: str = ""
+    cloudflared_path: str = ""
+    metrics_port: int = 0
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -311,3 +320,4 @@ class AletheiaConfig(BaseModel):
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
+    tunnel: TunnelConfig = Field(default_factory=TunnelConfig)

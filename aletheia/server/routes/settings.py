@@ -55,6 +55,7 @@ async def get_settings():
             "ccxt_exchange": cfg.market_data.ccxt_exchange,
         },
         "universe": cfg.universe.model_dump(mode="json"),
+        "tunnel": cfg.tunnel.model_dump(mode="json"),
     }
 
 
@@ -546,3 +547,50 @@ async def update_universe_config(req: UniverseConfigUpdate):
                  "after": cfg.universe.model_dump(mode="json"),
                  "message": f"Universe config updated: {list(updates.keys())}"})
     return {"updated": updates, "universe": cfg.universe.model_dump(mode="json")}
+
+
+# ---------------------------------------------------------------------------
+# Tunnel config (Cloudflare Tunnel)
+# ---------------------------------------------------------------------------
+
+class TunnelConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    tunnel_id: Optional[str] = None
+    hostname: Optional[str] = None
+
+
+@router.get("/tunnel/status")
+async def get_tunnel_status():
+    from aletheia.gateway.tunnel import tunnel_status
+    return tunnel_status()
+
+
+@router.post("/tunnel")
+async def update_tunnel_config(req: TunnelConfigUpdate):
+    cfg = load_config()
+    old = cfg.tunnel.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.tunnel, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "tunnel_config_changed",
+                 "entity_type": "tunnel_config", "before": old,
+                 "after": cfg.tunnel.model_dump(mode="json"),
+                 "message": f"Tunnel config updated: {list(updates.keys())}"})
+    return {"updated": updates, "tunnel": cfg.tunnel.model_dump(mode="json")}
+
+
+@router.post("/tunnel/start")
+async def start_tunnel_api():
+    from aletheia.gateway.tunnel import start_tunnel
+    result = start_tunnel()
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("reason", "unknown error"))
+    return result
+
+
+@router.post("/tunnel/stop")
+async def stop_tunnel_api():
+    from aletheia.gateway.tunnel import stop_tunnel
+    return stop_tunnel()

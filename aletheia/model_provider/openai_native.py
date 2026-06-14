@@ -188,6 +188,7 @@ class OpenAINativeProvider(ModelProvider):
                     return ModelHealth(
                         provider=self.name, available=True,
                         model=self.model, models=slugs,
+                        model_metadata=models,
                     )
                 return ModelHealth(
                     provider=self.name, available=False,

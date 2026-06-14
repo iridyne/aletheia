@@ -42,6 +42,8 @@ async def get_model_config():
             "enabled": pcfg.enabled,
             "model": pcfg.model,
             "api_key": _key_status(pcfg.api_key_secret_ref),
+            "auth_type": pcfg.auth_type,
+            "oauth": _key_status(pcfg.oauth_token_ref),
         }
         if ptype in HTTP_PROVIDERS:
             entry["base_url"] = pcfg.base_url
@@ -61,7 +63,8 @@ async def get_model_health():
     results = await healthcheck_all()
     return [
         {"provider": h.provider, "available": h.available, "model": h.model,
-         "error": h.error, "models": h.models}
+         "error": h.error, "models": h.models,
+         "model_metadata": h.model_metadata}
         for h in results
     ]
 
@@ -91,14 +94,14 @@ async def get_provider_types():
             "fields": ["command", "model"],
         },
         "anthropic_native": {
-            "label": "Anthropic (Direct)",
+            "label": "Claude OAuth (Experimental)",
             "category": "http",
-            "fields": ["model", "api_key"],
+            "fields": ["model", "api_key", "oauth"],
         },
         "openai_native": {
-            "label": "OpenAI (Direct)",
+            "label": "OpenAI OAuth (Experimental)",
             "category": "http",
-            "fields": ["model", "api_key"],
+            "fields": ["model", "api_key", "oauth"],
         },
     }
 
@@ -357,21 +360,74 @@ async def openai_oauth_start():
 
 @router.get("/model/openai-oauth/status")
 async def openai_oauth_status():
-    """Poll OpenAI OAuth login status. No tokens exposed."""
+    """Poll OpenAI OAuth login status. No tokens exposed, no side-effects."""
     from aletheia.model_provider import openai_oauth
+    return openai_oauth.get_status()
+
+
+@router.post("/model/openai-oauth/finalize")
+async def openai_oauth_finalize():
+    """Persist completed OpenAI OAuth tokens. Idempotent — safe to call multiple times."""
+    from aletheia.model_provider import openai_oauth
+    from aletheia.config.secrets import get_secret
+
     status = openai_oauth.get_status()
-    # If completed, persist tokens and update config
-    if status["state"] == "completed":
-        tokens = openai_oauth.get_tokens()
-        if tokens:
-            _persist_openai_oauth(tokens)
-    return status
+    if status["state"] != "completed":
+        raise HTTPException(400, "OAuth flow not completed yet")
+
+    cfg = load_config()
+    pcfg = cfg.models.providers.get("openai_native")
+    if pcfg and pcfg.oauth_token_ref and get_secret(pcfg.oauth_token_ref):
+        return {"persisted": False, "reason": "already_persisted"}
+
+    tokens = openai_oauth.get_tokens()
+    if not tokens:
+        raise HTTPException(400, "No tokens available from completed flow")
+
+    _persist_openai_oauth(tokens)
+    write_audit({
+        "actor": "human", "source": "dashboard",
+        "event_type": "openai_oauth_finalized", "entity_type": "model_provider",
+        "entity_id": "openai_native",
+        "message": "OpenAI OAuth tokens persisted to config",
+    })
+    return {"persisted": True}
 
 
 @router.post("/model/openai-oauth/cancel")
 async def openai_oauth_cancel():
     from aletheia.model_provider import openai_oauth
     return await openai_oauth.cancel()
+
+
+@router.post("/model/openai-oauth/disconnect")
+async def openai_oauth_disconnect():
+    """Disconnect OpenAI OAuth — clear tokens, revert to api_key auth."""
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    pcfg = cfg.models.providers.get("openai_native")
+    if not pcfg:
+        raise HTTPException(400, "openai_native provider not configured")
+
+    if pcfg.oauth_token_ref:
+        set_secret(pcfg.oauth_token_ref, "")
+        pcfg.oauth_token_ref = None
+    if pcfg.oauth_refresh_ref:
+        set_secret(pcfg.oauth_refresh_ref, "")
+        pcfg.oauth_refresh_ref = None
+    pcfg.oauth_expires_at = None
+    pcfg.auth_type = "api_key"
+
+    save_config(cfg)
+    clear_cache()
+
+    write_audit({
+        "actor": "human", "source": "dashboard",
+        "event_type": "oauth_disconnected", "entity_type": "model_provider",
+        "entity_id": "openai_native",
+        "message": "OpenAI OAuth disconnected, reverted to api_key auth",
+    })
+    return {"disconnected": True}
 
 
 def _persist_openai_oauth(tokens: dict) -> None:
@@ -385,6 +441,9 @@ def _persist_openai_oauth(tokens: dict) -> None:
 
     pcfg.auth_type = "oauth"
     pcfg.enabled = True
+
+    if not pcfg.model or pcfg.model == "default":
+        pcfg.model = "gpt-4o"
 
     if tokens.get("api_key"):
         ref = "model.openai_native.oauth_token"
@@ -443,6 +502,36 @@ async def claude_oauth_cancel():
     return claude_oauth.cancel()
 
 
+@router.post("/model/claude-oauth/disconnect")
+async def claude_oauth_disconnect():
+    """Disconnect Claude OAuth — clear tokens, revert to api_key auth."""
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    pcfg = cfg.models.providers.get("anthropic_native")
+    if not pcfg:
+        raise HTTPException(400, "anthropic_native provider not configured")
+
+    if pcfg.oauth_token_ref:
+        set_secret(pcfg.oauth_token_ref, "")
+        pcfg.oauth_token_ref = None
+    if pcfg.oauth_refresh_ref:
+        set_secret(pcfg.oauth_refresh_ref, "")
+        pcfg.oauth_refresh_ref = None
+    pcfg.oauth_expires_at = None
+    pcfg.auth_type = "api_key"
+
+    save_config(cfg)
+    clear_cache()
+
+    write_audit({
+        "actor": "human", "source": "dashboard",
+        "event_type": "oauth_disconnected", "entity_type": "model_provider",
+        "entity_id": "anthropic_native",
+        "message": "Claude OAuth disconnected, reverted to api_key auth",
+    })
+    return {"disconnected": True}
+
+
 def _persist_claude_oauth(tokens: dict) -> None:
     """Save Claude OAuth tokens to secrets + update config."""
     cfg = load_config()
@@ -454,6 +543,9 @@ def _persist_claude_oauth(tokens: dict) -> None:
 
     pcfg.auth_type = "oauth"
     pcfg.enabled = True
+
+    if not pcfg.model or pcfg.model == "default":
+        pcfg.model = "claude-sonnet-4-6"
 
     if tokens.get("access_token"):
         ref = "model.anthropic_native.oauth_token"

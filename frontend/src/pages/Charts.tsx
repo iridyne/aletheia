@@ -15,15 +15,7 @@ function ProviderChip({ provider }: { provider?: string | null }) {
     : provider === 'bybit' ? 'Bybit · CCXT'
     : provider === 'bitget' ? 'Bitget'
     : provider
-  return (
-    <span style={{
-      fontSize: '0.6rem', padding: '0.1rem 0.35rem',
-      borderRadius: 3, background: 'rgba(34,211,238,0.1)',
-      color: 'var(--accent)', fontFamily: 'monospace', letterSpacing: '0.02em',
-    }}>
-      {label}
-    </span>
-  )
+  return <span className="provider-chip">{label}</span>
 }
 
 export default function Charts() {
@@ -93,77 +85,54 @@ export default function Charts() {
       />
 
       {/* Data source + freshness bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-        <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Data source:</span>
+      <div className="charts-source-bar">
+        <span className="charts-source-label">Data source:</span>
         <ProviderChip provider={dataProvider} />
-        {!dataProvider && (
-          <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>loading…</span>
-        )}
+        {!dataProvider && <span className="charts-source-label">loading…</span>}
         {lastUpdatedLabel && (
-          <span style={{ fontSize: '0.65rem', color: 'var(--faint)', marginLeft: 'auto' }}>
-            updated {lastUpdatedLabel}
-          </span>
+          <span className="charts-updated">updated {lastUpdatedLabel}</span>
         )}
       </div>
 
       {/* Watchlist Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1.1rem' }}>
+      <div className="charts-watchlist">
         {SYMBOLS.map(sym => {
           const snap = snapshotMap[sym] ?? snapshotMap[sym.replace('/', '')]
           const isActive = sym === symbol
           const change = snap?.change_pct_24h
           const changeColor = change > 0 ? 'var(--green)' : change < 0 ? 'var(--red)' : 'var(--muted)'
-          const displayName = sym  // already canonical BTC/USDT
           return (
             <div
               key={sym}
-              className="card"
-              style={{
-                cursor: 'pointer', padding: '0.7rem 0.9rem', marginBottom: 0,
-                borderColor: isActive ? 'var(--accent)' : undefined,
-                background: isActive ? 'rgba(34,211,238,0.05)' : undefined,
-              }}
+              className={`card charts-watchlist-card${isActive ? ' active' : ''}`}
               onClick={() => setSymbol(sym)}
             >
-              {/* Symbol + provider */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-                <span style={{ fontSize: '0.72rem', color: 'var(--faint)' }}>{displayName}</span>
+              <div className="charts-card-head">
+                <span className="charts-card-symbol">{sym}</span>
                 <ProviderChip provider={snap?.provider} />
               </div>
-
-              {/* Last price */}
-              <div className="mono" style={{ fontSize: '1rem', fontWeight: 600 }}>
+              <div className="mono charts-card-price">
                 {snap ? fmtNum(snap.price) : '—'}
               </div>
-
-              {/* 24h change + volume */}
-              <div className="flex items-center gap-2 mt-2" style={{ justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+              <div className="charts-card-meta">
+                <div className="charts-card-change">
                   {change != null && (
-                    <span className="mono" style={{ fontSize: '0.72rem', color: changeColor }}>
+                    <span className="mono" style={{ color: changeColor }}>
                       {fmtSigned(change)}%
                     </span>
                   )}
                   {snap?.volume_24h != null && (
-                    <span className="text-muted" style={{ fontSize: '0.65rem' }}>
-                      Vol {fmtNum(snap.volume_24h / 1e6)}M
-                    </span>
+                    <span className="charts-card-vol">Vol {fmtNum(snap.volume_24h / 1e6)}M</span>
                   )}
                 </div>
               </div>
-
-              {/* 24h High / Low */}
               {(snap?.high_24h != null || snap?.low_24h != null) && (
-                <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.3rem' }}>
+                <div className="charts-card-hl">
                   {snap.high_24h != null && (
-                    <span style={{ fontSize: '0.64rem', color: 'var(--green)' }}>
-                      H {fmtNum(snap.high_24h)}
-                    </span>
+                    <span className="charts-card-high">H {fmtNum(snap.high_24h)}</span>
                   )}
                   {snap.low_24h != null && (
-                    <span style={{ fontSize: '0.64rem', color: 'var(--red)' }}>
-                      L {fmtNum(snap.low_24h)}
-                    </span>
+                    <span className="charts-card-low">L {fmtNum(snap.low_24h)}</span>
                   )}
                 </div>
               )}
@@ -174,14 +143,14 @@ export default function Charts() {
 
       {/* Chart */}
       <div className="card">
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+        <div className="charts-controls">
           <select value={symbol} onChange={e => setSymbol(e.target.value)}>
             {SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           <select value={timeframe} onChange={e => setTimeframe(e.target.value)}>
             {TIMEFRAMES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: 'var(--faint)' }}>
+          <span className="charts-via">
             {dataProvider ? `via ${dataProvider} · CCXT` : ''}
           </span>
         </div>
@@ -206,7 +175,7 @@ export default function Charts() {
                     {opp.confidence_score != null ? `${opp.confidence_score}/100` : '—'}
                   </td>
                   <td>{opp.source_agent || '—'}</td>
-                  <td style={{ maxWidth: '30ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={opp.thesis || ''}>{opp.thesis || '—'}</td>
+                  <td className="td-ellipsis" title={opp.thesis || ''}>{opp.thesis || '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -228,7 +197,7 @@ export default function Charts() {
               <tr><th>Strategy</th><td className="mono">{selectedTrade.strategy_id || '—'}</td></tr>
             </tbody>
           </table>
-          <button className="secondary" style={{ marginTop: '0.4rem' }} onClick={() => setSelectedOrder(null)}>Close</button>
+          <button className="secondary" onClick={() => setSelectedOrder(null)}>Close</button>
         </div>
       )}
     </div>

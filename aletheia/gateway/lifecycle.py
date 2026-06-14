@@ -88,6 +88,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _verify_started(proc, cfg)
         _write_watchdog_tick("started")
         _auto_register_watchdog(cfg)
+        _auto_start_tunnel(cfg)
 
 
 def _verify_webui_accessible(cfg) -> bool:
@@ -279,6 +280,8 @@ def do_stop() -> None:
     Fixes the restart leak where killing only the supervisor (no /T) orphaned the
     inner uvicorn, which kept holding the port and made the next start crash-loop.
     """
+    _auto_stop_tunnel()
+
     cfg = load_config()
     port = cfg.app.dashboard_port
     host = cfg.app.bind_host
@@ -372,6 +375,19 @@ def do_status() -> None:
     else:
         autostart_label = f"unknown ({a.get('reason', 'error')})"
     typer.echo(f"Autostart: {autostart_label}")
+
+    try:
+        from aletheia.gateway.tunnel import tunnel_status as _ts
+        ts = _ts()
+        if ts["enabled"]:
+            if ts["running"]:
+                typer.echo(f"Tunnel: running → https://{ts['hostname']} (PID {ts['pid']})")
+            else:
+                typer.echo("Tunnel: enabled but not running")
+        else:
+            typer.echo("Tunnel: disabled")
+    except Exception:
+        pass
 
 
 def do_logs(lines: int = 50) -> None:
@@ -541,3 +557,28 @@ def _decode_resume_api_payload(body: str) -> dict:
     except json.JSONDecodeError:
         return {"raw": body}
     return data if isinstance(data, dict) else {"raw": data}
+
+
+def _auto_start_tunnel(cfg) -> None:
+    """Start Cloudflare Tunnel if enabled. Best-effort, never blocks gateway start."""
+    if not getattr(cfg, "tunnel", None) or not cfg.tunnel.enabled:
+        return
+    try:
+        from aletheia.gateway.tunnel import start_tunnel
+        result = start_tunnel()
+        if result.get("ok"):
+            _echo_stdout_safe(f"Tunnel started → https://{cfg.tunnel.hostname}")
+        else:
+            _echo_safe(f"Tunnel failed: {result.get('reason', 'unknown')}")
+    except Exception as e:
+        _echo_safe(f"Tunnel start error: {e}")
+
+
+def _auto_stop_tunnel() -> None:
+    """Stop Cloudflare Tunnel if running. Best-effort, never blocks gateway stop."""
+    try:
+        from aletheia.gateway.tunnel import is_tunnel_running, stop_tunnel
+        if is_tunnel_running():
+            stop_tunnel()
+    except Exception:
+        pass

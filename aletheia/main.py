@@ -13,7 +13,9 @@ from aletheia.cli.update_cmd import update_app
 from aletheia.cli.runtime_cmd import runtime_app
 from aletheia.cli.knowledge_cmd import knowledge_app
 from aletheia.cli.doctor_cmd import doctor_app
+from aletheia.cli.audit_cmd import audit_app
 from aletheia.cli.operator import agent_app
+from aletheia.cli.tunnel import tunnel_app
 
 app = typer.Typer(
     name="aletheia",
@@ -24,8 +26,10 @@ app = typer.Typer(
 # Bootstrap surface — keep on the CLI: these do what a not-yet-running web UI cannot.
 app.add_typer(gateway_app, name="gateway", help="Gateway lifecycle commands.")
 app.add_typer(doctor_app, name="doctor", help="Probe this machine's real state (single source of truth).")
+app.add_typer(audit_app, name="audit", help="Audit trail verification (hash chain integrity).")
 app.add_typer(agent_app, name="agent", help="Operator Agent control-plane commands.")
 app.add_typer(runtime_app, name="runtime", help="PI runtime continuity commands.")
+app.add_typer(tunnel_app, name="tunnel", help="Cloudflare Tunnel (public access).")
 
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")

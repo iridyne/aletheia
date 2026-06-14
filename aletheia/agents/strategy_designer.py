@@ -7,6 +7,7 @@ from aletheia.agents.helpers import llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.trading.instruments import tradable_symbols_from_config, observed_symbols_from_config
+from aletheia.knowledge.manager import create_strategy_memory
 from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
 
 # States the designer walks a fresh strategy through so it becomes tradable.
@@ -18,12 +19,17 @@ _VALID_DIRECTIONS = {"long", "short", "neutral"}
 
 
 class StrategySpec(BaseModel):
-    """Structured strategy the LLM is asked to produce (degrades gracefully)."""
+    """Structured strategy the LLM is asked to produce (degrades gracefully).
+
+    NOTE: entry_rule/exit_rule are ADVISORY text — they document the LLM's intent
+    but are NOT parsed or executed by paper_trader. Actual trade direction comes
+    from opportunity.direction_bias. These fields exist for auditability only.
+    """
     name: str = "Designed Strategy"
     timeframe: str = "1h"
     direction_bias: str = "neutral"
-    entry_rule: str = ""
-    exit_rule: str = ""
+    entry_rule: str = ""  # advisory, NOT executed — see docstring
+    exit_rule: str = ""   # advisory, NOT executed — see docstring
     rationale: str = ""
 
 
@@ -119,6 +125,22 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
     strategy = create_strategy(name=name, description=description, parameters=parameters)
     log_tool(run_id, "create_strategy_hypothesis", "observe", True, output=strategy.id)
     outputs.append(f"strategy:{strategy.id}")
+
+    # Persist strategy card into KB (§4.2 strategy_memory: parameters + intent snapshot).
+    try:
+        import json as _json
+        memory_content = (
+            f"# {name}\n\n"
+            f"**Direction**: {direction} | **Timeframe**: {timeframe} | **Symbol**: {default_symbol}\n\n"
+            f"## Entry Rule (advisory)\n{entry_rule or 'n/a'}\n\n"
+            f"## Exit Rule (advisory)\n{exit_rule or 'n/a'}\n\n"
+            f"## Rationale\n{rationale or 'n/a'}\n\n"
+            f"## Parameters\n```json\n{_json.dumps(parameters, indent=2)}\n```\n"
+        )
+        create_strategy_memory(strategy.id, f"Strategy Card: {name}", memory_content)
+        log_tool(run_id, "create_strategy_memory", "observe", True, output=strategy.id)
+    except Exception as e:
+        errors.append(f"strategy_memory_failed:{e}")
 
     # Advance through the ungated lifecycle states so the paper trader can bind to it.
     # Stop and record on the first refused transition rather than forcing it.

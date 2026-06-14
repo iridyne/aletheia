@@ -160,6 +160,10 @@ class StrategyRecord(BaseModel):
     name: str
     description: str | None = None
     state: str = "draft"
+    # JSON blob with entry_rule/exit_rule/timeframe/direction_bias.
+    # NOTE: entry_rule/exit_rule are ADVISORY (LLM-generated intent text),
+    # NOT parsed or executed by paper_trader. Trade direction derives from
+    # opportunity.direction_bias, not from these rules.
     parameters: str = "{}"
     under_review: bool = False
     review_notes: str | None = None

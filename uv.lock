@@ -149,6 +149,7 @@ name = "aletheia-trading-os"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "apscheduler" },
     { name = "ccxt" },
     { name = "cryptography" },
@@ -173,6 +174,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9" },
     { name = "anyio", marker = "extra == 'dev'", specifier = ">=4.4" },
     { name = "apscheduler", specifier = ">=3.10" },
     { name = "ccxt", specifier = ">=4.5.56" },
