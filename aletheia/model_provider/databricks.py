@@ -78,7 +78,10 @@ class DatabricksProvider(OpenAICompatibleProvider):
                 if resp.status_code == 200:
                     models = await self.list_models()
                     slugs = [m["slug"] for m in models]
-                    return ModelHealth(provider=self.name, available=True, model=self.model, models=slugs)
+                    return ModelHealth(
+                        provider=self.name, available=True, model=self.model,
+                        models=slugs, model_metadata=models,
+                    )
                 return ModelHealth(provider=self.name, available=False,
                                    error=f"HTTP {resp.status_code}")
         except Exception as e:

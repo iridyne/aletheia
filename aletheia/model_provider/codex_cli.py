@@ -151,7 +151,7 @@ class CodexCLIProvider(ModelProvider):
         return ModelHealth(
             provider=self.name, available=True,
             model=self.model or (slugs[0] if slugs else "codex"),
-            models=slugs,
+            models=slugs, model_metadata=models,
         )
 
     # --- subprocess helpers ---

@@ -232,11 +232,12 @@ class ClaudeCLIProvider(ModelProvider):
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=f"probe_failed:{e}")
 
-        models = [m["slug"] for m in await self.list_models()]
+        models_list = await self.list_models()
+        slugs = [m["slug"] for m in models_list]
         return ModelHealth(
             provider=self.name, available=True,
             model=self.model or "opus",
-            models=models,
+            models=slugs, model_metadata=models_list,
         )
 
 
