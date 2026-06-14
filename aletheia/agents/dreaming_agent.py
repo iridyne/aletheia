@@ -188,11 +188,26 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     summary_lines = [f"- {r['agent_name']}: {r['status']} ({r.get('started_at', '')[:16]})" for r in recent_runs]
     activity = "\n".join(summary_lines) if summary_lines else "No recent agent activity."
 
+    # Enrich context: recent post-trade post-mortems (serenity_post_mortems)
+    post_mortem_ctx = ""
+    try:
+        from aletheia.storage.repositories import list_serenity_post_mortems
+        mortems = list_serenity_post_mortems(limit=5)
+        if mortems:
+            pm_lines = [
+                f"- [{m.get('created_at', '')[:10]}] {m.get('strategy_id', '?')}: "
+                f"{m.get('summary', 'no summary')}"
+                for m in mortems
+            ]
+            post_mortem_ctx = "\n\nRecent post-mortems:\n" + "\n".join(pm_lines)
+    except Exception:
+        pass
+
     content, err = await llm_complete(
         system="You are the system's nightly consolidation process. Given recent agent activity, "
                "produce a short markdown 'dreaming log': (1) what happened, (2) one insight or pattern, "
                "(3) one suggested focus for tomorrow. Keep it brief.",
-        user=f"Recent agent activity:\n{activity}\n\nWrite the dreaming log.",
+        user=f"Recent agent activity:\n{activity}{post_mortem_ctx}\n\nWrite the dreaming log.",
         max_tokens=700,
     )
     log_tool(run_id, "llm_complete", "observe", True)

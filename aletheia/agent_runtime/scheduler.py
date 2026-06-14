@@ -431,6 +431,11 @@ def _run_backtest_orchestrator():
                 f"{result.strategies_killed} killed, {result.strategies_kept} kept"
             ),
         })
+
+        # Lifecycle automation: apply exit_policy feedback + evidence-based actions
+        from aletheia.analytics.lifecycle_automation import run_lifecycle_automation
+        lc_result = run_lifecycle_automation()
+        logger.info("Lifecycle automation: %s", lc_result)
     except Exception as e:
         logger.warning("backtest_orchestrator job failed: %s", e)
 

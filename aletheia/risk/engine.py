@@ -109,14 +109,20 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     # 5. Max position size. Live and demo each have a notional cap so paper
     #    promotion evidence is built from bounded trades (distinct tokens: a demo
     #    size rejection must not count toward live-critical violations).
+    #    Portfolio drawdown scaling: if current equity is significantly below peak,
+    #    reduce the effective cap proportionally (industry standard: halve size at
+    #    10% drawdown, reject at 20% drawdown).
+    drawdown_scale = _portfolio_drawdown_scale(proposal.execution_mode)
     if proposal.quantity and proposal.price:
         notional = proposal.quantity * proposal.price
         if proposal.execution_mode == "bitget_live_limited":
-            if notional > risk.max_live_position_notional_usdt:
-                violations.append(f"exceeds_max_position_notional:{notional}>{risk.max_live_position_notional_usdt}")
+            effective_cap = risk.max_live_position_notional_usdt * drawdown_scale
+            if notional > effective_cap:
+                violations.append(f"exceeds_max_position_notional:{notional}>{effective_cap}")
         else:
-            if notional > risk.max_demo_position_notional_usdt:
-                violations.append(f"exceeds_demo_position_notional:{notional}>{risk.max_demo_position_notional_usdt}")
+            effective_cap = risk.max_demo_position_notional_usdt * drawdown_scale
+            if notional > effective_cap:
+                violations.append(f"exceeds_demo_position_notional:{notional}>{effective_cap}")
 
     # 6. Max open positions
     open_positions = list_positions(status="open")
@@ -218,6 +224,11 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")
 
+    # 15. Lesson-based constraints — accepted lessons with actionable recommendations
+    #     can impose symbol/direction blocks learned from past failures.
+    lesson_violations = _check_lesson_constraints(proposal)
+    violations.extend(lesson_violations)
+
     # Determine execution mode
     if not violations:
         allowed_mode = proposal.execution_mode
@@ -249,6 +260,96 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     result.decision_id = decision.id
 
     return result
+
+
+def _check_lesson_constraints(proposal) -> list[str]:
+    """Check accepted lessons for actionable constraints.
+
+    Lessons with category='risk' and recommendation_json containing:
+      - {"action": "block_symbol", "symbol": "X"} → reject trades on symbol X
+      - {"action": "block_direction", "direction": "short"} → reject shorts
+      - {"action": "reduce_size", "factor": 0.5} → (advisory, logged but not enforced here)
+      - {"action": "block_scanner", "scanner": "X"} → reject trades from scanner X
+    """
+    violations = []
+    try:
+        from aletheia.learning.lessons import LessonStore
+        import json
+        store = LessonStore()
+        active_lessons = store.list_all(status="accepted", limit=50)
+        sym_canonical = to_canonical(proposal.symbol)
+
+        for lesson in active_lessons:
+            if not lesson.recommendation_json:
+                continue
+            try:
+                rec = json.loads(lesson.recommendation_json)
+            except (ValueError, TypeError):
+                continue
+
+            action = rec.get("action")
+            if action == "block_symbol":
+                blocked_sym = to_canonical(rec.get("symbol", ""))
+                if blocked_sym and blocked_sym == sym_canonical:
+                    violations.append(f"lesson_block_symbol:{lesson.lesson_id}:{blocked_sym}")
+
+            elif action == "block_direction":
+                blocked_dir = rec.get("direction", "")
+                if blocked_dir and proposal.direction == blocked_dir:
+                    violations.append(f"lesson_block_direction:{lesson.lesson_id}:{blocked_dir}")
+
+            elif action == "block_scanner":
+                blocked_scanner = rec.get("scanner", "")
+                if blocked_scanner and getattr(proposal, "scanner_family", None) == blocked_scanner:
+                    violations.append(f"lesson_block_scanner:{lesson.lesson_id}:{blocked_scanner}")
+
+    except Exception:
+        pass
+    return violations
+
+
+def _portfolio_drawdown_scale(execution_mode: str) -> float:
+    """Compute position size scaling factor based on portfolio drawdown.
+
+    Uses recent portfolio_snapshots to detect peak-to-current drawdown.
+    Returns 1.0 (no reduction) to 0.0 (reject entirely) as a multiplier
+    on position size caps.
+
+    Scale: 0-5% DD → 1.0, 5-10% DD → linear from 1.0 to 0.5, 10-20% → 0.5 to 0.0
+    """
+    try:
+        from aletheia.storage.repositories import list_portfolio_snapshots
+        snapshots = list_portfolio_snapshots(limit=50)
+        if len(snapshots) < 3:
+            return 1.0
+
+        mode_snapshots = [
+            s for s in snapshots
+            if s.get("execution_mode") == execution_mode
+            or (execution_mode == "paper_internal" and s.get("execution_mode") in ("paper_internal", "bitget_demo"))
+        ]
+        if len(mode_snapshots) < 3:
+            return 1.0
+
+        values = [float(s.get("total_value_usdt") or 0) for s in mode_snapshots]
+        peak = max(values)
+        current = values[-1]
+
+        if peak <= 0:
+            return 1.0
+
+        drawdown_pct = (peak - current) / peak * 100.0
+
+        if drawdown_pct <= 5.0:
+            return 1.0
+        elif drawdown_pct <= 10.0:
+            return 1.0 - (drawdown_pct - 5.0) / 5.0 * 0.5
+        elif drawdown_pct <= 20.0:
+            return 0.5 - (drawdown_pct - 10.0) / 10.0 * 0.5
+        else:
+            return 0.0
+    except Exception:
+        return 1.0
 
 
 def _current_live_exposure() -> float:

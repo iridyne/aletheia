@@ -182,3 +182,79 @@ def test_execution_not_eligible_skipped():
         candidates = build_paper_candidates(limit=50)
     assert len(candidates) == 1
     assert candidates[0]["skip_reason"] == "execution_eligible=False"
+
+
+# ---------------------------------------------------------------------------
+# Strategy evidence tests
+# ---------------------------------------------------------------------------
+
+def test_backtest_killed_strategy_blocked():
+    """Strategy with negative backtest expectancy should be blocked."""
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+    strategy = {
+        "id": "strat-1", "name": "Bad Strat", "state": "paper_running",
+        "paper_trading_paused": 0, "parameters": '{"ruleset": null}',
+    }
+    opps = [_make_opp(linked_strategy_id="strat-1")]
+
+    def mock_evidence(strat):
+        return {
+            "evidence_status": "backtest_killed",
+            "backtest_expectancy": -0.5,
+            "backtest_profit_factor": 0.4,
+            "paper_expectancy": None,
+            "paper_trade_count": 0,
+            "drift_status": None,
+        }
+
+    with _patch_deps(opps) as ctx:
+        with patch("aletheia.agents.paper_trader_ranker.get_strategy", return_value=strategy):
+            with patch("aletheia.agents.paper_trader_ranker.is_paper_trading_paused", return_value=False):
+                with patch("aletheia.agents.paper_trader_ranker._lookup_strategy_evidence", side_effect=mock_evidence):
+                    candidates = build_paper_candidates(limit=50)
+
+    assert len(candidates) == 1
+    assert "strategy_evidence:backtest_killed" in candidates[0]["skip_reason"]
+
+
+def test_paper_failing_penalizes_score():
+    """Strategy with paper_failing evidence should get score penalty."""
+    from aletheia.agents.paper_trader_ranker import _compute_trade_score
+
+    factor_signal = {"status": "active"}
+    evidence_failing = {
+        "evidence_status": "paper_failing",
+        "drift_status": "paper_underperforming",
+    }
+    evidence_promising = {
+        "evidence_status": "paper_promising",
+        "drift_status": "paper_confirming",
+    }
+
+    score_failing = _compute_trade_score(
+        {"confidence_score": 80}, None, factor_signal, "high", evidence_failing
+    )
+    score_promising = _compute_trade_score(
+        {"confidence_score": 80}, None, factor_signal, "high", evidence_promising
+    )
+
+    # paper_promising should score much higher than paper_failing
+    assert score_promising > score_failing
+    # paper_failing penalty = -30 + underperforming -15 = -45 relative to no evidence
+    # paper_promising bonus = +15 + confirming +10 = +25 relative to no evidence
+    assert score_promising - score_failing == 70.0
+
+
+def test_no_evidence_no_penalty():
+    """Without strategy evidence, scoring should be unchanged."""
+    from aletheia.agents.paper_trader_ranker import _compute_trade_score
+
+    factor_signal = {"status": "active"}
+    score_no_evidence = _compute_trade_score(
+        {"confidence_score": 80}, None, factor_signal, "high", None
+    )
+    score_empty_evidence = _compute_trade_score(
+        {"confidence_score": 80}, None, factor_signal, "high", {}
+    )
+    assert score_no_evidence == score_empty_evidence

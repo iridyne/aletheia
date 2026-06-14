@@ -18,6 +18,7 @@ from aletheia.analytics.trade_attribution import (
     late_entry_bucket,
     factor_key as compute_factor_key,
 )
+from aletheia.analytics.strategy_evidence import _classify_evidence_status
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.repositories import (
@@ -27,6 +28,7 @@ from aletheia.storage.repositories import (
     list_opportunities,
     list_strategies,
 )
+from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
 from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy, is_paper_trading_paused
 
@@ -34,6 +36,13 @@ logger = logging.getLogger("aletheia.agents.paper_trader_ranker")
 
 _CONFIDENCE_RANK = {"speculative": 0, "medium": 1, "high": 2}
 _CONFIDENCE_SCORE_DEFAULT = {"speculative": 20, "medium": 50, "high": 75}
+
+# Evidence-based strategy gates (not_executable is NOT a block — strategies
+# without a RuleSet can still trade from LLM signals; the entry validation
+# handles the no-ruleset case independently)
+_EVIDENCE_BLOCK_STATUSES = {"backtest_killed"}
+_EVIDENCE_PENALTY_STATUSES = {"paper_failing": -30, "review_needed": -10, "needs_backtest": -5}
+_EVIDENCE_BONUS_STATUSES = {"paper_promising": 15}
 
 
 def build_paper_candidates(limit: int = 50) -> list[dict]:
@@ -146,6 +155,19 @@ def _evaluate_candidate(
                 strategy = s
                 break
 
+    # Strategy evidence gate (backtest + paper PnL)
+    strategy_evidence = None
+    if strategy:
+        strategy_evidence = _lookup_strategy_evidence(strategy)
+        ev_status = strategy_evidence.get("evidence_status")
+        if ev_status in _EVIDENCE_BLOCK_STATUSES:
+            return _make_candidate(
+                opp, skip_reason=f"strategy_evidence:{ev_status}",
+                direction=direction, strategy_id=strategy_id,
+                universe_member=universe_member,
+                strategy_evidence=strategy_evidence,
+            )
+
     # RuleSet entry validation
     ruleset_entry_result = None
     strategy_has_ruleset = False
@@ -164,6 +186,7 @@ def _evaluate_candidate(
                     opp, skip_reason=f"ruleset_entry_not_met:{ruleset_entry_result}",
                     direction=direction, strategy_id=strategy_id,
                     strategy_has_ruleset=True, universe_member=universe_member,
+                    strategy_evidence=strategy_evidence,
                 )
 
     # Factor feedback lookup
@@ -183,10 +206,30 @@ def _evaluate_candidate(
             direction=direction, strategy_id=strategy_id,
             strategy_has_ruleset=strategy_has_ruleset,
             universe_member=universe_member, factor_signal=factor_signal,
+            strategy_evidence=strategy_evidence,
+        )
+
+    # Guard evaluation (deterministic, no LLM)
+    guard_eval = _evaluate_guards_safe(
+        opp, universe_member, factor_signal, direction, confidence,
+        strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
+    )
+    if guard_eval and guard_eval.blocked:
+        blocked_ids = ",".join(h.guard_id for h in guard_eval.hits if h.block_candidate)
+        return _make_candidate(
+            opp, skip_reason=f"guard_blocked:{blocked_ids}",
+            direction=direction, strategy_id=strategy_id,
+            strategy_has_ruleset=strategy_has_ruleset,
+            universe_member=universe_member, factor_signal=factor_signal,
+            strategy_evidence=strategy_evidence, guard_eval=guard_eval,
         )
 
     # Compute trade score
-    trade_score = _compute_trade_score(opp, universe_member, factor_signal, confidence)
+    trade_score = _compute_trade_score(opp, universe_member, factor_signal, confidence, strategy_evidence)
+
+    # Apply guard penalty
+    if guard_eval:
+        trade_score -= guard_eval.total_penalty
 
     return _make_candidate(
         opp,
@@ -197,6 +240,8 @@ def _evaluate_candidate(
         universe_member=universe_member,
         factor_signal=factor_signal,
         trade_score=trade_score,
+        strategy_evidence=strategy_evidence,
+        guard_eval=guard_eval,
     )
 
 
@@ -205,6 +250,7 @@ def _compute_trade_score(
     universe_member: dict | None,
     factor_signal: dict,
     confidence: str,
+    strategy_evidence: dict | None = None,
 ) -> float:
     """Compute deterministic trade quality score."""
     score = 0.0
@@ -231,6 +277,30 @@ def _compute_trade_score(
         score += 5
     elif factor_status == "watch":
         score -= 5
+
+    # Strategy evidence bonus/penalty (backtest + paper PnL attribution)
+    if strategy_evidence:
+        ev_status = strategy_evidence.get("evidence_status")
+        if ev_status in _EVIDENCE_PENALTY_STATUSES:
+            score += _EVIDENCE_PENALTY_STATUSES[ev_status]
+        elif ev_status in _EVIDENCE_BONUS_STATUSES:
+            score += _EVIDENCE_BONUS_STATUSES[ev_status]
+
+        # Paper drift penalty: underperforming = extra penalty
+        drift_status = strategy_evidence.get("drift_status")
+        if drift_status == "paper_underperforming":
+            score -= 15
+        elif drift_status == "paper_confirming":
+            score += 10
+
+    # Macro risk_regime: penalize new entries during risk_off (Edge Lab: strengthened)
+    try:
+        from aletheia.storage.repositories import latest_macro_snapshot
+        macro = latest_macro_snapshot()
+        if macro and macro.get("risk_regime") == "risk_off":
+            score -= 35
+    except Exception:
+        pass
 
     # Risk flag penalties
     risk_flags = []
@@ -283,6 +353,70 @@ def _check_ruleset_entry(symbol: str, ruleset_json, params: dict) -> bool | None
         return None
 
 
+def _evaluate_guards_safe(
+    opp: dict,
+    universe_member: dict | None,
+    factor_signal: dict | None,
+    direction: str | None,
+    confidence: str | None,
+    strategy_has_ruleset: bool,
+    ruleset_entry_result,
+    strategy_evidence: dict | None,
+) -> GuardEvaluation | None:
+    """Build guard context and evaluate. Returns None on failure (never crashes ranker)."""
+    try:
+        cfg = load_config()
+        guard_cfg = getattr(cfg, "guard", None)
+        if guard_cfg and (not guard_cfg.enabled or not guard_cfg.enforce_in_paper_ranker):
+            return None
+
+        risk_flags = []
+        if universe_member:
+            rf = universe_member.get("risk_flags")
+            if isinstance(rf, str):
+                try:
+                    risk_flags = _json.loads(rf)
+                except (ValueError, TypeError):
+                    pass
+            elif isinstance(rf, list):
+                risk_flags = rf
+
+        ctx = {
+            "symbol": opp.get("symbol"),
+            "asset_class": "crypto",
+            "direction": direction,
+            "scanner_family": opp.get("scanner_family"),
+            "confidence": confidence,
+            "confidence_score": opp.get("confidence_score"),
+            "confidence_bucket": confidence,
+            "late_entry_penalty": universe_member.get("late_entry_penalty") if universe_member else None,
+            "late_entry_bucket": universe_member.get("late_entry_bucket") if universe_member else None,
+            "tradability_score": universe_member.get("tradability_score") if universe_member else None,
+            "universe_total_score": universe_member.get("total_score") if universe_member else None,
+            "crowding_risk": universe_member.get("crowding_risk") if universe_member else None,
+            "risk_flags": risk_flags,
+            "factor_status": factor_signal.get("status") if factor_signal else None,
+            "factor_expectancy": factor_signal.get("expectancy") if factor_signal else None,
+            "factor_trade_count": factor_signal.get("trade_count") if factor_signal else None,
+            "strategy_has_ruleset": strategy_has_ruleset,
+            "ruleset_entry_result": ruleset_entry_result,
+            "strategy_drift_status": strategy_evidence.get("drift_status") if strategy_evidence else None,
+            "paper_expectancy": strategy_evidence.get("paper_expectancy") if strategy_evidence else None,
+            "backtest_expectancy": strategy_evidence.get("backtest_expectancy") if strategy_evidence else None,
+        }
+
+        max_penalty = guard_cfg.max_score_penalty if guard_cfg else 40.0
+        result = evaluate_guards(ctx, scope="paper_entry")
+
+        if result.total_penalty > max_penalty:
+            result.total_penalty = max_penalty
+
+        return result
+    except Exception as e:
+        logger.warning("Guard evaluation failed (non-fatal): %s", e)
+        return None
+
+
 def _make_candidate(
     opp: dict,
     skip_reason: str | None = None,
@@ -293,6 +427,8 @@ def _make_candidate(
     universe_member: dict | None = None,
     factor_signal: dict | None = None,
     trade_score: float = -999.0,
+    strategy_evidence: dict | None = None,
+    guard_eval=None,
 ) -> dict:
     """Assemble a candidate dict."""
     return {
@@ -323,6 +459,17 @@ def _make_candidate(
         "factor_status": factor_signal.get("status") if factor_signal else None,
         "factor_expectancy": factor_signal.get("expectancy") if factor_signal else None,
         "factor_trade_count": factor_signal.get("trade_count") if factor_signal else None,
+        # Strategy evidence (backtest + paper PnL attribution)
+        "evidence_status": strategy_evidence.get("evidence_status") if strategy_evidence else None,
+        "backtest_expectancy": strategy_evidence.get("backtest_expectancy") if strategy_evidence else None,
+        "paper_expectancy": strategy_evidence.get("paper_expectancy") if strategy_evidence else None,
+        "paper_trade_count": strategy_evidence.get("paper_trade_count") if strategy_evidence else None,
+        "drift_status": strategy_evidence.get("drift_status") if strategy_evidence else None,
+        # Guard metadata
+        "guard_blocked": guard_eval.blocked if guard_eval else False,
+        "guard_penalty": guard_eval.total_penalty if guard_eval else 0.0,
+        "matched_guard_ids": [h.guard_id for h in guard_eval.hits] if guard_eval else [],
+        "guard_reasons": [h.reason for h in guard_eval.hits] if guard_eval else [],
         # Scoring
         "trade_score": trade_score,
         "skip_reason": skip_reason,
@@ -341,6 +488,103 @@ def _parse_risk_flags(universe_member: dict | None) -> list:
         except (ValueError, TypeError):
             return []
     return []
+
+
+def _lookup_strategy_evidence(strategy: dict) -> dict:
+    """Lightweight per-strategy evidence lookup for ranker scoring.
+
+    Returns {evidence_status, backtest_expectancy, paper_expectancy, drift_status}.
+    Avoids the full build_strategy_evidence_snapshot() cost by doing minimal queries.
+    """
+    result = {
+        "evidence_status": None,
+        "backtest_expectancy": None,
+        "backtest_profit_factor": None,
+        "paper_expectancy": None,
+        "paper_trade_count": 0,
+        "drift_status": None,
+    }
+    try:
+        params_raw = strategy.get("parameters") or "{}"
+        params = _json.loads(params_raw) if isinstance(params_raw, str) else params_raw
+        has_ruleset = bool(params.get("ruleset"))
+        compile_status = "ok" if has_ruleset else "no_ruleset"
+        if has_ruleset:
+            try:
+                from aletheia.strategy.dsl import RuleSet
+                RuleSet.from_json(params["ruleset"])
+            except Exception:
+                compile_status = "compile_error"
+
+        # Fetch latest backtest for this strategy
+        latest_backtest = None
+        try:
+            from aletheia.storage.sqlite import get_db
+            db = get_db()
+            bt_row = db.execute(
+                "SELECT expectancy, profit_factor, trade_count "
+                "FROM backtest_runs WHERE strategy_id = ? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (strategy["id"],),
+            ).fetchone()
+            if bt_row:
+                latest_backtest = {
+                    "expectancy": bt_row[0],
+                    "profit_factor": bt_row[1],
+                    "trade_count": bt_row[2],
+                }
+                result["backtest_expectancy"] = bt_row[0]
+                result["backtest_profit_factor"] = bt_row[1]
+        except Exception:
+            pass
+
+        # Fetch paper PnL summary from positions linked to this strategy
+        paper_summary = None
+        try:
+            from aletheia.storage.sqlite import get_db
+            db = get_db()
+            paper_row = db.execute(
+                "SELECT count(*) as cnt, "
+                "avg(realized_pnl_pct) as avg_pnl, "
+                "sum(CASE WHEN realized_pnl_pct > 0 THEN 1 ELSE 0 END) as wins "
+                "FROM positions WHERE strategy_id = ? AND status = 'closed' "
+                "AND trading_mode = 'paper'",
+                (strategy["id"],),
+            ).fetchone()
+            if paper_row and paper_row[0] > 0:
+                cnt = paper_row[0]
+                paper_summary = {
+                    "trade_count": cnt,
+                    "expectancy": paper_row[1],
+                }
+                result["paper_expectancy"] = paper_row[1]
+                result["paper_trade_count"] = cnt
+        except Exception:
+            pass
+
+        # Drift status
+        if latest_backtest and paper_summary and paper_summary["trade_count"] >= 3:
+            bt_exp = latest_backtest.get("expectancy") or 0
+            paper_exp = paper_summary.get("expectancy") or 0
+            ratio = paper_exp / bt_exp if bt_exp != 0 else None
+            if bt_exp > 0 and paper_exp < 0:
+                result["drift_status"] = "backtest_false_positive"
+            elif bt_exp > 0 and ratio is not None and ratio >= 0.5:
+                result["drift_status"] = "paper_confirming"
+            elif bt_exp > 0 and ratio is not None and ratio < 0.5:
+                result["drift_status"] = "paper_underperforming"
+            else:
+                result["drift_status"] = "no_clear_drift"
+
+        # Classify evidence
+        drift_for_classify = {"drift_status": result["drift_status"]} if result["drift_status"] else None
+        result["evidence_status"] = _classify_evidence_status(
+            has_ruleset, compile_status, latest_backtest, paper_summary, drift_for_classify,
+        )
+    except Exception as e:
+        logger.debug("Strategy evidence lookup failed for %s: %s", strategy.get("id"), e)
+
+    return result
 
 
 def _safe_get(fn, key: str | None):

@@ -150,6 +150,32 @@ async def _analyze_symbol(
         except Exception:
             pass  # enriched context is optional; never break the main path
 
+        # Append prediction market sentiment if available
+        try:
+            from aletheia.storage.repositories import list_prediction_claims
+            claims = list_prediction_claims(limit=5)
+            btc_claims = [c for c in claims if "btc" in (c.get("title") or "").lower() or "bitcoin" in (c.get("title") or "").lower()]
+            if btc_claims:
+                claim_lines = [f"- {c.get('title', '?')}: {c.get('probability', '?')}%" for c in btc_claims[:3]]
+                context += "\n\n## Prediction Market Signals\n" + "\n".join(claim_lines)
+        except Exception:
+            pass
+
+        # Append recent news headlines for this symbol
+        try:
+            from aletheia.storage.sqlite import get_db
+            news_db = get_db()
+            news_rows = news_db.execute(
+                "SELECT title, source, created_at FROM news_items "
+                "WHERE symbols_mentioned LIKE ? ORDER BY created_at DESC LIMIT 3",
+                (f"%{symbol.split('/')[0]}%",),
+            ).fetchall()
+            if news_rows:
+                news_lines = [f"- [{r[2][:10]}] {r[0]} ({r[1]})" for r in news_rows]
+                context += "\n\n## Recent News\n" + "\n".join(news_lines)
+        except Exception:
+            pass
+
     except Exception as e:
         from aletheia.trading.market_data import latest_snapshot
         snap = latest_snapshot(symbol)
