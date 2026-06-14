@@ -47,3 +47,8 @@ filterwarnings = ["ignore::DeprecationWarning"]
 [tool.aletheia]
 # marker so tooling can detect repo root
 root = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

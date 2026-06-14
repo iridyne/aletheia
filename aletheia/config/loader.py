@@ -10,6 +10,33 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = _PROJECT_ROOT / "data"
 CONFIG_PATH = DATA_DIR / "config.yaml"
 
+_DOTENV_LOADED = False
+
+
+def _load_dotenv() -> None:
+    """Load .env from project root if present. Idempotent, never raises."""
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED:
+        return
+    _DOTENV_LOADED = True
+    env_file = _PROJECT_ROOT / ".env"
+    if not env_file.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_file, override=False)
+    except ImportError:
+        import os
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key, value = key.strip(), value.strip()
+            if value and value[0] in ('"', "'") and value[-1] == value[0]:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+
 
 def get_data_dir() -> Path:
     return DATA_DIR
@@ -98,6 +125,7 @@ def save_config(cfg: AletheiaConfig) -> None:
 
 def bootstrap() -> AletheiaConfig:
     """Ensure data dirs exist and config is written. Returns loaded config."""
+    _load_dotenv()
     ensure_data_dirs()
     # Seed starter playbooks on first run (guide §22.3 / §8)
     try:

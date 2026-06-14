@@ -108,6 +108,71 @@ def test_classify_risk_regime_neutral():
     assert _classify_risk_regime(vix=None, cap_change=None) == "neutral"
 
 
+@pytest.mark.asyncio
+async def test_fetch_fred_parses_response(monkeypatch):
+    """FRED fetcher extracts latest non-'.' observation value."""
+    import httpx
+    from aletheia.data.collectors.macro import _fetch_fred
+
+    # Mock a FRED-like JSON response
+    def _mock_response(series_id):
+        values = {
+            "SP500": "5500.12",
+            "VIXCLS": "18.50",
+            "DTWEXBGS": "103.45",
+            "NASDAQCOM": "17200.00",
+        }
+        return {
+            "observations": [
+                {"date": "2026-06-14", "value": "."},       # holiday → skip
+                {"date": "2026-06-13", "value": values.get(series_id, "0")},
+            ]
+        }
+
+    class FakeResponse:
+        status_code = 200
+        def raise_for_status(self): pass
+        def __init__(self, series_id): self._sid = series_id
+        def json(self): return _mock_response(self._sid)
+
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def get(self, url, params=None):
+            return FakeResponse(params["series_id"])
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: FakeClient())
+
+    spy, vix, dxy, nasdaq = await _fetch_fred("fake-key")
+    assert spy == 5500.12
+    assert vix == 18.50
+    assert dxy == 103.45
+    assert nasdaq == 17200.00
+
+
+@pytest.mark.asyncio
+async def test_fetch_fred_skips_dots(monkeypatch):
+    """All '.' values → returns None for that series."""
+    import httpx
+    from aletheia.data.collectors.macro import _fetch_fred
+
+    class FakeResponse:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"observations": [{"date": "2026-06-14", "value": "."}]}
+
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def get(self, url, params=None): return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: FakeClient())
+
+    spy, vix, dxy, nasdaq = await _fetch_fred("fake-key")
+    assert spy is None
+    assert vix is None
+
+
 # ---------------------------------------------------------------------------
 # normalizer.py
 # ---------------------------------------------------------------------------

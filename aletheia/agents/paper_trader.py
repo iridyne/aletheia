@@ -14,7 +14,16 @@ supports USDT futures, so paper trades are submitted as `usdt_futures`.
 The position size is a small fixed paper quantity from instrument config, NOT an
 LLM decision. The LLM is used only (optionally) for a short rationale string and
 degrades gracefully when unavailable.
+
+Money Loop Reset: If the bound strategy carries an executable RuleSet in
+parameters["ruleset"], the paper trader verifies the entry signal against current
+OHLCV bars BEFORE submitting the proposal. This replaces the old "trade on any
+opportunity confidence" behavior for rule-equipped strategies.
 """
+from __future__ import annotations
+
+import json as _json
+import logging
 
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import log_tool
@@ -26,11 +35,14 @@ from aletheia.storage.repositories import (
     list_opportunities,
     update_opportunity,
     list_strategies,
+    get_ohlcv_candles,
 )
 from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.market_data import latest_snapshot
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy, is_paper_trading_paused
 from aletheia.data.symbols import to_canonical
+
+logger = logging.getLogger("aletheia.agents.paper_trader")
 
 # Conservative fixed paper notional target (USDT) per autonomous paper trade.
 _PAPER_NOTIONAL_USDT = 25.0
@@ -147,6 +159,46 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             if is_active_paper_strategy(s):
                 strategy_id = s["id"]
                 break
+
+    # ── Money Loop: RuleSet entry signal verification ──
+    # If the bound strategy has executable rules, validate that the entry signal
+    # fires on current OHLCV data BEFORE committing to a proposal.
+    if strategy_id:
+        bound_strategy = get_strategy(strategy_id)
+        if bound_strategy:
+            params_raw = bound_strategy.get("parameters") or "{}"
+            try:
+                params = _json.loads(params_raw) if isinstance(params_raw, str) else params_raw
+            except (ValueError, TypeError):
+                params = {}
+            ruleset_json = params.get("ruleset")
+            if ruleset_json:
+                try:
+                    from aletheia.strategy.dsl import RuleSet
+                    from aletheia.strategy.evaluator import BarData, evaluate_at_bar
+
+                    ruleset = RuleSet.from_json(ruleset_json)
+                    tf = params.get("timeframe") or "1h"
+                    candles = get_ohlcv_candles(symbol, tf, limit=200)
+                    if candles:
+                        bars = [
+                            BarData(
+                                ts=int(c["ts"]), open=float(c["open"]),
+                                high=float(c["high"]), low=float(c["low"]),
+                                close=float(c["close"]), volume=float(c["volume"]),
+                            )
+                            for c in candles
+                        ]
+                        sig = evaluate_at_bar(ruleset, bars, len(bars) - 1)
+                        if sig["entry"] is not True:
+                            update_opportunity(opp["id"], status="reviewed")
+                            skip_reason = f"ruleset_entry_not_met:{sig['entry']}"
+                            log_tool(run_id, "create_paper_proposal", "paper", False, output=skip_reason)
+                            outputs.append(f"skipped:{opp['id']}:{skip_reason}")
+                            return {"outputs": outputs, "errors": errors}
+                        outputs.append("ruleset_entry_confirmed")
+                except Exception as e:
+                    logger.debug("RuleSet validation skipped: %s", e)
 
     # Bitget demo only supports USDT futures (no spot), so paper trades execute as
     # usdt_futures. execution_mode is config-driven: bitget_demo (real demo API) or

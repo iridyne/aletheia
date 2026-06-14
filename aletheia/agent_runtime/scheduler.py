@@ -116,6 +116,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="data_collectors", misfire_grace_time=60,
         next_run_time=datetime.now(),
     )
+    # Strategy backtest orchestrator — daily evaluation of all active strategies.
+    # Runs after strategy_designer (01:00) so newly generated strategies get tested.
+    _scheduler.add_job(
+        _run_backtest_orchestrator, "cron", hour=4, minute=0,
+        id="backtest_orchestrator", misfire_grace_time=600,
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -395,6 +401,38 @@ def _run_universe_refresh():
         asyncio.run(_async_universe_refresh())
     except Exception as e:
         logger.warning("universe_refresh job failed: %s", e)
+
+
+def _run_backtest_orchestrator():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        from aletheia.strategy.orchestrator import run_all_backtests, generate_daily_report
+        from aletheia.strategy.performance_ledger import (
+            compute_ledger_snapshot, append_ledger_event,
+        )
+        from aletheia.files.jsonl import write_audit
+
+        result = run_all_backtests(retire_killed=True)
+        report = generate_daily_report(result)
+        logger.info("Backtest orchestrator: %d evaluated, %d killed, %d kept",
+                    result.strategies_evaluated, result.strategies_killed, result.strategies_kept)
+
+        snapshot = compute_ledger_snapshot(period_days=7)
+        append_ledger_event(snapshot)
+
+        write_audit({
+            "actor": "system", "source": "scheduler",
+            "event_type": "backtest_orchestrator_complete",
+            "entity_type": "strategy",
+            "message": (
+                f"Backtest run: {result.strategies_evaluated} evaluated, "
+                f"{result.strategies_killed} killed, {result.strategies_kept} kept"
+            ),
+        })
+    except Exception as e:
+        logger.warning("backtest_orchestrator job failed: %s", e)
 
 
 async def _async_universe_refresh():

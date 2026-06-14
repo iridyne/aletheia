@@ -1421,6 +1421,57 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_items_type_status ON knowledge_items(it
 """
 
 
+_STRATEGY_BACKTEST_DDL = """
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id TEXT PRIMARY KEY,
+    strategy_id TEXT REFERENCES strategy_records(id),
+    symbol TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    bar_count INTEGER NOT NULL DEFAULT 0,
+    initial_capital REAL NOT NULL DEFAULT 1000.0,
+    cost_model_json TEXT NOT NULL DEFAULT '{}',
+    ruleset_json TEXT NOT NULL DEFAULT '{}',
+    trade_count INTEGER NOT NULL DEFAULT 0,
+    win_rate REAL NOT NULL DEFAULT 0.0,
+    total_return_pct REAL NOT NULL DEFAULT 0.0,
+    expectancy REAL NOT NULL DEFAULT 0.0,
+    profit_factor REAL NOT NULL DEFAULT 0.0,
+    max_drawdown_pct REAL NOT NULL DEFAULT 0.0,
+    sharpe_approx REAL NOT NULL DEFAULT 0.0,
+    avg_trade_bars REAL NOT NULL DEFAULT 0.0,
+    status TEXT NOT NULL DEFAULT 'completed',
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS backtest_trades (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES backtest_runs(id),
+    trade_index INTEGER NOT NULL,
+    direction TEXT NOT NULL,
+    entry_ts INTEGER NOT NULL,
+    exit_ts INTEGER NOT NULL,
+    entry_bar_index INTEGER NOT NULL,
+    exit_bar_index INTEGER NOT NULL,
+    entry_price REAL NOT NULL,
+    exit_price REAL NOT NULL,
+    quantity REAL NOT NULL,
+    entry_fee REAL NOT NULL DEFAULT 0.0,
+    exit_fee REAL NOT NULL DEFAULT 0.0,
+    entry_slippage REAL NOT NULL DEFAULT 0.0,
+    exit_slippage REAL NOT NULL DEFAULT 0.0,
+    pnl REAL NOT NULL DEFAULT 0.0,
+    return_pct REAL NOT NULL DEFAULT 0.0,
+    exit_reason TEXT NOT NULL DEFAULT 'signal'
+);
+
+CREATE INDEX IF NOT EXISTS idx_backtest_trades_run ON backtest_trades(run_id);
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_strategy ON backtest_runs(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at DESC);
+"""
+
+
 def run_migrations() -> None:
     """Run all idempotent schema creation statements."""
     db = get_db()
@@ -1428,6 +1479,7 @@ def run_migrations() -> None:
     db.executescript(_DATA_COLLECTORS_DDL)
     db.executescript(_PREDICTION_OBSERVER_RUNS_DDL)
     db.executescript(_PREDICTION_NORMALIZED_DDL)
+    db.executescript(_STRATEGY_BACKTEST_DDL)
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts(db)
