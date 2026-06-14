@@ -153,8 +153,8 @@ def test_paper_trader_ignores_xstocks_opportunities(tmp_path, monkeypatch):
     from aletheia.agents.paper_trader import run_paper_trader
     out = asyncio.run(run_paper_trader(permission_mode="Full", run_id="run-xs-pt"))
 
-    # paper_trader should find no_open_opportunity (equity skipped).
-    assert "no_open_opportunity" in out["outputs"], f"Expected skip, got: {out}"
+    # paper_trader should find no ranked candidate (equity excluded from crypto filter).
+    assert "no_ranked_candidate" in out["outputs"], f"Expected skip, got: {out}"
     proposals = repo.list_trade_proposals()
     assert not proposals, "paper_trader must not propose xStocks trades"
     reset_db()

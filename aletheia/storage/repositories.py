@@ -327,6 +327,10 @@ def list_strategy_risk_decisions(strategy_id: str, limit: int = 1000) -> list[di
 
 # --- Orders ---
 
+def get_order(oid: str) -> dict | None:
+    return _select_one("orders", oid)
+
+
 def insert_order(o: Order) -> None:
     _insert("orders", o.model_dump())
 

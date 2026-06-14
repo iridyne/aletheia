@@ -30,6 +30,7 @@ from aletheia.server.routes.runtime import router as runtime_router
 from aletheia.server.routes.persistence import router as persistence_router
 from aletheia.server.routes.prediction import router as prediction_router
 from aletheia.server.routes.universe import router as universe_router
+from aletheia.server.routes.analytics import router as analytics_router
 
 logger = logging.getLogger("aletheia")
 
@@ -309,6 +310,7 @@ app.include_router(runtime_router)
 app.include_router(persistence_router)
 app.include_router(prediction_router)
 app.include_router(universe_router)
+app.include_router(analytics_router)
 
 # Dev-reload routes — only mounted when ALETHEIA_DEV_RELOAD=1 and live is disabled.
 from aletheia.server.dev_reload import is_dev_reload_enabled
