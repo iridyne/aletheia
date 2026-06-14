@@ -266,7 +266,11 @@ async def test_ac11_paper_trade_flow(client):
 async def test_ac12_risk_blocks(client):
     c, _ = client
     from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "Paper"; save_config(cfg)
+    cfg = load_config()
+    cfg.agent.permission_mode = "Paper"
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+    save_config(cfg)
     from aletheia.execution.gateway import submit_proposal
     bad = submit_proposal(symbol="DOGEUSDT", market_type="spot", direction="long",
                           quantity=1, price=1, execution_mode="paper_internal")

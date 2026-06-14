@@ -369,7 +369,7 @@ async def test_telegram_health_reachable(client, monkeypatch):
         async def __aexit__(self, *a): return False
         async def get(self, *a, **k): return FakeResp()
 
-    monkeypatch.setattr(tg_routes.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(tg_routes, "httpx_client", lambda **kwargs: FakeAsyncClient())
 
     resp = await client.get("/api/telegram/health")
     assert resp.status_code == 200

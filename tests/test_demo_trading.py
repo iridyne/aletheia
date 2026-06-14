@@ -243,7 +243,7 @@ def test_place_order_mix_body_has_margin_coin_and_tradeside(tmp_path, monkeypatc
                     return {"code": "00000", "data": {"state": "live"}}
             return _D()
 
-    monkeypatch.setattr(bg.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(bg, "httpx_client", lambda **kwargs: _FakeAsyncClient())
     monkeypatch.setattr(bg.BitgetClient, "_headers", lambda self, *a, **k: {})
 
     client = bg.BitgetClient(mode="demo")
@@ -287,7 +287,7 @@ def test_place_order_hedge_close_body_has_holdside(tmp_path, monkeypatch):
                     return {"code": "00000", "data": {"state": "filled", "priceAvg": "60000", "baseVolume": "0.001"}}
             return _D()
 
-    monkeypatch.setattr(bg.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(bg, "httpx_client", lambda **kwargs: _FakeAsyncClient())
     monkeypatch.setattr(bg.BitgetClient, "_headers", lambda self, *a, **k: {})
 
     client = bg.BitgetClient(mode="demo")

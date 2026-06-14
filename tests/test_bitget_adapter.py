@@ -55,7 +55,7 @@ class _FakeAsyncClient:
 def fake_http(monkeypatch):
     _FakeAsyncClient.routes = {}
     _FakeAsyncClient.calls = []
-    monkeypatch.setattr(bg.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(bg, "httpx_client", lambda **kwargs: _FakeAsyncClient())
     # Stub credentials so authenticated calls don't require secret storage.
     monkeypatch.setattr(bg.BitgetClient, "_get_creds", lambda self: ("k", "s", "p"))
     return _FakeAsyncClient

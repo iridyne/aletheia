@@ -139,7 +139,9 @@ def test_cooldown_blocks_second_restart(tmp_path, monkeypatch):
     # A restart happened 60s ago — within the 1800s default cooldown.
     _seed_restart_audit(seconds_ago=60)
 
-    exits, sent = _patch_health(monkeypatch, ["code_updated_pending_restart:a..b"])
+    # Use market_data_stale (not code_drift) so _code_drift_already_tried()
+    # doesn't short-circuit before reaching the cooldown check.
+    exits, sent = _patch_health(monkeypatch, ["market_data_stale:120min"])
     health.run_health_check()
 
     assert exits == []  # cooldown blocks it
@@ -157,7 +159,9 @@ def test_hourly_ceiling_blocks_restart(tmp_path, monkeypatch):
     _seed_restart_audit(seconds_ago=3000)
     _seed_restart_audit(seconds_ago=2500)
 
-    exits, sent = _patch_health(monkeypatch, ["code_updated_pending_restart:a..b"])
+    # Use market_data_stale (not code_drift) so _code_drift_already_tried()
+    # doesn't short-circuit before reaching the ceiling check.
+    exits, sent = _patch_health(monkeypatch, ["market_data_stale:120min"])
     health.run_health_check()
 
     assert exits == []
