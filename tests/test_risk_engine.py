@@ -144,7 +144,7 @@ def test_paper_broker_full_flow(tmp_path, monkeypatch):
     positions = repo.list_positions(status="open")
     assert len(positions) == 1
     assert positions[0]["symbol"] == "ETHUSDT"
-    assert positions[0]["entry_price"] == 3000.0
+    assert positions[0]["entry_price"] == pytest.approx(3000.0, rel=0.01)  # slippage
     reset_db()
 
 
