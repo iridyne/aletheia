@@ -1,4 +1,12 @@
-"""Strategy lifecycle: forward-only state machine with promotion gates."""
+"""Strategy lifecycle: forward-only state machine with promotion gates.
+
+Validation layer: currently only **paper trading** validation exists (real-time
+execution against live market via Bitget demo or internal paper broker). There is
+no backtest, walk-forward, or PBO (Probability of Backtest Overfitting) layer —
+strategies must accumulate 14+ days of live paper evidence before promotion gates
+can pass. This is a known MVP limitation (not a bug); introducing a historical
+backtest framework is explicitly out of scope per project red lines.
+"""
 
 import json
 from datetime import datetime, timezone

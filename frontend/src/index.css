@@ -83,6 +83,15 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 }
 .content { margin-left: 240px; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
 .main { flex: 1; padding: var(--space-5) var(--space-6); background: var(--bg-2); overflow-y: auto; }
+/* Collapse sidebar on narrow viewports (L1); hamburger toggle handled in App.tsx */
+.hamburger { display: none; }
+@media (max-width: 700px) {
+  .sidebar { transform: translateX(-100%); transition: transform 0.2s ease; z-index: 50; }
+  .sidebar.open { transform: translateX(0); }
+  .content { margin-left: 0; }
+  .main { padding: var(--space-3) var(--space-4); }
+  .hamburger { display: inline-flex; }
+}
 
 /* ---------- Brand ---------- */
 /* Height + border match .topbar so sidebar header and content header share one
@@ -98,7 +107,7 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 
 /* ---------- Sidebar nav (grouped + collapsible) ---------- */
 .sidebar nav { padding: var(--space-3) var(--space-2) var(--space-6); }
-.nav-group { margin-bottom: 0.35rem; }
+.nav-group { margin-bottom: var(--space-2); }
 .nav-group-label {
   width: 100%; display: flex; justify-content: space-between; align-items: center;
   background: none; border: none; cursor: pointer;
@@ -117,7 +126,7 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 }
 .sidebar nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .sidebar nav a.active {
-  background: rgba(34,211,238,0.10);
+  background: rgba(34,211,238,0.25);
   color: var(--accent); border-left: 3px solid var(--accent);
   padding-left: calc(0.75rem - 1px); font-weight: 600;
 }
@@ -431,6 +440,9 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 .news-prose { line-height: 1.6; }
 
 /* ---------- Tables ---------- */
+/* Utility for explicit scroll containers (H9). Cards use overflow: hidden by
+   default; pages with wide tables should wrap them in .table-wrap. */
+.table-wrap { overflow-x: auto; min-width: 0; }
 table { width: 100%; border-collapse: collapse; font-size: 0.825rem; }
 th, td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
 th {
@@ -496,7 +508,7 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
   display: flex; justify-content: flex-end;
 }
 .drawer-panel {
-  width: min(520px, 90vw); height: 100vh; overflow-y: auto;
+  width: min(520px, 90vw); height: 100dvh; overflow-y: auto;
   background: var(--surface); border-left: 1px solid var(--border);
   box-shadow: -4px 0 24px rgba(0,0,0,0.4);
   display: flex; flex-direction: column;
@@ -516,10 +528,10 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 .drawer-close:hover { color: var(--text); filter: none; }
 .drawer-body { padding: var(--space-5); flex: 1; }
 
-.drawer-section { margin-bottom: 1.1rem; }
+.drawer-section { margin-bottom: var(--space-4); }
 .drawer-section-label {
   font-size: 0.68rem; font-weight: 600; color: var(--faint);
-  text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 0.45rem;
+  text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: var(--space-2);
 }
 .drawer-section-content { }
 
@@ -1032,10 +1044,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .cc-guidance {
   margin: 0;
-  padding-left: 1.1rem;
+  padding-left: var(--space-4);
   color: var(--text);
 }
-.cc-guidance li + li { margin-top: 0.55rem; }
+.cc-guidance li + li { margin-top: var(--space-2); }
 .cc-card-header {
   display: flex;
   align-items: center;
@@ -1067,7 +1079,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .cc-filter-label {
   display: block;
-  margin-bottom: 0.45rem;
+  margin-bottom: var(--space-2);
   font-size: 0.78rem;
   color: var(--muted);
 }
@@ -1099,7 +1111,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .cc-list {
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  gap: var(--space-2);
   max-height: 260px;
   overflow-y: auto;
 }
@@ -1227,7 +1239,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 /* ---------- Cockpit Grid ---------- */
 .cockpit-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-4); align-items: start;
 }
 @media (max-width: 900px) { .cockpit-grid { grid-template-columns: 1fr; } }
 .cockpit-panel { min-height: 120px; }
@@ -1655,8 +1667,8 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .timeline-ts { color: var(--faint); font-family: var(--mono); min-width: 4rem; font-size: 0.7rem; }
 .at-chev { font-size: 0.7rem; color: var(--accent); }
 .at-title { font-size: 0.72rem; font-weight: 600; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
-.at-count { font-size: 0.6rem; padding: 0.05rem 0.35rem; }
-.at-filter { padding: var(--space-1) var(--space-2); font-size: 0.62rem; text-transform: capitalize; }
+.at-count { font-size: 0.65rem; padding: 0.1rem var(--space-2); }
+.at-filter { padding: var(--space-1) var(--space-3); font-size: 0.68rem; text-transform: capitalize; min-height: 24px; }
 .at-empty { padding: var(--space-4); color: var(--faint); font-size: 0.78rem; text-align: center; }
 .at-icon { font-size: 0.75rem; }
 .at-event-title { flex: 1; font-size: 0.78rem; }
@@ -1700,6 +1712,17 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
 
 /* Risk boundaries read-only grid (replaces an inline auto-fill grid). */
 .boundaries-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-2) var(--space-6); }
+
+/* ---------- Loading skeleton (M7) ---------- */
+.skeleton { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5) var(--space-6); }
+.skeleton-bar {
+  height: 14px; border-radius: var(--r-sm); background: var(--surface-2);
+  animation: shimmer 1.4s ease infinite;
+}
+.skeleton-bar:nth-child(1) { width: 45%; }
+.skeleton-bar:nth-child(2) { width: 70%; }
+.skeleton-bar:nth-child(3) { width: 55%; }
+@keyframes shimmer { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 /* scrollbar */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

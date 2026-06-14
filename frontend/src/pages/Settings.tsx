@@ -1693,7 +1693,7 @@ function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc
                 {modelMeta.length > 0
                   ? modelMeta.map(m => (
                     <option key={m.slug} value={m.slug}>
-                      {m.display_name || m.slug}{m.tier ? ` [${m.tier}]` : ''}{m.context_window ? ` (${Math.round(m.context_window / 1000)}k)` : ''}
+                      {m.display_name || m.slug}{m.tier || m.context_window ? ' — ' : ''}{m.tier || ''}{m.tier && m.context_window ? ' · ' : ''}{m.context_window ? `${Math.round(m.context_window / 1000)}K ctx` : ''}
                     </option>
                   ))
                   : models.map(m => <option key={m} value={m}>{m}</option>)
@@ -1809,7 +1809,7 @@ function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc
                 {modelMeta.length > 0
                   ? modelMeta.map(m => (
                     <option key={m.slug} value={m.slug}>
-                      {m.display_name || m.slug}{m.tier ? ` [${m.tier}]` : ''}{m.context_window ? ` (${Math.round(m.context_window / 1000)}k)` : ''}
+                      {m.display_name || m.slug}{m.tier || m.context_window ? ' — ' : ''}{m.tier || ''}{m.tier && m.context_window ? ' · ' : ''}{m.context_window ? `${Math.round(m.context_window / 1000)}K ctx` : ''}
                     </option>
                   ))
                   : models.map(m => <option key={m} value={m}>{m}</option>)

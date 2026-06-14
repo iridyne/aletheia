@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PriceChart from '../charts/PriceChart'
 import PageHeader from '../components/PageHeader'
-import { fmtNum, fmtSigned, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, fmtTimestamp, useDecimals } from '../lib/format'
 
 // Canonical BTC/USDT format — matches CCXT / backend MarketDataConfig
 const SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
@@ -191,9 +191,9 @@ export default function Charts() {
             <tbody>
               <tr><th>Order ID</th><td className="mono">{selectedTrade.id}</td></tr>
               <tr><th>Direction</th><td>{selectedTrade.direction}</td></tr>
-              <tr><th>Quantity</th><td>{selectedTrade.quantity}</td></tr>
-              <tr><th>Price</th><td>{selectedTrade.price}</td></tr>
-              <tr><th>Filled</th><td>{selectedTrade.filled_at?.slice(0, 16)}</td></tr>
+              <tr><th>Quantity</th><td className="mono">{fmtNum(selectedTrade.quantity)}</td></tr>
+              <tr><th>Price</th><td className="mono">{fmtNum(selectedTrade.price)} USDT</td></tr>
+              <tr><th>Filled</th><td className="mono">{fmtTimestamp(selectedTrade.filled_at)}</td></tr>
               <tr><th>Strategy</th><td className="mono">{selectedTrade.strategy_id || '—'}</td></tr>
             </tbody>
           </table>

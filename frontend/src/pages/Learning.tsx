@@ -194,7 +194,9 @@ function KnowledgeTab() {
     <>
       <div className="flex gap-2 mb-3">
         {KB_TABS.map(t => (
-          <button key={t.key} className={tab === t.key ? '' : 'secondary'} onClick={() => setTab(t.key)}>{t.label}</button>
+          <button key={t.key} className={tab === t.key ? '' : 'secondary'} onClick={() => setTab(t.key)}>
+            {t.label}{t.key === tab && rows.length > 0 && <span className="tab-badge">{rows.length}</span>}
+          </button>
         ))}
       </div>
       <div className="card">

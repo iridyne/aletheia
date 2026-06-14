@@ -55,6 +55,7 @@ export function DataTable<T>({ data, columns, onRowClick, pageSize = 25, emptyMe
           />
         </div>
       )}
+      <div className="table-wrap">
       <table>
         <thead>
           <tr>
@@ -86,6 +87,7 @@ export function DataTable<T>({ data, columns, onRowClick, pageSize = 25, emptyMe
           ))}
         </tbody>
       </table>
+      </div>
       {pageCount > 1 && (
         <div className="dt-pagination">
           <button className="secondary" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>

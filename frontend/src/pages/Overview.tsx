@@ -68,7 +68,7 @@ export default function Overview() {
     ? (railHeight ?? SINGLE_COL_CAP)
     : SINGLE_COL_CAP
 
-  if (!status) return <p>Loading...</p>
+  if (!status) return <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
 
   const s = status as any
   const running = !!s.gateway_running

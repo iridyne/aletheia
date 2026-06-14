@@ -383,13 +383,14 @@ function StatusBar() {
 
 export default function App() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }))
 
   return (
     <div className="layout">
       <CommandPalette />
-      <aside className="sidebar">
+      <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="brand">
           <span className="brand-mark">◆</span>
           <span className="brand-name">ALETHEIA</span>
@@ -405,7 +406,7 @@ export default function App() {
                 </button>
               )}
               {!collapsed[group] && items.map(n => (
-                <NavLink key={n.to} to={n.to} end={n.to === '/'}>
+                <NavLink key={n.to} to={n.to} end={n.to === '/'} onClick={() => setSidebarOpen(false)}>
                   {n.label}
                 </NavLink>
               ))}
@@ -415,6 +416,8 @@ export default function App() {
       </aside>
       <div className="content">
         <header className="topbar">
+          {/* Hamburger for mobile sidebar toggle (L1) */}
+          <button className="topbar-btn hamburger" onClick={() => setSidebarOpen(o => !o)} aria-label="Toggle menu">☰</button>
           {/* Bloomberg-style ticker replaces the breadcrumb (which duplicated brand+sidebar
               "you-are-here" cues). The active sidebar item + each page's PageHeader title
               cover navigation context; the topbar now adds market-state context instead. */}

@@ -19,13 +19,13 @@
 >
 > **状态**：✅ §1-§3 条目已于 2026-06-06 修复并合入 master（原文保留作审计参考，修复摘要见 §10）。
 > ✅ **§5（OAuth Provider）已于 2026-06-14 全部修复**（04e0938 + model_metadata 补全）。
-> 🆕 **§4（2026-06-13）是新增的结构性发现**，基于通读当前代码，**未修复、待分项授权**。
+> ✅ **§4（2026-06-13→2026-06-14 修复）结构性发现已全部处理**：entry_rule 标注为 advisory（语义诚实）；验证层标注为 MVP 已知限制；audit hash chain 已实施。
 
 ---
 
 ## 0. 阅读顺序与使用方式
 
-按等级倒序读：先看 §1（🔴），再看 §2（🟠），最后 §3（🟡）。§4（🟠，2026-06-13）是新增未修复区。
+按等级倒序读：先看 §1（🔴），再看 §2（🟠），最后 §3（🟡）。§4（2026-06-13→2026-06-14 已修复）。
 按修复时机：每条注明的"最小修复"是 hotfix 级；若涉及 schema/迁移/跨模块，先开 plan。
 按归档：修好的条目移到 §10 历史区（保留 file:line 与修复 commit）。
 
@@ -474,7 +474,7 @@
 
 ---
 
-## 4. 🟠 结构性发现（2026-06-13 新增 · 通读当前代码）
+## 4. ✅ 结构性发现（2026-06-13 发现 · 2026-06-14 修复）
 
 > 来源：2026-06-13 通读 `paper_trader` / `market_observer` / `strategy_designer` / `strategy_lifecycle` /
 > `retrieval` / `jsonl` 全文。**与 §1-§3（2026-06-08 快照）不同**：这批是当前一手核实，
@@ -482,21 +482,26 @@
 > §3 paper_trader 的 `llm_complete` 死导入已清——核实时均已不复存在）。
 > 完整论证见 [EXECUTION_PATH_HONESTY.md](EXECUTION_PATH_HONESTY.md)。
 
-- **strategy 的 `entry_rule`/`exit_rule` 是悬空死字符串（策略层与交易决策脱节）**
-  - 佐证（产出侧）：`agents/strategy_designer.py:80-104` LLM 产出 entry_rule/exit_rule 自由文本 → `:102-103` 截断 500 字符 → `:107-113` 存进 `parameters` JSON；`storage/models.py:163` `parameters: str = "{}"`（不透明 JSON blob）
-  - 佐证（无消费侧）：全仓 grep `dsl`/`parse_strategy`/`compile`/`rule_engine` **0 命中**；`paper_trader.py:136-149` 只解析 `strategy_id` 做关联，**从不读 `parameters` 里的 rule**
-  - 影响：strategy 声称的"入场/出场规则"对实际交易**零影响**——交易方向完全来自 opportunity 的 LLM `direction_bias`（`market_observer.py:143` → `paper_trader.py:104-108`）。这是 Prism 式"漂亮脚手架不接通"的镜像变体（违反"语义诚实 > 能力"）
-  - 最小修复（择一，均需授权）：(A) 字段/UI/docstring 标注 entry_rule 为 "advisory, NOT executed"（纯语义诚实，零行为改动）；(B) 在 LLM direction 后、下单前加确定性 gate 验证方向；(C) 让 entry_rule 结构化 + 被 paper_trader 解析执行（远期，北极星 Phase 2A）。详见 EXECUTION_PATH_HONESTY.md §7
+- ✅ **strategy 的 `entry_rule`/`exit_rule` 已标注为 advisory（语义诚实，零行为改动）**
+  - 修复方案 A 已实施：
+    - `storage/models.py:163-167` StrategyRecord.parameters 字段加文档注释："entry_rule/exit_rule are ADVISORY (LLM-generated intent text), NOT parsed or executed by paper_trader"
+    - `agents/strategy_designer.py:22-27,31-32` StrategySpec docstring + 字段注释标注 "advisory, NOT executed"
+    - 前端不直接显示 entry_rule/exit_rule 字段（仅作为 parameters JSON blob 的一部分在 CommandCenter 展示），无需额外 UI 标注
+  - 原始佐证保留：产出侧 `strategy_designer.py`；无消费侧（paper_trader 从不读 parameters 里的 rule）；交易方向来自 opportunity.direction_bias
 
-- **验证层只有 paper 一层，缺 backtest / walk-forward / PBO（对照原始设计 §3.6 五层验证）**
-  - 佐证：`strategy_lifecycle.py:184-273` promotion gates 真实严格（14天/30笔/正期望/回撤≤5%/连亏≤5/关键违规=0/需review），但全部基于"真实跑完 paper 后的统计"；全仓 grep `backtest`/`walk_forward`/`overfitting`/`PBO` 0 命中
-  - 影响：策略必须真实跑 14 天 paper 才能验证，**无法用历史数据提前回测**；LLM 方向判断进入 paper 前**无任何前置确定性筛查**；坏方向无法被快速淘汰。原始设计 §3.6 的 5 层验证只兑现 paper 1 层（slippage 由 Bitget demo 真实模拟盘部分缓解）
-  - 最小修复：远期可考虑引入轻量回测原语（vectorbt 等），属推迟队列；当前 paper 路径继续是真值来源。**不引入重型回测框架**（红线）
+- ✅ **验证层只有 paper 一层：标注为 MVP 已知限制，接受现状**
+  - 修复：`trading/strategy_lifecycle.py` 顶部 module docstring 补充说明"当前只有 paper validation 一层，无 backtest/walk-forward/PBO；这是 MVP 已知限制，不引入重型回测框架（红线）"
+  - 原始佐证保留：promotion gates 严格但全部基于真实 paper 统计；全仓 grep backtest/walk_forward/overfitting/PBO 0 命中
 
-- **audit 是 append-only JSONL 但无 hash 链（防篡改不足）**
-  - 佐证：`files/jsonl.py:25-42` 只 append、rotate 改名 `.1` 不删；`:60-69` `write_audit` 每条记录独立，**不引用前一条 hash**
-  - 影响：无法做链式防篡改验证；"Trading-as-Git" 名实不符（只有 append-only，无 git 式内容寻址链）
-  - 最小修复：对应 `REFERENCE_openalice_prism_review.md` **蓝图 B**（commit_hash + parent_hash 链 + state_after 快照，对照 OpenAlice TradingGit），已待授权
+- ✅ **audit JSONL hash chain 已实施（防篡改链式验证）**
+  - 修复：`files/jsonl.py` 的 `write_audit()` 实现了完整 hash chain：
+    - 模块级 `_last_audit_hash` + `_audit_hash_lock` 线程安全
+    - 每条记录注入 `_prev_hash`（前一条的 SHA-256）
+    - `_get_last_audit_hash()` 进程启动时从 audit.jsonl 最后一行读取 hash（文件不存在则用 genesis `"0"*64`）
+    - `_hash_record(line)` 对序列化后的完整行做 SHA-256
+    - rotate 后链不断（新文件首条的 `_prev_hash` 仍引用 rotate 前最后一条的 hash）
+  - `verify_audit_chain()` 函数：遍历 audit.jsonl 验证每条 _prev_hash 与前一条 hash 一致；兼容 legacy 无 _prev_hash 记录
+  - 测试：`tests/test_audit_hashchain.py`（6 个测试覆盖 genesis/链接/验证/篡改检测/legacy 兼容/空文件）
 
 ---
 

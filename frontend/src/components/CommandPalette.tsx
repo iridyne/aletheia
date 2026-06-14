@@ -84,7 +84,7 @@ export default function CommandPalette() {
         >
           <Command.Input
             className="cmd-input"
-            placeholder="Jump somewhere, or type a draft for Command Center..."
+            placeholder="Jump somewhere, or type a natural-language command (20+ chars) for AI..."
             autoFocus
           />
           <Command.List className="cmd-list">

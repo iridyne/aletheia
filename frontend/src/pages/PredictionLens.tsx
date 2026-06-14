@@ -6,12 +6,12 @@ import PageHeader from '../components/PageHeader'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { StatusBadge } from '../components/DataTable'
 import ProbabilityChart from '../charts/ProbabilityChart'
+import { fmtTimestamp } from '../lib/format'
 
 type Tab = 'radar' | 'movers' | 'runs' | 'preferences'
 
 function shortDate(s: string | null | undefined) {
-  if (!s) return '—'
-  return s.slice(0, 16).replace('T', ' ')
+  return fmtTimestamp(s)
 }
 
 function pctFmt(v: number | null | undefined, decimals = 1) {
@@ -131,7 +131,7 @@ function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: ()
       <div className="pred-card-footer">
         <DirectionBadge direction={market.direction_bias} />
         {market.resolution_at && (
-          <span className="text-muted text-sm">Resolves: {market.resolution_at.slice(0, 10)}</span>
+          <span className="text-muted text-sm">Resolves: {fmtTimestamp(market.resolution_at, { dateOnly: true })}</span>
         )}
         <span className="text-muted text-sm">{shortDate(market.created_at)}</span>
       </div>
@@ -196,7 +196,7 @@ function ProbabilityMoversTab({ markets, onSelect }: { markets: PredictionMarket
         <tbody>
           {movers.map(m => (
             <tr key={m.id} onClick={() => onSelect(m)} style={{ cursor: 'pointer' }}>
-              <td className="pred-event-cell">{m.event_title.length > 60 ? m.event_title.slice(0, 57) + '…' : m.event_title}</td>
+              <td className="pred-event-cell td-ellipsis">{m.event_title}</td>
               <td className="mono">{pctFmt(m.yes_probability)}</td>
               <td className={`mono ${(m.probability_change_24h ?? 0) > 0 ? 'pnl-positive' : (m.probability_change_24h ?? 0) < 0 ? 'pnl-negative' : ''}`}>
                 {deltaFmt(m.probability_change_24h)}
@@ -385,7 +385,7 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
         <DrawerField label="Volume 24h" value={volFmt(market.volume_24h)} />
         <DrawerField label="Liquidity" value={volFmt(market.liquidity)} />
         <DrawerField label="Order Book" value={market.enable_orderbook ? 'Enabled' : 'Disabled'} />
-        <DrawerField label="Resolution" value={market.resolution_at?.slice(0, 10) ?? '—'} />
+        <DrawerField label="Resolution" value={fmtTimestamp(market.resolution_at, { dateOnly: true })} />
       </DrawerSection>
 
       {claims.length > 0 && (
