@@ -6,8 +6,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-import httpx
-
+from aletheia.net import httpx_client
 from aletheia.data.models import (
     FundingRateSnapshot,
     LiquidationEvent,
@@ -139,7 +138,7 @@ async def _fetch_liquidations(
     results: list[LiquidationEvent] = []
     now = datetime.now(timezone.utc)
 
-    async with httpx.AsyncClient(trust_env=True, timeout=10) as client:
+    async with httpx_client(timeout=10) as client:
         for sym in symbols[:10]:  # cap to avoid rate limits
             binance_sym = sym.replace("/", "")
             try:

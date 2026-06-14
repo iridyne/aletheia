@@ -6,8 +6,9 @@ logged, or echoed. Setting the token stays CLI-only (`aletheia secrets set
 telegram.bot_token`) — this route adds no write surface.
 """
 
-import httpx
 from fastapi import APIRouter
+
+from aletheia.net import httpx_client
 
 from aletheia.config.secrets import get_secret
 
@@ -25,7 +26,7 @@ async def telegram_health():
     if not token:
         return {"reachable": False, "error": "not_configured"}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx_client(timeout=10) as client:
             resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")
             data = resp.json()
         if data.get("ok"):

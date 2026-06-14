@@ -389,6 +389,36 @@ def _probe_webui_static(report: Report) -> None:
     report.add("webui.static", "ok", f"{size} bytes index, {js_count} JS bundles")
 
 
+def _probe_network(report: Report) -> None:
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        proxy_url = cfg.network.proxy_url
+    except Exception as e:
+        report.add("network.proxy", "info", f"could not read config: {e}")
+        return
+
+    if not proxy_url:
+        report.add("network.proxy", "ok", "not configured (direct connection)")
+        return
+
+    import time
+    import urllib.request
+    url = "https://api.binance.com/api/v3/ping"
+    t0 = time.monotonic()
+    try:
+        import os
+        proxies = {"https": proxy_url, "http": proxy_url}
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
+        opener.open(url, timeout=8).read()
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        report.add("network.proxy", "ok", f"proxy configured, reachable ({latency_ms}ms) — {proxy_url}")
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        report.add("network.proxy", "warn", f"proxy configured but unreachable ({latency_ms}ms): {e}",
+                   "check proxy is running and proxy_url is correct in Settings → Infrastructure → Network")
+
+
 def build_report() -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing."""
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -401,6 +431,7 @@ def build_report() -> Report:
         _probe_trading_loop,
         _probe_health,
         _probe_webui_static,  # 新增维度
+        _probe_network,
     ):
         try:
             probe(report)

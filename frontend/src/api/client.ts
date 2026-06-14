@@ -561,6 +561,12 @@ export const api = {
     explore_ratio: number; blacklist: string[];
   }>) => post<any>('/settings/universe', body),
 
+  // Network / proxy config
+  updateNetworkConfig: (body: Partial<{ proxy_url: string; no_proxy: string }>) =>
+    post<{ updated: Record<string, any>; network: { proxy_url: string; no_proxy: string } }>('/settings/network', body),
+  testNetworkProxy: () =>
+    post<{ reachable: boolean; latency_ms: number; error: string | null }>('/settings/network/test'),
+
   // Generic helpers for pages that need simple get/post
   get: <T = any>(path: string) => fetchJson<T>(path),
   post: <T = any>(path: string, body?: unknown) => post<T>(path, body),

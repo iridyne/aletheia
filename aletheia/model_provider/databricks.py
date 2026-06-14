@@ -9,8 +9,7 @@ The model field doubles as the endpoint_name for URL construction.
 
 from urllib.parse import urlparse
 
-import httpx
-
+from aletheia.net import httpx_client
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.base import ModelHealth
 
@@ -48,7 +47,7 @@ class DatabricksProvider(OpenAICompatibleProvider):
     async def list_models(self) -> list[dict]:
         """Fetch serving endpoints from Databricks workspace."""
         try:
-            async with httpx.AsyncClient(timeout=4) as client:
+            async with httpx_client(timeout=4) as client:
                 resp = await client.get(
                     f"{self.workspace_url}/api/2.0/serving-endpoints",
                     headers=self._headers(),
@@ -70,7 +69,7 @@ class DatabricksProvider(OpenAICompatibleProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx.AsyncClient(timeout=4) as client:
+            async with httpx_client(timeout=4) as client:
                 resp = await client.get(
                     f"{self.workspace_url}/api/2.0/serving-endpoints",
                     headers=self._headers(),
@@ -101,7 +100,7 @@ class DatabricksProvider(OpenAICompatibleProvider):
             "messages": messages,
             "max_tokens": request.max_tokens,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx_client(timeout=60) as client:
             resp = await client.post(
                 f"{self.workspace_url}/serving-endpoints/{self.model}/invocations",
                 json=payload, headers=self._headers(),

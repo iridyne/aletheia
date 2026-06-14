@@ -56,6 +56,7 @@ async def get_settings():
         },
         "universe": cfg.universe.model_dump(mode="json"),
         "tunnel": cfg.tunnel.model_dump(mode="json"),
+        "network": cfg.network.model_dump(mode="json"),
     }
 
 
@@ -594,3 +595,54 @@ async def start_tunnel_api():
 async def stop_tunnel_api():
     from aletheia.gateway.tunnel import stop_tunnel
     return stop_tunnel()
+
+
+# ---------------------------------------------------------------------------
+# Network / proxy config
+# ---------------------------------------------------------------------------
+
+class NetworkConfigUpdate(BaseModel):
+    proxy_url: Optional[str] = None
+    no_proxy: Optional[str] = None
+
+
+@router.post("/network")
+async def update_network_config(req: NetworkConfigUpdate):
+    """Update global proxy configuration and apply it to the running process."""
+    cfg = load_config()
+    old = cfg.network.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.network, field, value)
+    save_config(cfg)
+
+    # Apply immediately: set env vars so trust_env=True clients pick them up.
+    from aletheia.net import apply_proxy_env
+    apply_proxy_env()
+
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard",
+                 "event_type": "network_config_changed",
+                 "entity_type": "network_config", "before": old,
+                 "after": cfg.network.model_dump(mode="json"),
+                 "message": f"Network config updated: {list(updates.keys())}"})
+    return {"updated": updates, "network": cfg.network.model_dump(mode="json")}
+
+
+@router.post("/network/test")
+async def test_network_proxy():
+    """Test proxy connectivity by pinging Binance API through the configured proxy."""
+    import time
+    from aletheia.net import httpx_client
+    url = "https://api.binance.com/api/v3/ping"
+    t0 = time.monotonic()
+    try:
+        async with httpx_client(timeout=10) as client:
+            resp = await client.get(url)
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        if resp.status_code == 200:
+            return {"reachable": True, "latency_ms": latency_ms, "error": None}
+        return {"reachable": False, "latency_ms": latency_ms, "error": f"HTTP {resp.status_code}"}
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return {"reachable": False, "latency_ms": latency_ms, "error": str(e)[:200]}

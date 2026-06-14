@@ -820,6 +820,10 @@ function InfrastructureTab({ settings, qc }: any) {
       <Section title="Autostart" description="Start the gateway automatically when you log in to Windows.">
         <AutostartCard qc={qc} />
       </Section>
+
+      <Section title="Network Proxy" description="Route all outbound HTTP through a proxy. Required when direct internet access is unavailable (e.g. Task Scheduler-started gateway).">
+        <NetworkCard settings={settings} qc={qc} />
+      </Section>
     </div>
   )
 }
@@ -1153,6 +1157,85 @@ function AutostartCard({ qc }: any) {
         {msg && <span className="hint" style={{ margin: 0 }}>{msg}</span>}
       </div>
       <p className="hint" style={{ marginTop: '0.6rem' }}>Starts the gateway on login and watchdogs it every 5 min. Runs gated start — live trading stays disabled.</p>
+    </div>
+  )
+}
+
+function NetworkCard({ settings, qc }: any) {
+  const net = (settings?.network as any) || {}
+  const [proxyUrl, setProxyUrl] = useState<string>(net.proxy_url || '')
+  const [noProxy, setNoProxy] = useState<string>(net.no_proxy || '')
+  const [testResult, setTestResult] = useState<{ reachable: boolean; latency_ms: number; error: string | null } | null>(null)
+  const [testing, setTesting] = useState(false)
+
+  // Sync from server state when settings load
+  useEffect(() => {
+    setProxyUrl(net.proxy_url || '')
+    setNoProxy(net.no_proxy || '')
+  }, [net.proxy_url, net.no_proxy])
+
+  const mut = useMutation({
+    mutationFn: (body: any) => api.updateNetworkConfig(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
+
+  const handleSave = () => {
+    mut.mutate({ proxy_url: proxyUrl.trim(), no_proxy: noProxy.trim() })
+    setTestResult(null)
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const r = await api.testNetworkProxy()
+      setTestResult(r)
+    } catch (e: any) {
+      setTestResult({ reachable: false, latency_ms: 0, error: e.message || 'request failed' })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const isConfigured = !!proxyUrl.trim()
+  let statusDot = <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>●</span>
+  if (isConfigured && testResult?.reachable) statusDot = <span style={{ color: 'var(--green)', fontSize: '0.75rem' }}>●</span>
+  else if (isConfigured && testResult && !testResult.reachable) statusDot = <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>●</span>
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+      <Row label="Proxy URL" hint="Applied to all outbound HTTP (LLM, exchange, market data). Leave empty for direct connection.">
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {statusDot}
+          <input
+            type="text" value={proxyUrl}
+            onChange={e => setProxyUrl(e.target.value)}
+            placeholder="http://127.0.0.1:7897"
+            style={{ width: '220px', fontFamily: 'monospace', fontSize: '0.8rem' }}
+          />
+        </div>
+      </Row>
+      <Row label="No Proxy" hint="Comma-separated hosts to bypass (e.g. 127.0.0.1,localhost).">
+        <input
+          type="text" value={noProxy}
+          onChange={e => setNoProxy(e.target.value)}
+          placeholder="127.0.0.1,localhost"
+          style={{ width: '220px', fontFamily: 'monospace', fontSize: '0.8rem' }}
+        />
+      </Row>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={handleSave} disabled={mut.isPending}>Save</button>
+        <button className="secondary" onClick={handleTest} disabled={testing}>
+          {testing ? 'Testing…' : 'Test Connection'}
+        </button>
+        {mut.isSuccess && <span className="hint" style={{ color: 'var(--green)', margin: 0 }}>Saved.</span>}
+        {mut.isError && <span className="hint" style={{ color: 'var(--red)', margin: 0 }}>{(mut.error as any)?.message}</span>}
+        {testResult && (
+          <span className="hint mono" style={{ margin: 0, color: testResult.reachable ? 'var(--green)' : 'var(--red)' }}>
+            {testResult.reachable ? `✓ reachable (${testResult.latency_ms}ms)` : `✗ ${testResult.error || 'unreachable'}`}
+          </span>
+        )}
+      </div>
     </div>
   )
 }

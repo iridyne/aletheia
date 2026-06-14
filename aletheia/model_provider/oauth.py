@@ -19,7 +19,7 @@ from base64 import urlsafe_b64encode
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
-import httpx
+from aletheia.net import httpx_client
 from aiohttp import web
 
 logger = logging.getLogger("aletheia.model_provider.oauth")
@@ -96,7 +96,7 @@ async def exchange_code(
     else:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx_client(timeout=30) as client:
         if config.token_request_format == "json":
             resp = await client.post(config.token_url, json=body, headers=headers)
         else:
@@ -119,7 +119,7 @@ async def refresh_tokens(config: OAuthConfig, refresh_token: str) -> dict:
     else:
         headers["Content-Type"] = "application/x-www-form-urlencoded"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx_client(timeout=30) as client:
         if config.token_request_format == "json":
             resp = await client.post(config.token_url, json=body, headers=headers)
         else:
@@ -139,7 +139,7 @@ async def token_exchange_rfc8693(
         "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
         "requested_token": requested_token,
     }
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx_client(timeout=30) as client:
         resp = await client.post(
             token_url, data=body,
             headers={"Content-Type": "application/x-www-form-urlencoded"},

@@ -3,8 +3,7 @@
 import json
 from collections.abc import AsyncIterator
 
-import httpx
-
+from aletheia.net import httpx_client
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth, StreamChunk,
@@ -79,7 +78,7 @@ class OpenAINativeProvider(ModelProvider):
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx_client(timeout=60) as client:
             resp = await client.post(
                 f"{BASE_URL}/chat/completions", json=payload, headers=self._headers()
             )
@@ -104,7 +103,7 @@ class OpenAINativeProvider(ModelProvider):
             "max_tokens": request.max_tokens,
             "stream": True,
         }
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx_client(timeout=120) as client:
             async with client.stream(
                 "POST", f"{BASE_URL}/chat/completions",
                 json=payload, headers=self._headers(),
@@ -148,7 +147,7 @@ class OpenAINativeProvider(ModelProvider):
 
     async def list_models(self) -> list[dict]:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx_client(timeout=10) as client:
                 resp = await client.get(
                     f"{BASE_URL}/models", headers=self._headers()
                 )
@@ -178,7 +177,7 @@ class OpenAINativeProvider(ModelProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx_client(timeout=10) as client:
                 resp = await client.get(
                     f"{BASE_URL}/models", headers=self._headers()
                 )

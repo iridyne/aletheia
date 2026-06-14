@@ -67,9 +67,8 @@ class CCXTProvider:
         self._sessions: list = []
 
     def _client(self, name: str):
-        import aiohttp
         import ccxt.async_support as ccxt
-        from aiohttp.resolver import ThreadedResolver
+        from aletheia.net import aiohttp_session
 
         if not hasattr(ccxt, name):
             raise ValueError(f"unknown ccxt exchange: {name}")
@@ -80,10 +79,8 @@ class CCXTProvider:
         # even though plain urllib (OS resolver) reaches the same host fine. We
         # inject our own session so ccxt uses it (own_session=False), which means
         # WE are responsible for closing it — done in close().
-        session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(resolver=ThreadedResolver()),
-            trust_env=True,
-        )
+        # aiohttp_session() also applies proxy from config via apply_proxy_env().
+        session = aiohttp_session()
         self._sessions.append(session)
         return getattr(ccxt, name)({"enableRateLimit": True, "session": session})
 

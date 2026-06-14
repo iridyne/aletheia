@@ -3,8 +3,7 @@
 import json
 from collections.abc import AsyncIterator
 
-import httpx
-
+from aletheia.net import httpx_client
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth, StreamChunk,
@@ -61,7 +60,7 @@ class AnthropicNativeProvider(ModelProvider):
         }
         if request.system:
             payload["system"] = request.system
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx_client(timeout=60) as client:
             resp = await client.post(
                 f"{BASE_URL}/v1/messages", json=payload, headers=self._headers()
             )
@@ -88,7 +87,7 @@ class AnthropicNativeProvider(ModelProvider):
         }
         if request.system:
             payload["system"] = request.system
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx_client(timeout=120) as client:
             async with client.stream(
                 "POST", f"{BASE_URL}/v1/messages",
                 json=payload, headers=self._headers(),
@@ -130,7 +129,7 @@ class AnthropicNativeProvider(ModelProvider):
 
     async def list_models(self) -> list[dict]:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx_client(timeout=10) as client:
                 resp = await client.get(
                     f"{BASE_URL}/v1/models", headers=self._headers()
                 )
@@ -156,7 +155,7 @@ class AnthropicNativeProvider(ModelProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx_client(timeout=10) as client:
                 resp = await client.get(
                     f"{BASE_URL}/v1/models", headers=self._headers()
                 )

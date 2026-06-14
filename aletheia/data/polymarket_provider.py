@@ -102,9 +102,9 @@ def _fetch_raw_urllib(params: str) -> list[dict]:
 
 async def _fetch_raw(params: str) -> list[dict]:
     try:
-        import httpx
+        from aletheia.net import httpx_client
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx_client(timeout=_TIMEOUT) as client:
             resp = await client.get(_GAMMA_URL, params=dict(p.split("=", 1) for p in params.split("&")))
             resp.raise_for_status()
             data = resp.json()
@@ -140,8 +140,8 @@ async def fetch_market_history(token_id: str, interval: str = "1h", fidelity: in
     clob_url = "https://clob.polymarket.com/prices-history"
     params = f"market={token_id}&interval=all&fidelity={fidelity}"
     try:
-        import httpx
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        from aletheia.net import httpx_client
+        async with httpx_client(timeout=_TIMEOUT) as client:
             resp = await client.get(f"{clob_url}?{params}")
             resp.raise_for_status()
             data = resp.json()

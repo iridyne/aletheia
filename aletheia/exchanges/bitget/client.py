@@ -3,8 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-import httpx
-
+from aletheia.net import httpx_client
 from aletheia.exchanges.bitget.auth import build_headers
 from aletheia.config.secrets import get_secret, redact
 
@@ -115,7 +114,7 @@ class BitgetClient:
         path = "/api/v2/spot/account/info"
         try:
             headers = self._headers("GET", path)
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx_client(timeout=15) as client:
                 resp = await client.get(f"{self._base}{path}", headers=headers)
                 data = resp.json()
                 if data.get("code") == "00000":
@@ -137,7 +136,7 @@ class BitgetClient:
         else:
             path = f"/api/v2/mix/market/ticker?symbol={symbol}&productType=USDT-FUTURES"
 
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}")
             data = resp.json()
 
@@ -169,7 +168,7 @@ class BitgetClient:
         else:
             path = f"/api/v2/mix/market/candles?symbol={symbol}&productType=USDT-FUTURES&granularity={timeframe}&limit={limit}"
 
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}")
             data = resp.json()
 
@@ -192,7 +191,7 @@ class BitgetClient:
         """Get account balances."""
         path = "/api/v2/spot/account/assets"
         headers = self._headers("GET", path)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
             data = resp.json()
         if data.get("code") != "00000":
@@ -253,7 +252,7 @@ class BitgetClient:
         body = json.dumps(body_data)
         headers = self._headers("POST", path, body)
 
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
             data = resp.json()
 
@@ -311,7 +310,7 @@ class BitgetClient:
         """Fetch a single mix order's detail (fill state + priceAvg)."""
         path = f"/api/v2/mix/order/detail?orderId={order_id}&symbol={symbol}&productType=USDT-FUTURES"
         headers = self._headers("GET", path)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
             data = resp.json()
         if data.get("code") != "00000":
@@ -325,7 +324,7 @@ class BitgetClient:
         """Get account summary (§19.3)."""
         path = "/api/v2/spot/account/info"
         headers = self._headers("GET", path)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
             data = resp.json()
         if data.get("code") != "00000":
@@ -341,7 +340,7 @@ class BitgetClient:
         """Get open USDT-futures positions (§19.3)."""
         path = "/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT"
         headers = self._headers("GET", path)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
             data = resp.json()
         if data.get("code") != "00000":
@@ -373,7 +372,7 @@ class BitgetClient:
         """
         path = f"/api/v2/mix/account/accounts?productType={product_type}"
         headers = self._headers("GET", path)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
             data = resp.json()
         if data.get("code") != "00000":
@@ -390,7 +389,7 @@ class BitgetClient:
         else:
             path = "/api/v2/mix/order/orders-pending?productType=USDT-FUTURES"
         headers = self._headers("GET", path)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
             data = resp.json()
         if data.get("code") != "00000":
@@ -408,7 +407,7 @@ class BitgetClient:
             body_data = {"symbol": symbol, "orderId": order_id, "productType": "USDT-FUTURES"}
         body = _json.dumps(body_data)
         headers = self._headers("POST", path, body)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
             data = resp.json()
         if data.get("code") != "00000":
@@ -424,7 +423,7 @@ class BitgetClient:
         if symbol:
             path += ("&" if "?" in path else "?") + f"symbol={symbol}"
         headers = self._headers("GET", path)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{self._base}{path}", headers=headers)
             data = resp.json()
         if data.get("code") != "00000":

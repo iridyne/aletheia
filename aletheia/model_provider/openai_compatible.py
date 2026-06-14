@@ -1,8 +1,8 @@
 """OpenAI-compatible model provider (chat_completions and responses protocols)."""
 
 import json
-import httpx
 
+from aletheia.net import httpx_client
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth,
@@ -39,7 +39,7 @@ class OpenAICompatibleProvider(ModelProvider):
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx_client(timeout=60) as client:
             resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=self._headers())
             resp.raise_for_status()
             data = resp.json()
@@ -61,7 +61,7 @@ class OpenAICompatibleProvider(ModelProvider):
             "temperature": request.temperature,
             "max_output_tokens": request.max_tokens,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx_client(timeout=60) as client:
             resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
             resp.raise_for_status()
             data = resp.json()
@@ -91,7 +91,7 @@ class OpenAICompatibleProvider(ModelProvider):
     async def list_models(self) -> list[dict]:
         """Fetch available models from the OpenAI-compatible /models endpoint."""
         try:
-            async with httpx.AsyncClient(timeout=4) as client:
+            async with httpx_client(timeout=4) as client:
                 resp = await client.get(f"{self.base_url}/models", headers=self._headers())
                 if resp.status_code != 200:
                     return []
@@ -113,7 +113,7 @@ class OpenAICompatibleProvider(ModelProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx.AsyncClient(timeout=4) as client:
+            async with httpx_client(timeout=4) as client:
                 resp = await client.get(f"{self.base_url}/models", headers=self._headers())
                 if resp.status_code == 200:
                     models = await self.list_models()

@@ -4,8 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-import httpx
-
+from aletheia.net import httpx_client
 from aletheia.config.loader import load_config, save_config
 from aletheia.config.secrets import get_secret
 from aletheia.files.jsonl import write_audit
@@ -38,7 +37,7 @@ class TelegramBot:
         return f"https://api.telegram.org/bot{self.token}/{method}"
 
     async def send_message(self, chat_id: int, text: str) -> None:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx_client(timeout=10) as client:
             await client.post(self._api_url("sendMessage"), json={"chat_id": chat_id, "text": text})
 
     def _is_authorized(self, chat_id: int) -> bool:
@@ -153,7 +152,7 @@ class TelegramBot:
             return
         self._running = True
         backoff = poll_interval
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx_client(timeout=20) as client:
             while self._running:
                 try:
                     updates = await self._fetch_updates(client)
@@ -170,7 +169,7 @@ class TelegramBot:
     def stop(self) -> None:
         self._running = False
 
-    async def _fetch_updates(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
+    async def _fetch_updates(self, client) -> list[dict[str, Any]]:
         resp = await client.get(self._api_url("getUpdates"), params={"offset": self._offset, "timeout": 20})
         payload = resp.json()
         if not payload.get("ok"):
@@ -182,7 +181,7 @@ class TelegramBot:
                 self._offset = max(self._offset, int(update_id) + 1)
         return updates
 
-    async def _handle_update(self, update: dict[str, Any], client: httpx.AsyncClient) -> None:
+    async def _handle_update(self, update: dict[str, Any], client) -> None:
         message = update.get("message") or {}
         if not message:
             return

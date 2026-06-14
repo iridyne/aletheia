@@ -315,6 +315,11 @@ class TunnelConfig(BaseModel):
     metrics_port: int = 0
 
 
+class NetworkConfig(BaseModel):
+    proxy_url: str = ""   # e.g. "http://127.0.0.1:7897" — applied to all outbound HTTP
+    no_proxy: str = ""    # comma-separated bypass list, e.g. "127.0.0.1,localhost"
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -333,3 +338,4 @@ class AletheiaConfig(BaseModel):
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
+    network: NetworkConfig = Field(default_factory=NetworkConfig)

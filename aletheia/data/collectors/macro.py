@@ -15,8 +15,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
-
+from aletheia.net import httpx_client
 from aletheia.data.models import MacroSnapshot
 
 logger = logging.getLogger("aletheia.data.collectors.macro")
@@ -111,7 +110,7 @@ async def _fetch_fred(
     """
     results: dict[str, float | None] = {"spy": None, "vix": None, "dxy": None, "nasdaq": None}
 
-    async with httpx.AsyncClient(trust_env=True, timeout=10) as client:
+    async with httpx_client(timeout=10) as client:
         for key, series_id in _FRED_SERIES.items():
             try:
                 resp = await client.get(
@@ -142,7 +141,7 @@ async def _fetch_fred(
 # ---------------------------------------------------------------------------
 
 async def _fetch_coingecko() -> tuple[float | None, float | None, float | None]:
-    async with httpx.AsyncClient(trust_env=True, timeout=10) as client:
+    async with httpx_client(timeout=10) as client:
         resp = await client.get(_COINGECKO_GLOBAL_URL)
         resp.raise_for_status()
         data = resp.json().get("data", {})

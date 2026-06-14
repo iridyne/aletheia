@@ -191,6 +191,11 @@ async def _llm_startup_gate(cfg) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = bootstrap()
+    # Apply proxy config to process env before any HTTP client or scheduler runs.
+    # Ensures watchdog-started processes (which inherit no session env vars) still
+    # route through the proxy specified in config.yaml.
+    from aletheia.net import apply_proxy_env
+    apply_proxy_env()
     runtime_context = runtime_process_context()
     app.state.runtime_context = runtime_context
     background_services_enabled = should_start_background_services(runtime_context)

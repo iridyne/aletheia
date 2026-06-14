@@ -1,8 +1,8 @@
 """Anthropic-compatible model provider."""
 
 import json
-import httpx
 
+from aletheia.net import httpx_client
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth,
@@ -48,7 +48,7 @@ class AnthropicCompatibleProvider(ModelProvider):
             payload["temperature"] = request.temperature
         if request.system:
             payload["system"] = request.system
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx_client(timeout=60) as client:
             resp = await client.post(f"{self.base_url}/v1/messages", json=payload, headers=self._headers())
             resp.raise_for_status()
             data = resp.json()
@@ -77,7 +77,7 @@ class AnthropicCompatibleProvider(ModelProvider):
     async def list_models(self) -> list[dict]:
         """Fetch available models from the gateway's /v1/models endpoint."""
         try:
-            async with httpx.AsyncClient(timeout=4) as client:
+            async with httpx_client(timeout=4) as client:
                 resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
                 if resp.status_code != 200:
                     return []
@@ -99,7 +99,7 @@ class AnthropicCompatibleProvider(ModelProvider):
 
     async def healthcheck(self) -> ModelHealth:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx_client(timeout=10) as client:
                 resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
                 if resp.status_code == 200:
                     models = await self.list_models()
