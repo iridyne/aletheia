@@ -120,6 +120,20 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
                     last_ts = int(ohlcv_1h[-1][0]) / 1000
                     data_freshness_sec = int(time.time() - last_ts)
 
+                # Enrich from data collectors (may be None if not yet collected)
+                ob_row = repo.latest_orderbook(symbol)
+                fr_row = repo.latest_funding_rate(symbol)
+                oi_row = repo.latest_open_interest(symbol)
+
+                depth_10bps = ob_row["total_depth_10bps_usd"] if ob_row else None
+                funding_rate = fr_row["funding_rate"] if fr_row else None
+                open_interest = oi_row["open_interest_usd"] if oi_row else None
+                oi_delta_1h = oi_row["oi_change_1h_pct"] if oi_row else None
+
+                # Use collector spread if ticker bid/ask not available
+                if spread is None and ob_row:
+                    spread = ob_row.get("spread_bps")
+
                 feat = {
                     "asset_id": asset_id,
                     "symbol": symbol,
@@ -128,30 +142,34 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
                     "quote_volume_24h": quote_volume_24h,
                     "volume_1h": volume_1h,
                     "spread_bps": spread,
-                    "depth_10bps_usd": None,  # Phase 2: fetch_order_book → sum within 10bps; cfg.universe.min_depth_10bps_usd gate
+                    "depth_10bps_usd": depth_10bps,
                     "atr_pct": atr_val,
                     "rsi_14": rsi_val,
                     "return_1h": return_1h,
                     "return_4h": return_4h,
                     "return_24h": return_24h,
-                    "funding_rate": None,  # perp-only, future enhancement
-                    "open_interest": None,
-                    "oi_delta_1h": None,
+                    "funding_rate": funding_rate,
+                    "open_interest": open_interest,
+                    "oi_delta_1h": oi_delta_1h,
                     "data_freshness_sec": data_freshness_sec,
                 }
 
-                # Persist feature snapshot
+                # Persist feature snapshot (includes enriched collector fields)
                 snap = UniverseFeatureSnapshot(
                     asset_id=asset_id,
                     ts=now.isoformat(),
                     quote_volume_24h=quote_volume_24h,
                     volume_1h=volume_1h,
                     spread_bps=spread,
+                    depth_10bps_usd=depth_10bps,
                     atr_pct=atr_val,
                     rsi_14=rsi_val,
                     return_1h=return_1h,
                     return_4h=return_4h,
                     return_24h=return_24h,
+                    funding_rate=funding_rate,
+                    open_interest=open_interest,
+                    oi_delta_1h=oi_delta_1h,
                     data_freshness_sec=data_freshness_sec,
                 )
                 repo.insert_universe_feature_snapshot(snap)

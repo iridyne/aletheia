@@ -1049,6 +1049,83 @@ CREATE TABLE IF NOT EXISTS universe_policies (
 );
 """
 
+_DATA_COLLECTORS_DDL = """
+-- ====================================================================
+-- Data Collectors Layer (9-domain market data)
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS orderbook_snapshots (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    bid_price REAL NOT NULL,
+    ask_price REAL NOT NULL,
+    spread_bps REAL NOT NULL,
+    bid_depth_10bps_usd REAL,
+    ask_depth_10bps_usd REAL,
+    total_depth_10bps_usd REAL,
+    imbalance_ratio REAL,
+    fetch_latency_ms INTEGER,
+    observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_orderbook_sym_ts
+    ON orderbook_snapshots (symbol, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS funding_rate_snapshots (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    funding_rate REAL NOT NULL,
+    funding_rate_annualized REAL NOT NULL,
+    next_funding_time TEXT,
+    mark_price REAL,
+    observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_funding_sym_ts
+    ON funding_rate_snapshots (symbol, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS open_interest_snapshots (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    open_interest_usd REAL NOT NULL,
+    open_interest_coin REAL,
+    oi_change_1h_pct REAL,
+    long_short_ratio REAL,
+    observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_oi_sym_ts
+    ON open_interest_snapshots (symbol, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS liquidation_events (
+    id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    side TEXT NOT NULL,
+    quantity_usd REAL NOT NULL,
+    price REAL NOT NULL,
+    event_time TEXT NOT NULL,
+    observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_liquidation_sym_ts
+    ON liquidation_events (symbol, event_time DESC);
+
+CREATE TABLE IF NOT EXISTS macro_snapshots (
+    id TEXT PRIMARY KEY,
+    btc_dominance REAL,
+    total_market_cap_usd REAL,
+    total_market_cap_change_24h_pct REAL,
+    spy_close REAL,
+    vix_close REAL,
+    dxy_close REAL,
+    nasdaq_close REAL,
+    risk_regime TEXT NOT NULL DEFAULT 'neutral',
+    observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_macro_ts
+    ON macro_snapshots (observed_at DESC);
+"""
+
 _PREDICTION_OBSERVER_RUNS_DDL = """
 CREATE TABLE IF NOT EXISTS prediction_observer_runs (
     id TEXT PRIMARY KEY,
@@ -1348,6 +1425,7 @@ def run_migrations() -> None:
     """Run all idempotent schema creation statements."""
     db = get_db()
     db.executescript(SCHEMA_SQL)
+    db.executescript(_DATA_COLLECTORS_DDL)
     db.executescript(_PREDICTION_OBSERVER_RUNS_DDL)
     db.executescript(_PREDICTION_NORMALIZED_DDL)
     _ensure_columns(db)

@@ -108,6 +108,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         _run_universe_refresh, "interval", minutes=10,
         id="universe_refresh", misfire_grace_time=120,
     )
+    # 9-domain market data collectors (microstructure/derivatives/macro).
+    # Single job, runs every 2 min, uses internal phase counter to control
+    # per-domain frequency (orderbook+funding every 2min; macro every 10min).
+    _scheduler.add_job(
+        _run_data_collectors, "interval", minutes=2,
+        id="data_collectors", misfire_grace_time=60,
+        next_run_time=datetime.now(),
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -331,6 +339,11 @@ def _run_cleanup():
             "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
             "market_snapshots": repo.prune_market_snapshots(r.market_snapshots_days),
             "portfolio_snapshots": repo.prune_portfolio_snapshots(r.portfolio_snapshots_days),
+            "orderbook_snapshots": repo.prune_orderbook_snapshots(7),
+            "liquidation_events": repo.prune_liquidation_events(7),
+            "funding_rate_snapshots": repo.prune_funding_rate_snapshots(30),
+            "open_interest_snapshots": repo.prune_open_interest_snapshots(30),
+            "macro_snapshots": repo.prune_macro_snapshots(90),
         }
         write_audit({
             "actor": "system", "source": "scheduler",
@@ -393,3 +406,104 @@ async def _async_universe_refresh():
 async def _async_run(agent_name: str):
     from aletheia.agent_runtime.orchestrator import run_agent
     await run_agent(agent_name, trigger_type="scheduled")
+
+
+# Phase counter for the data_collectors job (module-level, not reset between calls).
+_DC_TICK: int = 0
+
+
+def _run_data_collectors():
+    """Collect microstructure/derivatives/macro data on a 2-min tick.
+
+    Phase A (every tick, 2min): orderbook + funding + OI for observed symbols.
+    Phase B (every 5th tick, 10min): macro (CoinGecko + yFinance).
+
+    Single job keeps us within the max_workers=3 SQLite constraint.
+    """
+    global _DC_TICK
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    _DC_TICK += 1
+    try:
+        asyncio.run(_async_data_collectors(cfg, _DC_TICK))
+    except Exception as e:
+        logger.warning("data_collectors job failed: %s", e)
+
+
+async def _async_data_collectors(cfg, tick: int) -> None:
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from aletheia.data.collectors.macro import MacroCollector
+    from aletheia.data.normalizer import compute_tradability, compute_leverage_state
+    from aletheia.storage import repositories as repo
+
+    # Observed symbols: use universe if available, fall back to configured symbols.
+    symbols = _get_observed_symbols(cfg)
+    if not symbols:
+        logger.debug("data_collectors: no symbols configured, skipping")
+        return
+
+    # --- Phase A: microstructure + derivatives (every tick) ---
+    micro = MicrostructureCollector()
+    micro_result = await micro.collect(symbols)
+    for snap in micro_result.get("snapshots", []):
+        try:
+            repo.insert_orderbook_snapshot(snap.model_dump())
+        except Exception as e:
+            logger.debug("orderbook persist failed: %s", e)
+
+    deriv = DerivativesCollector()
+    deriv_result = await deriv.collect(symbols)
+    for snap in deriv_result.get("funding", []):
+        try:
+            repo.insert_funding_rate_snapshot(snap.model_dump())
+        except Exception as e:
+            logger.debug("funding persist failed: %s", e)
+    for snap in deriv_result.get("open_interest", []):
+        try:
+            repo.insert_open_interest_snapshot(snap.model_dump())
+        except Exception as e:
+            logger.debug("OI persist failed: %s", e)
+    for event in deriv_result.get("liquidations", []):
+        try:
+            repo.insert_liquidation_event(event.model_dump())
+        except Exception as e:
+            logger.debug("liquidation persist failed: %s", e)
+
+    # --- Phase B: macro (every 5th tick = ~10 min) ---
+    if tick % 5 == 1:
+        macro_coll = MacroCollector()
+        macro_result = await macro_coll.collect(symbols)
+        snap = macro_result.get("snapshot")
+        if snap:
+            try:
+                repo.insert_macro_snapshot(snap.model_dump())
+            except Exception as e:
+                logger.debug("macro persist failed: %s", e)
+
+    # Log summary
+    micro_count = len(micro_result.get("snapshots", []))
+    funding_count = len(deriv_result.get("funding", []))
+    logger.debug(
+        "data_collectors tick=%d: orderbook=%d funding=%d",
+        tick, micro_count, funding_count,
+    )
+
+
+def _get_observed_symbols(cfg) -> list[str]:
+    """Return list of canonical symbols to collect data for."""
+    # Primary: active universe members
+    try:
+        from aletheia.storage import repositories as repo
+        members = repo.get_active_universe_members(limit=20)
+        if members:
+            return [m["symbol"] for m in members if m.get("symbol")]
+    except Exception:
+        pass
+
+    # Fallback: configured observed symbols
+    try:
+        return list(cfg.market_data.observed_symbols or [])[:20]
+    except Exception:
+        return []

@@ -106,6 +106,50 @@ async def _analyze_symbol(
         log_tool(run_id, "build_market_context", "observe", True,
                  output=f"{symbol} fallback={ctx_debug.get('fallback')} "
                         f"errs={len(ctx_debug.get('errors', []))}")
+
+        # Append enriched microstructure/derivatives/macro context if available.
+        try:
+            from aletheia.data.context_builder import render_enriched_context_md
+            from aletheia.storage import repositories as repo
+            from aletheia.data.normalizer import compute_tradability, compute_leverage_state
+            from aletheia.data.models import TradabilityScore, LeverageState, MacroSnapshot
+
+            ob = repo.latest_orderbook(symbol)
+            fr = repo.latest_funding_rate(symbol)
+            oi = repo.latest_open_interest(symbol)
+            macro_row = repo.latest_macro_snapshot()
+
+            tradability: dict = {}
+            if ob:
+                t = compute_tradability(
+                    symbol=symbol, exchange=ob.get("exchange", ""),
+                    spread_bps=ob["spread_bps"],
+                    depth_10bps_usd=ob.get("total_depth_10bps_usd") or 0,
+                    volume_24h_usd=0,  # supplemented from ticker if available
+                )
+                tradability[symbol] = t
+
+            leverage: dict = {}
+            if fr or oi:
+                lv = compute_leverage_state(
+                    symbol=symbol,
+                    funding_rate=fr["funding_rate"] if fr else None,
+                    funding_annualized=fr["funding_rate_annualized"] if fr else None,
+                    open_interest_usd=oi["open_interest_usd"] if oi else None,
+                    oi_delta_1h_pct=oi["oi_change_1h_pct"] if oi else None,
+                )
+                leverage[symbol] = lv
+
+            macro = None
+            if macro_row:
+                macro = MacroSnapshot(**macro_row)
+
+            enriched = render_enriched_context_md([symbol], tradability, leverage, macro)
+            if enriched:
+                context = context + "\n\n" + enriched
+        except Exception:
+            pass  # enriched context is optional; never break the main path
+
     except Exception as e:
         from aletheia.trading.market_data import latest_snapshot
         snap = latest_snapshot(symbol)

@@ -1174,6 +1174,14 @@ def get_universe_member(member_id: str) -> dict | None:
     return _select_one("universe_members", member_id)
 
 
+def get_active_universe_members(limit: int = 20) -> list[dict]:
+    """Return top-ranked members from the currently active universe snapshot."""
+    snap = get_active_universe_snapshot()
+    if not snap:
+        return []
+    return list_universe_members(snap["id"], limit=limit)
+
+
 def get_latest_feature_snapshot(asset_id: str) -> dict | None:
     db = get_db()
     row = db.execute(
@@ -1215,3 +1223,141 @@ def list_universe_snapshots(market_type: str = "crypto", limit: int = 20) -> lis
         order="created_at DESC",
         limit=limit,
     )
+
+
+# ---------------------------------------------------------------------------
+# Data Collectors (9-domain market data)
+# ---------------------------------------------------------------------------
+
+def insert_orderbook_snapshot(data: dict) -> None:
+    from aletheia.storage.models import new_id
+    if "id" not in data:
+        data["id"] = new_id()
+    _insert("orderbook_snapshots", data)
+
+
+def latest_orderbook(symbol: str) -> dict | None:
+    rows = _select_all(
+        "orderbook_snapshots",
+        where="symbol = ?",
+        params=(symbol,),
+        order="observed_at DESC",
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+def insert_funding_rate_snapshot(data: dict) -> None:
+    from aletheia.storage.models import new_id
+    if "id" not in data:
+        data["id"] = new_id()
+    _insert("funding_rate_snapshots", data)
+
+
+def latest_funding_rate(symbol: str) -> dict | None:
+    rows = _select_all(
+        "funding_rate_snapshots",
+        where="symbol = ?",
+        params=(symbol,),
+        order="observed_at DESC",
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+def insert_open_interest_snapshot(data: dict) -> None:
+    from aletheia.storage.models import new_id
+    if "id" not in data:
+        data["id"] = new_id()
+    _insert("open_interest_snapshots", data)
+
+
+def latest_open_interest(symbol: str) -> dict | None:
+    rows = _select_all(
+        "open_interest_snapshots",
+        where="symbol = ?",
+        params=(symbol,),
+        order="observed_at DESC",
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+def insert_liquidation_event(data: dict) -> None:
+    from aletheia.storage.models import new_id
+    if "id" not in data:
+        data["id"] = new_id()
+    _insert("liquidation_events", data)
+
+
+def recent_liquidations(symbol: str, hours: int = 1) -> list[dict]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    return _select_all(
+        "liquidation_events",
+        where="symbol = ? AND event_time > ?",
+        params=(symbol, cutoff),
+        order="event_time DESC",
+        limit=200,
+    )
+
+
+def insert_macro_snapshot(data: dict) -> None:
+    from aletheia.storage.models import new_id
+    if "id" not in data:
+        data["id"] = new_id()
+    _insert("macro_snapshots", data)
+
+
+def latest_macro_snapshot() -> dict | None:
+    rows = _select_all("macro_snapshots", order="observed_at DESC", limit=1)
+    return rows[0] if rows else None
+
+
+def prune_orderbook_snapshots(days: int = 7) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM orderbook_snapshots WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_liquidation_events(days: int = 7) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM liquidation_events WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_funding_rate_snapshots(days: int = 30) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM funding_rate_snapshots WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_open_interest_snapshots(days: int = 30) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM open_interest_snapshots WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_macro_snapshots(days: int = 90) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM macro_snapshots WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
