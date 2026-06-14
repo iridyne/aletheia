@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-06-14 — 全局代理配置实现(commit 28eb357)
+
+> 根因:Windows Task Scheduler 启动的 watchdog 进程没有 HTTPS_PROXY env var → CCXT/Binance
+> 连接超时 → market_data 写入失败 → market data 永远 stale。
+
+### 实现内容
+- `aletheia/net.py`(NEW): `httpx_client()` / `aiohttp_session()` / `apply_proxy_env()` 三个工厂函数
+- `aletheia/config/schema.py`: 新增 `NetworkConfig(proxy_url, no_proxy)`
+- `aletheia/server/app.py`: lifespan startup 调 `apply_proxy_env()`
+- 13 个文件 30+ 处 httpx/aiohttp 调用点统一替换为 net.py 工厂
+  (最关键:ccxt_provider.py 的 aiohttp.ClientSession → aiohttp_session())
+- `aletheia/server/routes/settings.py`: `POST /api/settings/network` + `/test` 端点
+- `frontend/src/pages/Settings.tsx`: NetworkCard 组件 (Infrastructure tab)
+- `aletheia/diagnostics/doctor.py`: `_probe_network()` 诊断维度
+
+### 验证
+- `npm run build` 通过(187 modules, 803 kB)
+- `uv run pytest -q` 通过(同预存失败数,无新增失败)
+- 用户可通过 Settings → Infrastructure → Network Proxy 配置代理 URL 并点 Test 验证连通性
+
+---
+
 ## 2026-06-14 — Edge Lab 全量落地(commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
 
 > 来源:Clustr100 社区交易群知识提炼 → 用户批准 implementation plan → 两个并发 session 分工落地。

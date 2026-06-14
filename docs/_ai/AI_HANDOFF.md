@@ -7,7 +7,7 @@
 
 ## Last Updated
 
-2026-06-14 (本次会话:Edge Lab — 信号→PnL 可量化消除层全量落地 [commits 9fe5c5f, 8532280, c90d2eb, ab2ba5c, ab4a522])
+2026-06-14 (本次会话:全局代理配置实现 — aletheia/net.py + NetworkConfig schema + Settings UI + doctor probe [commit 28eb357])
 
 前一批次: Gateway 静态文件启动可靠性修复 + preflight/doctor 加固[commit db2423f];
 2026-06-13 (本次会话:① Gateway 静态文件启动可靠性修复 + preflight/doctor 加固[commit db2423f];
@@ -18,6 +18,28 @@
 startup gate 3 次重试 + Windows toast、风控单列 symbol_list 双模式过滤、Anthropic/OpenAI 原生
 provider + 流式、universe plan 缺口补齐、design-doc 合规修复、Clustr100 社区知识库。18 个提交,
 均为 2026-06-13 当日。会话结束:本机实例停机,开发切换到另一台机器。)
+
+## Recent Change (全局代理配置 — 2026-06-14, commit 28eb357)
+
+> 触发:watchdog 进程不继承终端 session-only HTTPS_PROXY → CCXT/aiohttp 无法触达 Binance
+> → market_data job 静默超时 → market data 永远写不进来。用户要求"完整的代理配置实现,前后端都要做"。
+>
+> **根因**:进程无 HTTP_PROXY env var;aiohttp trust_env=True 无效;30+ 处 httpx.AsyncClient/
+> aiohttp.ClientSession 分散各处,无统一代理入口。
+>
+> **结构**:
+> - `aletheia/net.py`(NEW):共享 HTTP 工厂 — `httpx_client(timeout)` + `aiohttp_session()` + `apply_proxy_env()`。
+>   aiohttp_session 用 ThreadedResolver(Windows DNS) + trust_env=True; apply_proxy_env 从 config 写 env。
+> - `aletheia/config/schema.py`:新增 `NetworkConfig(proxy_url, no_proxy)` → `AletheiaConfig.network`。
+> - `aletheia/server/app.py`:lifespan startup 调 `apply_proxy_env()`,确保 watchdog 进程启动后立即生效。
+> - 13 个文件 30+ 处调用点:model_provider x5、oauth、bitget/client x12、data collectors x3、
+>   polymarket、telegram x2、ccxt_provider(最关键:Binance market data 路径)全部替换为 net.py 工厂。
+> - `aletheia/server/routes/settings.py`:GET /settings 增 network 字段;POST /api/settings/network 保存
+>   并热更新 env;POST /api/settings/network/test 测试 Binance 连通性。
+> - `frontend/src/pages/Settings.tsx`:Infrastructure tab 新增 NetworkCard(Proxy URL/No Proxy 输入、
+>   Save/Test 按钮、状态指示点:灰/绿/红)。
+> - `aletheia/diagnostics/doctor.py`:新增 `_probe_network()` — urllib ping Binance via proxy → doctor report。
+> - Frontend build 通过(187 modules, 803 kB);静态文件已提交。
 
 ## Recent Change (Edge Lab — 2026-06-14, commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
 

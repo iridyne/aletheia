@@ -86,6 +86,15 @@ Microstructure/Derivatives/Macro 三表段，平均每个 symbol 多 ~200 token 
 
 ---
 
+## 代理配置(已落地,2026-06-14 commit 28eb357)
+
+全局 HTTP 代理已接通。要让 market_data 恢复正常:
+1. Settings → Infrastructure → Network Proxy → 输入代理 URL(如 `http://127.0.0.1:7897`)→ 点 Test 验证连通 → Save。
+2. 重启 gateway(proxy 已在 lifespan startup 自动 apply;watchdog 重启后同样生效)。
+3. `aletheia doctor` 应显示 `✓ network.proxy  proxy configured, reachable (XXms)`。
+
+---
+
 ## 待办(下一步可做的事 — 不含"现在状态如何")
 
 1. **观测主线继续**:Phase 0 观察门仍以承载观察窗的机器为准;凡涉及"72h 跑到哪了 / 是否达标"
