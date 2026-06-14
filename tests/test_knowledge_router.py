@@ -1,0 +1,96 @@
+"""Tests for the knowledge reference router."""
+
+from unittest.mock import patch, MagicMock
+
+from aletheia.knowledge.router import (
+    build_advisory_context,
+    retrieve_for_role,
+    _build_guard_advisory,
+    _ITEM_TYPES_BY_ROLE,
+)
+
+
+class TestRetrieveForRole:
+    @patch("aletheia.knowledge.router.retrieve_lessons")
+    def test_uses_role_item_types(self, mock_retrieve):
+        mock_retrieve.return_value = []
+        retrieve_for_role("strategy_designer", "entry exit")
+        mock_retrieve.assert_called_once_with(
+            "entry exit", k=3,
+            item_types=_ITEM_TYPES_BY_ROLE["strategy_designer"],
+        )
+
+    @patch("aletheia.knowledge.router.retrieve_lessons")
+    def test_unknown_role_defaults(self, mock_retrieve):
+        mock_retrieve.return_value = []
+        retrieve_for_role("unknown_agent", "test query")
+        call_args = mock_retrieve.call_args
+        assert "trade_case_study" in call_args.kwargs["item_types"]
+
+    @patch("aletheia.knowledge.router.retrieve_lessons")
+    def test_returns_empty_on_error(self, mock_retrieve):
+        mock_retrieve.side_effect = RuntimeError("db broken")
+        result = retrieve_for_role("market_observer", "query")
+        assert result == []
+
+
+class TestBuildGuardAdvisory:
+    @patch("aletheia.knowledge.router.evaluate_guards")
+    def test_returns_empty_when_no_hits(self, mock_eval):
+        from aletheia.knowledge.guards import GuardEvaluation
+        mock_eval.return_value = GuardEvaluation(blocked=False, total_penalty=0, hits=[])
+        assert _build_guard_advisory({"symbol": "BTC/USDT"}) == ""
+
+    @patch("aletheia.knowledge.router.evaluate_guards")
+    def test_returns_block_on_hits(self, mock_eval):
+        from aletheia.knowledge.guards import GuardEvaluation, GuardHit
+        mock_eval.return_value = GuardEvaluation(
+            blocked=False, total_penalty=15.0,
+            hits=[GuardHit(
+                guard_id="test", title="Test Guard", enforcement="scoring",
+                severity="warning", score_penalty=15.0, reason="matched",
+            )],
+        )
+        result = _build_guard_advisory({"symbol": "BTC/USDT"})
+        assert "ADVISORY" in result
+        assert "test" in result
+
+    @patch("aletheia.knowledge.router.evaluate_guards")
+    def test_returns_empty_on_error(self, mock_eval):
+        mock_eval.side_effect = RuntimeError("broken")
+        assert _build_guard_advisory({"symbol": "BTC/USDT"}) == ""
+
+
+class TestBuildAdvisoryContext:
+    @patch("aletheia.knowledge.router._build_guard_advisory")
+    @patch("aletheia.knowledge.router._retrieve_lessons_safe")
+    def test_combines_lessons_and_guards(self, mock_lessons, mock_guards):
+        mock_lessons.return_value = "## Lessons block"
+        mock_guards.return_value = "## Guard block"
+        result = build_advisory_context(
+            "strategy_designer", "query",
+            guard_context={"symbol": "BTC/USDT"},
+        )
+        assert "Lessons block" in result
+        assert "Guard block" in result
+
+    @patch("aletheia.knowledge.router._build_guard_advisory")
+    @patch("aletheia.knowledge.router._retrieve_lessons_safe")
+    def test_empty_when_nothing(self, mock_lessons, mock_guards):
+        mock_lessons.return_value = ""
+        mock_guards.return_value = ""
+        result = build_advisory_context("market_observer", "query", guard_context={})
+        assert result == ""
+
+    @patch("aletheia.knowledge.router._retrieve_lessons_safe")
+    def test_no_guard_context_skips_guards(self, mock_lessons):
+        mock_lessons.return_value = "## Lessons"
+        result = build_advisory_context("market_observer", "query")
+        assert "Lessons" in result
+
+    @patch("aletheia.knowledge.router._retrieve_lessons_safe")
+    def test_truncates_long_output(self, mock_lessons):
+        mock_lessons.return_value = "x" * 3000
+        result = build_advisory_context("market_observer", "query", max_chars=100)
+        assert len(result) <= 120  # 100 + truncation notice
+        assert "[...truncated]" in result

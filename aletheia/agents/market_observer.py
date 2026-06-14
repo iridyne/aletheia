@@ -318,17 +318,17 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             linked_strategy_id = s["id"]
             break
 
-    # Experience-loop lessons block (shared across all symbols in one run).
+    # Experience-loop advisory context (lessons + case studies + guard advisories)
     memory_block = ""
     try:
-        from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
-        lessons = retrieve_lessons(
+        from aletheia.knowledge.router import build_advisory_context
+        memory_block = build_advisory_context(
+            role="market_observer",
             query=f"{' '.join(symbols)} market regime risk funding volatility",
             k=3,
-            item_types=["research_note", "post_trade_review", "dreaming_log"],
         )
-        memory_block = format_memory_block(lessons)
-        log_tool(run_id, "retrieve_lessons", "observe", True, output=f"lessons:{len(lessons)}")
+        log_tool(run_id, "retrieve_lessons", "observe", True,
+                 output=f"lessons:{1 if memory_block else 0}")
     except Exception:
         pass
 

@@ -1036,6 +1036,33 @@ async def get_strategy_memory():
     return repo.list_knowledge_items(item_type="strategy_memory")
 
 
+@router.get("/knowledge/guards")
+async def get_guards():
+    """List all active trading guards."""
+    try:
+        from aletheia.knowledge.guards import load_trading_guards
+        guards = load_trading_guards(status="active")
+        return [g.model_dump() for g in guards]
+    except Exception as e:
+        return {"error": str(e), "guards": []}
+
+
+@router.get("/knowledge/guards/stats")
+async def get_guard_stats():
+    """Guard effectiveness statistics."""
+    try:
+        from aletheia.analytics.guard_effectiveness import compute_guard_stats
+        return compute_guard_stats()
+    except Exception as e:
+        return {"error": str(e), "stats": []}
+
+
+@router.get("/knowledge/case-studies")
+async def get_case_studies():
+    _ensure_db()
+    return repo.list_knowledge_items(item_type="trade_case_study")
+
+
 @router.get("/proposals/{proposal_id}/risk-decision")
 async def get_proposal_risk_decision(proposal_id: str):
     """Get risk decision for a specific proposal."""

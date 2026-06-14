@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from aletheia.analytics.trade_attribution import build_trade_attribution_rows, factor_key
 from aletheia.knowledge.manager import create_trade_case_study, create_guard_candidate
 from aletheia.knowledge.frontmatter import render_frontmatter
-from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.analytics.trade_case_builder")
 
@@ -291,16 +290,24 @@ def _opened_after(row: dict, cutoff_ts: float) -> bool:
 
 
 def _get_existing_case_position_ids() -> set[str]:
-    """Get position IDs that already have case studies."""
+    """Get position IDs that already have case studies (from file frontmatter)."""
     try:
-        items = repo.list_knowledge_items(item_type="trade_case_study", limit=1000)
+        from aletheia.config.loader import get_data_dir
+        from aletheia.knowledge.frontmatter import parse_frontmatter
+
+        case_dir = get_data_dir() / "knowledge" / "case_studies"
+        if not case_dir.exists():
+            return set()
+
         ids = set()
-        for item in items:
-            meta = item.get("metadata")
-            if isinstance(meta, dict):
-                pid = meta.get("position_id")
+        for path in case_dir.glob("*.md"):
+            try:
+                meta, _ = parse_frontmatter(path)
+                pid = meta.get("position_id") if meta else None
                 if pid:
                     ids.add(pid)
+            except Exception:
+                continue
         return ids
     except Exception:
         return set()

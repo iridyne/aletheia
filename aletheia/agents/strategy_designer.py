@@ -146,18 +146,18 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         symbols = observed_symbols_from_config(cfg)
     default_symbol = symbols[0] if symbols else "BTC/USDT"
 
-    # Experience loop (§6): consult prior high-confidence lessons + playbooks as
-    # ADVISORY design inputs. Both are read-only and quality-gated; degrade to nothing.
+    # Experience loop (§6): consult prior high-confidence lessons + case studies +
+    # guard advisories as ADVISORY design inputs. Quality-gated; degrade to nothing.
     memory_block = ""
     try:
-        from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
-        lessons = retrieve_lessons(
+        from aletheia.knowledge.router import build_advisory_context
+        memory_block = build_advisory_context(
+            role="strategy_designer",
             query="strategy design entry exit risk drawdown expectancy",
             k=3,
-            item_types=["research_note", "post_trade_review", "strategy_memory"],
         )
-        memory_block = format_memory_block(lessons)
-        log_tool(run_id, "retrieve_lessons", "observe", True, output=f"lessons:{len(lessons)}")
+        log_tool(run_id, "retrieve_lessons", "observe", True,
+                 output=f"lessons:{1 if memory_block else 0}")
     except Exception:
         pass
 
