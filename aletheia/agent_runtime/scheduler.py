@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -58,7 +58,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _run_exchange_sync, "interval", minutes=5, id="exchange_sync",
-        misfire_grace_time=60, next_run_time=datetime.now(),
+        misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=10),
     )
     _scheduler.add_job(
         _run_paper_trader, "interval", minutes=15, id="paper_trader",
@@ -70,7 +70,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _run_position_reconcile, "interval", minutes=5, id="position_reconcile",
-        misfire_grace_time=60, next_run_time=datetime.now(),
+        misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=20),
     )
     _scheduler.add_job(
         _run_cleanup, "cron", hour=3, minute=17, id="cleanup",
@@ -94,14 +94,18 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="prediction_observer", misfire_grace_time=120,
     )
     # Post-trade reviewer — reviews closed positions every 4 hours.
+    # Delay first run by 5 min so LLM-heavy jobs don't compete with market_data
+    # at startup (ThreadPool=3, and LLM calls can block a slot for minutes).
     _scheduler.add_job(
         _run_post_trade_reviewer, "interval", hours=4,
         id="post_trade_reviewer", misfire_grace_time=300,
+        next_run_time=datetime.now() + timedelta(minutes=5),
     )
     # Risk critic — reviews risk decisions and writes lessons every 6 hours.
     _scheduler.add_job(
         _run_risk_critic, "interval", hours=6,
         id="risk_critic", misfire_grace_time=300,
+        next_run_time=datetime.now() + timedelta(minutes=10),
     )
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
@@ -114,7 +118,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _run_data_collectors, "interval", minutes=2,
         id="data_collectors", misfire_grace_time=60,
-        next_run_time=datetime.now(),
+        next_run_time=datetime.now() + timedelta(seconds=30),
     )
     # Strategy backtest orchestrator — daily evaluation of all active strategies.
     # Runs after strategy_designer (01:00) so newly generated strategies get tested.
