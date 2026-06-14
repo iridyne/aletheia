@@ -80,7 +80,10 @@ class CCXTProvider:
         # even though plain urllib (OS resolver) reaches the same host fine. We
         # inject our own session so ccxt uses it (own_session=False), which means
         # WE are responsible for closing it — done in close().
-        session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(resolver=ThreadedResolver()))
+        session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(resolver=ThreadedResolver()),
+            trust_env=True,
+        )
         self._sessions.append(session)
         return getattr(ccxt, name)({"enableRateLimit": True, "session": session})
 

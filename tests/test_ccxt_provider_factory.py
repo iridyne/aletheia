@@ -50,3 +50,21 @@ def test_factory_returns_fresh_instance_each_call(monkeypatch):
     b = get_market_data_provider()
     # Never cached — distinct objects so cross-event-loop reuse is impossible.
     assert a is not b
+
+
+async def test_client_session_trusts_env():
+    """ClientSession must use trust_env=True so HTTP_PROXY env vars are honored.
+
+    Without trust_env=True, aiohttp ignores HTTP_PROXY/HTTPS_PROXY and all
+    requests bypass the system proxy — causing total failure in environments
+    where exchanges are only reachable through a proxy (e.g. behind GFW).
+    """
+    p = CCXTProvider(exchange="binance", fallback_exchange="bybit")
+    client = p._client("binance")
+    assert len(p._sessions) == 1
+    session = p._sessions[0]
+    assert session.trust_env is True, (
+        "ClientSession missing trust_env=True — proxy env vars will be ignored"
+    )
+    await session.close()
+    await client.close()

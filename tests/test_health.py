@@ -282,3 +282,73 @@ async def test_llm_complete_reports_failure_then_success(tmp_path, monkeypatch):
     content, err = await helpers.llm_complete(system="s", user="u")
     assert content == "hi" and err is None
     assert health.get_llm_consecutive_failures() == 0
+
+
+# --- code_drift one-shot: don't keep restarting if drift persists ---
+
+def test_code_drift_does_not_restart_twice(tmp_path, monkeypatch):
+    """After one code_drift restart in the last hour, if drift persists, fall
+    through to market_data_stale instead of consuming another restart slot."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health, build_info
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.health.self_heal_enabled = True
+    cfg.health.self_heal_code_drift = True
+    cfg.health.self_heal_market_data = True
+    save_config(cfg)
+
+    # Simulate a previous code_drift restart 20 minutes ago
+    from aletheia.files.jsonl import write_audit
+    from datetime import datetime, timedelta
+    ts = (datetime.utcnow() - timedelta(minutes=20)).isoformat()
+    write_audit({
+        "actor": "system", "source": "self_heal",
+        "event_type": "self_heal_restart",
+        "entity_type": "gateway", "entity_id": "gateway",
+        "reason": "code_drift",
+        "message": "Self-heal restart: code_drift",
+        "timestamp": ts,
+    })
+
+    # code_drift still present + market_data is stale
+    monkeypatch.setattr(build_info, "code_drift_issue",
+                        lambda: "code_updated_pending_restart:aaa..bbb")
+    monkeypatch.setattr(health, "_market_data_stale_minutes", lambda cfg: 60.0)
+    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
+    monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
+
+    restarted_for = []
+    monkeypatch.setattr(health, "_trigger_restart", lambda r: restarted_for.append(r))
+    monkeypatch.setattr(health, "_can_self_restart", lambda: (True, ""))
+    monkeypatch.setattr(health, "_send_alert", lambda msg: None)
+
+    health.run_health_check()
+    assert restarted_for == ["market_data_stale"]
+
+
+def test_code_drift_first_time_still_restarts(tmp_path, monkeypatch):
+    """First occurrence of code_drift (no prior restart in last hour) should
+    still trigger a restart as before."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health, build_info
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.health.self_heal_enabled = True
+    cfg.health.self_heal_code_drift = True
+    save_config(cfg)
+
+    monkeypatch.setattr(build_info, "code_drift_issue",
+                        lambda: "code_updated_pending_restart:aaa..bbb")
+    monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
+    monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
+
+    restarted_for = []
+    monkeypatch.setattr(health, "_trigger_restart", lambda r: restarted_for.append(r))
+    monkeypatch.setattr(health, "_can_self_restart", lambda: (True, ""))
+    monkeypatch.setattr(health, "_send_alert", lambda msg: None)
+
+    health.run_health_check()
+    assert restarted_for == ["code_drift"]

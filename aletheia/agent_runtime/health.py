@@ -207,6 +207,39 @@ def _recent_self_heal_restarts() -> list[float]:
     return sorted(ages, reverse=True)  # oldest (largest age) first
 
 
+def _code_drift_already_tried() -> bool:
+    """True if a code_drift restart was attempted in the last hour but drift persists.
+
+    code_drift is supposed to be self-terminating (boot==HEAD after respawn).
+    If it persists after a restart, HEAD keeps moving (ongoing dev) — stop
+    consuming restart budget and let other signals (market_data_stale) through.
+    """
+    from datetime import datetime
+    from aletheia.files.jsonl import read_jsonl
+    now = datetime.utcnow()
+    try:
+        for e in read_jsonl("audit.jsonl", limit=200):
+            if e.get("event_type") != "self_heal_restart":
+                continue
+            if "code_drift" not in (e.get("reason") or e.get("message", "")):
+                continue
+            ts = e.get("timestamp")
+            if not ts:
+                continue
+            try:
+                dt = datetime.fromisoformat(ts)
+            except ValueError:
+                continue
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
+            age = (now - dt).total_seconds()
+            if 0 <= age <= 3600:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _trigger_restart(reason: str) -> None:
     """Audit FIRST (synchronous append completes before exit), then restart.
 
@@ -222,6 +255,7 @@ def _trigger_restart(reason: str) -> None:
     write_audit({
         "actor": "system", "source": "self_heal", "event_type": "self_heal_restart",
         "entity_type": "gateway", "entity_id": "gateway",
+        "reason": reason,
         "message": f"Self-heal restart: {reason}",
     })
     _send_alert(f"self-heal restart ({reason}) — respawning")
@@ -336,16 +370,22 @@ def run_health_check() -> dict:
 
     issues = h["issues"]
     # Priority: code drift first — safest (self-terminating: boot==HEAD after
-    # respawn) and fresh code may also restore a stalled feed.
+    # respawn) and fresh code may also restore a stalled feed. BUT: only try
+    # once per hour — if the restart didn't fix the drift (HEAD keeps moving),
+    # stop consuming budget and let other signals (market_data_stale) through.
     if cfg.health.self_heal_code_drift and any(
         i.startswith("code_updated_pending_restart") for i in issues
     ):
-        ok, why = _can_self_restart()
-        if ok:
-            _trigger_restart("code_drift")
+        if not _code_drift_already_tried():
+            ok, why = _can_self_restart()
+            if ok:
+                _trigger_restart("code_drift")
+                return h
+            _alert_suppressed("code_drift", why)
             return h
-        _alert_suppressed("code_drift", why)
-        return h
+        else:
+            logger.info("code_drift restart already attempted within the hour; "
+                        "demoting to alert-only, letting other signals through")
 
     if cfg.health.self_heal_market_data and any(
         i.startswith("market_data_stale") for i in issues
