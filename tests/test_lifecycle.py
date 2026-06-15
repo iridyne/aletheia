@@ -325,6 +325,7 @@ def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
     cfg = lifecycle.load_config()
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
 
     # Launcher still alive (poll None); gateway up → no raise.
     lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=1.0)
@@ -358,6 +359,34 @@ def test_verify_started_raises_on_timeout_when_never_up(tmp_path, monkeypatch):
 
     with pytest.raises(typer.Exit):
         lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.6)
+
+
+def test_verify_started_kills_api_only_gateway_when_webui_missing(tmp_path, monkeypatch):
+    """API-only startup is not success: kill it so watchdog can retry after build.
+
+    Regression: if dashboard_static/index.html disappeared during frontend build,
+    uvicorn could bind /api while "/" stayed 404. The old verifier returned
+    success, leaving users with an unreachable UI forever.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    cfg = lifecycle.load_config()
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: True)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: False)
+    monkeypatch.setattr(lifecycle, "read_pid", lambda: 4242)
+    killed: list[int] = []
+    monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
+    cleared: list[bool] = []
+    monkeypatch.setattr(lifecycle, "clear_pid", lambda: cleared.append(True))
+    monkeypatch.setattr(lifecycle, "wait_port_free", lambda port, host, timeout=10.0: True)
+
+    with pytest.raises(typer.Exit):
+        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.1)
+
+    assert killed == [4242]
+    assert cleared == [True]
 
 
 def test_verify_started_surfaces_errors_log_tail(tmp_path, monkeypatch, capsys):

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from aletheia import __version__
@@ -45,6 +46,7 @@ def _mount_static_dashboard() -> None:
     _static_dir = Path(__file__).resolve().parent.parent / "dashboard_static"
     if not (_static_dir.exists() and (_static_dir / "index.html").exists()):
         logger.warning(f"Static dashboard not mounted: {_static_dir} / index.html missing")
+        _mount_dashboard_unavailable_page(_static_dir)
         return
 
     class _StaticCacheHeaders(StaticFiles):
@@ -71,6 +73,44 @@ def _mount_static_dashboard() -> None:
 
     app.mount("/", _StaticCacheHeaders(directory=str(_static_dir), html=True), name="dashboard")
     logger.info(f"Static dashboard mounted from {_static_dir}")
+
+
+def _mount_dashboard_unavailable_page(static_dir: Path) -> None:
+    """Serve a clear emergency page instead of a JSON 404 when assets are absent.
+
+    This route is only used in broken/direct-start cases. Normal CLI starts fail
+    preflight before the API process comes up, and lifecycle verification now
+    kills API-only starts so the watchdog can retry.
+    """
+    if getattr(app.state, "_dashboard_unavailable_route", False):
+        return
+
+    @app.get("/", include_in_schema=False)
+    async def dashboard_unavailable():
+        return HTMLResponse(
+            status_code=503,
+            content=f"""<!doctype html>
+<html><head>
+<meta charset=\"utf-8\" />
+<meta http-equiv=\"refresh\" content=\"5\" />
+<title>Aletheia dashboard unavailable</title>
+<style>
+body {{ background:#0a0e12; color:#e6edf3; font-family:system-ui,sans-serif; padding:32px; }}
+code {{ color:#22d3ee; }}
+.box {{ max-width:760px; border:1px solid #ff5d6c; border-radius:8px; padding:20px; background:#141a21; }}
+</style>
+</head><body>
+<div class=\"box\">
+<h1>Aletheia dashboard assets are unavailable</h1>
+<p>The backend API is running, but the static dashboard was not mounted.</p>
+<p>Expected assets under: <code>{static_dir}</code></p>
+<p>Recovery: <code>cd frontend && npm run build</code>, then <code>uv run aletheia gateway restart --no-browser</code>.</p>
+<p>This page refreshes every 5 seconds.</p>
+</div>
+</body></html>""",
+        )
+
+    app.state._dashboard_unavailable_route = True
 
 
 def runtime_process_context(environ: dict[str, str] | None = None) -> dict:

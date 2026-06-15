@@ -6,7 +6,10 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: path.resolve(__dirname, '../aletheia/dashboard_static'),
-    emptyOutDir: true,
+    // Keep the previous hashed assets while building. Emptying this directory
+    // creates a short window where a gateway restart can mount no dashboard and
+    // serve API-only 404s at "/".
+    emptyOutDir: false,
     manifest: true,
   },
   server: {

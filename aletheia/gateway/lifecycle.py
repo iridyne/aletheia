@@ -146,23 +146,40 @@ def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
         if proc is not None and proc.poll() is not None and proc.returncode != 0:
             _fail_spawn(f"launcher exited with code {proc.returncode} before gateway came up")
         if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
-            # Port is up — verify WebUI is actually accessible (not just API)
+            # Port is up — verify WebUI is actually accessible (not just API).
+            # Keep waiting until timeout if root is not HTML; static assets may
+            # still be appearing during a frontend build.
             try:
                 if _verify_webui_accessible(cfg):
                     return  # Gateway confirmed fully operational
             except Exception:
-                pass  # Verification failed, but don't block startup — API still works
-            # WebUI may be 404 but API works — log and proceed
-            logger.warning(
-                "Gateway started but WebUI may be inaccessible. "
-                "Check aletheia/dashboard_static/ exists."
-            )
-            return
+                pass
         time.sleep(0.3)
 
     if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
-        return
+        _stop_failed_gateway(cfg)
+        _fail_spawn(
+            "gateway API came up but WebUI root did not return HTML; "
+            "dashboard_static may be missing or mid-build"
+        )
     _fail_spawn(f"gateway did not come up within {timeout:.0f}s (no pid file / port not listening)")
+
+
+def _stop_failed_gateway(cfg) -> None:
+    """Stop a just-started gateway that failed spawn verification.
+
+    If we leave an API-only process running, the watchdog sees "already running"
+    and never retries, while users get a broken dashboard. Kill only the tracked
+    Aletheia gateway tree, then clear the pid after the port is free.
+    """
+    try:
+        pid = read_pid()
+        if pid:
+            kill_pid_tree(pid)
+        wait_port_free(cfg.app.dashboard_port, cfg.app.bind_host, timeout=5.0)
+        clear_pid()
+    except Exception:
+        pass
 
 
 def _fail_spawn(reason: str) -> None:
