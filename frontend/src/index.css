@@ -972,9 +972,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--muted);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-3);
   font: inherit;
-  font-size: 0.86rem;
+  font-size: 0.78rem;
+  font-weight: 600;
   cursor: pointer;
 }
 .command-center-tabs button.active {
@@ -1966,14 +1967,15 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
   margin-bottom: var(--space-3);
 }
 .lens-tab {
-  padding: 0.6rem 1.2rem;
+  padding: var(--space-1) var(--space-3);
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 0.85rem;
-  transition: color 0.15s, border-color 0.15s;
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: color 0.1s, border-color 0.1s;
 }
 .lens-tab:hover { color: var(--text); }
 .lens-tab-active {
@@ -1989,12 +1991,13 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
 .lens-brief-input textarea {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: var(--space-2);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
   color: var(--text);
   font-family: inherit;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   resize: vertical;
+  min-height: 72px;
 }
 .lens-brief-actions {
   display: flex;
