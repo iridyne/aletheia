@@ -994,7 +994,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   justify-content: center;
   color: var(--muted);
   border: 1px dashed var(--border);
-  border-radius: 14px;
+  border-radius: var(--r);
   background: rgba(255,255,255,0.02);
   text-align: center;
   padding: var(--space-4);
@@ -1006,7 +1006,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   margin-bottom: var(--space-3);
   padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--r);
   background: var(--surface);
 }
 .command-msg.user {
@@ -1030,15 +1030,16 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: inherit;
-  font-size: 0.92rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
   color: var(--text);
+  line-height: 1.5;
 }
 .command-trace-card,
 .command-result-card {
   margin-bottom: var(--space-3);
   padding: var(--space-3);
-  border-radius: 12px;
+  border-radius: var(--r);
   background: rgba(255,255,255,0.03);
   border: 1px solid var(--border);
 }
@@ -1075,19 +1076,20 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .command-composer textarea {
   width: 100%;
   resize: vertical;
-  min-height: 108px;
-  border-radius: 12px;
+  min-height: 88px;
+  border-radius: var(--r);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
-  padding: 0.9rem 1rem;
+  padding: var(--space-3);
   font: inherit;
+  font-size: 0.85rem;
 }
 .command-preview {
   margin-top: var(--space-3);
   padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r);
   background: rgba(255,255,255,0.03);
 }
 .command-preview-head {
@@ -1245,8 +1247,8 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .cc-action-btn {
   width: 100%;
-  padding: 0.8rem 0.9rem;
-  border-radius: 12px;
+  padding: var(--space-3);
+  border-radius: var(--r);
   border: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(79, 156, 255, 0.12), rgba(79, 156, 255, 0.04));
   color: var(--text);
@@ -1264,12 +1266,13 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .cc-filter-input {
   width: 100%;
   margin-bottom: var(--space-3);
-  padding: 0.75rem 0.85rem;
-  border-radius: 10px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
+  font-size: 0.82rem;
 }
 .cc-branch-form {
   margin-bottom: var(--space-3);
@@ -1296,10 +1299,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .cc-command-row {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.75rem 0.9rem;
+  gap: 0.25rem;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   background: var(--surface-2);
   color: var(--text);
   text-align: left;
@@ -1332,9 +1335,9 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: 0.75rem 0.9rem;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   background: var(--surface-2);
   color: var(--text);
   text-align: left;
@@ -1407,9 +1410,9 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  padding: 0.65rem 0.75rem;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   background: var(--surface-2);
 }
 .cc-inspector-label {
@@ -1428,8 +1431,8 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   margin: 0;
   max-height: 280px;
   overflow: auto;
-  padding: 0.9rem 1rem;
-  border-radius: 12px;
+  padding: var(--space-3);
+  border-radius: var(--r);
   background: var(--bg-2);
   color: var(--text);
   border: 1px solid var(--border);
@@ -1928,7 +1931,6 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--faint); }
 ::-webkit-scrollbar-thumb:hover { background: var(--faint); }
 
 /* --- Serenity Research Workbench --- */
