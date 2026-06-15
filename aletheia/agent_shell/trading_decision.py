@@ -191,13 +191,19 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         else:
             stop_price = round(price * (1 + stop_pct / 100.0), 8)
 
+    decision_meta = {
+        "conviction": decision.conviction,
+        "debate_ran": decision.debate_ran,
+        "debate_bull": decision.debate_bull_confidence,
+        "debate_bear": decision.debate_bear_confidence,
+        "supporting": decision.supporting_signals[:5],
+        "opposing": decision.opposing_signals[:5],
+        "guards": guard_summary,
+    }
     rationale = (
-        f"PI Agent decision.\n"
-        f"conviction={decision.conviction}\n"
-        f"reasoning={decision.reasoning[:200]}\n"
-        f"debate_ran={decision.debate_ran}\n"
-        f"bull={decision.debate_bull_confidence} bear={decision.debate_bear_confidence}\n"
-        f"guards={guard_summary}"
+        f"{decision.reasoning[:200]}\n"
+        f"---\n"
+        f"{json.dumps(decision_meta)}"
     )
 
     return create_paper_proposal(

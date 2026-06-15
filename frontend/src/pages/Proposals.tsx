@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
@@ -10,6 +10,48 @@ import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, StatusText } from '../components/ui'
 import { formatViolation, formatViolationText } from '../lib/riskViolations'
 import { humanize, fmtTimestamp } from '../lib/format'
+
+interface DecisionMeta {
+  conviction: number
+  debate_ran: boolean
+  debate_bull: number | null
+  debate_bear: number | null
+  supporting: string[]
+  opposing: string[]
+  guards: { guards_run: number; blocks: number; warnings: number; details: any[] }
+}
+
+function parseDecisionMeta(rationale: string | null): { text: string; meta: DecisionMeta | null } {
+  if (!rationale) return { text: '', meta: null }
+  const sep = rationale.indexOf('\n---\n')
+  if (sep === -1) return { text: rationale, meta: null }
+  const text = rationale.slice(0, sep)
+  try {
+    const meta = JSON.parse(rationale.slice(sep + 5)) as DecisionMeta
+    return { text, meta }
+  } catch {
+    return { text: rationale, meta: null }
+  }
+}
+
+function ConvictionMeter({ conviction, debateRan, bull, bear }: {
+  conviction: number; debateRan: boolean; bull: number | null; bear: number | null
+}) {
+  const color = conviction >= 70 ? 'var(--c-signal)' : conviction >= 55 ? 'var(--c-warn)' : 'var(--c-danger)'
+  return (
+    <div className="conviction-meter">
+      <div className="conviction-bar-wrap">
+        <div className="conviction-bar" style={{ width: `${conviction}%`, background: color }} />
+      </div>
+      <span className="conviction-label mono">{conviction}/100</span>
+      {debateRan && (
+        <span className="conviction-debate mono">
+          Bull {bull ?? '?'} / Bear {bear ?? '?'}
+        </span>
+      )}
+    </div>
+  )
+}
 
 /**
  * Approval Desk (WEBUI_PAGE_MAP.md — Proposals ELEVATED).
@@ -122,7 +164,7 @@ export default function Proposals() {
               <DrawerField label="Stop" value={selected.stop_price} mono />
             </DrawerSection>
             <DrawerSection label="Rationale">
-              <p className="feed-thesis">{selected.agent_rationale || 'No rationale provided.'}</p>
+              <ProposalRationaleDetail rationale={selected.agent_rationale} />
             </DrawerSection>
             <RiskDecisionSection proposalId={selected.id} />
             <DrawerSection label="Links">
@@ -185,12 +227,7 @@ function ProposalCard({
         <span>{humanize(p.order_type)}</span>
       </div>
 
-      {p.agent_rationale && (
-        <div className="proposal-rationale">
-          <span className="proposal-rationale-label">WHY</span>
-          <span>{p.agent_rationale.length > 220 ? p.agent_rationale.slice(0, 220) + '…' : p.agent_rationale}</span>
-        </div>
-      )}
+      <ProposalRationale rationale={p.agent_rationale} />
 
       {/* Risk verdict — fetched inline so the decision is informed without a click */}
       <RiskVerdictInline proposalId={p.id} />
@@ -258,9 +295,6 @@ function RiskDecisionSection({ proposalId }: { proposalId: string }) {
     <DrawerSection label="Risk Decision">
       <DrawerField label="Decision" value={<StatusBadge status={d.decision || (d.approved ? 'approved' : 'rejected')} />} />
       <DrawerField label="Risk Score" value={d.risk_score} mono />
-      {/* The backend message is `Rejected: <raw codes>` when there are violations — redundant
-          with (and uglier than) the humanized Violations list below. Show it only when it
-          adds something the list doesn't, i.e. no violations (e.g. "Approved"). */}
       {violations.length === 0 && <DrawerField label="Message" value={d.message} />}
       {violations.length > 0 && (
         <div className="mt-2">
@@ -274,5 +308,60 @@ function RiskDecisionSection({ proposalId }: { proposalId: string }) {
         </div>
       )}
     </DrawerSection>
+  )
+}
+
+function ProposalRationale({ rationale }: { rationale: string | null }) {
+  const { text, meta } = useMemo(() => parseDecisionMeta(rationale), [rationale])
+  if (!rationale) return null
+  return (
+    <div className="proposal-rationale">
+      {meta ? (
+        <>
+          <ConvictionMeter conviction={meta.conviction} debateRan={meta.debate_ran}
+            bull={meta.debate_bull} bear={meta.debate_bear} />
+          <span className="proposal-rationale-label">WHY</span>
+          <span>{text.length > 180 ? text.slice(0, 180) + '…' : text}</span>
+        </>
+      ) : (
+        <>
+          <span className="proposal-rationale-label">WHY</span>
+          <span>{rationale.length > 220 ? rationale.slice(0, 220) + '…' : rationale}</span>
+        </>
+      )}
+    </div>
+  )
+}
+
+function ProposalRationaleDetail({ rationale }: { rationale: string | null }) {
+  const { text, meta } = useMemo(() => parseDecisionMeta(rationale), [rationale])
+  if (!rationale) return <p className="feed-thesis">No rationale provided.</p>
+  if (!meta) return <p className="feed-thesis">{rationale}</p>
+  return (
+    <div className="decision-detail">
+      <ConvictionMeter conviction={meta.conviction} debateRan={meta.debate_ran}
+        bull={meta.debate_bull} bear={meta.debate_bear} />
+      <p className="feed-thesis mt-2">{text}</p>
+      {meta.supporting.length > 0 && (
+        <div className="decision-signals mt-2">
+          <span className="text-muted text-sm">Supporting:</span>
+          <div className="signal-tags">{meta.supporting.map((s, i) => <Badge key={i} tone="green">{s}</Badge>)}</div>
+        </div>
+      )}
+      {meta.opposing.length > 0 && (
+        <div className="decision-signals mt-1">
+          <span className="text-muted text-sm">Opposing:</span>
+          <div className="signal-tags">{meta.opposing.map((s, i) => <Badge key={i} tone="red">{s}</Badge>)}</div>
+        </div>
+      )}
+      {meta.guards.warnings > 0 && (
+        <div className="decision-guards mt-2">
+          <span className="text-muted text-sm">Guard warnings:</span>
+          {meta.guards.details.map((d: any, i: number) => (
+            <span key={i} className="guard-warn-tag">{d.guard}: {d.reason}</span>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

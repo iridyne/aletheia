@@ -1743,11 +1743,26 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .proposal-params b { color: var(--text); font-weight: 600; }
 
 .proposal-rationale {
-  display: flex; gap: var(--space-2); font-size: 0.8rem; line-height: 1.5; color: var(--text);
+  display: flex; flex-wrap: wrap; gap: var(--space-2); font-size: 0.8rem; line-height: 1.5; color: var(--text);
 }
 .proposal-rationale-label {
   font-size: 0.6rem; font-weight: 700; color: var(--accent); letter-spacing: 0.08em;
   padding-top: 2px; flex-shrink: 0;
+}
+.conviction-meter {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%; margin-bottom: var(--space-1);
+}
+.conviction-bar-wrap {
+  flex: 1; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; max-width: 120px;
+}
+.conviction-bar { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.conviction-label { font-size: 0.72rem; font-weight: 600; }
+.conviction-debate { font-size: 0.68rem; color: var(--muted); }
+.decision-detail .signal-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.decision-guards { font-size: 0.72rem; }
+.guard-warn-tag {
+  display: inline-block; background: rgba(255,180,50,0.12); color: var(--c-warn);
+  padding: 1px 6px; border-radius: 3px; font-size: 0.68rem; margin: 2px 4px 2px 0;
 }
 
 .proposal-risk {
