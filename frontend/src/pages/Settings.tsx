@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
 import PageHeader from '../components/PageHeader'
@@ -28,19 +29,23 @@ type Tab = 'intelligence' | 'execution' | 'risk' | 'infrastructure'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'intelligence',   label: 'Intelligence' },
   { id: 'execution',      label: 'Execution' },
-  { id: 'risk',           label: 'Risk & Symbols' },
+  { id: 'risk',           label: 'Risk, Symbols & Universe' },
   { id: 'infrastructure', label: 'Infrastructure' },
 ]
+
+function isTab(value: string | null): value is Tab {
+  return !!value && TABS.some(t => t.id === value)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Layout primitives
 // ─────────────────────────────────────────────────────────────────────────────
 
-function Section({ title, description, children }: {
-  title: string; description?: string; children: React.ReactNode
+function Section({ id, title, description, children }: {
+  id?: string; title: string; description?: string; children: React.ReactNode
 }) {
   return (
-    <section className="settings-section">
+    <section className="settings-section" id={id ? `settings-section-${id}` : undefined}>
       <div className="settings-section-head">
         <h3>{title}</h3>
         {description && <p className="settings-section-desc">{description}</p>}
@@ -90,9 +95,35 @@ function SaveMsg({ msg }: { msg: { ok: boolean; text: string } | null }) {
 
 export default function Settings() {
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
-  const [tab, setTab] = useState<Tab>('intelligence')
+  const [tab, setTab] = useState<Tab>(() => {
+    const requestedTab = searchParams.get('tab')
+    return isTab(requestedTab) ? requestedTab : 'intelligence'
+  })
+
+  useEffect(() => {
+    const requestedTab = searchParams.get('tab')
+    if (isTab(requestedTab) && requestedTab !== tab) setTab(requestedTab)
+  }, [searchParams, tab])
+
+  useEffect(() => {
+    const section = searchParams.get('section')
+    if (!section) return
+    const timer = window.setTimeout(() => {
+      document.getElementById(`settings-section-${section}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [searchParams, tab, settings])
+
+  const selectTab = (next: Tab) => {
+    setTab(next)
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('tab', next)
+    nextParams.delete('section')
+    setSearchParams(nextParams, { replace: true })
+  }
 
   if (!status || !settings) return <p className="hint">Loading…</p>
 
@@ -105,7 +136,7 @@ export default function Settings() {
 
       <div className="tab-bar" style={{ marginBottom: '2rem' }}>
         {TABS.map(t => (
-          <button key={t.id} className={`tab ${tab === t.id ? 'tab-active' : ''}`} onClick={() => setTab(t.id)}>
+          <button key={t.id} className={`tab ${tab === t.id ? 'tab-active' : ''}`} onClick={() => selectTab(t.id)}>
             {t.label}
           </button>
         ))}
@@ -176,10 +207,6 @@ function IntelligenceTab({ status, settings, qc }: any) {
           />
           <span className={`badge ${schedulerEnabled ? 'badge-green' : 'badge-yellow'}`}>{schedulerEnabled ? 'ACTIVE' : 'DISABLED'}</span>
         </Row>
-      </Section>
-
-      <Section title="Universe Generator" description="Dynamic candidate selection — automatically discovers and scores tradable symbols beyond the static list. When enabled, agents observe the top 20–30 assets by opportunity score.">
-        <UniverseConfigCard settings={settings} qc={qc} />
       </Section>
 
       <Section title="AI Model Providers" description="LLM endpoints used by all agents. Verify & Save tests the connection before persisting. API keys are write-only.">
@@ -553,6 +580,14 @@ function TradingParamsCard({ settings, qc }: any) {
 function RiskTab({ settings, qc }: any) {
   return (
     <div>
+      <Section
+        id="universe"
+        title="Universe Board"
+        description="Controls the dynamic candidate selector shown on Universe Board. When disabled, agents use the static fallback list instead."
+      >
+        <UniverseConfigCard settings={settings} qc={qc} />
+      </Section>
+
       <Section
         title="Tradable Symbols"
         description="Coins agents are allowed to analyse and trade. Applied to both the risk engine and exchange config atomically."

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { UniverseMember, UniverseCurrentResponse, UniverseMemberDetail } from '../types'
 import { DataTable } from '../components/DataTable'
@@ -99,6 +100,7 @@ const columns = [
 
 export default function Universe() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [selected, setSelected] = useState<UniverseMember | null>(null)
 
   const { data } = useQuery<UniverseCurrentResponse>({
@@ -136,6 +138,25 @@ export default function Universe() {
               : `Snapshot ${snapshot?.id?.slice(0, 8)} — ${members.length} candidates`
         }
       />
+
+      {!enabled && (
+        <div className="card" style={{ borderColor: 'var(--border-2)', marginBottom: '1rem' }}>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div>
+              <h3 style={{ marginBottom: '0.25rem' }}>Universe generator is disabled</h3>
+              <p className="hint" style={{ margin: 0 }}>
+                The board is showing the static fallback pool. Enable it in Settings → Risk, Symbols & Universe → Universe Board.
+              </p>
+            </div>
+            <button
+              className="secondary"
+              onClick={() => navigate('/settings?tab=risk&section=universe')}
+            >
+              Open Universe setting
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Summary row */}
       <div className="account-snapshot">
@@ -177,6 +198,12 @@ export default function Universe() {
             disabled={refreshMutation.isPending}
           >
             {refreshMutation.isPending ? 'Refreshing…' : 'Refresh Now'}
+          </button>
+          <button
+            className="secondary"
+            onClick={() => navigate('/settings?tab=risk&section=universe')}
+          >
+            Universe Settings
           </button>
           {refreshMutation.isError && (
             <span className="text-sm pnl-negative">

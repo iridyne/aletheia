@@ -116,6 +116,26 @@ async def test_model_health_endpoint(client):
     assert all("provider" in h and "available" in h for h in data)
 
 
+@pytest.mark.anyio
+async def test_universe_settings_are_visible_and_persisted(client):
+    resp = await client.get("/api/settings")
+    assert resp.status_code == 200
+    assert resp.json()["universe"]["enabled"] is False
+
+    resp = await client.post(
+        "/api/settings/universe",
+        json={"enabled": True, "max_candidates": 20, "explore_ratio": 0.15},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["universe"]["enabled"] is True
+    assert body["universe"]["max_candidates"] == 20
+
+    resp = await client.get("/api/settings")
+    assert resp.json()["universe"]["enabled"] is True
+    assert resp.json()["universe"]["max_candidates"] == 20
+
+
 # --- Codex subscription provider routes ---
 
 @pytest.mark.anyio
