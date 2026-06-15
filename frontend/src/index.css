@@ -106,7 +106,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .nav-group-label {
   width: 100%; display: flex; justify-content: space-between; align-items: center;
   background: none; border: none; cursor: pointer;
-  color: var(--faint); font-family: var(--sans); font-size: 0.65rem; font-weight: 600;
+  color: var(--muted); font-family: var(--sans); font-size: 0.65rem; font-weight: 600;
   letter-spacing: 0.14em; text-transform: uppercase;
   padding: 0.7rem 0.75rem 0.35rem;
 }
@@ -243,7 +243,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .sp-section:last-child { border-bottom: none; }
 .sp-section-label {
   font-size: 0.62rem; font-weight: 600; letter-spacing: 0.12em;
-  text-transform: uppercase; color: var(--faint);
+  text-transform: uppercase; color: var(--muted);
   margin-bottom: var(--space-1); padding: 0;
 }
 .sp-row {
@@ -615,7 +615,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 th, td { padding: 5px var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
 th {
-  color: var(--faint); font-weight: 600; font-size: 0.66rem; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; font-size: 0.66rem; text-transform: uppercase;
   letter-spacing: 0.07em; border-bottom: 2px solid var(--border-2);
 }
 tbody tr { transition: background 0.08s; }
@@ -709,7 +709,7 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 
 .drawer-section { margin-bottom: var(--space-4); }
 .drawer-section-label {
-  font-size: 0.68rem; font-weight: 600; color: var(--faint);
+  font-size: 0.68rem; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: var(--space-2);
 }
 .drawer-section-content { }
