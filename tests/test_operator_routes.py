@@ -1048,3 +1048,6 @@ async def test_operator_extension_routes_roundtrip_and_enable_gate(client):
     enabled = enable.json()
     assert enabled["status"] == "enabled"
     assert enabled["enabled_by"] == "human-review"
+    from aletheia.storage.sqlite import get_db
+
+    assert get_db().in_transaction is False

@@ -33,20 +33,46 @@ if (-not (Test-Path $Aletheia)) {
     Write-Error "venv aletheia.exe not found at $Aletheia. Run 'uv sync' first."
 }
 
+function Test-DevReloadEnabled {
+    try {
+        $response = Invoke-RestMethod -Uri 'http://127.0.0.1:8787/api/dev/reload/status' -TimeoutSec 3
+        return ($response.enabled -eq $true)
+    } catch {
+        return $false
+    }
+}
+
+function Assert-GatewayRunning {
+    param([string]$Action)
+    Start-Sleep -Seconds 2
+    $currentStatus = & $Aletheia gateway status 2>&1 | Out-String
+    if ($currentStatus -match 'Gateway:\s+running') {
+        return $currentStatus
+    }
+    Write-Error "gateway failed after $Action. Last status:`n$currentStatus"
+}
+
 $status = & $Aletheia gateway status 2>&1 | Out-String
 if ($status -match 'Gateway:\s+running') {
-    Write-Host "[ok] gateway already running on 127.0.0.1:8787" -ForegroundColor Green
-    Write-Host "     NOTE: restart gateway to pick up ALETHEIA_DEV_RELOAD=1 for SSE endpoint" -ForegroundColor Yellow
+    if (Test-DevReloadEnabled) {
+        Write-Host "[ok] gateway already running on 127.0.0.1:8787 with dev reload" -ForegroundColor Green
+    } else {
+        Write-Host "[..] gateway is running without dev reload; restarting on single port 8787..." -ForegroundColor Yellow
+        & $Aletheia gateway restart --no-browser | Out-Null
+        $status = Assert-GatewayRunning 'dev-reload restart'
+        if (-not (Test-DevReloadEnabled)) {
+            Write-Error "gateway is running, but /api/dev/reload/status is not enabled. Check data/logs/errors.log."
+        }
+        Write-Host "[ok] gateway running on 127.0.0.1:8787 with dev reload" -ForegroundColor Green
+    }
 } else {
     Write-Host "[..] starting gateway..." -ForegroundColor Yellow
-    & $Aletheia gateway start | Out-Null
-    Start-Sleep -Seconds 2
-    $status = & $Aletheia gateway status 2>&1 | Out-String
-    if ($status -match 'Gateway:\s+running') {
-        Write-Host "[ok] gateway running on 127.0.0.1:8787" -ForegroundColor Green
-    } else {
-        Write-Error "gateway failed to start. Last status:`n$status"
+    & $Aletheia gateway start --no-browser | Out-Null
+    $status = Assert-GatewayRunning 'start'
+    if (-not (Test-DevReloadEnabled)) {
+        Write-Error "gateway is running, but /api/dev/reload/status is not enabled. Check data/logs/errors.log."
     }
+    Write-Host "[ok] gateway running on 127.0.0.1:8787 with dev reload" -ForegroundColor Green
 }
 
 # --- 2. Ensure node_modules exists --------------------------------------------

@@ -141,13 +141,13 @@ Use these commands unless a task has a narrower justified command:
 - Backend focused tests: `uv run pytest tests/<file>.py -q`
 - Backend full suite: `uv run pytest -q`
 - Frontend build (production assets): run in `frontend/` with `npm run build`
-- Frontend dev (hot reload, default during UI work): `.\scripts\dev.ps1` — Vite on `:5173` proxies `/api/*` to the persistent gateway on `:8787`. Iterate against `:5173`; only rebuild `aletheia/dashboard_static/` once before commit.
+- Frontend dev (single-port default during UI work): `.\scripts\dev.ps1` — the gateway on `:8787` serves both API and dashboard while `vite build --watch` refreshes `aletheia/dashboard_static/`. Iterate against `http://127.0.0.1:8787/`; do not use `:5173` as the daily entrypoint.
 - Gateway smoke: `uv run aletheia gateway status`
 
 If frontend source changes are committed, rebuild static assets under
 `aletheia/dashboard_static/` because they are part of the shipped local dashboard.
-During tight iteration loops use `scripts\dev.ps1` instead — rebuilding the
-static bundle on every keystroke wastes seconds the dev server already saves.
+During tight iteration loops use `scripts\dev.ps1` instead — it keeps the
+single gateway port live while Vite rebuilds the static bundle in watch mode.
 
 ## Git And Workspace Rules
 

@@ -41,6 +41,17 @@ uv run aletheia secrets set ...      # → Settings → Credentials
 uv run aletheia risk kill | resume   # → Risk panel
 ```
 
+## Development UI entrypoint
+
+Use the same URL for daily use and UI iteration:
+
+```powershell
+.\scripts\dev.ps1   # rebuild-watch frontend + dev-reload gateway on http://127.0.0.1:8787/
+```
+
+Do not use `:5173` as the normal dashboard entrypoint; the gateway's `:8787`
+origin is the canonical API + UI surface.
+
 ## Architecture
 
 - Python 3.12 backend (FastAPI + Typer CLI), Bitget spot + USDT futures (BTC/ETH/SOL)

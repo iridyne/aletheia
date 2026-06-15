@@ -48,7 +48,7 @@ Python 3.12, FastAPI, Typer, APScheduler, SQLite (WAL), JSONL, React/Vite, CCXT,
 uv sync
 python -m aletheia gateway start  # Full gateway (scheduler + API + agents)
 # or for development:
-scripts/dev.ps1                   # Vite HMR :5173 proxying /api/* to :8787
+scripts/dev.ps1                   # Single-port :8787 UI + API with Vite build-watch
 ```
 
 ## How to Test

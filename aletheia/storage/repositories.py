@@ -23,9 +23,14 @@ def _insert(table: str, data: dict) -> None:
     was_in_tx = db.in_transaction
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
-    db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(data.values()))
-    if not was_in_tx:
-        db.commit()
+    try:
+        db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(data.values()))
+        if not was_in_tx:
+            db.commit()
+    except Exception:
+        if not was_in_tx and db.in_transaction:
+            db.rollback()
+        raise
 
 
 def _select_all(table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int = 100) -> list[dict]:
@@ -51,9 +56,14 @@ def _update(table: str, id_val: str, data: dict) -> None:
     # the write hung open holding the lock → `database is locked` for other threads.
     was_in_tx = db.in_transaction
     sets = ", ".join(f"{k} = ?" for k in data.keys())
-    db.execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*data.values(), id_val])
-    if not was_in_tx:
-        db.commit()
+    try:
+        db.execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*data.values(), id_val])
+        if not was_in_tx:
+            db.commit()
+    except Exception:
+        if not was_in_tx and db.in_transaction:
+            db.rollback()
+        raise
 
 
 @contextmanager

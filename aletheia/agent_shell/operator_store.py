@@ -735,12 +735,12 @@ def update_extension(extension_id: str, **kwargs) -> None:
     updates = dict(kwargs)
     if "manifest" in updates:
         updates["manifest"] = _json_dump(updates["manifest"] or {})
-    if "session_id" in updates and updates["session_id"]:
-        _ensure_session(str(updates["session_id"]))
     updates.setdefault("updated_at", _utc_now())
 
     db = get_db()
     was_in_tx = db.in_transaction
+    if "session_id" in updates and updates["session_id"]:
+        _ensure_session(str(updates["session_id"]))
     sets = ", ".join(f"{key} = ?" for key in updates.keys())
     db.execute(
         f"UPDATE extension_registry SET {sets} WHERE id = ?",
