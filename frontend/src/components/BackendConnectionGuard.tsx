@@ -67,7 +67,8 @@ export default function BackendConnectionGuard() {
   }, [errorUpdatedAt])
 
   const driftIssue = data?.health_issues?.find(i => i.startsWith('code_updated_pending_restart:')) || ''
-  const schedulerBroken = !!data?.scheduler_enabled && !data?.scheduler_running
+  const hasSchedulerActual = typeof data?.scheduler_running === 'boolean'
+  const schedulerBroken = hasSchedulerActual && !!data?.scheduler_enabled && !data?.scheduler_running
   const disconnected = failureCount > 0
   const offlineForMs = offlineSince ? Date.now() - offlineSince : 0
   const showOverlay = disconnected && offlineForMs >= OVERLAY_AFTER_MS

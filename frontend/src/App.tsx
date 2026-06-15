@@ -191,8 +191,13 @@ function StatusBar() {
   const exch = String(data.exchange || '')
   const perm = String(data.permission_mode || '')
   const modelProv = String(data.model_provider || '')
-  const schedulerState = String(data.scheduler_state || (paused ? 'paused' : 'unknown'))
-  const schedulerRunning = !!data.scheduler_running
+  const hasSchedulerActual = typeof data.scheduler_running === 'boolean'
+  const schedulerState = hasSchedulerActual
+    ? String(data.scheduler_state || 'unknown')
+    : (paused ? 'paused' : data.scheduler_enabled ? 'configured' : 'disabled')
+  const schedulerRunning = hasSchedulerActual
+    ? !!data.scheduler_running
+    : (!paused && !!data.scheduler_enabled)
   const killed = !!ks?.active
 
   const latestRun = (runs as any[])[0]
