@@ -30,8 +30,7 @@ export default function PageHeader({
             <span className="crumb-current">{title}</span>
           </div>
         )}
-        <h2 className="page-title">{title}</h2>
-        {role && <p className="page-role">{role}</p>}
+        <h2 className="page-title" title={role}>{title}</h2>
       </div>
       {actions && <div className="page-header-actions">{actions}</div>}
     </div>

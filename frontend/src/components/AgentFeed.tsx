@@ -134,6 +134,7 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
       })
     }
     for (const p of (proposals as TradeProposal[])) {
+      if (p.status === 'pending') continue
       items.push({
         key: `prop-${p.id}`,
         ts: p.created_at,

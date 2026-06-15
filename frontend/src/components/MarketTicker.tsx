@@ -26,10 +26,6 @@ const CRYPTO = [
   { sym: 'SOL/USDT', label: 'SOL' },
 ]
 
-const INDICES = [
-  { sym: 'SPX', label: 'SPX' },
-  { sym: 'VIX', label: 'VIX' },
-]
 
 function pad2(n: number): string {
   return n < 10 ? '0' + n : String(n)
@@ -94,19 +90,6 @@ export default function MarketTicker() {
         )
       })}
 
-      <span className="ticker-divider" aria-hidden="true" />
-
-      {/* Indices — NOT WIRED. Placeholder slots until backend GET /api/market/indices ships. */}
-      {INDICES.map(({ sym, label }) => (
-        <span
-          key={sym}
-          className="ticker-token ticker-token-pending"
-          title="Indices feed not wired — see WEBUI_BACKEND_HANDOFF.md §13"
-        >
-          <span className="ticker-label">{label}</span>
-          <span className="ticker-price">—</span>
-        </span>
-      ))}
     </div>
   )
 }

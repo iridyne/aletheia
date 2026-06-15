@@ -391,22 +391,19 @@ function StatusBar() {
         </div>
       </div>
 
-      {/* Block 2 — System plate (low-priority context, hides on narrow). */}
-      <div className="system-plate mono" title="Exchange · Mode · Permission">
-        {(exch || '—')}{mode ? `·${mode}` : ''}
-        <button
-          className="perm-mode-btn mono"
-          onClick={() => {
-            const idx = PERMISSION_MODES.indexOf(perm as any)
-            const next = PERMISSION_MODES[(idx + 1) % PERMISSION_MODES.length]
-            permMut.mutate(next)
-          }}
-          title={`Permission mode: ${perm} — click to cycle`}
-          disabled={permMut.isPending}
-        >
-          {perm || '—'}
-        </button>
-      </div>
+      {/* Block 2 — Permission cycle button (exchange/mode visible in popover). */}
+      <button
+        className="perm-mode-btn mono"
+        onClick={() => {
+          const idx = PERMISSION_MODES.indexOf(perm as any)
+          const next = PERMISSION_MODES[(idx + 1) % PERMISSION_MODES.length]
+          permMut.mutate(next)
+        }}
+        title={`Permission mode: ${perm} — click to cycle`}
+        disabled={permMut.isPending}
+      >
+        {perm || '—'}
+      </button>
 
       {/* Block 3 — Pause/Resume action. */}
       <button

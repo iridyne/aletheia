@@ -74,8 +74,8 @@ export default function Proposals() {
       <div className="desk-queue-header">
         <h3>Pending Queue</h3>
         {pending.length > 0
-          ? <Badge tone="yellow">{pending.length} awaiting decision</Badge>
-          : <StatusText tone="green">queue clear</StatusText>}
+          ? <Badge tone="yellow">{pending.length}</Badge>
+          : <StatusText tone="green">clear</StatusText>}
       </div>
 
       {pending.length === 0 ? (
