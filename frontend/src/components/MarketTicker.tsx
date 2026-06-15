@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { fmtNum, fmtSigned, useDecimals } from '../lib/format'
@@ -59,6 +59,27 @@ export default function MarketTicker() {
     if (!snapMap[s.symbol]) snapMap[s.symbol] = s
   }
 
+  // Tick flash: compare current vs previous prices
+  const prevPrices = useRef<Record<string, number>>({})
+  const [flashes, setFlashes] = useState<Record<string, 'up' | 'down'>>({})
+
+  useEffect(() => {
+    const next: Record<string, 'up' | 'down'> = {}
+    for (const { sym } of CRYPTO) {
+      const price = snapMap[sym]?.price
+      const prev = prevPrices.current[sym]
+      if (price != null && prev != null && price !== prev) {
+        next[sym] = price > prev ? 'up' : 'down'
+      }
+      if (price != null) prevPrices.current[sym] = price
+    }
+    if (Object.keys(next).length > 0) {
+      setFlashes(next)
+      const t = setTimeout(() => setFlashes({}), 650)
+      return () => clearTimeout(t)
+    }
+  }, [snapshots])
+
   return (
     <div className="market-ticker" role="status" aria-label="Market ticker">
       {/* Clocks */}
@@ -82,7 +103,7 @@ export default function MarketTicker() {
         return (
           <span key={sym} className="ticker-token" title={`${sym} · 24h change`}>
             <span className="ticker-label">{label}</span>
-            <span className="ticker-price">{price != null ? fmtNum(price) : '—'}</span>
+            <span className={`ticker-price${flashes[sym] ? ` tick-flash-${flashes[sym]}` : ''}`}>{price != null ? fmtNum(price) : '—'}</span>
             <span className={`ticker-pct ticker-${tone}`}>
               {pct != null ? `${fmtSigned(pct)}%` : ''}
             </span>

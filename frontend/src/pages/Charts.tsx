@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PriceChart from '../charts/PriceChart'
+import Sparkline from '../components/Sparkline'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
 import { fmtNum, fmtSigned, fmtTimestamp, useDecimals } from '../lib/format'
@@ -48,6 +49,27 @@ export default function Charts() {
     const legacyKey = s.symbol.replace('/', '')
     if (!snapshotMap[legacyKey]) snapshotMap[legacyKey] = s
   }
+
+  // Tick flash on price change
+  const prevPrices = useRef<Record<string, number>>({})
+  const [flashes, setFlashes] = useState<Record<string, 'up' | 'down'>>({})
+  useEffect(() => {
+    const next: Record<string, 'up' | 'down'> = {}
+    for (const sym of SYMBOLS) {
+      const snap = snapshotMap[sym]
+      const price = snap?.price
+      const prev = prevPrices.current[sym]
+      if (price != null && prev != null && price !== prev) {
+        next[sym] = price > prev ? 'up' : 'down'
+      }
+      if (price != null) prevPrices.current[sym] = price
+    }
+    if (Object.keys(next).length > 0) {
+      setFlashes(next)
+      const t = setTimeout(() => setFlashes({}), 650)
+      return () => clearTimeout(t)
+    }
+  }, [snapshots])
 
   // Derive the data provider from the most recent snapshot (all symbols share one provider)
   const anySnap = (snapshots as any[])[0]
@@ -111,9 +133,10 @@ export default function Charts() {
                 <span className="charts-card-symbol">{sym}</span>
                 <ProviderChip provider={snap?.provider} />
               </div>
-              <div className="mono charts-card-price">
+              <div className={`mono charts-card-price${flashes[sym] ? ` tick-flash-${flashes[sym]}` : ''}`}>
                 {snap ? fmtNum(snap.price) : '—'}
               </div>
+              <Sparkline symbol={sym} width={100} height={20} />
               <div className="charts-card-meta">
                 <div className="charts-card-change">
                   {change != null && (

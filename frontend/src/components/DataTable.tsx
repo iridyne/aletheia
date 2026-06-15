@@ -63,10 +63,12 @@ export function DataTable<T>({ data, columns, onRowClick, pageSize = 25, emptyMe
               <th
                 key={header.id}
                 onClick={header.column.getCanSort() ? header.column.getToggleSortingHandler() : undefined}
-                style={{ cursor: header.column.getCanSort() ? 'pointer' : 'default' }}
+                className={header.column.getCanSort() ? 'sortable' : undefined}
               >
                 {flexRender(header.column.columnDef.header, header.getContext())}
-                {{ asc: ' ↑', desc: ' ↓' }[header.column.getIsSorted() as string] ?? ''}
+                <span className="sort-indicator">
+                  {{ asc: ' ▲', desc: ' ▼' }[header.column.getIsSorted() as string] ?? ''}
+                </span>
               </th>
             ))}
           </tr>

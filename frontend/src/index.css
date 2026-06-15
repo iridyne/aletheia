@@ -666,7 +666,10 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 }
 .setup-banner a { font-weight: 600; }
 
-/* ---------- DataTable toolbar + pagination ---------- */
+/* ---------- DataTable sort + toolbar + pagination ---------- */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text); }
+.sort-indicator { color: var(--accent); font-size: 0.55rem; margin-left: 2px; vertical-align: middle; }
 .dt-toolbar { margin-bottom: 0.6rem; }
 .dt-filter {
   width: 220px; background: var(--bg); border: 1px solid var(--border-2);
@@ -912,6 +915,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .charts-card-symbol { font-size: 0.72rem; color: var(--faint); }
 .charts-card-price { font-size: 1rem; font-weight: 600; }
+.sparkline { display: block; margin: 2px 0; opacity: 0.85; }
 .charts-card-meta { display: flex; justify-content: space-between; }
 .charts-card-change { display: flex; gap: 0.4rem; align-items: center; }
 .charts-card-change .mono { font-size: 0.72rem; }
@@ -1871,6 +1875,12 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
 .skeleton-bar:nth-child(2) { width: 70%; }
 .skeleton-bar:nth-child(3) { width: 55%; }
 @keyframes shimmer { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* ---------- Tick flash (price change pulse) ---------- */
+@keyframes tick-up   { from { background: rgba(46,230,168,0.18); } to { background: transparent; } }
+@keyframes tick-down { from { background: rgba(255,93,108,0.18); } to { background: transparent; } }
+.tick-flash-up   { animation: tick-up 600ms ease-out; border-radius: 2px; }
+.tick-flash-down { animation: tick-down 600ms ease-out; border-radius: 2px; }
 
 /* scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

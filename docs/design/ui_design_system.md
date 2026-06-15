@@ -430,6 +430,7 @@ tr.clickable:active { background: var(--bg); }
 | 2026-06-15 | 08dc3b8 | drawer/tabs/scrollbar/color discipline |
 | 2026-06-15 | 675dc80 | controls/metrics/sections 紧凑 |
 | 2026-06-15 | 2ac849c | Bloomberg-density pass 1 |
+| 2026-06-15 | (pending) | Tick flash + sort indicator + watchlist sparkline |
 
 ---
 
@@ -439,6 +440,46 @@ tr.clickable:active { background: var(--bg); }
 2. **暗模式色彩微调** — `--surface-2` hover 在 OLED 上可能与 `--surface` 不可区分
 3. **动画 reduced-motion** — 尚未添加 `prefers-reduced-motion` 媒体查询
 4. **Command Center terminal 化** — message body 已切 monospace，可进一步加 prompt prefix / syntax highlighting
-5. **Charts mini-chart** — watchlist card 内嵌 sparkline（需 lightweight-charts 实例复用）
-6. **表格 sticky header** — 长列表 `position: sticky` 列头
-7. **Code-split** — JS bundle 815KB，应拆分 lightweight-charts 为 dynamic import
+5. **表格 sticky header** — 长列表 `position: sticky` 列头
+6. **Code-split** — JS bundle 815KB，应拆分 lightweight-charts 为 dynamic import
+7. **键盘快捷键提示 (Keyboard hints)** — 按钮旁显示 shortcut badge（`⌘K` 等），数字键选 watchlist
+8. **侧栏 icon-only 折叠 (Sidebar collapse)** — 折叠为 48px icon rail，给 chart 更多空间
+9. **Volume 子图 (Volume sub-pane)** — PriceChart 下方联动 volume 柱图，lightweight-charts 原生支持
+10. **PnL 归因热力图 (Heatmap)** — treemap 按持仓权重+PnL着色，多 coin 场景有意义
+
+---
+
+## 15. Tick Flash 动画
+
+价格变化时对价格元素施加 600ms background pulse（绿=涨、红=跌），让用户感知"数据活着"。
+
+**CSS:**
+```css
+@keyframes tick-up   { from { background: rgba(46,230,168,0.18); } to { background: transparent; } }
+@keyframes tick-down { from { background: rgba(255,93,108,0.18); } to { background: transparent; } }
+.tick-flash-up   { animation: tick-up 600ms ease-out; }
+.tick-flash-down { animation: tick-down 600ms ease-out; }
+```
+
+**React 实现模式：**
+- `useRef<Record<string, number>>` 存上次价格
+- `useEffect` 比较 prev/next，变化时 `setFlashes({[sym]: 'up'|'down'})`
+- 650ms `setTimeout` 清空 flash state（略长于动画以避免闪烁中断）
+
+**应用位置：** `MarketTicker.tsx`（topbar）、`Charts.tsx`（watchlist cards）
+
+---
+
+## 16. Watchlist Sparkline
+
+卡片内嵌 24h 趋势线（SVG polyline），让用户无需进入详情即可判断走势形态。
+
+**组件：** `Sparkline.tsx`
+- 从 `/api/market/ohlcv?symbol=X&timeframe=1h&limit=24` 获取 close 数据
+- 归一化到 SVG 坐标，绿色=涨趋势、红色=跌趋势
+- 60s refetch、30s staleTime，不增加 API 压力
+- 尺寸：100×20px（watchlist 内），可配置
+
+**设计约束：**
+- `opacity: 0.85` 不抢夺价格文字的视觉权重
+- `aria-hidden="true"` — 辅助技术不播报装饰图形
