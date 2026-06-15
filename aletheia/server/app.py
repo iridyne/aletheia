@@ -219,6 +219,18 @@ async def lifespan(app: FastAPI):
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
     run_migrations()
+    if background_services_enabled:
+        try:
+            from aletheia.agent_runtime.run_logger import mark_stale_running_runs
+
+            stale_runs = mark_stale_running_runs(
+                reason="gateway startup reconciled previous incomplete agent run",
+                source="startup",
+            )
+            if stale_runs:
+                logger.warning("Marked %d stale agent run(s) during startup reconciliation", stale_runs)
+        except Exception as e:
+            logger.warning("Agent run startup reconciliation failed: %s", e)
     init_tool_registry()
     if background_services_enabled:
         try:

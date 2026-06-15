@@ -2,9 +2,7 @@
 
 import hashlib
 import json
-import tempfile
-from pathlib import Path
-from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -94,3 +92,39 @@ def test_verify_empty_file(tmp_path):
     result = verify_audit_chain()
     assert result["valid"] is True
     assert result["records"] == 0
+
+
+def test_concurrent_audit_writes_preserve_single_hash_chain(tmp_path):
+    """Concurrent writers must not reuse the same previous hash."""
+    from aletheia.files.jsonl import write_audit, verify_audit_chain
+
+    def _write(i: int) -> None:
+        write_audit({"action": f"event_{i}", "timestamp": f"2026-01-01T00:00:{i:02d}"})
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_write, range(20)))
+
+    result = verify_audit_chain()
+    assert result["valid"] is True
+    assert result["records"] == 20
+
+    lines = (tmp_path / "audit.jsonl").read_text("utf-8").strip().splitlines()
+    prev_hashes = [json.loads(line)["_prev_hash"] for line in lines]
+    assert len(prev_hashes) == len(set(prev_hashes))
+
+
+def test_verify_audit_chain_spans_rotated_files(tmp_path, monkeypatch):
+    """The first current-file record may link to the last rotated record."""
+    import aletheia.files.jsonl as jmod
+    from aletheia.files.jsonl import write_audit, verify_audit_chain
+
+    monkeypatch.setattr(jmod, "_max_bytes", lambda: 1)
+
+    for i in range(4):
+        write_audit({"action": f"event_{i}", "timestamp": f"2026-01-01T00:00:{i:02d}"})
+
+    assert (tmp_path / "audit.jsonl.1").exists()
+    assert (tmp_path / "audit.jsonl").exists()
+    result = verify_audit_chain()
+    assert result["valid"] is True
+    assert result["records"] == 4

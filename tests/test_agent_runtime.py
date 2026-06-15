@@ -1,5 +1,6 @@
 """Tests for agent runtime: permissions, tool registry, orchestrator."""
 
+import json
 import pytest
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -71,6 +72,44 @@ def test_get_permitted_tools_observe():
     assert "create_research_note" in tools
     assert "run_paper_order" not in tools
     assert "unlock_live" not in tools
+
+
+def test_mark_stale_running_runs_closes_only_running_rows(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+
+    from aletheia.agent_runtime.run_logger import mark_stale_running_runs
+    from aletheia.storage.models import AgentRun
+
+    running = AgentRun(agent_name="market_observer", trigger_type="scheduled")
+    completed = AgentRun(
+        agent_name="research_agent",
+        trigger_type="manual",
+        status="completed",
+        ended_at="2026-01-01T00:00:00+00:00",
+        errors=json.dumps(["already done"]),
+    )
+    repo.insert_agent_run(running)
+    repo.insert_agent_run(completed)
+
+    count = mark_stale_running_runs(reason="gateway startup recovery", source="test")
+
+    assert count == 1
+    stale_row = repo.get_agent_run(running.id)
+    assert stale_row["status"] == "stale"
+    assert stale_row["ended_at"]
+    assert any("gateway startup recovery" in err for err in json.loads(stale_row["errors"]))
+
+    completed_row = repo.get_agent_run(completed.id)
+    assert completed_row["status"] == "completed"
+    assert completed_row["errors"] == json.dumps(["already done"])
+
+    audit_rows = get_db().execute(
+        "SELECT event_type, message FROM audit_events ORDER BY timestamp DESC LIMIT 1"
+    ).fetchall()
+    assert audit_rows
+    assert audit_rows[0]["event_type"] == "agent_runs_marked_stale"
+    assert "1 running agent run" in audit_rows[0]["message"]
+    reset_db()
 
 
 # Agents now call the LLM; with no model server in tests they degrade gracefully

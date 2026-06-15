@@ -1,5 +1,13 @@
 # 执行路径语义诚实 — LLM 究竟在决策回路的哪个位置
 
+## 2026-06-15 P0/P1 status amendment
+
+- The 2026-06-13 analysis below is a historical snapshot; quote it together with this amendment.
+- Current code now has an audit JSONL _prev_hash chain, plus the 2026-06-15 P0 hardening for serialized concurrent writes, verification across rotated files, and preservation of old rotations.
+- The current runtime/DB snapshot still shows only one paper_running strategy with has_ruleset=False and backtest_runs=0, so do not claim the current paper/live decision loop is fully driven by executable DSL or backtests.
+- This P0/P1 change only hardens trust state: audit, agent run lifecycle, operator shell single-instance behavior, docs, and version facts. It does not change risk, execution, live unlock, trading direction, or order semantics.
+
+
 > 状态：一次性事实记录（2026-06-13）。机器无关、长期有效的*意图/事实*，非运行态事实，**非施工授权**。
 > 性质：本文件回答一个被反复误述的问题——"Aletheia 的 LLM 在不在交易执行路径上？"
 > 通过通读当前代码（非文档叙述）给出**带 file:line 证据**的精确答案，并与原始设计 v1、

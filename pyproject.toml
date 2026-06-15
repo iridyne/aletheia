@@ -1,6 +1,6 @@
 [project]
 name = "aletheia-trading-os"
-version = "0.1.0"
+version = "0.5.0"
 description = "Aletheia Trading OS — local-first AI-native agentic trading system"
 readme = "README.md"
 requires-python = ">=3.12"

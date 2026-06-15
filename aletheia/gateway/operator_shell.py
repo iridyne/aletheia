@@ -1,5 +1,6 @@
 """Operator shell spawn helpers and supervision."""
 
+from contextlib import contextmanager
 import os
 import platform
 import subprocess
@@ -58,6 +59,164 @@ def operator_shell_log_path() -> Path:
     return get_data_dir() / "logs" / "operator-shell-errors.log"
 
 
+def operator_shell_pid_path() -> Path:
+    return get_data_dir() / "operator-shell.pid"
+
+
+def _operator_shell_pid_lock_path() -> Path:
+    return get_data_dir() / ".operator-shell.pid.lock"
+
+
+def _read_operator_shell_pid() -> int | None:
+    path = operator_shell_pid_path()
+    if not path.exists():
+        return None
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_operator_shell_pid(pid: int) -> None:
+    path = operator_shell_pid_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{pid}\n", encoding="utf-8")
+
+
+def _clear_operator_shell_pid(expected_pid: int | None = None) -> None:
+    path = operator_shell_pid_path()
+    if not path.exists():
+        return
+    if expected_pid is not None and _read_operator_shell_pid() != expected_pid:
+        return
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _pid_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if platform.system() == "Windows":
+        try:
+            from aletheia.gateway._win32_proc import pid_alive_win32
+
+            return pid_alive_win32(pid, ("",))
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _read_process_command_line(pid: int) -> str | None:
+    if pid <= 0:
+        return None
+    if platform.system() == "Windows":
+        return None
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    try:
+        if proc_cmdline.exists():
+            raw = proc_cmdline.read_bytes()
+            return raw.replace(b"\0", b" ").decode("utf-8", errors="replace")
+    except OSError:
+        pass
+    try:
+        return subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+    except Exception:
+        return None
+
+
+def _operator_shell_markers(cmd: list[str]) -> tuple[str, ...]:
+    markers = ["operator-shell"]
+    if len(cmd) > 1:
+        markers.append(Path(cmd[1]).name)
+    if len(cmd) > 2:
+        markers.append(Path(cmd[2]).name)
+    return tuple(marker for marker in markers if marker)
+
+
+def _operator_shell_process_matches(pid: int, cmd: list[str]) -> bool:
+    """True when pid appears to be this project's operator shell process."""
+    markers = _operator_shell_markers(cmd)
+    if not markers:
+        return False
+    if platform.system() == "Windows":
+        try:
+            from aletheia.gateway._win32_proc import pid_alive_win32
+
+            return all(pid_alive_win32(pid, (marker, marker.replace("/", "\\"))) for marker in markers)
+        except Exception:
+            return False
+    cmdline = _read_process_command_line(pid)
+    if not cmdline:
+        return False
+    normalized = cmdline.replace("\\", "/").lower()
+    return all(marker.replace("\\", "/").lower() in normalized for marker in markers)
+
+
+@contextmanager
+def _exclusive_pidfile_lock():
+    lock_path = _operator_shell_pid_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        if platform.system() == "Windows":
+            import msvcrt
+
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+class ExistingOperatorShellProcess:
+    """Popen-like handle for an already running operator shell we do not own."""
+
+    external = True
+
+    def __init__(self, pid: int, cmd: list[str] | None = None):
+        self.pid = pid
+        self._cmd = cmd
+
+    def poll(self):
+        alive = _pid_exists(self.pid)
+        if alive and self._cmd is not None:
+            alive = _operator_shell_process_matches(self.pid, self._cmd)
+        return None if alive else 0
+
+    def terminate(self) -> None:
+        return None
+
+    def wait(self, timeout=None):  # noqa: ARG002
+        return None if self.poll() is None else 0
+
+    def kill(self) -> None:
+        return None
+
+
 def spawn_operator_shell(
     cfg,
     *,
@@ -72,30 +231,45 @@ def spawn_operator_shell(
     if once and "--once" not in cmd:
         cmd = [*cmd, "--once"]
 
-    log_path = operator_shell_log_path()
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env.update(
-        _build_operator_shell_env(
-            cfg,
-            runtime_id=runtime_id,
-            runtime_mode=runtime_mode,
-            runtime_state=runtime_state,
+    def _spawn_new():
+        log_path = operator_shell_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env.update(
+            _build_operator_shell_env(
+                cfg,
+                runtime_id=runtime_id,
+                runtime_mode=runtime_mode,
+                runtime_state=runtime_state,
+            )
         )
-    )
-    if once:
-        env["ALETHEIA_OPERATOR_ONCE"] = "1"
-    popen_kwargs: dict = {
-        "cwd": str(operator_shell_root()),
-        "stdout": subprocess.DEVNULL,
-        "env": env,
-    }
-    if platform.system() == "Windows":
-        popen_kwargs["creationflags"] = CREATE_NO_WINDOW
+        if once:
+            env["ALETHEIA_OPERATOR_ONCE"] = "1"
+        popen_kwargs: dict = {
+            "cwd": str(operator_shell_root()),
+            "stdout": subprocess.DEVNULL,
+            "env": env,
+        }
+        if platform.system() == "Windows":
+            popen_kwargs["creationflags"] = CREATE_NO_WINDOW
 
-    with log_path.open("a", encoding="utf-8") as log_file:
-        popen_kwargs["stderr"] = log_file
-        return subprocess.Popen(cmd, **popen_kwargs)
+        with log_path.open("a", encoding="utf-8") as log_file:
+            popen_kwargs["stderr"] = log_file
+            return subprocess.Popen(cmd, **popen_kwargs)
+
+    if not once:
+        with _exclusive_pidfile_lock():
+            existing_pid = _read_operator_shell_pid()
+            if existing_pid is not None:
+                if _pid_exists(existing_pid) and _operator_shell_process_matches(existing_pid, cmd):
+                    return ExistingOperatorShellProcess(existing_pid, cmd)
+                _clear_operator_shell_pid(expected_pid=existing_pid)
+
+            proc = _spawn_new()
+            _write_operator_shell_pid(proc.pid)
+            return proc
+
+    return _spawn_new()
 
 
 def spawn_shadow_operator_shell(cfg, runtime_id: str):
@@ -180,7 +354,10 @@ class OperatorShellMonitor:
         if code is None:
             return
 
+        proc_pid = getattr(self.proc, "pid", None)
         self.proc = None
+        if proc_pid is not None:
+            _clear_operator_shell_pid(expected_pid=proc_pid)
         if code == 0:
             self._failure_count = 0
             return
@@ -225,15 +402,22 @@ class OperatorShellMonitor:
     def stop(self) -> None:
         self._stop_event.set()
         if self.proc is not None:
-            try:
-                self.proc.terminate()
-                self.proc.wait(timeout=5)
-            except Exception:
-                try:
-                    self.proc.kill()
-                except Exception:
-                    pass
+            proc = self.proc
             self.proc = None
+            if getattr(proc, "external", False):
+                proc = None
+            if proc is not None:
+                proc_pid = getattr(proc, "pid", None)
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                if proc_pid is not None:
+                    _clear_operator_shell_pid(expected_pid=proc_pid)
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None

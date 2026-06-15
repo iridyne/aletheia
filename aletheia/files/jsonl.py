@@ -1,10 +1,12 @@
 """JSONL event stream writer/reader."""
 
+from contextlib import contextmanager
+from datetime import datetime
 import hashlib
 import json
-import threading
+import os
 from pathlib import Path
-from datetime import datetime
+import threading
 
 from aletheia.config.loader import get_data_dir
 
@@ -31,21 +33,72 @@ def _max_bytes() -> int:
 def append_jsonl(filename: str, record: dict) -> None:
     """Append a JSON record to a JSONL file in data/logs/, rotating at a size cap.
 
-    When the file exceeds the cap it is rotated to `{filename}.1` (single cold
-    generation, overwriting any prior .1) — content is never deleted.
+    When the active file exceeds the cap it is rotated to the next numeric
+    generation (`{filename}.1`, `{filename}.2`, ...). Rotation is best-effort and
+    preserves older generations instead of overwriting them.
     """
     path = _log_dir() / filename
+    line = json.dumps(record, default=str, ensure_ascii=False)
+    _append_jsonl_line(path, line)
+
+
+def _append_jsonl_line(path: Path, line: str) -> None:
+    """Append a pre-serialized line after best-effort rotation.
+
+    Audit logging uses this helper so the bytes used for the hash are exactly
+    the bytes written to disk.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        if path.exists() and path.stat().st_size >= _max_bytes():
-            rotated = path.with_name(filename + ".1")
-            if rotated.exists():
-                rotated.unlink()
-            path.rename(rotated)
+        _rotate_jsonl_if_needed(path)
     except OSError:
         pass  # rotation is best-effort; never block a write
-    line = json.dumps(record, default=str, ensure_ascii=False)
     with path.open("a", encoding="utf-8") as f:
         f.write(line + "\n")
+
+
+def _rotation_index(path: Path, active_name: str) -> int | None:
+    prefix = f"{active_name}."
+    if not path.name.startswith(prefix):
+        return None
+    suffix = path.name[len(prefix):]
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+def _rotated_paths(path: Path) -> list[Path]:
+    paths: list[tuple[int, Path]] = []
+    try:
+        for candidate in path.parent.glob(f"{path.name}.*"):
+            index = _rotation_index(candidate, path.name)
+            if index is not None:
+                paths.append((index, candidate))
+    except OSError:
+        return []
+    return [candidate for _, candidate in sorted(paths, key=lambda item: item[0])]
+
+
+def _jsonl_paths_chronological(path: Path) -> list[Path]:
+    paths = _rotated_paths(path)
+    if path.exists():
+        paths.append(path)
+    return paths
+
+
+def _next_rotation_path(path: Path) -> Path:
+    indexes = [
+        index
+        for candidate in _rotated_paths(path)
+        if (index := _rotation_index(candidate, path.name)) is not None
+    ]
+    next_index = (max(indexes) + 1) if indexes else 1
+    return path.with_name(f"{path.name}.{next_index}")
+
+
+def _rotate_jsonl_if_needed(path: Path) -> None:
+    if path.exists() and path.stat().st_size >= _max_bytes():
+        path.rename(_next_rotation_path(path))
 
 
 def read_jsonl(filename: str, limit: int = 100) -> list[dict]:
@@ -67,24 +120,26 @@ def _hash_record(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()
 
 
-def _get_last_audit_hash() -> str:
-    """Return the hash of the last audit record (reads from file on first call)."""
+def _last_non_empty_line(paths: list[Path]) -> str:
+    last_line = ""
+    for path in paths:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        last_line = line.strip()
+        except OSError:
+            continue
+    return last_line
+
+
+def _get_last_audit_hash(*, use_cache: bool = True) -> str:
+    """Return the hash of the last audit record across active + rotated files."""
     global _last_audit_hash
-    if _last_audit_hash is not None:
+    if use_cache and _last_audit_hash is not None:
         return _last_audit_hash
     path = _log_dir() / "audit.jsonl"
-    if not path.exists():
-        _last_audit_hash = _GENESIS_HASH
-        return _last_audit_hash
-    last_line = ""
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    last_line = line.strip()
-    except OSError:
-        _last_audit_hash = _GENESIS_HASH
-        return _last_audit_hash
+    last_line = _last_non_empty_line(_jsonl_paths_chronological(path))
     if not last_line:
         _last_audit_hash = _GENESIS_HASH
         return _last_audit_hash
@@ -92,23 +147,53 @@ def _get_last_audit_hash() -> str:
     return _last_audit_hash
 
 
+@contextmanager
+def _exclusive_file_lock(lock_path: Path):
+    """Cross-process exclusive lock used to serialize audit hash-chain writes."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as lock_file:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def write_audit(event: dict) -> None:
     """Write an audit event to audit.jsonl with hash chain.
 
-    Each record includes `_prev_hash` — the SHA-256 of the previous line on disk.
-    Verification: re-hash each line and confirm it matches the next line's _prev_hash.
+    Each record includes `_prev_hash`: the SHA-256 of the previous line on disk.
+    Verification: re-hash each line and confirm it matches the next line's
+    `_prev_hash`.
     """
     global _last_audit_hash
     if "timestamp" not in event:
         event["timestamp"] = datetime.utcnow().isoformat()
 
     with _audit_hash_lock:
-        prev_hash = _get_last_audit_hash()
-        event["_prev_hash"] = prev_hash
-        line = json.dumps(event, default=str, ensure_ascii=False)
-        _last_audit_hash = _hash_record(line)
-
-    append_jsonl("audit.jsonl", event)
+        with _exclusive_file_lock(_log_dir() / ".audit.lock"):
+            prev_hash = _get_last_audit_hash(use_cache=False)
+            event["_prev_hash"] = prev_hash
+            line = json.dumps(event, default=str, ensure_ascii=False)
+            _append_jsonl_line(_log_dir() / "audit.jsonl", line)
+            _last_audit_hash = _hash_record(line)
 
     # Also persist into sqlite.audit_events for structured querying when DB is
     # available (backward-compatible with pure JSONL deployments).
@@ -155,42 +240,51 @@ def write_agent_run_log(record: dict) -> None:
 
 
 def verify_audit_chain() -> dict:
-    """Verify the integrity of audit.jsonl hash chain.
+    """Verify the integrity of the audit JSONL hash chain.
 
     Returns {"valid": bool, "records": int, "errors": list[str]}.
     """
     path = _log_dir() / "audit.jsonl"
-    if not path.exists():
+    paths = _jsonl_paths_chronological(path)
+    if not paths:
         return {"valid": True, "records": 0, "errors": []}
 
     errors: list[str] = []
     prev_hash = _GENESIS_HASH
     count = 0
 
-    with path.open("r", encoding="utf-8") as f:
-        for i, raw_line in enumerate(f, 1):
-            raw_line = raw_line.strip()
-            if not raw_line:
-                continue
-            count += 1
-            try:
-                record = json.loads(raw_line)
-            except json.JSONDecodeError:
-                errors.append(f"line {i}: invalid JSON")
-                prev_hash = _GENESIS_HASH
-                continue
+    for current_path in paths:
+        try:
+            line_iter = current_path.open("r", encoding="utf-8")
+        except OSError:
+            continue
+        with line_iter as f:
+            for i, raw_line in enumerate(f, 1):
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                count += 1
+                label = f"{current_path.name}:{i}"
+                try:
+                    record = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    errors.append(f"{label}: invalid JSON")
+                    prev_hash = _GENESIS_HASH
+                    continue
 
-            record_prev = record.get("_prev_hash")
-            if record_prev is None:
-                # Legacy record before hash chain was added — reset chain
+                record_prev = record.get("_prev_hash")
+                if record_prev is None:
+                    # Legacy record before hash chain was added: continue from it
+                    # without treating the missing field as corruption.
+                    prev_hash = _hash_record(raw_line)
+                    continue
+
+                if record_prev != prev_hash:
+                    errors.append(
+                        f"{label}: _prev_hash mismatch "
+                        f"(expected {prev_hash[:16]}..., got {record_prev[:16]}...)"
+                    )
                 prev_hash = _hash_record(raw_line)
-                continue
-
-            if record_prev != prev_hash:
-                errors.append(
-                    f"line {i}: _prev_hash mismatch (expected {prev_hash[:16]}…, got {record_prev[:16]}…)"
-                )
-            prev_hash = _hash_record(raw_line)
 
     return {"valid": len(errors) == 0, "records": count, "errors": errors}
 

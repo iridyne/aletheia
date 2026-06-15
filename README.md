@@ -63,5 +63,5 @@ uv run aletheia risk kill | resume   # → Risk panel
 ## Tests
 
 ```bash
-uv run pytest        # 272 tests: unit, integration, security, §32 acceptance
+uv run pytest        # full local test suite; use focused tests during narrow fixes
 ```

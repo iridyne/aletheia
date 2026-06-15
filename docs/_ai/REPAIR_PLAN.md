@@ -1,5 +1,13 @@
 # 修复计划 — Backend & Frontend Issues 综合排期
 
+## 2026-06-15 P0/P1 status amendment
+
+- This file remains a historical planning record; current priorities were re-ranked around P0/P1 trust hardening.
+- Implemented P0/P1 scope: audit JSONL concurrency/rotation verification, gateway-startup stale agent_runs reconciliation, operator shell pidfile single-instance protection, README test wording, and package version fact sync.
+- This round did not add trading capability, backtest execution, DSL execution, risk-limit changes, live unlock, exchange expansion, or market expansion.
+- The W4.2 note about a missing hash chain is now historical background; use aletheia/files/jsonl.py and tests/test_audit_hashchain.py as the current source of truth.
+
+
 > **生成日期**：2026-06-14
 > **基于**：`docs/issues/BACKEND_ISSUES.md`（§4, §5, §12 未修复区）+ `docs/issues/FRONTEND_ISSUES.md`（§4, §5, §6.7 未修复区）
 > **原则**：§1-§3 + §10 历史区已于 2026-06-06/07 修复（75% 真修、25% 经二次修正补齐于 `feat/strategy-causal-chain`）。本计划只针对**当前确认未修复**的条目。
