@@ -255,9 +255,17 @@ def build_app_context(sections: list[str] | None = None) -> dict:
         }
 
     if "strategies" in wanted:
-        strats = list_strategies(limit=10)
+        strats = list_strategies(limit=20)
         ctx["strategies"] = [
-            {"name": s["name"], "state": s["state"]}
+            {
+                "name": s["name"],
+                "state": s["state"],
+                "symbol": (s.get("parameters") or {}).get("symbol") if isinstance(s.get("parameters"), dict) else None,
+                "paused": s.get("paper_trading_paused", False),
+                "under_review": s.get("under_review", False),
+                "total_pnl": s.get("total_pnl"),
+                "win_rate": s.get("win_rate"),
+            }
             for s in strats
         ]
 

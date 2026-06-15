@@ -262,11 +262,10 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 def _compute_position_size(conviction: int) -> float:
     """Compute notional position size from conviction score (0-100)."""
     from aletheia.config.loader import load_config
+    from aletheia.trading.sizing import compute_position_size
     cfg = load_config()
     base = getattr(cfg.trading, "default_notional_usdt", 25.0)
-    ratio = conviction / 75.0   # 75 = "normal" → 1× base
-    multiplier = max(_MIN_CONVICTION_MULTIPLIER, min(_MAX_CONVICTION_MULTIPLIER, ratio))
-    return round(base * multiplier, 2)
+    return compute_position_size(conviction, base)
 
 
 # ── prompt builders ───────────────────────────────────────────────────────────
