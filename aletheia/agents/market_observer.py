@@ -150,14 +150,34 @@ async def _analyze_symbol(
         except Exception:
             pass  # enriched context is optional; never break the main path
 
-        # Append prediction market sentiment if available
+        # Append prediction market signals relevant to this symbol
         try:
-            from aletheia.storage.repositories import list_prediction_claims
-            claims = list_prediction_claims(limit=5)
-            btc_claims = [c for c in claims if "btc" in (c.get("title") or "").lower() or "bitcoin" in (c.get("title") or "").lower()]
-            if btc_claims:
-                claim_lines = [f"- {c.get('title', '?')}: {c.get('probability', '?')}%" for c in btc_claims[:3]]
-                context += "\n\n## Prediction Market Signals\n" + "\n".join(claim_lines)
+            from aletheia.storage.repositories import _select_all
+            base = symbol.split("/")[0].lower()
+            keyword_variants = [base]
+            _COIN_NAMES = {"btc": "bitcoin", "eth": "ethereum", "sol": "solana",
+                           "xrp": "ripple", "doge": "dogecoin", "ada": "cardano",
+                           "avax": "avalanche", "link": "chainlink"}
+            if base in _COIN_NAMES:
+                keyword_variants.append(_COIN_NAMES[base])
+            where_clauses = " OR ".join(["LOWER(question) LIKE ?" for _ in keyword_variants])
+            params = tuple(f"%{kw}%" for kw in keyword_variants)
+            pred_rows = _select_all(
+                "prediction_markets",
+                where=f"({where_clauses}) AND status = 'active'",
+                params=params,
+                order="abs(probability_change_24h) DESC",
+                limit=3,
+            )
+            if pred_rows:
+                lines = []
+                for r in pred_rows:
+                    q = (r.get("question") or "")[:80]
+                    yes = (r.get("yes_probability") or 0) * 100
+                    delta = (r.get("probability_change_24h") or 0) * 100
+                    vol = r.get("volume_24h") or 0
+                    lines.append(f"- {q}: YES={yes:.0f}% (Δ24h {delta:+.1f}pp, vol=${vol:,.0f})")
+                context += "\n\n## Prediction Market Signals\n" + "\n".join(lines)
         except Exception:
             pass
 
