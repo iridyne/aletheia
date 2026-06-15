@@ -41,6 +41,22 @@ def close_db() -> None:
         _local.conn = None
 
 
+def rollback_if_in_transaction() -> bool:
+    """Rollback this thread's open SQLite transaction, if any.
+
+    Scheduler jobs run on reusable worker threads. If a job path leaks an open
+    transaction after an exception, that worker thread can hold SQLite's writer
+    lock across future jobs and make otherwise healthy routes fail with
+    ``database is locked``. This helper is intentionally local to the current
+    thread/connection; it never touches other processes or trading state.
+    """
+    conn = getattr(_local, "conn", None)
+    if conn is None or not conn.in_transaction:
+        return False
+    conn.rollback()
+    return True
+
+
 def reset_db() -> None:
     """Reset connection for this thread (for testing)."""
     close_db()

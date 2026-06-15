@@ -30,6 +30,19 @@ def setup_env(tmp_path, monkeypatch):
     init_tool_registry()
 
 
+def setup_real_db_env(tmp_path, monkeypatch):
+    """Use the production per-thread SQLite connection path for lock tests."""
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    reset_db()
+    sq._db_conn = None
+    run_migrations()
+
+
 # --- Scheduler ---
 
 def test_scheduler_disabled_returns_none(tmp_path, monkeypatch):
@@ -60,6 +73,39 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     assert len(s.get_jobs()) == 19
     sched.stop_scheduler()
     reset_db()
+
+
+def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypatch):
+    setup_real_db_env(tmp_path, monkeypatch)
+
+    from aletheia.agent_runtime import scheduler as sched
+    from aletheia.storage.sqlite import db_path, get_db
+    import sqlite3
+
+    def leaky_job():
+        db = get_db()
+        db.execute(
+            "INSERT INTO audit_events (id, actor, source, event_type, message, timestamp) "
+            "VALUES ('leaked','system','test','leaked_tx','uncommitted','2026-01-01T00:00:00')"
+        )
+        assert db.in_transaction
+
+    sched._run_job_guarded("leaky_job", leaky_job)
+
+    other = sqlite3.connect(str(db_path()), timeout=1)
+    try:
+        leaked_count = other.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE id = 'leaked'"
+        ).fetchone()[0]
+        assert leaked_count == 0
+        other.execute(
+            "INSERT INTO audit_events (id, actor, source, event_type, message, timestamp) "
+            "VALUES ('after','system','test','after_guard','writer available','2026-01-01T00:00:01')"
+        )
+        other.commit()
+    finally:
+        other.close()
+        reset_db()
 
 
 # --- Market data ---

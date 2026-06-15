@@ -1,6 +1,7 @@
 """Scheduler for periodic agent + market-data tasks using APScheduler."""
 
 import asyncio
+from functools import partial
 import logging
 from datetime import datetime, timedelta
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
@@ -12,6 +13,31 @@ from aletheia.config.loader import load_config
 logger = logging.getLogger("aletheia.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
+
+
+def _run_job_guarded(job_id: str, fn):
+    """Run one scheduled job and release any leaked SQLite writer state.
+
+    APScheduler reuses worker threads. A single leaked SQLite transaction in one
+    job can otherwise keep the WAL writer lock pinned across later jobs, causing
+    unrelated API routes and heartbeats to fail with ``database is locked``.
+    The guard rolls back only this worker thread's leftover transaction and then
+    closes the thread-local connection so the next job starts clean.
+    """
+    from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
+
+    if rollback_if_in_transaction():
+        logger.warning("Rolled back stale SQLite transaction before scheduler job %s", job_id)
+    try:
+        return fn()
+    finally:
+        if rollback_if_in_transaction():
+            logger.warning("Rolled back leaked SQLite transaction after scheduler job %s", job_id)
+        close_db()
+
+
+def _guarded(job_id: str, fn):
+    return partial(_run_job_guarded, job_id, fn)
 
 
 def init_scheduler() -> BackgroundScheduler | None:
@@ -29,102 +55,103 @@ def init_scheduler() -> BackgroundScheduler | None:
         return None
 
     # max_workers=3: default 10 lets 13 jobs all hit `data/app.db` at the same minute
-    # mark; with WAL+busy_timeout, 3 concurrent writers is the sweet spot before lock
-    # contention dominates. Jobs that miss their slot use APScheduler's misfire grace.
+    # mark. Each job is wrapped by _run_job_guarded(), which rolls back leaked
+    # per-thread transactions and closes thread-local SQLite connections at job
+    # end so one failed job cannot pin the writer lock for the next jobs.
     _scheduler = BackgroundScheduler(executors={"default": ThreadPoolExecutor(3)})
 
     _scheduler.add_job(
-        _run_market_data, "interval", minutes=5, id="market_data",
+        _guarded("market_data", _run_market_data), "interval", minutes=5, id="market_data",
         misfire_grace_time=60,
     )
     _scheduler.add_job(
-        _run_market_observer, "interval", minutes=15, id="market_observer",
+        _guarded("market_observer", _run_market_observer), "interval", minutes=15, id="market_observer",
         misfire_grace_time=60,
     )
     _scheduler.add_job(
-        _run_dreaming_agent, "cron", hour=2, minute=0, id="dreaming_daily",
+        _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
         misfire_grace_time=300,
     )
     _scheduler.add_job(
-        _run_strategy_designer, "cron", hour=1, minute=0, id="strategy_designer_daily",
+        _guarded("strategy_designer_daily", _run_strategy_designer), "cron", hour=1, minute=0, id="strategy_designer_daily",
         misfire_grace_time=300,
     )
     _scheduler.add_job(
-        _run_reconciliation, "interval", minutes=2, id="reconciliation",
+        _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",
         misfire_grace_time=60,
     )
     _scheduler.add_job(
-        _run_portfolio_snapshot, "interval", minutes=10, id="portfolio_snapshot",
+        _guarded("portfolio_snapshot", _run_portfolio_snapshot), "interval", minutes=10, id="portfolio_snapshot",
         misfire_grace_time=120,
     )
     _scheduler.add_job(
-        _run_exchange_sync, "interval", minutes=5, id="exchange_sync",
+        _guarded("exchange_sync", _run_exchange_sync), "interval", minutes=5, id="exchange_sync",
         misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=10),
     )
     _scheduler.add_job(
-        _run_paper_trader, "interval", minutes=15, id="paper_trader",
+        _guarded("paper_trader", _run_paper_trader), "interval", minutes=15, id="paper_trader",
         misfire_grace_time=60,
     )
     _scheduler.add_job(
-        _run_position_manager, "interval", minutes=5, id="position_manager",
+        _guarded("position_manager", _run_position_manager), "interval", minutes=5, id="position_manager",
         misfire_grace_time=60,
     )
     _scheduler.add_job(
-        _run_position_reconcile, "interval", minutes=5, id="position_reconcile",
+        _guarded("position_reconcile", _run_position_reconcile), "interval", minutes=5, id="position_reconcile",
         misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=20),
     )
     _scheduler.add_job(
-        _run_cleanup, "cron", hour=3, minute=17, id="cleanup",
+        _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
         misfire_grace_time=600,
     )
     _scheduler.add_job(
-        _run_health_check, "interval", minutes=10, id="health_check",
+        _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
         misfire_grace_time=120,
     )
     # US equity observer — runs every 30 min Mon–Fri during US market hours
     # (14:30–21:00 UTC = 09:30–16:00 Eastern). The job function enforces the
     # time gate so off-hours fires are silent no-ops (stale daily data).
     _scheduler.add_job(
-        _run_stock_observer, "cron",
+        _guarded("stock_observer", _run_stock_observer), "cron",
         day_of_week="mon-fri", hour="14-20", minute="*/30",
         id="stock_observer", misfire_grace_time=300,
     )
     # Prediction market observer — runs every 30 min around the clock.
     _scheduler.add_job(
-        _run_prediction_observer, "interval", minutes=30,
+        _guarded("prediction_observer", _run_prediction_observer), "interval", minutes=30,
         id="prediction_observer", misfire_grace_time=120,
     )
     # Post-trade reviewer — reviews closed positions every 4 hours.
     # Delay first run by 5 min so LLM-heavy jobs don't compete with market_data
     # at startup (ThreadPool=3, and LLM calls can block a slot for minutes).
     _scheduler.add_job(
-        _run_post_trade_reviewer, "interval", hours=4,
+        _guarded("post_trade_reviewer", _run_post_trade_reviewer), "interval", hours=4,
         id="post_trade_reviewer", misfire_grace_time=300,
         next_run_time=datetime.now() + timedelta(minutes=5),
     )
     # Risk critic — reviews risk decisions and writes lessons every 6 hours.
     _scheduler.add_job(
-        _run_risk_critic, "interval", hours=6,
+        _guarded("risk_critic", _run_risk_critic), "interval", hours=6,
         id="risk_critic", misfire_grace_time=300,
         next_run_time=datetime.now() + timedelta(minutes=10),
     )
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
-        _run_universe_refresh, "interval", minutes=10,
+        _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
         id="universe_refresh", misfire_grace_time=120,
     )
     # 9-domain market data collectors (microstructure/derivatives/macro).
     # Single job, runs every 2 min, uses internal phase counter to control
     # per-domain frequency (orderbook+funding every 2min; macro every 10min).
     _scheduler.add_job(
-        _run_data_collectors, "interval", minutes=2,
+        _guarded("data_collectors", _run_data_collectors), "interval", minutes=2,
         id="data_collectors", misfire_grace_time=60,
         next_run_time=datetime.now() + timedelta(seconds=30),
     )
     # Strategy backtest orchestrator — daily evaluation of all active strategies.
     # Runs after strategy_designer (01:00) so newly generated strategies get tested.
     _scheduler.add_job(
-        _run_backtest_orchestrator, "cron", hour=4, minute=0,
+        _guarded("backtest_orchestrator", _run_backtest_orchestrator), "cron", hour=4, minute=0,
         id="backtest_orchestrator", misfire_grace_time=600,
     )
 

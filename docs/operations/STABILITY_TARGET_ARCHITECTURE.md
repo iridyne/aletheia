@@ -144,10 +144,13 @@ uv run pytest tests/test_runtime_continuity.py tests/test_frontdoor.py -q
 
 Goal: remove lock storms that can degrade operator heartbeat and route writes.
 
-Controls:
+Implemented/required controls:
 
 - keep WAL and `busy_timeout`;
 - isolate long-running work from write transactions;
+- wrap every scheduled job with a SQLite guard that rolls back leaked
+  per-thread transactions and closes the thread-local connection at job end, so
+  one failed job cannot pin the WAL writer lock for later jobs or heartbeats;
 - centralize high-contention writes behind narrow retry/backoff helpers or a
   single local writer lane where needed;
 - never hold DB transactions across network/LLM/exchange calls.
