@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from aletheia.config.loader import bootstrap, get_data_dir
+from aletheia.gateway.frontdoor_route import frontdoor_route_path, write_frontdoor_route
 from aletheia.gateway.pidfile import (
     write_pid, _resolve_real_python,
     find_gateway_orphans, find_port_holders, kill_pid_tree, port_in_use, wait_port_free,
@@ -35,6 +36,7 @@ _SERVER_PORT_LOST_GRACE_SEC = 15.0
 _SERVER_PORT_CHECK_INTERVAL_SEC = 1.0
 _BACKEND_PORT_OFFSET = 1
 _FRONTDOOR_STARTUP_GRACE_SEC = 20.0
+_WILDCARD_HOSTS = {"", "0.0.0.0", "::", "*"}
 
 
 def _sleep(seconds: float) -> None:
@@ -76,6 +78,36 @@ def _cleanup_backend_before_spawn(cfg, backend_port: int) -> None:
                 kill_pid_tree(pid)
 
 
+def _connect_host(host: str) -> str:
+    return "127.0.0.1" if host in _WILDCARD_HOSTS else host
+
+
+def _backend_base_url(cfg, backend_port: int) -> str:
+    return f"http://{_connect_host(cfg.app.bind_host)}:{backend_port}"
+
+
+def _publish_frontdoor_route(
+    cfg,
+    *,
+    backend_port: int,
+    runtime_context: dict | None = None,
+    backend_pid: int | None = None,
+    reason: str,
+) -> None:
+    try:
+        runtime_context = runtime_context or current_gateway_launch_context(cfg, port=backend_port)
+        write_frontdoor_route(
+            backend_base_url=_backend_base_url(cfg, backend_port),
+            runtime_id=str(runtime_context.get("runtime_id") or "runtime-local-current"),
+            runtime_mode=str(runtime_context.get("runtime_mode") or "current"),
+            runtime_state=str(runtime_context.get("runtime_state") or "current"),
+            backend_pid=backend_pid,
+            reason=reason,
+        )
+    except Exception:
+        pass
+
+
 def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
     """Spawn the stable local front door that owns the dashboard port."""
     log_path = get_data_dir() / "logs" / "frontdoor-errors.log"
@@ -83,7 +115,7 @@ def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
     from aletheia.gateway.logs import rotate_if_needed
     rotate_if_needed(log_path)
     real_python, env_patch = _resolve_real_python()
-    backend_base_url = f"http://{cfg.app.bind_host}:{backend_port}"
+    backend_base_url = _backend_base_url(cfg, backend_port)
     cmd = [
         real_python,
         "-m",
@@ -101,6 +133,7 @@ def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
     env["ALETHEIA_BACKEND_HOST"] = cfg.app.bind_host
     env["ALETHEIA_BACKEND_PORT"] = str(backend_port)
     env["ALETHEIA_BACKEND_BASE_URL"] = backend_base_url
+    env["ALETHEIA_FRONTDOOR_ROUTE_PATH"] = str(frontdoor_route_path())
     popen_kwargs: dict = {
         "stdout": subprocess.DEVNULL,
         "cwd": str(Path(__file__).resolve().parent.parent),
@@ -178,6 +211,13 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_proc: subprocess.Po
     with errors_log.open("a", encoding="utf-8") as ef:
         popen_kwargs["stderr"] = ef
         proc = subprocess.Popen(cmd, **popen_kwargs)
+        _publish_frontdoor_route(
+            cfg,
+            backend_port=runtime_context["port"],
+            runtime_context=runtime_context,
+            backend_pid=getattr(proc, "pid", None),
+            reason="backend_spawn",
+        )
         started_at = time.monotonic()
         saw_listening_port = False
         port_missing_since: float | None = None
@@ -294,6 +334,7 @@ def run_supervised(spawn_fn=None) -> dict:
         if frontdoor_enabled:
             _cleanup_before_spawn(cfg)
             _cleanup_backend_before_spawn(cfg, backend_port)
+            _publish_frontdoor_route(cfg, backend_port=backend_port, reason="supervisor_start")
             frontdoor_proc = _ensure_frontdoor_running(cfg, backend_port, frontdoor_proc)
         while True:
             if frontdoor_enabled:

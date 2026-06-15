@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
 from aletheia import __version__
+from aletheia.gateway.frontdoor_route import read_frontdoor_route, resolve_backend_base_url
 
 _boot_time = time.time()
 _HOP_BY_HOP_HEADERS = {
@@ -41,16 +42,11 @@ def dashboard_static_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "dashboard_static"
 
 
-def backend_base_url() -> str:
-    explicit = os.environ.get("ALETHEIA_BACKEND_BASE_URL", "").strip()
-    if explicit:
-        return explicit.rstrip("/")
-    host = os.environ.get("ALETHEIA_BACKEND_HOST", "127.0.0.1")
-    port = os.environ.get("ALETHEIA_BACKEND_PORT", "8788")
-    return f"http://{host}:{port}"
+def backend_base_url(*, route_path: Path | None = None, fallback: str | None = None) -> str:
+    return resolve_backend_base_url(path=route_path, fallback=fallback)
 
 
-def _frontdoor_payload(*, static_dir: Path, backend_url: str) -> dict:
+def _frontdoor_payload(*, static_dir: Path, backend_url: str, route: dict | None) -> dict:
     static_index = static_dir.exists() and (static_dir / "index.html").exists()
     return {
         "ok": True,
@@ -61,6 +57,7 @@ def _frontdoor_payload(*, static_dir: Path, backend_url: str) -> dict:
         "static_index": static_index,
         "static_dir": str(static_dir),
         "backend_base_url": backend_url,
+        "backend_route": route,
     }
 
 
@@ -112,21 +109,36 @@ def create_app(
     *,
     static_dir: Path | None = None,
     backend_url: str | None = None,
+    route_path: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Aletheia Local Front Door", version=__version__)
     effective_static_dir = static_dir or dashboard_static_dir()
     configured_backend_url = backend_url.rstrip("/") if backend_url else None
+    use_route_file = route_path is not None or configured_backend_url is None
 
     def _backend_url() -> str:
+        if use_route_file:
+            return backend_base_url(route_path=route_path, fallback=configured_backend_url)
         return configured_backend_url or backend_base_url()
+
+    def _backend_route() -> dict | None:
+        return read_frontdoor_route(route_path) if use_route_file else None
 
     @app.get("/_infra/livez")
     async def livez():
-        return _frontdoor_payload(static_dir=effective_static_dir, backend_url=_backend_url())
+        return _frontdoor_payload(
+            static_dir=effective_static_dir,
+            backend_url=_backend_url(),
+            route=_backend_route(),
+        )
 
     @app.get("/_infra/readyz")
     async def readyz():
-        payload = _frontdoor_payload(static_dir=effective_static_dir, backend_url=_backend_url())
+        payload = _frontdoor_payload(
+            static_dir=effective_static_dir,
+            backend_url=_backend_url(),
+            route=_backend_route(),
+        )
         backend = await _probe_backend(_backend_url())
         payload["backend"] = backend
         status_code = 200 if payload["static_index"] else 503
@@ -134,7 +146,11 @@ def create_app(
 
     @app.get("/_infra/status")
     async def infra_status():
-        payload = _frontdoor_payload(static_dir=effective_static_dir, backend_url=_backend_url())
+        payload = _frontdoor_payload(
+            static_dir=effective_static_dir,
+            backend_url=_backend_url(),
+            route=_backend_route(),
+        )
         payload["backend"] = await _probe_backend(_backend_url())
         return JSONResponse(status_code=200 if payload["static_index"] else 503, content=payload)
 

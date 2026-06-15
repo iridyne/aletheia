@@ -41,6 +41,12 @@ UI and `/_infra/*` diagnostics while the worker is restarting. During that
 window, `/api/*` returns a structured `503 backend_unavailable` instead of a raw
 connection failure.
 
+The front door reads its active backend from `data/frontdoor-route.json`. The
+supervisor refreshes that file on backend spawn, and runtime-continuity promotion
+can atomically switch it to a ready shadow backend without rebinding `:8787`.
+Inspect `http://127.0.0.1:8787/_infra/status` to see the active
+`backend_base_url`, backend readiness, and route metadata.
+
 The production dashboard also has a global backend connection guard. If `/api`
 becomes unreachable during restart/self-heal, the page shows a fail-loud banner
 and, after a prolonged outage, an overlay with the recovery command. Browser

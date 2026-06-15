@@ -158,6 +158,7 @@ def test_spawn_frontdoor_uses_dashboard_port_and_backend_url(tmp_path, monkeypat
     env = captured["kwargs"]["env"]
     assert env["ALETHEIA_BACKEND_PORT"] == "9876"
     assert env["ALETHEIA_BACKEND_BASE_URL"] == "http://127.0.0.1:9876"
+    assert env["ALETHEIA_FRONTDOOR_ROUTE_PATH"].endswith("frontdoor-route.json")
 
 
 def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
@@ -188,6 +189,12 @@ def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
     assert "--port" in captured["cmd"]
     assert "9876" in captured["cmd"]
     assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_PORT"] == "9876"
+    from aletheia.gateway.frontdoor_route import read_frontdoor_route
+
+    route = read_frontdoor_route()
+    assert route is not None
+    assert route["backend_base_url"] == "http://127.0.0.1:9876"
+    assert route["backend_pid"] == 1357
 
 
 def test_inner_server_is_restarted_when_port_never_listens(tmp_path, monkeypatch):

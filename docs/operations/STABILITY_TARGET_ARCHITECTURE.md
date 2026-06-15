@@ -126,11 +126,14 @@ Invoke-WebRequest http://127.0.0.1:8787/
 
 Goal: eliminate bad handoffs when code changes during heavy development.
 
-Controls:
+Implemented/required controls:
 
 - start a candidate backend on an internal port;
-- require `/_infra/readyz` and targeted smoke before promotion;
-- switch the front door only after the candidate is ready;
+- require `/_infra/readyz` and targeted `/api/health` smoke before promotion;
+- keep the front-door backend target in an atomic local route file
+  (`data/frontdoor-route.json`) so `:8787` can switch workers without rebinding
+  the user-facing port;
+- switch the front door only after the candidate backend reports ready;
 - keep rollback metadata and old-worker drain state;
 - keep shadow runtime side effects disabled.
 
@@ -138,6 +141,7 @@ Exit checks:
 
 ```powershell
 uv run pytest tests/test_runtime_continuity.py tests/test_frontdoor.py -q
+Invoke-WebRequest http://127.0.0.1:8787/_infra/status
 ```
 
 ### Phase 4 — SQLite/write-path hardening

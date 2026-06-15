@@ -111,9 +111,16 @@ def test_runtime_service_candidate_shadow_promote_and_rollback(tmp_path, monkeyp
     assert promoted["current"]["runtime_id"] == validation["runtime_id"]
     assert promoted["previous_current"]["state"] == "draining"
     assert promoted["draining"]["runtime_id"] == "runtime-local-current"
-    assert promoted["activation"]["restart_required"] is True
-    assert promoted["activation"]["strategy"] == "supervisor_respawn"
+    assert promoted["activation"]["restart_required"] is False
+    assert promoted["activation"]["strategy"] == "frontdoor_route_switch"
+    assert promoted["activation"]["backend_base_url"] == "http://127.0.0.1:8877"
     assert promoted["current"]["metadata"]["activation"]["action"] == "promote"
+    from aletheia.gateway.frontdoor_route import read_frontdoor_route
+
+    route = read_frontdoor_route()
+    assert route is not None
+    assert route["runtime_id"] == validation["runtime_id"]
+    assert route["backend_base_url"] == "http://127.0.0.1:8877"
 
     rolled = svc.rollback(actor="human", cause="test-rollback")
     assert rolled["current"]["runtime_id"] == "runtime-local-current"

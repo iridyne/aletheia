@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from urllib.request import urlopen
+import urllib.request
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway.pidfile import _no_window_kwargs, _resolve_real_python
@@ -80,10 +80,16 @@ def current_gateway_launch_context(cfg, *, port: int | None = None) -> dict:
 
 def wait_http_ready(base_url: str, *, timeout_sec: float = 10.0) -> bool:
     deadline = time.monotonic() + timeout_sec
-    url = f"{base_url.rstrip('/')}/api/health"
+    infra_url = f"{base_url.rstrip('/')}/_infra/readyz"
+    smoke_url = f"{base_url.rstrip('/')}/api/health"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         try:
-            with urlopen(url, timeout=0.75) as response:
+            with opener.open(infra_url, timeout=0.75) as response:
+                if response.status != 200:
+                    time.sleep(0.25)
+                    continue
+            with opener.open(smoke_url, timeout=0.75) as response:
                 if 200 <= response.status < 500:
                     return True
         except Exception:

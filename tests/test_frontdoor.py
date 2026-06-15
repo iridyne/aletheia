@@ -49,6 +49,38 @@ async def test_frontdoor_infra_status_stays_available_when_backend_down(tmp_path
 
 
 @pytest.mark.anyio
+async def test_frontdoor_backend_route_file_can_switch_without_restart(tmp_path):
+    from aletheia.gateway.frontdoor import create_app
+    from aletheia.gateway.frontdoor_route import write_frontdoor_route
+
+    route_path = tmp_path / "frontdoor-route.json"
+    write_frontdoor_route(
+        backend_base_url="http://127.0.0.1:8788",
+        runtime_id="runtime-a",
+        path=route_path,
+        reason="test-a",
+    )
+    app = create_app(
+        static_dir=_static_fixture(tmp_path),
+        backend_url="http://127.0.0.1:9",
+        route_path=route_path,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        first = await client.get("/_infra/livez")
+        write_frontdoor_route(
+            backend_base_url="http://127.0.0.1:8789",
+            runtime_id="runtime-b",
+            path=route_path,
+            reason="test-b",
+        )
+        second = await client.get("/_infra/livez")
+
+    assert first.json()["backend_base_url"] == "http://127.0.0.1:8788"
+    assert second.json()["backend_base_url"] == "http://127.0.0.1:8789"
+    assert second.json()["backend_route"]["runtime_id"] == "runtime-b"
+
+
+@pytest.mark.anyio
 async def test_frontdoor_api_returns_structured_503_when_backend_down(tmp_path):
     from aletheia.gateway.frontdoor import create_app
 
@@ -76,4 +108,3 @@ async def test_frontdoor_readyz_fails_only_when_static_missing(tmp_path):
     assert resp.json()["static_index"] is False
     assert root.status_code == 503
     assert "dashboard assets are unavailable" in root.text.lower()
-

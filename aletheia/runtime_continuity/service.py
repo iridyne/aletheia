@@ -12,6 +12,7 @@ from enum import StrEnum
 import json
 from uuid import uuid4
 
+from aletheia.gateway.frontdoor_route import write_frontdoor_route
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.sqlite import get_db
 
@@ -66,13 +67,41 @@ def _decode_row(row) -> dict | None:
     return item
 
 
-def _activation_plan(*, runtime_id: str, action: str) -> dict:
+def _route_target(runtime: dict | None) -> dict | None:
+    metadata = dict((runtime or {}).get("metadata") or {})
+    gateway_process = metadata.get("gateway_process")
+    if not isinstance(gateway_process, dict):
+        return None
+    if gateway_process.get("ready") is False or gateway_process.get("started") is False:
+        return None
+    base_url = gateway_process.get("base_url")
+    if not base_url:
+        return None
+    return {
+        "backend_base_url": str(base_url),
+        "backend_pid": gateway_process.get("pid"),
+    }
+
+
+def _activation_plan(*, runtime_id: str, action: str, runtime: dict | None = None) -> dict:
+    route = _route_target(runtime)
+    if route is not None:
+        return {
+            "runtime_id": runtime_id,
+            "action": action,
+            "strategy": "frontdoor_route_switch",
+            "restart_required": False,
+            "reason": "ready_shadow_backend_can_be_promoted_without_rebinding_frontdoor",
+            "backend_base_url": route["backend_base_url"],
+            "backend_pid": route.get("backend_pid"),
+            "created_at": _utc_now(),
+        }
     return {
         "runtime_id": runtime_id,
         "action": action,
         "strategy": "supervisor_respawn",
         "restart_required": True,
-        "reason": "single_process_gateway_without_front_proxy",
+        "reason": "no_ready_shadow_backend_route_available",
         "created_at": _utc_now(),
     }
 
@@ -132,6 +161,39 @@ class RuntimeContinuityService:
             ),
         )
         return event_id
+
+    def _apply_activation(self, activation: dict, *, actor: str, cause: str) -> None:
+        if activation.get("strategy") != "frontdoor_route_switch":
+            return
+        try:
+            write_frontdoor_route(
+                backend_base_url=str(activation["backend_base_url"]),
+                runtime_id=str(activation["runtime_id"]),
+                runtime_mode="current",
+                runtime_state=RuntimeState.CURRENT.value,
+                backend_pid=activation.get("backend_pid"),
+                reason=f"runtime_{activation.get('action') or 'activate'}",
+            )
+            self._record_event(
+                runtime_id=str(activation["runtime_id"]),
+                event_type="frontdoor_route_switched",
+                phase="activation",
+                actor=actor,
+                cause=cause,
+                payload=activation,
+            )
+            self._db().commit()
+        except Exception as exc:  # noqa: BLE001 - transition already committed
+            self._record_event(
+                runtime_id=str(activation.get("runtime_id") or ""),
+                event_type="frontdoor_route_switch_failed",
+                phase="activation",
+                severity="error",
+                actor=actor,
+                cause=cause,
+                payload={**activation, "error": str(exc)},
+            )
+            self._db().commit()
 
     def _current_runtime(self) -> dict | None:
         row = self._db().execute(
@@ -697,7 +759,7 @@ class RuntimeContinuityService:
                 raise RuntimeTransitionError("current_runtime_missing")
             now = _utc_now()
             checkpoint_id = _new_id("runtime-checkpoint")
-            activation = _activation_plan(runtime_id=runtime_id, action="promote")
+            activation = _activation_plan(runtime_id=runtime_id, action="promote", runtime=runtime)
             promoted_metadata = dict(runtime.get("metadata") or {})
             promoted_metadata["activation"] = activation
             db.execute(
@@ -738,6 +800,7 @@ class RuntimeContinuityService:
             )
             self.release_lock("promote", token, actor=actor)
             db.commit()
+            self._apply_activation(activation, actor=actor, cause=cause)
             return {
                 **self.status(),
                 "current": self._runtime(runtime_id),
@@ -793,7 +856,7 @@ class RuntimeContinuityService:
             now = _utc_now()
             target = self._runtime(target_runtime_id)
             target_metadata = dict((target or {}).get("metadata") or {})
-            activation = _activation_plan(runtime_id=target_runtime_id, action="rollback")
+            activation = _activation_plan(runtime_id=target_runtime_id, action="rollback", runtime=target)
             target_metadata["activation"] = activation
             if current is not None:
                 db.execute(
@@ -830,6 +893,7 @@ class RuntimeContinuityService:
             except Exception:
                 pass
             db.commit()
+            self._apply_activation(activation, actor=actor, cause=cause)
             return {
                 **self.status(),
                 "current": self._runtime(target_runtime_id),
