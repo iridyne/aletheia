@@ -77,6 +77,7 @@ class UniverseService:
         from aletheia.universe.scanners import run_all_scanners
         from aletheia.universe.allocator import allocate_universe, compute_total_score
         from aletheia.universe.outcome_recorder import settle_due, register_pending
+        from aletheia.universe.signal_emitter import emit_deterministic_opportunities
 
         cfg = load_config()
 
@@ -163,6 +164,8 @@ class UniverseService:
                     "symbol": item["symbol"],
                     "scanner_family": item.get("scanner_family"),
                     "entry_price_usd": entry_price,
+                    "total_score": item["total_score"],
+                    "expires_at": member_expires,
                 })
 
             # Register forward outcome tracking for all members with valid prices
@@ -170,6 +173,14 @@ class UniverseService:
                 register_pending(inserted_members, entry_ts=now.isoformat())
             except Exception as e:
                 logger.warning("Forward outcome registration failed (non-fatal): %s", e)
+
+            # Emit deterministic opportunities for high-scoring members (LLM-free path)
+            try:
+                emit_deterministic_opportunities(
+                    inserted_members, snap.id, scored_features=scored,
+                )
+            except Exception as e:
+                logger.warning("Deterministic opportunity emission failed (non-fatal): %s", e)
 
             repo.update_universe_scanner_run(
                 run.id,

@@ -131,6 +131,17 @@ def list_opportunities_by_asset_class(asset_class: str, limit: int = 50) -> list
     return _select_all("opportunities", where="asset_class = ?", params=(asset_class,), limit=limit)
 
 
+def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str) -> dict | None:
+    """Find an existing open opportunity for the same symbol in the same universe snapshot."""
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM opportunities WHERE symbol = ? AND universe_snapshot_id = ? "
+        "AND status = 'open' LIMIT 1",
+        (symbol, snapshot_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 # --- Prediction Observer Runs ---
 
 def insert_prediction_run(run_id: str, categories: list) -> None:
