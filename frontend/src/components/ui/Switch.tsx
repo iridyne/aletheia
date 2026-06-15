@@ -25,7 +25,7 @@ export function Switch({
         disabled={disabled}
       />
       <span className="settings-switch-track" aria-hidden="true"><span className="settings-switch-thumb" /></span>
-      <span className="settings-switch-text">{label ?? (checked ? 'Enabled' : 'Disabled')}</span>
+      {label && <span className="settings-switch-text">{label}</span>}
     </label>
   )
 }

@@ -108,7 +108,7 @@ export default function TradesPositions() {
       <div className="blotter-section-head">
         <h3>Open Positions</h3>
         {open.length > 0
-          ? <Badge tone="green">{open.length} open</Badge>
+          ? <Badge tone="green">{open.length}</Badge>
           : <Badge tone="muted">flat</Badge>}
       </div>
       {open.length === 0 ? (

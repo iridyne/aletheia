@@ -189,7 +189,6 @@ function AgentModelsTab({ status, settings, qc }: any) {
       <Section title="Learning" description="Controls whether agents autonomously generate research, knowledge, and strategy ideas.">
         <Row label="Autonomous learning" hint="When ON, agents run dreaming/research cycles unprompted. When OFF, only human-triggered runs execute.">
           <Toggle checked={autoLearn} onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
-          <span className={`badge ${autoLearn ? 'badge-green' : 'badge-red'}`}>{autoLearn ? 'ON' : 'OFF'}</span>
         </Row>
       </Section>
 
@@ -203,7 +202,6 @@ function AgentModelsTab({ status, settings, qc }: any) {
             onChange={v => runtimeMut.mutate({ scheduler_enabled: v })}
             disabled={runtimeMut.isPending}
           />
-          <span className={`badge ${schedulerEnabled ? 'badge-green' : 'badge-yellow'}`}>{schedulerEnabled ? 'ACTIVE' : 'DISABLED'}</span>
         </Row>
       </Section>
 
@@ -267,7 +265,6 @@ function UniverseConfigCard({ settings, qc }: any) {
     <div className="card" style={{ marginBottom: 0 }}>
       <div className="flex items-center gap-3 mb-3">
         <Toggle checked={enabled} onChange={v => { setEnabled(v); setMsg(null) }} />
-        <span className={`badge ${enabled ? 'badge-green' : 'badge-muted'}`}>{enabled ? 'ACTIVE' : 'OFF'}</span>
         {!enabled && <span className="hint" style={{ margin: 0 }}>Agents use static symbol list (BTC/ETH/SOL) when disabled.</span>}
       </div>
       <div className="settings-field-grid">

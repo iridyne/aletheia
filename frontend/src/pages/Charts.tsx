@@ -150,9 +150,6 @@ export default function Charts() {
           <select value={timeframe} onChange={e => setTimeframe(e.target.value)}>
             {TIMEFRAMES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          <span className="charts-via">
-            {dataProvider ? `via ${dataProvider} · CCXT` : ''}
-          </span>
         </div>
         <PriceChart symbol={symbol} timeframe={timeframe} markers={markers} onMarkerClick={setSelectedOrder} />
         <p className="hint">Green/red arrows mark filled paper trades on {symbol}. Click a marker to see trade details.</p>

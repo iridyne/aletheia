@@ -179,6 +179,59 @@ Write:
 
 This eliminates the need for a flex-row wrapper, keeps the grid simple, and works at any viewport width.
 
+### Switch 控件自身即状态——不要重复显示
+
+Switch（滑块开关）的视觉设计天然表达 on/off 状态：track 颜色、thumb 位置、动效全部在传达当前值。**不要**在旁边再放一个 capsule badge（`ON`/`OFF`/`ACTIVE`/`DISABLED`）或文字标签来复述相同信息。
+
+冗余指示器带来的问题：
+- 视觉噪声——用户需要两次确认同一个信息
+- 维护成本——状态文案需跟 Switch 值同步，容易出 bug
+- 语义歧义——badge 在设计体系中用于*外部状态*（连接状态、服务健康度），滥用会稀释其含义
+
+**规则:**
+- Switch 旁的 `label` prop 用于标识*控制对象*（如 "Spot"、"Telegram delivery"），不用于复述开关状态
+- 如果只有一个 Switch 控制单一布尔值，Row 的 `label` 已经说明了含义，Switch 不需要额外 label
+- 仅当 Switch 关闭后需要给出额外上下文（如 "Agents use static symbol list when disabled"）时，用灰色 hint 文字——这不是状态指示器，而是后果说明
+
+```tsx
+// WRONG — badge 复述 Switch 状态
+<Toggle checked={enabled} onChange={...} />
+<span className="badge badge-green">ACTIVE</span>
+
+// CORRECT — Switch 自说明，不需要 badge
+<Toggle checked={enabled} onChange={...} />
+
+// CORRECT — 关闭后的后果说明（非状态复述）
+<Toggle checked={enabled} onChange={...} />
+{!enabled && <span className="hint">Agents use static symbol list when disabled.</span>}
+```
+
+### 信息冗余审计原则 (Information Redundancy)
+
+每个视觉元素必须"付得起房租"——占据屏幕空间就必须贡献独特信息或辅助任务完成。参考 Nielsen H8（极简设计）、Tufte 数据墨水比、NNG 认知负荷理论。
+
+**五类常见冗余（应消除）：**
+
+| 类型 | 示例 | 判断标准 |
+|------|------|---------|
+| 双重编码 | 绿色圆点 + 文字 "active"（同一信息用两个通道） | 如果去掉文字后，色盲用户无法理解 → 保留（accessibility）。否则 → 去掉重复通道 |
+| 标签回声 | Section "Open Positions" + badge "3 open" | 如果去掉 badge 里的 "open"，信息依然完整 → 只显示数字 |
+| 控件 + 状态复述 | Switch + badge "ON"/"Enabled" | Switch 视觉本身即状态表达 → 永远不加状态 badge |
+| 区域内重复 | 数据来源在 source bar 显示，又在 chart controls 里重复 | 同一 viewport 内同一信息出现两次 → 保留信息层级更高的那个 |
+| Context 回声 | label="Today PnL" + context="today" | context 字段应补充 label 未覆盖的维度（%、时间范围、数据源） |
+
+**保留双通道的合理场景：**
+- 数据表格中的 `StatusBadge`（每个 cell 必须独立可读）
+- `StatusText` 纯色字（文字 IS 主要信息载体，color 只是辅助 tint）
+- Dashboard 圆点 + 内容值（如 "Exchange: bitget · connected"——圆点给快扫，文字给详情）
+- 严肃操作的确认区域（删除按钮旁红色 warning 文案——冗余是刻意的摩擦）
+
+**审计 checklist（每次改 UI 过一遍）：**
+1. 同一视觉区域内，是否有两个元素传达完全相同的事实？
+2. 如果去掉其中一个，用户能否依然在 <2 秒内获取该信息？
+3. 保留的那个是否对色盲/低视力用户仍然可达？
+4. 保留的编码方式是否与设计系统其他地方一致？
+
 ### Inline grids vs. `.form-grid`
 
 If you're writing `display: grid; gridTemplateColumns: repeat(auto-fill, minmax(200px, 1fr))` inline, stop. Use `.form-grid` (always 2 columns). For special cases, override with `gridTemplateColumns` inline on the form-grid div — but the class gives you consistent label styling, gap, and input width for free.

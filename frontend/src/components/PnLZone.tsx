@@ -131,7 +131,7 @@ export default function PnLZone() {
             label="Today PnL"
             value={todayNum == null ? 'not available' : fmtSigned(todayNum)}
             tone={toneOf(todayNum)}
-            context={todayNum == null ? 'no data' : dayPct != null ? `${fmtSigned(dayPct)}% of managed` : 'today'}
+            context={todayNum == null ? 'no data' : dayPct != null ? `${fmtSigned(dayPct)}% of managed` : undefined}
           />
           <MetricTile
             label="Unrealized"
