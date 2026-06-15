@@ -8,6 +8,7 @@ from httpx import AsyncClient, ASGITransport
 
 from aletheia.server.app import app
 from aletheia.model_provider.router import clear_cache
+from aletheia.config.schema import AletheiaConfig
 
 
 @pytest.fixture
@@ -23,6 +24,19 @@ async def client(tmp_path, monkeypatch):
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     clear_cache()
+
+
+def _flatten_keys(value, prefix=""):
+    if isinstance(value, dict):
+        keys = set()
+        for k, v in value.items():
+            path = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, dict):
+                keys |= _flatten_keys(v, path)
+            else:
+                keys.add(path)
+        return keys
+    return {prefix} if prefix else set()
 
 
 @pytest.mark.anyio
@@ -134,6 +148,103 @@ async def test_universe_settings_are_visible_and_persisted(client):
     resp = await client.get("/api/settings")
     assert resp.json()["universe"]["enabled"] is True
     assert resp.json()["universe"]["max_candidates"] == 20
+
+
+@pytest.mark.anyio
+async def test_settings_response_covers_sanitized_config_schema(client):
+    """Every non-secret config.yaml key should be visible on Settings."""
+    resp = await client.get("/api/settings")
+    assert resp.status_code == 200
+    actual_keys = _flatten_keys(resp.json())
+    expected_keys = _flatten_keys(AletheiaConfig().model_dump(mode="json"))
+
+    secret_suffixes = (
+        ".api_key_secret_ref",
+        ".oauth_token_ref",
+        ".oauth_refresh_ref",
+    )
+    expected_visible = {
+        key for key in expected_keys
+        if not (key.startswith("models.providers.") and key.endswith(secret_suffixes))
+    }
+
+    missing = sorted(expected_visible - actual_keys)
+    assert not missing
+
+    raw = resp.text.lower()
+    assert "api_key_secret_ref" not in raw
+    assert "oauth_token_ref" not in raw
+    assert "oauth_refresh_ref" not in raw
+
+
+@pytest.mark.anyio
+async def test_settings_update_controls_persist_new_config_fields(client):
+    resp = await client.post(
+        "/api/settings/exchange-markets",
+        json={"spot": True, "usdt_futures": True, "paper_execution_mode": "paper_internal"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["paper_execution_mode"] == "paper_internal"
+
+    resp = await client.post(
+        "/api/settings/trading",
+        json={"slippage_bps": 8.5, "execution_fee_pct": 0.07, "auto_adopt_enabled": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["trading"]["slippage_bps"] == 8.5
+    assert resp.json()["trading"]["execution_fee_pct"] == 0.07
+    assert resp.json()["trading"]["auto_adopt_enabled"] is False
+
+    resp = await client.post(
+        "/api/settings/health-config",
+        json={
+            "self_heal_enabled": False,
+            "self_heal_min_interval_sec": 2400,
+            "self_heal_max_per_hour": 1,
+            "self_heal_code_drift": False,
+            "self_heal_market_data": False,
+            "self_heal_port_cleanup": False,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["updated"]["self_heal_enabled"] is False
+    assert resp.json()["updated"]["self_heal_min_interval_sec"] == 2400
+    assert resp.json()["updated"]["self_heal_max_per_hour"] == 1
+
+    resp = await client.post(
+        "/api/settings/universe",
+        json={
+            "min_depth_10bps_usd": 50000,
+            "blacklist": ["doge/usdt", " DOGE/USDT ", "pepe/usdt"],
+            "fallback_symbols": ["btc/usdt", "eth/usdt"],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["universe"]["min_depth_10bps_usd"] == 50000
+    assert resp.json()["universe"]["blacklist"] == ["DOGE/USDT", "PEPE/USDT"]
+    assert resp.json()["universe"]["fallback_symbols"] == ["BTC/USDT", "ETH/USDT"]
+
+    settings = (await client.get("/api/settings")).json()
+    assert settings["exchange"]["paper_execution_mode"] == "paper_internal"
+    assert settings["trading"]["auto_adopt_enabled"] is False
+    assert settings["health"]["self_heal_enabled"] is False
+    assert settings["universe"]["fallback_symbols"] == ["BTC/USDT", "ETH/USDT"]
+
+
+@pytest.mark.anyio
+async def test_settings_rejects_mismatched_or_invalid_config_controls(client):
+    """UI/API mismatches must fail loudly instead of silently ignoring fields."""
+    resp = await client.post("/api/settings/trading", json={"slip_bps": 3})
+    assert resp.status_code == 422
+
+    resp = await client.post(
+        "/api/settings/exchange-markets",
+        json={"spot": True, "usdt_futures": True, "paper_execution_mode": "unknown"},
+    )
+    assert resp.status_code == 400
+
+    resp = await client.post("/api/settings/universe", json={"fallback_symbols": []})
+    assert resp.status_code == 400
 
 
 # --- Codex subscription provider routes ---

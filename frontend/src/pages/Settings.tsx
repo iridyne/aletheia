@@ -89,6 +89,32 @@ function SaveMsg({ msg }: { msg: { ok: boolean; text: string } | null }) {
   return <span className={`settings-save-msg ${msg.ok ? 'ok' : 'err'}`} title={msg.text}>{msg.text}</span>
 }
 
+function parseCsvList(raw: string): string[] {
+  return raw.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+}
+
+function listToCsv(value: unknown): string {
+  return Array.isArray(value) ? value.join(', ') : ''
+}
+
+function formatConfigValue(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'string' || typeof value === 'number') return String(value)
+  return JSON.stringify(value)
+}
+
+function flattenConfig(value: unknown, prefix = ''): Array<{ key: string; value: unknown }> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return prefix ? [{ key: prefix, value }] : []
+  const rows: Array<{ key: string; value: unknown }> = []
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const path = prefix ? `${prefix}.${key}` : key
+    if (child && typeof child === 'object' && !Array.isArray(child)) rows.push(...flattenConfig(child, path))
+    else rows.push({ key: path, value: child })
+  }
+  return rows
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main page
 // ─────────────────────────────────────────────────────────────────────────────
@@ -226,7 +252,10 @@ function UniverseConfigCard({ settings, qc }: any) {
   const [corePool, setCorePool] = useState('10')
   const [minVolume, setMinVolume] = useState('5000000')
   const [maxSpread, setMaxSpread] = useState('25')
+  const [minDepth, setMinDepth] = useState('25000')
   const [exploreRatio, setExploreRatio] = useState('0.2')
+  const [blacklist, setBlacklist] = useState('')
+  const [fallbackSymbols, setFallbackSymbols] = useState('BTC/USDT, ETH/USDT, SOL/USDT')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -237,7 +266,10 @@ function UniverseConfigCard({ settings, qc }: any) {
     setCorePool(String(universe.core_pool_size ?? 10))
     setMinVolume(String(universe.min_volume_24h_usdt ?? 5000000))
     setMaxSpread(String(universe.max_spread_bps ?? 25))
+    setMinDepth(String(universe.min_depth_10bps_usd ?? 25000))
     setExploreRatio(String(universe.explore_ratio ?? 0.2))
+    setBlacklist(listToCsv(universe.blacklist))
+    setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
   }, [settings])
 
   const mut = useMutation({
@@ -248,7 +280,10 @@ function UniverseConfigCard({ settings, qc }: any) {
       core_pool_size: parseInt(corePool),
       min_volume_24h_usdt: parseFloat(minVolume),
       max_spread_bps: parseFloat(maxSpread),
+      min_depth_10bps_usd: parseFloat(minDepth),
       explore_ratio: parseFloat(exploreRatio),
+      blacklist: parseCsvList(blacklist),
+      fallback_symbols: parseCsvList(fallbackSymbols),
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -290,10 +325,33 @@ function UniverseConfigCard({ settings, qc }: any) {
             onChange={e => { setMaxSpread(e.target.value); setMsg(null) }} />
         </label>
         <label className="settings-field">
+          <span>Min depth @ 10bps (USD)</span>
+          <input type="number" min={1000} max={10000000} step={1000} value={minDepth}
+            onChange={e => { setMinDepth(e.target.value); setMsg(null) }} />
+        </label>
+        <label className="settings-field">
           <span>Explore ratio</span>
           <input type="number" min={0} max={0.5} step={0.05} value={exploreRatio}
             onChange={e => { setExploreRatio(e.target.value); setMsg(null) }} />
         </label>
+      </div>
+      <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
+        <label>
+          <span>Universe blacklist</span>
+          <input value={blacklist} placeholder="DOGE/USDT, PEPE/USDT"
+            onChange={e => { setBlacklist(e.target.value); setMsg(null) }}
+            style={{ fontFamily: 'var(--mono)' }} />
+        </label>
+        <label>
+          <span>Fallback symbols</span>
+          <input value={fallbackSymbols} placeholder="BTC/USDT, ETH/USDT, SOL/USDT"
+            onChange={e => { setFallbackSymbols(e.target.value); setMsg(null) }}
+            style={{ fontFamily: 'var(--mono)' }} />
+        </label>
+      </div>
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+        <span className="hint" style={{ margin: 0 }}>market_type: <code>{universe.market_type || 'crypto'}</code></span>
+        <span className="hint" style={{ margin: 0 }}>family_quota: <code>{JSON.stringify(universe.family_quota || {})}</code></span>
       </div>
       <div className="flex items-center gap-2">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
@@ -354,40 +412,52 @@ function ExchangeModeRow({ status, qc }: any) {
 
 function ExchangeMarketsRow({ settings, qc }: any) {
   const markets = (settings?.exchange as any)?.enabled_markets || { spot: true, usdt_futures: true }
+  const serverPaperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
   const [spot, setSpot] = useState(!!markets.spot)
   const [futures, setFutures] = useState(!!markets.usdt_futures)
+  const [paperMode, setPaperMode] = useState(serverPaperMode)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     setSpot(!!markets.spot)
     setFutures(!!markets.usdt_futures)
+    setPaperMode(serverPaperMode)
   }, [settings])
 
   const mut = useMutation({
-    mutationFn: () => api.setExchangeMarkets({ spot, usdt_futures: futures }),
+    mutationFn: () => api.setExchangeMarkets({ spot, usdt_futures: futures, paper_execution_mode: paperMode }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
   const dirty = spot !== !!markets.spot || futures !== !!markets.usdt_futures
+    || paperMode !== serverPaperMode
 
   return (
-    <Row label="Enabled markets" hint="Which Bitget market types agents can place orders in. At least one must be enabled.">
-      <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-        <input type="checkbox" checked={spot} onChange={e => { setSpot(e.target.checked); setMsg(null) }} />
-        Spot
-      </label>
-      <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-        <input type="checkbox" checked={futures} onChange={e => { setFutures(e.target.checked); setMsg(null) }} />
-        USDT Futures
-      </label>
-      {dirty && (
-        <button className="secondary" onClick={() => mut.mutate()} disabled={mut.isPending || (!spot && !futures)}>
-          {mut.isPending ? 'Saving…' : 'Save'}
-        </button>
-      )}
-      <SaveMsg msg={msg} />
-    </Row>
+    <>
+      <Row label="Enabled markets" hint="Which Bitget market types agents can place orders in. At least one must be enabled.">
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={spot} onChange={e => { setSpot(e.target.checked); setMsg(null) }} />
+          Spot
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={futures} onChange={e => { setFutures(e.target.checked); setMsg(null) }} />
+          USDT Futures
+        </label>
+      </Row>
+      <Row label="Paper execution mode" hint="Where autonomous paper orders are simulated. bitget_demo uses Bitget demo/simulated trading; paper_internal uses only the local simulator.">
+        <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
+          <option value="bitget_demo">bitget_demo</option>
+          <option value="paper_internal">paper_internal</option>
+        </select>
+        {dirty && (
+          <button className="secondary" onClick={() => mut.mutate()} disabled={mut.isPending || (!spot && !futures)}>
+            {mut.isPending ? 'Saving…' : 'Save exchange config'}
+          </button>
+        )}
+        <SaveMsg msg={msg} />
+      </Row>
+    </>
   )
 }
 
@@ -512,7 +582,10 @@ function TradingParamsCard({ settings, qc }: any) {
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
   const [holdHours, setHoldHours] = useState('')
+  const [slippageBps, setSlippageBps] = useState('')
+  const [executionFeePct, setExecutionFeePct] = useState('')
   const [confidence, setConfidence] = useState('medium')
+  const [autoAdopt, setAutoAdopt] = useState(true)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -520,7 +593,10 @@ function TradingParamsCard({ settings, qc }: any) {
     setStopLoss(String(trading.default_stop_loss_pct ?? 2))
     setTakeProfit(String(trading.default_take_profit_pct ?? 4))
     setHoldHours(String(trading.max_position_hold_hours ?? 72))
+    setSlippageBps(String(trading.slippage_bps ?? 5))
+    setExecutionFeePct(String(trading.execution_fee_pct ?? 0.1))
     setConfidence(trading.min_confidence_to_trade ?? 'medium')
+    setAutoAdopt(trading.auto_adopt_enabled !== false)
   }, [settings])
 
   const mut = useMutation({
@@ -528,7 +604,10 @@ function TradingParamsCard({ settings, qc }: any) {
       default_stop_loss_pct: parseFloat(stopLoss),
       default_take_profit_pct: parseFloat(takeProfit),
       max_position_hold_hours: parseFloat(holdHours),
+      slippage_bps: parseFloat(slippageBps),
+      execution_fee_pct: parseFloat(executionFeePct),
       min_confidence_to_trade: confidence,
+      auto_adopt_enabled: autoAdopt,
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -558,11 +637,33 @@ function TradingParamsCard({ settings, qc }: any) {
             style={{ fontFamily: 'var(--mono)' }} />
         </label>
         <label>
+          <span>Paper slippage (bps)</span>
+          <input type="number" min={0} max={200} step={0.5} value={slippageBps}
+            onChange={e => { setSlippageBps(e.target.value); setMsg(null) }}
+            style={{ fontFamily: 'var(--mono)' }} />
+        </label>
+        <label>
+          <span>Execution fee (%)</span>
+          <input type="number" min={0} max={5} step={0.01} value={executionFeePct}
+            onChange={e => { setExecutionFeePct(e.target.value); setMsg(null) }}
+            style={{ fontFamily: 'var(--mono)' }} />
+        </label>
+        <label>
           <span>Min confidence to trade</span>
           <select value={confidence} onChange={e => { setConfidence(e.target.value); setMsg(null) }}>
             {CONFIDENCE_LEVELS.map(c => <option key={c}>{c}</option>)}
           </select>
         </label>
+      </div>
+      <div style={{ marginBottom: '0.75rem' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={autoAdopt} onChange={e => { setAutoAdopt(e.target.checked); setMsg(null) }} />
+          Auto-adopt external demo positions into local management
+        </label>
+        <p className="hint" style={{ marginTop: '0.35rem' }}>
+          When ON, demo positions found on the exchange can be brought under Aletheia management and may receive default exits.
+          Live positions are never auto-adopted.
+        </p>
       </div>
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
@@ -859,6 +960,10 @@ function InfrastructureTab({ settings, qc }: any) {
       <Section title="Network Proxy" description="Route all outbound HTTP through a proxy. Required when direct internet access is unavailable (e.g. Task Scheduler-started gateway).">
         <NetworkCard settings={settings} qc={qc} />
       </Section>
+
+      <Section title="Configuration Matrix" description="Read-only coverage map for the sanitized local config. If a key exists in config.yaml but has no dedicated control above, it is still visible here.">
+        <ConfigCoverageCard settings={settings} />
+      </Section>
     </div>
   )
 }
@@ -879,6 +984,7 @@ function DisplayRow() {
 
 function AppRows({ settings, qc }: any) {
   const app = settings?.app as any || {}
+  const runtime = settings?.runtime as any || {}
   const autoBrowser = app.auto_open_browser !== false
 
   const appMut = useMutation({
@@ -890,13 +996,23 @@ function AppRows({ settings, qc }: any) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
 
-  const gitEnabled = !!(settings?.runtime as any)?.git_enabled
+  const gitEnabled = !!runtime.git_enabled
 
   return (
     <>
+      <Row label="App name" hint="Read-only product identity from config.yaml.">
+        <span className="mono" style={{ fontSize: '0.82rem' }}>{app.name || 'Aletheia Trading OS'}</span>
+      </Row>
       <Row label="Dashboard port" hint={`Currently listening on :${app.dashboard_port || 8787}. Change requires gateway restart.`}>
         <span className="mono" style={{ fontSize: '0.82rem' }}>{app.dashboard_port || 8787}</span>
         <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>(read-only — set via config.yaml)</span>
+      </Row>
+      <Row label="Bind host" hint="Loopback is safest. Non-loopback hosts expose the local API without multi-user auth.">
+        <span className="mono" style={{ fontSize: '0.82rem' }}>{app.bind_host || '127.0.0.1'}</span>
+        <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>(read-only — set via config.yaml)</span>
+      </Row>
+      <Row label="Gateway mode" hint="Process lifecycle mode used by the CLI/supervisor.">
+        <span className="mono" style={{ fontSize: '0.82rem' }}>{runtime.gateway_mode || 'background'}</span>
       </Row>
       <Row label="Auto-open browser" hint="Open the dashboard in a browser tab automatically when the gateway starts.">
         <Toggle checked={autoBrowser} onChange={v => appMut.mutate({ auto_open_browser: v })} disabled={appMut.isPending} />
@@ -904,7 +1020,88 @@ function AppRows({ settings, qc }: any) {
       <Row label="Git versioning of data" hint="When enabled, knowledge, playbooks, and reports are committed to git automatically for history and rollback.">
         <Toggle checked={gitEnabled} onChange={v => runtimeMut.mutate({ git_enabled: v })} disabled={runtimeMut.isPending} />
       </Row>
+      <Row label="Auto-reload Python changes" hint="Development convenience for hot-reloading backend code. Turn off before a controlled live run.">
+        <Toggle checked={runtime.auto_reload !== false} onChange={v => runtimeMut.mutate({ auto_reload: v })} disabled={runtimeMut.isPending} />
+      </Row>
+      <Row label="Enable autostart on gateway start" hint="When enabled, gateway start attempts to register the Windows watchdog/autostart task.">
+        <Toggle checked={runtime.autostart_on_start !== false} onChange={v => runtimeMut.mutate({ autostart_on_start: v })} disabled={runtimeMut.isPending} />
+      </Row>
     </>
+  )
+}
+
+function ConfigCoverageCard({ settings }: { settings: any }) {
+  const controlled = new Set([
+    'agent.permission_mode', 'agent.autonomous_learning',
+    'runtime.scheduler_enabled', 'runtime.git_enabled', 'runtime.auto_reload', 'runtime.autostart_on_start',
+    'runtime.runtime_continuity_enabled', 'runtime.runtime_continuity_lock_ttl_sec', 'runtime.runtime_continuity_shadow_port_offset',
+    'app.auto_open_browser',
+    'exchange.mode', 'exchange.enabled_markets.spot', 'exchange.enabled_markets.usdt_futures', 'exchange.paper_execution_mode',
+    'live.state',
+    'risk.symbol_filter_mode', 'risk.symbol_list',
+    ...RISK_LIVE.map(f => `risk.${f.key}`),
+    ...RISK_DEMO.map(f => `risk.${f.key}`),
+    ...RISK_BOOLS.map(f => `risk.${f.key}`),
+    'trading.default_stop_loss_pct', 'trading.default_take_profit_pct', 'trading.max_position_hold_hours',
+    'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.min_confidence_to_trade', 'trading.auto_adopt_enabled',
+    'health.enabled', 'health.alert_via_telegram', 'health.alert_via_windows_toast', 'health.require_llm_at_startup',
+    'health.self_heal_enabled', 'health.self_heal_code_drift', 'health.self_heal_market_data', 'health.self_heal_port_cleanup',
+    'health.max_agent_failure_ratio', 'health.llm_unavailable_alert_after', 'health.market_data_max_staleness_min',
+    'health.supervisor_max_restarts', 'health.supervisor_restart_window_sec', 'health.supervisor_backoff_cap_sec',
+    'health.self_heal_min_interval_sec', 'health.self_heal_max_per_hour',
+    'health.startup_gate_max_retries', 'health.startup_gate_retry_delay_sec',
+    'retention.agent_runs_days', 'retention.tool_calls_days', 'retention.run_steps_days',
+    'retention.market_snapshots_days', 'retention.portfolio_snapshots_days', 'retention.jsonl_max_mb',
+    'telegram.enabled', 'telegram.allowed_chat_ids',
+    'update.enabled', 'update.branch',
+    'universe.enabled', 'universe.refresh_interval_min', 'universe.max_candidates', 'universe.core_pool_size',
+    'universe.min_volume_24h_usdt', 'universe.max_spread_bps', 'universe.min_depth_10bps_usd',
+    'universe.explore_ratio', 'universe.blacklist', 'universe.fallback_symbols',
+    'tunnel.enabled', 'tunnel.tunnel_id', 'tunnel.hostname',
+    'network.proxy_url', 'network.no_proxy',
+  ])
+  const readOnlyPrefixes = [
+    'app.', 'runtime.paused', 'runtime.kill_switch_active',
+    'operator.', 'guard.', 'market_data.', 'update.last_', 'update.current_commit',
+    'live.first_live_confirmation_done', 'tunnel.credentials_path', 'tunnel.cloudflared_path', 'tunnel.metrics_port',
+  ]
+
+  const rows = flattenConfig(settings)
+    .filter(r => !r.key.includes('api_key') && !r.key.includes('oauth_token') && !r.key.includes('oauth_refresh'))
+    .sort((a, b) => a.key.localeCompare(b.key))
+
+  return (
+    <div className="card" style={{ marginBottom: 0 }}>
+      <p className="hint" style={{ marginTop: 0 }}>
+        This matrix is intentionally read-only. It prevents hidden config drift; dedicated controls above remain the only editable surface for safety-sensitive settings.
+      </p>
+      <div style={{ maxHeight: '420px', overflow: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Config key</th>
+              <th>Value</th>
+              <th>Setting surface</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.key}>
+                <td className="mono">{row.key}</td>
+                <td className="mono" style={{ maxWidth: '520px', wordBreak: 'break-word' }}>{formatConfigValue(row.value)}</td>
+                <td>
+                  {controlled.has(row.key)
+                    ? <span className="badge badge-green">editable above</span>
+                    : readOnlyPrefixes.some(prefix => row.key === prefix || row.key.startsWith(prefix))
+                      ? <span className="badge badge-muted">read-only visible here</span>
+                      : <span className="badge badge-muted">read-only / config.yaml</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 
@@ -937,6 +1134,8 @@ function HealthCard({ settings, qc }: any) {
     { key: 'supervisor_max_restarts',      label: 'Supervisor max restarts',  unit: '',    min: 1,  max: 50,    step: 1, isInt: true },
     { key: 'supervisor_restart_window_sec',label: 'Restart window',           unit: 'sec', min: 60, max: 86400, step: 60, isInt: true },
     { key: 'supervisor_backoff_cap_sec',   label: 'Backoff cap',              unit: 'sec', min: 5,  max: 3600,  step: 1, isInt: true },
+    { key: 'self_heal_min_interval_sec',   label: 'Self-heal min interval',   unit: 'sec', min: 300,max: 86400, step: 60, isInt: true },
+    { key: 'self_heal_max_per_hour',       label: 'Self-heal max per hour',   unit: '',    min: 0,  max: 12,    step: 1, isInt: true },
     { key: 'startup_gate_max_retries',     label: 'LLM gate retries',         unit: '',    min: 1,  max: 10,    step: 1, isInt: true },
     { key: 'startup_gate_retry_delay_sec', label: 'LLM gate retry delay',     unit: 'sec', min: 5,  max: 120,   step: 5, isInt: true },
   ]
@@ -959,6 +1158,22 @@ function HealthCard({ settings, qc }: any) {
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
           <input type="checkbox" checked={vals.require_llm_at_startup !== false} onChange={e => set('require_llm_at_startup', e.target.checked)} />
           Require LLM at startup
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={vals.self_heal_enabled !== false} onChange={e => set('self_heal_enabled', e.target.checked)} />
+          Self-heal enabled
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={vals.self_heal_code_drift !== false} onChange={e => set('self_heal_code_drift', e.target.checked)} />
+          Restart on code drift
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={vals.self_heal_market_data !== false} onChange={e => set('self_heal_market_data', e.target.checked)} />
+          Restart on stale market data
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={vals.self_heal_port_cleanup !== false} onChange={e => set('self_heal_port_cleanup', e.target.checked)} />
+          Clean orphan port holders
         </label>
       </div>
       <NumGrid fields={HEALTH_FIELDS} vals={vals} set={set} />

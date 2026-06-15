@@ -277,16 +277,19 @@ export const api = {
     post<{ mode: string; symbols: string[] }>('/settings/symbols', body),
   updateTradingConfig: (body: Partial<{
     default_stop_loss_pct: number; default_take_profit_pct: number
-    max_position_hold_hours: number; min_confidence_to_trade: string
+    max_position_hold_hours: number; slippage_bps: number; execution_fee_pct: number
+    min_confidence_to_trade: string; auto_adopt_enabled: boolean
   }>) => post<{ updated: Record<string, any>; trading: Record<string, any> }>('/settings/trading', body),
 
   setAutonomousLearning: (enabled: boolean) =>
     post<{ old: boolean; new: boolean }>('/settings/autonomous-learning', { enabled }),
-  setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean }) =>
-    post<{ enabled_markets: Record<string, boolean> }>('/settings/exchange-markets', body),
+  setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean; paper_execution_mode?: string }) =>
+    post<Record<string, any>>('/settings/exchange-markets', body),
   updateRuntimeConfig: (body: Partial<{
     scheduler_enabled: boolean
     git_enabled: boolean
+    auto_reload: boolean
+    autostart_on_start: boolean
     runtime_continuity_enabled: boolean
     runtime_continuity_lock_ttl_sec: number
     runtime_continuity_shadow_port_offset: number
@@ -299,6 +302,9 @@ export const api = {
     llm_unavailable_alert_after: number; market_data_max_staleness_min: number
     supervisor_max_restarts: number; supervisor_restart_window_sec: number
     supervisor_backoff_cap_sec: number
+    self_heal_enabled: boolean; self_heal_min_interval_sec: number; self_heal_max_per_hour: number
+    self_heal_code_drift: boolean; self_heal_market_data: boolean; self_heal_port_cleanup: boolean
+    require_llm_at_startup: boolean; startup_gate_max_retries: number; startup_gate_retry_delay_sec: number
   }>) => post<{ updated: Record<string, any> }>('/settings/health-config', body),
   updateRetentionConfig: (body: Partial<{
     agent_runs_days: number; tool_calls_days: number; run_steps_days: number
@@ -561,7 +567,7 @@ export const api = {
   updateUniverseConfig: (body: Partial<{
     enabled: boolean; refresh_interval_min: number; max_candidates: number;
     core_pool_size: number; min_volume_24h_usdt: number; max_spread_bps: number;
-    explore_ratio: number; blacklist: string[];
+    min_depth_10bps_usd: number; explore_ratio: number; blacklist: string[]; fallback_symbols: string[];
   }>) => post<any>('/settings/universe', body),
 
   // Network / proxy config

@@ -3,7 +3,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from aletheia.config.loader import load_config, save_config
 
@@ -12,11 +12,22 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
 
 
-class PermissionModeRequest(BaseModel):
+class SettingsRequest(BaseModel):
+    """Strict request body for Settings mutations.
+
+    The dashboard should fail loudly when a control sends a stale or misspelled
+    config key. Pydantic's default `extra=ignore` would otherwise make a UI/API
+    mismatch look like a successful save while persisting nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PermissionModeRequest(SettingsRequest):
     mode: str
 
 
-class ExchangeModeRequest(BaseModel):
+class ExchangeModeRequest(SettingsRequest):
     mode: str
 
 
@@ -26,11 +37,18 @@ async def get_settings():
     providers_safe = {}
     for name, p in cfg.models.providers.items():
         providers_safe[name] = {
+            "type": p.type,
             "base_url": p.base_url,
             "protocol": p.protocol,
             "model": p.model,
             "enabled": p.enabled,
+            "command": p.command,
             "mode": p.mode,
+            "codex_model": p.codex_model,
+            "workspace_url": p.workspace_url,
+            "auth_scheme": p.auth_scheme,
+            "auth_type": p.auth_type,
+            "oauth_expires_at": p.oauth_expires_at,
         }
     return {
         "app": cfg.app.model_dump(mode="json"),
@@ -38,10 +56,10 @@ async def get_settings():
         "exchange": cfg.exchange.model_dump(mode="json"),
         "live": cfg.live.model_dump(mode="json"),
         "agent": cfg.agent.model_dump(mode="json"),
+        "operator": cfg.operator.model_dump(mode="json"),
         "models": {"default_provider": cfg.models.default_provider, "providers": providers_safe},
         "risk": cfg.risk.model_dump(mode="json"),
-        "telegram": {"enabled": cfg.telegram.enabled},
-        "update": {"enabled": cfg.update.enabled, "branch": cfg.update.branch},
+        "update": cfg.update.model_dump(mode="json"),
         "trading": cfg.trading.model_dump(mode="json"),
         "health": cfg.health.model_dump(mode="json"),
         "retention": cfg.retention.model_dump(mode="json"),
@@ -49,12 +67,9 @@ async def get_settings():
             "enabled": cfg.telegram.enabled,
             "allowed_chat_ids": cfg.telegram.allowed_chat_ids,
         },
-        "market_data": {
-            "observed_symbols": cfg.market_data.observed_symbols,
-            "observed_instruments": cfg.market_data.observed_instruments,
-            "ccxt_exchange": cfg.market_data.ccxt_exchange,
-        },
+        "market_data": cfg.market_data.model_dump(mode="json"),
         "universe": cfg.universe.model_dump(mode="json"),
+        "guard": cfg.guard.model_dump(mode="json"),
         "tunnel": cfg.tunnel.model_dump(mode="json"),
         "network": cfg.network.model_dump(mode="json"),
     }
@@ -64,7 +79,7 @@ async def get_settings():
 # Agent config
 # ---------------------------------------------------------------------------
 
-class AutonomousLearningRequest(BaseModel):
+class AutonomousLearningRequest(SettingsRequest):
     enabled: bool
 
 
@@ -86,34 +101,41 @@ async def set_autonomous_learning(req: AutonomousLearningRequest):
 # Exchange markets config
 # ---------------------------------------------------------------------------
 
-class ExchangeMarketsRequest(BaseModel):
+class ExchangeMarketsRequest(SettingsRequest):
     spot: bool
     usdt_futures: bool
+    paper_execution_mode: Optional[str] = None
 
 
 @router.post("/exchange-markets")
 async def set_exchange_markets(req: ExchangeMarketsRequest):
     if not req.spot and not req.usdt_futures:
         raise HTTPException(400, "At least one market must be enabled")
+    if req.paper_execution_mode is not None and req.paper_execution_mode not in {"bitget_demo", "paper_internal"}:
+        raise HTTPException(400, "paper_execution_mode must be 'bitget_demo' or 'paper_internal'")
     cfg = load_config()
-    old = dict(cfg.exchange.enabled_markets)
+    old = cfg.exchange.model_dump(mode="json")
     cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
+    if req.paper_execution_mode is not None:
+        cfg.exchange.paper_execution_mode = req.paper_execution_mode
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_markets_changed",
                  "entity_type": "exchange_config", "before": old,
-                 "after": cfg.exchange.enabled_markets,
-                 "message": f"enabled_markets updated"})
-    return {"enabled_markets": cfg.exchange.enabled_markets}
+                 "after": cfg.exchange.model_dump(mode="json"),
+                 "message": "exchange config updated"})
+    return cfg.exchange.model_dump(mode="json")
 
 
 # ---------------------------------------------------------------------------
 # Runtime config
 # ---------------------------------------------------------------------------
 
-class RuntimeConfigUpdate(BaseModel):
+class RuntimeConfigUpdate(SettingsRequest):
     scheduler_enabled: Optional[bool] = None
     git_enabled: Optional[bool] = None
+    auto_reload: Optional[bool] = None
+    autostart_on_start: Optional[bool] = None
     runtime_continuity_enabled: Optional[bool] = None
     runtime_continuity_lock_ttl_sec: Optional[int] = None
     runtime_continuity_shadow_port_offset: Optional[int] = None
@@ -143,7 +165,7 @@ async def update_runtime_config(req: RuntimeConfigUpdate):
 # App config
 # ---------------------------------------------------------------------------
 
-class AppConfigUpdate(BaseModel):
+class AppConfigUpdate(SettingsRequest):
     auto_open_browser: Optional[bool] = None
 
 
@@ -167,7 +189,7 @@ async def update_app_config(req: AppConfigUpdate):
 # Health monitoring config
 # ---------------------------------------------------------------------------
 
-class HealthConfigUpdate(BaseModel):
+class HealthConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     alert_via_telegram: Optional[bool] = None
     alert_via_windows_toast: Optional[bool] = None
@@ -177,6 +199,12 @@ class HealthConfigUpdate(BaseModel):
     supervisor_max_restarts: Optional[int] = None
     supervisor_restart_window_sec: Optional[int] = None
     supervisor_backoff_cap_sec: Optional[int] = None
+    self_heal_enabled: Optional[bool] = None
+    self_heal_min_interval_sec: Optional[int] = None
+    self_heal_max_per_hour: Optional[int] = None
+    self_heal_code_drift: Optional[bool] = None
+    self_heal_market_data: Optional[bool] = None
+    self_heal_port_cleanup: Optional[bool] = None
     require_llm_at_startup: Optional[bool] = None
     startup_gate_max_retries: Optional[int] = None
     startup_gate_retry_delay_sec: Optional[int] = None
@@ -189,6 +217,8 @@ _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
     "supervisor_max_restarts": (1, 50),
     "supervisor_restart_window_sec": (60, 86400),
     "supervisor_backoff_cap_sec": (5, 3600),
+    "self_heal_min_interval_sec": (300, 86400),
+    "self_heal_max_per_hour": (0, 12),
     "startup_gate_max_retries": (1, 10),
     "startup_gate_retry_delay_sec": (5, 120),
 }
@@ -218,7 +248,7 @@ async def update_health_config(req: HealthConfigUpdate):
 # Retention config
 # ---------------------------------------------------------------------------
 
-class RetentionConfigUpdate(BaseModel):
+class RetentionConfigUpdate(SettingsRequest):
     agent_runs_days: Optional[int] = None
     tool_calls_days: Optional[int] = None
     run_steps_days: Optional[int] = None
@@ -261,7 +291,7 @@ async def update_retention_config(req: RetentionConfigUpdate):
 # Telegram config
 # ---------------------------------------------------------------------------
 
-class TelegramConfigUpdate(BaseModel):
+class TelegramConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     allowed_chat_ids: Optional[list[int]] = None
 
@@ -286,7 +316,7 @@ async def update_telegram_config(req: TelegramConfigUpdate):
 # Update config
 # ---------------------------------------------------------------------------
 
-class UpdateConfigUpdate(BaseModel):
+class UpdateConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     branch: Optional[str] = None
 
@@ -347,7 +377,7 @@ async def set_exchange_mode(req: ExchangeModeRequest):
 # Risk config (editable limits)
 # ---------------------------------------------------------------------------
 
-class RiskConfigUpdate(BaseModel):
+class RiskConfigUpdate(SettingsRequest):
     max_daily_loss_pct: Optional[float] = None
     max_single_trade_risk_pct: Optional[float] = None
     max_total_live_exposure_pct: Optional[float] = None
@@ -415,7 +445,7 @@ async def update_risk_config(req: RiskConfigUpdate):
 VALID_SYMBOL_FILTER_MODES = {"whitelist", "blacklist"}
 
 
-class SymbolsUpdate(BaseModel):
+class SymbolsUpdate(SettingsRequest):
     mode: str = "blacklist"
     symbols: list[str] = []
 
@@ -462,17 +492,22 @@ async def update_tradable_symbols(req: SymbolsUpdate):
 # Trading config (paper position management)
 # ---------------------------------------------------------------------------
 
-class TradingConfigUpdate(BaseModel):
+class TradingConfigUpdate(SettingsRequest):
     default_stop_loss_pct: Optional[float] = None
     default_take_profit_pct: Optional[float] = None
     max_position_hold_hours: Optional[float] = None
+    slippage_bps: Optional[float] = None
+    execution_fee_pct: Optional[float] = None
     min_confidence_to_trade: Optional[str] = None
+    auto_adopt_enabled: Optional[bool] = None
 
 
 _TRADING_BOUNDS: dict[str, tuple[float, float]] = {
     "default_stop_loss_pct": (0.1, 50.0),
     "default_take_profit_pct": (0.1, 100.0),
     "max_position_hold_hours": (1.0, 8760.0),
+    "slippage_bps": (0.0, 200.0),
+    "execution_fee_pct": (0.0, 5.0),
 }
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 
@@ -507,15 +542,17 @@ async def update_trading_config(req: TradingConfigUpdate):
 # Universe config
 # ---------------------------------------------------------------------------
 
-class UniverseConfigUpdate(BaseModel):
+class UniverseConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     refresh_interval_min: Optional[int] = None
     max_candidates: Optional[int] = None
     core_pool_size: Optional[int] = None
     min_volume_24h_usdt: Optional[float] = None
     max_spread_bps: Optional[float] = None
+    min_depth_10bps_usd: Optional[float] = None
     explore_ratio: Optional[float] = None
     blacklist: Optional[list[str]] = None
+    fallback_symbols: Optional[list[str]] = None
 
 
 _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
@@ -524,6 +561,7 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "core_pool_size": (1, 50),
     "min_volume_24h_usdt": (100_000, 500_000_000),
     "max_spread_bps": (1, 200),
+    "min_depth_10bps_usd": (1_000, 10_000_000),
     "explore_ratio": (0.0, 0.5),
 }
 
@@ -540,6 +578,10 @@ async def update_universe_config(req: UniverseConfigUpdate):
             lo, hi = _UNIVERSE_BOUNDS[field]
             if not (lo <= value <= hi):
                 raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        if field in {"blacklist", "fallback_symbols"}:
+            value = list(dict.fromkeys(str(s).strip().upper() for s in value if str(s).strip()))
+            if field == "fallback_symbols" and not value:
+                raise HTTPException(400, "fallback_symbols must not be empty")
         setattr(cfg.universe, field, value)
 
     save_config(cfg)
@@ -555,7 +597,7 @@ async def update_universe_config(req: UniverseConfigUpdate):
 # Tunnel config (Cloudflare Tunnel)
 # ---------------------------------------------------------------------------
 
-class TunnelConfigUpdate(BaseModel):
+class TunnelConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     tunnel_id: Optional[str] = None
     hostname: Optional[str] = None
@@ -602,7 +644,7 @@ async def stop_tunnel_api():
 # Network / proxy config
 # ---------------------------------------------------------------------------
 
-class NetworkConfigUpdate(BaseModel):
+class NetworkConfigUpdate(SettingsRequest):
     proxy_url: Optional[str] = None
     no_proxy: Optional[str] = None
 
