@@ -437,19 +437,60 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 
 /* ---------- Badges ---------- */
 .badge {
-  display: inline-block; padding: 0.15rem 0.5rem; border-radius: var(--r-sm);
-  font-size: 0.72rem; font-weight: 600; font-family: var(--mono); letter-spacing: 0.01em;
-  border: 1px solid transparent;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.12rem 0.42rem; border-radius: var(--r-sm);
+  font-size: 0.7rem; font-weight: 600; font-family: var(--mono); letter-spacing: 0.01em;
+  border: 1px solid var(--border); background: transparent; color: var(--muted);
 }
-.badge-green { background: rgba(46,230,168,0.20); color: var(--green); border-color: rgba(46,230,168,0.35); }
-.badge-red { background: rgba(255,93,108,0.20); color: var(--red); border-color: rgba(255,93,108,0.35); }
-.badge-yellow { background: rgba(245,185,66,0.22); color: var(--yellow); border-color: rgba(245,185,66,0.40); }
-.badge-blue { background: rgba(74,163,255,0.20); color: var(--blue); border-color: rgba(74,163,255,0.35); }
+.badge-green { background: rgba(46,230,168,0.06); color: var(--green); border-color: rgba(46,230,168,0.24); }
+.badge-red { background: rgba(255,93,108,0.06); color: var(--red); border-color: rgba(255,93,108,0.26); }
+.badge-yellow { background: rgba(245,185,66,0.07); color: var(--yellow); border-color: rgba(245,185,66,0.28); }
+.badge-blue { background: rgba(74,163,255,0.06); color: var(--blue); border-color: rgba(74,163,255,0.24); }
 /* muted/neutral badge — for "no", "n/a", off, orphaned states (replaces the undefined
    badge-muted/badge-amber class names that were rendering colorless). */
-.badge-muted { background: rgba(125,137,151,0.15); color: var(--muted); border-color: rgba(125,137,151,0.30); }
+.badge-muted { background: rgba(125,137,151,0.05); color: var(--muted); border-color: rgba(125,137,151,0.20); }
 
 /* ---------- Settings page primitives ---------- */
+/* Settings uses a vertical IA: left section nav + right detail panel. */
+.settings-shell {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+.settings-nav {
+  position: sticky; top: calc(var(--header-height) + var(--space-4));
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-2);
+  background: rgba(20,26,33,0.72);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.settings-nav-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; padding: var(--space-3);
+  background: transparent; color: var(--muted);
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  text-align: left; filter: none;
+}
+.settings-nav-item:hover { background: var(--surface-2); color: var(--text); filter: none; }
+.settings-nav-item.active {
+  background: rgba(34,211,238,0.06);
+  border-color: rgba(34,211,238,0.28);
+  color: var(--text);
+}
+.settings-nav-label { font-size: 0.84rem; font-weight: 700; }
+.settings-nav-desc { font-size: 0.72rem; color: var(--muted); line-height: 1.35; font-weight: 400; }
+.settings-panel { min-width: 0; max-width: 1180px; }
+@media (max-width: 900px) {
+  .settings-shell { grid-template-columns: 1fr; gap: var(--space-4); }
+  .settings-nav {
+    position: static; overflow-x: auto; flex-direction: row;
+    scrollbar-width: thin;
+  }
+  .settings-nav-item { min-width: 190px; }
+}
+
 /* Section: display-font header + accent-dim left bar + sealing rule. */
 .settings-section { margin-bottom: var(--space-8); }
 .settings-section-head {
@@ -462,16 +503,61 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 }
 .settings-section-desc { margin: 0; font-size: 0.76rem; color: var(--muted); line-height: 1.45; }
 .settings-section-rule { border-top: 1px solid var(--border-2); margin-bottom: var(--space-1); }
-/* Row: 2-col label↔control, padding-based spacing (no per-row borders). */
-.settings-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); align-items: start; padding: var(--space-2) 0; }
+/* Row: label ↔ right-aligned controls. Desktop rows avoid accidental wrapping;
+   mobile is the only place where controls stack below labels. */
+.settings-row {
+  display: grid; grid-template-columns: minmax(220px, 0.42fr) minmax(320px, 0.58fr);
+  gap: var(--space-5); align-items: center; padding: var(--space-3) 0;
+}
 .settings-row-label { font-size: 0.82rem; font-weight: 500; color: var(--text); }
 .settings-row-label.danger { color: var(--red); }
 .settings-row-hint { font-size: 0.73rem; color: var(--muted); margin-top: var(--space-1); line-height: 1.4; }
-.settings-row-control { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.settings-toggle { display: flex; align-items: center; gap: var(--space-1); font-size: 0.82rem; cursor: pointer; }
+.settings-row-control { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); flex-wrap: nowrap; min-width: 0; }
+@media (max-width: 900px) {
+  .settings-row { grid-template-columns: 1fr; gap: var(--space-2); align-items: start; }
+  .settings-row-control { justify-content: flex-start; flex-wrap: wrap; }
+}
+.settings-toggle {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font-size: 0.82rem; cursor: pointer; color: var(--text); min-height: 28px;
+}
+.settings-switch-input {
+  position: absolute; opacity: 0; pointer-events: none;
+}
+.settings-switch-track {
+  position: relative; width: 34px; height: 18px; flex-shrink: 0;
+  border-radius: 999px; background: var(--bg);
+  border: 1px solid var(--border-2);
+  transition: background 0.15s, border-color 0.15s;
+}
+.settings-switch-thumb {
+  position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+  border-radius: 999px; background: var(--muted);
+  transition: transform 0.15s, background 0.15s;
+}
+.settings-switch-input:checked + .settings-switch-track {
+  background: rgba(34,211,238,0.12); border-color: rgba(34,211,238,0.45);
+}
+.settings-switch-input:checked + .settings-switch-track .settings-switch-thumb {
+  transform: translateX(16px); background: var(--accent);
+}
+.settings-switch-input:focus-visible + .settings-switch-track {
+  box-shadow: 0 0 0 3px rgba(34,211,238,0.12);
+}
+.settings-switch-text { white-space: nowrap; }
+.settings-toggle-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-2) var(--space-4); margin-bottom: var(--space-4);
+}
+.settings-action-row {
+  display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.settings-action-row-start { justify-content: flex-start; margin: 0 0 var(--space-3); }
+.settings-inline-note { margin-bottom: var(--space-4); }
 /* Numeric field grid (universe config etc.) — labels stack, inputs FILL the column
    (no fixed widths); units live in the label text, not as sibling spans. */
-.settings-field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-2) var(--space-5); margin-bottom: var(--space-3); }
+.settings-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-3) var(--space-5); margin-bottom: var(--space-4); align-items: start; }
 .settings-field { display: flex; flex-direction: column; gap: var(--space-1); }
 .settings-field > span { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .settings-field input { width: 100%; font-family: var(--mono); }
@@ -517,10 +603,10 @@ td { color: var(--text); }
 button {
   background: var(--accent); color: #04181d; border: none; padding: 0.42rem 0.85rem;
   border-radius: var(--r-sm); cursor: pointer; font-size: 0.8rem; font-weight: 600;
-  font-family: var(--sans); transition: filter 0.12s, transform 0.05s;
+  font-family: var(--sans); transition: filter 0.12s, background 0.12s, border-color 0.12s, color 0.12s;
 }
 button:hover { filter: brightness(1.1); }
-button:active { transform: translateY(1px); }
+button:active { transform: none; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border-2); }
 button.secondary:hover { background: var(--border); filter: none; }
@@ -531,6 +617,9 @@ select, input {
   padding: 0.42rem 0.55rem; border-radius: var(--r-sm); font-size: 0.83rem; font-family: var(--sans);
 }
 select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(34,211,238,0.12); }
+input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* ---------- Misc ---------- */
 .hint { margin-top: 0.5rem; color: var(--muted); font-size: 0.78rem; }
@@ -1211,6 +1300,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .cc-list-item {
   width: 100%;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   padding: 0.75rem 0.9rem;
@@ -1219,7 +1309,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   background: var(--surface-2);
   color: var(--text);
   text-align: left;
+  transition: background 0.12s, border-color 0.12s;
 }
+.cc-list-item:hover { filter: none; background: rgba(34,211,238,0.035); border-color: var(--border-2); }
+.cc-list-item:active { transform: none; }
 .cc-list-item.selected {
   border-color: var(--border-2);
   background: rgba(79, 156, 255, 0.08);
@@ -1235,6 +1328,17 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   font-size: 0.74rem;
   color: var(--muted);
 }
+.cc-severity {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.cc-severity-high { color: var(--red); }
+.cc-severity-medium { color: var(--yellow); }
+.cc-severity-low { color: var(--muted); }
 .cc-list-item.static {
   cursor: default;
 }

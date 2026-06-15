@@ -126,6 +126,19 @@ function severityBadge(severity: string): string {
   }
 }
 
+function severityTextClass(severity: string): string {
+  switch (severity) {
+    case 'high':
+      return 'cc-severity-high'
+    case 'medium':
+      return 'cc-severity-medium'
+    case 'low':
+      return 'cc-severity-low'
+    default:
+      return 'cc-severity-low'
+  }
+}
+
 function eventDetail(event: OperatorEvent): string {
   if (typeof event.payload === 'object' && event.payload && 'status' in (event.payload as Record<string, unknown>)) {
     return String((event.payload as Record<string, unknown>).status)
@@ -1288,7 +1301,7 @@ export default function CommandCenter() {
                     <span>{item.summary}</span>
                     <span className="cc-item-subtle">{humanize(item.kind)}</span>
                   </span>
-                  <span className={`badge ${severityBadge(item.severity)}`}>{humanize(item.severity)}</span>
+                  <span className={`cc-severity ${severityTextClass(item.severity)}`}>{humanize(item.severity)}</span>
                 </button>
               ))}
             </div>

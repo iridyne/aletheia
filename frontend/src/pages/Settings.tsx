@@ -25,16 +25,25 @@ const PROVIDER_LABELS: Record<string, string> = {
 const OAUTH_PROVIDERS = new Set(['anthropic_native', 'openai_native'])
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
-type Tab = 'intelligence' | 'execution' | 'risk' | 'infrastructure'
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'intelligence',   label: 'Intelligence' },
-  { id: 'execution',      label: 'Execution' },
-  { id: 'risk',           label: 'Risk, Symbols & Universe' },
-  { id: 'infrastructure', label: 'Infrastructure' },
+type Tab = 'agent' | 'execution' | 'risk' | 'health' | 'runtime' | 'advanced'
+const TABS: { id: Tab; label: string; description: string }[] = [
+  { id: 'agent',     label: 'Agent & Models',      description: 'Autonomy, scheduler, and model providers' },
+  { id: 'execution', label: 'Execution',           description: 'Exchange, credentials, live state, and paper fills' },
+  { id: 'risk',      label: 'Risk & Universe',     description: 'Risk limits, tradable symbols, and universe board' },
+  { id: 'health',    label: 'Health & Alerts',     description: 'Self-heal, startup gates, and notifications' },
+  { id: 'runtime',   label: 'Runtime & System',    description: 'App shell, updates, autostart, retention, and network' },
+  { id: 'advanced',  label: 'Advanced',            description: 'Read-only configuration coverage and diagnostics' },
 ]
 
-function isTab(value: string | null): value is Tab {
-  return !!value && TABS.some(t => t.id === value)
+const TAB_ALIASES: Record<string, Tab> = {
+  intelligence: 'agent',
+  infrastructure: 'runtime',
+}
+
+function parseTab(value: string | null): Tab | null {
+  if (!value) return null
+  if (TABS.some(t => t.id === value)) return value as Tab
+  return TAB_ALIASES[value] ?? null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,11 +84,14 @@ function Row({ label, hint, children, danger }: {
   )
 }
 
-function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+function Toggle({ checked, onChange, disabled, label }: {
+  checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string
+}) {
   return (
     <label className="settings-toggle">
-      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} disabled={disabled} />
-      {checked ? 'Enabled' : 'Disabled'}
+      <input className="settings-switch-input" type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} disabled={disabled} />
+      <span className="settings-switch-track" aria-hidden="true"><span className="settings-switch-thumb" /></span>
+      <span className="settings-switch-text">{label ?? (checked ? 'Enabled' : 'Disabled')}</span>
     </label>
   )
 }
@@ -125,13 +137,12 @@ export default function Settings() {
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
   const [tab, setTab] = useState<Tab>(() => {
-    const requestedTab = searchParams.get('tab')
-    return isTab(requestedTab) ? requestedTab : 'intelligence'
+    return parseTab(searchParams.get('tab')) ?? 'agent'
   })
 
   useEffect(() => {
-    const requestedTab = searchParams.get('tab')
-    if (isTab(requestedTab) && requestedTab !== tab) setTab(requestedTab)
+    const requestedTab = parseTab(searchParams.get('tab'))
+    if (requestedTab && requestedTab !== tab) setTab(requestedTab)
   }, [searchParams, tab])
 
   useEffect(() => {
@@ -160,18 +171,24 @@ export default function Settings() {
         role="Operate · Configure AI agent behaviour, exchange connections, risk limits, and system infrastructure. Secrets are write-only and never displayed."
       />
 
-      <div className="tab-bar" style={{ marginBottom: '2rem' }}>
-        {TABS.map(t => (
-          <button key={t.id} className={`tab ${tab === t.id ? 'tab-active' : ''}`} onClick={() => selectTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
+      <div className="settings-shell">
+        <aside className="settings-nav" aria-label="Settings sections">
+          {TABS.map(t => (
+            <button key={t.id} className={`settings-nav-item ${tab === t.id ? 'active' : ''}`} onClick={() => selectTab(t.id)}>
+              <span className="settings-nav-label">{t.label}</span>
+              <span className="settings-nav-desc">{t.description}</span>
+            </button>
+          ))}
+        </aside>
+        <div className="settings-panel">
+          {tab === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} />}
+          {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} />}
+          {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} />}
+          {tab === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} />}
+          {tab === 'runtime'   && <RuntimeSystemTab      settings={settings} qc={qc} />}
+          {tab === 'advanced'  && <AdvancedTab           settings={settings} />}
+        </div>
       </div>
-
-      {tab === 'intelligence'   && <IntelligenceTab   status={status} settings={settings} qc={qc} />}
-      {tab === 'execution'      && <ExecutionTab      status={status} settings={settings} qc={qc} />}
-      {tab === 'risk'           && <RiskTab           settings={settings} qc={qc} />}
-      {tab === 'infrastructure' && <InfrastructureTab settings={settings} qc={qc} />}
     </div>
   )
 }
@@ -180,7 +197,7 @@ export default function Settings() {
 // INTELLIGENCE TAB — agent behaviour, permission, autonomy, scheduler
 // ─────────────────────────────────────────────────────────────────────────────
 
-function IntelligenceTab({ status, settings, qc }: any) {
+function AgentModelsTab({ status, settings, qc }: any) {
   const agent = settings?.agent as any || {}
   const runtime = settings?.runtime as any || {}
 
@@ -436,14 +453,8 @@ function ExchangeMarketsRow({ settings, qc }: any) {
   return (
     <>
       <Row label="Enabled markets" hint="Which Bitget market types agents can place orders in. At least one must be enabled.">
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={spot} onChange={e => { setSpot(e.target.checked); setMsg(null) }} />
-          Spot
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={futures} onChange={e => { setFutures(e.target.checked); setMsg(null) }} />
-          USDT Futures
-        </label>
+        <Toggle checked={spot} label="Spot" onChange={v => { setSpot(v); setMsg(null) }} />
+        <Toggle checked={futures} label="USDT Futures" onChange={v => { setFutures(v); setMsg(null) }} />
       </Row>
       <Row label="Paper execution mode" hint="Where autonomous paper orders are simulated. bitget_demo uses Bitget demo/simulated trading; paper_internal uses only the local simulator.">
         <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
@@ -655,11 +666,12 @@ function TradingParamsCard({ settings, qc }: any) {
           </select>
         </label>
       </div>
-      <div style={{ marginBottom: '0.75rem' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={autoAdopt} onChange={e => { setAutoAdopt(e.target.checked); setMsg(null) }} />
-          Auto-adopt external demo positions into local management
-        </label>
+      <div className="settings-inline-note">
+        <Toggle
+          checked={autoAdopt}
+          label="Auto-adopt external demo positions into local management"
+          onChange={v => { setAutoAdopt(v); setMsg(null) }}
+        />
         <p className="hint" style={{ marginTop: '0.35rem' }}>
           When ON, demo positions found on the exchange can be brought under Aletheia management and may receive default exits.
           Live positions are never auto-adopted.
@@ -843,9 +855,9 @@ const RISK_BOOLS: BoolField[] = [
 
 function NumGrid({ fields, vals, set }: { fields: NumField[]; vals: Record<string, any>; set: (k: string, v: any) => void }) {
   return (
-    <div className="form-grid" style={{ marginBottom: '0.5rem' }}>
+    <div className="settings-field-grid">
       {fields.map(f => (
-        <label key={f.key}>
+        <label key={f.key} className="settings-field">
           <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
           <input type="number" min={f.min} max={f.max} step={f.step} value={vals[f.key] ?? ''}
             onChange={e => set(f.key, f.isInt ? parseInt(e.target.value) : parseFloat(e.target.value))}
@@ -904,17 +916,9 @@ function RiskCard({ settings, qc }: any) {
       <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', margin: '1rem 0 0.5rem' }}>Demo / paper limits</div>
       <NumGrid fields={RISK_DEMO} vals={vals} set={set} />
 
-      {/* Bool toggles */}
-      <div style={{ display: 'flex', gap: '1.75rem', margin: '1rem 0', flexWrap: 'wrap' }}>
-        {RISK_BOOLS.map(f => (
-          <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-            <input type="checkbox" checked={!!vals[f.key]} onChange={e => set(f.key, e.target.checked)} />
-            {f.label}
-          </label>
-        ))}
-      </div>
+      <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
 
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save risk limits'}</button>
         <SaveMsg msg={msg} />
       </div>
@@ -923,10 +927,45 @@ function RiskCard({ settings, qc }: any) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INFRASTRUCTURE TAB — display, app, health, retention, telegram, update, autostart
+// HEALTH & ALERTS TAB — health, self-heal, startup gate, notification delivery
 // ─────────────────────────────────────────────────────────────────────────────
 
-function InfrastructureTab({ settings, qc }: any) {
+function HealthNotificationsTab({ settings, qc }: any) {
+  return (
+    <div>
+      <Section title="Health Monitoring" description="Thresholds that determine when the system raises internal health alerts.">
+        <HealthCard settings={settings} qc={qc} />
+      </Section>
+
+      <Section title="Telegram" description="Alert delivery when agents act or limits are breached. Token is stored in secrets (write-only via CLI).">
+        <TelegramCard settings={settings} qc={qc} />
+      </Section>
+    </div>
+  )
+}
+
+function ToggleGrid({ fields, vals, set }: {
+  fields: BoolField[]; vals: Record<string, any>; set: (k: string, v: boolean) => void
+}) {
+  return (
+    <div className="settings-toggle-grid">
+      {fields.map(f => (
+        <Toggle
+          key={f.key}
+          checked={!!vals[f.key]}
+          label={f.label}
+          onChange={v => set(f.key, v)}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RUNTIME & SYSTEM TAB — display, app, retention, updates, autostart, network
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RuntimeSystemTab({ settings, qc }: any) {
   return (
     <div>
       <Section title="Display" description="Visual formatting applied across the dashboard.">
@@ -937,16 +976,8 @@ function InfrastructureTab({ settings, qc }: any) {
         <AppRows settings={settings} qc={qc} />
       </Section>
 
-      <Section title="Health Monitoring" description="Thresholds that determine when the system raises internal health alerts.">
-        <HealthCard settings={settings} qc={qc} />
-      </Section>
-
       <Section title="Data Retention" description="How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.">
         <RetentionCard settings={settings} qc={qc} />
-      </Section>
-
-      <Section title="Telegram" description="Alert delivery when agents act or limits are breached. Token is stored in secrets (write-only via CLI).">
-        <TelegramCard settings={settings} qc={qc} />
       </Section>
 
       <Section title="Software Updates" description="On-demand self-upgrade via git pull. Never runs automatically.">
@@ -960,7 +991,17 @@ function InfrastructureTab({ settings, qc }: any) {
       <Section title="Network Proxy" description="Route all outbound HTTP through a proxy. Required when direct internet access is unavailable (e.g. Task Scheduler-started gateway).">
         <NetworkCard settings={settings} qc={qc} />
       </Section>
+    </div>
+  )
+}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ADVANCED TAB — read-only coverage and diagnostics
+// ─────────────────────────────────────────────────────────────────────────────
+
+function AdvancedTab({ settings }: { settings: any }) {
+  return (
+    <div>
       <Section title="Configuration Matrix" description="Read-only coverage map for the sanitized local config. If a key exists in config.yaml but has no dedicated control above, it is still visible here.">
         <ConfigCoverageCard settings={settings} />
       </Section>
@@ -1139,45 +1180,22 @@ function HealthCard({ settings, qc }: any) {
     { key: 'startup_gate_max_retries',     label: 'LLM gate retries',         unit: '',    min: 1,  max: 10,    step: 1, isInt: true },
     { key: 'startup_gate_retry_delay_sec', label: 'LLM gate retry delay',     unit: 'sec', min: 5,  max: 120,   step: 5, isInt: true },
   ]
+  const HEALTH_TOGGLES: BoolField[] = [
+    { key: 'enabled', label: 'Health monitoring' },
+    { key: 'alert_via_telegram', label: 'Telegram alerts' },
+    { key: 'alert_via_windows_toast', label: 'Windows toast alerts' },
+    { key: 'require_llm_at_startup', label: 'Require LLM at startup' },
+    { key: 'self_heal_enabled', label: 'Self-heal enabled' },
+    { key: 'self_heal_code_drift', label: 'Restart on code drift' },
+    { key: 'self_heal_market_data', label: 'Restart on stale market data' },
+    { key: 'self_heal_port_cleanup', label: 'Clean orphan port holders' },
+  ]
 
   return (
     <div className="card" style={{ marginBottom: 0 }}>
-      <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '0.85rem' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!vals.enabled} onChange={e => set('enabled', e.target.checked)} />
-          Health monitoring enabled
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={!!vals.alert_via_telegram} onChange={e => set('alert_via_telegram', e.target.checked)} />
-          Alert via Telegram
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={vals.alert_via_windows_toast !== false} onChange={e => set('alert_via_windows_toast', e.target.checked)} />
-          Alert via Windows toast
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={vals.require_llm_at_startup !== false} onChange={e => set('require_llm_at_startup', e.target.checked)} />
-          Require LLM at startup
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={vals.self_heal_enabled !== false} onChange={e => set('self_heal_enabled', e.target.checked)} />
-          Self-heal enabled
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={vals.self_heal_code_drift !== false} onChange={e => set('self_heal_code_drift', e.target.checked)} />
-          Restart on code drift
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={vals.self_heal_market_data !== false} onChange={e => set('self_heal_market_data', e.target.checked)} />
-          Restart on stale market data
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
-          <input type="checkbox" checked={vals.self_heal_port_cleanup !== false} onChange={e => set('self_heal_port_cleanup', e.target.checked)} />
-          Clean orphan port holders
-        </label>
-      </div>
+      <ToggleGrid fields={HEALTH_TOGGLES} vals={vals} set={set} />
       <NumGrid fields={HEALTH_FIELDS} vals={vals} set={set} />
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
         <SaveMsg msg={msg} />
       </div>
@@ -1278,11 +1296,10 @@ function TelegramCard({ settings, qc }: any) {
           />
         </label>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-        <Toggle checked={enabled} onChange={v => { setEnabled(v); setMsg(null) }} />
-        <span className={`badge ${enabled ? 'badge-green' : 'badge-red'}`}>{enabled ? 'ON' : 'OFF'}</span>
+      <div className="settings-action-row settings-action-row-start">
+        <Toggle checked={enabled} label="Telegram delivery" onChange={v => { setEnabled(v); setMsg(null) }} />
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
         <SaveMsg msg={msg} />
       </div>

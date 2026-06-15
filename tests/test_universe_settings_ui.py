@@ -12,7 +12,7 @@ def test_universe_board_has_direct_settings_link():
 def test_settings_exposes_universe_control_in_symbols_tab():
     """Universe is a symbol-selection control, so it must be discoverable there."""
     settings = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
-    assert "Risk, Symbols & Universe" in settings
+    assert "Risk & Universe" in settings
     assert 'id="universe"' in settings
     assert "settings-section-${section}" in settings
     assert settings.count("<UniverseConfigCard settings={settings} qc={qc} />") == 1
@@ -57,3 +57,37 @@ def test_settings_controls_match_backend_config_fields():
 
     assert '<option value="bitget_demo">bitget_demo</option>' in settings
     assert '<option value="paper_internal">paper_internal</option>' in settings
+
+
+def test_settings_uses_vertical_information_architecture_and_switches():
+    settings = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
+    css = Path("frontend/src/index.css").read_text(encoding="utf-8")
+
+    for label in [
+        "Agent & Models",
+        "Execution",
+        "Risk & Universe",
+        "Health & Alerts",
+        "Runtime & System",
+        "Advanced",
+    ]:
+        assert label in settings
+
+    assert "settings-shell" in settings
+    assert "settings-nav-item" in settings
+    assert "settings-switch-track" in settings
+    assert "settings-toggle-grid" in settings
+    assert "type=\"checkbox\"" in settings  # hidden semantic input remains for accessibility
+    assert css.count(".settings-switch-input") >= 1
+    assert "settings-switch-input:checked + .settings-switch-track" in css
+
+
+def test_global_ui_removes_draggy_button_and_number_spinner_patterns():
+    css = Path("frontend/src/index.css").read_text(encoding="utf-8")
+    command_center = Path("frontend/src/pages/CommandCenter.tsx").read_text(encoding="utf-8")
+
+    assert "button:active { transform: none; }" in css
+    assert 'input[type="number"]::-webkit-inner-spin-button' in css
+    assert 'input[type="number"] { appearance: textfield;' in css
+    assert "cc-severity" in command_center
+    assert "cc-list-item:active { transform: none; }" in css
