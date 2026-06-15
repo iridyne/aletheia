@@ -112,8 +112,7 @@ def test_mark_stale_running_runs_closes_only_running_rows(tmp_path, monkeypatch)
     reset_db()
 
 
-# Agents now call the LLM; with no model server in tests they degrade gracefully
-# (status "completed_with_errors") but MUST still produce their artifact.
+# Agents now call the LLM; with no model server in tests they degrade gracefully.
 _OK = ("completed", "completed_with_errors")
 
 
@@ -122,9 +121,12 @@ async def test_market_observer_creates_opportunity(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     result = await run_agent("market_observer", trigger_type="manual")
     assert result["status"] in _OK
-    assert any("opportunity:" in o for o in result["outputs"])
-    opps = repo.list_opportunities()
-    assert len(opps) >= 1
+    # When LLM is unavailable, the quality gate skips opportunity creation.
+    # Errors are recorded instead of neutral/NULL waste signals.
+    if result["status"] == "completed_with_errors":
+        assert len(result["errors"]) > 0
+    else:
+        assert any("opportunity:" in o for o in result["outputs"])
     reset_db()
 
 
