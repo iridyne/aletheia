@@ -918,6 +918,10 @@ function HealthCard({ settings, qc }: any) {
           Alert via Telegram
         </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+          <input type="checkbox" checked={vals.alert_via_windows_toast !== false} onChange={e => set('alert_via_windows_toast', e.target.checked)} />
+          Alert via Windows toast
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer' }}>
           <input type="checkbox" checked={vals.require_llm_at_startup !== false} onChange={e => set('require_llm_at_startup', e.target.checked)} />
           Require LLM at startup
         </label>

@@ -1,8 +1,17 @@
-"""Best-effort Windows toast notifications. Never raises."""
+"""Best-effort operator notifications. Never raises.
 
+Notifications are deliberately advisory only: they must never block the gateway,
+and they must never mutate trading state. The sink fan-outs to local audit/error
+streams, Windows toast, and Telegram when configured.
+"""
+
+import asyncio
 import logging
+import os
 import platform
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from html import escape
 
 logger = logging.getLogger("aletheia.notifications")
 
@@ -11,11 +20,11 @@ _IS_WINDOWS = platform.system() == "Windows"
 
 def send_windows_toast(title: str, message: str) -> None:
     """Send a Windows toast notification via PowerShell. No-op on non-Windows."""
-    if not _IS_WINDOWS:
+    if not _IS_WINDOWS or os.environ.get("PYTEST_CURRENT_TEST"):
         return
     try:
-        safe_title = title.replace("'", "''")
-        safe_message = message.replace("'", "''")
+        safe_title = escape(title, quote=False).replace("'", "''")
+        safe_message = escape(message, quote=False).replace("'", "''")
         script = (
             f"$ErrorActionPreference='SilentlyContinue'; "
             f"if (Get-Module -ListAvailable -Name BurntToast) {{ "
@@ -38,3 +47,96 @@ def send_windows_toast(title: str, message: str) -> None:
         )
     except Exception as e:
         logger.debug("Toast notification failed (non-critical): %s", e)
+
+
+def _send_telegram_alert(message: str) -> None:
+    """Send a Telegram alert to allowed chats when configured. Never raises."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        if not cfg.health.alert_via_telegram or not cfg.telegram.enabled:
+            return
+        from aletheia.telegram.bot import TelegramBot
+        bot = TelegramBot()
+        if not bot.configure():
+            return
+
+        async def _send_all():
+            for chat_id in bot.allowed_chat_ids:
+                try:
+                    await bot.send_message(chat_id, f"⚠️ Aletheia: {message}")
+                except Exception:
+                    pass
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(_send_all())
+        else:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(asyncio.run, _send_all()).result()
+    except Exception as e:
+        logger.warning("Telegram notification failed (non-critical): %s", e)
+
+
+def notify_operator(
+    title: str,
+    message: str,
+    *,
+    level: str = "warning",
+    source: str = "system",
+    event_type: str | None = "operator_notification",
+    entity_type: str = "system",
+    entity_id: str = "system",
+    audit: bool = True,
+    error_log: bool = True,
+    windows: bool = True,
+    telegram: bool = True,
+) -> None:
+    """Best-effort fan-out notification for operator-visible failures.
+
+    This is intentionally small and synchronous: callers use it only on degraded
+    transitions, supervisor failures, and startup faults. Every branch catches
+    its own errors so notification failures cannot take down the gateway.
+    """
+    clean_title = str(title)[:120]
+    clean_message = str(message)[:1000]
+
+    if audit and event_type:
+        try:
+            from aletheia.files.jsonl import write_audit
+            write_audit({
+                "actor": "system",
+                "source": source,
+                "event_type": event_type,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "level": level,
+                "message": f"{clean_title}: {clean_message}",
+            })
+        except Exception:
+            pass
+
+    if error_log:
+        try:
+            from aletheia.files.jsonl import write_error
+            write_error({
+                "source": source,
+                "level": level,
+                "title": clean_title,
+                "message": clean_message,
+            })
+        except Exception:
+            pass
+
+    if windows:
+        try:
+            from aletheia.config.loader import load_config
+            cfg = load_config()
+            if getattr(cfg.health, "alert_via_windows_toast", True):
+                send_windows_toast(clean_title, clean_message)
+        except Exception:
+            pass
+
+    if telegram:
+        _send_telegram_alert(f"{clean_title}: {clean_message}")

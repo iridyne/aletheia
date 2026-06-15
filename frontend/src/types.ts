@@ -300,6 +300,16 @@ export interface SystemStatus {
   live_state: string
   permission_mode: string
   scheduler_enabled: boolean
+  scheduler_running: boolean
+  scheduler_state: string
+  scheduler_job_count: number
+  model_provider: string
+  health_status: string
+  health_issues: string[]
+  boot_commit: string | null
+  current_commit: string | null
+  pid: number
+  uptime_sec: number
   version: string
 }
 

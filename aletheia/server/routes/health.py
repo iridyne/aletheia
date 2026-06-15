@@ -1,5 +1,6 @@
 """Health and status API routes."""
 
+import logging
 import os
 import time
 
@@ -11,6 +12,7 @@ from aletheia.config.loader import load_config, save_config
 router = APIRouter(prefix="/api", tags=["system"])
 
 _boot_time = time.time()
+logger = logging.getLogger("aletheia.routes.health")
 
 
 @router.get("/health")
@@ -21,6 +23,21 @@ async def health():
         "status": "healthy" if h["healthy"] else "degraded",
         "issues": h["issues"],
         "version": __version__,
+    }
+
+
+@router.get("/ready")
+async def ready():
+    """Cheap liveness probe for the dashboard reconnect guard.
+
+    This intentionally avoids DB/config reads: if this route responds, the HTTP
+    worker is alive even if deeper health is degraded.
+    """
+    return {
+        "ok": True,
+        "version": __version__,
+        "pid": os.getpid(),
+        "uptime_sec": round(time.time() - _boot_time, 1),
     }
 
 
@@ -48,6 +65,32 @@ async def stability():
 @router.get("/status")
 async def status():
     cfg = load_config()
+    try:
+        from aletheia.agent_runtime.health import compute_health
+        h = compute_health()
+    except Exception as e:
+        logger.warning("status health rollup failed: %s", e)
+        h = {"healthy": False, "issues": [f"health_check_error:{type(e).__name__}"]}
+
+    try:
+        from aletheia.agent_runtime.scheduler import status_snapshot
+        sched = status_snapshot()
+    except Exception as e:
+        logger.warning("status scheduler snapshot failed: %s", e)
+        sched = {"running": False, "state": f"error:{type(e).__name__}", "job_count": 0}
+
+    try:
+        from aletheia.agent_runtime.build_info import get_boot_commit
+        boot_commit = get_boot_commit()
+    except Exception:
+        boot_commit = None
+
+    try:
+        from aletheia.update.git_ops import current_commit
+        head_commit = current_commit() or None
+    except Exception:
+        head_commit = None
+
     return {
         "gateway_running": True,  # if we can respond, we are running
         "paused": cfg.runtime.paused,
@@ -56,6 +99,16 @@ async def status():
         "live_state": cfg.live.state,
         "permission_mode": cfg.agent.permission_mode,
         "scheduler_enabled": cfg.runtime.scheduler_enabled,
+        "scheduler_running": sched["running"],
+        "scheduler_state": sched["state"],
+        "scheduler_job_count": sched["job_count"],
+        "model_provider": cfg.models.default_provider,
+        "health_status": "healthy" if h["healthy"] else "degraded",
+        "health_issues": h["issues"],
+        "boot_commit": boot_commit,
+        "current_commit": head_commit,
+        "pid": os.getpid(),
+        "uptime_sec": round(time.time() - _boot_time, 1),
         "version": __version__,
     }
 

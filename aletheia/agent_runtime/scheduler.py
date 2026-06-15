@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -170,6 +171,35 @@ def resume_scheduler() -> None:
 
 def is_running() -> bool:
     return _scheduler is not None and _scheduler.running
+
+
+def status_snapshot() -> dict:
+    """Return an honest, read-only snapshot of the in-process scheduler.
+
+    `runtime.scheduler_enabled` is only the operator's desired configuration.
+    This snapshot reports the actual APScheduler object state so the dashboard
+    does not show "active" when init failed or the scheduler is paused.
+    """
+    if _scheduler is None:
+        return {"running": False, "state": "not_started", "job_count": 0}
+    state = getattr(_scheduler, "state", None)
+    if state == STATE_RUNNING:
+        label = "running"
+    elif state == STATE_PAUSED:
+        label = "paused"
+    elif state == STATE_STOPPED:
+        label = "stopped"
+    else:
+        label = f"unknown:{state}"
+    try:
+        job_count = len(_scheduler.get_jobs())
+    except Exception:
+        job_count = 0
+    return {
+        "running": state == STATE_RUNNING,
+        "state": label,
+        "job_count": job_count,
+    }
 
 
 def _run_market_data():

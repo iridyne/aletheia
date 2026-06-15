@@ -3,10 +3,9 @@
 Computes health from REAL backend signals (recent agent-run failure ratio, kill
 switch, LLM availability) and alerts only on transition INTO an unhealthy state
 (de-duped via a persisted flag). Never fabricates a positive "healthy" push.
-Alerts go through the existing Telegram bot when configured.
+Alerts go through the local operator notification sink (Windows toast and Telegram when configured).
 """
 
-import asyncio
 import logging
 import os
 
@@ -137,37 +136,17 @@ def compute_health() -> dict:
 
 
 def _send_alert(message: str) -> None:
-    """Best-effort Telegram alert to all allowed chats. Never raises."""
-    cfg = load_config()
-    if not cfg.health.alert_via_telegram or not cfg.telegram.enabled:
-        return
+    """Best-effort operator alert. Never raises."""
     try:
-        from aletheia.telegram.bot import TelegramBot
-        bot = TelegramBot()
-        if not bot.configure():
-            return
-
-        async def _send_all():
-            for chat_id in bot.allowed_chat_ids:
-                try:
-                    await bot.send_message(chat_id, f"⚠️ Aletheia health: {message}")
-                except Exception:
-                    pass
-
-        # run_health_check() is sync and may be called from either a plain thread
-        # (scheduler) or inside a running event loop (FastAPI route / tests). A bare
-        # asyncio.run() raises inside a running loop, and loop.create_task() would
-        # fire-and-forget a task this sync function never awaits (it can be GC'd and
-        # the alert silently lost). Run the coroutine to completion in a worker thread
-        # so it is safe and actually delivered in both contexts.
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.run(_send_all())  # no loop in this thread
-        else:
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                pool.submit(asyncio.run, _send_all()).result()
+        from aletheia.notifications import notify_operator
+        notify_operator(
+            "Aletheia health degraded",
+            message,
+            source="health",
+            event_type=None,  # caller writes the specific audit event.
+            audit=False,
+            error_log=False,
+        )
     except Exception as e:
         logger.warning("health alert send failed: %s", e)
 

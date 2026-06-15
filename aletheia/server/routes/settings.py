@@ -170,6 +170,7 @@ async def update_app_config(req: AppConfigUpdate):
 class HealthConfigUpdate(BaseModel):
     enabled: Optional[bool] = None
     alert_via_telegram: Optional[bool] = None
+    alert_via_windows_toast: Optional[bool] = None
     max_agent_failure_ratio: Optional[float] = None
     llm_unavailable_alert_after: Optional[int] = None
     market_data_max_staleness_min: Optional[int] = None

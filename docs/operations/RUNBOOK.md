@@ -16,7 +16,7 @@ trading stays disabled until you explicitly unlock it — see [Live trading](#8-
 ```bash
 uv venv --python 3.12
 uv pip install -e ".[dev]"
-uv run aletheia version          # Aletheia Trading OS v0.4.0
+uv run aletheia version          # Aletheia Trading OS v0.5.0
 ```
 
 ## 2. Start the gateway (dashboard)
@@ -31,8 +31,14 @@ Other lifecycle commands: `gateway stop | restart | pause | resume | logs | open
 
 The gateway runs under a **supervisor**: if the inner server crashes it is
 respawned with backoff; after too many restarts in a window it gives up, writes a
-`gateway_supervisor_gave_up` audit event, and (if Telegram is configured) alerts
-you. The inner server's stderr goes to `data/logs/errors.log`.
+`gateway_supervisor_gave_up` audit event, and alerts through the operator
+notification sink (Windows toast and Telegram when configured). The inner
+server's stderr goes to `data/logs/errors.log`.
+
+The production dashboard also has a global backend connection guard. If `/api`
+becomes unreachable during restart/self-heal, the page shows a fail-loud banner
+and, after a prolonged outage, an overlay with the recovery command. Browser
+notifications are opt-in from that banner because browsers require permission.
 
 ## 2.5 Frontend hot reload (development default)
 

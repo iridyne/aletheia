@@ -24,6 +24,7 @@ import Universe from './pages/Universe'
 // import ActivityTimeline from './components/ActivityTimeline'
 import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
+import BackendConnectionGuard from './components/BackendConnectionGuard'
 
 export type NavItem = { to: string; label: string }
 export type NavGroup = { group: string; items: NavItem[] }
@@ -182,14 +183,16 @@ function StatusBar() {
 
   if (!data) return <div className="topbar-status"><span className="dot dot-muted" />connecting…</div>
 
-  const running = !!(data as any).gateway_running
-  const paused = !!(data as any).paused
-  const live = String((data as any).live_state || 'live_disabled')
+  const running = !!data.gateway_running
+  const paused = !!data.paused
+  const live = String(data.live_state || 'live_disabled')
   const liveOn = live !== 'live_disabled'
-  const mode = String((data as any).exchange_mode || '')
-  const exch = String((data as any).exchange || '')
-  const perm = String((data as any).permission_mode || '')
-  const modelProv = String((data as any).model_provider || '')
+  const mode = String(data.exchange_mode || '')
+  const exch = String(data.exchange || '')
+  const perm = String(data.permission_mode || '')
+  const modelProv = String(data.model_provider || '')
+  const schedulerState = String(data.scheduler_state || (paused ? 'paused' : 'unknown'))
+  const schedulerRunning = !!data.scheduler_running
   const killed = !!ks?.active
 
   const latestRun = (runs as any[])[0]
@@ -259,9 +262,9 @@ function StatusBar() {
               <span className="sp-value">{running ? (paused ? 'paused' : 'running') : 'stopped'}</span>
             </div>
             <div className="sp-row">
-              <span className={`dot dot-${paused ? 'yellow' : 'green'}`} />
+              <span className={`dot dot-${schedulerRunning ? 'green' : paused ? 'yellow' : 'red'}`} />
               <span className="sp-label">Scheduler</span>
-              <span className="sp-value">{paused ? 'paused' : 'active'}</span>
+              <span className="sp-value">{schedulerState}</span>
             </div>
             <div className="sp-row">
               <span className={`dot dot-${liveLight}`} />
@@ -425,6 +428,7 @@ export default function App() {
           <StatusBar />
         </header>
         <main className="main">
+          <BackendConnectionGuard />
           <Routes>
             <Route path="/" element={<Overview />} />
             <Route path="/agent-activity" element={<AgentActivity />} />

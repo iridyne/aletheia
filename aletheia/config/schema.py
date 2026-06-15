@@ -203,6 +203,7 @@ class TelegramConfig(BaseModel):
 class HealthConfig(BaseModel):
     enabled: bool = True
     alert_via_telegram: bool = True
+    alert_via_windows_toast: bool = True
     max_agent_failure_ratio: float = 0.5
     llm_unavailable_alert_after: int = 3
     # Silent-degradation guard: flag the market-data feed as stale when the newest

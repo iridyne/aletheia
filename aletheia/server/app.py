@@ -178,11 +178,15 @@ async def _llm_startup_gate(cfg) -> None:
         pass
 
     try:
-        from aletheia.notifications import send_windows_toast
+        from aletheia.notifications import notify_operator
         attempts = result.get("attempts", 1)
-        send_windows_toast(
+        notify_operator(
             "Aletheia Gateway Paused",
             f"LLM unavailable ({result['checked']} providers, {attempts} retries). Check Databricks/network.",
+            source="startup_gate",
+            event_type=None,
+            audit=False,
+            error_log=True,
         )
     except Exception:
         pass

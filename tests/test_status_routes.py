@@ -1,0 +1,78 @@
+import sqlite3
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from aletheia.server.app import app
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+async def client(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    reset_db()
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    run_migrations()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+    reset_db()
+
+
+@pytest.mark.anyio
+async def test_ready_is_lightweight_liveness(client):
+    resp = await client.get("/api/ready")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["pid"] > 0
+    assert "version" in data
+
+
+@pytest.mark.anyio
+async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
+    import aletheia.agent_runtime.scheduler as scheduler
+    import aletheia.agent_runtime.health as health
+    import aletheia.agent_runtime.build_info as build_info
+    import aletheia.update.git_ops as git_ops
+
+    monkeypatch.setattr(
+        scheduler,
+        "status_snapshot",
+        lambda: {"running": False, "state": "not_started", "job_count": 0},
+    )
+    monkeypatch.setattr(
+        health,
+        "compute_health",
+        lambda: {"healthy": False, "issues": ["code_updated_pending_restart:old..new"]},
+    )
+    monkeypatch.setattr(build_info, "get_boot_commit", lambda: "old")
+    monkeypatch.setattr(git_ops, "current_commit", lambda: "new")
+
+    resp = await client.get("/api/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["gateway_running"] is True
+    assert data["scheduler_running"] is False
+    assert data["scheduler_state"] == "not_started"
+    assert data["health_status"] == "degraded"
+    assert data["health_issues"] == ["code_updated_pending_restart:old..new"]
+    assert data["boot_commit"] == "old"
+    assert data["current_commit"] == "new"
+    assert data["model_provider"]

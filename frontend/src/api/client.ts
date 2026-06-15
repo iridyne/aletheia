@@ -1,3 +1,5 @@
+import type { SystemStatus } from '../types'
+
 const BASE = '/api'
 
 function extractApiError(status: number, body: string): string {
@@ -154,10 +156,11 @@ export interface SerenityThemeOverview {
 
 export const api = {
   getHealth: () => fetchJson<{ status: string; issues: string[]; version: string }>('/health'),
+  getReady: () => fetchJson<{ ok: boolean; version: string; pid: number; uptime_sec: number }>('/ready'),
   // Restart the gateway worker (warm) or full process (cold). Issued from the
   // topbar restart button when the health endpoint reports code_updated_pending_restart.
   restartGateway: () => post<{ mode: 'warm' | 'cold'; ok: boolean; message: string }>('/gateway/restart'),
-  getStatus: () => fetchJson<Record<string, unknown>>('/status'),
+  getStatus: () => fetchJson<SystemStatus>('/status'),
   getOperatorStatus: () => fetchJson<any>('/operator/status'),
   getRuntimeStatus: () => fetchJson<any>('/operator/runtime'),
   createRuntimeCandidate: (body: {
@@ -292,7 +295,7 @@ export const api = {
   updateAppConfig: (body: Partial<{ auto_open_browser: boolean }>) =>
     post<{ updated: Record<string, any> }>('/settings/app', body),
   updateHealthConfig: (body: Partial<{
-    enabled: boolean; alert_via_telegram: boolean; max_agent_failure_ratio: number
+    enabled: boolean; alert_via_telegram: boolean; alert_via_windows_toast: boolean; max_agent_failure_ratio: number
     llm_unavailable_alert_after: number; market_data_max_staleness_min: number
     supervisor_max_restarts: number; supervisor_restart_window_sec: number
     supervisor_backoff_cap_sec: number
@@ -316,7 +319,7 @@ export const api = {
     deps_reinstalled?: boolean; restart_required?: boolean; message?: string
   }>('/update/apply'),
 
-  // Autostart + watchdog (Windows Task Scheduler; on-logon start + 5-min watchdog)
+  // Autostart + watchdog (Windows Task Scheduler; on-logon start + 2-min watchdog)
   getAutostartStatus: () => fetchJson<{
     supported: boolean; enabled: boolean | null; task_name?: string
     trigger?: string; interval?: string; reason?: string; detail?: string

@@ -36,6 +36,12 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     # Preflight checks — fail fast if environment is broken
     from aletheia.gateway.preflight import run_preflight_checks, assert_preflight_or_exit
     preflight_result = run_preflight_checks()
+    if not preflight_result.passed:
+        _notify_gateway_problem(
+            "Aletheia Gateway preflight failed",
+            "; ".join(f"{c.name}: {c.message}" for c in preflight_result.failures()),
+            source="watchdog",
+        )
     assert_preflight_or_exit(preflight_result)  # exits on failure
 
     if is_running():
@@ -179,6 +185,14 @@ def _fail_spawn(reason: str) -> None:
         })
     except Exception:
         pass
+
+    _notify_gateway_problem(
+        "Aletheia Gateway failed to start",
+        reason,
+        source="watchdog",
+        error_log=True,
+        audit=False,
+    )
 
     msg = f"Gateway failed to start: {reason}."
     if tail:
@@ -460,6 +474,32 @@ def _audit_orphan_cleanup(orphan_pids: list[int]) -> None:
             "entity_type": "gateway", "entity_id": "gateway",
             "message": f"Watchdog auto-cleaned {len(orphan_pids)} orphan(s): {orphan_pids}",
         })
+    except Exception:
+        pass
+
+
+def _notify_gateway_problem(
+    title: str,
+    message: str,
+    *,
+    source: str,
+    error_log: bool = True,
+    audit: bool = True,
+) -> None:
+    """Best-effort operator-visible notification for gateway lifecycle faults."""
+    try:
+        from aletheia.notifications import notify_operator
+        notify_operator(
+            title,
+            message,
+            source=source,
+            event_type="gateway_operator_notification",
+            entity_type="gateway",
+            entity_id="gateway",
+            level="error",
+            audit=audit,
+            error_log=error_log,
+        )
     except Exception:
         pass
 

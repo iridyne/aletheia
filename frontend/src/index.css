@@ -364,6 +364,44 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
 .notice-banner .notice-text { line-height: 1.45; }
 .notice-banner .notice-text b { color: var(--yellow); }
 
+/* ---------- Backend connection guard (global, fail-loud) ---------- */
+.backend-guard {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--space-4); padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4); border-radius: var(--r);
+  box-shadow: var(--shadow);
+}
+.backend-guard-red {
+  background: linear-gradient(90deg, rgba(255,93,108,0.16), rgba(255,93,108,0.05));
+  border: 1px solid rgba(255,93,108,0.45);
+}
+.backend-guard-yellow {
+  background: linear-gradient(90deg, rgba(245,185,66,0.14), rgba(245,185,66,0.04));
+  border: 1px solid rgba(245,185,66,0.40);
+}
+.backend-guard-main { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
+.backend-guard-main strong {
+  display: block; font-family: var(--display); font-size: 0.9rem; letter-spacing: 0.01em;
+}
+.backend-guard-main p { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.82rem; }
+.backend-guard-detail { font-family: var(--mono); color: var(--faint) !important; word-break: break-word; }
+.backend-guard-actions { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
+.backend-guard-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(5,8,12,0.72); backdrop-filter: blur(2px);
+}
+.backend-guard-panel {
+  width: min(520px, calc(100vw - 32px)); padding: var(--space-6);
+  background: var(--surface); border: 1px solid rgba(255,93,108,0.55);
+  border-radius: var(--r); box-shadow: 0 24px 80px rgba(0,0,0,0.55);
+}
+.backend-guard-panel h2 {
+  margin: var(--space-3) 0 var(--space-2);
+  font-family: var(--display); font-size: 1.2rem;
+}
+.backend-guard-panel p { margin-top: var(--space-2); color: var(--muted); }
+
 /* ---------- Cards ---------- */
 .card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
