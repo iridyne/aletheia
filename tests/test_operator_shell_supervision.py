@@ -26,11 +26,13 @@ def test_build_operator_shell_command_uses_local_tsx_runtime(tmp_path, monkeypat
     from aletheia.gateway import operator_shell
 
     root = tmp_path / "operator-shell"
-    cli = root / "node_modules" / "tsx" / "dist" / "cli.mjs"
+    preflight = root / "node_modules" / "tsx" / "dist" / "preflight.cjs"
+    loader = root / "node_modules" / "tsx" / "dist" / "loader.mjs"
     entry = root / "src" / "index.ts"
-    cli.parent.mkdir(parents=True, exist_ok=True)
+    preflight.parent.mkdir(parents=True, exist_ok=True)
     entry.parent.mkdir(parents=True, exist_ok=True)
-    cli.write_text("// tsx", encoding="utf-8")
+    preflight.write_text("// tsx preflight", encoding="utf-8")
+    loader.write_text("// tsx loader", encoding="utf-8")
     entry.write_text("console.log('ok')", encoding="utf-8")
 
     monkeypatch.setattr(operator_shell, "operator_shell_root", lambda: root)
@@ -39,19 +41,24 @@ def test_build_operator_shell_command_uses_local_tsx_runtime(tmp_path, monkeypat
 
     assert cmd is not None
     assert cmd[0] == "node"
-    assert cmd[1] == str(cli)
-    assert cmd[2] == str(entry)
+    assert cmd[1] == "--require"
+    assert cmd[2] == str(preflight)
+    assert cmd[3] == "--import"
+    assert cmd[4] == loader.as_uri()
+    assert cmd[5] == str(entry)
 
 
 def _make_operator_shell_fixture(tmp_path, monkeypatch):
     from aletheia.gateway import operator_shell
 
     root = tmp_path / "operator-shell"
-    cli = root / "node_modules" / "tsx" / "dist" / "cli.mjs"
+    preflight = root / "node_modules" / "tsx" / "dist" / "preflight.cjs"
+    loader = root / "node_modules" / "tsx" / "dist" / "loader.mjs"
     entry = root / "src" / "index.ts"
-    cli.parent.mkdir(parents=True, exist_ok=True)
+    preflight.parent.mkdir(parents=True, exist_ok=True)
     entry.parent.mkdir(parents=True, exist_ok=True)
-    cli.write_text("// tsx", encoding="utf-8")
+    preflight.write_text("// tsx preflight", encoding="utf-8")
+    loader.write_text("// tsx loader", encoding="utf-8")
     entry.write_text("console.log('ok')", encoding="utf-8")
     monkeypatch.setattr(operator_shell, "operator_shell_root", lambda: root)
     return operator_shell
@@ -272,6 +279,33 @@ def test_operator_shell_monitor_records_offline_when_spawn_unavailable(tmp_path,
     assert "command remained unavailable" in heartbeat["last_error"]
     assert monitor.degraded_until == now["value"] + cfg.operator.restart_after_sec
     assert any(kind == "operator_shell_degraded" for kind, _ in events)
+
+
+def test_operator_shell_monitor_records_offline_when_spawn_raises(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell.operator_store import get_latest_heartbeat
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.gateway.operator_shell import OperatorShellMonitor
+
+    cfg = load_config()
+    cfg.operator.max_restart_failures = 1
+    save_config(cfg)
+
+    monkeypatch.setattr("aletheia.gateway.operator_shell._gateway_api_ready", lambda cfg: True)
+
+    def raise_spawn(_cfg):
+        raise RuntimeError("spawn failed")
+
+    monitor = OperatorShellMonitor(cfg, spawn_fn=raise_spawn, now_fn=lambda: 1000.0)
+
+    monitor.tick_once()
+
+    heartbeat = get_latest_heartbeat()
+    assert heartbeat is not None
+    assert heartbeat["status"] == "offline"
+    assert heartbeat["mode"] == "Degraded"
+    assert "spawn failed" in heartbeat["last_error"]
 
 
 def test_operator_shell_monitor_refreshes_offline_status_during_cooldown(tmp_path, monkeypatch):

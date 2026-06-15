@@ -22,11 +22,16 @@ def operator_shell_root() -> Path:
 
 def build_operator_shell_command(cfg) -> list[str] | None:
     root = operator_shell_root()
-    cli = root / "node_modules" / "tsx" / "dist" / "cli.mjs"
+    preflight = root / "node_modules" / "tsx" / "dist" / "preflight.cjs"
+    loader = root / "node_modules" / "tsx" / "dist" / "loader.mjs"
     entry = root / "src" / "index.ts"
-    if not cli.exists() or not entry.exists():
+    if not preflight.exists() or not loader.exists() or not entry.exists():
         return None
-    return ["node", str(cli), str(entry)]
+    # Launch the actual tsx loader process directly instead of invoking the tsx
+    # CLI wrapper. On Windows the wrapper can transiently fork/exit, which makes
+    # the Python supervisor track the short-lived parent instead of the durable
+    # operator process.
+    return ["node", "--require", str(preflight), "--import", loader.as_uri(), str(entry)]
 
 
 def _current_runtime_id() -> str:
@@ -139,10 +144,12 @@ def _read_process_command_line(pid: int) -> str | None:
 
 def _operator_shell_markers(cmd: list[str]) -> tuple[str, ...]:
     markers = ["operator-shell"]
-    if len(cmd) > 1:
-        markers.append(Path(cmd[1]).name)
-    if len(cmd) > 2:
-        markers.append(Path(cmd[2]).name)
+    for value in cmd[1:]:
+        if value.startswith("-"):
+            continue
+        name = Path(value).name
+        if name in {"cli.mjs", "preflight.cjs", "loader.mjs", "index.ts"}:
+            markers.append(name)
     return tuple(marker for marker in markers if marker)
 
 
@@ -521,7 +528,7 @@ class OperatorShellMonitor:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def _record_unavailable(self, message: str, *, now: float | None = None, force: bool = False) -> None:
+    def _record_unavailable(self, message: str, *, now: float | None = None, force: bool = False) -> bool:
         effective_now = self.now_fn() if now is None else now
         interval = max(float(self.cfg.operator.heartbeat_interval_sec), 1.0)
         if (
@@ -529,9 +536,10 @@ class OperatorShellMonitor:
             and self._last_unavailable_heartbeat_at is not None
             and effective_now - self._last_unavailable_heartbeat_at < interval
         ):
-            return
+            return False
         _record_operator_shell_unavailable(self.cfg, message)
         self._last_unavailable_heartbeat_at = effective_now
+        return True
 
     def tick_once(self) -> None:
         if not self.cfg.operator.enabled:
@@ -547,17 +555,24 @@ class OperatorShellMonitor:
                 return
             if not _gateway_api_ready(self.cfg):
                 return
-            proc = self.spawn_fn(self.cfg)
+            spawn_error: str | None = None
+            try:
+                proc = self.spawn_fn(self.cfg)
+            except Exception as exc:
+                proc = None
+                spawn_error = f"Operator shell start failed: {exc}"
             if proc is None:
                 self._failure_count += 1
-                message = "Operator shell command is unavailable; supervisor cannot start it."
+                message = spawn_error or "Operator shell command is unavailable; supervisor cannot start it."
                 self._record_unavailable(message, now=now)
                 if self._failure_count >= self.cfg.operator.max_restart_failures:
                     self.degraded_until = now + self.cfg.operator.restart_after_sec
+                    detail = f"; last error: {spawn_error}" if spawn_error else ""
                     degraded_message = (
                         "Operator shell command remained unavailable after "
                         f"{self._failure_count} start attempt(s); "
                         f"cooldown {self.cfg.operator.restart_after_sec}s"
+                        f"{detail}"
                     )
                     self._record_unavailable(degraded_message, now=now, force=True)
                     self.record_event(
@@ -585,6 +600,10 @@ class OperatorShellMonitor:
             _clear_operator_shell_pid(expected_pid=proc_pid)
         if code == 0:
             self._failure_count = 0
+            self._record_unavailable(
+                "Operator shell exited cleanly; supervisor will restart it.",
+                now=now,
+            )
             return
 
         self._failure_count += 1
@@ -672,7 +691,12 @@ class OperatorShellMonitor:
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
-            self.tick_once()
+            try:
+                self.tick_once()
+            except Exception as exc:
+                message = f"Operator shell monitor tick failed: {exc}"
+                if self._record_unavailable(message):
+                    self.record_event("operator_shell_degraded", {"message": message})
             self._stop_event.wait(self.poll_interval_sec)
 
     def stop(self) -> None:
