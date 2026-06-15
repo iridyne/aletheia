@@ -2883,8 +2883,14 @@ export class OperatorLoop {
       this.sessionRuntime.setCurrentIntent(this.recoveryIntent)
     }
 
-    if (this.recoveryMode === 'Degraded' || operatorStatus.last_error || operatorStatus.status === 'stale') {
+    if (this.recoveryMode === 'Degraded' || operatorStatus.status === 'stale') {
       this.mode = 'Degraded'
+    } else if (operatorStatus.last_error) {
+      // Transient errors (e.g. gateway restart 404) are cleared on next
+      // successful runOnce — start as Degraded but don't persist the error
+      // into recoveryIntent (which would stick across multiple restarts).
+      this.mode = 'Degraded'
+      this.lastError = operatorStatus.last_error
     } else if (operatorStatus.mode === 'Paused') {
       this.mode = 'Paused'
     } else {
@@ -2995,6 +3001,10 @@ export class OperatorLoop {
       if (piSessionRan && this.taskRuntime.snapshot().currentTaskId === null) {
         this.settleModeAfterTaskRun(snapshot, activeTaskBeforePiSession)
       }
+      // Clear lastError BEFORE building heartbeat — a successful runOnce proves
+      // the prior error is resolved. Writing null into the heartbeat prevents
+      // recoverState() from re-reading a stale error on next restart.
+      this.lastError = null
       const heartbeat = buildHeartbeat({
         mode: this.mode,
         permissionMode: this.config.permissionMode,
@@ -3010,7 +3020,6 @@ export class OperatorLoop {
       })
       await this.backendClient.postHeartbeat(heartbeat)
       this.lastSuccessAt = heartbeat.last_seen_at
-      this.lastError = null
       return true
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error)
