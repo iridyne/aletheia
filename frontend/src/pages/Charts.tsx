@@ -147,12 +147,19 @@ export default function Charts() {
           <select value={symbol} onChange={e => setSymbol(e.target.value)}>
             {SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select value={timeframe} onChange={e => setTimeframe(e.target.value)}>
-            {TIMEFRAMES.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
+          <div className="seg-toggle">
+            {TIMEFRAMES.map(t => (
+              <button
+                key={t}
+                className={`seg-btn${timeframe === t ? ' active' : ''}`}
+                onClick={() => setTimeframe(t)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
         </div>
         <PriceChart symbol={symbol} timeframe={timeframe} markers={markers} onMarkerClick={setSelectedOrder} />
-        <p className="hint">Green/red arrows mark filled paper trades on {symbol}. Click a marker to see trade details.</p>
       </Card>
 
       {/* Linked Opportunities */}

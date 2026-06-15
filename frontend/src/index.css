@@ -902,7 +902,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: var(--space-2); margin-bottom: var(--space-3);
 }
-.charts-watchlist-card { cursor: pointer; padding: var(--space-2) var(--space-3); margin-bottom: 0; }
+.charts-watchlist-card { cursor: pointer; padding: var(--space-2) var(--space-3); margin-bottom: 0; transition: border-color 0.1s, background 0.1s; }
 .charts-watchlist-card.active { border-color: var(--accent); background: rgba(34,211,238,0.05); }
 .charts-card-head {
   display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-1);
@@ -916,7 +916,8 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .charts-card-hl { display: flex; gap: 0.6rem; margin-top: 0.3rem; }
 .charts-card-high { font-size: 0.64rem; color: var(--green); }
 .charts-card-low { font-size: 0.64rem; color: var(--red); }
-.charts-controls { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-3); }
+.charts-controls { display: flex; gap: var(--space-3); align-items: center; margin-bottom: var(--space-3); }
+.charts-controls select { min-width: 110px; }
 .provider-chip {
   font-size: 0.6rem; padding: 0.1rem 0.35rem; border-radius: 3px;
   background: rgba(34,211,238,0.1); color: var(--accent);
