@@ -97,6 +97,15 @@ function extractResumeError(e: any): string {
   return String(e?.message || 'failed')
 }
 
+function parseIssue(raw: string): { label: string; value: string; tone: 'yellow' | 'red' } {
+  if (raw.startsWith('market_data_stale:')) return { label: 'market_data_stale', value: raw.split(':')[1], tone: 'yellow' }
+  if (raw.startsWith('agent_failure_ratio:')) return { label: 'agent_failure_ratio', value: raw.split(':')[1], tone: 'red' }
+  if (raw === 'kill_switch_active') return { label: 'kill_switch', value: 'active', tone: 'red' }
+  if (raw === 'trading_paused') return { label: 'trading', value: 'paused', tone: 'yellow' }
+  if (raw.startsWith('llm_unavailable:')) return { label: 'llm_unavailable', value: raw.split(':')[1], tone: 'red' }
+  return { label: raw, value: '', tone: 'yellow' }
+}
+
 function StatusBar() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
@@ -110,6 +119,7 @@ function StatusBar() {
   // emits via /api/health.issues. Empty string when no drift.
   const driftIssue = (health?.issues || []).find(i => i.startsWith('code_updated_pending_restart:')) || ''
   const driftRange = driftIssue ? driftIssue.replace('code_updated_pending_restart:', '') : ''
+  const healthIssues = (health?.issues || []).filter(i => !i.startsWith('code_updated_pending_restart:'))
 
   const [restarting, setRestarting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -281,6 +291,20 @@ function StatusBar() {
               <span className="sp-label">Kill Switch</span>
               <span className="sp-value">{killed ? 'engaged' : 'inactive'}</span>
             </div>
+            {healthIssues.length > 0 && (
+              <div className="sp-issues">
+                {healthIssues.map(i => {
+                  const { label, value, tone } = parseIssue(i)
+                  return (
+                    <div key={i} className="sp-issue-row">
+                      <span className={`sp-issue-icon sp-issue-${tone}`}>⚠</span>
+                      <span className="sp-issue-label">{label}</span>
+                      {value && <span className="sp-issue-value">{value}</span>}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {/* Section 2: Infrastructure */}
@@ -307,7 +331,10 @@ function StatusBar() {
             <div className="sp-section-label">Operator</div>
             <div className="sp-row">
               <span className="sp-label">Status</span>
-              <span className="sp-value">{operatorStatus}</span>
+              <span className="sp-value">
+                {operatorStatus}
+                {operatorStatus === 'stale' && <span className="sp-stale-hint"> — heartbeat timeout</span>}
+              </span>
             </div>
             <div className="sp-row">
               <span className="sp-label">Mode</span>

@@ -295,6 +295,28 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
   margin-top: var(--space-1); line-height: 1.4;
 }
 
+/* Health issues list (shown when health.issues is non-empty) */
+.sp-issues {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px dashed var(--border);
+}
+.sp-issue-row {
+  display: flex; align-items: baseline; gap: 5px;
+  padding: 1px 0;
+}
+.sp-issue-icon { flex-shrink: 0; font-size: 0.6rem; line-height: 1.6; }
+.sp-issue-yellow { color: var(--yellow); }
+.sp-issue-red { color: var(--red); }
+.sp-issue-label {
+  color: var(--muted); font-family: var(--mono); font-size: 0.66rem;
+}
+.sp-issue-value {
+  color: var(--faint); font-family: var(--mono); font-size: 0.66rem;
+  margin-left: auto;
+}
+.sp-stale-hint { color: var(--faint); font-size: 0.64rem; font-weight: 400; }
+
 /* ---------- System plate (Block 2) ---------- */
 .system-plate {
   display: flex; align-items: center; gap: var(--space-2);
