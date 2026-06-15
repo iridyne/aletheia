@@ -18,7 +18,10 @@ import time
 from pathlib import Path
 
 from aletheia.config.loader import bootstrap, get_data_dir
-from aletheia.gateway.pidfile import write_pid, _resolve_real_python
+from aletheia.gateway.pidfile import (
+    write_pid, _resolve_real_python,
+    find_gateway_orphans, find_port_holders, kill_pid_tree, wait_port_free,
+)
 from aletheia.gateway.browser import open_browser
 from aletheia.runtime_continuity.processes import current_gateway_launch_context, runtime_process_env
 
@@ -33,6 +36,20 @@ def _sleep(seconds: float) -> None:
     time.sleep(seconds)
 
 
+def _cleanup_before_spawn(cfg) -> None:
+    """Kill leftover gateway orphans and port holders before spawning."""
+    my_pid = os.getpid()
+    for pid in find_gateway_orphans():
+        if pid != my_pid:
+            kill_pid_tree(pid)
+    port = cfg.app.dashboard_port
+    host = cfg.app.bind_host
+    if not wait_port_free(port, host, timeout=2.0):
+        for pid in find_port_holders(port):
+            if pid != my_pid:
+                kill_pid_tree(pid)
+
+
 def _spawn_server(cfg) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code."""
     errors_log = get_data_dir() / "logs" / "errors.log"
@@ -41,15 +58,11 @@ def _spawn_server(cfg) -> int:
     rotate_if_needed(errors_log)
     real_python, env_patch = _resolve_real_python()
     runtime_context = current_gateway_launch_context(cfg)
-    project_root = Path(__file__).resolve().parent.parent
-    aletheia_dir = project_root / "aletheia"
 
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
         "--host", runtime_context["host"], "--port", str(runtime_context["port"]),
         "--log-level", "info",
-        "--reload",
-        "--reload-dir", str(aletheia_dir),
     ]
     env = runtime_process_env(
         base_env=os.environ.copy(),
@@ -60,8 +73,6 @@ def _spawn_server(cfg) -> int:
         workdir=runtime_context["workdir"],
         env_patch=env_patch,
     )
-    env["WATCHFILES_FORCE_POLLING"] = "true"
-    env["ALETHEIA_DEV_RELOAD"] = "1"
 
     popen_kwargs: dict = {
         "stdout": subprocess.DEVNULL,
@@ -73,7 +84,12 @@ def _spawn_server(cfg) -> int:
     with errors_log.open("a", encoding="utf-8") as ef:
         popen_kwargs["stderr"] = ef
         proc = subprocess.Popen(cmd, **popen_kwargs)
-        return proc.wait()
+        code = proc.wait()
+        try:
+            kill_pid_tree(proc.pid)  # defensive: ensure no orphan subtree
+        except (AttributeError, OSError):
+            pass
+        return code
 
 
 def _start_vite_build_watch() -> subprocess.Popen | None:
@@ -145,6 +161,7 @@ def run_supervised(spawn_fn=None) -> dict:
     restart_times: list[float] = []
     try:
         while True:
+            _cleanup_before_spawn(cfg)
             code = spawn_fn()
             if code == 0:
                 return {"gave_up": False, "restarts": restarts}  # clean shutdown
