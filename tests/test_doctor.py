@@ -11,6 +11,11 @@ from datetime import datetime, timezone, timedelta
 from aletheia.diagnostics import doctor as dx
 
 
+class _FakeStdout:
+    def __init__(self, encoding: str):
+        self.encoding = encoding
+
+
 def _iso_ago(minutes: float) -> str:
     return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
 
@@ -32,6 +37,36 @@ def test_fmt_age_buckets():
     assert dx._fmt_age(5) == "5min ago"
     assert dx._fmt_age(90).endswith("h ago")
     assert dx._fmt_age(60 * 24 * 2).endswith("d ago")
+
+
+def test_doctor_cli_glyphs_fall_back_when_stdout_encoding_cannot_encode(monkeypatch):
+    import aletheia.cli.doctor_cmd as doctor_cmd
+    import sys
+
+    monkeypatch.setattr(sys, "stdout", _FakeStdout("gbk"))
+
+    assert doctor_cmd._glyph("ok") == "OK"
+    assert doctor_cmd._glyph("blocker") == "X"
+
+
+def test_doctor_cli_arrow_falls_back_when_stdout_encoding_cannot_encode(monkeypatch):
+    import aletheia.cli.doctor_cmd as doctor_cmd
+    import sys
+
+    monkeypatch.setattr(sys, "stdout", _FakeStdout("ascii"))
+
+    assert doctor_cmd._arrow() == "->"
+
+
+def test_doctor_cli_glyphs_use_unicode_when_stdout_supports_it(monkeypatch):
+    import aletheia.cli.doctor_cmd as doctor_cmd
+    import sys
+
+    monkeypatch.setattr(sys, "stdout", _FakeStdout("utf-8"))
+
+    assert doctor_cmd._glyph("ok") == "✓"
+    assert doctor_cmd._glyph("blocker") == "✗"
+    assert doctor_cmd._arrow() == "→"
 
 
 # --- Report aggregation ---

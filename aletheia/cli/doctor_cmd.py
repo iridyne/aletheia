@@ -7,20 +7,40 @@ live origin rather than the last fetch.
 """
 
 import typer
+import sys
 
 doctor_app = typer.Typer(no_args_is_help=False)
 
 _SEV_GLYPH = {"ok": "✓", "info": "·", "warn": "!", "blocker": "✗"}
+_SEV_ASCII = {"ok": "OK", "info": "-", "warn": "!", "blocker": "X"}
+
+
+def _stdout_supports(text: str) -> bool:
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        text.encode(encoding)
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _glyph(severity: str) -> str:
+    glyph = _SEV_GLYPH.get(severity, "·")
+    return glyph if _stdout_supports(glyph) else _SEV_ASCII.get(severity, "-")
+
+
+def _arrow() -> str:
+    return "→" if _stdout_supports("→") else "->"
 
 
 def _print_report(report) -> None:
     typer.echo(f"Aletheia doctor — {report.generated_at}")
     typer.echo("=" * 64)
     for c in report.checks:
-        glyph = _SEV_GLYPH.get(c.severity, "·")
+        glyph = _glyph(c.severity)
         typer.echo(f" {glyph} {c.name:26s} {c.detail}")
         if c.fix_hint and c.severity in ("warn", "blocker"):
-            typer.echo(f"     → {c.fix_hint}")
+            typer.echo(f"     {_arrow()} {c.fix_hint}")
     typer.echo("=" * 64)
 
     blockers, warns = report.blockers, report.warns
