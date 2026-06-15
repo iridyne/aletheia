@@ -1464,6 +1464,16 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
   const isHTTP = HTTP_PROVIDERS.has(name)
   const isOAuth = OAUTH_PROVIDERS.has(name)
   const isCLI = !isHTTP
+  const enabled = config?.enabled !== false
+
+  const toggleEnabled = useMutation({
+    mutationFn: (next: boolean) => api.setModelProvider({ provider: name, enabled: next }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['model'] })
+      qc.invalidateQueries({ queryKey: ['model-health'] })
+      qc.invalidateQueries({ queryKey: ['status'] })
+    },
+  })
 
   // Status resolution
   let statusColor: string = 'var(--muted)'
@@ -1471,7 +1481,8 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
   const keyConfigured = isHTTP && config?.api_key?.configured
   const oauthConfigured = isOAuth && config?.oauth?.configured
   const hasCredential = keyConfigured || oauthConfigured
-  if (health?.available) { statusColor = 'var(--green)'; statusText = 'connected' }
+  if (!enabled) { statusColor = 'var(--muted)'; statusText = 'disabled' }
+  else if (health?.available) { statusColor = 'var(--green)'; statusText = 'connected' }
   else if (isCLI && health?.error === 'not_installed') { statusColor = 'var(--yellow)'; statusText = 'not installed' }
   else if (isCLI && health?.error?.includes('disabled')) { statusColor = 'var(--muted)'; statusText = 'disabled' }
   else if (isOAuth && !hasCredential) { statusColor = 'var(--muted)'; statusText = 'not connected' }
@@ -1522,6 +1533,18 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
         )}
         {/* Spacer */}
         <span style={{ flex: 1 }} />
+        <span
+          onClick={e => e.stopPropagation()}
+          style={{ display: 'inline-flex', alignItems: 'center', marginRight: '0.35rem' }}
+          title={isDefault ? 'The default provider must stay enabled' : `Toggle ${PROVIDER_LABELS[name] || name}`}
+        >
+          <Toggle
+            checked={enabled}
+            onCheckedChange={checked => toggleEnabled.mutate(checked)}
+            disabled={isDefault || toggleEnabled.isPending}
+            aria-label={`${enabled ? 'Disable' : 'Enable'} ${PROVIDER_LABELS[name] || name}`}
+          />
+        </span>
         {/* Status text */}
         <span style={{ fontSize: '0.72rem', color: statusColor, fontFamily: 'var(--mono)' }}>
           {statusText}
@@ -1650,7 +1673,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
   })
 
   const setDefault = useMutation({
-    mutationFn: () => api.setModelProvider({ provider: name, default: true }),
+    mutationFn: () => api.setModelProvider({ provider: name, enabled: true, default: true }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
 
