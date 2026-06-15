@@ -1,4 +1,6 @@
 import asyncio
+import threading
+import time
 from types import SimpleNamespace
 
 
@@ -36,3 +38,35 @@ def test_data_collectors_job_is_timeboxed(monkeypatch, caplog):
     scheduler._run_data_collectors()
 
     assert "data_collectors job timed out" in caplog.text
+
+
+def test_scheduler_guard_serializes_background_jobs():
+    from aletheia.agent_runtime import scheduler
+
+    entered = threading.Event()
+    release = threading.Event()
+    order: list[str] = []
+
+    def first_job():
+        order.append("first_enter")
+        entered.set()
+        assert release.wait(timeout=1)
+        order.append("first_exit")
+
+    def second_job():
+        order.append("second_enter")
+
+    t1 = threading.Thread(target=scheduler._run_job_guarded, args=("first", first_job))
+    t2 = threading.Thread(target=scheduler._run_job_guarded, args=("second", second_job))
+
+    t1.start()
+    assert entered.wait(timeout=1)
+    t2.start()
+    time.sleep(0.05)
+    assert order == ["first_enter"]
+
+    release.set()
+    t1.join(timeout=1)
+    t2.join(timeout=1)
+
+    assert order == ["first_enter", "first_exit", "second_enter"]

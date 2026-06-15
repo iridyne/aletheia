@@ -3,6 +3,7 @@
 import asyncio
 from functools import partial
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import Awaitable
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
@@ -14,6 +15,7 @@ from aletheia.config.loader import load_config
 logger = logging.getLogger("aletheia.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
+_SCHEDULER_JOB_LOCK = threading.RLock()
 
 # Hard time budgets for scheduler jobs that depend on external IO or LLM calls.
 # APScheduler's max_instances=1 prevents overlap, but it cannot recover a job
@@ -61,17 +63,24 @@ def _run_job_guarded(job_id: str, fn):
     unrelated API routes and heartbeats to fail with ``database is locked``.
     The guard rolls back only this worker thread's leftover transaction and then
     closes the thread-local connection so the next job starts clean.
+
+    SQLite still has one writer even in WAL mode. Keep scheduler jobs serialized
+    at the process level so independent pools (io / observer / agents) cannot
+    contend for the same local database during startup catch-up bursts. Frontend
+    and API requests remain outside this lock; this only makes background jobs
+    prefer stability over parallel throughput.
     """
     from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
 
-    if rollback_if_in_transaction():
-        logger.warning("Rolled back stale SQLite transaction before scheduler job %s", job_id)
-    try:
-        return fn()
-    finally:
+    with _SCHEDULER_JOB_LOCK:
         if rollback_if_in_transaction():
-            logger.warning("Rolled back leaked SQLite transaction after scheduler job %s", job_id)
-        close_db()
+            logger.warning("Rolled back stale SQLite transaction before scheduler job %s", job_id)
+        try:
+            return fn()
+        finally:
+            if rollback_if_in_transaction():
+                logger.warning("Rolled back leaked SQLite transaction after scheduler job %s", job_id)
+            close_db()
 
 
 def _guarded(job_id: str, fn):
