@@ -30,6 +30,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "paper_trader": 300.0,
     "stock_observer": 240.0,
     "prediction_observer": 240.0,
+    "divergence_scanner": 60.0,
     "post_trade_reviewer": 300.0,
     "risk_critic": 300.0,
     "universe_refresh": 90.0,
@@ -486,6 +487,17 @@ def _run_prediction_observer():
         )
     except Exception as e:
         logger.warning("prediction_observer job failed: %s", e)
+        return  # skip divergence scan on observer failure
+    # Chain: scan for crypto/prediction divergences after observer persists fresh data
+    try:
+        _run_async_with_timeout("divergence_scanner", _async_run("divergence_scanner"))
+    except TimeoutError:
+        logger.warning(
+            "divergence_scanner timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["divergence_scanner"],
+        )
+    except Exception as e:
+        logger.warning("divergence_scanner failed: %s", e)
 
 
 def _run_cleanup():
