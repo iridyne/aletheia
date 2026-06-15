@@ -171,18 +171,19 @@ def pid_alive_win32(pid: int, markers: tuple[str, ...]) -> bool:
         _kernel32.CloseHandle(handle)
 
 
-def list_processes_win32() -> list[tuple[int, str]]:
-    """Return [(pid, command_line)] for Python processes.
+def list_processes_by_exe_win32(exe_names: set[str] | None = None) -> list[tuple[int, int, str]]:
+    """Return [(pid, parent_pid, command_line)] for selected process executables.
 
     Uses CreateToolhelp32Snapshot for enumeration (no subprocess spawn).
-    Only reads command lines for processes whose exe name is python/pythonw
-    (cheap pre-filter avoids opening hundreds of unrelated processes).
+    When exe_names is provided, only reads command lines for those executable
+    names (cheap pre-filter avoids opening hundreds of unrelated processes).
     """
+    allowed = {name.lower() for name in exe_names} if exe_names is not None else None
     snapshot = _kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if snapshot == INVALID_HANDLE_VALUE:
         return []
 
-    results: list[tuple[int, str]] = []
+    results: list[tuple[int, int, str]] = []
     entry = PROCESSENTRY32W()
     entry.dwSize = sizeof(PROCESSENTRY32W)
 
@@ -192,7 +193,7 @@ def list_processes_win32() -> list[tuple[int, str]]:
 
         while True:
             exe_name = entry.szExeFile.lower()
-            if exe_name in _PYTHON_EXES:
+            if allowed is None or exe_name in allowed:
                 pid = entry.th32ProcessID
                 handle = _kernel32.OpenProcess(
                     PROCESS_QUERY_LIMITED_INFORMATION, False, pid
@@ -201,7 +202,7 @@ def list_processes_win32() -> list[tuple[int, str]]:
                     try:
                         cmdline = _get_process_cmdline(handle)
                         if cmdline:
-                            results.append((pid, cmdline))
+                            results.append((pid, entry.th32ParentProcessID, cmdline))
                     finally:
                         _kernel32.CloseHandle(handle)
 
@@ -211,6 +212,18 @@ def list_processes_win32() -> list[tuple[int, str]]:
         _kernel32.CloseHandle(snapshot)
 
     return results
+
+
+def list_processes_win32() -> list[tuple[int, str]]:
+    """Return [(pid, command_line)] for Python processes.
+
+    Kept for the gateway orphan scanner, which only needs Python gateway
+    supervisor/uvicorn processes.
+    """
+    return [
+        (pid, cmdline)
+        for pid, _parent_pid, cmdline in list_processes_by_exe_win32(_PYTHON_EXES)
+    ]
 
 
 def _get_child_pids(parent_pid: int) -> list[int]:

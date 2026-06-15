@@ -1,4 +1,5 @@
 import type { BackendGatewayClient } from './schemas.js'
+import { gatewayRequestFailureMessage } from './gateway_errors.js'
 
 export interface PiSessionRequest {
   goal: string
@@ -42,13 +43,15 @@ export class PiRuntimeAdapter {
       allowed_commands: request.allowedCommands || null,
       max_turns: request.maxTurns ?? 8,
     }
+    const url = `${this.baseUrl}/api/operator/internal/llm-session`
+    const init: RequestInit = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/operator/internal/llm-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
+      const response = await fetch(url, init)
 
       if (!response.ok) {
         return {
@@ -56,7 +59,7 @@ export class PiRuntimeAdapter {
           turnsUsed: 0,
           commandsExecuted: [],
           finalAnswer: null,
-          error: `gateway_request_failed:${response.status}`,
+          error: await gatewayRequestFailureMessage(url, init, response),
         }
       }
 

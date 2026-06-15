@@ -163,6 +163,119 @@ def _operator_shell_process_matches(pid: int, cmd: list[str]) -> bool:
     return all(marker.replace("\\", "/").lower() in normalized for marker in markers)
 
 
+def _normalized_cmdline(value: str) -> str:
+    return value.replace("\\", "/").lower()
+
+
+def _direct_operator_shell_cmdline_match(cmdline: str) -> bool:
+    normalized = _normalized_cmdline(cmdline)
+    root_marker = str(operator_shell_root()).replace("\\", "/").lower()
+    if "--once" in normalized:
+        return False
+    return (
+        root_marker in normalized
+        and "operator-shell" in normalized
+        and "index.ts" in normalized
+        and ("node_modules/tsx" in normalized or "cli.mjs" in normalized or "loader.mjs" in normalized)
+    )
+
+
+def _relative_tsx_parent_cmdline_match(cmdline: str) -> bool:
+    normalized = _normalized_cmdline(cmdline)
+    if "--once" in normalized:
+        return False
+    return "cli.mjs" in normalized and "src/index.ts" in normalized
+
+
+def _operator_shell_process_roots(
+    processes: list[tuple[int, int, str]],
+) -> list[int]:
+    """Return root PIDs for this project's current operator-shell processes.
+
+    The Python supervisor launches tsx with absolute paths, but a manual
+    `npm start` from operator-shell/ produces a relative parent command line
+    (`node_modules/tsx/dist/cli.mjs src/index.ts`). Its child still contains the
+    absolute project path via the tsx loader. We therefore match direct project
+    command lines first, then pull in their tsx parent so killing/adopting a
+    process tree works reliably on Windows.
+    """
+    by_pid = {pid: (parent_pid, cmdline) for pid, parent_pid, cmdline in processes}
+    matched: set[int] = {
+        pid for pid, _parent_pid, cmdline in processes if _direct_operator_shell_cmdline_match(cmdline)
+    }
+
+    for pid in list(matched):
+        parent_pid, _cmdline = by_pid.get(pid, (0, ""))
+        parent = by_pid.get(parent_pid)
+        if parent is not None and _relative_tsx_parent_cmdline_match(parent[1]):
+            matched.add(parent_pid)
+
+    for pid, parent_pid, cmdline in processes:
+        if parent_pid in matched and _direct_operator_shell_cmdline_match(cmdline):
+            matched.add(pid)
+
+    roots = [
+        pid
+        for pid in matched
+        if by_pid.get(pid, (0, ""))[0] not in matched
+    ]
+    return sorted(roots)
+
+
+def _list_operator_shell_processes() -> list[tuple[int, int, str]]:
+    if platform.system() == "Windows":
+        try:
+            from aletheia.gateway._win32_proc import list_processes_by_exe_win32
+
+            return list_processes_by_exe_win32({"node.exe"})
+        except Exception:
+            return []
+
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "pid=,ppid=,args="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout
+    except Exception:
+        return []
+
+    rows: list[tuple[int, int, str]] = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        pid_str, _, rest = line.partition(" ")
+        parent_str, _, cmdline = rest.strip().partition(" ")
+        try:
+            rows.append((int(pid_str), int(parent_str), cmdline.strip()))
+        except ValueError:
+            continue
+    return rows
+
+
+def _cleanup_unmanaged_operator_shells(keep_pid: int | None = None) -> None:
+    """Kill duplicate/current operator-shell process trees outside keep_pid."""
+    try:
+        roots = _operator_shell_process_roots(_list_operator_shell_processes())
+    except Exception:
+        return
+    if not roots:
+        return
+
+    try:
+        from aletheia.gateway.pidfile import kill_pid_tree
+    except Exception:
+        return
+
+    for pid in roots:
+        if keep_pid is not None and pid == keep_pid:
+            continue
+        kill_pid_tree(pid)
+        _clear_operator_shell_pid(expected_pid=pid)
+
+
 @contextmanager
 def _exclusive_pidfile_lock():
     lock_path = _operator_shell_pid_lock_path()
@@ -262,9 +375,11 @@ def spawn_operator_shell(
             existing_pid = _read_operator_shell_pid()
             if existing_pid is not None:
                 if _pid_exists(existing_pid) and _operator_shell_process_matches(existing_pid, cmd):
+                    _cleanup_unmanaged_operator_shells(keep_pid=existing_pid)
                     return ExistingOperatorShellProcess(existing_pid, cmd)
                 _clear_operator_shell_pid(expected_pid=existing_pid)
 
+            _cleanup_unmanaged_operator_shells()
             proc = _spawn_new()
             _write_operator_shell_pid(proc.pid)
             return proc

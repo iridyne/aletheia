@@ -20,6 +20,11 @@ import { EventRouter } from './event_router.js'
 import { RecommendationEngine } from './recommendation_engine.js'
 import { RepairEngine } from './repair_engine.js'
 import { PiRuntimeAdapter } from './pi_runtime_adapter.js'
+import {
+  errorMessage,
+  isGatewayInfrastructureError,
+  operatorIntentForError,
+} from './gateway_errors.js'
 
 interface OperatorLoopDeps {
   backendClient?: BackendGatewayClient
@@ -173,6 +178,60 @@ export class OperatorLoop {
       return 'Degraded'
     }
     return 'Observing'
+  }
+
+  private recoveryLastError(message: string | null): string | null {
+    return isGatewayInfrastructureError(message) ? null : message
+  }
+
+  private recoveryHeartbeatIntent(intent: string | null): string | null {
+    return isGatewayInfrastructureError(intent) ? null : intent
+  }
+
+  private startupRetryDelayMs(): number {
+    return Math.min(Math.max(this.config.heartbeatIntervalSec * 1000, 1000), 5000)
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  private async recoverStateForBackgroundStart(): Promise<void> {
+    while (!this.recovered) {
+      try {
+        await this.recoverState()
+      } catch (error) {
+        this.lastError = errorMessage(error)
+        this.mode = 'Degraded'
+        this.sessionRuntime.setCurrentIntent(operatorIntentForError(this.lastError))
+        console.error(`operator_startup_recover_failed:${this.lastError}`)
+        await this.sleep(this.startupRetryDelayMs())
+        continue
+      }
+      return
+    }
+  }
+
+  private async createLifecycleEvent(eventType: 'operator_started' | 'operator_stopped'): Promise<void> {
+    try {
+      await this.backendClient.createEvent({
+        event_type: eventType,
+        severity: 'info',
+        source: 'operator_shell',
+        session_id: this.config.mainSessionId,
+        related_entity_type: 'operator',
+        related_entity_id: 'operator',
+        payload: {
+          mode: this.mode,
+          runtime_id: this.runtimeId(),
+          runtime_mode: this.runtimeMode(),
+          runtime_state: this.runtimeState(),
+        },
+      })
+    } catch (error) {
+      this.lastError = errorMessage(error)
+      console.error(`operator_lifecycle_event_failed:${eventType}:${this.lastError}`)
+    }
   }
 
   private branchKindLabel(kind: OperatorSessionBranchState['kind']): string {
@@ -2855,12 +2914,14 @@ export class OperatorLoop {
             id: operatorStatus.active_branch_id,
             kind: operatorStatus.active_branch_kind || 'command_session',
             title: operatorStatus.active_branch_title || null,
-            summary: operatorStatus.current_intent || null,
+            summary: this.recoveryHeartbeatIntent(operatorStatus.current_intent),
           }
         : null,
     )
     this.taskRuntime.restore(runningTasks)
-    this.lastError = operatorStatus.last_error
+    const recoveryLastError = this.recoveryLastError(operatorStatus.last_error)
+    const recoveryHeartbeatIntent = this.recoveryHeartbeatIntent(operatorStatus.current_intent)
+    this.lastError = recoveryLastError
     this.lastSuccessAt = operatorStatus.last_success_at
     this.seedCompactedDates(sessionDetail?.artifacts || [])
     const activeBranch = this.sessionRuntime.getActiveBranch()
@@ -2870,8 +2931,8 @@ export class OperatorLoop {
         ? orderedBranches
         : [activeBranch, ...orderedBranches.filter(branch => branch.id !== activeBranch.id)]
     const recovery = this.buildRecoveryContext({
-      lastError: operatorStatus.last_error,
-      heartbeatIntent: operatorStatus.current_intent,
+      lastError: recoveryLastError,
+      heartbeatIntent: recoveryHeartbeatIntent,
       failedTasks,
       artifacts: sessionDetail?.artifacts || [],
       branches: recoveryBranches,
@@ -2885,12 +2946,12 @@ export class OperatorLoop {
 
     if (this.recoveryMode === 'Degraded' || operatorStatus.status === 'stale') {
       this.mode = 'Degraded'
-    } else if (operatorStatus.last_error) {
+    } else if (recoveryLastError) {
       // Transient errors (e.g. gateway restart 404) are cleared on next
       // successful runOnce — start as Degraded but don't persist the error
       // into recoveryIntent (which would stick across multiple restarts).
       this.mode = 'Degraded'
-      this.lastError = operatorStatus.last_error
+      this.lastError = recoveryLastError
     } else if (operatorStatus.mode === 'Paused') {
       this.mode = 'Paused'
     } else {
@@ -3022,9 +3083,9 @@ export class OperatorLoop {
       this.lastSuccessAt = heartbeat.last_seen_at
       return true
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error)
+      this.lastError = errorMessage(error)
       this.mode = 'Degraded'
-      this.sessionRuntime.setCurrentIntent(this.lastError)
+      this.sessionRuntime.setCurrentIntent(operatorIntentForError(this.lastError))
       // Still send heartbeat on failure — otherwise any transient API error
       // causes heartbeat to go stale (45s timeout) rather than showing Degraded.
       try {
@@ -3050,23 +3111,15 @@ export class OperatorLoop {
   }
 
   async start(): Promise<void> {
-    await this.recoverState()
-    await this.backendClient.createEvent({
-      event_type: 'operator_started',
-      severity: 'info',
-      source: 'operator_shell',
-      session_id: this.config.mainSessionId,
-      related_entity_type: 'operator',
-      related_entity_id: 'operator',
-      payload: {
-        mode: this.mode,
-        runtime_id: this.runtimeId(),
-        runtime_mode: this.runtimeMode(),
-        runtime_state: this.runtimeState(),
-      },
-    })
-
     if (this.config.once) {
+      try {
+        await this.recoverState()
+      } catch (error) {
+        this.lastError = errorMessage(error)
+        this.mode = 'Degraded'
+        this.sessionRuntime.setCurrentIntent(operatorIntentForError(this.lastError))
+      }
+      await this.createLifecycleEvent('operator_started')
       const ok = await this.runOnce()
       if (!ok) {
         process.exitCode = 1
@@ -3074,6 +3127,8 @@ export class OperatorLoop {
       return
     }
 
+    await this.recoverStateForBackgroundStart()
+    await this.createLifecycleEvent('operator_started')
     await this.runOnce()
     this.intervalHandle = setInterval(() => {
       void this.runOnce()
@@ -3085,19 +3140,6 @@ export class OperatorLoop {
       clearInterval(this.intervalHandle)
       this.intervalHandle = null
     }
-    await this.backendClient.createEvent({
-      event_type: 'operator_stopped',
-      severity: 'info',
-      source: 'operator_shell',
-      session_id: this.config.mainSessionId,
-      related_entity_type: 'operator',
-      related_entity_id: 'operator',
-      payload: {
-        mode: this.mode,
-        runtime_id: this.runtimeId(),
-        runtime_mode: this.runtimeMode(),
-        runtime_state: this.runtimeState(),
-      },
-    })
+    await this.createLifecycleEvent('operator_stopped')
   }
 }

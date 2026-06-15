@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { EventRouter } from '../src/event_router.js'
+import { BackendClient } from '../src/backend_client.js'
 import { OperatorLoop } from '../src/operator_loop.js'
 import { RecommendationEngine } from '../src/recommendation_engine.js'
 import { RepairEngine } from '../src/repair_engine.js'
@@ -401,6 +402,26 @@ function makeTask(
     ...overrides,
   }
 }
+
+test('backend client includes method and route in gateway request failures', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ detail: 'No route matches operator status' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch
+
+    const client = new BackendClient('http://127.0.0.1:8787')
+
+    await assert.rejects(
+      () => client.getOperatorStatus(),
+      /gateway_request_failed:404:GET \/api\/operator\/status:No route matches operator status/,
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
 
 test('recommendation engine converts degraded health into actionable diagnostics', () => {
   const engine = new RecommendationEngine()
@@ -1805,6 +1826,133 @@ test('operator loop emits one event, tracks one task, and returns to observing a
   assert.equal(calls.updatedTasks[0].payload.status, 'completed')
   assert.equal(calls.heartbeats[2].mode, 'Observing')
   assert.equal(calls.heartbeats[2].current_task_id, null)
+})
+
+test('operator loop does not persist raw gateway 404 as the current intent', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getGatewayStatus = async () => {
+    throw new Error('gateway_request_failed:404:GET /api/missing:Not Found')
+  }
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, false)
+  assert.equal(calls.heartbeats.length, 1)
+  assert.equal(calls.heartbeats[0].mode, 'Degraded')
+  assert.equal(calls.heartbeats[0].last_error, 'gateway_request_failed:404:GET /api/missing:Not Found')
+  assert.equal(calls.heartbeats[0].current_intent, 'gateway connectivity recovery pending')
+})
+
+test('operator loop ignores transient gateway errors when rebuilding recovery intent', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.getOperatorStatus = async () =>
+    ({
+      agent_id: 'operator',
+      status: 'stale',
+      mode: 'Degraded',
+      permission_mode: 'ReadOnly',
+      is_busy: false,
+      current_task_id: null,
+      current_intent: 'gateway_request_failed:404',
+      queue_size: 0,
+      last_seen_at: new Date().toISOString(),
+      last_success_at: new Date().toISOString(),
+      last_error: 'gateway_request_failed:404',
+      model_provider: 'pi-shell',
+      session_id: 'operator-main',
+      stale: true,
+      stale_after_sec: 45,
+    }) satisfies PersistedOperatorStatus
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  await loop.recoverState()
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.heartbeats.length, 1)
+  assert.equal(calls.heartbeats[0].mode, 'Observing')
+  assert.equal(calls.heartbeats[0].current_intent, 'monitoring system state')
+  assert.equal(calls.heartbeats[0].last_error, null)
+})
+
+test('operator loop treats lifecycle event write failure as non-fatal startup telemetry', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  backend.createEvent = async payload => {
+    if (payload.event_type === 'operator_started') {
+      throw new Error('gateway_request_failed:500:POST /api/operator/internal/events:database is locked')
+    }
+    calls.createdEvents.push(payload)
+    return { id: `event-${calls.createdEvents.length}` }
+  }
+  const previousExitCode = process.exitCode
+  const previousConsoleError = console.error
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  try {
+    console.error = () => undefined
+    await loop.start()
+  } finally {
+    console.error = previousConsoleError
+    process.exitCode = previousExitCode
+  }
+
+  assert.equal(calls.heartbeats.length, 1)
+  assert.equal(calls.heartbeats[0].last_error, null)
 })
 
 test('operator loop keeps heartbeat cadence every run but throttles supervision scans to 30 seconds', async () => {

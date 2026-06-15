@@ -20,7 +20,7 @@ from pathlib import Path
 from aletheia.config.loader import bootstrap, get_data_dir
 from aletheia.gateway.pidfile import (
     write_pid, _resolve_real_python,
-    find_gateway_orphans, find_port_holders, kill_pid_tree, wait_port_free,
+    find_gateway_orphans, find_port_holders, kill_pid_tree, port_in_use, wait_port_free,
 )
 from aletheia.gateway.browser import open_browser
 from aletheia.runtime_continuity.processes import current_gateway_launch_context, runtime_process_env
@@ -30,6 +30,9 @@ from aletheia.runtime_continuity.processes import current_gateway_launch_context
 # up every time the supervisor spawns the server. Suppression only — stderr still
 # flows to data/logs/errors.log via the existing redirect.
 CREATE_NO_WINDOW = 0x08000000
+_SERVER_PORT_STARTUP_GRACE_SEC = 90.0
+_SERVER_PORT_LOST_GRACE_SEC = 15.0
+_SERVER_PORT_CHECK_INTERVAL_SEC = 1.0
 
 
 def _sleep(seconds: float) -> None:
@@ -84,12 +87,36 @@ def _spawn_server(cfg) -> int:
     with errors_log.open("a", encoding="utf-8") as ef:
         popen_kwargs["stderr"] = ef
         proc = subprocess.Popen(cmd, **popen_kwargs)
-        code = proc.wait()
-        try:
-            kill_pid_tree(proc.pid)  # defensive: ensure no orphan subtree
-        except (AttributeError, OSError):
-            pass
-        return code
+        started_at = time.monotonic()
+        saw_listening_port = False
+        port_missing_since: float | None = None
+        while True:
+            code = proc.poll()
+            if code is not None:
+                try:
+                    kill_pid_tree(proc.pid)  # defensive: ensure no orphan subtree
+                except (AttributeError, OSError):
+                    pass
+                return code
+
+            now = time.monotonic()
+            if port_in_use(runtime_context["port"], runtime_context["host"]):
+                saw_listening_port = True
+                port_missing_since = None
+            else:
+                if saw_listening_port:
+                    if port_missing_since is None:
+                        port_missing_since = now
+                    if now - port_missing_since >= _SERVER_PORT_LOST_GRACE_SEC:
+                        _record_port_liveness_failure(runtime_context["port"], proc.pid)
+                        kill_pid_tree(proc.pid)
+                        return 1
+                elif now - started_at >= _SERVER_PORT_STARTUP_GRACE_SEC:
+                    _record_port_liveness_failure(runtime_context["port"], proc.pid)
+                    kill_pid_tree(proc.pid)
+                    return 1
+
+            _sleep(_SERVER_PORT_CHECK_INTERVAL_SEC)
 
 
 def _start_vite_build_watch() -> subprocess.Popen | None:
@@ -195,6 +222,27 @@ def _record_give_up(attempts: int) -> None:
         write_error({"source": "gateway_supervisor", "message": msg})
         from aletheia.agent_runtime.health import _send_alert
         _send_alert(msg)
+    except Exception:
+        pass
+
+
+def _record_port_liveness_failure(port: int, pid: int) -> None:
+    try:
+        from aletheia.files.jsonl import write_audit, write_error
+
+        msg = (
+            f"Gateway inner server PID {pid} stopped listening on port {port}; "
+            "supervisor is restarting it"
+        )
+        write_audit({
+            "actor": "system",
+            "source": "gateway",
+            "event_type": "gateway_inner_port_lost",
+            "entity_type": "gateway",
+            "entity_id": str(pid),
+            "message": msg,
+        })
+        write_error({"source": "gateway_supervisor", "message": msg})
     except Exception:
         pass
 

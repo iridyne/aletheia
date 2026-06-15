@@ -31,6 +31,7 @@ import type {
   ReviewSummary,
   StrategySummary,
 } from './schemas.js'
+import { gatewayRequestFailureMessage } from './gateway_errors.js'
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -40,7 +41,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     ...init,
   })
   if (!response.ok) {
-    throw new Error(`gateway_request_failed:${response.status}`)
+    throw new Error(await gatewayRequestFailureMessage(url, init, response))
   }
   return response.json() as Promise<T>
 }

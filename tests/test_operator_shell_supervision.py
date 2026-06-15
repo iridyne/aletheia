@@ -106,6 +106,58 @@ def test_spawn_operator_shell_replaces_stale_pidfile(tmp_path, monkeypatch):
     assert pid_path.read_text("utf-8").strip() == "5678"
 
 
+def test_operator_shell_process_roots_include_relative_tsx_parent(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    operator_shell = _make_operator_shell_fixture(tmp_path, monkeypatch)
+    root = operator_shell.operator_shell_root()
+    child_cmd = (
+        f'"C:/Program Files/nodejs/node.exe" --require '
+        f'{root}/node_modules/tsx/dist/preflight.cjs --import '
+        f'file:///{root}/node_modules/tsx/dist/loader.mjs src/index.ts'
+    )
+
+    roots = operator_shell._operator_shell_process_roots(
+        [
+            (100, 1, "node_modules/tsx/dist/cli.mjs src/index.ts"),
+            (101, 100, child_cmd),
+        ]
+    )
+
+    assert roots == [100]
+
+
+def test_spawn_operator_shell_kills_unmanaged_duplicates_before_spawning(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.config.loader import load_config
+
+    operator_shell = _make_operator_shell_fixture(tmp_path, monkeypatch)
+    killed: list[int] = []
+
+    class FakeProc:
+        pid = 5678
+        external = False
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(operator_shell, "_list_operator_shell_processes", lambda: [(1234, 1, "")])
+    monkeypatch.setattr(operator_shell, "_operator_shell_process_roots", lambda processes: [1234])
+    monkeypatch.setattr(operator_shell.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(
+        "aletheia.gateway.pidfile.kill_pid_tree",
+        lambda pid: killed.append(pid),
+    )
+
+    proc = operator_shell.spawn_operator_shell(load_config())
+
+    assert proc is not None
+    assert proc.pid == 5678
+    assert killed == [1234]
+    assert operator_shell.operator_shell_pid_path().read_text("utf-8").strip() == "5678"
+
+
 def test_operator_shell_monitor_stop_does_not_terminate_external_process(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
@@ -208,6 +260,7 @@ def test_gateway_supervisor_starts_and_stops_operator_monitor(tmp_path, monkeypa
 
     monkeypatch.setattr(operator_shell, "OperatorShellMonitor", FakeMonitor)
     monkeypatch.setattr(runner, "_sleep", lambda s: None)
+    monkeypatch.setattr(runner, "_cleanup_before_spawn", lambda cfg: None)
 
     result = runner.run_supervised(spawn_fn=lambda: 0)
 
