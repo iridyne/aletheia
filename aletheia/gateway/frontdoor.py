@@ -21,8 +21,10 @@ from starlette.background import BackgroundTask
 
 from aletheia import __version__
 from aletheia.gateway.frontdoor_route import read_frontdoor_route, resolve_backend_base_url
+from aletheia.infra.events import emit_infra_event, list_infra_events
 
 _boot_time = time.time()
+_last_backend_ready_at: str | None = None
 _HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -62,17 +64,33 @@ def _frontdoor_payload(*, static_dir: Path, backend_url: str, route: dict | None
 
 
 async def _probe_backend(backend_url: str) -> dict:
+    global _last_backend_ready_at
     try:
         async with httpx.AsyncClient(timeout=0.8, trust_env=False) as client:
             resp = await client.get(f"{backend_url.rstrip('/')}/_infra/readyz")
+        if resp.status_code == 200:
+            from datetime import datetime, timezone
+            _last_backend_ready_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         return {
             "ready": resp.status_code == 200,
             "status_code": resp.status_code,
+            "last_seen_at": _last_backend_ready_at,
         }
     except Exception as exc:  # noqa: BLE001 - diagnostics must not raise
+        emit_infra_event(
+            severity="warning",
+            source="frontdoor",
+            code="backend_unavailable",
+            entity_id=backend_url,
+            message="Backend worker is unreachable from the frontdoor",
+            action="gateway_recovering",
+            metadata={"backend_base_url": backend_url, "error": f"{type(exc).__name__}: {exc}"},
+            dedupe_sec=30,
+        )
         return {
             "ready": False,
             "error": f"{type(exc).__name__}: {exc}",
+            "last_seen_at": _last_backend_ready_at,
         }
 
 
@@ -89,19 +107,48 @@ async def _close_proxy_response(upstream: httpx.Response, client: httpx.AsyncCli
     await client.aclose()
 
 
-def _proxy_unavailable(path: str, backend_url: str, exc: Exception) -> JSONResponse:
+def _proxy_unavailable(path: str, backend_url: str, route: dict | None, exc: Exception) -> JSONResponse:
+    error = f"{type(exc).__name__}: {exc}"
+    emit_infra_event(
+        severity="critical",
+        source="frontdoor",
+        code="backend_unavailable",
+        entity_id=backend_url,
+        message=f"API proxy failed for /api/{path}; backend is unreachable",
+        action="gateway_recovering",
+        metadata={"path": f"/api/{path}", "backend_base_url": backend_url, "error": error},
+        dedupe_sec=10,
+    )
+    payload = {
+        "ok": False,
+        "error": "backend_unavailable",
+        "reason": "backend_unavailable",
+        "message": "Aletheia backend worker is restarting or unreachable",
+        "action": "gateway_recovering",
+        "path": f"/api/{path}",
+        "backend_base_url": backend_url,
+        "backend_route": route,
+        "last_seen_at": _last_backend_ready_at,
+        "retry_after_sec": 3,
+        "detail": {
+            "reason": "backend_unavailable",
+            "message": "Aletheia backend worker is restarting or unreachable",
+            "path": f"/api/{path}",
+            "backend_base_url": backend_url,
+            "backend_route": route,
+            "last_seen_at": _last_backend_ready_at,
+            "retry_after_sec": 3,
+            "error": error,
+        },
+    }
     return JSONResponse(
         status_code=503,
-        content={
-            "detail": {
-                "reason": "backend_unavailable",
-                "message": "Aletheia backend worker is restarting or unreachable",
-                "path": f"/api/{path}",
-                "backend_base_url": backend_url,
-                "error": f"{type(exc).__name__}: {exc}",
-            }
+        content=payload,
+        headers={
+            "Cache-Control": "no-store",
+            "Retry-After": "3",
+            "X-Aletheia-Degraded": "backend_unavailable",
         },
-        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -152,6 +199,7 @@ def create_app(
             route=_backend_route(),
         )
         payload["backend"] = await _probe_backend(_backend_url())
+        payload["events"] = list_infra_events(limit=10, min_severity="warning")
         return JSONResponse(status_code=200 if payload["static_index"] else 503, content=payload)
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
@@ -172,7 +220,7 @@ def create_app(
             upstream = await client.send(upstream_request, stream=True)
         except Exception as exc:  # noqa: BLE001 - must fail loud as HTTP 503
             await client.aclose()
-            return _proxy_unavailable(path, backend, exc)
+            return _proxy_unavailable(path, backend, _backend_route(), exc)
 
         response_headers = _filtered_headers(upstream.headers.items())
         response_headers["X-Aletheia-Frontdoor"] = "1"

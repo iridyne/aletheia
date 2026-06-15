@@ -306,11 +306,24 @@ export interface SystemStatus {
   model_provider: string
   health_status: string
   health_issues: string[]
+  infra_events?: InfraEvent[]
+  llm_model_health?: Record<string, unknown>[]
   boot_commit: string | null
   current_commit: string | null
   pid: number
   uptime_sec: number
   version: string
+}
+
+export interface InfraEvent {
+  created_at: string
+  severity: 'info' | 'warning' | 'critical'
+  source: string
+  code: string
+  message: string
+  action?: string | null
+  entity_id?: string | null
+  metadata?: Record<string, unknown>
 }
 
 export interface AuditEvent {

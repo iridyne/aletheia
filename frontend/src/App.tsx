@@ -25,6 +25,7 @@ import Universe from './pages/Universe'
 import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
+import type { InfraEvent } from './types'
 
 export type NavItem = { to: string; label: string }
 export type NavGroup = { group: string; items: NavItem[] }
@@ -106,6 +107,10 @@ function parseIssue(raw: string): { label: string; value: string; tone: 'yellow'
   return { label: raw, value: '', tone: 'yellow' }
 }
 
+function eventTone(e: InfraEvent): 'yellow' | 'red' {
+  return e.severity === 'critical' ? 'red' : 'yellow'
+}
+
 function StatusBar() {
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, refetchInterval: 10000 })
@@ -113,6 +118,7 @@ function StatusBar() {
   const { data: ks } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, refetchInterval: 10000 })
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: api.getHealth, refetchInterval: 10000 })
+  const { data: infraEvents } = useQuery({ queryKey: ['infra-events'], queryFn: api.getInfraEvents, refetchInterval: 10000 })
 
   // Code drift = disk HEAD has moved past the boot commit. Surfaces the
   // "code updated, restart needed" signal that build_info.code_drift_issue
@@ -120,6 +126,7 @@ function StatusBar() {
   const driftIssue = (health?.issues || []).find(i => i.startsWith('code_updated_pending_restart:')) || ''
   const driftRange = driftIssue ? driftIssue.replace('code_updated_pending_restart:', '') : ''
   const healthIssues = (health?.issues || []).filter(i => !i.startsWith('code_updated_pending_restart:'))
+  const recentInfraEvents = (infraEvents?.events || data?.infra_events || []).slice(0, 5)
 
   const [restarting, setRestarting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -325,6 +332,24 @@ function StatusBar() {
               </div>
             )}
           </div>
+
+          {recentInfraEvents.length > 0 && (
+            <div className="sp-section">
+              <div className="sp-section-label">Infra Events</div>
+              <div className="sp-events">
+                {recentInfraEvents.map((e, idx) => (
+                  <div key={`${e.created_at}-${e.code}-${idx}`} className="sp-event-row">
+                    <span className={`sp-issue-icon sp-issue-${eventTone(e)}`}>⚠</span>
+                    <div className="sp-event-main">
+                      <span className="sp-event-code">{e.code}</span>
+                      <span className="sp-event-message">{e.message}</span>
+                      {e.action && <span className="sp-event-action">{e.action}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Section 3: Operator */}
           <div className="sp-section">

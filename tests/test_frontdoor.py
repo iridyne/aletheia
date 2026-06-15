@@ -87,11 +87,21 @@ async def test_frontdoor_api_returns_structured_503_when_backend_down(tmp_path):
     app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
         resp = await client.get("/api/status")
+        status = await client.get("/_infra/status")
 
     assert resp.status_code == 503
-    detail = resp.json()["detail"]
+    data = resp.json()
+    assert data["ok"] is False
+    assert data["error"] == "backend_unavailable"
+    assert data["action"] == "gateway_recovering"
+    assert data["retry_after_sec"] == 3
+    assert resp.headers["X-Aletheia-Degraded"] == "backend_unavailable"
+    detail = data["detail"]
     assert detail["reason"] == "backend_unavailable"
     assert detail["path"] == "/api/status"
+
+    event_codes = [e["code"] for e in status.json()["events"]]
+    assert "backend_unavailable" in event_codes
 
 
 @pytest.mark.anyio

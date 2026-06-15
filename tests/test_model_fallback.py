@@ -38,6 +38,10 @@ def _setup_config(tmp_path, monkeypatch, *, fallback_models=None):
     pcfg.fallback_models = fallback_models or []
     save_config(cfg)
     clear_cache()
+    from aletheia.model_provider.fallback import reset_model_health
+    from aletheia.infra.events import clear_infra_events
+    reset_model_health()
+    clear_infra_events()
     return cfg
 
 
@@ -95,6 +99,57 @@ async def test_complete_with_fallback_uses_detected_models_when_config_list_empt
 
     assert resp.content == "ok:claude-detected"
     assert provider.calls == ["claude-primary", "claude-detected"]
+
+
+@pytest.mark.anyio
+async def test_transient_failures_put_model_in_cooldown_and_skip_it(tmp_path, monkeypatch):
+    _setup_config(tmp_path, monkeypatch, fallback_models=["claude-fallback"])
+    from aletheia.model_provider import fallback
+
+    monkeypatch.setattr(fallback, "_COOLDOWN_FAILURE_THRESHOLD", 2)
+    monkeypatch.setattr(fallback, "_COOLDOWN_SEC", 60)
+    provider = FakeProvider(fail_models={"claude-primary": "429 Too Many Requests"})
+
+    for _ in range(2):
+        resp = await fallback.complete_with_fallback(
+            ModelRequest(messages=[{"role": "user", "content": "x"}]),
+            provider=provider,
+        )
+        assert resp.content == "ok:claude-fallback"
+
+    resp = await fallback.complete_with_fallback(
+        ModelRequest(messages=[{"role": "user", "content": "x"}]),
+        provider=provider,
+    )
+    assert resp.content == "ok:claude-fallback"
+    assert provider.calls == [
+        "claude-primary", "claude-fallback",
+        "claude-primary", "claude-fallback",
+        "claude-fallback",
+    ]
+    meta = resp.raw["aletheia_model_fallback"]
+    assert meta["skipped_cooldown_models"] == ["claude-primary"]
+    health = fallback.get_model_health_snapshot()
+    primary = next(x for x in health if x["model"] == "claude-primary")
+    assert primary["cooling_down"] is True
+
+
+@pytest.mark.anyio
+async def test_infra_events_expose_llm_cooldown(tmp_path, client, monkeypatch):
+    _setup_config(tmp_path, monkeypatch, fallback_models=["claude-fallback"])
+    from aletheia.model_provider import fallback
+
+    monkeypatch.setattr(fallback, "_COOLDOWN_FAILURE_THRESHOLD", 1)
+    provider = FakeProvider(fail_models={"claude-primary": "502 Bad Gateway"})
+    await fallback.complete_with_fallback(
+        ModelRequest(messages=[{"role": "user", "content": "x"}]),
+        provider=provider,
+    )
+
+    resp = await client.get("/api/infra/events")
+    assert resp.status_code == 200
+    codes = [e["code"] for e in resp.json()["events"]]
+    assert "llm_model_cooldown" in codes
 
 
 @pytest.mark.anyio

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from aletheia import __version__
 from aletheia.config.loader import load_config, save_config
+from aletheia.infra.events import list_infra_events
 
 router = APIRouter(prefix="/api", tags=["system"])
 infra_router = APIRouter(prefix="/_infra", tags=["infra"])
@@ -54,6 +55,15 @@ def _readiness_payload() -> tuple[int, dict]:
     return status_code, payload
 
 
+def _llm_model_health_snapshot() -> list[dict]:
+    try:
+        from aletheia.model_provider.fallback import get_model_health_snapshot
+        return get_model_health_snapshot()
+    except Exception as e:  # noqa: BLE001 - status endpoint must stay alive
+        logger.debug("llm model health snapshot failed: %s", e)
+        return []
+
+
 @router.get("/health")
 async def health():
     from aletheia.agent_runtime.health import compute_health
@@ -62,6 +72,14 @@ async def health():
         "status": "healthy" if h["healthy"] else "degraded",
         "issues": h["issues"],
         "version": __version__,
+    }
+
+
+@router.get("/infra/events")
+async def infra_events(limit: int = 20, min_severity: str | None = None):
+    """Recent sanitized infra/runtime events for dashboard status surfaces."""
+    return {
+        "events": list_infra_events(limit=limit, min_severity=min_severity),
     }
 
 
@@ -180,6 +198,8 @@ async def status():
         "model_provider": cfg.models.default_provider,
         "health_status": "healthy" if h["healthy"] else "degraded",
         "health_issues": h["issues"],
+        "infra_events": list_infra_events(limit=5, min_severity="warning"),
+        "llm_model_health": _llm_model_health_snapshot(),
         "boot_commit": boot_commit,
         "current_commit": head_commit,
         "pid": os.getpid(),

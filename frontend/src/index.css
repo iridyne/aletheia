@@ -302,6 +302,25 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   color: var(--faint); font-family: var(--mono); font-size: 0.66rem;
   margin-left: auto;
 }
+.sp-events {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.sp-event-row {
+  display: flex; gap: 6px; align-items: flex-start;
+  padding: 2px 0;
+}
+.sp-event-main {
+  display: flex; flex-direction: column; gap: 1px; min-width: 0;
+}
+.sp-event-code {
+  font-family: var(--mono); font-size: 0.66rem; color: var(--text);
+}
+.sp-event-message {
+  font-size: 0.68rem; color: var(--muted); line-height: 1.35;
+}
+.sp-event-action {
+  font-family: var(--mono); font-size: 0.62rem; color: var(--faint);
+}
 .sp-stale-hint { color: var(--faint); font-size: 0.64rem; font-weight: 400; }
 
 

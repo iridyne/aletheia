@@ -8,12 +8,15 @@ transient capacity/rate-limit failure (429/502/503/504, "at capacity", etc.).
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass, asdict
 import logging
+import time
 from typing import Any
 
 import httpx
 
 from aletheia.config.loader import load_config
+from aletheia.infra.events import emit_infra_event
 from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
 from aletheia.model_provider import router as provider_router
 
@@ -38,6 +41,24 @@ _TRANSIENT_TEXT_MARKERS = (
     "gateway timeout",
 )
 _MAX_MODELS_PER_REQUEST = 6
+_COOLDOWN_FAILURE_THRESHOLD = 2
+_COOLDOWN_SEC = 300
+_MODEL_HEALTH: dict[tuple[str, str], "ModelHealthState"] = {}
+
+
+@dataclass
+class ModelHealthState:
+    provider: str
+    model: str
+    consecutive_failures: int = 0
+    cooldown_until: float = 0
+    last_error: str | None = None
+    last_failure_at: float | None = None
+    last_success_at: float | None = None
+
+    @property
+    def cooling_down(self) -> bool:
+        return self.cooldown_until > time.time()
 
 
 def is_transient_model_error(exc: BaseException) -> bool:
@@ -57,6 +78,80 @@ def _clone_provider_with_model(provider: ModelProvider, model: str) -> ModelProv
     clone = copy.copy(provider)
     setattr(clone, "model", model)
     return clone
+
+
+def _state(provider_name: str, model: str) -> ModelHealthState:
+    key = (provider_name, model)
+    state = _MODEL_HEALTH.get(key)
+    if state is None:
+        state = ModelHealthState(provider=provider_name, model=model)
+        _MODEL_HEALTH[key] = state
+    return state
+
+
+def _is_in_cooldown(provider_name: str, model: str) -> bool:
+    state = _MODEL_HEALTH.get((provider_name, model))
+    return bool(state and state.cooling_down)
+
+
+def _record_model_success(provider_name: str, model: str) -> None:
+    state = _state(provider_name, model)
+    was_cooling = state.cooling_down
+    state.consecutive_failures = 0
+    state.cooldown_until = 0
+    state.last_error = None
+    state.last_success_at = time.time()
+    if was_cooling:
+        emit_infra_event(
+            severity="info",
+            source="llm",
+            code="llm_model_recovered",
+            entity_id=f"{provider_name}/{model}",
+            message=f"LLM model recovered: {provider_name}/{model}",
+            action="model_reenabled",
+            dedupe_sec=60,
+        )
+
+
+def _record_model_failure(provider_name: str, model: str, exc: BaseException) -> None:
+    state = _state(provider_name, model)
+    state.consecutive_failures += 1
+    state.last_error = str(exc)[:300]
+    state.last_failure_at = time.time()
+    if state.consecutive_failures >= _COOLDOWN_FAILURE_THRESHOLD:
+        state.cooldown_until = time.time() + _COOLDOWN_SEC
+        emit_infra_event(
+            severity="warning",
+            source="llm",
+            code="llm_model_cooldown",
+            entity_id=f"{provider_name}/{model}",
+            message=f"LLM model temporarily cooling down after transient failures: {provider_name}/{model}",
+            action="using_fallback_model",
+            metadata={
+                "provider": provider_name,
+                "model": model,
+                "consecutive_failures": state.consecutive_failures,
+                "cooldown_sec": _COOLDOWN_SEC,
+            },
+            dedupe_sec=60,
+        )
+
+
+def get_model_health_snapshot() -> list[dict[str, Any]]:
+    """Return sanitized in-process LLM model health for status surfaces."""
+    now = time.time()
+    snapshot = []
+    for state in _MODEL_HEALTH.values():
+        item = asdict(state)
+        item["cooling_down"] = state.cooldown_until > now
+        item["cooldown_remaining_sec"] = max(0, round(state.cooldown_until - now, 1))
+        snapshot.append(item)
+    return sorted(snapshot, key=lambda x: (x["provider"], x["model"]))
+
+
+def reset_model_health() -> None:
+    """Test helper."""
+    _MODEL_HEALTH.clear()
 
 
 async def _candidate_models(provider_name: str, provider: ModelProvider) -> list[str]:
@@ -110,6 +205,7 @@ def _with_fallback_meta(
         "requested_model": requested_model,
         "final_model": response.model,
         "attempted_models": attempted_models,
+        "skipped_cooldown_models": raw.get("skipped_cooldown_models", []),
         "fallback_used": fallback_used,
     }
     response.raw = raw
@@ -131,30 +227,73 @@ async def complete_with_fallback(
         return await provider.complete(request)
 
     requested_model = models[0]
+    skipped_cooldown = [
+        model for model in models if _is_in_cooldown(resolved_provider_name, model)
+    ]
+    models_to_try = [
+        model for model in models if not _is_in_cooldown(resolved_provider_name, model)
+    ]
+    if not models_to_try:
+        emit_infra_event(
+            severity="critical",
+            source="llm",
+            code="llm_all_models_cooling_down",
+            entity_id=resolved_provider_name,
+            message=f"All candidate LLM models are cooling down for provider {resolved_provider_name}",
+            action="wait_for_cooldown_or_change_provider",
+            metadata={"provider": resolved_provider_name, "models": models},
+            dedupe_sec=60,
+        )
+        raise RuntimeError(f"all LLM candidate models are cooling down for {resolved_provider_name}")
     attempted: list[str] = []
     last_exc: BaseException | None = None
-    for idx, model in enumerate(models):
+    for idx, model in enumerate(models_to_try):
         attempted.append(model)
-        candidate = provider if idx == 0 else _clone_provider_with_model(provider, model)
+        candidate = provider if model == str(getattr(provider, "model", "") or "") else _clone_provider_with_model(provider, model)
         try:
             response = await candidate.complete(request)
+            _record_model_success(resolved_provider_name, model)
+            if skipped_cooldown and isinstance(response.raw, dict):
+                response.raw = dict(response.raw)
+                response.raw["skipped_cooldown_models"] = skipped_cooldown
+            fallback_used = model != requested_model
+            if fallback_used:
+                emit_infra_event(
+                    severity="warning",
+                    source="llm",
+                    code="llm_model_fallback_used",
+                    entity_id=f"{resolved_provider_name}/{requested_model}",
+                    message=f"LLM request fell back from {requested_model} to {model}",
+                    action="fallback_success",
+                    metadata={
+                        "provider": resolved_provider_name,
+                        "requested_model": requested_model,
+                        "final_model": model,
+                        "attempted_models": attempted,
+                        "skipped_cooldown_models": skipped_cooldown,
+                    },
+                    dedupe_sec=30,
+                )
             return _with_fallback_meta(
                 response,
                 provider_name=resolved_provider_name,
                 requested_model=requested_model,
                 attempted_models=attempted,
-                fallback_used=idx > 0,
+                fallback_used=fallback_used,
             )
         except Exception as exc:  # noqa: BLE001 - caller expects provider errors
             last_exc = exc
-            if not is_transient_model_error(exc) or idx == len(models) - 1:
+            transient = is_transient_model_error(exc)
+            if transient:
+                _record_model_failure(resolved_provider_name, model, exc)
+            if not transient or idx == len(models_to_try) - 1:
                 raise
             logger.warning(
                 "LLM model %s/%s transient failure on %s; trying fallback %s",
                 resolved_provider_name,
                 model,
                 type(exc).__name__,
-                models[idx + 1],
+                models_to_try[idx + 1],
             )
     assert last_exc is not None
     raise last_exc
