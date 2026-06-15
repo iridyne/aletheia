@@ -92,6 +92,49 @@ def get_current_policy():
     }
 
 
+@router.get("/calibration")
+def get_calibration():
+    """Forward outcome calibration: per-family/horizon aggregate stats.
+
+    Answers: "do the scanner families actually pick winners?"
+    """
+    stats = repo.calibration_stats()
+
+    # Also provide per-family summary across all horizons
+    family_agg: dict[str, dict] = {}
+    for row in stats:
+        fam = row["scanner_family"] or "unknown"
+        if fam not in family_agg:
+            family_agg[fam] = {"family": fam, "total_n": 0, "total_positive": 0, "weighted_return": 0.0}
+        family_agg[fam]["total_n"] += row["n"]
+        family_agg[fam]["total_positive"] += row["positive_count"]
+        family_agg[fam]["weighted_return"] += (row["avg_return"] or 0) * row["n"]
+
+    summaries = []
+    for fam, agg in sorted(family_agg.items()):
+        n = agg["total_n"]
+        summaries.append({
+            "family": fam,
+            "total_outcomes": n,
+            "hit_rate_pct": round(agg["total_positive"] / n * 100, 1) if n > 0 else 0,
+            "avg_return_pct": round(agg["weighted_return"] / n, 3) if n > 0 else 0,
+        })
+
+    return {
+        "by_family_horizon": stats,
+        "by_family": summaries,
+    }
+
+
+@router.get("/members/{member_id}/outcomes")
+def get_member_outcomes(member_id: str):
+    """Forward outcomes for a specific universe member."""
+    outcomes = repo.list_forward_outcomes_by_member(member_id)
+    if not outcomes:
+        raise HTTPException(404, "No outcomes found for this member")
+    return outcomes
+
+
 @router.get("/registry/stats")
 def registry_stats():
     """Asset registry statistics."""

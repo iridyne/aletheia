@@ -1210,6 +1210,82 @@ def list_universe_snapshots(market_type: str = "crypto", limit: int = 20) -> lis
 
 
 # ---------------------------------------------------------------------------
+# Universe Forward Outcomes
+# ---------------------------------------------------------------------------
+
+def insert_forward_outcome(outcome) -> None:
+    _insert("universe_forward_outcomes", outcome.model_dump())
+
+
+def insert_forward_outcomes_batch(outcomes: list) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    for o in outcomes:
+        data = o.model_dump()
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join(["?"] * len(data))
+        db.execute(
+            f"INSERT INTO universe_forward_outcomes ({cols}) VALUES ({placeholders})",
+            list(data.values()),
+        )
+    if not was_in_tx:
+        db.commit()
+
+
+def list_pending_forward_outcomes(before_ts: str, limit: int = 500) -> list[dict]:
+    return _select_all(
+        "universe_forward_outcomes",
+        where="status = 'pending' AND due_at <= ?",
+        params=(before_ts,),
+        order="due_at ASC",
+        limit=limit,
+    )
+
+
+def settle_forward_outcome(outcome_id: str, exit_price: float, forward_return: float, settled_at: str) -> None:
+    _update("universe_forward_outcomes", outcome_id, {
+        "exit_price_usd": exit_price,
+        "forward_return_pct": forward_return,
+        "settled_at": settled_at,
+        "status": "settled",
+    })
+
+
+def fail_forward_outcome(outcome_id: str, settled_at: str) -> None:
+    _update("universe_forward_outcomes", outcome_id, {
+        "settled_at": settled_at,
+        "status": "failed",
+    })
+
+
+def list_forward_outcomes_by_member(member_id: str) -> list[dict]:
+    return _select_all(
+        "universe_forward_outcomes",
+        where="member_id = ?",
+        params=(member_id,),
+        order="horizon ASC",
+    )
+
+
+def calibration_stats() -> list[dict]:
+    """Aggregate forward return stats grouped by scanner_family + horizon."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT scanner_family, horizon, "
+        "COUNT(*) as n, "
+        "AVG(forward_return_pct) as avg_return, "
+        "SUM(CASE WHEN forward_return_pct > 0 THEN 1 ELSE 0 END) as positive_count, "
+        "MIN(forward_return_pct) as min_return, "
+        "MAX(forward_return_pct) as max_return "
+        "FROM universe_forward_outcomes "
+        "WHERE status = 'settled' "
+        "GROUP BY scanner_family, horizon "
+        "ORDER BY scanner_family, horizon"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
 # Data Collectors (9-domain market data)
 # ---------------------------------------------------------------------------
 

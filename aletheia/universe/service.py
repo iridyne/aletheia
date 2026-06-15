@@ -76,8 +76,16 @@ class UniverseService:
         from aletheia.universe.filters import apply_tradability_filters
         from aletheia.universe.scanners import run_all_scanners
         from aletheia.universe.allocator import allocate_universe, compute_total_score
+        from aletheia.universe.outcome_recorder import settle_due, register_pending
 
         cfg = load_config()
+
+        # Settle any overdue forward outcomes before producing new ones
+        try:
+            settle_due()
+        except Exception as e:
+            logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
+
         run = UniverseScannerRun()
         repo.insert_universe_scanner_run(run)
 
@@ -121,9 +129,11 @@ class UniverseService:
                     seen_symbols[sym] = item
             allocated = sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
 
+            inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
                 ttl_sec = item.get("ttl_sec", 3600)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
+                entry_price = item.get("last_price")
                 member = UniverseMember(
                     snapshot_id=snap.id,
                     asset_id=item["asset_id"],
@@ -144,8 +154,22 @@ class UniverseService:
                     inclusion_reason=json.dumps(item.get("reasons", [])),
                     risk_flags=json.dumps(item.get("risk_flags", [])),
                     execution_eligible=item.get("execution_eligible", True),
+                    entry_price_usd=entry_price,
                 )
                 repo.insert_universe_member(member)
+                inserted_members.append({
+                    "id": member.id,
+                    "snapshot_id": snap.id,
+                    "symbol": item["symbol"],
+                    "scanner_family": item.get("scanner_family"),
+                    "entry_price_usd": entry_price,
+                })
+
+            # Register forward outcome tracking for all members with valid prices
+            try:
+                register_pending(inserted_members, entry_ts=now.isoformat())
+            except Exception as e:
+                logger.warning("Forward outcome registration failed (non-fatal): %s", e)
 
             repo.update_universe_scanner_run(
                 run.id,

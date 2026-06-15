@@ -1055,6 +1055,28 @@ CREATE TABLE IF NOT EXISTS universe_members (
 CREATE INDEX IF NOT EXISTS idx_universe_members_snapshot
     ON universe_members (snapshot_id, rank);
 
+CREATE TABLE IF NOT EXISTS universe_forward_outcomes (
+    id TEXT PRIMARY KEY,
+    member_id TEXT NOT NULL REFERENCES universe_members(id),
+    snapshot_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    scanner_family TEXT,
+    horizon TEXT NOT NULL,
+    entry_price_usd REAL NOT NULL,
+    entry_ts TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    settled_at TEXT,
+    exit_price_usd REAL,
+    forward_return_pct REAL,
+    status TEXT NOT NULL DEFAULT 'pending'
+);
+CREATE INDEX IF NOT EXISTS idx_forward_outcomes_status_due
+    ON universe_forward_outcomes (status, due_at);
+CREATE INDEX IF NOT EXISTS idx_forward_outcomes_member
+    ON universe_forward_outcomes (member_id);
+CREATE INDEX IF NOT EXISTS idx_forward_outcomes_family_horizon
+    ON universe_forward_outcomes (scanner_family, horizon);
+
 CREATE TABLE IF NOT EXISTS universe_policies (
     id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -1332,6 +1354,8 @@ _ADDITIVE_COLUMNS = [
     ("btc_entry_price", "positions", "REAL"),
     ("btc_exit_price", "positions", "REAL"),
     ("regime_tag", "positions", "TEXT"),
+    # Universe Forward Outcomes: entry price at member inclusion time
+    ("entry_price_usd", "universe_members", "REAL"),
 ]
 
 
