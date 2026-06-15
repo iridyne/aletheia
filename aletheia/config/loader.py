@@ -117,10 +117,28 @@ def load_config() -> AletheiaConfig:
 
 
 def save_config(cfg: AletheiaConfig) -> None:
-    """Persist config to disk."""
+    """Persist config to disk. Emits infra events for any cross-field inconsistencies."""
     ensure_data_dirs()
     data = cfg.model_dump(mode="json")
     CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8")
+    _emit_consistency_events(cfg)
+
+
+def _emit_consistency_events(cfg: AletheiaConfig) -> None:
+    try:
+        from aletheia.diagnostics.config_consistency import check_config_consistency
+        from aletheia.infra.events import emit_infra_event
+        for finding in check_config_consistency(cfg):
+            emit_infra_event(
+                severity="warning",
+                source="config_consistency",
+                code=finding.field_path,
+                message=finding.message,
+                action=finding.fix_hint,
+                dedupe_sec=300,
+            )
+    except Exception:  # noqa: BLE001 — advisory; must never break save
+        pass
 
 
 def bootstrap() -> AletheiaConfig:

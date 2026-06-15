@@ -478,6 +478,20 @@ def _probe_audit_chain(report: Report) -> None:
                    "audit log may have been tampered with or corrupted")
 
 
+def _probe_config_consistency(report: Report) -> None:
+    """Cross-field config consistency — detects contradictions like disabled default provider."""
+    from aletheia.config.loader import load_config
+    from aletheia.diagnostics.config_consistency import check_config_consistency
+    cfg = load_config()
+    findings = check_config_consistency(cfg)
+    if not findings:
+        report.add("config.consistency", "ok", "no cross-field inconsistencies")
+        return
+    for f in findings:
+        sev: Severity = "warn" if f.severity == "warning" else "blocker"  # type: ignore[assignment]
+        report.add(f"config.consistency.{f.field_path}", sev, f.message, f.fix_hint)
+
+
 def build_report() -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing."""
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -485,6 +499,7 @@ def build_report() -> Report:
         _probe_code_sync,
         _probe_process,
         _probe_config_gates,
+        _probe_config_consistency,
         _probe_credentials,
         _probe_market_data,
         _probe_trading_loop,

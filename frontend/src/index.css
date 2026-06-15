@@ -407,6 +407,28 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   font-family: var(--display); font-size: 1.2rem;
 }
 .backend-guard-panel p { margin-top: var(--space-2); color: var(--muted); }
+.backend-guard-body { min-width: 0; }
+
+/* guard issue list */
+.guard-issues { list-style: none; margin: 0.3rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.guard-issue { display: flex; align-items: center; gap: 0.35rem; font-size: 0.81rem; }
+.guard-issue-detail { color: var(--faint); font-family: var(--mono); font-size: 0.78rem; }
+.guard-issue-more { margin-top: 0.15rem; }
+.guard-more-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 0.79rem; padding: 0; text-decoration: underline; }
+.guard-more-btn:hover { color: var(--text); }
+.dot-sm { width: 6px; height: 6px; flex-shrink: 0; }
+
+/* guard infra events */
+.guard-events { margin-top: 0.45rem; font-size: 0.8rem; }
+.guard-events-summary { cursor: pointer; color: var(--muted); font-size: 0.79rem; user-select: none; }
+.guard-events-summary:hover { color: var(--text); }
+.guard-event-list { list-style: none; margin: 0.3rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.guard-event { display: grid; grid-template-columns: auto 1fr auto; gap: 0.4rem; align-items: baseline; }
+.guard-event-code { color: var(--faint); font-size: 0.75rem; white-space: nowrap; }
+.guard-event-msg { color: var(--muted); word-break: break-word; }
+.guard-event-age { color: var(--faint); font-size: 0.73rem; white-space: nowrap; }
+.guard-event-critical .guard-event-msg { color: rgba(255,93,108,0.9); }
+.guard-event-warning .guard-event-msg { color: rgba(245,185,66,0.9); }
 
 /* ---------- Cards ---------- */
 .card {
