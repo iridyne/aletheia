@@ -60,11 +60,6 @@ body {
   line-height: 1.5;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
-  /* faint grid texture for terminal atmosphere */
-  background-image:
-    linear-gradient(rgba(34,211,238,0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(34,211,238,0.018) 1px, transparent 1px);
-  background-size: 64px 64px;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -126,9 +121,9 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .sidebar nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .sidebar nav a.active {
-  background: rgba(34,211,238,0.25);
-  color: var(--accent); border-left: 3px solid var(--accent);
-  padding-left: calc(0.75rem - 1px); font-weight: 600;
+  background: rgba(34,211,238,0.12);
+  color: var(--accent); border-left: 2px solid var(--accent);
+  padding-left: calc(0.75rem); font-weight: 600;
 }
 
 /* ---------- Topbar (breadcrumb + global status) ---------- */
@@ -620,10 +615,11 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 th, td { padding: 5px var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
 th {
-  color: var(--faint); font-weight: 600; font-size: 0.68rem; text-transform: uppercase;
-  letter-spacing: 0.07em; border-bottom-color: var(--border-2);
+  color: var(--faint); font-weight: 600; font-size: 0.66rem; text-transform: uppercase;
+  letter-spacing: 0.07em; border-bottom: 2px solid var(--border-2);
 }
-tbody tr { transition: background 0.1s; }
+tbody tr { transition: background 0.08s; }
+tbody tr:nth-child(even) { background: rgba(20,26,33,0.35); }
 tbody tr:hover { background: var(--surface-2); }
 td { color: var(--text); }
 
@@ -1886,7 +1882,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 /* Cockpit / control-surface buttons — same 36px hit target */
 .btn-control {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
-  min-height: 36px; padding: var(--space-2) var(--space-4);
+  min-height: 28px; padding: var(--space-1) var(--space-3);
 }
 .btn-control.secondary {
   background: var(--surface-2);
