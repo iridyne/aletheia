@@ -403,6 +403,10 @@ function makeTask(
   }
 }
 
+function waitMs(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 test('backend client includes method and route in gateway request failures', async () => {
   const originalFetch = globalThis.fetch
   try {
@@ -483,6 +487,52 @@ test('operator loop in shadow runtime emits runtime-aware heartbeat and suppress
   assert.equal(calls.heartbeats[0].runtime_state, 'shadowing')
   assert.equal(calls.gatewayStatusReads, 1)
   assert.equal(calls.healthReads, 1)
+})
+
+test('operator loop background heartbeat stays fresh while runOnce is still in flight', async () => {
+  const { backend, calls } = makeFakeBackend(makeSnapshot())
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 1,
+      permissionMode: 'ReadOnly',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: false,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  ;(loop as any).recovered = true
+  let releaseRun: (() => void) | null = null
+  let runCalls = 0
+  ;(loop as any).runOnce = async () => {
+    runCalls += 1
+    await new Promise<void>(resolve => {
+      releaseRun = resolve
+    })
+    return true
+  }
+
+  const started = loop.start()
+  await waitMs(1200)
+
+  assert.equal(runCalls, 1)
+  assert.ok(
+    calls.heartbeats.length >= 1,
+    'heartbeat pump should persist operator state before a long runOnce finishes',
+  )
+
+  releaseRun?.()
+  await started
+  await loop.stop()
 })
 
 test('recommendation engine marks dreaming as due when no recent dreaming activity exists', () => {

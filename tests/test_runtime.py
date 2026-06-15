@@ -76,6 +76,15 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     market_observer_job = s.get_job("market_observer")
     assert market_observer_job is not None
     assert market_observer_job.next_run_time <= started_at.astimezone(market_observer_job.next_run_time.tzinfo) + timedelta(seconds=120)
+    assert market_observer_job.executor == "observer"
+    assert market_observer_job.max_instances == 1
+    assert market_observer_job.coalesce is True
+    market_data_job = s.get_job("market_data")
+    assert market_data_job is not None
+    assert market_data_job.executor == "io"
+    post_trade_job = s.get_job("post_trade_reviewer")
+    assert post_trade_job is not None
+    assert post_trade_job.executor == "agents"
     sched.stop_scheduler()
     reset_db()
 

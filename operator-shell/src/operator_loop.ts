@@ -10,6 +10,7 @@ import type {
   OperatorSessionDetail,
   OperatorSessionBranchState,
   OperatorSnapshot,
+  OperatorHeartbeat,
 } from './schemas.js'
 import { BackendClient } from './backend_client.js'
 import type { OperatorShellConfig } from './config.js'
@@ -55,6 +56,8 @@ export class OperatorLoop {
   private readonly recommendationEngine: RecommendationEngine
   private readonly piRuntime: PiRuntimeAdapter
   private intervalHandle: NodeJS.Timeout | null = null
+  private heartbeatHandle: NodeJS.Timeout | null = null
+  private runOnceInFlight = false
   private mode: OperatorMode = 'Observing'
   private lastError: string | null = null
   private lastSuccessAt: string | null = null
@@ -196,6 +199,73 @@ export class OperatorLoop {
     return new Promise(resolve => setTimeout(resolve, ms))
   }
 
+  private heartbeatIntervalMs(): number {
+    return Math.max(this.config.heartbeatIntervalSec * 1000, 1000)
+  }
+
+  private buildCurrentHeartbeat(): OperatorHeartbeat {
+    return buildHeartbeat({
+      mode: this.mode,
+      permissionMode: this.config.permissionMode,
+      session: this.sessionRuntime.getMainSession(),
+      tasks: this.taskRuntime.snapshot(),
+      activeBranch: this.sessionRuntime.getActiveBranch(),
+      modelProvider: this.config.modelProvider,
+      lastError: this.lastError,
+      lastSuccessAt: this.lastSuccessAt,
+      runtimeId: this.runtimeId(),
+      runtimeMode: this.runtimeMode(),
+      runtimeState: this.runtimeState(),
+    })
+  }
+
+  private async sendCurrentHeartbeat(): Promise<void> {
+    const heartbeat = this.buildCurrentHeartbeat()
+    await this.backendClient.postHeartbeat(heartbeat)
+    this.lastSuccessAt = heartbeat.last_seen_at
+  }
+
+  private async sendCurrentHeartbeatBestEffort(): Promise<boolean> {
+    try {
+      await this.sendCurrentHeartbeat()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private startHeartbeatPump(): void {
+    if (this.heartbeatHandle) {
+      return
+    }
+    this.heartbeatHandle = setInterval(() => {
+      void this.sendCurrentHeartbeatBestEffort()
+    }, this.heartbeatIntervalMs())
+  }
+
+  private stopHeartbeatPump(): void {
+    if (!this.heartbeatHandle) {
+      return
+    }
+    clearInterval(this.heartbeatHandle)
+    this.heartbeatHandle = null
+  }
+
+  private async runOnceSerialized(): Promise<boolean> {
+    if (this.runOnceInFlight) {
+      // Keep the persisted operator state fresh while a long PI/session task is
+      // still in progress, but never start a second runOnce on top of it.
+      await this.sendCurrentHeartbeatBestEffort()
+      return false
+    }
+    this.runOnceInFlight = true
+    try {
+      return await this.runOnce()
+    } finally {
+      this.runOnceInFlight = false
+    }
+  }
+
   private async recoverStateForBackgroundStart(): Promise<void> {
     while (!this.recovered) {
       try {
@@ -205,6 +275,7 @@ export class OperatorLoop {
         this.mode = 'Degraded'
         this.sessionRuntime.setCurrentIntent(operatorIntentForError(this.lastError))
         console.error(`operator_startup_recover_failed:${this.lastError}`)
+        await this.sendCurrentHeartbeatBestEffort()
         await this.sleep(this.startupRetryDelayMs())
         continue
       }
@@ -479,21 +550,7 @@ export class OperatorLoop {
     this.mode = status.paused ? 'Paused' : health.status === 'healthy' ? 'Observing' : 'Degraded'
     const issueSummary = health.issues.length > 0 ? health.issues.join(', ') : health.status
     this.sessionRuntime.setCurrentIntent(`shadow validation: ${issueSummary}`)
-    const heartbeat = buildHeartbeat({
-      mode: this.mode,
-      permissionMode: this.config.permissionMode,
-      session: this.sessionRuntime.getMainSession(),
-      tasks: { currentTaskId: null, queueSize: 0 },
-      activeBranch: this.sessionRuntime.getActiveBranch(),
-      modelProvider: this.config.modelProvider,
-      lastError: this.lastError,
-      lastSuccessAt: this.lastSuccessAt,
-      runtimeId: this.runtimeId(),
-      runtimeMode: this.runtimeMode(),
-      runtimeState: this.runtimeState(),
-    })
-    await this.backendClient.postHeartbeat(heartbeat)
-    this.lastSuccessAt = heartbeat.last_seen_at
+    await this.sendCurrentHeartbeat()
     this.lastError = null
     return true
   }
@@ -3066,21 +3123,7 @@ export class OperatorLoop {
       // the prior error is resolved. Writing null into the heartbeat prevents
       // recoverState() from re-reading a stale error on next restart.
       this.lastError = null
-      const heartbeat = buildHeartbeat({
-        mode: this.mode,
-        permissionMode: this.config.permissionMode,
-        session: this.sessionRuntime.getMainSession(),
-        tasks: this.taskRuntime.snapshot(),
-        activeBranch: this.sessionRuntime.getActiveBranch(),
-        modelProvider: this.config.modelProvider,
-        lastError: this.lastError,
-        lastSuccessAt: this.lastSuccessAt,
-        runtimeId: this.runtimeId(),
-        runtimeMode: this.runtimeMode(),
-        runtimeState: this.runtimeState(),
-      })
-      await this.backendClient.postHeartbeat(heartbeat)
-      this.lastSuccessAt = heartbeat.last_seen_at
+      await this.sendCurrentHeartbeat()
       return true
     } catch (error) {
       this.lastError = errorMessage(error)
@@ -3089,20 +3132,7 @@ export class OperatorLoop {
       // Still send heartbeat on failure — otherwise any transient API error
       // causes heartbeat to go stale (45s timeout) rather than showing Degraded.
       try {
-        const heartbeat = buildHeartbeat({
-          mode: this.mode,
-          permissionMode: this.config.permissionMode,
-          session: this.sessionRuntime.getMainSession(),
-          tasks: this.taskRuntime.snapshot(),
-          activeBranch: this.sessionRuntime.getActiveBranch(),
-          modelProvider: this.config.modelProvider,
-          lastError: this.lastError,
-          lastSuccessAt: this.lastSuccessAt,
-          runtimeId: this.runtimeId(),
-          runtimeMode: this.runtimeMode(),
-          runtimeState: this.runtimeState(),
-        })
-        await this.backendClient.postHeartbeat(heartbeat)
+        await this.sendCurrentHeartbeat()
       } catch { /* heartbeat itself failed — nothing more we can do */ }
       return false
     } finally {
@@ -3127,12 +3157,13 @@ export class OperatorLoop {
       return
     }
 
+    this.startHeartbeatPump()
     await this.recoverStateForBackgroundStart()
     await this.createLifecycleEvent('operator_started')
-    await this.runOnce()
+    await this.runOnceSerialized()
     this.intervalHandle = setInterval(() => {
-      void this.runOnce()
-    }, this.config.heartbeatIntervalSec * 1000)
+      void this.runOnceSerialized()
+    }, this.heartbeatIntervalMs())
   }
 
   async stop(): Promise<void> {
@@ -3140,6 +3171,7 @@ export class OperatorLoop {
       clearInterval(this.intervalHandle)
       this.intervalHandle = null
     }
+    this.stopHeartbeatPump()
     await this.createLifecycleEvent('operator_stopped')
   }
 }
