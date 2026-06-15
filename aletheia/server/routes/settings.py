@@ -49,6 +49,8 @@ async def get_settings():
             "auth_scheme": p.auth_scheme,
             "auth_type": p.auth_type,
             "oauth_expires_at": p.oauth_expires_at,
+            "model_fallback_enabled": p.model_fallback_enabled,
+            "fallback_models": list(p.fallback_models or []),
         }
     return {
         "app": cfg.app.model_dump(mode="json"),

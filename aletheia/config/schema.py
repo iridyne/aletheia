@@ -139,6 +139,12 @@ class ProviderConfig(BaseModel):
     oauth_token_ref: str | None = None
     oauth_refresh_ref: str | None = None
     oauth_expires_at: int | None = None  # Unix ms timestamp
+    # Request-level model fallback. When the configured model returns a
+    # transient capacity/rate-limit error, the runtime can try these models
+    # before giving up. If empty, the runtime may use list_models() detection as
+    # a best-effort catalogue. This never changes the persisted default model.
+    model_fallback_enabled: bool = True
+    fallback_models: list[str] = Field(default_factory=list)
 
 
 class ModelsConfig(BaseModel):

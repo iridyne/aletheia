@@ -45,13 +45,12 @@ def _ordered_enabled_providers(cfg) -> list[str]:
 async def _probe_one(name: str) -> dict:
     """Run one real minimal completion. Returns {provider, usable, error}."""
     try:
-        from aletheia.model_provider.router import get_provider
-        provider = get_provider(name)
+        from aletheia.model_provider.fallback import complete_with_fallback
         resp = await asyncio.wait_for(
-            provider.complete(ModelRequest(
+            complete_with_fallback(ModelRequest(
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=_PROBE_MAX_TOKENS,
-            )),
+            ), provider_name=name),
             timeout=_PROBE_TIMEOUT_SEC,
         )
         content = (resp.content or "").strip() if resp is not None else ""

@@ -41,6 +41,8 @@ async def get_model_config():
             "type": ptype,
             "enabled": pcfg.enabled,
             "model": pcfg.model,
+            "model_fallback_enabled": getattr(pcfg, "model_fallback_enabled", True),
+            "fallback_models": list(getattr(pcfg, "fallback_models", []) or []),
             "api_key": _key_status(pcfg.api_key_secret_ref),
             "auth_type": pcfg.auth_type,
             "oauth": _key_status(pcfg.oauth_token_ref),
@@ -288,6 +290,8 @@ class ModelConfigRequest(BaseModel):
     default: bool | None = None
     api_key: str | None = None
     auth_scheme: str | None = None
+    model_fallback_enabled: bool | None = None
+    fallback_models: list[str] | None = None
 
 
 @router.post("/settings/model")
@@ -323,6 +327,12 @@ async def set_model(req: ModelConfigRequest):
         pcfg.workspace_url = req.workspace_url
     if req.auth_scheme is not None:
         pcfg.auth_scheme = req.auth_scheme
+    if req.model_fallback_enabled is not None:
+        pcfg.model_fallback_enabled = req.model_fallback_enabled
+    if req.fallback_models is not None:
+        pcfg.fallback_models = list(dict.fromkeys(
+            m.strip() for m in req.fallback_models if isinstance(m, str) and m.strip()
+        ))
     if req.default:
         cfg.models.default_provider = req.provider
 

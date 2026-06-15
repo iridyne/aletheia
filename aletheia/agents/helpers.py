@@ -1,10 +1,12 @@
 """Shared helpers for agents: LLM calls with graceful degradation + tool logging."""
 
 import logging
+import json
 from collections.abc import AsyncIterator
 
-from aletheia.model_provider.base import ModelRequest, StructuredModelRequest, StreamChunk
+from aletheia.model_provider.base import ModelRequest, StreamChunk
 from aletheia.model_provider.router import get_provider
+from aletheia.model_provider.fallback import complete_with_fallback
 
 logger = logging.getLogger("aletheia.agents")
 
@@ -17,11 +19,11 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800) -> tupl
     """
     try:
         provider = get_provider()
-        resp = await provider.complete(ModelRequest(
+        resp = await complete_with_fallback(ModelRequest(
             messages=[{"role": "user", "content": user}],
             system=system,
             max_tokens=max_tokens,
-        ))
+        ), provider=provider)
         _record_llm(True)
         return resp.content, None
     except Exception as e:
@@ -39,11 +41,14 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 40
     """
     try:
         provider = get_provider()
-        data = await provider.structured(
-            StructuredModelRequest(messages=[{"role": "user", "content": user}], system=system,
-                                   max_tokens=max_tokens),
-            schema,
+        messages = [{"role": "user", "content": user}]
+        schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, "model_json_schema") else {})
+        messages.append({"role": "user", "content": f"Respond with valid JSON matching this schema: {schema_json}"})
+        resp = await complete_with_fallback(
+            ModelRequest(messages=messages, system=system, temperature=0.3, max_tokens=max_tokens),
+            provider=provider,
         )
+        data = json.loads(resp.content)
         if not isinstance(data, dict):
             return None, "structured_non_dict"
         _record_llm(True)
