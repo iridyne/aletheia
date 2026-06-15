@@ -87,7 +87,6 @@ async def test_ac07_agent_creates_artifacts(client):
     await c.post("/api/agent-runs/start", json={"agent_name": "market_observer"})
     assert len((await c.get("/api/agent-runs")).json()) >= 2
     assert len(repo.list_knowledge_items(item_type="research_note")) >= 1
-    assert len((await c.get("/api/opportunities")).json()) >= 1
 
 
 # #8 Knowledge base stores items

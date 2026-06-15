@@ -50,23 +50,36 @@ def _block_real_exchange_orders(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _fast_llm_failure(request, monkeypatch):
-    """Make LLM calls fail instantly instead of waiting for TCP connect timeout.
+def _fast_network_timeout(request, monkeypatch):
+    """Set very short httpx connect timeout so external calls fail fast.
 
-    Without this, tests that call run_agent() block ~13s per symbol waiting for
-    httpx to timeout connecting to localhost:8000 (no listener). This fixture
-    makes the entire test suite ~40s faster.
-
-    Tests that provide their own LLM mock can opt out via @pytest.mark.real_llm.
+    Does NOT block ASGI TestClient (which uses transport, not real TCP).
+    LLM/exchange calls that go to real hosts fail in <50ms instead of 60s.
+    Also disables model-discovery network call inside fallback logic.
     """
-    if request.node.get_closest_marker("real_llm"):
+    if request.node.get_closest_marker("real_network"):
         return
-    import aletheia.model_provider.fallback as fb
+    from aletheia import net as _net
+    import httpx as _httpx
 
-    async def _instant_fail(req, *, provider_name=None, provider=None):
-        raise ConnectionRefusedError("LLM not available in test environment")
+    _original_httpx_client = _net.httpx_client
 
-    monkeypatch.setattr(fb, "complete_with_fallback", _instant_fail)
+    def _fast_httpx_client(timeout: float = 30, **kwargs):
+        fast_timeout = _httpx.Timeout(0.05, connect=0.05)
+        return _original_httpx_client(timeout=fast_timeout, **kwargs)
+
+    monkeypatch.setattr(_net, "httpx_client", _fast_httpx_client)
+
+    # Disable list_models() network discovery in fallback to avoid extra round-trips.
+    # Tests that provide their own LLM mock (real_llm marker) keep full fallback logic.
+    if not request.node.get_closest_marker("real_llm"):
+        import aletheia.model_provider.fallback as _fb
+
+        async def _fast_candidates(provider_name, provider):
+            primary = str(getattr(provider, "model", "") or "")
+            return [primary] if primary else []
+
+        monkeypatch.setattr(_fb, "_candidate_models", _fast_candidates)
 
 
 @pytest.fixture(autouse=True)
@@ -86,8 +99,12 @@ def _no_network_market_data(request, monkeypatch):
 
     async def _empty_ticker(self, symbol):
         from aletheia.data.providers import Ticker
-        return Ticker(symbol=str(symbol), last_price=0.0,
-                      volume_24h=0.0, change_pct_24h=0.0)
+        return Ticker(symbol=str(symbol), last_price=50000.0,
+                      volume_24h=1_000_000.0, change_pct_24h=1.5)
+
+    async def _noop_close(self):
+        pass
 
     monkeypatch.setattr(CCXTProvider, "get_ohlcv", _empty_ohlcv)
     monkeypatch.setattr(CCXTProvider, "get_ticker", _empty_ticker)
+    monkeypatch.setattr(CCXTProvider, "close", _noop_close)

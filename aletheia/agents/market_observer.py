@@ -272,7 +272,7 @@ async def _analyze_symbol(
         thesis_parts.append("Observations: " + " | ".join(observations))
     if confidence_score is not None:
         thesis_parts.append(f"score={confidence_score}/100")
-    thesis = " ".join(thesis_parts) if thesis_parts else f"{symbol} market read (direction={direction})"
+    thesis = " ".join(thesis_parts) if thesis_parts else f"No structured rationale — {symbol} market read (direction={direction})"
 
     # If a deterministic opportunity already exists for this symbol+snapshot,
     # annotate it with LLM insights instead of creating a duplicate.

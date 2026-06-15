@@ -81,8 +81,9 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
     assert opps[0]["symbol"] == "BTC/USDT"  # stored in canonical format
 
 
-async def test_observer_falls_back_to_neutral_on_error(tmp_path, monkeypatch):
-    # Configure a single symbol so we get exactly 1 opportunity.
+async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
+    # LLM-skip behavior: when LLM is unavailable, market_observer does NOT
+    # create neutral noise. Opportunities come from deterministic paths instead.
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -97,10 +98,8 @@ async def test_observer_falls_back_to_neutral_on_error(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
     result = await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
-    assert len(opps) == 1
-    # graceful fallback: opportunity still recorded, neutral/speculative
-    assert opps[0]["direction_bias"] == "neutral"
-    assert opps[0]["confidence"] == "speculative"
+    assert len(opps) == 0  # no neutral noise created
+    assert any("llm_unavailable" in e for e in result.get("errors", []))
 
 
 # --- paper_trader honors direction + confidence; records non-traded signals ---
