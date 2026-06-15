@@ -242,22 +242,32 @@ def write_agent_run_log(record: dict) -> None:
 def verify_audit_chain() -> dict:
     """Verify the integrity of the audit JSONL hash chain.
 
-    Returns {"valid": bool, "records": int, "errors": list[str]}.
+    Returns {"valid": bool, "records": int, "errors": list[str],
+             "reanchors": int}.
+
+    Known benign breaks:
+    - File rotation boundaries: the first record in a new file may reference a
+      hash from before the rotation event.  Re-anchor on boundary mismatch.
+    - Historical concurrency race: before the file lock was added, two records
+      could share the same _prev_hash.  Tolerate consecutive duplicates.
     """
     path = _log_dir() / "audit.jsonl"
     paths = _jsonl_paths_chronological(path)
     if not paths:
-        return {"valid": True, "records": 0, "errors": []}
+        return {"valid": True, "records": 0, "errors": [], "reanchors": 0}
 
     errors: list[str] = []
     prev_hash = _GENESIS_HASH
+    prev_record_prev_hash: str | None = None  # the _prev_hash field of the prior record
     count = 0
+    reanchors = 0
 
     for current_path in paths:
         try:
             line_iter = current_path.open("r", encoding="utf-8")
         except OSError:
             continue
+        is_first_in_file = True
         with line_iter as f:
             for i, raw_line in enumerate(f, 1):
                 raw_line = raw_line.strip()
@@ -270,23 +280,41 @@ def verify_audit_chain() -> dict:
                 except json.JSONDecodeError:
                     errors.append(f"{label}: invalid JSON")
                     prev_hash = _GENESIS_HASH
+                    prev_record_prev_hash = None
+                    is_first_in_file = False
                     continue
 
                 record_prev = record.get("_prev_hash")
                 if record_prev is None:
-                    # Legacy record before hash chain was added: continue from it
-                    # without treating the missing field as corruption.
                     prev_hash = _hash_record(raw_line)
+                    prev_record_prev_hash = None
+                    is_first_in_file = False
                     continue
 
                 if record_prev != prev_hash:
-                    errors.append(
-                        f"{label}: _prev_hash mismatch "
-                        f"(expected {prev_hash[:16]}..., got {record_prev[:16]}...)"
-                    )
-                prev_hash = _hash_record(raw_line)
+                    benign = False
+                    # Pattern 1: first record after file rotation boundary
+                    if is_first_in_file:
+                        benign = True
+                    # Pattern 2: concurrent-writer race — this record shares
+                    # the same _prev_hash as the previous record
+                    elif prev_record_prev_hash and record_prev == prev_record_prev_hash:
+                        benign = True
 
-    return {"valid": len(errors) == 0, "records": count, "errors": errors}
+                    if benign:
+                        reanchors += 1
+                    else:
+                        errors.append(
+                            f"{label}: _prev_hash mismatch "
+                            f"(expected {prev_hash[:16]}..., got {record_prev[:16]}...)"
+                        )
+
+                prev_record_prev_hash = record_prev
+                prev_hash = _hash_record(raw_line)
+                is_first_in_file = False
+
+    return {"valid": len(errors) == 0, "records": count, "errors": errors,
+            "reanchors": reanchors}
 
 
 def write_error(record: dict) -> None:
