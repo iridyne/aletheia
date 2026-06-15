@@ -82,7 +82,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   display: flex; flex-direction: column; padding: 0;
 }
 .content { margin-left: 240px; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh; }
-.main { flex: 1; padding: var(--space-5) var(--space-6); background: var(--bg-2); overflow-y: auto; }
+.main { flex: 1; padding: var(--space-4) var(--space-5); background: var(--bg-2); overflow-y: auto; }
 /* Collapse sidebar on narrow viewports (L1); hamburger toggle handled in App.tsx */
 .hamburger { display: none !important; }
 @media (max-width: 700px) {
@@ -120,8 +120,8 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .chev-closed { transform: rotate(-90deg); }
 
 .sidebar nav a {
-  display: block; padding: 0.45rem 0.75rem; margin: 0.05rem 0;
-  color: var(--muted); font-size: 0.825rem; border-radius: var(--r-sm);
+  display: block; padding: 0.35rem 0.75rem; margin: 1px 0;
+  color: var(--muted); font-size: 0.8rem; border-radius: var(--r-sm);
   border-left: 2px solid transparent; transition: background 0.12s, color 0.12s;
 }
 .sidebar nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
@@ -333,16 +333,16 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 
 /* ---------- Page title (now a section header beneath the breadcrumb) ---------- */
 .page-title {
-  font-family: var(--display); font-size: 1.35rem; font-weight: 600;
-  margin-bottom: var(--space-4); letter-spacing: -0.01em;
+  font-family: var(--display); font-size: 1.25rem; font-weight: 600;
+  margin-bottom: var(--space-3); letter-spacing: -0.01em;
 }
 
 /* ---------- Page header (title + role descriptor) ---------- */
 .page-header {
   display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--space-4); margin-bottom: var(--space-4);
+  gap: var(--space-3); margin-bottom: var(--space-3);
 }
-.page-header .page-title { margin-bottom: var(--space-1); }
+.page-header .page-title { margin-bottom: 0; }
 .page-header-actions { display: flex; gap: var(--space-2); flex-shrink: 0; }
 
 /* ---------- Honest notice banner (e.g. News ingestion not configured) ---------- */
@@ -397,12 +397,12 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 /* ---------- Cards ---------- */
 .card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-  padding: var(--space-4); margin-bottom: var(--space-4); box-shadow: var(--shadow);
+  padding: var(--space-3) var(--space-4); margin-bottom: var(--space-3); box-shadow: var(--shadow);
   min-width: 0; overflow: hidden;
 }
 .card-flush { margin-bottom: 0; }
 .card h3 {
-  margin-bottom: var(--space-3); font-size: 0.8rem; font-weight: 600; color: var(--muted);
+  margin-bottom: var(--space-2); font-size: 0.78rem; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.08em;
 }
 .ui-card-header {
@@ -617,8 +617,8 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 /* Utility for explicit scroll containers (H9). Cards use overflow: hidden by
    default; pages with wide tables should wrap them in .table-wrap. */
 .table-wrap { overflow-x: auto; min-width: 0; }
-table { width: 100%; border-collapse: collapse; font-size: 0.825rem; }
-th, td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+th, td { padding: 5px var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
 th {
   color: var(--faint); font-weight: 600; font-size: 0.68rem; text-transform: uppercase;
   letter-spacing: 0.07em; border-bottom-color: var(--border-2);
@@ -1559,11 +1559,11 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 
 /* ---------- PnL / Account zone (Decision 1) ---------- */
-.pnl-zone { margin-bottom: var(--space-4); }
+.pnl-zone { margin-bottom: var(--space-3); }
 /* hero (dominant) + context tiles share one dense row */
 .pnl-cluster {
-  display: grid; grid-template-columns: 1.1fr 2.4fr; gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  display: grid; grid-template-columns: 1.1fr 2.4fr; gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 @media (max-width: 900px) { .pnl-cluster { grid-template-columns: 1fr; } }
 .pnl-hero {
@@ -1578,7 +1578,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .pnl-pie-wrap { flex-shrink: 0; }
 .pnl-hero-value {
   font-family: var(--mono); font-weight: 600; color: var(--text);
-  font-feature-settings: 'tnum' 1; line-height: 1.05; font-size: 2.4rem;
+  font-feature-settings: 'tnum' 1; line-height: 1.1; font-size: 2rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: var(--space-1) 0;
 }
 .pnl-hero-value.is-muted { color: var(--muted); }
@@ -1631,7 +1631,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   align-items: start;
 }
 @media (max-width: 900px) { .cockpit-main { grid-template-columns: 1fr; } }
-.cockpit-rail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.cockpit-rail { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .cockpit-rail .card { margin-bottom: 0; }
 
 /* Right-rail cards each get a preset max-height + internal scroll so the rail's total
@@ -1653,10 +1653,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
    card's bottom edge stays aligned with the right rail's last card. */
 .feed-list-scroll { flex: 1; overflow-y: auto; min-height: 0; }
 .feed-row {
-  display: flex; align-items: flex-start; gap: var(--space-3);
+  display: flex; align-items: flex-start; gap: var(--space-2);
   width: 100%; text-align: left; background: none; color: var(--text);
   border: none; border-bottom: 1px solid var(--border); border-radius: 0;
-  padding: var(--space-2) var(--space-1); font-family: var(--sans); font-weight: 400;
+  padding: 5px var(--space-1); font-family: var(--sans); font-weight: 400;
   transition: background 0.1s;
 }
 .feed-row:last-child { border-bottom: none; }
