@@ -28,6 +28,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "dreaming_agent": 300.0,
     "strategy_designer": 300.0,
     "paper_trader": 300.0,
+    "pi_trading_decision": 300.0,
     "stock_observer": 240.0,
     "prediction_observer": 240.0,
     "divergence_scanner": 60.0,
@@ -152,6 +153,11 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("paper_trader", _run_paper_trader), "interval", minutes=15, id="paper_trader",
         misfire_grace_time=60, executor="agents",
+    )
+    _scheduler.add_job(
+        _guarded("pi_trading_decision", _run_pi_trading_decision), "interval", minutes=15,
+        id="pi_trading_decision", misfire_grace_time=120,
+        next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
     )
     _scheduler.add_job(
         _guarded("position_manager", _run_position_manager), "interval", minutes=5, id="position_manager",
@@ -413,6 +419,31 @@ def _run_paper_trader():
         )
     except Exception as e:
         logger.warning("paper_trader job failed: %s", e)
+
+
+def _run_pi_trading_decision():
+    """PI Agent trading decision — evaluates market state and submits proposals."""
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    if cfg.agent.permission_mode not in ("Paper", "Full"):
+        return
+    try:
+        import asyncio
+        from aletheia.agent_shell.commands import evaluate_trading_opportunity
+        result = asyncio.run(evaluate_trading_opportunity({}))
+        if result.get("action") == "trade":
+            logger.info(
+                "pi_trading_decision: %s %s conviction=%s proposal=%s",
+                result.get("direction"), result.get("symbol"),
+                result.get("conviction"), result.get("proposal_id"),
+            )
+        else:
+            logger.debug("pi_trading_decision: skip — %s", result.get("reasoning", "")[:80])
+    except TimeoutError:
+        logger.warning("pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300))
+    except Exception as e:
+        logger.warning("pi_trading_decision job failed: %s", e)
 
 
 def _run_position_manager():
