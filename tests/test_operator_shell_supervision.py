@@ -226,6 +226,7 @@ def test_operator_shell_monitor_degrades_after_restart_budget(tmp_path, monkeypa
         now_fn=lambda: now["value"],
         record_event=lambda kind, payload: events.append((kind, payload)),
     )
+    monkeypatch.setattr("aletheia.gateway.operator_shell._gateway_api_ready", lambda cfg: True)
 
     monitor.tick_once()
     monitor.tick_once()
@@ -237,6 +238,66 @@ def test_operator_shell_monitor_degrades_after_restart_budget(tmp_path, monkeypa
     assert spawned["count"] == 3
     assert monitor.degraded_until > now["value"]
     assert any(kind == "operator_shell_degraded" for kind, _ in events)
+
+
+def test_operator_shell_monitor_waits_for_gateway_ready_before_spawn(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.config.loader import load_config
+    from aletheia.gateway.operator_shell import OperatorShellMonitor
+
+    spawned = {"count": 0}
+
+    def fake_spawn(_cfg):
+        spawned["count"] += 1
+        raise AssertionError("operator shell should not spawn before gateway API is ready")
+
+    monkeypatch.setattr("aletheia.gateway.operator_shell._gateway_api_ready", lambda cfg: False)
+
+    monitor = OperatorShellMonitor(load_config(), spawn_fn=fake_spawn)
+    monitor.tick_once()
+
+    assert spawned["count"] == 0
+    assert monitor.proc is None
+
+
+def test_operator_shell_monitor_restarts_stale_heartbeat_process(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.gateway.operator_shell import OperatorShellMonitor
+
+    cfg = load_config()
+    cfg.operator.heartbeat_stale_after_sec = 45
+    save_config(cfg)
+
+    now = {"value": 1000.0}
+    killed: list[int] = []
+    events = []
+
+    class FakeProc:
+        pid = 2468
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("aletheia.gateway.operator_shell._gateway_api_ready", lambda cfg: True)
+    monkeypatch.setattr("aletheia.gateway.operator_shell._latest_operator_heartbeat_age_sec", lambda: 120.0)
+    monkeypatch.setattr("aletheia.gateway.pidfile.kill_pid_tree", lambda pid: killed.append(pid))
+
+    monitor = OperatorShellMonitor(
+        cfg,
+        now_fn=lambda: now["value"],
+        record_event=lambda kind, payload: events.append((kind, payload)),
+    )
+    monitor.proc = FakeProc()
+    monitor._proc_started_at = now["value"] - 120.0
+
+    monitor.tick_once()
+
+    assert killed == [2468]
+    assert monitor.proc is None
+    assert any(kind == "operator_shell_restart" for kind, _ in events)
 
 
 def test_gateway_supervisor_starts_and_stops_operator_monitor(tmp_path, monkeypatch):

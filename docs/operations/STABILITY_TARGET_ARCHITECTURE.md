@@ -86,6 +86,9 @@ Controls:
 - current-runtime PID/lock discipline for gateway and operator shell;
 - duplicate current operator shells are killed or adopted deterministically;
 - shadow/test runtimes cannot write current operator heartbeat;
+- operator shell startup waits for the gateway API to become ready, and a live
+  but stale-heartbeat operator process is killed/restarted instead of being
+  adopted forever;
 - stale code and stale market-data self-heal are rate-limited and audited;
 - lifecycle route failures are non-fatal to operator startup.
 

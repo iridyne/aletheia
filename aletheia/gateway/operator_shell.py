@@ -8,6 +8,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable
+import urllib.request
+from datetime import datetime, timezone
 
 from aletheia.config.loader import get_data_dir
 
@@ -220,6 +222,47 @@ def _operator_shell_process_roots(
         if by_pid.get(pid, (0, ""))[0] not in matched
     ]
     return sorted(roots)
+
+
+def _connect_host(host: str) -> str:
+    return "127.0.0.1" if host in {"", "0.0.0.0", "::", "*"} else host
+
+
+def _gateway_api_ready(cfg) -> bool:
+    try:
+        url = f"http://{_connect_host(cfg.app.bind_host)}:{cfg.app.dashboard_port}/api/ready"
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(url, timeout=1.0) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+def _parse_utc_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
+
+
+def _latest_operator_heartbeat_age_sec() -> float | None:
+    try:
+        from aletheia.agent_shell.operator_store import get_latest_heartbeat
+
+        heartbeat = get_latest_heartbeat("operator")
+    except Exception:
+        return None
+    if not heartbeat:
+        return None
+    ts = _parse_utc_ts(heartbeat.get("last_seen_at") or heartbeat.get("created_at"))
+    if ts is None:
+        return None
+    return (datetime.now(timezone.utc) - ts).total_seconds()
 
 
 def _list_operator_shell_processes() -> list[tuple[int, int, str]]:
@@ -449,6 +492,7 @@ class OperatorShellMonitor:
         self.record_event = record_event or _default_record_event
         self.poll_interval_sec = poll_interval_sec
         self.proc = None
+        self._proc_started_at: float | None = None
         self.degraded_until = 0.0
         self._failure_count = 0
         self._stop_event = threading.Event()
@@ -462,15 +506,22 @@ class OperatorShellMonitor:
         if self.proc is None:
             if now < self.degraded_until:
                 return
+            if not _gateway_api_ready(self.cfg):
+                return
             self.proc = self.spawn_fn(self.cfg)
+            self._proc_started_at = now
             return
 
         code = self.proc.poll()
         if code is None:
+            if self._operator_heartbeat_stale(now):
+                proc_pid = getattr(self.proc, "pid", None)
+                self._restart_stale_process(proc_pid)
             return
 
         proc_pid = getattr(self.proc, "pid", None)
         self.proc = None
+        self._proc_started_at = None
         if proc_pid is not None:
             _clear_operator_shell_pid(expected_pid=proc_pid)
         if code == 0:
@@ -503,6 +554,57 @@ class OperatorShellMonitor:
             },
         )
 
+    def _operator_heartbeat_stale(self, now: float) -> bool:
+        started_at = self._proc_started_at
+        stale_after = float(self.cfg.operator.heartbeat_stale_after_sec)
+        # Give a newly spawned/adopted process one stale window to boot, recover
+        # state, and emit its first heartbeat. This avoids restart loops while
+        # the backend is still settling immediately after gateway restart.
+        if started_at is not None and now - started_at <= stale_after:
+            return False
+        if not _gateway_api_ready(self.cfg):
+            return False
+        age = _latest_operator_heartbeat_age_sec()
+        if age is None:
+            return started_at is not None and now - started_at > stale_after
+        return age > stale_after
+
+    def _restart_stale_process(self, proc_pid: int | None) -> None:
+        if proc_pid is not None:
+            try:
+                from aletheia.gateway.pidfile import kill_pid_tree
+
+                kill_pid_tree(proc_pid)
+            except Exception:
+                pass
+            _clear_operator_shell_pid(expected_pid=proc_pid)
+        self.proc = None
+        self._proc_started_at = None
+        self._failure_count += 1
+        if self._failure_count >= self.cfg.operator.max_restart_failures:
+            self.degraded_until = self.now_fn() + self.cfg.operator.restart_after_sec
+            self.record_event(
+                "operator_shell_degraded",
+                {
+                    "message": (
+                        "Operator shell heartbeat stayed stale after "
+                        f"{self._failure_count} restart attempt(s); "
+                        f"cooldown {self.cfg.operator.restart_after_sec}s"
+                    )
+                },
+            )
+            self._failure_count = 0
+            return
+        self.record_event(
+            "operator_shell_restart",
+            {
+                "message": (
+                    "Operator shell heartbeat is stale while the gateway is ready; "
+                    f"restart attempt {self._failure_count}"
+                )
+            },
+        )
+
     def start(self) -> None:
         if self._thread is not None:
             return
@@ -519,6 +621,7 @@ class OperatorShellMonitor:
         if self.proc is not None:
             proc = self.proc
             self.proc = None
+            self._proc_started_at = None
             if getattr(proc, "external", False):
                 proc = None
             if proc is not None:
