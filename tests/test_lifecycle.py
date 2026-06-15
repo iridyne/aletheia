@@ -325,10 +325,26 @@ def test_verify_started_returns_when_gateway_comes_up(tmp_path, monkeypatch):
     cfg = lifecycle.load_config()
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: True)
     monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
 
     # Launcher still alive (poll None); gateway up → no raise.
     lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=1.0)
+
+
+def test_verify_started_waits_for_api_ready_before_success(tmp_path, monkeypatch):
+    """A listening socket alone is not readiness: require the cheap API probe."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    cfg = lifecycle.load_config()
+    monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
+    monkeypatch.setattr(lifecycle, "is_running", lambda: True)
+    monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: False)
+    monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
+
+    with pytest.raises(typer.Exit):
+        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.1)
 
 
 def test_verify_started_raises_when_launcher_dies_immediately(tmp_path, monkeypatch, capsys):
@@ -374,6 +390,7 @@ def test_verify_started_kills_api_only_gateway_when_webui_missing(tmp_path, monk
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: True)
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": True)
+    monkeypatch.setattr(lifecycle, "_verify_api_ready_accessible", lambda cfg: True)
     monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: False)
     monkeypatch.setattr(lifecycle, "read_pid", lambda: 4242)
     killed: list[int] = []

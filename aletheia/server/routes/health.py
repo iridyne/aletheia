@@ -2,17 +2,56 @@
 
 import logging
 import os
+from pathlib import Path
 import time
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from aletheia import __version__
 from aletheia.config.loader import load_config, save_config
 
 router = APIRouter(prefix="/api", tags=["system"])
+infra_router = APIRouter(prefix="/_infra", tags=["infra"])
 
 _boot_time = time.time()
 logger = logging.getLogger("aletheia.routes.health")
+
+
+def _uptime_sec() -> float:
+    return round(time.time() - _boot_time, 1)
+
+
+def _liveness_payload() -> dict:
+    return {
+        "ok": True,
+        "version": __version__,
+        "pid": os.getpid(),
+        "uptime_sec": _uptime_sec(),
+    }
+
+
+def _dashboard_static_dir() -> Path:
+    return Path(__file__).resolve().parent.parent.parent / "dashboard_static"
+
+
+def _static_dashboard_ready() -> tuple[bool, Path]:
+    static_dir = _dashboard_static_dir()
+    return (static_dir.exists() and (static_dir / "index.html").exists(), static_dir)
+
+
+def _readiness_payload() -> tuple[int, dict]:
+    static_index, static_dir = _static_dashboard_ready()
+    ok = bool(static_index)
+    status_code = 200 if ok else 503
+    payload = {
+        **_liveness_payload(),
+        "ok": ok,
+        "api": True,
+        "static_index": static_index,
+        "static_dir": str(static_dir),
+    }
+    return status_code, payload
 
 
 @router.get("/health")
@@ -33,12 +72,48 @@ async def ready():
     This intentionally avoids DB/config reads: if this route responds, the HTTP
     worker is alive even if deeper health is degraded.
     """
-    return {
-        "ok": True,
-        "version": __version__,
-        "pid": os.getpid(),
-        "uptime_sec": round(time.time() - _boot_time, 1),
-    }
+    return _liveness_payload()
+
+
+@infra_router.get("/livez")
+async def infra_livez():
+    """Infra liveness probe: process + HTTP loop are alive.
+
+    No DB/config/health rollup is read here. This endpoint is deliberately safe
+    to use from watchdogs, future front-door routing, and frontend reconnect
+    guards without conflating degraded business health with process death.
+    """
+    return _liveness_payload()
+
+
+@infra_router.get("/readyz")
+async def infra_readyz():
+    """Infra readiness probe: API is serving and dashboard static is present.
+
+    Degraded trading/model/market health stays visible on `/api/health`; it does
+    not make this probe fail. A missing dashboard does fail readiness because a
+    user would otherwise get a misleading API-only local UI.
+    """
+    status_code, payload = _readiness_payload()
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+@infra_router.get("/status")
+async def infra_status():
+    """Cheap infra snapshot for diagnostics and future stable front-door use."""
+    cfg = load_config()
+    status_code, readiness = _readiness_payload()
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            **readiness,
+            "host": cfg.app.bind_host,
+            "port": cfg.app.dashboard_port,
+            "runtime_mode": os.environ.get("ALETHEIA_RUNTIME_MODE", "current"),
+            "runtime_state": os.environ.get("ALETHEIA_RUNTIME_STATE", "current"),
+            "runtime_id": os.environ.get("ALETHEIA_RUNTIME_ID", "runtime-local-current"),
+        },
+    )
 
 
 @router.get("/version")

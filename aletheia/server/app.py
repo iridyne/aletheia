@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from aletheia import __version__
 from aletheia.config.loader import bootstrap
-from aletheia.server.routes.health import router as health_router
+from aletheia.server.routes.health import infra_router, router as health_router
 from aletheia.server.routes.settings import router as settings_router
 from aletheia.server.routes.data import router as data_router
 from aletheia.server.routes.live import router as live_router
@@ -355,6 +355,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(infra_router)
 app.include_router(settings_router)
 app.include_router(data_router)
 app.include_router(live_router)

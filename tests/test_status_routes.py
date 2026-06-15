@@ -46,6 +46,46 @@ async def test_ready_is_lightweight_liveness(client):
 
 
 @pytest.mark.anyio
+async def test_infra_livez_is_lightweight_liveness(client):
+    resp = await client.get("/_infra/livez")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["pid"] > 0
+    assert data["uptime_sec"] >= 0
+    assert "version" in data
+
+
+@pytest.mark.anyio
+async def test_infra_readyz_reports_static_dashboard_gap(client, tmp_path, monkeypatch):
+    import aletheia.server.routes.health as health_routes
+
+    missing_static = tmp_path / "missing-dashboard-static"
+    monkeypatch.setattr(health_routes, "_dashboard_static_dir", lambda: missing_static)
+
+    resp = await client.get("/_infra/readyz")
+    assert resp.status_code == 503
+    data = resp.json()
+    assert data["ok"] is False
+    assert data["api"] is True
+    assert data["static_index"] is False
+    assert data["static_dir"] == str(missing_static)
+
+
+@pytest.mark.anyio
+async def test_infra_status_includes_runtime_routing_context(client):
+    resp = await client.get("/_infra/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["api"] is True
+    assert data["host"] == "127.0.0.1"
+    assert data["port"] == 8787
+    assert data["runtime_mode"] == "current"
+    assert data["runtime_state"] == "current"
+
+
+@pytest.mark.anyio
 async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
     import aletheia.agent_runtime.scheduler as scheduler
     import aletheia.agent_runtime.health as health

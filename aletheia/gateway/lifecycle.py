@@ -117,6 +117,22 @@ def _verify_webui_accessible(cfg) -> bool:
         return False
 
 
+def _verify_api_ready_accessible(cfg) -> bool:
+    """Verify that the gateway HTTP worker is serving the cheap liveness route.
+
+    A TCP connect only proves that *something* is listening; readiness requires
+    the Aletheia FastAPI app to answer a deterministic, DB-free probe.
+    """
+    import urllib.request
+    try:
+        url = f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}/_infra/livez"
+        req = urllib.request.Request(url, headers={"User-Agent": "aletheia-preflight"})
+        with urllib.request.urlopen(req, timeout=2) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
 def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
     """Block until the detached gateway is confirmed up, or raise typer.Exit(1).
 
@@ -146,6 +162,9 @@ def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
         if proc is not None and proc.poll() is not None and proc.returncode != 0:
             _fail_spawn(f"launcher exited with code {proc.returncode} before gateway came up")
         if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+            if not _verify_api_ready_accessible(cfg):
+                time.sleep(0.3)
+                continue
             # Port is up — verify WebUI is actually accessible (not just API).
             # Keep waiting until timeout if root is not HTML; static assets may
             # still be appearing during a frontend build.
@@ -159,7 +178,7 @@ def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
     if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
         _stop_failed_gateway(cfg)
         _fail_spawn(
-            "gateway API came up but WebUI root did not return HTML; "
+            "gateway port came up but API/WebUI readiness did not pass; "
             "dashboard_static may be missing or mid-build"
         )
     _fail_spawn(f"gateway did not come up within {timeout:.0f}s (no pid file / port not listening)")

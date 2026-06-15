@@ -4,6 +4,8 @@ Local-first, file-based, Trading-as-Git, AI-native, self-learning agentic tradin
 
 > **Running it unattended?** See **[docs/operations/RUNBOOK.md](docs/operations/RUNBOOK.md)** — how to take
 > the system live for paper trading, the brakes, self-upgrade, and health monitoring.
+> For the phase-by-phase local runtime hardening plan, see
+> **[docs/operations/STABILITY_TARGET_ARCHITECTURE.md](docs/operations/STABILITY_TARGET_ARCHITECTURE.md)**.
 
 ## Quick Start
 

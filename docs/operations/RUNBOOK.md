@@ -198,6 +198,11 @@ local edits).
 
 ## 10. Health & observability
 
+The detailed stability roadmap and phase gates live in
+[`STABILITY_TARGET_ARCHITECTURE.md`](STABILITY_TARGET_ARCHITECTURE.md). The key
+runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
+(API+dashboard readiness), and `/api/health` (business/runtime health).
+
 - **Dashboard:** Overview (gateway/live/permission/kill-switch state, account/PnL),
   Agent Runs, Positions, Charts, Reports, Knowledge Base.
 - **CLI (bootstrap):** `aletheia doctor` (full ground-truth probe), `aletheia gateway status`,
