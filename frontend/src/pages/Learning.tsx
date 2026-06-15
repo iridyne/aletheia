@@ -99,28 +99,28 @@ function DreamingTab() {
       )}
 
       <Card>
-        <h3>Recent Consolidations (Dreaming Logs)</h3>
+        <h3>Consolidations</h3>
         {recentLogs.length === 0 && (allLogs as any[]).length === 0
           ? <p className="text-muted text-sm">No dreaming logs yet.</p>
           : <ItemList items={recentLogs.length > 0 ? recentLogs : (allLogs as any[]).slice(0, 10)} onSelect={setSelectedItem} />}
       </Card>
 
       <Card>
-        <h3>New Research Notes (24h)</h3>
+        <h3>Research Notes <span className="text-muted text-sm">24h</span></h3>
         {recentResearch.length === 0
           ? <p className="text-muted text-sm">No new research notes in the last 24 hours.</p>
           : <ItemList items={recentResearch} onSelect={setSelectedItem} />}
       </Card>
 
       <Card>
-        <h3>New Strategy Hypotheses (24h)</h3>
+        <h3>Strategy Hypotheses <span className="text-muted text-sm">24h</span></h3>
         {recentHypotheses.length === 0
           ? <p className="text-muted text-sm">No new strategy hypotheses in the last 24 hours.</p>
           : <ItemList items={recentHypotheses} onSelect={setSelectedItem} />}
       </Card>
 
       <Card>
-        <h3>Deprecated Memories (7d)</h3>
+        <h3>Deprecated Memories <span className="text-muted text-sm">7d</span></h3>
         {deprecatedMemories.length === 0
           ? <p className="text-muted text-sm">No memories deprecated in the last 7 days.</p>
           : <ItemList items={deprecatedMemories} onSelect={setSelectedItem} />}

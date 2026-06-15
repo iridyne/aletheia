@@ -137,7 +137,6 @@ export default function PnLZone() {
             label="Unrealized"
             value={fmtSigned(unrealNum)}
             tone={toneOf(unrealNum)}
-            context="open positions"
           />
           <MetricTile
             label="Realized"
@@ -157,10 +156,7 @@ export default function PnLZone() {
 
       {/* Equity curve */}
       <div className="card pnl-curve">
-        <div className="flex items-center justify-between mb-2">
-          <h3>Equity Curve</h3>
-          <span className="text-muted text-sm mono">cumulative PnL</span>
-        </div>
+        <h3 className="mb-2">Equity Curve</h3>
         <PnLChart />
       </div>
     </div>

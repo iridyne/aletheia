@@ -84,15 +84,10 @@ export default function Overview() {
     : 'green'
   const violations = (riskStatus?.violations as string[]) || []
 
-  // System pills (honest)
+  // System state
   const liveState = String(s.live_state || 'live_disabled')
-  const liveBadge = liveState === 'live_disabled' ? 'pill-muted' : 'pill-yellow'
   const defaultProvider = String(modelConfig?.default_provider || '')
   const dph = (modelHealth as any[]).find(h => h.provider === defaultProvider)
-  const modelPill = dph?.available ? 'pill-green' : dph ? 'pill-red' : 'pill-yellow'
-  const modelText = dph?.available ? 'model ✓' : dph ? 'model ✗' : 'model …'
-  const exPill = exchangeHealth?.connected ? 'pill-green' : exchangeHealth ? 'pill-red' : 'pill-yellow'
-  const exText = exchangeHealth?.connected ? `${exchangeMode} ✓` : exchangeHealth ? `${exchangeMode} ✗` : `${exchangeMode} …`
 
   return (
     <div>
@@ -112,10 +107,7 @@ export default function Overview() {
             <CardHeader title="Approval Desk" />
             {pendingProposals.length > 0 ? (
               <>
-                <div className="flex items-center gap-2">
-                  <Badge tone="yellow">{pendingProposals.length} pending</Badge>
-                  <span className="text-muted text-sm">awaiting review</span>
-                </div>
+                <Badge tone="yellow">{pendingProposals.length}</Badge>
                 <ul className="approval-list">
                   {pendingProposals.slice(0, 4).map((p: any) => (
                     <li key={p.id}>
@@ -179,12 +171,12 @@ export default function Overview() {
                 <StatusRow
                   label="Exchange"
                   light={exchangeHealth?.connected ? 'green' : exchangeHealth ? 'red' : 'yellow'}
-                  value={`${String(s.exchange)} · ${exText}`}
+                  value={`${String(s.exchange)} · ${exchangeMode}`}
                 />
                 <StatusRow
                   label="Model"
                   light={dph?.available ? 'green' : dph ? 'red' : 'yellow'}
-                  value={defaultProvider ? `${defaultProvider} · ${modelText}` : modelText}
+                  value={defaultProvider || '—'}
                 />
                 {/* Live + Permission + Kill collapsed into one row to keep the System
                     card height short — open positions moved to the PnL Exposure tile. */}
