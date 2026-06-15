@@ -1444,54 +1444,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   font-size: 0.78rem;
 }
 
-/* ---------- Cockpit Grid ---------- */
-.cockpit-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);
-  margin-bottom: var(--space-4); align-items: start;
-}
-@media (max-width: 900px) { .cockpit-grid { grid-template-columns: 1fr; } }
-.cockpit-panel { min-height: 120px; }
-
-/* ---------- Cockpit v2 (flagship) ---------- */
-/* HERO: account value (dominant) | today PnL + sparkline | run state + controls */
-.cockpit-hero {
-  display: grid; grid-template-columns: 1.3fr 1.3fr 1fr; gap: var(--space-4);
-  margin-bottom: var(--space-4);
-}
-@media (max-width: 1100px) { .cockpit-hero { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px) { .cockpit-hero { grid-template-columns: 1fr; } }
-.hero-zone {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-  padding: var(--space-4); box-shadow: var(--shadow);
-  display: flex; flex-direction: column; gap: var(--space-1); min-width: 0;
-}
-.hero-label {
-  font-size: 0.65rem; font-weight: 600; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.1em;
-}
-.hero-value {
-  font-family: var(--mono); font-weight: 600; color: var(--text);
-  font-feature-settings: 'tnum' 1; line-height: 1.05; font-size: 2.1rem;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hero-value.pnl-positive { color: var(--green); }
-.hero-value.pnl-negative { color: var(--red); }
-.hero-value.is-muted { color: var(--muted); }
-.hero-unit { font-size: 0.9rem; color: var(--faint); font-weight: 500; }
-.hero-sub { font-size: 0.75rem; color: var(--muted); }
-.hero-sub .mono { color: var(--text); }
-.hero-sparkline { margin-top: auto; }
-.hero-controls { display: flex; gap: var(--space-2); margin-top: auto; flex-wrap: wrap; }
-.hero-pills { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-
-/* dense role grid: approval desk | agent activity | risk+market */
-.cockpit-grid-3 {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4);
-  margin-bottom: var(--space-4);
-}
-@media (max-width: 1100px) { .cockpit-grid-3 { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px) { .cockpit-grid-3 { grid-template-columns: 1fr; } }
-.cockpit-grid-3 .card { margin-bottom: 0; height: 100%; }
 
 .approval-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; }
 .approval-list li {
@@ -1523,15 +1475,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .risk-clear { display: flex; align-items: center; gap: var(--space-2); }
 .risk-clear .risk-dot { margin-top: 0; }
 
-/* sub-block divider inside the risk+market panel */
-.panel-divider { border: none; border-top: 1px solid var(--border); margin: var(--space-3) 0; }
-
-/* watchlist mini-grid */
-.market-watch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
-.market-watch-cell { min-width: 0; }
-.market-watch-sym { font-size: 0.7rem; color: var(--faint); }
-.market-watch-price { font-family: var(--mono); font-size: 0.85rem; }
-.market-watch-chg { font-family: var(--mono); font-size: 0.7rem; }
 
 /* System status board — tabular, old-school console feel with status lights */
 .status-board { width: 100%; }
@@ -1558,11 +1501,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   width: 64px; text-align: center; font-family: var(--mono);
 }
 
-/* recent agent runs as a thin badge strip */
-.recent-runs-strip {
-  display: flex; gap: var(--space-1); align-items: center; flex-wrap: wrap;
-  margin-top: var(--space-2);
-}
 
 /* ---------- PnL / Account zone (Decision 1) ---------- */
 .pnl-zone { margin-bottom: var(--space-3); }
