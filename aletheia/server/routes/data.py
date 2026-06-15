@@ -1010,6 +1010,16 @@ async def get_portfolio_history(limit: int = 100):
     return repo.list_portfolio_snapshots(limit=limit)
 
 
+@router.get("/market/macro")
+async def get_macro_snapshot():
+    """Latest macro snapshot: VIX, DXY, SPY, BTC dominance, risk regime."""
+    _ensure_db()
+    snap = repo.latest_macro_snapshot()
+    if not snap:
+        return {"available": False, "data": None}
+    return {"available": True, "data": snap}
+
+
 @router.get("/knowledge")
 async def get_knowledge(type: str = Query(default="research_note")):
     _ensure_db()

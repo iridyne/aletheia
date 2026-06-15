@@ -450,6 +450,9 @@ export const api = {
   getMarketSnapshots: (symbol?: string, limit = 10) =>
     fetchJson<any[]>(`/market/snapshots${symbol ? `?symbol=${encodeURIComponent(symbol)}&limit=${limit}` : `?limit=${limit}`}`),
 
+  // Macro indicators (VIX, DXY, SPY, BTC dominance, risk regime)
+  getMacro: () => fetchJson<{ available: boolean; data: any }>('/market/macro'),
+
   // News Intelligence
   getNews: (limit = 50) => fetchJson<any[]>(`/news?limit=${limit}`),
   getNewsItem: (id: string) => fetchJson<any>(`/news/${id}`),
