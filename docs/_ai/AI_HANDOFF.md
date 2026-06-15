@@ -7,7 +7,9 @@
 
 ## Last Updated
 
-2026-06-14 (本次会话:全局代理配置实现 — aletheia/net.py + NetworkConfig schema + Settings UI + doctor probe [commit 28eb357])
+2026-06-15 (本次会话:决策层重构三批 — RuleSet 驱动 + PI Agent 决策权威 + conviction sizing [commits ef3e765, 73703ef])
+
+前一批次: 全局代理配置实现 — aletheia/net.py + NetworkConfig schema + Settings UI + doctor probe [commit 28eb357]
 
 前一批次: Gateway 静态文件启动可靠性修复 + preflight/doctor 加固[commit db2423f];
 2026-06-13 (本次会话:① Gateway 静态文件启动可靠性修复 + preflight/doctor 加固[commit db2423f];
@@ -40,6 +42,31 @@ provider + 流式、universe plan 缺口补齐、design-doc 合规修复、Clust
 >   Save/Test 按钮、状态指示点:灰/绿/红)。
 > - `aletheia/diagnostics/doctor.py`:新增 `_probe_network()` — urllib ping Binance via proxy → doctor report。
 > - Frontend build 通过(187 modules, 803 kB);静态文件已提交。
+
+## Recent Change (决策层重构 — 2026-06-15, commits ef3e765, 73703ef)
+
+> 触发:"假自主" — LLM direction_bias 输入确定性 ranker,固定 $25/固定 2% 止损,策略 RuleSet
+> 只做 binary gate,无退出信号,无多策略并行,无 conviction sizing。
+>
+> **结构**:
+> - `aletheia/trading/ruleset_scanner.py` (NEW): scan_active_rulesets() — 扫描 paper_running
+>   策略 RuleSet,直接从 OHLCV bars 生成 entry/exit 信号(不依赖 Opportunity 管道)。
+>   entry 无持仓时触发; exit 携带 position_id 供平仓。stop/TP 从 RuleSet 规格计算。
+> - `aletheia/agents/paper_trader.py` v3: Path A(RuleSet 信号,多策略并行) + Path B(机会驱动 fallback)。
+> - `aletheia/portfolio/position_manager.py`: evaluate_open_positions() 增加 RuleSet exit scan。
+> - `aletheia/strategy/orchestrator.py`: 新增 run_lifecycle_automation() — backtest 后自动
+>   升级达标策略(paper_running→paper_passed),自动暂停连亏策略。
+> - `aletheia/agent_shell/trading_decision.py` (NEW): PI Agent 决策引擎
+>   Step1: structured LLM 评估 → TradingDecision(action/conviction/symbol)
+>   Step2: conviction 40-80 区间 → Bull/Bear adversarial debate(asyncio.gather 并发)
+>   Step3: debate 后 conviction<55 → skip; 否则 conviction-based sizing
+>   LLM 接口: helpers.llm_structured(system, user, schema=_DummySchema)
+> - `aletheia/trading/sizing.py` (NEW): 正式 fractional Kelly sizing:
+>   conviction 70 → 1.0×, 线性 [0.3×, 2.5×], quarter-Kelly(0.25), DD scale。
+> - `aletheia/agent_shell/registry.py` + `commands.py`: 新增 2 个 PaperAuto 命令:
+>   evaluate_trading_opportunity, review_portfolio_state。
+> - `aletheia/agent_shell/context.py`: strategies section 增 symbol/paused/total_pnl/win_rate。
+> - 所有测试通过(测试计数 38→40 命令)。
 
 ## Recent Change (Edge Lab — 2026-06-14, commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
 
