@@ -66,7 +66,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _guarded("market_observer", _run_market_observer), "interval", minutes=15, id="market_observer",
-        misfire_grace_time=60,
+        misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=75),
     )
     _scheduler.add_job(
         _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",

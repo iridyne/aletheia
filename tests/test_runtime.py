@@ -60,8 +60,10 @@ def test_scheduler_disabled_returns_none(tmp_path, monkeypatch):
 
 def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta
     import aletheia.agent_runtime.scheduler as sched
     sched._scheduler = None
+    started_at = datetime.now()
     s = sched.init_scheduler()
     assert s is not None
     assert sched.is_running()
@@ -71,6 +73,9 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     # + post_trade_reviewer + risk_critic + universe_refresh + position_reconcile
     # + data_collectors + backtest_orchestrator
     assert len(s.get_jobs()) == 19
+    market_observer_job = s.get_job("market_observer")
+    assert market_observer_job is not None
+    assert market_observer_job.next_run_time <= started_at.astimezone(market_observer_job.next_run_time.tzinfo) + timedelta(seconds=120)
     sched.stop_scheduler()
     reset_db()
 
