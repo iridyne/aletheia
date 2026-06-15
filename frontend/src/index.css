@@ -407,7 +407,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .ui-card-header {
   display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--space-3); margin-bottom: var(--space-3);
+  gap: var(--space-2); margin-bottom: var(--space-2);
 }
 .ui-card-heading { min-width: 0; }
 .ui-card-header h3 { margin-bottom: 0; }
@@ -629,8 +629,8 @@ td { color: var(--text); }
 
 /* ---------- Buttons ---------- */
 button {
-  background: var(--accent); color: #04181d; border: none; padding: 0.42rem 0.85rem;
-  border-radius: var(--r-sm); cursor: pointer; font-size: 0.8rem; font-weight: 600;
+  background: var(--accent); color: #04181d; border: none; padding: 0.32rem 0.7rem;
+  border-radius: var(--r-sm); cursor: pointer; font-size: 0.76rem; font-weight: 600;
   font-family: var(--sans); transition: filter 0.12s, background 0.12s, border-color 0.12s, color 0.12s;
 }
 button:hover { filter: brightness(1.1); }
@@ -646,7 +646,7 @@ button.secondary:hover { background: var(--border); filter: none; }
 /* ---------- Inputs ---------- */
 select, input {
   background: var(--bg); color: var(--text); border: 1px solid var(--border-2);
-  padding: 0.42rem 0.55rem; border-radius: var(--r-sm); font-size: 0.83rem; font-family: var(--sans);
+  padding: 0.34rem 0.5rem; border-radius: var(--r-sm); font-size: 0.8rem; font-family: var(--sans);
 }
 select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(34,211,238,0.12); }
 input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
@@ -1627,7 +1627,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 
 /* ---------- Cockpit main: feed (main) + right rail ---------- */
 .cockpit-main {
-  display: grid; grid-template-columns: 1fr 320px; gap: var(--space-4);
+  display: grid; grid-template-columns: 1fr 310px; gap: var(--space-3);
   align-items: start;
 }
 @media (max-width: 900px) { .cockpit-main { grid-template-columns: 1fr; } }
@@ -1680,7 +1680,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .desk-queue {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: var(--space-4); margin-bottom: var(--space-6);
+  gap: var(--space-3); margin-bottom: var(--space-4);
 }
 .desk-history-title {
   font-family: var(--display); font-size: 0.95rem; font-weight: 600; color: var(--muted);
@@ -1733,7 +1733,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 /* ---------- Trades & Positions blotter ---------- */
 .blotter-section-head {
   display: flex; align-items: center; gap: var(--space-3);
-  margin: var(--space-5) 0 var(--space-2);
+  margin: var(--space-4) 0 var(--space-2);
 }
 .blotter-section-head h3 { margin: 0; }
 .blotter-group-label {
@@ -1826,13 +1826,13 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4);
 }
 @media (max-width: 900px) { .account-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.metric-tile { margin-bottom: 0; padding: var(--space-3) var(--space-4); min-height: 84px; }
+.metric-tile { margin-bottom: 0; padding: var(--space-2) var(--space-3); min-height: 68px; }
 .metric-label {
-  font-size: 0.65rem; font-weight: 600; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: var(--space-2);
+  font-size: 0.62rem; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: var(--space-1);
 }
 .metric-value {
-  font-family: var(--mono); font-size: 1.45rem; font-weight: 600; color: var(--text);
+  font-family: var(--mono); font-size: 1.3rem; font-weight: 600; color: var(--text);
   font-feature-settings: 'tnum' 1; line-height: 1.1;
 }
 .metric-value.pnl-positive { color: var(--green); }
