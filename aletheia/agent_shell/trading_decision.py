@@ -159,12 +159,25 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     from aletheia.trading.market_data import latest_snapshot
     from aletheia.execution.paper_tools import create_paper_proposal
     from aletheia.config.loader import load_config
+    from aletheia.trust.guard_chain import run_guards, summarize
 
     cfg = load_config()
     snap = latest_snapshot(decision.symbol)
     price = float((snap or {}).get("price") or 0)
     if not price:
         logger.warning("no_price_for_decision_proposal: %s", decision.symbol)
+        return None
+
+    # Run guard chain (advisory — does not block)
+    guard_verdicts = run_guards({
+        "symbol": decision.symbol,
+        "direction": decision.direction,
+        "conviction": decision.conviction,
+        "strategy_id": None,
+    })
+    guard_summary = summarize(guard_verdicts)
+    if guard_summary["blocks"]:
+        logger.warning("guard_chain_block: %s — %s", decision.symbol, guard_summary["details"])
         return None
 
     notional = decision.position_size_usdt or 25.0
@@ -183,7 +196,8 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         f"conviction={decision.conviction}\n"
         f"reasoning={decision.reasoning[:200]}\n"
         f"debate_ran={decision.debate_ran}\n"
-        f"bull={decision.debate_bull_confidence} bear={decision.debate_bear_confidence}"
+        f"bull={decision.debate_bull_confidence} bear={decision.debate_bear_confidence}\n"
+        f"guards={guard_summary}"
     )
 
     return create_paper_proposal(

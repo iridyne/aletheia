@@ -459,6 +459,25 @@ def _probe_network(report: Report) -> None:
                    "check proxy is running and proxy_url is correct in Settings → Infrastructure → Network")
 
 
+def _probe_audit_chain(report: Report) -> None:
+    """Verify audit JSONL hash chain integrity."""
+    from aletheia.files.jsonl import verify_audit_chain
+    result = verify_audit_chain()
+    records = result.get("records", 0)
+    if records == 0:
+        report.add("trust.audit_chain", "info", "no audit records yet")
+        return
+    if result["valid"]:
+        reanchors = result.get("reanchors", 0)
+        extra = f", {reanchors} rotation re-anchors" if reanchors else ""
+        report.add("trust.audit_chain", "ok", f"hash chain valid ({records} records{extra})")
+    else:
+        errors = result.get("errors", [])
+        detail = f"chain BROKEN — {len(errors)} error(s) in {records} records: {errors[:3]}"
+        report.add("trust.audit_chain", "warn", detail,
+                   "audit log may have been tampered with or corrupted")
+
+
 def build_report() -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing."""
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -470,8 +489,9 @@ def build_report() -> Report:
         _probe_market_data,
         _probe_trading_loop,
         _probe_health,
-        _probe_webui_static,  # 新增维度
+        _probe_webui_static,
         _probe_network,
+        _probe_audit_chain,
     ):
         try:
             probe(report)
