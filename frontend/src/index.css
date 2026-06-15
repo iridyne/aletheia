@@ -786,8 +786,9 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 }
 
 /* ---------- Clickable row ---------- */
-tr.clickable { cursor: pointer; }
+tr.clickable { cursor: pointer; transition: background 0.08s; }
 tr.clickable:hover { background: var(--surface-2); }
+tr.clickable:active { background: var(--bg); }
 tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; background: var(--surface-2); }
 
 /* ---------- Pipeline Stepper ---------- */
@@ -902,7 +903,9 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: var(--space-2); margin-bottom: var(--space-3);
 }
-.charts-watchlist-card { cursor: pointer; padding: var(--space-2) var(--space-3); margin-bottom: 0; transition: border-color 0.1s, background 0.1s; }
+.charts-watchlist-card { cursor: pointer; padding: var(--space-2) var(--space-3); margin-bottom: 0; transition: border-color 0.1s, background 0.1s, transform 60ms; }
+.charts-watchlist-card:hover { background: var(--surface-2); }
+.charts-watchlist-card:active { transform: scale(0.98); }
 .charts-watchlist-card.active { border-color: var(--accent); background: rgba(34,211,238,0.05); }
 .charts-card-head {
   display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-1);
@@ -1610,8 +1613,9 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 @media (max-width: 1100px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 480px) { .pnl-tiles { grid-template-columns: 1fr; } }
 .metric-context { font-size: 0.68rem; color: var(--muted); margin-top: var(--space-1); }
-.card.clickable { cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+.card.clickable { cursor: pointer; transition: border-color 0.12s, background 0.12s, transform 60ms; }
 .card.clickable:hover { border-color: var(--border-2); background: var(--surface-2); }
+.card.clickable:active { transform: scale(0.995); }
 .pnl-curve { margin-bottom: 0; }
 
 /* ---------- Segmented toggle (feed mode switch) ---------- */
@@ -1664,6 +1668,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .feed-row:last-child { border-bottom: none; }
 .feed-row:hover { background: var(--surface-2); filter: none; }
+.feed-row:active { background: var(--bg); }
 .feed-ts { color: var(--faint); font-size: 0.7rem; min-width: 4.5rem; padding-top: 1px; }
 .feed-icon { font-size: 0.85rem; line-height: 1.2; }
 .feed-body { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
