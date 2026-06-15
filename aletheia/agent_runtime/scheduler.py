@@ -550,6 +550,7 @@ def _run_cleanup():
             "funding_rate_snapshots": repo.prune_funding_rate_snapshots(30),
             "open_interest_snapshots": repo.prune_open_interest_snapshots(30),
             "macro_snapshots": repo.prune_macro_snapshots(90),
+            "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
         }
         write_audit({
             "actor": "system", "source": "scheduler",
@@ -606,6 +607,7 @@ def _run_universe_refresh():
     if cfg.runtime.paused:
         return
     if not cfg.universe.enabled:
+        logger.info("universe_refresh skipped: universe.enabled=False in config")
         return
     try:
         _run_async_with_timeout("universe_refresh", _async_universe_refresh())
@@ -657,8 +659,26 @@ def _run_backtest_orchestrator():
 
 async def _async_universe_refresh():
     from aletheia.universe.service import UniverseService
+    from aletheia.files.jsonl import write_agent_run_log
+    from aletheia.storage.models import _utcnow
+    started = _utcnow()
     svc = UniverseService()
-    await svc.refresh()
+    try:
+        snap_id = await svc.refresh()
+        write_agent_run_log({
+            "agent_name": "universe_refresh", "trigger_type": "scheduled",
+            "started_at": started, "ended_at": _utcnow(),
+            "status": "completed" if snap_id else "completed_no_snapshot",
+            "outputs_created": [snap_id] if snap_id else [],
+            "errors": [],
+        })
+    except Exception as e:
+        write_agent_run_log({
+            "agent_name": "universe_refresh", "trigger_type": "scheduled",
+            "started_at": started, "ended_at": _utcnow(),
+            "status": "failed", "outputs_created": [], "errors": [str(e)],
+        })
+        raise
 
 
 async def _async_run(agent_name: str):

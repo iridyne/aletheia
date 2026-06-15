@@ -11,6 +11,13 @@ logger = logging.getLogger("aletheia.universe.filters")
 # Max data freshness in seconds before an asset is considered stale
 _MAX_FRESHNESS_SEC = 7200  # 2 hours
 
+# Stablecoins and pegged assets — never tradeable for directional signals
+_STABLECOIN_BASES = {
+    "USDC", "USDT", "DAI", "TUSD", "BUSD", "FDUSD", "USDP",
+    "PYUSD", "USD1", "USDD", "FRAX", "LUSD", "GUSD",
+    "XAUT", "PAXG",  # gold-pegged
+}
+
 
 def _compute_tradability_score(feat: dict, cfg: UniverseConfig) -> float:
     """Compute a 0-100 tradability score based on volume, spread, depth."""
@@ -70,6 +77,11 @@ def apply_tradability_filters(features: list[dict], cfg: UniverseConfig) -> list
 
     for feat in features:
         symbol = feat.get("symbol", "")
+
+        # Stablecoin / pegged-asset exclusion
+        base = symbol.split("/")[0]
+        if base in _STABLECOIN_BASES:
+            continue
 
         # Blacklist check
         if symbol in cfg.blacklist:

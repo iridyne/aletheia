@@ -227,22 +227,27 @@ async def _analyze_symbol(
     observations: list[str] = []
 
     if err or not read:
+        # LLM unavailable — skip opportunity creation entirely.
+        # Neutral/NULL signals pollute the DB and UI without adding signal value.
         llm_error = err or "no_structured_read"
-    else:
-        llm_error = None
-        d = str(read.get("direction_bias", "")).lower()
-        c = str(read.get("confidence", "")).lower()
-        if d in _VALID_DIRECTIONS:
-            direction = d
-        if c in _VALID_CONFIDENCE:
-            confidence = c
-        rationale = str(read.get("rationale", ""))
-        cs = read.get("confidence_score")
-        if isinstance(cs, (int, float)) and 0 <= cs <= 100:
-            confidence_score = int(cs)
-        obs = read.get("key_observations") or []
-        if isinstance(obs, list):
-            observations = [str(o)[:200] for o in obs[:4] if o]
+        record_step(run_id, f"market_read_skipped:{symbol}",
+                    input_data=None, output_data=llm_error)
+        return None, f"{market_type}:{symbol}:llm_unavailable: {llm_error}"
+
+    llm_error = None
+    d = str(read.get("direction_bias", "")).lower()
+    c = str(read.get("confidence", "")).lower()
+    if d in _VALID_DIRECTIONS:
+        direction = d
+    if c in _VALID_CONFIDENCE:
+        confidence = c
+    rationale = str(read.get("rationale", ""))
+    cs = read.get("confidence_score")
+    if isinstance(cs, (int, float)) and 0 <= cs <= 100:
+        confidence_score = int(cs)
+    obs = read.get("key_observations") or []
+    if isinstance(obs, list):
+        observations = [str(o)[:200] for o in obs[:4] if o]
 
     record_step(
         run_id, f"market_read_output:{symbol}",
@@ -264,14 +269,7 @@ async def _analyze_symbol(
         thesis_parts.append("Observations: " + " | ".join(observations))
     if confidence_score is not None:
         thesis_parts.append(f"score={confidence_score}/100")
-    if thesis_parts:
-        thesis = " ".join(thesis_parts)
-    else:
-        thesis = (
-            f"No structured rationale produced (direction={direction}, "
-            f"confidence={confidence}). Likely cause: LLM unavailable or "
-            f"structured-output parse failure — see agent_runs/errors."
-        )
+    thesis = " ".join(thesis_parts) if thesis_parts else f"{symbol} market read (direction={direction})"
 
     opp = Opportunity(
         symbol=symbol,

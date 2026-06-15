@@ -1347,6 +1347,24 @@ def prune_macro_snapshots(days: int = 90) -> int:
     return cur.rowcount or 0
 
 
+def expire_stale_opportunities(ttl_hours: int = 48) -> int:
+    """Mark open opportunities older than ttl_hours as 'expired'.
+
+    Prevents indefinite accumulation of stale signals that the paper_trader
+    never acted on. Traded/reviewed opportunities are not affected.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=ttl_hours)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "UPDATE opportunities SET status = 'expired' WHERE status = 'open' AND created_at < ?",
+        (cutoff,),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
 # ── Edge Lab: Shadow Trades ──────────────────────────────────────────────────
 
 def insert_shadow_trade(shadow) -> None:

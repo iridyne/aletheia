@@ -1441,6 +1441,7 @@ function ModelProviderCard({ qc }: any) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <ModelPingButton />
       {ALL_PROVIDERS.map(p => (
         <ProviderCard
           key={p}
@@ -1453,6 +1454,25 @@ function ModelProviderCard({ qc }: any) {
           qc={qc}
         />
       ))}
+    </div>
+  )
+}
+
+function ModelPingButton() {
+  const ping = useMutation({ mutationFn: () => api.pingModel() })
+  const result = ping.data
+  return (
+    <div className="model-ping-row">
+      <button className="secondary" onClick={() => ping.mutate()} disabled={ping.isPending}>
+        {ping.isPending ? 'Testing…' : 'Test Default Model'}
+      </button>
+      {result && (
+        <span className={`model-ping-result mono ${result.ok ? 'ok' : 'fail'}`}>
+          {result.ok
+            ? `OK — ${result.latency_ms}ms · ${result.model}`
+            : `Error — ${result.error}`}
+        </span>
+      )}
     </div>
   )
 }

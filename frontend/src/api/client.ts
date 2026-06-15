@@ -208,6 +208,7 @@ export const api = {
   // Model provider config
   getModelConfig: () => fetchJson<{ default_provider: string; providers: Record<string, any> }>('/model'),
   getModelHealth: () => fetchJson<{ provider: string; available: boolean; model: string; error: string | null; models: string[] }[]>('/model/health'),
+  pingModel: () => post<{ ok: boolean; latency_ms: number; model: string; response: string; error: string | null }>('/model/ping'),
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
     enabled?: boolean; default?: boolean; api_key?: string; codex_model?: string

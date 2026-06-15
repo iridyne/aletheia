@@ -113,6 +113,14 @@ class UniverseService:
             repo.insert_universe_snapshot(snap)
             repo.expire_universe_snapshots(market_type, except_id=snap.id)
 
+            # Deduplicate by symbol — keep highest total_score per symbol
+            seen_symbols: dict[str, dict] = {}
+            for item in allocated:
+                sym = item["symbol"]
+                if sym not in seen_symbols or item["total_score"] > seen_symbols[sym]["total_score"]:
+                    seen_symbols[sym] = item
+            allocated = sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
+
             for rank, item in enumerate(allocated, 1):
                 ttl_sec = item.get("ttl_sec", 3600)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()

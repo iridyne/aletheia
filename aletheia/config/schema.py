@@ -251,6 +251,9 @@ class RetentionConfig(BaseModel):
     market_snapshots_days: int = 30
     portfolio_snapshots_days: int = 90
     jsonl_max_mb: float = 50.0
+    # Opportunities older than this that are still 'open' are marked 'expired'.
+    # Prevents indefinite accumulation of stale signals (default: 48h).
+    opportunity_ttl_hours: int = 48
 
 
 class TradingConfig(BaseModel):

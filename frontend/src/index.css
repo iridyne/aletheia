@@ -2268,3 +2268,12 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
   .pred-grid { grid-template-columns: 1fr; }
   .pred-card-stats { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Model ping test */
+.model-ping-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) 0; margin-bottom: var(--space-2);
+}
+.model-ping-result { font-size: 0.76rem; }
+.model-ping-result.ok { color: var(--green); }
+.model-ping-result.fail { color: var(--red); }

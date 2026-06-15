@@ -71,6 +71,38 @@ async def get_model_health():
     ]
 
 
+@router.post("/model/ping")
+async def ping_model():
+    """Instant inference test on the current default provider.
+
+    Sends 'Say OK' with max_tokens=10. Returns latency, model name, and
+    the actual response text. Never raises — errors are in the response body.
+    """
+    import time
+    from aletheia.model_provider.router import get_provider_async
+    from aletheia.model_provider.base import ModelRequest
+
+    t0 = time.monotonic()
+    try:
+        provider = await get_provider_async()
+        resp = await provider.complete(ModelRequest(
+            messages=[{"role": "user", "content": "Say OK"}],
+            max_tokens=10,
+            temperature=0,
+        ))
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        content = (resp.content or "").strip()
+        if not content:
+            return {"ok": False, "latency_ms": latency_ms, "model": resp.model or "unknown",
+                    "response": "", "error": "empty response"}
+        return {"ok": True, "latency_ms": latency_ms, "model": resp.model or "unknown",
+                "response": content[:50], "error": None}
+    except Exception as e:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        return {"ok": False, "latency_ms": latency_ms, "model": "unknown",
+                "response": "", "error": str(e)[:200]}
+
+
 @router.get("/model/provider-types")
 async def get_provider_types():
     """Return schema metadata for each provider type (used by frontend for dynamic forms)."""
