@@ -476,6 +476,28 @@ def _default_record_event(kind: str, payload: dict) -> None:
         pass
 
 
+def _record_operator_shell_unavailable(cfg, message: str) -> None:
+    """Persist an honest, fresh operator status while the supervisor owns recovery."""
+    try:
+        from aletheia.agent_shell.operator_store import record_heartbeat
+
+        record_heartbeat(
+            agent_id="operator",
+            status="offline",
+            mode="Degraded",
+            permission_mode=cfg.operator.permission_mode,
+            is_busy=False,
+            current_task_id=None,
+            current_intent=message,
+            queue_size=0,
+            last_error=message,
+            model_provider=None,
+            session_id=cfg.operator.main_session_id,
+        )
+    except Exception:
+        pass
+
+
 class OperatorShellMonitor:
     def __init__(
         self,
@@ -495,8 +517,21 @@ class OperatorShellMonitor:
         self._proc_started_at: float | None = None
         self.degraded_until = 0.0
         self._failure_count = 0
+        self._last_unavailable_heartbeat_at: float | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def _record_unavailable(self, message: str, *, now: float | None = None, force: bool = False) -> None:
+        effective_now = self.now_fn() if now is None else now
+        interval = max(float(self.cfg.operator.heartbeat_interval_sec), 1.0)
+        if (
+            not force
+            and self._last_unavailable_heartbeat_at is not None
+            and effective_now - self._last_unavailable_heartbeat_at < interval
+        ):
+            return
+        _record_operator_shell_unavailable(self.cfg, message)
+        self._last_unavailable_heartbeat_at = effective_now
 
     def tick_once(self) -> None:
         if not self.cfg.operator.enabled:
@@ -505,11 +540,35 @@ class OperatorShellMonitor:
         now = self.now_fn()
         if self.proc is None:
             if now < self.degraded_until:
+                self._record_unavailable(
+                    "Operator shell is in restart cooldown after repeated failures; supervisor will retry.",
+                    now=now,
+                )
                 return
             if not _gateway_api_ready(self.cfg):
                 return
-            self.proc = self.spawn_fn(self.cfg)
+            proc = self.spawn_fn(self.cfg)
+            if proc is None:
+                self._failure_count += 1
+                message = "Operator shell command is unavailable; supervisor cannot start it."
+                self._record_unavailable(message, now=now)
+                if self._failure_count >= self.cfg.operator.max_restart_failures:
+                    self.degraded_until = now + self.cfg.operator.restart_after_sec
+                    degraded_message = (
+                        "Operator shell command remained unavailable after "
+                        f"{self._failure_count} start attempt(s); "
+                        f"cooldown {self.cfg.operator.restart_after_sec}s"
+                    )
+                    self._record_unavailable(degraded_message, now=now, force=True)
+                    self.record_event(
+                        "operator_shell_degraded",
+                        {"message": degraded_message},
+                    )
+                    self._failure_count = 0
+                return
+            self.proc = proc
             self._proc_started_at = now
+            self._last_unavailable_heartbeat_at = None
             return
 
         code = self.proc.poll()
@@ -531,27 +590,27 @@ class OperatorShellMonitor:
         self._failure_count += 1
         if self._failure_count >= self.cfg.operator.max_restart_failures:
             self.degraded_until = now + self.cfg.operator.restart_after_sec
+            degraded_message = (
+                "Operator shell degraded after "
+                f"{self._failure_count} repeated failures; "
+                f"cooldown {self.cfg.operator.restart_after_sec}s"
+            )
+            self._record_unavailable(degraded_message, now=now, force=True)
             self.record_event(
                 "operator_shell_degraded",
-                {
-                    "message": (
-                        "Operator shell degraded after "
-                        f"{self._failure_count} repeated failures; "
-                        f"cooldown {self.cfg.operator.restart_after_sec}s"
-                    )
-                },
+                {"message": degraded_message},
             )
             self._failure_count = 0
             return
 
+        restart_message = (
+            f"Operator shell exited with code {code}; "
+            f"restart attempt {self._failure_count}"
+        )
+        self._record_unavailable(restart_message, now=now)
         self.record_event(
             "operator_shell_restart",
-            {
-                "message": (
-                    f"Operator shell exited with code {code}; "
-                    f"restart attempt {self._failure_count}"
-                )
-            },
+            {"message": restart_message},
         )
 
     def _operator_heartbeat_stale(self, now: float) -> bool:
@@ -583,26 +642,26 @@ class OperatorShellMonitor:
         self._failure_count += 1
         if self._failure_count >= self.cfg.operator.max_restart_failures:
             self.degraded_until = self.now_fn() + self.cfg.operator.restart_after_sec
+            degraded_message = (
+                "Operator shell heartbeat stayed stale after "
+                f"{self._failure_count} restart attempt(s); "
+                f"cooldown {self.cfg.operator.restart_after_sec}s"
+            )
+            self._record_unavailable(degraded_message, force=True)
             self.record_event(
                 "operator_shell_degraded",
-                {
-                    "message": (
-                        "Operator shell heartbeat stayed stale after "
-                        f"{self._failure_count} restart attempt(s); "
-                        f"cooldown {self.cfg.operator.restart_after_sec}s"
-                    )
-                },
+                {"message": degraded_message},
             )
             self._failure_count = 0
             return
+        restart_message = (
+            "Operator shell heartbeat is stale while the gateway is ready; "
+            f"restart attempt {self._failure_count}"
+        )
+        self._record_unavailable(restart_message)
         self.record_event(
             "operator_shell_restart",
-            {
-                "message": (
-                    "Operator shell heartbeat is stale while the gateway is ready; "
-                    f"restart attempt {self._failure_count}"
-                )
-            },
+            {"message": restart_message},
         )
 
     def start(self) -> None:

@@ -240,6 +240,75 @@ def test_operator_shell_monitor_degrades_after_restart_budget(tmp_path, monkeypa
     assert any(kind == "operator_shell_degraded" for kind, _ in events)
 
 
+def test_operator_shell_monitor_records_offline_when_spawn_unavailable(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell.operator_store import get_latest_heartbeat
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.gateway.operator_shell import OperatorShellMonitor
+
+    cfg = load_config()
+    cfg.operator.max_restart_failures = 1
+    cfg.operator.restart_after_sec = 90
+    save_config(cfg)
+
+    now = {"value": 1000.0}
+    events = []
+    monkeypatch.setattr("aletheia.gateway.operator_shell._gateway_api_ready", lambda cfg: True)
+
+    monitor = OperatorShellMonitor(
+        cfg,
+        spawn_fn=lambda _cfg: None,
+        now_fn=lambda: now["value"],
+        record_event=lambda kind, payload: events.append((kind, payload)),
+    )
+
+    monitor.tick_once()
+
+    heartbeat = get_latest_heartbeat()
+    assert heartbeat is not None
+    assert heartbeat["status"] == "offline"
+    assert heartbeat["mode"] == "Degraded"
+    assert "command remained unavailable" in heartbeat["last_error"]
+    assert monitor.degraded_until == now["value"] + cfg.operator.restart_after_sec
+    assert any(kind == "operator_shell_degraded" for kind, _ in events)
+
+
+def test_operator_shell_monitor_refreshes_offline_status_during_cooldown(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.agent_shell.operator_store import get_latest_heartbeat
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.gateway.operator_shell import OperatorShellMonitor
+
+    cfg = load_config()
+    cfg.operator.heartbeat_interval_sec = 10
+    save_config(cfg)
+
+    now = {"value": 1000.0}
+    monitor = OperatorShellMonitor(cfg, now_fn=lambda: now["value"])
+    monitor.degraded_until = 1200.0
+
+    monitor.tick_once()
+    first = get_latest_heartbeat()
+    assert first is not None
+    assert first["status"] == "offline"
+    assert "restart cooldown" in first["last_error"]
+
+    now["value"] += 5
+    monitor.tick_once()
+    throttled = get_latest_heartbeat()
+    assert throttled is not None
+    assert throttled["id"] == first["id"]
+
+    now["value"] += 6
+    monitor.tick_once()
+    refreshed = get_latest_heartbeat()
+    assert refreshed is not None
+    assert refreshed["id"] != first["id"]
+    assert refreshed["status"] == "offline"
+
+
 def test_operator_shell_monitor_waits_for_gateway_ready_before_spawn(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
@@ -264,6 +333,7 @@ def test_operator_shell_monitor_waits_for_gateway_ready_before_spawn(tmp_path, m
 def test_operator_shell_monitor_restarts_stale_heartbeat_process(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
+    from aletheia.agent_shell.operator_store import get_latest_heartbeat
     from aletheia.config.loader import load_config, save_config
     from aletheia.gateway.operator_shell import OperatorShellMonitor
 
@@ -297,6 +367,11 @@ def test_operator_shell_monitor_restarts_stale_heartbeat_process(tmp_path, monke
 
     assert killed == [2468]
     assert monitor.proc is None
+    heartbeat = get_latest_heartbeat()
+    assert heartbeat is not None
+    assert heartbeat["status"] == "offline"
+    assert heartbeat["mode"] == "Degraded"
+    assert "heartbeat is stale" in heartbeat["last_error"]
     assert any(kind == "operator_shell_restart" for kind, _ in events)
 
 
