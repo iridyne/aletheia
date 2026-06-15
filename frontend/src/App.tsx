@@ -364,6 +364,12 @@ function StatusBar() {
                 <span className="sp-value">{latestRun.agent_name}</span>
               </div>
             )}
+            {(operator as any)?.last_error && (
+              <div className="sp-row">
+                <span className={`sp-issue-icon sp-issue-red`}>⚠</span>
+                <span className="sp-issue-label">{(operator as any).last_error}</span>
+              </div>
+            )}
           </div>
 
           {/* Section 4: Code drift warning (conditional) */}
