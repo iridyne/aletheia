@@ -430,6 +430,7 @@ table, code, .mono, .pill, .badge, .topbar-status { font-feature-settings: 'tnum
   padding: var(--space-4); margin-bottom: var(--space-4); box-shadow: var(--shadow);
   min-width: 0; overflow: hidden;
 }
+.card-flush { margin-bottom: 0; }
 .card h3 {
   margin-bottom: var(--space-3); font-size: 0.8rem; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.08em;
@@ -610,6 +611,10 @@ button:active { transform: none; }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 button.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border-2); }
 button.secondary:hover { background: var(--border); filter: none; }
+.btn-ghost {
+  background: transparent; color: var(--muted); border: 1px solid transparent;
+}
+.btn-ghost:hover { background: var(--surface-2); color: var(--text); filter: none; }
 
 /* ---------- Inputs ---------- */
 select, input {

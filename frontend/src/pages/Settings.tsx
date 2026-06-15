@@ -4,6 +4,16 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
 import PageHeader from '../components/PageHeader'
+import {
+  NumberFieldGrid as NumGrid,
+  SaveMessage as SaveMsg,
+  SettingsRow as Row,
+  SettingsSection as Section,
+  Switch as Toggle,
+  SwitchGrid as ToggleGrid,
+  type BoolField,
+  type NumField,
+} from '../components/ui'
 import { useDecimals, setDecimals, fmtNum, DECIMAL_BOUNDS, humanize, humanizeBool } from '../lib/format'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,61 +54,6 @@ function parseTab(value: string | null): Tab | null {
   if (!value) return null
   if (TABS.some(t => t.id === value)) return value as Tab
   return TAB_ALIASES[value] ?? null
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Layout primitives
-// ─────────────────────────────────────────────────────────────────────────────
-
-function Section({ id, title, description, children }: {
-  id?: string; title: string; description?: string; children: React.ReactNode
-}) {
-  return (
-    <section className="settings-section" id={id ? `settings-section-${id}` : undefined}>
-      <div className="settings-section-head">
-        <h3>{title}</h3>
-        {description && <p className="settings-section-desc">{description}</p>}
-      </div>
-      <div className="settings-section-rule" />
-      {children}
-    </section>
-  )
-}
-
-// Two-column label ↔ control row.
-// No bottom border — rows use padding-based spacing only, so the only lines
-// the eye sees are Section headers. This is the fix for the "all lines look the same" problem.
-function Row({ label, hint, children, danger }: {
-  label: string; hint?: string; children: React.ReactNode; danger?: boolean
-}) {
-  return (
-    <div className="settings-row">
-      <div>
-        <div className={`settings-row-label${danger ? ' danger' : ''}`}>{label}</div>
-        {hint && <div className="settings-row-hint">{hint}</div>}
-      </div>
-      <div className="settings-row-control">
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function Toggle({ checked, onChange, disabled, label }: {
-  checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string
-}) {
-  return (
-    <label className="settings-toggle">
-      <input className="settings-switch-input" type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} disabled={disabled} />
-      <span className="settings-switch-track" aria-hidden="true"><span className="settings-switch-thumb" /></span>
-      <span className="settings-switch-text">{label ?? (checked ? 'Enabled' : 'Disabled')}</span>
-    </label>
-  )
-}
-
-function SaveMsg({ msg }: { msg: { ok: boolean; text: string } | null }) {
-  if (!msg) return null
-  return <span className={`settings-save-msg ${msg.ok ? 'ok' : 'err'}`} title={msg.text}>{msg.text}</span>
 }
 
 function parseCsvList(raw: string): string[] {
@@ -827,9 +782,6 @@ function SymbolsCard({ settings, qc }: any) {
 
 // ─── Risk limits ───
 
-interface NumField { key: string; label: string; unit: string; min: number; max: number; step: number; isInt?: boolean }
-interface BoolField { key: string; label: string }
-
 const RISK_LIVE: NumField[] = [
   { key: 'max_daily_loss_pct',            label: 'Max daily loss',          unit: '%',    min: 0.1,  max: 20,     step: 0.1 },
   { key: 'max_single_trade_risk_pct',     label: 'Max single trade risk',   unit: '%',    min: 0.01, max: 10,     step: 0.01 },
@@ -852,21 +804,6 @@ const RISK_BOOLS: BoolField[] = [
   { key: 'allow_short_live', label: 'Allow short selling (live)' },
   { key: 'allow_short_demo', label: 'Allow short selling (demo)' },
 ]
-
-function NumGrid({ fields, vals, set }: { fields: NumField[]; vals: Record<string, any>; set: (k: string, v: any) => void }) {
-  return (
-    <div className="settings-field-grid">
-      {fields.map(f => (
-        <label key={f.key} className="settings-field">
-          <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
-          <input type="number" min={f.min} max={f.max} step={f.step} value={vals[f.key] ?? ''}
-            onChange={e => set(f.key, f.isInt ? parseInt(e.target.value) : parseFloat(e.target.value))}
-            style={{ fontFamily: 'var(--mono)' }} />
-        </label>
-      ))}
-    </div>
-  )
-}
 
 function RiskCard({ settings, qc }: any) {
   const risk = settings?.risk as any
@@ -940,23 +877,6 @@ function HealthNotificationsTab({ settings, qc }: any) {
       <Section title="Telegram" description="Alert delivery when agents act or limits are breached. Token is stored in secrets (write-only via CLI).">
         <TelegramCard settings={settings} qc={qc} />
       </Section>
-    </div>
-  )
-}
-
-function ToggleGrid({ fields, vals, set }: {
-  fields: BoolField[]; vals: Record<string, any>; set: (k: string, v: boolean) => void
-}) {
-  return (
-    <div className="settings-toggle-grid">
-      {fields.map(f => (
-        <Toggle
-          key={f.key}
-          checked={!!vals[f.key]}
-          label={f.label}
-          onChange={v => set(f.key, v)}
-        />
-      ))}
     </div>
   )
 }

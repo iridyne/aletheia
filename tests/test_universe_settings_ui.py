@@ -62,6 +62,7 @@ def test_settings_controls_match_backend_config_fields():
 def test_settings_uses_vertical_information_architecture_and_switches():
     settings = Path("frontend/src/pages/Settings.tsx").read_text(encoding="utf-8")
     css = Path("frontend/src/index.css").read_text(encoding="utf-8")
+    ui_index = Path("frontend/src/components/ui/index.ts").read_text(encoding="utf-8")
 
     for label in [
         "Agent & Models",
@@ -75,9 +76,13 @@ def test_settings_uses_vertical_information_architecture_and_switches():
 
     assert "settings-shell" in settings
     assert "settings-nav-item" in settings
-    assert "settings-switch-track" in settings
-    assert "settings-toggle-grid" in settings
-    assert "type=\"checkbox\"" in settings  # hidden semantic input remains for accessibility
+    assert "SettingsSection" in ui_index
+    assert "Switch" in ui_index
+    assert "NumberFieldGrid" in ui_index
+    assert "SwitchGrid" in ui_index
+    assert "settings-toggle-grid" in Path("frontend/src/components/ui/SettingsSection.tsx").read_text(encoding="utf-8")
+    assert "type=\"checkbox\"" not in settings
+    assert "type=\"checkbox\"" in Path("frontend/src/components/ui/Switch.tsx").read_text(encoding="utf-8")
     assert css.count(".settings-switch-input") >= 1
     assert "settings-switch-input:checked + .settings-switch-track" in css
 

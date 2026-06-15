@@ -46,6 +46,8 @@ Radix/shadcn adoption remains incremental. Candidate primitives for later adopti
 
 ### P0 — Global interaction and visual hygiene
 
+Status: completed in commits `59c3368` and follow-up UI primitive extraction work.
+
 - Remove global button translate/drag effect.
 - Ensure list buttons override hover/active behavior.
 - Hide native number-input spinners.
@@ -59,6 +61,8 @@ Acceptance:
 - Buttons still have clear hover/focus states.
 
 ### P1 — Settings information architecture
+
+Status: completed in commit `59c3368`.
 
 - Replace four top tabs with six sections:
   1. Agent & Models
@@ -80,6 +84,8 @@ Acceptance:
 - Existing settings API coverage remains visible.
 
 ### P2 — Settings control cleanup
+
+Status: in progress. Visible checkbox controls have been converted to switch-style primitives; Settings still needs a broader inline-style reduction pass.
 
 - Replace visible checkboxes with switch controls.
 - Use `settings-toggle-grid` for related boolean controls.
@@ -114,6 +120,18 @@ Checks per page:
 
 ### P4 — Component extraction
 
+Status: in progress. Local primitives now exist under `frontend/src/components/ui/`:
+
+- `Button`
+- `Card`
+- `Badge`
+- `Switch`
+- `SettingsSection`
+- `SettingsRow`
+- `NumberFieldGrid`
+- `SwitchGrid`
+- `StatusDot`
+
 Create or consolidate local UI primitives:
 
 - `components/ui/Button`
@@ -139,4 +157,3 @@ Acceptance:
   - Native number spinners are hidden.
   - Global button active transform is disabled.
   - Command Center recommendation severity uses text style, not badge capsule.
-
