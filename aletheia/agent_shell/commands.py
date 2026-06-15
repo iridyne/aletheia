@@ -1805,6 +1805,155 @@ async def propose_extension_enablement(params: dict) -> dict:
     }
 
 
+async def evaluate_trading_opportunity(params: dict) -> dict:
+    """PI agent evaluates market state and submits a paper proposal if conviction >= 55."""
+    from aletheia.agent_shell.context import build_app_context
+    from aletheia.agent_shell.trading_decision import (
+        evaluate_trading_opportunity as _evaluate,
+        submit_decision_as_proposal,
+    )
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    execution_mode = cfg.exchange.paper_execution_mode
+
+    # Build rich context
+    ctx = build_app_context(sections=["market", "trading", "proposals", "strategies", "risk"])
+
+    # Enrich with RuleSet signals and recent lessons
+    try:
+        from aletheia.trading.ruleset_scanner import scan_active_rulesets
+        signals = scan_active_rulesets(execution_mode=execution_mode)
+        ctx["ruleset_signals"] = [
+            {
+                "symbol": s.symbol,
+                "signal_type": s.signal_type,
+                "direction": s.direction,
+                "strategy": s.strategy_name,
+                "timeframe": s.timeframe,
+            }
+            for s in signals
+        ]
+    except Exception:
+        ctx["ruleset_signals"] = []
+
+    try:
+        items = list_knowledge_items(limit=10)
+        ctx["lessons"] = [
+            {"action": i.get("item_type"), "symbol": i.get("metadata", {}).get("symbol"),
+             "body": i.get("content", "")[:100]}
+            for i in items
+            if i.get("item_type") in ("lesson", "accepted_lesson", "research_note")
+        ]
+    except Exception:
+        ctx["lessons"] = []
+
+    # Run PI agent decision loop
+    decision = await _evaluate(ctx)
+
+    result: dict = {
+        "action": decision.action,
+        "conviction": decision.conviction,
+        "reasoning": decision.reasoning[:300],
+        "debate_ran": decision.debate_ran,
+        "debate_bull": decision.debate_bull_confidence,
+        "debate_bear": decision.debate_bear_confidence,
+    }
+
+    if decision.action == "trade" and decision.symbol:
+        result["symbol"] = decision.symbol
+        result["direction"] = decision.direction
+        result["position_size_usdt"] = decision.position_size_usdt
+
+        proposal_result = await submit_decision_as_proposal(decision, execution_mode)
+        if proposal_result:
+            result["proposal_id"] = proposal_result.get("proposal_id")
+            result["proposal_status"] = proposal_result.get("status")
+        else:
+            result["proposal_error"] = "price_unavailable_or_proposal_rejected"
+
+    return result
+
+
+async def review_portfolio_state(params: dict) -> dict:
+    """PI agent reviews open positions for overexposure and optionally closes / reduces."""
+    import json as _json
+    from aletheia.agent_shell.context import build_app_context
+    from aletheia.agents.helpers import llm_structured
+    from aletheia.portfolio.pnl import close_position, _latest_price
+
+    ctx = build_app_context(sections=["market", "trading", "risk"])
+    open_positions = ctx.get("trading", {}).get("open_positions", [])
+    risk = ctx.get("risk", {})
+
+    if not open_positions:
+        return {"action": "none", "reason": "no_open_positions"}
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["hold", "close_one", "reduce_exposure"]},
+            "target_symbol": {"type": "string"},
+            "reasoning": {"type": "string"},
+        },
+        "required": ["action", "reasoning"],
+    }
+
+    pos_summary = "\n".join(
+        f"  {p['symbol']} {p['direction']} qty={p['quantity']} upnl={p.get('unrealized_pnl', '?')}"
+        for p in open_positions
+    )
+    system = "You are a portfolio risk reviewer for an autonomous paper trading system."
+    user = f"""Current open positions:
+{pos_summary}
+
+Risk limits:
+  Max open positions (demo): {risk.get('max_open_positions_demo', '?')}
+  Kill switch: {risk.get('kill_switch', False)}
+
+Review the portfolio and decide:
+- "hold": all positions look fine
+- "close_one": one specific position should be closed (specify target_symbol)
+- "reduce_exposure": overall exposure is too high (specify target_symbol to close)
+
+Be conservative — only recommend closing if there is a clear risk reason.
+
+Return JSON: {_json.dumps(schema)}"""
+
+    class _Schema:
+        @staticmethod
+        def model_json_schema() -> dict:
+            return schema
+
+    review, err = await llm_structured(system, user, schema=_Schema())
+
+    if err or review is None:
+        return {"action": "none", "reason": err or "llm_unavailable"}
+
+    action = review.get("action", "hold")
+    result = {
+        "action": action,
+        "reasoning": review.get("reasoning", "")[:300],
+        "target_symbol": review.get("target_symbol"),
+    }
+
+    if action in ("close_one", "reduce_exposure") and review.get("target_symbol"):
+        sym = review["target_symbol"]
+        matching = [p for p in list_positions(status="open") if p["symbol"] == sym]
+        closed_count = 0
+        for pos in matching[:1]:
+            price = _latest_price(sym)
+            if price:
+                try:
+                    close_position(pos["id"], exit_price=float(price), reason="pi_agent_portfolio_review")
+                    closed_count += 1
+                except Exception as e:
+                    result["close_error"] = str(e)[:100]
+        result["positions_closed"] = closed_count
+
+    return result
+
+
 HANDLERS: dict[str, callable] = {
     "get_system_status": get_system_status,
     "get_operator_status": get_operator_status,
@@ -1844,4 +1993,6 @@ HANDLERS: dict[str, callable] = {
     "propose_risk_boundary_change": propose_risk_boundary_change,
     "propose_command_center_behavior_change": propose_command_center_behavior_change,
     "propose_extension_enablement": propose_extension_enablement,
+    "evaluate_trading_opportunity": evaluate_trading_opportunity,
+    "review_portfolio_state": review_portfolio_state,
 }

@@ -1,4 +1,4 @@
-"""Paper Trader agent — turns open opportunities into autonomous paper proposals.
+"""Paper Trader agent — turns open opportunities and RuleSet signals into paper proposals.
 
 USER-AUTHORIZED autonomous behavior (paper only). Containment:
 - Only runs when permission mode is Paper or Full. Denied in Observe.
@@ -11,14 +11,13 @@ Execution target is `exchange.paper_execution_mode`: `bitget_demo` places real o
 on Bitget's demo (simulated) API; `paper_internal` fills locally. Bitget demo only
 supports USDT futures, so paper trades are submitted as `usdt_futures`.
 
-The position size is a small fixed paper quantity from instrument config, NOT an
-LLM decision. The LLM is used only (optionally) for a short rationale string and
-degrades gracefully when unavailable.
-
-PaperTrader v2: Uses ranked candidate selection via paper_trader_ranker. All eligible
-opportunities are scored and the best candidate is selected, instead of first-match.
-Factor feedback from closed trades influences scoring (avoid losing factors, prefer
-winning ones). RuleSet entry validation is part of the ranking pipeline.
+PaperTrader v3 (RuleSet-Driven):
+  Path A — RuleSet signals: for each paper_running strategy with a compiled RuleSet,
+    evaluate_at_bar() produces entry/exit signals directly from OHLCV bars.
+    Multiple strategies can fire simultaneously (multi-strategy parallel).
+    Exit signals close existing positions. Entry signals open new ones.
+  Path B — Opportunity-driven (fallback): original ranked candidate selection from
+    market_observer opportunities. Runs after Path A to consume remaining signals.
 """
 from __future__ import annotations
 
@@ -32,6 +31,7 @@ from aletheia.config.loader import load_config
 from aletheia.execution.paper_tools import create_paper_proposal
 from aletheia.storage.repositories import update_opportunity
 from aletheia.trading.market_data import latest_snapshot
+from aletheia.trading.ruleset_scanner import RuleSetSignal, scan_active_rulesets
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
 
@@ -50,12 +50,29 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         errors.append(f"create_paper_proposal not permitted in mode {permission_mode}")
         return {"outputs": outputs, "errors": errors}
 
-    # ── Ranked candidate selection (v2) ──
+    execution_mode = cfg.exchange.paper_execution_mode
+
+    # ── Path A: RuleSet-driven signals (multi-strategy parallel) ──────────────
+    try:
+        ruleset_signals = scan_active_rulesets(execution_mode=execution_mode)
+    except Exception as e:
+        logger.warning("ruleset scan failed: %s", e)
+        ruleset_signals = []
+
+    for sig in ruleset_signals:
+        try:
+            if sig.signal_type == "exit" and sig.position_id:
+                out = _handle_ruleset_exit(sig, run_id)
+            else:
+                out = _handle_ruleset_entry(sig, cfg, execution_mode, run_id)
+            if out:
+                outputs.append(out)
+        except Exception as e:
+            errors.append(f"ruleset_signal_error:{sig.symbol}:{e}")
+
+    # ── Path B: Opportunity-driven (fallback, ranked) ─────────────────────────
     candidates = build_paper_candidates(limit=50)
 
-    # Mark deterministically-skipped opportunities as reviewed (they won't change
-    # on next tick: neutral_bias, low confidence, paused strategy, blocked factor).
-    # This preserves the v1 behavior of consuming unactionable signals.
     _PERMANENT_SKIP_PREFIXES = ("neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:")
     skipped = [c for c in candidates if c.get("skip_reason")]
     for c in skipped:
@@ -76,10 +93,10 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         logger.debug("shadow trade persistence failed: %s", _shadow_err)
 
     if selected is None:
-        outputs.append("no_ranked_candidate")
+        if not outputs:
+            outputs.append("no_ranked_candidate")
         return {"outputs": outputs, "errors": errors}
 
-    # Use the selected candidate
     symbol = selected["symbol"]
     direction = selected["direction"]
     opp_id = selected["opportunity_id"]
@@ -94,24 +111,18 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     price = float(price)
     quantity = round(_PAPER_NOTIONAL_USDT / price, 6) or 0.000001
 
-    # Protective stop from config %
     stop_pct = cfg.trading.default_stop_loss_pct
     if direction == "long":
         stop_price = round(price * (1 - stop_pct / 100.0), 8)
     else:
         stop_price = round(price * (1 + stop_pct / 100.0), 8)
 
-    # Build rationale with scoring metadata
     rationale = (
         f"Autonomous paper trade from ranked candidate.\n"
         f"opportunity_id={opp_id}\n"
         f"trade_score={selected.get('trade_score')}\n"
         f"factor_key={selected.get('factor_key')}\n"
         f"factor_status={selected.get('factor_status')}\n"
-        f"factor_expectancy={selected.get('factor_expectancy')}\n"
-        f"universe_score={selected.get('universe_total_score')}\n"
-        f"tradability_score={selected.get('tradability_score')}\n"
-        f"late_entry_penalty={selected.get('late_entry_penalty')}\n"
         f"ruleset_entry_confirmed={selected.get('ruleset_entry_result')}"
     )
 
@@ -122,16 +133,84 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         quantity=quantity,
         price=price,
         stop_price=stop_price,
-        execution_mode=cfg.exchange.paper_execution_mode,
+        execution_mode=execution_mode,
         strategy_id=strategy_id,
         opportunity_id=opp_id,
         agent_rationale=rationale[:500],
     )
     log_tool(run_id, "create_paper_proposal", "paper", True, output=result.get("proposal_id"))
-
-    # Mark the opportunity consumed for idempotency
     update_opportunity(opp_id, status="proposed")
 
     pid = result.get("proposal_id")
     outputs.append(f"proposal:{pid}:{result.get('status')}")
     return {"outputs": outputs, "errors": errors}
+
+
+# ── RuleSet signal handlers ───────────────────────────────────────────────────
+
+def _handle_ruleset_exit(sig: RuleSetSignal, run_id: str | None) -> str | None:
+    """Close a position triggered by RuleSet exit signal."""
+    from aletheia.portfolio.pnl import close_position, _latest_price
+    price = _latest_price(sig.symbol)
+    if price is None:
+        logger.warning("no_price_for_exit:%s", sig.symbol)
+        return None
+    try:
+        close_position(sig.position_id, exit_price=float(price), reason="ruleset_exit_signal")
+        logger.info("ruleset_exit: closed position %s for %s", sig.position_id, sig.symbol)
+        return f"ruleset_exit:{sig.symbol}:{sig.strategy_id[:8]}"
+    except Exception as e:
+        logger.warning("ruleset_exit failed for %s: %s", sig.position_id, e)
+        return None
+
+
+def _handle_ruleset_entry(
+    sig: RuleSetSignal,
+    cfg,
+    execution_mode: str,
+    run_id: str | None,
+) -> str | None:
+    """Open a new position triggered by RuleSet entry signal."""
+    snap = latest_snapshot(sig.symbol)
+    price = (snap or {}).get("price")
+    if not price:
+        logger.warning("no_price_for_entry:%s", sig.symbol)
+        return None
+
+    price = float(price)
+    quantity = round(_PAPER_NOTIONAL_USDT / price, 6) or 0.000001
+
+    # Use RuleSet-derived stop if available, else fall back to config %
+    stop_price = sig.stop_price
+    if stop_price is None:
+        stop_pct = cfg.trading.default_stop_loss_pct
+        if sig.direction == "long":
+            stop_price = round(price * (1 - stop_pct / 100.0), 8)
+        else:
+            stop_price = round(price * (1 + stop_pct / 100.0), 8)
+
+    rationale = (
+        f"RuleSet entry signal.\n"
+        f"strategy={sig.strategy_id}\n"
+        f"strategy_name={sig.strategy_name}\n"
+        f"timeframe={sig.timeframe}\n"
+        f"stop_price={stop_price}"
+    )
+
+    result = create_paper_proposal(
+        symbol=sig.symbol,
+        market_type="usdt_futures",
+        direction=sig.direction,
+        quantity=quantity,
+        price=price,
+        stop_price=stop_price,
+        execution_mode=execution_mode,
+        strategy_id=sig.strategy_id,
+        opportunity_id=None,
+        agent_rationale=rationale[:500],
+    )
+    log_tool(run_id, "create_paper_proposal", "paper", True, output=result.get("proposal_id"))
+
+    pid = result.get("proposal_id")
+    logger.info("ruleset_entry: proposal %s for %s %s", pid, sig.direction, sig.symbol)
+    return f"ruleset_entry:{sig.symbol}:{sig.strategy_id[:8]}:{result.get('status')}"

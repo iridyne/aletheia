@@ -85,10 +85,25 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
 
 
 def evaluate_open_positions() -> dict:
-    """Evaluate all open paper positions and close any that hit an exit rule."""
+    """Evaluate all open paper positions and close any that hit an exit rule.
+
+    Checks both price-based rules (stop/TP/max-hold) and RuleSet exit signals
+    from the strategy's compiled RuleSet (if any).
+    """
     cfg = load_config()
     closed = 0
     checked = 0
+
+    # Collect RuleSet exit signals once (avoids redundant bar fetches per position)
+    ruleset_exit_position_ids: set[str] = set()
+    try:
+        from aletheia.trading.ruleset_scanner import scan_active_rulesets
+        for sig in scan_active_rulesets():
+            if sig.signal_type == "exit" and sig.position_id:
+                ruleset_exit_position_ids.add(sig.position_id)
+    except Exception as e:
+        logger.warning("ruleset exit scan failed: %s", e)
+
     for p in list_positions(status="open"):
         # Never auto-close live positions (future + human-only).
         if p.get("execution_mode") not in _PAPER_MODES:
@@ -97,16 +112,17 @@ def evaluate_open_positions() -> dict:
         price = _latest_price(p["symbol"])
         if price is None:
             continue  # no honest exit price — skip, never fabricate
+
+        # Determine exit reason: price-based first, then RuleSet signal
         decision = _decide_exit(p, float(price), cfg)
+        if decision is None and p["id"] in ruleset_exit_position_ids:
+            decision = ("ruleset_exit_signal", float(price))
+
         if decision is None:
             continue
         reason, exit_price = decision
         try:
             if p.get("execution_mode") == "bitget_demo":
-                # Demo is a REAL exchange position — close it with a real hedge-mode
-                # order so the exchange and local books stay consistent (a local-only
-                # close would dangle the demo position). The broker realizes PnL via
-                # close_position internally, using the exchange's confirmed exit price.
                 from aletheia.execution.bitget_broker import close_demo_position
                 close_demo_position(p["id"], reason=reason)
             else:

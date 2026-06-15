@@ -200,7 +200,7 @@ def run_all_backtests(
                 action_taken="skipped", error=str(e),
             ))
 
-    return OrchestratorResult(
+    orch_result = OrchestratorResult(
         timestamp=datetime.now(timezone.utc).isoformat(),
         strategies_evaluated=len(active),
         strategies_killed=killed,
@@ -209,6 +209,65 @@ def run_all_backtests(
         strategies_skipped=skipped,
         reports=reports,
     )
+
+    # Auto lifecycle: promote survivors that pass gates, pause consistent losers
+    try:
+        run_lifecycle_automation()
+    except Exception as e:
+        logger.warning("lifecycle_automation failed: %s", e)
+
+    return orch_result
+
+
+def run_lifecycle_automation() -> dict:
+    """Auto-promote strategies that pass promotion gates; auto-pause consistent losers.
+
+    Runs after backtests so evidence is fresh. Does NOT touch live transitions
+    (those require explicit human approval via propose_strategy_promotion).
+    """
+    from aletheia.storage.repositories import list_strategies, update_strategy
+    from aletheia.trading.strategy_lifecycle import (
+        check_promotion_gates, promote_strategy,
+        DEFAULT_PROMOTION_GATES,
+    )
+
+    promoted = []
+    paused = []
+
+    for strat in list_strategies(limit=200):
+        sid = strat["id"]
+        state = strat.get("state")
+
+        # Auto-promote paper_running → paper_passed when all gates pass
+        if state == "paper_running" and not strat.get("paper_trading_paused") and not strat.get("under_review"):
+            gates = check_promotion_gates(sid)
+            if gates["passed"]:
+                try:
+                    promote_strategy(sid, "paper_passed")
+                    logger.info("auto_promoted %s to paper_passed", sid)
+                    promoted.append(sid)
+                except Exception as e:
+                    logger.warning("auto_promote failed for %s: %s", sid, e)
+                continue
+
+            # Auto-pause if consecutive losses exceed gate threshold
+            max_consec = DEFAULT_PROMOTION_GATES["max_consecutive_losses_allowed"]
+            consec = gates.get("metrics", {}).get("max_consecutive_losses")
+            if consec is not None and consec > max_consec:
+                try:
+                    from datetime import datetime, timezone
+                    update_strategy(
+                        sid,
+                        paper_trading_paused=True,
+                        paper_pause_reason=f"auto_pause:consecutive_losses={consec}>{max_consec}",
+                        paper_paused_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                    logger.info("auto_paused %s (consecutive_losses=%s)", sid, consec)
+                    paused.append(sid)
+                except Exception as e:
+                    logger.warning("auto_pause failed for %s: %s", sid, e)
+
+    return {"promoted": promoted, "paused": paused}
 
 
 def generate_daily_report(result: OrchestratorResult) -> str:

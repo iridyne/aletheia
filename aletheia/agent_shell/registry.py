@@ -390,6 +390,26 @@ COMMANDS: dict[str, CommandDef] = {
         audit_event_type="operator_propose_extension_enablement",
         backend_handler="propose_extension_enablement",
     ),
+    "evaluate_trading_opportunity": CommandDef(
+        name="evaluate_trading_opportunity",
+        risk_class="controlled_operational",
+        worker_permission_required="Paper",
+        operator_permission_required="PaperAuto",
+        description="PI agent evaluates current market state and submits a paper proposal if conviction >= 55",
+        requires_confirmation=False,
+        audit_event_type="operator_evaluate_trading_opportunity",
+        backend_handler="evaluate_trading_opportunity",
+    ),
+    "review_portfolio_state": CommandDef(
+        name="review_portfolio_state",
+        risk_class="controlled_operational",
+        worker_permission_required="Paper",
+        operator_permission_required="PaperAuto",
+        description="PI agent reviews open positions for overexposure and optionally closes / reduces",
+        requires_confirmation=False,
+        audit_event_type="operator_review_portfolio_state",
+        backend_handler="review_portfolio_state",
+    ),
 }
 
 FORBIDDEN_INTENTS = frozenset([
