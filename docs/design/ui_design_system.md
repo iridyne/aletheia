@@ -257,3 +257,188 @@ If you're writing `display: grid; gridTemplateColumns: repeat(auto-fill, minmax(
 4. **Write-only secrets** — never display API keys; show only `··last4` or "set"/"not configured".
 5. **Progressive disclosure** — collapsed cards show status summary; expand to edit. Don't overwhelm with all fields at once.
 6. **Consistent grid** — 2-column form-grid for all form cards. No ad-hoc inline grids with varying column counts.
+
+---
+
+## 7. Spacing & Density Tokens (Bloomberg-density pass)
+
+所有 spacing 必须引用 CSS var，禁止硬编码 px。
+
+| Token | Value | 用途 |
+|-------|-------|------|
+| `--space-1` | 4px | 最小间距(icon gap, pill 内距) |
+| `--space-2` | 8px | 行内元素 gap, feed-row padding |
+| `--space-3` | 12px | card padding-block, card margin-bottom, section gap |
+| `--space-4` | 16px | main 区域 padding-inline, cockpit grid gap |
+| `--space-5` | 20px | main padding-inline(宽屏), sidebar padding |
+| `--space-6` | 24px | settings grid column gap |
+| `--space-8` | 32px | settings-section bottom margin |
+
+### 密度决策记录
+
+| 元素 | 旧值 | 新值 | 理由 |
+|------|------|------|------|
+| `.card` padding | 16px / 16px | 12px / 16px (block/inline) | 垂直密度提升 ~25% |
+| `table td/th` padding | 8px | 5px inline-start | 行高更紧凑 |
+| `th` font-size | — | 0.66rem | 列头不争夺视觉权重 |
+| `.metric-tile` min-height | 84px | 68px | 减少 PnL zone 垂直占用 |
+| `.metric-value` font-size | 1.45rem | 1.3rem | 与整体密度匹配 |
+| `button` padding | 0.42/0.85rem | 0.32/0.7rem | 与 28px min-height 对齐 |
+| `.pnl-hero-value` | 2.4rem | 2rem | hero 不过分膨胀 |
+| `.cockpit-main` gap | 16px | 12px | rail 与 feed 更紧 |
+| `.cockpit-rail` width | 320px | 310px | 窄 10px 给 feed 更多空间 |
+| `sidebar nav a` padding | 0.45rem | 0.35rem | 更多 nav items 可见 |
+
+---
+
+## 8. Border Radius 规范
+
+| Token | Value | 适用范围 |
+|-------|-------|---------|
+| `var(--r)` | 8px | 卡片、弹窗、dialog、textarea、inspector |
+| `var(--r-sm)` | 5px | 按钮、badge、input、select、小 chip |
+| `999px` | pill | 仅用于 switch track、pill badge |
+
+**铁律：** 禁止写 `border-radius: 10px/12px/14px` 等硬编码值。Command Center 已统一纠正。
+
+---
+
+## 9. 交互反馈 (Interaction Feedback)
+
+### 按钮
+
+```css
+button { transition: filter 80ms, transform 60ms; }
+button:hover { filter: brightness(1.12); }
+button:active:not(:disabled) { transform: scale(0.97); filter: brightness(0.95); }
+button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+button.secondary:active { background: var(--bg); }
+```
+
+- 过渡时长 80ms (hover) / 60ms (press) — 快于动画，接近即时响应
+- `scale(0.97)` 给触觉反馈但不分散注意力
+- `focus-visible` 仅键盘导航时出现，不影响鼠标用户
+
+### 可点击卡片
+
+```css
+.card.clickable:hover { border-color: var(--border-2); background: var(--surface-2); }
+.card.clickable:active { transform: scale(0.995); }
+```
+
+### Feed 行 / Table 行
+
+```css
+.feed-row:hover { background: var(--surface-2); }
+.feed-row:active { background: var(--bg); }
+tr.clickable:active { background: var(--bg); }
+```
+
+### Charts 看板卡
+
+```css
+.charts-watchlist-card:hover { background: var(--surface-2); }
+.charts-watchlist-card:active { transform: scale(0.98); }
+```
+
+**统一规律：**
+- hover → lighten background (`surface-2`)
+- active → darken (`bg`) 或 scale (卡片类用 scale, 行类用 darken)
+- transition 均 ≤100ms
+
+---
+
+## 10. 无障碍 (Accessibility)
+
+### 对比度 (Contrast Ratios, WCAG AA)
+
+| 前景 → 背景 | 比值 | 判定 |
+|-------------|------|------|
+| `--text` on `--bg` | 16.39:1 | AA ✓ |
+| `--text` on `--surface` | 14.82:1 | AA ✓ |
+| `--muted` on `--bg` | 5.44:1 | AA ✓ |
+| `--muted` on `--surface` | 4.92:1 | AA ✓ |
+| `--muted` on `--surface-2` | 4.55:1 | AA ✓ (临界) |
+| `--faint` on `--bg` | 2.55:1 | 仅装饰 |
+| `--faint` on `--surface` | 2.31:1 | 仅装饰 |
+| `--accent` on `--bg` | 10.72:1 | AA ✓ |
+| `--green` on `--bg` | 11.99:1 | AA ✓ |
+| `--red` on `--bg` | 6.49:1 | AA ✓ |
+| `--yellow` on `--bg` | 10.97:1 | AA ✓ |
+
+**规则：**
+- 承载有意义文字的元素（table headers, section labels, nav group labels）必须使用 `--muted` 或更亮
+- `--faint` 仅可用于：separator dots, breadcrumb separators, timestamp suffixes, unit labels, placeholder text
+- 如果 `--faint` 要承载可读文字 → 提升为 `--muted`
+
+### 键盘导航
+
+- 所有 `button` 有 `focus-visible` outline
+- `tr.clickable` 有 `focus-visible` outline
+- Tab 顺序跟随 DOM 结构(无 tabindex 跳跃)
+
+---
+
+## 11. Tab 系统
+
+全站 tab 组件必须视觉统一:
+
+| 变体 | 用途 | 样式规格 |
+|------|------|---------|
+| `.tab-bar` + `.tab` | 页面内切换(Learning, Agent Activity) | font-size: 0.78rem, weight: 600, border-bottom: 2px |
+| `.seg-toggle` + `.seg-btn` | 紧凑内联切换(Feed mode, Chart timeframe) | font-size: 0.7rem, weight: 600, bg: accent-dim active |
+| `.lens-tab` / `.command-center-tabs` | 工具面板内切换 | font-size: 0.78rem, weight: 600, border-bottom: 2px |
+
+**铁律：** 不论哪种 tab 变体，font-size 不超过 0.78rem，font-weight 固定 600。
+
+---
+
+## 12. 已删除的死代码 (Cleanup Log)
+
+以下 CSS 类经 grep 确认无任何 .tsx 引用，已安全删除：
+
+| 类名 | 原用途 | 删除 commit |
+|------|--------|------------|
+| `.cockpit-grid`, `.cockpit-panel` | 旧 2-col 布局 | 6fa0f69 |
+| `.cockpit-hero`, `.hero-zone` | 旧 v2 hero section | 6fa0f69 |
+| `.hero-label`, `.hero-sub`, `.hero-sparkline` | 旧 hero 子元素 | 6fa0f69 |
+| `.hero-controls`, `.hero-pills` | 旧 hero 按钮区 | 6fa0f69 |
+| `.hero-value` + modifiers | 旧数值显示(PnLZone 用 .pnl-hero-value) | 6fa0f69 |
+| `.cockpit-grid-3` + media | 旧 3-col grid | 6fa0f69 |
+| `.market-watch`, `.market-watch-*` | 旧 mini-watchlist | 6fa0f69 |
+| `.panel-divider` | 旧面板分割线 | 6fa0f69 |
+| `.recent-runs-strip` | 旧 agent run badge strip | 6fa0f69 |
+| `.pill-*`, `.ticker-token-pending` | 旧 topbar pill | 早期 commit |
+| body grid texture `background-image` | 旧网格纹理 | 6d2f557 |
+
+**验证方法：** `grep -r "class-name" frontend/src/ --include="*.tsx"` — 0 结果即可安全删除。
+
+---
+
+## 13. 变更历史 (Style Changelog)
+
+| 日期 | Commit | 摘要 |
+|------|--------|------|
+| 2026-06-15 | 88a46be | Command Center radius 统一 (12/14px → var(--r)) |
+| 2026-06-15 | 74bf57a | WCAG AA contrast: th/labels faint→muted |
+| 2026-06-15 | 33a47d4 | Charts timeframe: dropdown→segmented toggle |
+| 2026-06-15 | 311f5c2 | lens/CC tabs 字号对齐 0.78rem |
+| 2026-06-15 | de7a9b4 | 微交互扩展: card/row/watchlist press feedback |
+| 2026-06-15 | 6fa0f69 | 删除 ~70 行 dead CSS |
+| 2026-06-15 | 56ae379 | button press/focus/transition 80ms |
+| 2026-06-15 | 6d2f557 | tables/nav/bg/buttons 终极打磨 |
+| 2026-06-15 | 08dc3b8 | drawer/tabs/scrollbar/color discipline |
+| 2026-06-15 | 675dc80 | controls/metrics/sections 紧凑 |
+| 2026-06-15 | 2ac849c | Bloomberg-density pass 1 |
+
+---
+
+## 14. 后续优化方向 (Backlog)
+
+1. **响应式断点精修** — 700-900px 区间在 density pass 后可能过挤，需实机验证
+2. **暗模式色彩微调** — `--surface-2` hover 在 OLED 上可能与 `--surface` 不可区分
+3. **动画 reduced-motion** — 尚未添加 `prefers-reduced-motion` 媒体查询
+4. **Command Center terminal 化** — message body 已切 monospace，可进一步加 prompt prefix / syntax highlighting
+5. **Charts mini-chart** — watchlist card 内嵌 sparkline（需 lightweight-charts 实例复用）
+6. **表格 sticky header** — 长列表 `position: sticky` 列头
+7. **Code-split** — JS bundle 815KB，应拆分 lightweight-charts 为 dynamic import
