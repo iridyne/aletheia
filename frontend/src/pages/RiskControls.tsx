@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
+import { ActionRow, Card, CardHeader, Button, StatusText, TableWrap } from '../components/ui'
 import { fmtSigned, useDecimals, humanize } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 
@@ -28,7 +29,7 @@ export default function RiskControls() {
   const paused = !!(status as any)?.paused
   const violations = (riskStatus?.violations as string[]) || []
   const riskState = String(riskStatus?.status || 'unknown')
-  const riskBadge = riskState === 'blocked' ? 'badge-red' : riskState === 'warning' ? 'badge-yellow' : riskState === 'healthy' ? 'badge-green' : 'badge-blue'
+  const riskTone = riskState === 'blocked' ? 'red' : riskState === 'warning' ? 'yellow' : riskState === 'healthy' ? 'green' : 'blue'
 
   const exposure = (portfolio as any)?.exposure_by_symbol as Record<string, number> | undefined
 
@@ -41,11 +42,12 @@ export default function RiskControls() {
 
       <div className="risk-grid">
         {/* Risk State */}
-        <div className="card">
-          <h3>Risk State</h3>
+        <Card>
+          <CardHeader title="Risk State" />
+          <TableWrap>
           <table>
             <tbody>
-              <tr><th>Status</th><td><span className={`badge ${riskBadge}`}>{riskStateLabel(riskState)}</span></td></tr>
+              <tr><th>Status</th><td><StatusText tone={riskTone}>{riskStateLabel(riskState)}</StatusText></td></tr>
               <tr><th>Violations</th><td>
                 {violations.length > 0 ? (
                   <ul className="risk-violations">
@@ -64,61 +66,63 @@ export default function RiskControls() {
                   </ul>
                 ) : <span className="text-muted">none</span>}
               </td></tr>
-              <tr><th>Permission Mode</th><td><span className="badge badge-blue">{humanize(String((status as any)?.permission_mode || '—'))}</span></td></tr>
-              <tr><th>Live State</th><td><span className={`badge ${(status as any)?.live_state === 'live_disabled' ? 'badge-muted' : 'badge-yellow'}`}>{humanize(String((status as any)?.live_state || '—'))}</span></td></tr>
+              <tr><th>Permission Mode</th><td><StatusText tone="blue">{humanize(String((status as any)?.permission_mode || '—'))}</StatusText></td></tr>
+              <tr><th>Live State</th><td><StatusText tone={(status as any)?.live_state === 'live_disabled' ? 'muted' : 'yellow'}>{humanize(String((status as any)?.live_state || '—'))}</StatusText></td></tr>
             </tbody>
           </table>
-        </div>
+          </TableWrap>
+        </Card>
 
         {/* Kill Switch */}
-        <div className="card">
-          <h3>Kill Switch</h3>
-          <div className="flex items-center gap-3 mb-3">
-            <span className={`badge badge-lg ${killed ? 'badge-red' : 'badge-green'}`}>
-              {killed ? 'ENGAGED' : 'INACTIVE'}
-            </span>
-          </div>
+        <Card>
+          <CardHeader
+            title="Kill Switch"
+            actions={<StatusText tone={killed ? 'red' : 'green'}>{killed ? 'ENGAGED' : 'INACTIVE'}</StatusText>}
+          />
           <p className="text-sm text-muted mb-3">
             {killed
               ? 'All trading is halted. No new proposals will be executed until released.'
               : 'Kill switch is inactive. The system can execute approved proposals.'}
           </p>
-          <div className="flex gap-2">
+          <ActionRow align="start">
             {!killed && (
-              <button
-                className="secondary danger"
+              <Button
+                variant="danger"
                 onClick={() => { if (confirm('Engage kill switch? All trading will halt immediately.')) engageKill.mutate() }}
               >
                 Engage Kill Switch
-              </button>
+              </Button>
             )}
             {killed && (
-              <button onClick={() => releaseKill.mutate()}>
+              <Button onClick={() => releaseKill.mutate()}>
                 Release Kill Switch
-              </button>
+              </Button>
             )}
-          </div>
-        </div>
+          </ActionRow>
+        </Card>
 
         {/* Gateway Control */}
-        <div className="card">
-          <h3>Gateway Control</h3>
+        <Card>
+          <CardHeader title="Gateway Control" />
+          <TableWrap>
           <table>
             <tbody>
-              <tr><th>Gateway</th><td><span className={`badge ${(status as any)?.gateway_running ? 'badge-green' : 'badge-red'}`}>{(status as any)?.gateway_running ? 'Running' : 'Stopped'}</span></td></tr>
-              <tr><th>Scheduler</th><td><span className={`badge ${paused ? 'badge-yellow' : 'badge-green'}`}>{paused ? 'Paused' : 'Active'}</span></td></tr>
+              <tr><th>Gateway</th><td><StatusText tone={(status as any)?.gateway_running ? 'green' : 'red'}>{(status as any)?.gateway_running ? 'Running' : 'Stopped'}</StatusText></td></tr>
+              <tr><th>Scheduler</th><td><StatusText tone={paused ? 'yellow' : 'green'}>{paused ? 'Paused' : 'Active'}</StatusText></td></tr>
             </tbody>
           </table>
-          <div className="flex gap-2 mt-3">
-            <button className="secondary" onClick={() => pauseMut.mutate()} disabled={paused}>Pause All Agents</button>
-            <button onClick={() => resumeMut.mutate()} disabled={!paused}>Resume</button>
-          </div>
-        </div>
+          </TableWrap>
+          <ActionRow>
+            <Button variant="secondary" onClick={() => pauseMut.mutate()} disabled={paused}>Pause All Agents</Button>
+            <Button onClick={() => resumeMut.mutate()} disabled={!paused}>Resume</Button>
+          </ActionRow>
+        </Card>
 
         {/* Exposure */}
-        <div className="card">
-          <h3>Exposure by Symbol</h3>
+        <Card>
+          <CardHeader title="Exposure by Symbol" />
           {exposure && Object.keys(exposure).length > 0 ? (
+            <TableWrap>
             <table>
               <thead><tr><th>Symbol</th><th>Exposure (USDT)</th></tr></thead>
               <tbody>
@@ -132,15 +136,16 @@ export default function RiskControls() {
                 ))}
               </tbody>
             </table>
+            </TableWrap>
           ) : (
             <p className="text-muted text-sm">No open exposure</p>
           )}
-        </div>
+        </Card>
       </div>
 
       {/* Risk Boundaries (read-only) */}
-      <div className="card">
-        <h3>Risk Boundaries (configured limits)</h3>
+      <Card>
+        <CardHeader title="Risk Boundaries (configured limits)" />
         {boundaries ? (
           <div className="boundaries-grid">
             {Object.entries(boundaries as Record<string, any>).map(([key, val]) => (
@@ -153,7 +158,7 @@ export default function RiskControls() {
         ) : (
           <p className="text-muted text-sm">Loading…</p>
         )}
-      </div>
+      </Card>
     </div>
   )
 }

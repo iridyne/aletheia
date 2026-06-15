@@ -6,6 +6,7 @@ import type { StrategyRecord } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
+import { Badge, Button, Card, TableWrap } from '../components/ui'
 import { humanize, fmtTimestamp } from '../lib/format'
 
 const STATES = ['draft', 'research_note', 'strategy_hypothesis', 'paper_candidate', 'paper_running', 'paper_passed', 'live_candidate', 'live_limited', 'retired']
@@ -80,14 +81,14 @@ export default function StrategyLifecycle() {
         title="Strategy Lifecycle"
         role="Evolve · the promotion pipeline (draft → research → hypothesis → paper → live-limited). Click a strategy to see its promotion gates and advance or retire it."
       />
-      <div className="card">
+      <Card>
         <DataTable
           data={rows}
           columns={columns}
           onRowClick={setSelected}
           emptyMessage="No strategies yet."
         />
-      </div>
+      </Card>
 
       <DetailDrawer open={!!selected} onClose={() => { setSelected(null); setPromoteError(null) }} title={selected?.name || 'Strategy'}>
         {selected && (
@@ -112,14 +113,14 @@ export default function StrategyLifecycle() {
             )}
             <div className="flex gap-2 mt-3">
               {NEXT_STATE[selected.state] && (
-                <button onClick={handlePromote} disabled={promote.isPending}>
+                <Button onClick={handlePromote} disabled={promote.isPending}>
                   Promote → {humanize(NEXT_STATE[selected.state])}
-                </button>
+                </Button>
               )}
               {selected.state !== 'retired' && selected.state !== 'deprecated' && (
-                <button className="secondary" onClick={() => retire.mutate(selected.id)} disabled={retire.isPending}>
+                <Button variant="secondary" onClick={() => retire.mutate(selected.id)} disabled={retire.isPending}>
                   Retire
-                </button>
+                </Button>
               )}
             </div>
           </>
@@ -144,21 +145,23 @@ function PromotionGates({ strategyId }: { strategyId: string }) {
   return (
     <DrawerSection label="Promotion Gates">
       <p className="mb-2">
-        <span className={`badge ${passed ? 'badge-green' : 'badge-red'}`}>{passed ? 'All gates pass' : `${failures.length} gate(s) failed`}</span>
+        <Badge tone={passed ? 'green' : 'red'}>{passed ? 'All gates pass' : `${failures.length} gate(s) failed`}</Badge>
       </p>
-      <table className="drawer-table">
-        <thead>
-          <tr><th>Metric</th><th>Value</th></tr>
-        </thead>
-        <tbody>
-          {Object.entries(metrics).map(([k, v]) => (
-            <tr key={k}>
-              <td>{humanize(k)}</td>
-              <td className="mono">{v != null ? String(v) : '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <TableWrap>
+        <table className="drawer-table">
+          <thead>
+            <tr><th>Metric</th><th>Value</th></tr>
+          </thead>
+          <tbody>
+            {Object.entries(metrics).map(([k, v]) => (
+              <tr key={k}>
+                <td>{humanize(k)}</td>
+                <td className="mono">{v != null ? String(v) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
       {failures.length > 0 && (
         <ul className="drawer-list drawer-list-error mt-2">
           {failures.map((f, i) => <li key={i}>{f}</li>)}

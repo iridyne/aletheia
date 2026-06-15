@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PriceChart from '../charts/PriceChart'
 import PageHeader from '../components/PageHeader'
+import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
 import { fmtNum, fmtSigned, fmtTimestamp, useDecimals } from '../lib/format'
 
 // Canonical BTC/USDT format — matches CCXT / backend MarketDataConfig
@@ -100,11 +101,10 @@ export default function Charts() {
           const snap = snapshotMap[sym] ?? snapshotMap[sym.replace('/', '')]
           const isActive = sym === symbol
           const change = snap?.change_pct_24h
-          const changeColor = change > 0 ? 'var(--green)' : change < 0 ? 'var(--red)' : 'var(--muted)'
           return (
-            <div
+            <Card
               key={sym}
-              className={`card charts-watchlist-card${isActive ? ' active' : ''}`}
+              className={`charts-watchlist-card${isActive ? ' active' : ''}`}
               onClick={() => setSymbol(sym)}
             >
               <div className="charts-card-head">
@@ -117,7 +117,7 @@ export default function Charts() {
               <div className="charts-card-meta">
                 <div className="charts-card-change">
                   {change != null && (
-                    <span className="mono" style={{ color: changeColor }}>
+                    <span className={`mono ${change > 0 ? 'pnl-positive' : change < 0 ? 'pnl-negative' : 'text-muted'}`}>
                       {fmtSigned(change)}%
                     </span>
                   )}
@@ -136,13 +136,13 @@ export default function Charts() {
                   )}
                 </div>
               )}
-            </div>
+            </Card>
           )
         })}
       </div>
 
       {/* Chart */}
-      <div className="card">
+      <Card>
         <div className="charts-controls">
           <select value={symbol} onChange={e => setSymbol(e.target.value)}>
             {SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
@@ -156,12 +156,13 @@ export default function Charts() {
         </div>
         <PriceChart symbol={symbol} timeframe={timeframe} markers={markers} onMarkerClick={setSelectedOrder} />
         <p className="hint">Green/red arrows mark filled paper trades on {symbol}. Click a marker to see trade details.</p>
-      </div>
+      </Card>
 
       {/* Linked Opportunities */}
       {symbolOpportunities.length > 0 && (
-        <div className="card">
-          <h3>Open Opportunities — {symbol}</h3>
+        <Card>
+          <CardHeader title={`Open Opportunities — ${symbol}`} />
+          <TableWrap>
           <table>
             <thead>
               <tr><th>Direction</th><th>Confidence</th><th>Score</th><th>Source</th><th>Thesis</th></tr>
@@ -169,7 +170,7 @@ export default function Charts() {
             <tbody>
               {symbolOpportunities.slice(0, 5).map((opp: any) => (
                 <tr key={opp.id}>
-                  <td><span className={`badge ${opp.direction_bias === 'long' ? 'badge-green' : opp.direction_bias === 'short' ? 'badge-red' : 'badge-blue'}`}>{opp.direction_bias}</span></td>
+                  <td><Badge tone={opp.direction_bias === 'long' ? 'green' : opp.direction_bias === 'short' ? 'red' : 'blue'}>{opp.direction_bias}</Badge></td>
                   <td className="mono">{opp.confidence || '—'}</td>
                   <td className="mono" title="0..100 numeric calibration">
                     {opp.confidence_score != null ? `${opp.confidence_score}/100` : '—'}
@@ -180,13 +181,15 @@ export default function Charts() {
               ))}
             </tbody>
           </table>
-        </div>
+          </TableWrap>
+        </Card>
       )}
 
       {/* Trade Detail */}
       {selectedTrade && (
-        <div className="card">
-          <h3>Trade Detail</h3>
+        <Card>
+          <CardHeader title="Trade Detail" />
+          <TableWrap>
           <table>
             <tbody>
               <tr><th>Order ID</th><td className="mono">{selectedTrade.id}</td></tr>
@@ -197,8 +200,9 @@ export default function Charts() {
               <tr><th>Strategy</th><td className="mono">{selectedTrade.strategy_id || '—'}</td></tr>
             </tbody>
           </table>
-          <button className="secondary" onClick={() => setSelectedOrder(null)}>Close</button>
-        </div>
+          </TableWrap>
+          <Button variant="secondary" onClick={() => setSelectedOrder(null)}>Close</Button>
+        </Card>
       )}
     </div>
   )

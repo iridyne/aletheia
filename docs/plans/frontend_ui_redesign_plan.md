@@ -24,7 +24,7 @@ Out of scope:
 4. Badge/capsule styling carried too much color weight and was used for too many meanings.
 5. Desktop settings rows wrapped too easily instead of aligning controls to the right.
 6. Native number-input spinners stood out against the dark UI.
-7. Settings implementation accumulated many inline styles and duplicated field-layout patterns.
+7. Settings implementation accumulated many inline styles and duplicated field-layout patterns; the primary settings IA/control pass is complete, while provider-specific advanced blocks remain a lower-risk cleanup seam.
 
 ## Design system direction
 
@@ -85,19 +85,22 @@ Acceptance:
 
 ### P2 — Settings control cleanup
 
-Status: in progress. Visible checkbox controls have been converted to switch-style primitives; Settings still needs a broader inline-style reduction pass.
+Status: functionally completed for the requested settings control issues in commits `59c3368`, `41b1366`, and the current P3/P4 pass.
 
 - Replace visible checkboxes with switch controls.
 - Use `settings-toggle-grid` for related boolean controls.
 - Use `settings-action-row` for save buttons and messages.
-- Continue reducing inline style blocks in Settings.
+- Keep provider-specific advanced blocks as an explicitly tracked follow-up seam rather than mixing them into trading/runtime behavior changes.
 
 Acceptance:
 
 - Settings no longer visually mixes checkbox + capsule status for the same boolean.
 - Control areas align consistently on desktop and stack only on narrow screens.
+- `Settings.tsx` has no direct native `type="checkbox"` controls; switch semantics live in the shared primitive.
 
 ### P3 — Page-by-page layout pass
+
+Status: completed for the production page set in the current P3/P4 pass. Non-settings pages now import shared UI primitives and no longer render ad-hoc `<button>`, `className="badge..."`, `className="card..."`, or inline `style={{...}}` patterns.
 
 Priority order:
 
@@ -120,10 +123,13 @@ Checks per page:
 
 ### P4 — Component extraction
 
-Status: in progress. Local primitives now exist under `frontend/src/components/ui/`:
+Status: completed for the local primitive layer used by this pass. Local primitives now exist under `frontend/src/components/ui/`:
 
 - `Button`
 - `Card`
+- `CardHeader`
+- `ActionRow`
+- `TableWrap`
 - `Badge`
 - `Switch`
 - `SettingsSection`
@@ -131,6 +137,9 @@ Status: in progress. Local primitives now exist under `frontend/src/components/u
 - `NumberFieldGrid`
 - `SwitchGrid`
 - `StatusDot`
+- `StatusText`
+- `StatusPair`
+- `ListRowButton`
 
 Create or consolidate local UI primitives:
 
@@ -146,6 +155,7 @@ Acceptance:
 
 - Page files stop re-implementing repeated layout primitives.
 - Inline styles continue to trend down.
+- Focused source tests guard the primitive export set and P3 pages against ad-hoc button/card/badge regressions.
 
 ## Regression checks
 
@@ -156,4 +166,5 @@ Acceptance:
   - Switch styling is used.
   - Native number spinners are hidden.
   - Global button active transform is disabled.
-  - Command Center recommendation severity uses text style, not badge capsule.
+- Command Center recommendation severity uses text style, not badge capsule.
+- P3 page primitive regression check passes.

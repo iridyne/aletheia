@@ -7,6 +7,7 @@ import type { TradeProposal } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
+import { Badge, Button, Card, StatusText } from '../components/ui'
 import { formatViolation, formatViolationText } from '../lib/riskViolations'
 import { humanize, fmtTimestamp } from '../lib/format'
 
@@ -73,12 +74,12 @@ export default function Proposals() {
       <div className="desk-queue-header">
         <h3>Pending Queue</h3>
         {pending.length > 0
-          ? <span className="badge badge-yellow">{pending.length} awaiting decision</span>
-          : <span className="badge badge-green">queue clear</span>}
+          ? <Badge tone="yellow">{pending.length} awaiting decision</Badge>
+          : <StatusText tone="green">queue clear</StatusText>}
       </div>
 
       {pending.length === 0 ? (
-        <div className="card"><p className="text-muted text-sm">No proposals awaiting decision.</p></div>
+        <Card><p className="text-muted text-sm">No proposals awaiting decision.</p></Card>
       ) : (
         <div className="desk-queue">
           {pending.map(p => (
@@ -97,14 +98,14 @@ export default function Proposals() {
 
       {/* HISTORY — decided proposals */}
       <h3 className="desk-history-title">Decision History</h3>
-      <div className="card">
+      <Card>
         <DataTable
           data={decided}
           columns={historyColumns}
           onRowClick={setSelected}
           emptyMessage="No decided proposals yet."
         />
-      </div>
+      </Card>
 
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Proposal Detail">
         {selected && (
@@ -139,11 +140,11 @@ export default function Proposals() {
             <div className="flex gap-2 mt-3">
               {selected.status === 'pending' && (
                 <>
-                  <button onClick={() => { doApprove(selected); setSelected(null) }} disabled={approve.isPending}>Approve</button>
-                  <button className="secondary" onClick={() => { doReject(selected); setSelected(null) }} disabled={reject.isPending}>Reject</button>
+                  <Button onClick={() => { doApprove(selected); setSelected(null) }} disabled={approve.isPending}>Approve</Button>
+                  <Button variant="secondary" onClick={() => { doReject(selected); setSelected(null) }} disabled={reject.isPending}>Reject</Button>
                 </>
               )}
-              <button className="secondary" onClick={() => navigate('/charts')}>View on Chart</button>
+              <Button variant="secondary" onClick={() => navigate('/charts')}>View on Chart</Button>
             </div>
           </>
         )}
@@ -165,13 +166,13 @@ function ProposalCard({
 }) {
   const dirClass = p.direction === 'long' || p.direction === 'buy' ? 'dir-long' : 'dir-short'
   return (
-    <div className="card proposal-card">
+    <Card className="proposal-card">
       <div className="proposal-card-head">
         <div className="flex items-center gap-2">
           <span className={`dir-tag ${dirClass}`}>{p.direction.toUpperCase()}</span>
           <span className="proposal-symbol mono">{p.symbol}</span>
-          <span className="badge badge-blue">{humanize(p.market_type)}</span>
-          <span className="badge badge-yellow">{humanize(p.execution_mode)}</span>
+          <Badge tone="blue">{humanize(p.market_type)}</Badge>
+          <Badge tone="yellow">{humanize(p.execution_mode)}</Badge>
         </div>
         <span className="text-muted text-sm mono">{fmtTimestamp(p.created_at)}</span>
       </div>
@@ -195,16 +196,16 @@ function ProposalCard({
       <RiskVerdictInline proposalId={p.id} />
 
       <div className="proposal-card-actions">
-        <button onClick={onApprove} disabled={busy}>Approve</button>
-        <button className="secondary" onClick={onReject} disabled={busy}>Reject</button>
-        <button className="secondary" onClick={onOpenDetail}>Details</button>
+        <Button onClick={onApprove} disabled={busy}>Approve</Button>
+        <Button variant="secondary" onClick={onReject} disabled={busy}>Reject</Button>
+        <Button variant="secondary" onClick={onOpenDetail}>Details</Button>
         {(p.strategy_id || p.opportunity_id) && (
-          <button className="secondary" onClick={() => navigate(p.opportunity_id ? '/agent-activity' : '/strategies')}>
+          <Button variant="secondary" onClick={() => navigate(p.opportunity_id ? '/agent-activity' : '/strategies')}>
             {p.opportunity_id ? 'Opportunity →' : 'Strategy →'}
-          </button>
+          </Button>
         )}
       </div>
-    </div>
+    </Card>
   )
 }
 

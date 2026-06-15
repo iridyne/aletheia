@@ -8,6 +8,7 @@ import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
+import { Badge, Button, Card } from '../components/ui'
 import { humanize, fmtTimestamp } from '../lib/format'
 
 /**
@@ -95,17 +96,17 @@ function RunsTab({ runs }: { runs: AgentRun[] }) {
 
   return (
     <>
-      <div className="card">
+      <Card>
         <h3>Run an agent now</h3>
         <div className="flex flex-wrap gap-1">
           {AGENTS.map(a => (
-            <button key={a} className="secondary" onClick={() => run.mutate(a)} disabled={run.isPending}>{a}</button>
+            <Button key={a} variant="secondary" onClick={() => run.mutate(a)} disabled={run.isPending}>{a}</Button>
           ))}
         </div>
-      </div>
-      <div className="card">
+      </Card>
+      <Card>
         <DataTable data={runs} columns={runColumns} onRowClick={setSelected} emptyMessage="No agent runs yet." />
-      </div>
+      </Card>
 
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Agent Run Detail">
         {selected && (
@@ -158,27 +159,27 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
 
   return (
     <>
-      <div className="card">
+      <Card>
         <div className="flex flex-wrap gap-1 mb-2">
-          <button className={`secondary ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
+          <Button variant="secondary" className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
             All ({opps.length})
-          </button>
-          <button className={`secondary ${filter === 'crypto' ? 'active' : ''}`} onClick={() => setFilter('crypto')}>
+          </Button>
+          <Button variant="secondary" className={filter === 'crypto' ? 'active' : ''} onClick={() => setFilter('crypto')}>
             Crypto ({counts.crypto})
-          </button>
+          </Button>
           {counts.equity > 0 && (
-            <button className={`secondary ${filter === 'equity' ? 'active' : ''}`} onClick={() => setFilter('equity')}>
+            <Button variant="secondary" className={filter === 'equity' ? 'active' : ''} onClick={() => setFilter('equity')}>
               Equity ({counts.equity})
-            </button>
+            </Button>
           )}
           {counts.prediction > 0 && (
-            <button className={`secondary ${filter === 'prediction' ? 'active' : ''}`} onClick={() => setFilter('prediction')}>
+            <Button variant="secondary" className={filter === 'prediction' ? 'active' : ''} onClick={() => setFilter('prediction')}>
               Prediction ({counts.prediction})
-            </button>
+            </Button>
           )}
         </div>
         <DataTable data={filtered} columns={oppColumns} onRowClick={setSelected} emptyMessage="No opportunities yet." />
-      </div>
+      </Card>
 
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Opportunity Detail">
         {selected && (
@@ -187,9 +188,9 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
               <DrawerField label="Symbol" value={selected.symbol} mono />
               <DrawerField label="Market" value={humanize(selected.market)} />
               <DrawerField label="Asset Class" value={
-                <span className={`badge ${selected.asset_class === 'prediction' ? 'badge-blue' : selected.asset_class === 'equity' ? 'badge-yellow' : 'badge-green'}`}>
+                <Badge tone={selected.asset_class === 'prediction' ? 'blue' : selected.asset_class === 'equity' ? 'yellow' : 'green'}>
                   {humanize(selected.asset_class || 'crypto')}
-                </span>
+                </Badge>
               } />
               <DrawerField label="Direction Bias" value={humanize(selected.direction_bias)} />
               <DrawerField label="Confidence" value={selected.confidence_score != null ? `${selected.confidence_score}%` : selected.confidence ?? null} mono />
@@ -214,9 +215,9 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
             </DrawerSection>
             <div className="mt-2 flex gap-1">
               {selected.asset_class === 'prediction' ? (
-                <button className="secondary" onClick={() => navigate('/prediction-markets')}>View in Prediction Lens</button>
+                <Button variant="secondary" onClick={() => navigate('/prediction-markets')}>View in Prediction Lens</Button>
               ) : (
-                <button className="secondary" onClick={() => navigate('/charts')}>View on Chart</button>
+                <Button variant="secondary" onClick={() => navigate('/charts')}>View on Chart</Button>
               )}
             </div>
           </>

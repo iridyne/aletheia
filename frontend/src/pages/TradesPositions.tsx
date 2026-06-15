@@ -9,6 +9,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import AccountSnapshot from '../components/AccountSnapshot'
 import CausalChain from '../components/CausalChain'
 import PageHeader from '../components/PageHeader'
+import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
 import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp } from '../lib/format'
 
 /**
@@ -107,17 +108,17 @@ export default function TradesPositions() {
       <div className="blotter-section-head">
         <h3>Open Positions</h3>
         {open.length > 0
-          ? <span className="badge badge-green">{open.length} open</span>
-          : <span className="badge badge-muted">flat</span>}
+          ? <Badge tone="green">{open.length} open</Badge>
+          : <Badge tone="muted">flat</Badge>}
       </div>
       {open.length === 0 ? (
-        <div className="card"><p className="text-muted text-sm">No open positions.</p></div>
+        <Card><p className="text-muted text-sm">No open positions.</p></Card>
       ) : (
         Object.entries(openGroups).map(([group, items]) => (
-          <div className="card" key={group}>
-            <h4 className="blotter-group-label">{group}</h4>
+          <Card key={group}>
+            <CardHeader title={<h4 className="blotter-group-label">{group}</h4>} />
             <DataTable data={items} columns={openColumns} onRowClick={p => setSel({ kind: 'position', position: p })} />
-          </div>
+          </Card>
         ))
       )}
 
@@ -131,13 +132,14 @@ export default function TradesPositions() {
       />
 
       {exposure && Object.keys(exposure).length > 0 && (
-        <div className="card">
-          <h4 className="blotter-group-label">Exposure by Symbol</h4>
+        <Card>
+          <CardHeader title={<h4 className="blotter-group-label">Exposure by Symbol</h4>} />
           <p className="text-muted text-sm mt-1">
             {reconciliation?.sync_status === 'ok' || reconciliation?.sync_status === 'stale'
               ? 'Open notional from the live exchange account view.'
               : 'aletheia-managed open notional · exchange sync unavailable (local view may drift from the exchange)'}
           </p>
+          <TableWrap>
           <table>
             <tbody>
               {Object.entries(exposure).map(([sym, v]) => (
@@ -145,7 +147,8 @@ export default function TradesPositions() {
               ))}
             </tbody>
           </table>
-        </div>
+          </TableWrap>
+        </Card>
       )}
 
       {/* ORDER / FILL HISTORY — the §23.9 ledger */}
@@ -153,26 +156,26 @@ export default function TradesPositions() {
         <h3>Orders &amp; Fills</h3>
         <span className="text-muted text-sm">click a row for the causal chain</span>
       </div>
-      <div className="card">
+      <Card>
         <DataTable
           data={orderRows}
           columns={orderColumns}
           onRowClick={o => setSel({ kind: 'order', order: o })}
           emptyMessage="No orders yet."
         />
-      </div>
+      </Card>
 
       {/* CLOSED POSITIONS — realized PnL ledger */}
       {closed.length > 0 && (
         <>
           <div className="blotter-section-head"><h3>Closed Positions</h3></div>
-          <div className="card">
+          <Card>
             <DataTable
               data={closed}
               columns={closedColumns}
               onRowClick={p => setSel({ kind: 'position', position: p })}
             />
-          </div>
+          </Card>
         </>
       )}
 
@@ -201,11 +204,11 @@ function ReconciliationCard({
   if (external.length === 0 && orphaned.length === 0) return null
 
   return (
-    <div className="card">
+    <Card>
       <div className="blotter-section-head">
         <h4 className="blotter-group-label">Account Reconciliation</h4>
-        {external.length > 0 && <span className="badge badge-yellow">{external.length} unmanaged</span>}
-        {orphaned.length > 0 && <span className="badge badge-muted">{orphaned.length} orphaned</span>}
+        {external.length > 0 && <Badge tone="yellow">{external.length} unmanaged</Badge>}
+        {orphaned.length > 0 && <Badge tone="muted">{orphaned.length} orphaned</Badge>}
       </div>
 
       {external.length > 0 && (
@@ -214,6 +217,7 @@ function ReconciliationCard({
             On the exchange but <strong>not opened by Aletheia</strong> — adoption candidates.
             {syncStatus === 'stale' && ' (exchange view is stale)'}
           </p>
+          <TableWrap>
           <table>
             <thead>
               <tr><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>uPnL</th></tr>
@@ -230,6 +234,7 @@ function ReconciliationCard({
               ))}
             </tbody>
           </table>
+          </TableWrap>
         </>
       )}
 
@@ -238,6 +243,7 @@ function ReconciliationCard({
           <p className="text-muted text-sm mt-3 mb-1">
             Open in Aletheia's books but <strong>no longer on the exchange</strong> — reconcile-close candidates.
           </p>
+          <TableWrap>
           <table>
             <thead>
               <tr><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Mode</th></tr>
@@ -254,9 +260,10 @@ function ReconciliationCard({
               ))}
             </tbody>
           </table>
+          </TableWrap>
         </>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -286,7 +293,7 @@ function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) 
       </DrawerSection>
       {order.filled_at && (
         <div className="mt-2">
-          <button className="secondary" onClick={() => navigate('/charts')}>View on Chart</button>
+          <Button variant="secondary" onClick={() => navigate('/charts')}>View on Chart</Button>
         </div>
       )}
     </>
@@ -303,7 +310,7 @@ function PositionDetail({ position }: { position: Position }) {
         <DrawerField label="Mode" value={humanize(position.execution_mode)} />
         <DrawerField label="Status" value={<StatusBadge status={position.status} />} />
         {position.source === 'adopted' && (
-          <DrawerField label="Source" value={<span className="badge badge-yellow">Adopted</span>} />
+          <DrawerField label="Source" value={<Badge tone="yellow">Adopted</Badge>} />
         )}
       </DrawerSection>
       <DrawerSection label="Pricing">

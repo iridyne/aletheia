@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import SetupBanner from '../components/SetupBanner'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
+import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { humanize, fmtTimestamp } from '../lib/format'
 
@@ -78,9 +79,9 @@ export default function Overview() {
 
   // Risk
   const riskState = String(riskStatus?.status || 'not_available')
-  const riskBadge = riskState === 'blocked' ? 'badge-red'
-    : (riskState === 'warning' || riskState === 'not_available' || riskState === 'not_evaluated') ? 'badge-yellow'
-    : 'badge-green'
+  const riskTone = riskState === 'blocked' ? 'red'
+    : (riskState === 'warning' || riskState === 'not_available' || riskState === 'not_evaluated') ? 'yellow'
+    : 'green'
   const violations = (riskStatus?.violations as string[]) || []
 
   // System pills (honest)
@@ -107,12 +108,12 @@ export default function Overview() {
 
         <div className="cockpit-rail" ref={setRailEl}>
           {/* Approval Desk — the one human-in-loop control point */}
-          <div className="card rail-card desk-panel">
-            <h3>Approval Desk</h3>
+          <Card className="rail-card desk-panel">
+            <CardHeader title="Approval Desk" />
             {pendingProposals.length > 0 ? (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="badge badge-yellow">{pendingProposals.length} pending</span>
+                  <Badge tone="yellow">{pendingProposals.length} pending</Badge>
                   <span className="text-muted text-sm">awaiting review</span>
                 </div>
                 <ul className="approval-list">
@@ -123,20 +124,20 @@ export default function Overview() {
                     </li>
                   ))}
                 </ul>
-                <button className="btn-control mt-3" onClick={() => navigate('/proposals')}>Review →</button>
+                <Button className="btn-control mt-3" onClick={() => navigate('/proposals')}>Review →</Button>
               </>
             ) : (
               <p className="text-muted text-sm">No pending actions</p>
             )}
-          </div>
+          </Card>
 
           {/* Risk state */}
-          <div className="card rail-card risk-panel">
+          <Card className="rail-card risk-panel">
             <div className="risk-head">
               <h3>Risk State</h3>
               <div className="risk-head-badges">
-                {killed && <span className="badge badge-red">KILL SWITCH</span>}
-                <span className={`badge ${riskBadge}`}>{riskStateLabel(riskState)}</span>
+                {killed && <StatusText tone="red">KILL SWITCH</StatusText>}
+                <StatusText tone={riskTone}>{riskStateLabel(riskState)}</StatusText>
               </div>
             </div>
             {violations.length > 0 ? (
@@ -160,15 +161,15 @@ export default function Overview() {
                 <span className="text-muted text-sm">No active violations</span>
               </div>
             )}
-          </div>
+          </Card>
 
           {/* System / connections — tabular status board (old-school console feel) */}
-          <div className="card rail-card system-panel">
+          <Card className="rail-card system-panel">
             <div className="flex items-center justify-between mb-2">
               <h3>System</h3>
               <div className="flex gap-2">
-                <button className="btn-control" onClick={() => pauseMut.mutate()} disabled={paused || !running}>⏸</button>
-                <button className="btn-control secondary" onClick={() => resumeMut.mutate()} disabled={!paused}>▶</button>
+                <Button className="btn-control" onClick={() => pauseMut.mutate()} disabled={paused || !running}>⏸</Button>
+                <Button className="btn-control" variant="secondary" onClick={() => resumeMut.mutate()} disabled={!paused}>▶</Button>
               </div>
             </div>
             <table className="status-board">
@@ -194,7 +195,7 @@ export default function Overview() {
                 />
               </tbody>
             </table>
-          </div>
+          </Card>
         </div>
       </div>
     </div>

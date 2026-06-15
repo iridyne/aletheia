@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
+import { Badge, Button, Card } from '../components/ui'
 import { humanize, fmtTimestamp } from '../lib/format'
 
 type NewsItem = {
@@ -20,11 +21,11 @@ type NewsItem = {
   status: string
 }
 
-const SENTIMENT_BADGE: Record<string, string> = {
-  bullish: 'badge-green',
-  bearish: 'badge-red',
-  neutral: 'badge-blue',
-  mixed: 'badge-yellow',
+const SENTIMENT_TONE: Record<string, 'green' | 'red' | 'blue' | 'yellow'> = {
+  bullish: 'green',
+  bearish: 'red',
+  neutral: 'blue',
+  mixed: 'yellow',
 }
 
 export default function NewsIntel() {
@@ -65,13 +66,14 @@ export default function NewsIntel() {
 
       <div className="flex items-center gap-2 mb-3">
         {['all', 'new', 'reviewed'].map(f => (
-          <button
+          <Button
             key={f}
-            className={`btn-sm ${f === filter ? '' : 'secondary'}`}
+            variant={f === filter ? 'primary' : 'secondary'}
+            className="btn-sm"
             onClick={() => setFilter(f)}
           >
             {humanize(f)}
-          </button>
+          </Button>
         ))}
         <span className="text-muted text-sm">
           {items.length} items
@@ -79,15 +81,15 @@ export default function NewsIntel() {
       </div>
 
       {items.length === 0 ? (
-        <div className="card">
+        <Card>
           <p className="text-muted">No news items yet. News will appear here once the ingestion pipeline is configured or items are added manually via the API.</p>
-        </div>
+        </Card>
       ) : (
         <div className="news-list">
           {items.map(item => (
-            <div
+            <Card
               key={item.id}
-              className="card news-card clickable"
+              className="news-card clickable"
               onClick={() => { setSelected(item); setAnalysis(null) }}
             >
               <div className="flex justify-between items-center gap-2">
@@ -97,23 +99,23 @@ export default function NewsIntel() {
                     <span className="text-muted text-sm">{item.source}</span>
                     <span className="text-muted text-sm mono">{fmtTimestamp(item.published_at)}</span>
                     {item.symbols_mentioned?.map(s => (
-                      <span key={s} className="badge badge-blue">{s}</span>
+                      <Badge key={s} tone="blue">{s}</Badge>
                     ))}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={`badge ${SENTIMENT_BADGE[item.sentiment] || 'badge-blue'}`}>
+                  <Badge tone={SENTIMENT_TONE[item.sentiment] || 'blue'}>
                     {humanize(item.sentiment)}
-                  </span>
-                  <span className={`badge ${item.status === 'new' ? 'badge-yellow' : 'badge-muted'}`}>
+                  </Badge>
+                  <Badge tone={item.status === 'new' ? 'yellow' : 'muted'}>
                     {humanize(item.status)}
-                  </span>
+                  </Badge>
                 </div>
               </div>
               {item.summary && (
                 <p className="text-muted text-sm mt-2 news-summary">{item.summary}</p>
               )}
-            </div>
+            </Card>
           ))}
         </div>
       )}
@@ -126,16 +128,16 @@ export default function NewsIntel() {
               <DrawerField label="Source" value={selected.source} />
               <DrawerField label="Published" value={fmtTimestamp(selected.published_at)} mono />
               <DrawerField label="Event Type" value={humanize(selected.event_type)} />
-              <DrawerField label="Sentiment" value={<span className={`badge ${SENTIMENT_BADGE[selected.sentiment] || 'badge-blue'}`}>{humanize(selected.sentiment)}</span>} />
+              <DrawerField label="Sentiment" value={<Badge tone={SENTIMENT_TONE[selected.sentiment] || 'blue'}>{humanize(selected.sentiment)}</Badge>} />
               <DrawerField label="Relevance" value={`${(selected.relevance_score * 100).toFixed(0)}%`} mono />
-              <DrawerField label="Status" value={<span className={`badge ${selected.status === 'new' ? 'badge-yellow' : 'badge-muted'}`}>{humanize(selected.status)}</span>} />
+              <DrawerField label="Status" value={<Badge tone={selected.status === 'new' ? 'yellow' : 'muted'}>{humanize(selected.status)}</Badge>} />
             </DrawerSection>
 
             {selected.symbols_mentioned?.length > 0 && (
               <DrawerSection label="Related Assets">
                 <div className="flex gap-2 flex-wrap">
                   {selected.symbols_mentioned.map(s => (
-                    <span key={s} className="badge badge-blue">{s}</span>
+                    <Badge key={s} tone="blue">{s}</Badge>
                   ))}
                 </div>
               </DrawerSection>
@@ -159,13 +161,13 @@ export default function NewsIntel() {
               {analysis ? (
                 <p className="text-sm news-prose">{analysis}</p>
               ) : (
-                <button
+                <Button
                   className="btn-sm"
                   onClick={() => analyzeMut.mutate(selected.id)}
                   disabled={analyzeMut.isPending}
                 >
                   {analyzeMut.isPending ? 'Analyzing…' : 'Analyze Impact'}
-                </button>
+                </Button>
               )}
             </DrawerSection>
           </>

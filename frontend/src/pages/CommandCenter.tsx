@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { humanize } from '../lib/format'
 import PageHeader from '../components/PageHeader'
+import { Badge, Button, Card, ListRowButton, StatusText, TableWrap } from '../components/ui'
 import type {
   OperatorCommandAudit,
   OperatorCommandPreview,
@@ -89,21 +90,6 @@ function sessionKindLabel(kind: string | null | undefined): string {
   }
 }
 
-function sessionKindBadge(kind: string | null | undefined): string {
-  switch (kind) {
-    case 'dreaming_session':
-      return 'badge-blue'
-    case 'review_session':
-      return 'badge-yellow'
-    case 'strategy_session':
-      return 'badge-green'
-    case 'diagnostic_session':
-      return 'badge-red'
-    default:
-      return 'badge-blue'
-  }
-}
-
 const BRANCH_KIND_OPTIONS = [
   { value: 'command_session', label: 'Command' },
   { value: 'diagnostic_session', label: 'Diagnostic' },
@@ -111,20 +97,6 @@ const BRANCH_KIND_OPTIONS = [
   { value: 'strategy_session', label: 'Strategy' },
   { value: 'review_session', label: 'Review' },
 ] as const
-
-function severityBadge(severity: string): string {
-  switch (severity) {
-    case 'high':
-    case 'warning':
-      return 'badge-red'
-    case 'medium':
-      return 'badge-yellow'
-    case 'info':
-      return 'badge-blue'
-    default:
-      return 'badge-blue'
-  }
-}
 
 function severityTextClass(severity: string): string {
   switch (severity) {
@@ -136,6 +108,25 @@ function severityTextClass(severity: string): string {
       return 'cc-severity-low'
     default:
       return 'cc-severity-low'
+  }
+}
+
+function depthClass(depth: number): string {
+  return `cc-depth-${Math.max(0, Math.min(depth, 6))}`
+}
+
+function sessionKindTone(kind: string | null | undefined): 'blue' | 'yellow' | 'green' | 'red' | 'muted' {
+  switch (kind) {
+    case 'dreaming_session':
+      return 'blue'
+    case 'review_session':
+      return 'yellow'
+    case 'strategy_session':
+      return 'green'
+    case 'diagnostic_session':
+      return 'red'
+    default:
+      return 'muted'
   }
 }
 
@@ -290,13 +281,13 @@ function RuntimeContinuityPanel({
   return (
     <div className="runtime-continuity-panel">
       <div className="runtime-summary-strip">
-        <span className={`badge ${status?.enabled ? 'badge-green' : 'badge-yellow'}`}>
+        <Badge tone={status?.enabled ? 'green' : 'yellow'}>
           {status?.enabled ? 'enabled' : 'disabled'}
-        </span>
+        </Badge>
         <span className="mono">phase: {status?.phase || 'not configured'}</span>
         <span className="mono">lock: {status?.lock_owner || 'none'}</span>
         {status?.activation_required && (
-          <span className="badge badge-yellow">restart required</span>
+          <StatusText tone="yellow">restart required</StatusText>
         )}
         <span className="mono">current: {status?.runtime_id || '—'}</span>
       </div>
@@ -309,37 +300,41 @@ function RuntimeContinuityPanel({
       </div>
 
       <div className="runtime-action-row">
-        <button className="btn-control" onClick={onCandidate} disabled={pendingAction !== null}>
+        <Button className="btn-control" onClick={onCandidate} disabled={pendingAction !== null}>
           {pendingAction === 'candidate' ? 'Creating…' : 'Create Candidate'}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="secondary"
           className="btn-control secondary"
           onClick={onShadow}
           disabled={!candidateId || pendingAction !== null}
         >
           {pendingAction === 'shadow' ? 'Validating…' : 'Start Shadow'}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="secondary"
           className="btn-control secondary"
           onClick={onPromote}
           disabled={!status?.can_promote || pendingAction !== null}
         >
           {pendingAction === 'promote' ? 'Promoting…' : 'Promote'}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="danger"
           className="btn-control danger"
           onClick={onDrain}
           disabled={!status?.can_drain || pendingAction !== null}
         >
           {pendingAction === 'drain' ? 'Draining…' : 'Drain'}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="danger"
           className="btn-control danger"
           onClick={onRollback}
           disabled={!status?.can_rollback || pendingAction !== null}
         >
           {pendingAction === 'rollback' ? 'Rolling Back…' : 'Rollback'}
-        </button>
+        </Button>
       </div>
 
       <div className="runtime-ops-grid">
@@ -380,7 +375,7 @@ function RuntimeContinuityPanel({
             <span className="mono text-muted">{guidance?.action || 'observe'}</span>
           </div>
           <div className="runtime-guidance">
-            <span className={`badge ${runtimeBadge(guidance?.action)}`}>{guidance?.action || 'observe'}</span>
+            <StatusText tone={runtimeBadge(guidance?.action).includes('green') ? 'green' : runtimeBadge(guidance?.action).includes('red') ? 'red' : 'yellow'}>{guidance?.action || 'observe'}</StatusText>
             <span>{guidance?.reason ? humanize(guidance.reason) : 'No runtime action suggested.'}</span>
             {guidance?.runtime_id && <span className="mono">{guidance.runtime_id}</span>}
           </div>
@@ -871,20 +866,20 @@ export default function CommandCenter() {
         role="Persistent operator workspace for command, diagnosis, session branching, and evidence-backed inspection."
         actions={
           <div className="flex gap-2">
-            <button className="btn-control" onClick={() => pauseMut.mutate()} disabled={pauseMut.isPending}>Pause</button>
-            <button className="btn-control secondary" onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>Resume</button>
-            <button className="btn-control secondary" onClick={() => wakeMut.mutate()} disabled={wakeMut.isPending}>Wake</button>
+            <Button className="btn-control" onClick={() => pauseMut.mutate()} disabled={pauseMut.isPending}>Pause</Button>
+            <Button variant="secondary" className="btn-control secondary" onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>Resume</Button>
+            <Button variant="secondary" className="btn-control secondary" onClick={() => wakeMut.mutate()} disabled={wakeMut.isPending}>Wake</Button>
           </div>
         }
       />
 
       <div className="command-center-layout">
         <div className="command-center-main">
-        <section className="card command-center-shell">
+        <Card className="command-center-shell">
           <div className="command-center-strip">
-            <span className={`badge ${operatorStatus?.status === 'online' ? 'badge-green' : operatorStatus?.status === 'stale' ? 'badge-yellow' : 'badge-red'}`}>
+            <Badge tone={operatorStatus?.status === 'online' ? 'green' : operatorStatus?.status === 'stale' ? 'yellow' : 'red'}>
               {humanize(operatorStatus?.status || 'offline')}
-            </span>
+            </Badge>
             <span className="mono">mode: {operatorStatus?.mode || 'Observing'}{operatorStatus?.mode === 'Working' && operatorStatus?.current_intent ? ` — ${operatorStatus.current_intent}` : ''}</span>
             <span className="mono">perm: {operatorStatus?.permission_mode || 'ReadOnly'}</span>
             <span className="mono">session: {operatorStatus?.session_id || 'operator-main'}</span>
@@ -894,18 +889,20 @@ export default function CommandCenter() {
           </div>
 
           <div className="command-center-tabs">
-            <button
+            <Button
+              variant="ghost"
               className={activePane === 'conversation' ? 'active' : ''}
               onClick={() => setActivePane('conversation')}
             >
               Conversation
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
               className={activePane === 'runtime' ? 'active' : ''}
               onClick={() => setActivePane('runtime')}
             >
               Runtime Continuity
-            </button>
+            </Button>
           </div>
 
           {activePane === 'conversation' ? (
@@ -960,7 +957,7 @@ export default function CommandCenter() {
                     {showTraceCard && (
                       <div className="command-trace-card">
                         <div className="command-trace-head">
-                          <span className="badge badge-blue">Trace</span>
+                          <Badge tone="blue">Trace</Badge>
                           <span className="mono">{commandName}</span>
                         </div>
                         {(parameters || commandDescription) && (
@@ -976,9 +973,9 @@ export default function CommandCenter() {
                     {showResultCard && (
                       <div className="command-result-card">
                         <div className="command-result-head">
-                          <span className={`badge ${permitted === false ? 'badge-red' : 'badge-green'}`}>
+                          <Badge tone={permitted === false ? 'red' : 'green'}>
                             {permitted === false ? 'Blocked' : 'Executed'}
-                          </span>
+                          </Badge>
                           <span className="mono">{commandName || 'response'}</span>
                           {riskLevel && <span className="mono">risk: {riskLevel}</span>}
                         </div>
@@ -1008,9 +1005,9 @@ export default function CommandCenter() {
             {previewInput.length > 0 && (
               <div className="command-preview">
                 <div className="command-preview-head">
-                  <span className={`badge ${previewBadge(commandPreview)}`}>
+                  <Badge tone={previewBadge(commandPreview).includes('green') ? 'green' : previewBadge(commandPreview).includes('red') ? 'red' : 'yellow'}>
                     {commandPreviewFetching && !commandPreview ? 'Checking…' : previewLabel(commandPreview)}
-                  </span>
+                  </Badge>
                   <span className="mono">
                     {commandPreview?.command?.name || commandPreview?.intent || 'preview'}
                   </span>
@@ -1062,13 +1059,13 @@ export default function CommandCenter() {
             )}
             <div className="command-composer-actions">
               <span className="text-muted text-sm">Long-form interaction lives here. Ctrl+K is a launcher; child sessions carry specialist traces.</span>
-              <button
+              <Button
                 className="btn-control"
                 disabled={commandMut.isPending || input.trim().length === 0}
                 onClick={() => commandMut.mutate()}
               >
                 {commandMut.isPending ? 'Sending…' : 'Send'}
-              </button>
+              </Button>
             </div>
           </div>
             </>
@@ -1096,9 +1093,9 @@ export default function CommandCenter() {
               }}
             />
           )}
-        </section>
+        </Card>
 
-          <div className="card">
+          <Card>
             <div className="cc-card-header">
               <h3>Sessions</h3>
               <span className="mono text-muted">{sessions.length}</span>
@@ -1118,22 +1115,23 @@ export default function CommandCenter() {
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
-                <button
+                <Button
+                  variant="secondary"
                   className="btn-control secondary"
                   disabled={createBranchMut.isPending || branchTitle.trim().length === 0}
                   onClick={() => createBranchMut.mutate()}
                 >
                   {createBranchMut.isPending ? 'Creating…' : 'Create Branch'}
-                </button>
+                </Button>
               </div>
               <div className="text-muted text-sm">Start a persistent side-task session under the currently selected session and make it the active operator branch.</div>
             </div>
             <div className="cc-list">
               {sessions.length === 0 && <div className="text-muted text-sm">No sessions yet.</div>}
               {sessionRows.map(({ session, depth }) => (
-                <button
+                <ListRowButton
                   key={session.id}
-                  className={`cc-list-item ${selectedSessionId === session.id ? 'selected' : ''}`}
+                  selected={selectedSessionId === session.id}
                   onClick={() => {
                     setSelectedSessionId(session.id)
                     setInspectorFocus({ kind: 'session', id: session.id })
@@ -1142,17 +1140,17 @@ export default function CommandCenter() {
                     }
                   }}
                 >
-                  <span className="cc-session-copy" style={{ paddingLeft: `${depth * 16}px` }}>
+                  <span className={`cc-session-copy ${depthClass(depth)}`}>
                     <span>{sessionDisplayTitle(session)}</span>
                     <span className="cc-item-subtle">{session.id} · {session.message_count} msg</span>
                   </span>
-                  <span className={`badge ${sessionKindBadge(session.kind)}`}>{sessionKindLabel(session.kind)}</span>
-                </button>
+                  <StatusText tone={sessionKindTone(session.kind)}>{sessionKindLabel(session.kind)}</StatusText>
+                </ListRowButton>
               ))}
             </div>
-          </div>
+          </Card>
 
-          <div className="card">
+          <Card>
             <div className="cc-card-header">
               <h3>Timeline</h3>
               <span className="mono text-muted">{filteredTimeline.length}/{timeline.length}</span>
@@ -1161,9 +1159,9 @@ export default function CommandCenter() {
               {timeline.length === 0 && <div className="text-muted text-sm">No operator timeline yet.</div>}
               {timeline.length > 0 && filteredTimeline.length === 0 && <div className="text-muted text-sm">No timeline items match the filter.</div>}
               {filteredTimeline.map(item => (
-                <button
+                <ListRowButton
                   key={item.id}
-                  className={`cc-list-item ${inspectorFocus?.kind === 'event' && inspectorFocus.id === item.id ? 'selected' : ''}`}
+                  selected={inspectorFocus?.kind === 'event' && inspectorFocus.id === item.id}
                   onClick={() => setInspectorFocus({ kind: 'event', id: item.id })}
                 >
                   <span className="cc-list-copy">
@@ -1171,12 +1169,12 @@ export default function CommandCenter() {
                     <span className="cc-item-subtle">{item.detail}</span>
                   </span>
                   <span className="mono">{formatTimestamp(item.ts)}</span>
-                </button>
+                </ListRowButton>
               ))}
             </div>
-          </div>
+          </Card>
 
-          <div className="card">
+          <Card>
             <div className="cc-card-header">
               <h3>Command History</h3>
               <span className="mono text-muted">
@@ -1196,45 +1194,47 @@ export default function CommandCenter() {
               {filterText.length > 0 && commandSearchResults.length === 0 && <div className="text-muted text-sm">No command records match the full operator history search.</div>}
               {commandHistory.length > 0 && filteredCommands.length === 0 && <div className="text-muted text-sm">No command records match the filter.</div>}
               {filteredCommands.map(command => (
-                <button
+                <ListRowButton
                   key={command.id}
-                  className={`cc-command-row ${inspectorFocus?.kind === 'command' && inspectorFocus.id === command.id ? 'selected' : ''}`}
+                  className="cc-command-row"
+                  selected={inspectorFocus?.kind === 'command' && inspectorFocus.id === command.id}
                   onClick={() => setInspectorFocus({ kind: 'command', id: command.id })}
                 >
                   <div className="cc-command-main">
                     <span className="cc-command-name">{command.command}</span>
-                    <span className={`badge ${command.permitted ? 'badge-green' : 'badge-red'}`}>
+                    <StatusText tone={command.permitted ? 'green' : 'red'}>
                       {command.permitted ? 'allowed' : 'blocked'}
-                    </span>
+                    </StatusText>
                   </div>
                   <div className="cc-command-meta">
                     <span className="mono">{formatTimestamp(command.created_at)}</span>
                     {filterText.length > 0 && <span className="mono">{command.session_id}</span>}
                     {command.result_summary && <span>{command.result_summary}</span>}
                   </div>
-                </button>
+                </ListRowButton>
               ))}
             </div>
-          </div>
+          </Card>
         </div>
 
         <aside className="command-center-side">
-          <div className="card">
+          <Card>
             <h3>Quick Actions</h3>
             <div className="cc-action-grid">
               {quickActions.map(action => (
-                <button
+                <Button
+                  variant="secondary"
                   key={action.id}
                   className="cc-action-btn"
                   onClick={() => setInput(action.draft)}
                 >
                   {action.label}
-                </button>
+                </Button>
               ))}
             </div>
-          </div>
+          </Card>
 
-          <div className="card">
+          <Card>
             <div className="cc-card-header">
               <h3>Enabled Extensions</h3>
               <span className="mono text-muted">{enabledExtensions.length}</span>
@@ -1250,9 +1250,8 @@ export default function CommandCenter() {
                     : ''
                 const draft = textParameter ? `${extension.slash_command} ` : extension.slash_command
                 return (
-                  <button
+                  <ListRowButton
                     key={extension.id}
-                    className="cc-list-item"
                     onClick={() => setInput(draft)}
                   >
                     <span className="cc-list-copy">
@@ -1262,28 +1261,30 @@ export default function CommandCenter() {
                       </span>
                       <span className="cc-item-subtle">{extension.description}</span>
                     </span>
-                    <span className="badge badge-green">enabled</span>
-                  </button>
+                    <StatusText tone="green">enabled</StatusText>
+                  </ListRowButton>
                 )
               })}
             </div>
-          </div>
+          </Card>
 
-          <div className="card">
+          <Card>
             <h3>Operator State</h3>
-            <table className="status-board">
-              <tbody>
-                <tr><th>Status</th><td>{humanize(operatorStatus?.status || 'offline')}</td></tr>
-                <tr><th>Mode</th><td>{operatorStatus?.mode || 'Observing'}</td></tr>
-                <tr><th>Intent</th><td>{operatorStatus?.current_intent || '—'}</td></tr>
-                <tr><th>Active Branch</th><td>{operatorStatus?.active_branch_title || operatorStatus?.active_branch_id || '—'}</td></tr>
-                <tr><th>Heartbeat</th><td>{formatTimestamp(operatorStatus?.last_seen_at)}</td></tr>
-                <tr><th>Error</th><td>{operatorStatus?.last_error || '—'}</td></tr>
-              </tbody>
-            </table>
-          </div>
+            <TableWrap>
+              <table className="status-board">
+                <tbody>
+                  <tr><th>Status</th><td>{humanize(operatorStatus?.status || 'offline')}</td></tr>
+                  <tr><th>Mode</th><td>{operatorStatus?.mode || 'Observing'}</td></tr>
+                  <tr><th>Intent</th><td>{operatorStatus?.current_intent || '—'}</td></tr>
+                  <tr><th>Active Branch</th><td>{operatorStatus?.active_branch_title || operatorStatus?.active_branch_id || '—'}</td></tr>
+                  <tr><th>Heartbeat</th><td>{formatTimestamp(operatorStatus?.last_seen_at)}</td></tr>
+                  <tr><th>Error</th><td>{operatorStatus?.last_error || '—'}</td></tr>
+                </tbody>
+              </table>
+            </TableWrap>
+          </Card>
 
-          <div className="card">
+          <Card>
             <div className="cc-card-header">
               <h3>Recommendations</h3>
               <span className="mono text-muted">{filteredRecommendations.length}/{recommendations.length}</span>
@@ -1292,9 +1293,9 @@ export default function CommandCenter() {
               {recommendations.length === 0 && <div className="text-muted text-sm">No backend recommendations right now.</div>}
               {recommendations.length > 0 && filteredRecommendations.length === 0 && <div className="text-muted text-sm">No recommendations match the filter.</div>}
               {filteredRecommendations.map(item => (
-                <button
+                <ListRowButton
                   key={item.id}
-                  className={`cc-list-item ${inspectorFocus?.kind === 'recommendation' && inspectorFocus.id === item.id ? 'selected' : ''}`}
+                  selected={inspectorFocus?.kind === 'recommendation' && inspectorFocus.id === item.id}
                   onClick={() => setInspectorFocus({ kind: 'recommendation', id: item.id })}
                 >
                   <span className="cc-list-copy">
@@ -1302,12 +1303,12 @@ export default function CommandCenter() {
                     <span className="cc-item-subtle">{humanize(item.kind)}</span>
                   </span>
                   <span className={`cc-severity ${severityTextClass(item.severity)}`}>{humanize(item.severity)}</span>
-                </button>
+                </ListRowButton>
               ))}
             </div>
-          </div>
+          </Card>
 
-          <div className="card">
+          <Card>
             <div className="cc-card-header">
               <h3>Active Tasks</h3>
               <span className="mono text-muted">{filteredTasks.length}/{tasks.length}</span>
@@ -1316,9 +1317,9 @@ export default function CommandCenter() {
               {tasks.length === 0 && <div className="text-muted text-sm">No operator tasks yet.</div>}
               {tasks.length > 0 && filteredTasks.length === 0 && <div className="text-muted text-sm">No tasks match the filter.</div>}
               {filteredTasks.map(task => (
-                <button
+                <ListRowButton
                   key={task.id}
-                  className={`cc-list-item ${inspectorFocus?.kind === 'task' && inspectorFocus.id === task.id ? 'selected' : activeTask?.id === task.id ? 'selected' : ''}`}
+                  selected={inspectorFocus?.kind === 'task' && inspectorFocus.id === task.id ? true : activeTask?.id === task.id}
                   onClick={() => setInspectorFocus({ kind: 'task', id: task.id })}
                 >
                   <span className="cc-list-copy">
@@ -1326,12 +1327,12 @@ export default function CommandCenter() {
                     <span className="cc-item-subtle">{task.assigned_to} · {humanize(task.status)}</span>
                   </span>
                   <span className="mono">{humanize(task.priority)}</span>
-                </button>
+                </ListRowButton>
               ))}
             </div>
-          </div>
+          </Card>
 
-          <div className="card">
+          <Card>
             <div className="cc-card-header">
               <h3>Context Inspector</h3>
               <span className="mono text-muted">{sessionContext?.profile ? humanize(sessionContext.profile) : '—'}</span>
@@ -1362,9 +1363,9 @@ export default function CommandCenter() {
                 </pre>
               </div>
             )}
-          </div>
+          </Card>
 
-          <div className="card">
+          <Card>
             <div className="cc-card-header">
               <h3>Inspector</h3>
               <span className="mono text-muted">{inspectorModel.subtitle}</span>
@@ -1386,7 +1387,7 @@ export default function CommandCenter() {
                 {JSON.stringify(inspectorModel.raw, null, 2)}
               </pre>
             </div>
-          </div>
+          </Card>
         </aside>
       </div>
     </div>

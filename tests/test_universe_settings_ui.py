@@ -96,3 +96,52 @@ def test_global_ui_removes_draggy_button_and_number_spinner_patterns():
     assert 'input[type="number"] { appearance: textfield;' in css
     assert "cc-severity" in command_center
     assert "cc-list-item:active { transform: none; }" in css
+
+
+def test_p3_pages_use_shared_primitives_instead_of_ad_hoc_capsules_and_buttons():
+    """The page-by-page pass should not regress to draggy button rows or heavy badges."""
+    pages = [
+        "AgentActivity.tsx",
+        "Charts.tsx",
+        "CommandCenter.tsx",
+        "Learning.tsx",
+        "NewsIntel.tsx",
+        "Overview.tsx",
+        "PredictionLens.tsx",
+        "Proposals.tsx",
+        "RiskControls.tsx",
+        "SerenityLens.tsx",
+        "StrategyLifecycle.tsx",
+        "TradesPositions.tsx",
+        "Universe.tsx",
+    ]
+    for name in pages:
+        page = Path("frontend/src/pages") / name
+        text = page.read_text(encoding="utf-8")
+        assert "../components/ui" in text, name
+        assert "<button" not in text, name
+        assert 'className="badge' not in text, name
+        assert 'className="card"' not in text, name
+        assert 'className="card ' not in text, name
+        assert "style={{" not in text, name
+
+    command_center = Path("frontend/src/pages/CommandCenter.tsx").read_text(encoding="utf-8")
+    assert "ListRowButton" in command_center
+    assert "cc-severity" in command_center
+
+
+def test_local_ui_primitive_barrel_exports_page_layout_components():
+    ui_index = Path("frontend/src/components/ui/index.ts").read_text(encoding="utf-8")
+    for symbol in [
+        "Button",
+        "Card",
+        "CardHeader",
+        "TableWrap",
+        "Badge",
+        "Switch",
+        "SettingsSection",
+        "StatusDot",
+        "StatusText",
+        "ListRowButton",
+    ]:
+        assert symbol in ui_index

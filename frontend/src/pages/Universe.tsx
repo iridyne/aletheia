@@ -8,6 +8,7 @@ import { DataTable } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
 import MetricTile from '../components/MetricTile'
+import { Badge, Button, Card } from '../components/ui'
 import { humanize, fmtTimestamp } from '../lib/format'
 
 const col = createColumnHelper<UniverseMember>()
@@ -17,15 +18,8 @@ function parseJson(raw: string | null | undefined): any[] {
   try { return JSON.parse(raw) } catch { return [] }
 }
 
-/** Scanner-family accent — stays within the token palette (no off-palette purple/orange). */
-function familyColor(family: string | null): string {
-  switch (family) {
-    case 'momentum': return 'var(--blue)'
-    case 'mean_reversion': return 'var(--accent)'
-    case 'volatility': return 'var(--yellow)'
-    case 'derivatives': return 'var(--green)'
-    default: return 'var(--muted)'
-  }
+function familyClass(family: string | null): string {
+  return `universe-family universe-family-${family || 'unknown'}`
 }
 
 function formatVolume(v: number | null): string {
@@ -52,7 +46,7 @@ const columns = [
   col.accessor('scanner_family', {
     header: 'Family',
     cell: info => (
-      <span style={{ color: familyColor(info.getValue()) }}>
+      <span className={familyClass(info.getValue())}>
         {info.getValue() ? humanize(info.getValue()!) : '—'}
       </span>
     ),
@@ -91,9 +85,9 @@ const columns = [
   col.accessor('execution_eligible', {
     header: 'Eligible',
     cell: info => (
-      <span className={`badge ${info.getValue() ? 'badge-green' : 'badge-muted'}`}>
+      <Badge tone={info.getValue() ? 'green' : 'muted'}>
         {info.getValue() ? 'Yes' : 'No'}
-      </span>
+      </Badge>
     ),
   }),
 ]
@@ -140,22 +134,22 @@ export default function Universe() {
       />
 
       {!enabled && (
-        <div className="card" style={{ borderColor: 'var(--border-2)', marginBottom: '1rem' }}>
+        <Card className="universe-disabled-card">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div>
-              <h3 style={{ marginBottom: '0.25rem' }}>Universe generator is disabled</h3>
-              <p className="hint" style={{ margin: 0 }}>
+              <h3>Universe generator is disabled</h3>
+              <p className="hint">
                 The board is showing the static fallback pool. Enable it in Settings → Risk, Symbols & Universe → Universe Board.
               </p>
             </div>
-            <button
-              className="secondary"
+            <Button
+              variant="secondary"
               onClick={() => navigate('/settings?tab=risk&section=universe')}
             >
               Open Universe setting
-            </button>
+            </Button>
           </div>
-        </div>
+        </Card>
       )}
 
       {/* Summary row */}
@@ -174,8 +168,8 @@ export default function Universe() {
             const count = members.filter(m => m.scanner_family === family).length
             const top = members.find(m => m.scanner_family === family)
             return (
-              <div key={family} className="card metric-tile">
-                <div className="metric-label" style={{ color: familyColor(family) }}>
+              <Card key={family} className="metric-tile">
+                <div className={`metric-label ${familyClass(family)}`}>
                   {humanize(family)}
                 </div>
                 <div className="metric-value">{count} <span className="text-sm text-muted">assets</span></div>
@@ -184,7 +178,7 @@ export default function Universe() {
                     Top: <span className="mono">{top.symbol}</span> ({top.total_score.toFixed(0)})
                   </div>
                 )}
-              </div>
+              </Card>
             )
           })}
         </div>
@@ -193,18 +187,18 @@ export default function Universe() {
       {/* Actions */}
       {enabled && (
         <div className="flex gap-2 items-center mb-3">
-          <button
+          <Button
             onClick={() => refreshMutation.mutate()}
             disabled={refreshMutation.isPending}
           >
             {refreshMutation.isPending ? 'Refreshing…' : 'Refresh Now'}
-          </button>
-          <button
-            className="secondary"
+          </Button>
+          <Button
+            variant="secondary"
             onClick={() => navigate('/settings?tab=risk&section=universe')}
           >
             Universe Settings
-          </button>
+          </Button>
           {refreshMutation.isError && (
             <span className="text-sm pnl-negative">
               {(refreshMutation.error as Error).message}
@@ -287,7 +281,7 @@ function MemberDrawer({ member, onClose }: { member: UniverseMember; onClose: ()
 
       <DrawerSection label="Risk Flags">
         {parseJson(member.risk_flags).map((f: string, i: number) => (
-          <div key={i} className="text-sm" style={{ color: 'var(--yellow)' }}>⚠ {humanize(String(f))}</div>
+          <div key={i} className="text-sm universe-risk-flag">⚠ {humanize(String(f))}</div>
         ))}
         {parseJson(member.risk_flags).length === 0 && (
           <div className="text-sm text-muted">No risk flags</div>

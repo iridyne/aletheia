@@ -5,6 +5,7 @@ import type { PredictionMarket, PredictionStatus, PredictionObserverRun, Predict
 import PageHeader from '../components/PageHeader'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { StatusBadge } from '../components/DataTable'
+import { Badge, Button, Card, StatusText, TableWrap, type StatusTone } from '../components/ui'
 import ProbabilityChart from '../charts/ProbabilityChart'
 import { fmtTimestamp } from '../lib/format'
 
@@ -33,41 +34,40 @@ function volFmt(v: number | null | undefined) {
   return `$${v.toFixed(0)}`
 }
 
-function freshnessLabel(dateStr: string | null | undefined): { label: string; tone: string } {
-  if (!dateStr) return { label: 'unknown', tone: 'text-muted' }
+function freshnessLabel(dateStr: string | null | undefined): { label: string; tone: StatusTone } {
+  if (!dateStr) return { label: 'unknown', tone: 'muted' }
   const age = (Date.now() - new Date(dateStr).getTime()) / 60000
-  if (age < 15) return { label: 'fresh', tone: 'pnl-positive' }
-  if (age < 60) return { label: 'stale', tone: 'text-muted' }
-  return { label: 'outdated', tone: 'pnl-negative' }
+  if (age < 15) return { label: 'fresh', tone: 'green' }
+  if (age < 60) return { label: 'stale', tone: 'muted' }
+  return { label: 'outdated', tone: 'red' }
 }
 
 function DirectionBadge({ direction }: { direction: string | null }) {
-  if (!direction) return <span className="badge">—</span>
-  const cls = direction === 'long' ? 'badge-green' : direction === 'short' ? 'badge-red' : 'badge-yellow'
+  if (!direction) return <StatusText tone="muted">—</StatusText>
+  const tone = direction === 'long' ? 'green' : direction === 'short' ? 'red' : 'yellow'
   const label = direction === 'long' ? 'YES rising' : direction === 'short' ? 'YES falling' : 'stable'
-  return <span className={`badge ${cls}`}>{label}</span>
+  return <StatusText tone={tone}>{label}</StatusText>
 }
 
-const CLAIM_TYPE_BADGE: Record<string, string> = {
-  observation: 'badge-blue',
-  volume_spike: 'badge-green',
-  probability_momentum: 'badge-yellow',
-  resolution_risk: 'badge-red',
-  liquidity_warning: 'badge-red',
+const CLAIM_TYPE_TONE: Record<string, StatusTone> = {
+  observation: 'blue',
+  volume_spike: 'green',
+  probability_momentum: 'yellow',
+  resolution_risk: 'red',
+  liquidity_warning: 'red',
 }
 
 function ClaimBadge({ type }: { type: string }) {
-  const cls = CLAIM_TYPE_BADGE[type] || 'badge-blue'
-  return <span className={`badge ${cls}`}>{type.replace(/_/g, ' ')}</span>
+  return <StatusText tone={CLAIM_TYPE_TONE[type] || 'blue'}>{type.replace(/_/g, ' ')}</StatusText>
 }
 
 // --- Observer Status Card ---
 function ObserverStatusCard({ status }: { status: PredictionStatus | undefined }) {
-  if (!status) return <div className="pred-status-card card">Loading status…</div>
+  if (!status) return <Card className="pred-status-card">Loading status…</Card>
   const freshness = freshnessLabel(status.last_run?.completed_at)
 
   return (
-    <div className="pred-status-card card">
+    <Card className="pred-status-card">
       <div className="pred-status-grid">
         <div className="pred-status-item">
           <span className="pred-status-label">Last Run</span>
@@ -77,7 +77,7 @@ function ObserverStatusCard({ status }: { status: PredictionStatus | undefined }
         </div>
         <div className="pred-status-item">
           <span className="pred-status-label">Freshness</span>
-          <span className={`pred-status-value ${freshness.tone}`}>{freshness.label}</span>
+          <span className="pred-status-value"><StatusText tone={freshness.tone}>{freshness.label}</StatusText></span>
         </div>
         <div className="pred-status-item">
           <span className="pred-status-label">Markets Scanned</span>
@@ -96,17 +96,17 @@ function ObserverStatusCard({ status }: { status: PredictionStatus | undefined }
           <span className="pred-status-value">{status.categories.join(', ') || 'none'}</span>
         </div>
       </div>
-    </div>
+    </Card>
   )
 }
 
 // --- Market Card ---
 function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: () => void }) {
   return (
-    <div className="pred-market-card card" onClick={onClick}>
+    <Card className="pred-market-card" onClick={onClick}>
       <div className="pred-card-header">
         <h4 className="pred-card-title">{market.event_title}</h4>
-        {market.category && <span className="badge badge-blue">{market.category}</span>}
+        {market.category && <Badge tone="blue">{market.category}</Badge>}
       </div>
       <div className="pred-card-stats">
         <div className="pred-stat">
@@ -135,7 +135,7 @@ function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: ()
         )}
         <span className="text-muted text-sm">{shortDate(market.created_at)}</span>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -152,9 +152,9 @@ function MarketRadarTab({ markets, onSelect }: { markets: PredictionMarket[]; on
   return (
     <div>
       <div className="pred-sort-bar">
-        <button className={`secondary ${sort === 'recent' ? 'active' : ''}`} onClick={() => setSort('recent')}>Recent</button>
-        <button className={`secondary ${sort === 'movers' ? 'active' : ''}`} onClick={() => setSort('movers')}>Biggest Movers</button>
-        <button className={`secondary ${sort === 'volume' ? 'active' : ''}`} onClick={() => setSort('volume')}>Highest Volume</button>
+        <Button variant="secondary" className={sort === 'recent' ? 'active' : ''} onClick={() => setSort('recent')}>Recent</Button>
+        <Button variant="secondary" className={sort === 'movers' ? 'active' : ''} onClick={() => setSort('movers')}>Biggest Movers</Button>
+        <Button variant="secondary" className={sort === 'volume' ? 'active' : ''} onClick={() => setSort('volume')}>Highest Volume</Button>
       </div>
       {sorted.length === 0 ? (
         <div className="pred-empty">
@@ -181,34 +181,36 @@ function ProbabilityMoversTab({ markets, onSelect }: { markets: PredictionMarket
   }
 
   return (
-    <div className="card">
-      <table>
-        <thead>
-          <tr>
-            <th>Event</th>
-            <th>YES Now</th>
-            <th>24h Change</th>
-            <th>Volume</th>
-            <th>Liquidity</th>
-            <th>Signal</th>
-          </tr>
-        </thead>
-        <tbody>
-          {movers.map(m => (
-            <tr key={m.id} onClick={() => onSelect(m)} style={{ cursor: 'pointer' }}>
-              <td className="pred-event-cell td-ellipsis">{m.event_title}</td>
-              <td className="mono">{pctFmt(m.yes_probability)}</td>
-              <td className={`mono ${(m.probability_change_24h ?? 0) > 0 ? 'pnl-positive' : (m.probability_change_24h ?? 0) < 0 ? 'pnl-negative' : ''}`}>
-                {deltaFmt(m.probability_change_24h)}
-              </td>
-              <td className="mono">{volFmt(m.volume_24h)}</td>
-              <td className="mono">{volFmt(m.liquidity)}</td>
-              <td><DirectionBadge direction={m.direction_bias} /></td>
+    <Card>
+      <TableWrap>
+        <table>
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>YES Now</th>
+              <th>24h Change</th>
+              <th>Volume</th>
+              <th>Liquidity</th>
+              <th>Signal</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {movers.map(m => (
+              <tr key={m.id} className="clickable" onClick={() => onSelect(m)}>
+                <td className="pred-event-cell td-ellipsis">{m.event_title}</td>
+                <td className="mono">{pctFmt(m.yes_probability)}</td>
+                <td className={`mono ${(m.probability_change_24h ?? 0) > 0 ? 'pnl-positive' : (m.probability_change_24h ?? 0) < 0 ? 'pnl-negative' : ''}`}>
+                  {deltaFmt(m.probability_change_24h)}
+                </td>
+                <td className="mono">{volFmt(m.volume_24h)}</td>
+                <td className="mono">{volFmt(m.liquidity)}</td>
+                <td><DirectionBadge direction={m.direction_bias} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
+    </Card>
   )
 }
 
@@ -219,32 +221,34 @@ function ObserverRunsTab({ runs }: { runs: PredictionObserverRun[] }) {
   }
 
   return (
-    <div className="card">
-      <table>
-        <thead>
-          <tr>
-            <th>Started</th>
-            <th>Status</th>
-            <th>Markets</th>
-            <th>Opps Created</th>
-            <th>Completed</th>
-            <th>Errors</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map(r => (
-            <tr key={r.id}>
-              <td>{shortDate(r.started_at)}</td>
-              <td><StatusBadge status={r.status} /></td>
-              <td>{r.markets_scanned}</td>
-              <td>{r.opportunities_created}</td>
-              <td>{shortDate(r.completed_at)}</td>
-              <td>{r.errors.length > 0 ? <span className="badge badge-red">{r.errors.length}</span> : '—'}</td>
+    <Card>
+      <TableWrap>
+        <table>
+          <thead>
+            <tr>
+              <th>Started</th>
+              <th>Status</th>
+              <th>Markets</th>
+              <th>Opps Created</th>
+              <th>Completed</th>
+              <th>Errors</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {runs.map(r => (
+              <tr key={r.id}>
+                <td>{shortDate(r.started_at)}</td>
+                <td><StatusBadge status={r.status} /></td>
+                <td>{r.markets_scanned}</td>
+                <td>{r.opportunities_created}</td>
+                <td>{shortDate(r.completed_at)}</td>
+                <td>{r.errors.length > 0 ? <StatusText tone="red">{r.errors.length}</StatusText> : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
+    </Card>
   )
 }
 
@@ -267,14 +271,14 @@ function PreferencesTab() {
   const currentCats = prefs?.categories ?? []
 
   return (
-    <div className="card">
+    <Card>
       <h3>Observer Preferences</h3>
       <div className="pred-pref-section">
         <label className="pred-pref-label">Observed Categories</label>
         <p className="text-muted text-sm">Keywords that filter which Polymarket events the observer tracks.</p>
         <div className="pred-pref-tags">
           {currentCats.map(c => (
-            <span key={c} className="badge badge-blue">{c}</span>
+            <Badge key={c} tone="blue">{c}</Badge>
           ))}
         </div>
         <div className="flex gap-1 mt-1">
@@ -291,8 +295,8 @@ function PreferencesTab() {
               }
             }}
           />
-          <button
-            className="secondary"
+          <Button
+            variant="secondary"
             disabled={!cats.trim() || updateMut.isPending}
             onClick={() => {
               const newCats = [...currentCats, ...cats.split(',').map(s => s.trim()).filter(Boolean)]
@@ -301,17 +305,18 @@ function PreferencesTab() {
             }}
           >
             Add
-          </button>
+          </Button>
         </div>
         {currentCats.length > 0 && (
           <div className="mt-1">
-            <button
-              className="secondary text-sm"
+            <Button
+              variant="secondary"
+              className="text-sm"
               onClick={() => updateMut.mutate([])}
               disabled={updateMut.isPending}
             >
               Clear all categories
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -321,7 +326,7 @@ function PreferencesTab() {
           The prediction observer runs every {prefs?.observer_interval_minutes ?? 30} minutes (configured in scheduler).
         </p>
       </div>
-    </div>
+    </Card>
   )
 }
 
@@ -339,7 +344,7 @@ function SerenityLinksSection({ marketId }: { marketId: string }) {
     <DrawerSection label="Linked Serenity Themes">
       {linked.map((e: any) => (
         <div key={e.id} className="pred-serenity-link">
-          <span className="badge badge-green">evidence</span>
+          <Badge tone="green">evidence</Badge>
           <span>{e.title}</span>
           <a href="/serenity" className="lens-cross-link">→ View in Serenity Lens</a>
         </div>
@@ -449,9 +454,9 @@ export default function PredictionLens() {
         title="Prediction Markets"
         role="Observe · prediction market probability trends from Polymarket. Observation-only — not routed to Paper Trader or Live Execution."
         actions={
-          <button className="secondary" onClick={() => refresh.mutate(undefined as any)} disabled={refresh.isPending}>
+          <Button variant="secondary" onClick={() => refresh.mutate(undefined as any)} disabled={refresh.isPending}>
             {refresh.isPending ? 'Refreshing…' : 'Refresh Now'}
-          </button>
+          </Button>
         }
       />
 
@@ -462,18 +467,18 @@ export default function PredictionLens() {
       <ObserverStatusCard status={status} />
 
       <div className="pred-tabs">
-        <button className={`pred-tab ${tab === 'radar' ? 'pred-tab-active' : ''}`} onClick={() => setTab('radar')}>
+        <Button variant="ghost" className={`pred-tab ${tab === 'radar' ? 'pred-tab-active' : ''}`} onClick={() => setTab('radar')}>
           Market Radar {markets.length > 0 && <span className="tab-badge">{markets.length}</span>}
-        </button>
-        <button className={`pred-tab ${tab === 'movers' ? 'pred-tab-active' : ''}`} onClick={() => setTab('movers')}>
+        </Button>
+        <Button variant="ghost" className={`pred-tab ${tab === 'movers' ? 'pred-tab-active' : ''}`} onClick={() => setTab('movers')}>
           Probability Movers
-        </button>
-        <button className={`pred-tab ${tab === 'runs' ? 'pred-tab-active' : ''}`} onClick={() => setTab('runs')}>
+        </Button>
+        <Button variant="ghost" className={`pred-tab ${tab === 'runs' ? 'pred-tab-active' : ''}`} onClick={() => setTab('runs')}>
           Observer Runs {runs.length > 0 && <span className="tab-badge">{runs.length}</span>}
-        </button>
-        <button className={`pred-tab ${tab === 'preferences' ? 'pred-tab-active' : ''}`} onClick={() => setTab('preferences')}>
+        </Button>
+        <Button variant="ghost" className={`pred-tab ${tab === 'preferences' ? 'pred-tab-active' : ''}`} onClick={() => setTab('preferences')}>
           Preferences
-        </button>
+        </Button>
       </div>
 
       <div className="pred-tab-content">

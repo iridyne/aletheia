@@ -3,20 +3,22 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
 import { StatusBadge } from '../components/DataTable'
+import { Badge, Button, Card, StatusDot, StatusText, Switch, TableWrap, type StatusTone } from '../components/ui'
 import { fmtTimestamp, humanize } from '../lib/format'
 
 type Tab = 'overview' | 'runs' | 'themes' | 'evidence' | 'profile'
 
-const STATUS_COLORS: Record<string, string> = {
-  idle: 'var(--muted)',
-  healthy: 'var(--green)',
-  running: 'var(--blue)',
-  rate_limited: 'var(--yellow)',
-  error: 'var(--red)',
+const ENGINE_STATUS_TONE: Record<string, StatusTone> = {
+  idle: 'muted',
+  healthy: 'green',
+  running: 'yellow',
+  rate_limited: 'yellow',
+  error: 'red',
 }
 
-function StatusDot({ status }: { status: string }) {
-  return <span className="dot" style={{ background: STATUS_COLORS[status] || 'var(--muted)' }} />
+function EngineStatusDot({ status }: { status: string }) {
+  const tone = ENGINE_STATUS_TONE[status] || 'muted'
+  return <StatusDot tone={tone === 'blue' ? 'muted' : tone} />
 }
 
 // Run status uses the shared canonical StatusBadge (humanized label + consistent color
@@ -57,8 +59,8 @@ function ResearchStatusCard() {
         <div className="lens-status-item">
           <span className="lens-status-label">Engine</span>
           <span className="lens-status-value">
-            <StatusDot status={status.engineStatus} />
-            {status.engineStatus}
+            <EngineStatusDot status={status.engineStatus} />
+            <StatusText tone={ENGINE_STATUS_TONE[status.engineStatus] || 'muted'}>{status.engineStatus}</StatusText>
           </span>
         </div>
         <div className="lens-status-item">
@@ -125,7 +127,7 @@ function OverviewTab() {
 
   return (
     <div>
-      <section className="card">
+      <Card>
         <h3>Trigger Research Run</h3>
         <div className="lens-brief-input">
           <textarea
@@ -136,17 +138,18 @@ function OverviewTab() {
             maxLength={2000}
           />
           <div className="lens-brief-actions">
-            <label className="lens-checkbox">
-              <input type="checkbox" checked={saveToProfile} onChange={e => setSaveToProfile(e.target.checked)} />
-              Save preferences to profile
-            </label>
-            <button
+            <Switch
+              checked={saveToProfile}
+              onCheckedChange={setSaveToProfile}
+              label="Save preferences to profile"
+            />
+            <Button
               onClick={() => createRun.mutate()}
               disabled={createRun.isPending || hasActive}
               title={hasActive ? 'A run is already active' : 'Start a new research run'}
             >
               {createRun.isPending ? 'Starting…' : hasActive ? 'Run Active' : 'Run Research'}
-            </button>
+            </Button>
           </div>
           {createRun.isError && (
             <div className="lens-status-warning">
@@ -155,12 +158,12 @@ function OverviewTab() {
           )}
         </div>
         <p className="text-muted lens-disclaimer">Research only — does not execute trades or modify positions.</p>
-      </section>
+      </Card>
 
-      <section className="card">
+      <Card>
         <h3>Recent Activity</h3>
         <RecentRunsList limit={5} />
-      </section>
+      </Card>
     </div>
   )
 }
@@ -174,10 +177,10 @@ function RunsTab() {
       {selectedRunId ? (
         <RunDetailPanel runId={selectedRunId} onBack={() => setSelectedRunId(null)} />
       ) : (
-        <section className="card">
+        <Card>
           <h3>Run History</h3>
           <RecentRunsList limit={20} onSelect={setSelectedRunId} />
-        </section>
+        </Card>
       )}
     </div>
   )
@@ -201,7 +204,7 @@ function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: st
   }
 
   return (
-    <div className="lens-table-wrap">
+    <TableWrap>
       <table>
         <thead>
           <tr>
@@ -232,7 +235,7 @@ function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: st
           ))}
         </tbody>
       </table>
-    </div>
+    </TableWrap>
   )
 }
 
@@ -275,20 +278,20 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
   const canCancel = run.status === 'queued' || run.status === 'running'
 
   return (
-    <section className="card">
+    <Card>
       <div className="card-head card-head-space">
-        <button className="secondary" onClick={onBack}>← Back</button>
+        <Button variant="secondary" onClick={onBack}>← Back</Button>
         <h3>Run Detail</h3>
         <div className="lens-run-actions">
           {canCancel && (
-            <button className="secondary" onClick={() => cancelMut.mutate()} disabled={cancelMut.isPending}>
+            <Button variant="secondary" onClick={() => cancelMut.mutate()} disabled={cancelMut.isPending}>
               {cancelMut.isPending ? 'Cancelling…' : 'Cancel'}
-            </button>
+            </Button>
           )}
           {canRetry && (
-            <button onClick={() => retryMut.mutate()} disabled={retryMut.isPending}>
+            <Button onClick={() => retryMut.mutate()} disabled={retryMut.isPending}>
               {retryMut.isPending ? 'Retrying…' : 'Retry'}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -355,7 +358,7 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
             <div className="lens-run-themes">
               <h5>Themes from this run:</h5>
               {artifacts.themes.map((t: any) => (
-                <span key={t.id} className="badge badge-green">{t.name}</span>
+                <Badge key={t.id} tone="green">{t.name}</Badge>
               ))}
             </div>
           )}
@@ -372,7 +375,7 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
           </div>
         )) : <p className="text-muted">No events recorded yet.</p>}
       </div>
-    </section>
+    </Card>
   )
 }
 
@@ -427,12 +430,12 @@ function ThemesTab() {
   return (
     <div className="lens-theme-cards">
       {themes.map((t: any) => (
-        <div key={t.id} className="lens-theme-card">
+        <Card key={t.id} className="lens-theme-card">
           <div className="lens-theme-header">
             <h4 className="clickable" onClick={() => setSelectedTheme(t.id)}>{t.name}</h4>
-            <span className={`badge badge-${t.status === 'active' ? 'green' : t.status === 'watching' || t.status === 'promoted' ? 'blue' : 'yellow'}`}>
+            <StatusText tone={t.status === 'active' ? 'green' : t.status === 'watching' || t.status === 'promoted' ? 'blue' : 'yellow'}>
               {humanize(t.status)}
-            </span>
+            </StatusText>
           </div>
           {t.thesis && <p className="lens-theme-thesis">{t.thesis}</p>}
           {!t.thesis && t.description && <p>{t.description}</p>}
@@ -447,43 +450,43 @@ function ThemesTab() {
           <div className="lens-theme-actions">
             {t.status === 'active' && (
               <>
-                <button className="secondary btn-sm" onClick={() => feedbackMut.mutate({ id: t.id, action: 'more_like_this' })}>
+                <Button variant="secondary" className="btn-sm" onClick={() => feedbackMut.mutate({ id: t.id, action: 'more_like_this' })}>
                   +More
-                </button>
-                <button className="secondary btn-sm" onClick={() => feedbackMut.mutate({ id: t.id, action: 'not_interested' })}>
+                </Button>
+                <Button variant="secondary" className="btn-sm" onClick={() => feedbackMut.mutate({ id: t.id, action: 'not_interested' })}>
                   -Less
-                </button>
-                <button className="secondary btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'watching' })}>
+                </Button>
+                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'watching' })}>
                   Watch
-                </button>
-                <button className="secondary btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'dismissed' })}>
+                </Button>
+                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'dismissed' })}>
                   Dismiss
-                </button>
-                <button className="btn-sm" onClick={() => deepDiveMut.mutate(t.id)} disabled={deepDiveMut.isPending}>
+                </Button>
+                <Button className="btn-sm" onClick={() => deepDiveMut.mutate(t.id)} disabled={deepDiveMut.isPending}>
                   Deep Dive
-                </button>
-                <button className="btn-sm btn-promote" onClick={() => promoteMut.mutate(t.id)} disabled={promoteMut.isPending}>
+                </Button>
+                <Button className="btn-sm btn-promote" onClick={() => promoteMut.mutate(t.id)} disabled={promoteMut.isPending}>
                   Promote
-                </button>
+                </Button>
               </>
             )}
             {t.status === 'watching' && (
               <>
-                <button className="secondary btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'active' })}>
+                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'active' })}>
                   Reactivate
-                </button>
-                <button className="secondary btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'dismissed' })}>
+                </Button>
+                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'dismissed' })}>
                   Dismiss
-                </button>
+                </Button>
               </>
             )}
             {t.status === 'dismissed' && (
-              <button className="secondary btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'active' })}>
+              <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'active' })}>
                 Reactivate
-              </button>
+              </Button>
             )}
           </div>
-        </div>
+        </Card>
       ))}
     </div>
   )
@@ -501,11 +504,11 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
   const { theme, claims, evidence, feedback, opportunities } = data
 
   return (
-    <section className="card">
+    <Card>
       <div className="card-head card-head-space">
-        <button className="secondary" onClick={onBack}>← Back</button>
+        <Button variant="secondary" onClick={onBack}>← Back</Button>
         <h3>{theme.name}</h3>
-        <span className={`badge badge-${theme.status === 'active' ? 'green' : 'yellow'}`}>{theme.status}</span>
+        <StatusText tone={theme.status === 'active' ? 'green' : 'yellow'}>{theme.status}</StatusText>
       </div>
 
       {theme.thesis && <p className="lens-theme-thesis"><b>Thesis:</b> {theme.thesis}</p>}
@@ -527,8 +530,8 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
             <div key={c.id} className="lens-claim-item">
               <span className="lens-claim-text">{c.claim_text}</span>
               <span className="lens-claim-meta">
-                {c.support_level && <span className={`badge badge-${c.support_level === 'strong' ? 'green' : c.support_level === 'medium' ? 'blue' : 'yellow'}`}>{c.support_level}</span>}
-                {c.price_relevant ? <span className="badge badge-green">price-relevant</span> : null}
+                {c.support_level && <StatusText tone={c.support_level === 'strong' ? 'green' : c.support_level === 'medium' ? 'blue' : 'yellow'}>{c.support_level}</StatusText>}
+                {c.price_relevant ? <StatusText tone="green">price-relevant</StatusText> : null}
                 <span className="text-muted">{(c.confidence * 100).toFixed(0)}%</span>
               </span>
             </div>
@@ -538,7 +541,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
 
       <h4>Evidence ({evidence.length})</h4>
       {evidence.length > 0 ? (
-        <div className="lens-table-wrap">
+        <TableWrap>
           <table>
             <thead><tr><th>Title</th><th>Source</th><th>Tier</th><th>Symbol</th></tr></thead>
             <tbody>
@@ -552,13 +555,13 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
               ))}
             </tbody>
           </table>
-        </div>
+        </TableWrap>
       ) : <p className="text-muted">No evidence linked to this theme.</p>}
 
       {opportunities.length > 0 && (
         <>
           <h4>Opportunities ({opportunities.length})</h4>
-          <div className="lens-table-wrap">
+          <TableWrap>
             <table>
               <thead><tr><th>Symbol</th><th>Direction</th><th>Tier</th><th>Status</th></tr></thead>
               <tbody>
@@ -572,7 +575,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableWrap>
         </>
       )}
 
@@ -589,7 +592,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
           </div>
         </>
       )}
-    </section>
+    </Card>
   )
 }
 
@@ -610,9 +613,9 @@ function EvidenceTab() {
   }
 
   return (
-    <section className="card">
+    <Card>
       <h3>Evidence ({evidence.length})</h3>
-      <div className="lens-table-wrap">
+      <TableWrap>
         <table>
           <thead>
             <tr>
@@ -639,7 +642,7 @@ function EvidenceTab() {
                 <td>{e.tier}</td>
                 <td>
                   {e.source === 'prediction_market'
-                    ? <span className="badge badge-blue">prediction</span>
+                    ? <Badge tone="blue">prediction</Badge>
                     : e.source}
                 </td>
                 <td>{e.confidence}</td>
@@ -648,8 +651,8 @@ function EvidenceTab() {
             ))}
           </tbody>
         </table>
-      </div>
-    </section>
+      </TableWrap>
+    </Card>
   )
 }
 
@@ -682,7 +685,7 @@ function ProfileTab() {
 
   return (
     <div>
-      <section className="card">
+      <Card>
         <h3>Research Preferences</h3>
         {profile ? (
           <div className="lens-status-grid">
@@ -702,9 +705,9 @@ function ProfileTab() {
         ) : (
           <p className="text-muted">No profile set. Use the brief below to define your research preferences.</p>
         )}
-      </section>
+      </Card>
 
-      <section className="card">
+      <Card>
         <h3>Update Preferences</h3>
         <div className="lens-brief-input">
           <textarea
@@ -715,18 +718,18 @@ function ProfileTab() {
             maxLength={2000}
           />
           <div className="lens-brief-actions">
-            <button className="secondary" onClick={() => parseMut.mutate()} disabled={!editBrief || parseMut.isPending}>
+            <Button variant="secondary" onClick={() => parseMut.mutate()} disabled={!editBrief || parseMut.isPending}>
               {parseMut.isPending ? 'Parsing…' : 'Preview'}
-            </button>
+            </Button>
             {parseResult && (
-              <button onClick={() => saveMut.mutate({
+              <Button onClick={() => saveMut.mutate({
                 includeTopics: parseResult.parsed?.includeTopics,
                 excludeTopics: parseResult.parsed?.excludeTopics,
                 timeHorizon: parseResult.parsed?.timeHorizon,
                 rawBrief: editBrief,
               })} disabled={saveMut.isPending}>
                 {saveMut.isPending ? 'Saving…' : 'Save to Profile'}
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -744,7 +747,7 @@ function ProfileTab() {
             )}
           </div>
         )}
-      </section>
+      </Card>
     </div>
   )
 }
@@ -764,13 +767,14 @@ export default function SerenityLens() {
 
       <div className="lens-tabs">
         {(['overview', 'runs', 'themes', 'evidence', 'profile'] as Tab[]).map(tab => (
-          <button
+          <Button
+            variant="ghost"
             key={tab}
             className={`lens-tab ${activeTab === tab ? 'lens-tab-active' : ''}`}
             onClick={() => setActiveTab(tab)}
           >
             {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </button>
+          </Button>
         ))}
       </div>
 
