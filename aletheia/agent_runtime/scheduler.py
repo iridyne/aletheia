@@ -4,6 +4,7 @@ import asyncio
 from functools import partial
 import logging
 from datetime import datetime, timedelta
+from typing import Awaitable
 from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -13,6 +14,25 @@ from aletheia.config.loader import load_config
 logger = logging.getLogger("aletheia.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
+
+# Hard time budgets for scheduler jobs that depend on external IO or LLM calls.
+# APScheduler's max_instances=1 prevents overlap, but it cannot recover a job
+# that stays inside an awaited network call forever. Timeboxing these coroutines
+# keeps one stuck collector/model request from starving the scheduler pools and
+# holding SQLite thread-local state indefinitely.
+_ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
+    "market_data": 120.0,
+    "market_observer": 240.0,
+    "dreaming_agent": 300.0,
+    "strategy_designer": 300.0,
+    "paper_trader": 300.0,
+    "stock_observer": 240.0,
+    "prediction_observer": 240.0,
+    "post_trade_reviewer": 300.0,
+    "risk_critic": 300.0,
+    "universe_refresh": 120.0,
+    "data_collectors": 90.0,
+}
 
 
 # Isolate latency-sensitive infrastructure jobs from long LLM/agent jobs. A
@@ -51,6 +71,11 @@ def _run_job_guarded(job_id: str, fn):
 
 def _guarded(job_id: str, fn):
     return partial(_run_job_guarded, job_id, fn)
+
+
+def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
+    timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
+    return asyncio.run(asyncio.wait_for(awaitable, timeout=timeout))
 
 
 def init_scheduler() -> BackgroundScheduler | None:
@@ -257,7 +282,12 @@ def _run_market_data():
         return
     try:
         from aletheia.trading.market_data import collect_market_snapshots
-        asyncio.run(collect_market_snapshots())
+        _run_async_with_timeout("market_data", collect_market_snapshots())
+    except TimeoutError:
+        logger.warning(
+            "market_data job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["market_data"],
+        )
     except Exception as e:
         logger.warning("market_data job failed: %s", e)
 
@@ -267,7 +297,12 @@ def _run_market_observer():
     if cfg.runtime.paused:
         return
     try:
-        asyncio.run(_async_run("market_observer"))
+        _run_async_with_timeout("market_observer", _async_run("market_observer"))
+    except TimeoutError:
+        logger.warning(
+            "market_observer job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["market_observer"],
+        )
     except Exception as e:
         logger.warning("market_observer job failed: %s", e)
 
@@ -286,7 +321,12 @@ def _run_dreaming_agent():
     except Exception:
         # Fallback: direct agent call if new pipeline fails
         try:
-            asyncio.run(_async_run("dreaming_agent"))
+            _run_async_with_timeout("dreaming_agent", _async_run("dreaming_agent"))
+        except TimeoutError:
+            logger.warning(
+                "dreaming_agent fallback timed out after %.0fs",
+                _ASYNC_JOB_TIMEOUT_SEC["dreaming_agent"],
+            )
         except Exception as e:
             logger.warning("dreaming_agent job failed: %s", e)
 
@@ -296,7 +336,12 @@ def _run_strategy_designer():
     if cfg.runtime.paused:
         return
     try:
-        asyncio.run(_async_run("strategy_designer"))
+        _run_async_with_timeout("strategy_designer", _async_run("strategy_designer"))
+    except TimeoutError:
+        logger.warning(
+            "strategy_designer job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["strategy_designer"],
+        )
     except Exception as e:
         logger.warning("strategy_designer job failed: %s", e)
 
@@ -345,7 +390,12 @@ def _run_paper_trader():
     if cfg.agent.permission_mode not in ("Paper", "Full"):
         return
     try:
-        asyncio.run(_async_run("paper_trader"))
+        _run_async_with_timeout("paper_trader", _async_run("paper_trader"))
+    except TimeoutError:
+        logger.warning(
+            "paper_trader job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["paper_trader"],
+        )
     except Exception as e:
         logger.warning("paper_trader job failed: %s", e)
 
@@ -397,7 +447,12 @@ def _run_stock_observer():
     if not cfg.market_data.observed_stocks:
         return
     try:
-        asyncio.run(_async_run("stock_observer"))
+        _run_async_with_timeout("stock_observer", _async_run("stock_observer"))
+    except TimeoutError:
+        logger.warning(
+            "stock_observer job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["stock_observer"],
+        )
     except Exception as e:
         logger.warning("stock_observer job failed: %s", e)
 
@@ -409,7 +464,12 @@ def _run_prediction_observer():
     if not cfg.market_data.observed_prediction_markets:
         return
     try:
-        asyncio.run(_async_run("prediction_observer"))
+        _run_async_with_timeout("prediction_observer", _async_run("prediction_observer"))
+    except TimeoutError:
+        logger.warning(
+            "prediction_observer job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["prediction_observer"],
+        )
     except Exception as e:
         logger.warning("prediction_observer job failed: %s", e)
 
@@ -459,7 +519,12 @@ def _run_post_trade_reviewer():
     if cfg.runtime.paused:
         return
     try:
-        asyncio.run(_async_run("post_trade_reviewer"))
+        _run_async_with_timeout("post_trade_reviewer", _async_run("post_trade_reviewer"))
+    except TimeoutError:
+        logger.warning(
+            "post_trade_reviewer job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["post_trade_reviewer"],
+        )
     except Exception as e:
         logger.warning("post_trade_reviewer job failed: %s", e)
 
@@ -469,7 +534,12 @@ def _run_risk_critic():
     if cfg.runtime.paused:
         return
     try:
-        asyncio.run(_async_run("risk_critic"))
+        _run_async_with_timeout("risk_critic", _async_run("risk_critic"))
+    except TimeoutError:
+        logger.warning(
+            "risk_critic job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["risk_critic"],
+        )
     except Exception as e:
         logger.warning("risk_critic job failed: %s", e)
 
@@ -481,7 +551,12 @@ def _run_universe_refresh():
     if not cfg.universe.enabled:
         return
     try:
-        asyncio.run(_async_universe_refresh())
+        _run_async_with_timeout("universe_refresh", _async_universe_refresh())
+    except TimeoutError:
+        logger.warning(
+            "universe_refresh job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["universe_refresh"],
+        )
     except Exception as e:
         logger.warning("universe_refresh job failed: %s", e)
 
@@ -552,7 +627,12 @@ def _run_data_collectors():
         return
     _DC_TICK += 1
     try:
-        asyncio.run(_async_data_collectors(cfg, _DC_TICK))
+        _run_async_with_timeout("data_collectors", _async_data_collectors(cfg, _DC_TICK))
+    except TimeoutError:
+        logger.warning(
+            "data_collectors job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["data_collectors"],
+        )
     except Exception as e:
         logger.warning("data_collectors job failed: %s", e)
 
