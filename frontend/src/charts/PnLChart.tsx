@@ -17,7 +17,10 @@ export default function PnLChart() {
   const rows = allRows
     .filter((s: any) => !hasExchangeData || s.exchange_equity_usdt != null)
     .map((s: any) => {
-      const t = Math.floor(new Date(s.snapshot_at + 'Z').getTime() / 1000)
+      // snapshot_at comes as "2026-06-14T20:21:26+00:00" — already has timezone.
+      // Do NOT append 'Z' (that produces an invalid "...+00:00Z" string → NaN).
+      const raw = s.snapshot_at ?? ''
+      const t = Math.floor(new Date(raw.endsWith('Z') ? raw : raw.replace(/\+00:00$/, 'Z')).getTime() / 1000)
       const value = s.exchange_equity_usdt != null
         ? s.exchange_equity_usdt
         : (s.unrealized_pnl ?? 0) + (s.realized_pnl ?? 0)

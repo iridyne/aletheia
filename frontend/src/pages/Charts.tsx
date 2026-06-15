@@ -68,7 +68,7 @@ export default function Charts() {
   const markers = (trades as any[])
     .filter(o => (o.symbol === symbol || o.symbol === bitgetSymbol) && o.filled_at)
     .map(o => ({
-      time: Math.floor(new Date(o.filled_at + 'Z').getTime() / 1000),
+      time: Math.floor(new Date(o.filled_at.endsWith('Z') || o.filled_at.includes('+') ? o.filled_at : o.filled_at + 'Z').getTime() / 1000),
       side: (o.direction === 'long' || o.direction === 'buy' ? 'buy' : 'sell') as 'buy' | 'sell',
       price: o.price || 0,
       id: o.id,

@@ -66,9 +66,13 @@ function relTime(ts?: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
+function safeDate(ts: string): number {
+  return new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime()
+}
+
 function durationOf(run: AgentRun): string {
   if (!run.started_at || !run.ended_at) return ''
-  const ms = new Date(run.ended_at + 'Z').getTime() - new Date(run.started_at + 'Z').getTime()
+  const ms = safeDate(run.ended_at) - safeDate(run.started_at)
   if (Number.isNaN(ms) || ms < 0) return ''
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
@@ -144,7 +148,7 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
     }
   }
 
-  items.sort((a, b) => new Date(b.ts + 'Z').getTime() - new Date(a.ts + 'Z').getTime())
+  items.sort((a, b) => safeDate(b.ts) - safeDate(a.ts))
   const visible = items.slice(0, 40)
 
   // When maxHeight is given, cap the card and scroll the feed list inside —
