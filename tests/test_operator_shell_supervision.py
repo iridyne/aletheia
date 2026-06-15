@@ -262,6 +262,7 @@ def test_operator_shell_monitor_records_offline_when_spawn_unavailable(tmp_path,
     now = {"value": 1000.0}
     events = []
     monkeypatch.setattr("aletheia.gateway.operator_shell._gateway_api_ready", lambda cfg: True)
+    monkeypatch.setattr("aletheia.gateway.operator_shell._post_operator_heartbeat", lambda cfg, payload: False)
 
     monitor = OperatorShellMonitor(
         cfg,
@@ -293,6 +294,7 @@ def test_operator_shell_monitor_records_offline_when_spawn_raises(tmp_path, monk
     save_config(cfg)
 
     monkeypatch.setattr("aletheia.gateway.operator_shell._gateway_api_ready", lambda cfg: True)
+    monkeypatch.setattr("aletheia.gateway.operator_shell._post_operator_heartbeat", lambda cfg, payload: False)
 
     def raise_spawn(_cfg):
         raise RuntimeError("spawn failed")
@@ -318,6 +320,7 @@ def test_operator_shell_monitor_refreshes_offline_status_during_cooldown(tmp_pat
     cfg = load_config()
     cfg.operator.heartbeat_interval_sec = 10
     save_config(cfg)
+    monkeypatch.setattr("aletheia.gateway.operator_shell._post_operator_heartbeat", lambda cfg, payload: False)
 
     now = {"value": 1000.0}
     monitor = OperatorShellMonitor(cfg, now_fn=lambda: now["value"])
@@ -364,7 +367,7 @@ def test_operator_shell_monitor_waits_for_gateway_ready_before_spawn(tmp_path, m
     assert monitor.proc is None
 
 
-def test_operator_shell_monitor_restarts_stale_heartbeat_process(tmp_path, monkeypatch):
+def test_operator_shell_monitor_marks_alive_stale_heartbeat_degraded_without_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
     from aletheia.agent_shell.operator_store import get_latest_heartbeat
@@ -387,6 +390,7 @@ def test_operator_shell_monitor_restarts_stale_heartbeat_process(tmp_path, monke
 
     monkeypatch.setattr("aletheia.gateway.operator_shell._gateway_api_ready", lambda cfg: True)
     monkeypatch.setattr("aletheia.gateway.operator_shell._latest_operator_heartbeat_age_sec", lambda: 120.0)
+    monkeypatch.setattr("aletheia.gateway.operator_shell._post_operator_heartbeat", lambda cfg, payload: False)
     monkeypatch.setattr("aletheia.gateway.pidfile.kill_pid_tree", lambda pid: killed.append(pid))
 
     monitor = OperatorShellMonitor(
@@ -399,14 +403,14 @@ def test_operator_shell_monitor_restarts_stale_heartbeat_process(tmp_path, monke
 
     monitor.tick_once()
 
-    assert killed == [2468]
-    assert monitor.proc is None
+    assert killed == []
+    assert monitor.proc is not None
     heartbeat = get_latest_heartbeat()
     assert heartbeat is not None
-    assert heartbeat["status"] == "offline"
+    assert heartbeat["status"] == "online"
     assert heartbeat["mode"] == "Degraded"
-    assert "heartbeat is stale" in heartbeat["last_error"]
-    assert any(kind == "operator_shell_restart" for kind, _ in events)
+    assert "internal heartbeat is delayed" in heartbeat["last_error"]
+    assert events == []
 
 
 def test_gateway_supervisor_starts_and_stops_operator_monitor(tmp_path, monkeypatch):

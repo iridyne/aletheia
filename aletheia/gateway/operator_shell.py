@@ -1,6 +1,7 @@
 """Operator shell spawn helpers and supervision."""
 
 from contextlib import contextmanager
+import json
 import os
 import platform
 import subprocess
@@ -483,26 +484,70 @@ def _default_record_event(kind: str, payload: dict) -> None:
         pass
 
 
-def _record_operator_shell_unavailable(cfg, message: str) -> None:
+def _post_operator_heartbeat(cfg, payload: dict) -> bool:
+    try:
+        url = f"http://{_connect_host(cfg.app.bind_host)}:{cfg.app.dashboard_port}/api/operator/internal/heartbeat"
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=2.0) as response:
+            return 200 <= response.status < 300
+    except Exception:
+        return False
+
+
+def _record_operator_shell_unavailable(
+    cfg,
+    message: str,
+    *,
+    status: str = "offline",
+    preserve_latest: bool = False,
+) -> bool:
     """Persist an honest, fresh operator status while the supervisor owns recovery."""
+    latest: dict | None = None
+    if preserve_latest:
+        try:
+            from aletheia.agent_shell.operator_store import get_latest_heartbeat
+
+            latest = get_latest_heartbeat("operator")
+        except Exception:
+            latest = None
+
+    payload = {
+        "agent_id": "operator",
+        "status": status,
+        "mode": "Degraded",
+        "permission_mode": (latest or {}).get("permission_mode") or cfg.operator.permission_mode,
+        "is_busy": bool((latest or {}).get("is_busy")) if preserve_latest else False,
+        "current_task_id": (latest or {}).get("current_task_id") if preserve_latest else None,
+        "current_intent": message,
+        "queue_size": int((latest or {}).get("queue_size") or 0) if preserve_latest else 0,
+        "last_error": message,
+        "model_provider": (latest or {}).get("model_provider") if preserve_latest else None,
+        "session_id": (latest or {}).get("session_id") or cfg.operator.main_session_id,
+        "runtime_id": (latest or {}).get("runtime_id"),
+        "runtime_mode": (latest or {}).get("runtime_mode") or "current",
+        "runtime_state": (latest or {}).get("runtime_state") or "current",
+        "active_branch_id": (latest or {}).get("active_branch_id") if preserve_latest else None,
+        "active_branch_kind": (latest or {}).get("active_branch_kind") if preserve_latest else None,
+        "active_branch_title": (latest or {}).get("active_branch_title") if preserve_latest else None,
+        "last_success_at": (latest or {}).get("last_success_at") if preserve_latest else None,
+    }
+    if _post_operator_heartbeat(cfg, payload):
+        return True
+
     try:
         from aletheia.agent_shell.operator_store import record_heartbeat
 
-        record_heartbeat(
-            agent_id="operator",
-            status="offline",
-            mode="Degraded",
-            permission_mode=cfg.operator.permission_mode,
-            is_busy=False,
-            current_task_id=None,
-            current_intent=message,
-            queue_size=0,
-            last_error=message,
-            model_provider=None,
-            session_id=cfg.operator.main_session_id,
-        )
+        record_heartbeat(**payload)
+        return True
     except Exception:
-        pass
+        return False
 
 
 class OperatorShellMonitor:
@@ -528,7 +573,15 @@ class OperatorShellMonitor:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def _record_unavailable(self, message: str, *, now: float | None = None, force: bool = False) -> bool:
+    def _record_unavailable(
+        self,
+        message: str,
+        *,
+        now: float | None = None,
+        force: bool = False,
+        status: str = "offline",
+        preserve_latest: bool = False,
+    ) -> bool:
         effective_now = self.now_fn() if now is None else now
         interval = max(float(self.cfg.operator.heartbeat_interval_sec), 1.0)
         if (
@@ -537,9 +590,15 @@ class OperatorShellMonitor:
             and effective_now - self._last_unavailable_heartbeat_at < interval
         ):
             return False
-        _record_operator_shell_unavailable(self.cfg, message)
-        self._last_unavailable_heartbeat_at = effective_now
-        return True
+        recorded = _record_operator_shell_unavailable(
+            self.cfg,
+            message,
+            status=status,
+            preserve_latest=preserve_latest,
+        )
+        if recorded:
+            self._last_unavailable_heartbeat_at = effective_now
+        return recorded
 
     def tick_once(self) -> None:
         if not self.cfg.operator.enabled:
@@ -645,7 +704,14 @@ class OperatorShellMonitor:
         age = _latest_operator_heartbeat_age_sec()
         if age is None:
             return started_at is not None and now - started_at > stale_after
-        return age > stale_after
+        if age > stale_after:
+            self._record_unavailable(
+                "Operator shell process is alive but its internal heartbeat is delayed; supervisor is keeping status fresh.",
+                status="online",
+                preserve_latest=True,
+            )
+            return False
+        return False
 
     def _restart_stale_process(self, proc_pid: int | None) -> None:
         if proc_pid is not None:
