@@ -43,6 +43,48 @@ class _FakePosition:
         self.mark_price = 3010.0
 
 
+def test_store_retries_transient_sqlite_busy(monkeypatch):
+    from aletheia.portfolio import exchange_sync as es
+
+    class _Conn:
+        def __init__(self, *, fail=False):
+            self.fail = fail
+            self.committed = False
+
+        def execute(self, *_args, **_kwargs):
+            if self.fail:
+                raise sqlite3.OperationalError("database is locked")
+
+        def commit(self):
+            self.committed = True
+
+    first = _Conn(fail=True)
+    second = _Conn()
+    conns = [first, second]
+    cleanup: list[str] = []
+
+    monkeypatch.setattr(es, "get_db", lambda: conns.pop(0))
+    monkeypatch.setattr(es, "rollback_if_in_transaction", lambda: cleanup.append("rollback"))
+    monkeypatch.setattr(es, "close_db", lambda: cleanup.append("close"))
+    monkeypatch.setattr(es.time, "sleep", lambda _sec: None)
+
+    es._store(es.ExchangeAccountState(
+        mode="demo",
+        equity_usdt=1.0,
+        available_usdt=1.0,
+        frozen_usdt=0.0,
+        futures_unrealized_pnl=0.0,
+        open_positions_count=0,
+        open_orders_count=0,
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+        asset_breakdown=[],
+        positions=[],
+    ))
+
+    assert cleanup == ["rollback", "close"]
+    assert second.committed is True
+
+
 def _patch_client(monkeypatch, *, balances=None, positions=None, orders=None,
                   raises_on_balances=False, mix_equity=None):
     """Mock BitgetClient so tests don't hit the network.

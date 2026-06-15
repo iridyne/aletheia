@@ -21,12 +21,14 @@ Governance:
 
 import json
 import logging
+import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 from aletheia.config.loader import load_config
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import close_db, get_db, rollback_if_in_transaction
 
 logger = logging.getLogger("aletheia.exchange_sync")
 
@@ -64,7 +66,6 @@ def _settings_key(mode: str) -> str:
 
 def _store(state: ExchangeAccountState) -> None:
     """Persist the latest snapshot. Idempotent upsert into settings."""
-    db = get_db()
     payload = json.dumps({
         "mode": state.mode,
         "equity_usdt": state.equity_usdt,
@@ -77,13 +78,26 @@ def _store(state: ExchangeAccountState) -> None:
         "asset_breakdown": state.asset_breakdown or [],
         "positions": state.positions or [],
     })
-    # SQLite UPSERT — settings has key as PRIMARY KEY.
-    db.execute(
-        "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        (_settings_key(state.mode), payload),
-    )
-    db.commit()
+    # SQLite UPSERT: settings has key as PRIMARY KEY. This cache write can race
+    # with frequent heartbeat/API writes during startup; treat SQLITE_BUSY as a
+    # transient condition and reset this worker's thread-local connection before
+    # retrying so a failed refresh never leaves a writer transaction behind.
+    for attempt in range(3):
+        try:
+            db = get_db()
+            db.execute(
+                "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (_settings_key(state.mode), payload),
+            )
+            db.commit()
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower() or attempt >= 2:
+                raise
+            rollback_if_in_transaction()
+            close_db()
+            time.sleep(0.25 * (attempt + 1))
 
 
 def _read_raw(mode: str) -> Optional[dict]:
