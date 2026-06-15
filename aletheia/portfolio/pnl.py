@@ -24,8 +24,14 @@ def _btc_price_at_close() -> float | None:
         return None
 
 
-def mark_positions_to_market() -> list[dict]:
-    """Update unrealized PnL on open positions using the latest market price."""
+def mark_positions_to_market(persist: bool = False) -> list[dict]:
+    """Compute unrealized PnL on open positions using the latest market price.
+
+    When persist=False (default, used by GET /api/portfolio), only computes in
+    memory — no DB writes, no WAL lock contention with scheduler threads.
+    When persist=True (used by scheduler's portfolio_snapshot job), also writes
+    the updated price/PnL back to the positions table.
+    """
     positions = list_positions(status="open")
     updated = []
     for p in positions:
@@ -39,7 +45,8 @@ def mark_positions_to_market() -> list[dict]:
             upnl = (price - entry) * qty
         else:  # short/sell
             upnl = (entry - price) * qty
-        update_position(p["id"], current_price=price, unrealized_pnl=upnl)
+        if persist:
+            update_position(p["id"], current_price=price, unrealized_pnl=upnl)
         rec = dict(p)
         rec["current_price"] = price
         rec["unrealized_pnl"] = upnl
@@ -114,9 +121,9 @@ def today_realized_pnl(execution_mode: str | None = None) -> float:
     return round(total, 8)
 
 
-def compute_portfolio(execution_mode: str | None = None) -> dict:
+def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = False) -> dict:
     """Aggregate open positions into a portfolio summary (marks to market first)."""
-    positions = mark_positions_to_market()
+    positions = mark_positions_to_market(persist=persist_marks)
     if execution_mode:
         positions = [p for p in positions if p["execution_mode"] == execution_mode]
 
@@ -221,8 +228,13 @@ def compute_portfolio(execution_mode: str | None = None) -> dict:
 
 
 def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> PortfolioSnapshot:
-    """Compute the portfolio and persist a portfolio_snapshot row."""
-    summary = compute_portfolio()
+    """Compute the portfolio and persist a portfolio_snapshot row.
+
+    Called from the scheduler thread — uses persist=True to also write
+    mark-to-market prices back to the positions table (safe because the
+    scheduler holds no concurrent lock contention with itself).
+    """
+    summary = compute_portfolio(persist_marks=True)
     snap = PortfolioSnapshot(
         total_value_usdt=summary["total_value_usdt"],
         unrealized_pnl=summary["unrealized_pnl"],

@@ -3016,6 +3016,24 @@ export class OperatorLoop {
       this.lastError = error instanceof Error ? error.message : String(error)
       this.mode = 'Degraded'
       this.sessionRuntime.setCurrentIntent(this.lastError)
+      // Still send heartbeat on failure — otherwise any transient API error
+      // causes heartbeat to go stale (45s timeout) rather than showing Degraded.
+      try {
+        const heartbeat = buildHeartbeat({
+          mode: this.mode,
+          permissionMode: this.config.permissionMode,
+          session: this.sessionRuntime.getMainSession(),
+          tasks: this.taskRuntime.snapshot(),
+          activeBranch: this.sessionRuntime.getActiveBranch(),
+          modelProvider: this.config.modelProvider,
+          lastError: this.lastError,
+          lastSuccessAt: this.lastSuccessAt,
+          runtimeId: this.runtimeId(),
+          runtimeMode: this.runtimeMode(),
+          runtimeState: this.runtimeState(),
+        })
+        await this.backendClient.postHeartbeat(heartbeat)
+      } catch { /* heartbeat itself failed — nothing more we can do */ }
       return false
     } finally {
       this.endRunSessionParentScope()
