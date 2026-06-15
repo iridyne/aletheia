@@ -81,6 +81,19 @@ def _fast_network_timeout(request, monkeypatch):
 
         monkeypatch.setattr(_fb, "_candidate_models", _fast_candidates)
 
+    # Eliminate retry delays in startup/resume LLM gate (avoids 15s×2 sleeps).
+    # Only skips long sleeps (>2s); tests with explicit short delays (1s) still work.
+    import aletheia.agent_runtime.startup_gate as _sg
+
+    _real_asyncio_sleep = _sg.asyncio.sleep
+
+    async def _skip_long_sleep(seconds):
+        if seconds > 2:
+            return
+        await _real_asyncio_sleep(seconds)
+
+    monkeypatch.setattr(_sg.asyncio, "sleep", _skip_long_sleep)
+
 
 @pytest.fixture(autouse=True)
 def _no_network_market_data(request, monkeypatch):
