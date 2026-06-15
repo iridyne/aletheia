@@ -21,7 +21,7 @@ _scheduler: BackgroundScheduler | None = None
 # keeps one stuck collector/model request from starving the scheduler pools and
 # holding SQLite thread-local state indefinitely.
 _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
-    "market_data": 120.0,
+    "market_data": 90.0,
     "market_observer": 240.0,
     "dreaming_agent": 300.0,
     "strategy_designer": 300.0,
@@ -30,8 +30,8 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "prediction_observer": 240.0,
     "post_trade_reviewer": 300.0,
     "risk_critic": 300.0,
-    "universe_refresh": 120.0,
-    "data_collectors": 90.0,
+    "universe_refresh": 90.0,
+    "data_collectors": 45.0,
 }
 
 
@@ -42,9 +42,14 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
 # cap while preventing starvation of the boot catch-up observer.
 _EXECUTOR_WORKERS = {
     "default": 2,
-    "io": 2,
+    # SQLite has one writer. In a local-first MVP, a conservative IO lane is
+    # more reliable than parallel scheduled writers that frequently collide and
+    # cascade into ``database is locked`` across unrelated jobs.
+    "io": 1,
     "observer": 1,
-    "agents": 2,
+    # LLM-backed jobs also write run logs/artifacts. Keep them serial so a slow
+    # model call cannot make two agent jobs compete for SQLite at once.
+    "agents": 1,
 }
 
 
