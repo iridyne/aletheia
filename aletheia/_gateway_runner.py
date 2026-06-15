@@ -33,6 +33,8 @@ CREATE_NO_WINDOW = 0x08000000
 _SERVER_PORT_STARTUP_GRACE_SEC = 90.0
 _SERVER_PORT_LOST_GRACE_SEC = 15.0
 _SERVER_PORT_CHECK_INTERVAL_SEC = 1.0
+_BACKEND_PORT_OFFSET = 1
+_FRONTDOOR_STARTUP_GRACE_SEC = 20.0
 
 
 def _sleep(seconds: float) -> None:
@@ -53,14 +55,103 @@ def _cleanup_before_spawn(cfg) -> None:
                 kill_pid_tree(pid)
 
 
-def _spawn_server(cfg) -> int:
+def backend_port_for(cfg) -> int:
+    """Return the internal backend worker port behind the stable front door."""
+    raw = os.environ.get("ALETHEIA_BACKEND_PORT")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return int(cfg.app.dashboard_port) + _BACKEND_PORT_OFFSET
+
+
+def _cleanup_backend_before_spawn(cfg, backend_port: int) -> None:
+    """Free the internal backend port without touching the front-door port."""
+    host = cfg.app.bind_host
+    if not wait_port_free(backend_port, host, timeout=2.0):
+        my_pid = os.getpid()
+        for pid in find_port_holders(backend_port):
+            if pid != my_pid:
+                kill_pid_tree(pid)
+
+
+def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
+    """Spawn the stable local front door that owns the dashboard port."""
+    log_path = get_data_dir() / "logs" / "frontdoor-errors.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    from aletheia.gateway.logs import rotate_if_needed
+    rotate_if_needed(log_path)
+    real_python, env_patch = _resolve_real_python()
+    backend_base_url = f"http://{cfg.app.bind_host}:{backend_port}"
+    cmd = [
+        real_python,
+        "-m",
+        "uvicorn",
+        "aletheia.gateway.frontdoor:app",
+        "--host",
+        cfg.app.bind_host,
+        "--port",
+        str(cfg.app.dashboard_port),
+        "--log-level",
+        "warning",
+    ]
+    env = os.environ.copy()
+    env.update(env_patch)
+    env["ALETHEIA_BACKEND_HOST"] = cfg.app.bind_host
+    env["ALETHEIA_BACKEND_PORT"] = str(backend_port)
+    env["ALETHEIA_BACKEND_BASE_URL"] = backend_base_url
+    popen_kwargs: dict = {
+        "stdout": subprocess.DEVNULL,
+        "cwd": str(Path(__file__).resolve().parent.parent),
+        "env": env,
+    }
+    if platform.system() == "Windows":
+        popen_kwargs["creationflags"] = CREATE_NO_WINDOW
+    with log_path.open("a", encoding="utf-8") as log_file:
+        popen_kwargs["stderr"] = log_file
+        return subprocess.Popen(cmd, **popen_kwargs)
+
+
+def _wait_frontdoor_listening(cfg, proc: subprocess.Popen, *, timeout: float = _FRONTDOOR_STARTUP_GRACE_SEC) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return False
+        if port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+            return True
+        _sleep(0.2)
+    return port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)
+
+
+def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | None) -> subprocess.Popen:
+    if proc is not None and proc.poll() is None and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
+        return proc
+    if proc is not None:
+        try:
+            kill_pid_tree(proc.pid)
+        except Exception:
+            pass
+        _record_frontdoor_restart(cfg.app.dashboard_port, getattr(proc, "pid", 0))
+    new_proc = _spawn_frontdoor(cfg, backend_port)
+    if not _wait_frontdoor_listening(cfg, new_proc):
+        _record_frontdoor_restart(cfg.app.dashboard_port, getattr(new_proc, "pid", 0))
+        try:
+            kill_pid_tree(new_proc.pid)
+        except Exception:
+            pass
+        return new_proc
+    return new_proc
+
+
+def _spawn_server(cfg, *, port: int | None = None, frontdoor_proc: subprocess.Popen | None = None) -> int:
     """Spawn the inner uvicorn server as a child process; return its exit code."""
     errors_log = get_data_dir() / "logs" / "errors.log"
     errors_log.parent.mkdir(parents=True, exist_ok=True)
     from aletheia.gateway.logs import rotate_if_needed
     rotate_if_needed(errors_log)
     real_python, env_patch = _resolve_real_python()
-    runtime_context = current_gateway_launch_context(cfg)
+    runtime_context = current_gateway_launch_context(cfg, port=port)
 
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
@@ -90,6 +181,8 @@ def _spawn_server(cfg) -> int:
         started_at = time.monotonic()
         saw_listening_port = False
         port_missing_since: float | None = None
+        if not hasattr(proc, "poll"):
+            return proc.wait()
         while True:
             code = proc.poll()
             if code is not None:
@@ -98,6 +191,14 @@ def _spawn_server(cfg) -> int:
                 except (AttributeError, OSError):
                     pass
                 return code
+
+            if frontdoor_proc is not None:
+                frontdoor_dead = frontdoor_proc.poll() is not None
+                frontdoor_port_lost = not port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)
+                if frontdoor_dead or frontdoor_port_lost:
+                    _record_frontdoor_restart(cfg.app.dashboard_port, getattr(frontdoor_proc, "pid", 0))
+                    kill_pid_tree(proc.pid)
+                    return 1
 
             now = time.monotonic()
             if port_in_use(runtime_context["port"], runtime_context["host"]):
@@ -172,8 +273,11 @@ def run_supervised(spawn_fn=None) -> dict:
     """
     cfg = bootstrap()
     write_pid()  # supervisor owns the pid file (written exactly once)
+    frontdoor_enabled = spawn_fn is None
+    backend_port = backend_port_for(cfg) if frontdoor_enabled else cfg.app.dashboard_port
+    frontdoor_proc = None
     if spawn_fn is None:
-        spawn_fn = lambda: _spawn_server(cfg)
+        spawn_fn = lambda: _spawn_server(cfg, port=backend_port, frontdoor_proc=frontdoor_proc)
     from aletheia.gateway.operator_shell import OperatorShellMonitor
     operator_monitor = OperatorShellMonitor(cfg)
     operator_monitor.start()
@@ -187,8 +291,16 @@ def run_supervised(spawn_fn=None) -> dict:
     restarts = 0
     restart_times: list[float] = []
     try:
-        while True:
+        if frontdoor_enabled:
             _cleanup_before_spawn(cfg)
+            _cleanup_backend_before_spawn(cfg, backend_port)
+            frontdoor_proc = _ensure_frontdoor_running(cfg, backend_port, frontdoor_proc)
+        while True:
+            if frontdoor_enabled:
+                frontdoor_proc = _ensure_frontdoor_running(cfg, backend_port, frontdoor_proc)
+                _cleanup_backend_before_spawn(cfg, backend_port)
+            else:
+                _cleanup_before_spawn(cfg)
             code = spawn_fn()
             if code == 0:
                 return {"gave_up": False, "restarts": restarts}  # clean shutdown
@@ -208,6 +320,11 @@ def run_supervised(spawn_fn=None) -> dict:
             _sleep(backoff)
     finally:
         _stop_vite_watch(vite_proc)
+        if frontdoor_proc is not None:
+            try:
+                kill_pid_tree(frontdoor_proc.pid)
+            except Exception:
+                pass
         operator_monitor.stop()
 
 
@@ -239,6 +356,24 @@ def _record_port_liveness_failure(port: int, pid: int) -> None:
             "source": "gateway",
             "event_type": "gateway_inner_port_lost",
             "entity_type": "gateway",
+            "entity_id": str(pid),
+            "message": msg,
+        })
+        write_error({"source": "gateway_supervisor", "message": msg})
+    except Exception:
+        pass
+
+
+def _record_frontdoor_restart(port: int, pid: int) -> None:
+    try:
+        from aletheia.files.jsonl import write_audit, write_error
+
+        msg = f"Gateway front door PID {pid} is not serving port {port}; supervisor is restarting it"
+        write_audit({
+            "actor": "system",
+            "source": "gateway",
+            "event_type": "gateway_frontdoor_restart",
+            "entity_type": "gateway_frontdoor",
             "entity_id": str(pid),
             "message": msg,
         })

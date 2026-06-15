@@ -125,7 +125,7 @@ def _verify_api_ready_accessible(cfg) -> bool:
     """
     import urllib.request
     try:
-        url = f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}/_infra/livez"
+        url = f"http://{cfg.app.bind_host}:{cfg.app.dashboard_port}/api/ready"
         req = urllib.request.Request(url, headers={"User-Agent": "aletheia-preflight"})
         with urllib.request.urlopen(req, timeout=2) as response:
             return response.status == 200

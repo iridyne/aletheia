@@ -100,14 +100,17 @@ cd operator-shell; npm test
 
 Goal: make `8787` stay bound even while the backend worker restarts.
 
-Planned controls:
+Implemented controls:
 
 - a minimal local front-door process owns `8787`;
-- backend worker binds an internal loopback port;
+- backend worker binds an internal loopback port (`dashboard_port + 1` by
+  default; currently `8788` for the default `8787` dashboard);
 - front door serves the last known-good static dashboard and `/_infra/*`;
 - `/api/*` proxies to the ready backend worker and returns structured `503`
   JSON instead of connection-refused when the worker is down;
-- dev HMR/build-watch remains single-port from the user's perspective.
+- startup verification waits for `/api/ready` through the front door before
+  declaring the gateway started;
+- dev build-watch remains single-port from the user's perspective.
 
 Exit checks:
 
@@ -178,4 +181,3 @@ uv run aletheia doctor --fetch
 uv run aletheia gateway restart --no-browser
 uv run aletheia gateway status
 ```
-

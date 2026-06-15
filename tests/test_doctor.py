@@ -169,3 +169,39 @@ def test_process_autostart_warns_when_watchdog_never_ran(monkeypatch):
     autostart_check = next(c for c in r.checks if c.name == "process.autostart")
     assert autostart_check.severity == "warn"
     assert "not run" in autostart_check.detail.lower()
+
+
+def test_frontdoor_probe_reports_backend_readiness(monkeypatch):
+    import json
+    import urllib.request
+
+    payload = {
+        "role": "frontdoor",
+        "pid": 1234,
+        "static_index": True,
+        "backend_base_url": "http://127.0.0.1:8788",
+        "backend": {"ready": True, "status_code": 200},
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps(payload).encode("utf-8")
+
+    class FakeOpener:
+        def open(self, url, timeout=0):  # noqa: ARG002
+            return FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *args, **kwargs: FakeOpener())
+
+    r = dx.Report(generated_at="t")
+    dx._probe_frontdoor_process(r, "127.0.0.1", 8787)
+
+    checks = {c.name: c for c in r.checks}
+    assert checks["process.frontdoor"].severity == "ok"
+    assert checks["process.backend"].severity == "ok"

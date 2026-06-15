@@ -35,6 +35,12 @@ respawned with backoff; after too many restarts in a window it gives up, writes 
 notification sink (Windows toast and Telegram when configured). The inner
 server's stderr goes to `data/logs/errors.log`.
 
+`8787` is owned by a small local **front door**. The backend worker runs on an
+internal loopback port behind it, so the dashboard port can keep serving static
+UI and `/_infra/*` diagnostics while the worker is restarting. During that
+window, `/api/*` returns a structured `503 backend_unavailable` instead of a raw
+connection failure.
+
 The production dashboard also has a global backend connection guard. If `/api`
 becomes unreachable during restart/self-heal, the page shows a fail-loud banner
 and, after a prolonged outage, an overlay with the recovery command. Browser

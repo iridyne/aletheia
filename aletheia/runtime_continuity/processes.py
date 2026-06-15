@@ -64,7 +64,7 @@ def current_runtime_record() -> dict | None:
     return dict(row) if row else None
 
 
-def current_gateway_launch_context(cfg) -> dict:
+def current_gateway_launch_context(cfg, *, port: int | None = None) -> dict:
     runtime = current_runtime_record() or {"runtime_id": "runtime-local-current", "state": "current"}
     workdir = runtime_workdir(runtime)
     return {
@@ -72,7 +72,7 @@ def current_gateway_launch_context(cfg) -> dict:
         "runtime_id": str(runtime.get("runtime_id") or "runtime-local-current"),
         "runtime_mode": "current",
         "runtime_state": str(runtime.get("state") or "current"),
-        "port": int(cfg.app.dashboard_port),
+        "port": int(port if port is not None else cfg.app.dashboard_port),
         "host": cfg.app.bind_host,
         "workdir": workdir,
     }

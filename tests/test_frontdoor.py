@@ -1,0 +1,79 @@
+from pathlib import Path
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+def _static_fixture(tmp_path: Path) -> Path:
+    static_dir = tmp_path / "dashboard_static"
+    assets = static_dir / "assets"
+    assets.mkdir(parents=True)
+    (static_dir / "index.html").write_text(
+        "<!doctype html><html><body><div id='root'>ok</div></body></html>",
+        encoding="utf-8",
+    )
+    (assets / "index-test.js").write_text("console.log('ok')", encoding="utf-8")
+    return static_dir
+
+
+@pytest.mark.anyio
+async def test_frontdoor_serves_static_without_backend(tmp_path):
+    from aletheia.gateway.frontdoor import create_app
+
+    app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        resp = await client.get("/")
+
+    assert resp.status_code == 200
+    assert "root" in resp.text
+
+
+@pytest.mark.anyio
+async def test_frontdoor_infra_status_stays_available_when_backend_down(tmp_path):
+    from aletheia.gateway.frontdoor import create_app
+
+    app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        resp = await client.get("/_infra/status")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["role"] == "frontdoor"
+    assert data["static_index"] is True
+    assert data["backend"]["ready"] is False
+
+
+@pytest.mark.anyio
+async def test_frontdoor_api_returns_structured_503_when_backend_down(tmp_path):
+    from aletheia.gateway.frontdoor import create_app
+
+    app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        resp = await client.get("/api/status")
+
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert detail["reason"] == "backend_unavailable"
+    assert detail["path"] == "/api/status"
+
+
+@pytest.mark.anyio
+async def test_frontdoor_readyz_fails_only_when_static_missing(tmp_path):
+    from aletheia.gateway.frontdoor import create_app
+
+    missing_static = tmp_path / "missing"
+    app = create_app(static_dir=missing_static, backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        resp = await client.get("/_infra/readyz")
+        root = await client.get("/")
+
+    assert resp.status_code == 503
+    assert resp.json()["static_index"] is False
+    assert root.status_code == 503
+    assert "dashboard assets are unavailable" in root.text.lower()
+

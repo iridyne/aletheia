@@ -82,6 +82,114 @@ def test_supervisor_writes_pid_once(tmp_path, monkeypatch):
     assert written["n"] == 1  # supervisor writes pid exactly once
 
 
+def test_run_supervised_default_uses_frontdoor_and_internal_backend_port(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.operator.enabled = False
+    save_config(cfg)
+
+    class FakeFrontdoor:
+        pid = 1234
+
+        def poll(self):
+            return None
+
+    captured: dict = {}
+    monkeypatch.setattr(runner, "write_pid", lambda: None)
+    monkeypatch.setattr(runner, "_cleanup_before_spawn", lambda cfg: None)
+    monkeypatch.setattr(runner, "_cleanup_backend_before_spawn", lambda cfg, backend_port: captured.setdefault("cleanup_port", backend_port))
+    def fake_ensure_frontdoor(cfg, backend_port, proc):  # noqa: ARG001
+        captured["frontdoor_port"] = backend_port
+        return FakeFrontdoor()
+
+    monkeypatch.setattr(runner, "_ensure_frontdoor_running", fake_ensure_frontdoor)
+    monkeypatch.setattr(runner, "_stop_vite_watch", lambda proc: None)
+    monkeypatch.setattr(runner, "kill_pid_tree", lambda pid: captured.setdefault("killed_frontdoor", pid))
+
+    def fake_spawn_server(cfg, *, port=None, frontdoor_proc=None):
+        captured["backend_port"] = port
+        captured["frontdoor_proc"] = frontdoor_proc
+        return 0
+
+    monkeypatch.setattr(runner, "_spawn_server", fake_spawn_server)
+
+    result = runner.run_supervised()
+
+    expected_backend_port = cfg.app.dashboard_port + 1
+    assert result["gave_up"] is False
+    assert captured["cleanup_port"] == expected_backend_port
+    assert captured["frontdoor_port"] == expected_backend_port
+    assert captured["backend_port"] == expected_backend_port
+    assert isinstance(captured["frontdoor_proc"], FakeFrontdoor)
+    assert captured["killed_frontdoor"] == 1234
+
+
+def test_spawn_frontdoor_uses_dashboard_port_and_backend_url(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config
+
+    captured = {}
+
+    class FakeProc:
+        pid = 2468
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(runner, "_resolve_real_python", lambda: ("python-real", {"PYTHON_PATCH": "1"}))
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+
+    cfg = load_config()
+    proc = runner._spawn_frontdoor(cfg, backend_port=9876)
+
+    assert proc.pid == 2468
+    assert captured["cmd"][:4] == ["python-real", "-m", "uvicorn", "aletheia.gateway.frontdoor:app"]
+    assert "--port" in captured["cmd"]
+    assert str(cfg.app.dashboard_port) in captured["cmd"]
+    env = captured["kwargs"]["env"]
+    assert env["ALETHEIA_BACKEND_PORT"] == "9876"
+    assert env["ALETHEIA_BACKEND_BASE_URL"] == "http://127.0.0.1:9876"
+
+
+def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config
+
+    captured = {}
+
+    class FakeProc:
+        pid = 1357
+
+        def poll(self):
+            return 0
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(runner, "_resolve_real_python", lambda: ("python-real", {}))
+
+    code = runner._spawn_server(load_config(), port=9876)
+
+    assert code == 0
+    assert captured["cmd"][:4] == ["python-real", "-m", "uvicorn", "aletheia.server.app:app"]
+    assert "--port" in captured["cmd"]
+    assert "9876" in captured["cmd"]
+    assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_PORT"] == "9876"
+
+
 def test_inner_server_is_restarted_when_port_never_listens(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia import _gateway_runner as runner

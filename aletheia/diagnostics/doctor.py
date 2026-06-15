@@ -128,6 +128,7 @@ def _probe_process(report: Report) -> None:
 
     if running:
         report.add("process.gateway", "ok", f"running (PID {pid}) on {host}:{port}")
+        _probe_frontdoor_process(report, host, port)
     elif port_in_use(port, host):
         report.add("process.gateway", "warn",
                    f"port {port} held but no tracked PID (orphan / ghost socket)",
@@ -179,6 +180,45 @@ def _probe_process(report: Report) -> None:
                        "run `aletheia gateway enable-autostart` or check Task Scheduler access")
     except Exception:
         pass
+
+
+def _probe_frontdoor_process(report: Report, host: str, port: int) -> None:
+    """Probe the stable front-door layer when present.
+
+    This is best-effort and local-only. Older/direct gateway builds will answer
+    `/_infra/status` without `role=frontdoor`, in which case we stay quiet.
+    """
+    try:
+        import json
+        import urllib.request
+
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(f"http://{host}:{port}/_infra/status", timeout=2) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return
+
+    if payload.get("role") != "frontdoor":
+        return
+
+    static_state = "static ok" if payload.get("static_index") else "static missing"
+    backend = payload.get("backend") or {}
+    report.add(
+        "process.frontdoor",
+        "ok" if payload.get("static_index") else "warn",
+        f"front door PID {payload.get('pid')} on {host}:{port}, {static_state}",
+        "Run: cd frontend && npm run build" if not payload.get("static_index") else "",
+    )
+    if backend.get("ready"):
+        report.add("process.backend", "ok", f"backend ready behind front door ({payload.get('backend_base_url')})")
+    else:
+        detail = backend.get("error") or f"status_code={backend.get('status_code')}"
+        report.add(
+            "process.backend",
+            "warn",
+            f"backend not ready behind front door ({payload.get('backend_base_url')}): {detail}",
+            "wait for supervisor restart, or run `aletheia gateway restart --no-browser`",
+        )
 
 
 def _probe_config_gates(report: Report) -> None:
