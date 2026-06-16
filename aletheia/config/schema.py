@@ -177,6 +177,10 @@ class ModelsConfig(BaseModel):
 
 
 class RiskConfig(BaseModel):
+    # Kill switch auto-trigger: when enabled, breaching max_daily_loss_pct trips
+    # the global trading brake automatically. Separate toggles for demo and live.
+    kill_switch_enabled_live: bool = True
+    kill_switch_enabled_demo: bool = False
     max_daily_loss_pct: float = 1.0
     max_single_trade_risk_pct: float = 0.25
     max_total_live_exposure_pct: float = 5.0

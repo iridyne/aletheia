@@ -549,6 +549,17 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2);
   margin-top: var(--space-3);
 }
+.kill-switch-info {
+  margin-top: var(--space-3); padding: var(--space-3);
+  background: rgba(245,185,66,0.06); border: 1px solid rgba(245,185,66,0.25);
+  border-radius: var(--r-sm); font-size: 0.78rem;
+}
+.kill-switch-info-title {
+  font-weight: 700; font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin-bottom: var(--space-2);
+}
+.kill-switch-info ul { margin: 0; padding-left: 1.2rem; color: var(--text); }
+.kill-switch-info li { margin-bottom: var(--space-1); line-height: 1.5; }
 .settings-action-row-start { justify-content: flex-start; margin: 0 0 var(--space-3); }
 .settings-inline-note { margin-bottom: var(--space-4); }
 /* Numeric field grid (universe config etc.) — labels stack, inputs FILL the column

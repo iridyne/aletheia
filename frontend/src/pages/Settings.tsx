@@ -818,6 +818,8 @@ const RISK_DEMO: NumField[] = [
 ]
 
 const RISK_BOOLS: BoolField[] = [
+  { key: 'kill_switch_enabled_live', label: 'Kill switch auto-trigger (live)' },
+  { key: 'kill_switch_enabled_demo', label: 'Kill switch auto-trigger (demo)' },
   { key: 'allow_short_live', label: 'Allow short selling (live)' },
   { key: 'allow_short_demo', label: 'Allow short selling (demo)' },
 ]
@@ -871,6 +873,18 @@ function RiskCard({ settings, qc }: any) {
       <NumGrid fields={RISK_DEMO} vals={vals} set={set} />
 
       <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
+
+      {/* Kill switch trigger conditions — always visible for transparency */}
+      <div className="kill-switch-info">
+        <div className="kill-switch-info-title">Kill Switch Auto-Trigger Conditions</div>
+        <ul>
+          <li><strong>Trigger formula:</strong> daily realized PnL &le; &minus;(Live Cap &times; Max Daily Loss %)</li>
+          <li><strong>Current threshold:</strong> &minus;{fmtNum((vals.max_live_limited_cap_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
+          <li><strong>Scope:</strong> applies to live trades when "Kill switch auto-trigger (live)" is ON; applies to demo trades when "Kill switch auto-trigger (demo)" is ON</li>
+          <li><strong>Effect:</strong> once tripped, ALL proposals (live + demo) are rejected until manually released</li>
+          <li><strong>Reset:</strong> release from Risk Controls panel or CLI after UTC new day</li>
+        </ul>
+      </div>
 
       <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save risk limits'}</button>

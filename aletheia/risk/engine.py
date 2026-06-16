@@ -144,13 +144,18 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
 
     # 8. Max daily loss — global brake. If today's realized loss breaches the limit,
     #    reject and auto-trip the kill switch (guide §21.3, §2.4).
+    #    Respects kill_switch_enabled_live / kill_switch_enabled_demo toggles:
+    #    the daily-loss violation is always recorded, but the kill switch only
+    #    auto-trips when the matching toggle is enabled.
     from aletheia.portfolio.pnl import today_realized_pnl
     capital_base = risk.max_live_limited_cap_usdt or 0.0
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
     realized = today_realized_pnl()
     if daily_loss_limit > 0 and realized <= -daily_loss_limit:
         violations.append(f"max_daily_loss_exceeded:{realized}<=-{daily_loss_limit}")
-        if not cfg.runtime.kill_switch_active:
+        is_live = _is_live(proposal.execution_mode)
+        ks_enabled = risk.kill_switch_enabled_live if is_live else risk.kill_switch_enabled_demo
+        if ks_enabled and not cfg.runtime.kill_switch_active:
             from aletheia.risk.kill_switch import activate as _trip
             _trip(reason=f"daily loss {realized} breached limit -{daily_loss_limit}", actor="system")
 

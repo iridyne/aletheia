@@ -274,6 +274,7 @@ export const api = {
     max_futures_leverage_live: number; max_futures_leverage_demo: number
     max_open_positions_live: number; max_open_positions_demo: number
     allow_short_demo: boolean; allow_short_live: boolean
+    kill_switch_enabled_live: boolean; kill_switch_enabled_demo: boolean
   }>) => post<{ updated: Record<string, any>; risk: Record<string, any> }>('/settings/risk', body),
   updateSymbolFilter: (body: { mode: string; symbols: string[] }) =>
     post<{ mode: string; symbols: string[] }>('/settings/symbols', body),

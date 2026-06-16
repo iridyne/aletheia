@@ -394,6 +394,8 @@ class RiskConfigUpdate(SettingsRequest):
     max_open_positions_demo: Optional[int] = None
     allow_short_demo: Optional[bool] = None
     allow_short_live: Optional[bool] = None
+    kill_switch_enabled_live: Optional[bool] = None
+    kill_switch_enabled_demo: Optional[bool] = None
 
 
 # Fields that must never be changed via the dashboard (safety invariants).
