@@ -49,12 +49,13 @@ class UniverseService:
             return self._fallback_as_members(cfg)
 
         now = datetime.now(timezone.utc).isoformat()
+        ttl_enabled = cfg.universe.snapshot_ttl_enabled
         result = []
         for m in members:
             if execution_eligible_only and not m.get("execution_eligible", True):
                 continue
             m_out = dict(m)
-            if m_out.get("expires_at") and m_out["expires_at"] < now:
+            if ttl_enabled and m_out.get("expires_at") and m_out["expires_at"] < now:
                 if execution_eligible_only:
                     continue  # never use stale data for execution decisions
                 m_out["stale"] = True

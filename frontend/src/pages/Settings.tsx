@@ -224,6 +224,7 @@ function UniverseConfigCard({ settings, qc }: any) {
   const [maxSpread, setMaxSpread] = useState('25')
   const [minDepth, setMinDepth] = useState('25000')
   const [exploreRatio, setExploreRatio] = useState('0.2')
+  const [snapshotTtlEnabled, setSnapshotTtlEnabled] = useState(true)
   const [snapshotTtlHours, setSnapshotTtlHours] = useState('24')
   const [blacklist, setBlacklist] = useState('')
   const [fallbackSymbols, setFallbackSymbols] = useState('BTC/USDT, ETH/USDT, SOL/USDT')
@@ -239,6 +240,7 @@ function UniverseConfigCard({ settings, qc }: any) {
     setMaxSpread(String(universe.max_spread_bps ?? 25))
     setMinDepth(String(universe.min_depth_10bps_usd ?? 25000))
     setExploreRatio(String(universe.explore_ratio ?? 0.2))
+    setSnapshotTtlEnabled(universe.snapshot_ttl_enabled ?? true)
     setSnapshotTtlHours(String(universe.snapshot_ttl_hours ?? 24))
     setBlacklist(listToCsv(universe.blacklist))
     setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
@@ -254,6 +256,7 @@ function UniverseConfigCard({ settings, qc }: any) {
       max_spread_bps: parseFloat(maxSpread),
       min_depth_10bps_usd: parseFloat(minDepth),
       explore_ratio: parseFloat(exploreRatio),
+      snapshot_ttl_enabled: snapshotTtlEnabled,
       snapshot_ttl_hours: parseFloat(snapshotTtlHours),
       blacklist: parseCsvList(blacklist),
       fallback_symbols: parseCsvList(fallbackSymbols),
@@ -307,9 +310,14 @@ function UniverseConfigCard({ settings, qc }: any) {
             onChange={e => { setExploreRatio(e.target.value); setMsg(null) }} />
         </label>
         <label className="settings-field">
-          <span>Snapshot TTL (hours)</span>
-          <input type="number" min={1} max={72} step={1} value={snapshotTtlHours}
-            onChange={e => { setSnapshotTtlHours(e.target.value); setMsg(null) }} />
+          <span>Snapshot TTL</span>
+          <div className="flex items-center gap-2">
+            <Toggle checked={snapshotTtlEnabled} onChange={v => { setSnapshotTtlEnabled(v); setMsg(null) }} />
+            <input type="number" min={1} max={72} step={1} value={snapshotTtlHours}
+              disabled={!snapshotTtlEnabled}
+              onChange={e => { setSnapshotTtlHours(e.target.value); setMsg(null) }} />
+            <span className="hint" style={{ margin: 0 }}>hrs</span>
+          </div>
         </label>
       </div>
       <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
