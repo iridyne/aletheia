@@ -32,7 +32,7 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800) -> tupl
         return None, f"llm_unavailable: {e}"
 
 
-async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 400) -> tuple[dict | None, str | None]:
+async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 1024) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
     Never raises — absorbs provider errors AND the JSON-parse failure in the
