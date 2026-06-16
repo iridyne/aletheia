@@ -7,7 +7,30 @@
 
 ## Last Updated
 
-2026-06-16 (项目级 code-review:契约漂移 + 运行态正确性,15 findings → 修复)
+2026-06-16 (根治 scheduler deadlock / DB lock — isolation_level=None autocommit)
+
+---
+
+## Recent Change (根治 scheduler deadlock + DB lock — 2026-06-16)
+
+> **根因**:Python sqlite3 默认 `isolation_level=""` 在每条 INSERT/UPDATE/DELETE 前自动
+> 发起 BEGIN。APScheduler daemon 线程被 `_run_sync_with_timeout` 超时放弃后，thread-local
+> connection 永远持有 `in_transaction=True`→WAL writer slot 被永久锁住→所有后续写操作
+> "database is locked"→market_observer 僵死、无新 opportunity。
+
+**修复(7 commits, d11fcf5..187e201)**:
+1. `scheduler.py`: 缩窄全局 RLock(只包前后 DB cleanup,不包 job 本体)
+2. `scheduler.py`: daemon thread + hard timeout 防 asyncio.run teardown 挂死
+3. `scheduler.py`: close_db() 在超时后清理 daemon-thread 连接
+4. `knowledge/retrieval.py`: reindex_all() 改显式 BEGIN/COMMIT
+5. `portfolio/exchange_sync.py`: _store() 用独立 autocommit 连接 + _run_async 55s timeout
+6. **核心修复 `storage/sqlite.py`**: `isolation_level=None`(真 autocommit),消灭整类
+   隐式事务泄漏 bug；DML 自动提交,不再需要 was_in_tx+commit 模式
+7. `storage/repositories.py`: 移除 _insert/_update 中的 was_in_tx+commit(多余);
+   `transaction()` context manager 保持显式 BEGIN/COMMIT 用于批量原子操作
+
+**验证**: DB 75 秒连续可写(轮询 BEGIN IMMEDIATE 无 lock);market_observer 3 轮正常
+产出(11:10/11:18/11:25 UTC);position_reconciler/post_trade_reviewer 正常循环。
 
 ---
 
