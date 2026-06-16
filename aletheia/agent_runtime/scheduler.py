@@ -205,8 +205,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
-        _guarded("universe_refresh", _run_universe_refresh), "interval",
-        minutes=cfg.universe.refresh_interval_min,
+        _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
         id="universe_refresh", misfire_grace_time=120, executor="io",
     )
     # 9-domain market data collectors (microstructure/derivatives/macro).
@@ -318,15 +317,27 @@ def _run_market_observer():
     cfg = load_config()
     if cfg.runtime.paused:
         return
-    try:
-        _run_async_with_timeout("market_observer", _async_run("market_observer"))
-    except TimeoutError:
-        logger.warning(
-            "market_observer job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["market_observer"],
-        )
-    except Exception as e:
-        logger.warning("market_observer job failed: %s", e)
+    # Retry once on database-is-locked — the WAL contention window is short
+    # (exchange_sync / data_collectors / uvicorn handlers), so a brief wait
+    # usually clears it without waiting a full 15-min cycle.
+    for attempt in range(2):
+        try:
+            _run_async_with_timeout("market_observer", _async_run("market_observer"))
+            return
+        except TimeoutError:
+            logger.warning(
+                "market_observer job timed out after %.0fs",
+                _ASYNC_JOB_TIMEOUT_SEC["market_observer"],
+            )
+            return
+        except Exception as e:
+            if "database is locked" in str(e) and attempt == 0:
+                import time as _time
+                logger.warning("market_observer: database locked, retrying in 10s…")
+                _time.sleep(10)
+                continue
+            logger.warning("market_observer job failed: %s", e)
+            return
 
 
 def _run_dreaming_agent():
