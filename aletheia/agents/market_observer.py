@@ -79,6 +79,10 @@ Output a structured market read. Calibration:
   the snapshot (e.g. "BTC 1h RSI 68 + price > SMA_20: short-term overbought").
   Empty list signals "no concrete evidence to point at".
 
+CRITICAL: Output ONLY the raw JSON object. No markdown fences, no explanation
+before or after, no "Here is..." preamble. Just the JSON starting with { and
+ending with }.
+
 Not financial advice."""
 
 

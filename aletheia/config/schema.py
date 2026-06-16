@@ -241,6 +241,10 @@ class HealthConfig(BaseModel):
     require_llm_at_startup: bool = True
     startup_gate_max_retries: int = 3
     startup_gate_retry_delay_sec: int = 15
+    # Auto-resume: when startup gate pauses the system, periodically probe LLM
+    # and auto-resume when connectivity is restored.
+    auto_resume_enabled: bool = True
+    auto_resume_interval_sec: int = 300
 
 
 class RetentionConfig(BaseModel):
