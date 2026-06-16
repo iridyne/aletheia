@@ -260,6 +260,43 @@ market analysis, claims, lessons, skills, policy versions。
 
 ---
 
+## Cross-Cutting Track: Model Provider Fallback & Priority (规划中)
+
+> **状态**: 仅设计记录,尚未实施。待 Phase 0 观察门通过后作为基础设施增强项启动。
+
+**目标**: 让用户在 Settings UI 中以拖拽方式编排模型提供商优先级,并在首选提供商限流/不可用时自动降级到次选提供商,实现 LLM 调用链路的高可用。
+
+### 需求概述
+
+1. **可视化优先级排序** — Settings 页新增 "Model Provider Priority" 区域,以可拖拽列表展示已配置的 provider(OpenAI-compatible、Anthropic、Databricks 等),用户通过拖拽调整优先级顺序。
+2. **自动 Failover** — 当排名第一的 provider 返回 429 (rate limit) 或连续 N 次超时/5xx 时,router 自动将请求分流到下一优先级 provider,直到首选恢复为止。
+3. **恢复探测** — 被降级的 provider 按固定间隔(如 60s)做轻量 healthcheck;一旦恢复健康,自动提升回原优先级位置。
+4. **状态可观测** — Dashboard 显示当前生效的 provider、各 provider 的健康状态(green/yellow/red)、最近的 failover 事件。
+
+### 技术实现方向(草案)
+
+| 层 | 变更 |
+|---|---|
+| Config schema | `model_providers.priority_order: list[str]` + `model_providers.failover.max_retries` / `cooldown_seconds` |
+| `model_provider/router.py` | 新增 `FallbackRouter` 包装类: 按 priority_order 逐个尝试,tracking circuit-breaker state per provider |
+| `server/routes/settings.py` | 新增 GET/PUT `/api/settings/model-priority` 端点 |
+| Frontend Settings | 拖拽列表组件(react-beautiful-dnd 或原生 HTML5 DnD),绑定 priority 端点 |
+| Frontend Dashboard | provider status dot 扩展为 failover indicator(当前 active provider 高亮) |
+
+### 设计约束
+
+- Failover 只在 **同一请求语义** 内降级(不跨模型能力等级:structured → structured)
+- Circuit breaker 状态不持久化到 DB(进程重启后重置——provider 大概率已恢复)
+- 不引入新外部依赖;DnD 复用前端已有 pattern 或用最轻量方案
+- Priority 配置保存在 `data/config.yaml`,遵循现有 Config ↔ UI 规则
+
+### 前置条件
+
+- Phase 0 观察门通过(稳定性 > 新功能)
+- 至少 2 个 provider 已通过 healthcheck 可达(当前: Databricks Qwen3.5 + 本地 Ollama)
+
+---
+
 ## Phase 0 — Stabilize & Observe
 
 **Goal**: All 15 scheduler jobs run autonomously. System proves basic stability.
