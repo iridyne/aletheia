@@ -289,18 +289,28 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   border-top: 1px dashed var(--border);
 }
 .sp-issue-row {
-  display: flex; align-items: baseline; gap: 5px;
-  padding: 1px 0;
+  display: flex; align-items: flex-start; gap: 5px;
+  padding: 2px 0;
 }
 .sp-issue-icon { flex-shrink: 0; font-size: 0.6rem; line-height: 1.6; }
 .sp-issue-yellow { color: var(--yellow); }
 .sp-issue-red { color: var(--red); }
+.sp-issue-body {
+  display: flex; flex-direction: column; gap: 1px; min-width: 0;
+}
+.sp-issue-title {
+  display: flex; align-items: baseline; gap: 5px;
+}
 .sp-issue-label {
   color: var(--muted); font-family: var(--mono); font-size: 0.66rem;
 }
 .sp-issue-value {
   color: var(--faint); font-family: var(--mono); font-size: 0.66rem;
   margin-left: auto;
+}
+.sp-issue-hint {
+  color: var(--faint); font-size: 0.62rem; line-height: 1.4;
+  max-width: 220px; white-space: normal;
 }
 .sp-events {
   display: flex; flex-direction: column; gap: 4px;

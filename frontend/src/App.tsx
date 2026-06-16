@@ -98,13 +98,13 @@ function extractResumeError(e: any): string {
   return String(e?.message || 'failed')
 }
 
-function parseIssue(raw: string): { label: string; value: string; tone: 'yellow' | 'red' } {
-  if (raw.startsWith('market_data_stale:')) return { label: 'market_data_stale', value: raw.split(':')[1], tone: 'yellow' }
-  if (raw.startsWith('agent_failure_ratio:')) return { label: 'agent_failure_ratio', value: raw.split(':')[1], tone: 'red' }
-  if (raw === 'kill_switch_active') return { label: 'kill_switch', value: 'active', tone: 'red' }
-  if (raw === 'trading_paused') return { label: 'trading', value: 'paused', tone: 'yellow' }
-  if (raw.startsWith('llm_unavailable:')) return { label: 'llm_unavailable', value: raw.split(':')[1], tone: 'red' }
-  return { label: raw, value: '', tone: 'yellow' }
+function parseIssue(raw: string): { label: string; value: string; tone: 'yellow' | 'red'; hint: string } {
+  if (raw.startsWith('market_data_stale:')) return { label: 'market_data_stale', value: raw.split(':')[1], tone: 'yellow', hint: 'Feed will refresh automatically on next 5-min cycle. If stuck >30 min, restart the gateway.' }
+  if (raw.startsWith('agent_failure_ratio:')) return { label: 'agent_failure_ratio', value: raw.split(':')[1], tone: 'red', hint: 'Multiple agents failing. Check gateway logs for errors.' }
+  if (raw === 'kill_switch_active') return { label: 'kill_switch', value: 'active', tone: 'red', hint: 'All trading blocked. Go to Settings → Risk → Kill Switch to deactivate.' }
+  if (raw === 'trading_paused') return { label: 'trading', value: 'paused', tone: 'yellow', hint: 'Click the Resume button in the top bar to restart the trading loop.' }
+  if (raw.startsWith('llm_unavailable:')) return { label: 'llm_unavailable', value: raw.split(':')[1], tone: 'red', hint: 'LLM provider unreachable. Check Settings → Model Provider, then click Resume.' }
+  return { label: raw, value: '', tone: 'yellow', hint: '' }
 }
 
 function eventTone(e: InfraEvent): 'yellow' | 'red' {
@@ -301,12 +301,17 @@ function StatusBar() {
             {healthIssues.length > 0 && (
               <div className="sp-issues">
                 {healthIssues.map(i => {
-                  const { label, value, tone } = parseIssue(i)
+                  const { label, value, tone, hint } = parseIssue(i)
                   return (
                     <div key={i} className="sp-issue-row">
                       <span className={`sp-issue-icon sp-issue-${tone}`}>⚠</span>
-                      <span className="sp-issue-label">{label}</span>
-                      {value && <span className="sp-issue-value">{value}</span>}
+                      <div className="sp-issue-body">
+                        <div className="sp-issue-title">
+                          <span className="sp-issue-label">{label}</span>
+                          {value && <span className="sp-issue-value">{value}</span>}
+                        </div>
+                        {hint && <span className="sp-issue-hint">{hint}</span>}
+                      </div>
                     </div>
                   )
                 })}
@@ -358,7 +363,7 @@ function StatusBar() {
               <span className="sp-label">Status</span>
               <span className="sp-value">
                 {operatorStatus}
-                {operatorStatus === 'stale' && <span className="sp-stale-hint"> — heartbeat timeout</span>}
+                {operatorStatus === 'stale' && <span className="sp-stale-hint"> — heartbeat delayed; supervisor is keeping status fresh. Usually self-recovers within 1–2 min. If stuck, restart the gateway.</span>}
               </span>
             </div>
             <div className="sp-row">
