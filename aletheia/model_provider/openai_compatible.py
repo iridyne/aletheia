@@ -140,6 +140,15 @@ class OpenAICompatibleProvider(ModelProvider):
                         provider=self.name, available=True, model=self.model,
                         models=slugs, model_metadata=models,
                     )
-                return ModelHealth(provider=self.name, available=False, error=f"HTTP {resp.status_code}")
+        except Exception:
+            pass
+        # /models not available (Databricks, some gateways) — probe with inference
+        try:
+            from aletheia.model_provider.base import ModelRequest
+            resp = await self.complete(ModelRequest(
+                messages=[{"role": "user", "content": "Say OK"}],
+                max_tokens=5, temperature=0,
+            ))
+            return ModelHealth(provider=self.name, available=True, model=self.model, models=[], model_metadata=[])
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=str(e))
