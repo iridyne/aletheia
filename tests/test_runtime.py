@@ -90,6 +90,12 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
 
 
 def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypatch):
+    """Guard rolls back a leaked explicit transaction (BEGIN without COMMIT).
+
+    With isolation_level=None (autocommit), standalone DML auto-commits and can't
+    leak. But an explicit BEGIN without COMMIT (e.g. a crashed transaction() block)
+    still needs cleanup — the guard handles that case.
+    """
     setup_real_db_env(tmp_path, monkeypatch)
 
     from aletheia.agent_runtime import scheduler as sched
@@ -98,6 +104,7 @@ def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypa
 
     def leaky_job():
         db = get_db()
+        db.execute("BEGIN")
         db.execute(
             "INSERT INTO audit_events (id, actor, source, event_type, message, timestamp) "
             "VALUES ('leaked','system','test','leaked_tx','uncommitted','2026-01-01T00:00:00')"

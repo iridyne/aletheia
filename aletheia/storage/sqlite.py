@@ -18,9 +18,21 @@ def db_path() -> Path:
 def get_db() -> sqlite3.Connection:
     conn = getattr(_local, "conn", None)
     if conn is None:
-        # timeout=30: retry up to 30 s on SQLITE_BUSY before raising, avoids transient
-        # lock errors during concurrent writes from scheduler + API handlers.
-        conn = sqlite3.connect(str(db_path()), check_same_thread=True, timeout=30)
+        # isolation_level=None → true autocommit. Each DML statement commits
+        # immediately unless wrapped in an explicit BEGIN/COMMIT block (via the
+        # transaction() context manager in repositories.py). This eliminates the
+        # class of bugs where an abandoned daemon thread holds an implicitly-opened
+        # transaction forever, permanently locking the WAL writer slot.
+        #
+        # Previously (default isolation_level=""), Python auto-issued BEGIN before
+        # every INSERT/UPDATE/DELETE. If commit() never ran (thread abandoned by
+        # _run_sync_with_timeout, or exception path missed), the connection held
+        # in_transaction=True until GC — which never happens for thread-local conns
+        # on daemon threads. Under uvicorn this caused permanent "database is locked".
+        conn = sqlite3.connect(
+            str(db_path()), check_same_thread=True, timeout=30,
+            isolation_level=None,
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")

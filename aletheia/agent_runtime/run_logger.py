@@ -72,34 +72,41 @@ def mark_stale_running_runs(
     if not rows:
         return 0
 
-    was_in_tx = db.in_transaction
+    already_in_tx = db.in_transaction
+    if not already_in_tx:
+        db.execute("BEGIN")
     marked = 0
     stale_error = f"marked stale by {source}: {reason}"
-    for row in rows:
-        errors = _decode_json_list(row["errors"])
-        if stale_error not in errors:
-            errors.append(stale_error)
-        cur = db.execute(
-            """
-            UPDATE agent_runs
-            SET status = ?, ended_at = ?, errors = ?
-            WHERE id = ? AND status = ?
-            """,
-            ("stale", ended_at, json.dumps(errors, ensure_ascii=False), row["id"], "running"),
-        )
-        if cur.rowcount:
-            marked += 1
-            write_agent_run_log(
-                {
-                    "event": "run_marked_stale",
-                    "run_id": row["id"],
-                    "agent_name": row["agent_name"],
-                    "ended_at": ended_at,
-                    "reason": reason,
-                }
+    try:
+        for row in rows:
+            errors = _decode_json_list(row["errors"])
+            if stale_error not in errors:
+                errors.append(stale_error)
+            cur = db.execute(
+                """
+                UPDATE agent_runs
+                SET status = ?, ended_at = ?, errors = ?
+                WHERE id = ? AND status = ?
+                """,
+                ("stale", ended_at, json.dumps(errors, ensure_ascii=False), row["id"], "running"),
             )
-    if not was_in_tx:
-        db.commit()
+            if cur.rowcount:
+                marked += 1
+                write_agent_run_log(
+                    {
+                        "event": "run_marked_stale",
+                        "run_id": row["id"],
+                        "agent_name": row["agent_name"],
+                        "ended_at": ended_at,
+                        "reason": reason,
+                    }
+                )
+        if not already_in_tx:
+            db.commit()
+    except Exception:
+        if not already_in_tx:
+            db.rollback()
+        raise
 
     if marked:
         write_audit(

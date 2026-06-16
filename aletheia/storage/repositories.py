@@ -14,23 +14,9 @@ from aletheia.storage.models import (
 
 def _insert(table: str, data: dict) -> None:
     db = get_db()
-    # Commit when this call is NOT nested inside an open transaction() block.
-    # NB: check was_in_tx (state BEFORE the write), not db.in_transaction after —
-    # Python's sqlite3 auto-opens a tx on the INSERT, so `not db.in_transaction`
-    # is ALWAYS False here and the old `and not db.in_transaction` guard meant the
-    # write was never committed: the tx hung open holding the WAL write lock until
-    # the conn was reused, and every other thread's write hit `database is locked`.
-    was_in_tx = db.in_transaction
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
-    try:
-        db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(data.values()))
-        if not was_in_tx:
-            db.commit()
-    except Exception:
-        if not was_in_tx and db.in_transaction:
-            db.rollback()
-        raise
+    db.execute(f"INSERT INTO {table} ({cols}) VALUES ({placeholders})", list(data.values()))
 
 
 def _select_all(table: str, where: str | None = None, params: tuple = (), order: str = "rowid DESC", limit: int = 100) -> list[dict]:
@@ -51,19 +37,8 @@ def _select_one(table: str, id_val: str) -> dict | None:
 
 def _update(table: str, id_val: str, data: dict) -> None:
     db = get_db()
-    # See _insert: commit when not nested in a transaction(). The old
-    # `and not db.in_transaction` guard never fired (UPDATE auto-opens a tx), so
-    # the write hung open holding the lock → `database is locked` for other threads.
-    was_in_tx = db.in_transaction
     sets = ", ".join(f"{k} = ?" for k in data.keys())
-    try:
-        db.execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*data.values(), id_val])
-        if not was_in_tx:
-            db.commit()
-    except Exception:
-        if not was_in_tx and db.in_transaction:
-            db.rollback()
-        raise
+    db.execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*data.values(), id_val])
 
 
 @contextmanager
@@ -186,7 +161,6 @@ def upsert_prediction_event(data: dict) -> str:
     """Insert or update a prediction event by external_event_id."""
     from aletheia.storage.models import new_id, _utcnow
     db = get_db()
-    was_in_tx = db.in_transaction
     ext_id = data["external_event_id"]
     existing = db.execute(
         "SELECT id FROM prediction_events WHERE external_event_id = ? AND source = ?",
@@ -207,8 +181,6 @@ def upsert_prediction_event(data: dict) -> str:
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
         db.execute(f"INSERT INTO prediction_events ({cols}) VALUES ({placeholders})", list(data.values()))
-    if not was_in_tx:
-        db.commit()
     return row_id
 
 
@@ -216,7 +188,6 @@ def upsert_prediction_market(data: dict) -> str:
     """Insert or update a prediction market by external_market_id."""
     from aletheia.storage.models import new_id, _utcnow
     db = get_db()
-    was_in_tx = db.in_transaction
     ext_id = data["external_market_id"]
     existing = db.execute(
         "SELECT id FROM prediction_markets WHERE external_market_id = ? AND source = ?",
@@ -235,8 +206,6 @@ def upsert_prediction_market(data: dict) -> str:
         cols = ", ".join(data.keys())
         placeholders = ", ".join("?" * len(data))
         db.execute(f"INSERT INTO prediction_markets ({cols}) VALUES ({placeholders})", list(data.values()))
-    if not was_in_tx:
-        db.commit()
     return row_id
 
 

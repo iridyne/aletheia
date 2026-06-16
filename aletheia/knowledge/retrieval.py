@@ -124,25 +124,27 @@ def reindex_all() -> int:
             return 0
         from aletheia.storage.repositories import list_knowledge_items
         from aletheia.storage.models import KnowledgeItem
-        was_in_tx = db.in_transaction
-        db.execute("DELETE FROM knowledge_fts")
-        count = 0
-        for row in list_knowledge_items(limit=100000, status="active"):
-            if row.get("confidence") != _ALLOWED_CONFIDENCE:
-                continue
-            body = _read_body(row.get("file_path"))
-            item = KnowledgeItem(**{k: row[k] for k in row if k in KnowledgeItem.model_fields})
-            if index_knowledge_item(item, body):
-                count += 1
-        if not was_in_tx:
-            db.commit()
+        already_in_tx = db.in_transaction
+        if not already_in_tx:
+            db.execute("BEGIN")
+        try:
+            db.execute("DELETE FROM knowledge_fts")
+            count = 0
+            for row in list_knowledge_items(limit=100000, status="active"):
+                if row.get("confidence") != _ALLOWED_CONFIDENCE:
+                    continue
+                body = _read_body(row.get("file_path"))
+                item = KnowledgeItem(**{k: row[k] for k in row if k in KnowledgeItem.model_fields})
+                if index_knowledge_item(item, body):
+                    count += 1
+            if not already_in_tx:
+                db.commit()
+        except Exception:
+            if not already_in_tx:
+                db.rollback()
+            raise
         return count
     except Exception as e:
-        if not was_in_tx:
-            try:
-                db.rollback()
-            except Exception:
-                pass
         logger.warning("reindex_all failed: %s", e)
         return 0
 
