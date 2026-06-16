@@ -1533,10 +1533,11 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
           userSelect: 'none',
         }}
       >
-        {/* Status dot */}
-        <span style={{
+        {/* Status dot — color encodes provider state; hover for label */}
+        <span title={statusText} style={{
           width: '8px', height: '8px', borderRadius: '50%',
           background: statusColor, flexShrink: 0,
+          boxShadow: statusColor === 'var(--muted)' ? 'none' : `0 0 6px ${statusColor}`,
         }} />
         {/* Label */}
         <span style={{ fontWeight: 600, fontSize: '0.82rem', fontFamily: 'var(--display)' }}>
@@ -1565,10 +1566,7 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
             aria-label={`${enabled ? 'Disable' : 'Enable'} ${PROVIDER_LABELS[name] || name}`}
           />
         </span>
-        {/* Status text */}
-        <span style={{ fontSize: '0.72rem', color: statusColor, fontFamily: 'var(--mono)' }}>
-          {statusText}
-        </span>
+        {/* Status text removed — dot color + hover tooltip conveys state */}
         {/* Chevron */}
         <span style={{ fontSize: '0.7rem', color: 'var(--muted)', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}>▸</span>
       </div>
