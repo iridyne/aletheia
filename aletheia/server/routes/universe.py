@@ -111,9 +111,9 @@ def get_calibration():
     for row in stats:
         fam = row["scanner_family"] or "unknown"
         if fam not in family_agg:
-            family_agg[fam] = {"family": fam, "total_n": 0, "total_positive": 0, "weighted_return": 0.0}
+            family_agg[fam] = {"family": fam, "total_n": 0, "total_wins": 0, "weighted_return": 0.0}
         family_agg[fam]["total_n"] += row["n"]
-        family_agg[fam]["total_positive"] += row["positive_count"]
+        family_agg[fam]["total_wins"] += row["win_count"]
         family_agg[fam]["weighted_return"] += (row["avg_return"] or 0) * row["n"]
 
     summaries = []
@@ -122,7 +122,7 @@ def get_calibration():
         summaries.append({
             "family": fam,
             "total_outcomes": n,
-            "hit_rate_pct": round(agg["total_positive"] / n * 100, 1) if n > 0 else 0,
+            "hit_rate_pct": round(agg["total_wins"] / n * 100, 1) if n > 0 else 0,
             "avg_return_pct": round(agg["weighted_return"] / n, 3) if n > 0 else 0,
         })
 

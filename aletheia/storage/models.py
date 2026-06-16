@@ -742,6 +742,10 @@ class UniverseForwardOutcome(BaseModel):
     snapshot_id: str
     symbol: str
     scanner_family: str | None = None
+    # Trade direction the scanner family implied at selection ("long" | "short").
+    # None for legacy rows / members with no inferable direction; win-rate
+    # calibration treats those as long (positive return = win) for back-compat.
+    direction: str | None = None
     horizon: str  # "15m" | "1h" | "4h" | "24h"
     entry_price_usd: float
     entry_ts: str = Field(default_factory=_utcnow)

@@ -7,9 +7,51 @@
 
 ## Last Updated
 
-2026-06-16 (Phase 0 节奏调整 + 文档统一 + model provider thinking-mode fix)
+2026-06-16 (项目级 code-review:契约漂移 + 运行态正确性,15 findings → 修复)
 
 ---
+
+## Recent Change (项目级 Code-Review 修复 — 2026-06-16, uncommitted)
+
+> 全项目 code-review(契约对应 + 运行态正确性 + 潜在 bug)。15 条确认 findings:
+> 7 条机械修复已先行落地,4 条设计级(A/B/C/D)在本轮完整实现。
+
+**A — universe high-confidence 标签不可达**
+- 根因:`signal_emitter._HIGH_CONF_THRESHOLD=70`,但 allocator 总分天花板 ≈68.5
+  (opportunity 0.35×100 + tradability 0.25×100 + liquidity 0.15×90 − min cost 5.0),
+  所以每个 deterministic opportunity 都被强制 "medium","high" 永不出现。
+- 修复:阈值降到 60,保留有意义的 medium=[45,60) / high=[60,ceiling] 区分。
+
+**B — forward outcome 只能给 BTC/ETH/SOL 定价**
+- 根因:`settle_due` 只读存量 market snapshot,而 snapshot 仅覆盖静态观测的
+  3 个标的;轮动 universe 成员全部 None → 标 `failed`,校准永远攒不到数据。
+- 修复:`settle_due`/`_batch_fetch_prices` 改 async,用共享 CCXT provider 给全部
+  symbol 取 live ticker(provider 关闭一次),snapshot 仅作兜底。
+
+**C — calibration 胜率对 short 方向算反了**
+- 根因:`calibration_stats` 把 `forward_return_pct > 0` 一律算赢,但 short 仓在
+  价格下跌时才赢 → derivatives/mean_reversion 的 short 选择被系统性误判。
+- 修复:`UniverseForwardOutcome` 加 `direction` 列(model + 迁移:CREATE TABLE
+  与 `_ADDITIVE_COLUMNS` 双路,startup-only,幂等);`service.refresh` 用
+  `_infer_direction` 写入方向;`register_pending` 落库;胜率 SQL 改方向感知
+  (long/NULL: return>0 赢;short: return<0 赢),`positive_count`→`win_count`
+  (语义诚实,short 赢在负收益),`routes/universe.py` 同步改名。
+
+**D — 设置保存后刷新间隔不生效**
+- 根因:APScheduler IntervalTrigger 添加后不可变,保存的 `refresh_interval_min`
+  要等下次重启才生效。
+- 修复:新增 `scheduler.reschedule_universe_refresh(interval_min)`(锁内
+  `reschedule_job`,job 不存在/异常返回 False 不阻断保存);`settings.py` 在
+  `refresh_interval_min` 变化时调用,返回 `rescheduled` 标志。
+
+**Tests**: 新增 `tests/test_universe_calibration.py`(3 方向感知用例);改 signal_emitter
+阈值用例。ABCD 受影响测试单独跑 36/36 全绿,且未新增 DB writer / scheduler job。
+
+**顺带修复(同批)**:`test_startup_gate::test_empty_response_not_usable` 原失败——测试桩
+`_FakeResp` 缺 `.raw`、与生产 `startup_gate.py:64`(`resp.raw` 兜底判定)漂移。给
+`_FakeResp.__init__` 加 `raw=None` 参数对齐真实 `ModelResponse`,零生产代码改动
+(详见 `docs/issues/BACKEND_ISSUES.md` §6.5,已标 ✅)。修复后 `test_startup_gate` 14/14 绿,
+全量基线恢复全绿。
 
 ## Recent Change (Phase 0 节奏调整 + 文档统一 — 2026-06-16)
 

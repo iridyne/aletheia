@@ -590,12 +590,20 @@ async def update_universe_config(req: UniverseConfigUpdate):
         setattr(cfg.universe, field, value)
 
     save_config(cfg)
+
+    # IntervalTrigger is immutable once added — a saved refresh_interval_min only
+    # takes effect at the next gateway restart unless the live job is rescheduled.
+    rescheduled = False
+    if "refresh_interval_min" in updates and updates["refresh_interval_min"] != old.get("refresh_interval_min"):
+        from aletheia.agent_runtime.scheduler import reschedule_universe_refresh
+        rescheduled = reschedule_universe_refresh(cfg.universe.refresh_interval_min)
+
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "universe_config_changed",
                  "entity_type": "universe_config", "before": old,
                  "after": cfg.universe.model_dump(mode="json"),
                  "message": f"Universe config updated: {list(updates.keys())}"})
-    return {"updated": updates, "universe": cfg.universe.model_dump(mode="json")}
+    return {"updated": updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
 
 
 # ---------------------------------------------------------------------------

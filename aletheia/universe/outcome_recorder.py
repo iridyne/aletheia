@@ -42,9 +42,11 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
         ts = ts.replace(tzinfo=timezone.utc)
 
     outcomes: list[UniverseForwardOutcome] = []
+    skipped_no_price = 0
     for m in members:
         entry_price = m.get("entry_price_usd")
         if not entry_price or entry_price <= 0:
+            skipped_no_price += 1
             continue
 
         for horizon_key, delta in _HORIZONS.items():
@@ -54,6 +56,7 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
                 snapshot_id=m["snapshot_id"],
                 symbol=m["symbol"],
                 scanner_family=m.get("scanner_family"),
+                direction=m.get("direction"),
                 horizon=horizon_key,
                 entry_price_usd=entry_price,
                 entry_ts=entry_ts,
@@ -64,10 +67,16 @@ def register_pending(members: list[dict], entry_ts: str) -> int:
         repo.insert_forward_outcomes_batch(outcomes)
         logger.debug("Registered %d forward outcome rows", len(outcomes))
 
+    if skipped_no_price:
+        logger.info(
+            "Forward-outcome registration skipped %d/%d members with no entry price "
+            "(missing 1h OHLCV at feature collection)", skipped_no_price, len(members),
+        )
+
     return len(outcomes)
 
 
-def settle_due() -> int:
+async def settle_due() -> int:
     """Settle all overdue pending outcomes by fetching current prices.
 
     Returns:
@@ -81,7 +90,7 @@ def settle_due() -> int:
         return 0
 
     symbols_needed = list({r["symbol"] for r in pending})
-    prices = _batch_fetch_prices(symbols_needed)
+    prices = await _batch_fetch_prices(symbols_needed)
 
     settled = 0
     for row in pending:
@@ -107,15 +116,47 @@ def settle_due() -> int:
     return settled
 
 
-def _batch_fetch_prices(symbols: list[str]) -> dict[str, float | None]:
-    """Fetch latest prices for symbols. Uses market_data snapshots first, falls back to None."""
+async def _batch_fetch_prices(symbols: list[str]) -> dict[str, float | None]:
+    """Fetch latest prices for all universe symbols.
+
+    Forward outcomes cover the full rotating universe, but stored market
+    snapshots only exist for the few statically observed instruments
+    (BTC/ETH/SOL). Reading snapshots alone left every rotating member priceless,
+    so its outcome was marked `failed` and calibration never accumulated data.
+
+    Fetch live tickers via the shared CCXT market-data provider for all symbols,
+    falling back to the latest stored snapshot when a live fetch fails.
+    """
     from aletheia.trading.market_data import latest_snapshot
 
     prices: dict[str, float | None] = {}
+
+    # 1. Live tickers for every symbol (one provider, closed once).
+    try:
+        from aletheia.data.ccxt_provider import get_market_data_provider
+
+        provider = get_market_data_provider()
+        try:
+            for sym in symbols:
+                try:
+                    ticker = await provider.get_ticker(sym)
+                    price = float(ticker.last_price) if ticker.last_price else None
+                    prices[sym] = price if price and price > 0 else None
+                except Exception:
+                    prices[sym] = None
+        finally:
+            await provider.close()
+    except Exception as e:  # provider construction failed — fall through to snapshots
+        logger.warning("Live price fetch unavailable, using snapshots only: %s", e)
+
+    # 2. Snapshot fallback for any symbol the live fetch couldn't price.
     for sym in symbols:
+        if prices.get(sym):
+            continue
         try:
             snap = latest_snapshot(sym)
             prices[sym] = float(snap["price"]) if snap and snap.get("price") else None
         except Exception:
             prices[sym] = None
+
     return prices

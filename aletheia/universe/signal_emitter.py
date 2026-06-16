@@ -22,8 +22,12 @@ logger = logging.getLogger("aletheia.universe.signal_emitter")
 
 # Only emit for members that scored high enough to be worth trading
 _MIN_SCORE = 45.0
-# total_score threshold for "high" vs "medium" confidence label
-_HIGH_CONF_THRESHOLD = 70.0
+# total_score threshold for "high" vs "medium" confidence label.
+# The allocator's score ceiling is ~68.5 (opportunity 0.35×100 + tradability
+# 0.25×100 + liquidity 0.15×90 − min cost 5.0), so a 70 threshold made "high"
+# unreachable — every emitted opportunity was forced to "medium". 60 keeps a
+# meaningful split: medium = [45, 60), high = [60, ceiling].
+_HIGH_CONF_THRESHOLD = 60.0
 
 
 def emit_deterministic_opportunities(
@@ -65,7 +69,15 @@ def emit_deterministic_opportunities(
 
         direction = _infer_direction(family, feat)
         if direction is None:
-            continue  # ambiguous — do not produce neutral noise
+            # A member scored high enough to trade but yields no direction —
+            # ambiguous signal, unhandled family (e.g. "event"), or thin OHLCV
+            # history. Skip without producing neutral noise, but leave a trace
+            # so a whole family silently emitting nothing is observable.
+            logger.debug(
+                "no direction for %s family=%s score=%.0f — skipped",
+                symbol, family, total_score,
+            )
+            continue
 
         # De-duplicate: same symbol already has an open opportunity from this snapshot
         existing = find_open_opportunity_by_symbol_snapshot(symbol, snapshot_id)
@@ -146,9 +158,9 @@ def _infer_direction(family: str | None, feat: dict) -> str | None:
 
     if family == "volatility":
         # Volatility expansion: follow the direction of the breakout
-        if ret_1h is not None:
+        if ret_1h is not None and ret_1h != 0:
             return "long" if ret_1h > 0 else "short"
-        return None
+        return None  # flat candle carries no breakout direction
 
     if family == "derivatives":
         # Derivatives: fade crowded positions via funding rate signal
@@ -160,8 +172,8 @@ def _infer_direction(family: str | None, feat: dict) -> str | None:
             if funding > 0.005:
                 return "short"
         # Fall back to 4h momentum if no funding data
-        if ret_4h is not None:
+        if ret_4h is not None and ret_4h != 0:
             return "long" if ret_4h > 0 else "short"
-        return None
+        return None  # no funding signal and flat 4h — ambiguous
 
     return None

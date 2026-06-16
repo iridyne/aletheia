@@ -1279,13 +1279,21 @@ def list_forward_outcomes_by_member(member_id: str) -> list[dict]:
 
 
 def calibration_stats() -> list[dict]:
-    """Aggregate forward return stats grouped by scanner_family + horizon."""
+    """Aggregate forward return stats grouped by scanner_family + horizon.
+
+    A "win" is direction-aware: a long member wins when the forward return is
+    positive, a short member wins when it is negative. Legacy rows with NULL
+    direction are treated as long (positive = win) for back-compat.
+    """
     db = get_db()
     rows = db.execute(
         "SELECT scanner_family, horizon, "
         "COUNT(*) as n, "
         "AVG(forward_return_pct) as avg_return, "
-        "SUM(CASE WHEN forward_return_pct > 0 THEN 1 ELSE 0 END) as positive_count, "
+        "SUM(CASE "
+        "  WHEN direction = 'short' AND forward_return_pct < 0 THEN 1 "
+        "  WHEN COALESCE(direction, 'long') != 'short' AND forward_return_pct > 0 THEN 1 "
+        "  ELSE 0 END) as win_count, "
         "MIN(forward_return_pct) as min_return, "
         "MAX(forward_return_pct) as max_return "
         "FROM universe_forward_outcomes "

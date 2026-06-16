@@ -136,12 +136,21 @@ class TestEmitDeterministicOpportunities:
         assert opp.confidence == "high"
         assert opp.confidence_score == 75
 
-    def test_medium_confidence_below_70(self):
+    def test_medium_confidence_below_threshold(self):
         members = [_make_member("ETH/USDT", "momentum", 55)]
         feats = [_make_feat("ETH/USDT")]
         count, opps = self._run(members, feats)
         assert count == 1
         assert opps[0].confidence == "medium"
+
+    def test_high_confidence_at_threshold(self):
+        # 60 is the reachable "high" boundary (allocator ceiling ~68.5); a 70
+        # threshold made "high" impossible. Score exactly at threshold → high.
+        members = [_make_member("BNB/USDT", "momentum", 60)]
+        feats = [_make_feat("BNB/USDT")]
+        count, opps = self._run(members, feats)
+        assert count == 1
+        assert opps[0].confidence == "high"
 
     def test_skips_low_score(self):
         members = [_make_member("LOW/USDT", "momentum", 30)]

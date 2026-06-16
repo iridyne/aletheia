@@ -264,6 +264,34 @@ def resume_scheduler() -> None:
     logger.info("Scheduler resumed")
 
 
+def reschedule_universe_refresh(interval_min: int) -> bool:
+    """Apply a new universe_refresh interval to the live scheduler.
+
+    APScheduler's IntervalTrigger is immutable once added, so changing
+    ``universe.refresh_interval_min`` in config does nothing until the next
+    gateway restart unless the job is explicitly rescheduled. Called from the
+    settings route after a config save so the UI takes effect immediately.
+
+    Returns True if the live job was rescheduled, False if there was no running
+    scheduler/job to update (the new interval still applies at next boot via
+    config). Never raises into the request path.
+    """
+    if _scheduler is None:
+        return False
+    try:
+        with _SCHEDULER_JOB_LOCK:
+            if _scheduler.get_job("universe_refresh") is None:
+                return False
+            _scheduler.reschedule_job(
+                "universe_refresh", trigger="interval", minutes=interval_min,
+            )
+        logger.info("Rescheduled universe_refresh to every %d min", interval_min)
+        return True
+    except Exception as e:  # noqa: BLE001 — config is already saved; never 500 the save
+        logger.warning("Failed to reschedule universe_refresh (applies at next restart): %s", e)
+        return False
+
+
 def is_running() -> bool:
     return _scheduler is not None and _scheduler.running
 

@@ -81,13 +81,15 @@ class UniverseService:
         from aletheia.universe.scanners import run_all_scanners
         from aletheia.universe.allocator import allocate_universe, compute_total_score
         from aletheia.universe.outcome_recorder import settle_due, register_pending
-        from aletheia.universe.signal_emitter import emit_deterministic_opportunities
+        from aletheia.universe.signal_emitter import (
+            emit_deterministic_opportunities, _infer_direction,
+        )
 
         cfg = load_config()
 
         # Settle any overdue forward outcomes before producing new ones
         try:
-            settle_due()
+            await settle_due()
         except Exception as e:
             logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
 
@@ -168,6 +170,7 @@ class UniverseService:
                     "snapshot_id": snap.id,
                     "symbol": item["symbol"],
                     "scanner_family": item.get("scanner_family"),
+                    "direction": _infer_direction(item.get("scanner_family"), item),
                     "entry_price_usd": entry_price,
                     "total_score": item["total_score"],
                     "expires_at": member_expires,

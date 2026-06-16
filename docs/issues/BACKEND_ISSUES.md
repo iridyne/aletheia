@@ -753,3 +753,11 @@
 - **佐证**：`aletheia/agent_runtime/scheduler.py:760-769`
 - **最小修复**：可将两个 collector 共享同一 provider 实例，但改动涉及 collect 接口，优先级低。
 - **状态**：🟡 已知，暂不修
+
+### 6.5 🟡 test_startup_gate 的 `_FakeResp` 缺 `.raw`，与生产代码漂移
+
+- **原因**：`startup_gate.py:64` 在 content 为空时读 `resp.raw` 取 `completion_tokens`（thinking-mode 模型把 budget 花在推理上、text 为空但确实跑了的兜底判定）。真实 `ModelResponse`（`model_provider/base.py:25` `raw: Any = None`）有此字段，但测试桩 `tests/test_startup_gate.py:46-48 _FakeResp` 只定义了 `.content`，没有 `.raw`。
+- **影响**：`test_empty_response_not_usable` 失败——期望 `error == "empty_response"`，实际命中 `AttributeError: '_FakeResp' object has no attribute 'raw'`（被 `_probe_one` 的 except 捕获返回为错误串）。**仅测试桩漂移，生产路径正确**。
+- **佐证**：`aletheia/agent_runtime/startup_gate.py:64`、`aletheia/model_provider/base.py:25`、`tests/test_startup_gate.py:46-48`
+- **最小修复**：给 `_FakeResp.__init__` 加 `self.raw = None`（或接受 `raw` 参数），使桩与真实 `ModelResponse` 对齐。
+- **状态**：✅ 已修（2026-06-16，与 ABCD 同批提交）。`_FakeResp.__init__` 增加 `raw=None` 参数并赋 `self.raw`，对齐真实 `ModelResponse`；`test_startup_gate.py` 14/14 绿。

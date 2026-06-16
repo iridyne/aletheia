@@ -1061,6 +1061,7 @@ CREATE TABLE IF NOT EXISTS universe_forward_outcomes (
     snapshot_id TEXT NOT NULL,
     symbol TEXT NOT NULL,
     scanner_family TEXT,
+    direction TEXT,
     horizon TEXT NOT NULL,
     entry_price_usd REAL NOT NULL,
     entry_ts TEXT NOT NULL,
@@ -1356,6 +1357,8 @@ _ADDITIVE_COLUMNS = [
     ("regime_tag", "positions", "TEXT"),
     # Universe Forward Outcomes: entry price at member inclusion time
     ("entry_price_usd", "universe_members", "REAL"),
+    # Direction-aware calibration: the trade direction the scanner implied.
+    ("direction", "universe_forward_outcomes", "TEXT"),
 ]
 
 
