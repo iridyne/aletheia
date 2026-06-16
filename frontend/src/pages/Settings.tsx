@@ -1632,8 +1632,8 @@ const TIER_COLORS: Record<string, string> = {
 function HTTPProviderForm({ name, config, isDefault, qc }: {
   name: string; config: any; isDefault: boolean; qc: any
 }) {
-  const [baseUrl, setBaseUrl] = useState('')
-  const [model, setModel] = useState('')
+  const [baseUrl, setBaseUrl] = useState(() => config?.base_url || '')
+  const [model, setModel] = useState(() => config?.model || '')
   const [protocol, setProtocol] = useState(() => config?.protocol || 'chat_completions')
   const [authScheme, setAuthScheme] = useState(() => config?.auth_scheme || 'x-api-key')
   const [apiKey, setApiKey] = useState('')
@@ -1649,7 +1649,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
   const detectMut = useMutation({
     mutationFn: async () => {
       const body: any = { provider: name }
-      if (!isNative) body.base_url = baseUrl || config?.base_url || undefined
+      if (!isNative) body.base_url = baseUrl || undefined
       if (apiKey) body.api_key = apiKey
       if (isAnthropic) body.auth_scheme = authScheme
       return api.detectModels(body)
@@ -1674,11 +1674,11 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
       setResult(null)
       const testBody: any = {
         provider: name,
-        model: model || config?.model || undefined,
+        model: model || undefined,
         api_key: apiKey || undefined,
         probe: true,
       }
-      if (!isNative) testBody.base_url = baseUrl || config?.base_url || undefined
+      if (!isNative) testBody.base_url = baseUrl || undefined
       if (isOpenAI) testBody.protocol = protocol
       if (isAnthropic) testBody.auth_scheme = authScheme
 
@@ -1724,7 +1724,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
       {!isNative && (
         <label style={{ gridColumn: '1 / -1' }}>
           Base URL
-          <input value={baseUrl} placeholder={config?.base_url || 'http://localhost:8000/v1'} onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
+          <input value={baseUrl} placeholder="http://localhost:8000/v1" onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
         </label>
       )}
 
@@ -1733,7 +1733,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
         <span>Model{detectedModels && detectedModels.length > 0 && ` (${detectedModels.length})`}</span>
         <input
           value={model}
-          placeholder={config?.model || 'default'}
+          placeholder="model slug"
           onChange={e => { setModel(e.target.value); setModelEditing(true); setResult(null) }}
           onFocus={() => { setModelFocused(true); setModelEditing(false) }}
           onBlur={() => setTimeout(() => setModelFocused(false), 150)}
