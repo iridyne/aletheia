@@ -104,17 +104,22 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
     def _run():
         return asyncio.run(asyncio.wait_for(awaitable, timeout=timeout))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_run)
-        try:
-            return future.result(timeout=thread_timeout)
-        except concurrent.futures.TimeoutError:
-            logger.error(
-                "job %s: asyncio.run() teardown hung after %.0fs — "
-                "executor thread abandoned (ProactorEventLoop IOCP drain)",
-                job_id, thread_timeout,
-            )
-            raise TimeoutError(f"job {job_id} teardown hung after {thread_timeout}s")
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(_run)
+    try:
+        return future.result(timeout=thread_timeout)
+    except concurrent.futures.TimeoutError:
+        logger.error(
+            "job %s: asyncio.run() teardown hung after %.0fs — "
+            "executor thread abandoned (ProactorEventLoop IOCP drain)",
+            job_id, thread_timeout,
+        )
+        # shutdown(wait=False): do NOT block on the hung daemon thread.
+        # The thread will die when the process exits (daemon semantics).
+        pool.shutdown(wait=False)
+        raise TimeoutError(f"job {job_id} teardown hung after {thread_timeout}s")
+    finally:
+        pool.shutdown(wait=False)
 
 
 def init_scheduler() -> BackgroundScheduler | None:
