@@ -69,6 +69,10 @@ Output a structured market read. Calibration:
 
 - key_observations: 2-4 bullets, each citing a specific number.
 
+CRITICAL: Output ONLY the raw JSON object. No markdown fences, no explanation
+before or after, no "Here is..." preamble. Just the JSON starting with { and
+ending with }.
+
 Note: this is a paper-trading observation only — not financial advice."""
 
 

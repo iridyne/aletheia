@@ -32,6 +32,63 @@ async def llm_complete(system: str, user: str, *, max_tokens: int = 800) -> tupl
         return None, f"llm_unavailable: {e}"
 
 
+def _extract_json_object(text: str):
+    """Extract the first valid JSON object from LLM response text.
+
+    Handles: raw JSON, markdown code fences (```json ... ```), prose before/after
+    the JSON block, and nested braces. Returns the parsed object or None.
+    """
+    import re
+    # Strategy 1: try direct parse (fastest path for well-behaved models)
+    text = text.strip()
+    if text.startswith("{"):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: strip markdown code fences
+    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if fence_match:
+        try:
+            return json.loads(fence_match.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: brace-matching extraction — find the first '{' and match
+    # its closing '}' accounting for nesting and string literals.
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            if in_string:
+                escape = True
+            continue
+        if c == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
 async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 1024) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
@@ -43,7 +100,10 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
         provider = get_provider()
         messages = [{"role": "user", "content": user}]
         schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, "model_json_schema") else {})
-        messages.append({"role": "user", "content": f"Respond with valid JSON matching this schema: {schema_json}"})
+        messages.append({"role": "user", "content": (
+            f"Respond with ONLY a raw JSON object matching this schema (no markdown fences, "
+            f"no explanation, no text before or after — just the JSON): {schema_json}"
+        )})
         # Prepend /no_think for Qwen3-series reasoning models: without it the model
         # exhausts the token budget on internal reasoning and returns empty text output.
         # Other models ignore this prefix safely.
@@ -66,12 +126,9 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
             logger.warning("LLM structured call: empty content, no completion tokens")
             _record_llm(False)
             return None, "llm_unavailable: empty_response"
-        # Strip markdown code fences that some models wrap JSON in
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        data = json.loads(content)
+        data = _extract_json_object(content)
+        if data is None:
+            return None, f"structured_parse_error: no valid JSON object found in response"
         if not isinstance(data, dict):
             return None, "structured_non_dict"
         _record_llm(True)
