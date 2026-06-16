@@ -60,26 +60,25 @@ _EXECUTOR_WORKERS = {
 def _run_job_guarded(job_id: str, fn):
     """Run one scheduled job and release any leaked SQLite writer state.
 
-    APScheduler reuses worker threads. A single leaked SQLite transaction in one
-    job can otherwise keep the WAL writer lock pinned across later jobs, causing
-    unrelated API routes and heartbeats to fail with ``database is locked``.
-    The guard rolls back only this worker thread's leftover transaction and then
-    closes the thread-local connection so the next job starts clean.
+    The global _SCHEDULER_JOB_LOCK is held ONLY for the pre/post-job DB cleanup
+    (rollback_if_in_transaction + close_db) — NOT around the job body. Network
+    I/O, LLM calls, and asyncio.run() all execute outside the lock. SQLite
+    single-writer ordering falls back to busy_timeout=30000 (WAL pillar 1),
+    which is the correct mechanism for cross-writer contention.
 
-    SQLite still has one writer even in WAL mode. Keep scheduler jobs serialized
-    at the process level so independent pools (io / observer / agents) cannot
-    contend for the same local database during startup catch-up bursts. Frontend
-    and API requests remain outside this lock; this only makes background jobs
-    prefer stability over parallel throughput.
+    Previously the lock wrapped the entire job — including 45–240s async timeouts.
+    On Windows, if asyncio.run() teardown hung (ProactorEventLoop IOCP drain),
+    the executor thread held the RLock forever, starving every other job.
     """
     from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
 
     with _SCHEDULER_JOB_LOCK:
         if rollback_if_in_transaction():
             logger.warning("Rolled back stale SQLite transaction before scheduler job %s", job_id)
-        try:
-            return fn()
-        finally:
+    try:
+        return fn()
+    finally:
+        with _SCHEDULER_JOB_LOCK:
             if rollback_if_in_transaction():
                 logger.warning("Rolled back leaked SQLite transaction after scheduler job %s", job_id)
             close_db()
@@ -90,8 +89,32 @@ def _guarded(job_id: str, fn):
 
 
 def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
+    """Run an async job with a hard wall-clock bound.
+
+    Runs the coroutine in a dedicated daemon thread so that a hung asyncio.run()
+    teardown (Windows ProactorEventLoop IOCP drain) cannot pin the calling
+    APScheduler executor thread indefinitely. The caller gets back control after
+    timeout + 15s grace regardless of internal loop state.
+    """
+    import concurrent.futures
+
     timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
-    return asyncio.run(asyncio.wait_for(awaitable, timeout=timeout))
+    thread_timeout = timeout + 15.0
+
+    def _run():
+        return asyncio.run(asyncio.wait_for(awaitable, timeout=timeout))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_run)
+        try:
+            return future.result(timeout=thread_timeout)
+        except concurrent.futures.TimeoutError:
+            logger.error(
+                "job %s: asyncio.run() teardown hung after %.0fs — "
+                "executor thread abandoned (ProactorEventLoop IOCP drain)",
+                job_id, thread_timeout,
+            )
+            raise TimeoutError(f"job {job_id} teardown hung after {thread_timeout}s")
 
 
 def init_scheduler() -> BackgroundScheduler | None:
@@ -469,9 +492,8 @@ def _run_pi_trading_decision():
     if cfg.agent.permission_mode not in ("Paper", "Full"):
         return
     try:
-        import asyncio
         from aletheia.agent_shell.commands import evaluate_trading_opportunity
-        result = asyncio.run(evaluate_trading_opportunity({}))
+        result = _run_async_with_timeout("pi_trading_decision", evaluate_trading_opportunity({}))
         if result.get("action") == "trade":
             logger.info(
                 "pi_trading_decision: %s %s conviction=%s proposal=%s",

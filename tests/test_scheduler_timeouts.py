@@ -40,33 +40,34 @@ def test_data_collectors_job_is_timeboxed(monkeypatch, caplog):
     assert "data_collectors job timed out" in caplog.text
 
 
-def test_scheduler_guard_serializes_background_jobs():
+def test_scheduler_guard_allows_concurrent_job_bodies():
+    """Job bodies run concurrently (no global lock during fn()).
+
+    The lock only covers pre/post DB cleanup. This prevents the deadlock where
+    a slow network job pins the RLock and starves all other scheduler jobs.
+    """
     from aletheia.agent_runtime import scheduler
 
-    entered = threading.Event()
+    first_entered = threading.Event()
+    second_entered = threading.Event()
     release = threading.Event()
-    order: list[str] = []
 
     def first_job():
-        order.append("first_enter")
-        entered.set()
-        assert release.wait(timeout=1)
-        order.append("first_exit")
+        first_entered.set()
+        assert release.wait(timeout=2)
 
     def second_job():
-        order.append("second_enter")
+        second_entered.set()
 
     t1 = threading.Thread(target=scheduler._run_job_guarded, args=("first", first_job))
     t2 = threading.Thread(target=scheduler._run_job_guarded, args=("second", second_job))
 
     t1.start()
-    assert entered.wait(timeout=1)
+    assert first_entered.wait(timeout=1)
     t2.start()
-    time.sleep(0.05)
-    assert order == ["first_enter"]
+    # Second job should enter while first is still running (no serialization)
+    assert second_entered.wait(timeout=1)
 
     release.set()
-    t1.join(timeout=1)
-    t2.join(timeout=1)
-
-    assert order == ["first_enter", "first_exit", "second_enter"]
+    t1.join(timeout=2)
+    t2.join(timeout=2)
