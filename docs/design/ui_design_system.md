@@ -483,3 +483,34 @@ tr.clickable:active { background: var(--bg); }
 **设计约束：**
 - `opacity: 0.85` 不抢夺价格文字的视觉权重
 - `aria-hidden="true"` — 辅助技术不播报装饰图形
+
+
+---
+
+## 7. 告警与错误提示规范 (Actionable Warnings)
+
+**原则：每条告警必须附带操作指引。** 用户看到 ⚠ 时，下一步应该立刻清晰，不需要去查文档或猜测。
+
+### Health Issue 告警（Status Bar 弹出层）
+
+每个 health issue 在标题行下方显示一行 `hint`，说明原因和操作方法。当前映射（`App.tsx parseIssue()`）：
+
+| Issue key | 操作提示 |
+|-----------|---------|
+| `market_data_stale` | Feed 每 5 分钟自动刷新；如超 30 分钟未恢复，重启 Gateway |
+| `trading_paused` | 点击顶栏 Resume 按钮恢复交易循环 |
+| `llm_unavailable` | 检查 Settings → Model Provider 配置，再点 Resume |
+| `kill_switch_active` | 进入 Settings → Risk → Kill Switch 手动解除 |
+| `agent_failure_ratio` | 查看 Gateway 日志定位失败 Agent |
+| `operator stale` | 通常 1–2 分钟自动恢复；若持续则重启 Gateway |
+
+### 实现约束
+
+- `hint` 必须是一句话（<50 字），直接说"你应该做什么"，不解释技术原因
+- 不在 hint 里重复 label/value 已有的信息（信息冗余原则）
+- `hint` 样式：`.sp-issue-hint`，`color: var(--faint)`，`font-size: 0.62rem`，换行显示在 label 下方
+- InfraEvent 的 `action` 字段已有类似机制（显示在 event 下方），health issue hint 遵循同一视觉语言
+
+### 新增 health issue 的 checklist
+
+添加新的 health issue 时，必须同步在 `parseIssue()` 里加对应的 `hint`，否则用户只能看到裸 key 字符串和一个 ⚠。
