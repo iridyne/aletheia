@@ -69,8 +69,8 @@ def _check_demo_credentials(cfg: "AletheiaConfig") -> ConfigInconsistency | None
         return None
     # Check if demo API key exists in secrets store
     try:
-        from aletheia.auth.secrets import get_secret
-        key = get_secret("bitget_api_key_demo") or get_secret("BITGET_API_KEY_DEMO")
+        from aletheia.config.secrets import get_secret
+        key = get_secret("bitget.demo.api_key")
         if not key:
             return ConfigInconsistency(
                 field_path="exchange.paper_execution_mode",
