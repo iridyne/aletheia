@@ -202,4 +202,11 @@ def run_lifecycle_automation() -> dict:
         logger.warning("strategy_evidence_actions failed: %s", e)
         results["evidence_actions"] = {"error": str(e)}
 
+    try:
+        from aletheia.analytics.guard_promotion import run_promotion_check
+        results["guard_promotion"] = run_promotion_check()
+    except Exception as e:
+        logger.warning("guard_promotion failed (non-fatal): %s", e)
+        results["guard_promotion"] = {"error": str(e)}
+
     return results

@@ -125,6 +125,14 @@ class CCXTProvider:
         since: int | None = None,
     ) -> list[Candle]:
         ccxt_symbol, canon, _ = _resolve_ccxt_symbol(symbol)
+
+        from aletheia.data.cache import get_cache
+        cache = get_cache()
+        if since is None:
+            cached = cache.get(canon, timeframe, limit)
+            if cached is not None:
+                return cached
+
         last_err: Exception | None = None
         for name, ensure in (
             (self._primary_name, self._ensure_primary),
@@ -146,6 +154,8 @@ class CCXTProvider:
                     for row in raw
                 ]
                 self._persist(canon, timeframe, candles, name)
+                if since is None and candles:
+                    cache.set(canon, timeframe, limit, candles)
                 return candles
             except Exception as e:  # noqa: BLE001 — try fallback, then re-raise
                 last_err = e

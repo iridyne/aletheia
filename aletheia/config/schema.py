@@ -301,8 +301,8 @@ class UniverseConfig(BaseModel):
     min_depth_10bps_usd: float = 25_000
     explore_ratio: float = 0.2
     family_quota: dict[str, float] = Field(default_factory=lambda: {
-        "momentum": 0.30, "mean_reversion": 0.20,
-        "derivatives": 0.30, "event": 0.20,
+        "momentum": 0.35, "mean_reversion": 0.25,
+        "derivatives": 0.35, "event": 0.05,
     })
     blacklist: list[str] = Field(default_factory=list)
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
@@ -313,7 +313,7 @@ class UniverseConfig(BaseModel):
 class GuardConfig(BaseModel):
     enabled: bool = True
     enforce_in_paper_ranker: bool = True
-    auto_promote_enabled: bool = False
+    auto_promote_enabled: bool = True
     min_matching_trades: int = 3
     max_score_penalty: float = 40.0
 

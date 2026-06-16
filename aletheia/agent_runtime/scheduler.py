@@ -45,6 +45,14 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
 # checks to detect resource exhaustion trending toward process restart.
 _abandoned_thread_count: list[int] = [0]
 
+# Volume scanner results cache (populated by data_collectors Phase B, ~10 min cadence).
+_latest_volume_ranking: dict = {}
+
+
+def get_latest_volume_ranking() -> dict:
+    """Return latest volume scanner results (empty dict if never collected)."""
+    return _latest_volume_ranking.copy()
+
 
 # Isolate latency-sensitive infrastructure jobs from long LLM/agent jobs. A
 # single APScheduler default ThreadPool lets a slow post-trade review or shell
@@ -314,6 +322,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
         id="universe_refresh", misfire_grace_time=120, executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=90),
     )
     # 9-domain market data collectors (microstructure/derivatives/macro).
     # Single job, runs every 2 min, uses internal phase counter to control
@@ -551,7 +560,8 @@ def _run_portfolio_snapshot():
         return
     try:
         from aletheia.portfolio.pnl import compute_and_store_snapshot
-        compute_and_store_snapshot(execution_mode=("bitget_live_limited" if cfg.exchange.mode == "live" else "paper_internal"))
+        _mode = "bitget_live_limited" if cfg.exchange.mode == "live" else cfg.exchange.paper_execution_mode
+        compute_and_store_snapshot(execution_mode=_mode)
     except Exception as e:
         logger.warning("portfolio_snapshot job failed: %s", e)
 
@@ -913,7 +923,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         except Exception as e:
             logger.debug("liquidation persist failed: %s", e)
 
-    # --- Phase B: macro (every 5th tick = ~10 min) ---
+    # --- Phase B: macro + volume scanner (every 5th tick = ~10 min) ---
     if tick % 5 == 1:
         macro_coll = MacroCollector()
         macro_result = await macro_coll.collect(symbols)
@@ -923,6 +933,18 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                 repo.insert_macro_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("macro persist failed: %s", e)
+
+        try:
+            from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+            vol_scanner = VolumeScannerCollector(top_n=30)
+            vol_result = await vol_scanner.collect(symbols[:200])
+            if vol_result.get("top_symbols"):
+                _latest_volume_ranking.update({
+                    "symbols": vol_result["top_symbols"],
+                    "observed_at": vol_result["observed_at"],
+                })
+        except Exception as e:
+            logger.debug("volume_scanner collection failed: %s", e)
 
     # Log summary
     micro_count = len(micro_result.get("snapshots", []))
