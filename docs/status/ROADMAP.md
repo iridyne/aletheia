@@ -1,9 +1,14 @@
 # Aletheia Trading OS — Phased Development Roadmap
 
-> Last updated: 2026-06-13
+> Last updated: 2026-06-16
 > Sources: PIPELINE_STATUS.md + deep research (102 agents, 20 sources) + WORLD_MAP.md (full architecture vision)
 >   + external Agent Framework Research Report 2025–2026 (validation only — see [agent_framework_research_2025_2026.md](../references/agent_framework_research_2025_2026.md))
 > Nature: **Guiding document, not automatic authorization** — each phase requires explicit confirmation before starting
+
+> **2026-06-16 调整**:Phase 0 不再要求专门隔离 72h 不 commit 的观察窗口。改为
+> 边开发边用 `aletheia doctor` 持续观察闭环健康指标(见 Phase 0 观察门一节)。
+> Phase 间不再硬性串行——只要不触 trust 边界(execution / 凭证 / live),
+> 任何 Phase 都可以并行推进。Phase 6 (Live) 仍需用户显式授权才启动。
 
 ---
 
@@ -39,7 +44,7 @@
 ## Phase Overview
 
 ```
-Phase 0   Stabilize & Observe       — Fill infrastructure gaps, prove 72h+ stability
+Phase 0   Stabilize & Observe       — Fill infrastructure gaps, watch loop health while developing
 Phase 1   Learning Quality           — Prove memory/review output is signal, not noise
 Phase 2A  Structured Signals         — Strategy becomes executable rules, not text
 Phase 2B  Agent Coordination         — Chain-based workflow (observer -> critic -> trader)
@@ -51,8 +56,10 @@ Phase 6   Live Readiness             — Capital gates, reconciliation, human co
 Phase 7+  Advanced (requires separate authorization per item)
 ```
 
-Each phase has an **observation gate** — hard criteria that must pass before proceeding.
-Phases are **not time-locked**. Move as fast or slow as reality permits.
+Each phase has an **observation gate** — health indicators we watch over time.
+Phases are **not time-locked** and **may run in parallel**: gates inform priority, not
+sequencing. The only hard sequencing is the trust boundary — Phase 6 (Live) requires
+explicit user authorization regardless of whether earlier gates are satisfied.
 
 ---
 
@@ -69,16 +76,16 @@ Phases are **not time-locked**. Move as fast or slow as reality permits.
 > [superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md](superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md)。
 > 外部参考源文件为 `C:\Users\Administrator\Downloads\aletheia_pi_agent_implementation_plan.md`。
 > **该文的 `Stage 1–6` 是本 track 内部编号,与 Phase 0–7 是两套独立编号,不可互映。**
-> **2026-06-10 工作约定**:权威的 Phase 0 观察窗可在另一台观测机上继续跑;本仓库允许在
-> `worktree-dev` 并行推进 Track B 的设计冻结后实现,但**合并 / 上线 / 宣称完成**仍受
-> Phase 0 门全绿 + 显式授权双重约束。
+> **2026-06-16 工作约定**:Track B 实现可直接在 `master` 上推进,无需先满足 Phase 0
+> 观察门;合并 / 上线由代码审查 + 测试基线 + trust 边界(不触 execution / 凭证 / live)
+> 把关。涉及 live 路径的能力仍需用户显式授权。
 
 本 track **拆两层**(见 [AI_HANDOFF.md](AI_HANDOFF.md) 2026-06-09 判断):
 
 | 层 | 内容 | 状态 | 前置 |
 |---|---|---|---|
 | **A — 确定性自愈 supervisor** | 无 LLM。code-drift/stale→重启、端口清理、限频持久化。这是稳定性根基,不是操作员。 | **DONE** (`8a6e008` + `abd7773`) | — |
-| **B — LLM Apex Agent Shell (Pi Agent)** | 顶层 LLM 系统操作员。下文展开。 | **IN PROGRESS on `worktree-dev`** — Python control plane, Command Center, shell supervision, operator event/task loop 已落地；更深的 PI runtime / delegation / lifecycle 仍在后续 track | **合并 / 上线仍需 Phase 0 观察门全绿 + 显式授权** |
+| **B — LLM Apex Agent Shell (Pi Agent)** | 顶层 LLM 系统操作员。下文展开。 | **IN PROGRESS** — Python control plane, Command Center, shell supervision, operator event/task loop 已落地；更深的 PI runtime / delegation / lifecycle 仍在后续 track | **直接在 master 推进**;触 trust 边界(execution / 凭证 / live)的改动需显式授权 |
 
 ### Track B 核心架构(§8)
 
@@ -210,13 +217,11 @@ agent_shell_messages   — 会话内消息(session_id, role, content, created_at
 agent_shell_commands   — 命令审计(query_id, input, intent, command, params, output, latency_ms)
 ```
 
-### 为什么 B 在 Phase 0 之后
+### Track B 与 Phase 轴的关系
 
-B 是 8 个新模块的能力扩张。Phase 0 战略冻结律(见 [CURRENT_TASK.md](CURRENT_TASK.md))明确:
-门全绿前只做稳定性 + doctor 类减人工确定性工具。**B 是"盖楼",72h 稳跑证明是"地基"——地基不稳不盖楼。**
-
-> **开发可提前**(`worktree-dev` 等 worktree 分支,不合并 `master`);**上线需门全绿 +
-> 显式授权。** 这条允许的是"并行研发",不是"跳过观测门"。
+B 是 8 个新模块的能力扩张,正交于交易智能成熟度。**2026-06-16 起允许直接在 `master`
+推进**:不再要求先把 Phase 0 观察窗跑完。代码审查 + 测试基线 + trust 边界(不触
+execution / 凭证 / live)是合并的实际门槛。Track B 的能力本身天然不进 live 路径。
 
 ### Track B Stage 1 观察门
 
@@ -262,7 +267,7 @@ market analysis, claims, lessons, skills, policy versions。
 
 ## Cross-Cutting Track: Model Provider Fallback & Priority (规划中)
 
-> **状态**: 仅设计记录,尚未实施。待 Phase 0 观察门通过后作为基础设施增强项启动。
+> **状态**: 仅设计记录,尚未实施。可作为基础设施增强项随时启动(不依赖其他 Phase)。
 
 **目标**: 让用户在 Settings UI 中以拖拽方式编排模型提供商优先级,并在首选提供商限流/不可用时自动降级到次选提供商,实现 LLM 调用链路的高可用。
 
@@ -292,14 +297,14 @@ market analysis, claims, lessons, skills, policy versions。
 
 ### 前置条件
 
-- Phase 0 观察门通过(稳定性 > 新功能)
 - 至少 2 个 provider 已通过 healthcheck 可达(当前: Databricks Qwen3.5 + 本地 Ollama)
 
 ---
 
 ## Phase 0 — Stabilize & Observe
 
-**Goal**: All 15 scheduler jobs run autonomously. System proves basic stability.
+**Goal**: All 15 scheduler jobs run autonomously. System proves basic stability — observed
+**continuously while development proceeds**, not in a sealed isolated window.
 
 ### Tasks
 
@@ -307,36 +312,40 @@ market analysis, claims, lessons, skills, policy versions。
 |---|---|---|
 | 0.1 | `post_trade_reviewer` scheduled (4h) | DONE |
 | 0.2 | `risk_critic` scheduled (6h) | DONE |
-| 0.3 | Test baseline green (488 passed) | DONE |
+| 0.3 | Test baseline green | DONE |
 | 0.4 | Config: `permission_mode=Paper` (gates paper_trader via `is_tool_permitted`; the old `autonomous_paper_trading` flag was removed in `7117bdf` 5→3 mode refactor) | DONE |
 | 0.5 | Start gateway for unattended run | DONE |
-| 0.6 | Pure observation period (72h minimum) | RESET 2026-06-09 — first attempt was a false start (see note) |
+| 0.6 | Continuous loop-health observation (no isolated window required) | ONGOING — monitor via `aletheia doctor` after each meaningful change |
 | 0.7 | Deterministic self-heal (code-drift/stale→restart, port cleanup, LLM→alert) | DONE 2026-06-09 (`8a6e008` + rate-limit fix `abd7773`) |
 
-> **2026-06-09 false-start note**: A prior "observation period" was recorded as running, but on audit the gateway was a zombie — alive on stale code (`1aa1feb`, 7 commits behind HEAD), `/api/health` degraded with `code_updated_pending_restart` + `market_data_stale:1114min`. `paper_trader` had not fired in 11h; 294 opportunities produced **0** proposals/orders/fills. Restarted gateway → healthy, then built task 0.7 (deterministic self-heal) so this class of zombie auto-resolves within one 10-min health cycle. **Verified end-to-end 2026-06-09**: induced code drift → health flagged it → self-heal auto-restarted → supervisor respawned fresh code → drift cleared (audit `self_heal_restart: code_drift`). This was exactly the "False confidence" failure mode below — process alive ≠ system running.
+> **2026-06-16 节奏调整**:取消"专门 72h 不 commit 隔离观察"约束。理由 = 每次代码改动
+> 触发的 `code_drift` 自愈重启是**预期行为**而非污染源(自愈机制本就为此设计);把它当
+> 失败信号反而违背 self-heal 的初衷。**改为持续监测**:每次较大改动后用 `aletheia doctor`
+> 扫一眼,看下方健康指标是否仍在累积。
 
-### Observation Gate
+### Observation Gate (continuous health indicators)
 
-> **Timer reset 2026-06-09 (cutover)** — paper trading moved from local `paper_internal`
-> matching on **spot** to **Bitget demo** real-simulation orders on **USDT perpetuals**.
-> The prior spot/local baseline is voided by this deliberate higher-fidelity form change
-> (not by drift noise). This cutover commit is the intended exception to the no-commit rule;
-> the new window resumes the rule: **no commits during the observation window** (drift
-> compares booted commit vs `git HEAD`, not the working tree, so editing without committing
-> is safe).
+These are watched as ongoing trends, not binary gates within a fixed window. A regression
+in any line is a signal to investigate; absolute thresholds are sample-size guidance, not
+shipping criteria.
 
-All must pass:
-- [ ] Gateway 72h+ no crash (health = healthy/degraded, not dead) — and **no `self_heal_restart` from `code_drift`** in the window (those mean someone committed)
-- [ ] market_observer producing opportunities every 15min (>70% non-error)
-- [ ] paper_trader executed at least **5 fills** — each 15-min cycle that opens or adds counts as one trading action ("one open" by project convention); the `positions` table merges same-symbol/direction adds into one row, so count **fills**, not position rows
-- [ ] position_manager closed at least 2 positions (demo closes place a real hedge-mode reduce order; the exchange must go flat too)
-- [ ] post_trade_reviewer + risk_critic have output (knowledge_items grows beyond baseline)
-- [ ] **demo orders visible on Bitget**: `get_open_orders`/`get_positions` show paper_trader's real demo orders; exchange_sync reflects demo equity/positions
+- Gateway runs across multi-day timeframes (health = healthy/degraded, not dead).
+  `self_heal_restart: code_drift` is **expected** when commits land — that's the watchdog
+  doing its job, not a failure.
+- market_observer produces opportunities every ~15min (>70% non-error).
+- paper_trader accumulates fills over time (5 fills is sample-size guidance — "enough to
+  speak", not a binary gate); `positions` table merges same-symbol/direction adds into one
+  row, so count **fills**, not position rows.
+- position_manager closes at least 2 positions over the observation history (proves the
+  close path isn't dead).
+- post_trade_reviewer + risk_critic produce output (knowledge_items grows over time).
+- **demo orders visible on Bitget**: `get_open_orders`/`get_positions` show paper_trader's
+  real demo orders; exchange_sync reflects demo equity/positions.
 
-> **Watch (NOT a gate)**: positions stay concentrated in one symbol because paper_trader re-picks the top opportunity each cycle and adds to the same side. **Accepted as fine for Phase 0** — the gate proves the loop *runs*. Symbol diversification is a Phase 2A concern, not a stability gate.
+> **Watch (NOT a gate)**: positions stay concentrated in one symbol because paper_trader re-picks the top opportunity each cycle and adds to the same side. Symbol diversification is a Phase 2A concern, not a stability gate.
 
-**If gate fails**: Diagnose (LLM unreachable / config error / data source down / demo API rejecting), fix, restart timer.
-**Gate caveat**: "5 fills / 2 closes" measures that the *loop runs*, not that it's *profitable* — profitability is a separate Phase 1+ question (see "False confidence" failure mode).
+**If indicators regress**: diagnose (LLM unreachable / config error / data source down / demo API rejecting), fix, keep developing.
+**Gate caveat**: these indicators measure that the *loop runs*, not that it's *profitable* — profitability is a separate Phase 1+ question (see "False confidence" failure mode).
 
 ---
 

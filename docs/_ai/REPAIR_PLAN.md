@@ -1,5 +1,8 @@
 # 修复计划 — Backend & Frontend Issues 综合排期
 
+> **状态:已归档(2026-06-16)**。全部 5 个 Wave 已标记完成。本文件保留为历史记录。
+> 当前活跃问题跟踪见 `docs/issues/BACKEND_ISSUES.md` 和 `docs/issues/FRONTEND_ISSUES.md`。
+
 ## 2026-06-15 P0/P1 status amendment
 
 - This file remains a historical planning record; current priorities were re-ranked around P0/P1 trust hardening.

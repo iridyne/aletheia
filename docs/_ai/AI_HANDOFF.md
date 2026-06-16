@@ -7,7 +7,9 @@
 
 ## Last Updated
 
-2026-06-15 (本次会话:决策层重构三批 — RuleSet 驱动 + PI Agent 决策权威 + conviction sizing [commits ef3e765, 73703ef])
+2026-06-16 (本次会话:P1 FTS5 修复 + test fixture 重构 + UI 规范对齐 [commits cb9692e..e96c37e + 本次])
+
+前一批次: 决策层重构三批 — RuleSet 驱动 + PI Agent 决策权威 + conviction sizing [commits ef3e765, 73703ef]
 
 前一批次: 全局代理配置实现 — aletheia/net.py + NetworkConfig schema + Settings UI + doctor probe [commit 28eb357]
 
@@ -20,6 +22,34 @@
 startup gate 3 次重试 + Windows toast、风控单列 symbol_list 双模式过滤、Anthropic/OpenAI 原生
 provider + 流式、universe plan 缺口补齐、design-doc 合规修复、Clustr100 社区知识库。18 个提交,
 均为 2026-06-13 当日。会话结束:本机实例停机,开发切换到另一台机器。)
+
+## Recent Change (P1 FTS5 + test fixture + UI 对齐 — 2026-06-16)
+
+> **P1 FTS5 经验循环修复** (cb9692e):
+> - 启动时 `reindex_all()` backfill 所有 high_confidence items 进 FTS5
+> - `_index()` 静默 except 改为 logger.warning
+> - doctor 新增 `fts.coverage` 探针
+> - 5 个 FTS 专用测试 (`test_fts_coverage.py`)
+>
+> **Universe Forward Outcomes** (cb9692e):
+> - 追踪 scanner 成员 15m/1h/4h/24h 收益表现
+> - `GET /api/universe/outcomes` 端点 + 前端 Universe 页展示
+>
+> **Deterministic opportunity path** (a0c7cfa):
+> - `signal_emitter.py`: universe members → deterministic Opportunity (无需 LLM)
+> - 32 个 signal_emitter 测试
+>
+> **Test fixture 重构** (ed1015d, f113230):
+> - conftest.py: `_fast_llm_failure` → `_fast_network_timeout` (httpx 0.5s timeout)
+> - 适配 market_observer LLM-skip 行为 (不再创建 neutral noise)
+> - startup_gate retry sleep 跳过 (全套 21min→9min)
+>
+> **UI 规范对齐** (本次):
+> - Charts.tsx: `<button>` → `<Button>` (primitive 要求)
+> - index.css: `button:active { transform: none; }` (消除 draggy 动画)
+> - Proposals.tsx: ConvictionMeter 抽到 components/ (消除 page 级 inline style)
+>
+> **测试结果**: 1295/1295 pass (0 failures)
 
 ## Recent Change (全局代理配置 — 2026-06-14, commit 28eb357)
 

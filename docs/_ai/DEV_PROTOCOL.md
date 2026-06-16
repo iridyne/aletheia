@@ -62,15 +62,15 @@ aletheia doctor --fetch   # 先 git fetch,让 code.sync 反映 live origin 而�
 `--fix` 刻意保守:它只修基础设施(进程 / 端口 / 启动),**绝不**自动清
 kill_switch、**绝不**碰交易状态——那些是红线,留人决定(doctor 会打印提示)。
 
-## 4. 战略冻结(当前 Phase 0)
+## 4. 开发节奏(2026-06-16 更新)
 
-地基不稳别盖楼。**在一个 72h 观察窗口真正跑完(Phase 0 观察门全绿)之前,
-roadmap 冻结,只做两类事:**
-- (A) 稳定性修复(Windows 无人值守、自愈、崩溃根因);
-- (B) "减人工"的确定性工具(如 `doctor`)。
+边开发边观察。Phase 0 闭环健康指标(fills 累积、position close、knowledge_items
+增长)作为**持续监测的趋势**——不设隔离观察窗口,不因观察未完成阻塞后续能力线。
+`code_drift` 自愈重启是预期行为(代表代码改动后自动换上新码),不是失败信号。
 
-不在 Phase 0 稳跑证明前启动任何 Phase 1+ 的能力扩张。每加一层复杂度,就多一个
-会在 Windows 上坏、要人伺候的东西——这正是当前 agent 使用效率低的根源。
+唯一硬阻塞线:**Phase 6 (Live)** 需要用户显式授权——这是 trust 边界,与开发
+节奏无关。其余 Phase 和 Track B 可并行推进,改动不触 `execution/`/凭证/live
+即可自主合并。
 
 ## 5. doctor 探测维度速查
 

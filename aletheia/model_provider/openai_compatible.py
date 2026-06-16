@@ -145,9 +145,9 @@ class OpenAICompatibleProvider(ModelProvider):
         # /models not available (Databricks, some gateways) — probe with inference
         try:
             from aletheia.model_provider.base import ModelRequest
-            resp = await self.complete(ModelRequest(
+            await self.complete(ModelRequest(
                 messages=[{"role": "user", "content": "Say OK"}],
-                max_tokens=5, temperature=0,
+                max_tokens=200, temperature=0,
             ))
             return ModelHealth(provider=self.name, available=True, model=self.model, models=[], model_metadata=[])
         except Exception as e:

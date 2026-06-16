@@ -133,9 +133,9 @@ function ChartTab({
           </select>
           <div className="seg-toggle">
             {TIMEFRAMES.map(t => (
-              <button key={t} className={`seg-btn${timeframe === t ? ' active' : ''}`} onClick={() => setTimeframe(t)}>
+              <Button key={t} variant="ghost" className={`seg-btn${timeframe === t ? ' active' : ''}`} onClick={() => setTimeframe(t)}>
                 {t}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -443,8 +443,9 @@ export default function Charts() {
       {/* Lower panel: tab-switched detail areas */}
       <div className="tab-bar" role="tablist">
         {(['chart', 'signals', 'news', 'predictions'] as const).map(id => (
-          <button
+          <Button
             key={id}
+            variant="ghost"
             role="tab"
             aria-selected={activeTab === id}
             className={`tab${activeTab === id ? ' tab-active' : ''}`}
@@ -454,7 +455,7 @@ export default function Charts() {
               : id === 'signals' ? <>Signals{signalCount > 0 && <span className="tab-badge">{signalCount}</span>}</>
               : id === 'news' ? 'News'
               : 'Predictions'}
-          </button>
+          </Button>
         ))}
       </div>
       <div className="tab-panel">
