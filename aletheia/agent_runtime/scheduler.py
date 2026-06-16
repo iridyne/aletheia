@@ -95,14 +95,28 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
     teardown (Windows ProactorEventLoop IOCP drain) cannot pin the calling
     APScheduler executor thread indefinitely. The caller gets back control after
     timeout + 15s grace regardless of internal loop state.
+
+    Critical: DB cleanup (rollback + close) happens INSIDE the event loop via a
+    wrapper coroutine's finally block — before asyncio.run() starts teardown.
+    Without this, a hung teardown leaves the daemon thread's thread-local sqlite
+    connection open with a potential uncommitted write transaction, permanently
+    holding the WAL write lock and blocking all other DB writers in the process.
     """
     import concurrent.futures
 
     timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
     thread_timeout = timeout + 15.0
 
+    async def _guarded_coro():
+        from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
+        try:
+            return await asyncio.wait_for(awaitable, timeout=timeout)
+        finally:
+            rollback_if_in_transaction()
+            close_db()
+
     def _run():
-        return asyncio.run(asyncio.wait_for(awaitable, timeout=timeout))
+        return asyncio.run(_guarded_coro())
 
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = pool.submit(_run)
@@ -114,8 +128,6 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             "executor thread abandoned (ProactorEventLoop IOCP drain)",
             job_id, thread_timeout,
         )
-        # shutdown(wait=False): do NOT block on the hung daemon thread.
-        # The thread will die when the process exits (daemon semantics).
         pool.shutdown(wait=False)
         raise TimeoutError(f"job {job_id} teardown hung after {thread_timeout}s")
     finally:
