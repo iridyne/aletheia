@@ -66,6 +66,11 @@ export function isGatewayInfrastructureError(message: string | null | undefined)
   )
 }
 
+export function isTaskNotFoundError(message: string | null | undefined): boolean {
+  if (!message) return false
+  return message.includes('gateway_request_failed:404') && message.includes('/tasks/')
+}
+
 export function operatorIntentForError(message: string | null | undefined): string {
   if (isGatewayInfrastructureError(message)) {
     return 'gateway connectivity recovery pending'

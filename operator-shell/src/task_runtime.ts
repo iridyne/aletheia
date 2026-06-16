@@ -4,6 +4,7 @@ import type {
   OperatorTaskState,
   PersistedOperatorTask,
 } from './schemas.js'
+import { isTaskNotFoundError, errorMessage } from './gateway_errors.js'
 
 export class TaskRuntime {
   private queuedTasks: Array<{
@@ -38,6 +39,23 @@ export class TaskRuntime {
   constructor(
     private readonly backendClient: Pick<BackendGatewayClient, 'createTask' | 'updateTask'>,
   ) {}
+
+  // Returns the updated task, or null if the task no longer exists (404).
+  // All other errors are re-thrown so the caller can handle them normally.
+  private async safeUpdateTask(
+    taskId: string,
+    payload: Parameters<BackendGatewayClient['updateTask']>[1],
+  ): Promise<{ id: string } | null> {
+    try {
+      return await this.backendClient.updateTask(taskId, payload)
+    } catch (err) {
+      if (isTaskNotFoundError(errorMessage(err))) {
+        console.warn(`task_evicted:${taskId} — backend has no record; dropping from queue`)
+        return null
+      }
+      throw err
+    }
+  }
 
   snapshot(): OperatorTaskState {
     return this.state
@@ -130,9 +148,14 @@ export class TaskRuntime {
     if (!next) {
       return
     }
-    await this.backendClient.updateTask(next.taskId, {
-      status: 'running',
-    })
+    const updated = await this.safeUpdateTask(next.taskId, { status: 'running' })
+    if (updated === null) {
+      // Task evicted — try to promote the next one in queue
+      if (this.queuedTasks.length > 0) {
+        await this.promoteQueuedTask()
+      }
+      return
+    }
     this.activeTask = {
       ...next,
       restoredFromRecovery: false,
@@ -212,10 +235,7 @@ export class TaskRuntime {
       return
     }
     const taskId = this.activeTask.taskId
-    await this.backendClient.updateTask(taskId, {
-      status: 'completed',
-      output_data,
-    })
+    await this.safeUpdateTask(taskId, { status: 'completed', output_data })
     this.activeTask = null
     this.syncState()
   }
@@ -235,10 +255,7 @@ export class TaskRuntime {
     }
 
     const [task] = this.queuedTasks.splice(queuedIndex, 1)
-    await this.backendClient.updateTask(task.taskId, {
-      status: 'completed',
-      output_data,
-    })
+    await this.safeUpdateTask(task.taskId, { status: 'completed', output_data })
     this.syncState()
     return true
   }
@@ -248,11 +265,7 @@ export class TaskRuntime {
       return
     }
     const taskId = this.activeTask.taskId
-    await this.backendClient.updateTask(taskId, {
-      status: 'failed',
-      error,
-      output_data,
-    })
+    await this.safeUpdateTask(taskId, { status: 'failed', error, output_data })
     this.activeTask = null
     this.syncState()
   }
@@ -273,11 +286,7 @@ export class TaskRuntime {
     }
 
     const [task] = this.queuedTasks.splice(queuedIndex, 1)
-    await this.backendClient.updateTask(task.taskId, {
-      status: 'failed',
-      error,
-      output_data,
-    })
+    await this.safeUpdateTask(task.taskId, { status: 'failed', error, output_data })
     this.syncState()
     return true
   }
