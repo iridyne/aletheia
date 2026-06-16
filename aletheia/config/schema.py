@@ -306,6 +306,8 @@ class UniverseConfig(BaseModel):
     })
     blacklist: list[str] = Field(default_factory=list)
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    snapshot_ttl_enabled: bool = True
+    snapshot_ttl_hours: float = 24.0
 
 
 class GuardConfig(BaseModel):
