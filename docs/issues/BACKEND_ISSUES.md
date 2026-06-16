@@ -707,3 +707,49 @@
   databricks, codex_cli, claude_cli）的 healthcheck 均传入 `model_metadata=models`；
   `/api/model/health` 端点返回完整 metadata
 - 佐证：`aletheia/model_provider/base.py:45-46`, 各 provider healthcheck 方法
+
+---
+
+## 6. 🟡 数据层结构性技术债（2026-06-16 数据源审计）
+
+> **来源**：2026-06-16 数据层全景审计，发现 4 个隐患，其中 §6.1（Binance 硬编码）和 §6.2（yfinance 脆弱性）已在同日修复。§6.3/6.4 记录备查。
+
+### 6.1 ✅ 清算数据 Binance 硬编码与 primary exchange 配置解耦
+
+- **原因**：`_fetch_liquidations()` 硬编码向 `fapi.binance.com` 发起 REST 请求，与 `market_data.ccxt_exchange` 配置完全无关。当 primary 为 Bybit 时，资金费率/OI 来自 Bybit，但清算事件来自 Binance，静默混用两个市场数据，无任何提示。
+- **佐证（修复前）**：`aletheia/data/collectors/derivatives.py:134-177`（旧 `_fetch_liquidations`，exchange 字段写死 `"binance"`）
+- **修复**：
+  - 新增 `_fetch_liquidations_ccxt(exchange, primary_name, symbols)` — 检查 CCXT `exchange.has["fetchLiquidations"]`，支持时优先走 CCXT 统一接口，liquidation 记录的 exchange 字段与 funding/OI 一致
+  - 新增 `_CCXTLiquidationsUnsupported` sentinel exception — CCXT 不支持时抛出，由 `collect()` 捕获后 fallback 到 Binance REST
+  - 旧函数改名为 `_fetch_liquidations_binance_rest()`，注释明确标注"fallback, exchange metadata mismatch"
+  - 当 primary != binance 且触发 fallback 时，`logger.debug` 明确说明 exchange mismatch
+- **佐证（修复后）**：`aletheia/data/collectors/derivatives.py`（`_CCXTLiquidationsUnsupported`, `_fetch_liquidations_ccxt`, `_fetch_liquidations_binance_rest`）
+
+### 6.2 ✅ yfinance scraper 脆弱性：失败静默，无可观测告警
+
+- **原因**：yfinance 是非官方 scraper，Yahoo Finance 历史上多次 breaking change。失败时三处代码均静默（`continue`/`return None`/`return ""`），agent 行为变化无任何可见信号。
+- **佐证（修复前）**：
+  - `aletheia/data/yfinance_provider.py:60-65` — all tickers empty 时仅返回 `""`
+  - `aletheia/data/collectors/macro.py:168-169` — `ImportError` 静默返回 `None, None, None, None`
+  - `aletheia/agents/stock_observer.py:133-134` — 外层 `except Exception: return None` 吞掉 ImportError
+- **修复**：
+  - `yfinance_provider.py`：全部 ticker 空时升级为 `logger.warning`，`ImportError` 单独 WARN
+  - `macro.py`：`ImportError` 加 `logger.warning`；全部 ticker None 时加 `logger.warning`；各 ticker 异常改为 `logger.debug`（有 file:ticker 信息）
+  - `stock_observer.py`：提前单独 `try/except ImportError` + WARN，其余异常保持静默（单 ticker 失败不影响其他）；补充 `logger = logging.getLogger(...)`
+- **佐证（修复后）**：上述三个文件
+
+### 6.3 🟡 只有 REST 轮询，无流式数据——决策频率天花板
+
+- **原因**：所有数据来源均为快照轮询（OHLCV TTL 10 min、orderbook 点时刻切片）。没有 WebSocket 订阅机制。
+- **影响**：系统天花板为日内到日线频率策略。高频实盘时此架构需要重设计。
+- **佐证**：`aletheia/data/ccxt_provider.py`（get_ohlcv/get_ticker 均为 REST），`aletheia/data/collectors/microstructure.py`（fetch_order_book 一次性调用）
+- **最小修复**：MVP 阶段不需要修，上实盘前需评估目标频率并决定是否引入 CCXT Pro WebSocket。
+- **状态**：🟡 已知限制，暂不修
+
+### 6.4 🟡 OHLCVCache 不覆盖三个 collector，但实际无并发风险
+
+- **原因**：`MicrostructureCollector`/`DerivativesCollector`/`VolumeScannerCollector` 每次调用都新建 `CCXTProvider` 实例，不走 `OHLCVCache`。但这三个 collector 在 scheduler 中是顺序执行（见 `scheduler.py:760-769`），不存在真正的并发 provider 冲突。
+- **影响**：`load_markets()` 被调用两次（micro 一次、deriv 一次），轻微效率损耗，无数据正确性问题。
+- **佐证**：`aletheia/agent_runtime/scheduler.py:760-769`
+- **最小修复**：可将两个 collector 共享同一 provider 实例，但改动涉及 collect 接口，优先级低。
+- **状态**：🟡 已知，暂不修
