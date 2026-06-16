@@ -198,23 +198,25 @@ export default function Universe() {
 
       {/* Actions */}
       {enabled && (
-        <div className="flex gap-2 items-center mb-3">
-          <Button
-            onClick={() => refreshMutation.mutate()}
-            disabled={refreshMutation.isPending}
-          >
-            {refreshMutation.isPending ? 'Refreshing…' : 'Refresh Now'}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => navigate('/settings?tab=risk&section=universe')}
-          >
-            Universe Settings
-          </Button>
+        <div className="mb-3">
+          <div className="flex gap-2">
+            <Button
+              onClick={() => refreshMutation.mutate()}
+              disabled={refreshMutation.isPending}
+            >
+              {refreshMutation.isPending ? 'Refreshing…' : 'Refresh Now'}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => navigate('/settings?tab=risk&section=universe')}
+            >
+              Universe Settings
+            </Button>
+          </div>
           {refreshMutation.isError && (
-            <span className="text-sm pnl-negative">
+            <div className="settings-save-msg err">
               {(refreshMutation.error as Error).message}
-            </span>
+            </div>
           )}
         </div>
       )}
