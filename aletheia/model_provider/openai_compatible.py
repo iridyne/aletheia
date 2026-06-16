@@ -2,11 +2,21 @@
 
 import json
 
+import httpx
+
 from aletheia.net import httpx_client
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth,
 )
+
+
+def _raise_without_secrets(resp: httpx.Response) -> None:
+    """Like resp.raise_for_status() but strips auth headers from the exception."""
+    if resp.is_success:
+        return
+    msg = f"HTTP {resp.status_code} from {resp.url}"
+    raise httpx.HTTPStatusError(msg, request=resp.request, response=resp)
 
 
 def _extract_text_content(raw) -> str:
@@ -57,7 +67,7 @@ class OpenAICompatibleProvider(ModelProvider):
         }
         async with httpx_client(timeout=60) as client:
             resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=self._headers())
-            resp.raise_for_status()
+            _raise_without_secrets(resp)
             data = resp.json()
         choice = data["choices"][0]
         raw_content = choice["message"]["content"]
@@ -81,7 +91,7 @@ class OpenAICompatibleProvider(ModelProvider):
         }
         async with httpx_client(timeout=60) as client:
             resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
-            resp.raise_for_status()
+            _raise_without_secrets(resp)
             data = resp.json()
         content = ""
         for item in data.get("output", []):

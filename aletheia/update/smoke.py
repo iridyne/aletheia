@@ -10,6 +10,7 @@ NOT run here — too slow for an unattended update path.
 """
 
 import logging
+import os
 import subprocess
 
 from aletheia.config.loader import _PROJECT_ROOT
@@ -18,19 +19,32 @@ from aletheia.gateway.pidfile import _no_window_kwargs
 logger = logging.getLogger("aletheia.update.smoke")
 
 _IMPORT_TARGETS = "import aletheia.server.app, aletheia.execution.gateway, aletheia.risk.engine, aletheia.config.loader"
-_FAST_TESTS = ["tests/test_config.py", "tests/test_risk_engine.py"]
+_FAST_TESTS = [
+    "tests/test_config.py",
+    "tests/test_risk_engine.py",
+    "tests/test_secrets.py",
+]
+
+_SECRET_PREFIXES = ("BITGET_", "OPENAI_", "ANTHROPIC_", "LLM_", "TELEGRAM_BOT_TOKEN")
+
+
+def _safe_env() -> dict:
+    """Return os.environ with secret-bearing keys stripped."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(_SECRET_PREFIXES)}
 
 
 def run_smoke_check() -> dict:
     """Run the import gate then the fast-test gate. Returns {ok, stage, detail}."""
     import sys
+    env = _safe_env()
 
     # Gate 1: import the critical modules in a fresh interpreter.
     try:
         r = subprocess.run(
             [sys.executable, "-c", _IMPORT_TARGETS],
             cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=60,
-            **_no_window_kwargs(),
+            env=env, **_no_window_kwargs(),
         )
         if r.returncode != 0:
             return {"ok": False, "stage": "import", "detail": (r.stderr or r.stdout).strip()[:500]}
@@ -42,7 +56,7 @@ def run_smoke_check() -> dict:
         r = subprocess.run(
             [sys.executable, "-m", "pytest", *_FAST_TESTS, "-q", "-x"],
             cwd=str(_PROJECT_ROOT), capture_output=True, text=True, timeout=180,
-            **_no_window_kwargs(),
+            env=env, **_no_window_kwargs(),
         )
         if r.returncode != 0:
             return {"ok": False, "stage": "fast_tests", "detail": (r.stdout or r.stderr).strip()[-500:]}

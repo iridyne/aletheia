@@ -6,6 +6,7 @@ worktree. Reinstalls dependencies only when pyproject.toml changed.
 """
 
 import logging
+import os
 import subprocess
 from datetime import datetime, timezone
 
@@ -14,6 +15,14 @@ from aletheia.files.jsonl import write_audit
 from aletheia.gateway.pidfile import _no_window_kwargs
 from aletheia.update import git_ops
 from aletheia.update.smoke import run_smoke_check
+
+_SECRET_PREFIXES = ("BITGET_", "OPENAI_", "ANTHROPIC_", "LLM_", "TELEGRAM_BOT_TOKEN")
+
+
+def _safe_env() -> dict:
+    """Return os.environ with secret-bearing keys stripped."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(_SECRET_PREFIXES)}
 
 logger = logging.getLogger("aletheia.update.applier")
 
@@ -55,12 +64,13 @@ def check_for_update() -> dict:
 
 def _reinstall_deps() -> dict:
     """Reinstall the package (editable) so changed dependencies take effect."""
+    env = _safe_env()
     for cmd in (["uv", "pip", "install", "-e", "."], ["pip", "install", "-e", "."]):
         try:
             r = subprocess.run(
                 cmd,
                 cwd=str(_PROJECT_ROOT), capture_output=True, text=True,
-                **_no_window_kwargs(),
+                env=env, **_no_window_kwargs(),
             )
             if r.returncode == 0:
                 return {"ok": True, "tool": cmd[0]}

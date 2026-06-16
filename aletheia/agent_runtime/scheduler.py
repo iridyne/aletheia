@@ -701,9 +701,9 @@ def _run_cleanup():
         from aletheia.files.jsonl import write_audit
         r = cfg.retention
         counts = {
-            "agent_runs": repo.prune_agent_runs(r.agent_runs_days),
             "run_steps": repo.prune_run_steps(r.run_steps_days),
             "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
+            "agent_runs": repo.prune_agent_runs(r.agent_runs_days),
             "market_snapshots": repo.prune_market_snapshots(r.market_snapshots_days),
             "portfolio_snapshots": repo.prune_portfolio_snapshots(r.portfolio_snapshots_days),
             "orderbook_snapshots": repo.prune_orderbook_snapshots(7),
