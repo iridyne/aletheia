@@ -1090,9 +1090,9 @@ async def get_dreaming_summary():
     Returns recent 24h activity across knowledge types + deprecated items.
     """
     _ensure_db()
-    from datetime import datetime, timedelta
-    cutoff_24h = (datetime.utcnow() - timedelta(hours=24)).isoformat()
-    cutoff_7d = (datetime.utcnow() - timedelta(days=7)).isoformat()
+    from datetime import datetime, timedelta, timezone
+    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
     recent_research = repo._select_all(
         "knowledge_items",
@@ -1148,10 +1148,10 @@ async def get_reviews_summary():
     and the strategy IDs that still lack fresh review coverage.
     """
     _ensure_db()
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
-    cutoff_24h = (datetime.utcnow() - timedelta(hours=24)).isoformat()
-    cutoff_15m = (datetime.utcnow() - timedelta(minutes=15)).isoformat()
+    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cutoff_15m = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
 
     recent_closed_positions = repo._select_all(
         "positions",

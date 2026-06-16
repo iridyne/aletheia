@@ -45,13 +45,40 @@ def _is_proxy_reachable(url: str) -> bool:
 
     Result is cached for _PROXY_CACHE_TTL seconds so the scheduler doesn't
     pay a TCP round-trip on every job invocation.
-    """
-    cached = _proxy_reachable_cache.get(url)
-    if cached is not None:
-        ok, ts = cached
-        if time.monotonic() - ts < _PROXY_CACHE_TTL:
-            return ok
 
+    If called from a running asyncio event loop, returns the cached value
+    immediately (stale OK) and schedules a background refresh — never blocks
+    the event loop with a synchronous TCP connect.
+    """
+    import asyncio
+
+    cached = _proxy_reachable_cache.get(url)
+    cache_fresh = cached is not None and (time.monotonic() - cached[1] < _PROXY_CACHE_TTL)
+
+    if cache_fresh:
+        return cached[0]
+
+    # If we're on an event loop thread, return stale cache or False and refresh async
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        if cached is not None:
+            # Schedule background refresh, return stale value now
+            loop.run_in_executor(None, _probe_proxy_sync, url)
+            return cached[0]
+        # No cache at all — return False (assume direct) and kick off probe
+        loop.run_in_executor(None, _probe_proxy_sync, url)
+        return False
+
+    # Not on event loop — safe to block
+    return _probe_proxy_sync(url)
+
+
+def _probe_proxy_sync(url: str) -> bool:
+    """Blocking TCP probe. Safe to call from worker threads."""
     try:
         parsed = urlparse(url)
         host = parsed.hostname or "127.0.0.1"

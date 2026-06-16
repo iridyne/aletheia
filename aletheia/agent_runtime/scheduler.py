@@ -37,7 +37,13 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "universe_refresh": 90.0,
     "data_collectors": 45.0,
     "exchange_sync": 60.0,
+    "backtest_orchestrator": 600.0,
 }
+
+
+# Track leaked daemon threads that couldn't be interrupted. Used by health
+# checks to detect resource exhaustion trending toward process restart.
+_abandoned_thread_count: list[int] = [0]
 
 
 # Isolate latency-sensitive infrastructure jobs from long LLM/agent jobs. A
@@ -148,6 +154,8 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
     timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
     thread_timeout = timeout + 15.0
 
+    _loop_ref: list[asyncio.AbstractEventLoop | None] = [None]
+
     async def _guarded_coro():
         from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
         try:
@@ -157,17 +165,35 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             close_db()
 
     def _run():
-        return asyncio.run(_guarded_coro())
+        loop = asyncio.new_event_loop()
+        _loop_ref[0] = loop
+        try:
+            return loop.run_until_complete(_guarded_coro())
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+            _loop_ref[0] = None
 
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = pool.submit(_run)
     try:
         return future.result(timeout=thread_timeout)
     except concurrent.futures.TimeoutError:
+        # Try to interrupt the stuck event loop from this thread
+        loop = _loop_ref[0]
+        if loop is not None:
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except Exception:
+                pass
+        _abandoned_thread_count[0] += 1
         logger.error(
             "job %s: asyncio.run() teardown hung after %.0fs — "
-            "executor thread abandoned (ProactorEventLoop IOCP drain)",
-            job_id, thread_timeout,
+            "executor thread abandoned (ProactorEventLoop IOCP drain). "
+            "Total abandoned threads: %d",
+            job_id, thread_timeout, _abandoned_thread_count[0],
         )
         pool.shutdown(wait=False)
         raise TimeoutError(f"job {job_id} teardown hung after {thread_timeout}s")
@@ -212,11 +238,11 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
-        misfire_grace_time=300, executor="agents",
+        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
     )
     _scheduler.add_job(
         _guarded("strategy_designer_daily", _run_strategy_designer), "cron", hour=1, minute=0, id="strategy_designer_daily",
-        misfire_grace_time=300, executor="agents",
+        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
     )
     _scheduler.add_job(
         _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",
@@ -251,7 +277,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
-        misfire_grace_time=600, executor="io",
+        misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
     _scheduler.add_job(
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
@@ -263,7 +289,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("stock_observer", _run_stock_observer), "cron",
         day_of_week="mon-fri", hour="14-20", minute="*/30",
-        id="stock_observer", misfire_grace_time=300, executor="agents",
+        id="stock_observer", misfire_grace_time=300, executor="agents", timezone="UTC",
     )
     # Prediction market observer — runs every 30 min around the clock.
     _scheduler.add_job(
@@ -301,7 +327,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Runs after strategy_designer (01:00) so newly generated strategies get tested.
     _scheduler.add_job(
         _guarded("backtest_orchestrator", _run_backtest_orchestrator), "cron", hour=4, minute=0,
-        id="backtest_orchestrator", misfire_grace_time=600, executor="agents",
+        id="backtest_orchestrator", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
     )
 
     _scheduler.start()
@@ -750,36 +776,44 @@ def _run_backtest_orchestrator():
     if cfg.runtime.paused:
         return
     try:
-        from aletheia.strategy.orchestrator import run_all_backtests, generate_daily_report
-        from aletheia.strategy.performance_ledger import (
-            compute_ledger_snapshot, append_ledger_event,
+        _run_sync_with_timeout("backtest_orchestrator", _backtest_orchestrator_body)
+    except TimeoutError:
+        logger.warning(
+            "backtest_orchestrator job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["backtest_orchestrator"],
         )
-        from aletheia.files.jsonl import write_audit
-
-        result = run_all_backtests(retire_killed=True)
-        report = generate_daily_report(result)
-        logger.info("Backtest orchestrator: %d evaluated, %d killed, %d kept",
-                    result.strategies_evaluated, result.strategies_killed, result.strategies_kept)
-
-        snapshot = compute_ledger_snapshot(period_days=7)
-        append_ledger_event(snapshot)
-
-        write_audit({
-            "actor": "system", "source": "scheduler",
-            "event_type": "backtest_orchestrator_complete",
-            "entity_type": "strategy",
-            "message": (
-                f"Backtest run: {result.strategies_evaluated} evaluated, "
-                f"{result.strategies_killed} killed, {result.strategies_kept} kept"
-            ),
-        })
-
-        # Lifecycle automation: apply exit_policy feedback + evidence-based actions
-        from aletheia.analytics.lifecycle_automation import run_lifecycle_automation
-        lc_result = run_lifecycle_automation()
-        logger.info("Lifecycle automation: %s", lc_result)
     except Exception as e:
         logger.warning("backtest_orchestrator job failed: %s", e)
+
+
+def _backtest_orchestrator_body():
+    from aletheia.strategy.orchestrator import run_all_backtests, generate_daily_report
+    from aletheia.strategy.performance_ledger import (
+        compute_ledger_snapshot, append_ledger_event,
+    )
+    from aletheia.files.jsonl import write_audit
+
+    result = run_all_backtests(retire_killed=True)
+    generate_daily_report(result)
+    logger.info("Backtest orchestrator: %d evaluated, %d killed, %d kept",
+                result.strategies_evaluated, result.strategies_killed, result.strategies_kept)
+
+    snapshot = compute_ledger_snapshot(period_days=7)
+    append_ledger_event(snapshot)
+
+    write_audit({
+        "actor": "system", "source": "scheduler",
+        "event_type": "backtest_orchestrator_complete",
+        "entity_type": "strategy",
+        "message": (
+            f"Backtest run: {result.strategies_evaluated} evaluated, "
+            f"{result.strategies_killed} killed, {result.strategies_kept} kept"
+        ),
+    })
+
+    from aletheia.analytics.lifecycle_automation import run_lifecycle_automation
+    lc_result = run_lifecycle_automation()
+    logger.info("Lifecycle automation: %s", lc_result)
 
 
 async def _async_universe_refresh():

@@ -103,9 +103,22 @@ def _filtered_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
     }
 
 
-async def _close_proxy_response(upstream: httpx.Response, client: httpx.AsyncClient) -> None:
+_proxy_client: httpx.AsyncClient | None = None
+
+
+def _get_proxy_client() -> httpx.AsyncClient:
+    global _proxy_client
+    if _proxy_client is None or _proxy_client.is_closed:
+        _proxy_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=10.0),
+            trust_env=False,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _proxy_client
+
+
+async def _close_proxy_response(upstream: httpx.Response) -> None:
     await upstream.aclose()
-    await client.aclose()
 
 
 def _proxy_unavailable(path: str, backend_url: str, route: dict | None, exc: Exception) -> JSONResponse:
@@ -210,7 +223,7 @@ def create_app(
         target = httpx.URL(f"{backend}/api/{path}", query=query)
         body = await request.body()
         headers = _filtered_headers(request.headers.items())
-        client = httpx.AsyncClient(timeout=None, trust_env=False)
+        client = _get_proxy_client()
         try:
             upstream_request = client.build_request(
                 request.method,
@@ -220,7 +233,6 @@ def create_app(
             )
             upstream = await client.send(upstream_request, stream=True)
         except Exception as exc:  # noqa: BLE001 - must fail loud as HTTP 503
-            await client.aclose()
             return _proxy_unavailable(path, backend, _backend_route(), exc)
 
         response_headers = _filtered_headers(upstream.headers.items())
@@ -229,7 +241,7 @@ def create_app(
             upstream.aiter_raw(),
             status_code=upstream.status_code,
             headers=response_headers,
-            background=BackgroundTask(_close_proxy_response, upstream, client),
+            background=BackgroundTask(_close_proxy_response, upstream),
         )
 
     if effective_static_dir.exists() and (effective_static_dir / "index.html").exists():

@@ -120,10 +120,11 @@ def _task_arguments() -> str:
     if _exists(pyvenv_cfg) and str(Path(exe).resolve()) != str(Path(real_python).resolve()):
         venv_site = str(venv_dir / "Lib" / "site-packages")
         project_root = str(_PROJECT_ROOT)
+        # Use repr() for path strings to handle single quotes, backslashes, etc.
         return (
             f'-c "import os,sys,site;'
-            f"site.addsitedir(r'{venv_site}');"
-            f"os.chdir(r'{project_root}');"
+            f"site.addsitedir({repr(venv_site)});"
+            f"os.chdir({repr(project_root)});"
             f"from aletheia.main import app;"
             f"sys.argv=['task','gateway','start','--no-browser'];"
             f'app()"'

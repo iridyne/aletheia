@@ -686,16 +686,25 @@ def get_serenity_claim(claim_id: str) -> dict | None:
 
 
 def insert_serenity_claims_bulk(claims: list) -> None:
+    if not claims:
+        return
     db = get_db()
-    was_in_tx = db.in_transaction
-    for c in claims:
-        data = c.model_dump()
-        data["price_relevant"] = int(data.get("price_relevant", False))
-        cols = ", ".join(data.keys())
-        placeholders = ", ".join(["?"] * len(data))
-        db.execute(f"INSERT INTO serenity_claims ({cols}) VALUES ({placeholders})", list(data.values()))
-    if not was_in_tx:
-        db.commit()
+    already_in_tx = db.in_transaction
+    if not already_in_tx:
+        db.execute("BEGIN")
+    try:
+        for c in claims:
+            data = c.model_dump()
+            data["price_relevant"] = int(data.get("price_relevant", False))
+            cols = ", ".join(data.keys())
+            placeholders = ", ".join(["?"] * len(data))
+            db.execute(f"INSERT INTO serenity_claims ({cols}) VALUES ({placeholders})", list(data.values()))
+        if not already_in_tx:
+            db.commit()
+    except Exception:
+        if not already_in_tx:
+            db.rollback()
+        raise
 
 
 def list_serenity_claims(run_id: str | None = None, price_relevant: bool | None = None, limit: int = 200) -> list[dict]:
@@ -752,37 +761,31 @@ def list_serenity_claims_for_theme(theme_id: str, limit: int = 200) -> list[dict
 def acquire_serenity_lock(lock_key: str, owner_run_id: str, ttl_seconds: int = 600) -> bool:
     from datetime import datetime, timezone, timedelta
     db = get_db()
-    was_in_tx = db.in_transaction
     now = datetime.now(timezone.utc)
     expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
 
-    existing = db.execute("SELECT * FROM serenity_agent_locks WHERE lock_key = ?", (lock_key,)).fetchone()
-    if existing:
-        if existing["expires_at"] < now.isoformat():
-            db.execute("DELETE FROM serenity_agent_locks WHERE lock_key = ?", (lock_key,))
-        else:
-            if not was_in_tx:
-                db.commit()
-            return False
-
+    # Atomic acquire: purge expired, then INSERT OR IGNORE (PK = lock_key).
+    # Two concurrent threads both DELETE expired + INSERT OR IGNORE: only one
+    # INSERT succeeds (the other is a no-op due to PK constraint). No TOCTOU.
     db.execute(
-        "INSERT INTO serenity_agent_locks (lock_key, owner_run_id, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+        "DELETE FROM serenity_agent_locks WHERE lock_key = ? AND expires_at < ?",
+        (lock_key, now.isoformat()),
+    )
+    db.execute(
+        "INSERT OR IGNORE INTO serenity_agent_locks "
+        "(lock_key, owner_run_id, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
         (lock_key, owner_run_id, now.isoformat(), expires_at),
     )
-    if not was_in_tx:
-        db.commit()
-    return True
+    acquired = db.execute("SELECT changes()").fetchone()[0] > 0
+    return acquired
 
 
 def release_serenity_lock(lock_key: str, owner_run_id: str) -> bool:
     db = get_db()
-    was_in_tx = db.in_transaction
     result = db.execute(
         "DELETE FROM serenity_agent_locks WHERE lock_key = ? AND owner_run_id = ?",
         (lock_key, owner_run_id),
     )
-    if not was_in_tx:
-        db.commit()
     return result.rowcount > 0
 
 
@@ -988,7 +991,6 @@ def upsert_ohlcv_candles(
         ")",
         (symbol, timeframe, symbol, timeframe, _OHLCV_WINDOW),
     )
-    db.commit()
 
 
 def get_ohlcv_candles(

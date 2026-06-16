@@ -31,17 +31,24 @@ def rotate_if_needed(path: Path | None = None, max_bytes: int = _MAX_LOG_BYTES) 
     """Roll `path` to `path.1` if it exceeds max_bytes. Returns True if rotated.
 
     Best-effort and never raises: log rotation must not be able to crash the
-    supervisor's spawn path.
+    supervisor's spawn path. On Windows, a child process holding the file open
+    prevents rename — fall back to truncation to bound growth.
     """
     p = path or errors_log_path()
     try:
         if not p.exists() or p.stat().st_size <= max_bytes:
             return False
         backup = p.with_suffix(p.suffix + ".1")
-        if backup.exists():
-            backup.unlink()
-        os.replace(p, backup)  # atomic; a fresh file is created on next open
-        return True
+        try:
+            if backup.exists():
+                backup.unlink()
+            os.replace(p, backup)
+            return True
+        except PermissionError:
+            # Windows: another process holds the file open (inherited handle).
+            # Truncate in place to prevent unbounded growth.
+            p.open("w").close()
+            return True
     except OSError:
         return False
 
