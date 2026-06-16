@@ -553,6 +553,8 @@ class UniverseConfigUpdate(SettingsRequest):
     max_spread_bps: Optional[float] = None
     min_depth_10bps_usd: Optional[float] = None
     explore_ratio: Optional[float] = None
+    snapshot_ttl_enabled: Optional[bool] = None
+    snapshot_ttl_hours: Optional[float] = None
     blacklist: Optional[list[str]] = None
     fallback_symbols: Optional[list[str]] = None
 
@@ -565,6 +567,7 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "max_spread_bps": (1, 200),
     "min_depth_10bps_usd": (1_000, 10_000_000),
     "explore_ratio": (0.0, 0.5),
+    "snapshot_ttl_hours": (1, 72),
 }
 
 

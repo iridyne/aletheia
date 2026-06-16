@@ -205,7 +205,8 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
-        _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
+        _guarded("universe_refresh", _run_universe_refresh), "interval",
+        minutes=cfg.universe.refresh_interval_min,
         id="universe_refresh", misfire_grace_time=120, executor="io",
     )
     # 9-domain market data collectors (microstructure/derivatives/macro).
