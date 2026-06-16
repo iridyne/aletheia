@@ -44,8 +44,12 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
         messages = [{"role": "user", "content": user}]
         schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, "model_json_schema") else {})
         messages.append({"role": "user", "content": f"Respond with valid JSON matching this schema: {schema_json}"})
+        # Prepend /no_think for Qwen3-series reasoning models: without it the model
+        # exhausts the token budget on internal reasoning and returns empty text output.
+        # Other models ignore this prefix safely.
+        structured_system = f"/no_think\n{system}" if system else "/no_think"
         resp = await complete_with_fallback(
-            ModelRequest(messages=messages, system=system, temperature=0.3, max_tokens=max_tokens),
+            ModelRequest(messages=messages, system=structured_system, temperature=0.3, max_tokens=max_tokens),
             provider=provider,
         )
         content = (resp.content or "").strip()
