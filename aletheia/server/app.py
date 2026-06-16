@@ -231,6 +231,16 @@ async def _llm_startup_gate(cfg) -> None:
     except Exception:
         pass
 
+    # Start auto-resume probe loop (runs as independent asyncio.Task, not via
+    # APScheduler which is now paused). Periodically re-probes LLM and resumes
+    # the system when connectivity is restored.
+    if fresh.health.auto_resume_enabled:
+        try:
+            from aletheia.agent_runtime.auto_resume import start_auto_resume_task
+            start_auto_resume_task(interval_sec=fresh.health.auto_resume_interval_sec)
+        except Exception as e:
+            logger.debug("auto_resume task start failed: %s", e)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
