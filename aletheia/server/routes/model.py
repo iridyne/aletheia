@@ -295,7 +295,14 @@ async def codex_login_status():
 @router.post("/model/codex/login-cancel")
 async def codex_login_cancel():
     from aletheia.model_provider import codex_auth
-    return codex_auth.cancel()
+    result = codex_auth.cancel()
+    write_audit({
+        "actor": "human", "source": "dashboard",
+        "event_type": "codex_login_cancelled", "entity_type": "model_provider",
+        "entity_id": "codex_cli",
+        "message": "Codex device-auth login cancelled by user",
+    })
+    return result
 
 
 @router.get("/model/codex/models")

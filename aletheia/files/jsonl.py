@@ -4,11 +4,14 @@ from contextlib import contextmanager
 from datetime import datetime
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import threading
 
 from aletheia.config.loader import get_data_dir
+
+logger = logging.getLogger("aletheia.files.jsonl")
 
 _GENESIS_HASH = "0" * 64
 _audit_hash_lock = threading.Lock()
@@ -187,13 +190,17 @@ def write_audit(event: dict) -> None:
     if "timestamp" not in event:
         event["timestamp"] = datetime.utcnow().isoformat()
 
-    with _audit_hash_lock:
-        with _exclusive_file_lock(_log_dir() / ".audit.lock"):
-            prev_hash = _get_last_audit_hash(use_cache=False)
-            event["_prev_hash"] = prev_hash
-            line = json.dumps(event, default=str, ensure_ascii=False)
-            _append_jsonl_line(_log_dir() / "audit.jsonl", line)
-            _last_audit_hash = _hash_record(line)
+    try:
+        with _audit_hash_lock:
+            with _exclusive_file_lock(_log_dir() / ".audit.lock"):
+                prev_hash = _get_last_audit_hash(use_cache=False)
+                event["_prev_hash"] = prev_hash
+                line = json.dumps(event, default=str, ensure_ascii=False)
+                _append_jsonl_line(_log_dir() / "audit.jsonl", line)
+                _last_audit_hash = _hash_record(line)
+    except OSError as e:
+        logger.warning("audit jsonl write failed: %s (event_type=%s)",
+                       e, event.get("event_type", "?"))
 
     # Also persist into sqlite.audit_events for structured querying when DB is
     # available (backward-compatible with pure JSONL deployments).
@@ -221,9 +228,9 @@ def _write_audit_row(event: dict) -> None:
 
     try:
         insert_audit_event(AuditEvent(**payload))
-    except Exception:
-        # Audit table may not exist before migrations run in some tests.
-        return
+    except Exception as e:
+        logger.warning("audit sqlite write failed: %s (event_type=%s)",
+                       e, payload.get("event_type", "?"))
 
 
 def _serialize_state(value: object) -> str:

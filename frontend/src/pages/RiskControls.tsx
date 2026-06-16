@@ -156,7 +156,7 @@ export default function RiskControls() {
             ))}
           </div>
         ) : (
-          <p className="text-muted text-sm">Loading…</p>
+          <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
         )}
       </Card>
     </div>

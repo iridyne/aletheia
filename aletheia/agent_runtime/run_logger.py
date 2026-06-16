@@ -22,14 +22,31 @@ def start_run(agent_name: str, trigger_type: str, permission_mode: str, model_pr
 
 
 def end_run(run: AgentRun, status: str = "completed", outputs: list[str] | None = None, errors: list[str] | None = None) -> None:
+    tools_called = _aggregate_tools_called(run.id)
     update_data = {
         "status": status,
         "ended_at": datetime.now(timezone.utc).isoformat(),
         "outputs_created": json.dumps(outputs if outputs is not None else []),
         "errors": json.dumps(errors if errors is not None else []),
+        "tools_called": json.dumps(tools_called),
     }
     update_agent_run(run.id, **update_data)
     write_agent_run_log({"event": "run_ended", "run_id": run.id, "status": status})
+
+
+def _aggregate_tools_called(run_id: str) -> list[str]:
+    """Return deduplicated tool names used during this run."""
+    try:
+        from aletheia.storage.repositories import list_tool_calls
+        calls = list_tool_calls(run_id=run_id, limit=500)
+        seen: dict[str, None] = {}
+        for c in calls:
+            name = c.get("tool_name") or ""
+            if name and name not in seen:
+                seen[name] = None
+        return list(seen)
+    except Exception:
+        return []
 
 
 def _decode_json_list(raw: str | None) -> list:

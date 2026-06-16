@@ -31,7 +31,7 @@ function MarkdownContent({ itemId }: { itemId: string }) {
     queryFn: () => api.getKnowledgeContent(itemId),
     enabled: !!itemId,
   })
-  if (isLoading) return <p className="text-muted text-sm">Loading content...</p>
+  if (isLoading) return <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
   if (!data || data.error) return <p className="text-muted text-sm">{data?.error === 'file_not_found' ? 'File not found on disk.' : 'No content available.'}</p>
   if (!data.content) return <p className="text-muted text-sm">Empty file.</p>
   return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
@@ -188,6 +188,17 @@ function KnowledgeTab() {
   const { data = [] } = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
   const rows = data as KnowledgeItem[]
 
+  const { data: d0 } = useQuery({ queryKey: ['knowledge', KB_TABS[0].key], queryFn: KB_TABS[0].fn, staleTime: 60_000 })
+  const { data: d1 } = useQuery({ queryKey: ['knowledge', KB_TABS[1].key], queryFn: KB_TABS[1].fn, staleTime: 60_000 })
+  const { data: d2 } = useQuery({ queryKey: ['knowledge', KB_TABS[2].key], queryFn: KB_TABS[2].fn, staleTime: 60_000 })
+  const { data: d3 } = useQuery({ queryKey: ['knowledge', KB_TABS[3].key], queryFn: KB_TABS[3].fn, staleTime: 60_000 })
+  const counts: Record<string, number | undefined> = {
+    [KB_TABS[0].key]: Array.isArray(d0) ? d0.length : undefined,
+    [KB_TABS[1].key]: Array.isArray(d1) ? d1.length : undefined,
+    [KB_TABS[2].key]: Array.isArray(d2) ? d2.length : undefined,
+    [KB_TABS[3].key]: Array.isArray(d3) ? d3.length : undefined,
+  }
+
   function parseTags(raw: string | null): string[] {
     if (!raw) return []
     try { return JSON.parse(raw) } catch { return [] }
@@ -198,7 +209,7 @@ function KnowledgeTab() {
       <div className="flex gap-2 mb-3">
         {KB_TABS.map(t => (
           <Button key={t.key} variant={tab === t.key ? 'primary' : 'secondary'} onClick={() => setTab(t.key)}>
-            {t.label}{t.key === tab && rows.length > 0 && <span className="tab-badge">{rows.length}</span>}
+            {t.label}{counts[t.key] != null && counts[t.key]! > 0 && <span className="tab-badge">{counts[t.key]}</span>}
           </Button>
         ))}
       </div>

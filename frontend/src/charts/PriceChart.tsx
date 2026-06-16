@@ -208,6 +208,12 @@ export default function PriceChart({ symbol, timeframe = '1h', markers = [], onM
       {status === 'error' && <p className="hint">Could not load market data (configure exchange / network).</p>}
       {status === 'empty' && <p className="hint">No candle data yet.</p>}
       <div ref={containerRef} style={{ width: '100%' }} />
+      {markers.length > 0 && (
+        <div className="chart-legend">
+          <span style={{ color: chartTheme.markerBuy }}>▲ Buy</span>
+          <span style={{ color: chartTheme.markerSell }}>▼ Sell</span>
+        </div>
+      )}
     </div>
   )
 }

@@ -121,7 +121,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .sidebar nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
 .sidebar nav a.active {
-  background: rgba(34,211,238,0.12);
+  background: rgba(34,211,238,0.20);
   color: var(--accent); border-left: 2px solid var(--accent);
   padding-left: calc(0.75rem); font-weight: 600;
 }
@@ -440,7 +440,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .badge-green { background: rgba(46,230,168,0.06); color: var(--green); border-color: rgba(46,230,168,0.24); }
 .badge-red { background: rgba(255,93,108,0.06); color: var(--red); border-color: rgba(255,93,108,0.26); }
-.badge-yellow, .badge-warning { background: rgba(245,185,66,0.07); color: var(--yellow); border-color: rgba(245,185,66,0.28); }
+.badge-yellow, .badge-warning { background: rgba(245,185,66,0.18); color: var(--yellow); border-color: rgba(245,185,66,0.28); }
 .badge-blue { background: rgba(74,163,255,0.06); color: var(--blue); border-color: rgba(74,163,255,0.24); }
 /* muted/neutral badge — for "no", "n/a", off, orphaned states (replaces the undefined
    badge-muted/badge-amber class names that were rendering colorless). */
@@ -954,6 +954,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .bias-long    { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .bias-short   { background: var(--red);   box-shadow: 0 0 6px var(--red);   }
 .bias-neutral { background: var(--faint); }
+.chart-legend {
+  display: flex; gap: var(--space-3); padding: var(--space-2) 0;
+  font-size: 0.72rem; font-weight: 500;
+}
 
 /* ---------- Signals tab ---------- */
 .signals-row-long  td { border-left: 2px solid rgba(46,230,168,0.28); }
@@ -1901,11 +1905,11 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .at-event-sub { font-size: 0.7rem; color: var(--faint); }
 
 /* ---------- Topbar enhancements ---------- */
-/* 36px hit target — density tradeoff vs strict WCAG 44px inside a 52px topbar */
+/* 40px hit target — WCAG AA minimum touch target (44px relaxed to 40px for density) */
 .topbar-btn {
   display: inline-flex; align-items: center; justify-content: center;
   padding: var(--space-2); font-size: 0.9rem; line-height: 1;
-  border-radius: var(--r-sm); min-width: 36px; min-height: 36px;
+  border-radius: var(--r-sm); min-width: 40px; min-height: 40px;
 }
 /* Cockpit / control-surface buttons — same 36px hit target */
 .btn-control {
