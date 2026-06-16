@@ -217,9 +217,9 @@ async def _analyze_symbol(
 
     read, err = await llm_structured(
         system=_SYSTEM_PROMPT,
-        user=f"Market data for {symbol}:\n{context}{memory_block}\n\nReturn the market read JSON.",
+        user=f"/no_think\nMarket data for {symbol}:\n{context}{memory_block}\n\nReturn the market read JSON.",
         schema=MarketRead,
-        max_tokens=600,
+        max_tokens=2048,
     )
     log_tool(run_id, "llm_structured", "observe", True)
 
