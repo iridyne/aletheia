@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from aletheia.config.loader import load_config
-from aletheia.storage.sqlite import close_db, get_db, rollback_if_in_transaction
+from aletheia.storage.sqlite import get_db
 
 logger = logging.getLogger("aletheia.exchange_sync")
 
@@ -65,7 +65,16 @@ def _settings_key(mode: str) -> str:
 
 
 def _store(state: ExchangeAccountState) -> None:
-    """Persist the latest snapshot. Idempotent upsert into settings."""
+    """Persist the latest snapshot. Idempotent upsert into settings.
+
+    Uses a dedicated autocommit connection (isolation_level=None) so that the
+    INSERT is immediately committed as a single atomic statement. This prevents
+    the thread-local connection from holding an open write transaction if the
+    daemon thread is abandoned by _run_sync_with_timeout — the root cause of
+    the permanent DB lock under uvicorn.
+    """
+    from aletheia.storage.sqlite import db_path
+
     payload = json.dumps({
         "mode": state.mode,
         "equity_usdt": state.equity_usdt,
@@ -78,26 +87,24 @@ def _store(state: ExchangeAccountState) -> None:
         "asset_breakdown": state.asset_breakdown or [],
         "positions": state.positions or [],
     })
-    # SQLite UPSERT: settings has key as PRIMARY KEY. This cache write can race
-    # with frequent heartbeat/API writes during startup; treat SQLITE_BUSY as a
-    # transient condition and reset this worker's thread-local connection before
-    # retrying so a failed refresh never leaves a writer transaction behind.
     for attempt in range(3):
+        conn = None
         try:
-            db = get_db()
-            db.execute(
+            conn = sqlite3.connect(str(db_path()), isolation_level=None, timeout=30)
+            conn.execute("PRAGMA busy_timeout=30000")
+            conn.execute(
                 "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
                 (_settings_key(state.mode), payload),
             )
-            db.commit()
             return
         except sqlite3.OperationalError as exc:
             if "database is locked" not in str(exc).lower() or attempt >= 2:
                 raise
-            rollback_if_in_transaction()
-            close_db()
             time.sleep(0.25 * (attempt + 1))
+        finally:
+            if conn:
+                conn.close()
 
 
 def _read_raw(mode: str) -> Optional[dict]:
@@ -166,15 +173,23 @@ def _client_or_unconfigured() -> tuple[Optional[object], str]:
 
 
 def _run_async(coro):
-    """Run a coroutine to completion from sync code, safe whether or not a loop runs."""
+    """Run a coroutine to completion from sync code, safe whether or not a loop runs.
+
+    Uses shutdown(wait=False) so that a hung asyncio.run() teardown (Windows
+    ProactorEventLoop IOCP drain) doesn't block the calling thread forever.
+    The outer _run_sync_with_timeout will abandon this thread on hard timeout.
+    """
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(asyncio.run, coro).result(timeout=55)
+    finally:
+        pool.shutdown(wait=False)
 
 
 def sync_exchange_account() -> Optional[ExchangeAccountState]:

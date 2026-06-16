@@ -46,26 +46,29 @@ class _FakePosition:
 def test_store_retries_transient_sqlite_busy(monkeypatch):
     from aletheia.portfolio import exchange_sync as es
 
-    class _Conn:
-        def __init__(self, *, fail=False):
-            self.fail = fail
-            self.committed = False
+    attempts = []
 
-        def execute(self, *_args, **_kwargs):
-            if self.fail:
+    class _Conn:
+        def __init__(self, attempt_num):
+            self.attempt_num = attempt_num
+            self.closed = False
+
+        def execute(self, sql, *args, **kwargs):
+            attempts.append(self.attempt_num)
+            if self.attempt_num == 0:
                 raise sqlite3.OperationalError("database is locked")
 
-        def commit(self):
-            self.committed = True
+        def close(self):
+            self.closed = True
 
-    first = _Conn(fail=True)
-    second = _Conn()
-    conns = [first, second]
-    cleanup: list[str] = []
+    call_count = [0]
 
-    monkeypatch.setattr(es, "get_db", lambda: conns.pop(0))
-    monkeypatch.setattr(es, "rollback_if_in_transaction", lambda: cleanup.append("rollback"))
-    monkeypatch.setattr(es, "close_db", lambda: cleanup.append("close"))
+    def fake_connect(*args, **kwargs):
+        conn = _Conn(call_count[0])
+        call_count[0] += 1
+        return conn
+
+    monkeypatch.setattr(es.sqlite3, "connect", fake_connect)
     monkeypatch.setattr(es.time, "sleep", lambda _sec: None)
 
     es._store(es.ExchangeAccountState(
@@ -81,8 +84,9 @@ def test_store_retries_transient_sqlite_busy(monkeypatch):
         positions=[],
     ))
 
-    assert cleanup == ["rollback", "close"]
-    assert second.committed is True
+    assert len(attempts) >= 2
+    assert attempts[0] == 0  # first attempt failed
+    assert attempts[1] == 1  # retried with new connection
 
 
 def _patch_client(monkeypatch, *, balances=None, positions=None, orders=None,
