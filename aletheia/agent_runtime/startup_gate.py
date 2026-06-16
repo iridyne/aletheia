@@ -27,8 +27,11 @@ logger = logging.getLogger("aletheia.startup_gate")
 
 # A real completion can be slow on a cold gateway endpoint; keep the probe short
 # enough that startup isn't blocked for long, but long enough for a genuine call.
+# Reasoning models (e.g. Qwen3.5) need more budget: 5 tokens are exhausted by the
+# reasoning phase with nothing left for text output — bump to 32 so there's room
+# for both phases. The completion_tokens fallback below covers edge cases.
 _PROBE_TIMEOUT_SEC = 20
-_PROBE_MAX_TOKENS = 5
+_PROBE_MAX_TOKENS = 32
 
 
 def _ordered_enabled_providers(cfg) -> list[str]:
@@ -55,6 +58,11 @@ async def _probe_one(name: str) -> dict:
         )
         content = (resp.content or "").strip() if resp is not None else ""
         if content:
+            return {"provider": name, "usable": True, "error": None}
+        # Reasoning models may still exhaust the budget on the reasoning phase;
+        # completion_tokens > 0 proves the model ran — treat as usable.
+        usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
+        if usage.get("completion_tokens", 0) > 0:
             return {"provider": name, "usable": True, "error": None}
         return {"provider": name, "usable": False, "error": "empty_response"}
     except asyncio.TimeoutError:
