@@ -36,17 +36,41 @@ class TestOrchestrator:
         assert "no_executable_ruleset" in result.reports[0].verdict_reasons
 
     @patch("aletheia.storage.repositories.list_strategies")
+    @patch("aletheia.storage.repositories.update_strategy")
     @patch("aletheia.trading.strategy_lifecycle.promote_strategy")
     @patch("aletheia.strategy.orchestrator.load_bars_from_db")
     @patch("aletheia.strategy.orchestrator.insert_backtest_run")
     @patch("aletheia.strategy.orchestrator.insert_backtest_trades")
-    def test_skips_insufficient_bars(self, mock_trades, mock_run, mock_bars, mock_promote, mock_list):
+    @patch("aletheia.strategy.orchestrator._request_ohlcv_backfill")
+    def test_skips_insufficient_bars(self, mock_backfill, mock_trades, mock_run, mock_bars, mock_promote, mock_update, mock_list):
         _, _, _, _, rs = strategy_1_btc_trend_following()
         mock_list.return_value = [self._make_strategy_row(ruleset_json=rs.to_json())]
         mock_bars.return_value = []  # no bars
         result = run_all_backtests()
         assert result.strategies_skipped == 1
         assert "insufficient_ohlcv_data" in result.reports[0].verdict_reasons
+        mock_backfill.assert_called_once()
+
+    @patch("aletheia.storage.repositories.list_strategies")
+    @patch("aletheia.storage.repositories.update_strategy")
+    @patch("aletheia.trading.strategy_lifecycle.promote_strategy")
+    @patch("aletheia.strategy.orchestrator.load_bars_from_db")
+    @patch("aletheia.strategy.orchestrator.insert_backtest_run")
+    @patch("aletheia.strategy.orchestrator.insert_backtest_trades")
+    @patch("aletheia.strategy.orchestrator._request_ohlcv_backfill")
+    def test_auto_kills_after_3_consecutive_skips(self, mock_backfill, mock_trades, mock_run, mock_bars, mock_promote, mock_update, mock_list):
+        _, _, _, _, rs = strategy_1_btc_trend_following()
+        params = {"ruleset": rs.to_json(), "symbol": "BTC/USDT", "timeframe": "1h",
+                  "direction_bias": "long", "_backtest_skip_count": 2}
+        row = {"id": "s1", "name": "test", "state": "paper_running",
+               "parameters": json.dumps(params)}
+        mock_list.return_value = [row]
+        mock_bars.return_value = []
+        result = run_all_backtests()
+        assert result.strategies_killed == 1
+        assert result.reports[0].verdict == "kill"
+        assert "consecutive_skips=3" in result.reports[0].verdict_reasons[1]
+        mock_promote.assert_called_once_with("s1", "retired")
 
     @patch("aletheia.storage.repositories.list_strategies")
     @patch("aletheia.trading.strategy_lifecycle.promote_strategy")

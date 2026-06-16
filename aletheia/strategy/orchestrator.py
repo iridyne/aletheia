@@ -11,6 +11,7 @@ Designed to be called from:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field, asdict
@@ -71,7 +72,7 @@ def run_all_backtests(
 
     Returns OrchestratorResult with per-strategy reports.
     """
-    from aletheia.storage.repositories import list_strategies
+    from aletheia.storage.repositories import list_strategies, update_strategy
     from aletheia.trading.strategy_lifecycle import promote_strategy
 
     cm = cost_model or CostModel()
@@ -113,15 +114,42 @@ def run_all_backtests(
             bars = load_bars_from_db(symbol, timeframe, limit=bar_limit)
 
             if len(bars) < 30:
-                skipped += 1
-                reports.append(BacktestReport(
-                    strategy_id=sid, strategy_name=name,
-                    symbol=symbol, timeframe=timeframe,
-                    bar_count=len(bars), trade_count=0,
-                    verdict="review", verdict_reasons=["insufficient_ohlcv_data"],
-                    action_taken="skipped",
-                ))
+                # Track consecutive skip count in strategy parameters
+                skip_count = int(params.get("_backtest_skip_count", 0)) + 1
+                params["_backtest_skip_count"] = skip_count
+                update_strategy(sid, parameters=json.dumps(params))
+
+                # Auto-kill after 3 consecutive skips (symbol is unbacktestable)
+                if skip_count >= 3:
+                    promote_strategy(sid, "retired")
+                    killed += 1
+                    reports.append(BacktestReport(
+                        strategy_id=sid, strategy_name=name,
+                        symbol=symbol, timeframe=timeframe,
+                        bar_count=len(bars), trade_count=0,
+                        verdict="kill",
+                        verdict_reasons=["insufficient_ohlcv_data", f"consecutive_skips={skip_count}"],
+                        action_taken="retired",
+                    ))
+                    logger.info("auto-killed %s: insufficient data after %d consecutive skips", sid, skip_count)
+                else:
+                    skipped += 1
+                    reports.append(BacktestReport(
+                        strategy_id=sid, strategy_name=name,
+                        symbol=symbol, timeframe=timeframe,
+                        bar_count=len(bars), trade_count=0,
+                        verdict="review",
+                        verdict_reasons=["insufficient_ohlcv_data", f"skip_{skip_count}_of_3"],
+                        action_taken="skipped",
+                    ))
+                    # Trigger async OHLCV backfill for next cycle
+                    _request_ohlcv_backfill(symbol, timeframe)
                 continue
+
+            # Reset skip counter on successful bar load
+            if params.get("_backtest_skip_count"):
+                params["_backtest_skip_count"] = 0
+                update_strategy(sid, parameters=json.dumps(params))
 
             cfg = BacktestConfig(
                 symbol=symbol, timeframe=timeframe,
@@ -305,3 +333,21 @@ def generate_daily_report(result: OrchestratorResult) -> str:
         lines.append("*No active strategies with executable rules found.*")
 
     return "\n".join(lines)
+
+
+def _request_ohlcv_backfill(symbol: str, timeframe: str) -> None:
+    """Best-effort async OHLCV fetch to populate data for next backtest cycle."""
+    try:
+        from aletheia.data.ccxt_provider import get_market_data_provider
+
+        async def _fetch():
+            provider = get_market_data_provider()
+            try:
+                await provider.get_ohlcv(symbol, timeframe=timeframe, limit=200)
+            finally:
+                await provider.close()
+
+        asyncio.run(_fetch())
+        logger.info("ohlcv_backfill completed: %s/%s (200 bars)", symbol, timeframe)
+    except Exception as e:
+        logger.debug("ohlcv_backfill failed for %s/%s: %s", symbol, timeframe, e)

@@ -72,16 +72,28 @@ Output a structured market read. Calibration:
 Note: this is a paper-trading observation only — not financial advice."""
 
 
-def _fetch_stock_indicators(ticker: str) -> dict | None:
+class _FetchError:
+    """Sentinel distinguishing hard errors from transient empty data."""
+    __slots__ = ("reason",)
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+
+def _fetch_stock_indicators(ticker: str, _retry: bool = True) -> dict | _FetchError | None:
     """Synchronous yfinance fetch + indicator computation for one ticker.
 
-    Returns a dict with indicator values, or None on failure.
+    Returns:
+      - dict: success with indicator values
+      - None: data temporarily unavailable (empty hist / insufficient bars) — soft
+      - _FetchError: hard failure (import missing, network exception) — counts as real error
     """
     try:
         import yfinance as yf
     except ImportError:
-        logger.warning("yfinance not installed — stock_observer cannot fetch equity data")
-        return None
+        return _FetchError("yfinance_not_installed")
+
+    import time
 
     try:
         from aletheia.trading.indicators import sma, rsi, atr, bollinger, momentum_pct, zscore_last
@@ -95,6 +107,9 @@ def _fetch_stock_indicators(ticker: str) -> dict | None:
             show_errors=False,
         )
         if hist is None or hist.empty:
+            if _retry:
+                time.sleep(3)
+                return _fetch_stock_indicators(ticker, _retry=False)
             return None
 
         closes = [float(x) for x in hist["Close"].dropna().tolist()]
@@ -138,8 +153,11 @@ def _fetch_stock_indicators(ticker: str) -> dict | None:
             "momentum_10": mom10,
             "volume_zscore": vol_z,
         }
-    except Exception:
-        return None
+    except Exception as e:
+        if _retry:
+            time.sleep(3)
+            return _fetch_stock_indicators(ticker, _retry=False)
+        return _FetchError(f"exception:{e}")
 
 
 def _render_stock_snapshot(data: dict) -> str:
@@ -171,16 +189,21 @@ async def _analyze_stock(
 ) -> tuple[str | None, str | None]:
     """Fetch indicators + LLM read for one equity ticker.
 
-    Returns (opportunity_id, error_str).
+    Returns (opportunity_id, error_str | warning_str | None).
+    Error strings prefixed with "hard:" are real failures; "soft:" are transient/empty.
     """
     import asyncio as _asyncio
 
     loop = _asyncio.get_event_loop()
     data = await loop.run_in_executor(None, _fetch_stock_indicators, ticker)
 
+    if isinstance(data, _FetchError):
+        log_tool(run_id, "get_stock_snapshot", "observe", False, output=ticker)
+        return None, f"hard:{data.reason}:{ticker}"
+
     if data is None:
         log_tool(run_id, "get_stock_snapshot", "observe", False, output=ticker)
-        return None, f"yfinance_fetch_failed:{ticker}"
+        return None, f"soft:empty_data:{ticker}"
 
     log_tool(run_id, "get_stock_snapshot", "observe", True, output=ticker)
     snapshot_text = _render_stock_snapshot(data)
@@ -282,6 +305,9 @@ async def run_stock_observer(permission_mode: str = "Observe", run_id: str | Non
             linked_strategy_id = s["id"]
             break
 
+    hard_errors: list[str] = []
+    soft_warnings: list[str] = []
+
     for ticker in tickers:
         try:
             opp_id, err = await _analyze_stock(
@@ -293,8 +319,21 @@ async def run_stock_observer(permission_mode: str = "Observe", run_id: str | Non
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")
             if err:
-                errors.append(f"{ticker}:{err}")
+                if err.startswith("hard:"):
+                    hard_errors.append(err)
+                else:
+                    soft_warnings.append(err)
         except Exception as e:
-            errors.append(f"{ticker}:unexpected:{e}")
+            hard_errors.append(f"hard:unexpected:{ticker}:{e}")
+
+    # Tolerance threshold: only report errors if >50% tickers had hard failures.
+    # Soft warnings (empty data) never escalate to errors.
+    if len(hard_errors) > len(tickers) / 2:
+        errors.extend(hard_errors)
+    elif hard_errors:
+        outputs.append(f"warnings:{len(hard_errors)}_hard_{len(soft_warnings)}_soft")
+
+    if soft_warnings:
+        outputs.append(f"soft_skipped:{len(soft_warnings)}")
 
     return {"outputs": outputs, "errors": errors}
