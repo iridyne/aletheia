@@ -340,8 +340,8 @@ function UniverseConfigCard({ settings, qc }: any) {
       </div>
       <div className="flex items-center gap-2">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
-        <SaveMsg msg={msg} />
       </div>
+      <SaveMsg msg={msg} />
       <p className="hint">
         When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
         and feeds the top {maxCandidates} to agents. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.
@@ -436,8 +436,8 @@ function ExchangeMarketsRow({ settings, qc }: any) {
             {mut.isPending ? 'Saving…' : 'Save exchange config'}
           </button>
         )}
-        <SaveMsg msg={msg} />
       </Row>
+      <SaveMsg msg={msg} />
     </>
   )
 }
@@ -462,12 +462,14 @@ function LiveStateRow({ status, qc }: any) {
   }
 
   return (
-    <Row label="Live trading state" hint="Disabled by default. Unlocking runs a credential pre-flight, requires confirmation, and is audited. Use Kill Switch on Risk & Controls to halt immediately." danger={!isDisabled}>
-      <span className={`badge ${isDisabled ? 'badge-muted' : 'badge-yellow'}`}>{humanize(String(status.live_state))}</span>
-      <button onClick={preflightUnlock} disabled={!isDisabled}>Unlock Live-Limited</button>
-      <button className="secondary" onClick={() => lock.mutate()} disabled={isDisabled}>Lock</button>
-      {warning && <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>⚠ {warning}</span>}
-    </Row>
+    <div>
+      <Row label="Live trading state" hint="Disabled by default. Unlocking runs a credential pre-flight, requires confirmation, and is audited. Use Kill Switch on Risk & Controls to halt immediately." danger={!isDisabled}>
+        <span className={`badge ${isDisabled ? 'badge-muted' : 'badge-yellow'}`}>{humanize(String(status.live_state))}</span>
+        <button onClick={preflightUnlock} disabled={!isDisabled}>Unlock Live-Limited</button>
+        <button className="secondary" onClick={() => lock.mutate()} disabled={isDisabled}>Lock</button>
+      </Row>
+      {warning && <div className="settings-save-msg err">⚠ {warning}</div>}
+    </div>
   )
 }
 
@@ -545,12 +547,12 @@ function ExchangeCredentialsCard({ qc }: any) {
           <input type="password" value={passphrase} placeholder={cur?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} />
         </label>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
         <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
           {verifyAndSave.isPending ? 'Verifying…' : `Verify & Save ${profile}`}
         </button>
-        {result && <span className="hint" style={{ color: result.ok ? 'var(--green)' : 'var(--red)' }}>{result.msg}</span>}
       </div>
+      {result && <div className={`settings-save-msg ${result.ok ? 'ok' : 'err'}`}>{result.msg}</div>}
       <p className="hint">Enter all three fields to test the connection live before saving. Credentials are write-only.</p>
     </div>
   )
@@ -647,10 +649,10 @@ function TradingParamsCard({ settings, qc }: any) {
           Live positions are never auto-adopted.
         </p>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
-        <SaveMsg msg={msg} />
       </div>
+      <SaveMsg msg={msg} />
       <p className="hint">Stop-loss / take-profit apply to new positions only. Existing positions keep their original exits.</p>
     </div>
   )
@@ -762,8 +764,8 @@ function SymbolsCard({ settings, qc }: any) {
             {mut.isPending ? 'Saving…' : 'Save changes'}
           </button>
         )}
-        <SaveMsg msg={msg} />
       </div>
+      <SaveMsg msg={msg} />
       <p className="hint">
         {mode === 'whitelist'
           ? 'Only these symbols can be traded. Add any Bitget pair (e.g. SOLUSDT, SUIUSDT).'
@@ -872,8 +874,8 @@ function RiskCard({ settings, qc }: any) {
 
       <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save risk limits'}</button>
-        <SaveMsg msg={msg} />
       </div>
+      <SaveMsg msg={msg} />
     </div>
   )
 }
@@ -1132,8 +1134,8 @@ function HealthCard({ settings, qc }: any) {
       <NumGrid fields={HEALTH_FIELDS} vals={vals} set={set} />
       <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
-        <SaveMsg msg={msg} />
       </div>
+      <SaveMsg msg={msg} />
     </div>
   )
 }
@@ -1172,10 +1174,10 @@ function RetentionCard({ settings, qc }: any) {
   return (
     <div className="card" style={{ marginBottom: 0 }}>
       <NumGrid fields={RETENTION_FIELDS} vals={vals} set={set} />
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
-        <SaveMsg msg={msg} />
       </div>
+      <SaveMsg msg={msg} />
       <p className="hint">Trades, proposals, knowledge, and audit events are never pruned — only raw telemetry.</p>
     </div>
   )
@@ -1236,8 +1238,8 @@ function TelegramCard({ settings, qc }: any) {
       </div>
       <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
-        <SaveMsg msg={msg} />
       </div>
+      <SaveMsg msg={msg} />
       <p className="hint">
         Bot token is write-only — set via <code>aletheia secrets set telegram.bot_token</code>.
         Chat IDs are comma-separated Telegram user or group IDs.
@@ -1314,10 +1316,10 @@ function UpdateCard({ settings, qc }: any) {
           <input value={branch} onChange={e => { setBranch(e.target.value); setCfgMsg(null) }} style={{ fontFamily: 'var(--mono)' }} />
         </label>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
         <button className="secondary" onClick={() => cfgMut.mutate()} disabled={cfgMut.isPending}>{cfgMut.isPending ? 'Saving…' : 'Save config'}</button>
-        <SaveMsg msg={cfgMsg} />
       </div>
+      <SaveMsg msg={cfgMsg} />
     </div>
   )
 }
@@ -1429,19 +1431,19 @@ function NetworkCard({ settings, qc }: any) {
           style={{ width: '220px', fontFamily: 'monospace', fontSize: '0.8rem' }}
         />
       </Row>
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
         <button onClick={handleSave} disabled={mut.isPending}>Save</button>
         <button className="secondary" onClick={handleTest} disabled={testing}>
           {testing ? 'Testing…' : 'Test Connection'}
         </button>
-        {mut.isSuccess && <span className="hint" style={{ color: 'var(--green)', margin: 0 }}>Saved.</span>}
-        {mut.isError && <span className="hint" style={{ color: 'var(--red)', margin: 0 }}>{(mut.error as any)?.message}</span>}
-        {testResult && (
-          <span className="hint mono" style={{ margin: 0, color: testResult.reachable ? 'var(--green)' : 'var(--red)' }}>
-            {testResult.reachable ? `✓ reachable (${testResult.latency_ms}ms)` : `✗ ${testResult.error || 'unreachable'}`}
-          </span>
-        )}
       </div>
+      {mut.isSuccess && <div className="settings-save-msg ok">Saved.</div>}
+      {mut.isError && <div className="settings-save-msg err">{(mut.error as any)?.message}</div>}
+      {testResult && (
+        <div className={`settings-save-msg ${testResult.reachable ? 'ok' : 'err'}`}>
+          {testResult.reachable ? `✓ reachable (${testResult.latency_ms}ms)` : `✗ ${testResult.error || 'unreachable'}`}
+        </div>
+      )}
     </div>
   )
 }
@@ -1807,7 +1809,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
       </label>
 
       {/* Row 4: Actions — full width */}
-      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
         <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
           {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
         </button>
@@ -1819,17 +1821,17 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
         <button className="secondary" onClick={() => detectMut.mutate()} disabled={detectMut.isPending} title="Re-detect models" style={{ marginLeft: 'auto', padding: '0.42rem 0.55rem' }}>
           {detectMut.isPending ? '↻ …' : '↻'}
         </button>
-        {result && (
-          <span style={{ fontSize: '0.75rem', color: result.ok ? 'var(--green)' : 'var(--red)', fontFamily: 'var(--mono)' }}>
-            {result.ok ? '✓' : '✗'} {result.msg}
-          </span>
-        )}
-        {detectMut.isError && (
-          <span style={{ fontSize: '0.75rem', color: 'var(--red)', fontFamily: 'var(--mono)' }}>
-            ✗ detection failed
-          </span>
-        )}
       </div>
+      {result && (
+        <div style={{ gridColumn: '1 / -1' }} className={`settings-save-msg ${result.ok ? 'ok' : 'err'}`}>
+          {result.ok ? '✓' : '✗'} {result.msg}
+        </div>
+      )}
+      {detectMut.isError && (
+        <div style={{ gridColumn: '1 / -1' }} className="settings-save-msg err">
+          ✗ detection failed
+        </div>
+      )}
     </div>
   )
 }

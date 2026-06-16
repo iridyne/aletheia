@@ -65,7 +65,7 @@ export function SettingsRow({
 
 export function SaveMessage({ msg }: { msg: { ok: boolean; text: string } | null }) {
   if (!msg) return null
-  return <span className={`settings-save-msg ${msg.ok ? 'ok' : 'err'}`} title={msg.text}>{msg.text}</span>
+  return <div className={`settings-save-msg ${msg.ok ? 'ok' : 'err'}`} title={msg.text}>{msg.text}</div>
 }
 
 export function NumberFieldGrid({
