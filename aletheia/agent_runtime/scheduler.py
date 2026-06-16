@@ -264,6 +264,34 @@ def resume_scheduler() -> None:
     logger.info("Scheduler resumed")
 
 
+def reschedule_universe_refresh(interval_min: int) -> bool:
+    """Apply a new universe_refresh interval to the live scheduler.
+
+    APScheduler's IntervalTrigger is immutable once added, so changing
+    ``universe.refresh_interval_min`` in config does nothing until the next
+    gateway restart unless the job is explicitly rescheduled. Called from the
+    settings route after a config save so the UI takes effect immediately.
+
+    Returns True if the live job was rescheduled, False if there was no running
+    scheduler/job to update (the new interval still applies at next boot via
+    config). Never raises into the request path.
+    """
+    if _scheduler is None:
+        return False
+    try:
+        with _SCHEDULER_JOB_LOCK:
+            if _scheduler.get_job("universe_refresh") is None:
+                return False
+            _scheduler.reschedule_job(
+                "universe_refresh", trigger="interval", minutes=interval_min,
+            )
+        logger.info("Rescheduled universe_refresh to every %d min", interval_min)
+        return True
+    except Exception as e:  # noqa: BLE001 — config is already saved; never 500 the save
+        logger.warning("Failed to reschedule universe_refresh (applies at next restart): %s", e)
+        return False
+
+
 def is_running() -> bool:
     return _scheduler is not None and _scheduler.running
 
@@ -317,15 +345,27 @@ def _run_market_observer():
     cfg = load_config()
     if cfg.runtime.paused:
         return
-    try:
-        _run_async_with_timeout("market_observer", _async_run("market_observer"))
-    except TimeoutError:
-        logger.warning(
-            "market_observer job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["market_observer"],
-        )
-    except Exception as e:
-        logger.warning("market_observer job failed: %s", e)
+    # Retry once on database-is-locked — the WAL contention window is short
+    # (exchange_sync / data_collectors / uvicorn handlers), so a brief wait
+    # usually clears it without waiting a full 15-min cycle.
+    for attempt in range(2):
+        try:
+            _run_async_with_timeout("market_observer", _async_run("market_observer"))
+            return
+        except TimeoutError:
+            logger.warning(
+                "market_observer job timed out after %.0fs",
+                _ASYNC_JOB_TIMEOUT_SEC["market_observer"],
+            )
+            return
+        except Exception as e:
+            if "database is locked" in str(e) and attempt == 0:
+                import time as _time
+                logger.warning("market_observer: database locked, retrying in 10s…")
+                _time.sleep(10)
+                continue
+            logger.warning("market_observer job failed: %s", e)
+            return
 
 
 def _run_dreaming_agent():

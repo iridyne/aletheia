@@ -16,15 +16,21 @@ def get_current_universe():
     """Return the current active universe snapshot and its members."""
     from aletheia.universe.service import UniverseService
     svc = UniverseService()
-    members = svc.get_current_universe()
     cfg = load_config()
 
     snap = repo.get_active_universe_snapshot(cfg.universe.market_type)
+    # execution_eligible_only=False: UI sees stale members (tagged stale=True)
+    # rather than falling back to the static 3-symbol pool.
+    members = svc.get_current_universe(execution_eligible_only=False)
+
+    stale_count = sum(1 for m in members if m.get("stale"))
     return {
         "snapshot": snap,
         "members": members,
         "enabled": cfg.universe.enabled,
         "fallback": snap is None,
+        "stale": stale_count > 0,
+        "stale_count": stale_count,
     }
 
 
@@ -90,6 +96,49 @@ def get_current_policy():
         "min_volume_24h_usdt": cfg.universe.min_volume_24h_usdt,
         "max_spread_bps": cfg.universe.max_spread_bps,
     }
+
+
+@router.get("/calibration")
+def get_calibration():
+    """Forward outcome calibration: per-family/horizon aggregate stats.
+
+    Answers: "do the scanner families actually pick winners?"
+    """
+    stats = repo.calibration_stats()
+
+    # Also provide per-family summary across all horizons
+    family_agg: dict[str, dict] = {}
+    for row in stats:
+        fam = row["scanner_family"] or "unknown"
+        if fam not in family_agg:
+            family_agg[fam] = {"family": fam, "total_n": 0, "total_wins": 0, "weighted_return": 0.0}
+        family_agg[fam]["total_n"] += row["n"]
+        family_agg[fam]["total_wins"] += row["win_count"]
+        family_agg[fam]["weighted_return"] += (row["avg_return"] or 0) * row["n"]
+
+    summaries = []
+    for fam, agg in sorted(family_agg.items()):
+        n = agg["total_n"]
+        summaries.append({
+            "family": fam,
+            "total_outcomes": n,
+            "hit_rate_pct": round(agg["total_wins"] / n * 100, 1) if n > 0 else 0,
+            "avg_return_pct": round(agg["weighted_return"] / n, 3) if n > 0 else 0,
+        })
+
+    return {
+        "by_family_horizon": stats,
+        "by_family": summaries,
+    }
+
+
+@router.get("/members/{member_id}/outcomes")
+def get_member_outcomes(member_id: str):
+    """Forward outcomes for a specific universe member."""
+    outcomes = repo.list_forward_outcomes_by_member(member_id)
+    if not outcomes:
+        raise HTTPException(404, "No outcomes found for this member")
+    return outcomes
 
 
 @router.get("/registry/stats")

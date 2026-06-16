@@ -1,6 +1,6 @@
 import { ReactNode } from 'react'
 
-type Tone = 'neutral' | 'positive' | 'negative' | 'muted'
+type Tone = 'neutral' | 'positive' | 'negative' | 'muted' | 'warning'
 
 type Props = {
   label: string
@@ -17,6 +17,7 @@ const TONE_CLASS: Record<Tone, string> = {
   positive: 'pnl-positive',
   negative: 'pnl-negative',
   muted: 'text-muted',
+  warning: 'pnl-warning',
 }
 
 export default function MetricTile({ label, value, tone = 'neutral', caveat, context, onClick }: Props) {

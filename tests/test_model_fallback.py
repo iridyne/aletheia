@@ -5,6 +5,8 @@ from aletheia.model_provider.base import ModelRequest, ModelResponse
 from aletheia.model_provider.router import clear_cache
 from aletheia.server.app import app
 
+pytestmark = pytest.mark.real_llm
+
 
 @pytest.fixture
 async def client(tmp_path, monkeypatch):

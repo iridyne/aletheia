@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from aletheia import __version__
 from aletheia.gateway.frontdoor_route import read_frontdoor_route, resolve_backend_base_url
@@ -232,9 +233,26 @@ def create_app(
         )
 
     if effective_static_dir.exists() and (effective_static_dir / "index.html").exists():
+
+        class _SPAStaticFiles(StaticFiles):
+            """StaticFiles with SPA fallback: unknown paths serve index.html.
+
+            Only intercepts 404 for non-asset paths — /assets/* 404s pass
+            through so browsers detect stale chunk hashes correctly.
+            """
+
+            async def get_response(self, path: str, scope):
+                try:
+                    return await super().get_response(path, scope)
+                except StarletteHTTPException as exc:
+                    url_path = scope.get("path", "")
+                    if exc.status_code == 404 and not url_path.startswith("/assets/"):
+                        return await super().get_response("index.html", scope)
+                    raise
+
         app.mount(
             "/",
-            StaticFiles(directory=str(effective_static_dir), html=True),
+            _SPAStaticFiles(directory=str(effective_static_dir), html=True),
             name="dashboard",
         )
     else:

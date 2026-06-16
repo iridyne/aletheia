@@ -232,6 +232,41 @@ Switch（滑块开关）的视觉设计天然表达 on/off 状态：track 颜色
 3. 保留的那个是否对色盲/低视力用户仍然可达？
 4. 保留的编码方式是否与设计系统其他地方一致？
 
+### 错误/成功反馈信息的位置（下方弹出，不同行并排）
+
+**规则：操作结果反馈信息（错误或成功）必须显示在触发按钮的下方，而不是与按钮同行右侧。**
+
+同行并排的问题：
+- 按钮区域固定宽度有限，错误文本会挤压按钮或被截断
+- 触发 flex-wrap 时，元素跳行方式不可预期
+- 与现代 UI 规范不符（输入反馈应在控件下方，符合视线从上到下的扫描方向）
+
+**实现方式：**
+
+```tsx
+// WRONG — 错误信息与按钮同行，挤占空间
+<div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+  <button onClick={save}>Save</button>
+  {error && <span style={{ color: 'var(--red)' }}>{error}</span>}
+</div>
+
+// CORRECT — 按钮行独立，反馈信息在下方独立 block
+<div style={{ display: 'flex', gap: '0.5rem' }}>
+  <button onClick={save}>Save</button>
+</div>
+{error && <div className="settings-save-msg err">{error}</div>}
+```
+
+**`SaveMessage` / `SaveMsg` 组件**（`SettingsSection.tsx`）已经渲染为 `<div>` block 元素。只需把它放在按钮 flex 行**之后**，不要放在行内。
+
+**CSS 定义（`index.css` — `.settings-save-msg`）：**
+- `display: block`，独占一行
+- `padding: 0.28rem 0.55rem`，`border-radius: var(--r-sm)`
+- `.ok`：绿色文字 + 淡绿背景 + 绿色边框
+- `.err`：红色文字 + 淡红背景 + 红色边框
+
+这一模式也适用于 `SettingsRow` children 中出现的错误（如 `LiveStateRow`）：把 warning 提到 `<Row>` 外部，用 wrapper `<div>` 包住 `<Row>` 和 `<div className="settings-save-msg err">`。
+
 ### Inline grids vs. `.form-grid`
 
 If you're writing `display: grid; gridTemplateColumns: repeat(auto-fill, minmax(200px, 1fr))` inline, stop. Use `.form-grid` (always 2 columns). For special cases, override with `gridTemplateColumns` inline on the form-grid div — but the class gives you consistent label styling, gap, and input width for free.
@@ -483,3 +518,34 @@ tr.clickable:active { background: var(--bg); }
 **设计约束：**
 - `opacity: 0.85` 不抢夺价格文字的视觉权重
 - `aria-hidden="true"` — 辅助技术不播报装饰图形
+
+
+---
+
+## 7. 告警与错误提示规范 (Actionable Warnings)
+
+**原则：每条告警必须附带操作指引。** 用户看到 ⚠ 时，下一步应该立刻清晰，不需要去查文档或猜测。
+
+### Health Issue 告警（Status Bar 弹出层）
+
+每个 health issue 在标题行下方显示一行 `hint`，说明原因和操作方法。当前映射（`App.tsx parseIssue()`）：
+
+| Issue key | 操作提示 |
+|-----------|---------|
+| `market_data_stale` | Feed 每 5 分钟自动刷新；如超 30 分钟未恢复，重启 Gateway |
+| `trading_paused` | 点击顶栏 Resume 按钮恢复交易循环 |
+| `llm_unavailable` | 检查 Settings → Model Provider 配置，再点 Resume |
+| `kill_switch_active` | 进入 Settings → Risk → Kill Switch 手动解除 |
+| `agent_failure_ratio` | 查看 Gateway 日志定位失败 Agent |
+| `operator stale` | 通常 1–2 分钟自动恢复；若持续则重启 Gateway |
+
+### 实现约束
+
+- `hint` 必须是一句话（<50 字），直接说"你应该做什么"，不解释技术原因
+- 不在 hint 里重复 label/value 已有的信息（信息冗余原则）
+- `hint` 样式：`.sp-issue-hint`，`color: var(--faint)`，`font-size: 0.62rem`，换行显示在 label 下方
+- InfraEvent 的 `action` 字段已有类似机制（显示在 event 下方），health issue hint 遵循同一视觉语言
+
+### 新增 health issue 的 checklist
+
+添加新的 health issue 时，必须同步在 `parseIssue()` 里加对应的 `hint`，否则用户只能看到裸 key 字符串和一个 ⚠。

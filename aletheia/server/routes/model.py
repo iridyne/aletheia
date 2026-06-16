@@ -259,10 +259,10 @@ async def test_model_candidate(req: TestCandidateRequest):
         try:
             resp = await provider.complete(ModelRequest(
                 messages=[{"role": "user", "content": "Say OK"}],
-                max_tokens=10, temperature=0,
+                max_tokens=200, temperature=0,
             ))
-            if not resp.content.strip():
-                return {"available": False, "model": health.model, "error": "inference returned empty response"}
+            # Thinking-mode models may exhaust budget on reasoning without text;
+            # a successful HTTP round-trip is sufficient proof of connectivity.
         except Exception as e:
             return {"available": False, "model": health.model, "error": f"inference failed: {e}"}
 

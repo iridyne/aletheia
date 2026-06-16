@@ -14,7 +14,10 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
-from aletheia.storage.repositories import insert_opportunity, list_strategies
+from aletheia.storage.repositories import (
+    insert_opportunity, list_strategies,
+    find_open_opportunity_by_symbol_snapshot, update_opportunity,
+)
 from aletheia.trading.instruments import observed_instruments_from_config, xstocks_instruments_from_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 from aletheia.config.loader import load_config
@@ -214,9 +217,9 @@ async def _analyze_symbol(
 
     read, err = await llm_structured(
         system=_SYSTEM_PROMPT,
-        user=f"Market data for {symbol}:\n{context}{memory_block}\n\nReturn the market read JSON.",
+        user=f"/no_think\nMarket data for {symbol}:\n{context}{memory_block}\n\nReturn the market read JSON.",
         schema=MarketRead,
-        max_tokens=600,
+        max_tokens=2048,
     )
     log_tool(run_id, "llm_structured", "observe", True)
 
@@ -269,7 +272,23 @@ async def _analyze_symbol(
         thesis_parts.append("Observations: " + " | ".join(observations))
     if confidence_score is not None:
         thesis_parts.append(f"score={confidence_score}/100")
-    thesis = " ".join(thesis_parts) if thesis_parts else f"{symbol} market read (direction={direction})"
+    thesis = " ".join(thesis_parts) if thesis_parts else f"No structured rationale — {symbol} market read (direction={direction})"
+
+    # If a deterministic opportunity already exists for this symbol+snapshot,
+    # annotate it with LLM insights instead of creating a duplicate.
+    if universe_snapshot_id:
+        existing = find_open_opportunity_by_symbol_snapshot(symbol, universe_snapshot_id)
+        if existing:
+            updates: dict = {"thesis": thesis}
+            if confidence_score is not None:
+                old_score = existing.get("confidence_score") or 0
+                updates["confidence_score"] = max(old_score, confidence_score)
+                updates["confidence"] = confidence
+            if direction != "neutral":
+                updates["direction_bias"] = direction
+            update_opportunity(existing["id"], **updates)
+            log_tool(run_id, "annotate_opportunity", "observe", True, output=existing["id"])
+            return existing["id"], llm_error
 
     opp = Opportunity(
         symbol=symbol,

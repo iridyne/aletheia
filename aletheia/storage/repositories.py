@@ -131,6 +131,17 @@ def list_opportunities_by_asset_class(asset_class: str, limit: int = 50) -> list
     return _select_all("opportunities", where="asset_class = ?", params=(asset_class,), limit=limit)
 
 
+def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str) -> dict | None:
+    """Find an existing open opportunity for the same symbol in the same universe snapshot."""
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM opportunities WHERE symbol = ? AND universe_snapshot_id = ? "
+        "AND status = 'open' LIMIT 1",
+        (symbol, snapshot_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 # --- Prediction Observer Runs ---
 
 def insert_prediction_run(run_id: str, categories: list) -> None:
@@ -1207,6 +1218,90 @@ def list_universe_snapshots(market_type: str = "crypto", limit: int = 20) -> lis
         order="created_at DESC",
         limit=limit,
     )
+
+
+# ---------------------------------------------------------------------------
+# Universe Forward Outcomes
+# ---------------------------------------------------------------------------
+
+def insert_forward_outcome(outcome) -> None:
+    _insert("universe_forward_outcomes", outcome.model_dump())
+
+
+def insert_forward_outcomes_batch(outcomes: list) -> None:
+    db = get_db()
+    was_in_tx = db.in_transaction
+    for o in outcomes:
+        data = o.model_dump()
+        cols = ", ".join(data.keys())
+        placeholders = ", ".join(["?"] * len(data))
+        db.execute(
+            f"INSERT INTO universe_forward_outcomes ({cols}) VALUES ({placeholders})",
+            list(data.values()),
+        )
+    if not was_in_tx:
+        db.commit()
+
+
+def list_pending_forward_outcomes(before_ts: str, limit: int = 500) -> list[dict]:
+    return _select_all(
+        "universe_forward_outcomes",
+        where="status = 'pending' AND due_at <= ?",
+        params=(before_ts,),
+        order="due_at ASC",
+        limit=limit,
+    )
+
+
+def settle_forward_outcome(outcome_id: str, exit_price: float, forward_return: float, settled_at: str) -> None:
+    _update("universe_forward_outcomes", outcome_id, {
+        "exit_price_usd": exit_price,
+        "forward_return_pct": forward_return,
+        "settled_at": settled_at,
+        "status": "settled",
+    })
+
+
+def fail_forward_outcome(outcome_id: str, settled_at: str) -> None:
+    _update("universe_forward_outcomes", outcome_id, {
+        "settled_at": settled_at,
+        "status": "failed",
+    })
+
+
+def list_forward_outcomes_by_member(member_id: str) -> list[dict]:
+    return _select_all(
+        "universe_forward_outcomes",
+        where="member_id = ?",
+        params=(member_id,),
+        order="horizon ASC",
+    )
+
+
+def calibration_stats() -> list[dict]:
+    """Aggregate forward return stats grouped by scanner_family + horizon.
+
+    A "win" is direction-aware: a long member wins when the forward return is
+    positive, a short member wins when it is negative. Legacy rows with NULL
+    direction are treated as long (positive = win) for back-compat.
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT scanner_family, horizon, "
+        "COUNT(*) as n, "
+        "AVG(forward_return_pct) as avg_return, "
+        "SUM(CASE "
+        "  WHEN direction = 'short' AND forward_return_pct < 0 THEN 1 "
+        "  WHEN COALESCE(direction, 'long') != 'short' AND forward_return_pct > 0 THEN 1 "
+        "  ELSE 0 END) as win_count, "
+        "MIN(forward_return_pct) as min_return, "
+        "MAX(forward_return_pct) as max_return "
+        "FROM universe_forward_outcomes "
+        "WHERE status = 'settled' "
+        "GROUP BY scanner_family, horizon "
+        "ORDER BY scanner_family, horizon"
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

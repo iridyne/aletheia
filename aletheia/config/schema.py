@@ -306,6 +306,8 @@ class UniverseConfig(BaseModel):
     })
     blacklist: list[str] = Field(default_factory=list)
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    snapshot_ttl_enabled: bool = True
+    snapshot_ttl_hours: float = 24.0
 
 
 class GuardConfig(BaseModel):
@@ -326,7 +328,10 @@ class TunnelConfig(BaseModel):
 
 
 class NetworkConfig(BaseModel):
-    proxy_url: str = ""   # e.g. "http://127.0.0.1:7897" — applied to all outbound HTTP
+    # Default to 7890 (Clash/Mihomo common port). Set to "" to disable.
+    # On machines without a proxy the reachability check in net.py falls back to
+    # direct connection automatically — so this default is safe on all machines.
+    proxy_url: str = "http://127.0.0.1:7890"
     no_proxy: str = ""    # comma-separated bypass list, e.g. "127.0.0.1,localhost"
 
 

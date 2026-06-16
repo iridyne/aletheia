@@ -1,9 +1,13 @@
 """Knowledge Base manager — handles lifecycle of KB items (no hard delete)."""
 
+import logging
+
 from aletheia.storage.models import KnowledgeItem
 from aletheia.storage.repositories import (
     insert_knowledge_item, update_knowledge_item, list_knowledge_items,
 )
+
+logger = logging.getLogger("aletheia.knowledge.manager")
 from aletheia.files.markdown import (
     write_daily_review,
     write_dreaming_log,
@@ -30,8 +34,8 @@ def _index(item, content: str) -> None:
             return
         from aletheia.knowledge.retrieval import index_knowledge_item
         index_knowledge_item(item, content)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("_index failed for %s: %s", getattr(item, "id", "?"), e)
 
 
 def create_research_note(title: str, content: str, confidence: str = "medium_confidence", metadata: dict | None = None) -> KnowledgeItem:

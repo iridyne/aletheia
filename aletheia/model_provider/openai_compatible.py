@@ -9,6 +9,22 @@ from aletheia.model_provider.base import (
 )
 
 
+def _extract_text_content(raw) -> str:
+    """Normalize message content: some models (e.g. Qwen3.5 thinking mode) return
+    content as a list of blocks [{type:"reasoning",...},{type:"text",text:"..."}]
+    instead of a plain string. Extract the text block(s)."""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        text_parts = [block.get("text", "") for block in raw if block.get("type") == "text"]
+        if text_parts:
+            return "".join(text_parts)
+        # No text block (token budget exhausted on reasoning) — return empty so
+        # callers treat it as an incomplete/empty response rather than raw JSON.
+        return ""
+    return str(raw) if raw else ""
+
+
 class OpenAICompatibleProvider(ModelProvider):
     name = "openai_compatible"
 
@@ -44,8 +60,10 @@ class OpenAICompatibleProvider(ModelProvider):
             resp.raise_for_status()
             data = resp.json()
         choice = data["choices"][0]
+        raw_content = choice["message"]["content"]
+        content = _extract_text_content(raw_content)
         return ModelResponse(
-            content=choice["message"]["content"],
+            content=content,
             model=data.get("model", self.model),
             usage=data.get("usage", {}),
             raw=data,
@@ -122,6 +140,15 @@ class OpenAICompatibleProvider(ModelProvider):
                         provider=self.name, available=True, model=self.model,
                         models=slugs, model_metadata=models,
                     )
-                return ModelHealth(provider=self.name, available=False, error=f"HTTP {resp.status_code}")
+        except Exception:
+            pass
+        # /models not available (Databricks, some gateways) — probe with inference
+        try:
+            from aletheia.model_provider.base import ModelRequest
+            await self.complete(ModelRequest(
+                messages=[{"role": "user", "content": "Say OK"}],
+                max_tokens=200, temperature=0,
+            ))
+            return ModelHealth(provider=self.name, available=True, model=self.model, models=[], model_metadata=[])
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=str(e))

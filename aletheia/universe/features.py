@@ -134,6 +134,8 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
                 if spread is None and ob_row:
                     spread = ob_row.get("spread_bps")
 
+                last_price = closes_1h[-1] if closes_1h else None
+
                 feat = {
                     "asset_id": asset_id,
                     "symbol": symbol,
@@ -152,6 +154,7 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
                     "open_interest": open_interest,
                     "oi_delta_1h": oi_delta_1h,
                     "data_freshness_sec": data_freshness_sec,
+                    "last_price": last_price,
                 }
 
                 # Persist feature snapshot (includes enriched collector fields)

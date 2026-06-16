@@ -478,6 +478,49 @@ def _probe_audit_chain(report: Report) -> None:
                    "audit log may have been tampered with or corrupted")
 
 
+def _probe_config_consistency(report: Report) -> None:
+    """Cross-field config consistency — detects contradictions like disabled default provider."""
+    from aletheia.config.loader import load_config
+    from aletheia.diagnostics.config_consistency import check_config_consistency
+    cfg = load_config()
+    findings = check_config_consistency(cfg)
+    if not findings:
+        report.add("config.consistency", "ok", "no cross-field inconsistencies")
+        return
+    for f in findings:
+        sev: Severity = "warn" if f.severity == "warning" else "blocker"  # type: ignore[assignment]
+        report.add(f"config.consistency.{f.field_path}", sev, f.message, f.fix_hint)
+
+
+def _probe_fts_coverage(report: Report) -> None:
+    """Check FTS5 index coverage vs eligible knowledge items."""
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    row = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_fts'"
+    ).fetchone()
+    if not row:
+        report.add("fts.coverage", "warn", "knowledge_fts table missing — experience loop disabled",
+                   "run: uv run aletheia kb reindex")
+        return
+    eligible = db.execute(
+        "SELECT COUNT(*) FROM knowledge_items WHERE confidence='high_confidence' AND (status='active' OR status IS NULL)"
+    ).fetchone()[0]
+    indexed = db.execute("SELECT COUNT(*) FROM knowledge_fts").fetchone()[0]
+    if eligible == 0:
+        report.add("fts.coverage", "ok", "no eligible items yet")
+        return
+    pct = indexed / eligible
+    detail = f"{indexed}/{eligible} indexed ({pct:.0%})"
+    if pct >= 0.8:
+        report.add("fts.coverage", "ok", detail)
+    elif pct >= 0.5:
+        report.add("fts.coverage", "warn", detail, "restart gateway to trigger reindex")
+    else:
+        report.add("fts.coverage", "blocker", detail,
+                   "experience loop severely degraded — restart gateway or run: uv run aletheia kb reindex")
+
+
 def build_report() -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing."""
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -485,6 +528,7 @@ def build_report() -> Report:
         _probe_code_sync,
         _probe_process,
         _probe_config_gates,
+        _probe_config_consistency,
         _probe_credentials,
         _probe_market_data,
         _probe_trading_loop,
@@ -492,6 +536,7 @@ def build_report() -> Report:
         _probe_webui_static,
         _probe_network,
         _probe_audit_chain,
+        _probe_fts_coverage,
     ):
         try:
             probe(report)

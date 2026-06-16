@@ -1,5 +1,33 @@
 # Development Log
 
+## 2026-06-16 — 项目级 Code-Review 修复(A/B/C/D 设计级,uncommitted)
+
+> 来源:`/code-review max` 全项目审查(契约对应 + 运行态正确性 + 潜在 bug)。
+> 15 条确认 findings,7 条机械修复先行,4 条设计级本轮完整实现。
+
+### 实现内容
+- **A** `signal_emitter.py`: `_HIGH_CONF_THRESHOLD` 70→60 —— allocator 总分天花板 ≈68.5,
+  原阈值令 "high" 永不可达。
+- **B** `outcome_recorder.py`: `settle_due`/`_batch_fetch_prices` 改 async,共享 CCXT provider
+  给全部 universe symbol 取 live ticker,snapshot 兜底 —— 此前只有静态 3 标的能定价,
+  轮动成员全标 `failed`,校准攒不到数据。
+- **C** 方向感知校准:`UniverseForwardOutcome` 加 `direction` 列(`models.py` + `migrations.py`
+  CREATE TABLE 与 `_ADDITIVE_COLUMNS` 双路);`service.refresh` 经 `_infer_direction` 写方向,
+  `register_pending` 落库;`repositories.calibration_stats` 胜率 SQL 改方向感知
+  (`positive_count`→`win_count`,short 赢在负收益),`routes/universe.py` 同步。
+- **D** `scheduler.py`: 新增 `reschedule_universe_refresh()`(锁内 `reschedule_job`);
+  `routes/settings.py` 在 `refresh_interval_min` 变化时调用,使保存即时生效(原须重启)。
+
+### 验证
+- `tests/test_universe_calibration.py`(NEW,3 方向用例) + signal_emitter 阈值用例
+- ABCD 受影响测试单独跑 36/36 全绿,ABCD 未新增 DB writer / scheduler job
+- 顺带修 `test_startup_gate::test_empty_response_not_usable`(测试桩 `_FakeResp` 缺 `.raw`、与
+  `startup_gate.py:64` 漂移;加 `raw=None` 对齐真实 `ModelResponse`,零生产改动;BACKEND_ISSUES §6.5 ✅),
+  修复后全量基线恢复全绿
+- 所有改动均非 trust-boundary 文件(risk/execution/auth/secrets/live 未触碰)
+
+---
+
 ## 2026-06-14 — 全局代理配置实现(commit 28eb357)
 
 > 根因:Windows Task Scheduler 启动的 watchdog 进程没有 HTTPS_PROXY env var → CCXT/Binance

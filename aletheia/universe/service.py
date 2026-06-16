@@ -49,13 +49,17 @@ class UniverseService:
             return self._fallback_as_members(cfg)
 
         now = datetime.now(timezone.utc).isoformat()
+        ttl_enabled = cfg.universe.snapshot_ttl_enabled
         result = []
         for m in members:
             if execution_eligible_only and not m.get("execution_eligible", True):
                 continue
-            if m.get("expires_at") and m["expires_at"] < now:
-                continue
-            result.append(m)
+            m_out = dict(m)
+            if ttl_enabled and m_out.get("expires_at") and m_out["expires_at"] < now:
+                if execution_eligible_only:
+                    continue  # never use stale data for execution decisions
+                m_out["stale"] = True
+            result.append(m_out)
 
         if not result:
             logger.warning("All universe members expired; falling back to static pool")
@@ -76,8 +80,19 @@ class UniverseService:
         from aletheia.universe.filters import apply_tradability_filters
         from aletheia.universe.scanners import run_all_scanners
         from aletheia.universe.allocator import allocate_universe, compute_total_score
+        from aletheia.universe.outcome_recorder import settle_due, register_pending
+        from aletheia.universe.signal_emitter import (
+            emit_deterministic_opportunities, _infer_direction,
+        )
 
         cfg = load_config()
+
+        # Settle any overdue forward outcomes before producing new ones
+        try:
+            await settle_due()
+        except Exception as e:
+            logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
+
         run = UniverseScannerRun()
         repo.insert_universe_scanner_run(run)
 
@@ -100,7 +115,8 @@ class UniverseService:
             allocated = allocate_universe(scored, cfg.universe)
 
             now = datetime.now(timezone.utc)
-            expires_at = (now + timedelta(minutes=cfg.universe.refresh_interval_min * 2)).isoformat()
+            snapshot_ttl_sec = int(cfg.universe.snapshot_ttl_hours * 3600)
+            expires_at = (now + timedelta(seconds=snapshot_ttl_sec)).isoformat()
             snap = UniverseSnapshot(
                 market_type=market_type,
                 expires_at=expires_at,
@@ -121,9 +137,11 @@ class UniverseService:
                     seen_symbols[sym] = item
             allocated = sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
 
+            inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
-                ttl_sec = item.get("ttl_sec", 3600)
+                ttl_sec = max(item.get("ttl_sec", 3600), snapshot_ttl_sec)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
+                entry_price = item.get("last_price")
                 member = UniverseMember(
                     snapshot_id=snap.id,
                     asset_id=item["asset_id"],
@@ -144,8 +162,33 @@ class UniverseService:
                     inclusion_reason=json.dumps(item.get("reasons", [])),
                     risk_flags=json.dumps(item.get("risk_flags", [])),
                     execution_eligible=item.get("execution_eligible", True),
+                    entry_price_usd=entry_price,
                 )
                 repo.insert_universe_member(member)
+                inserted_members.append({
+                    "id": member.id,
+                    "snapshot_id": snap.id,
+                    "symbol": item["symbol"],
+                    "scanner_family": item.get("scanner_family"),
+                    "direction": _infer_direction(item.get("scanner_family"), item),
+                    "entry_price_usd": entry_price,
+                    "total_score": item["total_score"],
+                    "expires_at": member_expires,
+                })
+
+            # Register forward outcome tracking for all members with valid prices
+            try:
+                register_pending(inserted_members, entry_ts=now.isoformat())
+            except Exception as e:
+                logger.warning("Forward outcome registration failed (non-fatal): %s", e)
+
+            # Emit deterministic opportunities for high-scoring members (LLM-free path)
+            try:
+                emit_deterministic_opportunities(
+                    inserted_members, snap.id, scored_features=scored,
+                )
+            except Exception as e:
+                logger.warning("Deterministic opportunity emission failed (non-fatal): %s", e)
 
             repo.update_universe_scanner_run(
                 run.id,

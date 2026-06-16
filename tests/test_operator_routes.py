@@ -309,6 +309,32 @@ async def test_operator_task_create_update_and_list(client):
 
 
 @pytest.mark.anyio
+async def test_patch_evicted_task_is_idempotent(client):
+    """PATCH completed/failed on a non-existent task returns 200 (no-op).
+    This prevents the operator loop from entering Degraded mode when it tries
+    to close a task that was evicted after a gateway restart."""
+    ghost_id = "00000000-0000-0000-0000-000000000000"
+
+    for terminal_status in ("completed", "failed"):
+        r = await client.patch(
+            f"/api/operator/internal/tasks/{ghost_id}",
+            json={"status": terminal_status},
+        )
+        assert r.status_code == 200, f"Expected 200 for {terminal_status}, got {r.status_code}"
+        body = r.json()
+        assert body["id"] == ghost_id
+        assert body["status"] == terminal_status
+        assert body.get("evicted") is True
+
+    # Non-terminal status on a missing task still returns 404
+    r = await client.patch(
+        f"/api/operator/internal/tasks/{ghost_id}",
+        json={"status": "running"},
+    )
+    assert r.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_operator_session_messages_and_session_detail(client):
     post = await client.post(
         "/api/operator/internal/messages",

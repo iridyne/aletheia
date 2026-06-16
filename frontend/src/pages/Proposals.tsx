@@ -8,6 +8,7 @@ import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, StatusText } from '../components/ui'
+import { ConvictionMeter } from '../components/ConvictionMeter'
 import { formatViolation, formatViolationText } from '../lib/riskViolations'
 import { humanize, fmtTimestamp } from '../lib/format'
 
@@ -32,25 +33,6 @@ function parseDecisionMeta(rationale: string | null): { text: string; meta: Deci
   } catch {
     return { text: rationale, meta: null }
   }
-}
-
-function ConvictionMeter({ conviction, debateRan, bull, bear }: {
-  conviction: number; debateRan: boolean; bull: number | null; bear: number | null
-}) {
-  const color = conviction >= 70 ? 'var(--c-signal)' : conviction >= 55 ? 'var(--c-warn)' : 'var(--c-danger)'
-  return (
-    <div className="conviction-meter">
-      <div className="conviction-bar-wrap">
-        <div className="conviction-bar" style={{ width: `${conviction}%`, background: color }} />
-      </div>
-      <span className="conviction-label mono">{conviction}/100</span>
-      {debateRan && (
-        <span className="conviction-debate mono">
-          Bull {bull ?? '?'} / Bear {bear ?? '?'}
-        </span>
-      )}
-    </div>
-  )
 }
 
 /**

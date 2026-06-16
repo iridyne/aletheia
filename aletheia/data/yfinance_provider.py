@@ -58,8 +58,17 @@ def _fetch_macro_sync() -> str:
             except Exception as e:  # noqa: BLE001 — one bad ticker must not sink the block
                 logger.debug("macro ticker %s failed: %s", ticker, e)
         if not any_row:
+            # All tickers returned empty — yfinance may have a broken API or schema change.
+            logger.warning(
+                "yfinance macro context: all %d tickers returned empty data "
+                "(yfinance library change or Yahoo Finance API outage?)",
+                len(_MACRO_TICKERS),
+            )
             return ""
         return "### Macro context (daily)\n" + "\n".join(rows) + "\n"
+    except ImportError:
+        logger.warning("yfinance not installed — macro context block unavailable")
+        return ""
     except Exception as e:  # noqa: BLE001
         logger.warning("macro context fetch failed: %s", e)
         return ""

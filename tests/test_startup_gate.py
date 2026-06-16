@@ -44,8 +44,9 @@ def _cfg_with(providers: dict, default: str) -> AletheiaConfig:
 
 
 class _FakeResp:
-    def __init__(self, content):
+    def __init__(self, content, raw=None):
         self.content = content
+        self.raw = raw  # mirrors ModelResponse.raw (Any = None); empty-content path reads it
 
 
 class _FakeProvider:

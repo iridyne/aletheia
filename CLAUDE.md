@@ -34,6 +34,23 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
   - 启动前会运行 preflight checks，静态文件缺失时**拒绝启动并给出修复建议**
 - Priority: State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy
 
+## Gateway 进程管理
+
+Gateway 是三进程架构（supervisor → frontdoor:8787 + backend:8788），由 `lifecycle.py` 统管。**不要手动 kill 进程**，用 CLI 命令：
+
+```
+uv run aletheia gateway restart --no-browser   # 一键重启（tree-kill + 孤儿清扫 + 端口释放 + 健康验证）
+uv run aletheia gateway stop                    # 停止
+uv run aletheia gateway start --no-browser      # 启动（已运行则跳过）
+uv run aletheia gateway status                  # 查看 PID、端口、暂停状态
+uv run aletheia gateway logs [-n 50]            # 尾部日志
+```
+
+- 代码改动后需要重启 Gateway 才能生效（scheduler 跑的是内存中的旧代码）
+- `--no-browser` 避免每次重启弹浏览器；省略则自动打开 dashboard
+- Windows Task Scheduler 看门狗每 5 分钟自动拉起（`enable-autostart` 已开启）
+- PID 文件在 `data/gateway.pid`；孤儿检测基于 cmdline 标记，不会误杀其他 Python 进程
+
 ## Repo Setup
 
 - **`aletheia/data/` is the source package** for the data layer (`symbols.py`, `ccxt_provider.py`, `providers.py`, `cache.py`, `polymarket_provider.py`, `yfinance_provider.py`) — imported by `risk/`, `execution/`, `trading/`, and the agents. It is distinct from the repo-root `data/` runtime dir (`get_data_dir()` → `<repo>/data`, holding `config.yaml`/`app.db`/logs, which IS gitignored). `.gitignore` must keep the runtime rule root-anchored as `/data/`; a bare `data/` also matches `aletheia/data/` and silently excludes the source package from git, breaking every clone. After cloning, sanity-check with `uv run python -c "import aletheia.risk.engine"` and `uv run pytest -q`.

@@ -733,6 +733,27 @@ class UniverseMember(BaseModel):
     inclusion_reason: str = "[]"
     risk_flags: str = "[]"
     execution_eligible: bool = True
+    entry_price_usd: float | None = None
+
+
+class UniverseForwardOutcome(BaseModel):
+    id: str = Field(default_factory=new_id)
+    member_id: str
+    snapshot_id: str
+    symbol: str
+    scanner_family: str | None = None
+    # Trade direction the scanner family implied at selection ("long" | "short").
+    # None for legacy rows / members with no inferable direction; win-rate
+    # calibration treats those as long (positive return = win) for back-compat.
+    direction: str | None = None
+    horizon: str  # "15m" | "1h" | "4h" | "24h"
+    entry_price_usd: float
+    entry_ts: str = Field(default_factory=_utcnow)
+    due_at: str
+    settled_at: str | None = None
+    exit_price_usd: float | None = None
+    forward_return_pct: float | None = None
+    status: str = "pending"  # "pending" | "settled" | "failed"
 
 
 class UniversePolicy(BaseModel):

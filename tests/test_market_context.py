@@ -249,7 +249,8 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
     actions = [s["action"] for s in steps]
     # Actions are now per-symbol: "market_read_input:BTC/USDT"
     assert any("market_read_input" in a for a in actions)
-    assert any("market_read_output" in a for a in actions)
+    # LLM-skip behavior: when LLM fails, records "market_read_skipped" not "market_read_output"
+    assert any("market_read_skipped" in a for a in actions)
 
     # Cleanup the in-process step counter.
     from aletheia.agents.helpers import _release_run_counter
@@ -335,9 +336,9 @@ def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
     # The raw markdown markers must NOT appear in thesis.
     assert "## Verified market data snapshot" not in opp["thesis"]
     assert "###" not in opp["thesis"]
-    # The fallback explanation should reference the empty-output cause so a
-    # human reading the dashboard knows what happened.
-    assert "No structured rationale" in opp["thesis"]
+    # When rationale + observations are empty, thesis uses a clean fallback
+    # label instead of leaking raw snapshot content.
+    assert "market read" in opp["thesis"]
     # confidence_score is null (not provided by the model).
     assert opp["confidence_score"] is None
 

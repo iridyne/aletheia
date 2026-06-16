@@ -626,6 +626,7 @@ export interface UniverseMember {
   inclusion_reason: string
   risk_flags: string
   execution_eligible: number
+  stale?: boolean
 }
 
 export interface UniverseSnapshot {
@@ -643,6 +644,8 @@ export interface UniverseCurrentResponse {
   members: UniverseMember[]
   enabled: boolean
   fallback: boolean
+  stale: boolean
+  stale_count: number
 }
 
 export interface UniverseFeatureSnapshot {

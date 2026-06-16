@@ -1183,6 +1183,11 @@ async def operator_create_task(payload: OperatorTaskCreate):
 @router.patch("/internal/tasks/{task_id}")
 async def operator_update_task(task_id: str, payload: OperatorTaskUpdate):
     if get_task(task_id) is None:
+        # Idempotent: client marking a terminal state on an already-evicted task
+        # (e.g. after gateway restart) gets a 200 no-op instead of 404, so the
+        # operator loop does not enter Degraded mode for a stale task reference.
+        if payload.status in ("completed", "failed"):
+            return {"id": task_id, "status": payload.status, "evicted": True}
         raise HTTPException(404, "Task not found")
     updates = payload.model_dump(exclude_none=True)
     update_task(task_id, **updates)

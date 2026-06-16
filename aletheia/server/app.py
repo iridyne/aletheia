@@ -263,6 +263,14 @@ async def lifespan(app: FastAPI):
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
     run_migrations()
+    # Backfill FTS5 index so the experience loop has full coverage on every boot.
+    try:
+        from aletheia.knowledge.retrieval import reindex_all
+        fts_count = reindex_all()
+        if fts_count:
+            logger.info("FTS reindex: %d knowledge items indexed", fts_count)
+    except Exception as e:
+        logger.warning("FTS reindex failed (non-fatal): %s", e)
     if background_services_enabled:
         try:
             from aletheia.agent_runtime.run_logger import mark_stale_running_runs
