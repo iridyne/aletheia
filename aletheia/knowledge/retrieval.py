@@ -124,10 +124,9 @@ def reindex_all() -> int:
             return 0
         from aletheia.storage.repositories import list_knowledge_items
         from aletheia.storage.models import KnowledgeItem
+        was_in_tx = db.in_transaction
         db.execute("DELETE FROM knowledge_fts")
         count = 0
-        # Pull active items of every type; quality gate is applied at retrieval time,
-        # but we only bother indexing high_confidence to keep the index lean.
         for row in list_knowledge_items(limit=100000, status="active"):
             if row.get("confidence") != _ALLOWED_CONFIDENCE:
                 continue
@@ -135,8 +134,15 @@ def reindex_all() -> int:
             item = KnowledgeItem(**{k: row[k] for k in row if k in KnowledgeItem.model_fields})
             if index_knowledge_item(item, body):
                 count += 1
+        if not was_in_tx:
+            db.commit()
         return count
     except Exception as e:
+        if not was_in_tx:
+            try:
+                db.rollback()
+            except Exception:
+                pass
         logger.warning("reindex_all failed: %s", e)
         return 0
 
