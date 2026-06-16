@@ -13,11 +13,14 @@ Design choices:
   logs an error and continues with the next ticker.
 """
 
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
+
+logger = logging.getLogger("aletheia.agents.stock_observer")
 from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.storage.models import Opportunity
@@ -76,6 +79,11 @@ def _fetch_stock_indicators(ticker: str) -> dict | None:
     """
     try:
         import yfinance as yf
+    except ImportError:
+        logger.warning("yfinance not installed — stock_observer cannot fetch equity data")
+        return None
+
+    try:
         from aletheia.trading.indicators import sma, rsi, atr, bollinger, momentum_pct, zscore_last
 
         hist = yf.download(

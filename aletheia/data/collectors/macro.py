@@ -166,6 +166,7 @@ def _fetch_tradfi() -> tuple[float | None, float | None, float | None, float | N
     try:
         import yfinance as yf
     except ImportError:
+        logger.warning("yfinance not installed — tradfi macro fallback unavailable (FRED key required)")
         return None, None, None, None
 
     tickers = {"SPY": None, "^VIX": None, "DX-Y.NYB": None, "^IXIC": None}
@@ -175,9 +176,15 @@ def _fetch_tradfi() -> tuple[float | None, float | None, float | None, float | N
             hist = t.history(period="2d")
             if not hist.empty:
                 tickers[ticker_sym] = round(float(hist["Close"].iloc[-1]), 2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("yfinance tradfi ticker %s failed: %s", ticker_sym, e)
 
+    all_none = all(v is None for v in tickers.values())
+    if all_none:
+        logger.warning(
+            "yfinance tradfi fallback: all tickers returned None "
+            "(yfinance library change or Yahoo Finance API outage?)"
+        )
     return tickers["SPY"], tickers["^VIX"], tickers["DX-Y.NYB"], tickers["^IXIC"]
 
 

@@ -15,7 +15,16 @@ from aletheia.data.models import (
 
 logger = logging.getLogger("aletheia.data.collectors.derivatives")
 
+# Fallback liquidation source: Binance Futures REST.
+# Used ONLY when the primary configured exchange does not support fetch_liquidations
+# via CCXT unified API. When active, liquidation exchange metadata will read "binance"
+# regardless of the configured primary — callers should treat it as market-wide signal,
+# not as confirmation of events on the configured primary exchange.
 _BINANCE_LIQUIDATIONS_URL = "https://fapi.binance.com/fapi/v1/forceOrders"
+
+
+class _CCXTLiquidationsUnsupported(Exception):
+    """Raised when the exchange's CCXT driver lacks fetch_liquidations support."""
 
 
 class DerivativesCollector:
@@ -29,6 +38,7 @@ class DerivativesCollector:
         oi: list[OpenInterestSnapshot] = []
         liquidations: list[LiquidationEvent] = []
         errors: list[str] = []
+        primary_name = provider._primary_name
 
         try:
             exchange = provider._ensure_primary()
@@ -42,7 +52,7 @@ class DerivativesCollector:
                 # Funding rate
                 try:
                     fr = await exchange.fetch_funding_rate(perp_sym)
-                    snap = _parse_funding(sym, provider._primary_name, fr)
+                    snap = _parse_funding(sym, primary_name, fr)
                     if snap:
                         funding.append(snap)
                 except Exception as e:
@@ -52,22 +62,41 @@ class DerivativesCollector:
                 # Open interest
                 try:
                     raw_oi = await exchange.fetch_open_interest(perp_sym)
-                    snap = _parse_oi(sym, provider._primary_name, raw_oi)
+                    snap = _parse_oi(sym, primary_name, raw_oi)
                     if snap:
                         oi.append(snap)
                 except Exception as e:
                     errors.append(f"oi {sym}: {e}")
                     logger.debug("OI fetch failed for %s: %s", sym, e)
+
+            # Liquidations: try primary exchange via CCXT first; fall back to Binance REST.
+            try:
+                ccxt_liqs = await _fetch_liquidations_ccxt(exchange, primary_name, symbols)
+                liquidations.extend(ccxt_liqs)
+                logger.debug(
+                    "liquidations via ccxt/%s: %d events", primary_name, len(ccxt_liqs)
+                )
+            except _CCXTLiquidationsUnsupported:
+                if primary_name != "binance":
+                    logger.debug(
+                        "liquidations: %s does not support fetch_liquidations via CCXT; "
+                        "falling back to Binance Futures REST — liquidation records will "
+                        "carry exchange='binance', not '%s'",
+                        primary_name,
+                        primary_name,
+                    )
+                try:
+                    binance_liqs = await _fetch_liquidations_binance_rest(symbols)
+                    liquidations.extend(binance_liqs)
+                except Exception as e:
+                    errors.append(f"liquidations: {e}")
+                    logger.debug("liquidation fetch (binance fallback) failed: %s", e)
+            except Exception as e:
+                errors.append(f"liquidations: {e}")
+                logger.debug("liquidation fetch failed: %s", e)
+
         finally:
             await provider.close()
-
-        # Liquidations — separate HTTP call (Binance REST)
-        try:
-            liqs = await _fetch_liquidations(symbols)
-            liquidations.extend(liqs)
-        except Exception as e:
-            errors.append(f"liquidations: {e}")
-            logger.debug("liquidation fetch failed: %s", e)
 
         return {
             "funding": funding,
@@ -131,10 +160,63 @@ def _parse_oi(
     )
 
 
-async def _fetch_liquidations(
+async def _fetch_liquidations_ccxt(
+    exchange, exchange_name: str, symbols: list[str]
+) -> list[LiquidationEvent]:
+    """Fetch recent liquidations from the primary exchange via CCXT unified API.
+
+    Raises _CCXTLiquidationsUnsupported if the exchange driver does not implement
+    fetch_liquidations, allowing the caller to fall back to Binance REST.
+    """
+    if not exchange.has.get("fetchLiquidations"):
+        raise _CCXTLiquidationsUnsupported(exchange_name)
+
+    results: list[LiquidationEvent] = []
+    now = datetime.now(timezone.utc)
+    since_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
+
+    for sym in symbols[:10]:  # cap to avoid rate limits
+        perp_sym = _to_perp_symbol(sym, exchange)
+        if not perp_sym:
+            continue
+        try:
+            raw_list = await exchange.fetch_liquidations(perp_sym, since=since_ms, limit=20)
+            for item in raw_list:
+                price = float(item.get("price") or 0)
+                qty = float(item.get("amount") or item.get("quantity") or 0)
+                side_raw = (item.get("side") or "").lower()
+                # CCXT unified: side is the position side being liquidated
+                side = side_raw if side_raw in ("long", "short") else "short"
+                ts = item.get("timestamp")
+                event_str = (
+                    datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
+                    if ts
+                    else now.isoformat()
+                )
+                results.append(LiquidationEvent(
+                    symbol=sym,
+                    exchange=exchange_name,
+                    side=side,
+                    quantity_usd=price * qty,
+                    price=price,
+                    event_time=event_str,
+                    observed_at=now.isoformat(),
+                ))
+        except Exception as e:
+            logger.debug("ccxt liquidations fetch failed for %s: %s", sym, e)
+
+    return results
+
+
+async def _fetch_liquidations_binance_rest(
     symbols: list[str],
 ) -> list[LiquidationEvent]:
-    """Fetch recent liquidations from Binance Futures API."""
+    """Fetch recent liquidations from Binance Futures REST API (fallback).
+
+    This endpoint is exchange-specific. When the configured primary exchange is not
+    Binance, returned events carry exchange='binance' and represent Binance market
+    conditions, not the configured primary.
+    """
     results: list[LiquidationEvent] = []
     now = datetime.now(timezone.utc)
 
@@ -155,7 +237,6 @@ async def _fetch_liquidations(
                     event_time = item.get("time", 0)
                     if event_time:
                         et = datetime.fromtimestamp(event_time / 1000, tz=timezone.utc)
-                        # Only keep liquidations from last hour
                         if (now - et) > timedelta(hours=1):
                             continue
                         event_str = et.isoformat()
