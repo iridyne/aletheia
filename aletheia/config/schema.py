@@ -304,6 +304,7 @@ class UniverseConfig(BaseModel):
         "momentum": 0.30, "mean_reversion": 0.20,
         "derivatives": 0.30, "event": 0.20,
     })
+    snapshot_ttl_hours: float = 24.0
     blacklist: list[str] = Field(default_factory=list)
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
 

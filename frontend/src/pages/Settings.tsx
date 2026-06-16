@@ -224,6 +224,7 @@ function UniverseConfigCard({ settings, qc }: any) {
   const [maxSpread, setMaxSpread] = useState('25')
   const [minDepth, setMinDepth] = useState('25000')
   const [exploreRatio, setExploreRatio] = useState('0.2')
+  const [snapshotTtlHours, setSnapshotTtlHours] = useState('24')
   const [blacklist, setBlacklist] = useState('')
   const [fallbackSymbols, setFallbackSymbols] = useState('BTC/USDT, ETH/USDT, SOL/USDT')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -238,6 +239,7 @@ function UniverseConfigCard({ settings, qc }: any) {
     setMaxSpread(String(universe.max_spread_bps ?? 25))
     setMinDepth(String(universe.min_depth_10bps_usd ?? 25000))
     setExploreRatio(String(universe.explore_ratio ?? 0.2))
+    setSnapshotTtlHours(String(universe.snapshot_ttl_hours ?? 24))
     setBlacklist(listToCsv(universe.blacklist))
     setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
   }, [settings])
@@ -252,6 +254,7 @@ function UniverseConfigCard({ settings, qc }: any) {
       max_spread_bps: parseFloat(maxSpread),
       min_depth_10bps_usd: parseFloat(minDepth),
       explore_ratio: parseFloat(exploreRatio),
+      snapshot_ttl_hours: parseFloat(snapshotTtlHours),
       blacklist: parseCsvList(blacklist),
       fallback_symbols: parseCsvList(fallbackSymbols),
     }),
@@ -302,6 +305,11 @@ function UniverseConfigCard({ settings, qc }: any) {
           <span>Explore ratio</span>
           <input type="number" min={0} max={0.5} step={0.05} value={exploreRatio}
             onChange={e => { setExploreRatio(e.target.value); setMsg(null) }} />
+        </label>
+        <label className="settings-field">
+          <span>Snapshot TTL (hours)</span>
+          <input type="number" min={1} max={72} step={1} value={snapshotTtlHours}
+            onChange={e => { setSnapshotTtlHours(e.target.value); setMsg(null) }} />
         </label>
       </div>
       <div className="form-grid" style={{ marginBottom: '0.75rem' }}>

@@ -572,7 +572,8 @@ export const api = {
   updateUniverseConfig: (body: Partial<{
     enabled: boolean; refresh_interval_min: number; max_candidates: number;
     core_pool_size: number; min_volume_24h_usdt: number; max_spread_bps: number;
-    min_depth_10bps_usd: number; explore_ratio: number; blacklist: string[]; fallback_symbols: string[];
+    min_depth_10bps_usd: number; explore_ratio: number; snapshot_ttl_hours: number;
+    blacklist: string[]; fallback_symbols: string[];
   }>) => post<any>('/settings/universe', body),
 
   // Network / proxy config

@@ -16,15 +16,21 @@ def get_current_universe():
     """Return the current active universe snapshot and its members."""
     from aletheia.universe.service import UniverseService
     svc = UniverseService()
-    members = svc.get_current_universe()
     cfg = load_config()
 
     snap = repo.get_active_universe_snapshot(cfg.universe.market_type)
+    # execution_eligible_only=False: UI sees stale members (tagged stale=True)
+    # rather than falling back to the static 3-symbol pool.
+    members = svc.get_current_universe(execution_eligible_only=False)
+
+    stale_count = sum(1 for m in members if m.get("stale"))
     return {
         "snapshot": snap,
         "members": members,
         "enabled": cfg.universe.enabled,
         "fallback": snap is None,
+        "stale": stale_count > 0,
+        "stale_count": stale_count,
     }
 
 

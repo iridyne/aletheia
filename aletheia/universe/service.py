@@ -53,9 +53,12 @@ class UniverseService:
         for m in members:
             if execution_eligible_only and not m.get("execution_eligible", True):
                 continue
-            if m.get("expires_at") and m["expires_at"] < now:
-                continue
-            result.append(m)
+            m_out = dict(m)
+            if m_out.get("expires_at") and m_out["expires_at"] < now:
+                if execution_eligible_only:
+                    continue  # never use stale data for execution decisions
+                m_out["stale"] = True
+            result.append(m_out)
 
         if not result:
             logger.warning("All universe members expired; falling back to static pool")
@@ -109,7 +112,8 @@ class UniverseService:
             allocated = allocate_universe(scored, cfg.universe)
 
             now = datetime.now(timezone.utc)
-            expires_at = (now + timedelta(minutes=cfg.universe.refresh_interval_min * 2)).isoformat()
+            snapshot_ttl_sec = int(cfg.universe.snapshot_ttl_hours * 3600)
+            expires_at = (now + timedelta(seconds=snapshot_ttl_sec)).isoformat()
             snap = UniverseSnapshot(
                 market_type=market_type,
                 expires_at=expires_at,
@@ -132,7 +136,7 @@ class UniverseService:
 
             inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
-                ttl_sec = item.get("ttl_sec", 3600)
+                ttl_sec = max(item.get("ttl_sec", 3600), snapshot_ttl_sec)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
                 entry_price = item.get("last_price")
                 member = UniverseMember(

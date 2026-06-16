@@ -430,7 +430,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .badge-green { background: rgba(46,230,168,0.06); color: var(--green); border-color: rgba(46,230,168,0.24); }
 .badge-red { background: rgba(255,93,108,0.06); color: var(--red); border-color: rgba(255,93,108,0.26); }
-.badge-yellow { background: rgba(245,185,66,0.07); color: var(--yellow); border-color: rgba(245,185,66,0.28); }
+.badge-yellow, .badge-warning { background: rgba(245,185,66,0.07); color: var(--yellow); border-color: rgba(245,185,66,0.28); }
 .badge-blue { background: rgba(74,163,255,0.06); color: var(--blue); border-color: rgba(74,163,255,0.24); }
 /* muted/neutral badge — for "no", "n/a", off, orphaned states (replaces the undefined
    badge-muted/badge-amber class names that were rendering colorless). */
@@ -734,6 +734,7 @@ th.sortable:hover { color: var(--text); }
    separately; these let any element use semantic up/down color). */
 .pnl-positive { color: var(--green); }
 .pnl-negative { color: var(--red); }
+.pnl-warning { color: var(--yellow); }
 .card-head {
   display: flex;
   align-items: center;

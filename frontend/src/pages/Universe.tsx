@@ -42,7 +42,15 @@ function timeAgo(isoStr: string | null | undefined): string {
 
 const columns = [
   col.accessor('rank', { header: '#', cell: info => <span className="mono">{info.getValue()}</span> }),
-  col.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  col.accessor('symbol', {
+    header: 'Symbol',
+    cell: info => (
+      <span className="flex items-center gap-1">
+        <span className="mono">{info.getValue()}</span>
+        {info.row.original.stale && <Badge tone="warning">stale</Badge>}
+      </span>
+    ),
+  }),
   col.accessor('scanner_family', {
     header: 'Family',
     cell: info => (
@@ -112,13 +120,15 @@ export default function Universe() {
   const snapshot = data?.snapshot
   const enabled = data?.enabled ?? false
   const isFallback = data?.fallback ?? true
+  const isStale = data?.stale ?? false
+  const staleCount = data?.stale_count ?? 0
 
   const summary = snapshot?.summary ? (() => {
     try { return JSON.parse(snapshot.summary) } catch { return {} }
   })() : {}
 
-  const statusTone = !enabled ? 'muted' : isFallback ? 'negative' : 'positive'
-  const statusText = !enabled ? 'Off' : isFallback ? 'Fallback' : 'Active'
+  const statusTone = !enabled ? 'muted' : isFallback ? 'negative' : isStale ? 'warning' : 'positive'
+  const statusText = !enabled ? 'Off' : isFallback ? 'Fallback' : isStale ? 'Stale' : 'Active'
 
   return (
     <div>
@@ -128,8 +138,10 @@ export default function Universe() {
           !enabled
             ? 'Disabled — using static fallback (BTC/ETH/SOL)'
             : isFallback
-              ? 'No active snapshot — showing fallback pool'
-              : `Snapshot ${snapshot?.id?.slice(0, 8)} — ${members.length} candidates`
+              ? 'No active snapshot — showing fallback pool (BTC/ETH/SOL)'
+              : isStale
+                ? `Stale data — ${staleCount}/${members.length} members expired, awaiting next refresh`
+                : `Snapshot ${snapshot?.id?.slice(0, 8)} — ${members.length} candidates`
         }
       />
 
