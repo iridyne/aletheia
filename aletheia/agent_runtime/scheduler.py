@@ -36,6 +36,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "risk_critic": 300.0,
     "universe_refresh": 90.0,
     "data_collectors": 45.0,
+    "exchange_sync": 60.0,
 }
 
 
@@ -86,6 +87,46 @@ def _run_job_guarded(job_id: str, fn):
 
 def _guarded(job_id: str, fn):
     return partial(_run_job_guarded, job_id, fn)
+
+
+def _run_sync_with_timeout(job_id: str, fn) -> object:
+    """Run a sync function with a hard wall-clock bound.
+
+    Same daemon-thread-abandon pattern as _run_async_with_timeout but for sync
+    callables (e.g. exchange_sync which internally calls asyncio.run() multiple
+    times). If the function hangs (e.g. ProactorEventLoop IOCP drain), the
+    calling APScheduler thread gets back control after timeout + 15s grace.
+
+    DB cleanup happens inside the worker thread's finally block so a hung thread
+    doesn't leave an uncommitted transaction holding the WAL write lock.
+    """
+    import concurrent.futures
+    from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
+
+    timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
+    thread_timeout = timeout + 15.0
+
+    def _run():
+        try:
+            return fn()
+        finally:
+            rollback_if_in_transaction()
+            close_db()
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(_run)
+    try:
+        return future.result(timeout=thread_timeout)
+    except concurrent.futures.TimeoutError:
+        logger.error(
+            "job %s: sync function hung after %.0fs — "
+            "executor thread abandoned",
+            job_id, thread_timeout,
+        )
+        pool.shutdown(wait=False)
+        raise TimeoutError(f"job {job_id} hung after {thread_timeout}s")
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
@@ -468,7 +509,12 @@ def _run_exchange_sync():
         return
     try:
         from aletheia.portfolio.exchange_sync import sync_exchange_account
-        sync_exchange_account()
+        _run_sync_with_timeout("exchange_sync", sync_exchange_account)
+    except TimeoutError:
+        logger.warning(
+            "exchange_sync job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["exchange_sync"],
+        )
     except Exception as e:
         logger.warning("exchange_sync job failed: %s", e)
 
