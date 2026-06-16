@@ -48,11 +48,34 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 40
             ModelRequest(messages=messages, system=system, temperature=0.3, max_tokens=max_tokens),
             provider=provider,
         )
-        data = json.loads(resp.content)
+        content = (resp.content or "").strip()
+        if not content:
+            # LLM connected and ran (usage tokens > 0) but returned empty text.
+            # This is a parse failure, NOT an LLM outage — do not trip the health
+            # monitor's failure counter (which would pause the scheduler).
+            usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
+            if usage.get("completion_tokens", 0) > 0:
+                logger.warning("LLM structured call: empty content with %d completion_tokens — "
+                               "reasoning model exhausted budget on reasoning phase",
+                               usage["completion_tokens"])
+                return None, "structured_empty_content"
+            logger.warning("LLM structured call: empty content, no completion tokens")
+            _record_llm(False)
+            return None, "llm_unavailable: empty_response"
+        # Strip markdown code fences that some models wrap JSON in
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
+        data = json.loads(content)
         if not isinstance(data, dict):
             return None, "structured_non_dict"
         _record_llm(True)
         return data, None
+    except json.JSONDecodeError as e:
+        # Bad JSON but the LLM did respond — not an outage, don't trip health counter
+        logger.warning("LLM structured call: JSON parse failed: %s", e)
+        return None, f"structured_parse_error: {e}"
     except Exception as e:
         logger.warning("LLM structured call failed: %s", e)
         _record_llm(False)
