@@ -34,7 +34,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "divergence_scanner": 60.0,
     "post_trade_reviewer": 300.0,
     "risk_critic": 300.0,
-    "universe_refresh": 180.0,
+    "universe_refresh": 360.0,
     "data_collectors": 45.0,
     "exchange_sync": 60.0,
     "backtest_orchestrator": 600.0,
