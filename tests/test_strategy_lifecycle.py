@@ -344,7 +344,9 @@ def test_paper_evidence_includes_bitget_demo_modes(tmp_path, monkeypatch):
             closed_at=created_at,
         ))
 
-    create_post_trade_review("Post-Trade Review", "Demo evidence accepted.", strategy_id=s.id)
+    create_post_trade_review("Post-Trade Review",
+                             "Demo evidence accepted. 10 trades reviewed with mixed results; additional bitget_demo trades being seeded to meet minimum threshold.",
+                             strategy_id=s.id)
     result = check_promotion_gates(s.id)
     assert result["passed"] is False
     assert any(failure.startswith("insufficient_paper_trades") for failure in result["failures"])
@@ -402,7 +404,8 @@ def test_strategy_post_trade_review_required_by_strategy(tmp_path, monkeypatch):
 
     create_post_trade_review(
         "Post-Trade Review Strategy-Specific",
-        "Reviewed paper evidence for this strategy.",
+        "Reviewed paper evidence for this strategy. 30 trades completed with 58% win rate. "
+        "Average risk-reward 1.4:1. Recommend promoting to paper_passed.",
         strategy_id=s.id,
     )
     assert promote_strategy(s.id, "paper_passed")["success"] is True
@@ -544,6 +547,7 @@ def _seed_strategy_evidence(strategy_id: str, include_strategy_review: bool = Tr
     if include_strategy_review:
         create_post_trade_review(
             "Post-Trade Review",
-            "Reviewed paper evidence.",
+            "Reviewed 30 paper trades for this strategy. Win rate 60%, average winner 1.5x loser. "
+            "Momentum entries performed well; mean reversion exits were premature. Recommend tightening exit rules.",
             strategy_id=strategy_id,
         )

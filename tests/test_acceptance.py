@@ -81,8 +81,14 @@ async def test_ac06_model_providers(client):
 
 # #7 Agent runtime creates research notes + opportunities
 @pytest.mark.anyio
-async def test_ac07_agent_creates_artifacts(client):
+async def test_ac07_agent_creates_artifacts(client, monkeypatch):
     c, _ = client
+    # Mock LLM to return substantive content so quality gate passes.
+    async def _fake_llm(system, user, max_tokens=800):
+        return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
+                "ETH funding rates suggest crowded longs. Recommend reducing spot exposure.", None)
+    monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)
+
     await c.post("/api/agent-runs/start", json={"agent_name": "research_agent"})
     await c.post("/api/agent-runs/start", json={"agent_name": "market_observer"})
     assert len((await c.get("/api/agent-runs")).json()) >= 2
@@ -91,8 +97,14 @@ async def test_ac07_agent_creates_artifacts(client):
 
 # #8 Knowledge base stores items
 @pytest.mark.anyio
-async def test_ac08_knowledge_base(client):
+async def test_ac08_knowledge_base(client, monkeypatch):
     c, _ = client
+    # Mock LLM to return substantive content so quality gate passes.
+    async def _fake_llm(system, user, max_tokens=800):
+        return ("Daily dreaming log: market observer ran 3 cycles, research agent produced 2 notes. "
+                "Insight: momentum correlated with funding divergence. Focus: validate SOL breakout.", None)
+    monkeypatch.setattr("aletheia.agents.dreaming_agent.llm_complete", _fake_llm)
+
     await c.post("/api/agent-runs/start", json={"agent_name": "dreaming_agent"})
     assert len((await c.get("/api/knowledge/dreaming-logs")).json()) >= 1
     assert len((await c.get("/api/knowledge?type=daily_review")).json()) >= 1
@@ -130,7 +142,8 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
 
     create_post_trade_review(
         "Post-Trade Review",
-        "Reviewed the BTC paper position.",
+        "Reviewed the BTC paper position closed at a loss. Entry momentum confirmed but exit was premature. "
+        "Recommend tighter stop placement and trailing stop on profitable positions.",
         strategy_id="strat-1",
     )
 

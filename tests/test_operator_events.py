@@ -851,7 +851,7 @@ async def test_operator_recommendations_include_strategy_design_due_when_recent_
     from aletheia.knowledge.manager import create_research_note, create_strategy_memory
     from aletheia.trading.strategy_lifecycle import create_strategy
 
-    create_research_note("Breakout Research", "Recent market structure favors breakout continuation.")
+    create_research_note("Breakout Research", "Recent market structure favors breakout continuation with BTC breaking resistance and volume confirming the move.")
     strategy = create_strategy("Draft Strategy Anchor", "anchor strategy for memory path")
     create_strategy_memory(strategy.id, "Momentum Hypothesis", "Probe ETH continuation on 1h.")
 

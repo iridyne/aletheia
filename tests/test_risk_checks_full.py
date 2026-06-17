@@ -55,6 +55,10 @@ def test_daily_loss_exceeded_blocks_and_trips_kill_switch(tmp_path, monkeypatch)
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.pnl import close_position
     from aletheia.risk import kill_switch
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
+    save_config(cfg)
 
     # Capital base = max_live_limited_cap_usdt default 100; max_daily_loss_pct 1.0 → $1 limit.
     pos = Position(symbol="BTCUSDT", market_type="spot", direction="long",
@@ -355,6 +359,7 @@ def test_kill_switch_trip_blocks_subsequent_proposal(tmp_path, monkeypatch):
     # Seed a closed losing position large enough to breach max_daily_loss.
     cfg = load_config()
     cfg.risk.max_daily_loss_pct = 1.0  # 1% of cap(100) = $1 limit
+    cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
     save_config(cfg)
     repo.insert_position(Position(
         symbol="BTCUSDT", market_type="spot", direction="long",

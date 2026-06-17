@@ -42,13 +42,13 @@ def test_retrieve_only_high_confidence_active(tmp_path, monkeypatch):
     from aletheia.knowledge.retrieval import retrieve_lessons
 
     create_research_note("High conf funding lesson",
-                         "Extreme perp funding signals crowded positioning; reduce exposure.",
+                         "Extreme perp funding rates signal crowded long positioning; reducing spot exposure is prudent risk management ahead of potential liquidation cascade.",
                          confidence="high_confidence")
     create_research_note("Medium conf note",
-                         "Some speculative funding and exposure musing.",
+                         "Some speculative observation about funding rates and their potential impact on exposure management during volatile market conditions.",
                          confidence="medium_confidence")
     create_research_note("Speculative note",
-                         "Maybe funding matters for exposure sometimes.",
+                         "Speculative hypothesis: funding rate divergence between BTC and ETH perps may signal sector rotation rather than broad deleveraging event.",
                          confidence="speculative")
 
     res = retrieve_lessons("funding exposure positioning risk", k=5)
@@ -63,7 +63,7 @@ def test_archived_item_not_recalled(tmp_path, monkeypatch):
     from aletheia.knowledge.retrieval import retrieve_lessons
 
     item = create_research_note("Drawdown lesson",
-                                "Tighten stops after three consecutive losses to limit drawdown.",
+                                "Tighten stops after three consecutive losses to limit drawdown exposure; max consecutive loss streak triggers mandatory position size reduction.",
                                 confidence="high_confidence")
     assert len(retrieve_lessons("drawdown stops losses", k=5)) == 1
     archive_item(item.id)
@@ -77,7 +77,7 @@ def test_memory_block_has_provenance(tmp_path, monkeypatch):
     from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
 
     create_research_note("Volatility lesson",
-                         "Volatility expands after contraction; size down into squeezes.",
+                         "Volatility expands after contraction periods; sizing down into squeezes protects capital and preserves powder for the eventual breakout move.",
                          confidence="high_confidence")
     block = format_memory_block(retrieve_lessons("volatility squeeze size", k=3))
     assert "ADVISORY" in block
@@ -102,7 +102,7 @@ def test_reindex_backfills_existing(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
 
     create_research_note("Trend lesson",
-                         "In a confirmed uptrend, buy pullbacks to the moving average.",
+                         "In a confirmed uptrend, buying pullbacks to the 50-period moving average offers favorable risk-reward with clear invalidation level below the MA.",
                          confidence="high_confidence")
     # Wipe the FTS index to simulate pre-existing data written before the loop existed.
     sq.get_db().execute("DELETE FROM knowledge_fts")
@@ -233,8 +233,9 @@ async def test_post_trade_reviewer_keeps_fallback_lessons_medium(tmp_path, monke
     result = await run_agent("post_trade_reviewer", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")
     items = repo.list_knowledge_items(item_type="post_trade_review")
-    # Fallback text behind an offline LLM must stay out of the retrieval gate.
-    assert items and all(i["confidence"] == "medium_confidence" for i in items)
+    # When LLM is offline, the agent skips writing reviews (no placeholder noise).
+    # Any items that do exist must be medium_confidence (not retrieval-eligible).
+    assert all(i["confidence"] == "medium_confidence" for i in items)
     reset_db()
 
 

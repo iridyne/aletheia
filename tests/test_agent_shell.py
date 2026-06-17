@@ -965,7 +965,7 @@ async def test_runtime_maps_extension_text_tail_into_target_parameters(tmp_path,
         from aletheia.agent_shell.runtime import AgentShellRuntime
 
         runtime = AgentShellRuntime()
-        resp = await runtime.handle("/create-research-note Review BTC basis dislocation before Asia open.")
+        resp = await runtime.handle("/create-research-note Review BTC basis dislocation before Asia open. Funding rates turning negative suggests crowded longs being squeezed.")
 
     assert resp.intent == "create_research_note"
     notes = list_knowledge_items(item_type="research_note", limit=10)
@@ -1100,7 +1100,7 @@ async def test_create_dreaming_log_handler_preserves_item_type(tmp_path, monkeyp
     from aletheia.agent_shell.commands import create_dreaming_log
     from aletheia.storage.repositories import list_knowledge_items
 
-    result = await create_dreaming_log({"title": "Dreaming Log", "content": "Pattern synthesis."})
+    result = await create_dreaming_log({"title": "Dreaming Log", "content": "Pattern synthesis: momentum divergence on BTC 4h chart with RSI overbought and flat price action suggesting distribution phase."})
 
     assert result["created"] is True
     items = list_knowledge_items(item_type="dreaming_log")

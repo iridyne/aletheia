@@ -176,7 +176,7 @@ async def test_operator_internal_typed_command_executes_with_existing_registry_a
                 "user_input": "Create a diagnostic todo for stale market data.",
                 "parameters": {
                     "title": "Market data stale",
-                    "content": "Inspect market_data_stale:45m before trusting automation.",
+                    "content": "Inspect market_data_stale:45m before trusting automation. Check provider health and websocket reconnect logic.",
                 },
             },
         )

@@ -141,7 +141,8 @@ def test_task_arguments_bootstrap_makes_venv_importable(monkeypatch):
 
     # (a) Uses site.addsitedir pointing at the venv's site-packages (effective now).
     assert "site.addsitedir(" in args
-    assert r"\.venv\Lib\site-packages" in args
+    # repr() escapes backslashes, so single \ in path becomes \\ in the generated args string.
+    assert r"\\.venv\\Lib\\site-packages" in args
     # (b) Still imports + runs the gateway CLI.
     assert "from aletheia.main import app" in args
     assert "gateway" in args and "start" in args and "--no-browser" in args
