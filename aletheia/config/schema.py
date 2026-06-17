@@ -318,6 +318,13 @@ class UniverseConfig(BaseModel):
     snapshot_ttl_hours: float = 24.0
 
 
+class RegimeConfig(BaseModel):
+    enabled: bool = True
+    min_hold_periods: int = 3
+    bias_threshold: float = 0.30
+    short_enabled: bool = True
+
+
 class GuardConfig(BaseModel):
     enabled: bool = True
     enforce_in_paper_ranker: bool = True
@@ -359,6 +366,7 @@ class AletheiaConfig(BaseModel):
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
+    regime: RegimeConfig = Field(default_factory=RegimeConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)

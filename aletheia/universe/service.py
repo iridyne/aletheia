@@ -93,6 +93,42 @@ class UniverseService:
         except Exception as e:
             logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
 
+        # Detect market regime (non-fatal — falls back to sideways)
+        current_regime = None
+        try:
+            if not cfg.regime.enabled:
+                raise RuntimeError("regime disabled by config")
+
+            from aletheia.regime.collector import collect_regime_inputs
+            from aletheia.regime.detector import debounced_detect, MarketRegime
+            from aletheia.storage.models import MarketRegimeRecord
+
+            regime_inputs = await collect_regime_inputs()
+            if regime_inputs:
+                current_regime = debounced_detect(
+                    min_hold_periods=cfg.regime.min_hold_periods,
+                    **regime_inputs,
+                )
+                record = MarketRegimeRecord(
+                    state=current_regime.state,
+                    confidence=current_regime.confidence,
+                    long_bias=current_regime.long_bias,
+                    short_bias=current_regime.short_bias,
+                    signals=json.dumps(current_regime.signals),
+                    detected_at=current_regime.detected_at,
+                )
+                repo.insert_market_regime(record)
+                # If short globally disabled, zero out short_bias so gate blocks all shorts
+                if not cfg.regime.short_enabled:
+                    current_regime.short_bias = 0.0
+                logger.info(
+                    "Regime: %s (conf=%.2f, long_bias=%.2f, short_bias=%.2f)",
+                    current_regime.state, current_regime.confidence,
+                    current_regime.long_bias, current_regime.short_bias,
+                )
+        except Exception as e:
+            logger.warning("Regime detection failed (non-fatal): %s", e)
+
         run = UniverseScannerRun()
         repo.insert_universe_scanner_run(run)
 
@@ -186,6 +222,7 @@ class UniverseService:
             try:
                 emit_deterministic_opportunities(
                     inserted_members, snap.id, scored_features=scored,
+                    regime=current_regime,
                 )
             except Exception as e:
                 logger.warning("Deterministic opportunity emission failed (non-fatal): %s", e)
