@@ -197,12 +197,16 @@ def httpx_client(timeout: float = 30, **kwargs) -> httpx.AsyncClient:
 def aiohttp_session(**kwargs) -> aiohttp.ClientSession:
     """Return an aiohttp.ClientSession with proxy from config.
 
-    Sets HTTP_PROXY / HTTPS_PROXY env vars before creating the session so
-    that trust_env=True picks them up. Windows-safe: uses ThreadedResolver
-    (OS getaddrinfo) instead of c-ares AsyncResolver. Falls back to direct
-    connection if the configured proxy is not reachable.
+    Respects existing HTTP_PROXY/HTTPS_PROXY env vars (e.g. set by the system
+    or shell profile). Only falls back to config.network.proxy_url when no env
+    var is present. Never clears env vars — the scheduler's fresh event loop
+    previously caused apply_proxy_env() to race and clear valid proxy settings.
     """
-    apply_proxy_env()
+    if not os.environ.get("HTTPS_PROXY") and not os.environ.get("HTTP_PROXY"):
+        proxy = _proxy_url()
+        if proxy:
+            os.environ["HTTP_PROXY"] = proxy
+            os.environ["HTTPS_PROXY"] = proxy
     connector = aiohttp.TCPConnector(resolver=ThreadedResolver())
     return aiohttp.ClientSession(
         connector=connector,
