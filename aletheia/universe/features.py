@@ -53,9 +53,8 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
 
     try:
         exchange = provider._ensure_primary()
-        # Force spot-only market loading — futures API (fapi.binance.com) may be
-        # unreachable in some network environments while spot API works fine.
         exchange.options["defaultType"] = "spot"
+        exchange.options["fetchMarkets"] = ["spot"]
         await exchange.load_markets()
 
         # Batch fetch all tickers at once (much faster than per-symbol)
