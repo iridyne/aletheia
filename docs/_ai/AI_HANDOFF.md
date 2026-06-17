@@ -7,7 +7,31 @@
 
 ## Last Updated
 
-2026-06-17 (Scanner 性能修复：Binance fetchMarkets key + OHLCV 并发 + 测试基础设施)
+2026-06-17 (调研：开源算法交易框架；Scanner §16 修复 + 测试基础设施强化)
+
+---
+
+## Recent Change (开源算法交易框架调研 — 2026-06-17，纯研究无代码改动)
+
+> **背景**: team-lead 委派基础研究任务，为 Aletheia 下一步架构（做空对称、策略发现、
+> 信号流水线）决策提供参考。
+
+**调研范围**: Jesse、Freqtrade/FreqAI、QuantConnect LEAN、Zipline-reloaded、Backtrader、
+Nautilus Trader、Hummingbot、OctoBot、FinRL；Alpha Factory 概念；LLM 策略生成
+（FinGPT、GPT-InvestAR）。
+
+**关键结论（对 Aletheia 有参考价值）**:
+- **做空对称性**: Nautilus Trader（OrderSide enum）、Jesse（`go_short()` 与 `go_long()` 对称）
+  最完整；Freqtrade 做空是事后补丁（`can_short=True` + futures 限制）
+- **最佳流水线架构**: LEAN 五层分离（Universe → Alpha → Portfolio Construction → Risk →
+  Execution）是机构标准；Aletheia 当前管道吻合，但 ranker + paper_trader 混合承担了
+  Portfolio Construction 职责——未来拆分有价值
+- **ML 信号路径**: FreqAI 最完整（周期重训练 + 不确定性过滤 + 特征自动扩展）；LLM
+  目前只作特征提取工具，无端到端 LLM 生成可部署策略的生产案例
+- **Alpha Factory**: Aletheia 的 signal_emitter + universe calibration 走的是 WorldQuant
+  Alpha Factory 路线（小 alpha 并行 + 组合），方向正确
+
+**无代码改动**；研究记录已写入 DEVLOG。
 
 ---
 
