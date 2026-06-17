@@ -649,3 +649,15 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **error.log**: 仅 uvicorn startup 记录（3 次 self-heal restart），无新异常模式
 
 **备注**: 本轮首次连续 4 个 scanner run 全部 completed，无 ghost 产生。系统自上轮 reconciliation 后进入稳态运行。knowledge 去重仍未部署（plan §1），total=843 持续增长。
+
+### 2026-06-17 09:03 UTC — 第十三轮巡检 (Δ17min)
+
+[09:03 UTC] ✓ 系统正常 — 核心管道正常运行
+
+**管道状态**: Scanner completed 08:50 (121 passed) | Features 793/batch | Market 08:59 (4min 前) | Portfolio 08:38 (25min, 轻微延迟) | Knowledge +7/h (6 ptr + 1 rn), total=846 | Ghost=2(1 合法 + 1 刚超时) | Stale agents 207→211(+4)
+
+**agent 运行率**: 1h: 28 runs, 21 completed, 6 failed (21.4% — 略升) | 24h: 672 runs, 90 failed (13.4%)
+
+**error.log**: startup reconciliation "Marked 1 stale agent run(s)" + uvicorn restart (self-heal 正常)
+
+**趋势**: ghost scanner 从 1 微升到 2（thread abandon 正常复发节奏），stale agents +4/轮（加速，可能因 self-heal restart 频率略增）。portfolio 25min 延迟在可接受范围（<30min 不报警）。整体稳态持续。
