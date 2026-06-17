@@ -785,3 +785,125 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **其他管道正常**: Market 11:48 (15min) | Portfolio 12:01 (2min) | Knowledge total=868 | Agent 1h: 26 runs, 22 completed, 1 failed (3.8% — 优秀) | 24h: 752 runs, 96 failed (12.8% — 改善) | Stale 217 | Ghost=0
 
 **结论**: §16 scanner 失败不紧急（TTL 22h），但仍需修复以恢复 universe 动态刷新。其他所有管道健康且高效运行。
+
+### 2026-06-17 12:42 UTC — §16 已修复 ✅
+
+**修复内容**: `features.py` 和 `registry.py` 中 `fetchMarkets = ["spot", "swap"]` → `["spot", "linear"]`
+
+**验证**: Scanner 成功完成，assets_passed=115。commit `d8908e5`。
+
+**根因分析**: CCXT 的 `fetchMarkets` option 是 exchange-specific 的。Binance adapter 白名单只接受 `["spot", "linear", "inverse"]`，"swap" 是 CCXT 统一层的 market type 概念（用于 `defaultType` / symbol routing），但 Binance 拒绝它。这类 exchange-adapter 差异需要在代码中明确映射。
+
+**§16 状态**: 🟢 已修复并验证
+
+### 2026-06-17 12:50 UTC — 第二十轮巡检 (Δ8min post-fix)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 修复生效 | 12:42 completed (115 assets), 下一次 ~12:52 |
+| Market Snapshots | ✅ 正常 | 12:50 (实时), 651/h |
+| Portfolio | ✅ 正常 | 12:40 (10min ago) |
+| Knowledge | ⚠️ 重复 | 884 total, 1h +205 (17x "Daily Consolidation" dreaming_log) |
+| Opportunities | ✅ 高产 | 1807 total, +544/h |
+| Feature Snapshots | ✅ 恢复 | 12:42 (与 scanner 同步恢复) |
+| Predictions | ❌ 空 | 0 markets, 0 claims |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**§16 修复验证**: Scanner 在 12:42 成功完成，assets_scanned=1000, assets_passed=115。§16 关闭。
+
+**market_observer stale 率异常 (§17 新发现)** 🟠
+
+- 2h 内 86 次运行: 36 completed + 4 completed_with_errors + **46 stale (53%)**
+- Stale 集中在 02:22→11:39 UTC (9h 持续期)，12:41 最新 completed 后停止 stale
+- 可能原因: market_observer 运行慢（>超时阈值）→ 被标记 stale → 但实际完成了工作
+- 24h 总计: stale=99, 其中 46 来自 market_observer (47%)
+
+**§7 知识重复持续恶化** 🔴
+
+- 1h 内产出 205 条 knowledge_items, 其中 dreaming_log=17 全部标题 "Daily Consolidation"
+- post_trade_review=102/h, research_note=15/h — 速率远超正常
+- §7 去重方案（plan file）尚未实施。每小时注入 200+ 条大部分重复的 "知识" 持续消耗存储和 FTS 索引
+
+**新发现: Binance batch ticker 非法字符错误** 🟡
+
+- errors.log: `Batch spot ticker fetch failed: binance {"code":-1100,"msg":"Illegal characters found in parameter 'symbols'"}`
+- 原因推断: 部分 symbol 含小写字母或非标准字符，Binance API regex 拒绝
+- 影响: 非致命（降级到单个 ticker fetch），但降低扫描效率
+- 修复方向: fetch_tickers 前过滤 symbols，只传符合 Binance regex `[\\w\\-._&&[^a-z]]` 的
+
+**24h Agent 成功率**: completed=636 (82%), stale=99 (12.7%), completed_with_errors=41 (5.3%)
+- 实际有效率 (completed + completed_with_errors) = 87.3%
+- Ghost agents=0 (启动清扫有效)
+- Timed out=0 (本周期无超时)
+
+### 2026-06-17 13:04 UTC — 第二十一轮巡检 (Δ14min)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 连续成功 | 13:03 completed (14s, 115 passed) — 连续第 3 次成功 |
+| Market Snapshots | ✅ 正常 | 13:00 (4min ago), 665/h |
+| Portfolio | ✅ 正常 | 13:01 (3min ago) |
+| Knowledge | ⚠️ 重复 | 888 total, 1h: ptr=105 + dreaming=17 + rn=16 + tcs=70 |
+| Features | ✅ 恢复 | 13:03 (与 scanner 同步) |
+| Opportunities | ✅ 高产 | 1838 total, +575/h |
+| Predictions | ❌ 空 | 0 markets |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**Scanner perf improvement 验证**: 新代码 (sem=10 + 8s timeout) 下 scanner 14s 完成，与之前持平。timeout 保护已就绪但未触发（说明当前网络正常）。
+
+**§17 market_observer stale 持续** (46/87 = 53%): 一条新 evidence — `asyncio.run() teardown hung after 255s — executor thread abandoned (ProactorEventLoop IOCP drain)`。确认 stale 根因是 **Windows ProactorEventLoop IOCP drain hang**，非代码逻辑问题。market_observer 实际完成了工作但 cleanup 卡住 → 超时 → 标记 stale。
+
+**§18 Symbol 跨交易所不匹配 (新发现)** 🟡
+
+- **观测**: errors.log 大量 `binance does not have market symbol GRASS/USDT`, `1000PEPE/USDT`, `1000SHIB/USDT`, `SPX/USDT`, `VVV/USDT`
+- **根因**: registry 从 Bitget 同步资产列表（`market_data.ccxt_exchange=binance`, `exchange.name=bitget`），但 Bitget 有些 symbol 格式 (1000PEPE, SPX) 在 Binance 不存在
+- **影响**: 非致命（降级到 skip），但污染日志 + 浪费 API calls
+- **修复方向**: 
+  - fetch_tickers 前用 `exchange.markets` 过滤只传 Binance 已知 symbols
+  - 或 registry sync 时标记 `data_source_available=False` 对这些 symbols
+  - Binance 命名: PEPE (not 1000PEPE), SHIBUSDT (not 1000SHIB)
+
+**Batch ticker 非法字符**: 持续触发。Binance regex 要求 symbols 全大写 `[\\w\\-._&&[^a-z]]`，部分 Bitget registry symbols 含不合法字符。需预过滤。
+
+**Agent 1h**: completed=319 (81%), stale=57 (14.4%), completed_with_errors=17 (4.3%), running=1, timed_out=1
+- Ghost=0 ✅
+- Stale total=220 (持续累积，历史不清理)
+
+### 2026-06-17 13:46 UTC — 第二十二轮巡检 (Δ42min)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 连续成功 | 13:43 (35s, 285 passed) — 连续第 6 次成功 |
+| Market Snapshots | ✅ 正常 | 13:41 (5min ago), 721/h |
+| Portfolio | ✅ 正常 | 13:42 (4min ago) |
+| Knowledge | ⚠️ 重复 | 897 total (+9/42min), dreaming=17/h 仍全重复 |
+| Features | ✅ 正常 | 13:43 |
+| Opportunities | ✅ 高产 | 1906 total, +643/h |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 |
+
+**Scanner 行为变化观测**: passed 从 115→285 (×2.5)，耗时 14s→35s。min_volume 未变 (5M USDT)。推测原因：亚洲交易时段更多 symbol 达到 volume 阈值，或 futures markets 在 registry 中生效（`fetchMarkets=["spot","linear"]` 现在正确加载了 perp 市场）。35s 对 285 symbols 合理 (285/sem=10 × avg_latency)。
+
+**§17 持续**: market_observer stale=48/92 (52%), timed_out=3。ProactorEventLoop IOCP hang 根因不变。
+
+**§18 持续**: errors.log 仍有 FOLKS/USDT, COAI/USDT 等 Bitget-only symbols 在 Binance/Bybit 查询失败。日志噪音但非阻断。
+
+**§7 持续**: dreaming_log=17/h 全是重复 "Daily Consolidation"。
+
+[2026-06-17 13:46 UTC] ✓ 核心管道全部正常运行，scanner 性能优化生效中
+
+[2026-06-17 14:03 UTC] ✓ 系统正常 — Scanner 连续第 8 次成功 (35-36s, 285 passed), Market/Portfolio/Features 实时, Opportunities +675/h. §17/§18 持续无恶化. market_observer stale=49/94 (52%), timed_out=5.
+
+[2026-06-17 14:46 UTC] ✓ 系统正常 — Scanner 连续 12+ 次成功 (35-36s, 282-287 passed), Opportunities 突破 2000 (total=2009, +746/h). §17 market_observer stale=50/98 (51%), timed_out=7. §18 symbol mismatch 持续 (SKYAI, MRVL 等). Ghost=0.
+
+[2026-06-17 15:03 UTC] ✓ 系统正常 — Scanner 连续成功 (35s, 283 passed), Market/Portfolio/Features 实时, Opportunities=2031 (+768/h). §17 恶化趋势: timed_out 5→9, abandoned threads=4 (IOCP drain 累积). 其余无变化.
+
+[2026-06-17 15:46 UTC] ✓ 系统正常 — Scanner 连续成功 (34-36s, 284-286 passed), Opportunities=2096 (+833/h). §17 timed_out=11 (缓慢累积, 非阻断). Ghost=0, Stale total=225 (稳定不增).
+
+[2026-06-17 16:03 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 284-285 passed), Opportunities=2119 (+856/h). §17 abandoned threads=8 (从 4→8, 1h 内翻倍), timed_out=13. 线程泄漏加速但进程稳定, 建议下次 gateway restart 清理.
+
+[2026-06-17 16:46 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 284-286 passed), Opportunities=2184 (+921/h 峰值). §17 timed_out=15 (+2/43min, 线性增长). Stale total=225 (稳定). Ghost=0. 所有核心管道实时.
+
+[2026-06-17 17:03 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 285-286 passed), Opportunities=2208 (+945/h). **新**: strategy_designer 首次触发 (completed=1), pipeline 完整链条生效. §17 abandoned threads=12 (持续累积 ~4/h), timed_out=17. Knowledge=908 (+1 strategy_memory). Ghost=0.
+
+[2026-06-17 17:46 UTC] ✓ 系统正常 — Scanner 稳定 (35-36s, 286 passed), Opportunities=2274 (**+1011/h 首次破千**). Market snapshots=1050/h. §17 timed_out=19 (线性 ~2/45min). Ghost=0, Stale=225 (不增). 所有管道实时运行 5h+ 无中断.
