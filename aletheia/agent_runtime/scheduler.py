@@ -170,6 +170,29 @@ def _run_sync_with_timeout(job_id: str, fn) -> object:
         pool.shutdown(wait=False)
 
 
+def _ensure_agent_run_ended(job_id: str, target_status: str) -> None:
+    """Safety-net: mark any still-running agent_run row as ended from caller thread.
+
+    Handles the case where asyncio.run() teardown hangs (IOCP drain) after the
+    coroutine already completed successfully — the daemon thread's finally block
+    never reaches its DB update, leaving a ghost 'running' row that the periodic
+    cleanup later marks as 'stale'.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        was_in_tx = db.in_transaction
+        db.execute(
+            "UPDATE agent_runs SET status = ?, ended_at = datetime('now') "
+            "WHERE agent_name = ? AND status = 'running'",
+            (target_status, job_id),
+        )
+        if not was_in_tx:
+            db.commit()
+    except Exception as e:
+        logger.debug("_ensure_agent_run_ended(%s, %s) failed: %s", job_id, target_status, e)
+
+
 def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
     """Run an async job with a hard wall-clock bound.
 
@@ -214,7 +237,9 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = pool.submit(_run)
     try:
-        return future.result(timeout=thread_timeout)
+        result = future.result(timeout=thread_timeout)
+        _ensure_agent_run_ended(job_id, "completed")
+        return result
     except concurrent.futures.TimeoutError:
         # Try to interrupt the stuck event loop from this thread
         loop = _loop_ref[0]

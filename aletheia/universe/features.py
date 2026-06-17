@@ -16,6 +16,7 @@ logger = logging.getLogger("aletheia.universe.features")
 
 _OHLCV_CONCURRENCY = 10
 _OHLCV_TIMEOUT = 8.0
+_TICKER_CHUNK_SIZE = 100
 
 
 def _pct_return(closes: list[float], bars: int) -> float | None:
@@ -41,6 +42,19 @@ def _spread_bps(bid: float | None, ask: float | None) -> float | None:
     if bid is None or ask is None or bid <= 0:
         return None
     return ((ask - bid) / bid) * 10000.0
+
+
+async def _chunked_fetch_tickers(exchange, symbols: list[str]) -> dict:
+    """Fetch tickers in chunks to stay within Binance URL length limits."""
+    all_tickers: dict = {}
+    valid = [s for s in symbols if s in exchange.markets]
+    for i in range(0, len(valid), _TICKER_CHUNK_SIZE):
+        chunk = valid[i:i + _TICKER_CHUNK_SIZE]
+        try:
+            all_tickers.update(await exchange.fetch_tickers(chunk))
+        except Exception as e:
+            logger.warning("Ticker chunk %d-%d failed: %s", i, i + len(chunk), e)
+    return all_tickers
 
 
 async def _fetch_single_feature(
@@ -173,17 +187,11 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
         tickers: dict = {}
 
         exchange.options["defaultType"] = "spot"
-        try:
-            tickers.update(await exchange.fetch_tickers(spot_symbols[:500]))
-        except Exception as e:
-            logger.warning("Batch spot ticker fetch failed: %s", e)
+        tickers.update(await _chunked_fetch_tickers(exchange, spot_symbols))
 
         if perp_symbols:
             exchange.options["defaultType"] = "swap"
-            try:
-                tickers.update(await exchange.fetch_tickers(perp_symbols[:300]))
-            except Exception as e:
-                logger.warning("Batch perp ticker fetch failed: %s", e)
+            tickers.update(await _chunked_fetch_tickers(exchange, perp_symbols))
 
         # --- Volume pre-filter ---
         min_vol = cfg.universe.min_volume_24h_usdt
