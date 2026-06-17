@@ -537,3 +537,33 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 24h: 594 runs, 78 failed (13.1%)
 
 **结论**: 核心数据管道(scanner/market/features)稳定运行。portfolio 停滞超 100min 升级为 §15。知识增速放缓（dreaming_agent 可能只每日触发一次）。系统整体可用。
+
+### 2026-06-17 07:03 UTC — 第九轮巡检 (Δ17min)
+
+**系统状态**: gateway running, scheduler active
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 正常 | 06:48 completed (118 passed, 4min), 当前 06:58 in progress |
+| Feature Snapshots | ✅ 正常 | 148-793 assets/batch, 稳定 |
+| Market Snapshots | ✅ 正常 | 06:57 UTC (6min 前) |
+| Portfolio Snapshots | ✅ 恢复 | 06:57 UTC (§15 自修复, 从 05:00 停滞 117min 后恢复) |
+| Knowledge Production | ⚠️ 重复 | +6 items/h (5 ptr + 1 rn), total=829 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**状态变化 vs 上轮**:
+- ✅ §15 Portfolio 恢复: 05:00 → 06:57 (self-heal restart 后恢复, 同 market_observer 模式)
+- ⚠️ Ghost scanner: 18→19 (+1, 持续累积)
+- ⚠️ Stale agents: 199→200 (+1)
+- 📊 Scanner 总计: completed=16, running=19(ghost), timed_out=84, failed=9
+- 📊 Knowledge: 825→829 (+4 in 17min, post_trade_review 为主)
+
+**agent 运行率**:
+- 1h: 16 runs, 13 completed, 3 failed (18.8% — 改善)
+- 24h: 603 runs, 79 failed (13.1% — 持平)
+
+**error.log**: 无新异常，仅 uvicorn startup 记录（3 次 restart，code_drift self-heal 正常）
+
+**结论**: 全部 5 条数据管道恢复正常运行。§15 portfolio 停滞已自修复（确认模式：thread abandon → self-heal restart → 管道恢复）。系统稳态运行，主要技术债仍为 ghost scanner 累积(19) + stale agents 累积(200)。知识去重未部署，垃圾仍在缓慢增长但速率降低(4/17min vs 之前 22/17min)。
