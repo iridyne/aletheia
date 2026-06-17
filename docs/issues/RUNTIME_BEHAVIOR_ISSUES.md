@@ -685,3 +685,41 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **error.log**: max_instances skipped + missed run (正常) + startup reconciliation "Marked 1 stale"
 
 **备注**: agent 1h 失败率 8.3% 为近期最佳之一。系统持续稳态运行 >4h。knowledge total 停在 853（本小时未产出新增 — 可能当前 agent 周期刚好在间隔中）。
+
+### 2026-06-17 10:46 UTC — 第十六轮巡检 (Δ43min)
+
+**系统状态**: gateway running, **scanner 连续 4 次 failed** 🔴
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | 🔴 连续 failed | 10:22/10:24/10:34/10:44 全部 failed (scanned=0) |
+| Feature Snapshots | ⚠️ 停滞 | 最新 10:08 (38min 前), 因 scanner 失败无新 batch |
+| Market Snapshots | ✅ 正常 | 10:43 (3min 前) |
+| Portfolio Snapshots | ✅ 正常 | 10:43 (3min) |
+| Knowledge Production | ✅ 正常 | +8/h (6 ptr + 1 rn + 1 cs), total=861 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**§16 Scanner 连续失败 — futures commit 引入 "swap" ExchangeError** 🔴
+
+- **观测**: 4 次连续 failed, scanned=0, 即时失败
+- **根因**: commit `f626ad3` (feat(futures): Layer 0-6 spot/futures unification) 修改了
+  `aletheia/universe/features.py`，将 `fetchMarkets` 改为 `["spot", "swap"]`
+- **错误**: `binance fetchMarkets() "swap" is not a supported market type`
+  - Binance CCXT 只接受 `["spot", "linear", "inverse"]`，不接受 "swap"
+  - "swap" 是 CCXT 内部 market type，不能传给 binance 的 fetchMarkets options
+- **影响**: universe scanner 完全停止 → 无新 feature snapshots → 无新 universe 候选
+  - market_observer/portfolio 不受影响（独立管道）
+  - 现有 universe snapshot 仍有效（TTL 内）但会过期
+- **紧迫性**: 必须立即修复，否则 universe 过期后回退到 static fallback
+- **修复方向**: features.py 应使用 `["spot", "linear"]` 而非 `["spot", "swap"]`
+  来加载 binance 永续合约市场。或在 futures 未配置启用时保持 `["spot"]`
+
+**其他观测**:
+- Ghost scanner=0 (全部 failed 不产生 ghost)
+- Stale agents: 213→216 (+3)
+- timed_out: 109→111 (+2)
+- agent 运行率 1h: 30 runs, 25 completed, 4 failed (13.3% — 正常)
+
+**结论**: futures integration commit 引入了 scanner 回归。这是 §14 的根本修复需求——之前是脏文件导致，这次是已提交的代码。需要修复 features.py 中 binance fetchMarkets 的 market type 映射。
