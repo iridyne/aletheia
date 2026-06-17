@@ -99,6 +99,20 @@ Microstructure/Derivatives/Macro 三表段，平均每个 symbol 多 ~200 token 
 
 ---
 
+## US Equity 集成 — 完成 (2026-06-17, Phase 1-4 全部)
+
+10 个文件改动 + 1 个新文件(`aletheia/agents/equity_observer.py`)。
+
+- **Phase 1**：`data/symbols.py` xstock↔ticker 映射，`config/schema.py` `observed_equities` 字段，`storage/models.py` + `migrations.py` Opportunity 新字段
+- **Phase 2**：`equity_observer.py` 统一 agent（yfinance 日线 + xStock 实时价 + deviation 监控）；`scheduler.py` 替换 `stock_observer` 调度
+- **Phase 3**：`knowledge/router.py` 加 `equity_observer` role；`market_observer.py` 移除 xStocks 分支
+- **Settings UI**：`POST /settings/equities` backend + `updateEquities` API client + `EquitiesCard` 前端组件（RiskTab "Observed US Equities" section）
+- **Phase 4**：`paper_trader_ranker.py` equity shadow track（计分但 `skip_reason="equity_shadow_track"`，永不执行）
+
+启用方式：Settings → Risk & Universe → Observed US Equities → 添加 ticker（如 AAPL、TSLA）→ Save changes；gateway 重启后 equity_observer 在 Mon–Fri 市场时段自动运行。
+
+---
+
 ## 待办(下一步可做的事 — 不含"现在状态如何")
 
 1. **持续闭环观察**:每次较大改动后用 `aletheia doctor` 扫一眼,看 fills/positions/

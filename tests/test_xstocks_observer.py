@@ -1,9 +1,9 @@
-"""Tests for Bitget xStocks observation via market_observer.
+"""Tests for Bitget xStocks observation and equity_observer integration.
 
 xStocks (AAPLON/USDT etc.) are Bitget tokenized equity tokens:
-- Fetched via CCXTProvider(exchange="bitget") — only Bitget lists ON-series
+- Fetched via equity_observer (not market_observer) since Phase 2 of equity integration
 - asset_class="equity" → paper_trader MUST NOT trade them
-- linked_strategy_id=None — no crypto strategy binding
+- execution_eligible=False — observation-only; xStocks are the on-chain execution channel
 """
 
 import asyncio
@@ -67,67 +67,55 @@ def test_xstocks_instruments_empty_when_not_configured(tmp_path, monkeypatch):
     reset_db()
 
 
-# --- Observer integration ---
+# --- equity_observer integration ---
 
-def test_xstocks_opportunities_have_equity_asset_class(tmp_path, monkeypatch):
-    """market_observer writes asset_class=equity for xStocks symbols."""
+def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
+    """equity_observer writes asset_class=equity, execution_eligible=False for equity tickers."""
     _setup(tmp_path, monkeypatch)
 
-    # Limit crypto symbols to none so only xStocks run.
-    import aletheia.agents.market_observer as mo
-    import aletheia.config.loader as loader
-
+    import aletheia.agents.equity_observer as eo
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.market_data.observed_symbols = []
-    cfg.market_data.observed_xstocks = ["AAPLON/USDT"]
+    cfg.market_data.observed_equities = ["AAPL"]
+    cfg.market_data.observed_xstocks = []  # no xStocks cross-validation in this test
     save_config(cfg)
 
-    # Stub LLM — returns a directional read so opportunity is created.
+    # Stub yfinance fetch so no network needed.
+    def fake_fetch(ticker, _retry=True):
+        return {
+            "ticker": ticker, "last": 195.0, "bars": 65,
+            "sma20": 190.0, "sma50": 185.0, "rsi14": 58.0, "atr14": 3.5,
+            "bb_lower": 180.0, "bb_upper": 210.0, "bb_pct_b": 0.6,
+            "momentum_10": 2.5, "volume_zscore": 0.8,
+        }
+    monkeypatch.setattr(eo, "_fetch_equity_indicators", fake_fetch)
+
+    # Stub LLM.
     async def fake_llm(*a, **kw):
         return ({"direction_bias": "long", "confidence": "medium",
-                 "confidence_score": 60, "rationale": "xstock test",
-                 "key_observations": ["price above SMA20"]}, None)
-    monkeypatch.setattr(mo, "llm_structured", fake_llm)
+                 "confidence_score": 65, "rationale": "equity test",
+                 "key_observations": ["price above SMA50"]}, None)
+    monkeypatch.setattr(eo, "llm_structured", fake_llm)
 
-    # Stub build_market_context so no network needed.
-    async def fake_builder(symbols, market_type="spot", provider=None, client=None):
-        return ("AAPLON/USDT verified snapshot", {"fallback": False, "errors": [], "symbols": {}})
-    import aletheia.trading.market_context as mc
-    monkeypatch.setattr(mc, "build_market_context", fake_builder)
-
-    # Stub the CCXTProvider so xStocks loop doesn't hit network.
-    from aletheia.data.ccxt_provider import CCXTProvider
-    class FakeBitgetProvider:
-        async def get_ticker(self, sym):
-            from aletheia.data.providers import Ticker
-            return Ticker(symbol=sym, last_price=300.0, volume_24h=10000, change_pct_24h=0.5, provider="bitget")
-        async def get_ohlcv(self, sym, timeframe, limit):
-            return []
-        async def close(self):
-            pass
-    monkeypatch.setattr(mo, "_analyze_symbol", mo._analyze_symbol)  # keep original
-    # Patch CCXTProvider construction inside market_observer
-    monkeypatch.setattr("aletheia.data.ccxt_provider.CCXTProvider",
-                        lambda exchange, fallback_exchange: FakeBitgetProvider())
-
-    from aletheia.agents.market_observer import run_market_observer
-    out = asyncio.run(run_market_observer(permission_mode="Full", run_id="run-xs-1"))
+    from aletheia.agents.equity_observer import run_equity_observer
+    out = asyncio.run(run_equity_observer(permission_mode="Full", run_id="run-eq-1"))
 
     opps = repo.list_opportunities(limit=20)
-    xstock_opps = [o for o in opps if o.get("symbol") == "AAPLON/USDT"]
-    assert xstock_opps, f"Expected xStock opportunity, got: {[o['symbol'] for o in opps]}"
-    opp = xstock_opps[0]
+    eq_opps = [o for o in opps if o.get("canonical_ticker") == "AAPL"]
+    assert eq_opps, f"Expected AAPL equity opportunity, got: {[o.get('symbol') for o in opps]}"
+    opp = eq_opps[0]
     assert opp["asset_class"] == "equity", f"asset_class should be equity, got {opp['asset_class']}"
-    assert opp["linked_strategy_id"] is None, "xStocks should not be linked to crypto strategies"
+    assert opp["asset_subclass"] == "equity_daily"
+    assert opp["execution_eligible"] == 0, "equity opportunities must not be execution-eligible"
+    assert opp["symbol"] == "AAPL/USD"
 
     from aletheia.agents.helpers import _release_run_counter
-    _release_run_counter("run-xs-1")
+    _release_run_counter("run-eq-1")
     reset_db()
 
 
 def test_paper_trader_ignores_xstocks_opportunities(tmp_path, monkeypatch):
-    """paper_trader must skip asset_class=equity opportunities."""
+    """paper_trader must not trade asset_class=equity opportunities (shadow track only)."""
     _setup(tmp_path, monkeypatch)
 
     from aletheia.config.loader import load_config, save_config
@@ -153,8 +141,9 @@ def test_paper_trader_ignores_xstocks_opportunities(tmp_path, monkeypatch):
     from aletheia.agents.paper_trader import run_paper_trader
     out = asyncio.run(run_paper_trader(permission_mode="Full", run_id="run-xs-pt"))
 
-    # paper_trader should find no ranked candidate (equity excluded from crypto filter).
-    assert "no_ranked_candidate" in out["outputs"], f"Expected skip, got: {out}"
+    # equity_shadow_track candidate appears in skip outputs but never becomes a trade proposal.
+    skip_outputs = [o for o in out["outputs"] if o.startswith("skip:") and "equity_shadow_track" in o]
+    assert skip_outputs, f"Expected equity_shadow_track skip output, got: {out}"
     proposals = repo.list_trade_proposals()
     assert not proposals, "paper_trader must not propose xStocks trades"
     reset_db()

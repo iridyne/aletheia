@@ -83,6 +83,14 @@ class MarketDataConfig(BaseModel):
     # Polymarket category slugs (or keywords) to observe. prediction_observer
     # fetches active markets matching these categories every 30 minutes.
     observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])
+    # US equities to observe — canonical Yahoo Finance tickers (e.g. "AAPL").
+    # equity_observer fetches daily bars via yfinance AND real-time price via
+    # Bitget xStocks (if a matching ON-series token exists). Runs Mon–Fri
+    # 14:30–21:00 UTC (US market hours). Empty = disabled.
+    observed_equities: list[str] = Field(default_factory=list)
+    # Deprecated: use observed_equities instead. Kept for backwards compatibility
+    # so existing config.yaml files continue to load without error.
+    observed_stocks: list[str] = Field(default_factory=list)
     # Bitget tokenized xStocks (ON-series spot symbols). market_observer observes
     # these via Bitget CCXT (no API key needed); asset_class="equity", never traded.
     observed_xstocks: list[str] = Field(

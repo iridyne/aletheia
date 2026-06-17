@@ -278,6 +278,8 @@ export const api = {
   }>) => post<{ updated: Record<string, any>; risk: Record<string, any> }>('/settings/risk', body),
   updateSymbolFilter: (body: { mode: string; symbols: string[] }) =>
     post<{ mode: string; symbols: string[] }>('/settings/symbols', body),
+  updateEquities: (tickers: string[]) =>
+    post<{ observed_equities: string[] }>('/settings/equities', { tickers }),
   updateTradingConfig: (body: Partial<{
     default_stop_loss_pct: number; default_take_profit_pct: number
     max_position_hold_hours: number; slippage_bps: number; execution_fee_pct: number

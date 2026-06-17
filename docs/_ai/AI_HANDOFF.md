@@ -7,6 +7,42 @@
 
 ## Last Updated
 
+2026-06-17 (US Equity 集成 Phase 1-4 + Settings UI 全部完成)
+
+---
+
+## Recent Change (US Equity 集成 Phase 1-4 + Settings UI — 2026-06-17)
+
+> **背景**:xStocks（Bitget ON-series）和 yfinance 两条路径孤立，symbol 格式不兼容，
+> knowledge 循环断路，equity 机会被 ranker 硬杀。
+
+**改动(10 个文件，1 个新文件)**:
+
+1. `aletheia/data/symbols.py` — 新增 `_XSTOCK_BASE_TO_TICKER` 映射表 + `xstock_to_ticker()` / `ticker_to_xstock()` 工具函数（10 个已知 ON-series token）
+2. `aletheia/config/schema.py` — `MarketDataConfig` 加 `observed_equities: list[str]`（主入口）+ `observed_stocks`（向后兼容）
+3. `aletheia/storage/models.py` — `Opportunity` 加 `asset_subclass: str = ""` + `canonical_ticker: str = ""`
+4. `aletheia/storage/migrations.py` — `_ADDITIVE_COLUMNS` 追加两条 equity 字段（`TEXT NOT NULL DEFAULT ''`）
+5. `aletheia/agents/equity_observer.py` — **新文件**：统一 equity agent（yfinance 日线 + Bitget xStock 实时价 + deviation_pct 监控 + equity 专属 LLM prompt）；`execution_eligible=False`；deviation > 2% premium_alert；deviation > 5% data_anomaly（排除 LLM）
+6. `aletheia/agent_runtime/scheduler.py` — `equity_observer` cron job（替换 `stock_observer`，相同 Mon–Fri 14:30–21:00 UTC 窗口）
+7. `aletheia/knowledge/router.py` — `AgentRole` 加 `equity_observer`；`_ITEM_TYPES_BY_ROLE` 加 equity role（research_note / trade_case_study / post_trade_review）
+8. `aletheia/agents/market_observer.py` — 移除 xStocks 分支（防止与 equity_observer 重复写入）
+9. `aletheia/server/routes/settings.py` — 新增 `POST /settings/equities` endpoint（`EquitiesConfigUpdate`，normalize+去重保存到 `market_data.observed_equities`）
+10. `frontend/src/api/client.ts` — 新增 `updateEquities(tickers)` API 方法
+11. `frontend/src/pages/Settings.tsx` — 新增 `EquitiesCard` 组件（chip-based 增删，save mutation）+ 在 RiskTab 加 "Observed US Equities" Section；前端静态文件已重新构建
+12. `aletheia/agents/paper_trader_ranker.py` — **Phase 4 shadow track**：equity 机会改为计分（direction + confidence_score）但标记 `skip_reason="equity_shadow_track"`，不再 `return None` 硬排除；对应 2 个测试用例同步更新
+
+**关键设计决策**:
+- `deviation_pct` = tracking error 监控，**不是套利信号**（所有执行从 Bitget 出发，xStocks 是唯一执行渠道）
+- equity 不进 Universe 主流水线（crypto 特征对 equity 无意义）
+- equity shadow track 会出现在 paper_trader 的 skip outputs 里，方便观察 equity 信号质量，但永远不会被选为执行候选
+- `stock_observer` 留在 registry（向后兼容），但不再由 scheduler 调度
+
+**验证**: 前端 tsc+vite build 无错误；25 项相关测试全绿（paper_trader_ranker 25 + xstocks_observer 4）
+
+---
+
+## Last Updated (previous)
+
 2026-06-16 (根治 scheduler deadlock / DB lock — isolation_level=None autocommit)
 
 ---

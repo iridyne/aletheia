@@ -681,11 +681,79 @@ function RiskTab({ settings, qc }: any) {
       </Section>
 
       <Section
+        title="Observed US Equities"
+        description="US equity tickers for equity_observer (observation-only, not traded). Requires Bitget xStock support for the ticker."
+      >
+        <EquitiesCard settings={settings} qc={qc} />
+      </Section>
+
+      <Section
         title="Risk Limits"
         description="Hard limits enforced by the Risk Engine on every order evaluation. Changes are audited and take effect on the next agent cycle."
       >
         <RiskCard settings={settings} qc={qc} />
       </Section>
+    </div>
+  )
+}
+
+// ─── Equities ───
+
+function EquitiesCard({ settings, qc }: any) {
+  const serverTickers: string[] = settings?.market_data?.observed_equities ?? []
+  const [draft, setDraft] = useState<string[]>(serverTickers)
+  const [input, setInput] = useState('')
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => { setDraft(serverTickers) }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateEquities(draft),
+    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const add = () => {
+    const t = input.trim().toUpperCase()
+    if (!t || draft.includes(t)) return
+    setDraft(prev => [...prev, t]); setInput(''); setMsg(null)
+  }
+  const remove = (t: string) => { setDraft(prev => prev.filter(x => x !== t)); setMsg(null) }
+
+  const dirty = JSON.stringify(draft.slice().sort()) !== JSON.stringify(serverTickers.slice().sort())
+
+  return (
+    <div className="card" style={{ marginBottom: 0 }}>
+      <div className="flex flex-wrap gap-1 mb-3" style={{ minHeight: '2rem' }}>
+        {draft.map(t => (
+          <span key={t} className="symbol-chip allow">
+            {t}
+            <button onClick={() => remove(t)} title={`Remove ${t}`}>×</button>
+          </span>
+        ))}
+        {draft.length === 0 && (
+          <span className="hint" style={{ margin: 0 }}>No tickers — equity_observer will not run.</span>
+        )}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          value={input} placeholder="e.g. AAPL"
+          onChange={e => setInput(e.target.value.toUpperCase())}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+          style={{ width: '120px', fontFamily: 'var(--mono)', textTransform: 'uppercase' }}
+        />
+        <button className="secondary" onClick={add}>Add</button>
+        {dirty && (
+          <button onClick={() => mut.mutate()} disabled={mut.isPending}>
+            {mut.isPending ? 'Saving…' : 'Save changes'}
+          </button>
+        )}
+      </div>
+      <SaveMsg msg={msg} />
+      <p className="hint">
+        US equity tickers observed by equity_observer (yfinance daily bars + Bitget xStock price deviation).
+        Observation-only — not traded. Changes take effect on next agent cycle (Mon–Fri market hours).
+      </p>
     </div>
   )
 }

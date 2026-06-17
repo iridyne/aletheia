@@ -102,6 +102,13 @@ def _evaluate_candidate(
     """
     # Hard filter: asset class
     ac = opp.get("asset_class") or "crypto"
+    if ac == "equity":
+        # Shadow track: score but never execute. Run through direction + confidence to
+        # produce a meaningful score for monitoring; skip crypto-specific pipeline steps.
+        bias = (opp.get("direction_bias") or "neutral").lower()
+        direction = "long" if bias in ("long", "bullish") else ("short" if bias in ("short", "bearish") else None)
+        score = float(opp.get("confidence_score") or 0)
+        return _make_candidate(opp, skip_reason="equity_shadow_track", direction=direction, trade_score=score)
     if ac != "crypto":
         return None
 

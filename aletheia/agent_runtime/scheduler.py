@@ -29,7 +29,8 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "strategy_designer": 300.0,
     "paper_trader": 300.0,
     "pi_trading_decision": 300.0,
-    "stock_observer": 240.0,
+    "equity_observer": 240.0,
+    "stock_observer": 240.0,  # kept for backwards-compat; superseded by equity_observer
     "prediction_observer": 240.0,
     "divergence_scanner": 60.0,
     "post_trade_reviewer": 300.0,
@@ -317,12 +318,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=120, executor="io",
     )
     # US equity observer — runs every 30 min Mon–Fri during US market hours
-    # (14:30–21:00 UTC = 09:30–16:00 Eastern). The job function enforces the
-    # time gate so off-hours fires are silent no-ops (stale daily data).
+    # (14:30–21:00 UTC = 09:30–16:00 Eastern). Unified agent: yfinance daily bars
+    # + Bitget xStocks real-time price cross-validation. Replaces stock_observer.
     _scheduler.add_job(
-        _guarded("stock_observer", _run_stock_observer), "cron",
+        _guarded("equity_observer", _run_equity_observer), "cron",
         day_of_week="mon-fri", hour="14-20", minute="*/30",
-        id="stock_observer", misfire_grace_time=300, executor="agents", timezone="UTC",
+        id="equity_observer", misfire_grace_time=300, executor="agents", timezone="UTC",
     )
     # Prediction market observer — runs every 30 min around the clock.
     _scheduler.add_job(
@@ -675,23 +676,23 @@ def _run_position_reconcile():
         logger.warning("position_reconcile job failed: %s", e)
 
 
-def _run_stock_observer():
-    """Run stock_observer during US market hours (gate checked here too)."""
+def _run_equity_observer():
+    """Run equity_observer during US market hours (scheduler cron already filters)."""
     cfg = load_config()
     if cfg.runtime.paused:
         return
-    # Redundant time gate (scheduler cron already filters, but be explicit).
-    if not cfg.market_data.observed_stocks:
+    tickers = cfg.market_data.observed_equities or cfg.market_data.observed_stocks
+    if not tickers:
         return
     try:
-        _run_async_with_timeout("stock_observer", _async_run("stock_observer"))
+        _run_async_with_timeout("equity_observer", _async_run("equity_observer"))
     except TimeoutError:
         logger.warning(
-            "stock_observer job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["stock_observer"],
+            "equity_observer job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["equity_observer"],
         )
     except Exception as e:
-        logger.warning("stock_observer job failed: %s", e)
+        logger.warning("equity_observer job failed: %s", e)
 
 
 def _run_prediction_observer():
