@@ -246,6 +246,7 @@
 | P2 | §3 stock_observer 全失败 | 确认 xStock 接口状态 | ✅ 已禁用 |
 | P2 | §5 prediction_events 空 | 确认数据写入路径 | ℹ️ 设计如此 |
 | P3 | §8 market_observer 偶发失败 | 监控即可 | — 无需修复 |
+| **P1** | **§16 scanner 连续失败 (futures regression)** | **batch ticker + pre-filter + concurrent OHLCV** | ✅ 已修复 (需 gateway restart) |
 
 ### 修复说明 (2026-06-17)
 
@@ -284,6 +285,16 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 清理脚本增加 `--backfill` 模式：质量过关的孤儿文件插入 DB（含 content_hash 去重）
 - 低质量文件（<80 bytes / placeholder）在 backfill 时删除
 - 用法: `uv run python scripts/cleanup_duplicate_knowledge.py --backfill`
+
+**§16 Scanner 性能升级** (2026-06-17):
+- 根因: futures 合并后 registry 从 ~400 增至 ~700-900 资产，`collect_features()` 串行
+  `fetch_ohlcv()` 每资产 1-2s，总计 >20min 远超 360s timeout
+- 修复策略: batch ticker + volume pre-filter + concurrent OHLCV
+  1. Spot/perp tickers 分别 batch fetch（~2-4s 取回全部）
+  2. 用 quoteVolume >= min_volume_24h_usdt 预筛，700→~100-150 资产
+  3. 剩余资产用 asyncio.Semaphore(5) 并发 OHLCV，~60s 内完成
+- timeout 从 360s 提升至 600s 作为安全网
+- 预期: 从 timeout (>360s) 降至 60-90s 完成
 
 ---
 
@@ -754,3 +765,13 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **Feature snapshots 停滞 53min** (最新 10:08) — 因 scanner 失败无新 universe 供 feature 采集。现有 universe snapshot 仍在 TTL 内（snapshot_ttl_hours 通常 6-24h），暂不影响 market_observer 选币。
 
 **紧迫性升级**: 已连续失败 >40min。若不修复，universe snapshot 将在 TTL 后过期，系统回退到 static fallback (BTC/ETH/SOL only)。
+
+### 2026-06-17 11:46 UTC — 第十八轮巡检 (Δ43min)
+
+**§16 持续恶化**: Scanner 连续 10 次 failed (82min+, 10:22→11:44)。failed 总计 9→19 (+10)。Feature snapshots 停滞 97min (最新 10:08)。
+
+**其他管道正常**: Market 11:38 (8min) | Portfolio 11:43 (3min) | Knowledge +4/h (3 ptr + 1 rn), total=865 | Agent 1h: 27 runs, 21 completed, 1 failed (3.7% — 最佳) | Stale 217 | Ghost=0
+
+**新观测**: error.log 出现 `RuntimeWarning: coroutine 'binance.request' was never awaited` — service.py:214 在 exception 处理中未正确 await CCXT close，造成资源泄漏。非阻断但增加内存/连接开销。
+
+**影响评估**: 最后一次成功 universe snapshot 在 ~10:02 UTC (104min 前)。如果 snapshot_ttl_hours=6，则到 ~16:02 UTC 前 universe 仍有效。还有 ~4h 窗口修复。agent 运行率反而因无 scanner timeout 而改善到 3.7%（只有 agent 管道在跑）。
