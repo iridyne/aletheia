@@ -895,3 +895,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 14:03 UTC] ✓ 系统正常 — Scanner 连续第 8 次成功 (35-36s, 285 passed), Market/Portfolio/Features 实时, Opportunities +675/h. §17/§18 持续无恶化. market_observer stale=49/94 (52%), timed_out=5.
 
 [2026-06-17 14:46 UTC] ✓ 系统正常 — Scanner 连续 12+ 次成功 (35-36s, 282-287 passed), Opportunities 突破 2000 (total=2009, +746/h). §17 market_observer stale=50/98 (51%), timed_out=7. §18 symbol mismatch 持续 (SKYAI, MRVL 等). Ghost=0.
+
+[2026-06-17 15:03 UTC] ✓ 系统正常 — Scanner 连续成功 (35s, 283 passed), Market/Portfolio/Features 实时, Opportunities=2031 (+768/h). §17 恶化趋势: timed_out 5→9, abandoned threads=4 (IOCP drain 累积). 其余无变化.
