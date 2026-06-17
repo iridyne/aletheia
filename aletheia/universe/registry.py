@@ -44,6 +44,7 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
 
     try:
         exchange = provider._ensure_primary()
+        exchange.options["defaultType"] = "spot"
         await exchange.load_markets()
         markets = exchange.markets
 
