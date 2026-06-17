@@ -599,3 +599,41 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 24h: 636 runs, 82 failed (12.9% — 持平)
 
 **结论**: 核心管道(scanner/market/features)稳定。agent 成功率近 1h 显著改善(7.1%)。Portfolio 再次微停待观察(self-heal 模式可预期恢复)。§12 case study NoneType 是最高频复现的非阻断性 bug(13 positions/cycle)。ghost scanner 累积加速(+3 vs 之前 +1~2/轮)说明 timeout→DB 清理的修复越来越紧迫。
+
+### 2026-06-17 08:03 UTC — 第十一轮巡检 (Δ17min)
+
+**系统状态**: gateway running, scheduler active, self-heal restart 后稳定
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 正常 | 07:49 completed (120 passed), 当前 07:59 in progress |
+| Feature Snapshots | ✅ 正常 | 790-793 assets/batch, 连续 3 batch 稳定 |
+| Market Snapshots | ✅ 正常 | 07:57 UTC (6min 前) |
+| Portfolio Snapshots | ✅ 恢复 | 07:57 UTC (上轮 49min 停滞后恢复) |
+| Knowledge Production | ⚠️ 重复 | +10 items/h (9 ptr + 1 rn), total=839 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**重要发现 — §10 Ghost Scanner 批量清理已生效** ✅
+- Ghost scanner: 22→1 (自动清理 21 条 ghost → timed_out)
+- Scanner timed_out: 84→106 (+22, 对应之前 ghost 数)
+- **确认**: self-heal restart 后的 startup reconciliation 正确工作
+- 当前仅剩 1 条 running (即当前正在跑的合法 run)
+- 这是 §10 问题的**运行期自愈**，非代码修复——下次长期运行仍会累积
+
+**error.log 新模式**:
+- `max_instances reached (1)`: APScheduler 正确跳过并发实例（max_instances=1 生效）
+- `Run time was missed by 0:03:06`: scheduler restart 后部分 job missed 一个周期（正常）
+- §12 case study NoneType: 持续 (11 positions/cycle)
+
+**已知问题趋势**:
+- Ghost scanner: 22→1 (✅ 批量清理)
+- Stale agents: 203→205 (+2, 仍在缓慢累积)
+- Knowledge: 835→839 (+4 in 17min)
+
+**agent 运行率**:
+- 1h: 41 runs, 35 completed, 5 failed (12.2% — 正常波动)
+- 24h: 644 runs, 84 failed (13.0% — 持平)
+
+**结论**: §10 ghost scanner 问题在本轮得到批量清理(22→1)，确认 startup reconciliation 有效但需要周期化(§11 建议)。所有核心管道正常。系统处于最佳稳态。
