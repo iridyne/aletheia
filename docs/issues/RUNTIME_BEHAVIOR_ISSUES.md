@@ -150,26 +150,42 @@
 
 ---
 
-## §7 知识类型分布不均 🟡
+## §7 知识产出严重注水——99% 重复垃圾 🔴
 
-**观测数据**:
-- 磁盘文件分布:
-  - case_studies: 1244 (56%) — "发生了什么"
-  - post_trade_reviews: 435 (20%) — "交易后怎样"
-  - dreaming_logs: 301 (14%) — "联想到什么"
-  - research_notes: 210 (10%) — "为什么发生"
-  - daily_reviews: 10 (0.5%) — "今天总结"
-  - operator_memory: 5 (0.2%) — "运营者经验"
+**观测数据** (2026-06-17 00:50 UTC 内容级审计):
 
-**影响**:
-- 系统擅长"记事"(case_study) 但弱于"归因"(research) 和"总结"(daily_review)
-- daily_reviews 10 天仅 10 条是正常的（1条/天），但 research_notes 相对不足
-- 知识质量取决于深度研究，而非数量堆积
+| 目录 | 文件数 | 唯一内容 | 重复率 | 最多重复 |
+|------|--------|----------|--------|----------|
+| case_studies/ | 1251 | **8** | **99.4%** | x186 (同一条反复写) |
+| research_notes/ | 211 | 22 | 89.6% | x190 (占位符 "Content here") |
+| dreaming_logs/ | 301 | 99 | 67.1% | x190 (一句话 "Synthesized 3 research notes.") |
+| post_trade_reviews/ | 438 | 377 | 13.9% | x28 (空壳仅标题) |
+| daily_reviews/ | 10 | 8 | 20.0% | x3 |
 
-**优化方向**:
-- 不是 bug，更像是 agent 行为权重问题
-- 可调节 research_agent 触发频率或降低 case_study 的重复记录阈值
-- daily_review 应检查是否每天定时生成（确认 scheduler 注册）
+**核心证据**:
+- `research_notes/`: 190 个文件内容是 `"# BTC Breakout Analysis\nconfidence: high\nContent here"` — **字面占位符**
+- `dreaming_logs/`: 190 个文件内容是 `"# Daily Consolidation\nSynthesized 3 research notes."` — **一句无意义总结**
+- `case_studies/`: 1251 个文件只有 8 种内容，每种被写入 ~186 次（同一笔交易反复记录）
+- `post_trade_reviews/`: 28 个空壳（58 bytes，仅标题无正文）；14 个 "LLM unavailable" 回退内容
+
+**影响 — 这不只是浪费存储，是在主动污染决策链**:
+1. **FTS 搜索被稀释**: agent 查 "SOL stop_loss" 返回 186 条相同结果，有效信息被淹没
+2. **知识引用噪声**: 任何基于知识库做的统计/汇总都是假象（"1251 case studies" 实际只有 8 个交易的记录）
+3. **LLM context 浪费**: 如果 agent 读取知识做决策，拉出来的是垃圾内容
+4. **false confidence**: 系统对外展示"696 knowledge items"给人积累了大量经验的错觉，实际有效知识极少
+
+**根因分析**:
+- **重复写入无去重**: post_trade_reviewer / market_observer 每次运行都为同一批已关闭持仓重新生成 case_study，不检查是否已存在
+- **LLM 失败回退写空壳**: LLM 不可用时仍然创建文件，内容是 placeholder 或一句话 fallback
+- **占位符内容泄入**: `research_notes` 中 "Content here" 说明模板/占位符直接被存为正式知识
+- **无质量门槛**: 写入流程没有最小内容长度或内容验证检查
+
+**修复方案建议**:
+1. **去重守卫(写入时)**: 写入前对 (item_type + position_id/symbol/date) 做唯一性检查，已存在则 skip 或 update
+2. **质量门槛(写入时)**: 内容 < 100 bytes 或匹配已知 placeholder 模式则拒绝写入
+3. **LLM 失败不写入**: 当 LLM 不可用导致内容生成失败时，不创建文件，仅记录 skip 事件
+4. **历史清理(一次性)**: 批量删除重复文件，仅保留每个唯一内容的第一份
+5. **写入审计**: 每次写入记录 content_hash，定期报告重复率供监控
 
 ---
 
@@ -190,14 +206,41 @@
 
 ---
 
+## §9 知识 DB 与磁盘文件不同步 🟠
+
+**观测数据** (2026-06-17 00:45 UTC):
+- DB `knowledge_items`: 713 条
+- 磁盘 `data/knowledge/` 总文件: 2205 个 .md
+- FTS 索引: 438/438（仅覆盖 DB 记录子集）
+- 差距: 1492 个磁盘文件未入 DB（68% 遗失）
+
+**影响**:
+- 全文搜索（FTS）只能检索到 1/3 的知识——agent 查询知识库时大量历史经验不可见
+- 依赖 DB query 的分析（如 post_trade_review 汇总、case_study 关联）遗漏大量数据
+- 知识"存了但找不到"——学习系统有效容量远低于实际积累量
+
+**初步根因推断**:
+- 早期知识生成可能只写文件不入 DB（后来加了 DB 记录逻辑）
+- 或 DB 有清理/rotation 机制删除了旧记录但保留了文件
+- FTS 索引 reindex 只对 DB 中存在的记录建索引
+
+**排查方向**:
+- 对比磁盘最早文件时间 vs DB 最早 created_at，确认是"早期未入 DB"还是"后来被删"
+- 检查知识写入代码是否同时写 DB + 文件
+- 评估是否需要做一次历史文件回填（backfill into DB + FTS）
+
+---
+
 ## 优先级排序
 
 | 优先级 | 条目 | 核心诉求 |
 |--------|------|----------|
+| **P0** | **§7 知识注水 99% 重复** | **止血: 去重守卫 + 质量门槛 + 历史清理** |
 | P0 | §4 学习系统断裂 | 恢复 knowledge → lesson 闭环 |
 | P1 | §6 策略转化率极低 | 确认 opportunity → strategy 管道设计意图 |
+| P1 | §9 知识 DB/磁盘不同步 | 68% 知识对 agent 不可见 (注: §7 清理后需重评) |
 | P1 | §1 risk_critic 不稳定 | 排查 timeout/挂起原因 |
-| P2 | §2 prediction+divergence 停运 | 确认调度设计 |
+| P2 | §2 prediction+divergence 停运 | 确认调度设计(已部分恢复) |
 | P2 | §3 stock_observer 全失败 | 确认 xStock 接口状态 |
 | P2 | §5 prediction_events 空 | 确认数据写入路径 |
 | P3 | §7 知识类型不均 | agent 权重调优 |
@@ -212,3 +255,26 @@
 - Agent 平均间隔 2.3min, 无 >15min gap
 - 市场数据采集正常 (avg 0.8min gap)
 - 主要发现: 学习闭环断裂(§4)、策略转化极低(§6)、3 个 agent 异常(§1-§3)
+
+### 2026-06-17 00:45 UTC — 第二轮观测 (Δ25min)
+- 系统健康: all clear, kill_switch inactive
+- **增量**: knowledge +17 (case_study +14, post_trade_review +3), opportunities +14, orders +1, fills +1
+- **磁盘增量**: case_studies 1244→1251(+7), post_trade_reviews 435→438(+3)
+- 市场采集: avg 0.7min gap, max 5.1min — 改善(上次 max 8.4min)
+- **§2 状态更新**: prediction_observer + divergence_scanner 本轮各运行 1 次(completed) — **已恢复**。推断为大周期调度（~30min），非故障
+- **§1 状态更新**: risk_critic 本轮未触发（30min 内 0 runs）— 调度间隔可能 >30min 或按需触发
+- **§3 持续**: stock_observer 本轮 0 runs — 仍未恢复
+- **§6 持续**: strategies 仍为 2 个，无新增
+- **§4 持续**: ps_lessons 仍为 0
+- **新发现**: knowledge DB(713) vs disk(2205) 差距 3:1 — DB 记录仅为磁盘文件的子集，FTS 索引 438/438 仅覆盖 DB 内记录。历史知识文件未回填入 DB/FTS
+- **产出速率**: ~40 knowledge/h, ~34 opportunities/h（稳定）
+
+### 2026-06-17 00:50 UTC — 数据质量审计
+- **严重发现**: 知识产出 99%+ 为重复垃圾内容（§7 升级为 🔴 P0）
+- case_studies 1251 文件仅 8 种唯一内容（同一笔交易重复写入 186 次）
+- research_notes 190/211 是占位符 "Content here"
+- dreaming_logs 190/301 是一句话 "Synthesized 3 research notes."
+- post_trade_reviews 28 个空壳(58 bytes)、14 个 "LLM unavailable" 回退
+- **结论**: 系统在大量"生产"知识但绝大部分是无信息量的重复/占位/回退内容
+- **根因**: 写入流程无去重检查 + LLM 失败仍写空壳 + 占位符模板泄入
+- **紧迫性**: 每 30min 继续注入 ~17 条重复内容，持续污染 FTS 索引和下游决策
