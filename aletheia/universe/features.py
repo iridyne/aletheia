@@ -56,13 +56,9 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
         await exchange.load_markets()
 
         # Batch fetch all tickers at once (much faster than per-symbol)
-        symbols_to_fetch = [a["symbol"] for a in assets if a.get("symbol")]
-        ccxt_symbols = []
-        symbol_map: dict[str, str] = {}
-        for sym in symbols_to_fetch:
-            ccxt_sym = sym  # canonical BTC/USDT is CCXT spot format
-            ccxt_symbols.append(ccxt_sym)
-            symbol_map[ccxt_sym] = sym
+        # Deduplicate symbols — same symbol can appear as spot + perp in registry
+        symbols_to_fetch = list(dict.fromkeys(a["symbol"] for a in assets if a.get("symbol")))
+        ccxt_symbols = symbols_to_fetch  # canonical BTC/USDT is CCXT spot format
 
         tickers: dict = {}
         try:
