@@ -785,3 +785,13 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **其他管道正常**: Market 11:48 (15min) | Portfolio 12:01 (2min) | Knowledge total=868 | Agent 1h: 26 runs, 22 completed, 1 failed (3.8% — 优秀) | 24h: 752 runs, 96 failed (12.8% — 改善) | Stale 217 | Ghost=0
 
 **结论**: §16 scanner 失败不紧急（TTL 22h），但仍需修复以恢复 universe 动态刷新。其他所有管道健康且高效运行。
+
+### 2026-06-17 12:42 UTC — §16 已修复 ✅
+
+**修复内容**: `features.py` 和 `registry.py` 中 `fetchMarkets = ["spot", "swap"]` → `["spot", "linear"]`
+
+**验证**: Scanner 成功完成，assets_passed=115。commit `d8908e5`。
+
+**根因分析**: CCXT 的 `fetchMarkets` option 是 exchange-specific 的。Binance adapter 白名单只接受 `["spot", "linear", "inverse"]`，"swap" 是 CCXT 统一层的 market type 概念（用于 `defaultType` / symbol routing），但 Binance 拒绝它。这类 exchange-adapter 差异需要在代码中明确映射。
+
+**§16 状态**: 🟢 已修复并验证
