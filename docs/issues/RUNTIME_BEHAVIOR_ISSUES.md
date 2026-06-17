@@ -237,10 +237,10 @@
 |--------|------|----------|------|
 | **P0** | **§7 知识注水 99% 重复** | **止血: 去重守卫 + 质量门槛 + 历史清理** | ✅ 已修复 (需 gateway restart) |
 | P0 | §4 学习系统断裂 | 恢复 knowledge → lesson 闭环 | ✅ 已修复 |
-| P1 | §15 portfolio_snapshot 停滞 | 加 timeout 保护，防止 io executor 被占死 | ✅ 已修复 (需 gateway restart) |
-| P1 | §10/§11 ghost scanner + stale agents | 周期性清理 agent_runs + scanner_runs | ✅ 已修复 (需 gateway restart) |
+| P1 | §15 portfolio_snapshot 停滞 | timeout + executor 隔离 + 启动即执行 | ✅ 已修复 (需 gateway restart) |
+| P1 | §10/§11 ghost scanner + stale agents | 年龄门槛 + 即时标记 + 周期清理 | ✅ 已修复 (需 gateway restart) |
 | P1 | §6 策略转化率极低 | 确认 opportunity → strategy 管道设计意图 | ℹ️ 设计如此 |
-| P1 | §9 知识 DB/磁盘不同步 | 68% 知识对 agent 不可见 (注: §7 清理后需重评) | ✅ 清理脚本就绪 |
+| P1 | §9 知识 DB/磁盘不同步 | 68% 知识对 agent 不可见 | ✅ backfill 脚本就绪 (手动运行) |
 | P1 | §1 risk_critic 不稳定 | 排查 timeout/挂起原因 | ✅ 已修复(误判) |
 | P2 | §2 prediction+divergence 停运 | 确认调度设计(已部分恢复) | ℹ️ 设计如此 |
 | P2 | §3 stock_observer 全失败 | 确认 xStock 接口状态 | ✅ 已禁用 |
@@ -266,15 +266,24 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - §5: 数据写入 `prediction_markets` + `prediction_market_claims`，非 `prediction_events`
 - §6: opportunities→proposals (paper_trader) 和 strategies (strategy_designer) 是独立管道
 
-**§15 portfolio_snapshot timeout** (2026-06-17, commit cf0c00b):
+**§15 portfolio_snapshot timeout + executor isolation** (2026-06-17):
 - `_run_portfolio_snapshot` 改用 `_run_sync_with_timeout("portfolio_snapshot", ...)` (45s budget)
 - 加入 `_ASYNC_JOB_TIMEOUT_SEC["portfolio_snapshot"] = 45.0`
 - 根因: `io` executor `max_workers=1`，portfolio_snapshot 无 timeout 时挂住会卡死整个 io 队列
+- 二次修复: 移至 `default` executor（workers=2），不再与 exchange_sync 排队竞争
+- 加 `next_run_time=30s`：重启后立即执行一次，不等完整 interval
 
-**§10/§11 ghost scanner + stale agent cleanup** (2026-06-17, commit cf0c00b):
+**§10/§11 ghost scanner + stale agent cleanup** (2026-06-17):
 - 新增 `_cleanup_stale_agent_runs()`: agent_runs 中 running>20min 的行标为 stale
-- `_run_health_check()` 末尾追加两个 cleanup 调用（每 10min 一次）
+- `_run_health_check()` 追加两个 cleanup 调用（每 10min 一次）
+- `_cleanup_stale_scanner_runs()` 加 10min 年龄门槛，不再误杀合法运行中的 scanner
+- `_run_async_with_timeout` timeout 后立即从 caller 线程标记 agent_runs 为 timed_out
 - 根因: Windows ProactorEventLoop IOCP drain 导致线程被 abandoned，APScheduler 认为 job 结束，但 DB 行状态卡在 running
+
+**§9 知识 backfill** (2026-06-17):
+- 清理脚本增加 `--backfill` 模式：质量过关的孤儿文件插入 DB（含 content_hash 去重）
+- 低质量文件（<80 bytes / placeholder）在 backfill 时删除
+- 用法: `uv run python scripts/cleanup_duplicate_knowledge.py --backfill`
 
 ---
 

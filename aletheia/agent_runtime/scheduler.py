@@ -303,7 +303,8 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _guarded("portfolio_snapshot", _run_portfolio_snapshot), "interval", minutes=10, id="portfolio_snapshot",
-        misfire_grace_time=120, executor="io",
+        misfire_grace_time=120, executor="default",
+        next_run_time=datetime.now() + timedelta(seconds=30),
     )
     _scheduler.add_job(
         _guarded("exchange_sync", _run_exchange_sync), "interval", minutes=5, id="exchange_sync",
@@ -826,15 +827,23 @@ def _run_risk_critic():
 
 
 def _cleanup_stale_scanner_runs():
-    """Mark any stuck 'running' scanner runs as timed_out. Prevents zombie accumulation."""
+    """Mark stuck 'running' scanner runs as timed_out after 10min wall-clock.
+
+    The 10-minute threshold is timeout(360s) + grace(15s) + buffer, ensuring
+    legitimately running scans (~3.5min) are never killed by the periodic cleanup.
+    """
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         was_in_tx = db.in_transaction
-        db.execute(
+        result = db.execute(
             "UPDATE universe_scanner_runs SET status = 'timed_out', "
-            "completed_at = datetime('now') WHERE status = 'running'",
+            "completed_at = datetime('now') "
+            "WHERE status = 'running' AND started_at < datetime('now', '-10 minutes')",
         )
+        rows = result.rowcount if result else 0
+        if rows:
+            logger.info("Marked %d stale scanner run(s) as timed_out", rows)
         if not was_in_tx:
             db.commit()
     except Exception as e:
