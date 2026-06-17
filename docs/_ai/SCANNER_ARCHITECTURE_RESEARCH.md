@@ -307,5 +307,75 @@ async def _fetch_ohlcv_with_retry(exchange, symbol, timeframe="1h", limit=30, ma
 
 ---
 
+---
+
+## 6. 高优先级代码修复 (可直接实施)
+
+### Fix 1: Per-symbol OHLCV timeout (P0, 2 行)
+
+```python
+# features.py — 每个 fetch_ohlcv 加 hard timeout
+ohlcv_1h = await asyncio.wait_for(
+    exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=30),
+    timeout=8.0
+)
+```
+
+**来源**: OctoBot 的 `asyncio.wait_for` 模式。没有 timeout，一个慢 symbol 会阻塞整个 semaphore slot。8s 是 OctoBot 对主流交易所的默认值。
+
+### Fix 2: Batch ticker 分块 (P1, 4 行)
+
+```python
+# 当前 fetch_tickers(spot_symbols[:500]) 可能超 Binance URL 长度限制
+CHUNK = 200
+for chunk in [symbols[i:i+CHUNK] for i in range(0, len(symbols), CHUNK)]:
+    tickers.update(await exchange.fetch_tickers(chunk))
+```
+
+**来源**: freqtrade 的 chunked batch 模式。当前代码有 `[:500]` 硬截断但无分块循环。
+
+### Fix 3: 单 symbol ticker fallback 重试 (P2, 6 行)
+
+```python
+for attempt in range(2):
+    try:
+        ticker = await exchange.fetch_ticker(symbol)
+        break
+    except Exception as e:
+        if attempt == 1:
+            continue  # 放弃
+        await asyncio.sleep(2.0)  # 首次失败 sleep 后重试
+```
+
+**来源**: freqtrade 的 quadratic backoff 简化版。当前 bare `except: continue` 在瞬态 rate-limit spike 时静默丢弃 symbols。
+
+### Fix 4: Binance symbols 过滤 (P1, 修复 round 20 发现)
+
+```python
+# fetch_tickers 前过滤不合法 symbols
+import re
+_BINANCE_SYMBOL_RE = re.compile(r'^[A-Z0-9\-._/]+$')
+valid_symbols = [s for s in spot_symbols if _BINANCE_SYMBOL_RE.match(s)]
+```
+
+**来源**: round 20 巡检发现 Binance 拒绝含小写字符的 symbols。预过滤比让 batch 整体失败更好。
+
+---
+
+## 7. 竞品对比矩阵
+
+| 能力 | freqtrade | hummingbot | OctoBot | Jesse | Aletheia (当前) |
+|------|-----------|------------|---------|-------|-----------------|
+| Batch ticker | ✅ | ✅ WS | ✅ WS | ❌ | ✅ |
+| Volume pre-filter | ✅ PairList chain | N/A (做市) | ✅ trading_mode | ❌ | ✅ |
+| Concurrent OHLCV | ✅ chunked gather | N/A (WS) | ✅ sem+timeout | ❌ 串行 | ✅ sem(5) |
+| Per-symbol timeout | ❌ | ✅ | ✅ 8-15s | ❌ | ❌ 需加 |
+| Retry/backoff | ✅ quadratic 3x | ✅ exponential | ✅ | ❌ | ❌ 需加 |
+| Exchange quirk map | ✅ per-exchange class | ✅ connector | ✅ | ❌ | ❌ 需加 |
+| Circuit breaker | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Stale-while-revalidate | ❌ | ✅ | ❌ | ❌ | ✅ (TTL fallback) |
+
+---
+
 *参考框架*: freqtrade v2024.x, hummingbot v2.x, OctoBot v0.4, CCXT v4.x
 *编写时间*: 2026-06-17

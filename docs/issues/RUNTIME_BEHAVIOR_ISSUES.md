@@ -795,3 +795,43 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **根因分析**: CCXT 的 `fetchMarkets` option 是 exchange-specific 的。Binance adapter 白名单只接受 `["spot", "linear", "inverse"]`，"swap" 是 CCXT 统一层的 market type 概念（用于 `defaultType` / symbol routing），但 Binance 拒绝它。这类 exchange-adapter 差异需要在代码中明确映射。
 
 **§16 状态**: 🟢 已修复并验证
+
+### 2026-06-17 12:50 UTC — 第二十轮巡检 (Δ8min post-fix)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 修复生效 | 12:42 completed (115 assets), 下一次 ~12:52 |
+| Market Snapshots | ✅ 正常 | 12:50 (实时), 651/h |
+| Portfolio | ✅ 正常 | 12:40 (10min ago) |
+| Knowledge | ⚠️ 重复 | 884 total, 1h +205 (17x "Daily Consolidation" dreaming_log) |
+| Opportunities | ✅ 高产 | 1807 total, +544/h |
+| Feature Snapshots | ✅ 恢复 | 12:42 (与 scanner 同步恢复) |
+| Predictions | ❌ 空 | 0 markets, 0 claims |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**§16 修复验证**: Scanner 在 12:42 成功完成，assets_scanned=1000, assets_passed=115。§16 关闭。
+
+**market_observer stale 率异常 (§17 新发现)** 🟠
+
+- 2h 内 86 次运行: 36 completed + 4 completed_with_errors + **46 stale (53%)**
+- Stale 集中在 02:22→11:39 UTC (9h 持续期)，12:41 最新 completed 后停止 stale
+- 可能原因: market_observer 运行慢（>超时阈值）→ 被标记 stale → 但实际完成了工作
+- 24h 总计: stale=99, 其中 46 来自 market_observer (47%)
+
+**§7 知识重复持续恶化** 🔴
+
+- 1h 内产出 205 条 knowledge_items, 其中 dreaming_log=17 全部标题 "Daily Consolidation"
+- post_trade_review=102/h, research_note=15/h — 速率远超正常
+- §7 去重方案（plan file）尚未实施。每小时注入 200+ 条大部分重复的 "知识" 持续消耗存储和 FTS 索引
+
+**新发现: Binance batch ticker 非法字符错误** 🟡
+
+- errors.log: `Batch spot ticker fetch failed: binance {"code":-1100,"msg":"Illegal characters found in parameter 'symbols'"}`
+- 原因推断: 部分 symbol 含小写字母或非标准字符，Binance API regex 拒绝
+- 影响: 非致命（降级到单个 ticker fetch），但降低扫描效率
+- 修复方向: fetch_tickers 前过滤 symbols，只传符合 Binance regex `[\\w\\-._&&[^a-z]]` 的
+
+**24h Agent 成功率**: completed=636 (82%), stale=99 (12.7%), completed_with_errors=41 (5.3%)
+- 实际有效率 (completed + completed_with_errors) = 87.3%
+- Ghost agents=0 (启动清扫有效)
+- Timed out=0 (本周期无超时)
