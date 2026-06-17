@@ -803,3 +803,36 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 实际有效率 (completed + completed_with_errors) = 87.3%
 - Ghost agents=0 (启动清扫有效)
 - Timed out=0 (本周期无超时)
+
+### 2026-06-17 13:04 UTC — 第二十一轮巡检 (Δ14min)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 连续成功 | 13:03 completed (14s, 115 passed) — 连续第 3 次成功 |
+| Market Snapshots | ✅ 正常 | 13:00 (4min ago), 665/h |
+| Portfolio | ✅ 正常 | 13:01 (3min ago) |
+| Knowledge | ⚠️ 重复 | 888 total, 1h: ptr=105 + dreaming=17 + rn=16 + tcs=70 |
+| Features | ✅ 恢复 | 13:03 (与 scanner 同步) |
+| Opportunities | ✅ 高产 | 1838 total, +575/h |
+| Predictions | ❌ 空 | 0 markets |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**Scanner perf improvement 验证**: 新代码 (sem=10 + 8s timeout) 下 scanner 14s 完成，与之前持平。timeout 保护已就绪但未触发（说明当前网络正常）。
+
+**§17 market_observer stale 持续** (46/87 = 53%): 一条新 evidence — `asyncio.run() teardown hung after 255s — executor thread abandoned (ProactorEventLoop IOCP drain)`。确认 stale 根因是 **Windows ProactorEventLoop IOCP drain hang**，非代码逻辑问题。market_observer 实际完成了工作但 cleanup 卡住 → 超时 → 标记 stale。
+
+**§18 Symbol 跨交易所不匹配 (新发现)** 🟡
+
+- **观测**: errors.log 大量 `binance does not have market symbol GRASS/USDT`, `1000PEPE/USDT`, `1000SHIB/USDT`, `SPX/USDT`, `VVV/USDT`
+- **根因**: registry 从 Bitget 同步资产列表（`market_data.ccxt_exchange=binance`, `exchange.name=bitget`），但 Bitget 有些 symbol 格式 (1000PEPE, SPX) 在 Binance 不存在
+- **影响**: 非致命（降级到 skip），但污染日志 + 浪费 API calls
+- **修复方向**: 
+  - fetch_tickers 前用 `exchange.markets` 过滤只传 Binance 已知 symbols
+  - 或 registry sync 时标记 `data_source_available=False` 对这些 symbols
+  - Binance 命名: PEPE (not 1000PEPE), SHIBUSDT (not 1000SHIB)
+
+**Batch ticker 非法字符**: 持续触发。Binance regex 要求 symbols 全大写 `[\\w\\-._&&[^a-z]]`，部分 Bitget registry symbols 含不合法字符。需预过滤。
+
+**Agent 1h**: completed=319 (81%), stale=57 (14.4%), completed_with_errors=17 (4.3%), running=1, timed_out=1
+- Ghost=0 ✅
+- Stale total=220 (持续累积，历史不清理)
