@@ -89,6 +89,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     reset_db()
 
 
+@pytest.mark.real_db
 def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypatch):
     """Guard rolls back a leaked explicit transaction (BEGIN without COMMIT).
 
@@ -183,7 +184,8 @@ async def test_agent_calls_llm_when_available(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
     async def fake_complete(system, user, max_tokens=800):
-        return ("LLM-generated research content.", None)
+        return ("LLM-generated research content: BTC consolidating near 200MA with declining volume; "
+                "ETH funding rate turning negative signals positioning squeeze. Medium-confidence.", None)
 
     monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", fake_complete)
     result = await run_agent("research_agent", trigger_type="manual")

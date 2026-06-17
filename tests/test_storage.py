@@ -1,6 +1,7 @@
 """Tests for storage layer: SQLite, JSONL, Markdown, repositories."""
 
 import json
+import pytest
 from unittest.mock import patch
 from pathlib import Path
 
@@ -213,6 +214,7 @@ def _real_db_env(tmp_path, monkeypatch):
     run_migrations()  # runs on the real per-thread connection
 
 
+@pytest.mark.real_db
 def test_insert_commits_and_releases_lock(tmp_path, monkeypatch):
     import sqlite3
     from aletheia.storage.sqlite import db_path
@@ -239,6 +241,7 @@ def test_insert_commits_and_releases_lock(tmp_path, monkeypatch):
         other.close()
 
 
+@pytest.mark.real_db
 def test_update_commits_and_releases_lock(tmp_path, monkeypatch):
     import sqlite3
     from aletheia.storage.sqlite import db_path
