@@ -33,15 +33,16 @@ async def run_risk_critic(permission_mode: str = "Observe", run_id: str | None =
     log_tool(run_id, "llm_complete", "observe", True)
     if err:
         errors.append(err)
-        content = f"Risk critique (LLM unavailable). Context: {ctx}"
+        return {"outputs": outputs, "errors": errors}
 
     # Promote to high_confidence (the retrieval quality gate) only when the LLM
     # produced the critique AND there was real activity to critique; otherwise the
     # note is vacuous and stays medium so it can't enter the experience loop.
-    confidence = "high_confidence" if (not err and (proposals or decisions)) else "medium_confidence"
+    confidence = "high_confidence" if (proposals or decisions) else "medium_confidence"
     item = create_research_note("Risk Lesson", content, confidence=confidence,
                                 metadata={"source": "risk_critic", "subtype": "risk_lesson"})
-    log_tool(run_id, "create_research_note", "observe", True, output=item.id)
-    outputs.append(f"research_note:{item.id}")
+    if item:
+        log_tool(run_id, "create_research_note", "observe", True, output=item.id)
+        outputs.append(f"research_note:{item.id}")
 
     return {"outputs": outputs, "errors": errors}

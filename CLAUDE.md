@@ -14,7 +14,7 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 - **Data flow**: Market data → Agent analysis → Strategy proposal → Risk Engine approval → Execution Gateway → Bitget API
 - **External deps**: Bitget API (spot/futures), LLM providers (OpenAI-compatible, Anthropic-compatible)
 - **Frontend**: `frontend/` — React/Vite dashboard (localhost control surface). Single endpoint: `:8787` (gateway serves API + static). For UI iteration, use `scripts/dev.ps1` (runs `vite build --watch` + backend watcher; gateway auto-restarts on changes). Do NOT rebuild `aletheia/dashboard_static/` manually in a tight loop — `dev.ps1` handles it.
-- **Tests**: `tests/` — 515 tests (unit, integration, security, acceptance). Run `uv run pytest -q`.
+- **Tests**: `tests/` — 515+ tests (unit, integration, security, acceptance). See **Testing Strategy** below.
 
 ## Development Rules
 
@@ -33,6 +33,20 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
   - 开发迭代用 `scripts/dev.ps1`(独立 Vite watch + 后端 watcher)
   - 启动前会运行 preflight checks，静态文件缺失时**拒绝启动并给出修复建议**
 - Priority: State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy
+
+## Testing Strategy
+
+全量测试 ~5min（515+ tests，I/O-bound：每个用例重建 DB + migrations）。采用分层策略避免阻塞开发：
+
+1. **日常改动**：只跑相关模块测试（`uv run pytest tests/test_xxx.py -q`），秒级~30s
+2. **提交前**：后台跑全量（`run_in_background`），不阻塞工作流
+3. **合并前**：确认全量通过（后台结果或 CI）
+
+关键原则：
+- **不等全量测试完成再继续工作**——后台跑，有失败再回头修
+- 针对性测试用 `-k` 过滤：`uv run pytest -q -k "knowledge or dreaming"`
+- 全量命令：`uv run pytest tests/ -q --tb=line`（放后台）
+- 测试慢的根因是 SQLite setup/teardown，非 CPU-bound，Rust/并行框架无收益
 
 ## Gateway 进程管理
 

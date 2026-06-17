@@ -474,6 +474,17 @@ def list_knowledge_items(item_type: str | None = None, limit: int = 50, strategy
     return _select_all("knowledge_items", where=where, params=tuple(params_list), limit=limit)
 
 
+def knowledge_hash_exists(item_type: str, content_hash: str) -> bool:
+    """Check if a knowledge item with this content hash already exists."""
+    rows = _select_all(
+        "knowledge_items",
+        where="item_type = ? AND content_hash = ?",
+        params=(item_type, content_hash),
+        limit=1,
+    )
+    return len(rows) > 0
+
+
 # --- Serenity Lens ---
 
 def insert_serenity_theme(t: SerenityTheme) -> None:

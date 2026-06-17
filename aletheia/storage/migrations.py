@@ -1359,6 +1359,8 @@ _ADDITIVE_COLUMNS = [
     ("entry_price_usd", "universe_members", "REAL"),
     # Direction-aware calibration: the trade direction the scanner implied.
     ("direction", "universe_forward_outcomes", "TEXT"),
+    # Knowledge dedup: SHA-256 prefix of content for write-time duplicate detection.
+    ("content_hash", "knowledge_items", "TEXT"),
 ]
 
 

@@ -1,10 +1,15 @@
 """Dreaming Agent — consolidates daily activity into learning summaries."""
 
+import json
+import logging
+
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
 from aletheia.storage.repositories import list_agent_runs
+
+logger = logging.getLogger("aletheia.agents.dreaming_agent")
 
 # Lifecycle states surfaced in the ledger, in pipeline order.
 _LEDGER_STATES = [
@@ -168,6 +173,62 @@ def _build_learning_ledger() -> str:
     )
 
 
+async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[str]) -> None:
+    """Extract structured lessons from recent high-confidence post_trade_reviews into ps_lessons."""
+    from datetime import datetime, timezone, timedelta
+    from aletheia.storage.repositories import list_knowledge_items
+    from aletheia.learning.lessons import LessonStore
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    reviews = [
+        r for r in list_knowledge_items(item_type="post_trade_review", limit=50)
+        if r.get("confidence") == "high_confidence"
+        and (r.get("created_at") or "") >= cutoff
+    ]
+    if not reviews:
+        return
+
+    summaries = "\n".join(
+        f"- [{r.get('title', 'untitled')}] strategy={r.get('strategy_id', '?')}"
+        for r in reviews[:10]
+    )
+    content, err = await llm_complete(
+        system=(
+            "You are a trading lesson extractor. Given recent post-trade reviews, "
+            "extract 1-3 actionable lessons. Return a JSON array where each object has: "
+            '"summary" (one sentence), "category" (one of: risk_sizing, entry_timing, '
+            'exit_timing, symbol_selection, general), "severity" (info|warning|critical). '
+            "Return ONLY the JSON array, no other text."
+        ),
+        user=f"Recent high-confidence post-trade reviews:\n{summaries}\n\nExtract lessons.",
+        max_tokens=400,
+    )
+    log_tool(run_id, "llm_complete_lessons", "observe", True)
+    if err:
+        errors.append(f"lesson_extraction_llm_failed: {err}")
+        return
+
+    try:
+        lessons = json.loads(content.strip().strip("`").removeprefix("json").strip())
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("dreaming_agent: lesson extraction LLM returned non-JSON")
+        return
+
+    store = LessonStore()
+    for lesson in lessons[:3]:
+        if not isinstance(lesson, dict) or not lesson.get("summary"):
+            continue
+        created = store.create(
+            summary=lesson["summary"],
+            source_type="post_trade_review",
+            source_id=reviews[0].get("id", "unknown"),
+            category=lesson.get("category", "general"),
+            severity=lesson.get("severity", "info"),
+        )
+        log_tool(run_id, "create_lesson", "observe", True, output=created.lesson_id)
+        outputs.append(f"lesson:{created.lesson_id}")
+
+
 @register_agent("dreaming_agent")
 async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Consolidate recent activity into a dreaming/learning log (guide §17.2)."""
@@ -213,18 +274,21 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     log_tool(run_id, "llm_complete", "observe", True)
     if err:
         errors.append(err)
-        content = f"## Daily Consolidation\n\nRecent activity:\n{activity}\n\n(LLM unavailable for synthesis.)"
+        logger.info("dreaming_agent: LLM unavailable, skipping dreaming_log write")
+    else:
+        # Append a real learning-progress snapshot. Never let it break the run.
+        try:
+            content += _build_learning_ledger()
+            log_tool(run_id, "build_learning_ledger", "observe", True)
+        except Exception as e:
+            errors.append(f"learning_ledger_failed: {e}")
 
-    # Append a real learning-progress snapshot. Never let it break the run.
-    try:
-        content += _build_learning_ledger()
-        log_tool(run_id, "build_learning_ledger", "observe", True)
-    except Exception as e:
-        errors.append(f"learning_ledger_failed: {e}")
-
-    item = create_dreaming_log("Daily Consolidation", content)
-    log_tool(run_id, "write_dreaming_log", "observe", True, output=item.id)
-    outputs.append(f"dreaming_log:{item.id}")
+        item = create_dreaming_log("Daily Consolidation", content)
+        if item:
+            log_tool(run_id, "write_dreaming_log", "observe", True, output=item.id)
+            outputs.append(f"dreaming_log:{item.id}")
+        else:
+            logger.info("dreaming_agent: dreaming_log skipped by quality/dedup gate")
 
     # Only write daily_review on cron-triggered runs (not manual CLI/API triggers)
     # to avoid duplicate content under different item_types.
@@ -241,6 +305,12 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
             review = create_daily_review("Daily Review", content)
             log_tool(run_id, "write_daily_review", "observe", True, output=review.id)
             outputs.append(f"daily_review:{review.id}")
+
+    # Lesson extraction: mine actionable lessons from today's post-trade reviews
+    try:
+        await _extract_lessons(run_id, outputs, errors)
+    except Exception as e:
+        errors.append(f"lesson_extraction_failed: {e}")
 
     # Trading-as-Git: snapshot the versioned data dirs (knowledge/playbooks/reports)
     # after the nightly consolidation. No-op when git_enabled is off; never raises.
