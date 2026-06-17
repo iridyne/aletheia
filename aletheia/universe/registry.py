@@ -45,7 +45,7 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
     try:
         exchange = provider._ensure_primary()
         market_types = ["spot"]
-        if getattr(getattr(cfg, "exchange", None), "enabled_markets", {}).get("usdt_futures"):
+        if cfg.exchange.enabled_markets.get("usdt_futures"):
             market_types.append("swap")
         exchange.options["defaultType"] = "spot"
         exchange.options["fetchMarkets"] = market_types
