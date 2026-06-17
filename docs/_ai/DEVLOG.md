@@ -1,5 +1,19 @@
 # Development Log
 
+## 2026-06-17 — 会话结束：Strategy Pool 调研产出归档
+
+> 本次会话为纯研究 + 交接写作，无代码改动。
+
+**归档文件**：
+- `docs/_ai/RESEARCH_SHORT_AND_STRATEGY.md` — 竞品框架 + Aletheia 现状对照，做空信号缺口分析
+- `docs/_ai/PLAN_REGIME_STRATEGY_SHORT.md` — 3 阶段实施方案（direction_affinity + regime_tags + ranker 扩展）
+
+**CURRENT_TASK.md 更新**：加入 Strategy Pool 下一步意图（Stage 1-3），清理过期的 git diverge 说明。
+
+**无敏感文件**：两个 untracked 文件均为纯文档，不含 secrets/token/凭证。
+
+---
+
 ## 2026-06-17 — Strategy Pool 前期探索（纯研究，无代码改动）
 
 > 来源：team-lead 委派，为 Strategy Pool 功能规划做前置调研。
