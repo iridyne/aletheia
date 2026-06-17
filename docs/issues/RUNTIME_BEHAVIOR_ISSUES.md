@@ -754,3 +754,13 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **Feature snapshots 停滞 53min** (最新 10:08) — 因 scanner 失败无新 universe 供 feature 采集。现有 universe snapshot 仍在 TTL 内（snapshot_ttl_hours 通常 6-24h），暂不影响 market_observer 选币。
 
 **紧迫性升级**: 已连续失败 >40min。若不修复，universe snapshot 将在 TTL 后过期，系统回退到 static fallback (BTC/ETH/SOL only)。
+
+### 2026-06-17 11:46 UTC — 第十八轮巡检 (Δ43min)
+
+**§16 持续恶化**: Scanner 连续 10 次 failed (82min+, 10:22→11:44)。failed 总计 9→19 (+10)。Feature snapshots 停滞 97min (最新 10:08)。
+
+**其他管道正常**: Market 11:38 (8min) | Portfolio 11:43 (3min) | Knowledge +4/h (3 ptr + 1 rn), total=865 | Agent 1h: 27 runs, 21 completed, 1 failed (3.7% — 最佳) | Stale 217 | Ghost=0
+
+**新观测**: error.log 出现 `RuntimeWarning: coroutine 'binance.request' was never awaited` — service.py:214 在 exception 处理中未正确 await CCXT close，造成资源泄漏。非阻断但增加内存/连接开销。
+
+**影响评估**: 最后一次成功 universe snapshot 在 ~10:02 UTC (104min 前)。如果 snapshot_ttl_hours=6，则到 ~16:02 UTC 前 universe 仍有效。还有 ~4h 窗口修复。agent 运行率反而因无 scanner timeout 而改善到 3.7%（只有 agent 管道在跑）。
