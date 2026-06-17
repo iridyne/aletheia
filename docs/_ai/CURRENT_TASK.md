@@ -52,18 +52,31 @@
 > **合并边界**:与 Operator Layer 一致——可以正常合并到 `master`;P3/P4 因触及
 > `execution/` / 凭证 / live 路径,改动需用户显式授权(trust 边界,不依赖观察门)。
 
+## 下一步可做：Strategy Pool（已完成前期调研，2026-06-17）
+
+> 调研文档：`docs/_ai/RESEARCH_SHORT_AND_STRATEGY.md`（现状分析）+
+> `docs/_ai/PLAN_REGIME_STRATEGY_SHORT.md`（实施方案）
+
+**调研结论摘要**：
+- `StrategyRecord.parameters`（JSON blob）不含 `direction_affinity` / `regime_tag`，需扩展
+- 10 态状态机已完善，扩展不需要改状态机本身
+- ranker 对策略的方向性过滤是空白，`direction_bias` 从 opportunity 独立推断
+
+**实施方案已写在 `PLAN_REGIME_STRATEGY_SHORT.md`**，分 3 阶段：
+- Stage 1：给 StrategyRecord 加 `direction_affinity` + `regime_tags` 字段（`_ADDITIVE_COLUMNS` 路径，安全）
+- Stage 2：Ranker 中引入 regime_match 得分项（扩展 `_compute_trade_score`）
+- Stage 3：strategy_designer 生成时写入方向偏好（需探索 strategy_designer agent）
+
+**前提**：上述 Stage 1-2 不触及 trust 边界（`risk/`、`execution/`），可直接实施。
+
 ## 接手机器第一步(机器交接后)
 
 0. **接手机器开机第一步**（机器无关流程，2026-06-17 更新）:
-   1. **处理 git diverge**：本地 master 领先 origin 46 提交，origin 有 2 个文档提交未合并。
-      运行 `git pull --rebase origin master`（推荐）或 `git merge origin/master`，
-      再 `git push` 同步到 origin。若已在最新机器上直接 `git pull --ff-only` 即可。
-   2. `uv run aletheia doctor`（本机 GBK 控制台需 `PYTHONIOENCODING=utf-8`）—— 取真实事实:
-      gateway 是否在跑、autostart 是否注册、凭证、loop 活动。**不要**用本文或任何 git 文档
-      推断这些。
-   3. 需要本地跑闭环时：`uv run aletheia gateway start`（或 dev 迭代用 `scripts/dev.ps1`）；
-      若需无人值守自动复活：`aletheia gateway enable-autostart`。
-   4. `uv run pytest -q` 确认 1338+ 测试基线绿（新增 19 个 hypothesis 属性测试）。
+   1. `git pull --ff-only`（或处理 diverge：`git pull --rebase origin master`）
+   2. `uv run aletheia doctor`（本机 GBK 控制台需 `PYTHONIOENCODING=utf-8`）—— 取真实事实
+   3. 需要本地跑闭环时：`uv run aletheia gateway start`；
+      若需无人值守自动复活：`aletheia gateway enable-autostart`
+   4. `uv run pytest -q` 确认 1338+ 测试基线绿
 
 ## Edge Lab — 完成 (2026-06-14, commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
 

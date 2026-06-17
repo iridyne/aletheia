@@ -1487,3 +1487,44 @@ def list_shadow_trades(
         conditions.append("resolved_at IS NULL")
     where = " AND ".join(conditions) if conditions else None
     return _select_all("shadow_trades", where=where, params=tuple(params), limit=limit)
+
+
+# ── Market Regime ─────────────────────────────────────────────────────────────
+
+def insert_market_regime(record) -> None:
+    from aletheia.storage.models import MarketRegimeRecord
+    data = record.model_dump() if hasattr(record, "model_dump") else dict(record)
+    if isinstance(data.get("signals"), dict):
+        data["signals"] = json.dumps(data["signals"])
+    _insert("market_regimes", data)
+
+
+def get_latest_market_regime() -> dict | None:
+    rows = _select_all("market_regimes", order="detected_at DESC", limit=1)
+    if not rows:
+        return None
+    row = rows[0]
+    if row.get("signals"):
+        try:
+            row["signals"] = json.loads(row["signals"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return row
+
+
+def list_market_regimes(limit: int = 50) -> list[dict]:
+    rows = _select_all("market_regimes", order="detected_at DESC", limit=limit)
+    for row in rows:
+        if row.get("signals"):
+            try:
+                row["signals"] = json.loads(row["signals"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return rows
+
+
+# ── Universe Feature Snapshots (batch read) ───────────────────────────────────
+
+def list_universe_feature_snapshots(limit: int = 50) -> list[dict]:
+    """Return recent feature snapshots across all assets (newest first)."""
+    return _select_all("universe_feature_snapshots", order="ts DESC", limit=limit)
