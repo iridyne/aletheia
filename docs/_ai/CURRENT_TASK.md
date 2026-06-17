@@ -54,14 +54,16 @@
 
 ## 接手机器第一步(机器交接后)
 
-0. **接手机器开机第一步**(2026-06-13 交接后,机器无关流程):
-   1. `git pull --ff-only` —— 拿最新意图(本日 18 提交 + docs/plans 已在 origin/master)。
-   2. `uv run aletheia doctor`(本机 GBK 控制台需 `PYTHONIOENCODING=utf-8`)—— 取真实事实:
+0. **接手机器开机第一步**（机器无关流程，2026-06-17 更新）:
+   1. **处理 git diverge**：本地 master 领先 origin 46 提交，origin 有 2 个文档提交未合并。
+      运行 `git pull --rebase origin master`（推荐）或 `git merge origin/master`，
+      再 `git push` 同步到 origin。若已在最新机器上直接 `git pull --ff-only` 即可。
+   2. `uv run aletheia doctor`（本机 GBK 控制台需 `PYTHONIOENCODING=utf-8`）—— 取真实事实:
       gateway 是否在跑、autostart 是否注册、凭证、loop 活动。**不要**用本文或任何 git 文档
       推断这些。
-   3. 需要本地跑闭环时:`uv run aletheia gateway start`(或 dev 迭代用 `scripts/dev.ps1`);
-      若需无人值守自动复活:`aletheia gateway enable-autostart`。
-   4. `uv run pytest -q` 确认 515+ 测试基线绿(克隆后还应跑 `import aletheia.risk.engine` sanity)。
+   3. 需要本地跑闭环时：`uv run aletheia gateway start`（或 dev 迭代用 `scripts/dev.ps1`）；
+      若需无人值守自动复活：`aletheia gateway enable-autostart`。
+   4. `uv run pytest -q` 确认 1338+ 测试基线绿（新增 19 个 hypothesis 属性测试）。
 
 ## Edge Lab — 完成 (2026-06-14, commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
 

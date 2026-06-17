@@ -7,7 +7,30 @@
 
 ## Last Updated
 
-2026-06-16 (根治 scheduler deadlock / DB lock — isolation_level=None autocommit)
+2026-06-17 (Scanner 性能修复：Binance fetchMarkets key + OHLCV 并发 + 测试基础设施)
+
+---
+
+## Recent Change (Scanner §16 修复 + 测试基础设施 — 2026-06-17, commits d8908e5..e053d5a)
+
+> **背景**: §16 scanner 持续超时（82min+，10 次连续失败）。根因是 futures 集成引入了
+> `"swap"` 作为 Binance fetchMarkets 的市场类型键，但 Binance 适配器白名单不认这个值，
+> 导致 ExchangeError 静默杀死整个扫描 pipeline。同时修复了测试套件因 quality gate 引入导致
+> 的 28+ 测试失败，并强化了测试基础设施（in-memory SQLite + Hypothesis 属性测试）。
+
+**改动（5 个文件 + 1 个新测试文件）**:
+
+1. `aletheia/universe/features.py` — `fetchMarkets` `["spot", "swap"]` → `["spot", "linear"]`；
+   `_OHLCV_CONCURRENCY` 5→10；`asyncio.wait_for(timeout=8.0)` per-symbol
+2. `aletheia/universe/registry.py` — `market_types.append("swap")` → `append("linear")`
+3. `tests/conftest.py` — `_inmemory_db` autouse fixture；`real_db` marker；hypothesis profile
+4. `tests/test_hypothesis_properties.py` — **新文件**：19 个属性测试（symbol converter、quality gate、content hash）
+5. 多个测试文件 — 测试种子内容扩展 ≥80 字符；`commands.py` None guard；`test_openai_healthcheck` mock TCP；`test_xstocks_observer` typo 修复
+
+**验证**: 1338 tests passed（+19 新增）；scanner `assets_passed=115` 完成；OHLCV ~7s→~3.5s
+
+**Git 状态**: 本地 master 领先 origin/master 46 个提交；origin 有 2 个 docs 提交未合并。
+建议接手后先 `git pull --rebase origin master` 解决 diverge。
 
 ---
 
