@@ -102,17 +102,17 @@ def _probe_proxy_sync(url: str) -> bool:
 
 
 def invalidate_proxy_cache() -> None:
-    """Mark the configured proxy as failed (HTTP-level) so subsequent calls bypass it.
+    """Mark the configured proxy as failed (HTTP-level) so subsequent httpx calls bypass it.
 
-    Called automatically by _ProxyFallbackTransport on proxy errors. Also clears
-    env vars so aiohttp_session() callers immediately benefit.
+    Called automatically by _ProxyFallbackTransport on proxy errors. Only
+    invalidates the in-memory cache — does NOT clear env vars, since those may
+    point to a working proxy port that differs from config (e.g. Clash on 7897
+    while config records stale 7890).
     """
     url = _proxy_url()
     if url:
         _proxy_reachable_cache[url] = (False, time.monotonic())
         logger.info("Proxy %s marked failed (HTTP-level) — bypassing for %ds", url, int(_PROXY_CACHE_TTL))
-    os.environ.pop("HTTP_PROXY", None)
-    os.environ.pop("HTTPS_PROXY", None)
 
 
 def _effective_proxy() -> str | None:
@@ -126,19 +126,20 @@ def _effective_proxy() -> str | None:
 
 
 def apply_proxy_env() -> None:
-    """Ensure HTTP_PROXY / HTTPS_PROXY env vars reflect the current config.
+    """Ensure HTTP_PROXY / HTTPS_PROXY env vars are set for trust_env=True clients.
 
-    Called at gateway startup and after config updates so that trust_env=True
-    on all clients (including CCXT's aiohttp session) picks up the right proxy.
-    Falls back to direct connection if the configured proxy is not reachable.
+    Priority: existing env vars (shell/system) > config.network.proxy_url > none.
+    Never clears env vars that were already present — they represent the user's
+    actual network path (e.g. Clash/v2ray on a different port than config records).
     """
-    proxy = _effective_proxy()
+    existing = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    if existing:
+        # Env already set (by shell profile, system, or prior call) — don't touch.
+        return
+    proxy = _proxy_url()
     if proxy:
         os.environ["HTTP_PROXY"] = proxy
         os.environ["HTTPS_PROXY"] = proxy
-    else:
-        os.environ.pop("HTTP_PROXY", None)
-        os.environ.pop("HTTPS_PROXY", None)
 
 
 class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
