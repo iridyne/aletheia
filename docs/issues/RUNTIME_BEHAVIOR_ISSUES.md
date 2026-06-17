@@ -296,3 +296,57 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - **结论**: 系统在大量"生产"知识但绝大部分是无信息量的重复/占位/回退内容
 - **根因**: 写入流程无去重检查 + LLM 失败仍写空壳 + 占位符模板泄入
 - **紧迫性**: 每 30min 继续注入 ~17 条重复内容，持续污染 FTS 索引和下游决策
+
+### 2026-06-17 04:25 UTC — 第三轮观测 (error visibility 修复后)
+
+**系统状态**: gateway running (PID 20152), kill_switch inactive, bitget_demo mode
+
+**数据收集管道**:
+| 管道 | 状态 | 最新时间 | 数据量 |
+|------|------|----------|--------|
+| Universe Scanner | ⚠️ 部分异常 | 04:23 UTC | 1000 scanned, 0 passed (当前 run) |
+| Feature Snapshots | ✅ 正常 | 04:23 UTC | 236→423→793 assets/batch |
+| Market Snapshots | ✅ 正常 | 04:17 UTC | 按周期采集 |
+| Orderbook/Funding/OI | ✅ 正常 | 活跃 | 多品种 |
+| Portfolio Snapshots | ✅ 正常 | 03:27 UTC | bitget_demo |
+| Knowledge Production | ⚠️ 重复严重 | 03:47 UTC | 5 post_trade_review/h |
+| Prediction Markets | ❌ 完全空 | — | 0 markets, 0 claims |
+| Lessons (ps_lessons) | ❌ 空 | — | 0 条 |
+
+**新发现**:
+
+1. **§10 Universe Scanner 幽灵 "running" 行** 🟠
+   - 观测: 8 行 status="running", completed_at=NULL, assets_passed=0
+   - 历史统计: completed=9, running=8(ghost), timed_out=84, failed=7
+   - 根因: timeout 杀进程后 DB 状态未回写为 timed_out
+   - 影响: dashboard 可能误判 scanner 为"正在运行"；stability 统计偏差
+   - 建议: startup reconciliation 扫描 running 且 started_at > 20min 的行，标记为 timed_out
+
+2. **§11 Agent Stale 累积** 🟠
+   - 观测: 182 行 agent_runs status="stale"，总失败率 11.9% (61/513 24h)
+   - 启动时仅 reconcile 了 1 条（"Marked 1 stale agent run(s)"）
+   - 根因: stale 检测仅在启动时做一次，运行期间挂起的 run 不会被 mark
+   - 影响: health 报告的 failure ratio 偏高（历史 stale 拉高分母）
+   - 建议: 周期性 stale 检测（每 health check 时顺带扫描 >15min 的 running runs）
+
+3. **§12 Case Study 创建 NoneType 错误** 🟡
+   - 观测: errors.log 大量 "Failed to create case study for position xxx: 'NoneType' object has no attribute 'id'"
+   - 根因: post_trade_reviewer 尝试对已关闭/reconciled 仓位创建 case study，但 lookup 返回 None
+   - 影响: case_study 产出中存在失败尝试；不影响核心交易但浪费日志空间
+   - 建议: 加 None 守卫在 case study 创建前
+
+4. **§2/§5 状态更新**: Prediction Markets 管道确认完全为空
+   - prediction_markets=0, prediction_market_claims=0
+   - 归类为"已知限制"（Polymarket API 可能不可达），非紧急
+
+**已修复项生效确认**:
+- ✅ infra_event 机制工作（emit 后 buffer 正常）
+- ✅ _FAILED_STATUSES 含 "timed_out"（health + stability_monitor）
+- ✅ max_instances=1 生效（重启后不再并发 scanner）
+- ✅ bitget.py 走 httpx_client() 代理链路
+
+**知识重复统计恶化**:
+- post_trade_review: 258 条全部同标题 "Post-Trade Review"
+- trade_case_study: 单个 case 最高重复 157 次
+- 总 knowledge_items=788（上次 713，+75 in ~4h）
+- **结论**: 去重修复（plan §1）尚未部署，垃圾仍在持续累积
