@@ -73,7 +73,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # ── Path B: Opportunity-driven (fallback, ranked) ─────────────────────────
     candidates = build_paper_candidates(limit=50)
 
-    _PERMANENT_SKIP_PREFIXES = ("neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:")
+    _PERMANENT_SKIP_PREFIXES = ("neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:", "equity_shadow_track")
     skipped = [c for c in candidates if c.get("skip_reason")]
     for c in skipped:
         reason = c.get("skip_reason", "")

@@ -188,7 +188,9 @@ def create_trade_case_study(
     if confidence not in VALID_CONFIDENCES:
         raise ValueError(f"Invalid confidence: {confidence}")
     if not _is_quality_pass(content):
-        logger.info("knowledge_skipped:quality_gate item_type=trade_case_study len=%d", len(content))
+        # WARNING (not INFO): quality gate failures indicate a content-generation
+        # problem (too short, placeholder) — distinguishable from normal dedup.
+        logger.warning("knowledge_skipped:quality_gate item_type=trade_case_study len=%d title=%r", len(content), title)
         return None
     ch = _content_hash(content)
     if knowledge_hash_exists("trade_case_study", ch):

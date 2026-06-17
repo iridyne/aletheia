@@ -505,8 +505,14 @@ async def update_observed_equities(req: EquitiesConfigUpdate):
     """Update US equity tickers observed by equity_observer (observation-only, not traded)."""
     normalized = list(dict.fromkeys(t.strip().upper() for t in req.tickers if t.strip()))
     cfg = load_config()
+    old = list(cfg.market_data.observed_equities or [])
     cfg.market_data.observed_equities = normalized
     save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "equities_config_changed",
+                 "entity_type": "market_data_config", "before": {"observed_equities": old},
+                 "after": {"observed_equities": normalized},
+                 "message": f"Observed equities updated: {old} -> {normalized}"})
     return {"observed_equities": normalized}
 
 
