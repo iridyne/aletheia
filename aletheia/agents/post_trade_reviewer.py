@@ -61,12 +61,13 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
         log_tool(run_id, "llm_complete", "observe", True)
         if err:
             errors.append(err)
-            content = f"Post-trade review (LLM unavailable). Context: {ctx}"
+            logger.info("post_trade_reviewer: LLM unavailable for strategy=%s, skipping write", strategy_id)
+            continue
 
         # Promote to high_confidence (the retrieval quality gate) only when the LLM
         # actually produced the review AND there were real fills behind it; empty or
         # fallback reviews stay medium so noise can't enter the experience loop.
-        confidence = "high_confidence" if (not err and strat_fills) else "medium_confidence"
+        confidence = "high_confidence" if strat_fills else "medium_confidence"
         item = create_post_trade_review(
             "Post-Trade Review",
             content,
@@ -74,8 +75,9 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
             strategy_id=strategy_id,
             confidence=confidence,
         )
-        log_tool(run_id, "create_post_trade_review", "observe", True, output=item.id)
-        outputs.append(f"post_trade_review:{item.id}")
+        if item:
+            log_tool(run_id, "create_post_trade_review", "observe", True, output=item.id)
+            outputs.append(f"post_trade_review:{item.id}")
 
     # Phase 4: Structured case study generation + guard candidate detection
     case_studies, guard_candidates = _run_case_builder_safe(run_id)

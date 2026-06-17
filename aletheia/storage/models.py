@@ -213,6 +213,7 @@ class KnowledgeItem(BaseModel):
     confidence: str = "medium_confidence"
     status: str = "active"
     tags: str = "[]"
+    content_hash: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
 

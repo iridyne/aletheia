@@ -231,20 +231,38 @@
 
 ---
 
-## 优先级排序
+## 优先级排序与修复状态
 
-| 优先级 | 条目 | 核心诉求 |
-|--------|------|----------|
-| **P0** | **§7 知识注水 99% 重复** | **止血: 去重守卫 + 质量门槛 + 历史清理** |
-| P0 | §4 学习系统断裂 | 恢复 knowledge → lesson 闭环 |
-| P1 | §6 策略转化率极低 | 确认 opportunity → strategy 管道设计意图 |
-| P1 | §9 知识 DB/磁盘不同步 | 68% 知识对 agent 不可见 (注: §7 清理后需重评) |
-| P1 | §1 risk_critic 不稳定 | 排查 timeout/挂起原因 |
-| P2 | §2 prediction+divergence 停运 | 确认调度设计(已部分恢复) |
-| P2 | §3 stock_observer 全失败 | 确认 xStock 接口状态 |
-| P2 | §5 prediction_events 空 | 确认数据写入路径 |
-| P3 | §7 知识类型不均 | agent 权重调优 |
-| P3 | §8 market_observer 偶发失败 | 监控即可 |
+| 优先级 | 条目 | 核心诉求 | 状态 |
+|--------|------|----------|------|
+| **P0** | **§7 知识注水 99% 重复** | **止血: 去重守卫 + 质量门槛 + 历史清理** | ✅ 已修复 |
+| P0 | §4 学习系统断裂 | 恢复 knowledge → lesson 闭环 | ✅ 已修复 |
+| P1 | §6 策略转化率极低 | 确认 opportunity → strategy 管道设计意图 | ℹ️ 设计如此 |
+| P1 | §9 知识 DB/磁盘不同步 | 68% 知识对 agent 不可见 (注: §7 清理后需重评) | ✅ 清理脚本就绪 |
+| P1 | §1 risk_critic 不稳定 | 排查 timeout/挂起原因 | ✅ 已修复(误判) |
+| P2 | §2 prediction+divergence 停运 | 确认调度设计(已部分恢复) | ℹ️ 设计如此 |
+| P2 | §3 stock_observer 全失败 | 确认 xStock 接口状态 | ✅ 已禁用 |
+| P2 | §5 prediction_events 空 | 确认数据写入路径 | ℹ️ 设计如此 |
+| P3 | §8 market_observer 偶发失败 | 监控即可 | — 无需修复 |
+
+### 修复说明 (2026-06-17)
+
+**§7 + §9 止血**: content-hash 去重 + 80-byte 质量门槛 + placeholder 拦截 + LLM 失败不写入。
+历史垃圾清理脚本 `scripts/cleanup_duplicate_knowledge.py` 待手动运行。
+
+**§4 学习闭环**: dreaming_agent 新增 `_extract_lessons()` 步骤，每日扫描 high-confidence
+post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
+
+**§1 误判**: `completed_with_errors` 实际是"成功但有警告"，stability_monitor 已修正为
+只计 `failed`/`stale` 为失败。
+
+**§3 禁用**: stock_observer 依赖的 yfinance 列结构不稳定，且无策略在用 xStock。
+`observed_stocks` 默认改为空列表，scheduler guard 跳过。用户可在 UI 手动配置启用。
+
+**§2/§5/§6 设计如此**:
+- §2: prediction_observer 30min 周期正常，divergence_scanner 链式跟随
+- §5: 数据写入 `prediction_markets` + `prediction_market_claims`，非 `prediction_events`
+- §6: opportunities→proposals (paper_trader) 和 strategies (strategy_designer) 是独立管道
 
 ---
 

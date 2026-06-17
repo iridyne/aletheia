@@ -34,9 +34,12 @@ def setup_test_env(tmp_path, monkeypatch):
     run_migrations()
 
 
+_VALID_CONTENT = "BTC showed a breakout above the 50-day SMA with volume confirmation. Entry at 64200 with stop at 62800 and target 68000."
+
+
 def test_create_research_note(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    item = create_research_note("BTC Analysis", "Content here", confidence="high_confidence")
+    item = create_research_note("BTC Analysis", _VALID_CONTENT, confidence="high_confidence")
     assert item.item_type == "research_note"
     assert item.confidence == "high_confidence"
     items = repo.list_knowledge_items(item_type="research_note")
@@ -53,7 +56,7 @@ def test_invalid_confidence_rejected(tmp_path, monkeypatch):
 
 def test_archive_item(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    item = create_research_note("To Archive", "Content")
+    item = create_research_note("To Archive", _VALID_CONTENT, confidence="high_confidence")
     archive_item(item.id)
     from aletheia.storage.sqlite import get_db
     row = get_db().execute("SELECT status FROM knowledge_items WHERE id = ?", (item.id,)).fetchone()
@@ -63,7 +66,7 @@ def test_archive_item(tmp_path, monkeypatch):
 
 def test_deprecate_item(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    item = create_research_note("To Deprecate", "Content")
+    item = create_research_note("To Deprecate", _VALID_CONTENT, confidence="high_confidence")
     deprecate_item(item.id)
     from aletheia.storage.sqlite import get_db
     row = get_db().execute("SELECT status, confidence FROM knowledge_items WHERE id = ?", (item.id,)).fetchone()
@@ -74,7 +77,7 @@ def test_deprecate_item(tmp_path, monkeypatch):
 
 def test_hard_delete_blocked(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    item = create_research_note("Protected", "Content")
+    item = create_research_note("Protected", _VALID_CONTENT, confidence="high_confidence")
     with pytest.raises(PermissionError, match="not allowed"):
         delete_item(item.id)
     # Item still exists
@@ -85,7 +88,7 @@ def test_hard_delete_blocked(tmp_path, monkeypatch):
 
 def test_dreaming_log_creation(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    item = create_dreaming_log("Nightly Review", "Synthesized findings")
+    item = create_dreaming_log("Nightly Review", _VALID_CONTENT)
     assert item.item_type == "dreaming_log"
     items = repo.list_knowledge_items(item_type="dreaming_log")
     assert len(items) == 1
@@ -104,7 +107,7 @@ def test_daily_review_creation(tmp_path, monkeypatch):
 
 def test_post_trade_review_creation(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    item = create_post_trade_review("Post-Trade Review", "Review content", metadata={"source": "test"})
+    item = create_post_trade_review("Post-Trade Review", _VALID_CONTENT, metadata={"source": "test"})
     assert item.item_type == "post_trade_review"
     assert "post_trade_reviews" in item.file_path
     items = repo.list_knowledge_items(item_type="post_trade_review")
@@ -150,9 +153,11 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
 
     result = await run_post_trade_reviewer(permission_mode="Observe")
     review_items = repo.list_knowledge_items(item_type="post_trade_review", strategy_id=strategy.id)
-    assert len(review_items) == 1
+    # LLM unavailable in test → agent skips write (by design: no garbage on LLM failure)
     if result["errors"]:
-        assert any("llm_unavailable" in err for err in result["errors"])
+        assert len(review_items) == 0
+    else:
+        assert len(review_items) == 1
     reset_db()
 
 
@@ -167,3 +172,31 @@ def test_strategy_memory_creation(tmp_path, monkeypatch):
 def test_contradiction_detection_stub():
     result = detect_contradictions([])
     assert result == []
+
+
+def test_quality_gate_rejects_short_content(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    item = create_research_note("Short", "Too short", confidence="high_confidence")
+    assert item is None
+    items = repo.list_knowledge_items(item_type="research_note")
+    assert len(items) == 0
+    reset_db()
+
+
+def test_quality_gate_rejects_placeholder(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    placeholder = "Content here " * 10  # Long enough but matches placeholder pattern
+    item = create_research_note("Placeholder", placeholder, confidence="high_confidence")
+    assert item is None
+    reset_db()
+
+
+def test_dedup_rejects_identical_content(tmp_path, monkeypatch):
+    setup_test_env(tmp_path, monkeypatch)
+    item1 = create_research_note("First", _VALID_CONTENT, confidence="high_confidence")
+    assert item1 is not None
+    item2 = create_research_note("Second", _VALID_CONTENT, confidence="high_confidence")
+    assert item2 is None  # Duplicate blocked
+    items = repo.list_knowledge_items(item_type="research_note")
+    assert len(items) == 1
+    reset_db()

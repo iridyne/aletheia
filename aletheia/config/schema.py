@@ -78,8 +78,8 @@ class MarketDataConfig(BaseModel):
     # Append macro (SPY/VIX/DXY/Gold) block to LLM market context prompt.
     enable_yfinance_macro: bool = False
     # US equities to observe (Yahoo Finance tickers). stock_observer runs only
-    # during US market hours (Mon–Fri 14:30–21:00 UTC).
-    observed_stocks: list[str] = Field(default_factory=lambda: ["SPY", "QQQ", "NVDA", "AAPL"])
+    # during US market hours (Mon–Fri 14:30–21:00 UTC). Empty = disabled.
+    observed_stocks: list[str] = Field(default_factory=list)
     # Polymarket category slugs (or keywords) to observe. prediction_observer
     # fetches active markets matching these categories every 30 minutes.
     observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])
