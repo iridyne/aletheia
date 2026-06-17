@@ -891,3 +891,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **§7 持续**: dreaming_log=17/h 全是重复 "Daily Consolidation"。
 
 [2026-06-17 13:46 UTC] ✓ 核心管道全部正常运行，scanner 性能优化生效中
+
+[2026-06-17 14:03 UTC] ✓ 系统正常 — Scanner 连续第 8 次成功 (35-36s, 285 passed), Market/Portfolio/Features 实时, Opportunities +675/h. §17/§18 持续无恶化. market_observer stale=49/94 (52%), timed_out=5.
