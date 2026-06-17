@@ -1366,6 +1366,8 @@ _ADDITIVE_COLUMNS = [
     # canonical_ticker: Yahoo Finance ticker for cross-path correlation (e.g. "AAPL").
     ("asset_subclass", "opportunities", "TEXT NOT NULL DEFAULT ''"),
     ("canonical_ticker", "opportunities", "TEXT NOT NULL DEFAULT ''"),
+    # Futures integration: market type (spot/perp) carried through the member.
+    ("market_type", "universe_members", "TEXT NOT NULL DEFAULT 'spot'"),
 ]
 
 

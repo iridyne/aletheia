@@ -23,16 +23,30 @@ class MicrostructureCollector:
         errors: list[str] = []
 
         try:
+            from aletheia.data.symbols import to_ccxt_perp, InstrumentId
+
             exchange = provider._ensure_primary()
             await exchange.load_markets()
 
             for sym in symbols:
                 try:
+                    # InstrumentId-aware: set defaultType and ccxt symbol per market_type
+                    if isinstance(sym, InstrumentId):
+                        is_perp = sym.market_type == "perp"
+                        fetch_sym = sym.to_ccxt_symbol()
+                        canonical_sym = sym.symbol
+                    else:
+                        is_perp = False
+                        fetch_sym = sym
+                        canonical_sym = sym
+
+                    exchange.options["defaultType"] = "swap" if is_perp else "spot"
+
                     t0 = time.time()
-                    ob = await exchange.fetch_order_book(sym, limit=20)
+                    ob = await exchange.fetch_order_book(fetch_sym, limit=20)
                     latency_ms = int((time.time() - t0) * 1000)
 
-                    snap = _parse_orderbook(sym, provider._primary_name, ob, latency_ms)
+                    snap = _parse_orderbook(canonical_sym, provider._primary_name, ob, latency_ms)
                     if snap:
                         snapshots.append(snap)
                 except Exception as e:

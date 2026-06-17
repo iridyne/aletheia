@@ -1,12 +1,17 @@
 """Tradable instrument definitions and timeframes (guide §3.2, §22.1)."""
 
-from aletheia.data.symbols import InstrumentId, to_canonical, MARKET_SPOT
+from aletheia.data.symbols import InstrumentId, to_canonical, MARKET_SPOT, MARKET_PERP
 
 # MVP tradable symbols — Bitget execution format (used by risk engine + order router)
 TRADABLE_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
 
 # Market types
 MARKET_USDT_FUTURES = "usdt_futures"
+
+
+def instrument_market_to_db_market(market_type: str) -> str:
+    """InstrumentId.market_type ("perp") → DB/execution layer string ("usdt_futures")."""
+    return MARKET_USDT_FUTURES if market_type == MARKET_PERP else market_type
 
 # Canonical timeframes (used by data layer and agent reasoning)
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]

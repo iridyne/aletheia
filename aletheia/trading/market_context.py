@@ -193,15 +193,21 @@ async def build_market_context(
     returns_24h: dict[str, float | None] = {}
 
     try:
+        from aletheia.data.symbols import to_ccxt_perp
+
+        is_perp = market_type in ("perp", "usdt_futures")
+
         for sym in symbols:
             sym_debug: dict = {}
             snaps: list[_IndicatorSnap] = []
             closes_1h: list[float] = []
+            # perp instruments need the settle-suffix form for CCXT (BTC/USDT:USDT).
+            fetch_sym = to_ccxt_perp(sym) if is_perp else sym
             for tf, limit in _TIMEFRAMES:
                 try:
                     candles = cache.get(sym, tf, limit)
                     if candles is None:
-                        candles = await provider.get_ohlcv(sym, timeframe=tf, limit=limit)
+                        candles = await provider.get_ohlcv(fetch_sym, timeframe=tf, limit=limit)
                         cache.set(sym, tf, limit, candles)
                 except Exception as e:
                     debug["errors"].append(f"{sym}/{tf}: {e}")
