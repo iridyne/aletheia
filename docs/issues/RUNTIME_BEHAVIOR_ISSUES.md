@@ -875,3 +875,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 17:03 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 285-286 passed), Opportunities=2208 (+945/h). **新**: strategy_designer 首次触发 (completed=1), pipeline 完整链条生效. §17 abandoned threads=12 (持续累积 ~4/h), timed_out=17. Knowledge=908 (+1 strategy_memory). Ghost=0.
 
 [2026-06-17 17:46 UTC] ✓ 系统正常 — Scanner 稳定 (35-36s, 286 passed), Opportunities=2274 (**+1011/h 首次破千**). Market snapshots=1050/h. §17 timed_out=19 (线性 ~2/45min). Ghost=0, Stale=225 (不增). 所有管道实时运行 5h+ 无中断.
+
+[2026-06-17 18:03 UTC] ✓ 系统正常 — Features=1754/h (4h 连续稳定 1740-1754), Opportunities=2297 (+89/h, 亚盘收市后下降). §17 market_observer **100% timed_out** (最近 8 次全部, 4min 超时). §7 知识去重生效: 1h 仅 4 条新增 (3 ptr + 1 rn, 无重复). Ghost=0, Stale=225. Gateway supervisor 13:41-14:11 重启 frontdoor 5 次 (已自愈). §18 新增: JELLYJELLY, SIREN, BLESS (Bitget-only). Ticker chunk 400-430 Binance 非法字符 regex 失败 (含小写 symbol).
