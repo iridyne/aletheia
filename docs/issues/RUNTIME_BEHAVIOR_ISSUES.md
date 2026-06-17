@@ -350,3 +350,39 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - trade_case_study: 单个 case 最高重复 157 次
 - 总 knowledge_items=788（上次 713，+75 in ~4h）
 - **结论**: 去重修复（plan §1）尚未部署，垃圾仍在持续累积
+
+### 2026-06-17 04:46 UTC — 第四轮巡检 (Δ21min)
+
+**系统状态**: gateway running, scheduler active
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 正常 | 最近 2 次 completed (112 passed, ~3.5min/run)，当前 1 run in progress |
+| Feature Snapshots | ✅ 正常 | 691-793 assets/batch，~10min 间隔 |
+| Market Snapshots | ✅ 正常 | 04:41 UTC (5min 前) |
+| Portfolio Snapshots | ✅ 正常 | 04:42 UTC |
+| Knowledge Production | ⚠️ 重复 | +12 items/h (11 post_trade_review + 1 research_note)，仍无去重 |
+| Prediction Markets | ❌ 空 | 0 markets |
+| Lessons | ❌ 空 | 0 条 |
+
+**Agent 运行率**:
+- 1h: 31 runs, 20 completed, 9 failed (29% failure — 偏高)
+- 24h: 522 runs, 62 failed (11.9%)
+
+**新发现**:
+
+1. **§13 market_observer asyncio 线程泄漏** 🟠
+   - 观测: "market_observer job timed out after 240s" + "asyncio.run() teardown hung after 255s, executor thread abandoned"
+   - 影响: ProactorEventLoop IOCP drain 挂起 → abandoned thread 计数+1 → 长期可能耗尽线程池
+   - 根因: Windows ProactorEventLoop 在 asyncio.run() 退出时不能干净关闭 IOCP（已知 CPython bug）
+   - 建议: 在 _run_async_with_timeout 中使用 asyncio.new_event_loop() + loop.run_until_complete() 代替 asyncio.run()，或对 market_observer 设置 replace_existing=True 防止下次覆盖
+
+2. **§10 更新**: ghost scanner "running" 行仍为 8（重启后未清理历史幽灵）
+   - 新 run 正常 completed，但历史 8 行仍悬挂
+   - **需要**: startup 或定期 reconciliation 清理
+
+3. **§12 持续**: case study NoneType 错误仍在产生（14+ 个 position 触发）
+
+**知识累积**: 788 → 798 (+10 in 21min) — 去重未部署，仍在增长
+**结论**: 核心数据管道健康；主要问题是知识垃圾 + market_observer 偶发 thread leak
