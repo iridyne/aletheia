@@ -869,3 +869,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 15:46 UTC] ✓ 系统正常 — Scanner 连续成功 (34-36s, 284-286 passed), Opportunities=2096 (+833/h). §17 timed_out=11 (缓慢累积, 非阻断). Ghost=0, Stale total=225 (稳定不增).
 
 [2026-06-17 16:03 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 284-285 passed), Opportunities=2119 (+856/h). §17 abandoned threads=8 (从 4→8, 1h 内翻倍), timed_out=13. 线程泄漏加速但进程稳定, 建议下次 gateway restart 清理.
+
+[2026-06-17 16:46 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 284-286 passed), Opportunities=2184 (+921/h 峰值). §17 timed_out=15 (+2/43min, 线性增长). Stale total=225 (稳定). Ghost=0. 所有核心管道实时.
