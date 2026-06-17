@@ -237,10 +237,10 @@
 |--------|------|----------|------|
 | **P0** | **§7 知识注水 99% 重复** | **止血: 去重守卫 + 质量门槛 + 历史清理** | ✅ 已修复 (需 gateway restart) |
 | P0 | §4 学习系统断裂 | 恢复 knowledge → lesson 闭环 | ✅ 已修复 |
-| P1 | §15 portfolio_snapshot 停滞 | 加 timeout 保护，防止 io executor 被占死 | ✅ 已修复 (需 gateway restart) |
-| P1 | §10/§11 ghost scanner + stale agents | 周期性清理 agent_runs + scanner_runs | ✅ 已修复 (需 gateway restart) |
+| P1 | §15 portfolio_snapshot 停滞 | timeout + executor 隔离 + 启动即执行 | ✅ 已修复 (需 gateway restart) |
+| P1 | §10/§11 ghost scanner + stale agents | 年龄门槛 + 即时标记 + 周期清理 | ✅ 已修复 (需 gateway restart) |
 | P1 | §6 策略转化率极低 | 确认 opportunity → strategy 管道设计意图 | ℹ️ 设计如此 |
-| P1 | §9 知识 DB/磁盘不同步 | 68% 知识对 agent 不可见 (注: §7 清理后需重评) | ✅ 清理脚本就绪 |
+| P1 | §9 知识 DB/磁盘不同步 | 68% 知识对 agent 不可见 | ✅ backfill 脚本就绪 (手动运行) |
 | P1 | §1 risk_critic 不稳定 | 排查 timeout/挂起原因 | ✅ 已修复(误判) |
 | P2 | §2 prediction+divergence 停运 | 确认调度设计(已部分恢复) | ℹ️ 设计如此 |
 | P2 | §3 stock_observer 全失败 | 确认 xStock 接口状态 | ✅ 已禁用 |
@@ -266,15 +266,24 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - §5: 数据写入 `prediction_markets` + `prediction_market_claims`，非 `prediction_events`
 - §6: opportunities→proposals (paper_trader) 和 strategies (strategy_designer) 是独立管道
 
-**§15 portfolio_snapshot timeout** (2026-06-17, commit cf0c00b):
+**§15 portfolio_snapshot timeout + executor isolation** (2026-06-17):
 - `_run_portfolio_snapshot` 改用 `_run_sync_with_timeout("portfolio_snapshot", ...)` (45s budget)
 - 加入 `_ASYNC_JOB_TIMEOUT_SEC["portfolio_snapshot"] = 45.0`
 - 根因: `io` executor `max_workers=1`，portfolio_snapshot 无 timeout 时挂住会卡死整个 io 队列
+- 二次修复: 移至 `default` executor（workers=2），不再与 exchange_sync 排队竞争
+- 加 `next_run_time=30s`：重启后立即执行一次，不等完整 interval
 
-**§10/§11 ghost scanner + stale agent cleanup** (2026-06-17, commit cf0c00b):
+**§10/§11 ghost scanner + stale agent cleanup** (2026-06-17):
 - 新增 `_cleanup_stale_agent_runs()`: agent_runs 中 running>20min 的行标为 stale
-- `_run_health_check()` 末尾追加两个 cleanup 调用（每 10min 一次）
+- `_run_health_check()` 追加两个 cleanup 调用（每 10min 一次）
+- `_cleanup_stale_scanner_runs()` 加 10min 年龄门槛，不再误杀合法运行中的 scanner
+- `_run_async_with_timeout` timeout 后立即从 caller 线程标记 agent_runs 为 timed_out
 - 根因: Windows ProactorEventLoop IOCP drain 导致线程被 abandoned，APScheduler 认为 job 结束，但 DB 行状态卡在 running
+
+**§9 知识 backfill** (2026-06-17):
+- 清理脚本增加 `--backfill` 模式：质量过关的孤儿文件插入 DB（含 content_hash 去重）
+- 低质量文件（<80 bytes / placeholder）在 backfill 时删除
+- 用法: `uv run python scripts/cleanup_duplicate_knowledge.py --backfill`
 
 ---
 
@@ -549,3 +558,199 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 24h: 594 runs, 78 failed (13.1%)
 
 **结论**: 核心数据管道(scanner/market/features)稳定运行。portfolio 停滞超 100min 升级为 §15。知识增速放缓（dreaming_agent 可能只每日触发一次）。系统整体可用。
+
+### 2026-06-17 07:03 UTC — 第九轮巡检 (Δ17min)
+
+**系统状态**: gateway running, scheduler active
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 正常 | 06:48 completed (118 passed, 4min), 当前 06:58 in progress |
+| Feature Snapshots | ✅ 正常 | 148-793 assets/batch, 稳定 |
+| Market Snapshots | ✅ 正常 | 06:57 UTC (6min 前) |
+| Portfolio Snapshots | ✅ 恢复 | 06:57 UTC (§15 自修复, 从 05:00 停滞 117min 后恢复) |
+| Knowledge Production | ⚠️ 重复 | +6 items/h (5 ptr + 1 rn), total=829 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**状态变化 vs 上轮**:
+- ✅ §15 Portfolio 恢复: 05:00 → 06:57 (self-heal restart 后恢复, 同 market_observer 模式)
+- ⚠️ Ghost scanner: 18→19 (+1, 持续累积)
+- ⚠️ Stale agents: 199→200 (+1)
+- 📊 Scanner 总计: completed=16, running=19(ghost), timed_out=84, failed=9
+- 📊 Knowledge: 825→829 (+4 in 17min, post_trade_review 为主)
+
+**agent 运行率**:
+- 1h: 16 runs, 13 completed, 3 failed (18.8% — 改善)
+- 24h: 603 runs, 79 failed (13.1% — 持平)
+
+**error.log**: 无新异常，仅 uvicorn startup 记录（3 次 restart，code_drift self-heal 正常）
+
+**结论**: 全部 5 条数据管道恢复正常运行。§15 portfolio 停滞已自修复（确认模式：thread abandon → self-heal restart → 管道恢复）。系统稳态运行，主要技术债仍为 ghost scanner 累积(19) + stale agents 累积(200)。知识去重未部署，垃圾仍在缓慢增长但速率降低(4/17min vs 之前 22/17min)。
+
+### 2026-06-17 07:46 UTC — 第十轮巡检 (Δ43min)
+
+**系统状态**: gateway running, scheduler active
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 正常 | 07:39 completed (122 passed, 3.5min), 产出稳定 |
+| Feature Snapshots | ✅ 正常 | 793 assets/batch (completed runs), 92-385 (ghost runs partial) |
+| Market Snapshots | ✅ 正常 | 07:42 UTC (4min 前) |
+| Portfolio Snapshots | ⚠️ 微停 | 最新 06:57 (49min 前, 上轮恢复后又停) |
+| Knowledge Production | ⚠️ 重复 | +10 items/h (9 ptr + 1 rn), total=835 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**已知问题趋势**:
+- Ghost scanner: 19→22 (+3 in 43min, 加速累积)
+- Stale agents: 200→203 (+3 in 43min)
+- Scanner 总计: completed=18, running=22(ghost), timed_out=84, failed=9
+- Knowledge: 829→835 (+6 in 43min, post_trade_review 为主)
+- §15 Portfolio: 又出现微停(06:57 后无更新, 49min), 可能再次进入 thread abandon 周期
+
+**error.log 模式**:
+- market_observer: asyncio.run() teardown hung (IOCP drain) — §13 持续
+- case study NoneType: 13 个 position 触发 — §12 持续, 高频复现
+
+**agent 运行率**:
+- 1h: 42 runs, 38 completed, 3 failed (7.1% — 显著改善, 近 1h 最佳)
+- 24h: 636 runs, 82 failed (12.9% — 持平)
+
+**结论**: 核心管道(scanner/market/features)稳定。agent 成功率近 1h 显著改善(7.1%)。Portfolio 再次微停待观察(self-heal 模式可预期恢复)。§12 case study NoneType 是最高频复现的非阻断性 bug(13 positions/cycle)。ghost scanner 累积加速(+3 vs 之前 +1~2/轮)说明 timeout→DB 清理的修复越来越紧迫。
+
+### 2026-06-17 08:03 UTC — 第十一轮巡检 (Δ17min)
+
+**系统状态**: gateway running, scheduler active, self-heal restart 后稳定
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 正常 | 07:49 completed (120 passed), 当前 07:59 in progress |
+| Feature Snapshots | ✅ 正常 | 790-793 assets/batch, 连续 3 batch 稳定 |
+| Market Snapshots | ✅ 正常 | 07:57 UTC (6min 前) |
+| Portfolio Snapshots | ✅ 恢复 | 07:57 UTC (上轮 49min 停滞后恢复) |
+| Knowledge Production | ⚠️ 重复 | +10 items/h (9 ptr + 1 rn), total=839 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**重要发现 — §10 Ghost Scanner 批量清理已生效** ✅
+- Ghost scanner: 22→1 (自动清理 21 条 ghost → timed_out)
+- Scanner timed_out: 84→106 (+22, 对应之前 ghost 数)
+- **确认**: self-heal restart 后的 startup reconciliation 正确工作
+- 当前仅剩 1 条 running (即当前正在跑的合法 run)
+- 这是 §10 问题的**运行期自愈**，非代码修复——下次长期运行仍会累积
+
+**error.log 新模式**:
+- `max_instances reached (1)`: APScheduler 正确跳过并发实例（max_instances=1 生效）
+- `Run time was missed by 0:03:06`: scheduler restart 后部分 job missed 一个周期（正常）
+- §12 case study NoneType: 持续 (11 positions/cycle)
+
+**已知问题趋势**:
+- Ghost scanner: 22→1 (✅ 批量清理)
+- Stale agents: 203→205 (+2, 仍在缓慢累积)
+- Knowledge: 835→839 (+4 in 17min)
+
+**agent 运行率**:
+- 1h: 41 runs, 35 completed, 5 failed (12.2% — 正常波动)
+- 24h: 644 runs, 84 failed (13.0% — 持平)
+
+**结论**: §10 ghost scanner 问题在本轮得到批量清理(22→1)，确认 startup reconciliation 有效但需要周期化(§11 建议)。所有核心管道正常。系统处于最佳稳态。
+
+### 2026-06-17 08:46 UTC — 第十二轮巡检 (Δ43min)
+
+[08:46 UTC] ✓ 系统正常 — 所有管道健康运行
+
+**管道状态**: Scanner 连续 4 次 completed (119-120 passed, ~3.5min/run) | Features 793/batch 稳定 | Market 08:38 | Portfolio 08:38 | Knowledge +8/h (6 ptr + 2 rn) | Ghost=1(当前合法 run) | Stale agents 205→207(+2)
+
+**agent 运行率**: 1h: 26 runs, 21 completed, 3 failed (11.5%) | 24h: 662 runs, 86 failed (13.0%)
+
+**error.log**: 仅 uvicorn startup 记录（3 次 self-heal restart），无新异常模式
+
+**备注**: 本轮首次连续 4 个 scanner run 全部 completed，无 ghost 产生。系统自上轮 reconciliation 后进入稳态运行。knowledge 去重仍未部署（plan §1），total=843 持续增长。
+
+### 2026-06-17 09:03 UTC — 第十三轮巡检 (Δ17min)
+
+[09:03 UTC] ✓ 系统正常 — 核心管道正常运行
+
+**管道状态**: Scanner completed 08:50 (121 passed) | Features 793/batch | Market 08:59 (4min 前) | Portfolio 08:38 (25min, 轻微延迟) | Knowledge +7/h (6 ptr + 1 rn), total=846 | Ghost=2(1 合法 + 1 刚超时) | Stale agents 207→211(+4)
+
+**agent 运行率**: 1h: 28 runs, 21 completed, 6 failed (21.4% — 略升) | 24h: 672 runs, 90 failed (13.4%)
+
+**error.log**: startup reconciliation "Marked 1 stale agent run(s)" + uvicorn restart (self-heal 正常)
+
+**趋势**: ghost scanner 从 1 微升到 2（thread abandon 正常复发节奏），stale agents +4/轮（加速，可能因 self-heal restart 频率略增）。portfolio 25min 延迟在可接受范围（<30min 不报警）。整体稳态持续。
+
+### 2026-06-17 09:46 UTC — 第十四轮巡检 (Δ43min)
+
+[09:46 UTC] ✓ 系统正常 — 全管道健康，ghost scanner 清零
+
+**管道状态**: Scanner 连续 completed (121 passed, 最近 2 次) | Features 793/batch 稳定 | Market 09:45 (1min 前) | Portfolio 09:39 (7min) | Knowledge +10/h (9 ptr + 1 rn), total=853 | Ghost=0 ✅ | Stale agents 211→212(+1, 放缓)
+
+**agent 运行率**: 1h: 26 runs, 18 completed, 5 failed (19.2%) | 24h: 688 runs, 91 failed (13.2%)
+
+**error.log**: max_instances=1 正确跳过并发 + "Run time missed" (self-heal restart 后正常丢失 1-2 周期)
+
+**备注**: ghost_scanner=0 是监测以来最佳值（连上轮遗留的 2 个也被 reconciliation 清了）。scanner timed_out 总数 106→109 (+3, 正常累积)。系统持续稳态运行 >3h 无重大异常。
+
+### 2026-06-17 10:03 UTC — 第十五轮巡检 (Δ17min)
+
+[10:03 UTC] ✓ 系统正常 — 全管道健康运行
+
+**管道状态**: Scanner 连续 3 次 completed (121 passed, ~3.8min/run) | Features 793/batch | Market 09:59 (4min 前) | Portfolio 09:59 (4min) | Knowledge +7/h (6 ptr + 1 rn), total=853 | Ghost=1(当前合法 run) | Stale agents 212→213(+1, 放缓)
+
+**agent 运行率**: 1h: 24 runs, 19 completed, 2 failed (8.3% — 优秀) | 24h: 696 runs, 92 failed (13.2%)
+
+**error.log**: max_instances skipped + missed run (正常) + startup reconciliation "Marked 1 stale"
+
+**备注**: agent 1h 失败率 8.3% 为近期最佳之一。系统持续稳态运行 >4h。knowledge total 停在 853（本小时未产出新增 — 可能当前 agent 周期刚好在间隔中）。
+
+### 2026-06-17 10:46 UTC — 第十六轮巡检 (Δ43min)
+
+**系统状态**: gateway running, **scanner 连续 4 次 failed** 🔴
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | 🔴 连续 failed | 10:22/10:24/10:34/10:44 全部 failed (scanned=0) |
+| Feature Snapshots | ⚠️ 停滞 | 最新 10:08 (38min 前), 因 scanner 失败无新 batch |
+| Market Snapshots | ✅ 正常 | 10:43 (3min 前) |
+| Portfolio Snapshots | ✅ 正常 | 10:43 (3min) |
+| Knowledge Production | ✅ 正常 | +8/h (6 ptr + 1 rn + 1 cs), total=861 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**§16 Scanner 连续失败 — futures commit 引入 "swap" ExchangeError** 🔴
+
+- **观测**: 4 次连续 failed, scanned=0, 即时失败
+- **根因**: commit `f626ad3` (feat(futures): Layer 0-6 spot/futures unification) 修改了
+  `aletheia/universe/features.py`，将 `fetchMarkets` 改为 `["spot", "swap"]`
+- **错误**: `binance fetchMarkets() "swap" is not a supported market type`
+  - Binance CCXT 只接受 `["spot", "linear", "inverse"]`，不接受 "swap"
+  - "swap" 是 CCXT 内部 market type，不能传给 binance 的 fetchMarkets options
+- **影响**: universe scanner 完全停止 → 无新 feature snapshots → 无新 universe 候选
+  - market_observer/portfolio 不受影响（独立管道）
+  - 现有 universe snapshot 仍有效（TTL 内）但会过期
+- **紧迫性**: 必须立即修复，否则 universe 过期后回退到 static fallback
+- **修复方向**: features.py 应使用 `["spot", "linear"]` 而非 `["spot", "swap"]`
+  来加载 binance 永续合约市场。或在 futures 未配置启用时保持 `["spot"]`
+
+**其他观测**:
+- Ghost scanner=0 (全部 failed 不产生 ghost)
+- Stale agents: 213→216 (+3)
+- timed_out: 109→111 (+2)
+- agent 运行率 1h: 30 runs, 25 completed, 4 failed (13.3% — 正常)
+
+**结论**: futures integration commit 引入了 scanner 回归。这是 §14 的根本修复需求——之前是脏文件导致，这次是已提交的代码。需要修复 features.py 中 binance fetchMarkets 的 market type 映射。
+
+### 2026-06-17 11:03 UTC — 第十七轮巡检 (Δ17min)
+
+**§16 持续**: Scanner 连续 5 次 failed (10:22→10:54, 40min+), "swap" ExchangeError 未修复
+
+**其他管道正常**: Market 10:58 (5min) | Portfolio 10:53 (10min) | Knowledge +8/h, total=861 | Agent 1h: 27 runs, 23 completed, 3 failed (11.1%) | Stale 216 | Ghost=0
+
+**Feature snapshots 停滞 53min** (最新 10:08) — 因 scanner 失败无新 universe 供 feature 采集。现有 universe snapshot 仍在 TTL 内（snapshot_ttl_hours 通常 6-24h），暂不影响 market_observer 选币。
+
+**紧迫性升级**: 已连续失败 >40min。若不修复，universe snapshot 将在 TTL 后过期，系统回退到 static fallback (BTC/ETH/SOL only)。
