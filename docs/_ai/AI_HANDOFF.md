@@ -1,4 +1,4 @@
-# AI Handoff
+﻿# AI Handoff
 
 > **本文件是 append-only 变更史**(记录"做了什么改动 + 根因",机器无关)。
 > 其中任何"当时机器状态"(gateway 在跑 / 观察期第 N 小时 / 凭证已存 / demo 单已落)
@@ -7,7 +7,39 @@
 
 ## Last Updated
 
-2026-06-17 (期货集成收尾：signal_emitter market 修复 + registry getattr 清理)
+2026-06-17 (调研：开源算法交易框架；Scanner §16 修复；测试基础设施强化；期货集成收尾)
+
+---
+
+## Recent Change (开源算法交易框架调研 — 2026-06-17，纯研究无代码改动)
+
+> **背景**: team-lead 委派基础研究任务，为 Aletheia 下一步架构决策（做空对称、策略发现、
+> 信号流水线）提供参考。调研 8 个框架 + FinRL + Alpha Factory + LLM 策略生成前沿。
+
+**关键结论（对 Aletheia 架构有参考价值）**:
+- **做空对称性**: Nautilus Trader（OrderSide enum）、Jesse（`go_short()` 与 `go_long()` 完全平行）最完整；Freqtrade 做空是事后补丁（`can_short=True` + futures 限制）
+- **最佳流水线**: LEAN 五层分离（Universe → Alpha → Portfolio Construction → Risk → Execution）是机构标准；Aletheia 当前管道吻合，但 ranker + paper_trader 混合承担 Portfolio Construction 职责
+- **ML 信号路径**: FreqAI 最完整（周期重训练 + 不确定性过滤 + 特征自动扩展）；LLM 目前只作特征提取工具，无端到端 LLM 生成可部署策略的生产案例
+- **Alpha Factory**: Aletheia 的 signal_emitter + universe calibration 走的是 WorldQuant Alpha Factory 路线（小 alpha 并行 + 组合），方向正确
+
+**无代码改动**；研究记录已写入 DEVLOG。
+
+---
+
+## Recent Change (Scanner §16 修复 + 测试基础设施强化 — 2026-06-17, commits d8908e5..e053d5a)
+
+> **背景**: §16 scanner 持续超时 82min+（10 次连续失败）。根因是期货集成引入了
+> `"swap"` 作为 Binance fetchMarkets 的市场类型键，但 Binance 适配器白名单不认这个值，
+> 导致 ExchangeError 静默杀死整个扫描 pipeline。
+
+**改动（4 commits）**:
+
+1. `features.py` + `registry.py` (d8908e5) — `"swap"` → `"linear"`（Binance USDT-perp 标准键）；scanner `assets_passed=115` 完成
+2. `tests/conftest.py` + `test_hypothesis_properties.py` (ec7ea30) — in-memory DB autouse；19 Hypothesis 属性测试；1338 passed
+3. 多个测试文件 (3221197) — `_MIN_CONTENT_LENGTH` 质量门导致 28+ 测试失败修复；None guard
+4. `features.py` (e053d5a) — `_OHLCV_CONCURRENCY` 5→10；`asyncio.wait_for(timeout=8.0)` per-symbol；OHLCV ~7s→~3.5s
+
+**验证**: 1338 tests passed（+19 Hypothesis 属性测试）；scanner 完成
 
 ---
 
