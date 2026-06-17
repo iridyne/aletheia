@@ -265,6 +265,33 @@ market analysis, claims, lessons, skills, policy versions。
 
 ---
 
+## Cross-Cutting Track: Self-Evolution (observer 自进化)
+
+> **正交于 Phase 0–7，正交于 Operator Layer Track。** 本 track 衡量 *observer pipeline 能否从自身运行结果中积累经验*——自动生成候选规则、归纳量能/动量规律、最终内化为确定性分析能力。
+> 详细设计与实施指令见 [`docs/plans/self_evolution_plan.md`](../plans/self_evolution_plan.md)。
+
+| Tier | 名称 | 状态 | 计划日期 | 前置条件 |
+|------|------|------|----------|----------|
+| **1** | 自动 guard_candidate 生成（无 LLM） | **DONE** `1a75dc7` 2026-06-17 | — | — |
+| **2** | 周期性 LLM 规律归纳（量能/动量/多 TF K 线） | **PLANNED** | **2026-07-01** | ≥50 条 settled outcomes（约 2 周积累） |
+| **3** | 确定性 scanner rule 提炼（节省 token） | **PLANNED** | **2026-08-17** | ≥20 per pattern OOS 验证，Tier 2 已产出有效 research_note |
+
+**核心数据流（Tier 1 已运行）**：
+```
+settle_due() → 4h 亏损 outcome → guard_candidate 文件 → 人工确认 → trading_guard → FTS 检索
+```
+
+**Tier 2 触发信号**（2026-07-01 前后检查）：
+- `calibration_stats()` 可见 ≥50 条 settled outcomes
+- 各 scanner_family 均有至少 10 条样本
+
+**人工确认入口**（每次会话可扫描）：
+```powershell
+uv run python -c "from aletheia.storage.repositories import list_knowledge_items; [print(i['id'], i['created_at'], i['title']) for i in list_knowledge_items(item_type='guard_candidate', limit=10)]"
+```
+
+---
+
 ## Cross-Cutting Track: Model Provider Fallback & Priority (规划中)
 
 > **状态**: 仅设计记录,尚未实施。可作为基础设施增强项随时启动(不依赖其他 Phase)。

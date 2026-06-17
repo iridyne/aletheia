@@ -101,6 +101,13 @@ Microstructure/Derivatives/Macro 三表段，平均每个 symbol 多 ~200 token 
 
 ## 待办(下一步可做的事 — 不含"现在状态如何")
 
+0. **Self-Evolution Tier 2（计划 2026-07-01）**：
+   - 前置检查：`calibration_stats()` 可见 ≥50 条 settled outcomes
+   - 实施内容：新增 `EvolutionSynthesizerAgent`，APScheduler UTC 03:00 每日触发，
+     按 scanner_family 分组调用 LLM 归纳量能/动量规律，写入 research_note / guard_candidate
+   - 详细设计：`docs/plans/self_evolution_plan.md` § Tier 2
+   - Tier 3（2026-08-17）：确定性 scanner rule 提炼，见同文件 § Tier 3
+
 1. **持续闭环观察**:每次较大改动后用 `aletheia doctor` 扫一眼,看 fills/positions/
    knowledge_items 是否仍在累积;退化才回头查根因。
 2. **并行开发**:可以同时推进 Operator Layer Track B、Persistence/Recovery 集成、
