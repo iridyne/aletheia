@@ -923,3 +923,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 21:03 UTC] ✓ 系统正常 — Features=1836/h (回升, 1531→1836). Opportunities=2571 (+81/h). §17 timed_out=33 (+1). paper_trader: completed_with_errors=3/h (持续, 非致命——可能缺少 open positions 或 LLM 降级). risk_critic: 1 stale (同上轮). Knowledge=470. Ghost=0, Stale=229. 9h+ 连续无中断.
 
 [2026-06-17 21:46 UTC] ✓ 系统正常 — Features=1830/h (稳定). Opportunities=2642 (+95/h). §17 timed_out=36 (+3/45min), abandoned_threads=3 (重置——gateway 可能自动 restart 清理). paper_trader + risk_critic 模式同上. Knowledge=474. Ghost=0, Stale=230. 9.7h 连续无中断.
+
+[2026-06-17 22:03 UTC] ✓ 系统正常 — Features=1830/h (3h 稳定在 1809-1836 带). Opportunities=2674 (+103/h 回升). §17 timed_out=37 (+1/45min, 放缓). Knowledge=479 (+1/h). Ghost=0, Stale=230. 10h+ 连续无中断——达到监测以来最长无中断运行.
