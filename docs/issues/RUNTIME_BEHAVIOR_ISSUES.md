@@ -246,6 +246,7 @@
 | P2 | §3 stock_observer 全失败 | 确认 xStock 接口状态 | ✅ 已禁用 |
 | P2 | §5 prediction_events 空 | 确认数据写入路径 | ℹ️ 设计如此 |
 | P3 | §8 market_observer 偶发失败 | 监控即可 | — 无需修复 |
+| **P1** | **§16 scanner 连续失败 (futures regression)** | **batch ticker + pre-filter + concurrent OHLCV** | ✅ 已修复 (需 gateway restart) |
 
 ### 修复说明 (2026-06-17)
 
@@ -284,6 +285,16 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 清理脚本增加 `--backfill` 模式：质量过关的孤儿文件插入 DB（含 content_hash 去重）
 - 低质量文件（<80 bytes / placeholder）在 backfill 时删除
 - 用法: `uv run python scripts/cleanup_duplicate_knowledge.py --backfill`
+
+**§16 Scanner 性能升级** (2026-06-17):
+- 根因: futures 合并后 registry 从 ~400 增至 ~700-900 资产，`collect_features()` 串行
+  `fetch_ohlcv()` 每资产 1-2s，总计 >20min 远超 360s timeout
+- 修复策略: batch ticker + volume pre-filter + concurrent OHLCV
+  1. Spot/perp tickers 分别 batch fetch（~2-4s 取回全部）
+  2. 用 quoteVolume >= min_volume_24h_usdt 预筛，700→~100-150 资产
+  3. 剩余资产用 asyncio.Semaphore(5) 并发 OHLCV，~60s 内完成
+- timeout 从 360s 提升至 600s 作为安全网
+- 预期: 从 timeout (>360s) 降至 60-90s 完成
 
 ---
 
