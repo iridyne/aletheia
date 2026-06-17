@@ -7,6 +7,51 @@
 
 ## Last Updated
 
+2026-06-17 (调研：Strategy Pool 前期探索 — 策略生命周期代码结构梳理，无代码改动)
+
+---
+
+## Recent Change (Strategy Pool 前期调研 — 2026-06-17，纯研究无代码改动)
+
+> **背景**: team-lead 委派，为 Strategy Pool 功能规划做代码结构前置调研。
+> 梳理了策略从生成到退役的完整路径，供后续设计 direction_affinity + regime_awareness 扩展时参考。
+
+**调研覆盖文件**：
+- `aletheia/agents/dreaming_agent.py` — 夜间巩固 + 学习账本（非策略生成）
+- `aletheia/storage/models.py:193` — `StrategyRecord`（核心数据模型）
+- `aletheia/storage/repositories.py:432` — CRUD（insert/update/get/list_strategies）
+- `aletheia/analytics/lifecycle_automation.py` — 自动暂停/退役（无 LLM）
+- `aletheia/analytics/strategy_evidence.py` — 策略健康分类
+- `aletheia/agents/paper_trader_ranker.py` — 策略证据对得分的影响
+- `aletheia/universe/outcome_recorder.py` — Universe 前向收益追踪（非策略级）
+- `aletheia/trading/strategy_lifecycle.py` — 状态机 + 晋升门（10 态，前向单向）
+- `aletheia/strategy/performance_ledger.py` — 元评估层
+
+**关键结论**：
+
+1. **StrategyRecord 不含 direction_affinity / regime 字段**：`parameters`（JSON blob）内只有
+   `entry_rule/exit_rule/timeframe/direction_bias/symbol/ruleset`。需扩展 `parameters` schema
+   或加新列（走 `_ADDITIVE_COLUMNS` 迁移路径）。
+
+2. **10 态前向状态机**（`aletheia/trading/strategy_lifecycle.py:27`）：
+   `draft → research_note → strategy_hypothesis → paper_candidate →
+   paper_running → paper_passed → live_candidate → live_limited → retired → deprecated`
+   晋升门要求 ≥14d paper + ≥30 笔交易 + 正 expectancy。
+
+3. **dreaming_agent 不生成策略**：负责夜间活动巩固 + 学习账本 + lesson 提取。
+   策略生成入口在 strategy_designer agent（本轮未探索）。
+
+4. **ranker 对策略的使用**：`backtest_killed` 是唯一硬阻断；其余通过 bonus/penalty 调分（+15/-10/-30）。
+   `direction_bias` 从 `opportunity` 独立推断，与 `strategy.parameters.direction` 无强绑定。
+
+5. **forward outcome 是 Universe 级，非策略级**：策略级 PnL 来自 positions 表的 `strategy_id` 外键。
+
+**无代码改动**；研究记录已写入 DEVLOG。
+
+---
+
+## Last Updated (previous)
+
 2026-06-17 (调研：开源算法交易框架；Scanner §16 修复 + 测试基础设施强化)
 
 ---
