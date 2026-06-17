@@ -895,3 +895,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 22:03 UTC] ✓ 系统正常 — Features=1830/h (3h 稳定在 1809-1836 带). Opportunities=2674 (+103/h 回升). §17 timed_out=37 (+1/45min, 放缓). Knowledge=479 (+1/h). Ghost=0, Stale=230. 10h+ 连续无中断——达到监测以来最长无中断运行.
 
 [2026-06-17 22:46 UTC] ✓ 系统正常 — Features=1829/h (锁定在 1830 带, 2h 无波动). Opportunities=2736 (+94/h). §17 timed_out=40 (+3/45min). Knowledge=485. Ghost=0, Stale=231. equity_observer 本轮未触发 (off-hours 正常). 10.7h 连续无中断.
+
+[2026-06-17 23:03 UTC] ✓ 系统正常 — Features=1827/h (1830 带持续 3h+). Opportunities=2761 (+87/h). §17 timed_out=41 (+1). Knowledge=489. Ghost=0, Stale=231. §18 根因确认: **龙虾/USDT** (中文字符 symbol) 在 registry 中, 导致 Binance chunk 400-430 整批 regex 拒绝. 修复方向: `_chunked_fetch_tickers` 预过滤非 ASCII symbols. 11h+ 连续无中断.
