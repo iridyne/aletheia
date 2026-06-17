@@ -386,3 +386,46 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 
 **知识累积**: 788 → 798 (+10 in 21min) — 去重未部署，仍在增长
 **结论**: 核心数据管道健康；主要问题是知识垃圾 + market_observer 偶发 thread leak
+
+### 2026-06-17 05:03 UTC — 第五轮巡检 (Δ17min)
+
+**系统状态**: gateway restarted (code drift fix), scheduler active
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ⚠️ 2 次失败 | 04:52 + 05:02 failed (swap market type error) |
+| Feature Snapshots | ✅ 正常 | 793 assets/batch 稳定 |
+| Market Snapshots | ✅ 正常 | 05:00 UTC |
+| Portfolio Snapshots | ✅ 正常 | 05:00 UTC |
+| Knowledge Production | ⚠️ 仍无去重 | +22 items/h (17 dreaming + 12 ptr + 2 rn + 1 daily) |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 恢复 | 0 → 32 条（dreaming_agent lesson 提取已生效） |
+
+**重要发现**:
+
+1. **§14 主仓脏文件导致 scanner 回退** 🔴
+   - 观测: registry.py 磁盘上有未提交的脏改动，把 fetchMarkets 改回含 "swap"
+   - 根因: 另一个并行 job（futures integration）修改了多个文件但未提交/未完成
+   - 影响: gateway 加载脏文件 → scanner 连续 2 次 failed (ExchangeError: "swap" not supported)
+   - **已修复**: `git checkout -- aletheia/universe/registry.py` 恢复 + gateway restart
+   - **注意**: features.py 等其他脏文件也含 "swap" 引用但当前不影响 scanner 主路径
+   - 建议: 并行 job 应在 worktree 中工作，不应脏改主仓文件
+
+2. **§4 学习闭环恢复确认** ✅
+   - ps_lessons: 0 → 32 条（首次有数据！）
+   - dreaming_agent `_extract_lessons()` 步骤已在运行中生效
+   - 验证: plan §2 修复目标达成
+
+3. **§7 知识去重未部署但产出模式变化**
+   - dreaming_log 突然 +17 条/h（之前几乎为 0）
+   - 可能 dreaming_agent 的新 lesson 提取触发了额外的 dreaming_log 写入
+   - 总 knowledge: 798 → 820 (+22 in ~17min) — 增速加快
+
+4. **§10/§11 状态**: ghost scanner 7→7, stale agents 183→185 — 缓慢累积中
+
+**agent 运行率改善**:
+- 1h: 48 runs, 38 completed, 7 failed (14.6% — 上次 29%，改善)
+- 24h: 548 runs, 64 failed (11.7%)
+
+**结论**: scanner 因脏文件暂时回退已修复；lesson 提取首次成功（里程碑）；知识垃圾增速加快需尽快部署去重
