@@ -20,7 +20,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aletheia.storage.sqlite import get_connection
+from aletheia.storage.sqlite import get_db
 
 
 def _content_hash(content: str) -> str:
@@ -32,7 +32,7 @@ def main():
     if dry_run:
         print("[DRY RUN] No changes will be made.\n")
 
-    db = get_connection()
+    db = get_db()
 
     # Step 1: Backfill content_hash for rows missing it
     print("=== Step 1: Backfill content_hash ===")
@@ -104,8 +104,8 @@ def main():
 
     # Step 3: Find orphan files (on disk but not in DB)
     print("=== Step 3: Orphan file cleanup ===")
-    from aletheia.files.markdown import get_knowledge_dir
-    knowledge_dir = get_knowledge_dir()
+    from aletheia.config.loader import get_data_dir
+    knowledge_dir = get_data_dir() / "knowledge"
     if knowledge_dir.exists():
         all_files = set(str(p) for p in knowledge_dir.rglob("*.md"))
         db_files = set(
