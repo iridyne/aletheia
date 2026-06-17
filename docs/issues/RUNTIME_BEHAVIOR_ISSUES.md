@@ -649,3 +649,15 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 24h: 644 runs, 84 failed (13.0% — 持平)
 
 **结论**: §10 ghost scanner 问题在本轮得到批量清理(22→1)，确认 startup reconciliation 有效但需要周期化(§11 建议)。所有核心管道正常。系统处于最佳稳态。
+
+### 2026-06-17 08:46 UTC — 第十二轮巡检 (Δ43min)
+
+[08:46 UTC] ✓ 系统正常 — 所有管道健康运行
+
+**管道状态**: Scanner 连续 4 次 completed (119-120 passed, ~3.5min/run) | Features 793/batch 稳定 | Market 08:38 | Portfolio 08:38 | Knowledge +8/h (6 ptr + 2 rn) | Ghost=1(当前合法 run) | Stale agents 205→207(+2)
+
+**agent 运行率**: 1h: 26 runs, 21 completed, 3 failed (11.5%) | 24h: 662 runs, 86 failed (13.0%)
+
+**error.log**: 仅 uvicorn startup 记录（3 次 self-heal restart），无新异常模式
+
+**备注**: 本轮首次连续 4 个 scanner run 全部 completed，无 ghost 产生。系统自上轮 reconciliation 后进入稳态运行。knowledge 去重仍未部署（plan §1），total=843 持续增长。
