@@ -54,14 +54,16 @@
 
 ## 接手机器第一步(机器交接后)
 
-0. **接手机器开机第一步**(2026-06-13 交接后,机器无关流程):
-   1. `git pull --ff-only` —— 拿最新意图(本日 18 提交 + docs/plans 已在 origin/master)。
-   2. `uv run aletheia doctor`(本机 GBK 控制台需 `PYTHONIOENCODING=utf-8`)—— 取真实事实:
+0. **接手机器开机第一步**（机器无关流程，2026-06-17 更新）:
+   1. **处理 git diverge**：本地 master 领先 origin 46 提交，origin 有 2 个文档提交未合并。
+      运行 `git pull --rebase origin master`（推荐）或 `git merge origin/master`，
+      再 `git push` 同步到 origin。若已在最新机器上直接 `git pull --ff-only` 即可。
+   2. `uv run aletheia doctor`（本机 GBK 控制台需 `PYTHONIOENCODING=utf-8`）—— 取真实事实:
       gateway 是否在跑、autostart 是否注册、凭证、loop 活动。**不要**用本文或任何 git 文档
       推断这些。
-   3. 需要本地跑闭环时:`uv run aletheia gateway start`(或 dev 迭代用 `scripts/dev.ps1`);
-      若需无人值守自动复活:`aletheia gateway enable-autostart`。
-   4. `uv run pytest -q` 确认 515+ 测试基线绿(克隆后还应跑 `import aletheia.risk.engine` sanity)。
+   3. 需要本地跑闭环时：`uv run aletheia gateway start`（或 dev 迭代用 `scripts/dev.ps1`）；
+      若需无人值守自动复活：`aletheia gateway enable-autostart`。
+   4. `uv run pytest -q` 确认 1338+ 测试基线绿（新增 19 个 hypothesis 属性测试）。
 
 ## Edge Lab — 完成 (2026-06-14, commits 9fe5c5f / 8532280 / c90d2eb / ab2ba5c / ab4a522)
 
@@ -96,20 +98,6 @@ Microstructure/Derivatives/Macro 三表段，平均每个 symbol 多 ~200 token 
 1. Settings → Infrastructure → Network Proxy → 输入代理 URL(如 `http://127.0.0.1:7897`)→ 点 Test 验证连通 → Save。
 2. 重启 gateway(proxy 已在 lifespan startup 自动 apply;watchdog 重启后同样生效)。
 3. `aletheia doctor` 应显示 `✓ network.proxy  proxy configured, reachable (XXms)`。
-
----
-
-## US Equity 集成 — 完成 (2026-06-17, Phase 1-4 全部)
-
-10 个文件改动 + 1 个新文件(`aletheia/agents/equity_observer.py`)。
-
-- **Phase 1**：`data/symbols.py` xstock↔ticker 映射，`config/schema.py` `observed_equities` 字段，`storage/models.py` + `migrations.py` Opportunity 新字段
-- **Phase 2**：`equity_observer.py` 统一 agent（yfinance 日线 + xStock 实时价 + deviation 监控）；`scheduler.py` 替换 `stock_observer` 调度
-- **Phase 3**：`knowledge/router.py` 加 `equity_observer` role；`market_observer.py` 移除 xStocks 分支
-- **Settings UI**：`POST /settings/equities` backend + `updateEquities` API client + `EquitiesCard` 前端组件（RiskTab "Observed US Equities" section）
-- **Phase 4**：`paper_trader_ranker.py` equity shadow track（计分但 `skip_reason="equity_shadow_track"`，永不执行）
-
-启用方式：Settings → Risk & Universe → Observed US Equities → 添加 ticker（如 AAPL、TSLA）→ Save changes；gateway 重启后 equity_observer 在 Mon–Fri 市场时段自动运行。
 
 ---
 
