@@ -1,5 +1,45 @@
 # Development Log
 
+## 2026-06-17 — 开源算法交易框架调研（纯研究，无代码改动）
+
+> 来源：team-lead 委派的基础研究任务；目标是为 Aletheia 下一步架构决策提供参考。
+
+### 调研范围
+
+覆盖 8 个框架（Jesse、Freqtrade/FreqAI、QuantConnect LEAN、Zipline-reloaded、Backtrader、
+Nautilus Trader、Hummingbot、OctoBot）以及 FinRL 强化学习框架；并调研了 Alpha Factory
+概念、LLM 驱动策略生成（FinGPT、GPT-InvestAR）、加密原生平台（3Commas/Mudrex/Pionex）。
+
+### 核心发现（详见本次会话 team-lead 收到的完整报告）
+
+1. **做空一等公民程度**：Nautilus Trader 和 Jesse 做空最对称（OrderSide enum /
+   `go_short()` 与 `go_long()` 完全平行）；Freqtrade 做空需 `can_short=True` + futures 市场，
+   属于事后补丁；Zipline/Backtrader 用负 order_target 量隐式表达做空，不够显式。
+
+2. **信号→仓位流水线**：QuantConnect LEAN 五层分离（Universe→Alpha→Portfolio
+   Construction→Risk→Execution）是机构级最佳实践；Aletheia 当前管道与此高度吻合，
+   但缺少独立的 PortfolioConstruction 层（ranker + paper_trader 混合承担此职责）。
+
+3. **策略发现方式**：业界主流仍是人工编码 + 超参优化（Optuna/Hyperopt）；FreqAI 是
+   最完整的 ML 信号路径（自动特征扩展 + 周期重训练 + 不确定性过滤）；LLM 目前仅作
+   为特征提取工具，未见端到端 LLM 生成可部署策略的生产案例。
+
+4. **Alpha Factory 概念**：WorldQuant 模式——大量独立 alpha 并行研究，统一回测/衰减/
+   容量评估后组合；每个 alpha 是小、可解释的信号，不是完整策略。Aletheia 的
+   signal_emitter + universe calibration 路径实质上在走类似方向。
+
+5. **Aletheia 差距点**（研究视角，供后续决策参考）：
+   - Short 方向 Opportunity 生成路径已完整（Layer 0-6 落地），但 risk engine 对空头
+     的对称风控尚需验证
+   - 无独立 PortfolioConstruction 层：ranker 既做信号排序又做 sizing，职责混合
+   - 缺少 ML 信号路径（FreqAI 风格的特征工程 + 周期重训练）
+
+### 无代码改动
+
+本轮为纯研究任务，未修改任何项目文件。
+
+---
+
 ## 2026-06-17 — Scanner 性能 + 测试基础设施强化
 
 > 本轮工作围绕 §16 scanner 超时根因展开：Binance fetchMarkets 错误 key → 预加载失败 →
