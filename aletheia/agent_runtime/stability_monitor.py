@@ -18,7 +18,7 @@ from aletheia.storage.repositories import (
 )
 
 
-_FAILED_STATUSES = {"failed", "error", "stale"}
+_FAILED_STATUSES = {"failed", "error", "stale", "timed_out"}
 
 
 def _orphan_counts() -> dict[str, int]:
