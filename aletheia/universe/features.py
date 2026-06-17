@@ -14,7 +14,8 @@ from aletheia.trading.indicators import rsi, atr, sma
 
 logger = logging.getLogger("aletheia.universe.features")
 
-_OHLCV_CONCURRENCY = 5
+_OHLCV_CONCURRENCY = 10
+_OHLCV_TIMEOUT = 8.0
 
 
 def _pct_return(closes: list[float], bars: int) -> float | None:
@@ -62,8 +63,11 @@ async def _fetch_single_feature(
 
     ohlcv_1h = []
     try:
-        ohlcv_1h = await exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=30)
-    except Exception:
+        ohlcv_1h = await asyncio.wait_for(
+            exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=30),
+            timeout=_OHLCV_TIMEOUT,
+        )
+    except (asyncio.TimeoutError, Exception):
         pass
 
     closes_1h = [float(c[4]) for c in ohlcv_1h] if ohlcv_1h else []
