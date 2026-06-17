@@ -75,8 +75,18 @@ async def test_codex_healthcheck_disabled():
 
 @pytest.mark.anyio
 async def test_openai_healthcheck_no_server():
+    import httpx
+
+    class FailClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, **k): raise httpx.ConnectError("refused")
+        async def post(self, url, **k): raise httpx.ConnectError("refused")
+
     provider = OpenAICompatibleProvider(base_url="http://localhost:19999/v1", model="test")
-    health = await provider.healthcheck()
+    with patch("aletheia.model_provider.openai_compatible.httpx_client", FailClient):
+        health = await provider.healthcheck()
     assert health.available is False
 
 

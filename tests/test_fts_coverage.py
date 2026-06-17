@@ -34,7 +34,8 @@ def test_high_confidence_items_indexed_at_creation(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
     db = sq.get_db()
 
-    create_research_note("BTC momentum study", "BTC shows strong momentum divergence",
+    create_research_note("BTC momentum study",
+                         "BTC shows strong momentum divergence on the 4h chart with RSI overbought while price action consolidates below resistance.",
                          confidence="high_confidence")
     count = db.execute("SELECT COUNT(*) FROM knowledge_fts").fetchone()[0]
     assert count == 1
@@ -61,9 +62,9 @@ def test_reindex_all_backfills_missing(tmp_path, monkeypatch):
     db = sq.get_db()
 
     # Create items normally (they get indexed)
-    create_trade_case_study("Case A", "ETH breakout above resistance",
+    create_trade_case_study("Case A", "ETH breakout above key resistance with strong volume confirmation; entry at breakout candle, stop below support, target at prior highs.",
                             confidence="high_confidence")
-    create_trade_case_study("Case B", "SOL mean reversion trade",
+    create_trade_case_study("Case B", "SOL mean reversion trade from oversold RSI on daily chart; position sized conservatively given macro uncertainty and thin liquidity.",
                             confidence="high_confidence")
 
     # Simulate historical gap: delete FTS entries directly
@@ -86,7 +87,7 @@ def test_retrieve_lessons_returns_results_after_reindex(tmp_path, monkeypatch):
 
     create_trade_case_study("Momentum breakout ETH",
                             "ETH broke above 200MA with volume confirmation. "
-                            "Entry at breakout, stop below support.",
+                            "Entry at breakout, stop placed below support level.",
                             confidence="high_confidence")
 
     # Clear FTS to simulate the historical gap
@@ -117,7 +118,8 @@ def test_doctor_fts_probe(tmp_path, monkeypatch):
     assert "no eligible" in report.checks[-1].detail
 
     # Create items with full coverage → ok
-    create_research_note("Test note", "content about trading",
+    create_research_note("Test note",
+                         "Market structure analysis: BTC consolidating near support with declining volume suggests accumulation phase before next move.",
                          confidence="high_confidence")
     report = Report()
     _probe_fts_coverage(report)

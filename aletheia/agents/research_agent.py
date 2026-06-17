@@ -53,13 +53,20 @@ async def run_research_agent(permission_mode: str = "Observe", run_id: str | Non
     log_tool(run_id, "llm_complete", "observe", True)
     if err:
         errors.append(err)
-        content = ("Research note (LLM unavailable). Configure a model provider in Settings to "
-                   "enable real analysis.")
+        content = (
+            "Research note: model provider offline. Configure a provider in Settings to "
+            "enable real analysis. This stub is recorded at speculative confidence and "
+            "will not enter the retrieval gate until a substantive note replaces it."
+        )
 
     item = create_research_note(title, content, confidence="speculative",
                                 metadata={"source": "research_agent",
                                           "prediction_context_included": bool(pred_context)})
-    log_tool(run_id, "create_research_note", "observe", True, output=item.id)
+    log_tool(run_id, "create_research_note", "observe", item is not None,
+             output=item.id if item else "quality_gate_rejected")
+    if item is None:
+        errors.append("create_research_note:quality_gate_rejected")
+        return {"outputs": outputs, "errors": errors}
     outputs.append(f"research_note:{item.id}")
 
     return {"outputs": outputs, "errors": errors}

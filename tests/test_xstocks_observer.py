@@ -107,7 +107,7 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
     assert opp["asset_class"] == "equity", f"asset_class should be equity, got {opp['asset_class']}"
     assert opp["asset_subclass"] == "equity_daily"
     assert opp["execution_eligible"] == 0, "equity opportunities must not be execution-eligible"
-    assert opp["symbol"] == "AAPL/USD"
+    assert opp["symbol"] == "AAPL/USDT"
 
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-eq-1")

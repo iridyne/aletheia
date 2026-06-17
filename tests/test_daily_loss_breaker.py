@@ -30,6 +30,11 @@ def setup_env(tmp_path, monkeypatch):
 
 def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
+    save_config(cfg)
+
     from aletheia.portfolio.pnl import close_position, today_realized_pnl
     from aletheia.risk.engine import evaluate_proposal
     from aletheia.risk import kill_switch

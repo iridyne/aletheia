@@ -839,6 +839,8 @@ async def create_research_note(params: dict) -> dict:
 
     from aletheia.knowledge.manager import create_research_note as _create
     item = _create(title=title, content=content)
+    if item is None:
+        return {"error": "Research note rejected by quality gate (content too short or placeholder)."}
     return {"created": True, "id": item.id, "title": title}
 
 
@@ -870,6 +872,8 @@ async def create_dreaming_log(params: dict) -> dict:
     from aletheia.knowledge.manager import create_dreaming_log as _create
 
     item = _create(title=title, content=content)
+    if item is None:
+        return {"error": "Dreaming log rejected by quality gate (content too short or placeholder)."}
     return {"created": True, "id": item.id, "title": title}
 
 
@@ -911,6 +915,8 @@ async def create_diagnostic_todo(params: dict) -> dict:
     from aletheia.knowledge.manager import create_research_note as _create
     item = _create(title=f"[DIAG] {title}", content=content,
                    metadata={"type": "diagnostic_todo"})
+    if item is None:
+        return {"error": "Diagnostic todo rejected by quality gate (content too short or placeholder)."}
     todo_path = write_diagnostic_todo(
         todo_id=item.id,
         title=title,

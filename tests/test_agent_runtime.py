@@ -133,6 +133,12 @@ async def test_market_observer_creates_opportunity(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_research_agent_creates_note(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    # Mock LLM to return substantive content (≥80 chars to pass quality gate).
+    async def _fake_llm(system, user, max_tokens=800):
+        return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
+                "ETH funding rates suggest crowded longs. Recommend reducing spot exposure into strength.", None)
+    monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)
+
     result = await run_agent("research_agent", trigger_type="manual")
     assert result["status"] in _OK
     assert any("research_note:" in o for o in result["outputs"])
@@ -144,6 +150,13 @@ async def test_research_agent_creates_note(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
+    # Mock LLM to return substantive content (≥80 chars to pass quality gate).
+    async def _fake_llm(system, user, max_tokens=800):
+        return ("Daily dreaming log: market observer ran 3 cycles, research agent produced 2 notes. "
+                "Insight: momentum signals correlated with funding rate divergence. "
+                "Focus for tomorrow: validate SOL breakout thesis with volume confirmation.", None)
+    monkeypatch.setattr("aletheia.agents.dreaming_agent.llm_complete", _fake_llm)
+
     result = await run_agent("dreaming_agent", trigger_type="manual")
     assert result["status"] in _OK
     assert any("dreaming_log:" in o for o in result["outputs"])

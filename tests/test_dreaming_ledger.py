@@ -53,8 +53,9 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
     update_strategy(s2.id, state="strategy_hypothesis")
 
     from aletheia.knowledge.manager import create_research_note
-    create_research_note("note A", "evidence A")
-    create_research_note("note B", "evidence B")
+    # Content must be ≥80 chars to pass _is_quality_pass's _MIN_CONTENT_LENGTH gate.
+    create_research_note("note A", "Evidence A: momentum divergence observed in BTC 4h chart. RSI overbought while price flat — bearish signal.")
+    create_research_note("note B", "Evidence B: ETH funding rates turned negative on perpetuals, suggesting leveraged longs being squeezed out gradually.")
 
     captured = {}
     from aletheia.agents import dreaming_agent
@@ -122,5 +123,8 @@ async def test_dreaming_git_snapshot_failure_does_not_break_run(tmp_path, monkey
 
     from aletheia.agents import dreaming_agent
     result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
-    # Run still completes and wrote its log despite git failure.
-    assert any(o.startswith("dreaming_log:") for o in result["outputs"])
+    # Run still completes and wrote its review despite git failure.
+    assert any(
+        o.startswith("dreaming_log:") or o.startswith("daily_review:")
+        for o in result["outputs"]
+    )
