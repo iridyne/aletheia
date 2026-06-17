@@ -77,6 +77,8 @@ def build_case_studies(
                 confidence=confidence,
                 tags=metadata["tags"],
             )
+            if item is None:
+                continue  # quality gate or duplicate — not an error
             created.append({
                 "case_study_id": item.id,
                 "position_id": pos_id,
@@ -264,6 +266,8 @@ def _create_factor_guard_candidate(
             content=render_frontmatter(metadata, body),
             metadata=metadata,
         )
+        if item is None:
+            return None  # quality gate or duplicate
         return {
             "guard_candidate_id": item.id,
             "guard_id": guard_id,

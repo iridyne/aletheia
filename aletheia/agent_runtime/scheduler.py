@@ -761,6 +761,11 @@ def _run_cleanup():
 
 
 def _run_health_check():
+    # Stale-run cleanup runs unconditionally regardless of paused/health.enabled
+    # so that threads abandoned during a pause period don't accumulate forever.
+    _cleanup_stale_agent_runs()
+    _cleanup_stale_scanner_runs()
+
     cfg = load_config()
     if cfg.runtime.paused or not cfg.health.enabled:
         return
@@ -769,11 +774,6 @@ def _run_health_check():
         run_health_check()
     except Exception as e:
         logger.warning("health_check job failed: %s", e)
-    # Piggyback periodic stale-run cleanup on the health_check cadence (every 10 min).
-    # Handles agent_runs rows left 'running' by abandoned asyncio threads (§11).
-    _cleanup_stale_agent_runs()
-    # Also clean scanner runs in case universe_refresh failed without calling its own cleanup.
-    _cleanup_stale_scanner_runs()
 
 
 def _run_post_trade_reviewer():
