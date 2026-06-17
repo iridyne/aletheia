@@ -503,3 +503,37 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 24h: 587 runs, 76 failed (12.9%)
 
 **结论**: 系统在 self-heal restart 后基本恢复。scanner + market_snapshots 正常产出。portfolio 停滞待观察。核心问题（ghost 累积 + thread abandon）仍需代码修复但不影响数据产出。
+
+### 2026-06-17 06:46 UTC — 第八轮巡检 (Δ43min)
+
+**系统状态**: gateway running, self-heal 仍在触发周期性 restart
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 正常 | 06:08 completed (114 passed, 3.5min), 当前 06:14 in progress |
+| Feature Snapshots | ✅ 正常 | 409-793 assets/batch, 稳定 |
+| Market Snapshots | ✅ 正常 | 06:12 UTC (34min 前) |
+| Portfolio Snapshots | ❌ 停滞 | 最新仍 05:00 (106min 前) |
+| Knowledge Production | ⚠️ 重复 | +5 ptr/h, total=825 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**§15 Portfolio Snapshot 长期停滞** 🟠
+- 观测: 最新 snapshot 停在 05:00 UTC (106min 前)，此后无更新
+- scanner/market 已恢复但 portfolio 未恢复
+- 可能原因: exchange_sync job 连续失败(infra_event 应在 3 次后报警)
+  或 compute_and_store_snapshot 依赖的 exchange 连接断开
+- 需要: 检查 infra_event buffer 是否有 exchange_sync/portfolio 警告
+
+**已知问题趋势**:
+- Ghost scanner: 16→18 (+2 in 43min, 稳定累积)
+- Stale agents: 197→199 (+2 in 43min)
+- 24h failure rate: 12.9% (持平)
+- Knowledge total: 823→825 (+2/43min — 增速放缓, 仅 post_trade_review)
+
+**agent 运行率**:
+- 1h: 17 runs, 12 completed, 4 failed (23.5%)
+- 24h: 594 runs, 78 failed (13.1%)
+
+**结论**: 核心数据管道(scanner/market/features)稳定运行。portfolio 停滞超 100min 升级为 §15。知识增速放缓（dreaming_agent 可能只每日触发一次）。系统整体可用。
