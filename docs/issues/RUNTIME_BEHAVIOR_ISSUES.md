@@ -235,8 +235,10 @@
 
 | 优先级 | 条目 | 核心诉求 | 状态 |
 |--------|------|----------|------|
-| **P0** | **§7 知识注水 99% 重复** | **止血: 去重守卫 + 质量门槛 + 历史清理** | ✅ 已修复 |
+| **P0** | **§7 知识注水 99% 重复** | **止血: 去重守卫 + 质量门槛 + 历史清理** | ✅ 已修复 (需 gateway restart) |
 | P0 | §4 学习系统断裂 | 恢复 knowledge → lesson 闭环 | ✅ 已修复 |
+| P1 | §15 portfolio_snapshot 停滞 | 加 timeout 保护，防止 io executor 被占死 | ✅ 已修复 (需 gateway restart) |
+| P1 | §10/§11 ghost scanner + stale agents | 周期性清理 agent_runs + scanner_runs | ✅ 已修复 (需 gateway restart) |
 | P1 | §6 策略转化率极低 | 确认 opportunity → strategy 管道设计意图 | ℹ️ 设计如此 |
 | P1 | §9 知识 DB/磁盘不同步 | 68% 知识对 agent 不可见 (注: §7 清理后需重评) | ✅ 清理脚本就绪 |
 | P1 | §1 risk_critic 不稳定 | 排查 timeout/挂起原因 | ✅ 已修复(误判) |
@@ -263,6 +265,16 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - §2: prediction_observer 30min 周期正常，divergence_scanner 链式跟随
 - §5: 数据写入 `prediction_markets` + `prediction_market_claims`，非 `prediction_events`
 - §6: opportunities→proposals (paper_trader) 和 strategies (strategy_designer) 是独立管道
+
+**§15 portfolio_snapshot timeout** (2026-06-17, commit cf0c00b):
+- `_run_portfolio_snapshot` 改用 `_run_sync_with_timeout("portfolio_snapshot", ...)` (45s budget)
+- 加入 `_ASYNC_JOB_TIMEOUT_SEC["portfolio_snapshot"] = 45.0`
+- 根因: `io` executor `max_workers=1`，portfolio_snapshot 无 timeout 时挂住会卡死整个 io 队列
+
+**§10/§11 ghost scanner + stale agent cleanup** (2026-06-17, commit cf0c00b):
+- 新增 `_cleanup_stale_agent_runs()`: agent_runs 中 running>20min 的行标为 stale
+- `_run_health_check()` 末尾追加两个 cleanup 调用（每 10min 一次）
+- 根因: Windows ProactorEventLoop IOCP drain 导致线程被 abandoned，APScheduler 认为 job 结束，但 DB 行状态卡在 running
 
 ---
 
