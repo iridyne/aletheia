@@ -7,6 +7,42 @@
 
 ## Last Updated
 
+2026-06-17 (Self-Evolution Tier 1 实施完毕；worktree 待合入 master)
+
+---
+
+## Recent Change (Self-Evolution Tier 1 — 2026-06-17, worktree-self-evolution-tier1)
+
+> **目标**：关闭 `universe_forward_outcomes` → knowledge base 反馈回路。
+> 此前坏结果有数据却从未反哺规则；Tier 1 是零 LLM 成本的最低风险起点。
+
+**核心逻辑**（`aletheia/universe/outcome_recorder.py`）：
+- `settle_due()` 结算后调用 `_maybe_generate_guard_candidates(settled_rows)`
+- 只处理 `horizon=4h`；方向感知阈值：long `return < -3%`，short `return > +3%`
+- 7 天内同 `symbol+scanner_family` 去重（`repositories.guard_candidate_exists_recent()`）
+- 生成 `medium_confidence` guard_candidate（不进 FTS 检索，需人工确认升级）
+- 失败只 `logger.warning`，不影响 `settle_due()` 返回值
+
+**修改文件**：
+- `aletheia/universe/outcome_recorder.py`：`_GUARD_HORIZON` / `_LOSS_THRESHOLD_*` 常量 + `_maybe_generate_guard_candidates()` + `_build_guard_candidate_content()`
+- `aletheia/storage/repositories.py`：`guard_candidate_exists_recent()` dedup 查询
+- `tests/test_self_evolution_tier1.py`（新建）：10 个单元测试，全通过
+
+**文档整理**（第二个提交）：
+- `docs/_ai/SELF_EVOLUTION_DESIGN.md` → `docs/plans/self_evolution_plan.md`（移入 plans/，加明确日期）
+- `docs/status/ROADMAP.md`：新增 Self-Evolution 横切轨道（Tier 1/2/3 状态表）
+- `docs/_ai/CURRENT_TASK.md`：待办第 0 项写入 Tier 2（2026-07-01）、Tier 3（2026-08-17）
+
+**验证**：用 master `.venv` 跑全量 suite，**1311 passed, 0 failed**。
+
+**待操作**：worktree 分支 `worktree-self-evolution-tier1` 尚未合入 master，
+因 master 有未提交的 in-progress 工作（equity observer、futures integration 等）。
+合并命令：`git merge worktree-self-evolution-tier1 --no-ff`（处理完 master 未提交变更后执行）。
+
+---
+
+## Last Updated (前次)
+
 2026-06-16 (项目级 code-review:契约漂移 + 运行态正确性,15 findings → 修复)
 
 ---

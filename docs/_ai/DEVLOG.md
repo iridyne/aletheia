@@ -1,5 +1,33 @@
 # Development Log
 
+## 2026-06-17 — Self-Evolution Tier 1 实施(worktree-self-evolution-tier1)
+
+> 研究 → 三层设计 → Tier 1 全量实现 + 文档整理，一次会话完成。
+
+### 背景
+Universe forward outcomes（4h/15m/1h/24h 收益追踪）数据已有，但从未反哺 scanner 规则。
+Tier 1 目标：无 LLM 成本地关闭这个反馈回路，将负面 4h outcome 自动转化为 guard_candidate。
+
+### 实现内容
+- `aletheia/universe/outcome_recorder.py`：`settle_due()` 后扫描 4h settled 行，方向感知
+  阈值判断（long < -3%，short > +3%），调用 `create_guard_candidate()`，7 天内去重
+- `aletheia/storage/repositories.py`：`guard_candidate_exists_recent(symbol, family, days=7)`
+- `tests/test_self_evolution_tier1.py`（新建）：10 个单元测试
+
+### 文档
+- `docs/plans/self_evolution_plan.md`（从 `docs/_ai/SELF_EVOLUTION_DESIGN.md` git mv）
+- `docs/status/ROADMAP.md`：Self-Evolution 横切轨道
+- `docs/_ai/CURRENT_TASK.md`：Tier 2（2026-07-01）、Tier 3（2026-08-17）日期
+
+### 验证
+1311 passed, 0 failed（master `.venv`，全量 suite）
+
+### 状态
+两个提交在 `worktree-self-evolution-tier1`（`1a75dc7`, `89df0be`），待合入 master。
+Master 当前有未提交的 equity observer / futures integration 工作，需先处理再 merge。
+
+---
+
 ## 2026-06-16 — 项目级 Code-Review 修复(A/B/C/D 设计级,uncommitted)
 
 > 来源:`/code-review max` 全项目审查(契约对应 + 运行态正确性 + 潜在 bug)。
