@@ -34,7 +34,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "divergence_scanner": 60.0,
     "post_trade_reviewer": 300.0,
     "risk_critic": 300.0,
-    "universe_refresh": 90.0,
+    "universe_refresh": 180.0,
     "data_collectors": 45.0,
     "exchange_sync": 60.0,
     "backtest_orchestrator": 600.0,
@@ -763,6 +763,22 @@ def _run_risk_critic():
         logger.warning("risk_critic job failed: %s", e)
 
 
+def _cleanup_stale_scanner_runs():
+    """Mark any stuck 'running' scanner runs as timed_out. Prevents zombie accumulation."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        was_in_tx = db.in_transaction
+        db.execute(
+            "UPDATE universe_scanner_runs SET status = 'timed_out', "
+            "completed_at = datetime('now') WHERE status = 'running'",
+        )
+        if not was_in_tx:
+            db.commit()
+    except Exception as e:
+        logger.debug("Failed to cleanup stale scanner runs: %s", e)
+
+
 def _run_universe_refresh():
     cfg = load_config()
     if cfg.runtime.paused:
@@ -777,8 +793,10 @@ def _run_universe_refresh():
             "universe_refresh job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["universe_refresh"],
         )
+        _cleanup_stale_scanner_runs()
     except Exception as e:
         logger.warning("universe_refresh job failed: %s", e)
+        _cleanup_stale_scanner_runs()
 
 
 def _run_backtest_orchestrator():
