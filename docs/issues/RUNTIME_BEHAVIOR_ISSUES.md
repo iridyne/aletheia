@@ -919,3 +919,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 20:03 UTC] ✓ 系统正常 — Features=1809/h (持续微升 1750→1792→1809), Opportunities=2490 (+94/h). §17 timed_out=29 (+2/45min 不变). Knowledge=463 (+1/h). Ghost=0, Stale=227. §18: SPY/USDT 多时间框架查询失败 (equity_observer xStock symbol). 8h+ 连续无中断.
 
 [2026-06-17 20:46 UTC] ✓ 系统正常 — Features=1531/h (下降, 因 off-peak US hours volume 过滤后通过 symbols 减少, 无 gap). Opportunities=2547 (+83/h). §17 timed_out=32 (+3/45min, 略加速). paper_trader: completed_with_errors=2 (首次出现, 非致命). risk_critic: 1 stale (偶发). Knowledge=467. Ghost=0, Stale=228. 8.7h 连续无中断.
+
+[2026-06-17 21:03 UTC] ✓ 系统正常 — Features=1836/h (回升, 1531→1836). Opportunities=2571 (+81/h). §17 timed_out=33 (+1). paper_trader: completed_with_errors=3/h (持续, 非致命——可能缺少 open positions 或 LLM 降级). risk_critic: 1 stale (同上轮). Knowledge=470. Ghost=0, Stale=229. 9h+ 连续无中断.
