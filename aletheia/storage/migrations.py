@@ -1361,6 +1361,11 @@ _ADDITIVE_COLUMNS = [
     ("direction", "universe_forward_outcomes", "TEXT"),
     # Knowledge dedup: SHA-256 prefix of content for write-time duplicate detection.
     ("content_hash", "knowledge_items", "TEXT"),
+    # US Equity integration: sub-category and canonical ticker on opportunities.
+    # asset_subclass: "equity_daily" (yfinance daily bars primary) | "".
+    # canonical_ticker: Yahoo Finance ticker for cross-path correlation (e.g. "AAPL").
+    ("asset_subclass", "opportunities", "TEXT NOT NULL DEFAULT ''"),
+    ("canonical_ticker", "opportunities", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 
@@ -1533,9 +1538,8 @@ CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at
 """
 
 
-def run_migrations() -> None:
-    """Run all idempotent schema creation statements."""
-    db = get_db()
+def _run_all_ddl(db) -> None:
+    """Execute every DDL statement against db (used for both real and blueprint DBs)."""
     db.executescript(SCHEMA_SQL)
     db.executescript(_DATA_COLLECTORS_DDL)
     db.executescript(_PREDICTION_OBSERVER_RUNS_DDL)
@@ -1546,3 +1550,51 @@ def run_migrations() -> None:
     _ensure_knowledge_fts(db)
     db.executescript(_CORE_INDEXES_SQL)
     db.commit()
+
+
+# In-memory blueprint used during pytest runs to avoid re-running DDL for every test.
+# Populated on first call to run_migrations(); subsequent calls clone it via backup().
+_blueprint: "sqlite3.Connection | None" = None
+
+
+def _is_pytest() -> bool:
+    import os
+    return "PYTEST_CURRENT_TEST" in os.environ
+
+
+def run_migrations() -> None:
+    """Run all idempotent schema creation statements.
+
+    In pytest: builds a shared in-memory blueprint on first call, then clones it into
+    the current test connection via backup() — skipping 80+ CREATE TABLE statements on
+    every subsequent call. Production paths (no PYTEST_CURRENT_TEST) always run DDL.
+    """
+    import sqlite3
+
+    db = get_db()
+
+    if not _is_pytest():
+        _run_all_ddl(db)
+        return
+
+    global _blueprint
+    if _blueprint is None:
+        _blueprint = sqlite3.connect(":memory:", check_same_thread=False)
+        _blueprint.row_factory = sqlite3.Row
+        _run_all_ddl(_blueprint)
+
+    # Only use backup when the destination is empty (no tables yet).
+    # Tests that pre-populate data before calling run_migrations() (e.g. migration
+    # backfill tests) must go through normal DDL so their existing rows are preserved.
+    table_count = db.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type='table'"
+    ).fetchone()[0]
+    if table_count == 0:
+        try:
+            _blueprint.backup(db)
+            db.commit()
+            return
+        except sqlite3.OperationalError:
+            pass  # destination busy — fall through to normal DDL
+
+    _run_all_ddl(db)

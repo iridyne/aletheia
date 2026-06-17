@@ -493,6 +493,24 @@ async def update_tradable_symbols(req: SymbolsUpdate):
 
 
 # ---------------------------------------------------------------------------
+# Observed equities (US equity tickers for equity_observer)
+# ---------------------------------------------------------------------------
+
+class EquitiesConfigUpdate(SettingsRequest):
+    tickers: list[str]
+
+
+@router.post("/equities")
+async def update_observed_equities(req: EquitiesConfigUpdate):
+    """Update US equity tickers observed by equity_observer (observation-only, not traded)."""
+    normalized = list(dict.fromkeys(t.strip().upper() for t in req.tickers if t.strip()))
+    cfg = load_config()
+    cfg.market_data.observed_equities = normalized
+    save_config(cfg)
+    return {"observed_equities": normalized}
+
+
+# ---------------------------------------------------------------------------
 # Trading config (paper position management)
 # ---------------------------------------------------------------------------
 

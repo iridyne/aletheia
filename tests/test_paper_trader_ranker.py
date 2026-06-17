@@ -76,13 +76,16 @@ def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watc
 # Filter tests
 # ---------------------------------------------------------------------------
 
-def test_non_crypto_excluded():
-    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+def test_equity_shadow_tracked():
+    """Equity opportunities are scored but not executed (equity_shadow_track skip_reason)."""
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
 
-    opps = [_make_opp(asset_class="equity")]
+    opps = [_make_opp(asset_class="equity", direction_bias="long", confidence="high")]
     with _patch_deps(opps):
         candidates = build_paper_candidates(limit=50)
-    assert len(candidates) == 0
+    assert len(candidates) == 1
+    assert candidates[0]["skip_reason"] == "equity_shadow_track"
+    assert select_best_candidate(candidates) is None
 
 
 def test_neutral_bias_skipped():

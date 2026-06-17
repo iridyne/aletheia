@@ -17,11 +17,14 @@ from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block, 
 
 logger = logging.getLogger("aletheia.knowledge.router")
 
-AgentRole = Literal["strategy_designer", "market_observer", "paper_trader"]
+AgentRole = Literal["strategy_designer", "market_observer", "equity_observer", "paper_trader"]
 
 _ITEM_TYPES_BY_ROLE: dict[str, list[str]] = {
     "strategy_designer": ["trade_case_study", "research_note", "post_trade_review", "strategy_memory"],
     "market_observer": ["trade_case_study", "research_note", "post_trade_review", "dreaming_log"],
+    # equity_observer uses equity-context knowledge: sector rotation, earnings events,
+    # relative strength patterns. Query terms should use equity vocabulary (not crypto).
+    "equity_observer": ["research_note", "trade_case_study", "post_trade_review"],
     "paper_trader": ["trade_case_study", "post_trade_review"],
 }
 

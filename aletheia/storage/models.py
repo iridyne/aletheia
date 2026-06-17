@@ -59,6 +59,12 @@ class Opportunity(BaseModel):
     # Asset class: "crypto" | "equity" | "prediction". Default "crypto" keeps
     # older rows valid. paper_trader only acts on "crypto" opportunities.
     asset_class: str = "crypto"
+    # Sub-category within asset_class. For equity: "equity_daily" (yfinance daily
+    # bars as primary signal). equity_observer always produces "equity_daily" with
+    # optional xstock data in metadata.
+    asset_subclass: str = ""
+    # Canonical equity ticker for cross-path correlation (e.g. "AAPL").
+    canonical_ticker: str = ""
     # JSON-encoded prediction/equity-specific metadata (event title, probabilities, etc.)
     metadata: str = "{}"
     execution_eligible: bool = True

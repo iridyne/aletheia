@@ -18,7 +18,7 @@ from aletheia.storage.repositories import (
     insert_opportunity, list_strategies,
     find_open_opportunity_by_symbol_snapshot, update_opportunity,
 )
-from aletheia.trading.instruments import observed_instruments_from_config, xstocks_instruments_from_config
+from aletheia.trading.instruments import observed_instruments_from_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 from aletheia.config.loader import load_config
 
@@ -349,7 +349,6 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
         instruments = observed_instruments_from_config(cfg)
         universe_members = []
 
-    xstocks = xstocks_instruments_from_config(cfg)
     symbols = [i.symbol for i in instruments]  # canonical list for memory query
 
     # Find an active strategy to link all opportunities from this run.
@@ -412,34 +411,5 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 errors.append(f"{instrument}:{err}")
         except Exception as e:
             errors.append(f"{instrument}:unexpected:{e}")
-
-    # xStocks loop: Bitget tokenized equity tokens, observation-only (asset_class=equity).
-    # Deliberate exception: NOT routed through get_market_data_provider(). ON-series
-    # xStocks only list on Bitget, so both primary AND fallback must be bitget — the
-    # factory would force the config fallback (bybit), which doesn't list these tokens.
-    if xstocks:
-        from aletheia.data.ccxt_provider import CCXTProvider
-        bitget_provider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
-        try:
-            for instrument in xstocks:
-                try:
-                    opp_id, err = await _analyze_symbol(
-                        symbol=instrument.symbol,
-                        market_type=instrument.market_type,
-                        permission_mode=permission_mode,
-                        run_id=run_id,
-                        linked_strategy_id=None,  # xStocks not linked to crypto strategies
-                        memory_block="",
-                        asset_class="equity",
-                        provider=bitget_provider,
-                    )
-                    if opp_id:
-                        outputs.append(f"opportunity:{opp_id}")
-                    if err:
-                        errors.append(f"{instrument}:{err}")
-                except Exception as e:
-                    errors.append(f"{instrument}:unexpected:{e}")
-        finally:
-            await bitget_provider.close()
 
     return {"outputs": outputs, "errors": errors}

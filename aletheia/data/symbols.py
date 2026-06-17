@@ -98,6 +98,45 @@ def to_yfinance(symbol: str) -> str:
     return f"{base}-{quote}" if quote else base
 
 
+# Bitget ON-series xStocks: base token (without /USDT) → canonical equity ticker.
+# xStocks are tokenized US equities on Bitget — they track NYSE/NASDAQ prices
+# but are a separate on-chain instrument (may carry small premium/discount).
+# Extend this dict as new xStock pairs are listed; ticker_to_xstock() derives
+# the reverse mapping automatically.
+_XSTOCK_BASE_TO_TICKER: dict[str, str] = {
+    "AAPLON": "AAPL",
+    "TSLAON": "TSLA",
+    "NVDAON": "NVDA",
+    "SPYON": "SPY",
+    "MSFTON": "MSFT",
+    "AMZNON": "AMZN",
+    "GOOGLON": "GOOGL",
+    "METAON": "META",
+    "NFLXON": "NFLX",
+    "GOOGLBON": "GOOG",
+}
+
+
+def xstock_to_ticker(symbol: str) -> str | None:
+    """Map a Bitget xStock symbol to its canonical equity ticker.
+
+    'AAPLON/USDT' → 'AAPL'. Returns None if not in the mapping table.
+    Input may be in any format (canonical 'AAPLON/USDT' or bare 'AAPLON').
+    """
+    base = symbol.split("/")[0].strip().upper()
+    return _XSTOCK_BASE_TO_TICKER.get(base)
+
+
+def ticker_to_xstock(ticker: str) -> str | None:
+    """Map a canonical equity ticker to its Bitget xStock symbol.
+
+    'AAPL' → 'AAPLON/USDT'. Returns None if no xStock exists for the ticker.
+    """
+    inv = {v: k for k, v in _XSTOCK_BASE_TO_TICKER.items()}
+    base = inv.get(ticker.strip().upper())
+    return f"{base}/USDT" if base else None
+
+
 @dataclass(frozen=True)
 class InstrumentId:
     """Unique instrument identity: ``exchange:symbol:market_type``.
