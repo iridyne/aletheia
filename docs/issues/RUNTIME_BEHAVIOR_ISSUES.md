@@ -915,3 +915,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 19:03 UTC] ✓ 系统正常 — Features=1792/h (持续微升), Opportunities=2396 (+99/h). §17 market_observer 4 次连续 timed_out (timed_out 总计 23→25, +2/45min 线性). §7 知识去重: 1 条/h (极低——可能 agent 周期间隔中). Ghost=0, Stale=226 (-1, reconciliation 偶发清理). 7h 连续无中断.
 
 [2026-06-17 19:46 UTC] ✓ 系统正常 — Features=1803/h (连续 3h 微升趋势 1752→1783→1803), Opportunities=2464 (+95/h 稳定). §17 timed_out=27 (+2/45min 线性不变). Knowledge=460 (+1/h). Ghost=0, Stale=228. §18: MSFT/USDT, GUA/USDT, BR/USDT 新增 (xStock symbols 混入 crypto 查询). 7.7h 连续无中断.
+
+[2026-06-17 20:03 UTC] ✓ 系统正常 — Features=1809/h (持续微升 1750→1792→1809), Opportunities=2490 (+94/h). §17 timed_out=29 (+2/45min 不变). Knowledge=463 (+1/h). Ghost=0, Stale=227. §18: SPY/USDT 多时间框架查询失败 (equity_observer xStock symbol). 8h+ 连续无中断.
