@@ -15,7 +15,7 @@ from aletheia.storage.repositories import list_agent_runs
 
 logger = logging.getLogger("aletheia.health")
 
-_FAILED_STATUSES = {"failed", "error", "completed_with_errors"}
+_FAILED_STATUSES = {"failed", "error", "completed_with_errors", "timed_out"}
 
 # In-process de-dupe of consecutive unhealthy alerts.
 _last_alerted_unhealthy = False

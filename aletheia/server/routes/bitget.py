@@ -98,8 +98,9 @@ async def test_candidate_credentials(req: TestCandidateCredsRequest):
     path = "/api/v2/spot/account/info"
     demo = req.profile == "demo"
     try:
+        from aletheia.net import httpx_client
         headers = build_headers(req.api_key, req.api_secret, req.passphrase, "GET", path, "", demo=demo)
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx_client(timeout=15) as client:
             resp = await client.get(f"{BASE_URL}{path}", headers=headers)
             data = resp.json()
         if data.get("code") == "00000":
