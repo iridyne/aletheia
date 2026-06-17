@@ -70,6 +70,7 @@ class Opportunity(BaseModel):
     entry_zone: str | None = None        # JSON: {"low": x, "high": y}
     stop_loss_hint: float | None = None
     tp_hint: float | None = None
+    regime_tag: str | None = None
 
 
 class ShadowTrade(BaseModel):
@@ -184,6 +185,16 @@ class Position(BaseModel):
     regime_tag: str | None = None
 
 
+class MarketRegimeRecord(BaseModel):
+    id: str = Field(default_factory=new_id)
+    state: str = "sideways"
+    confidence: float = 0.5
+    long_bias: float = 0.5
+    short_bias: float = 0.5
+    signals: str = "{}"
+    detected_at: str = Field(default_factory=_utcnow)
+
+
 class StrategyRecord(BaseModel):
     id: str = Field(default_factory=new_id)
     name: str
@@ -200,6 +211,9 @@ class StrategyRecord(BaseModel):
     paper_trading_paused: bool = False
     paper_pause_reason: str | None = None
     paper_paused_at: str | None = None
+    direction_affinity: str = "both"
+    applicable_regimes: str = "all"
+    strategy_type: str = "scanner"
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
 

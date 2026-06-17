@@ -29,12 +29,17 @@ _MIN_SCORE = 45.0
 # meaningful split: medium = [45, 60), high = [60, ceiling].
 _HIGH_CONF_THRESHOLD = 60.0
 
+# Regime bias threshold: if the direction's bias < this value, skip signal
+# unless score compensates (higher score can override weak regime alignment).
+_REGIME_BIAS_THRESHOLD = 0.30
+
 
 def emit_deterministic_opportunities(
     members: list[dict],
     snapshot_id: str,
     scored_features: list[dict],
     linked_strategy_id: str | None = None,
+    regime=None,
 ) -> int:
     """Generate one deterministic Opportunity per eligible high-scoring universe member.
 
@@ -45,6 +50,8 @@ def emit_deterministic_opportunities(
         scored_features: the `scored` list from refresh — carries scanner reasons +
                          raw feature values (return_1h, rsi_14, funding_rate, …).
         linked_strategy_id: optional strategy to attach.
+        regime: MarketRegime instance (or None). When provided, signals whose
+                direction conflicts with regime bias are filtered out.
 
     Returns:
         Number of opportunities created.
@@ -69,13 +76,18 @@ def emit_deterministic_opportunities(
 
         direction = _infer_direction(family, feat)
         if direction is None:
-            # A member scored high enough to trade but yields no direction —
-            # ambiguous signal, unhandled family (e.g. "event"), or thin OHLCV
-            # history. Skip without producing neutral noise, but leave a trace
-            # so a whole family silently emitting nothing is observable.
             logger.debug(
                 "no direction for %s family=%s score=%.0f — skipped",
                 symbol, family, total_score,
+            )
+            continue
+
+        # Regime bias gate: filter signals that conflict with current regime
+        if regime is not None and not _passes_regime_gate(direction, total_score, regime):
+            logger.debug(
+                "regime-filtered %s %s %s (regime=%s, bias=%.2f)",
+                family, direction, symbol, regime.state,
+                regime.short_bias if direction == "short" else regime.long_bias,
             )
             continue
 
@@ -106,6 +118,7 @@ def emit_deterministic_opportunities(
             universe_member_id=member_id,
             scanner_family=family,
             valid_until=m.get("expires_at"),
+            regime_tag=regime.state if regime else None,
         )
         try:
             insert_opportunity(opp)
@@ -120,6 +133,27 @@ def emit_deterministic_opportunities(
             created, snapshot_id[:8],
         )
     return created
+
+
+def _passes_regime_gate(direction: str, total_score: float, regime) -> bool:
+    """Check if a signal's direction passes the regime bias gate.
+
+    Logic:
+      - Get the bias for this direction (long_bias or short_bias)
+      - If bias >= threshold, always pass
+      - If bias < threshold, only pass if score is exceptionally high (top 20% above _HIGH_CONF_THRESHOLD)
+        This allows strong contrarian signals to survive even in hostile regimes.
+    """
+    bias = regime.long_bias if direction == "long" else regime.short_bias
+
+    if bias >= _REGIME_BIAS_THRESHOLD:
+        return True
+
+    # Strong signals can override weak regime alignment
+    if total_score >= _HIGH_CONF_THRESHOLD * 1.1:
+        return True
+
+    return False
 
 
 def _infer_direction(family: str | None, feat: dict) -> str | None:
