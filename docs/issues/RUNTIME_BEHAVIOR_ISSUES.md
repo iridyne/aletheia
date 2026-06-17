@@ -673,3 +673,15 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **error.log**: max_instances=1 正确跳过并发 + "Run time missed" (self-heal restart 后正常丢失 1-2 周期)
 
 **备注**: ghost_scanner=0 是监测以来最佳值（连上轮遗留的 2 个也被 reconciliation 清了）。scanner timed_out 总数 106→109 (+3, 正常累积)。系统持续稳态运行 >3h 无重大异常。
+
+### 2026-06-17 10:03 UTC — 第十五轮巡检 (Δ17min)
+
+[10:03 UTC] ✓ 系统正常 — 全管道健康运行
+
+**管道状态**: Scanner 连续 3 次 completed (121 passed, ~3.8min/run) | Features 793/batch | Market 09:59 (4min 前) | Portfolio 09:59 (4min) | Knowledge +7/h (6 ptr + 1 rn), total=853 | Ghost=1(当前合法 run) | Stale agents 212→213(+1, 放缓)
+
+**agent 运行率**: 1h: 24 runs, 19 completed, 2 failed (8.3% — 优秀) | 24h: 696 runs, 92 failed (13.2%)
+
+**error.log**: max_instances skipped + missed run (正常) + startup reconciliation "Marked 1 stale"
+
+**备注**: agent 1h 失败率 8.3% 为近期最佳之一。系统持续稳态运行 >4h。knowledge total 停在 853（本小时未产出新增 — 可能当前 agent 周期刚好在间隔中）。
