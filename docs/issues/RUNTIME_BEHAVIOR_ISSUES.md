@@ -429,3 +429,48 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 24h: 548 runs, 64 failed (11.7%)
 
 **结论**: scanner 因脏文件暂时回退已修复；lesson 提取首次成功（里程碑）；知识垃圾增速加快需尽快部署去重
+
+### 2026-06-17 05:46 UTC — 第六轮巡检 (Δ43min)
+
+**系统状态**: gateway running (PID 16552, started 05:47 UTC), code_drift self-heal 多次触发重启
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ⚠️ ghost 累积 | 8 runs since 05:03 全部卡 "running", 无 completed |
+| Feature Snapshots | ✅ 正常 | 197-675 assets/batch, 仍在产出 |
+| Market Snapshots | ❌ 停滞 | 最新 05:00 UTC (46min 前), market_observer 可能 timeout |
+| Portfolio Snapshots | ⚠️ 停滞 | 最新 05:00 UTC |
+| Knowledge Production | ⚠️ 重复 | +22/h (17 dreaming + 3 ptr), total=820 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 (无新增 — 正常, 每日运行一次) |
+
+**关键发现**:
+
+1. **§10 恶化: ghost scanner 8→15, 且 max_instances=1 无效** 🔴
+   - 观测: 05:03 后启动 8 次 scanner, 全部卡 "running" (completed_at=NULL)
+   - 最早的已超时 32min (timeout=360s=6min) 但状态未更新
+   - `max_instances=1` 未阻止新启动——因为 timeout 后线程被 abandoned,
+     APScheduler 认为 job 已结束
+   - 根因同 §13: `_run_async_with_timeout` 使用 asyncio.run(), Windows
+     ProactorEventLoop 关闭时 IOCP drain 挂起, 线程永不返回但 APScheduler
+     将其视为"已结束"
+   - 影响: scanner DB 状态完全不可信; ghost 行无限累积
+   - 建议: timeout 后必须强制更新 DB 为 "timed_out" (在 scheduler 层,
+     不依赖 asyncio 线程返回)
+
+2. **§8 状态更新: market_observer + portfolio_snapshot 停产 46min** 🟠
+   - market_snapshots 最新 05:00, portfolio 最新 05:00
+   - 可能原因: 多次 self-heal restart 期间 scheduler job 被丢弃
+   - 也可能: market_observer timeout → thread abandoned → 后续调度被 skip
+   - 需要观察下一周期是否恢复
+
+3. **§11 恶化: stale agents 183→195 (+12 in 43min)**
+   - 增速 ~16/h, 全部是 timeout 后 agent_runs 状态未清理
+   - startup reconciliation 每次只清 1 条（只看最后 1 条 running）
+
+**agent 运行率**:
+- 1h: 55 runs, 42 completed, 11 failed (20%)
+- 24h: 577 runs, 74 failed (12.8% — 上升)
+
+**结论**: asyncio thread abandonment 是系统性根因, 影响 scanner/market_observer/portfolio 三条管道的状态追踪。数据仍在产出 (feature snapshots 证明 scanner 内部在工作) 但 DB 状态管理完全失效。需要 P0 修复 timeout 后的 DB cleanup 逻辑。
