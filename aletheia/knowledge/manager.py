@@ -6,7 +6,7 @@ import logging
 from aletheia.storage.models import KnowledgeItem
 from aletheia.storage.repositories import (
     insert_knowledge_item, update_knowledge_item, list_knowledge_items,
-    knowledge_hash_exists,
+    knowledge_hash_exists, knowledge_title_exists_within,
 )
 
 logger = logging.getLogger("aletheia.knowledge.manager")
@@ -90,6 +90,9 @@ def create_research_note(title: str, content: str, confidence: str = "medium_con
 def create_dreaming_log(title: str, content: str) -> KnowledgeItem | None:
     if not _is_quality_pass(content):
         logger.info("knowledge_skipped:quality_gate item_type=dreaming_log len=%d", len(content))
+        return None
+    if knowledge_title_exists_within("dreaming_log", title, hours=6):
+        logger.info("knowledge_skipped:title_window item_type=dreaming_log title=%s", title)
         return None
     ch = _content_hash(content)
     if knowledge_hash_exists("dreaming_log", ch):

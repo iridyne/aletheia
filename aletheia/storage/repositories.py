@@ -485,6 +485,19 @@ def knowledge_hash_exists(item_type: str, content_hash: str) -> bool:
     return len(rows) > 0
 
 
+def knowledge_title_exists_within(item_type: str, title: str, hours: int = 6) -> bool:
+    """Check if a knowledge item with same type+title was created within N hours."""
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    row = db.execute(
+        "SELECT 1 FROM knowledge_items "
+        "WHERE item_type = ? AND title = ? AND created_at > datetime('now', ?)"
+        " LIMIT 1",
+        (item_type, title, f"-{hours} hours"),
+    ).fetchone()
+    return row is not None
+
+
 # --- Serenity Lens ---
 
 def insert_serenity_theme(t: SerenityTheme) -> None:
