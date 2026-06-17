@@ -836,3 +836,26 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **Agent 1h**: completed=319 (81%), stale=57 (14.4%), completed_with_errors=17 (4.3%), running=1, timed_out=1
 - Ghost=0 ✅
 - Stale total=220 (持续累积，历史不清理)
+
+### 2026-06-17 13:46 UTC — 第二十二轮巡检 (Δ42min)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 连续成功 | 13:43 (35s, 285 passed) — 连续第 6 次成功 |
+| Market Snapshots | ✅ 正常 | 13:41 (5min ago), 721/h |
+| Portfolio | ✅ 正常 | 13:42 (4min ago) |
+| Knowledge | ⚠️ 重复 | 897 total (+9/42min), dreaming=17/h 仍全重复 |
+| Features | ✅ 正常 | 13:43 |
+| Opportunities | ✅ 高产 | 1906 total, +643/h |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 |
+
+**Scanner 行为变化观测**: passed 从 115→285 (×2.5)，耗时 14s→35s。min_volume 未变 (5M USDT)。推测原因：亚洲交易时段更多 symbol 达到 volume 阈值，或 futures markets 在 registry 中生效（`fetchMarkets=["spot","linear"]` 现在正确加载了 perp 市场）。35s 对 285 symbols 合理 (285/sem=10 × avg_latency)。
+
+**§17 持续**: market_observer stale=48/92 (52%), timed_out=3。ProactorEventLoop IOCP hang 根因不变。
+
+**§18 持续**: errors.log 仍有 FOLKS/USDT, COAI/USDT 等 Bitget-only symbols 在 Binance/Bybit 查询失败。日志噪音但非阻断。
+
+**§7 持续**: dreaming_log=17/h 全是重复 "Daily Consolidation"。
+
+[2026-06-17 13:46 UTC] ✓ 核心管道全部正常运行，scanner 性能优化生效中
