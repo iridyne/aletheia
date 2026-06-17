@@ -1,7 +1,7 @@
 export function ConvictionMeter({ conviction, debateRan, bull, bear }: {
   conviction: number; debateRan: boolean; bull: number | null; bear: number | null
 }) {
-  const color = conviction >= 70 ? 'var(--c-signal)' : conviction >= 55 ? 'var(--c-warn)' : 'var(--c-danger)'
+  const color = conviction >= 70 ? 'var(--green)' : conviction >= 55 ? 'var(--yellow)' : 'var(--red)'
   return (
     <div className="conviction-meter">
       <div className="conviction-bar-wrap">

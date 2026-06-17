@@ -79,6 +79,7 @@ const columns = [
     header: 'TTL',
     cell: info => {
       const sec = info.getValue()
+      if (sec == null) return <span className="mono">—</span>
       return <span className="mono">{sec >= 3600 ? `${(sec / 3600).toFixed(0)}h` : `${(sec / 60).toFixed(0)}m`}</span>
     },
   }),
