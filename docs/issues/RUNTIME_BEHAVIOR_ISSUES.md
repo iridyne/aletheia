@@ -474,3 +474,32 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - 24h: 577 runs, 74 failed (12.8% — 上升)
 
 **结论**: asyncio thread abandonment 是系统性根因, 影响 scanner/market_observer/portfolio 三条管道的状态追踪。数据仍在产出 (feature snapshots 证明 scanner 内部在工作) 但 DB 状态管理完全失效。需要 P0 修复 timeout 后的 DB cleanup 逻辑。
+
+### 2026-06-17 06:03 UTC — 第七轮巡检 (Δ17min)
+
+**系统状态**: gateway running (PID restarted via self-heal), scheduler active
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 恢复 | 05:55 completed (114 passed, 3.5min), 自修复确认 |
+| Feature Snapshots | ✅ 正常 | 793 assets/batch |
+| Market Snapshots | ✅ 恢复 | 05:58 UTC (上轮停滞 46min, 现已恢复) |
+| Portfolio Snapshots | ⚠️ 停滞 | 最新仍 05:00 (62min 前) |
+| Knowledge Production | ⚠️ 重复 | +3 post_trade_review/h, total=823 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**状态变化 vs 上轮**:
+- ✅ Scanner 恢复: 05:55 成功 completed (上轮全部 ghost running)
+- ✅ Market snapshots 恢复: 05:00 → 05:58 (self-heal restart 后恢复)
+- ⚠️ Ghost scanner: 15→16 (累积中, 未清理历史幽灵)
+- ⚠️ Stale agents: 195→197
+- ⚠️ Portfolio 仍停滞 (可能 exchange_sync 触发条件未满足)
+- ⚠️ §12 持续: case study NoneType 错误仍在产生 (11 positions)
+
+**agent 运行率**:
+- 1h: 39 runs, 27 completed, 12 failed (30.8% — 高峰, 可能因 self-heal 重启期间丢 job)
+- 24h: 587 runs, 76 failed (12.9%)
+
+**结论**: 系统在 self-heal restart 后基本恢复。scanner + market_snapshots 正常产出。portfolio 停滞待观察。核心问题（ghost 累积 + thread abandon）仍需代码修复但不影响数据产出。
