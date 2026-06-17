@@ -579,3 +579,35 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **error.log**: 无新异常，仅 uvicorn startup 记录（3 次 restart，code_drift self-heal 正常）
 
 **结论**: 全部 5 条数据管道恢复正常运行。§15 portfolio 停滞已自修复（确认模式：thread abandon → self-heal restart → 管道恢复）。系统稳态运行，主要技术债仍为 ghost scanner 累积(19) + stale agents 累积(200)。知识去重未部署，垃圾仍在缓慢增长但速率降低(4/17min vs 之前 22/17min)。
+
+### 2026-06-17 07:46 UTC — 第十轮巡检 (Δ43min)
+
+**系统状态**: gateway running, scheduler active
+
+**管道健康摘要**:
+| 管道 | 状态 | 备注 |
+|------|------|------|
+| Universe Scanner | ✅ 正常 | 07:39 completed (122 passed, 3.5min), 产出稳定 |
+| Feature Snapshots | ✅ 正常 | 793 assets/batch (completed runs), 92-385 (ghost runs partial) |
+| Market Snapshots | ✅ 正常 | 07:42 UTC (4min 前) |
+| Portfolio Snapshots | ⚠️ 微停 | 最新 06:57 (49min 前, 上轮恢复后又停) |
+| Knowledge Production | ⚠️ 重复 | +10 items/h (9 ptr + 1 rn), total=835 |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**已知问题趋势**:
+- Ghost scanner: 19→22 (+3 in 43min, 加速累积)
+- Stale agents: 200→203 (+3 in 43min)
+- Scanner 总计: completed=18, running=22(ghost), timed_out=84, failed=9
+- Knowledge: 829→835 (+6 in 43min, post_trade_review 为主)
+- §15 Portfolio: 又出现微停(06:57 后无更新, 49min), 可能再次进入 thread abandon 周期
+
+**error.log 模式**:
+- market_observer: asyncio.run() teardown hung (IOCP drain) — §13 持续
+- case study NoneType: 13 个 position 触发 — §12 持续, 高频复现
+
+**agent 运行率**:
+- 1h: 42 runs, 38 completed, 3 failed (7.1% — 显著改善, 近 1h 最佳)
+- 24h: 636 runs, 82 failed (12.9% — 持平)
+
+**结论**: 核心管道(scanner/market/features)稳定。agent 成功率近 1h 显著改善(7.1%)。Portfolio 再次微停待观察(self-heal 模式可预期恢复)。§12 case study NoneType 是最高频复现的非阻断性 bug(13 positions/cycle)。ghost scanner 累积加速(+3 vs 之前 +1~2/轮)说明 timeout→DB 清理的修复越来越紧迫。
