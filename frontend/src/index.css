@@ -619,8 +619,9 @@ table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 th, td { padding: 5px var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
 th {
   color: var(--muted); font-weight: 600; font-size: 0.66rem; text-transform: uppercase;
-  letter-spacing: 0.07em; border-bottom: 2px solid var(--border-2);
+  letter-spacing: 0.07em;
 }
+thead th { border-bottom: 2px solid var(--border-2); }
 tbody tr { transition: background 0.08s; }
 tbody tr:nth-child(even) { background: rgba(20,26,33,0.35); }
 tbody tr:hover { background: var(--surface-2); }
