@@ -133,7 +133,7 @@ def _verify_api_ready_accessible(cfg) -> bool:
         return False
 
 
-def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
+def _verify_started(proc, cfg, *, timeout: float = 15.0, poll_interval: float = 0.3) -> None:
     """Block until the detached gateway is confirmed up, or raise typer.Exit(1).
 
     Four outcomes:
@@ -163,7 +163,7 @@ def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
             _fail_spawn(f"launcher exited with code {proc.returncode} before gateway came up")
         if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
             if not _verify_api_ready_accessible(cfg):
-                time.sleep(0.3)
+                time.sleep(poll_interval)
                 continue
             # Port is up — verify WebUI is actually accessible (not just API).
             # Keep waiting until timeout if root is not HTML; static assets may
@@ -173,7 +173,7 @@ def _verify_started(proc, cfg, *, timeout: float = 15.0) -> None:
                     return  # Gateway confirmed fully operational
             except Exception:
                 pass
-        time.sleep(0.3)
+        time.sleep(poll_interval)
 
     if is_running() and port_in_use(cfg.app.dashboard_port, cfg.app.bind_host):
         _stop_failed_gateway(cfg)
