@@ -1368,6 +1368,13 @@ _ADDITIVE_COLUMNS = [
     ("canonical_ticker", "opportunities", "TEXT NOT NULL DEFAULT ''"),
     # Futures integration: market type (spot/perp) carried through the member.
     ("market_type", "universe_members", "TEXT NOT NULL DEFAULT 'spot'"),
+    # Market Regime: tag opportunities and universe members with regime context
+    ("regime_tag", "opportunities", "TEXT"),
+    ("regime_tag", "universe_members", "TEXT"),
+    # Strategy Pool: direction affinity and applicable regimes
+    ("direction_affinity", "strategy_records", "TEXT DEFAULT 'both'"),
+    ("applicable_regimes", "strategy_records", "TEXT DEFAULT 'all'"),
+    ("strategy_type", "strategy_records", "TEXT DEFAULT 'scanner'"),
 ]
 
 
@@ -1540,6 +1547,22 @@ CREATE INDEX IF NOT EXISTS idx_backtest_runs_created ON backtest_runs(created_at
 """
 
 
+_MARKET_REGIME_DDL = """
+CREATE TABLE IF NOT EXISTS market_regimes (
+    id TEXT PRIMARY KEY,
+    state TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    long_bias REAL NOT NULL DEFAULT 0.5,
+    short_bias REAL NOT NULL DEFAULT 0.5,
+    signals TEXT DEFAULT '{}',
+    detected_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_market_regimes_detected ON market_regimes(detected_at DESC);
+"""
+
+
+
+
 def _run_all_ddl(db) -> None:
     """Execute every DDL statement against db (used for both real and blueprint DBs)."""
     db.executescript(SCHEMA_SQL)
@@ -1547,6 +1570,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_PREDICTION_OBSERVER_RUNS_DDL)
     db.executescript(_PREDICTION_NORMALIZED_DDL)
     db.executescript(_STRATEGY_BACKTEST_DDL)
+    db.executescript(_MARKET_REGIME_DDL)
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts(db)

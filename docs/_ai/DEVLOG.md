@@ -1,5 +1,72 @@
 # Development Log
 
+## 2026-06-17 — 会话结束：Strategy Pool 调研产出归档
+
+> 本次会话为纯研究 + 交接写作，无代码改动。
+
+**归档文件**：
+- `docs/_ai/RESEARCH_SHORT_AND_STRATEGY.md` — 竞品框架 + Aletheia 现状对照，做空信号缺口分析
+- `docs/_ai/PLAN_REGIME_STRATEGY_SHORT.md` — 3 阶段实施方案（direction_affinity + regime_tags + ranker 扩展）
+
+**CURRENT_TASK.md 更新**：加入 Strategy Pool 下一步意图（Stage 1-3），清理过期的 git diverge 说明。
+
+**无敏感文件**：两个 untracked 文件均为纯文档，不含 secrets/token/凭证。
+
+---
+
+## 2026-06-17 — Strategy Pool 前期探索（纯研究，无代码改动）
+
+> 来源：team-lead 委派，为 Strategy Pool 功能规划做前置调研。
+> 目标：理清策略生命周期现状，找出 direction_affinity + regime_awareness 的扩展挂钩点。
+
+### 调研结论
+
+**现有数据模型（`aletheia/storage/models.py:193`）**：
+`StrategyRecord` 字段：`id, name, description, state, parameters(JSON), under_review,
+review_notes, paper_trading_paused, paper_pause_reason, created_at, updated_at`。
+`parameters` 内约定字段：`entry_rule/exit_rule/timeframe/direction_bias/symbol/ruleset`。
+**不含** `direction_affinity`（多方向偏好权重）或 `regime_tag`（适用宏观环境）。
+
+**状态机（`aletheia/trading/strategy_lifecycle.py:27`）**：10 态前向单向，不可逆回退。
+晋升到 `paper_passed` 需 ≥14d + ≥30 笔 + 正 expectancy + 无 critical risk violations。
+
+**自动化生命周期（`aletheia/analytics/lifecycle_automation.py`）**：
+- `apply_strategy_evidence_actions()` — 自动退役（`backtest_killed`）/暂停（`paper_failing`）
+- `apply_exit_policy_feedback()` — 写 `parameters.suggested_exit_params`（advisory，不执行）
+- 无 LLM 调用，纯确定性规则
+
+**ranker 对策略的消费（`aletheia/agents/paper_trader_ranker.py:171`）**：
+- 硬阻断：`evidence_status == "backtest_killed"`
+- 软调分：`paper_promising +15 / review_needed -10 / paper_failing -30`
+- drift 调分：`paper_confirming +10 / paper_underperforming -15`
+- `direction_bias` 从 opportunity 独立推断，非 strategy.parameters 过滤
+
+**strategy_evidence 分类链（`aletheia/analytics/strategy_evidence.py:154`）**：
+`not_executable → needs_backtest → backtest_killed | needs_paper → paper_failing | paper_promising | review_needed`
+
+**forward outcome 是 Universe 级**（`aletheia/universe/outcome_recorder.py`）：
+追踪 member×horizon 收益，与策略无直接关联。策略级 PnL 来自 `positions.strategy_id`。
+
+**performance_ledger（`aletheia/strategy/performance_ledger.py`）**：
+元评估层，测量系统是否在进化（compile_rate / survival_rate / kill_rate / time_to_verdict）。
+
+### Strategy Pool 扩展挂钩点（供 team-lead 决策参考）
+
+1. **direction_affinity**：可加到 `StrategyRecord.parameters`（JSON 扩展，无需迁移）或加新列
+   （`_ADDITIVE_COLUMNS` 路径）。ranker 目前只用 opportunity.direction_bias，若要策略层过滤需
+   在 `_evaluate_candidate` 增加 direction 匹配逻辑。
+
+2. **regime_awareness**：`_compute_trade_score` 已有宏观 risk_regime 判断（`-35` penalty），
+   但是 opportunity 维度的，不是策略维度。策略层 regime_tag 需新增字段 + lifecycle 中记录
+   "策略在哪种 regime 下表现好"。
+
+3. **strategy_designer 集成**：策略生成入口在 `strategy_designer` agent（本轮未探索），
+   Strategy Pool 的批量管理界面应从这里出发。
+
+### 无代码改动
+
+---
+
 ## 2026-06-17 — 开源算法交易框架调研（纯研究，无代码改动）
 
 > 来源：team-lead 委派的基础研究任务；目标是为 Aletheia 下一步架构决策提供参考。
