@@ -7,7 +7,43 @@
 
 ## Last Updated
 
-2026-06-17 (US Equity 集成 Phase 1-4 + Settings UI 全部完成)
+2026-06-17 (期货集成 Layer 0-6 完成 + code-review 10 项修复)
+
+---
+
+## Recent Change (期货集成 Layer 0-6 — 2026-06-17, commit f626ad3)
+
+> **背景**: Phase A–E 只完成了执行层（ctVal、清算价、资金费率、UI）。上游信号链从未产出 `usdt_futures` 机会：registry 写死 spot，features 写死 spot，market_observer 硬编码 MARKET_SPOT，Opportunity.market 写入 "perp"（不匹配 risk engine 的 "usdt_futures"）。
+
+**改动（9 个文件）**:
+
+1. `aletheia/trading/instruments.py` — Layer 0：新增 `instrument_market_to_db_market()` 工具函数（"perp" → "usdt_futures"，单一边界转换入口）
+2. `aletheia/universe/registry.py` — Layer 1：`fetchMarkets` 改为按 `cfg.exchange.enabled_markets.usdt_futures` 动态添加 "swap"
+3. `aletheia/universe/features.py` — Layer 2：`collect_features()` 对 perp 资产切换 `defaultType=swap`，使用 `to_ccxt_perp()` symbol 格式
+4. `aletheia/storage/models.py` — Layer 3：`UniverseMember` 加 `market_type: str = "spot"` 字段
+5. `aletheia/storage/migrations.py` — Layer 3：`_ADDITIVE_COLUMNS` 追加 `("market_type", "universe_members", "TEXT NOT NULL DEFAULT 'spot'")`
+6. `aletheia/universe/service.py` — Layer 3：`UniverseMember` 构造时传 `market_type=item.get("market_type", "spot")`
+7. `aletheia/agents/market_observer.py` — Layer 4：universe 路径从 member dict 读 `market_type` 构造 InstrumentId（不再写死 MARKET_SPOT）；Opportunity.market 用 `instrument_market_to_db_market()` 转换
+8. `aletheia/trading/market_context.py` — Layer 5：`build_market_context()` 对 perp 用 `to_ccxt_perp()` 构造 fetch symbol
+9. `aletheia/data/collectors/microstructure.py` — Layer 6：`collect()` 支持 InstrumentId 输入，perp 自动切 `defaultType=swap`
+
+**验证**: 1301 tests passed；`instrument_market_to_db_market()` smoke-test 通过；gateway 重启正常（PID 37536，demo，live_disabled）
+
+---
+
+## Recent Change (code-review 10 项修复 — 2026-06-17, commit 5c06a54)
+
+> **背景**: `/code-review` high-effort 产出 10 个确认缺陷，立即修复。
+
+**修复(7 个文件)**:
+
+1. `equity_observer.py` — **#1** yfinance MultiIndex：所有 hist 列访问加 `.squeeze()`（pipeline 之前完全不工作）；**#5** deviation_pct：新增 `_fetch_live_price()` 用 fast_info 盘中价替代昨收；**#9** symbol 格式从 `ticker/USD` 改为 `ticker/USDT`
+2. `paper_trader.py` — **#2** `_PERMANENT_SKIP_PREFIXES` 加 `"equity_shadow_track"`（防止 equity opps 无限累积）
+3. `paper_trader_ranker.py` — **#3** equity 分支加 `status != 'open'` 保护（防止已关闭 opp 反复进入 shadow track）
+4. `scheduler.py` — **#4** equity cron `hour="14-21"`（覆盖 21:00 UTC 美股收盘竞价）；**#6** timeout 路径立即写 DB `status='timed_out'`（消除 ghost running 行）
+5. `manager.py` — **#7** quality gate 失败从 INFO 升级为 WARNING（含 title，与 dedup INFO 可区分）
+6. `settings.py` — **#8** `POST /equities` 加 `write_audit()` 调用
+7. `trade_case_builder.py` — **#10** `min_losses` falsy-zero 修复
 
 ---
 
