@@ -45,6 +45,31 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
 # checks to detect resource exhaustion trending toward process restart.
 _abandoned_thread_count: list[int] = [0]
 
+# Consecutive failure counter per IO job. Resets on success; emits infra_event
+# at threshold so failures surface in the dashboard status popover.
+_consecutive_failures: dict[str, int] = {}
+_FAILURE_ALERT_THRESHOLD = 3
+
+
+def _record_job_success(job_id: str) -> None:
+    _consecutive_failures[job_id] = 0
+
+
+def _record_job_failure(job_id: str, error: str) -> None:
+    _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
+    count = _consecutive_failures[job_id]
+    if count >= _FAILURE_ALERT_THRESHOLD:
+        from aletheia.infra.events import emit_infra_event
+        emit_infra_event(
+            severity="warning",
+            source="scheduler",
+            code=f"job_consecutive_failure:{job_id}",
+            message=f"{job_id} has failed {count} consecutive times: {error[:200]}",
+            action="Check logs or config; job will retry next cycle",
+            dedupe_sec=300,
+        )
+
+
 # Volume scanner results cache (populated by data_collectors Phase B, ~10 min cadence).
 _latest_volume_ranking: dict = {}
 
@@ -321,7 +346,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
         _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
-        id="universe_refresh", misfire_grace_time=120, executor="io",
+        id="universe_refresh", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
     # 9-domain market data collectors (microstructure/derivatives/macro).
@@ -545,13 +570,16 @@ def _run_exchange_sync():
     try:
         from aletheia.portfolio.exchange_sync import sync_exchange_account
         _run_sync_with_timeout("exchange_sync", sync_exchange_account)
+        _record_job_success("exchange_sync")
     except TimeoutError:
         logger.warning(
             "exchange_sync job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["exchange_sync"],
         )
+        _record_job_failure("exchange_sync", "timed out")
     except Exception as e:
         logger.warning("exchange_sync job failed: %s", e)
+        _record_job_failure("exchange_sync", str(e))
 
 
 def _run_portfolio_snapshot():
@@ -562,8 +590,10 @@ def _run_portfolio_snapshot():
         from aletheia.portfolio.pnl import compute_and_store_snapshot
         _mode = "bitget_live_limited" if cfg.exchange.mode == "live" else cfg.exchange.paper_execution_mode
         compute_and_store_snapshot(execution_mode=_mode)
+        _record_job_success("portfolio_snapshot")
     except Exception as e:
         logger.warning("portfolio_snapshot job failed: %s", e)
+        _record_job_failure("portfolio_snapshot", str(e))
 
 
 def _run_paper_trader():
@@ -788,15 +818,18 @@ def _run_universe_refresh():
         return
     try:
         _run_async_with_timeout("universe_refresh", _async_universe_refresh())
+        _record_job_success("universe_refresh")
     except TimeoutError:
         logger.warning(
             "universe_refresh job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["universe_refresh"],
         )
         _cleanup_stale_scanner_runs()
+        _record_job_failure("universe_refresh", "timed out")
     except Exception as e:
         logger.warning("universe_refresh job failed: %s", e)
         _cleanup_stale_scanner_runs()
+        _record_job_failure("universe_refresh", str(e))
 
 
 def _run_backtest_orchestrator():
@@ -892,13 +925,16 @@ def _run_data_collectors():
     _DC_TICK += 1
     try:
         _run_async_with_timeout("data_collectors", _async_data_collectors(cfg, _DC_TICK))
+        _record_job_success("data_collectors")
     except TimeoutError:
         logger.warning(
             "data_collectors job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["data_collectors"],
         )
+        _record_job_failure("data_collectors", "timed out")
     except Exception as e:
         logger.warning("data_collectors job failed: %s", e)
+        _record_job_failure("data_collectors", str(e))
 
 
 async def _async_data_collectors(cfg, tick: int) -> None:
