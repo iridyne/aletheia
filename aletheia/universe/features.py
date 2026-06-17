@@ -52,14 +52,17 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
     results = []
 
     try:
+        from aletheia.data.symbols import to_ccxt_perp
+
         exchange = provider._ensure_primary()
         exchange.options["defaultType"] = "spot"
-        exchange.options["fetchMarkets"] = ["spot"]
+        exchange.options["fetchMarkets"] = ["spot", "swap"]
         await exchange.load_markets()
 
-        # Batch fetch all tickers at once (much faster than per-symbol)
+        # Batch fetch spot tickers only (perp fetched individually with defaultType=swap)
         # Deduplicate symbols — same symbol can appear as spot + perp in registry
-        symbols_to_fetch = list(dict.fromkeys(a["symbol"] for a in assets if a.get("symbol")))
+        spot_assets = [a for a in assets if a.get("market_type", "spot") != "perp"]
+        symbols_to_fetch = list(dict.fromkeys(a["symbol"] for a in spot_assets if a.get("symbol")))
         ccxt_symbols = symbols_to_fetch  # canonical BTC/USDT is CCXT spot format
 
         tickers: dict = {}
@@ -77,11 +80,19 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
                 continue
 
             try:
+                is_perp = asset.get("market_type", "spot") == "perp"
+                if is_perp:
+                    exchange.options["defaultType"] = "swap"
+                    ccxt_sym = to_ccxt_perp(symbol)
+                else:
+                    exchange.options["defaultType"] = "spot"
+                    ccxt_sym = symbol
+
                 # Get ticker data
-                ticker = tickers.get(symbol)
+                ticker = tickers.get(ccxt_sym) if not is_perp else None
                 if ticker is None:
                     try:
-                        ticker = await exchange.fetch_ticker(symbol)
+                        ticker = await exchange.fetch_ticker(ccxt_sym)
                     except Exception:
                         continue
 
@@ -96,7 +107,7 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
                 # Fetch 1h OHLCV (24 bars for indicators)
                 ohlcv_1h = []
                 try:
-                    ohlcv_1h = await exchange.fetch_ohlcv(symbol, timeframe="1h", limit=30)
+                    ohlcv_1h = await exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=30)
                 except Exception:
                     pass
 

@@ -146,6 +146,7 @@ class UniverseService:
                     snapshot_id=snap.id,
                     asset_id=item["asset_id"],
                     symbol=item["symbol"],
+                    market_type=item.get("market_type", "spot"),
                     rank=rank,
                     total_score=item["total_score"],
                     opportunity_score=item.get("opportunity_score"),

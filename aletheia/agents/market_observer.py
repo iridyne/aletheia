@@ -18,7 +18,9 @@ from aletheia.storage.repositories import (
     insert_opportunity, list_strategies,
     find_open_opportunity_by_symbol_snapshot, update_opportunity,
 )
-from aletheia.trading.instruments import observed_instruments_from_config
+from aletheia.trading.instruments import (
+    observed_instruments_from_config, instrument_market_to_db_market,
+)
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 from aletheia.config.loader import load_config
 
@@ -296,7 +298,7 @@ async def _analyze_symbol(
 
     opp = Opportunity(
         symbol=symbol,
-        market=market_type,
+        market=instrument_market_to_db_market(market_type),
         direction_bias=direction,
         thesis=thesis,
         confidence=confidence,
@@ -342,8 +344,9 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             sym = m.get("symbol", "")
             if not sym:
                 continue
+            mt = m.get("market_type", "spot") or MARKET_SPOT
             instruments.append(InstrumentId.from_parts(
-                cfg.market_data.ccxt_exchange, sym, MARKET_SPOT
+                cfg.market_data.ccxt_exchange, sym, mt
             ))
     else:
         instruments = observed_instruments_from_config(cfg)

@@ -724,6 +724,7 @@ class UniverseMember(BaseModel):
     snapshot_id: str
     asset_id: str
     symbol: str
+    market_type: str = "spot"
     rank: int
     total_score: float
     opportunity_score: float | None = None
