@@ -78,7 +78,10 @@ def build_case_studies(
                 tags=metadata["tags"],
             )
             if item is None:
-                continue  # quality gate or duplicate — not an error
+                # Duplicate (INFO log) or quality-gate failure (WARNING log in manager).
+                # Quality-gate failures are distinguishable in logs; watch for
+                # repeated warnings as they indicate a content-generation regression.
+                continue
             created.append({
                 "case_study_id": item.id,
                 "position_id": pos_id,
@@ -97,7 +100,8 @@ def detect_guard_candidates(min_losses: int | None = None) -> list[dict]:
     Groups closed positions by factor_key, finds patterns with high loss rates,
     and creates guard candidates for patterns not already covered by active guards.
     """
-    min_losses = min_losses or _MIN_LOSSES_FOR_GUARD
+    if min_losses is None:
+        min_losses = _MIN_LOSSES_FOR_GUARD
     rows = build_trade_attribution_rows(limit=500)
     if not rows:
         return []

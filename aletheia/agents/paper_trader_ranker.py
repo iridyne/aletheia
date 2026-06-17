@@ -103,6 +103,12 @@ def _evaluate_candidate(
     # Hard filter: asset class
     ac = opp.get("asset_class") or "crypto"
     if ac == "equity":
+        # Exclude closed/non-open equity opps entirely (same guard as crypto path below).
+        # Without this, closed equity opps stay status='open' indefinitely (equity_shadow_track
+        # is a permanent skip, so paper_trader marks them reviewed — but only after they reach
+        # build_paper_candidates at least once). Pre-filtering here avoids accumulation.
+        if opp.get("status") != "open":
+            return None
         # Shadow track: score but never execute. Run through direction + confidence to
         # produce a meaningful score for monitoring; skip crypto-specific pipeline steps.
         bias = (opp.get("direction_bias") or "neutral").lower()

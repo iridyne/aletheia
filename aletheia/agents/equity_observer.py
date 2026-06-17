@@ -13,7 +13,7 @@ market_observer. For each ticker in cfg.market_data.observed_equities:
        asset_class="equity"
        asset_subclass="equity_daily"
        canonical_ticker=ticker         (e.g. "AAPL")
-       symbol="{ticker}/USD"           (canonical form so InstrumentId can be constructed)
+       symbol="{ticker}/USDT"          (canonical /USDT form matching Bitget xStock pairs)
        execution_eligible=False        (observation-only; all execution via Bitget xStocks)
        metadata includes yfinance data, xstock price (if available), deviation_pct
 
@@ -133,10 +133,12 @@ def _fetch_equity_indicators(ticker: str, _retry: bool = True) -> dict | _FetchE
                 return _fetch_equity_indicators(ticker, _retry=False)
             return None
 
-        closes = [float(x) for x in hist["Close"].dropna().tolist()]
-        highs = [float(x) for x in hist["High"].dropna().tolist()]
-        lows = [float(x) for x in hist["Low"].dropna().tolist()]
-        volumes = [float(x) for x in hist["Volume"].dropna().tolist()]
+        # yfinance >=1.4 returns MultiIndex DataFrame for single ticker;
+        # .squeeze() collapses it to a Series regardless of version.
+        closes = [float(x) for x in hist["Close"].squeeze().dropna().tolist()]
+        highs = [float(x) for x in hist["High"].squeeze().dropna().tolist()]
+        lows = [float(x) for x in hist["Low"].squeeze().dropna().tolist()]
+        volumes = [float(x) for x in hist["Volume"].squeeze().dropna().tolist()]
 
         if len(closes) < 20:
             return None
@@ -178,6 +180,22 @@ def _fetch_equity_indicators(ticker: str, _retry: bool = True) -> dict | _FetchE
             time.sleep(3)
             return _fetch_equity_indicators(ticker, _retry=False)
         return _FetchError(f"exception:{e}")
+
+
+def _fetch_live_price(ticker: str) -> float | None:
+    """Fetch live intraday price via yfinance fast_info (no API key required).
+
+    Returns None on any failure so callers can fall back to prior-close.
+    """
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).fast_info
+        price = getattr(info, "last_price", None)
+        if price and float(price) > 0:
+            return float(price)
+    except Exception:
+        pass
+    return None
 
 
 async def _fetch_xstock_price(xstock_symbol: str) -> float | None:
@@ -269,7 +287,13 @@ async def _analyze_equity(
     if xstock_symbol and xstock_in_config:
         xstock_price = await _fetch_xstock_price(xstock_symbol)
         if xstock_price is not None and data["last"] > 0:
-            deviation_pct = abs(xstock_price - data["last"]) / data["last"] * 100.0
+            # data["last"] is yfinance previous-day close; xstock_price is live.
+            # During market hours the stock may have moved legitimately, so we use
+            # the intraday live price from yfinance (fast_info) when available to
+            # give a same-timeframe comparison. Falls back to prior close otherwise.
+            ref_price = await loop.run_in_executor(None, _fetch_live_price, data["ticker"])
+            ref_price = ref_price if (ref_price and ref_price > 0) else data["last"]
+            deviation_pct = abs(xstock_price - ref_price) / ref_price * 100.0
             if deviation_pct > _XSTOCK_DEVIATION_ANOMALY_PCT:
                 logger.warning(
                     "xStock data anomaly for %s: deviation=%.2f%% (threshold=%.1f%%), excluding from LLM",
@@ -372,7 +396,7 @@ async def _analyze_equity(
                 meta["data_anomaly"] = True
 
     opp = Opportunity(
-        symbol=f"{ticker}/USD",
+        symbol=f"{ticker}/USDT",
         market="spot",
         direction_bias=direction,
         thesis=thesis,

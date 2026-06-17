@@ -230,6 +230,24 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             "Total abandoned threads: %d",
             job_id, thread_timeout, _abandoned_thread_count[0],
         )
+        # Immediately mark the corresponding agent_run as timed_out so that
+        # dashboards and health checks don't see a ghost 'running' row for up
+        # to 20 minutes (the periodic cleanup threshold).  We do this from the
+        # *caller* thread (not the abandoned daemon thread) to avoid racing on
+        # the thread-local DB connection.
+        try:
+            from aletheia.storage.sqlite import get_db
+            _db = get_db()
+            _was_in_tx = _db.in_transaction
+            _db.execute(
+                "UPDATE agent_runs SET status = 'timed_out', ended_at = datetime('now') "
+                "WHERE agent_name = ? AND status = 'running'",
+                (job_id,),
+            )
+            if not _was_in_tx:
+                _db.commit()
+        except Exception as _db_err:
+            logger.debug("Failed to mark agent_run timed_out for job %s: %s", job_id, _db_err)
         pool.shutdown(wait=False)
         raise TimeoutError(f"job {job_id} teardown hung after {thread_timeout}s")
     finally:
@@ -321,9 +339,10 @@ def init_scheduler() -> BackgroundScheduler | None:
     # US equity observer — runs every 30 min Mon–Fri during US market hours
     # (14:30–21:00 UTC = 09:30–16:00 Eastern). Unified agent: yfinance daily bars
     # + Bitget xStocks real-time price cross-validation. Replaces stock_observer.
+    # hour="14-21" so the last fire at 21:00 covers the closing auction (highest volume).
     _scheduler.add_job(
         _guarded("equity_observer", _run_equity_observer), "cron",
-        day_of_week="mon-fri", hour="14-20", minute="*/30",
+        day_of_week="mon-fri", hour="14-21", minute="*/30",
         id="equity_observer", misfire_grace_time=300, executor="agents", timezone="UTC",
     )
     # Prediction market observer — runs every 30 min around the clock.
