@@ -156,7 +156,7 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
     try:
         exchange = provider._ensure_primary()
         exchange.options["defaultType"] = "spot"
-        exchange.options["fetchMarkets"] = ["spot", "swap"]
+        exchange.options["fetchMarkets"] = ["spot", "linear"]
         await exchange.load_markets()
 
         # --- Phase A: batch ticker fetch (spot + perp) ---
