@@ -26,6 +26,7 @@ from aletheia.infra.events import emit_infra_event, list_infra_events
 
 _boot_time = time.time()
 _last_backend_ready_at: str | None = None
+_PROBE_TIMEOUT = 0.8  # seconds — monkeypatched to 0.05 in tests via conftest
 _HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -67,7 +68,7 @@ def _frontdoor_payload(*, static_dir: Path, backend_url: str, route: dict | None
 async def _probe_backend(backend_url: str) -> dict:
     global _last_backend_ready_at
     try:
-        async with httpx.AsyncClient(timeout=0.8, trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT, trust_env=False) as client:
             resp = await client.get(f"{backend_url.rstrip('/')}/_infra/readyz")
         if resp.status_code == 200:
             from datetime import datetime, timezone
@@ -104,13 +105,14 @@ def _filtered_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
 
 
 _proxy_client: httpx.AsyncClient | None = None
+_PROXY_CONNECT_TIMEOUT = 5.0  # seconds — monkeypatched to 0.05 in tests via conftest
 
 
 def _get_proxy_client() -> httpx.AsyncClient:
     global _proxy_client
     if _proxy_client is None or _proxy_client.is_closed:
         _proxy_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=10.0),
+            timeout=httpx.Timeout(connect=_PROXY_CONNECT_TIMEOUT, read=120.0, write=10.0, pool=10.0),
             trust_env=False,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )

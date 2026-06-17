@@ -23,6 +23,12 @@ _GATEWAY_SUPERVISOR_MARKER = "_gateway_runner"
 # probing port liveness we redirect these to loopback (the actual reachable name).
 _WILDCARD_HOSTS = {"", "0.0.0.0", "::", "*"}
 
+# TCP connect timeout for port-liveness probes.  On Windows, connecting to a
+# port with no listener does NOT return ECONNREFUSED immediately — it waits
+# the full timeout.  Kept short (0.5s) for production; monkeypatched to ~0ms
+# in tests via conftest._fast_port_probe.
+_PORT_PROBE_TIMEOUT: float = 0.5
+
 # Win32 process-creation flag that prevents the OS from allocating a console for a
 # spawned child. On Win11, an inherited or fresh console for a child of a detached
 # parent is hosted via Windows Terminal (`wt.exe`), which flashes a black window
@@ -252,7 +258,7 @@ def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     probe_host = "127.0.0.1" if host in _WILDCARD_HOSTS else host
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.5)
+            s.settimeout(_PORT_PROBE_TIMEOUT)
             return s.connect_ex((probe_host, port)) == 0
     except Exception:
         return False
