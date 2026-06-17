@@ -445,6 +445,8 @@ tr.clickable:active { background: var(--bg); }
 | `.recent-runs-strip` | 旧 agent run badge strip | 6fa0f69 |
 | `.pill-*`, `.ticker-token-pending` | 旧 topbar pill | 早期 commit |
 | body grid texture `background-image` | 旧网格纹理 | 6d2f557 |
+| `.card-head-space{margin-bottom:0}` (重复定义) | 被 @2120 完整定义覆盖的死规则 | UI review |
+| `.signals-row-long/short` + `td` 修饰 | 旧 Signals tab 行着色，0 .tsx 引用 | UI review |
 
 **验证方法：** `grep -r "class-name" frontend/src/ --include="*.tsx"` — 0 结果即可安全删除。
 
@@ -466,6 +468,7 @@ tr.clickable:active { background: var(--bg); }
 | 2026-06-15 | 675dc80 | controls/metrics/sections 紧凑 |
 | 2026-06-15 | 2ac849c | Bloomberg-density pass 1 |
 | 2026-06-15 | (pending) | Tick flash + sort indicator + watchlist sparkline |
+| 2026-06-17 | (pending) | UI code review: 定义缺失的 conviction/guard 颜色(→tokens)、button:active 对齐§9、10px→var(--r)、删 2 处死 CSS、sp-issue-hint faint→muted(§10)、修复 §7 重号→§17、PnL/TTL/confidence null 守卫 |
 
 ---
 
@@ -522,7 +525,7 @@ tr.clickable:active { background: var(--bg); }
 
 ---
 
-## 7. 告警与错误提示规范 (Actionable Warnings)
+## 17. 告警与错误提示规范 (Actionable Warnings)
 
 **原则：每条告警必须附带操作指引。** 用户看到 ⚠ 时，下一步应该立刻清晰，不需要去查文档或猜测。
 
@@ -543,7 +546,8 @@ tr.clickable:active { background: var(--bg); }
 
 - `hint` 必须是一句话（<50 字），直接说"你应该做什么"，不解释技术原因
 - 不在 hint 里重复 label/value 已有的信息（信息冗余原则）
-- `hint` 样式：`.sp-issue-hint`，`color: var(--faint)`，`font-size: 0.62rem`，换行显示在 label 下方
+- `hint` 样式：`.sp-issue-hint`，`color: var(--muted)`，`font-size: 0.62rem`，换行显示在 label 下方
+  （告警 hint 是用户必须读的可操作文字 → 受 §10 约束，用 `--muted`(≥4.55:1) 而非 `--faint`(2.31:1，仅装饰)）
 - InfraEvent 的 `action` 字段已有类似机制（显示在 event 下方），health issue hint 遵循同一视觉语言
 
 ### 新增 health issue 的 checklist

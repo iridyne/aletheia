@@ -27,6 +27,9 @@ export default function AccountSnapshot() {
       : syncStatus === 'error' ? 'exchange sync error'
       : 'exchange sync pending'
 
+  // "Today PnL" prefers the real day figure; when it's absent we fall back to
+  // unrealized PnL — but say so, rather than mislabel open-position drift as today's result.
+  const usingUnrealizedFallback = p?.today_pnl == null && p?.unrealized_pnl != null
   const todayPnlRaw = p?.today_pnl ?? p?.unrealized_pnl
   const todayPnlNum = todayPnlRaw == null ? null : Number(todayPnlRaw)
   const todayPnlText = fmtSigned(todayPnlNum)
@@ -45,6 +48,7 @@ export default function AccountSnapshot() {
         label="Today PnL"
         value={`${todayPnlText} USDT`}
         tone={todayPnlTone}
+        caveat={usingUnrealizedFallback ? 'unrealized · today figure unavailable' : undefined}
       />
       <MetricTile
         label="Open Positions"

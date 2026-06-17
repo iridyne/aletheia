@@ -30,6 +30,16 @@ function RunStatusBadge({ status }: { status: string }) {
 
 const shortDate = (s: string | null | undefined) => fmtTimestamp(s)
 
+// Safely read one numeric field from a JSON string column; never throws on
+// malformed data (a single bad row must not crash the whole table render).
+function jsonCount(raw: string | null | undefined, key: string): number {
+  if (!raw) return 0
+  try {
+    const v = JSON.parse(raw)?.[key]
+    return typeof v === 'number' ? v : 0
+  } catch { return 0 }
+}
+
 function ElapsedTimer({ startedAt }: { startedAt: string }) {
   const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000))
   useEffect(() => {
@@ -229,8 +239,8 @@ function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: st
               <td>{r.mode ? humanize(r.mode) : '—'}</td>
               <td className="mono">{shortDate(r.startedAt || r.started_at)}</td>
               <td className="mono">{shortDate(r.finishedAt || r.finished_at)}</td>
-              <td className="mono">{r.artifactCounts?.themes ?? JSON.parse(r.artifact_counts || '{}').themes ?? 0}</td>
-              <td>{r.artifactCounts?.claims ?? JSON.parse(r.artifact_counts || '{}').claims ?? 0}</td>
+              <td className="mono">{r.artifactCounts?.themes ?? jsonCount(r.artifact_counts, 'themes')}</td>
+              <td>{r.artifactCounts?.claims ?? jsonCount(r.artifact_counts, 'claims')}</td>
             </tr>
           ))}
         </tbody>
@@ -440,11 +450,11 @@ function ThemesTab() {
           {t.thesis && <p className="lens-theme-thesis">{t.thesis}</p>}
           {!t.thesis && t.description && <p>{t.description}</p>}
           {t.demand_wave && <p className="text-muted">Wave: {t.demand_wave}</p>}
-          {(t.confidence || t.novelty_score || t.actionability_score) && (
+          {(t.confidence != null || t.novelty_score != null || t.actionability_score != null) && (
             <div className="lens-theme-scores">
-              {t.confidence && <span className="lens-score">Conf: {(t.confidence * 100).toFixed(0)}%</span>}
-              {t.novelty_score && <span className="lens-score">Novel: {(t.novelty_score * 100).toFixed(0)}%</span>}
-              {t.actionability_score && <span className="lens-score">Action: {(t.actionability_score * 100).toFixed(0)}%</span>}
+              {t.confidence != null && <span className="lens-score">Conf: {(t.confidence * 100).toFixed(0)}%</span>}
+              {t.novelty_score != null && <span className="lens-score">Novel: {(t.novelty_score * 100).toFixed(0)}%</span>}
+              {t.actionability_score != null && <span className="lens-score">Action: {(t.actionability_score * 100).toFixed(0)}%</span>}
             </div>
           )}
           <div className="lens-theme-actions">
@@ -645,7 +655,7 @@ function EvidenceTab() {
                     ? <Badge tone="blue">prediction</Badge>
                     : e.source}
                 </td>
-                <td>{e.confidence}</td>
+                <td>{e.confidence || '—'}</td>
                 <td>{shortDate(e.created_at)}</td>
               </tr>
             ))}

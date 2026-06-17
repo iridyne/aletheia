@@ -32,8 +32,9 @@ const posCol = createColumnHelper<Position>()
 const ordCol = createColumnHelper<Order>()
 
 const pnlCell = (v: number | null | undefined) => {
-  const n = v ?? 0
-  return <span className={`mono ${n >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>{fmtSigned(v)}</span>
+  // Null/unknown PnL must not read as a flat green gain — show a muted dash.
+  if (v == null) return <span className="mono text-muted">—</span>
+  return <span className={`mono ${v >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>{fmtSigned(v)}</span>
 }
 
 const openColumns = [
