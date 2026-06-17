@@ -775,3 +775,13 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **新观测**: error.log 出现 `RuntimeWarning: coroutine 'binance.request' was never awaited` — service.py:214 在 exception 处理中未正确 await CCXT close，造成资源泄漏。非阻断但增加内存/连接开销。
 
 **影响评估**: 最后一次成功 universe snapshot 在 ~10:02 UTC (104min 前)。如果 snapshot_ttl_hours=6，则到 ~16:02 UTC 前 universe 仍有效。还有 ~4h 窗口修复。agent 运行率反而因无 scanner timeout 而改善到 3.7%（只有 agent 管道在跑）。
+
+### 2026-06-17 12:03 UTC — 第十九轮巡检 (Δ17min)
+
+**§16 持续**: Scanner 连续 11 次 failed (100min+, 10:22→12:02)。failed 总计 9→20。Feature snapshots 停滞 115min。
+
+**TTL 评估更新**: 最新 universe snapshot created=09:55, expires=**2026-06-18 09:55** (24h TTL)。**剩余窗口 ~22h** — 比之前预估的 4-6h 宽裕得多。系统不会在短期内回退到 static fallback。
+
+**其他管道正常**: Market 11:48 (15min) | Portfolio 12:01 (2min) | Knowledge total=868 | Agent 1h: 26 runs, 22 completed, 1 failed (3.8% — 优秀) | 24h: 752 runs, 96 failed (12.8% — 改善) | Stale 217 | Ghost=0
+
+**结论**: §16 scanner 失败不紧急（TTL 22h），但仍需修复以恢复 universe 动态刷新。其他所有管道健康且高效运行。
