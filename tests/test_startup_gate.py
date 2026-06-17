@@ -242,7 +242,7 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.health.startup_gate_max_retries = 3
-    cfg.health.startup_gate_retry_delay_sec = 1
+    cfg.health.startup_gate_retry_delay_sec = 0
 
     call_count = {"n": 0}
     orig_probe_one = startup_gate._probe_one

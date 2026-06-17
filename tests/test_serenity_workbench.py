@@ -713,10 +713,14 @@ def test_lock_same_owner_blocked(db):
 
 
 def test_lock_expiry(db):
-    import time
-    assert repo.acquire_serenity_lock("expire-lock", "run-1", ttl_seconds=1) is True
-    time.sleep(1.2)
-    # Lock should have expired, another owner can acquire
+    from datetime import datetime, timezone, timedelta
+    # Insert an already-expired lock directly — avoids a real 1.2s sleep.
+    past = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+    db.execute(
+        "INSERT INTO serenity_agent_locks (lock_key, owner_run_id, acquired_at, expires_at) VALUES (?,?,?,?)",
+        ("expire-lock", "run-1", past, past),
+    )
+    db.commit()
     assert repo.acquire_serenity_lock("expire-lock", "run-2", ttl_seconds=600) is True
 
 

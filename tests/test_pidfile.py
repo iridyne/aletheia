@@ -99,7 +99,7 @@ def test_wait_port_free_times_out_when_stuck(monkeypatch):
     from aletheia.gateway import pidfile
     monkeypatch.setattr(pidfile, "port_in_use", lambda port, host="127.0.0.1": True)
     monkeypatch.setattr(pidfile.time, "sleep", lambda s: None)  # no real waiting
-    assert pidfile.wait_port_free(8787, "127.0.0.1", timeout=1.0) is False
+    assert pidfile.wait_port_free(8787, "127.0.0.1", timeout=0.01) is False
 
 
 def test_kill_pid_tree_windows_uses_ctypes_not_subprocess(monkeypatch):

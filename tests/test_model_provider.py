@@ -115,6 +115,7 @@ async def test_openai_complete_mock():
 
     class FakeResponse:
         status_code = 200
+        is_success = True
         def raise_for_status(self): pass
         def json(self): return mock_response
 
@@ -220,8 +221,17 @@ async def test_openai_list_models_parses_data_array():
 
 @pytest.mark.anyio
 async def test_openai_list_models_returns_empty_on_failure():
+    import httpx
+
+    class FailClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, **k): raise httpx.ConnectError("refused")
+
     provider = OpenAICompatibleProvider(base_url="http://localhost:19999/v1", model="m")
-    models = await provider.list_models()
+    with patch("httpx.AsyncClient", FailClient):
+        models = await provider.list_models()
     assert models == []
 
 
@@ -270,8 +280,17 @@ async def test_anthropic_list_models_handles_plain_list():
 
 @pytest.mark.anyio
 async def test_anthropic_list_models_returns_empty_on_failure():
+    import httpx
+
+    class FailClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, **k): raise httpx.ConnectError("refused")
+
     provider = AnthropicCompatibleProvider(base_url="http://localhost:19999", model="m")
-    models = await provider.list_models()
+    with patch("httpx.AsyncClient", FailClient):
+        models = await provider.list_models()
     assert models == []
 
 
@@ -302,8 +321,17 @@ async def test_databricks_list_models_parses_endpoints():
 
 @pytest.mark.anyio
 async def test_databricks_list_models_returns_empty_on_failure():
+    import httpx
+
+    class FailClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, **k): raise httpx.ConnectError("refused")
+
     p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
-    models = await p.list_models()
+    with patch("httpx.AsyncClient", FailClient):
+        models = await p.list_models()
     assert models == []
 
 
@@ -390,8 +418,17 @@ async def test_anthropic_native_healthcheck_success():
 
 @pytest.mark.anyio
 async def test_anthropic_native_healthcheck_failure():
+    import httpx
+
+    class FailClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, **k): raise httpx.ConnectError("refused")
+
     provider = AnthropicNativeProvider(model="claude-sonnet-4-6")
-    health = await provider.healthcheck()
+    with patch("httpx.AsyncClient", FailClient):
+        health = await provider.healthcheck()
     assert health.available is False
 
 
@@ -482,8 +519,17 @@ async def test_openai_native_healthcheck_success():
 
 @pytest.mark.anyio
 async def test_openai_native_healthcheck_failure():
+    import httpx
+
+    class FailClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, **k): raise httpx.ConnectError("refused")
+
     provider = OpenAINativeProvider(model="gpt-4o")
-    health = await provider.healthcheck()
+    with patch("httpx.AsyncClient", FailClient):
+        health = await provider.healthcheck()
     assert health.available is False
 
 

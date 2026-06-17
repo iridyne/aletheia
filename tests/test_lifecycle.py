@@ -344,7 +344,7 @@ def test_verify_started_waits_for_api_ready_before_success(tmp_path, monkeypatch
     monkeypatch.setattr(lifecycle, "_verify_webui_accessible", lambda cfg: True)
 
     with pytest.raises(typer.Exit):
-        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.1)
+        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.1, poll_interval=0.01)
 
 
 def test_verify_started_raises_when_launcher_dies_immediately(tmp_path, monkeypatch, capsys):
@@ -374,7 +374,7 @@ def test_verify_started_raises_on_timeout_when_never_up(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "port_in_use", lambda port, host="127.0.0.1": False)
 
     with pytest.raises(typer.Exit):
-        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.6)
+        lifecycle._verify_started(_FakeProc(code=None), cfg, timeout=0.6, poll_interval=0.01)
 
 
 def test_verify_started_kills_api_only_gateway_when_webui_missing(tmp_path, monkeypatch):

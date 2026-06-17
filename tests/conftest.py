@@ -70,6 +70,20 @@ def _fast_network_timeout(request, monkeypatch):
 
     monkeypatch.setattr(_net, "httpx_client", _fast_httpx_client)
 
+    # Also patch httpx.AsyncClient directly so modules that do
+    # `from aletheia.net import httpx_client` (binding the function at import time)
+    # still get the short connect timeout.  ASGI transports are left untouched
+    # (transport= kwarg present → no real TCP, timeout is irrelevant there).
+    _OrigAsyncClient = _httpx.AsyncClient
+
+    class _FastAsyncClient(_OrigAsyncClient):
+        def __init__(self, *args, **kwargs):
+            if "transport" not in kwargs:
+                kwargs["timeout"] = _httpx.Timeout(0.05, connect=0.05)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(_httpx, "AsyncClient", _FastAsyncClient)
+
     # Disable list_models() network discovery in fallback to avoid extra round-trips.
     # Tests that provide their own LLM mock (real_llm marker) keep full fallback logic.
     if not request.node.get_closest_marker("real_llm"):
@@ -93,6 +107,39 @@ def _fast_network_timeout(request, monkeypatch):
         await _real_asyncio_sleep(seconds)
 
     monkeypatch.setattr(_sg.asyncio, "sleep", _skip_long_sleep)
+
+
+@pytest.fixture(autouse=True)
+def _fast_frontdoor_probe(monkeypatch):
+    """Shorten frontdoor timeouts from their production values to 50ms.
+
+    Two clients bypass the _fast_network_timeout guard:
+    - _probe_backend() creates its own AsyncClient with hardcoded 0.8s timeout.
+    - _get_proxy_client() creates a persistent proxy client with connect=5.0s.
+    Both are monkeypatched here.  The proxy client singleton is also reset so the
+    patched timeout takes effect even if a prior test already built the client.
+    """
+    import aletheia.gateway.frontdoor as _fd
+    monkeypatch.setattr(_fd, "_PROBE_TIMEOUT", 0.05)
+    monkeypatch.setattr(_fd, "_PROXY_CONNECT_TIMEOUT", 0.05)
+    # Force the proxy singleton to be rebuilt with the patched timeout.
+    original = _fd._proxy_client
+    _fd._proxy_client = None
+    yield
+    _fd._proxy_client = original
+
+
+@pytest.fixture(autouse=True)
+def _fast_port_probe(monkeypatch):
+    """Shorten TCP port-liveness timeout from 0.5s to ~0ms.
+
+    On Windows, connect() to a port with no listener waits the full settimeout()
+    instead of returning ECONNREFUSED immediately.  Tests that call port_in_use()
+    (directly or via wait_port_free) on ports that are genuinely free would
+    otherwise block 0.5s per probe.
+    """
+    import aletheia.gateway.pidfile as _pf
+    monkeypatch.setattr(_pf, "_PORT_PROBE_TIMEOUT", 0.001)
 
 
 @pytest.fixture(autouse=True)

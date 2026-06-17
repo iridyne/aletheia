@@ -134,15 +134,10 @@ class TestHttpxClientWithFallback:
 
 
 class TestInvalidateProxyCache:
-    def test_invalidate_clears_cache_and_env(self):
-        import os
-        os.environ["HTTP_PROXY"] = "http://test:1234"
-        os.environ["HTTPS_PROXY"] = "http://test:1234"
+    def test_invalidate_marks_cache_failed(self):
         _proxy_reachable_cache["http://test:1234"] = (True, 999999999.0)
 
         with patch("aletheia.net._proxy_url", return_value="http://test:1234"):
             invalidate_proxy_cache()
 
         assert _proxy_reachable_cache["http://test:1234"][0] is False
-        assert "HTTP_PROXY" not in os.environ
-        assert "HTTPS_PROXY" not in os.environ
