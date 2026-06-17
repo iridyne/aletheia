@@ -24,8 +24,39 @@ def _btc_price_at_close() -> float | None:
         return None
 
 
+def _build_exchange_upnl_index() -> dict[tuple[str, str], float]:
+    """Build (canonical_symbol, normalised_direction) → exchange uPnL from cache.
+
+    Returns empty dict when cache is unavailable — callers fall back to the local
+    estimate so the system degrades honestly rather than showing zeros.
+    """
+    try:
+        from aletheia.portfolio import exchange_sync
+        from aletheia.data.symbols import to_canonical
+        cached = exchange_sync.get_cached_state()
+        if cached is None or exchange_sync.status_for(cached) not in ("ok", "stale"):
+            return {}
+        index: dict[tuple[str, str], float] = {}
+        for p in cached.get("positions") or []:
+            sym = to_canonical(p.get("symbol", ""))
+            side = (p.get("side") or "").lower()
+            direction = "long" if side in ("long", "buy") else "short" if side in ("short", "sell") else None
+            if not sym or direction is None:
+                continue
+            upnl = p.get("unrealized_pnl")
+            if upnl is not None:
+                index[(sym, direction)] = float(upnl)
+        return index
+    except Exception:
+        return {}
+
+
 def mark_positions_to_market(persist: bool = False) -> list[dict]:
-    """Compute unrealized PnL on open positions using the latest market price.
+    """Compute unrealized PnL on open positions.
+
+    Prefers exchange uPnL (includes funding fees and mark-price basis) when the
+    exchange cache is available. Falls back to the local (price - entry) * qty
+    estimate only when the cache is absent or the position has no exchange match.
 
     When persist=False (default, used by GET /api/portfolio), only computes in
     memory — no DB writes, no WAL lock contention with scheduler threads.
@@ -33,6 +64,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     the updated price/PnL back to the positions table.
     """
     positions = list_positions(status="open")
+    exc_upnl_index = _build_exchange_upnl_index()
     updated = []
     for p in positions:
         price = _latest_price(p["symbol"])
@@ -41,9 +73,15 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         qty = p["quantity"]
         entry = p["entry_price"]
         direction = p["direction"]
-        if direction in ("long", "buy"):
+        norm_dir = "long" if direction in ("long", "buy") else "short"
+        # Exchange uPnL is authoritative (real mark-price + funding fees).
+        # Fall back to local estimate when exchange data is unavailable.
+        exc_val = exc_upnl_index.get((p["symbol"], norm_dir))
+        if exc_val is not None:
+            upnl = exc_val
+        elif direction in ("long", "buy"):
             upnl = (price - entry) * qty
-        else:  # short/sell
+        else:
             upnl = (entry - price) * qty
         if persist:
             update_position(p["id"], current_price=price, unrealized_pnl=upnl)
