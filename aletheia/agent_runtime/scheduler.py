@@ -38,6 +38,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "universe_refresh": 360.0,
     "data_collectors": 45.0,
     "exchange_sync": 60.0,
+    "portfolio_snapshot": 45.0,
     "backtest_orchestrator": 600.0,
 }
 
@@ -590,8 +591,14 @@ def _run_portfolio_snapshot():
     try:
         from aletheia.portfolio.pnl import compute_and_store_snapshot
         _mode = "bitget_live_limited" if cfg.exchange.mode == "live" else cfg.exchange.paper_execution_mode
-        compute_and_store_snapshot(execution_mode=_mode)
+        _run_sync_with_timeout("portfolio_snapshot", lambda: compute_and_store_snapshot(execution_mode=_mode))
         _record_job_success("portfolio_snapshot")
+    except TimeoutError:
+        logger.warning(
+            "portfolio_snapshot job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["portfolio_snapshot"],
+        )
+        _record_job_failure("portfolio_snapshot", "timed out")
     except Exception as e:
         logger.warning("portfolio_snapshot job failed: %s", e)
         _record_job_failure("portfolio_snapshot", str(e))
@@ -762,6 +769,11 @@ def _run_health_check():
         run_health_check()
     except Exception as e:
         logger.warning("health_check job failed: %s", e)
+    # Piggyback periodic stale-run cleanup on the health_check cadence (every 10 min).
+    # Handles agent_runs rows left 'running' by abandoned asyncio threads (§11).
+    _cleanup_stale_agent_runs()
+    # Also clean scanner runs in case universe_refresh failed without calling its own cleanup.
+    _cleanup_stale_scanner_runs()
 
 
 def _run_post_trade_reviewer():
@@ -808,6 +820,32 @@ def _cleanup_stale_scanner_runs():
             db.commit()
     except Exception as e:
         logger.debug("Failed to cleanup stale scanner runs: %s", e)
+
+
+def _cleanup_stale_agent_runs():
+    """Mark any stuck 'running' agent_runs as 'stale' after 20-minute wall-clock threshold.
+
+    Called periodically from health_check so that threads abandoned by
+    _run_async_with_timeout (Windows ProactorEventLoop IOCP drain) don't leave
+    agent_runs rows pinned at 'running' forever. 20 min >> the longest agent
+    timeout (5 min) + grace (15 s) so we only clean genuinely orphaned rows.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        was_in_tx = db.in_transaction
+        result = db.execute(
+            "UPDATE agent_runs SET status = 'stale', ended_at = datetime('now') "
+            "WHERE status = 'running' "
+            "AND started_at < datetime('now', '-20 minutes')",
+        )
+        rows = result.rowcount if result else 0
+        if rows:
+            logger.info("Marked %d stale agent run(s) as stale during health check", rows)
+        if not was_in_tx:
+            db.commit()
+    except Exception as e:
+        logger.debug("Failed to cleanup stale agent runs: %s", e)
 
 
 def _run_universe_refresh():
