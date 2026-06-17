@@ -43,6 +43,7 @@ packages = ["aletheia"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+addopts = "-p no:cacheprovider"
 
 [tool.aletheia]
 # marker so tooling can detect repo root
@@ -50,5 +51,6 @@ root = true
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.155.3",
     "pytest>=9.0.3",
 ]

@@ -12,7 +12,19 @@ overrides this within the test body. A test that reaches the exchange without a 
 fails loudly instead of silently placing a real order.
 """
 
+import sqlite3
 import pytest
+
+# ---------------------------------------------------------------------------
+# Hypothesis global settings
+# ---------------------------------------------------------------------------
+try:
+    from hypothesis import settings as _h_settings, HealthCheck
+    _h_settings.register_profile("ci", max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    _h_settings.register_profile("dev", max_examples=20, suppress_health_check=[HealthCheck.too_slow])
+    _h_settings.load_profile("dev")
+except ImportError:
+    pass  # hypothesis is optional; property tests are skipped if missing
 
 
 def pytest_configure(config):
@@ -28,6 +40,11 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "real_network: test needs real network calls — opt out of the market-data guard.",
+    )
+    config.addinivalue_line(
+        "markers",
+        "real_db: test requires a real file-backed SQLite DB (WAL/lock/cross-connection) "
+        "— opt out of the in-memory DB injection.",
     )
 
 
@@ -168,3 +185,48 @@ def _no_network_market_data(request, monkeypatch):
     monkeypatch.setattr(CCXTProvider, "get_ohlcv", _empty_ohlcv)
     monkeypatch.setattr(CCXTProvider, "get_ticker", _empty_ticker)
     monkeypatch.setattr(CCXTProvider, "close", _noop_close)
+
+
+# ---------------------------------------------------------------------------
+# In-memory SQLite injection
+#
+# Tests that call `sq._db_conn = conn` directly (setup_env helpers) override this
+# fixture's connection — that's intentional. Tests that need a REAL file-backed DB
+# for cross-connection WAL/lock tests (test_storage._real_db_env,
+# test_runtime.setup_real_db_env) call `sq._db_conn = None` themselves, which clears
+# the fixture's connection and lets get_db() open a real file connection instead.
+#
+# The autouse fixture therefore only benefits tests that DON'T have their own
+# setup_env — unit tests, route tests, etc. — giving them a pre-migrated :memory: DB
+# with zero disk I/O.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _inmemory_db(request, tmp_path, monkeypatch):
+    """Inject a per-test in-memory SQLite DB for tests that don't set up their own.
+
+    Skipped for tests marked `real_db` (WAL/lock/cross-connection tests).
+    Tests with their own setup_env that assign sq._db_conn override this connection.
+    """
+    if request.node.get_closest_marker("real_db"):
+        yield
+        return
+
+    import aletheia.config.loader as _loader
+    import aletheia.storage.sqlite as _sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
+
+    # Point DATA_DIR at tmp_path so file artifacts (logs, markdown) still land on disk.
+    monkeypatch.setattr(_loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(_loader, "CONFIG_PATH", tmp_path / "config.yaml")
+
+    reset_db()
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    _sq._db_conn = conn
+    run_migrations()
+
+    yield
+
+    reset_db()
