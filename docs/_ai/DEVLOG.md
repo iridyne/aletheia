@@ -1,5 +1,47 @@
 # Development Log
 
+## 2026-06-17 — Scanner 性能 + 测试基础设施强化
+
+> 本轮工作围绕 §16 scanner 超时根因展开：Binance fetchMarkets 错误 key → 预加载失败 →
+> OHLCV 串行慢 → 扫描超时。四条 commit 依次收尾。
+
+### 实现内容
+
+**fix(universe) d8908e5** — Binance fetchMarkets `"swap"` → `"linear"` 修复
+- 根因：CCXT Binance 适配器只接受 `["spot", "linear", "inverse"]`，`"swap"` 是 CCXT 统一名
+  但 Binance 侧白名单拒绝 → ExchangeError 静默杀死 scanner pipeline。
+- 修改：`features.py` + `registry.py` 两处 `"swap"` → `"linear"`（Binance USDT-perp 标准键）
+- 验证：scanner 完成 `assets_passed=115`
+
+**test(infra) ec7ea30** — in-memory SQLite autouse + Hypothesis 属性测试
+- `conftest.py`: `_inmemory_db` autouse fixture（`:memory:` DB per test，消除磁盘 I/O）；
+  `real_db` marker 保留 WAL 锁测试；`hypothesis` dev/ci profile（max_examples=20/50）
+- `tests/test_hypothesis_properties.py`: 19 个属性测试（_is_quality_pass 边界、symbol 转换器
+  崩溃安全性 + roundtrip、_content_hash 不变量）
+- 测试套件：1338 passed（+19 新增），耗时 ~49s
+- 文档：`docs/_ai/PYTEST_OPTIMIZATION_GUIDE.md`（in-memory 设计笔记）
+
+**fix(tests) 3221197** — 28+ 测试失败修复（`_MIN_CONTENT_LENGTH` 质量门影响）
+- 根因：`create_*` knowledge 函数对 <80 字符内容静默返回 `None`，旧测试用短字符串 →
+  `item.id` AttributeError 或 `count == 0` 断言失败。
+- 修复：测试种子内容扩展 ≥80 字符；`commands.py` None guard；`research_agent.py` /
+  `dreaming_agent.py` fallback 内容修复；`test_xstocks_observer` typo（`AAPL/USD` → `AAPL/USDT`）；
+  `test_openai_healthcheck` mock 真实 TCP（7.6s → 0.5s）；`daily_loss_breaker` 测试加
+  `kill_switch_enabled_demo=True`
+
+**perf(universe) e053d5a** — OHLCV 并发 5→10 + 8s per-symbol 超时
+- `_OHLCV_CONCURRENCY` 5→10（Binance 限速 6000 weight/min，115×2=230，远低于预算）
+- `asyncio.wait_for(timeout=8.0)` 防单一挂起 symbol 占满 semaphore slot
+- 效果：OHLCV 阶段 ~7s→~3.5s；单 symbol 网络尖峰不再拖慢整批
+
+### 状态
+
+- 工作区干净（`git status` clean），无未提交改动
+- 本地 master 领先 origin/master **46 个提交**；origin 有 2 个文档提交（round 18/19 观察记录）未 merge 到本地
+- 建议下次接手前：`git pull --rebase origin master` 解决 diverge，再 `git push` 同步
+
+---
+
 ## 2026-06-16 — 项目级 Code-Review 修复(A/B/C/D 设计级,uncommitted)
 
 > 来源:`/code-review max` 全项目审查(契约对应 + 运行态正确性 + 潜在 bug)。
