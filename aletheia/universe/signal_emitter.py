@@ -17,6 +17,7 @@ from aletheia.storage.repositories import (
     insert_opportunity,
     find_open_opportunity_by_symbol_snapshot,
 )
+from aletheia.trading.instruments import instrument_market_to_db_market
 
 logger = logging.getLogger("aletheia.universe.signal_emitter")
 
@@ -57,6 +58,7 @@ def emit_deterministic_opportunities(
         member_id = m.get("id")
         family = m.get("scanner_family")
         total_score = float(m.get("total_score") or 0)
+        market_type = m.get("market_type", "spot") or "spot"
 
         if not symbol or not member_id or not family:
             continue
@@ -93,7 +95,7 @@ def emit_deterministic_opportunities(
 
         opp = Opportunity(
             symbol=symbol,
-            market="crypto",
+            market=instrument_market_to_db_market(market_type),
             direction_bias=direction,
             thesis=thesis,
             confidence=confidence,

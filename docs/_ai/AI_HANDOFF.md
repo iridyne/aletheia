@@ -7,7 +7,25 @@
 
 ## Last Updated
 
-2026-06-17 (期货集成 Layer 0-6 完成 + code-review 10 项修复)
+2026-06-17 (期货集成收尾：signal_emitter market 修复 + registry getattr 清理)
+
+---
+
+## Recent Change (期货集成收尾 — 2026-06-17)
+
+> **背景**: 期货 Layer 0-6 完成后发现两处遗漏：signal_emitter 硬编码 market="crypto"、registry 使用了不必要的 getattr 防御写法（schema 早已有 enabled_markets 字段）。
+
+**改动（2 个文件）**:
+
+1. `aletheia/universe/signal_emitter.py`
+   - import `instrument_market_to_db_market`
+   - 循环内提取 `market_type = m.get("market_type", "spot") or "spot"`
+   - `Opportunity.market` 改为 `instrument_market_to_db_market(market_type)`（原硬编码 `"crypto"` 对期货品种完全错误）
+
+2. `aletheia/universe/registry.py`
+   - `getattr(getattr(cfg, "exchange", None), "enabled_markets", {}).get(...)` 简化为 `cfg.exchange.enabled_markets.get(...)`（schema 第 51 行已定义该字段，防御写法是多余的）
+
+**验证**: 90 tests passed (signal_emitter / universe_calibration / instrument_id / registry 全覆盖)；全量测试后台运行中。
 
 ---
 
