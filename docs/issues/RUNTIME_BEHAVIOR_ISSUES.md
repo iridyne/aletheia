@@ -735,3 +735,13 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - agent 运行率 1h: 30 runs, 25 completed, 4 failed (13.3% — 正常)
 
 **结论**: futures integration commit 引入了 scanner 回归。这是 §14 的根本修复需求——之前是脏文件导致，这次是已提交的代码。需要修复 features.py 中 binance fetchMarkets 的 market type 映射。
+
+### 2026-06-17 11:03 UTC — 第十七轮巡检 (Δ17min)
+
+**§16 持续**: Scanner 连续 5 次 failed (10:22→10:54, 40min+), "swap" ExchangeError 未修复
+
+**其他管道正常**: Market 10:58 (5min) | Portfolio 10:53 (10min) | Knowledge +8/h, total=861 | Agent 1h: 27 runs, 23 completed, 3 failed (11.1%) | Stale 216 | Ghost=0
+
+**Feature snapshots 停滞 53min** (最新 10:08) — 因 scanner 失败无新 universe 供 feature 采集。现有 universe snapshot 仍在 TTL 内（snapshot_ttl_hours 通常 6-24h），暂不影响 market_observer 选币。
+
+**紧迫性升级**: 已连续失败 >40min。若不修复，universe snapshot 将在 TTL 后过期，系统回退到 static fallback (BTC/ETH/SOL only)。
