@@ -969,3 +969,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-18 04:46 UTC] ✓ 系统正常 — Features=1867/h (恢复). Opportunities=3295 (+111/h 高产). §17 timed_out=65 (+4, market_observer 高频触发). Knowledge=547 (+11/h). Ghost=0, Stale=240. §18: MRVL/USDT (xStock), BR/USDT. 17h+ 连续无中断.
 
 [2026-06-18 05:03 UTC] ✓ 系统正常 — Features=1870/h (稳定). Opportunities=3319 (+115/h 持续高产). §17 timed_out=66 (+1). **dreaming_agent 日常周期触发**: 8 runs completed_with_errors (lesson extraction LLM 返回 non-JSON, 非阻断——知识仍写入). Knowledge=551 (+14/h). Ghost=0, Stale=240. 17.5h+ 连续无中断.
+
+[2026-06-18 18:14 UTC] ✓ 系统正常 — Features=1898/h (欧美盘高位稳定). Opportunities=4504 (+88/h, 13h 累积 +1185). §17 timed_out=119 (+53 跨越 13h, ~4/h 均速). Knowledge=616 (+1/h 极低——周期间隔中). Ghost=0, Stale=245. equity_observer 触发 2 completed_with_errors (US market hours). strategy_designer completed=1. §18: DRAM, AGT, BR, H (Bitget-only). 巡检间隔调整为 1h/次.
