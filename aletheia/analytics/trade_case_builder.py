@@ -89,7 +89,7 @@ def build_case_studies(
                 "realized_pnl_pct": case["realized_pnl_pct"],
             })
         except Exception as e:
-            logger.warning("Failed to create case study for position %s: %s", pos_id, e)
+            logger.warning("Failed to create case study for position %s: %s", pos_id, e, exc_info=True)
 
     return created
 
@@ -281,7 +281,7 @@ def _create_factor_guard_candidate(
             "loss_rate": round(loss_rate, 3),
         }
     except Exception as e:
-        logger.warning("Failed to create guard candidate for %s: %s", fk, e)
+        logger.warning("Failed to create guard candidate for %s: %s", fk, e, exc_info=True)
         return None
 
 
