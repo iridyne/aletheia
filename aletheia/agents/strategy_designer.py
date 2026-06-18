@@ -487,6 +487,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
 
     # ── Backtest gate: instant kill if strategy fails historical test ──
     backtest_killed = False
+    _cached_bars = None  # shared between gate and sweep to avoid double I/O
     if ruleset_json and cfg.strategy_factory.backtest_gate_enabled:
         from aletheia.strategy.backtest import BacktestConfig as _BtCfg, load_bars_from_db, run_backtest
         from aletheia.strategy.dsl import RuleSet as _RS
@@ -495,6 +496,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
 
         try:
             _bars = load_bars_from_db(chosen_symbol, timeframe, limit=500)
+            _cached_bars = _bars
             if len(_bars) >= 30:
                 _bt_dir = direction if direction != "neutral" else "long"
                 _bt_result = run_backtest(
@@ -547,8 +549,10 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
     if ruleset_json and not backtest_killed and cfg.strategy_factory.sweep_enabled:
         try:
             from aletheia.strategy.param_sweep import SweepConfig as _SwCfg, run_parameter_sweep
+            from aletheia.strategy.backtest import load_bars_from_db as _load_bars
+            from aletheia.strategy.dsl import RuleSet as _RS
 
-            sweep_bars = load_bars_from_db(chosen_symbol, timeframe, limit=500)
+            sweep_bars = _cached_bars if _cached_bars else _load_bars(chosen_symbol, timeframe, limit=500)
             if len(sweep_bars) >= 30:
                 _bt_dir = direction if direction != "neutral" else "long"
                 sweep_cfg = _SwCfg(

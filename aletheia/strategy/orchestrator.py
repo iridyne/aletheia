@@ -79,6 +79,12 @@ def run_all_backtests(
     reports: list[BacktestReport] = []
     killed = kept = review_count = skipped = 0
 
+    # Walk-forward config (read once, not per-strategy)
+    from aletheia.config.loader import load_config as _ld_cfg
+    _factory_cfg = _ld_cfg().strategy_factory
+    _wf_enabled = _factory_cfg.walk_forward_enabled
+    _wf_min_bars = _factory_cfg.walk_forward_min_bars
+
     strategies = list_strategies(limit=200)
     active = [s for s in strategies if s.get("state") in ("paper_running", "paper_candidate")]
 
@@ -198,11 +204,9 @@ def run_all_backtests(
 
             # Walk-forward OOS validation: strategies that pass backtest
             # must also show positive expectancy out-of-sample.
-            from aletheia.config.loader import load_config as _ld_cfg
-            _factory_cfg = _ld_cfg().strategy_factory
-            if (_factory_cfg.walk_forward_enabled
+            if (_wf_enabled
                     and verdict.verdict != Verdict.KILL
-                    and len(bars) >= _factory_cfg.walk_forward_min_bars):
+                    and len(bars) >= _wf_min_bars):
                 try:
                     from aletheia.strategy.walk_forward import run_walk_forward
                     wf_result = run_walk_forward(ruleset, bars, cfg)
