@@ -59,11 +59,14 @@ class TestSignalEmitterTrigger:
         scored_features = [{
             "symbol": "BTC/USDT",
             "reasons": ["strong_momentum"],
-            "return_1h": 0.02, "rsi_14": 55,
+            "return_1h": 2.0, "return_4h": 4.0, "rsi_14": 60,
+            "funding_rate": None, "return_24h": None,
+            "scanner_direction": "long",
         }]
 
         with patch("aletheia.universe.signal_emitter.insert_opportunity") as mock_insert, \
              patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot", return_value=None), \
+             patch("aletheia.universe.signal_emitter.lookup_factor_signal", return_value={"status": "watch"}), \
              patch("aletheia.agent_runtime.scheduler.trigger_strategy_designer_on_demand") as mock_trigger:
             count = emit_deterministic_opportunities(
                 members, "snap-1", scored_features,
@@ -81,11 +84,14 @@ class TestSignalEmitterTrigger:
         scored_features = [{
             "symbol": "BTC/USDT",
             "reasons": ["moderate"],
-            "return_1h": 0.01, "rsi_14": 55,
+            "return_1h": 1.0, "return_4h": 2.0, "rsi_14": 55,
+            "funding_rate": None, "return_24h": None,
+            "scanner_direction": "long",
         }]
 
         with patch("aletheia.universe.signal_emitter.insert_opportunity") as mock_insert, \
              patch("aletheia.universe.signal_emitter.find_open_opportunity_by_symbol_snapshot", return_value=None), \
+             patch("aletheia.universe.signal_emitter.lookup_factor_signal", return_value={"status": "watch"}), \
              patch("aletheia.agent_runtime.scheduler.trigger_strategy_designer_on_demand") as mock_trigger:
             count = emit_deterministic_opportunities(
                 members, "snap-1", scored_features,

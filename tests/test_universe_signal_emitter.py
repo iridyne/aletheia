@@ -9,7 +9,7 @@ from aletheia.universe.signal_emitter import _infer_direction, emit_deterministi
 # ── _infer_direction ────────────────────────────────────────────────────────
 
 def _feat(**kw):
-    base = {"return_1h": None, "return_4h": None, "rsi_14": None, "funding_rate": None}
+    base = {"return_1h": None, "return_4h": None, "return_24h": None, "rsi_14": None, "funding_rate": None}
     base.update(kw)
     return base
 
@@ -19,14 +19,24 @@ class TestInferDirection:
     def test_momentum_long(self):
         assert _infer_direction("momentum", _feat(return_1h=2.0, return_4h=4.0, rsi_14=60)) == "long"
 
-    def test_momentum_long_via_rsi(self):
-        assert _infer_direction("momentum", _feat(return_1h=1.0, rsi_14=55)) == "long"
+    def test_momentum_long_via_4h_rsi(self):
+        # 4h positive + RSI > 50 → long (direction now from 4h, not 1h)
+        assert _infer_direction("momentum", _feat(return_1h=1.0, return_4h=2.0, rsi_14=55)) == "long"
 
     def test_momentum_short(self):
         assert _infer_direction("momentum", _feat(return_1h=-2.0, return_4h=-3.0, rsi_14=40)) == "short"
 
-    def test_momentum_short_via_rsi(self):
-        assert _infer_direction("momentum", _feat(return_1h=-0.5, rsi_14=45)) == "short"
+    def test_momentum_short_via_4h_rsi(self):
+        # 4h negative + RSI < 50 → short
+        assert _infer_direction("momentum", _feat(return_1h=-0.5, return_4h=-1.0, rsi_14=45)) == "short"
+
+    def test_momentum_24h_overextended_rejects(self):
+        # 24h moved >10% → mean-reversion zone, reject
+        assert _infer_direction("momentum", _feat(return_1h=2.0, return_4h=4.0, rsi_14=60, return_24h=12.0)) is None
+
+    def test_momentum_funding_conflict_rejects(self):
+        # Long direction but funding > 0.01 (crowded longs) → reject
+        assert _infer_direction("momentum", _feat(return_4h=3.0, rsi_14=60, funding_rate=0.02)) is None
 
     def test_momentum_ambiguous_conflicting(self):
         # 1h up but 4h down and RSI < 50 → ambiguous
@@ -54,15 +64,22 @@ class TestInferDirection:
     def test_mean_reversion_no_data(self):
         assert _infer_direction("mean_reversion", _feat()) is None
 
-    # volatility
+    # volatility — now uses 4h direction (more stable than 1h noise)
     def test_volatility_long(self):
-        assert _infer_direction("volatility", _feat(return_1h=2.0)) == "long"
+        assert _infer_direction("volatility", _feat(return_4h=2.0)) == "long"
 
     def test_volatility_short(self):
-        assert _infer_direction("volatility", _feat(return_1h=-2.0)) == "short"
+        assert _infer_direction("volatility", _feat(return_4h=-2.0)) == "short"
 
-    def test_volatility_no_1h(self):
-        assert _infer_direction("volatility", _feat()) is None
+    def test_volatility_no_4h(self):
+        assert _infer_direction("volatility", _feat(return_1h=2.0)) is None
+
+    def test_volatility_small_4h_no_signal(self):
+        # abs(ret_4h) <= 1.0 → no clear breakout direction
+        assert _infer_direction("volatility", _feat(return_4h=0.5)) is None
+
+    def test_volatility_funding_conflict_rejects(self):
+        assert _infer_direction("volatility", _feat(return_4h=3.0, funding_rate=0.02)) is None
 
     # derivatives
     def test_derivatives_long_negative_funding(self):

@@ -212,19 +212,19 @@ def test_get_family_multipliers_insufficient_samples(monkeypatch):
     """Families below _MIN_CALIBRATION_SAMPLES threshold get no multiplier."""
     import aletheia.storage.repositories as _repo
     monkeypatch.setattr(_repo, "calibration_stats", lambda: [
-        {"scanner_family": "momentum", "horizon": "1h", "n": 10, "win_count": 8},
+        {"scanner_family": "momentum", "horizon": "4h", "n": 5, "win_count": 4},
     ])
     result = get_family_multipliers()
     assert "momentum" not in result
 
 
 def test_get_family_multipliers_above_threshold(monkeypatch):
-    """Family with enough samples and high hit rate gets boost > 1.0."""
+    """Family with enough samples and high hit rate gets boost > 1.0 (per-family horizon)."""
     import aletheia.storage.repositories as _repo
     monkeypatch.setattr(_repo, "calibration_stats", lambda: [
-        {"scanner_family": "momentum", "horizon": "1h", "n": 50, "win_count": 35},
+        {"scanner_family": "momentum", "horizon": "4h", "n": 50, "win_count": 35},
     ])
     result = get_family_multipliers()
     assert "momentum" in result
     assert result["momentum"] > 1.0
-    assert result["momentum"] <= 1.15
+    assert result["momentum"] <= 1.40

@@ -10,9 +10,15 @@ from aletheia.config.schema import UniverseConfig
 logger = logging.getLogger("aletheia.universe.allocator")
 
 # Calibration: minimum samples before adjusting a family's weight
-_MIN_CALIBRATION_SAMPLES = 20
-# Reference horizon for calibration (matches typical holding period)
-_CALIBRATION_HORIZON = "1h"
+_MIN_CALIBRATION_SAMPLES = 10
+# Per-family calibration horizon (matches typical holding period)
+_FAMILY_CALIBRATION_HORIZON = {
+    "momentum": "4h",
+    "mean_reversion": "1h",
+    "volatility": "1h",
+    "derivatives": "4h",
+}
+_DEFAULT_CALIBRATION_HORIZON = "1h"
 
 # TTL by scanner family (seconds)
 _FAMILY_TTL = {
@@ -25,11 +31,14 @@ _FAMILY_TTL = {
 }
 
 
-def get_family_multipliers(max_step: float = 0.15) -> dict[str, float]:
+def get_family_multipliers(max_step: float = 0.40) -> dict[str, float]:
     """Compute opportunity-score multipliers from forward outcome data.
 
     Returns {family: multiplier} where multiplier is in [1-max_step, 1+max_step].
     Families with insufficient data get 1.0 (neutral).
+
+    Each family is calibrated on its natural horizon (momentum/derivatives → 4h,
+    mean_reversion/volatility → 1h).
     """
     from aletheia.storage import repositories as repo
 
@@ -40,13 +49,14 @@ def get_family_multipliers(max_step: float = 0.15) -> dict[str, float]:
 
     multipliers: dict[str, float] = {}
     for row in stats:
-        if row.get("horizon") != _CALIBRATION_HORIZON:
+        family = row.get("scanner_family")
+        if not family:
+            continue
+        expected_horizon = _FAMILY_CALIBRATION_HORIZON.get(family, _DEFAULT_CALIBRATION_HORIZON)
+        if row.get("horizon") != expected_horizon:
             continue
         n = row.get("n", 0)
         if n < _MIN_CALIBRATION_SAMPLES:
-            continue
-        family = row.get("scanner_family")
-        if not family:
             continue
         hit_rate = row.get("win_count", 0) / n
         # Linear map: 0.5 → 1.0, 0.65+ → 1+max_step, 0.35- → 1-max_step

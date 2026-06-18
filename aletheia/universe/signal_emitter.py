@@ -18,6 +18,7 @@ from aletheia.storage.repositories import (
     find_open_opportunity_by_symbol_snapshot,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
+from aletheia.analytics.factor_feedback import lookup_factor_signal
 
 logger = logging.getLogger("aletheia.universe.signal_emitter")
 
@@ -77,13 +78,32 @@ def emit_deterministic_opportunities(
         if not feat:
             continue
 
-        direction = _infer_direction(family, feat)
+        # Prefer scanner-intrinsic direction; fallback to _infer_direction
+        direction = feat.get("scanner_direction") or _infer_direction(family, feat)
         if direction is None:
             logger.debug(
                 "no direction for %s family=%s score=%.0f — skipped",
                 symbol, family, total_score,
             )
             continue
+
+        # Factor feedback gate: block signals from proven-bad factor combinations
+        try:
+            factor_sig = lookup_factor_signal({
+                "scanner_family": family,
+                "direction": direction,
+                "symbol": symbol,
+            })
+            if factor_sig.get("status") == "blocked_candidate":
+                logger.debug(
+                    "factor-blocked %s %s %s (wr=%.0f%% exp=%.4f)",
+                    family, direction, symbol,
+                    (factor_sig.get("win_rate") or 0) * 100,
+                    factor_sig.get("expectancy") or 0,
+                )
+                continue
+        except Exception:
+            pass
 
         # Regime bias gate: filter signals that conflict with current regime
         if regime is not None and not _passes_regime_gate(direction, total_score, regime):
@@ -173,50 +193,91 @@ def _passes_regime_gate(direction: str, total_score: float, regime) -> bool:
     return False
 
 
+def _funding_conflicts(direction: str, funding: float | None) -> bool:
+    """Check if funding rate conflicts with proposed direction.
+
+    Crowded longs (high positive funding) conflict with long direction;
+    crowded shorts (extreme negative funding) conflict with short direction.
+    """
+    if funding is None:
+        return False
+    if direction == "long" and funding > 0.01:
+        return True
+    if direction == "short" and funding < -0.01:
+        return True
+    return False
+
+
 def _infer_direction(family: str | None, feat: dict) -> str | None:
     """Deterministically infer trade direction from scanner family + feature values.
 
     Returns "long", "short", or None (no clear signal — caller must skip).
+
+    Phase 0 improvements:
+      - 0.1: Momentum rejects when 24h already overextended (mean-reversion zone)
+      - 0.2: Rejects when 1h and 4h directions conflict
+      - 0.3: Funding rate confirmation across all families
+      - 0.4: Volatility uses 4h direction instead of noisy 1h
     """
     ret_1h = feat.get("return_1h")
     ret_4h = feat.get("return_4h")
+    ret_24h = feat.get("return_24h")
     rsi = feat.get("rsi_14")
     funding = feat.get("funding_rate")
 
     if family == "momentum":
-        # Momentum: follow the dominant short-term trend with multi-timeframe agreement
-        if ret_1h is not None and ret_1h > 0:
-            if (ret_4h is not None and ret_4h > 0) or (rsi is not None and rsi > 50):
-                return "long"
-        if ret_1h is not None and ret_1h < 0:
-            if (ret_4h is not None and ret_4h < 0) or (rsi is not None and rsi < 50):
-                return "short"
-        return None
+        # 0.1: 24h already overextended → mean-reversion zone, don't chase
+        if ret_24h is not None and abs(ret_24h) > 10.0:
+            return None
+
+        # 0.2: 1h vs 4h direction conflict → no clear trend
+        if ret_1h is not None and ret_4h is not None and ret_1h * ret_4h < 0:
+            return None
+
+        # Direction from 4h (more stable than 1h) with RSI confirmation
+        direction = None
+        if ret_4h is not None and ret_4h > 0:
+            if rsi is not None and rsi > 50:
+                direction = "long"
+        elif ret_4h is not None and ret_4h < 0:
+            if rsi is not None and rsi < 50:
+                direction = "short"
+
+        # 0.3: Funding conflict → reject
+        if direction and _funding_conflicts(direction, funding):
+            return None
+        return direction
 
     if family == "mean_reversion":
         # Mean reversion: fade extreme moves — oversold → long, overbought → short
+        direction = None
         if rsi is not None:
             if rsi <= 30:
-                return "long"
-            if rsi >= 70:
-                return "short"
-        if ret_4h is not None:
+                direction = "long"
+            elif rsi >= 70:
+                direction = "short"
+        if direction is None and ret_4h is not None:
             if ret_4h < -5.0:
-                return "long"   # overextended down → expect bounce
-            if ret_4h > 5.0:
-                return "short"  # overextended up → expect pullback
-        return None
+                direction = "long"
+            elif ret_4h > 5.0:
+                direction = "short"
+
+        # For MR, funding CONFIRMS (crowded side = reversion more likely)
+        # so we don't filter on funding conflict here
+        return direction
 
     if family == "volatility":
-        # Volatility expansion: follow the direction of the breakout
-        if ret_1h is not None and ret_1h != 0:
-            return "long" if ret_1h > 0 else "short"
-        return None  # flat candle carries no breakout direction
+        # 0.4: Use 4h direction (more autocorrelation than 1h noise)
+        if ret_4h is not None and abs(ret_4h) > 1.0:
+            direction = "long" if ret_4h > 0 else "short"
+            # 0.3: Funding conflict → reject
+            if _funding_conflicts(direction, funding):
+                return None
+            return direction
+        return None
 
     if family == "derivatives":
         # Derivatives: fade crowded positions via funding rate signal
-        # Negative funding → shorts paying → crowded short → fade → long
-        # Positive funding → longs paying → crowded long → fade → short
         if funding is not None:
             if funding < -0.005:
                 return "long"
@@ -224,7 +285,8 @@ def _infer_direction(family: str | None, feat: dict) -> str | None:
                 return "short"
         # Fall back to 4h momentum if no funding data
         if ret_4h is not None and ret_4h != 0:
-            return "long" if ret_4h > 0 else "short"
-        return None  # no funding signal and flat 4h — ambiguous
+            direction = "long" if ret_4h > 0 else "short"
+            return direction
+        return None
 
     return None

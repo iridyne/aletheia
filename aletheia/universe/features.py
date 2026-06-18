@@ -10,12 +10,13 @@ from datetime import datetime, timezone
 from aletheia.config.schema import AletheiaConfig
 from aletheia.storage.models import UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
-from aletheia.trading.indicators import rsi, atr, sma
+from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
 
 logger = logging.getLogger("aletheia.universe.features")
 
 _OHLCV_CONCURRENCY = 10
-_OHLCV_TIMEOUT = 8.0
+_OHLCV_TIMEOUT = 12.0
+_OHLCV_1H_LIMIT = 168  # 7 days of 1h candles
 _TICKER_CHUNK_SIZE = 100
 
 
@@ -35,6 +36,26 @@ def _atr_pct(highs: list[float], lows: list[float], closes: list[float], period:
     if atr_val is None or not closes or closes[-1] == 0:
         return None
     return (atr_val / closes[-1]) * 100.0
+
+
+def _compute_beta(asset_closes: list[float], btc_closes: list[float]) -> float | None:
+    """Compute beta of asset vs BTC using hourly returns. Returns None if insufficient data."""
+    n = min(len(asset_closes), len(btc_closes))
+    if n < 20:
+        return None
+    asset_rets = [(asset_closes[i] - asset_closes[i-1]) / asset_closes[i-1]
+                  for i in range(1, n) if asset_closes[i-1] != 0]
+    btc_rets = [(btc_closes[i] - btc_closes[i-1]) / btc_closes[i-1]
+                for i in range(1, n) if btc_closes[i-1] != 0]
+    if len(asset_rets) != len(btc_rets) or len(asset_rets) < 20:
+        return None
+    mean_a = sum(asset_rets) / len(asset_rets)
+    mean_b = sum(btc_rets) / len(btc_rets)
+    cov = sum((a - mean_a) * (b - mean_b) for a, b in zip(asset_rets, btc_rets)) / len(asset_rets)
+    var_b = sum((b - mean_b) ** 2 for b in btc_rets) / len(btc_rets)
+    if var_b == 0:
+        return None
+    return cov / var_b
 
 
 def _spread_bps(bid: float | None, ask: float | None) -> float | None:
@@ -64,6 +85,9 @@ async def _chunked_fetch_tickers(exchange, symbols: list[str]) -> dict:
 
 async def _fetch_single_feature(
     exchange, asset: dict, ticker: dict, now: datetime, to_ccxt_perp,
+    btc_return_24h: float | None = None,
+    btc_return_4h: float | None = None,
+    btc_closes_1h: list[float] | None = None,
 ) -> dict | None:
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
@@ -81,9 +105,19 @@ async def _fetch_single_feature(
     )
 
     ohlcv_1h = []
+    ohlcv_4h = []
     try:
         ohlcv_1h = await asyncio.wait_for(
-            exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=30),
+            exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=_OHLCV_1H_LIMIT),
+            timeout=_OHLCV_TIMEOUT,
+        )
+    except (asyncio.TimeoutError, Exception):
+        pass
+
+    # P1b: 4h candles for multi-timeframe features
+    try:
+        ohlcv_4h = await asyncio.wait_for(
+            exchange.fetch_ohlcv(ccxt_sym, timeframe="4h", limit=50),
             timeout=_OHLCV_TIMEOUT,
         )
     except (asyncio.TimeoutError, Exception):
@@ -94,12 +128,69 @@ async def _fetch_single_feature(
     lows_1h = [float(c[3]) for c in ohlcv_1h] if ohlcv_1h else []
     volumes_1h = [float(c[5]) for c in ohlcv_1h] if ohlcv_1h else []
 
+    closes_4h = [float(c[4]) for c in ohlcv_4h] if ohlcv_4h else []
+    highs_4h = [float(c[2]) for c in ohlcv_4h] if ohlcv_4h else []
+    lows_4h = [float(c[3]) for c in ohlcv_4h] if ohlcv_4h else []
+    volumes_4h = [float(c[5]) for c in ohlcv_4h] if ohlcv_4h else []
+
     rsi_val = rsi(closes_1h, 14) if len(closes_1h) >= 15 else None
     atr_val = _atr_pct(highs_1h, lows_1h, closes_1h) if len(closes_1h) >= 15 else None
     return_1h = _pct_return(closes_1h, 1)
     return_4h = _pct_return(closes_1h, 4)
     return_24h = _pct_return(closes_1h, 24)
     volume_1h = volumes_1h[-1] * closes_1h[-1] if volumes_1h and closes_1h else None
+
+    # P1b: 4h timeframe features (true 4h candles, not derived from 1h)
+    rsi_4h = rsi(closes_4h, 14) if len(closes_4h) >= 15 else None
+    atr_4h = _atr_pct(highs_4h, lows_4h, closes_4h) if len(closes_4h) >= 15 else None
+    bb_4h = bollinger(closes_4h, 20, 2.0) if len(closes_4h) >= 20 else None
+    bb_width_4h = None
+    if bb_4h:
+        l4, m4, u4 = bb_4h
+        if m4 > 0:
+            bb_width_4h = (u4 - l4) / m4 * 100
+    vol_ratio_4h = volume_sma_ratio(volumes_4h, 20) if len(volumes_4h) >= 20 else None
+
+    # Phase 1+P0 features: vol_ratio, bb_width, bb_squeeze, relative_strength, beta
+    vol_ratio = volume_sma_ratio(volumes_1h, 72) if len(volumes_1h) >= 72 else (
+        volume_sma_ratio(volumes_1h, 20) if len(volumes_1h) >= 20 else None
+    )
+
+    bb = bollinger(closes_1h, 20, 2.0) if len(closes_1h) >= 20 else None
+    bb_width_pct = None
+    bb_squeeze = False
+    if bb:
+        lower, mid, upper = bb
+        if mid > 0:
+            bb_width_pct = (upper - lower) / mid * 100
+            # Relative squeeze: compare current BB width to historical average
+            if len(closes_1h) >= 100:
+                historical_widths = []
+                for i in range(20, min(100, len(closes_1h))):
+                    h_bb = bollinger(closes_1h[:i], 20, 2.0)
+                    if h_bb and h_bb[1] > 0:
+                        historical_widths.append((h_bb[2] - h_bb[0]) / h_bb[1] * 100)
+                if historical_widths:
+                    avg_width = sum(historical_widths) / len(historical_widths)
+                    bb_squeeze = bb_width_pct < avg_width * 0.6
+
+    relative_strength_24h = None
+    relative_strength_4h = None
+    if return_24h is not None and btc_return_24h is not None:
+        relative_strength_24h = return_24h - btc_return_24h
+    if return_4h is not None and btc_return_4h is not None:
+        relative_strength_4h = return_4h - btc_return_4h
+
+    # Beta coefficient vs BTC (P3: for beta-adjusted RS)
+    btc_beta = None
+    if btc_closes_1h and len(closes_1h) >= 72 and len(btc_closes_1h) >= 72:
+        btc_beta = _compute_beta(closes_1h[-72:], btc_closes_1h[-72:])
+
+    # Beta-adjusted relative strength
+    rs_beta_adj_24h = None
+    if relative_strength_24h is not None and btc_beta is not None and btc_beta > 0:
+        expected_move = btc_return_24h * btc_beta if btc_return_24h else 0
+        rs_beta_adj_24h = return_24h - expected_move if return_24h is not None else None
 
     data_freshness_sec = None
     if ohlcv_1h:
@@ -114,6 +205,37 @@ async def _fetch_single_feature(
     funding_rate = fr_row["funding_rate"] if fr_row else None
     open_interest = oi_row["open_interest_usd"] if oi_row else None
     oi_delta_1h = oi_row["oi_change_1h_pct"] if oi_row else None
+
+    # P1a: Real-time funding rate for perp-eligible symbols (overrides stale DB cache)
+    # P2: Taker buy/sell ratio for perp symbols
+    taker_buy_ratio = None
+    if is_perp:
+        try:
+            perp_sym = to_ccxt_perp(symbol)
+            fr_data = await asyncio.wait_for(
+                exchange.fetch_funding_rate(perp_sym),
+                timeout=5.0,
+            )
+            if fr_data and fr_data.get("fundingRate") is not None:
+                funding_rate = float(fr_data["fundingRate"])
+        except Exception:
+            pass  # Keep DB cached value as fallback
+
+        # Taker buy/sell ratio from Binance fapi
+        try:
+            raw_sym = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
+            taker_data = await asyncio.wait_for(
+                exchange.fapipublic_get_takerlongshortratio({
+                    "symbol": raw_sym, "period": "1h", "limit": 1,
+                }),
+                timeout=5.0,
+            )
+            if taker_data and len(taker_data) > 0:
+                ratio = float(taker_data[0].get("buySellRatio", 0))
+                if ratio > 0:
+                    taker_buy_ratio = ratio
+        except Exception:
+            pass
 
     if spread is None and ob_row:
         spread = ob_row.get("spread_bps")
@@ -139,6 +261,18 @@ async def _fetch_single_feature(
         "oi_delta_1h": oi_delta_1h,
         "data_freshness_sec": data_freshness_sec,
         "last_price": last_price,
+        "vol_ratio": vol_ratio,
+        "bb_width_pct": bb_width_pct,
+        "bb_squeeze": bb_squeeze,
+        "relative_strength_24h": relative_strength_24h,
+        "relative_strength_4h": relative_strength_4h,
+        "btc_beta": btc_beta,
+        "rs_beta_adj_24h": rs_beta_adj_24h,
+        "rsi_4h": rsi_4h,
+        "atr_4h": atr_4h,
+        "bb_width_4h": bb_width_4h,
+        "vol_ratio_4h": vol_ratio_4h,
+        "taker_buy_ratio": taker_buy_ratio,
     }
 
     snap = UniverseFeatureSnapshot(
@@ -225,6 +359,22 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
             len(candidates), len(assets), min_vol,
         )
 
+        # --- BTC baseline for relative strength + beta ---
+        btc_return_24h = None
+        btc_return_4h = None
+        btc_closes_1h: list[float] = []
+        try:
+            btc_ohlcv = await asyncio.wait_for(
+                exchange.fetch_ohlcv("BTC/USDT", timeframe="1h", limit=_OHLCV_1H_LIMIT),
+                timeout=_OHLCV_TIMEOUT,
+            )
+            if btc_ohlcv:
+                btc_closes_1h = [float(c[4]) for c in btc_ohlcv]
+                btc_return_24h = _pct_return(btc_closes_1h, 24)
+                btc_return_4h = _pct_return(btc_closes_1h, 4)
+        except Exception as e:
+            logger.warning("BTC baseline fetch failed: %s", e)
+
         # --- Phase B: concurrent OHLCV fetch ---
         now = datetime.now(timezone.utc)
         sem = asyncio.Semaphore(_OHLCV_CONCURRENCY)
@@ -235,6 +385,9 @@ async def collect_features(assets: list[dict], cfg: AletheiaConfig) -> list[dict
                 try:
                     return await _fetch_single_feature(
                         exchange, asset, ticker, now, to_ccxt_perp,
+                        btc_return_24h=btc_return_24h,
+                        btc_return_4h=btc_return_4h,
+                        btc_closes_1h=btc_closes_1h,
                     )
                 except Exception as e:
                     logger.debug("Feature collect failed for %s: %s", asset.get("symbol"), e)

@@ -146,7 +146,7 @@ class UniverseService:
             filtered = apply_tradability_filters(features_list, cfg.universe)
             repo.update_universe_scanner_run(run.id, assets_passed=len(filtered))
 
-            calibration = get_family_multipliers(max_step=0.15)
+            calibration = get_family_multipliers()
             if calibration:
                 logger.info("Calibration multipliers: %s", calibration)
 
