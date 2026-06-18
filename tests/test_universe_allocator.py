@@ -3,6 +3,7 @@
 import pytest
 from aletheia.universe.allocator import (
     compute_total_score, allocate_universe, compute_late_entry_penalty,
+    get_family_multipliers,
 )
 from aletheia.config.schema import UniverseConfig
 
@@ -137,3 +138,93 @@ def test_core_vs_rotating_split(cfg):
     # Top items by score should be in the result
     top_symbols = {r["symbol"] for r in result[:3]}
     assert "HIGH0" in top_symbols
+
+
+# --- Calibration feedback tests ---
+
+
+def test_calibration_boosts_high_hit_rate(cfg):
+    """A family with high hit_rate gets opportunity_score boosted."""
+    feat = {
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "rsi_14": 55.0,
+        "return_1h": 1.0,
+        "return_4h": 2.0,
+        "data_freshness_sec": 200,
+    }
+    scanner_result = {"opportunity_score": 70.0, "scanner_family": "momentum"}
+    score_neutral = compute_total_score(feat, scanner_result, cfg, calibration=None)
+    score_boosted = compute_total_score(
+        feat, scanner_result, cfg, calibration={"momentum": 1.15}
+    )
+    assert score_boosted > score_neutral
+
+
+def test_calibration_penalizes_low_hit_rate(cfg):
+    """A family with low hit_rate gets opportunity_score reduced."""
+    feat = {
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "rsi_14": 55.0,
+        "return_1h": 1.0,
+        "return_4h": 2.0,
+        "data_freshness_sec": 200,
+    }
+    scanner_result = {"opportunity_score": 70.0, "scanner_family": "momentum"}
+    score_neutral = compute_total_score(feat, scanner_result, cfg, calibration=None)
+    score_penalized = compute_total_score(
+        feat, scanner_result, cfg, calibration={"momentum": 0.85}
+    )
+    assert score_penalized < score_neutral
+
+
+def test_calibration_no_effect_on_unknown_family(cfg):
+    """Calibration dict without the family key → multiplier defaults to 1.0."""
+    feat = {
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "rsi_14": 55.0,
+        "return_1h": 1.0,
+        "return_4h": 2.0,
+        "data_freshness_sec": 200,
+    }
+    scanner_result = {"opportunity_score": 70.0, "scanner_family": "volatility"}
+    score_neutral = compute_total_score(feat, scanner_result, cfg, calibration=None)
+    score_with_other = compute_total_score(
+        feat, scanner_result, cfg, calibration={"momentum": 1.15}
+    )
+    assert score_neutral == score_with_other
+
+
+def test_get_family_multipliers_empty_db(monkeypatch):
+    """With no calibration data, returns empty dict."""
+    import aletheia.storage.repositories as _repo
+    monkeypatch.setattr(_repo, "calibration_stats", lambda: [])
+    result = get_family_multipliers()
+    assert result == {}
+
+
+def test_get_family_multipliers_insufficient_samples(monkeypatch):
+    """Families below _MIN_CALIBRATION_SAMPLES threshold get no multiplier."""
+    import aletheia.storage.repositories as _repo
+    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+        {"scanner_family": "momentum", "horizon": "1h", "n": 10, "win_count": 8},
+    ])
+    result = get_family_multipliers()
+    assert "momentum" not in result
+
+
+def test_get_family_multipliers_above_threshold(monkeypatch):
+    """Family with enough samples and high hit rate gets boost > 1.0."""
+    import aletheia.storage.repositories as _repo
+    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+        {"scanner_family": "momentum", "horizon": "1h", "n": 50, "win_count": 35},
+    ])
+    result = get_family_multipliers()
+    assert "momentum" in result
+    assert result["momentum"] > 1.0
+    assert result["momentum"] <= 1.15
