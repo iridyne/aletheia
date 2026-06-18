@@ -967,3 +967,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-18 04:03 UTC] ✓ 系统正常 — Features=1554/h (off-peak 回落). Opportunities=3204 (+86/h). §17 timed_out=61 (不变), market_observer stale 占比升高 (3 stale + 3 timed_out / 7 runs, 但仍在 running). Knowledge=537 (+11/h). Ghost=0, Stale=240 (+3). §18: SWARMS, CLO, BSB, H (Bitget-only). 16.5h+ 连续无中断.
 
 [2026-06-18 04:46 UTC] ✓ 系统正常 — Features=1867/h (恢复). Opportunities=3295 (+111/h 高产). §17 timed_out=65 (+4, market_observer 高频触发). Knowledge=547 (+11/h). Ghost=0, Stale=240. §18: MRVL/USDT (xStock), BR/USDT. 17h+ 连续无中断.
+
+[2026-06-18 05:03 UTC] ✓ 系统正常 — Features=1870/h (稳定). Opportunities=3319 (+115/h 持续高产). §17 timed_out=66 (+1). **dreaming_agent 日常周期触发**: 8 runs completed_with_errors (lesson extraction LLM 返回 non-JSON, 非阻断——知识仍写入). Knowledge=551 (+14/h). Ghost=0, Stale=240. 17.5h+ 连续无中断.
