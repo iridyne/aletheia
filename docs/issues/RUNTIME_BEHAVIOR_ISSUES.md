@@ -247,6 +247,8 @@
 | P2 | §5 prediction_events 空 | 确认数据写入路径 | ℹ️ 设计如此 |
 | P3 | §8 market_observer 偶发失败 | 监控即可 | — 无需修复 |
 | **P1** | **§16 scanner 连续失败 (futures regression)** | **batch ticker + pre-filter + concurrent OHLCV** | ✅ 已修复 (需 gateway restart) |
+| P1 | §17 market_observer IOCP thread leak | SelectorEventLoop 替代 ProactorEventLoop | ✅ 已修复 (需 gateway restart) |
+| P2 | §18 Binance batch ticker regex 拒绝 | ASCII 预过滤 + venue 过滤 | ✅ 已修复 (需 gateway restart) |
 
 ### 修复说明 (2026-06-17)
 
@@ -295,6 +297,20 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
   3. 剩余资产用 asyncio.Semaphore(5) 并发 OHLCV，~60s 内完成
 - timeout 从 360s 提升至 600s 作为安全网
 - 预期: 从 timeout (>360s) 降至 60-90s 完成
+
+**§17 IOCP drain thread leak** (2026-06-18):
+- 根因: Windows `asyncio.new_event_loop()` 创建 ProactorEventLoop，`loop.close()` 挂起在
+  IOCP drain (已取消的 HTTP 连接有未完成的 completion packets)
+- 修复: 在 `_run_async_with_timeout._run()` 中检测 `sys.platform == "win32"` 时使用
+  `asyncio.SelectorEventLoop()` 代替。SelectorEventLoop 基于 select()，无 IOCP，
+  `loop.close()` 立即返回。对 HTTP 工作负载功能等价。
+- 预期: 消除 abandoned thread 累积 (~2/45min → 0)
+
+**§18 Binance batch ticker regex 拒绝** (2026-06-18):
+- 根因: (1) `list_universe_assets()` 无 venue 过滤，返回 Bitget-only symbols；
+  (2) 非 ASCII symbols（龙虾/USDT）通过 `exchange.markets` 检查后触发 Binance regex 拒绝
+- 修复: (a) `_is_valid_symbol()` ASCII 预过滤；(b) `service.py` 传 `venue=cfg.market_data.ccxt_exchange`
+- 预期: 消除 "Illegal characters" 和 cross-venue symbol mismatch 日志噪音
 
 ---
 
