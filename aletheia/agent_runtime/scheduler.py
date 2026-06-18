@@ -327,6 +327,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
     )
     _scheduler.add_job(
+        _guarded("strategy_designer_eu", _run_strategy_designer), "cron", hour=9, minute=0, id="strategy_designer_eu",
+        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
+    )
+    _scheduler.add_job(
+        _guarded("strategy_designer_us", _run_strategy_designer), "cron", hour=17, minute=0, id="strategy_designer_us",
+        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
+    )
+    _scheduler.add_job(
         _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",
         misfire_grace_time=60, executor="io",
     )
