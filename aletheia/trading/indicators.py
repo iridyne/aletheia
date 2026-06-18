@@ -133,6 +133,70 @@ def zscore_last(values: list[float], period: int) -> float | None:
     return (win[-1] - m) / sd
 
 
+def donchian_high(highs: list[float], period: int = 20) -> float | None:
+    """Highest high over the last `period` bars (Donchian upper channel)."""
+    win = _safe_window(highs, period)
+    return max(win) if win else None
+
+
+def donchian_low(lows: list[float], period: int = 20) -> float | None:
+    """Lowest low over the last `period` bars (Donchian lower channel)."""
+    win = _safe_window(lows, period)
+    return min(win) if win else None
+
+
+def obv(closes: list[float], volumes: list[float]) -> float | None:
+    """On-Balance Volume — cumulative volume signed by price direction.
+
+    Returns the normalized OBV (divided by mean volume to scale across assets).
+    """
+    n = min(len(closes), len(volumes))
+    if n < 2:
+        return None
+    cumulative = 0.0
+    for i in range(1, n):
+        if closes[i] > closes[i - 1]:
+            cumulative += volumes[i]
+        elif closes[i] < closes[i - 1]:
+            cumulative -= volumes[i]
+    avg_vol = sum(volumes[-n:]) / n if n > 0 else 1.0
+    return cumulative / avg_vol if avg_vol > 0 else 0.0
+
+
+def volume_sma_ratio(volumes: list[float], period: int = 20) -> float | None:
+    """Current volume / SMA(volume, period). >1.5 = notable spike, >3 = extreme."""
+    if len(volumes) < period:
+        return None
+    avg = sum(volumes[-period:]) / period
+    if avg == 0:
+        return None
+    return volumes[-1] / avg
+
+
+def vwap(closes: list[float], highs: list[float], lows: list[float],
+         volumes: list[float], period: int = 0) -> float | None:
+    """Volume-Weighted Average Price over the last `period` bars (0 = all bars).
+
+    Uses typical price (H+L+C)/3 weighted by volume.
+    """
+    n = min(len(closes), len(highs), len(lows), len(volumes))
+    if n < 1:
+        return None
+    if period > 0 and n > period:
+        closes = closes[-period:]
+        highs = highs[-period:]
+        lows = lows[-period:]
+        volumes = volumes[-period:]
+        n = period
+    cum_tp_vol = 0.0
+    cum_vol = 0.0
+    for i in range(n):
+        tp = (highs[i] + lows[i] + closes[i]) / 3
+        cum_tp_vol += tp * volumes[i]
+        cum_vol += volumes[i]
+    return cum_tp_vol / cum_vol if cum_vol > 0 else None
+
+
 def relative_strength_rank(returns: dict[str, float]) -> list[tuple[str, int]]:
     """Rank symbols by return desc; returns [(symbol, rank_1based), ...].
 

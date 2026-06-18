@@ -46,10 +46,15 @@ class Condition:
 
     right may be a float literal or another IndicatorRef
     (e.g., close > sma(50)).
+
+    timeframe: optional override (e.g., "4h") for multi-timeframe conditions.
+    When set, this condition evaluates against bars from that timeframe
+    instead of the strategy's primary timeframe.
     """
     left: IndicatorRef
     comparator: Comparator
     right: float | IndicatorRef
+    timeframe: str | None = None
 
 
 @dataclass
@@ -109,7 +114,8 @@ def _condition_from_dict(d: dict) -> Condition:
         if isinstance(raw_right, dict)
         else float(raw_right)
     )
-    return Condition(left=left, comparator=Comparator(d["comparator"]), right=right)
+    return Condition(left=left, comparator=Comparator(d["comparator"]), right=right,
+                     timeframe=d.get("timeframe"))
 
 
 def _rule_expr_from_dict(d: dict) -> RuleExpr:

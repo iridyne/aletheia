@@ -12,7 +12,8 @@ from aletheia.strategy.dsl import (
     Comparator, Condition, IndicatorRef, RuleExpr, RuleSet, StopLoss,
 )
 from aletheia.trading.indicators import (
-    atr, bollinger, ema, momentum_pct, rsi, sma, zscore_last,
+    atr, bollinger, donchian_high, donchian_low, ema, momentum_pct,
+    obv, rsi, sma, volume_sma_ratio, vwap, zscore_last,
 )
 
 
@@ -68,6 +69,16 @@ def compute_indicator(
         return momentum_pct(closes, int(p.get("lookback", 10)))
     if n == "zscore":
         return zscore_last(closes, int(p.get("period", 20)))
+    if n == "donchian_high":
+        return donchian_high(highs, int(p.get("period", 20)))
+    if n == "donchian_low":
+        return donchian_low(lows, int(p.get("period", 20)))
+    if n == "obv":
+        return obv(closes, volumes)
+    if n == "volume_sma_ratio":
+        return volume_sma_ratio(volumes, int(p.get("period", 20)))
+    if n == "vwap":
+        return vwap(closes, highs, lows, volumes, int(p.get("period", 0)))
 
     raise ValueError(f"Unknown indicator: {n!r}")
 
@@ -146,6 +157,7 @@ def evaluate_rule(
     prev_volumes: list[float] | None = None,
     opens: list[float] | None = None,
     prev_opens: list[float] | None = None,
+    multi_tf_bars: dict[str, list["BarData"]] | None = None,
 ) -> bool | None:
     """Evaluate an AND/OR tree. Returns None if any required indicator is None."""
     results: list[bool | None] = []
@@ -154,8 +166,25 @@ def evaluate_rule(
             r = evaluate_rule(
                 child, closes, highs, lows, volumes,
                 prev_closes, prev_highs, prev_lows, prev_volumes,
-                opens, prev_opens,
+                opens, prev_opens, multi_tf_bars,
             )
+        elif isinstance(child, Condition) and child.timeframe and multi_tf_bars:
+            tf_bars = multi_tf_bars.get(child.timeframe)
+            if not tf_bars:
+                r = None
+            else:
+                tf_c = [b.close for b in tf_bars]
+                tf_h = [b.high for b in tf_bars]
+                tf_l = [b.low for b in tf_bars]
+                tf_v = [b.volume for b in tf_bars]
+                tf_o = [b.open for b in tf_bars]
+                tf_pc = tf_c[:-1] or None
+                tf_po = tf_o[:-1] or None
+                r = evaluate_condition(
+                    child, tf_c, tf_h, tf_l, tf_v,
+                    tf_pc, tf_h[:-1] or None, tf_l[:-1] or None, tf_v[:-1] or None,
+                    tf_o, tf_po,
+                )
         else:
             r = evaluate_condition(
                 child, closes, highs, lows, volumes,
@@ -180,10 +209,12 @@ def evaluate_at_bar(
     ruleset: RuleSet,
     bars: list[BarData],
     bar_index: int,
+    multi_tf_bars: dict[str, list[BarData]] | None = None,
 ) -> dict[str, bool | None]:
     """Evaluate entry and exit signals at bar_index.
 
     Uses bars[0:bar_index+1] only (no look-ahead).
+    multi_tf_bars: optional dict mapping timeframe → full bar list for MTF conditions.
     Returns {"entry": True|False|None, "exit": True|False|None}.
     None means "insufficient data for this signal".
     """
@@ -203,12 +234,12 @@ def evaluate_at_bar(
     entry = evaluate_rule(
         ruleset.entry, closes, highs, lows, volumes,
         prev_closes, prev_highs, prev_lows, prev_volumes,
-        opens, prev_opens,
+        opens, prev_opens, multi_tf_bars,
     )
     exit_ = evaluate_rule(
         ruleset.exit, closes, highs, lows, volumes,
         prev_closes, prev_highs, prev_lows, prev_volumes,
-        opens, prev_opens,
+        opens, prev_opens, multi_tf_bars,
     )
     return {"entry": entry, "exit": exit_}
 

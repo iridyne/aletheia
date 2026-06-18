@@ -160,3 +160,77 @@ def format_kill_feedback_block(kills: list[dict], compile_stats: dict) -> str:
     )
 
     return "\n".join(lines)
+
+
+def get_winning_strategy_templates(days: int = 30, limit: int = 3) -> list[dict]:
+    """Retrieve strategies that are alive and performing well (positive templates).
+
+    Returns structural summaries of KEEP/paper_passed/paper_running strategies
+    with positive expectancy — the LLM should generate MORE like these.
+    """
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    rows = db.execute(
+        "SELECT sr.name, sr.parameters, sr.state, "
+        "       br.win_rate, br.expectancy, br.profit_factor, br.symbol, br.timeframe "
+        "FROM strategy_records sr "
+        "JOIN backtest_runs br ON br.strategy_id = sr.id "
+        "WHERE sr.state IN ('paper_running', 'paper_passed', 'live_candidate', 'live_limited') "
+        "  AND br.expectancy > 0 AND br.trade_count >= 5 "
+        "  AND br.created_at >= ? "
+        "ORDER BY br.expectancy DESC LIMIT ?",
+        (cutoff, limit),
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        params_raw = r["parameters"] or "{}"
+        try:
+            params = json.loads(params_raw) if isinstance(params_raw, str) else {}
+        except (ValueError, TypeError):
+            params = {}
+
+        ruleset_json = params.get("ruleset")
+        direction = params.get("direction_bias", "neutral")
+        source = params.get("source", "unknown")
+
+        results.append({
+            "strategy_name": r["name"] or "unnamed",
+            "symbol": r["symbol"] or params.get("symbol", "?"),
+            "timeframe": r["timeframe"] or params.get("timeframe", "?"),
+            "direction": direction,
+            "source": source,
+            "has_ruleset": bool(ruleset_json),
+            "metrics": {
+                "win_rate": r["win_rate"],
+                "expectancy": r["expectancy"],
+                "profit_factor": r["profit_factor"],
+            },
+            "state": r["state"],
+        })
+
+    return results
+
+
+def format_winning_templates_block(templates: list[dict]) -> str:
+    """Format winning strategy templates as a positive-guidance prompt block."""
+    if not templates:
+        return ""
+
+    lines = ["\n\n## Winning Strategy Templates (generate MORE like these)\n"]
+    for t in templates:
+        m = t["metrics"]
+        lines.append(
+            f"- **{t['strategy_name']}** ({t['symbol']} {t['timeframe']} {t['direction']}): "
+            f"win_rate={m['win_rate']:.0%}, expectancy={m['expectancy']:+.2f}, "
+            f"PF={m['profit_factor']:.2f} — state={t['state']}"
+        )
+    lines.append(
+        "\nDesign strategies with SIMILAR structure to the winners above "
+        "(same scanner family, direction style, or timeframe) but for DIFFERENT symbols or "
+        "with parameter variations that might capture a related edge."
+    )
+    return "\n".join(lines)

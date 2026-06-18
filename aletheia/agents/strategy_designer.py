@@ -31,6 +31,7 @@ _VALID_INDICATORS = {
     "sma", "ema", "rsi", "atr",
     "bollinger_upper", "bollinger_lower", "bollinger_mid",
     "momentum_pct", "zscore",
+    "donchian_high", "donchian_low", "obv", "volume_sma_ratio", "vwap",
 }
 _VALID_COMPARATORS = {"lt", "gt", "lte", "gte", "cross_above", "cross_below"}
 
@@ -239,7 +240,8 @@ def _compile_ruleset(spec: dict) -> tuple[str | None, str]:
                 if versus:
                     reason += f". Got versus='{versus}' which is not in valid indicators"
                 return None, reason
-            return Condition(left=left, comparator=Comparator(comp_str), right=right), ""
+            tf = c.get("timeframe") or None
+            return Condition(left=left, comparator=Comparator(comp_str), right=right, timeframe=tf), ""
 
         entry_compiled = []
         for i, c in enumerate(entry_conds):
@@ -324,14 +326,19 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         pass
 
     kill_feedback_block = ""
+    winning_block = ""
     try:
         from aletheia.strategy.feedback import (
             get_recent_kill_reasons, get_compile_failures, format_kill_feedback_block,
+            get_winning_strategy_templates, format_winning_templates_block,
         )
         kills = get_recent_kill_reasons(days=7, limit=5)
         compile_stats = get_compile_failures(days=7)
         kill_feedback_block = format_kill_feedback_block(kills, compile_stats)
-        log_tool(run_id, "kill_feedback", "observe", True, output=f"kills:{len(kills)}")
+        winners = get_winning_strategy_templates(days=30, limit=3)
+        winning_block = format_winning_templates_block(winners)
+        log_tool(run_id, "kill_feedback", "observe", True,
+                 output=f"kills:{len(kills)},winners:{len(winners)}")
     except Exception:
         pass
 
@@ -352,12 +359,14 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         "- timeframe: \"15m\" | \"1h\" | \"4h\"\n"
         "- direction_bias: \"long\" | \"short\" | \"neutral\"\n"
         "- entry_conditions: list of conditions (AND-combined). Each has:\n"
-        "    indicator: one of close/sma/ema/rsi/atr/bollinger_upper/bollinger_lower/momentum_pct/zscore\n"
+        "    indicator: one of close/open/high/low/volume/sma/ema/rsi/atr/bollinger_upper/bollinger_lower/momentum_pct/zscore/donchian_high/donchian_low/obv/volume_sma_ratio/vwap\n"
         "    indicator_params: {\"period\": N} or {}\n"
         "    comparator: lt/gt/lte/gte/cross_above/cross_below\n"
         "    threshold: number (use this OR versus, not both)\n"
         "    versus: another indicator name (e.g. \"sma\")\n"
         "    versus_params: {\"period\": N}\n"
+        "    timeframe: optional, e.g. \"4h\" or \"1d\" — evaluate this condition on a different timeframe "
+        "(use for multi-TF confluence: e.g. confirm 4h trend before entering on 1h)\n"
         "- exit_conditions: list of conditions (OR-combined, same structure)\n"
         "- stop_loss_pct: number or null (e.g. 2.0 for 2%)\n"
         "- stop_loss_atr_multiple: number or null (e.g. 1.5)\n"
@@ -370,7 +379,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         system=_EXEC_SYSTEM,
         user=(
             f"Design one targeted strategy for the highest-opportunity candidate below."
-            f"{universe_context}{memory_block}{kill_feedback_block}"
+            f"{universe_context}{memory_block}{kill_feedback_block}{winning_block}"
         ),
         schema=ExecutableStrategySpec,
         max_tokens=900,
