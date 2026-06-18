@@ -377,6 +377,7 @@ export const api = {
   getPredictionMarketClaims: (id: string) => fetchJson<import('../types').PredictionClaim[]>(`/prediction/markets/${id}/claims`),
   getPredictionPreferences: () => fetchJson<import('../types').PredictionPreferences>('/prediction/preferences'),
   updatePredictionPreferences: (body: { categories?: string[] }) => post<any>('/prediction/preferences', body),
+  togglePrediction: (enabled: boolean) => post<{ enabled: boolean }>('/prediction/toggle', { enabled }),
 
   // Serenity Lens endpoints (research-first investigation pipeline)
   getSerenityThemes: () => fetchJson<SerenityTheme[]>('/serenity/themes'),

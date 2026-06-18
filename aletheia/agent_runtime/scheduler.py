@@ -751,6 +751,8 @@ def _run_prediction_observer():
     cfg = load_config()
     if cfg.runtime.paused:
         return
+    if not cfg.market_data.prediction_enabled:
+        return
     if not cfg.market_data.observed_prediction_markets:
         return
     try:
