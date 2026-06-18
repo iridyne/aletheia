@@ -82,19 +82,42 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     for c in skipped[:10]:
         outputs.append(f"skip:{c.get('symbol','?')}:{c['skip_reason']}")
 
-    selected = select_best_candidate(candidates)
-
     # Edge Lab: persist top-N candidates as shadow trades for counterfactual analysis.
     try:
         from aletheia.analytics.shadow_trades import persist_shadow_batch
         eligible = [c for c in candidates if not c.get("skip_reason")]
+        selected = select_best_candidate(candidates)
         persist_shadow_batch(eligible, selected, top_n=5)
     except Exception as _shadow_err:
         logger.debug("shadow trade persistence failed: %s", _shadow_err)
 
-    if selected is None:
+    # Select best candidate with price fallback: iterate ranked candidates until
+    # one has a valid market snapshot (fixes stall when top candidate has no price).
+    eligible = [c for c in candidates if not c.get("skip_reason")]
+    if not eligible:
         if not outputs:
             outputs.append("no_ranked_candidate")
+        return {"outputs": outputs, "errors": errors}
+
+    selected = None
+    price = None
+    no_price_symbols: list[str] = []
+    for candidate in eligible:
+        sym = candidate["symbol"]
+        snap = latest_snapshot(sym)
+        p = (snap or {}).get("price")
+        if p:
+            selected = candidate
+            price = float(p)
+            break
+        no_price_symbols.append(sym)
+
+    if no_price_symbols:
+        errors.append(f"no_price_for:{','.join(no_price_symbols[:5])}")
+
+    if selected is None or price is None:
+        if not outputs:
+            outputs.append("no_priced_candidate")
         return {"outputs": outputs, "errors": errors}
 
     symbol = selected["symbol"]
@@ -102,13 +125,6 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     opp_id = selected["opportunity_id"]
     strategy_id = selected.get("strategy_id")
 
-    snap = latest_snapshot(symbol)
-    price = (snap or {}).get("price")
-    if not price:
-        errors.append(f"no_price_for:{symbol}")
-        return {"outputs": outputs, "errors": errors}
-
-    price = float(price)
     quantity = round(_PAPER_NOTIONAL_USDT / price, 6) or 0.000001
 
     stop_pct = cfg.trading.default_stop_loss_pct
