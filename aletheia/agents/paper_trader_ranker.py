@@ -29,6 +29,7 @@ from aletheia.storage.repositories import (
     list_strategies,
 )
 from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
+from aletheia.regime.detector import get_current_regime, MarketRegime
 from aletheia.trading.instruments import tradable_symbols_from_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy, is_paper_trading_paused
 
@@ -168,6 +169,17 @@ def _evaluate_candidate(
                 strategy = s
                 break
 
+    # Regime-aware strategy filtering (P0: direction_affinity + applicable_regimes)
+    regime = get_current_regime()
+    if strategy:
+        regime_skip = _check_strategy_regime_fit(strategy, direction, regime)
+        if regime_skip:
+            return _make_candidate(
+                opp, skip_reason=regime_skip,
+                direction=direction, strategy_id=strategy_id,
+                universe_member=universe_member,
+            )
+
     # Strategy evidence gate (backtest + paper PnL)
     strategy_evidence = None
     if strategy:
@@ -238,7 +250,10 @@ def _evaluate_candidate(
         )
 
     # Compute trade score
-    trade_score = _compute_trade_score(opp, universe_member, factor_signal, confidence, strategy_evidence)
+    trade_score = _compute_trade_score(
+        opp, universe_member, factor_signal, confidence, strategy_evidence,
+        strategy_has_ruleset=strategy_has_ruleset, direction=direction,
+    )
 
     # Apply guard penalty
     if guard_eval:
@@ -264,6 +279,9 @@ def _compute_trade_score(
     factor_signal: dict,
     confidence: str,
     strategy_evidence: dict | None = None,
+    *,
+    strategy_has_ruleset: bool = False,
+    direction: str | None = None,
 ) -> float:
     """Compute deterministic trade quality score."""
     score = 0.0
@@ -306,14 +324,19 @@ def _compute_trade_score(
         elif drift_status == "paper_confirming":
             score += 10
 
-    # Macro risk_regime: penalize new entries during risk_off (Edge Lab: strengthened)
-    try:
-        from aletheia.storage.repositories import latest_macro_snapshot
-        macro = latest_macro_snapshot()
-        if macro and macro.get("risk_regime") == "risk_off":
-            score -= 35
-    except Exception:
-        pass
+    # Regime-aware scoring: penalize mismatch, bonus for alignment
+    regime = get_current_regime()
+    if regime.state in ("bear", "volatile") and regime.confidence > 0.5:
+        score -= 20
+    elif regime.state == "bull" and regime.confidence > 0.5:
+        score += 10
+
+    # P2: Executable RuleSet bonus — verified strategies get preference
+    if strategy_has_ruleset:
+        score += 15
+
+    # P1: Lesson-aware scoring — penalty for symbol+direction with negative experience
+    score += _lesson_penalty(opp.get("symbol"), direction, opp.get("scanner_family"))
 
     # Risk flag penalties
     risk_flags = []
@@ -338,6 +361,63 @@ def _compute_trade_score(
             score -= 5
 
     return round(score, 2)
+
+
+def _lesson_penalty(symbol: str | None, direction: str | None, scanner_family: str | None) -> float:
+    """Query negative lessons for this symbol+direction. Returns penalty (negative or zero)."""
+    if not symbol:
+        return 0.0
+    try:
+        from aletheia.knowledge.retrieval import retrieve_lessons
+        query_parts = [symbol]
+        if direction:
+            query_parts.append(direction)
+        if scanner_family:
+            query_parts.append(scanner_family)
+        query = " ".join(query_parts)
+        lessons = retrieve_lessons(query, k=3, item_types=["trade_case_study", "post_trade_review"])
+        if not lessons:
+            return 0.0
+        penalty = 0.0
+        for lesson in lessons:
+            snippet_lower = lesson.snippet.lower()
+            if any(neg in snippet_lower for neg in ("loss", "失败", "failed", "stopped", "drawdown")):
+                penalty -= 8.0 * lesson.score
+        return max(-25.0, penalty)
+    except Exception:
+        return 0.0
+
+
+def _check_strategy_regime_fit(
+    strategy: dict, direction: str | None, regime: MarketRegime
+) -> str | None:
+    """Check if strategy is compatible with current regime. Returns skip reason or None."""
+    params_raw = strategy.get("parameters") or "{}"
+    try:
+        params = _json.loads(params_raw) if isinstance(params_raw, str) else params_raw
+    except (ValueError, TypeError):
+        params = {}
+
+    # Check direction_affinity vs regime
+    affinity = strategy.get("direction_affinity") or params.get("direction_affinity") or "both"
+    if regime.confidence > 0.6:
+        if regime.state == "bear" and affinity == "long":
+            return f"regime_mismatch:bear_vs_long_only(conf={regime.confidence:.2f})"
+        if regime.state == "bull" and affinity == "short":
+            return f"regime_mismatch:bull_vs_short_only(conf={regime.confidence:.2f})"
+
+    # Check applicable_regimes
+    applicable = strategy.get("applicable_regimes") or params.get("applicable_regimes") or "all"
+    if applicable != "all":
+        try:
+            regime_list = _json.loads(applicable) if isinstance(applicable, str) else applicable
+        except (ValueError, TypeError):
+            regime_list = None
+        if regime_list and isinstance(regime_list, list):
+            if regime.state not in regime_list:
+                return f"regime_not_applicable:{regime.state} not in {regime_list}"
+
+    return None
 
 
 def _check_ruleset_entry(symbol: str, ruleset_json, params: dict) -> bool | None:

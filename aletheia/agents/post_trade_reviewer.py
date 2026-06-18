@@ -86,7 +86,29 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
     if guard_candidates:
         outputs.append(f"guard_candidates_created:{len(guard_candidates)}")
 
+    # P3 event chain: sufficient new lessons → trigger strategy_designer to adapt
+    new_knowledge_count = len(case_studies) + len(guard_candidates)
+    if new_knowledge_count >= 2:
+        _trigger_strategy_adaptation(new_knowledge_count, run_id)
+        outputs.append(f"strategy_designer_triggered:lessons={new_knowledge_count}")
+
     return {"outputs": outputs, "errors": errors}
+
+
+def _trigger_strategy_adaptation(lesson_count: int, run_id: str | None) -> None:
+    """Trigger strategy_designer to incorporate new lessons. Best-effort."""
+    try:
+        from aletheia.agent_runtime.scheduler import trigger_strategy_designer_on_demand
+        fired = trigger_strategy_designer_on_demand()
+        if fired:
+            logger.info(
+                "Strategy designer triggered after %d new lessons (review→design chain)",
+                lesson_count,
+            )
+        else:
+            logger.debug("Strategy designer trigger debounced (cooldown active)")
+    except Exception as e:
+        logger.debug("Strategy adaptation trigger failed (non-fatal): %s", e)
 
 
 def _run_case_builder_safe(run_id: str | None) -> tuple[list, list]:
