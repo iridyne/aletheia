@@ -9,6 +9,11 @@ from aletheia.config.schema import UniverseConfig
 
 logger = logging.getLogger("aletheia.universe.allocator")
 
+# Calibration: minimum samples before adjusting a family's weight
+_MIN_CALIBRATION_SAMPLES = 20
+# Reference horizon for calibration (matches typical holding period)
+_CALIBRATION_HORIZON = "1h"
+
 # TTL by scanner family (seconds)
 _FAMILY_TTL = {
     "momentum": 1800,       # 30 min — fast signals
@@ -18,6 +23,37 @@ _FAMILY_TTL = {
     "event": 43200,         # 12 hours
     "core": 86400,          # 24 hours
 }
+
+
+def get_family_multipliers(max_step: float = 0.15) -> dict[str, float]:
+    """Compute opportunity-score multipliers from forward outcome data.
+
+    Returns {family: multiplier} where multiplier is in [1-max_step, 1+max_step].
+    Families with insufficient data get 1.0 (neutral).
+    """
+    from aletheia.storage import repositories as repo
+
+    try:
+        stats = repo.calibration_stats()
+    except Exception:
+        return {}
+
+    multipliers: dict[str, float] = {}
+    for row in stats:
+        if row.get("horizon") != _CALIBRATION_HORIZON:
+            continue
+        n = row.get("n", 0)
+        if n < _MIN_CALIBRATION_SAMPLES:
+            continue
+        family = row.get("scanner_family")
+        if not family:
+            continue
+        hit_rate = row.get("win_count", 0) / n
+        # Linear map: 0.5 → 1.0, 0.65+ → 1+max_step, 0.35- → 1-max_step
+        adjustment = (hit_rate - 0.5) * (max_step / 0.15)
+        adjustment = max(-max_step, min(max_step, adjustment))
+        multipliers[family] = 1.0 + adjustment
+    return multipliers
 
 
 def compute_late_entry_penalty(feat: dict) -> float:
@@ -53,12 +89,22 @@ def compute_late_entry_penalty(feat: dict) -> float:
     return min(30.0, penalty)
 
 
-def compute_total_score(feat: dict, scanner_result: dict, cfg: UniverseConfig) -> float:
+def compute_total_score(
+    feat: dict,
+    scanner_result: dict,
+    cfg: UniverseConfig,
+    calibration: dict[str, float] | None = None,
+) -> float:
     """Compute the final total_score for universe ranking.
 
     Linear combination: opportunity + tradability + liquidity - costs - penalties.
+    When calibration multipliers are provided, opportunity_score is scaled by
+    the family's empirical hit_rate performance.
     """
     opportunity = scanner_result.get("opportunity_score", 0)
+    if calibration:
+        family = scanner_result.get("scanner_family", "momentum")
+        opportunity *= calibration.get(family, 1.0)
     tradability = feat.get("tradability_score", 50.0)
 
     # Liquidity score from volume (simple: high volume = good liquidity)
