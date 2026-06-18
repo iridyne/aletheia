@@ -113,13 +113,15 @@ async def _fetch_raw(params: str) -> list[dict]:
         return _fetch_raw_urllib(params)
 
 
-async def fetch_active_markets(categories: list[str], limit: int = 15) -> list[PolymarketMarket]:
+async def fetch_active_markets(categories: list[str], limit: int = 50) -> list[PolymarketMarket]:
     """Fetch active markets matching any category keyword, sorted by 24h volume desc.
 
     Falls back to top-volume markets when no category matches are found,
     so the observer always has data to display.
     """
-    params = f"active=true&closed=false&limit={max(limit * 4, 40)}&order=volume24hr&ascending=false"
+    # Gamma API caps at 100 per request; over-fetch to compensate for category filtering.
+    fetch_count = min(limit * 3, 100)
+    params = f"active=true&closed=false&limit={fetch_count}&order=volume24hr&ascending=false"
     raw = await _fetch_raw(params)
     matched: list[PolymarketMarket] = []
     all_parsed: list[PolymarketMarket] = []

@@ -225,7 +225,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     # Fetch markets from Polymarket
     from aletheia.data.polymarket_provider import fetch_active_markets, format_prediction_context
     try:
-        markets = await fetch_active_markets(categories=categories, limit=15)
+        markets = await fetch_active_markets(categories=categories, limit=50)
         log_tool(run_id, "fetch_prediction_markets", "observe", True,
                  output=f"markets:{len(markets)}")
     except Exception as e:
@@ -306,10 +306,10 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
                              markets_scanned=len(markets), opportunities_created=0)
         return {"outputs": outputs, "errors": errors}
 
-    # Create one Opportunity per notable market (top 5 by volume).
+    # Create one Opportunity per fetched market — capture all signals.
     # The LLM read applies to the top market; others get a heuristic bias.
     opps_created = 0
-    for i, market in enumerate(markets[:5]):
+    for i, market in enumerate(markets):
         q = market.question
         symbol_slug = (q[:77] + "...") if len(q) > 80 else q
 
@@ -366,7 +366,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
 
     # Generate claims for each market (heuristic + LLM observations for top market)
     median_vol = sorted(m.volume_usd for m in markets)[len(markets) // 2] if markets else 0
-    for i, market in enumerate(markets[:5]):
+    for i, market in enumerate(markets):
         ext_id = market.market_id or market.slug or market.question[:40]
         internal_id = market_id_map.get(ext_id)
         if not internal_id:
@@ -392,7 +392,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
                         "tariff", "gdp", "cpi", "fomc", "treasury"}
     try:
         themes = list_serenity_themes(status="active", limit=50)
-        for market in markets[:5]:
+        for market in markets:
             if abs(market.prob_change_24h) < 0.10 or market.volume_usd < 50000:
                 continue
             q_lower = market.question.lower()
