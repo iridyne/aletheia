@@ -26,9 +26,9 @@ PAPER_TOOLS = [
 ]
 
 # System tools — modify playbooks/prompts/strategy config
-# DEPRECATED: these tools have no handler implementation yet.
-# Registered so permission checks don't KeyError, but calling them
-# returns "unimplemented" (see is_tool_permitted).
+# DEPRECATED: no handler implementation exists for these tools.
+# They remain registered so permission lookups don't KeyError.
+# Use is_tool_implemented() to guard before attempting execution.
 SYSTEM_TOOLS = [
     "create_playbook_draft",
     "create_prompt_draft",

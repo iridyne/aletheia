@@ -662,7 +662,9 @@ async def update_tunnel_config(req: TunnelConfigUpdate):
                  "entity_type": "tunnel_config", "before": old,
                  "after": cfg.tunnel.model_dump(mode="json"),
                  "message": f"Tunnel config updated: {list(updates.keys())}"})
-    return {"updated": updates, "tunnel": cfg.tunnel.model_dump(mode="json")}
+    tunnel_safe = {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
+                   if k != "credentials_path"}
+    return {"updated": updates, "tunnel": tunnel_safe}
 
 
 @router.post("/tunnel/start")
