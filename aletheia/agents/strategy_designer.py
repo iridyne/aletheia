@@ -512,6 +512,25 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
                     max_drawdown_pct=_m.max_drawdown_pct,
                     total_return_pct=_m.total_return_pct,
                 )
+                # Persist backtest run for performance_ledger statistics
+                try:
+                    from aletheia.strategy.models import BacktestRun as _BtRun
+                    from aletheia.strategy.repositories import insert_backtest_run as _ins_bt
+                    from dataclasses import asdict as _asdict
+                    _ins_bt(_BtRun(
+                        strategy_id=strategy.id,
+                        symbol=chosen_symbol, timeframe=timeframe, direction=_bt_dir,
+                        bar_count=len(_bars), initial_capital=1000.0,
+                        cost_model_json=_json.dumps(_asdict(_CM())),
+                        ruleset_json=ruleset_json,
+                        trade_count=_m.trade_count, win_rate=_m.win_rate,
+                        total_return_pct=_m.total_return_pct, expectancy=_m.expectancy,
+                        profit_factor=_pf, max_drawdown_pct=_m.max_drawdown_pct,
+                        sharpe_approx=_m.sharpe_approx, avg_trade_bars=_m.avg_trade_bars,
+                    ))
+                except Exception:
+                    pass
+
                 if _verdict.verdict.value == "kill" and _m.trade_count >= 2:
                     backtest_killed = True
                     outputs.append(f"backtest_killed:{_verdict.reasons}")
@@ -555,17 +574,19 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
             sweep_bars = _cached_bars if _cached_bars else _load_bars(chosen_symbol, timeframe, limit=500)
             if len(sweep_bars) >= 30:
                 _bt_dir = direction if direction != "neutral" else "long"
+                _max_v = cfg.strategy_factory.sweep_max_variants
                 sweep_cfg = _SwCfg(
                     base_ruleset=_RS.from_json(ruleset_json),
                     symbol=chosen_symbol,
                     timeframe=timeframe,
                     direction=_bt_dir,
-                    max_variants=50,
+                    max_variants=_max_v,
                 )
                 sweep_result = run_parameter_sweep(sweep_cfg, sweep_bars)
 
                 sweep_created = 0
-                for variant_rs, variant_metrics in sweep_result.all_survivors[:10]:
+                _max_deploy = min(10, len(sweep_result.all_survivors))
+                for variant_rs, variant_metrics in sweep_result.all_survivors[:_max_deploy]:
                     variant_params = dict(parameters)
                     variant_params["ruleset"] = variant_rs.to_json()
                     variant_params["source"] = "param_sweep"
