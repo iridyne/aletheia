@@ -623,7 +623,8 @@ def trigger_strategy_designer_on_demand() -> bool:
     """
     global _last_event_design_time
     now = _time.time()
-    if now - _last_event_design_time < _EVENT_DESIGN_COOLDOWN_SEC:
+    cooldown = load_config().strategy_factory.event_cooldown_minutes * 60
+    if now - _last_event_design_time < cooldown:
         logger.debug("strategy_designer event-trigger debounced (%.0fs since last)",
                      now - _last_event_design_time)
         return False
