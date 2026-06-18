@@ -1,8 +1,9 @@
-"""Strategy Designer agent — turns opportunities/hypotheses into strategy drafts.
+"""Strategy Designer agent — edge miner that designs strategies for specific universe candidates.
 
-As of the Money Loop Reset, the designer attempts to produce an executable
-RuleSet (stored in parameters["ruleset"]) that the paper_trader can validate.
-Falls back to advisory text when the LLM output doesn't compile.
+Consults the dynamic universe pipeline (scanner scores, features, regime) to
+produce targeted executable RuleSets for high-opportunity assets rather than
+generic BTC/ETH/SOL indicator combos. Falls back to advisory text when the LLM
+output doesn't compile.
 """
 from __future__ import annotations
 
@@ -25,7 +26,6 @@ _ACTIVATION_PATH = ["research_note", "strategy_hypothesis", "paper_candidate", "
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 
-# Valid indicator names for LLM output validation.
 _VALID_INDICATORS = {
     "close", "open", "high", "low", "volume",
     "sma", "ema", "rsi", "atr",
@@ -37,28 +37,30 @@ _VALID_COMPARATORS = {"lt", "gt", "lte", "gte", "cross_above", "cross_below"}
 
 class ConditionSpec(BaseModel):
     """One condition the LLM outputs."""
-    indicator: str = "close"              # indicator name
-    indicator_params: dict = {}           # e.g. {"period": 14}
-    comparator: str = "gt"               # lt/gt/lte/gte/cross_above/cross_below
-    threshold: float | None = None        # literal value (mutually exclusive with versus)
-    versus: str | None = None             # another indicator name (e.g. "sma")
-    versus_params: dict = {}              # params for versus indicator
+    indicator: str = "close"
+    indicator_params: dict = {}
+    comparator: str = "gt"
+    threshold: float | None = None
+    versus: str | None = None
+    versus_params: dict = {}
 
 
 class ExecutableStrategySpec(BaseModel):
     """LLM-facing schema that can be compiled to a RuleSet."""
+    symbol: str = ""
     name: str = "Designed Strategy"
     timeframe: str = "1h"
     direction_bias: str = "neutral"
-    entry_conditions: list[ConditionSpec] = []   # AND-combined
-    exit_conditions: list[ConditionSpec] = []    # OR-combined
-    stop_loss_pct: float | None = None           # e.g. 2.0 = 2%
-    stop_loss_atr_multiple: float | None = None  # e.g. 1.5
+    entry_conditions: list[ConditionSpec] = []
+    exit_conditions: list[ConditionSpec] = []
+    stop_loss_pct: float | None = None
+    stop_loss_atr_multiple: float | None = None
     rationale: str = ""
 
 
 class StrategySpec(BaseModel):
     """Fallback schema (advisory only, backward compat)."""
+    symbol: str = ""
     name: str = "Designed Strategy"
     timeframe: str = "1h"
     direction_bias: str = "neutral"
@@ -67,11 +69,143 @@ class StrategySpec(BaseModel):
     rationale: str = ""
 
 
-def _compile_ruleset(spec: dict) -> str | None:
-    """Try to compile an ExecutableStrategySpec dict into a RuleSet JSON string.
+def _build_universe_context(cfg) -> tuple[str, list[str]]:
+    """Pull universe candidates + regime into a structured context block for the LLM.
 
-    Returns the JSON string on success, or None if the spec is invalid.
+    Returns (context_block, candidate_symbols). context_block is the formatted
+    string to inject into the user prompt; candidate_symbols is the list of
+    symbols in priority order for validation.
     """
+    from aletheia.universe.service import UniverseService
+    from aletheia.storage import repositories as repo
+
+    candidate_symbols: list[str] = []
+    lines: list[str] = []
+    members: list[dict] = []
+
+    # ── Universe candidates (top 8 by total_score) ──
+    try:
+        svc = UniverseService()
+        members = svc.get_current_universe(execution_eligible_only=True, limit=8)
+        if members and members[0].get("scanner_family") != "core":
+            lines.append("\n\n## UNIVERSE CANDIDATES (ranked by opportunity score)")
+            lines.append("Pick ONE of these for your strategy — they have active scanner signals:\n")
+            for m in members:
+                sym = m.get("symbol", "?")
+                candidate_symbols.append(sym)
+                family = m.get("scanner_family", "?")
+                score = m.get("total_score", 0)
+                opp_score = m.get("opportunity_score", 0)
+                reasons_raw = m.get("inclusion_reason", "[]")
+                if isinstance(reasons_raw, str):
+                    try:
+                        reasons = _json.loads(reasons_raw)
+                    except Exception:
+                        reasons = []
+                else:
+                    reasons = reasons_raw or []
+                flags_raw = m.get("risk_flags", "[]")
+                if isinstance(flags_raw, str):
+                    try:
+                        flags = _json.loads(flags_raw)
+                    except Exception:
+                        flags = []
+                else:
+                    flags = flags_raw or []
+                line = (
+                    f"- **{sym}** | family={family} | total={score:.1f} | "
+                    f"opportunity={opp_score:.1f}"
+                )
+                if reasons:
+                    line += f" | reasons: {', '.join(reasons[:3])}"
+                if flags:
+                    line += f" | ⚠️ risks: {', '.join(flags)}"
+                lines.append(line)
+    except Exception as e:
+        logger.debug("Universe context unavailable: %s", e)
+
+    # ── Feature snapshot for top candidates (micro-structure context) ──
+    if members and members[0].get("scanner_family") != "core":
+        try:
+            features_lines: list[str] = []
+            for m in members[:5]:
+                asset_id = m.get("asset_id")
+                sym = m.get("symbol", "?")
+                if not asset_id:
+                    continue
+                feat = repo.get_latest_feature_snapshot(asset_id)
+                if feat:
+                    features_lines.append(
+                        f"  {sym}: RSI={feat.get('rsi_14', '?'):.1f}, "
+                        f"ATR%={feat.get('atr_pct', 0)*100:.2f}%, "
+                        f"ret_1h={feat.get('return_1h', 0)*100:+.2f}%, "
+                        f"ret_4h={feat.get('return_4h', 0)*100:+.2f}%, "
+                        f"vol_24h=${feat.get('quote_volume_24h', 0)/1e6:.1f}M, "
+                        f"spread={feat.get('spread_bps', 0):.1f}bps, "
+                        f"funding={feat.get('funding_rate', 0)*100:.4f}%"
+                    )
+            if features_lines:
+                lines.append("\n## LIVE FEATURES")
+                lines.extend(features_lines)
+        except Exception as e:
+            logger.debug("Feature snapshot unavailable: %s", e)
+
+    # ── Market regime ──
+    try:
+        regime = repo.get_latest_market_regime()
+        if regime:
+            state = regime.get("state", "unknown")
+            conf = regime.get("confidence", 0)
+            long_b = regime.get("long_bias", 0.5)
+            short_b = regime.get("short_bias", 0.5)
+            lines.append(
+                f"\n## MARKET REGIME: {state.upper()} "
+                f"(confidence={conf:.0%}, long_bias={long_b:.0%}, short_bias={short_b:.0%})"
+            )
+            if state == "bear":
+                lines.append("Prefer short or neutral strategies; long only with strong contrarian signal.")
+            elif state == "bull":
+                lines.append("Prefer long strategies; short only with strong contrarian signal.")
+            elif state == "volatile":
+                lines.append("Prefer tight stops and shorter timeframes; avoid wide ATR-based exits.")
+    except Exception as e:
+        logger.debug("Regime context unavailable: %s", e)
+
+    return "\n".join(lines), candidate_symbols
+
+
+def _resolve_symbol(spec: dict, candidate_symbols: list[str], fallback: str) -> str:
+    """Extract the symbol the LLM chose, validating against candidates."""
+    chosen = str(spec.get("symbol") or "").strip().upper()
+    if not chosen:
+        return candidate_symbols[0] if candidate_symbols else fallback
+
+    # Normalize: accept both "BTCUSDT" and "BTC/USDT" forms
+    canonical = chosen if "/" in chosen else None
+    if not canonical:
+        for cs in candidate_symbols:
+            if cs.replace("/", "") == chosen:
+                canonical = cs
+                break
+    if not canonical:
+        canonical = chosen
+
+    # Validate against candidates if we have them
+    if candidate_symbols:
+        if canonical in candidate_symbols:
+            return canonical
+        # Fuzzy match: maybe LLM returned slightly different form
+        for cs in candidate_symbols:
+            if cs.replace("/", "") == canonical.replace("/", ""):
+                return cs
+        # LLM picked something outside candidates — still respect it
+        logger.info("LLM chose %s outside universe candidates; accepting", canonical)
+
+    return canonical
+
+
+def _compile_ruleset(spec: dict) -> str | None:
+    """Try to compile an ExecutableStrategySpec dict into a RuleSet JSON string."""
     from aletheia.strategy.dsl import (
         Comparator, Condition, IndicatorRef, RuleExpr, RuleSet, StopLoss,
     )
@@ -121,33 +255,35 @@ def _compile_ruleset(spec: dict) -> str | None:
 
 @register_agent("strategy_designer")
 async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
-    """Draft a candidate strategy, persist its parameters, and advance it to paper_running.
+    """Mine edges from universe candidates and produce targeted executable strategies.
 
-    The strategy is created with a structured `parameters` snapshot (symbol, timeframe,
-    direction, entry/exit) so downstream promotion gates and post-trade reviews can
-    audit what the strategy was actually running. It is then auto-advanced through the
-    ungated lifecycle states to `paper_running` so the paper trader can bind trades to
-    it — closing the producer side of the strategy↔trade causal chain. Live gates are
-    untouched: promotion stops at paper_running.
+    Pulls the current dynamic universe (scanner scores, features, regime) and
+    asks the LLM to design a strategy for a specific high-opportunity asset
+    rather than generating generic indicator combos.
     """
     outputs: list[str] = []
     errors: list[str] = []
 
-    # Designing strategies is a research-class activity (creating hypotheses/drafts).
     if not is_tool_permitted("create_strategy_hypothesis", permission_mode):
         errors.append("create_strategy_hypothesis not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
     cfg = load_config()
-    # In whitelist mode, use the symbol_list. In blacklist mode, use observed symbols.
-    if cfg.risk.symbol_filter_mode == "whitelist":
-        symbols = tradable_symbols_from_config(cfg)
-    else:
-        symbols = observed_symbols_from_config(cfg)
-    default_symbol = symbols[0] if symbols else "BTC/USDT"
 
-    # Experience loop (§6): consult prior high-confidence lessons + case studies +
-    # guard advisories as ADVISORY design inputs. Quality-gated; degrade to nothing.
+    # ── Gather universe context (primary symbol source) ──
+    universe_context, candidate_symbols = _build_universe_context(cfg)
+    log_tool(run_id, "universe_context", "observe", True,
+             output=f"candidates:{len(candidate_symbols)}")
+
+    # Fallback to config symbols only if universe is empty/disabled
+    if not candidate_symbols:
+        if cfg.risk.symbol_filter_mode == "whitelist":
+            candidate_symbols = tradable_symbols_from_config(cfg)
+        else:
+            candidate_symbols = observed_symbols_from_config(cfg)
+    fallback_symbol = candidate_symbols[0] if candidate_symbols else "BTC/USDT"
+
+    # ── Experience loop ──
     memory_block = ""
     try:
         from aletheia.knowledge.router import build_advisory_context
@@ -183,10 +319,18 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
 
     # ── Attempt executable spec (RuleSet compilation) ──
     _EXEC_SYSTEM = (
-        "You are a crypto trading strategy designer. Propose ONE concrete paper-tradable "
-        "strategy for BTC/ETH/SOL.\n\n"
+        "You are a crypto edge miner. Your job is NOT to design generic indicator strategies. "
+        "Instead, you exploit specific microstructure opportunities identified by scanners.\n\n"
+        "RULES:\n"
+        "1. You MUST pick exactly ONE symbol from the candidates provided\n"
+        "2. Your strategy must exploit the specific edge the scanner identified for that asset "
+        "(momentum continuation, mean-reversion, volatility breakout, derivatives imbalance)\n"
+        "3. Entry/exit conditions must be calibrated to the asset's CURRENT features "
+        "(use the RSI, ATR%, return values provided)\n"
+        "4. Respect the market regime constraint\n\n"
         "Return JSON matching this schema exactly:\n"
-        "- name: short strategy name\n"
+        "- symbol: the canonical symbol you chose (e.g. \"ETH/USDT\")\n"
+        "- name: short strategy name referencing the asset and edge type\n"
         "- timeframe: \"15m\" | \"1h\" | \"4h\"\n"
         "- direction_bias: \"long\" | \"short\" | \"neutral\"\n"
         "- entry_conditions: list of conditions (AND-combined). Each has:\n"
@@ -199,16 +343,19 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         "- exit_conditions: list of conditions (OR-combined, same structure)\n"
         "- stop_loss_pct: number or null (e.g. 2.0 for 2%)\n"
         "- stop_loss_atr_multiple: number or null (e.g. 1.5)\n"
-        "- rationale: brief explanation\n\n"
-        "Keep rules concrete and conservative. Use at most 3 entry and 2 exit conditions."
+        "- rationale: WHY this edge exists for THIS asset right now (not generic TA theory)\n\n"
+        "Keep rules concrete. Use at most 3 entry and 2 exit conditions. "
+        "Calibrate thresholds to the live features shown."
         + playbook_block
     )
     spec, err = await llm_structured(
         system=_EXEC_SYSTEM,
-        user=f"Tradable symbols: {', '.join(symbols) or default_symbol}. Design one candidate "
-             f"strategy.{memory_block}{kill_feedback_block}",
+        user=(
+            f"Design one targeted strategy for the highest-opportunity candidate below."
+            f"{universe_context}{memory_block}{kill_feedback_block}"
+        ),
         schema=ExecutableStrategySpec,
-        max_tokens=800,
+        max_tokens=900,
     )
     log_tool(run_id, "llm_structured", "observe", True)
 
@@ -216,18 +363,22 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
     if err:
         errors.append(err)
 
-    # Try to compile a RuleSet from the spec
     ruleset_json = _compile_ruleset(spec)
 
-    # If compilation failed, fall back to advisory-only (backward compat)
+    # If compilation failed, fall back to advisory-only
     if not ruleset_json and not err:
         spec_fallback, err2 = await llm_structured(
-            system="You are a crypto trading strategy designer. Propose ONE concrete paper-tradable "
-                   "strategy for BTC/ETH/SOL. Return JSON with: name, timeframe, direction_bias "
-                   "(long/short/neutral), entry_rule (text), exit_rule (text), rationale."
-                   + playbook_block,
-            user=f"Tradable symbols: {', '.join(symbols) or default_symbol}. Design one candidate "
-                 f"strategy.{memory_block}{kill_feedback_block}",
+            system=(
+                "You are a crypto edge miner. Pick ONE symbol from the candidates and design "
+                "a targeted strategy exploiting its specific scanner signal. "
+                "Return JSON with: symbol, name, timeframe, direction_bias "
+                "(long/short/neutral), entry_rule (text), exit_rule (text), rationale."
+                + playbook_block
+            ),
+            user=(
+                f"Design one targeted strategy."
+                f"{universe_context}{memory_block}{kill_feedback_block}"
+            ),
             schema=StrategySpec,
             max_tokens=600,
         )
@@ -236,6 +387,8 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         if err2:
             errors.append(err2)
 
+    # ── Extract fields, resolving symbol from LLM output ──
+    chosen_symbol = _resolve_symbol(spec, candidate_symbols, fallback_symbol)
     name = str(spec.get("name") or "Designed Strategy")[:120]
     timeframe = str(spec.get("timeframe") or "1h")[:16]
     direction = str(spec.get("direction_bias") or "neutral").lower()
@@ -246,7 +399,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
     rationale = str(spec.get("rationale") or "")[:500]
 
     parameters: dict = {
-        "symbol": default_symbol,
+        "symbol": chosen_symbol,
         "timeframe": timeframe,
         "direction_bias": direction,
         "entry_rule": entry_rule,
@@ -254,6 +407,13 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
     }
     if ruleset_json:
         parameters["ruleset"] = ruleset_json
+
+    # Attach universe provenance for traceability
+    if candidate_symbols and chosen_symbol in candidate_symbols:
+        parameters["source"] = "universe_scanner"
+    else:
+        parameters["source"] = "config_fallback"
+
     description = (
         rationale
         or f"{name} ({timeframe}, {direction}). Entry: {entry_rule or 'n/a'}. Exit: {exit_rule or 'n/a'}."
@@ -263,13 +423,14 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
     log_tool(run_id, "create_strategy_hypothesis", "observe", True, output=strategy.id)
     outputs.append(f"strategy:{strategy.id}")
 
-    # Persist strategy card into KB (§4.2 strategy_memory: parameters + intent snapshot).
+    # Persist strategy card into KB
     try:
         executable_tag = "EXECUTABLE (RuleSet)" if ruleset_json else "advisory only"
+        source_tag = parameters.get("source", "unknown")
         memory_content = (
             f"# {name}\n\n"
-            f"**Direction**: {direction} | **Timeframe**: {timeframe} | **Symbol**: {default_symbol}\n"
-            f"**Rules**: {executable_tag}\n\n"
+            f"**Direction**: {direction} | **Timeframe**: {timeframe} | **Symbol**: {chosen_symbol}\n"
+            f"**Rules**: {executable_tag} | **Source**: {source_tag}\n\n"
             f"## Entry Rule\n{entry_rule or 'n/a'}\n\n"
             f"## Exit Rule\n{exit_rule or 'n/a'}\n\n"
             f"## Rationale\n{rationale or 'n/a'}\n\n"
@@ -281,7 +442,6 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         errors.append(f"strategy_memory_failed:{e}")
 
     # Advance through the ungated lifecycle states so the paper trader can bind to it.
-    # Stop and record on the first refused transition rather than forcing it.
     state = "draft"
     for target in _ACTIVATION_PATH:
         result = promote_strategy(strategy.id, target)
