@@ -931,3 +931,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 23:03 UTC] ✓ 系统正常 — Features=1827/h (1830 带持续 3h+). Opportunities=2761 (+87/h). §17 timed_out=41 (+1). Knowledge=489. Ghost=0, Stale=231. §18 根因确认: **龙虾/USDT** (中文字符 symbol) 在 registry 中, 导致 Binance chunk 400-430 整批 regex 拒绝. 修复方向: `_chunked_fetch_tickers` 预过滤非 ASCII symbols. 11h+ 连续无中断.
 
 [2026-06-17 23:46 UTC] ✓ 系统正常 — Features=1827/h (1830 带 4h+ 稳定). Opportunities=2821 (+85/h). §17 timed_out=43 (+2/45min, 线性). Knowledge=493. Ghost=0, Stale=233 (+2). §18 新增: VELVET/USDT (Bitget-only, Binance+Bybit 均无). paper_trader: completed_with_errors=3/h (持续, 非致命). 12h+ 连续无中断.
+
+[2026-06-18 00:03 UTC] ✓ 系统正常 — Features=1525/h (off-peak 下降, 同 round 33 模式). Opportunities=2844 (+83/h). §17 timed_out=45 (+2/45min, 线性), market_observer 最近 5 次全部 timed_out, abandoned_threads 重置为 1 (gateway 自动重启清理). Knowledge=497 (+8/h). Ghost=0, Stale=232. §18 新增: FOLKS/USDT (Bitget-only). 12.5h+ 连续无中断.
