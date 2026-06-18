@@ -68,12 +68,29 @@ async def get_prediction_status():
     categories = cfg.market_data.observed_prediction_markets
 
     return {
+        "enabled": cfg.market_data.prediction_enabled,
         "last_run": last_run,
         "categories": categories,
         "total_opportunities": len(opps),
         "open_opportunities": open_count,
         "observer_interval_minutes": 30,
     }
+
+
+@router.post("/toggle")
+async def toggle_prediction(body: dict):
+    """Enable or disable the prediction market module."""
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.files.jsonl import write_audit
+    cfg = load_config()
+    old = cfg.market_data.prediction_enabled
+    cfg.market_data.prediction_enabled = bool(body.get("enabled", False))
+    save_config(cfg)
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "prediction_toggled",
+                 "entity_type": "prediction_config", "before": {"enabled": old},
+                 "after": {"enabled": cfg.market_data.prediction_enabled},
+                 "message": f"Prediction market {'enabled' if cfg.market_data.prediction_enabled else 'disabled'}"})
+    return {"enabled": cfg.market_data.prediction_enabled}
 
 
 @router.get("/markets")
