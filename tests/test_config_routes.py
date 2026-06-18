@@ -163,9 +163,11 @@ async def test_settings_response_covers_sanitized_config_schema(client):
         ".oauth_token_ref",
         ".oauth_refresh_ref",
     )
+    hidden_keys = {"tunnel.credentials_path"}
     expected_visible = {
         key for key in expected_keys
         if not (key.startswith("models.providers.") and key.endswith(secret_suffixes))
+        and key not in hidden_keys
     }
 
     missing = sorted(expected_visible - actual_keys)

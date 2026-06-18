@@ -220,18 +220,30 @@ def check_promotion_gates(strategy_id: str) -> dict:
         strategy_specific_reviews = global_reviews
         post_trade_reviews_used = "global_fallback" if global_reviews else "missing"
 
+    # §5.3: only count filled orders (not pending/cancelled).
+    # Computed early so the runtime gate can use it for relaxation.
+    filled_orders = [o for o in orders if o.get("status") == "filled"]
+    paper_trade_count = len(fills) if fills else len(filled_orders)
+
+    # Runtime gate: trade-count-driven relaxation.
+    # High-frequency strategies (30+ trades) need only 3 days minimum instead of 14.
+    _HIGH_TRADE_THRESHOLD = DEFAULT_PROMOTION_GATES["min_paper_trades"]  # 30
+    _MIN_RUNTIME_DAYS_RELAXED = 3
+
     first_order_age_days = _first_order_age_days(orders)
     if first_order_age_days is None:
         failures.append("no_strategy_paper_orders")
+    elif paper_trade_count >= _HIGH_TRADE_THRESHOLD:
+        if first_order_age_days < _MIN_RUNTIME_DAYS_RELAXED:
+            failures.append(
+                f"insufficient_paper_runtime_days:{first_order_age_days}<"
+                f"{_MIN_RUNTIME_DAYS_RELAXED}"
+            )
     elif first_order_age_days < DEFAULT_PROMOTION_GATES["min_paper_runtime_days"]:
         failures.append(
             f"insufficient_paper_runtime_days:{first_order_age_days}<"
             f"{DEFAULT_PROMOTION_GATES['min_paper_runtime_days']}"
         )
-
-    # §5.3: only count filled orders (not pending/cancelled).
-    filled_orders = [o for o in orders if o.get("status") == "filled"]
-    paper_trade_count = len(fills) if fills else len(filled_orders)
     if paper_trade_count < DEFAULT_PROMOTION_GATES["min_paper_trades"]:
         failures.append(f"insufficient_paper_trades:{paper_trade_count}<{DEFAULT_PROMOTION_GATES['min_paper_trades']}")
 

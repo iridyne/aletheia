@@ -22,7 +22,7 @@ from aletheia.strategy.cost_model import CostModel
 from aletheia.strategy.dsl import RuleSet
 from aletheia.strategy.models import BacktestRun, BacktestTrade
 from aletheia.strategy.repositories import insert_backtest_run, insert_backtest_trades
-from aletheia.strategy.review import Verdict, evaluate_strategy
+from aletheia.strategy.review import StrategyVerdict, Verdict, evaluate_strategy
 
 logger = logging.getLogger("aletheia.strategy.orchestrator")
 
@@ -195,6 +195,33 @@ def run_all_backtests(
                 max_drawdown_pct=m.max_drawdown_pct,
                 total_return_pct=m.total_return_pct,
             )
+
+            # Walk-forward OOS validation: strategies that pass backtest
+            # must also show positive expectancy out-of-sample.
+            from aletheia.config.loader import load_config as _ld_cfg
+            _factory_cfg = _ld_cfg().strategy_factory
+            if (_factory_cfg.walk_forward_enabled
+                    and verdict.verdict != Verdict.KILL
+                    and len(bars) >= _factory_cfg.walk_forward_min_bars):
+                try:
+                    from aletheia.strategy.walk_forward import run_walk_forward
+                    wf_result = run_walk_forward(ruleset, bars, cfg)
+                    if not wf_result.passed:
+                        verdict = StrategyVerdict(
+                            verdict=Verdict.KILL,
+                            reasons=[
+                                "walk_forward_failed",
+                                f"oos_expectancy={wf_result.oos_avg_expectancy:.3f}",
+                                f"degradation={wf_result.degradation_ratio:.2f}",
+                            ],
+                            metrics_summary={
+                                **verdict.metrics_summary,
+                                "wf_oos_expectancy": wf_result.oos_avg_expectancy,
+                                "wf_degradation": wf_result.degradation_ratio,
+                            },
+                        )
+                except Exception as wf_err:
+                    logger.debug("walk_forward skipped for %s: %s", sid, wf_err)
 
             action = "flagged_for_review"
             if verdict.verdict == Verdict.KILL and retire_killed:

@@ -581,6 +581,14 @@ export const api = {
     blacklist: string[]; fallback_symbols: string[];
   }>) => post<any>('/settings/universe', body),
 
+  // Strategy Factory config
+  updateStrategyFactoryConfig: (body: Partial<{
+    backtest_gate_enabled: boolean; sweep_enabled: boolean; sweep_max_variants: number;
+    event_driven_enabled: boolean; event_cooldown_minutes: number; event_min_score: number;
+    walk_forward_enabled: boolean; walk_forward_folds: number; walk_forward_min_bars: number;
+    high_trade_count_threshold: number; min_runtime_days_relaxed: number;
+  }>) => post<any>('/settings/strategy_factory', body),
+
   // Network / proxy config
   updateNetworkConfig: (body: Partial<{ proxy_url: string; no_proxy: string }>) =>
     post<{ updated: Record<string, any>; network: { proxy_url: string; no_proxy: string } }>('/settings/network', body),

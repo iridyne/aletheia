@@ -59,6 +59,7 @@ def emit_deterministic_opportunities(
     """
     feat_by_symbol: dict[str, dict] = {f["symbol"]: f for f in scored_features}
     created = 0
+    _high_conf_emitted = False
 
     for m in members:
         symbol = m.get("symbol", "")
@@ -125,6 +126,8 @@ def emit_deterministic_opportunities(
         try:
             insert_opportunity(opp)
             created += 1
+            if confidence == "high":
+                _high_conf_emitted = True
             logger.debug("emitted %s %s %s score=%.0f", family, direction, symbol, total_score)
         except Exception as e:
             logger.warning("Failed to emit opportunity for %s: %s", symbol, e)
@@ -134,6 +137,18 @@ def emit_deterministic_opportunities(
             "Universe signal emitter: %d deterministic opportunities (snapshot=%s)",
             created, snapshot_id[:8],
         )
+
+    # Event-driven strategy design: trigger when high-confidence signals appear
+    if _high_conf_emitted:
+        try:
+            from aletheia.config.loader import load_config as _load_cfg
+            _cfg = _load_cfg()
+            if _cfg.strategy_factory.event_driven_enabled:
+                from aletheia.agent_runtime.scheduler import trigger_strategy_designer_on_demand
+                trigger_strategy_designer_on_demand()
+        except Exception as e:
+            logger.debug("Event-driven strategy trigger skipped: %s", e)
+
     return created
 
 

@@ -607,6 +607,32 @@ def _run_strategy_designer():
         logger.warning("strategy_designer job failed: %s", e)
 
 
+# ── Event-driven strategy design trigger ──────────────────────────────────────
+
+import time as _time
+
+_last_event_design_time: float = 0.0
+_EVENT_DESIGN_COOLDOWN_SEC: float = 1800.0  # 30 min debounce
+
+
+def trigger_strategy_designer_on_demand() -> bool:
+    """Trigger strategy_designer outside cron when high-score universe candidates appear.
+
+    Returns True if the designer was triggered, False if debounced.
+    Thread-safe: the agents executor (pool=1) serializes concurrent calls.
+    """
+    global _last_event_design_time
+    now = _time.time()
+    if now - _last_event_design_time < _EVENT_DESIGN_COOLDOWN_SEC:
+        logger.debug("strategy_designer event-trigger debounced (%.0fs since last)",
+                     now - _last_event_design_time)
+        return False
+    _last_event_design_time = now
+    logger.info("strategy_designer triggered by high-score universe signal")
+    _run_strategy_designer()
+    return True
+
+
 def _run_reconciliation():
     cfg = load_config()
     if cfg.runtime.paused:

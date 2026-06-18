@@ -485,24 +485,103 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
     except Exception as e:
         errors.append(f"strategy_memory_failed:{e}")
 
+    # ── Backtest gate: instant kill if strategy fails historical test ──
+    backtest_killed = False
+    if ruleset_json and cfg.strategy_factory.backtest_gate_enabled:
+        from aletheia.strategy.backtest import BacktestConfig as _BtCfg, load_bars_from_db, run_backtest
+        from aletheia.strategy.dsl import RuleSet as _RS
+        from aletheia.strategy.cost_model import CostModel as _CM
+        from aletheia.strategy.review import evaluate_strategy as _eval_strat
+
+        try:
+            _bars = load_bars_from_db(chosen_symbol, timeframe, limit=500)
+            if len(_bars) >= 30:
+                _bt_dir = direction if direction != "neutral" else "long"
+                _bt_result = run_backtest(
+                    _RS.from_json(ruleset_json), _bars,
+                    _BtCfg(symbol=chosen_symbol, timeframe=timeframe,
+                            direction=_bt_dir, cost_model=_CM()),
+                )
+                _m = _bt_result.metrics
+                _pf = min(_m.profit_factor, 999.0)
+                _verdict = _eval_strat(
+                    trade_count=_m.trade_count, win_rate=_m.win_rate,
+                    expectancy=_m.expectancy, profit_factor=_pf,
+                    max_drawdown_pct=_m.max_drawdown_pct,
+                    total_return_pct=_m.total_return_pct,
+                )
+                if _verdict.verdict.value == "kill" and _m.trade_count >= 2:
+                    backtest_killed = True
+                    outputs.append(f"backtest_killed:{_verdict.reasons}")
+                    log_tool(run_id, "backtest_gate", "observe", True,
+                             output=f"KILL: {_verdict.reasons}")
+        except Exception as e:
+            errors.append(f"backtest_gate_error:{e}")
+
     # Advance through the ungated lifecycle states so the paper trader can bind to it.
     # Advisory-only strategies (no compiled RuleSet) stop at paper_candidate — they
     # cannot be validated by the backtest engine, so giving them paper_running slots
     # wastes resources.
-    activation_limit = "paper_running" if ruleset_json else "paper_candidate"
-    state = "draft"
-    for target in _ACTIVATION_PATH:
-        if target == "paper_running" and activation_limit == "paper_candidate":
-            from aletheia.storage.repositories import update_strategy
-            update_strategy(strategy.id, paper_trading_paused=True,
-                           paper_pause_reason="no_ruleset")
-            outputs.append("advisory_only:paused_at_paper_candidate")
-            break
-        result = promote_strategy(strategy.id, target)
-        if not result.get("success"):
-            errors.append(f"promotion_stopped_at:{state}->{target}:{result.get('error')}")
-            break
-        state = target
-    outputs.append(f"strategy_state:{state}")
+    # Backtest-killed strategies are retired immediately — no paper resources wasted.
+    if backtest_killed:
+        promote_strategy(strategy.id, "retired")
+        outputs.append("strategy_state:retired")
+    else:
+        activation_limit = "paper_running" if ruleset_json else "paper_candidate"
+        state = "draft"
+        for target in _ACTIVATION_PATH:
+            if target == "paper_running" and activation_limit == "paper_candidate":
+                from aletheia.storage.repositories import update_strategy
+                update_strategy(strategy.id, paper_trading_paused=True,
+                               paper_pause_reason="no_ruleset")
+                outputs.append("advisory_only:paused_at_paper_candidate")
+                break
+            result = promote_strategy(strategy.id, target)
+            if not result.get("success"):
+                errors.append(f"promotion_stopped_at:{state}->{target}:{result.get('error')}")
+                break
+            state = target
+        outputs.append(f"strategy_state:{state}")
+
+    # ── Parameter sweep: generate variants from surviving base strategies ──
+    if ruleset_json and not backtest_killed and cfg.strategy_factory.sweep_enabled:
+        try:
+            from aletheia.strategy.param_sweep import SweepConfig as _SwCfg, run_parameter_sweep
+
+            sweep_bars = load_bars_from_db(chosen_symbol, timeframe, limit=500)
+            if len(sweep_bars) >= 30:
+                _bt_dir = direction if direction != "neutral" else "long"
+                sweep_cfg = _SwCfg(
+                    base_ruleset=_RS.from_json(ruleset_json),
+                    symbol=chosen_symbol,
+                    timeframe=timeframe,
+                    direction=_bt_dir,
+                    max_variants=50,
+                )
+                sweep_result = run_parameter_sweep(sweep_cfg, sweep_bars)
+
+                sweep_created = 0
+                for variant_rs, variant_metrics in sweep_result.all_survivors[:10]:
+                    variant_params = dict(parameters)
+                    variant_params["ruleset"] = variant_rs.to_json()
+                    variant_params["source"] = "param_sweep"
+                    variant_params["_parent_strategy_id"] = strategy.id
+                    variant_name = f"{name} (sweep-{sweep_created + 1})"[:120]
+                    v_strat = create_strategy(
+                        name=variant_name, description=f"Param variant of {name}",
+                        parameters=variant_params,
+                    )
+                    for t in _ACTIVATION_PATH:
+                        r = promote_strategy(v_strat.id, t)
+                        if not r.get("success"):
+                            break
+                    sweep_created += 1
+
+                if sweep_created:
+                    outputs.append(f"sweep_variants_created:{sweep_created}")
+                    log_tool(run_id, "param_sweep", "observe", True,
+                             output=f"{sweep_result.variants_tested} tested, {sweep_created} deployed")
+        except Exception as e:
+            errors.append(f"param_sweep_error:{e}")
 
     return {"outputs": outputs, "errors": errors}

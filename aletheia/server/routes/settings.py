@@ -74,7 +74,9 @@ async def get_settings():
         "guard": cfg.guard.model_dump(mode="json"),
         "tunnel": {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
                    if k != "credentials_path"},
+        "regime": cfg.regime.model_dump(mode="json"),
         "network": cfg.network.model_dump(mode="json"),
+        "strategy_factory": cfg.strategy_factory.model_dump(mode="json"),
     }
 
 
@@ -631,6 +633,44 @@ async def update_universe_config(req: UniverseConfigUpdate):
                  "after": cfg.universe.model_dump(mode="json"),
                  "message": f"Universe config updated: {list(updates.keys())}"})
     return {"updated": updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
+
+
+# ---------------------------------------------------------------------------
+# Strategy Factory config
+# ---------------------------------------------------------------------------
+
+class StrategyFactoryConfigUpdate(SettingsRequest):
+    backtest_gate_enabled: bool | None = None
+    sweep_enabled: bool | None = None
+    sweep_max_variants: int | None = None
+    event_driven_enabled: bool | None = None
+    event_cooldown_minutes: int | None = None
+    event_min_score: float | None = None
+    walk_forward_enabled: bool | None = None
+    walk_forward_folds: int | None = None
+    walk_forward_min_bars: int | None = None
+    high_trade_count_threshold: int | None = None
+    min_runtime_days_relaxed: int | None = None
+
+
+@router.post("/strategy_factory")
+async def update_strategy_factory_config(req: StrategyFactoryConfigUpdate):
+    """Update strategy factory parameters (generation velocity, validation gates)."""
+    cfg = load_config()
+    old = cfg.strategy_factory.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+
+    for field, value in updates.items():
+        setattr(cfg.strategy_factory, field, value)
+
+    save_config(cfg)
+
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "strategy_factory_config_changed",
+                 "entity_type": "strategy_factory_config", "before": old,
+                 "after": cfg.strategy_factory.model_dump(mode="json"),
+                 "message": f"Strategy factory config updated: {list(updates.keys())}"})
+    return {"updated": updates, "strategy_factory": cfg.strategy_factory.model_dump(mode="json")}
 
 
 # ---------------------------------------------------------------------------
