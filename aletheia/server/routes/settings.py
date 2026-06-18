@@ -72,7 +72,8 @@ async def get_settings():
         "market_data": cfg.market_data.model_dump(mode="json"),
         "universe": cfg.universe.model_dump(mode="json"),
         "guard": cfg.guard.model_dump(mode="json"),
-        "tunnel": cfg.tunnel.model_dump(mode="json"),
+        "tunnel": {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
+                   if k != "credentials_path"},
         "network": cfg.network.model_dump(mode="json"),
     }
 

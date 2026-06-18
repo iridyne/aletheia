@@ -174,7 +174,11 @@ def create_strategy_memory(strategy_id: str, title: str, content: str) -> Knowle
         file_path=str(path),
         confidence="medium_confidence",
     )
-    insert_knowledge_item(item)
+    try:
+        insert_knowledge_item(item)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
     _index(item, content)
     return item
 

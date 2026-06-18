@@ -13,13 +13,17 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-06-08 · 维护者：Aletheia Dev
+> **最后更新**：2026-06-18 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
 >
-> **状态**：✅ §1-§3 条目已于 2026-06-06 修复并合入 master（原文保留作审计参考，修复摘要见 §10）。
+> **状态**：
+> ✅ **§1（🔴 信任不变量）全部已修复**（2026-06-18 逐条代码验证确认）。详见 §10.1。
+> ✅ **§2（🟠 数据失真）全部已修复**（详见 §10.2）。最后 3 条于 2026-06-18 修复：§2.5 AllowEditing 标 deprecated / §2.6 create_strategy_memory 补原子回滚 / §2.8 credentials_path 剥离。
+> ✅ **§4（2026-06-13→2026-06-14 修复）结构性发现已全部处理**。
 > ✅ **§5（OAuth Provider）已于 2026-06-14 全部修复**（04e0938 + model_metadata 补全）。
-> ✅ **§4（2026-06-13→2026-06-14 修复）结构性发现已全部处理**：entry_rule 标注为 advisory（语义诚实）；验证层标注为 MVP 已知限制；audit hash chain 已实施。
+> ✅ **§6（数据层技术债）2026-06-16**：§6.1-6.2 已修复，§6.3-6.4 已知限制暂不修。
+> ✅ **§12（WebUI 后端缺口）全部已修复**（2026-06-18 验证）。
 
 ---
 
@@ -268,17 +272,17 @@
   - 影响：手动 CLI 触发不受双门约束，与"autonomous 默认 OFF"承诺局部背离
   - 最小修复：双门复制进 `paper_trader.py` agent body 顶部
 
-- **AllowEditing 是空权限模式**
+- ✅ **AllowEditing 是空权限模式**（2026-06-18：标记 DEPRECATED + 加 `is_tool_implemented` 守门）
   - 佐证：`agent_runtime/permissions.py:7` `"editing_tool": {"AllowEditing", "Auto"}`；`tool_registry.py:33-37` 三个 editing 工具（`create_playbook_draft` / `create_prompt_draft` / `create_code_change_proposal`）从未被任何 agent 调用
   - 影响：违反 trust §3.3——permission_mode 选 AllowEditing 行为无变化，但 UI 暗示"可写 playbook/prompt/代码改动"——用户承诺被静默兑空
-  - 最小修复：删 3 个 editing 注册项 + `editing_tool` 类标 deprecated；或返回 `unimplemented` 直到接线完成
+  - 修复：`tool_registry.py` 加 `_UNIMPLEMENTED_TOOLS` 集合 + `is_tool_implemented()` 函数，注释标注 DEPRECATED
 
 ### 2.6 存储 / 文件
 
-- **KB Markdown/SQLite 写入非原子**
+- ✅ **KB Markdown/SQLite 写入非原子**（2026-06-18：`create_strategy_memory` 补齐 try/except 回滚，与其余 create_* 一致）
   - 佐证：`knowledge/manager.py:22-29` `path = write_research_note(...); ... insert_knowledge_item(item)`——Markdown 落盘成功但 SQLite 插入失败时，磁盘有孤儿 .md，DB 无条目；反之亦然；无 try/except 回滚
   - 影响：KB 出现"文件存在但 list 不到"或"DB 中有 file_path 指向空文件"的脏状态；违反 trust §1.1 因果链可审计
-  - 最小修复：SQLite 先 insert + commit（含 file_path），失败回滚不写 Markdown；Markdown 写入失败则 update_knowledge_item(status='broken') + audit
+  - 修复：所有 `create_*` 函数现在统一使用 `try: insert_knowledge_item() / except: path.unlink(missing_ok=True); raise` 模式
 
 - **JSONL audit 写入静默吞异常**
   - 佐证：`files/jsonl.py:38-39` `except OSError: pass # rotation is best-effort`；`_write_audit_row:93-95` `except Exception: return`
@@ -344,10 +348,10 @@
 
 ### 2.8 Settings / 默认值 / CORS
 
-- **`/api/settings` GET 转储完整 cfg.model_dump，曝露 secret 命名空间**
+- ✅ **`/api/settings` GET 转储完整 cfg.model_dump，曝露 secret 命名空间**（2026-06-18：tunnel.credentials_path 已剥离）
   - 佐证：`routes/settings.py:21-24` `return cfg.model_dump(mode="json")`——含 `models.providers.*.api_key_secret_ref` 这类 keyring 索引
   - 影响：不是 raw key 泄漏，但违反 AGENTS.md "API keys must never be returned by GET" 的精神扩展——给攻击者 keyring 检索表
-  - 最小修复：路由层显式构造允许字段白名单返回
+  - 修复：tunnel 部分使用 dict comprehension 排除 `credentials_path`；models 部分此前已单独处理 `api_key_secret_ref`
 
 - **CORS 未配置 + `bind_host` 无校验**
   - 佐证：`server/app.py` 无 CORS middleware；`config/schema.py` `bind_host` 字段无 validator
@@ -578,6 +582,9 @@
 - ✅ **§2.7 Codex auth 正则误匹配**：锚定上下文后匹配
 - ✅ **§2.8 CORS 未配置**：加 localhost-only CORS + bind_host 校验
 - ✅ **§2.8 autostart 无 audit**：路由层补 audit
+- ✅ **§2.5 AllowEditing 空模式**：标记 DEPRECATED + `is_tool_implemented()` 守门（2026-06-18）
+- ✅ **§2.6 create_strategy_memory 非原子**：补齐 try/except + path.unlink 回滚（2026-06-18）
+- ✅ **§2.8 settings credentials_path 泄露**：tunnel 部分排除 credentials_path（2026-06-18）
 
 ### 10.3 §3 Dead code / Cosmetic 修复
 
