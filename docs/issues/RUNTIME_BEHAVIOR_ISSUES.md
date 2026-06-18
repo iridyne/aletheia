@@ -945,3 +945,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-18 02:46 UTC] ✓ 系统正常 — Features=1562/h (volume dip, 同 off-peak 模式). Opportunities=3089 (+80/h). §17 timed_out=57 (+3), abandoned_threads=3 (重新累积). Knowledge=522 (+8/h). Ghost=0, Stale=235. §18: H/USDT, SPX/USDT (Bitget-only). risk_critic stale 已恢复. 15h+ 连续无中断.
 
 [2026-06-18 03:03 UTC] ✓ 系统正常 — Features=1875/h (亚盘活跃, 连续 3h 上升趋势 1836→1864→1875). Opportunities=3118 (+87/h). §17 timed_out=58 (+1). Knowledge=526 (+9/h). Ghost=0, Stale=235. risk_critic 全部 completed (恢复). 15.5h+ 连续无中断.
+
+[2026-06-18 03:46 UTC] ✓ 系统正常 — Features=1870/h (亚盘持续). Opportunities=3184 (+95/h). §17 timed_out=61 (+3), abandoned_threads 再次重置为 1 (gateway 自动重启). Knowledge=536 (+14/h 高产). Ghost=0, Stale=237. post_trade_reviewer: 1 completed_with_errors (偶发). §18: INTC/USDT (xStock). 16h+ 连续无中断.
