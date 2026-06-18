@@ -79,7 +79,9 @@ class UniverseService:
         from aletheia.universe.features import collect_features
         from aletheia.universe.filters import apply_tradability_filters
         from aletheia.universe.scanners import run_all_scanners
-        from aletheia.universe.allocator import allocate_universe, compute_total_score
+        from aletheia.universe.allocator import (
+            allocate_universe, compute_total_score, get_family_multipliers,
+        )
         from aletheia.universe.outcome_recorder import settle_due, register_pending
         from aletheia.universe.signal_emitter import (
             emit_deterministic_opportunities, _infer_direction,
@@ -93,12 +95,50 @@ class UniverseService:
         except Exception as e:
             logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
 
+        # Detect market regime (non-fatal — falls back to sideways)
+        current_regime = None
+        try:
+            if not cfg.regime.enabled:
+                raise RuntimeError("regime disabled by config")
+
+            from aletheia.regime.collector import collect_regime_inputs
+            from aletheia.regime.detector import debounced_detect, MarketRegime
+            from aletheia.storage.models import MarketRegimeRecord
+
+            regime_inputs = await collect_regime_inputs()
+            if regime_inputs:
+                current_regime = debounced_detect(
+                    min_hold_periods=cfg.regime.min_hold_periods,
+                    **regime_inputs,
+                )
+                record = MarketRegimeRecord(
+                    state=current_regime.state,
+                    confidence=current_regime.confidence,
+                    long_bias=current_regime.long_bias,
+                    short_bias=current_regime.short_bias,
+                    signals=json.dumps(current_regime.signals),
+                    detected_at=current_regime.detected_at,
+                )
+                repo.insert_market_regime(record)
+                # If short globally disabled, zero out short_bias so gate blocks all shorts
+                if not cfg.regime.short_enabled:
+                    current_regime.short_bias = 0.0
+                logger.info(
+                    "Regime: %s (conf=%.2f, long_bias=%.2f, short_bias=%.2f)",
+                    current_regime.state, current_regime.confidence,
+                    current_regime.long_bias, current_regime.short_bias,
+                )
+        except Exception as e:
+            logger.warning("Regime detection failed (non-fatal): %s", e)
+
         run = UniverseScannerRun()
         repo.insert_universe_scanner_run(run)
 
         try:
             count = await sync_registry(cfg)
-            assets = repo.list_universe_assets(limit=1000)
+            assets = repo.list_universe_assets(
+                venue=cfg.market_data.ccxt_exchange, limit=1000,
+            )
             repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
 
             features_list = await collect_features(assets, cfg)
@@ -106,10 +146,16 @@ class UniverseService:
             filtered = apply_tradability_filters(features_list, cfg.universe)
             repo.update_universe_scanner_run(run.id, assets_passed=len(filtered))
 
+            calibration = get_family_multipliers(max_step=0.15)
+            if calibration:
+                logger.info("Calibration multipliers: %s", calibration)
+
             scored = []
             for feat in filtered:
                 scanner_result = run_all_scanners(feat)
-                total = compute_total_score(feat, scanner_result, cfg.universe)
+                total = compute_total_score(
+                    feat, scanner_result, cfg.universe, calibration=calibration or None,
+                )
                 scored.append({**feat, **scanner_result, "total_score": total})
 
             allocated = allocate_universe(scored, cfg.universe)
@@ -139,7 +185,7 @@ class UniverseService:
 
             inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
-                ttl_sec = max(item.get("ttl_sec", 3600), snapshot_ttl_sec)
+                ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
                 entry_price = item.get("last_price")
                 member = UniverseMember(
@@ -187,6 +233,7 @@ class UniverseService:
             try:
                 emit_deterministic_opportunities(
                     inserted_members, snap.id, scored_features=scored,
+                    regime=current_regime,
                 )
             except Exception as e:
                 logger.warning("Deterministic opportunity emission failed (non-fatal): %s", e)

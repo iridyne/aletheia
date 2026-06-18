@@ -418,6 +418,18 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
   )
 }
 
+// --- Disabled Overlay ---
+function DisabledOverlay() {
+  return (
+    <div className="pred-disabled-overlay">
+      <div className="pred-disabled-content">
+        <h3>Prediction Market 已关闭</h3>
+        <p>此功能当前未启用。前往 Settings → Market Data 开启 Prediction Market 观测。</p>
+      </div>
+    </div>
+  )
+}
+
 // --- Main Page ---
 export default function PredictionLens() {
   const qc = useQueryClient()
@@ -433,10 +445,12 @@ export default function PredictionLens() {
     queryKey: ['prediction-markets'],
     queryFn: api.getPredictionMarkets,
     refetchInterval: 60000,
+    enabled: status?.enabled !== false,
   })
   const { data: runs = [] } = useQuery({
     queryKey: ['prediction-runs'],
     queryFn: api.getPredictionRuns,
+    enabled: status?.enabled !== false,
   })
 
   const refresh = useMutation({
@@ -448,44 +462,50 @@ export default function PredictionLens() {
     },
   })
 
+  const isDisabled = status?.enabled === false
+
   return (
-    <div>
+    <div className="pred-page-wrapper">
       <PageHeader
         title="Prediction Markets"
         role="Observe · prediction market probability trends from Polymarket. Observation-only — not routed to Paper Trader or Live Execution."
         actions={
-          <Button variant="secondary" onClick={() => refresh.mutate(undefined as any)} disabled={refresh.isPending}>
+          <Button variant="secondary" onClick={() => refresh.mutate(undefined as any)} disabled={refresh.isPending || isDisabled}>
             {refresh.isPending ? 'Refreshing…' : 'Refresh Now'}
           </Button>
         }
       />
 
-      <div className="pred-obs-banner">
-        Prediction markets are observation-only. They are not eligible for Paper Trader or Live Execution.
-      </div>
+      {isDisabled && <DisabledOverlay />}
 
-      <ObserverStatusCard status={status} />
+      <div className={isDisabled ? 'pred-content-disabled' : ''}>
+        <div className="pred-obs-banner">
+          Prediction markets are observation-only. They are not eligible for Paper Trader or Live Execution.
+        </div>
 
-      <div className="pred-tabs">
-        <Button variant="ghost" className={`pred-tab ${tab === 'radar' ? 'pred-tab-active' : ''}`} onClick={() => setTab('radar')}>
-          Market Radar {markets.length > 0 && <span className="tab-badge">{markets.length}</span>}
-        </Button>
-        <Button variant="ghost" className={`pred-tab ${tab === 'movers' ? 'pred-tab-active' : ''}`} onClick={() => setTab('movers')}>
-          Probability Movers
-        </Button>
-        <Button variant="ghost" className={`pred-tab ${tab === 'runs' ? 'pred-tab-active' : ''}`} onClick={() => setTab('runs')}>
-          Observer Runs {runs.length > 0 && <span className="tab-badge">{runs.length}</span>}
-        </Button>
-        <Button variant="ghost" className={`pred-tab ${tab === 'preferences' ? 'pred-tab-active' : ''}`} onClick={() => setTab('preferences')}>
-          Preferences
-        </Button>
-      </div>
+        <ObserverStatusCard status={status} />
 
-      <div className="pred-tab-content">
-        {tab === 'radar' && <MarketRadarTab markets={markets} onSelect={setSelected} />}
-        {tab === 'movers' && <ProbabilityMoversTab markets={markets} onSelect={setSelected} />}
-        {tab === 'runs' && <ObserverRunsTab runs={runs} />}
-        {tab === 'preferences' && <PreferencesTab />}
+        <div className="pred-tabs">
+          <Button variant="ghost" className={`pred-tab ${tab === 'radar' ? 'pred-tab-active' : ''}`} onClick={() => setTab('radar')}>
+            Market Radar {markets.length > 0 && <span className="tab-badge">{markets.length}</span>}
+          </Button>
+          <Button variant="ghost" className={`pred-tab ${tab === 'movers' ? 'pred-tab-active' : ''}`} onClick={() => setTab('movers')}>
+            Probability Movers
+          </Button>
+          <Button variant="ghost" className={`pred-tab ${tab === 'runs' ? 'pred-tab-active' : ''}`} onClick={() => setTab('runs')}>
+            Observer Runs {runs.length > 0 && <span className="tab-badge">{runs.length}</span>}
+          </Button>
+          <Button variant="ghost" className={`pred-tab ${tab === 'preferences' ? 'pred-tab-active' : ''}`} onClick={() => setTab('preferences')}>
+            Preferences
+          </Button>
+        </div>
+
+        <div className="pred-tab-content">
+          {tab === 'radar' && <MarketRadarTab markets={markets} onSelect={setSelected} />}
+          {tab === 'movers' && <ProbabilityMoversTab markets={markets} onSelect={setSelected} />}
+          {tab === 'runs' && <ObserverRunsTab runs={runs} />}
+          {tab === 'preferences' && <PreferencesTab />}
+        </div>
       </div>
 
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Prediction Market Detail">

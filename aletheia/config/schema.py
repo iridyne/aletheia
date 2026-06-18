@@ -80,6 +80,9 @@ class MarketDataConfig(BaseModel):
     # US equities to observe (Yahoo Finance tickers). stock_observer runs only
     # during US market hours (Mon–Fri 14:30–21:00 UTC). Empty = disabled.
     observed_stocks: list[str] = Field(default_factory=list)
+    # Master switch for prediction market observation (Polymarket). When False,
+    # prediction_observer does not run and the Prediction Lens page shows disabled.
+    prediction_enabled: bool = False
     # Polymarket category slugs (or keywords) to observe. prediction_observer
     # fetches active markets matching these categories every 30 minutes.
     observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])
@@ -326,6 +329,13 @@ class UniverseConfig(BaseModel):
     snapshot_ttl_hours: float = 24.0
 
 
+class RegimeConfig(BaseModel):
+    enabled: bool = True
+    min_hold_periods: int = 3
+    bias_threshold: float = 0.30
+    short_enabled: bool = True
+
+
 class GuardConfig(BaseModel):
     enabled: bool = True
     enforce_in_paper_ranker: bool = True
@@ -367,6 +377,7 @@ class AletheiaConfig(BaseModel):
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
+    regime: RegimeConfig = Field(default_factory=RegimeConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)

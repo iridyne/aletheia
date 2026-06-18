@@ -223,7 +223,11 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             close_db()
 
     def _run():
-        loop = asyncio.new_event_loop()
+        import sys
+        if sys.platform == "win32":
+            loop = asyncio.SelectorEventLoop()
+        else:
+            loop = asyncio.new_event_loop()
         _loop_ref[0] = loop
         try:
             return loop.run_until_complete(_guarded_coro())
@@ -750,6 +754,8 @@ def _run_equity_observer():
 def _run_prediction_observer():
     cfg = load_config()
     if cfg.runtime.paused:
+        return
+    if not cfg.market_data.prediction_enabled:
         return
     if not cfg.market_data.observed_prediction_markets:
         return

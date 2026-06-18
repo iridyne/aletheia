@@ -113,22 +113,34 @@ async def _fetch_raw(params: str) -> list[dict]:
         return _fetch_raw_urllib(params)
 
 
-async def fetch_active_markets(categories: list[str], limit: int = 15) -> list[PolymarketMarket]:
-    """Fetch active markets matching any category keyword, sorted by 24h volume desc."""
-    # Over-fetch then filter+trim locally so category filtering is keyword-based.
-    params = f"active=true&closed=false&limit={max(limit * 4, 40)}&order=volume24hr&ascending=false"
+async def fetch_active_markets(categories: list[str], limit: int = 50) -> list[PolymarketMarket]:
+    """Fetch active markets matching any category keyword, sorted by 24h volume desc.
+
+    Falls back to top-volume markets when no category matches are found,
+    so the observer always has data to display.
+    """
+    # Gamma API caps at 100 per request; over-fetch to compensate for category filtering.
+    fetch_count = min(limit * 3, 100)
+    params = f"active=true&closed=false&limit={fetch_count}&order=volume24hr&ascending=false"
     raw = await _fetch_raw(params)
-    markets: list[PolymarketMarket] = []
+    matched: list[PolymarketMarket] = []
+    all_parsed: list[PolymarketMarket] = []
     for item in raw:
         if not isinstance(item, dict):
             continue
-        if not _matches_categories(item, categories):
-            continue
         m = _parse_market(item)
-        if m is not None:
-            markets.append(m)
-    markets.sort(key=lambda m: m.volume_usd, reverse=True)
-    return markets[:limit]
+        if m is None:
+            continue
+        all_parsed.append(m)
+        if _matches_categories(item, categories):
+            matched.append(m)
+    if matched:
+        matched.sort(key=lambda m: m.volume_usd, reverse=True)
+        return matched[:limit]
+    # Fallback: no category matches — return top-volume markets regardless
+    logger.info("no markets matched categories %s, falling back to top-volume", categories)
+    all_parsed.sort(key=lambda m: m.volume_usd, reverse=True)
+    return all_parsed[:limit]
 
 
 async def fetch_market_history(token_id: str, interval: str = "1h", fidelity: int = 60) -> list[dict]:

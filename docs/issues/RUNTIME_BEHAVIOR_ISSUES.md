@@ -247,6 +247,8 @@
 | P2 | §5 prediction_events 空 | 确认数据写入路径 | ℹ️ 设计如此 |
 | P3 | §8 market_observer 偶发失败 | 监控即可 | — 无需修复 |
 | **P1** | **§16 scanner 连续失败 (futures regression)** | **batch ticker + pre-filter + concurrent OHLCV** | ✅ 已修复 (需 gateway restart) |
+| P1 | §17 market_observer IOCP thread leak | SelectorEventLoop 替代 ProactorEventLoop | ✅ 已修复 (需 gateway restart) |
+| P2 | §18 Binance batch ticker regex 拒绝 | ASCII 预过滤 + venue 过滤 | ✅ 已修复 (需 gateway restart) |
 
 ### 修复说明 (2026-06-17)
 
@@ -295,6 +297,20 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
   3. 剩余资产用 asyncio.Semaphore(5) 并发 OHLCV，~60s 内完成
 - timeout 从 360s 提升至 600s 作为安全网
 - 预期: 从 timeout (>360s) 降至 60-90s 完成
+
+**§17 IOCP drain thread leak** (2026-06-18):
+- 根因: Windows `asyncio.new_event_loop()` 创建 ProactorEventLoop，`loop.close()` 挂起在
+  IOCP drain (已取消的 HTTP 连接有未完成的 completion packets)
+- 修复: 在 `_run_async_with_timeout._run()` 中检测 `sys.platform == "win32"` 时使用
+  `asyncio.SelectorEventLoop()` 代替。SelectorEventLoop 基于 select()，无 IOCP，
+  `loop.close()` 立即返回。对 HTTP 工作负载功能等价。
+- 预期: 消除 abandoned thread 累积 (~2/45min → 0)
+
+**§18 Binance batch ticker regex 拒绝** (2026-06-18):
+- 根因: (1) `list_universe_assets()` 无 venue 过滤，返回 Bitget-only symbols；
+  (2) 非 ASCII symbols（龙虾/USDT）通过 `exchange.markets` 检查后触发 Binance regex 拒绝
+- 修复: (a) `_is_valid_symbol()` ASCII 预过滤；(b) `service.py` 传 `venue=cfg.market_data.ccxt_exchange`
+- 预期: 消除 "Illegal characters" 和 cross-venue symbol mismatch 日志噪音
 
 ---
 
@@ -785,3 +801,171 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 **其他管道正常**: Market 11:48 (15min) | Portfolio 12:01 (2min) | Knowledge total=868 | Agent 1h: 26 runs, 22 completed, 1 failed (3.8% — 优秀) | 24h: 752 runs, 96 failed (12.8% — 改善) | Stale 217 | Ghost=0
 
 **结论**: §16 scanner 失败不紧急（TTL 22h），但仍需修复以恢复 universe 动态刷新。其他所有管道健康且高效运行。
+
+### 2026-06-17 12:42 UTC — §16 已修复 ✅
+
+**修复内容**: `features.py` 和 `registry.py` 中 `fetchMarkets = ["spot", "swap"]` → `["spot", "linear"]`
+
+**验证**: Scanner 成功完成，assets_passed=115。commit `d8908e5`。
+
+**根因分析**: CCXT 的 `fetchMarkets` option 是 exchange-specific 的。Binance adapter 白名单只接受 `["spot", "linear", "inverse"]`，"swap" 是 CCXT 统一层的 market type 概念（用于 `defaultType` / symbol routing），但 Binance 拒绝它。这类 exchange-adapter 差异需要在代码中明确映射。
+
+**§16 状态**: 🟢 已修复并验证
+
+### 2026-06-17 12:50 UTC — 第二十轮巡检 (Δ8min post-fix)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 修复生效 | 12:42 completed (115 assets), 下一次 ~12:52 |
+| Market Snapshots | ✅ 正常 | 12:50 (实时), 651/h |
+| Portfolio | ✅ 正常 | 12:40 (10min ago) |
+| Knowledge | ⚠️ 重复 | 884 total, 1h +205 (17x "Daily Consolidation" dreaming_log) |
+| Opportunities | ✅ 高产 | 1807 total, +544/h |
+| Feature Snapshots | ✅ 恢复 | 12:42 (与 scanner 同步恢复) |
+| Predictions | ❌ 空 | 0 markets, 0 claims |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**§16 修复验证**: Scanner 在 12:42 成功完成，assets_scanned=1000, assets_passed=115。§16 关闭。
+
+**market_observer stale 率异常 (§17 新发现)** 🟠
+
+- 2h 内 86 次运行: 36 completed + 4 completed_with_errors + **46 stale (53%)**
+- Stale 集中在 02:22→11:39 UTC (9h 持续期)，12:41 最新 completed 后停止 stale
+- 可能原因: market_observer 运行慢（>超时阈值）→ 被标记 stale → 但实际完成了工作
+- 24h 总计: stale=99, 其中 46 来自 market_observer (47%)
+
+**§7 知识重复持续恶化** 🔴
+
+- 1h 内产出 205 条 knowledge_items, 其中 dreaming_log=17 全部标题 "Daily Consolidation"
+- post_trade_review=102/h, research_note=15/h — 速率远超正常
+- §7 去重方案（plan file）尚未实施。每小时注入 200+ 条大部分重复的 "知识" 持续消耗存储和 FTS 索引
+
+**新发现: Binance batch ticker 非法字符错误** 🟡
+
+- errors.log: `Batch spot ticker fetch failed: binance {"code":-1100,"msg":"Illegal characters found in parameter 'symbols'"}`
+- 原因推断: 部分 symbol 含小写字母或非标准字符，Binance API regex 拒绝
+- 影响: 非致命（降级到单个 ticker fetch），但降低扫描效率
+- 修复方向: fetch_tickers 前过滤 symbols，只传符合 Binance regex `[\\w\\-._&&[^a-z]]` 的
+
+**24h Agent 成功率**: completed=636 (82%), stale=99 (12.7%), completed_with_errors=41 (5.3%)
+- 实际有效率 (completed + completed_with_errors) = 87.3%
+- Ghost agents=0 (启动清扫有效)
+- Timed out=0 (本周期无超时)
+
+### 2026-06-17 13:04 UTC — 第二十一轮巡检 (Δ14min)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 连续成功 | 13:03 completed (14s, 115 passed) — 连续第 3 次成功 |
+| Market Snapshots | ✅ 正常 | 13:00 (4min ago), 665/h |
+| Portfolio | ✅ 正常 | 13:01 (3min ago) |
+| Knowledge | ⚠️ 重复 | 888 total, 1h: ptr=105 + dreaming=17 + rn=16 + tcs=70 |
+| Features | ✅ 恢复 | 13:03 (与 scanner 同步) |
+| Opportunities | ✅ 高产 | 1838 total, +575/h |
+| Predictions | ❌ 空 | 0 markets |
+| Lessons | ✅ 稳定 | 32 条 |
+
+**Scanner perf improvement 验证**: 新代码 (sem=10 + 8s timeout) 下 scanner 14s 完成，与之前持平。timeout 保护已就绪但未触发（说明当前网络正常）。
+
+**§17 market_observer stale 持续** (46/87 = 53%): 一条新 evidence — `asyncio.run() teardown hung after 255s — executor thread abandoned (ProactorEventLoop IOCP drain)`。确认 stale 根因是 **Windows ProactorEventLoop IOCP drain hang**，非代码逻辑问题。market_observer 实际完成了工作但 cleanup 卡住 → 超时 → 标记 stale。
+
+**§18 Symbol 跨交易所不匹配 (新发现)** 🟡
+
+- **观测**: errors.log 大量 `binance does not have market symbol GRASS/USDT`, `1000PEPE/USDT`, `1000SHIB/USDT`, `SPX/USDT`, `VVV/USDT`
+- **根因**: registry 从 Bitget 同步资产列表（`market_data.ccxt_exchange=binance`, `exchange.name=bitget`），但 Bitget 有些 symbol 格式 (1000PEPE, SPX) 在 Binance 不存在
+- **影响**: 非致命（降级到 skip），但污染日志 + 浪费 API calls
+- **修复方向**: 
+  - fetch_tickers 前用 `exchange.markets` 过滤只传 Binance 已知 symbols
+  - 或 registry sync 时标记 `data_source_available=False` 对这些 symbols
+  - Binance 命名: PEPE (not 1000PEPE), SHIBUSDT (not 1000SHIB)
+
+**Batch ticker 非法字符**: 持续触发。Binance regex 要求 symbols 全大写 `[\\w\\-._&&[^a-z]]`，部分 Bitget registry symbols 含不合法字符。需预过滤。
+
+**Agent 1h**: completed=319 (81%), stale=57 (14.4%), completed_with_errors=17 (4.3%), running=1, timed_out=1
+- Ghost=0 ✅
+- Stale total=220 (持续累积，历史不清理)
+
+### 2026-06-17 13:46 UTC — 第二十二轮巡检 (Δ42min)
+
+| 管道 | 状态 | 详情 |
+|------|------|------|
+| Universe Scanner | ✅ 连续成功 | 13:43 (35s, 285 passed) — 连续第 6 次成功 |
+| Market Snapshots | ✅ 正常 | 13:41 (5min ago), 721/h |
+| Portfolio | ✅ 正常 | 13:42 (4min ago) |
+| Knowledge | ⚠️ 重复 | 897 total (+9/42min), dreaming=17/h 仍全重复 |
+| Features | ✅ 正常 | 13:43 |
+| Opportunities | ✅ 高产 | 1906 total, +643/h |
+| Predictions | ❌ 空 | 0 |
+| Lessons | ✅ 稳定 | 32 |
+
+**Scanner 行为变化观测**: passed 从 115→285 (×2.5)，耗时 14s→35s。min_volume 未变 (5M USDT)。推测原因：亚洲交易时段更多 symbol 达到 volume 阈值，或 futures markets 在 registry 中生效（`fetchMarkets=["spot","linear"]` 现在正确加载了 perp 市场）。35s 对 285 symbols 合理 (285/sem=10 × avg_latency)。
+
+**§17 持续**: market_observer stale=48/92 (52%), timed_out=3。ProactorEventLoop IOCP hang 根因不变。
+
+**§18 持续**: errors.log 仍有 FOLKS/USDT, COAI/USDT 等 Bitget-only symbols 在 Binance/Bybit 查询失败。日志噪音但非阻断。
+
+**§7 持续**: dreaming_log=17/h 全是重复 "Daily Consolidation"。
+
+[2026-06-17 13:46 UTC] ✓ 核心管道全部正常运行，scanner 性能优化生效中
+
+[2026-06-17 14:03 UTC] ✓ 系统正常 — Scanner 连续第 8 次成功 (35-36s, 285 passed), Market/Portfolio/Features 实时, Opportunities +675/h. §17/§18 持续无恶化. market_observer stale=49/94 (52%), timed_out=5.
+
+[2026-06-17 14:46 UTC] ✓ 系统正常 — Scanner 连续 12+ 次成功 (35-36s, 282-287 passed), Opportunities 突破 2000 (total=2009, +746/h). §17 market_observer stale=50/98 (51%), timed_out=7. §18 symbol mismatch 持续 (SKYAI, MRVL 等). Ghost=0.
+
+[2026-06-17 15:03 UTC] ✓ 系统正常 — Scanner 连续成功 (35s, 283 passed), Market/Portfolio/Features 实时, Opportunities=2031 (+768/h). §17 恶化趋势: timed_out 5→9, abandoned threads=4 (IOCP drain 累积). 其余无变化.
+
+[2026-06-17 15:46 UTC] ✓ 系统正常 — Scanner 连续成功 (34-36s, 284-286 passed), Opportunities=2096 (+833/h). §17 timed_out=11 (缓慢累积, 非阻断). Ghost=0, Stale total=225 (稳定不增).
+
+[2026-06-17 16:03 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 284-285 passed), Opportunities=2119 (+856/h). §17 abandoned threads=8 (从 4→8, 1h 内翻倍), timed_out=13. 线程泄漏加速但进程稳定, 建议下次 gateway restart 清理.
+
+[2026-06-17 16:46 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 284-286 passed), Opportunities=2184 (+921/h 峰值). §17 timed_out=15 (+2/43min, 线性增长). Stale total=225 (稳定). Ghost=0. 所有核心管道实时.
+
+[2026-06-17 17:03 UTC] ✓ 系统正常 — Scanner 连续成功 (34-35s, 285-286 passed), Opportunities=2208 (+945/h). **新**: strategy_designer 首次触发 (completed=1), pipeline 完整链条生效. §17 abandoned threads=12 (持续累积 ~4/h), timed_out=17. Knowledge=908 (+1 strategy_memory). Ghost=0.
+
+[2026-06-17 17:46 UTC] ✓ 系统正常 — Scanner 稳定 (35-36s, 286 passed), Opportunities=2274 (**+1011/h 首次破千**). Market snapshots=1050/h. §17 timed_out=19 (线性 ~2/45min). Ghost=0, Stale=225 (不增). 所有管道实时运行 5h+ 无中断.
+
+[2026-06-17 18:03 UTC] ✓ 系统正常 — Features=1754/h (4h 连续稳定 1740-1754), Opportunities=2297 (+89/h, 亚盘收市后下降). §17 market_observer **100% timed_out** (最近 8 次全部, 4min 超时). §7 知识去重生效: 1h 仅 4 条新增 (3 ptr + 1 rn, 无重复). Ghost=0, Stale=225. Gateway supervisor 13:41-14:11 重启 frontdoor 5 次 (已自愈). §18 新增: JELLYJELLY, SIREN, BLESS (Bitget-only). Ticker chunk 400-430 Binance 非法字符 regex 失败 (含小写 symbol).
+
+[2026-06-17 18:46 UTC] ✓ 系统正常 — Features=1783/h (微升), Opportunities=2370 (+96/h). §17 market_observer: timed_out=3 + stale=1 + running=1 (1h 内). Timed_out 总计 21→23. §7 知识去重持续有效: 8 条/h (6 ptr + 2 rn, 全部唯一). Ghost=0, Stale=227 (+2). §18 新增: COAI, TAC, MAGMA (Bitget-only, 多时间维度 OHLCV 查询全部失败). 系统运行 6.5h+ 无中断.
+
+[2026-06-17 19:03 UTC] ✓ 系统正常 — Features=1792/h (持续微升), Opportunities=2396 (+99/h). §17 market_observer 4 次连续 timed_out (timed_out 总计 23→25, +2/45min 线性). §7 知识去重: 1 条/h (极低——可能 agent 周期间隔中). Ghost=0, Stale=226 (-1, reconciliation 偶发清理). 7h 连续无中断.
+
+[2026-06-17 19:46 UTC] ✓ 系统正常 — Features=1803/h (连续 3h 微升趋势 1752→1783→1803), Opportunities=2464 (+95/h 稳定). §17 timed_out=27 (+2/45min 线性不变). Knowledge=460 (+1/h). Ghost=0, Stale=228. §18: MSFT/USDT, GUA/USDT, BR/USDT 新增 (xStock symbols 混入 crypto 查询). 7.7h 连续无中断.
+
+[2026-06-17 20:03 UTC] ✓ 系统正常 — Features=1809/h (持续微升 1750→1792→1809), Opportunities=2490 (+94/h). §17 timed_out=29 (+2/45min 不变). Knowledge=463 (+1/h). Ghost=0, Stale=227. §18: SPY/USDT 多时间框架查询失败 (equity_observer xStock symbol). 8h+ 连续无中断.
+
+[2026-06-17 20:46 UTC] ✓ 系统正常 — Features=1531/h (下降, 因 off-peak US hours volume 过滤后通过 symbols 减少, 无 gap). Opportunities=2547 (+83/h). §17 timed_out=32 (+3/45min, 略加速). paper_trader: completed_with_errors=2 (首次出现, 非致命). risk_critic: 1 stale (偶发). Knowledge=467. Ghost=0, Stale=228. 8.7h 连续无中断.
+
+[2026-06-17 21:03 UTC] ✓ 系统正常 — Features=1836/h (回升, 1531→1836). Opportunities=2571 (+81/h). §17 timed_out=33 (+1). paper_trader: completed_with_errors=3/h (持续, 非致命——可能缺少 open positions 或 LLM 降级). risk_critic: 1 stale (同上轮). Knowledge=470. Ghost=0, Stale=229. 9h+ 连续无中断.
+
+[2026-06-17 21:46 UTC] ✓ 系统正常 — Features=1830/h (稳定). Opportunities=2642 (+95/h). §17 timed_out=36 (+3/45min), abandoned_threads=3 (重置——gateway 可能自动 restart 清理). paper_trader + risk_critic 模式同上. Knowledge=474. Ghost=0, Stale=230. 9.7h 连续无中断.
+
+[2026-06-17 22:03 UTC] ✓ 系统正常 — Features=1830/h (3h 稳定在 1809-1836 带). Opportunities=2674 (+103/h 回升). §17 timed_out=37 (+1/45min, 放缓). Knowledge=479 (+1/h). Ghost=0, Stale=230. 10h+ 连续无中断——达到监测以来最长无中断运行.
+
+[2026-06-17 22:46 UTC] ✓ 系统正常 — Features=1829/h (锁定在 1830 带, 2h 无波动). Opportunities=2736 (+94/h). §17 timed_out=40 (+3/45min). Knowledge=485. Ghost=0, Stale=231. equity_observer 本轮未触发 (off-hours 正常). 10.7h 连续无中断.
+
+[2026-06-17 23:03 UTC] ✓ 系统正常 — Features=1827/h (1830 带持续 3h+). Opportunities=2761 (+87/h). §17 timed_out=41 (+1). Knowledge=489. Ghost=0, Stale=231. §18 根因确认: **龙虾/USDT** (中文字符 symbol) 在 registry 中, 导致 Binance chunk 400-430 整批 regex 拒绝. 修复方向: `_chunked_fetch_tickers` 预过滤非 ASCII symbols. 11h+ 连续无中断.
+
+[2026-06-17 23:46 UTC] ✓ 系统正常 — Features=1827/h (1830 带 4h+ 稳定). Opportunities=2821 (+85/h). §17 timed_out=43 (+2/45min, 线性). Knowledge=493. Ghost=0, Stale=233 (+2). §18 新增: VELVET/USDT (Bitget-only, Binance+Bybit 均无). paper_trader: completed_with_errors=3/h (持续, 非致命). 12h+ 连续无中断.
+
+[2026-06-18 00:03 UTC] ✓ 系统正常 — Features=1525/h (off-peak 下降, 同 round 33 模式). Opportunities=2844 (+83/h). §17 timed_out=45 (+2/45min, 线性), market_observer 最近 5 次全部 timed_out, abandoned_threads 重置为 1 (gateway 自动重启清理). Knowledge=497 (+8/h). Ghost=0, Stale=232. §18 新增: FOLKS/USDT (Bitget-only). 12.5h+ 连续无中断.
+
+[2026-06-18 00:46 UTC] ✓ 系统正常 — Features=1836/h (off-peak 恢复). Opportunities=2895 (+74/h). §17 timed_out=47 (+2/45min, 线性不变). Knowledge=501 (+8/h). Ghost=0, Stale=234. §18: SKYAI/USDT (Bitget-only, 3 timeframe 全失败). 13h+ 连续无中断.
+
+[2026-06-18 01:03 UTC] ✓ 系统正常 — Features=1836/h (稳定). Opportunities=2933 (+89/h). §17 timed_out=49 (+2/45min). Knowledge=504 (+7/h). Ghost=0, Stale=233. §18: UAI/USDT (Bitget-only). 13.5h+ 连续无中断.
+
+[2026-06-18 01:46 UTC] ✓ 系统正常 — Features=1752/h (微降). **Opportunities 突破 3000** (3009, +114/h 峰值). §17 timed_out=53 (+4, market_observer 本小时 5 次触发——调度间隔缩短). risk_critic: 2 stale (偶发, 非持续). Knowledge=514 (+13/h). Ghost=0, Stale=235. §18: BLESS, PIPPIN, SQD, MSFT (xStock). 14h+ 连续无中断.
+
+[2026-06-18 02:03 UTC] ✓ 系统正常 — Features=1864/h (亚盘开盘微升). Opportunities=3031 (+98/h). §17 timed_out=54 (+1, 回归正常速率). risk_critic: 2 stale (同上轮模式). Knowledge=517 (+13/h). Ghost=0, Stale=235. §18: BLUAI/USDT. 14.5h+ 连续无中断.
+
+[2026-06-18 02:46 UTC] ✓ 系统正常 — Features=1562/h (volume dip, 同 off-peak 模式). Opportunities=3089 (+80/h). §17 timed_out=57 (+3), abandoned_threads=3 (重新累积). Knowledge=522 (+8/h). Ghost=0, Stale=235. §18: H/USDT, SPX/USDT (Bitget-only). risk_critic stale 已恢复. 15h+ 连续无中断.
+
+[2026-06-18 03:03 UTC] ✓ 系统正常 — Features=1875/h (亚盘活跃, 连续 3h 上升趋势 1836→1864→1875). Opportunities=3118 (+87/h). §17 timed_out=58 (+1). Knowledge=526 (+9/h). Ghost=0, Stale=235. risk_critic 全部 completed (恢复). 15.5h+ 连续无中断.
+
+[2026-06-18 03:46 UTC] ✓ 系统正常 — Features=1870/h (亚盘持续). Opportunities=3184 (+95/h). §17 timed_out=61 (+3), abandoned_threads 再次重置为 1 (gateway 自动重启). Knowledge=536 (+14/h 高产). Ghost=0, Stale=237. post_trade_reviewer: 1 completed_with_errors (偶发). §18: INTC/USDT (xStock). 16h+ 连续无中断.
+
+[2026-06-18 04:03 UTC] ✓ 系统正常 — Features=1554/h (off-peak 回落). Opportunities=3204 (+86/h). §17 timed_out=61 (不变), market_observer stale 占比升高 (3 stale + 3 timed_out / 7 runs, 但仍在 running). Knowledge=537 (+11/h). Ghost=0, Stale=240 (+3). §18: SWARMS, CLO, BSB, H (Bitget-only). 16.5h+ 连续无中断.
+
+[2026-06-18 04:46 UTC] ✓ 系统正常 — Features=1867/h (恢复). Opportunities=3295 (+111/h 高产). §17 timed_out=65 (+4, market_observer 高频触发). Knowledge=547 (+11/h). Ghost=0, Stale=240. §18: MRVL/USDT (xStock), BR/USDT. 17h+ 连续无中断.
+
+[2026-06-18 05:03 UTC] ✓ 系统正常 — Features=1870/h (稳定). Opportunities=3319 (+115/h 持续高产). §17 timed_out=66 (+1). **dreaming_agent 日常周期触发**: 8 runs completed_with_errors (lesson extraction LLM 返回 non-JSON, 非阻断——知识仍写入). Knowledge=551 (+14/h). Ghost=0, Stale=240. 17.5h+ 连续无中断.

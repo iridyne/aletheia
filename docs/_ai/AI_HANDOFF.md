@@ -1,4 +1,4 @@
-﻿# AI Handoff
+# AI Handoff
 
 > **本文件是 append-only 变更史**(记录"做了什么改动 + 根因",机器无关)。
 > 其中任何"当时机器状态"(gateway 在跑 / 观察期第 N 小时 / 凭证已存 / demo 单已落)
@@ -7,129 +7,99 @@
 
 ## Last Updated
 
-2026-06-17 (调研：开源算法交易框架；Scanner §16 修复；测试基础设施强化；期货集成收尾)
+2026-06-17 (调研：Strategy Pool 前期探索 — 策略生命周期代码结构梳理，无代码改动)
 
 ---
 
-## Recent Change (开源算法交易框架调研 — 2026-06-17，纯研究无代码改动)
+## Recent Change (Strategy Pool 前期调研 — 2026-06-17，纯研究无代码改动)
 
-> **背景**: team-lead 委派基础研究任务，为 Aletheia 下一步架构决策（做空对称、策略发现、
-> 信号流水线）提供参考。调研 8 个框架 + FinRL + Alpha Factory + LLM 策略生成前沿。
+> **背景**: team-lead 委派，为 Strategy Pool 功能规划做代码结构前置调研。
+> 梳理了策略从生成到退役的完整路径，供后续设计 direction_affinity + regime_awareness 扩展时参考。
 
-**关键结论（对 Aletheia 架构有参考价值）**:
-- **做空对称性**: Nautilus Trader（OrderSide enum）、Jesse（`go_short()` 与 `go_long()` 完全平行）最完整；Freqtrade 做空是事后补丁（`can_short=True` + futures 限制）
-- **最佳流水线**: LEAN 五层分离（Universe → Alpha → Portfolio Construction → Risk → Execution）是机构标准；Aletheia 当前管道吻合，但 ranker + paper_trader 混合承担 Portfolio Construction 职责
-- **ML 信号路径**: FreqAI 最完整（周期重训练 + 不确定性过滤 + 特征自动扩展）；LLM 目前只作特征提取工具，无端到端 LLM 生成可部署策略的生产案例
-- **Alpha Factory**: Aletheia 的 signal_emitter + universe calibration 走的是 WorldQuant Alpha Factory 路线（小 alpha 并行 + 组合），方向正确
+**调研覆盖文件**：
+- `aletheia/agents/dreaming_agent.py` — 夜间巩固 + 学习账本（非策略生成）
+- `aletheia/storage/models.py:193` — `StrategyRecord`（核心数据模型）
+- `aletheia/storage/repositories.py:432` — CRUD（insert/update/get/list_strategies）
+- `aletheia/analytics/lifecycle_automation.py` — 自动暂停/退役（无 LLM）
+- `aletheia/analytics/strategy_evidence.py` — 策略健康分类
+- `aletheia/agents/paper_trader_ranker.py` — 策略证据对得分的影响
+- `aletheia/universe/outcome_recorder.py` — Universe 前向收益追踪（非策略级）
+- `aletheia/trading/strategy_lifecycle.py` — 状态机 + 晋升门（10 态，前向单向）
+- `aletheia/strategy/performance_ledger.py` — 元评估层
+
+**关键结论**：
+
+1. **StrategyRecord 不含 direction_affinity / regime 字段**：`parameters`（JSON blob）内只有
+   `entry_rule/exit_rule/timeframe/direction_bias/symbol/ruleset`。需扩展 `parameters` schema
+   或加新列（走 `_ADDITIVE_COLUMNS` 迁移路径）。
+
+2. **10 态前向状态机**（`aletheia/trading/strategy_lifecycle.py:27`）：
+   `draft → research_note → strategy_hypothesis → paper_candidate →
+   paper_running → paper_passed → live_candidate → live_limited → retired → deprecated`
+   晋升门要求 ≥14d paper + ≥30 笔交易 + 正 expectancy。
+
+3. **dreaming_agent 不生成策略**：负责夜间活动巩固 + 学习账本 + lesson 提取。
+   策略生成入口在 strategy_designer agent（本轮未探索）。
+
+4. **ranker 对策略的使用**：`backtest_killed` 是唯一硬阻断；其余通过 bonus/penalty 调分（+15/-10/-30）。
+   `direction_bias` 从 `opportunity` 独立推断，与 `strategy.parameters.direction` 无强绑定。
+
+5. **forward outcome 是 Universe 级，非策略级**：策略级 PnL 来自 positions 表的 `strategy_id` 外键。
 
 **无代码改动**；研究记录已写入 DEVLOG。
 
 ---
 
-## Recent Change (Scanner §16 修复 + 测试基础设施强化 — 2026-06-17, commits d8908e5..e053d5a)
-
-> **背景**: §16 scanner 持续超时 82min+（10 次连续失败）。根因是期货集成引入了
-> `"swap"` 作为 Binance fetchMarkets 的市场类型键，但 Binance 适配器白名单不认这个值，
-> 导致 ExchangeError 静默杀死整个扫描 pipeline。
-
-**改动（4 commits）**:
-
-1. `features.py` + `registry.py` (d8908e5) — `"swap"` → `"linear"`（Binance USDT-perp 标准键）；scanner `assets_passed=115` 完成
-2. `tests/conftest.py` + `test_hypothesis_properties.py` (ec7ea30) — in-memory DB autouse；19 Hypothesis 属性测试；1338 passed
-3. 多个测试文件 (3221197) — `_MIN_CONTENT_LENGTH` 质量门导致 28+ 测试失败修复；None guard
-4. `features.py` (e053d5a) — `_OHLCV_CONCURRENCY` 5→10；`asyncio.wait_for(timeout=8.0)` per-symbol；OHLCV ~7s→~3.5s
-
-**验证**: 1338 tests passed（+19 Hypothesis 属性测试）；scanner 完成
-
----
-
-## Recent Change (期货集成收尾 — 2026-06-17)
-
-> **背景**: 期货 Layer 0-6 完成后发现两处遗漏：signal_emitter 硬编码 market="crypto"、registry 使用了不必要的 getattr 防御写法（schema 早已有 enabled_markets 字段）。
-
-**改动（2 个文件）**:
-
-1. `aletheia/universe/signal_emitter.py`
-   - import `instrument_market_to_db_market`
-   - 循环内提取 `market_type = m.get("market_type", "spot") or "spot"`
-   - `Opportunity.market` 改为 `instrument_market_to_db_market(market_type)`（原硬编码 `"crypto"` 对期货品种完全错误）
-
-2. `aletheia/universe/registry.py`
-   - `getattr(getattr(cfg, "exchange", None), "enabled_markets", {}).get(...)` 简化为 `cfg.exchange.enabled_markets.get(...)`（schema 第 51 行已定义该字段，防御写法是多余的）
-
-**验证**: 90 tests passed (signal_emitter / universe_calibration / instrument_id / registry 全覆盖)；全量测试后台运行中。
-
----
-
-## Recent Change (期货集成 Layer 0-6 — 2026-06-17, commit f626ad3)
-
-> **背景**: Phase A–E 只完成了执行层（ctVal、清算价、资金费率、UI）。上游信号链从未产出 `usdt_futures` 机会：registry 写死 spot，features 写死 spot，market_observer 硬编码 MARKET_SPOT，Opportunity.market 写入 "perp"（不匹配 risk engine 的 "usdt_futures"）。
-
-**改动（9 个文件）**:
-
-1. `aletheia/trading/instruments.py` — Layer 0：新增 `instrument_market_to_db_market()` 工具函数（"perp" → "usdt_futures"，单一边界转换入口）
-2. `aletheia/universe/registry.py` — Layer 1：`fetchMarkets` 改为按 `cfg.exchange.enabled_markets.usdt_futures` 动态添加 "swap"
-3. `aletheia/universe/features.py` — Layer 2：`collect_features()` 对 perp 资产切换 `defaultType=swap`，使用 `to_ccxt_perp()` symbol 格式
-4. `aletheia/storage/models.py` — Layer 3：`UniverseMember` 加 `market_type: str = "spot"` 字段
-5. `aletheia/storage/migrations.py` — Layer 3：`_ADDITIVE_COLUMNS` 追加 `("market_type", "universe_members", "TEXT NOT NULL DEFAULT 'spot'")`
-6. `aletheia/universe/service.py` — Layer 3：`UniverseMember` 构造时传 `market_type=item.get("market_type", "spot")`
-7. `aletheia/agents/market_observer.py` — Layer 4：universe 路径从 member dict 读 `market_type` 构造 InstrumentId（不再写死 MARKET_SPOT）；Opportunity.market 用 `instrument_market_to_db_market()` 转换
-8. `aletheia/trading/market_context.py` — Layer 5：`build_market_context()` 对 perp 用 `to_ccxt_perp()` 构造 fetch symbol
-9. `aletheia/data/collectors/microstructure.py` — Layer 6：`collect()` 支持 InstrumentId 输入，perp 自动切 `defaultType=swap`
-
-**验证**: 1301 tests passed；`instrument_market_to_db_market()` smoke-test 通过；gateway 重启正常（PID 37536，demo，live_disabled）
-
----
-
-## Recent Change (code-review 10 项修复 — 2026-06-17, commit 5c06a54)
-
-> **背景**: `/code-review` high-effort 产出 10 个确认缺陷，立即修复。
-
-**修复(7 个文件)**:
-
-1. `equity_observer.py` — **#1** yfinance MultiIndex：所有 hist 列访问加 `.squeeze()`（pipeline 之前完全不工作）；**#5** deviation_pct：新增 `_fetch_live_price()` 用 fast_info 盘中价替代昨收；**#9** symbol 格式从 `ticker/USD` 改为 `ticker/USDT`
-2. `paper_trader.py` — **#2** `_PERMANENT_SKIP_PREFIXES` 加 `"equity_shadow_track"`（防止 equity opps 无限累积）
-3. `paper_trader_ranker.py` — **#3** equity 分支加 `status != 'open'` 保护（防止已关闭 opp 反复进入 shadow track）
-4. `scheduler.py` — **#4** equity cron `hour="14-21"`（覆盖 21:00 UTC 美股收盘竞价）；**#6** timeout 路径立即写 DB `status='timed_out'`（消除 ghost running 行）
-5. `manager.py` — **#7** quality gate 失败从 INFO 升级为 WARNING（含 title，与 dedup INFO 可区分）
-6. `settings.py` — **#8** `POST /equities` 加 `write_audit()` 调用
-7. `trade_case_builder.py` — **#10** `min_losses` falsy-zero 修复
-
----
-
-## Recent Change (US Equity 集成 Phase 1-4 + Settings UI — 2026-06-17)
-
-> **背景**:xStocks（Bitget ON-series）和 yfinance 两条路径孤立，symbol 格式不兼容，
-> knowledge 循环断路，equity 机会被 ranker 硬杀。
-
-**改动(10 个文件，1 个新文件)**:
-
-1. `aletheia/data/symbols.py` — 新增 `_XSTOCK_BASE_TO_TICKER` 映射表 + `xstock_to_ticker()` / `ticker_to_xstock()` 工具函数（10 个已知 ON-series token）
-2. `aletheia/config/schema.py` — `MarketDataConfig` 加 `observed_equities: list[str]`（主入口）+ `observed_stocks`（向后兼容）
-3. `aletheia/storage/models.py` — `Opportunity` 加 `asset_subclass: str = ""` + `canonical_ticker: str = ""`
-4. `aletheia/storage/migrations.py` — `_ADDITIVE_COLUMNS` 追加两条 equity 字段（`TEXT NOT NULL DEFAULT ''`）
-5. `aletheia/agents/equity_observer.py` — **新文件**：统一 equity agent（yfinance 日线 + Bitget xStock 实时价 + deviation_pct 监控 + equity 专属 LLM prompt）；`execution_eligible=False`；deviation > 2% premium_alert；deviation > 5% data_anomaly（排除 LLM）
-6. `aletheia/agent_runtime/scheduler.py` — `equity_observer` cron job（替换 `stock_observer`，相同 Mon–Fri 14:30–21:00 UTC 窗口）
-7. `aletheia/knowledge/router.py` — `AgentRole` 加 `equity_observer`；`_ITEM_TYPES_BY_ROLE` 加 equity role（research_note / trade_case_study / post_trade_review）
-8. `aletheia/agents/market_observer.py` — 移除 xStocks 分支（防止与 equity_observer 重复写入）
-9. `aletheia/server/routes/settings.py` — 新增 `POST /settings/equities` endpoint（`EquitiesConfigUpdate`，normalize+去重保存到 `market_data.observed_equities`）
-10. `frontend/src/api/client.ts` — 新增 `updateEquities(tickers)` API 方法
-11. `frontend/src/pages/Settings.tsx` — 新增 `EquitiesCard` 组件（chip-based 增删，save mutation）+ 在 RiskTab 加 "Observed US Equities" Section；前端静态文件已重新构建
-12. `aletheia/agents/paper_trader_ranker.py` — **Phase 4 shadow track**：equity 机会改为计分（direction + confidence_score）但标记 `skip_reason="equity_shadow_track"`，不再 `return None` 硬排除；对应 2 个测试用例同步更新
-
-**关键设计决策**:
-- `deviation_pct` = tracking error 监控，**不是套利信号**（所有执行从 Bitget 出发，xStocks 是唯一执行渠道）
-- equity 不进 Universe 主流水线（crypto 特征对 equity 无意义）
-- equity shadow track 会出现在 paper_trader 的 skip outputs 里，方便观察 equity 信号质量，但永远不会被选为执行候选
-- `stock_observer` 留在 registry（向后兼容），但不再由 scheduler 调度
-
-**验证**: 前端 tsc+vite build 无错误；25 项相关测试全绿（paper_trader_ranker 25 + xstocks_observer 4）
-
----
-
 ## Last Updated (previous)
 
-2026-06-16 (根治 scheduler deadlock / DB lock — isolation_level=None autocommit)
+2026-06-17 (调研：开源算法交易框架；Scanner §16 修复 + 测试基础设施强化)
+
+---
+
+## Recent Change (开源算法交易框架调研 — 2026-06-17，纯研究无代码改动)
+
+> **背景**: team-lead 委派基础研究任务，为 Aletheia 下一步架构（做空对称、策略发现、
+> 信号流水线）决策提供参考。
+
+**调研范围**: Jesse、Freqtrade/FreqAI、QuantConnect LEAN、Zipline-reloaded、Backtrader、
+Nautilus Trader、Hummingbot、OctoBot、FinRL；Alpha Factory 概念；LLM 策略生成
+（FinGPT、GPT-InvestAR）。
+
+**关键结论（对 Aletheia 有参考价值）**:
+- **做空对称性**: Nautilus Trader（OrderSide enum）、Jesse（`go_short()` 与 `go_long()` 对称）
+  最完整；Freqtrade 做空是事后补丁（`can_short=True` + futures 限制）
+- **最佳流水线架构**: LEAN 五层分离（Universe → Alpha → Portfolio Construction → Risk →
+  Execution）是机构标准；Aletheia 当前管道吻合，但 ranker + paper_trader 混合承担了
+  Portfolio Construction 职责——未来拆分有价值
+- **ML 信号路径**: FreqAI 最完整（周期重训练 + 不确定性过滤 + 特征自动扩展）；LLM
+  目前只作特征提取工具，无端到端 LLM 生成可部署策略的生产案例
+- **Alpha Factory**: Aletheia 的 signal_emitter + universe calibration 走的是 WorldQuant
+  Alpha Factory 路线（小 alpha 并行 + 组合），方向正确
+
+**无代码改动**；研究记录已写入 DEVLOG。
+
+---
+
+## Recent Change (Scanner §16 修复 + 测试基础设施 — 2026-06-17, commits d8908e5..e053d5a)
+
+> **背景**: §16 scanner 持续超时（82min+，10 次连续失败）。根因是 futures 集成引入了
+> `"swap"` 作为 Binance fetchMarkets 的市场类型键，但 Binance 适配器白名单不认这个值，
+> 导致 ExchangeError 静默杀死整个扫描 pipeline。同时修复了测试套件因 quality gate 引入导致
+> 的 28+ 测试失败，并强化了测试基础设施（in-memory SQLite + Hypothesis 属性测试）。
+
+**改动（5 个文件 + 1 个新测试文件）**:
+
+1. `aletheia/universe/features.py` — `fetchMarkets` `["spot", "swap"]` → `["spot", "linear"]`；
+   `_OHLCV_CONCURRENCY` 5→10；`asyncio.wait_for(timeout=8.0)` per-symbol
+2. `aletheia/universe/registry.py` — `market_types.append("swap")` → `append("linear")`
+3. `tests/conftest.py` — `_inmemory_db` autouse fixture；`real_db` marker；hypothesis profile
+4. `tests/test_hypothesis_properties.py` — **新文件**：19 个属性测试（symbol converter、quality gate、content hash）
+5. 多个测试文件 — 测试种子内容扩展 ≥80 字符；`commands.py` None guard；`test_openai_healthcheck` mock TCP；`test_xstocks_observer` typo 修复
+
+**验证**: 1338 tests passed（+19 新增）；scanner `assets_passed=115` 完成；OHLCV ~7s→~3.5s
+
+**Git 状态**: 本地 master 领先 origin/master 46 个提交；origin 有 2 个 docs 提交未合并。
+建议接手后先 `git pull --rebase origin master` 解决 diverge。
 
 ---
 

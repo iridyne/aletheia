@@ -125,6 +125,7 @@ export interface PredictionObserverRun {
 }
 
 export interface PredictionStatus {
+  enabled: boolean
   last_run: PredictionObserverRun | null
   categories: string[]
   total_opportunities: number

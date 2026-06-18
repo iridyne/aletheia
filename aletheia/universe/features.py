@@ -44,10 +44,15 @@ def _spread_bps(bid: float | None, ask: float | None) -> float | None:
     return ((ask - bid) / bid) * 10000.0
 
 
+def _is_valid_symbol(symbol: str) -> bool:
+    """Reject symbols with non-ASCII chars (e.g. 龙虾/USDT) that fail exchange regex."""
+    return symbol.isascii()
+
+
 async def _chunked_fetch_tickers(exchange, symbols: list[str]) -> dict:
     """Fetch tickers in chunks to stay within Binance URL length limits."""
     all_tickers: dict = {}
-    valid = [s for s in symbols if s in exchange.markets]
+    valid = [s for s in symbols if _is_valid_symbol(s) and s in exchange.markets]
     for i in range(0, len(valid), _TICKER_CHUNK_SIZE):
         chunk = valid[i:i + _TICKER_CHUNK_SIZE]
         try:
