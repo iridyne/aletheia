@@ -134,7 +134,9 @@ class UniverseService:
 
         try:
             count = await sync_registry(cfg)
-            assets = repo.list_universe_assets(limit=1000)
+            assets = repo.list_universe_assets(
+                venue=cfg.market_data.ccxt_exchange, limit=1000,
+            )
             repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
 
             features_list = await collect_features(assets, cfg)
