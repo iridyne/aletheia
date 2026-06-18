@@ -80,6 +80,9 @@ class MarketDataConfig(BaseModel):
     # US equities to observe (Yahoo Finance tickers). stock_observer runs only
     # during US market hours (Mon–Fri 14:30–21:00 UTC). Empty = disabled.
     observed_stocks: list[str] = Field(default_factory=list)
+    # Master switch for prediction market observation (Polymarket). When False,
+    # prediction_observer does not run and the Prediction Lens page shows disabled.
+    prediction_enabled: bool = False
     # Polymarket category slugs (or keywords) to observe. prediction_observer
     # fetches active markets matching these categories every 30 minutes.
     observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])

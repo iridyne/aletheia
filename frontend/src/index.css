@@ -2251,6 +2251,36 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
   .pred-grid { grid-template-columns: 1fr; }
   .pred-card-stats { grid-template-columns: repeat(2, 1fr); }
 }
+.pred-page-wrapper { position: relative; }
+.pred-disabled-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r);
+}
+.pred-disabled-content {
+  text-align: center;
+  padding: var(--space-8);
+  color: var(--muted);
+}
+.pred-disabled-content h3 {
+  font-size: 1.2rem;
+  color: var(--text);
+  margin-bottom: var(--space-2);
+}
+.pred-disabled-content p {
+  font-size: 0.85rem;
+  max-width: 360px;
+}
+.pred-content-disabled {
+  pointer-events: none;
+  opacity: 0.3;
+  filter: blur(1px);
+}
 
 /* Model ping test */
 .model-ping-row {

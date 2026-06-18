@@ -687,11 +687,49 @@ function RiskTab({ settings, qc }: any) {
       </Section>
 
       <Section
+        title="Prediction Markets"
+        description="Polymarket observer — fetches probability data for information-edge signals. Observation-only, never routed to execution."
+      >
+        <PredictionToggleCard qc={qc} />
+      </Section>
+
+      <Section
         title="Risk Limits"
         description="Hard limits enforced by the Risk Engine on every order evaluation. Changes are audited and take effect on the next agent cycle."
       >
         <RiskCard settings={settings} qc={qc} />
       </Section>
+    </div>
+  )
+}
+
+// ─── Prediction Markets Toggle ───
+
+function PredictionToggleCard({ qc }: { qc: any }) {
+  const { data: status } = useQuery({
+    queryKey: ['prediction-status'],
+    queryFn: api.getPredictionStatus,
+  })
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const mut = useMutation({
+    mutationFn: (enabled: boolean) => api.togglePrediction(enabled),
+    onSuccess: (data) => {
+      setMsg({ ok: true, text: data.enabled ? '✓ enabled' : '✓ disabled' })
+      qc.invalidateQueries({ queryKey: ['prediction-status'] })
+      qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const enabled = status?.enabled ?? false
+
+  return (
+    <div className="card" style={{ marginBottom: 0 }}>
+      <Row label="Prediction observer" hint="When ON, the scheduler fetches Polymarket data every 30 min. When OFF, all prediction-related agent work stops.">
+        <Toggle checked={enabled} onChange={v => mut.mutate(v)} disabled={mut.isPending} />
+      </Row>
+      <SaveMsg msg={msg} />
     </div>
   )
 }
