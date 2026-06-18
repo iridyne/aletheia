@@ -233,6 +233,10 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             return loop.run_until_complete(_guarded_coro())
         finally:
             try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                pass
+            try:
                 loop.close()
             except Exception:
                 pass

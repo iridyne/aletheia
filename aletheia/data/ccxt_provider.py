@@ -183,20 +183,26 @@ class CCXTProvider:
         ccxt does not close an injected session (own_session=False), so the
         sessions in self._sessions are ours to close — otherwise aiohttp logs
         "Unclosed client session" and leaks connectors across scheduler loops.
+
+        Each close is wrapped in a 5s timeout so a stuck TCP teardown (proxy /
+        half-open connections) cannot block the entire cancel-cleanup path —
+        the root cause of §19 "Unclosed client session" leaks after timeout.
         """
+        import asyncio as _aio
+
         for attr in ("_primary", "_fallback"):
             client = getattr(self, attr)
             if client is not None:
                 try:
-                    await client.close()
-                except Exception as e:  # noqa: BLE001
-                    logger.debug("provider close error: %s", e)
+                    await _aio.wait_for(client.close(), timeout=5.0)
+                except (Exception, _aio.CancelledError):  # noqa: BLE001
+                    pass
                 setattr(self, attr, None)
         for session in self._sessions:
             try:
-                await session.close()
-            except Exception as e:  # noqa: BLE001
-                logger.debug("session close error: %s", e)
+                await _aio.wait_for(session.close(), timeout=5.0)
+            except (Exception, _aio.CancelledError):  # noqa: BLE001
+                pass
         self._sessions = []
 
 
