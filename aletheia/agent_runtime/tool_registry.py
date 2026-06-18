@@ -27,15 +27,13 @@ PAPER_TOOLS = [
 
 # System tools — modify playbooks/prompts/strategy config
 # DEPRECATED: no handler implementation exists for these tools.
-# They remain registered so permission lookups don't KeyError.
-# Use is_tool_implemented() to guard before attempting execution.
+# They remain registered so permission lookups don't KeyError;
+# actual blocking is done by TOOL_CLASSES["system"] = {"Full"}.
 SYSTEM_TOOLS = [
     "create_playbook_draft",
     "create_prompt_draft",
     "create_code_change_proposal",
 ]
-
-_UNIMPLEMENTED_TOOLS = set(SYSTEM_TOOLS)
 
 # Restricted tools — never callable by agent
 RESTRICTED_TOOLS = [
@@ -45,11 +43,6 @@ RESTRICTED_TOOLS = [
     "modify_credentials",
     "modify_execution_gateway",
 ]
-
-
-def is_tool_implemented(tool_name: str) -> bool:
-    """Return False for tools registered but lacking a handler."""
-    return tool_name not in _UNIMPLEMENTED_TOOLS
 
 
 def init_tool_registry() -> None:
