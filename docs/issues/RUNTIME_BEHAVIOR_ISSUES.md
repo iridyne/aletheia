@@ -979,3 +979,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-18 21:21 UTC] ✓ 系统正常 — Features=1828/h (US 盘后回落, 正常). Opportunities=4759 (+87/h). §17 timed_out=132 (+4). Knowledge=645 (+4/h). Ghost=0, Stale=249. **paper_trader: 首次出现 completed=2** (同时 completed_with_errors=2, 混合模式——可能有真实 proposal 路径被执行). §18: SPCX, BTW, BAN, FOLKS, BSB, SPX. 33h+ 连续无中断.
 
 [2026-06-18 22:22 UTC] ✓ 系统正常 — Features=1825/h (US 盘后低位平稳). Opportunities=4848 (+89/h). §17 timed_out=136 (+4, 线性持续). Knowledge=649 (+4/h). Ghost=0, Stale=249. paper_trader: 10 completed + 58 CWE (2h内, 正常模式稳定). §18: 龙虾/USDT, SOXL + 常规 Bitget-only. equity_observer CWE (US hours). 34h+ 连续无中断.
+
+[2026-06-18 23:21 UTC] ✓ 系统正常 — Features=1811/h (亚盘夜间平稳). Opportunities=4939 (+91/h). §17 timed_out=140 (+4). Knowledge=653 (+4/h). Ghost=0, Stale=249. paper_trader: 12 completed + 60 CWE (稳定). §18: TSM/USDT (xStock), SOXL + 常规 Bitget-only. equity_observer CWE (US after-hours). 35h+ 连续无中断.
