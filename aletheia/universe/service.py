@@ -79,7 +79,9 @@ class UniverseService:
         from aletheia.universe.features import collect_features
         from aletheia.universe.filters import apply_tradability_filters
         from aletheia.universe.scanners import run_all_scanners
-        from aletheia.universe.allocator import allocate_universe, compute_total_score
+        from aletheia.universe.allocator import (
+            allocate_universe, compute_total_score, get_family_multipliers,
+        )
         from aletheia.universe.outcome_recorder import settle_due, register_pending
         from aletheia.universe.signal_emitter import (
             emit_deterministic_opportunities, _infer_direction,
@@ -106,10 +108,16 @@ class UniverseService:
             filtered = apply_tradability_filters(features_list, cfg.universe)
             repo.update_universe_scanner_run(run.id, assets_passed=len(filtered))
 
+            calibration = get_family_multipliers(max_step=0.15)
+            if calibration:
+                logger.info("Calibration multipliers: %s", calibration)
+
             scored = []
             for feat in filtered:
                 scanner_result = run_all_scanners(feat)
-                total = compute_total_score(feat, scanner_result, cfg.universe)
+                total = compute_total_score(
+                    feat, scanner_result, cfg.universe, calibration=calibration or None,
+                )
                 scored.append({**feat, **scanner_result, "total_score": total})
 
             allocated = allocate_universe(scored, cfg.universe)
@@ -139,7 +147,7 @@ class UniverseService:
 
             inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
-                ttl_sec = max(item.get("ttl_sec", 3600), snapshot_ttl_sec)
+                ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
                 entry_price = item.get("last_price")
                 member = UniverseMember(
