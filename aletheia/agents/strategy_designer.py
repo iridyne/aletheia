@@ -204,24 +204,30 @@ def _resolve_symbol(spec: dict, candidate_symbols: list[str], fallback: str) -> 
     return canonical
 
 
-def _compile_ruleset(spec: dict) -> str | None:
-    """Try to compile an ExecutableStrategySpec dict into a RuleSet JSON string."""
+def _compile_ruleset(spec: dict) -> tuple[str | None, str]:
+    """Try to compile an ExecutableStrategySpec dict into a RuleSet JSON string.
+
+    Returns (json_string, diagnosis). json_string is None on failure;
+    diagnosis explains what went wrong (empty string on success).
+    """
     from aletheia.strategy.dsl import (
         Comparator, Condition, IndicatorRef, RuleExpr, RuleSet, StopLoss,
     )
     try:
         entry_conds = spec.get("entry_conditions") or []
         exit_conds = spec.get("exit_conditions") or []
-        if not entry_conds or not exit_conds:
-            return None
+        if not entry_conds:
+            return None, "no entry_conditions provided"
+        if not exit_conds:
+            return None, "no exit_conditions provided"
 
-        def _build_cond(c: dict) -> Condition | None:
+        def _build_cond(c: dict, label: str) -> tuple[Condition | None, str]:
             ind = c.get("indicator", "close")
             if ind not in _VALID_INDICATORS:
-                return None
+                return None, f"{label}: invalid indicator '{ind}'. Valid: {sorted(_VALID_INDICATORS)}"
             comp_str = c.get("comparator", "gt")
             if comp_str not in _VALID_COMPARATORS:
-                return None
+                return None, f"{label}: invalid comparator '{comp_str}'. Valid: {sorted(_VALID_COMPARATORS)}"
             left = IndicatorRef(name=ind, params=c.get("indicator_params") or {})
             versus = c.get("versus")
             if versus and versus in _VALID_INDICATORS:
@@ -229,13 +235,25 @@ def _compile_ruleset(spec: dict) -> str | None:
             elif c.get("threshold") is not None:
                 right = float(c["threshold"])
             else:
-                return None
-            return Condition(left=left, comparator=Comparator(comp_str), right=right)
+                reason = f"{label}: needs 'threshold' (number) or 'versus' (valid indicator)"
+                if versus:
+                    reason += f". Got versus='{versus}' which is not in valid indicators"
+                return None, reason
+            return Condition(left=left, comparator=Comparator(comp_str), right=right), ""
 
-        entry_compiled = [_build_cond(c) for c in entry_conds]
-        exit_compiled = [_build_cond(c) for c in exit_conds]
-        if None in entry_compiled or None in exit_compiled:
-            return None
+        entry_compiled = []
+        for i, c in enumerate(entry_conds):
+            cond, reason = _build_cond(c, f"entry[{i}]")
+            if cond is None:
+                return None, reason
+            entry_compiled.append(cond)
+
+        exit_compiled = []
+        for i, c in enumerate(exit_conds):
+            cond, reason = _build_cond(c, f"exit[{i}]")
+            if cond is None:
+                return None, reason
+            exit_compiled.append(cond)
 
         entry_expr = RuleExpr(op="and", conditions=entry_compiled)  # type: ignore[arg-type]
         exit_expr = RuleExpr(op="or", conditions=exit_compiled)  # type: ignore[arg-type]
@@ -247,10 +265,10 @@ def _compile_ruleset(spec: dict) -> str | None:
             stop = StopLoss(mode="fixed_pct", value=float(spec["stop_loss_pct"]))
 
         ruleset = RuleSet(entry=entry_expr, exit=exit_expr, stop_loss=stop)
-        return ruleset.to_json()
+        return ruleset.to_json(), ""
     except Exception as e:
         logger.debug("RuleSet compilation failed: %s", e)
-        return None
+        return None, f"exception: {e}"
 
 
 @register_agent("strategy_designer")
@@ -363,9 +381,35 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
     if err:
         errors.append(err)
 
-    ruleset_json = _compile_ruleset(spec)
+    ruleset_json, compile_diagnosis = _compile_ruleset(spec)
 
-    # If compilation failed, fall back to advisory-only
+    # Retry once with error feedback if compilation failed but LLM call succeeded
+    if not ruleset_json and not err and compile_diagnosis:
+        logger.info("RuleSet compile failed (%s), retrying with feedback", compile_diagnosis)
+        retry_spec, retry_err = await llm_structured(
+            system=_EXEC_SYSTEM,
+            user=(
+                f"Design one targeted strategy for the highest-opportunity candidate below."
+                f"{universe_context}{memory_block}{kill_feedback_block}\n\n"
+                f"IMPORTANT: Your previous attempt failed to compile. Error: {compile_diagnosis}\n"
+                f"Fix the issue. Valid indicators: {sorted(_VALID_INDICATORS)}. "
+                f"Valid comparators: {sorted(_VALID_COMPARATORS)}. "
+                f"Each condition MUST have either 'threshold' (a number) or 'versus' (a valid indicator name)."
+            ),
+            schema=ExecutableStrategySpec,
+            max_tokens=900,
+        )
+        if retry_spec and not retry_err:
+            ruleset_json, compile_diagnosis = _compile_ruleset(retry_spec)
+            if ruleset_json:
+                spec = retry_spec
+                log_tool(run_id, "compile_retry_success", "observe", True)
+            else:
+                errors.append(f"compile_retry_failed:{compile_diagnosis}")
+        elif retry_err:
+            errors.append(f"compile_retry_llm_error:{retry_err}")
+
+    # If still no RuleSet, fall back to advisory-only
     if not ruleset_json and not err:
         spec_fallback, err2 = await llm_structured(
             system=(
@@ -442,8 +486,18 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         errors.append(f"strategy_memory_failed:{e}")
 
     # Advance through the ungated lifecycle states so the paper trader can bind to it.
+    # Advisory-only strategies (no compiled RuleSet) stop at paper_candidate — they
+    # cannot be validated by the backtest engine, so giving them paper_running slots
+    # wastes resources.
+    activation_limit = "paper_running" if ruleset_json else "paper_candidate"
     state = "draft"
     for target in _ACTIVATION_PATH:
+        if target == "paper_running" and activation_limit == "paper_candidate":
+            from aletheia.storage.repositories import update_strategy
+            update_strategy(strategy.id, paper_trading_paused=True,
+                           paper_pause_reason="no_ruleset")
+            outputs.append("advisory_only:paused_at_paper_candidate")
+            break
         result = promote_strategy(strategy.id, target)
         if not result.get("success"):
             errors.append(f"promotion_stopped_at:{state}->{target}:{result.get('error')}")
