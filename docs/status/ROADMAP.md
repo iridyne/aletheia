@@ -1,6 +1,6 @@
 # Aletheia Trading OS — Phased Development Roadmap
 
-> Last updated: 2026-06-16
+> Last updated: 2026-06-18
 > Sources: PIPELINE_STATUS.md + deep research (102 agents, 20 sources) + WORLD_MAP.md (full architecture vision)
 >   + external Agent Framework Research Report 2025–2026 (validation only — see [agent_framework_research_2025_2026.md](../references/agent_framework_research_2025_2026.md))
 > Nature: **Guiding document, not automatic authorization** — each phase requires explicit confirmation before starting
@@ -445,6 +445,50 @@ own rules were ever executed.
 
 ---
 
+## Phase 2A+ — Strategy Pool & Signal Directionality (Regime → Short 完善)
+
+> **前置**: Phase 5.4 Market Regime Detector 已完成 (2026-06-17 `cfbfff6`)。
+> 本 Phase 将 regime 信息从“被动过滤”升级为“主动引导策略选择”。
+
+**Goal**: 策略声明自身的方向偏好和适用 regime，信号方向成为固有属性而非事后推断。
+
+### P2 — Strategy Pool (direction_affinity + applicable_regimes)
+
+| ID | Task | Status |
+|---|---|---|
+| 2A+.1 | `StrategyRecord` 新增 `direction_affinity` ("long"/"short"/"both") 和 `applicable_regimes` ("bull,sideways"/"all") 字段 | **DONE** (schema + migration) |
+| 2A+.2 | `strategy_designer` 产出策略时自动填写 direction_affinity + applicable_regimes | PENDING |
+| 2A+.3 | `paper_trader_ranker` 按当前 regime 过滤不适用策略 | PENDING |
+| 2A+.4 | Dashboard Strategy 列表展示 direction_affinity + applicable_regimes 标签 | PENDING |
+| 2A+.5 | Settings UI 新增 RegimeConfig 面板(enabled / min_hold_periods / bias_threshold / short_enabled) | PENDING |
+
+### P3 — Signal Directionality Refactoring
+
+| ID | Task | Status |
+|---|---|---|
+| 2A+.6 | Scanner 输出 direction 字段，使方向成为信号固有属性 | PENDING |
+| 2A+.7 | `emit_deterministic_opportunities()` 中移除 `_infer_direction()` 后推断逻辑，改读 scanner 原生 direction | PENDING |
+| 2A+.8 | 新增 `short_momentum` / `bear_breakout` scanner family(专为做空设计) | PENDING |
+| 2A+.9 | Scanner family_quota 配置支持按 regime 动态调整 | PENDING |
+| 2A+.10 | 端到端验证：bear regime + short scanner → short opportunity → paper_trader 执行做空 | PENDING |
+
+### Design Constraints
+
+- **不改 Risk Engine / Execution 边界**：做空信号仍经 Risk Engine gate 才能执行
+- **backward compatible**：现有策略无 direction_affinity 默认 "both"、applicable_regimes 默认 "all"
+- **Scanner 方向输出是 optional 扩展**：无 direction 字段的 scanner 退回 `_infer_direction()` 逻辑
+- **short_enabled=False 是全局 kill switch**：无论 regime 如何，关闭后永不产生 short signal
+
+### Observation Gate
+
+- [ ] Bear regime 下系统能自然产生 short opportunities
+- [ ] Strategy Pool 中至少存在 1 个 direction_affinity="short" 的策略在 paper_running
+- [ ] short opportunity → paper_trader → 执行做空 → position_manager 管理退出
+- [ ] Bull regime 下 short signals 被 regime gate 正确过滤
+- [ ] RegimeConfig 可通过 Dashboard Settings 切换
+
+---
+
 ## Phase 2B — Agent Coordination Flow
 
 **Goal**: Agents form directional data flow instead of independent cron jobs.
@@ -556,7 +600,7 @@ own rules were ever executed.
 | 5.1 | Intelligence Synthesizer: deduplicate + link scanner outputs before opportunity creation | WORLD_MAP 4.4 |
 | 5.2 | News Intelligence Scanner: fetch, classify, link to assets, score impact | WORLD_MAP 4.3.4 |
 | 5.3 | NewsEvent -> ResearchNote -> OpportunityCandidate pipeline | WORLD_MAP 6.4 |
-| 5.4 | Regime classification signal (trending / ranging / volatile / quiet) | — |
+| 5.4 | Regime classification signal (trending / ranging / volatile / quiet) | **DONE** (2026-06-17 `cfbfff6`) |
 | 5.5 | Funding rate / open interest integration (deeper crypto signals) | — |
 | 5.6 | Cross-scanner consistency check (contradictions surfaced explicitly) | WORLD_MAP 4.4 Contradiction output |
 
