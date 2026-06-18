@@ -937,3 +937,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-18 00:46 UTC] ✓ 系统正常 — Features=1836/h (off-peak 恢复). Opportunities=2895 (+74/h). §17 timed_out=47 (+2/45min, 线性不变). Knowledge=501 (+8/h). Ghost=0, Stale=234. §18: SKYAI/USDT (Bitget-only, 3 timeframe 全失败). 13h+ 连续无中断.
 
 [2026-06-18 01:03 UTC] ✓ 系统正常 — Features=1836/h (稳定). Opportunities=2933 (+89/h). §17 timed_out=49 (+2/45min). Knowledge=504 (+7/h). Ghost=0, Stale=233. §18: UAI/USDT (Bitget-only). 13.5h+ 连续无中断.
+
+[2026-06-18 01:46 UTC] ✓ 系统正常 — Features=1752/h (微降). **Opportunities 突破 3000** (3009, +114/h 峰值). §17 timed_out=53 (+4, market_observer 本小时 5 次触发——调度间隔缩短). risk_critic: 2 stale (偶发, 非持续). Knowledge=514 (+13/h). Ghost=0, Stale=235. §18: BLESS, PIPPIN, SQD, MSFT (xStock). 14h+ 连续无中断.
