@@ -463,6 +463,23 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         or f"{name} ({timeframe}, {direction}). Entry: {entry_rule or 'n/a'}. Exit: {exit_rule or 'n/a'}."
     )[:1000]
 
+    # Dedup: skip if same symbol+timeframe+direction already has an active strategy
+    from aletheia.storage.repositories import list_strategies as _list_strats
+    _existing = _list_strats(limit=200)
+    _active_keys = set()
+    for _s in _existing:
+        if _s.get("state") in ("paper_running", "paper_candidate", "paper_passed"):
+            try:
+                _p = _json.loads(_s.get("parameters") or "{}")
+                _key = (_p.get("symbol"), _p.get("timeframe"), _p.get("direction_bias"))
+                _active_keys.add(_key)
+            except (ValueError, TypeError):
+                pass
+    _new_key = (chosen_symbol, timeframe, direction)
+    if _new_key in _active_keys and ruleset_json:
+        outputs.append(f"dedup_skipped:{chosen_symbol}:{timeframe}:{direction}")
+        return {"outputs": outputs, "errors": errors}
+
     strategy = create_strategy(name=name, description=description, parameters=parameters)
     log_tool(run_id, "create_strategy_hypothesis", "observe", True, output=strategy.id)
     outputs.append(f"strategy:{strategy.id}")
