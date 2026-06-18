@@ -34,6 +34,7 @@ def compute_indicator(
     highs: list[float],
     lows: list[float],
     volumes: list[float],
+    opens: list[float] | None = None,
 ) -> float | None:
     """Compute a single indicator value from the series ending at current bar."""
     n = ref.name
@@ -42,8 +43,7 @@ def compute_indicator(
     if n == "close":
         return closes[-1] if closes else None
     if n == "open":
-        # open series not explicitly tracked; approximate with close
-        return closes[-1] if closes else None
+        return opens[-1] if opens else (closes[-1] if closes else None)
     if n == "high":
         return highs[-1] if highs else None
     if n == "low":
@@ -80,10 +80,11 @@ def _resolve(
     highs: list[float],
     lows: list[float],
     volumes: list[float],
+    opens: list[float] | None = None,
 ) -> float | None:
     if isinstance(operand, (int, float)):
         return float(operand)
-    return compute_indicator(operand, closes, highs, lows, volumes)
+    return compute_indicator(operand, closes, highs, lows, volumes, opens)
 
 
 def evaluate_condition(
@@ -96,6 +97,8 @@ def evaluate_condition(
     prev_highs: list[float] | None = None,
     prev_lows: list[float] | None = None,
     prev_volumes: list[float] | None = None,
+    opens: list[float] | None = None,
+    prev_opens: list[float] | None = None,
 ) -> bool | None:
     """Evaluate one Condition. Returns None when data is insufficient."""
     comp = cond.comparator
@@ -103,18 +106,18 @@ def evaluate_condition(
     if comp in (Comparator.CROSS_ABOVE, Comparator.CROSS_BELOW):
         if not prev_closes:
             return None
-        cur_l = _resolve(cond.left, closes, highs, lows, volumes)
-        cur_r = _resolve(cond.right, closes, highs, lows, volumes)
-        prv_l = _resolve(cond.left, prev_closes, prev_highs or [], prev_lows or [], prev_volumes or [])
-        prv_r = _resolve(cond.right, prev_closes, prev_highs or [], prev_lows or [], prev_volumes or [])
+        cur_l = _resolve(cond.left, closes, highs, lows, volumes, opens)
+        cur_r = _resolve(cond.right, closes, highs, lows, volumes, opens)
+        prv_l = _resolve(cond.left, prev_closes, prev_highs or [], prev_lows or [], prev_volumes or [], prev_opens)
+        prv_r = _resolve(cond.right, prev_closes, prev_highs or [], prev_lows or [], prev_volumes or [], prev_opens)
         if any(v is None for v in (cur_l, cur_r, prv_l, prv_r)):
             return None
         if comp == Comparator.CROSS_ABOVE:
             return prv_l <= prv_r and cur_l > cur_r  # type: ignore[operator]
         return prv_l >= prv_r and cur_l < cur_r  # type: ignore[operator]
 
-    lv = _resolve(cond.left, closes, highs, lows, volumes)
-    rv = _resolve(cond.right, closes, highs, lows, volumes)
+    lv = _resolve(cond.left, closes, highs, lows, volumes, opens)
+    rv = _resolve(cond.right, closes, highs, lows, volumes, opens)
     if lv is None or rv is None:
         return None
 
@@ -141,6 +144,8 @@ def evaluate_rule(
     prev_highs: list[float] | None = None,
     prev_lows: list[float] | None = None,
     prev_volumes: list[float] | None = None,
+    opens: list[float] | None = None,
+    prev_opens: list[float] | None = None,
 ) -> bool | None:
     """Evaluate an AND/OR tree. Returns None if any required indicator is None."""
     results: list[bool | None] = []
@@ -149,11 +154,13 @@ def evaluate_rule(
             r = evaluate_rule(
                 child, closes, highs, lows, volumes,
                 prev_closes, prev_highs, prev_lows, prev_volumes,
+                opens, prev_opens,
             )
         else:
             r = evaluate_condition(
                 child, closes, highs, lows, volumes,
                 prev_closes, prev_highs, prev_lows, prev_volumes,
+                opens, prev_opens,
             )
         results.append(r)
 
@@ -185,19 +192,23 @@ def evaluate_at_bar(
     highs = [b.high for b in window]
     lows = [b.low for b in window]
     volumes = [b.volume for b in window]
+    opens = [b.open for b in window]
 
     prev_closes = closes[:-1] or None
     prev_highs = highs[:-1] or None
     prev_lows = lows[:-1] or None
     prev_volumes = volumes[:-1] or None
+    prev_opens = opens[:-1] or None
 
     entry = evaluate_rule(
         ruleset.entry, closes, highs, lows, volumes,
         prev_closes, prev_highs, prev_lows, prev_volumes,
+        opens, prev_opens,
     )
     exit_ = evaluate_rule(
         ruleset.exit, closes, highs, lows, volumes,
         prev_closes, prev_highs, prev_lows, prev_volumes,
+        opens, prev_opens,
     )
     return {"entry": entry, "exit": exit_}
 

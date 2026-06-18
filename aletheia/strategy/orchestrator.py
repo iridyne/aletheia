@@ -58,7 +58,7 @@ class OrchestratorResult:
 def run_all_backtests(
     retire_killed: bool = True,
     cost_model: CostModel | None = None,
-    bar_limit: int = 500,
+    bar_limit: int = 2000,
 ) -> OrchestratorResult:
     """Run backtests for all active strategies with executable RuleSets.
 

@@ -295,7 +295,7 @@ def _compute_metrics(
 
 # ── data loading helper ───────────────────────────────────────────────────────
 
-def load_bars_from_db(symbol: str, timeframe: str, limit: int = 500) -> list[BarData]:
+def load_bars_from_db(symbol: str, timeframe: str, limit: int = 2000) -> list[BarData]:
     """Load OHLCV bars from the existing market_ohlcv SQLite table."""
     from aletheia.storage.repositories import get_ohlcv_candles
     candles = get_ohlcv_candles(symbol, timeframe, limit=limit)

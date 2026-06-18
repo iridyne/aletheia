@@ -974,7 +974,7 @@ def prune_portfolio_snapshots(days: int = 90) -> int:
 # OHLCV rolling window store
 # ---------------------------------------------------------------------------
 
-_OHLCV_WINDOW = 500  # max bars kept per (symbol, timeframe) pair
+_OHLCV_WINDOW = 2000  # max bars kept per (symbol, timeframe) pair
 
 
 def upsert_ohlcv_candles(

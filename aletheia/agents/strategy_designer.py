@@ -512,7 +512,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         from aletheia.strategy.review import evaluate_strategy as _eval_strat
 
         try:
-            _bars = load_bars_from_db(chosen_symbol, timeframe, limit=500)
+            _bars = load_bars_from_db(chosen_symbol, timeframe, limit=2000)
             _cached_bars = _bars
             if len(_bars) >= 30:
                 _bt_dir = direction if direction != "neutral" else "long"
@@ -588,7 +588,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
             from aletheia.strategy.backtest import load_bars_from_db as _load_bars
             from aletheia.strategy.dsl import RuleSet as _RS
 
-            sweep_bars = _cached_bars if _cached_bars else _load_bars(chosen_symbol, timeframe, limit=500)
+            sweep_bars = _cached_bars if _cached_bars else _load_bars(chosen_symbol, timeframe, limit=2000)
             if len(sweep_bars) >= 30:
                 _bt_dir = direction if direction != "neutral" else "long"
                 _max_v = cfg.strategy_factory.sweep_max_variants
