@@ -933,3 +933,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-17 23:46 UTC] ✓ 系统正常 — Features=1827/h (1830 带 4h+ 稳定). Opportunities=2821 (+85/h). §17 timed_out=43 (+2/45min, 线性). Knowledge=493. Ghost=0, Stale=233 (+2). §18 新增: VELVET/USDT (Bitget-only, Binance+Bybit 均无). paper_trader: completed_with_errors=3/h (持续, 非致命). 12h+ 连续无中断.
 
 [2026-06-18 00:03 UTC] ✓ 系统正常 — Features=1525/h (off-peak 下降, 同 round 33 模式). Opportunities=2844 (+83/h). §17 timed_out=45 (+2/45min, 线性), market_observer 最近 5 次全部 timed_out, abandoned_threads 重置为 1 (gateway 自动重启清理). Knowledge=497 (+8/h). Ghost=0, Stale=232. §18 新增: FOLKS/USDT (Bitget-only). 12.5h+ 连续无中断.
+
+[2026-06-18 00:46 UTC] ✓ 系统正常 — Features=1836/h (off-peak 恢复). Opportunities=2895 (+74/h). §17 timed_out=47 (+2/45min, 线性不变). Knowledge=501 (+8/h). Ghost=0, Stale=234. §18: SKYAI/USDT (Bitget-only, 3 timeframe 全失败). 13h+ 连续无中断.
