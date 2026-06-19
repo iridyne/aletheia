@@ -10,7 +10,7 @@ from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.knowledge.manager import create_post_trade_review
-from aletheia.storage.repositories import get_trade_proposal, list_fills, list_orders
+from aletheia.storage.repositories import get_trade_proposal, get_order, list_fills, list_orders
 
 logger = logging.getLogger("aletheia.agents.post_trade_reviewer")
 
@@ -50,7 +50,22 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
         strategy_fills[None] = []
 
     for strategy_id, strat_fills in strategy_fills.items():
-        ctx = f"Strategy: {strategy_id or 'global'}. Fills: {len(strat_fills)}; total orders: {len(orders)}."
+        # Enrich context with position entry/exit data and market context
+        position_details = []
+        for f in strat_fills[:10]:
+            order = get_order(f.get("order_id")) if f.get("order_id") else None
+            pos_id = order.get("position_id") if order else None
+            if pos_id:
+                from aletheia.storage.repositories import _select_one
+                pos = _select_one("positions", pos_id)
+                if pos:
+                    detail = f"{pos.get('symbol', '?')} {pos.get('direction', '?')} entry={pos.get('entry_price')} exit={pos.get('current_price')} pnl={pos.get('realized_pnl', 'open')} regime={pos.get('regime_tag', '?')}"
+                    entry_ctx = pos.get("entry_market_summary") or ""
+                    if entry_ctx:
+                        detail += f" entry_context={entry_ctx[:200]}"
+                    position_details.append(detail)
+        positions_block = "\n".join(position_details) if position_details else "No position details available."
+        ctx = f"Strategy: {strategy_id or 'global'}. Fills: {len(strat_fills)}; orders: {len(orders)}.\n\nPosition Details:\n{positions_block}"
 
         content, err = await llm_complete(
             system="You are a post-trade reviewer. Given recent fills/orders, write a short review: "

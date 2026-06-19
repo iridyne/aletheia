@@ -82,6 +82,21 @@ def execute_paper_order(
         btc_entry_price = _btc_price_now()
         # Regime tag at entry time
         regime_tag = _current_regime()
+        # Capture entry-time market context for post-trade review
+        entry_market_summary = None
+        try:
+            import json as _json
+            from aletheia.data.context_builder import build_market_context_from_db
+            ctx = build_market_context_from_db([symbol])
+            entry_market_summary = _json.dumps({
+                "regime": regime_tag,
+                "price": fill_price,
+                "data_completeness": ctx.data_completeness,
+                "tradability": ctx.tradability.get(symbol, {}),
+                "leverage": ctx.leverage.get(symbol, {}),
+            }, default=str)[:2000]
+        except Exception:
+            pass
         position = Position(
             symbol=symbol,
             market_type=market_type,
@@ -97,6 +112,7 @@ def execute_paper_order(
             take_profit_price=take_profit_price,
             btc_entry_price=btc_entry_price,
             regime_tag=regime_tag,
+            entry_market_summary=entry_market_summary,
         )
         insert_position(position)
         position_id = position.id

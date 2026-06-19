@@ -842,6 +842,7 @@ def _run_cleanup():
             "funding_rate_snapshots": repo.prune_funding_rate_snapshots(30),
             "open_interest_snapshots": repo.prune_open_interest_snapshots(30),
             "macro_snapshots": repo.prune_macro_snapshots(90),
+            "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
         }
         write_audit({

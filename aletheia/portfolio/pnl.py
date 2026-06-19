@@ -276,20 +276,45 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
 
 
 def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> PortfolioSnapshot:
-    """Compute the portfolio and persist a portfolio_snapshot row.
+    """Compute the portfolio and persist portfolio_snapshot rows.
+
+    Writes two rows when exchange data is available:
+    1. Paper-local row (execution_mode from arg) — pure mark-to-market, no exchange data
+    2. Exchange row (execution_mode="exchange_account") — real account equity from cache
 
     Called from the scheduler thread — uses persist=True to also write
-    mark-to-market prices back to the positions table (safe because the
-    scheduler holds no concurrent lock contention with itself).
+    mark-to-market prices back to the positions table.
     """
     summary = compute_portfolio(persist_marks=True)
+
+    # Row 1: paper-local (pure mark-to-market, ignoring exchange equity override)
+    local_positions = [p for p in summary.get("positions", [])
+                       if p.get("execution_mode", "").startswith("paper")]
+    local_unrealized = sum(p.get("unrealized_pnl", 0) for p in local_positions)
+    local_notional = sum(
+        p["quantity"] * (p.get("current_price") or p["entry_price"])
+        for p in local_positions
+    )
     snap = PortfolioSnapshot(
-        total_value_usdt=summary["total_value_usdt"],
-        unrealized_pnl=summary["unrealized_pnl"],
+        total_value_usdt=round(local_notional, 4),
+        unrealized_pnl=round(local_unrealized, 4),
         realized_pnl=summary["realized_pnl"],
-        positions_count=summary["positions_count"],
+        positions_count=len(local_positions),
         execution_mode=execution_mode,
-        exchange_equity_usdt=summary.get("exchange_equity_usdt"),
     )
     insert_portfolio_snapshot(snap)
+
+    # Row 2: exchange account (real equity from Bitget cache, when available)
+    exchange_equity = summary.get("exchange_equity_usdt")
+    if exchange_equity is not None:
+        exc_snap = PortfolioSnapshot(
+            total_value_usdt=float(exchange_equity),
+            unrealized_pnl=summary["unrealized_pnl"],
+            realized_pnl=summary["realized_pnl"],
+            positions_count=summary["positions_count"],
+            execution_mode="exchange_account",
+            exchange_equity_usdt=float(exchange_equity),
+        )
+        insert_portfolio_snapshot(exc_snap)
+
     return snap

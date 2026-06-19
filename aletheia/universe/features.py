@@ -234,7 +234,7 @@ async def _fetch_single_feature(
                 ratio = float(taker_data[0].get("buySellRatio", 0))
                 if ratio > 0:
                     taker_buy_ratio = ratio
-        except Exception:
+        except Exception:  # Binance-only API; silent on Bitget/other exchanges
             pass
 
     if spread is None and ob_row:

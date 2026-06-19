@@ -1448,6 +1448,14 @@ def prune_open_interest_snapshots(days: int = 30) -> int:
         db.commit()
     return cur.rowcount or 0
 
+def prune_universe_feature_snapshots(days: int = 30) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM universe_feature_snapshots WHERE ts < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
 
 def prune_macro_snapshots(days: int = 90) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

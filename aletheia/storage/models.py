@@ -190,6 +190,7 @@ class Position(BaseModel):
     btc_exit_price: float | None = None
     # Regime tag at entry time: "risk_on" | "risk_off" | "unknown".
     regime_tag: str | None = None
+    entry_market_summary: str | None = None
 
 
 class MarketRegimeRecord(BaseModel):

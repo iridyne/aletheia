@@ -145,6 +145,22 @@ class UniverseService:
             )
             repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
 
+            # Inject volume-ranking symbols as additional candidates
+            try:
+                from aletheia.agent_runtime.scheduler import get_latest_volume_ranking
+                vol = get_latest_volume_ranking()
+                vol_symbols = vol.get("symbols") or [] if vol else []
+                existing_symbols = {a.get("symbol") for a in assets}
+                for sym in vol_symbols[:20]:
+                    if sym and sym not in existing_symbols:
+                        from aletheia.storage.models import UniverseAsset
+                        asset = UniverseAsset(venue=cfg.market_data.ccxt_exchange, market_type="spot", symbol=sym)
+                        repo.upsert_universe_asset(asset)
+                if vol_symbols:
+                    assets = repo.list_universe_assets(venue=cfg.market_data.ccxt_exchange, limit=1000)
+            except Exception as e:
+                logger.debug("volume_ranking injection skipped: %s", e)
+
             features_list = await collect_features(assets, cfg)
 
             filtered = apply_tradability_filters(features_list, cfg.universe)

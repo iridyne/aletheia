@@ -42,9 +42,9 @@ def create_session(
     session_id = str(uuid.uuid4())
     db = get_db()
     db.execute(
-        "INSERT INTO agent_shell_sessions (id, user_input, kind, created_at) "
-        "VALUES (?, ?, ?, datetime('now'))",
-        (session_id, user_input, kind),
+        "INSERT INTO agent_shell_sessions (id, user_input, kind, created_at, parent_session_id, title, runtime_id) "
+        "VALUES (?, ?, ?, datetime('now'), ?, ?, ?)",
+        (session_id, user_input, kind, parent_session_id, title, "runtime-local-current"),
     )
     db.commit()
     append_session_log(
