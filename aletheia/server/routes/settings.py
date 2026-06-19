@@ -269,6 +269,7 @@ class RetentionConfigUpdate(SettingsRequest):
     run_steps_days: Optional[int] = None
     market_snapshots_days: Optional[int] = None
     portfolio_snapshots_days: Optional[int] = None
+    opportunity_ttl_hours: Optional[int] = None
     jsonl_max_mb: Optional[float] = None
 
 
@@ -278,6 +279,7 @@ _RETENTION_BOUNDS: dict[str, tuple[float, float]] = {
     "run_steps_days": (1, 365),
     "market_snapshots_days": (1, 365),
     "portfolio_snapshots_days": (1, 1825),
+    "opportunity_ttl_hours": (1, 720),
     "jsonl_max_mb": (10.0, 10000.0),
 }
 
@@ -580,6 +582,57 @@ async def update_trading_config(req: TradingConfigUpdate):
 
 
 # ---------------------------------------------------------------------------
+# Market data config
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_EXCHANGES = {"binance", "bybit", "okx", "bitget", "gate", "kucoin", "htx"}
+
+
+class MarketDataConfigUpdate(SettingsRequest):
+    ccxt_exchange: Optional[str] = None
+    ccxt_fallback: Optional[str] = None
+    ohlcv_cache_ttl_min: Optional[int] = None
+    enable_yfinance_macro: Optional[bool] = None
+    observed_stocks: Optional[list[str]] = None
+    observed_xstocks: Optional[list[str]] = None
+    observed_prediction_markets: Optional[list[str]] = None
+
+
+_MARKET_DATA_BOUNDS: dict[str, tuple[float, float]] = {
+    "ohlcv_cache_ttl_min": (1, 60),
+}
+
+
+@router.post("/market-data")
+async def update_market_data_config(req: MarketDataConfigUpdate):
+    """Update market data source parameters."""
+    cfg = load_config()
+    old = cfg.market_data.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+
+    for field, value in updates.items():
+        if field in _MARKET_DATA_BOUNDS:
+            lo, hi = _MARKET_DATA_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        if field in {"ccxt_exchange", "ccxt_fallback"}:
+            value = str(value).strip().lower()
+            if value not in _SUPPORTED_EXCHANGES:
+                raise HTTPException(400, f"'{field}' must be one of: {sorted(_SUPPORTED_EXCHANGES)}")
+        if field in {"observed_stocks", "observed_xstocks", "observed_prediction_markets"}:
+            value = list(dict.fromkeys(str(s).strip() for s in value if str(s).strip()))
+        setattr(cfg.market_data, field, value)
+
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "market_data_config_changed",
+                 "entity_type": "market_data_config", "before": old,
+                 "after": cfg.market_data.model_dump(mode="json"),
+                 "message": f"Market data config updated: {list(updates.keys())}"})
+    return {"updated": updates, "market_data": cfg.market_data.model_dump(mode="json")}
+
+
+# ---------------------------------------------------------------------------
 # Universe config
 # ---------------------------------------------------------------------------
 
@@ -596,6 +649,8 @@ class UniverseConfigUpdate(SettingsRequest):
     snapshot_ttl_hours: Optional[float] = None
     blacklist: Optional[list[str]] = None
     fallback_symbols: Optional[list[str]] = None
+    market_type: Optional[str] = None
+    family_quota: Optional[dict[str, float]] = None
 
 
 _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
@@ -617,6 +672,7 @@ async def update_universe_config(req: UniverseConfigUpdate):
     old = cfg.universe.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
 
+    _VALID_MARKET_TYPES = {"crypto", "stocks", "mixed"}
     for field, value in updates.items():
         if field in _UNIVERSE_BOUNDS:
             lo, hi = _UNIVERSE_BOUNDS[field]
@@ -626,6 +682,15 @@ async def update_universe_config(req: UniverseConfigUpdate):
             value = list(dict.fromkeys(str(s).strip().upper() for s in value if str(s).strip()))
             if field == "fallback_symbols" and not value:
                 raise HTTPException(400, "fallback_symbols must not be empty")
+        if field == "market_type" and value not in _VALID_MARKET_TYPES:
+            raise HTTPException(400, f"market_type must be one of: {sorted(_VALID_MARKET_TYPES)}")
+        if field == "family_quota":
+            if not isinstance(value, dict) or not value:
+                raise HTTPException(400, "family_quota must be a non-empty dict")
+            total = sum(float(v) for v in value.values())
+            if abs(total - 1.0) > 0.01:
+                raise HTTPException(400, f"family_quota values must sum to 1.0 (got {total:.3f})")
+            value = {k: round(float(v), 2) for k, v in value.items()}
         setattr(cfg.universe, field, value)
 
     save_config(cfg)

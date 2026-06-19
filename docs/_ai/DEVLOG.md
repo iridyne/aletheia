@@ -1,151 +1,30 @@
 # Development Log
 
-## 2026-06-17 — 会话结束：Strategy Pool 调研产出归档
+## 2026-06-17 — Self-Evolution Tier 1 实施(worktree-self-evolution-tier1)
 
-> 本次会话为纯研究 + 交接写作，无代码改动。
+> 研究 → 三层设计 → Tier 1 全量实现 + 文档整理，一次会话完成。
 
-**归档文件**：
-- `docs/research/RESEARCH_SHORT_AND_STRATEGY.md` — 竞品框架 + Aletheia 现状对照，做空信号缺口分析
-- `docs/plans/PLAN_REGIME_STRATEGY_SHORT.md` — 3 阶段实施方案（direction_affinity + regime_tags + ranker 扩展）
-
-**CURRENT_TASK.md 更新**：加入 Strategy Pool 下一步意图（Stage 1-3），清理过期的 git diverge 说明。
-
-**无敏感文件**：两个 untracked 文件均为纯文档，不含 secrets/token/凭证。
-
----
-
-## 2026-06-17 — Strategy Pool 前期探索（纯研究，无代码改动）
-
-> 来源：team-lead 委派，为 Strategy Pool 功能规划做前置调研。
-> 目标：理清策略生命周期现状，找出 direction_affinity + regime_awareness 的扩展挂钩点。
-
-### 调研结论
-
-**现有数据模型（`aletheia/storage/models.py:193`）**：
-`StrategyRecord` 字段：`id, name, description, state, parameters(JSON), under_review,
-review_notes, paper_trading_paused, paper_pause_reason, created_at, updated_at`。
-`parameters` 内约定字段：`entry_rule/exit_rule/timeframe/direction_bias/symbol/ruleset`。
-**不含** `direction_affinity`（多方向偏好权重）或 `regime_tag`（适用宏观环境）。
-
-**状态机（`aletheia/trading/strategy_lifecycle.py:27`）**：10 态前向单向，不可逆回退。
-晋升到 `paper_passed` 需 ≥14d + ≥30 笔 + 正 expectancy + 无 critical risk violations。
-
-**自动化生命周期（`aletheia/analytics/lifecycle_automation.py`）**：
-- `apply_strategy_evidence_actions()` — 自动退役（`backtest_killed`）/暂停（`paper_failing`）
-- `apply_exit_policy_feedback()` — 写 `parameters.suggested_exit_params`（advisory，不执行）
-- 无 LLM 调用，纯确定性规则
-
-**ranker 对策略的消费（`aletheia/agents/paper_trader_ranker.py:171`）**：
-- 硬阻断：`evidence_status == "backtest_killed"`
-- 软调分：`paper_promising +15 / review_needed -10 / paper_failing -30`
-- drift 调分：`paper_confirming +10 / paper_underperforming -15`
-- `direction_bias` 从 opportunity 独立推断，非 strategy.parameters 过滤
-
-**strategy_evidence 分类链（`aletheia/analytics/strategy_evidence.py:154`）**：
-`not_executable → needs_backtest → backtest_killed | needs_paper → paper_failing | paper_promising | review_needed`
-
-**forward outcome 是 Universe 级**（`aletheia/universe/outcome_recorder.py`）：
-追踪 member×horizon 收益，与策略无直接关联。策略级 PnL 来自 `positions.strategy_id`。
-
-**performance_ledger（`aletheia/strategy/performance_ledger.py`）**：
-元评估层，测量系统是否在进化（compile_rate / survival_rate / kill_rate / time_to_verdict）。
-
-### Strategy Pool 扩展挂钩点（供 team-lead 决策参考）
-
-1. **direction_affinity**：可加到 `StrategyRecord.parameters`（JSON 扩展，无需迁移）或加新列
-   （`_ADDITIVE_COLUMNS` 路径）。ranker 目前只用 opportunity.direction_bias，若要策略层过滤需
-   在 `_evaluate_candidate` 增加 direction 匹配逻辑。
-
-2. **regime_awareness**：`_compute_trade_score` 已有宏观 risk_regime 判断（`-35` penalty），
-   但是 opportunity 维度的，不是策略维度。策略层 regime_tag 需新增字段 + lifecycle 中记录
-   "策略在哪种 regime 下表现好"。
-
-3. **strategy_designer 集成**：策略生成入口在 `strategy_designer` agent（本轮未探索），
-   Strategy Pool 的批量管理界面应从这里出发。
-
-### 无代码改动
-
----
-
-## 2026-06-17 — 开源算法交易框架调研（纯研究，无代码改动）
-
-> 来源：team-lead 委派的基础研究任务；目标是为 Aletheia 下一步架构决策提供参考。
-
-### 调研范围
-
-覆盖 8 个框架（Jesse、Freqtrade/FreqAI、QuantConnect LEAN、Zipline-reloaded、Backtrader、
-Nautilus Trader、Hummingbot、OctoBot）以及 FinRL 强化学习框架；并调研了 Alpha Factory
-概念、LLM 驱动策略生成（FinGPT、GPT-InvestAR）、加密原生平台（3Commas/Mudrex/Pionex）。
-
-### 核心发现（详见本次会话 team-lead 收到的完整报告）
-
-1. **做空一等公民程度**：Nautilus Trader 和 Jesse 做空最对称（OrderSide enum /
-   `go_short()` 与 `go_long()` 完全平行）；Freqtrade 做空需 `can_short=True` + futures 市场，
-   属于事后补丁；Zipline/Backtrader 用负 order_target 量隐式表达做空，不够显式。
-
-2. **信号→仓位流水线**：QuantConnect LEAN 五层分离（Universe→Alpha→Portfolio
-   Construction→Risk→Execution）是机构级最佳实践；Aletheia 当前管道与此高度吻合，
-   但缺少独立的 PortfolioConstruction 层（ranker + paper_trader 混合承担此职责）。
-
-3. **策略发现方式**：业界主流仍是人工编码 + 超参优化（Optuna/Hyperopt）；FreqAI 是
-   最完整的 ML 信号路径（自动特征扩展 + 周期重训练 + 不确定性过滤）；LLM 目前仅作
-   为特征提取工具，未见端到端 LLM 生成可部署策略的生产案例。
-
-4. **Alpha Factory 概念**：WorldQuant 模式——大量独立 alpha 并行研究，统一回测/衰减/
-   容量评估后组合；每个 alpha 是小、可解释的信号，不是完整策略。Aletheia 的
-   signal_emitter + universe calibration 路径实质上在走类似方向。
-
-5. **Aletheia 差距点**（研究视角，供后续决策参考）：
-   - Short 方向 Opportunity 生成路径已完整（Layer 0-6 落地），但 risk engine 对空头
-     的对称风控尚需验证
-   - 无独立 PortfolioConstruction 层：ranker 既做信号排序又做 sizing，职责混合
-   - 缺少 ML 信号路径（FreqAI 风格的特征工程 + 周期重训练）
-
-### 无代码改动
-
-本轮为纯研究任务，未修改任何项目文件。
-
----
-
-## 2026-06-17 — Scanner 性能 + 测试基础设施强化
-
-> 本轮工作围绕 §16 scanner 超时根因展开：Binance fetchMarkets 错误 key → 预加载失败 →
-> OHLCV 串行慢 → 扫描超时。四条 commit 依次收尾。
+### 背景
+Universe forward outcomes（4h/15m/1h/24h 收益追踪）数据已有，但从未反哺 scanner 规则。
+Tier 1 目标：无 LLM 成本地关闭这个反馈回路，将负面 4h outcome 自动转化为 guard_candidate。
 
 ### 实现内容
+- `aletheia/universe/outcome_recorder.py`：`settle_due()` 后扫描 4h settled 行，方向感知
+  阈值判断（long < -3%，short > +3%），调用 `create_guard_candidate()`，7 天内去重
+- `aletheia/storage/repositories.py`：`guard_candidate_exists_recent(symbol, family, days=7)`
+- `tests/test_self_evolution_tier1.py`（新建）：10 个单元测试
 
-**fix(universe) d8908e5** — Binance fetchMarkets `"swap"` → `"linear"` 修复
-- 根因：CCXT Binance 适配器只接受 `["spot", "linear", "inverse"]`，`"swap"` 是 CCXT 统一名
-  但 Binance 侧白名单拒绝 → ExchangeError 静默杀死 scanner pipeline。
-- 修改：`features.py` + `registry.py` 两处 `"swap"` → `"linear"`（Binance USDT-perp 标准键）
-- 验证：scanner 完成 `assets_passed=115`
+### 文档
+- `docs/plans/self_evolution_plan.md`（从 `docs/_ai/SELF_EVOLUTION_DESIGN.md` git mv）
+- `docs/status/ROADMAP.md`：Self-Evolution 横切轨道
+- `docs/_ai/CURRENT_TASK.md`：Tier 2（2026-07-01）、Tier 3（2026-08-17）日期
 
-**test(infra) ec7ea30** — in-memory SQLite autouse + Hypothesis 属性测试
-- `conftest.py`: `_inmemory_db` autouse fixture（`:memory:` DB per test，消除磁盘 I/O）；
-  `real_db` marker 保留 WAL 锁测试；`hypothesis` dev/ci profile（max_examples=20/50）
-- `tests/test_hypothesis_properties.py`: 19 个属性测试（_is_quality_pass 边界、symbol 转换器
-  崩溃安全性 + roundtrip、_content_hash 不变量）
-- 测试套件：1338 passed（+19 新增），耗时 ~49s
-- 文档：`docs/operations/PYTEST_OPTIMIZATION_GUIDE.md`（in-memory 设计笔记）
-
-**fix(tests) 3221197** — 28+ 测试失败修复（`_MIN_CONTENT_LENGTH` 质量门影响）
-- 根因：`create_*` knowledge 函数对 <80 字符内容静默返回 `None`，旧测试用短字符串 →
-  `item.id` AttributeError 或 `count == 0` 断言失败。
-- 修复：测试种子内容扩展 ≥80 字符；`commands.py` None guard；`research_agent.py` /
-  `dreaming_agent.py` fallback 内容修复；`test_xstocks_observer` typo（`AAPL/USD` → `AAPL/USDT`）；
-  `test_openai_healthcheck` mock 真实 TCP（7.6s → 0.5s）；`daily_loss_breaker` 测试加
-  `kill_switch_enabled_demo=True`
-
-**perf(universe) e053d5a** — OHLCV 并发 5→10 + 8s per-symbol 超时
-- `_OHLCV_CONCURRENCY` 5→10（Binance 限速 6000 weight/min，115×2=230，远低于预算）
-- `asyncio.wait_for(timeout=8.0)` 防单一挂起 symbol 占满 semaphore slot
-- 效果：OHLCV 阶段 ~7s→~3.5s；单 symbol 网络尖峰不再拖慢整批
+### 验证
+1311 passed, 0 failed（master `.venv`，全量 suite）
 
 ### 状态
-
-- 工作区干净（`git status` clean），无未提交改动
-- 本地 master 领先 origin/master **46 个提交**；origin 有 2 个文档提交（round 18/19 观察记录）未 merge 到本地
-- 建议下次接手前：`git pull --rebase origin master` 解决 diverge，再 `git push` 同步
+两个提交在 `worktree-self-evolution-tier1`（`1a75dc7`, `89df0be`），待合入 master。
+Master 当前有未提交的 equity observer / futures integration 工作，需先处理再 merge。
 
 ---
 

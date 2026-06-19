@@ -1321,6 +1321,21 @@ def calibration_stats() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def guard_candidate_exists_recent(symbol: str, scanner_family: str, within_days: int = 7) -> bool:
+    """Return True if a guard_candidate for this symbol+family was created within within_days."""
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
+    row = db.execute(
+        "SELECT 1 FROM knowledge_items "
+        "WHERE item_type = 'guard_candidate' "
+        "AND title LIKE ? "
+        "AND created_at >= ? "
+        "LIMIT 1",
+        (f"%{symbol}%{scanner_family}%", cutoff),
+    ).fetchone()
+    return row is not None
+
+
 # ---------------------------------------------------------------------------
 # Data Collectors (9-domain market data)
 # ---------------------------------------------------------------------------

@@ -1,5 +1,30 @@
 # Decisions
 
+## 2026-06-17 - Self-Evolution Tier 1：4h 作为触发窗口，medium_confidence 不进 FTS
+
+### Context
+
+Universe forward outcomes 有 4 个时间窗口（15m / 1h / 4h / 24h）。需要选一个作为
+自动生成 guard_candidate 的触发窗口。同时，guard_candidate 的 confidence 级别决定
+它是否会被 LLM 在市场分析时检索到。
+
+### Decision
+
+1. **触发窗口选 4h**：15m/1h 噪声过大，24h 延迟过长，4h 是信噪比最好的窗口。
+2. **生成 `medium_confidence`（不进 FTS）**：guard_candidate 是机器自动生成的候选，
+   未经人工审核，不应自动进入 LLM 检索池（防止低质量噪声干扰分析）。
+   需人工确认后用 `create_trading_guard()` 升级为 `high_confidence` 才可检索。
+3. **Tier 1 零 LLM**：所有内容由 `_build_guard_candidate_content()` 程序化生成，
+   零额外 token 成本，不依赖 LLM 可用性。
+
+### Reasoning
+
+- 4h 窗口与 paper_trader 的持仓周期匹配，是判断"入场是否合理"的最有意义时间段。
+- `medium_confidence` 确保人工是质量关的最终把控者；FTS 只服务高置信知识。
+- Tier 1 无 LLM 依赖意味着即使 LLM 提供商不可用，反馈闭环仍然运转。
+
+---
+
 ## 2026-06-13 - Dev 栈统一到 single-port :8787,移除独立 Vite dev server
 
 ### Context

@@ -7,136 +7,43 @@
 
 ## Last Updated
 
-2026-06-19 (Code review fixes — a550b62)
+2026-06-17 (Self-Evolution Tier 1 实施完毕；worktree 待合入 master)
 
 ---
 
-## Recent Change (Code review bug fixes — 2026-06-19, commit a550b62)
+## Recent Change (Self-Evolution Tier 1 — 2026-06-17, worktree-self-evolution-tier1)
 
-> **背景**: Batch 2 code review 发现 4 个 bug，上批次 Batch 2 实现后跟进修复。
+> **目标**：关闭 `universe_forward_outcomes` → knowledge base 反馈回路。
+> 此前坏结果有数据却从未反哺规则；Tier 1 是零 LLM 成本的最低风险起点。
 
-**4 个修复**:
-1. **CRITICAL** `migrations.py`: `universe_members` 缺 `atr_pct` 列 → ATR 仓位缩放在生产 DB 静默失效。补 `_ADDITIVE_COLUMNS` 条目，ALTER TABLE 幂等修复。
-2. **HIGH** `strategy_designer.py`: `_covered` 集合包含 retired/failed 策略 → 已死亡 symbol 误标"已覆盖"，新策略设计被阻断。改为只过滤活跃状态。
-3. **MEDIUM** `strategy_designer.py`: `.replace("/","")` 违反 CLAUDE.md 符号规范 → 改用 `to_bitget()` from `aletheia.data.symbols`。
-4. **INFO** `allocator.py`: `get_family_multipliers()` docstring 仍写 `derivatives→4h`，已更新为 `derivatives→1h`。
+**核心逻辑**（`aletheia/universe/outcome_recorder.py`）：
+- `settle_due()` 结算后调用 `_maybe_generate_guard_candidates(settled_rows)`
+- 只处理 `horizon=4h`；方向感知阈值：long `return < -3%`，short `return > +3%`
+- 7 天内同 `symbol+scanner_family` 去重（`repositories.guard_candidate_exists_recent()`）
+- 生成 `medium_confidence` guard_candidate（不进 FTS 检索，需人工确认升级）
+- 失败只 `logger.warning`，不影响 `settle_due()` 返回值
 
-**验证**: 31 tests passed (test_universe_allocator + calibration + paper_trader_ranker)。
+**修改文件**：
+- `aletheia/universe/outcome_recorder.py`：`_GUARD_HORIZON` / `_LOSS_THRESHOLD_*` 常量 + `_maybe_generate_guard_candidates()` + `_build_guard_candidate_content()`
+- `aletheia/storage/repositories.py`：`guard_candidate_exists_recent()` dedup 查询
+- `tests/test_self_evolution_tier1.py`（新建）：10 个单元测试，全通过
 
----
+**文档整理**（第二个提交）：
+- `docs/_ai/SELF_EVOLUTION_DESIGN.md` → `docs/plans/self_evolution_plan.md`（移入 plans/，加明确日期）
+- `docs/status/ROADMAP.md`：新增 Self-Evolution 横切轨道（Tier 1/2/3 状态表）
+- `docs/_ai/CURRENT_TASK.md`：待办第 0 项写入 Tier 2（2026-07-01）、Tier 3（2026-08-17）
 
-## Recent Change (Strategy Pool 前期调研 — 2026-06-17，纯研究无代码改动)
+**验证**：用 master `.venv` 跑全量 suite，**1311 passed, 0 failed**。
 
-> **背景**: team-lead 委派，为 Strategy Pool 功能规划做代码结构前置调研。
-> 梳理了策略从生成到退役的完整路径，供后续设计 direction_affinity + regime_awareness 扩展时参考。
-
-**调研覆盖文件**：
-- `aletheia/agents/dreaming_agent.py` — 夜间巩固 + 学习账本（非策略生成）
-- `aletheia/storage/models.py:193` — `StrategyRecord`（核心数据模型）
-- `aletheia/storage/repositories.py:432` — CRUD（insert/update/get/list_strategies）
-- `aletheia/analytics/lifecycle_automation.py` — 自动暂停/退役（无 LLM）
-- `aletheia/analytics/strategy_evidence.py` — 策略健康分类
-- `aletheia/agents/paper_trader_ranker.py` — 策略证据对得分的影响
-- `aletheia/universe/outcome_recorder.py` — Universe 前向收益追踪（非策略级）
-- `aletheia/trading/strategy_lifecycle.py` — 状态机 + 晋升门（10 态，前向单向）
-- `aletheia/strategy/performance_ledger.py` — 元评估层
-
-**关键结论**：
-
-1. **StrategyRecord 不含 direction_affinity / regime 字段**：`parameters`（JSON blob）内只有
-   `entry_rule/exit_rule/timeframe/direction_bias/symbol/ruleset`。需扩展 `parameters` schema
-   或加新列（走 `_ADDITIVE_COLUMNS` 迁移路径）。
-
-2. **10 态前向状态机**（`aletheia/trading/strategy_lifecycle.py:27`）：
-   `draft → research_note → strategy_hypothesis → paper_candidate →
-   paper_running → paper_passed → live_candidate → live_limited → retired → deprecated`
-   晋升门要求 ≥14d paper + ≥30 笔交易 + 正 expectancy。
-
-3. **dreaming_agent 不生成策略**：负责夜间活动巩固 + 学习账本 + lesson 提取。
-   策略生成入口在 strategy_designer agent（本轮未探索）。
-
-4. **ranker 对策略的使用**：`backtest_killed` 是唯一硬阻断；其余通过 bonus/penalty 调分（+15/-10/-30）。
-   `direction_bias` 从 `opportunity` 独立推断，与 `strategy.parameters.direction` 无强绑定。
-
-5. **forward outcome 是 Universe 级，非策略级**：策略级 PnL 来自 positions 表的 `strategy_id` 外键。
-
-**无代码改动**；研究记录已写入 DEVLOG。
+**待操作**：worktree 分支 `worktree-self-evolution-tier1` 尚未合入 master，
+因 master 有未提交的 in-progress 工作（equity observer、futures integration 等）。
+合并命令：`git merge worktree-self-evolution-tier1 --no-ff`（处理完 master 未提交变更后执行）。
 
 ---
 
-## Last Updated (previous)
+## Last Updated (前次)
 
-2026-06-17 (调研：开源算法交易框架；Scanner §16 修复 + 测试基础设施强化)
-
----
-
-## Recent Change (开源算法交易框架调研 — 2026-06-17，纯研究无代码改动)
-
-> **背景**: team-lead 委派基础研究任务，为 Aletheia 下一步架构（做空对称、策略发现、
-> 信号流水线）决策提供参考。
-
-**调研范围**: Jesse、Freqtrade/FreqAI、QuantConnect LEAN、Zipline-reloaded、Backtrader、
-Nautilus Trader、Hummingbot、OctoBot、FinRL；Alpha Factory 概念；LLM 策略生成
-（FinGPT、GPT-InvestAR）。
-
-**关键结论（对 Aletheia 有参考价值）**:
-- **做空对称性**: Nautilus Trader（OrderSide enum）、Jesse（`go_short()` 与 `go_long()` 对称）
-  最完整；Freqtrade 做空是事后补丁（`can_short=True` + futures 限制）
-- **最佳流水线架构**: LEAN 五层分离（Universe → Alpha → Portfolio Construction → Risk →
-  Execution）是机构标准；Aletheia 当前管道吻合，但 ranker + paper_trader 混合承担了
-  Portfolio Construction 职责——未来拆分有价值
-- **ML 信号路径**: FreqAI 最完整（周期重训练 + 不确定性过滤 + 特征自动扩展）；LLM
-  目前只作特征提取工具，无端到端 LLM 生成可部署策略的生产案例
-- **Alpha Factory**: Aletheia 的 signal_emitter + universe calibration 走的是 WorldQuant
-  Alpha Factory 路线（小 alpha 并行 + 组合），方向正确
-
-**无代码改动**；研究记录已写入 DEVLOG。
-
----
-
-## Recent Change (Scanner §16 修复 + 测试基础设施 — 2026-06-17, commits d8908e5..e053d5a)
-
-> **背景**: §16 scanner 持续超时（82min+，10 次连续失败）。根因是 futures 集成引入了
-> `"swap"` 作为 Binance fetchMarkets 的市场类型键，但 Binance 适配器白名单不认这个值，
-> 导致 ExchangeError 静默杀死整个扫描 pipeline。同时修复了测试套件因 quality gate 引入导致
-> 的 28+ 测试失败，并强化了测试基础设施（in-memory SQLite + Hypothesis 属性测试）。
-
-**改动（5 个文件 + 1 个新测试文件）**:
-
-1. `aletheia/universe/features.py` — `fetchMarkets` `["spot", "swap"]` → `["spot", "linear"]`；
-   `_OHLCV_CONCURRENCY` 5→10；`asyncio.wait_for(timeout=8.0)` per-symbol
-2. `aletheia/universe/registry.py` — `market_types.append("swap")` → `append("linear")`
-3. `tests/conftest.py` — `_inmemory_db` autouse fixture；`real_db` marker；hypothesis profile
-4. `tests/test_hypothesis_properties.py` — **新文件**：19 个属性测试（symbol converter、quality gate、content hash）
-5. 多个测试文件 — 测试种子内容扩展 ≥80 字符；`commands.py` None guard；`test_openai_healthcheck` mock TCP；`test_xstocks_observer` typo 修复
-
-**验证**: 1338 tests passed（+19 新增）；scanner `assets_passed=115` 完成；OHLCV ~7s→~3.5s
-
-**Git 状态**: 本地 master 领先 origin/master 46 个提交；origin 有 2 个 docs 提交未合并。
-建议接手后先 `git pull --rebase origin master` 解决 diverge。
-
----
-
-## Recent Change (根治 scheduler deadlock + DB lock — 2026-06-16)
-
-> **根因**:Python sqlite3 默认 `isolation_level=""` 在每条 INSERT/UPDATE/DELETE 前自动
-> 发起 BEGIN。APScheduler daemon 线程被 `_run_sync_with_timeout` 超时放弃后，thread-local
-> connection 永远持有 `in_transaction=True`→WAL writer slot 被永久锁住→所有后续写操作
-> "database is locked"→market_observer 僵死、无新 opportunity。
-
-**修复(7 commits, d11fcf5..187e201)**:
-1. `scheduler.py`: 缩窄全局 RLock(只包前后 DB cleanup,不包 job 本体)
-2. `scheduler.py`: daemon thread + hard timeout 防 asyncio.run teardown 挂死
-3. `scheduler.py`: close_db() 在超时后清理 daemon-thread 连接
-4. `knowledge/retrieval.py`: reindex_all() 改显式 BEGIN/COMMIT
-5. `portfolio/exchange_sync.py`: _store() 用独立 autocommit 连接 + _run_async 55s timeout
-6. **核心修复 `storage/sqlite.py`**: `isolation_level=None`(真 autocommit),消灭整类
-   隐式事务泄漏 bug；DML 自动提交,不再需要 was_in_tx+commit 模式
-7. `storage/repositories.py`: 移除 _insert/_update 中的 was_in_tx+commit(多余);
-   `transaction()` context manager 保持显式 BEGIN/COMMIT 用于批量原子操作
-
-**验证**: DB 75 秒连续可写(轮询 BEGIN IMMEDIATE 无 lock);market_observer 3 轮正常
-产出(11:10/11:18/11:25 UTC);position_reconciler/post_trade_reviewer 正常循环。
+2026-06-16 (项目级 code-review:契约漂移 + 运行态正确性,15 findings → 修复)
 
 ---
 
@@ -192,7 +99,7 @@ Nautilus Trader、Hummingbot、OctoBot、FinRL；Alpha Factory 概念；LLM 策�
 - `docs/_ai/PROJECT_CONTEXT.md`:全面重写(777→1295 tests, 新增 operator/edge lab/universe 等里程碑)
 - `docs/_ai/DEV_PROTOCOL.md` §4:删除"战略冻结"段,替换为"边开发边观察"
 - `docs/_ai/AI_HANDOFF.md`:压缩 2447→<500 行(50+ Operator 增量条目合并为一段摘要)
-- `docs/archive/REPAIR_PLAN.md`:标记归档(全部 Wave 完成)
+- `docs/_ai/REPAIR_PLAN.md`:标记归档(全部 Wave 完成)
 
 > **Model provider thinking-mode fix** (uncommitted):
 > `openai_compatible.py:145` + `routes/model.py:259`: `max_tokens` 5/10→200,

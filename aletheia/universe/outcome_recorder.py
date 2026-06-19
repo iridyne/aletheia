@@ -6,6 +6,11 @@ Tracks how universe members perform AFTER being selected, answering:
 Two entry points called from UniverseService.refresh():
   1. register_pending(members) — create outcome rows for each member × horizon
   2. settle_due() — find overdue pending rows, fetch exit price, compute return
+
+Self-evolution Tier 1:
+  After settling, outcomes with 4h forward_return below the loss threshold
+  automatically generate guard_candidate knowledge items for human review.
+  Closes the feedback loop: scanner signal → actual result → candidate rule.
 """
 
 from __future__ import annotations
@@ -17,6 +22,12 @@ from aletheia.storage.models import UniverseForwardOutcome
 from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.universe.outcome_recorder")
+
+# Tier 1: loss threshold for auto guard_candidate generation
+_GUARD_HORIZON = "4h"
+_LOSS_THRESHOLD_LONG = -3.0   # long outcome: return < -3% triggers candidate
+_LOSS_THRESHOLD_SHORT = 3.0   # short outcome: return > +3% triggers candidate
+_DEDUP_WINDOW_DAYS = 7
 
 _HORIZONS: dict[str, timedelta] = {
     "15m": timedelta(minutes=15),
@@ -93,6 +104,7 @@ async def settle_due() -> int:
     prices = await _batch_fetch_prices(symbols_needed)
 
     settled = 0
+    settled_rows: list[dict] = []
     for row in pending:
         symbol = row["symbol"]
         price = prices.get(symbol)
@@ -126,10 +138,12 @@ async def settle_due() -> int:
             settled_at=now_iso,
         )
         settled += 1
+        settled_rows.append({**row, "forward_return_pct": forward_return})
 
     if settled:
         logger.info("Settled %d / %d forward outcomes", settled, len(pending))
 
+<<<<<<< HEAD
     # Emit rolling win_rate metrics for observability (§4.2)
     if settled:
         try:
@@ -143,6 +157,11 @@ async def settle_due() -> int:
                     )
         except Exception:
             pass
+=======
+    # Tier 1: auto-generate guard candidates for significant losses
+    if settled_rows:
+        _maybe_generate_guard_candidates(settled_rows)
+>>>>>>> worktree-self-evolution-tier1
 
     return settled
 
@@ -191,3 +210,125 @@ async def _batch_fetch_prices(symbols: list[str]) -> dict[str, float | None]:
             prices[sym] = None
 
     return prices
+
+
+def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
+    """Self-evolution Tier 1: generate guard_candidate items for notable losses.
+
+    Only processes 4h horizon rows. Direction-aware: long outcomes trigger on
+    return < -3%, short outcomes on return > +3%. Deduplicates within 7 days
+    per symbol+family to avoid flooding the knowledge base.
+
+    Never raises — failures are logged and ignored so settle_due() is unaffected.
+    """
+    from aletheia.knowledge.manager import create_guard_candidate
+
+    candidates = [
+        r for r in settled_rows
+        if r.get("horizon") == _GUARD_HORIZON
+        and r.get("forward_return_pct") is not None
+        and r.get("scanner_family")
+    ]
+    if not candidates:
+        return
+
+    generated = 0
+    for row in candidates:
+        fwd = row["forward_return_pct"]
+        direction = row.get("direction") or "long"
+        symbol = row["symbol"]
+        family = row["scanner_family"]
+
+        # Direction-aware loss check
+        is_loss = (
+            (direction == "short" and fwd > _LOSS_THRESHOLD_SHORT)
+            or (direction != "short" and fwd < _LOSS_THRESHOLD_LONG)
+        )
+        if not is_loss:
+            continue
+
+        # Dedup: skip if a candidate for this symbol+family exists within 7 days
+        try:
+            if repo.guard_candidate_exists_recent(symbol, family, _DEDUP_WINDOW_DAYS):
+                logger.debug(
+                    "evolution:tier1 skipped dedup symbol=%s family=%s", symbol, family
+                )
+                continue
+        except Exception as e:
+            logger.warning("evolution:tier1 dedup check failed: %s", e)
+            continue
+
+        title = f"Auto guard candidate: {symbol} {family} 4h loss"
+        content = _build_guard_candidate_content(row, fwd, direction)
+
+        try:
+            create_guard_candidate(
+                title=title,
+                content=content,
+                metadata={
+                    "outcome_id": row["id"],
+                    "symbol": symbol,
+                    "scanner_family": family,
+                    "horizon": _GUARD_HORIZON,
+                    "forward_return_pct": fwd,
+                    "direction": direction,
+                    "entry_ts": row.get("entry_ts", ""),
+                    "auto_generated": True,
+                    "tier": 1,
+                },
+                tags=["auto_generated", "tier1_evolution"],
+            )
+            generated += 1
+            logger.info(
+                "evolution:tier1 guard_candidate created symbol=%s family=%s return=%.2f%%",
+                symbol, family, fwd,
+            )
+        except Exception as e:
+            logger.warning(
+                "evolution:tier1 failed to create guard_candidate symbol=%s: %s", symbol, e
+            )
+
+    if generated:
+        logger.info("evolution:tier1 generated %d guard candidate(s)", generated)
+
+
+def _build_guard_candidate_content(row: dict, fwd: float, direction: str) -> str:
+    symbol = row["symbol"]
+    family = row["scanner_family"]
+    entry_price = row.get("entry_price_usd", "?")
+    entry_ts = row.get("entry_ts", "?")
+    outcome_id = row.get("id", "?")
+    snapshot_id = row.get("snapshot_id", "?")
+
+    threshold = _LOSS_THRESHOLD_SHORT if direction == "short" else _LOSS_THRESHOLD_LONG
+    direction_label = "short（上涨为亏损）" if direction == "short" else "long（下跌为亏损）"
+
+    return f"""## 观察
+
+scanner_family=`{family}` 选出 `{symbol}`，方向 {direction_label}，
+4h 实际收益 **{fwd:+.2f}%**（触发阈值：{threshold:+.1f}%）。
+
+## 信号上下文
+
+- symbol: {symbol}
+- scanner_family: {family}
+- direction: {direction}
+- entry_price_usd: {entry_price}
+- entry_ts: {entry_ts}
+- horizon: 4h
+- forward_return_pct: {fwd:+.2f}%
+- outcome_id: {outcome_id}
+- snapshot_id: {snapshot_id}
+
+## 候选规则（待人工确认）
+
+当 `{family}` scanner 选出 {direction} 信号，且 4h 实际收益为 {fwd:+.2f}%，
+说明本次入场的时机或信号强度判断存在问题。
+
+建议：
+- 回溯该时点的 RSI、Vol z-score、ATR 等指标值，确认是否存在共性
+- 若多次类似形态均出现亏损，可考虑在 scanners.py 中提高该族的门槛
+- 确认无误后升级为 trading_guard，将阻止后续同类信号进入执行队列
+
+**此条目为自动生成，medium_confidence，不会参与 LLM 检索。须人工审核后升级。**
+"""

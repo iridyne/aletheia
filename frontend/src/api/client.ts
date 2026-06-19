@@ -313,7 +313,8 @@ export const api = {
   }>) => post<{ updated: Record<string, any> }>('/settings/health-config', body),
   updateRetentionConfig: (body: Partial<{
     agent_runs_days: number; tool_calls_days: number; run_steps_days: number
-    market_snapshots_days: number; portfolio_snapshots_days: number; jsonl_max_mb: number
+    market_snapshots_days: number; portfolio_snapshots_days: number
+    opportunity_ttl_hours: number; jsonl_max_mb: number
   }>) => post<{ updated: Record<string, any> }>('/settings/retention', body),
   updateTelegramConfig: (body: Partial<{ enabled: boolean; allowed_chat_ids: number[] }>) =>
     post<{ updated: Record<string, any> }>('/settings/telegram', body),
@@ -580,6 +581,7 @@ export const api = {
     min_depth_10bps_usd: number; explore_ratio: number;
     snapshot_ttl_enabled: boolean; snapshot_ttl_hours: number;
     blacklist: string[]; fallback_symbols: string[];
+    market_type: string; family_quota: Record<string, number>;
   }>) => post<any>('/settings/universe', body),
 
   // Strategy Factory config
@@ -589,6 +591,13 @@ export const api = {
     walk_forward_enabled: boolean; walk_forward_folds: number; walk_forward_min_bars: number;
     high_trade_count_threshold: number; min_runtime_days_relaxed: number;
   }>) => post<any>('/settings/strategy_factory', body),
+  // Market data config
+  updateMarketDataConfig: (body: Partial<{
+    ccxt_exchange: string; ccxt_fallback: string;
+    ohlcv_cache_ttl_min: number; enable_yfinance_macro: boolean;
+    observed_stocks: string[]; observed_xstocks: string[];
+    observed_prediction_markets: string[];
+  }>) => post<{ updated: Record<string, any>; market_data: Record<string, any> }>('/settings/market-data', body),
 
   // Network / proxy config
   updateNetworkConfig: (body: Partial<{ proxy_url: string; no_proxy: string }>) =>
