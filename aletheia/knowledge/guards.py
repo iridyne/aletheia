@@ -203,20 +203,36 @@ def format_guard_block(eval_result: GuardEvaluation, max_chars: int = 1200) -> s
 
 
 def _applies_to_context(guard: TradingGuard, context: dict) -> bool:
-    """Check if guard's applies_to filters match the context."""
+    """Check if guard's applies_to filters match the context.
+
+    Returns False when a required field is None in context (guard cannot
+    meaningfully evaluate without the data it depends on).
+    """
     at = guard.applies_to
-    if at.asset_class and context.get("asset_class") not in at.asset_class:
-        return False
-    if at.scanner_family and context.get("scanner_family") not in at.scanner_family:
-        return False
-    if at.symbol and context.get("symbol") not in at.symbol:
-        return False
-    if at.direction and context.get("direction") not in at.direction:
-        return False
-    if at.confidence_bucket and context.get("confidence_bucket") not in at.confidence_bucket:
-        return False
-    if at.late_entry_bucket and context.get("late_entry_bucket") not in at.late_entry_bucket:
-        return False
+    if at.asset_class:
+        val = context.get("asset_class")
+        if val is None or val not in at.asset_class:
+            return False
+    if at.scanner_family:
+        val = context.get("scanner_family")
+        if val is None or val not in at.scanner_family:
+            return False
+    if at.symbol:
+        val = context.get("symbol")
+        if val is None or val not in at.symbol:
+            return False
+    if at.direction:
+        val = context.get("direction")
+        if val is None or val not in at.direction:
+            return False
+    if at.confidence_bucket:
+        val = context.get("confidence_bucket")
+        if val is None or val not in at.confidence_bucket:
+            return False
+    if at.late_entry_bucket:
+        val = context.get("late_entry_bucket")
+        if val is None or val not in at.late_entry_bucket:
+            return False
     return True
 
 
