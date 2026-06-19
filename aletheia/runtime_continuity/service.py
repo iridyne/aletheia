@@ -7,10 +7,13 @@ unlock live trading, or change risk limits.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 import json
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 from aletheia.gateway.frontdoor_route import write_frontdoor_route
 from aletheia.storage.migrations import run_migrations
@@ -55,6 +58,24 @@ def _json_load(value: str | None) -> object:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:12]}"
+
+
+def _kill_shadow_process(runtime: dict) -> None:
+    """Terminate shadow gateway process if its PID is recorded."""
+    import os
+    import signal
+    metadata = runtime.get("metadata")
+    if isinstance(metadata, str):
+        metadata = _json_load(metadata)
+    gw = (metadata or {}).get("gateway_process") or {}
+    pid = gw.get("pid")
+    if not pid:
+        return
+    try:
+        os.kill(int(pid), signal.SIGTERM)
+        logger.info("Killed shadow gateway process pid=%d for runtime %s", pid, runtime.get("runtime_id"))
+    except (ProcessLookupError, OSError):
+        pass
 
 
 def _decode_row(row) -> dict | None:
@@ -637,6 +658,7 @@ class RuntimeContinuityService:
                 payload=process_report,
             )
             if failed:
+                _kill_shadow_process({"metadata": metadata, "runtime_id": runtime_id})
                 db.execute(
                     "UPDATE runtime_registry SET state = ?, failed_at = ?, last_error = ?, updated_at = ? "
                     "WHERE runtime_id = ?",
@@ -669,6 +691,7 @@ class RuntimeContinuityService:
             )
         report = self._validation_report(runtime)
         if not report["passed"]:
+            _kill_shadow_process(runtime)
             now = _utc_now()
             db.execute(
                 "UPDATE runtime_registry SET state = ?, failed_at = ?, last_error = ?, updated_at = ? "
@@ -821,6 +844,7 @@ class RuntimeContinuityService:
             raise RuntimeTransitionError(f"runtime_not_found:{runtime_id}")
         if runtime["state"] not in {RuntimeState.DRAINING.value, RuntimeState.CURRENT.value}:
             raise RuntimeTransitionError(f"runtime_not_draining:{runtime['state']}")
+        _kill_shadow_process(runtime)
         state = RuntimeState.LEGACY_POSITION_MANAGER.value if force else RuntimeState.DRAINING.value
         now = _utc_now()
         self._db().execute(
