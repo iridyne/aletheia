@@ -7,28 +7,79 @@ Degrades gracefully if the exchange is unreachable.
 import logging
 
 from aletheia.config.loader import load_config
+from aletheia.data.symbols import InstrumentId, MARKET_SPOT, to_canonical, to_bitget
 from aletheia.storage.models import MarketSnapshot
 from aletheia.storage.repositories import insert_market_snapshot
-from aletheia.data.symbols import to_canonical, to_bitget
 from aletheia.trading.instruments import observed_instruments_from_config, xstocks_instruments_from_config
 from aletheia.files.jsonl import append_jsonl
 
 logger = logging.getLogger("aletheia.market_data")
 
+_MAX_DYNAMIC_INSTRUMENTS = 60
+
+
+def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
+    """Build deduplicated instrument list from config + universe + open positions.
+
+    Sources (first occurrence wins for dedup):
+      1. Config core symbols (always included, even if universe is empty)
+      2. Active universe members (dynamic — the main altcoin source)
+      3. Open position symbols (so uPnL stays fresh after symbol leaves universe)
+
+    Total capped at _MAX_DYNAMIC_INSTRUMENTS to keep collection within 90s timeout.
+    """
+    exchange = cfg.market_data.ccxt_exchange or "binance"
+
+    seen: dict[str, InstrumentId] = {}
+    for iid in observed_instruments_from_config(cfg):
+        seen[iid.symbol] = iid
+    n_config = len(seen)
+
+    try:
+        from aletheia.storage import repositories as repo
+        members = repo.get_active_universe_members(limit=cfg.universe.max_candidates)
+        for m in members:
+            sym = m.get("symbol")
+            if not sym or sym in seen:
+                continue
+            try:
+                seen[sym] = InstrumentId.from_parts(exchange, sym, MARKET_SPOT)
+            except (ValueError, Exception):
+                pass
+    except Exception:
+        pass
+
+    try:
+        from aletheia.storage import repositories as repo
+        for pos in repo.list_positions(status="open"):
+            sym = pos.get("symbol")
+            if not sym or sym in seen:
+                continue
+            try:
+                seen[sym] = InstrumentId.from_parts(exchange, sym, MARKET_SPOT)
+            except (ValueError, Exception):
+                pass
+    except Exception:
+        pass
+
+    instruments = list(seen.values())[:_MAX_DYNAMIC_INSTRUMENTS]
+    logger.debug("market_snapshots: collecting %d instruments (config=%d dynamic=%d)",
+                 len(instruments), n_config, len(instruments) - n_config)
+    return instruments
+
 
 async def collect_market_snapshots() -> dict:
     """Fetch a ticker for each observed instrument and persist a market snapshot.
 
-    Uses observed_instruments_from_config() which returns InstrumentId objects —
-    each uniquely identifies exchange + symbol + market_type so snapshots from
-    different exchanges for the same symbol can coexist in the DB.
+    Dynamically includes universe members and open-position symbols so that
+    altcoin candidates have fresh price data for paper trading.
     """
     # Migrations run once at gateway startup (aletheia/server/app.py:44); scheduler
     # jobs MUST NOT call run_migrations() — concurrent executescript() across threads
     # was the dominant `database is locked` source.
     cfg = load_config()
 
-    instruments = observed_instruments_from_config(cfg)
+    instruments = _build_dynamic_instruments(cfg)
     xstocks = xstocks_instruments_from_config(cfg)
 
     from aletheia.data.ccxt_provider import CCXTProvider, get_market_data_provider
