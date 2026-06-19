@@ -995,3 +995,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 05:21 UTC] ✓ 系统正常 — Features=1763/h (亚盘早盘平稳). Opportunities=5459 (+88/h). §17 timed_out=162 (+3). Knowledge=680 (+6/h). Ghost=0, Stale=250 (+1: dreaming_agent 正在 running, 正常). dreaming_agent git_snapshot_failed 错误 (已知 CWE). §18: FOLKS/VELVET OHLCV 反复失败 (噪音). 41h+ 连续无中断.
 
 [2026-06-19 06:21 UTC] ✓ 系统正常 — Features=1753/h (亚盘早盘稳定). Opportunities=5551 (+92/h). §17 timed_out=167 (+5); errors.log §17 明文再现 "abandoned threads=3". Knowledge=691 (+11/h, 知识产出回升). Ghost=0, Stale=251. dreaming_agent: 1 completed (正常完成). §18: FOLKS/SPX OHLCV 常规噪音. 42h+ 连续无中断.
+
+[2026-06-19 07:21 UTC] ✓ 系统正常 — Features=1759/h (亚盘早盘持续稳定). Opportunities=5640 (+89/h). §17 timed_out=171 (+4). Knowledge=695 (+4/h). Ghost=0, Stale=251. dreaming_agent: 1 completed. §18: BSB/FOLKS/M 常规 Bitget-only. 43h+ 连续无中断.
