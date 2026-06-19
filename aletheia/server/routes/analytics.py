@@ -32,3 +32,10 @@ def get_trade_paths():
     """MFE/MAE trade path analysis for closed trades."""
     from aletheia.analytics.trade_path import build_trade_path_rows
     return build_trade_path_rows(limit=200)
+
+
+@router.get("/trade-stats")
+def get_trade_stats():
+    """Trade analytics: by-source and by-family aggregation for the Analytics panel."""
+    from aletheia.analytics.trade_stats import build_trade_stats
+    return build_trade_stats()

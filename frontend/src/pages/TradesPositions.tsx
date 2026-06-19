@@ -9,8 +9,10 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import AccountSnapshot from '../components/AccountSnapshot'
 import CausalChain from '../components/CausalChain'
 import PageHeader from '../components/PageHeader'
+import Tabs from '../components/Tabs'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
 import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp } from '../lib/format'
+import TradeAnalyticsPanel from '../charts/TradeAnalyticsPanel'
 
 /**
  * Trades & Positions (WEBUI_PAGE_MAP.md — Positions + Paper Trades MERGED).
@@ -105,80 +107,84 @@ export default function TradesPositions() {
       />
       <AccountSnapshot />
 
-      {/* OPEN POSITIONS — the live book */}
-      <div className="blotter-section-head">
-        <h3>Open Positions</h3>
-        {open.length > 0
-          ? <Badge tone="green">{open.length}</Badge>
-          : <Badge tone="muted">flat</Badge>}
-      </div>
-      {open.length === 0 ? (
-        <Card><p className="text-muted text-sm">No open positions.</p></Card>
-      ) : (
-        Object.entries(openGroups).map(([group, items]) => (
-          <Card key={group}>
-            <CardHeader title={<h4 className="blotter-group-label">{group}</h4>} />
-            <DataTable data={items} columns={openColumns} onRowClick={p => setSel({ kind: 'position', position: p })} />
-          </Card>
-        ))
-      )}
+      <Tabs tabs={[
+        { id: 'blotter', label: 'Blotter', badge: open.length > 0 ? <Badge tone="green">{open.length}</Badge> : undefined, render: () => (
+          <>
+            {/* OPEN POSITIONS — the live book */}
+            <div className="blotter-section-head">
+              <h3>Open Positions</h3>
+              {open.length > 0
+                ? <Badge tone="green">{open.length}</Badge>
+                : <Badge tone="muted">flat</Badge>}
+            </div>
+            {open.length === 0 ? (
+              <Card><p className="text-muted text-sm">No open positions.</p></Card>
+            ) : (
+              Object.entries(openGroups).map(([group, items]) => (
+                <Card key={group}>
+                  <CardHeader title={<h4 className="blotter-group-label">{group}</h4>} />
+                  <DataTable data={items} columns={openColumns} onRowClick={p => setSel({ kind: 'position', position: p })} />
+                </Card>
+              ))
+            )}
 
-      {/* ACCOUNT RECONCILIATION — positions on the exchange that Aletheia did not open,
-          plus locally-open positions the exchange no longer has. Discovery only here;
-          adoption / close are separate, gated actions (later phases). */}
-      <ReconciliationCard
-        external={reconciliation?.external ?? []}
-        orphaned={reconciliation?.orphaned ?? []}
-        syncStatus={reconciliation?.sync_status}
-      />
-
-      {exposure && Object.keys(exposure).length > 0 && (
-        <Card>
-          <CardHeader title={<h4 className="blotter-group-label">Exposure by Symbol</h4>} />
-          <p className="text-muted text-sm mt-1">
-            {reconciliation?.sync_status === 'ok' || reconciliation?.sync_status === 'stale'
-              ? 'Open notional from the live exchange account view.'
-              : 'aletheia-managed open notional · exchange sync unavailable (local view may drift from the exchange)'}
-          </p>
-          <TableWrap>
-          <table>
-            <tbody>
-              {Object.entries(exposure).map(([sym, v]) => (
-                <tr key={sym}><th>{sym}</th><td className="mono">{fmtNum(v)} USDT</td></tr>
-              ))}
-            </tbody>
-          </table>
-          </TableWrap>
-        </Card>
-      )}
-
-      {/* ORDER / FILL HISTORY — the §23.9 ledger */}
-      <div className="blotter-section-head">
-        <h3>Orders &amp; Fills</h3>
-        <span className="text-muted text-sm">click a row for the causal chain</span>
-      </div>
-      <Card>
-        <DataTable
-          data={orderRows}
-          columns={orderColumns}
-          onRowClick={o => setSel({ kind: 'order', order: o })}
-          emptyMessage="No orders yet."
-        />
-      </Card>
-
-      {/* CLOSED POSITIONS — realized PnL ledger */}
-      {closed.length > 0 && (
-        <>
-          <div className="blotter-section-head"><h3>Closed Positions</h3></div>
-          <Card>
-            <DataTable
-              data={closed}
-              columns={closedColumns}
-              onRowClick={p => setSel({ kind: 'position', position: p })}
+            <ReconciliationCard
+              external={reconciliation?.external ?? []}
+              orphaned={reconciliation?.orphaned ?? []}
+              syncStatus={reconciliation?.sync_status}
             />
-          </Card>
-        </>
-      )}
+
+            {exposure && Object.keys(exposure).length > 0 && (
+              <Card>
+                <CardHeader title={<h4 className="blotter-group-label">Exposure by Symbol</h4>} />
+                <p className="text-muted text-sm mt-1">
+                  {reconciliation?.sync_status === 'ok' || reconciliation?.sync_status === 'stale'
+                    ? 'Open notional from the live exchange account view.'
+                    : 'aletheia-managed open notional · exchange sync unavailable (local view may drift from the exchange)'}
+                </p>
+                <TableWrap>
+                <table>
+                  <tbody>
+                    {Object.entries(exposure).map(([sym, v]) => (
+                      <tr key={sym}><th>{sym}</th><td className="mono">{fmtNum(v)} USDT</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+                </TableWrap>
+              </Card>
+            )}
+
+            {/* ORDER / FILL HISTORY */}
+            <div className="blotter-section-head">
+              <h3>Orders &amp; Fills</h3>
+              <span className="text-muted text-sm">click a row for the causal chain</span>
+            </div>
+            <Card>
+              <DataTable
+                data={orderRows}
+                columns={orderColumns}
+                onRowClick={o => setSel({ kind: 'order', order: o })}
+                emptyMessage="No orders yet."
+              />
+            </Card>
+
+            {/* CLOSED POSITIONS */}
+            {closed.length > 0 && (
+              <>
+                <div className="blotter-section-head"><h3>Closed Positions</h3></div>
+                <Card>
+                  <DataTable
+                    data={closed}
+                    columns={closedColumns}
+                    onRowClick={p => setSel({ kind: 'position', position: p })}
+                  />
+                </Card>
+              </>
+            )}
+          </>
+        )},
+        { id: 'analytics', label: 'Analytics', render: () => <TradeAnalyticsPanel /> },
+      ]} />
 
       <DetailDrawer
         open={!!sel}

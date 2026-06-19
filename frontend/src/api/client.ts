@@ -605,7 +605,46 @@ export const api = {
   testNetworkProxy: () =>
     post<{ reachable: boolean; latency_ms: number; error: string | null }>('/settings/network/test'),
 
+  // Trade Analytics panel
+  getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
+
   // Generic helpers for pages that need simple get/post
   get: <T = any>(path: string) => fetchJson<T>(path),
   post: <T = any>(path: string, body?: unknown) => post<T>(path, body),
+}
+
+export interface TradeStatsSource {
+  source_type: 'ruleset' | 'opportunity'
+  trade_count: number
+  win_rate: number
+  avg_hold_hours: number
+  expectancy_pct: number
+  total_pnl: number
+}
+
+export interface TradeStatsFamily {
+  family: string
+  trade_count: number
+  win_rate: number
+  avg_hold_hours: number
+  expectancy_pct: number
+}
+
+export interface HoldBucket {
+  bucket: string
+  count: number
+  pct: number
+}
+
+export interface TradeStats {
+  by_source: TradeStatsSource[]
+  by_family: TradeStatsFamily[]
+  hold_distribution: HoldBucket[]
+  totals: {
+    trade_count: number
+    win_rate: number
+    avg_hold_hours: number
+    median_hold_hours: number
+    total_pnl: number
+  }
 }

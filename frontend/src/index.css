@@ -2300,3 +2300,87 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
 .model-ping-result { font-size: 0.76rem; }
 .model-ping-result.ok { color: var(--green); }
 .model-ping-result.fail { color: var(--red); }
+
+/* ── Trade Analytics Panel ──────────────────────────────────────────────── */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+@media (max-width: 700px) { .analytics-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.analytics-metric-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: var(--space-3) var(--space-4);
+}
+.analytics-metric-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.analytics-metric-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.analytics-metric-sub {
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-family: var(--mono);
+  margin-top: 2px;
+}
+
+.analytics-section-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin: 0 0 var(--space-2);
+}
+.analytics-bar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.analytics-bar-row:last-child { border-bottom: none; }
+.analytics-bar-label {
+  width: 90px;
+  font-size: 0.78rem;
+  color: var(--text);
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.analytics-bar-wrap {
+  flex: 1;
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.analytics-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.analytics-bar-stats {
+  display: flex;
+  gap: var(--space-4);
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  color: var(--muted);
+  flex-shrink: 0;
+  min-width: 160px;
+  justify-content: flex-end;
+}
+.analytics-bar-stats .pos { color: var(--green); }
+.analytics-bar-stats .neg { color: var(--red); }
