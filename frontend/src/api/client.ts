@@ -573,6 +573,7 @@ export const api = {
   refreshUniverse: () => post<{ snapshot_id: string; status: string }>('/universe/refresh'),
   getUniversePolicy: () => fetchJson<any>('/universe/policy'),
   getUniverseRegistryStats: () => fetchJson<{ total: number; active: number; blacklisted: number }>('/universe/registry/stats'),
+  getUniverseCalibration: () => fetchJson<import('../types').CalibrationResponse>('/universe/calibration'),
   updateUniverseConfig: (body: Partial<{
     enabled: boolean; refresh_interval_min: number; max_candidates: number;
     core_pool_size: number; min_volume_24h_usdt: number; max_spread_bps: number;

@@ -1273,12 +1273,33 @@ def list_forward_outcomes_by_member(member_id: str) -> list[dict]:
     )
 
 
+def mark_outlier_outcomes_failed(max_abs_return_pct: float = 1_000_000) -> int:
+    """Mark settled rows with physically impossible returns as failed.
+
+    Catches cross-symbol price contamination (e.g. BTC's price applied to PEPE
+    when ccxt returns wrong data without raising). Idempotent — safe to call on
+    every refresh; after the first pass it finds 0 rows and returns immediately.
+    """
+    db = get_db()
+    result = db.execute(
+        "UPDATE universe_forward_outcomes "
+        "SET status = 'failed' "
+        "WHERE status = 'settled' "
+        "AND ABS(forward_return_pct) > ?",
+        (max_abs_return_pct,),
+    )
+    return result.rowcount
+
+
 def calibration_stats() -> list[dict]:
     """Aggregate forward return stats grouped by scanner_family + horizon.
 
     A "win" is direction-aware: a long member wins when the forward return is
     positive, a short member wins when it is negative. Legacy rows with NULL
     direction are treated as long (positive = win) for back-compat.
+
+    Rows with |forward_return_pct| > 100 are excluded — they indicate
+    cross-symbol price contamination and skew avg_return into the billions.
     """
     db = get_db()
     rows = db.execute(
@@ -1293,6 +1314,7 @@ def calibration_stats() -> list[dict]:
         "MAX(forward_return_pct) as max_return "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
+        "AND ABS(forward_return_pct) <= 100 "
         "GROUP BY scanner_family, horizon "
         "ORDER BY scanner_family, horizon"
     ).fetchall()

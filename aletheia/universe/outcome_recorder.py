@@ -101,6 +101,20 @@ async def settle_due() -> int:
             continue
 
         entry = row["entry_price_usd"]
+
+        # Sanity: reject price deviating >10x from entry in either direction.
+        # Catches cross-symbol contamination (e.g. BTC price ~50000 applied to
+        # PEPE at entry 0.000003 → ratio 1.6B), which ccxt can return without
+        # raising when a symbol isn't found on the fallback exchange.
+        ratio = price / entry
+        if ratio > 10.0 or ratio < 0.1:
+            repo.fail_forward_outcome(row["id"], settled_at=now_iso)
+            logger.warning(
+                "Rejected anomalous exit price for %s: entry=%.8g exit=%.8g ratio=%.2f",
+                symbol, entry, price, ratio,
+            )
+            continue
+
         forward_return = ((price - entry) / entry) * 100.0
 
         repo.settle_forward_outcome(
@@ -113,6 +127,21 @@ async def settle_due() -> int:
 
     if settled:
         logger.info("Settled %d / %d forward outcomes", settled, len(pending))
+
+    # Emit rolling win_rate metrics for observability (§4.2)
+    if settled:
+        try:
+            stats = repo.calibration_stats()
+            for row in stats:
+                if row["n"] >= 10:
+                    wr = row["win_count"] / row["n"] * 100
+                    logger.info(
+                        "METRIC family=%s horizon=%s n=%d win_rate=%.1f%%",
+                        row["scanner_family"], row["horizon"], row["n"], wr,
+                    )
+        except Exception:
+            pass
+
     return settled
 
 

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import type { UniverseMember, UniverseCurrentResponse, UniverseMemberDetail } from '../types'
+import type { UniverseMember, UniverseCurrentResponse, UniverseMemberDetail, CalibrationResponse } from '../types'
 import { DataTable } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
@@ -112,6 +112,13 @@ export default function Universe() {
     refetchInterval: 30000,
   })
 
+  const { data: calibration } = useQuery<CalibrationResponse>({
+    queryKey: ['universe-calibration'],
+    queryFn: () => api.getUniverseCalibration(),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 10 * 60 * 1000,
+  })
+
   const refreshMutation = useMutation({
     mutationFn: () => api.post('/universe/refresh'),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['universe-current'] }),
@@ -196,6 +203,58 @@ export default function Universe() {
           })}
         </div>
       )}
+
+      {/* Scanner Calibration */}
+      {(() => {
+        const horizons = ['15m', '1h', '4h', '24h']
+        const calMap: Record<string, Record<string, { n: number; wr: number }>> = {}
+        for (const row of calibration?.by_family_horizon ?? []) {
+          const fam = row.scanner_family ?? 'unknown'
+          if (!calMap[fam]) calMap[fam] = {}
+          if (row.n >= 10) {
+            calMap[fam][row.horizon] = { n: row.n, wr: row.win_count / row.n * 100 }
+          }
+        }
+        const calFamilies = Object.keys(calMap)
+        if (!calFamilies.length) return null
+        return (
+          <Card className="mb-3">
+            <div className="metric-label mb-2">Scanner Calibration <span className="text-muted">(win rate, n≥10)</span></div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--color-text-muted)' }}>Family</th>
+                    {horizons.map(h => (
+                      <th key={h} style={{ textAlign: 'center', padding: '4px 8px', color: 'var(--color-text-muted)' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {calFamilies.sort().map(fam => (
+                    <tr key={fam}>
+                      <td style={{ padding: '4px 8px' }}>
+                        <span className={familyClass(fam)}>{humanize(fam)}</span>
+                      </td>
+                      {horizons.map(h => {
+                        const cell = calMap[fam]?.[h]
+                        if (!cell) return <td key={h} style={{ textAlign: 'center', padding: '4px 8px', color: 'var(--color-text-muted)' }}>—</td>
+                        const tone = cell.wr >= 52 ? 'pnl-positive' : cell.wr <= 48 ? 'pnl-negative' : ''
+                        return (
+                          <td key={h} style={{ textAlign: 'center', padding: '4px 8px' }}>
+                            <span className={`mono ${tone}`}>{cell.wr.toFixed(0)}%</span>
+                            <span className="text-muted" style={{ fontSize: '0.75em', display: 'block' }}>n={cell.n}</span>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )
+      })()}
 
       {/* Actions */}
       {enabled && (

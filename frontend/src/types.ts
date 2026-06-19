@@ -673,3 +673,25 @@ export interface UniverseMemberDetail {
   features: UniverseFeatureSnapshot | null
   opportunities: Array<{ id: string; symbol: string; status: string; direction_bias: string | null; created_at: string }>
 }
+
+export interface CalibrationRow {
+  scanner_family: string | null
+  horizon: string
+  n: number
+  win_count: number
+  avg_return: number | null
+  min_return: number | null
+  max_return: number | null
+}
+
+export interface CalibrationFamilySummary {
+  family: string
+  total_outcomes: number
+  hit_rate_pct: number
+  avg_return_pct: number
+}
+
+export interface CalibrationResponse {
+  by_family_horizon: CalibrationRow[]
+  by_family: CalibrationFamilySummary[]
+}
