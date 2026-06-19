@@ -1207,6 +1207,24 @@ function AppRows({ settings, qc }: any) {
       <Row label="Enable autostart on gateway start" hint="When enabled, gateway start attempts to register the Windows watchdog/autostart task.">
         <Toggle checked={runtime.autostart_on_start !== false} onChange={v => runtimeMut.mutate({ autostart_on_start: v })} disabled={runtimeMut.isPending} />
       </Row>
+      <Row label="Runtime continuity" hint="Experimental: enables shadow gateway staging for zero-disruption upgrades. When off, updates use legacy restart.">
+        <Toggle checked={!!runtime.runtime_continuity_enabled} onChange={v => runtimeMut.mutate({ runtime_continuity_enabled: v })} disabled={runtimeMut.isPending} />
+      </Row>
+      {!!runtime.runtime_continuity_enabled && (
+        <>
+          <Row label="Promote lock TTL" hint="Seconds the exclusive promote/rollback lock is held. Prevents concurrent transitions.">
+            <input type="number" min={30} max={3600} value={runtime.runtime_continuity_lock_ttl_sec ?? 300}
+              onChange={e => runtimeMut.mutate({ runtime_continuity_lock_ttl_sec: Math.max(30, Math.min(3600, parseInt(e.target.value) || 300)) })}
+              disabled={runtimeMut.isPending} style={{ width: '80px' }} />
+            <span className="hint m-0">sec</span>
+          </Row>
+          <Row label="Shadow port offset" hint="Shadow gateway listens on dashboard_port + this offset (e.g. 8787 + 100 = 8887).">
+            <input type="number" min={1} max={10000} value={runtime.runtime_continuity_shadow_port_offset ?? 100}
+              onChange={e => runtimeMut.mutate({ runtime_continuity_shadow_port_offset: Math.max(1, Math.min(10000, parseInt(e.target.value) || 100)) })}
+              disabled={runtimeMut.isPending} style={{ width: '80px' }} />
+          </Row>
+        </>
+      )}
     </>
   )
 }
