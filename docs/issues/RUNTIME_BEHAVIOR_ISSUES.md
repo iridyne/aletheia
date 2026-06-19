@@ -989,3 +989,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 02:21 UTC] ✓ 系统正常 — Features=1710/h (亚盘凌晨持续缓降). Opportunities=5191 (+84/h). §17 timed_out=151 (+4). Knowledge=666 (+4/h). Ghost=0, Stale=249. Agent 活跃度低 (凌晨调度窗口正常). §18: AAOI/USDT, PRL + 常规 Bitget-only. 38h+ 连续无中断.
 
 [2026-06-19 03:21 UTC] ✓ 系统正常 — Features=1486/h (亚盘凌晨低谷). Opportunities=5276 (+85/h). §17 timed_out=155 (+4). Knowledge=670 (+4/h). Ghost=0, Stale=249. Agent 活跃度低 (凌晨窗口正常). §18: XAU/USDT + 常规 Bitget-only. 39h+ 连续无中断.
+
+[2026-06-19 04:21 UTC] ✓ 系统正常 — Features=1806/h (亚盘早盘拉升, 低谷反弹). Opportunities=5371 (+95/h). §17 timed_out=159 (+4); errors.log 首次出现 §17 明文日志 "asyncio.run() teardown hung after 255s — executor thread abandoned, total=4". Knowledge=674 (+4/h). Ghost=0, Stale=249. §18: PLAY/USDT OHLCV 多次失败 (同一符号反复重试,噪音). 40h+ 连续无中断.
