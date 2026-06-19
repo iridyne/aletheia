@@ -245,9 +245,9 @@ risk_critic：已排入 scheduler（每 6h）
         │   • task materialization is now permission-aware, so `ReadOnly/Research` no longer spawn higher-permission proposal or operational-control tasks that can only get stuck in backlog
         ├─ 设计源:
         │   • OPERATOR_LAYER_DESIGN.md (概念层)
-        │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md
-        │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
-        │   • docs/superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md
+        │   • docs/design/specs/2026-06-10-pi-operator-agent-dual-process-design.md
+        │   • docs/design/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
+        │   • docs/design/specs/2026-06-10-pi-operator-agent-design-audit.md
         ├─ 仍缺:
         │   • 更深的 PI-style session runtime
         │   • 更广的 15–60 分钟层 scheduled scan/review opportunities

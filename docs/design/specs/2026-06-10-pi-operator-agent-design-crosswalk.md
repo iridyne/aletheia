@@ -4,7 +4,7 @@ Purpose: prove that the repo-specific dual-process design fully covers `C:\Users
 
 > **2026-06-11 status note**: This crosswalk remains the coverage proof for the frozen design package.
 > Execution planning now exists at
-> `docs/superpowers/plans/2026-06-10-pi-operator-agent-foundation.md`, and implementation is
+> `docs/archive/2026-06-10-pi-operator-agent-foundation.md`, and implementation is
 > in progress on `worktree-dev`. The coverage mapping below is still authoritative for design intent.
 
 Primary local design sources:
@@ -60,11 +60,11 @@ The reference file is now split into three local layers:
    - why the operator exists, how it sits over the trading core, and why `Ctrl+K` is not the full product surface
 
 2. **Repo-specific dual-process architecture**
-   - `docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md`
+   - `docs/design/specs/2026-06-10-pi-operator-agent-dual-process-design.md`
    - exact process model, APIs, permissions, storage, supervision, UI, recovery, and rollout
 
 3. **Execution planning**
-   - `docs/superpowers/plans/2026-06-10-pi-operator-agent-foundation.md`
+   - `docs/archive/2026-06-10-pi-operator-agent-foundation.md`
    - later worktree-dev implementation extends beyond that initial foundation slice
 
 ## Remaining Design Risks

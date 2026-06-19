@@ -54,8 +54,8 @@
 
 ## 下一步可做：Strategy Pool（已完成前期调研，2026-06-17）
 
-> 调研文档：`docs/_ai/RESEARCH_SHORT_AND_STRATEGY.md`（现状分析）+
-> `docs/_ai/PLAN_REGIME_STRATEGY_SHORT.md`（实施方案）
+> 调研文档：`docs/research/RESEARCH_SHORT_AND_STRATEGY.md`（现状分析）+
+> `docs/plans/PLAN_REGIME_STRATEGY_SHORT.md`（实施方案）
 
 **调研结论摘要**：
 - `StrategyRecord.parameters`（JSON blob）不含 `direction_affinity` / `regime_tag`，需扩展
@@ -140,8 +140,8 @@ Phase 2B = Agent 协调链。Phase 6 (Live) 仍需用户显式授权才启动(tr
 
 > 设计源:
 > 1. `docs/status/ROADMAP.md` § Cross-Cutting Track: Operator Layer
-> 2. `docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md` (详细蓝图)
-> 3. `docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md` (覆盖矩阵)
+> 2. `docs/design/specs/2026-06-10-pi-operator-agent-dual-process-design.md` (详细蓝图)
+> 3. `docs/design/specs/2026-06-10-pi-operator-agent-design-crosswalk.md` (覆盖矩阵)
 > 可直接在 `master` 推进;触 trust 边界(execution/凭证/live)的改动需显式授权。
 
 ### 架构决定

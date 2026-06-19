@@ -192,7 +192,7 @@ Nautilus Trader、Hummingbot、OctoBot、FinRL；Alpha Factory 概念；LLM 策�
 - `docs/_ai/PROJECT_CONTEXT.md`:全面重写(777→1295 tests, 新增 operator/edge lab/universe 等里程碑)
 - `docs/_ai/DEV_PROTOCOL.md` §4:删除"战略冻结"段,替换为"边开发边观察"
 - `docs/_ai/AI_HANDOFF.md`:压缩 2447→<500 行(50+ Operator 增量条目合并为一段摘要)
-- `docs/_ai/REPAIR_PLAN.md`:标记归档(全部 Wave 完成)
+- `docs/archive/REPAIR_PLAN.md`:标记归档(全部 Wave 完成)
 
 > **Model provider thinking-mode fix** (uncommitted):
 > `openai_compatible.py:145` + `routes/model.py:259`: `max_tokens` 5/10→200,

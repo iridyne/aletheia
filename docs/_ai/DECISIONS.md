@@ -164,8 +164,8 @@ Operator Layer 采用 **dual-process** 架构:
 
 - 本地设计 source of truth 收口为:
   - `docs/OPERATOR_LAYER_DESIGN.md` = 概念层
-  - `docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md` = repo-specific 双进程蓝图
-  - `docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md` = 参考文件覆盖矩阵
+  - `docs/design/specs/2026-06-10-pi-operator-agent-dual-process-design.md` = repo-specific 双进程蓝图
+  - `docs/design/specs/2026-06-10-pi-operator-agent-design-crosswalk.md` = 参考文件覆盖矩阵
 - 后续 implementation plan 必须按 dual-process 拆 Track 0-9,不能回退成单进程 quick fix
 - `CURRENT_TASK.md` / `ROADMAP.md` / `AI_HANDOFF.md` / `PIPELINE_STATUS.md` 都应引用上述本地设计源
 - 这条决策**不等于**允许立即合并或上线;上线仍受 `Phase 0 门全绿 + 显式授权` 约束
@@ -425,7 +425,7 @@ Keep `ace780a` as-is. None of the 18 local-only files (`LeftNav`, `RightInspecto
 - `frontend/src/` and `aletheia/dashboard_static/` stay byte-identical to origin.
 - Discarded local commits remain reachable through `02449f0` for archaeology.
 - `docs/AI_HANDOFF.md` Known Issues list is updated to surface the two unfixed north-star gaps that the previous "no remaining open items" line obscured.
-- Full audit and 18-file judgement table archived at `docs/superpowers/specs/2026-06-07-merge-postmortem-design.md`.
+- Full audit and 18-file judgement table archived at `docs/design/specs/2026-06-07-merge-postmortem-design.md`.
 
 ### Alternatives Considered
 

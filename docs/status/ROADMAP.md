@@ -701,9 +701,9 @@ docs/design/operator_layer.md          — Cross-cutting Operator Layer track de
 docs/references/north_star.md          — Reference systems comparison + gap analysis
 docs/references/agent_framework_research_2025_2026.md
                                        — External framework survey (validation; declines heavy-infra stack)
-docs/superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md
-docs/superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
-docs/superpowers/specs/2026-06-10-pi-operator-agent-design-audit.md
+docs/design/specs/2026-06-10-pi-operator-agent-dual-process-design.md
+docs/design/specs/2026-06-10-pi-operator-agent-design-crosswalk.md
+docs/design/specs/2026-06-10-pi-operator-agent-design-audit.md
 AGENTS.md                              — Governance red lines (constraints)
 docs/_ai/DECISIONS.md                  — Architectural decision records
 docs/_ai/AI_HANDOFF.md                 — Session handoff state

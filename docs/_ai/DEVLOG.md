@@ -5,8 +5,8 @@
 > 本次会话为纯研究 + 交接写作，无代码改动。
 
 **归档文件**：
-- `docs/_ai/RESEARCH_SHORT_AND_STRATEGY.md` — 竞品框架 + Aletheia 现状对照，做空信号缺口分析
-- `docs/_ai/PLAN_REGIME_STRATEGY_SHORT.md` — 3 阶段实施方案（direction_affinity + regime_tags + ranker 扩展）
+- `docs/research/RESEARCH_SHORT_AND_STRATEGY.md` — 竞品框架 + Aletheia 现状对照，做空信号缺口分析
+- `docs/plans/PLAN_REGIME_STRATEGY_SHORT.md` — 3 阶段实施方案（direction_affinity + regime_tags + ranker 扩展）
 
 **CURRENT_TASK.md 更新**：加入 Strategy Pool 下一步意图（Stage 1-3），清理过期的 git diverge 说明。
 
@@ -126,7 +126,7 @@ Nautilus Trader、Hummingbot、OctoBot）以及 FinRL 强化学习框架；并�
 - `tests/test_hypothesis_properties.py`: 19 个属性测试（_is_quality_pass 边界、symbol 转换器
   崩溃安全性 + roundtrip、_content_hash 不变量）
 - 测试套件：1338 passed（+19 新增），耗时 ~49s
-- 文档：`docs/_ai/PYTEST_OPTIMIZATION_GUIDE.md`（in-memory 设计笔记）
+- 文档：`docs/operations/PYTEST_OPTIMIZATION_GUIDE.md`（in-memory 设计笔记）
 
 **fix(tests) 3221197** — 28+ 测试失败修复（`_MIN_CONTENT_LENGTH` 质量门影响）
 - 根因：`create_*` knowledge 函数对 <80 字符内容静默返回 `None`，旧测试用短字符串 →
