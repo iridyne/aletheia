@@ -999,3 +999,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 07:21 UTC] ✓ 系统正常 — Features=1759/h (亚盘早盘持续稳定). Opportunities=5640 (+89/h). §17 timed_out=171 (+4). Knowledge=695 (+4/h). Ghost=0, Stale=251. dreaming_agent: 1 completed. §18: BSB/FOLKS/M 常规 Bitget-only. 43h+ 连续无中断.
 
 [2026-06-19 08:21 UTC] ✓ 系统正常 — Features=1775/h (亚盘早盘小幅上升). Opportunities=5727 (+87/h). §17 timed_out=175 (+4). Knowledge=703 (+8/h). Ghost=0, Stale=251. dreaming_agent: 1 completed. errors.log: no_price_for_entry:DEXE/USDT (偶发价格缺失, 非阻断). §18: SOXL/DRAM 常规 Bitget-only. 44h+ 连续无中断.
+
+[2026-06-19 09:21 UTC] ✓ 系统正常 — Features=1776/h (亚盘持续稳定). Opportunities=5797 (+70/h, 欧市开盘前减速). Knowledge=719 (+16/h, 上升). §17 timed_out=179 (+4). Ghost=0, Stale=253. dreaming_agent: 1 completed. §18: SKHYNIX/USDT (韩股 xStock) + H/USDT OHLCV 噪音. 45h+ 连续无中断.
