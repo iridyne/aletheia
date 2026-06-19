@@ -1017,3 +1017,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 16:21 UTC] ✓ 系统正常 — Features=1692/h (US 开盘过渡低位). Opportunities=6536 (+89/h). Knowledge=855 (+29/h, 加速近 900). §17 timed_out=208 (+5). Ghost=0, Stale=277. equity_observer CWE (US 开盘时段). forward_outcome FAILED 持续 (§18 下游). 52h+ 连续无中断.
 
 [2026-06-19 17:21 UTC] ✓ 系统正常 — Features=1914/h (US 开盘后回升). Opportunities=6644 (+108/h). Knowledge=884 (+29/h, 近 900). §17 timed_out=213 (+5). Ghost=0, Stale=278. equity_observer stale=1 (US 开盘时段首次 stale, 观察). forward_outcome FAILED: NVDA/PLTR (xStock §18 下游). 53h+ 连续无中断.
+
+[2026-06-19 18:21 UTC] ✓ 系统正常 — Features=1635/h (US 盘中震荡). Opportunities=6736 (+92/h). Knowledge=894 (+10/h, 近 900). §17 timed_out=217 (+4). Ghost=0, Stale=278. equity_observer stale=1 维持 (未加重). forward_outcome FAILED: AMD/USDT (xStock §18 下游). 54h+ 连续无中断.
