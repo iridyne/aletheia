@@ -143,7 +143,6 @@ async def settle_due() -> int:
     if settled:
         logger.info("Settled %d / %d forward outcomes", settled, len(pending))
 
-<<<<<<< HEAD
     # Emit rolling win_rate metrics for observability (§4.2)
     if settled:
         try:
@@ -157,11 +156,9 @@ async def settle_due() -> int:
                     )
         except Exception:
             pass
-=======
     # Tier 1: auto-generate guard candidates for significant losses
     if settled_rows:
         _maybe_generate_guard_candidates(settled_rows)
->>>>>>> worktree-self-evolution-tier1
 
     return settled
 
