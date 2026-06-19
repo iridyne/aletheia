@@ -1025,3 +1025,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 20:21 UTC] ✓ 系统正常 — Features=1335/h (US 盘中后段缓降). Opportunities=6910 (+91/h). Knowledge=918 (+13/h). §17 timed_out=224 (+3); market_observer 偶发 1 次 completed. Ghost=0, Stale=278. forward_outcome FAILED: AVGO/RKLB/NATGAS (xStock+大宗 §18 下游). 56h+ 连续无中断.
 
 [2026-06-19 21:21 UTC] ✓ 系统正常 — Features=1579/h (US 盘中回升). **Opportunities=7002 (+92/h, 首次突破 7000)**. Knowledge=929 (+11/h). §17 timed_out=228 (+4). Ghost=0, Stale=278. paper_trader: 26 completed (2h, 比例持续提升). forward_outcome FAILED §18 下游常规. 57h+ 连续无中断.
+
+[2026-06-19 22:21 UTC] ✓ 系统正常 — Features=1580/h (US 盘中稳定). Opportunities=7092 (+90/h). **Knowledge=280/h 新增** (post_trade_review×198, guard_candidate×43, research_note×31 — US 峰值时段知识爆发, 233/280 有 content_hash 唯一, 正常). §17 timed_out=232 (+4). Ghost=0, Stale=278. risk_critic stale 升至 8/39 (20%). paper_trader: 30 completed + 38 CWE (2h). equity_observer stale=1 持续第 6 轮稳定不恶化. forward_outcome FAILED §18 下游常规 (EVAA/SKYAI/MSTR/AAOI 等). 58h+ 连续无中断.
