@@ -203,7 +203,11 @@ def _evaluate_candidate(
         except (ValueError, TypeError):
             params = {}
         ruleset_json = params.get("ruleset")
-        if ruleset_json:
+        # Symbol-specific strategies: only apply their RuleSet to the target symbol.
+        # A strategy designed for DEXE/USDT must not block ADA/USDT opportunities.
+        strategy_target = params.get("symbol")
+        ruleset_applies = not strategy_target or to_canonical(strategy_target) == to_canonical(symbol)
+        if ruleset_json and ruleset_applies:
             strategy_has_ruleset = True
             ruleset_entry_result = _check_ruleset_entry(symbol, ruleset_json, params)
             if ruleset_entry_result is not True:
