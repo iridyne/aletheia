@@ -1007,3 +1007,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 11:21 UTC] ✓ 系统正常 — Features=1669/h (欧市小幅调整). **Opportunities=5977 (+101/h, 欧市开盘冲刺)**. Knowledge=756 (+21/h, 加速增长). §17 timed_out=187 (+4). Ghost=0, Stale=260 (risk_critic stale=4, 正常波动). dreaming_agent: 1 completed. §18: AGT/USDT OHLCV 常规噪音. 47h+ 连续无中断.
 
 [2026-06-19 12:21 UTC] ✓ 系统正常 — **Features=2096/h (欧市高峰, 首次突破 2000/h)**. **Opportunities=6077 (+100/h, 首次突破 6000)**. Knowledge=773 (+17/h, 持续加速). §17 timed_out=192 (+5). Ghost=0, Stale=261. dreaming_agent: 1 completed. §18: ESPORTS/BASED/BSB OHLCV 常规噪音. 48h+ 连续无中断.
+
+[2026-06-19 13:21 UTC] ✓ 系统正常 — **Features=2682/h (欧市高峰新高)**. Opportunities=6197 (+120/h). Knowledge=779 (+6/h). §17 timed_out=194 (+2). Ghost=0, Stale=268. errors.log: forward_outcome FAILED price unavailable (§18 下游效应, ESPORTS/VELVET/GUA 等 Bitget-only 符号无法回测, 非新问题). 49h+ 连续无中断.
