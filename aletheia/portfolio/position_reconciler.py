@@ -240,6 +240,15 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     # Adopted positions are USDT-futures mix positions on Bitget.
     market_type = "usdt_futures"
     now = datetime.now(timezone.utc).isoformat()
+    # Prefer exchange-provided open time for accurate max_hold calculation
+    ctime_ms = exchange_pos.get("cTime") or exchange_pos.get("created_at")
+    if ctime_ms:
+        try:
+            opened_at = datetime.fromtimestamp(int(ctime_ms) / 1000, tz=timezone.utc).isoformat()
+        except (ValueError, TypeError, OSError):
+            opened_at = now
+    else:
+        opened_at = now
     rationale = (
         f"Adopted pre-existing {execution_mode} position {symbol} {direction} "
         f"qty={quantity} @ {entry_price} into management (source=adopted). Not a "
@@ -284,7 +293,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         order_id=order.id,
         status="open",
         source="adopted",
-        opened_at=now,
+        opened_at=opened_at,
     )
 
     with transaction():

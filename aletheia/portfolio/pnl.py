@@ -157,7 +157,11 @@ def today_realized_pnl(execution_mode: str | None = None) -> float:
     total = 0.0
     for r in rows:
         closed_at = r.get("closed_at") or ""
-        if not closed_at.startswith(today):
+        try:
+            closed_date = datetime.fromisoformat(closed_at).date().isoformat()
+        except (ValueError, TypeError):
+            continue
+        if closed_date != today:
             continue
         if execution_mode and r.get("execution_mode") != execution_mode:
             continue

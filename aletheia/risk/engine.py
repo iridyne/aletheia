@@ -150,7 +150,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     from aletheia.portfolio.pnl import today_realized_pnl
     capital_base = risk.max_live_limited_cap_usdt or 0.0
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
-    realized = today_realized_pnl()
+    realized = today_realized_pnl(execution_mode=proposal.execution_mode)
     if daily_loss_limit > 0 and realized <= -daily_loss_limit:
         violations.append(f"max_daily_loss_exceeded:{realized}<=-{daily_loss_limit}")
         is_live = _is_live(proposal.execution_mode)
@@ -159,6 +159,9 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             from aletheia.risk.kill_switch import activate as _trip
             _trip(reason=f"daily loss {realized} breached limit -{daily_loss_limit}", actor="system")
 
+    # 9a. Exchange allowlist — reject if target exchange != allowed_exchange.
+    if risk.allowed_exchange and cfg.exchange.name != risk.allowed_exchange:
+        violations.append(f"exchange_not_allowed:{cfg.exchange.name}!={risk.allowed_exchange}")
     # 9. Account mode match — order mode and exchange account must agree.
     #    A live order requires exchange.mode == 'live'; a real demo order requires
     #    exchange.mode == 'demo'. Without the demo side of this check, a bitget_demo
@@ -308,8 +311,8 @@ def _check_lesson_constraints(proposal) -> list[str]:
                 if blocked_scanner and getattr(proposal, "scanner_family", None) == blocked_scanner:
                     violations.append(f"lesson_block_scanner:{lesson.lesson_id}:{blocked_scanner}")
 
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("_check_lesson_constraints failed: %s", e)
     return violations
 
 

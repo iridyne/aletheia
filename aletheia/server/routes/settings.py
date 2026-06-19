@@ -158,6 +158,16 @@ async def update_runtime_config(req: RuntimeConfigUpdate):
             raise HTTPException(400, "runtime_continuity_shadow_port_offset must be between 1 and 10000")
         setattr(cfg.runtime, field, value)
     save_config(cfg)
+    # Notify APScheduler if scheduler_enabled changed
+    if "scheduler_enabled" in updates:
+        try:
+            from aletheia.agent_runtime.scheduler import pause_scheduler, resume_scheduler
+            if cfg.runtime.scheduler_enabled:
+                resume_scheduler()
+            else:
+                pause_scheduler()
+        except Exception:
+            pass
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "runtime_config_changed",
                  "entity_type": "runtime_config", "before": old,

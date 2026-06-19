@@ -21,11 +21,11 @@ AgentRole = Literal["strategy_designer", "market_observer", "equity_observer", "
 
 _ITEM_TYPES_BY_ROLE: dict[str, list[str]] = {
     "strategy_designer": ["trade_case_study", "research_note", "post_trade_review", "strategy_memory"],
-    "market_observer": ["trade_case_study", "research_note", "post_trade_review", "dreaming_log"],
+    "market_observer": ["trade_case_study", "research_note", "post_trade_review", "dreaming_log", "trading_guard"],
     # equity_observer uses equity-context knowledge: sector rotation, earnings events,
     # relative strength patterns. Query terms should use equity vocabulary (not crypto).
     "equity_observer": ["research_note", "trade_case_study", "post_trade_review"],
-    "paper_trader": ["trade_case_study", "post_trade_review"],
+    "paper_trader": ["trade_case_study", "post_trade_review", "trading_guard"],
 }
 
 

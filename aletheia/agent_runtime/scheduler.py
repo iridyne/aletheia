@@ -696,6 +696,9 @@ def _run_paper_trader():
     cfg = load_config()
     if cfg.runtime.paused:
         return
+    if cfg.runtime.kill_switch_active:
+        logger.info("paper_trader: kill_switch active, skipping scheduler trigger")
+        return
     if cfg.agent.permission_mode not in ("Paper", "Full"):
         return
     try:
