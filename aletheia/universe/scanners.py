@@ -357,10 +357,19 @@ def run_all_scanners(feat: dict) -> dict:
         best_family = max(results, key=lambda k: results[k][0])
         best_score, best_reasons, best_dir = results[best_family]
 
+    # Derivatives proxy: fired when funding_rate and oi_delta are both None —
+    # RSI fallback produces a weaker signal that shouldn't trigger high-conf paths.
+    is_proxy = (
+        best_family == "derivatives"
+        and feat.get("funding_rate") is None
+        and feat.get("oi_delta_1h") is None
+    )
+
     return {
         "scanner_family": best_family,
         "opportunity_score": best_score,
         "reasons": best_reasons,
         "scanner_direction": best_dir,
         "all_scores": {k: v[0] for k, v in results.items()},
+        "is_proxy": is_proxy,
     }

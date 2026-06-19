@@ -16,7 +16,9 @@ _FAMILY_CALIBRATION_HORIZON = {
     "momentum": "4h",
     "mean_reversion": "1h",
     "volatility": "1h",
-    "derivatives": "4h",
+    # 1h chosen over 4h: derivatives 4h win_rate=39.5% (n=43, likely proxy noise),
+    # 1h win_rate=52.9% (n=51) better matches derivatives signal quality.
+    "derivatives": "1h",
 }
 _DEFAULT_CALIBRATION_HORIZON = "1h"
 

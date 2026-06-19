@@ -88,6 +88,32 @@ def _build_universe_context(cfg) -> tuple[str, list[str]]:
     try:
         svc = UniverseService()
         members = svc.get_current_universe(execution_eligible_only=True, limit=8)
+
+        # Sort uncovered symbols first: universe members without an existing strategy
+        # get priority so the LLM gradually fills gaps rather than redesigning covered assets.
+        try:
+            _strats = repo.list_strategies(limit=200)
+
+            def _safe_params(raw: str) -> dict:
+                try:
+                    return _json.loads(raw) if isinstance(raw, str) else (raw or {})
+                except Exception:
+                    return {}
+
+            _covered = {
+                _safe_params(s.get("parameters") or "{}").get("symbol", "").replace("/", "")
+                for s in _strats
+            }
+            members = sorted(
+                members,
+                key=lambda m: (
+                    m.get("symbol", "").replace("/", "") in _covered,  # False=0 sorts first
+                    -(m.get("total_score") or 0),
+                ),
+            )
+        except Exception:
+            pass  # coverage sort is best-effort
+
         if members and members[0].get("scanner_family") != "core":
             lines.append("\n\n## UNIVERSE CANDIDATES (ranked by opportunity score)")
             lines.append("Pick ONE of these for your strategy — they have active scanner signals:\n")

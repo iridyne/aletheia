@@ -35,7 +35,20 @@ from aletheia.trading.ruleset_scanner import RuleSetSignal, scan_active_rulesets
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
 
-_PAPER_NOTIONAL_USDT = 25.0
+_BASE_NOTIONAL_USDT = 25.0
+_ATR_TARGET_PCT = 1.5  # 1 ATR move ≈ 1.5% portfolio risk
+
+
+def _atr_adjusted_notional(atr_pct: float | None) -> float:
+    """Scale notional so 1 ATR move = ~1.5% of position.
+
+    Low-vol (BTC 0.5% ATR) → capped at 2x = $50; high-vol (PEPE 5% ATR) → floored at 0.4x = $10.
+    """
+    if not atr_pct or atr_pct <= 0:
+        return _BASE_NOTIONAL_USDT
+    scale = _ATR_TARGET_PCT / (atr_pct * 100)
+    scale = max(0.4, min(2.0, scale))
+    return round(_BASE_NOTIONAL_USDT * scale, 2)
 
 
 @register_agent("paper_trader")
@@ -125,7 +138,8 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     opp_id = selected["opportunity_id"]
     strategy_id = selected.get("strategy_id")
 
-    quantity = round(_PAPER_NOTIONAL_USDT / price, 6) or 0.000001
+    notional = _atr_adjusted_notional(selected.get("atr_pct"))
+    quantity = round(notional / price, 6) or 0.000001
 
     stop_pct = cfg.trading.default_stop_loss_pct
     if direction == "long":
@@ -194,7 +208,7 @@ def _handle_ruleset_entry(
         return None
 
     price = float(price)
-    quantity = round(_PAPER_NOTIONAL_USDT / price, 6) or 0.000001
+    quantity = round(_BASE_NOTIONAL_USDT / price, 6) or 0.000001
 
     # Use RuleSet-derived stop if available, else fall back to config %
     stop_price = sig.stop_price

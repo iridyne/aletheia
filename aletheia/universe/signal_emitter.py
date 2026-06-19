@@ -120,6 +120,10 @@ def emit_deterministic_opportunities(
             continue
 
         confidence = "high" if total_score >= _HIGH_CONF_THRESHOLD else "medium"
+        # Proxy derivatives signals (RSI fallback, no funding/OI data) are weaker —
+        # cap at medium to avoid triggering strategy_designer high-conf events.
+        if family == "derivatives" and feat.get("is_proxy"):
+            confidence = "medium"
         reasons: list[str] = feat.get("reasons") or []
         thesis = (
             f"[{family}] {'; '.join(reasons)}" if reasons

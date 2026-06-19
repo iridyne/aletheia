@@ -768,3 +768,25 @@
 - **佐证**：`aletheia/agent_runtime/startup_gate.py:64`、`aletheia/model_provider/base.py:25`、`tests/test_startup_gate.py:46-48`
 - **最小修复**：给 `_FakeResp.__init__` 加 `self.raw = None`（或接受 `raw` 参数），使桩与真实 `ModelResponse` 对齐。
 - **状态**：✅ 已修（2026-06-16，与 ABCD 同批提交）。`_FakeResp.__init__` 增加 `raw=None` 参数并赋 `self.raw`，对齐真实 `ModelResponse`；`test_startup_gate.py` 14/14 绿。
+
+---
+
+## 13. 🟡 低影响结构问题（2026-06-19 altcoin scale 审计）
+
+以下两条问题在 altcoin scale 审计中发现，影响等级低（不阻塞执行，无信任不变量风险），记录供后续迭代参考。暂不修复。
+
+### 13.1 🟡 Risk Engine 缺 per-symbol ATR 动态仓位验证
+
+- **原因**：`aletheia/risk/engine.py` 的仓位规模检查仅依赖全局 `max_order_usdt`（配置固定值），不感知 symbol 的 ATR 波动率。Paper trader 层已加 `_atr_adjusted_notional()`（Batch 2 改动），但 risk engine 本身看不到 ATR，无法对高波动率 altcoin 执行额外仓位收缩。
+- **影响**：若未来实盘开放，高 ATR 币种（如 PEPE ATR=5%）的仓位风险未被 risk engine 双重校验。当前 paper 模式下影响有限。
+- **佐证**：`aletheia/risk/engine.py`（max_order_usdt 检查）、`aletheia/agents/paper_trader.py:_atr_adjusted_notional()`
+- **最小修复**：在 risk engine 的仓位规模检查前查 `universe_feature_snapshots.atr_pct`，ATR > 3% 时收紧 `effective_max_usdt = max_order_usdt * (1.5 / (atr_pct * 100))`。
+- **状态**：🟡 待后续迭代。不阻塞当前 MVP。
+
+### 13.2 🟡 Calibration Multiplier 只看单一 horizon，多 horizon 数据浪费
+
+- **原因**：`aletheia/universe/allocator.py:get_family_multipliers()` 每个 family 只取 `_FAMILY_CALIBRATION_HORIZON` 中指定的单一 horizon（如 derivatives="1h"）计算 multiplier，其他 horizon（15m/4h/24h）的数据完全未使用。
+- **影响**：当指定 horizon 样本量不足时（n < 10 → multiplier = 1.0 中性），即便其他 horizon 有充足数据也无法贡献。此外，单一 horizon 的 win_rate 估计方差较高，多 horizon 加权平均理论上更稳健。
+- **佐证**：`aletheia/universe/allocator.py:52-68`（只取 `expected_horizon` 行）、`aletheia/storage/repositories.py:calibration_stats()`（已返回全部 horizon 数据）
+- **最小修复**：改为 `multipliers[family] = weighted_average(rows_for_family, weight=n)`，所有 horizon 按样本量加权。需评估持仓周期与 horizon 的匹配关系再决定权重方案。
+- **状态**：🟡 待积累更多数据后评估。数据量充足前改动收益有限。

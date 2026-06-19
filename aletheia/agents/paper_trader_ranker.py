@@ -550,6 +550,7 @@ def _make_candidate(
         "tradability_score": universe_member.get("tradability_score") if universe_member else None,
         "late_entry_penalty": universe_member.get("late_entry_penalty") if universe_member else None,
         "crowding_risk": universe_member.get("crowding_risk") if universe_member else None,
+        "atr_pct": universe_member.get("atr_pct") if universe_member else None,
         "risk_flags": _parse_risk_flags(universe_member),
         # Factor feedback
         "factor_key": factor_signal.get("factor_key") if factor_signal else None,

@@ -214,6 +214,7 @@ class UniverseService:
                     risk_flags=json.dumps(item.get("risk_flags", [])),
                     execution_eligible=item.get("execution_eligible", True),
                     entry_price_usd=entry_price,
+                    atr_pct=item.get("atr_pct"),
                 )
                 repo.insert_universe_member(member)
                 inserted_members.append({
