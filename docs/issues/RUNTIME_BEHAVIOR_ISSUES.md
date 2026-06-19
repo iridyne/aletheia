@@ -1005,3 +1005,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 10:21 UTC] ✓ 系统正常 — Features=1793/h (欧市早盘开启). Opportunities=5876 (+79/h). Knowledge=735 (+16/h, 持续上升). §17 timed_out=183 (+4); errors.log §17 明文再现 abandoned threads=1. Ghost=0, Stale=254. dreaming_agent: 1 completed. §18: FOLKS OHLCV 常规噪音. 46h+ 连续无中断.
 
 [2026-06-19 11:21 UTC] ✓ 系统正常 — Features=1669/h (欧市小幅调整). **Opportunities=5977 (+101/h, 欧市开盘冲刺)**. Knowledge=756 (+21/h, 加速增长). §17 timed_out=187 (+4). Ghost=0, Stale=260 (risk_critic stale=4, 正常波动). dreaming_agent: 1 completed. §18: AGT/USDT OHLCV 常规噪音. 47h+ 连续无中断.
+
+[2026-06-19 12:21 UTC] ✓ 系统正常 — **Features=2096/h (欧市高峰, 首次突破 2000/h)**. **Opportunities=6077 (+100/h, 首次突破 6000)**. Knowledge=773 (+17/h, 持续加速). §17 timed_out=192 (+5). Ghost=0, Stale=261. dreaming_agent: 1 completed. §18: ESPORTS/BASED/BSB OHLCV 常规噪音. 48h+ 连续无中断.
