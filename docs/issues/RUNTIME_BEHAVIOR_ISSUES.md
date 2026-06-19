@@ -993,3 +993,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 04:21 UTC] ✓ 系统正常 — Features=1806/h (亚盘早盘拉升, 低谷反弹). Opportunities=5371 (+95/h). §17 timed_out=159 (+4); errors.log 首次出现 §17 明文日志 "asyncio.run() teardown hung after 255s — executor thread abandoned, total=4". Knowledge=674 (+4/h). Ghost=0, Stale=249. §18: PLAY/USDT OHLCV 多次失败 (同一符号反复重试,噪音). 40h+ 连续无中断.
 
 [2026-06-19 05:21 UTC] ✓ 系统正常 — Features=1763/h (亚盘早盘平稳). Opportunities=5459 (+88/h). §17 timed_out=162 (+3). Knowledge=680 (+6/h). Ghost=0, Stale=250 (+1: dreaming_agent 正在 running, 正常). dreaming_agent git_snapshot_failed 错误 (已知 CWE). §18: FOLKS/VELVET OHLCV 反复失败 (噪音). 41h+ 连续无中断.
+
+[2026-06-19 06:21 UTC] ✓ 系统正常 — Features=1753/h (亚盘早盘稳定). Opportunities=5551 (+92/h). §17 timed_out=167 (+5); errors.log §17 明文再现 "abandoned threads=3". Knowledge=691 (+11/h, 知识产出回升). Ghost=0, Stale=251. dreaming_agent: 1 completed (正常完成). §18: FOLKS/SPX OHLCV 常规噪音. 42h+ 连续无中断.
