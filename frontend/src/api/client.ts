@@ -577,6 +577,12 @@ export const api = {
     blacklist: string[]; fallback_symbols: string[];
   }>) => post<any>('/settings/universe', body),
 
+  // Market data config
+  updateMarketDataConfig: (body: Partial<{
+    ccxt_exchange: string; ccxt_fallback: string;
+    ohlcv_cache_ttl_min: number; enable_yfinance_macro: boolean;
+  }>) => post<{ updated: Record<string, any>; market_data: Record<string, any> }>('/settings/market-data', body),
+
   // Network / proxy config
   updateNetworkConfig: (body: Partial<{ proxy_url: string; no_proxy: string }>) =>
     post<{ updated: Record<string, any>; network: { proxy_url: string; no_proxy: string } }>('/settings/network', body),

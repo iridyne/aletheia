@@ -378,7 +378,80 @@ function ExecutionTab({ status, settings, qc }: any) {
       >
         <TradingParamsCard settings={settings} qc={qc} />
       </Section>
+
+      <Section
+        title="Market Data Sources"
+        description="Primary and fallback exchanges for OHLCV, orderbook, and ticker data. Agents use CCXT for all market queries."
+      >
+        <MarketDataCard settings={settings} qc={qc} />
+      </Section>
     </div>
+  )
+}
+
+function MarketDataCard({ settings, qc }: any) {
+  const md = settings?.market_data || {}
+  const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'gate', 'kucoin', 'htx']
+
+  const [primary, setPrimary] = useState(md.ccxt_exchange || 'binance')
+  const [fallback, setFallback] = useState(md.ccxt_fallback || 'bybit')
+  const [cacheTtl, setCacheTtl] = useState(md.ohlcv_cache_ttl_min ?? 10)
+  const [yfinance, setYfinance] = useState(!!md.enable_yfinance_macro)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    setPrimary(md.ccxt_exchange || 'binance')
+    setFallback(md.ccxt_fallback || 'bybit')
+    setCacheTtl(md.ohlcv_cache_ttl_min ?? 10)
+    setYfinance(!!md.enable_yfinance_macro)
+  }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateMarketDataConfig({
+      ccxt_exchange: primary,
+      ccxt_fallback: fallback,
+      ohlcv_cache_ttl_min: cacheTtl,
+      enable_yfinance_macro: yfinance,
+    }),
+    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const dirty = primary !== (md.ccxt_exchange || 'binance')
+    || fallback !== (md.ccxt_fallback || 'bybit')
+    || cacheTtl !== (md.ohlcv_cache_ttl_min ?? 10)
+    || yfinance !== !!md.enable_yfinance_macro
+
+  return (
+    <>
+      <Row label="Primary exchange" hint="CCXT exchange ID used for OHLCV and ticker data. Must match a supported CCXT exchange.">
+        <select value={primary} onChange={e => { setPrimary(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
+          {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
+        </select>
+      </Row>
+      <Row label="Fallback exchange" hint="Used when the primary exchange fails or returns stale data.">
+        <select value={fallback} onChange={e => { setFallback(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
+          {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
+        </select>
+      </Row>
+      <Row label="OHLCV cache TTL" hint="Minutes to cache candlestick data before re-fetching. Lower = fresher data, higher = fewer API calls.">
+        <input type="number" min={1} max={60} value={cacheTtl}
+          onChange={e => { setCacheTtl(Math.max(1, Math.min(60, parseInt(e.target.value) || 1))); setMsg(null) }}
+          style={{ width: '80px' }} />
+        <span className="hint">min</span>
+      </Row>
+      <Row label="Yahoo Finance macro" hint="Enable macro indicator collection (DXY, VIX, S&P 500) via yfinance. Requires network access to Yahoo.">
+        <Toggle checked={yfinance} label="" onChange={v => { setYfinance(v); setMsg(null) }} />
+      </Row>
+      {dirty && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.5rem 0' }}>
+          <button onClick={() => mut.mutate()} disabled={mut.isPending}>
+            {mut.isPending ? 'Saving…' : 'Save market data config'}
+          </button>
+        </div>
+      )}
+      <SaveMsg msg={msg} />
+    </>
   )
 }
 
@@ -1036,11 +1109,12 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'universe.min_volume_24h_usdt', 'universe.max_spread_bps', 'universe.min_depth_10bps_usd',
     'universe.explore_ratio', 'universe.blacklist', 'universe.fallback_symbols',
     'tunnel.enabled', 'tunnel.tunnel_id', 'tunnel.hostname',
+    'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min', 'market_data.enable_yfinance_macro',
     'network.proxy_url', 'network.no_proxy',
   ])
   const readOnlyPrefixes = [
     'app.', 'runtime.paused', 'runtime.kill_switch_active',
-    'operator.', 'guard.', 'market_data.', 'update.last_', 'update.current_commit',
+    'operator.', 'guard.', 'update.last_', 'update.current_commit',
     'live.first_live_confirmation_done', 'tunnel.credentials_path', 'tunnel.cloudflared_path', 'tunnel.metrics_port',
   ]
 

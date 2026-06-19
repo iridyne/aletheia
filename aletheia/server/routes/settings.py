@@ -541,6 +541,52 @@ async def update_trading_config(req: TradingConfigUpdate):
 
 
 # ---------------------------------------------------------------------------
+# Market data config
+# ---------------------------------------------------------------------------
+
+_SUPPORTED_EXCHANGES = {"binance", "bybit", "okx", "bitget", "gate", "kucoin", "htx"}
+
+
+class MarketDataConfigUpdate(SettingsRequest):
+    ccxt_exchange: Optional[str] = None
+    ccxt_fallback: Optional[str] = None
+    ohlcv_cache_ttl_min: Optional[int] = None
+    enable_yfinance_macro: Optional[bool] = None
+
+
+_MARKET_DATA_BOUNDS: dict[str, tuple[float, float]] = {
+    "ohlcv_cache_ttl_min": (1, 60),
+}
+
+
+@router.post("/market-data")
+async def update_market_data_config(req: MarketDataConfigUpdate):
+    """Update market data source parameters."""
+    cfg = load_config()
+    old = cfg.market_data.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+
+    for field, value in updates.items():
+        if field in _MARKET_DATA_BOUNDS:
+            lo, hi = _MARKET_DATA_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        if field in {"ccxt_exchange", "ccxt_fallback"}:
+            value = str(value).strip().lower()
+            if value not in _SUPPORTED_EXCHANGES:
+                raise HTTPException(400, f"'{field}' must be one of: {sorted(_SUPPORTED_EXCHANGES)}")
+        setattr(cfg.market_data, field, value)
+
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "market_data_config_changed",
+                 "entity_type": "market_data_config", "before": old,
+                 "after": cfg.market_data.model_dump(mode="json"),
+                 "message": f"Market data config updated: {list(updates.keys())}"})
+    return {"updated": updates, "market_data": cfg.market_data.model_dump(mode="json")}
+
+
+# ---------------------------------------------------------------------------
 # Universe config
 # ---------------------------------------------------------------------------
 
