@@ -92,6 +92,8 @@ def _build_universe_context(cfg) -> tuple[str, list[str]]:
         # Sort uncovered symbols first: universe members without an existing strategy
         # get priority so the LLM gradually fills gaps rather than redesigning covered assets.
         try:
+            from aletheia.data.symbols import to_bitget as _to_bitget
+            _active_states = {"paper_running", "paper_candidate", "paper_passed", "active", "live_candidate", "live_limited"}
             _strats = repo.list_strategies(limit=200)
 
             def _safe_params(raw: str) -> dict:
@@ -101,13 +103,15 @@ def _build_universe_context(cfg) -> tuple[str, list[str]]:
                     return {}
 
             _covered = {
-                _safe_params(s.get("parameters") or "{}").get("symbol", "").replace("/", "")
+                _to_bitget(_safe_params(s.get("parameters") or "{}").get("symbol", ""))
                 for s in _strats
+                if s.get("state") in _active_states
+                and _safe_params(s.get("parameters") or "{}").get("symbol")
             }
             members = sorted(
                 members,
                 key=lambda m: (
-                    m.get("symbol", "").replace("/", "") in _covered,  # False=0 sorts first
+                    _to_bitget(m.get("symbol") or "") in _covered,  # False=0 sorts first
                     -(m.get("total_score") or 0),
                 ),
             )

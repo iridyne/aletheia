@@ -1375,6 +1375,8 @@ _ADDITIVE_COLUMNS = [
     ("direction_affinity", "strategy_records", "TEXT DEFAULT 'both'"),
     ("applicable_regimes", "strategy_records", "TEXT DEFAULT 'all'"),
     ("strategy_type", "strategy_records", "TEXT DEFAULT 'scanner'"),
+    # Batch 2 ATR sizing: volatility-scaled position notional
+    ("atr_pct", "universe_members", "REAL"),
 ]
 
 

@@ -39,8 +39,8 @@ def get_family_multipliers(max_step: float = 0.40) -> dict[str, float]:
     Returns {family: multiplier} where multiplier is in [1-max_step, 1+max_step].
     Families with insufficient data get 1.0 (neutral).
 
-    Each family is calibrated on its natural horizon (momentum/derivatives → 4h,
-    mean_reversion/volatility → 1h).
+    Each family is calibrated on its natural horizon (momentum → 4h,
+    derivatives/mean_reversion/volatility → 1h).
     """
     from aletheia.storage import repositories as repo
 
