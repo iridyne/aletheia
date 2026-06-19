@@ -7,7 +7,21 @@
 
 ## Last Updated
 
-2026-06-17 (调研：Strategy Pool 前期探索 — 策略生命周期代码结构梳理，无代码改动)
+2026-06-19 (Code review fixes — a550b62)
+
+---
+
+## Recent Change (Code review bug fixes — 2026-06-19, commit a550b62)
+
+> **背景**: Batch 2 code review 发现 4 个 bug，上批次 Batch 2 实现后跟进修复。
+
+**4 个修复**:
+1. **CRITICAL** `migrations.py`: `universe_members` 缺 `atr_pct` 列 → ATR 仓位缩放在生产 DB 静默失效。补 `_ADDITIVE_COLUMNS` 条目，ALTER TABLE 幂等修复。
+2. **HIGH** `strategy_designer.py`: `_covered` 集合包含 retired/failed 策略 → 已死亡 symbol 误标"已覆盖"，新策略设计被阻断。改为只过滤活跃状态。
+3. **MEDIUM** `strategy_designer.py`: `.replace("/","")` 违反 CLAUDE.md 符号规范 → 改用 `to_bitget()` from `aletheia.data.symbols`。
+4. **INFO** `allocator.py`: `get_family_multipliers()` docstring 仍写 `derivatives→4h`，已更新为 `derivatives→1h`。
+
+**验证**: 31 tests passed (test_universe_allocator + calibration + paper_trader_ranker)。
 
 ---
 
