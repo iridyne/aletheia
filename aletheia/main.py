@@ -16,6 +16,7 @@ from aletheia.cli.doctor_cmd import doctor_app
 from aletheia.cli.audit_cmd import audit_app
 from aletheia.cli.operator import agent_app
 from aletheia.cli.tunnel import tunnel_app
+from aletheia.cli.inspect_cmd import inspect_app
 
 app = typer.Typer(
     name="aletheia",
@@ -30,6 +31,7 @@ app.add_typer(audit_app, name="audit", help="Audit trail verification (hash chai
 app.add_typer(agent_app, name="agent", help="Operator Agent control-plane commands.")
 app.add_typer(runtime_app, name="runtime", help="PI runtime continuity commands.")
 app.add_typer(tunnel_app, name="tunnel", help="Cloudflare Tunnel (public access).")
+app.add_typer(inspect_app, name="inspect", help="Query runtime state (read-only, agent-friendly).")
 
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")
