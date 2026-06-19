@@ -7,6 +7,46 @@
 
 ## Last Updated
 
+2026-06-19 (Trade Analytics 面板上线；Batch 2 code-review 4 bugs 修复)
+
+---
+
+## Recent Change (Trade Analytics 面板 + Batch 2 bug 修复 — 2026-06-19, 0b3b1a6)
+
+> **目标**：在 Trades & Positions 页面增加 Analytics sub-tab，可视化展示
+> 交易模式差异（RuleSet vs Opportunity）、scanner family 表现、持仓时间分布。
+
+**Batch 2 Code-Review 修复（4 个 bugs，优先于 analytics 实施）**：
+- **CRITICAL** `aletheia/storage/migrations.py`：`_ADDITIVE_COLUMNS` 补入 `("atr_pct", "universe_members", "REAL")`；
+  缺失导致现有 DB 升级后 ATR 仓位定规模链路静默失败（`_atr_adjusted_notional()` 读到 None）。
+- **HIGH** `aletheia/agents/strategy_designer.py`：`_covered` 集合改为仅含 active 状态策略；
+  原代码把 retired/failed 策略也排除，导致 ranker 优先给已失败币种生成新策略。
+  同时用 `to_bitget()` 标准化符号，消除 `BTC/USDT` vs `BTCUSDT` 比较总为 False 的 bug。
+- **MEDIUM** symbol 格式：`strategy_designer.py` 原用 `.replace("/","")` 手动转换，
+  违反 CLAUDE.md canonical symbol 规则，改为 `to_bitget()` 统一入口。
+- **INFO** `aletheia/universe/allocator.py`：`get_family_multipliers()` 文档字符串更正
+  （"momentum/derivatives → 4h" → 实际 "momentum → 4h, derivatives/mean_reversion/volatility → 1h"）。
+
+**Trade Analytics 面板**：
+- `aletheia/analytics/trade_stats.py`（新建）：`build_trade_stats()` 聚合已平仓
+  持仓，按 source type / family / hold-time 分桶。RuleSet 判断用
+  `json_extract(s.parameters, '$.ruleset') IS NOT NULL`（`strategy_evidence.py` 同标准）。
+  family 数据复用 `compute_family_scorecard()`。
+- `aletheia/server/routes/analytics.py`：追加 `GET /api/analytics/trade-stats`。
+- `frontend/src/charts/TradeAnalyticsPanel.tsx`（新建）：4 区块 CSS bar chart 面板，
+  `useQuery(staleTime=60s)`，零新依赖。
+- `frontend/src/api/client.ts`：追加 `getTradeStats()` 及 TypeScript 接口。
+- `frontend/src/pages/TradesPositions.tsx`：用 `<Tabs>` 拆出 Blotter / Analytics 两个 tab。
+- `frontend/src/index.css`：追加 `.analytics-*` CSS 类。
+- `aletheia/dashboard_static/`：重新构建（203 modules）。
+
+**验证**：`GET /api/analytics/trade-stats` 返回正确 JSON（59 trades，by_source/by_family/
+hold_distribution/totals 字段完整）；前端构建 0 error；gateway 已重启。
+
+---
+
+## Last Updated (前次)
+
 2026-06-17 (Self-Evolution Tier 1 实施完毕；worktree 待合入 master)
 
 ---
