@@ -180,7 +180,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
         description="Controls how much autonomy agents have over trading decisions. Changes are audited."
       >
         <Row label="Permission mode" hint="Observe → Paper → Full. Increasing autonomy at each step.">
-          <select value={perm} onChange={e => permMut.mutate(e.target.value)} style={{ width: 'auto' }}>
+          <select value={perm} onChange={e => permMut.mutate(e.target.value)} className="w-auto">
             {PERMISSION_MODES.map(m => <option key={m}>{m}</option>)}
           </select>
         </Row>
@@ -281,10 +281,10 @@ function UniverseConfigCard({ settings, qc }: any) {
   if (!universe) return null
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
+    <div className="card mb-0">
       <div className="flex items-center gap-3 mb-3">
         <Toggle checked={enabled} onChange={v => { setEnabled(v); setMsg(null) }} />
-        {!enabled && <span className="hint" style={{ margin: 0 }}>Agents use static symbol list (BTC/ETH/SOL) when disabled.</span>}
+        {!enabled && <span className="hint m-0">Agents use static symbol list (BTC/ETH/SOL) when disabled.</span>}
       </div>
       <div className="settings-field-grid">
         <label className="settings-field">
@@ -329,35 +329,35 @@ function UniverseConfigCard({ settings, qc }: any) {
             <input type="number" min={1} max={72} step={1} value={snapshotTtlHours}
               disabled={!snapshotTtlEnabled}
               onChange={e => { setSnapshotTtlHours(e.target.value); setMsg(null) }} />
-            <span className="hint" style={{ margin: 0 }}>hrs</span>
+            <span className="hint m-0">hrs</span>
           </div>
         </label>
       </div>
-      <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
+      <div className="form-grid mb-3">
         <label>
           <span>Universe blacklist</span>
           <input value={blacklist} placeholder="DOGE/USDT, PEPE/USDT"
             onChange={e => { setBlacklist(e.target.value); setMsg(null) }}
-            style={{ fontFamily: 'var(--mono)' }} />
+            className="mono" />
         </label>
         <label>
           <span>Fallback symbols</span>
           <input value={fallbackSymbols} placeholder="BTC/USDT, ETH/USDT, SOL/USDT"
             onChange={e => { setFallbackSymbols(e.target.value); setMsg(null) }}
-            style={{ fontFamily: 'var(--mono)' }} />
+            className="mono" />
         </label>
       </div>
-      <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
+      <div className="form-grid mb-3">
         <label>
           <span>Market type</span>
-          <select value={marketType} onChange={e => { setMarketType(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
+          <select value={marketType} onChange={e => { setMarketType(e.target.value); setMsg(null) }} className="w-auto">
             <option value="crypto">crypto</option>
             <option value="stocks">stocks</option>
             <option value="mixed">mixed</option>
           </select>
         </label>
       </div>
-      <div style={{ marginBottom: '0.75rem' }}>
+      <div className="mb-3">
         <span className="settings-field-label">Family quota (must sum to 1.0)</span>
         <div className="settings-field-grid">
           {Object.entries(familyQuota).map(([family, val]) => (
@@ -467,12 +467,12 @@ function MarketDataCard({ settings, qc }: any) {
   return (
     <>
       <Row label="Primary exchange" hint="CCXT exchange ID used for OHLCV and ticker data. Must match a supported CCXT exchange.">
-        <select value={primary} onChange={e => { setPrimary(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
+        <select value={primary} onChange={e => { setPrimary(e.target.value); setMsg(null) }} className="w-auto">
           {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
         </select>
       </Row>
       <Row label="Fallback exchange" hint="Used when the primary exchange fails or returns stale data.">
-        <select value={fallback} onChange={e => { setFallback(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
+        <select value={fallback} onChange={e => { setFallback(e.target.value); setMsg(null) }} className="w-auto">
           {EXCHANGES.map(ex => <option key={ex} value={ex}>{ex}</option>)}
         </select>
       </Row>
@@ -488,20 +488,20 @@ function MarketDataCard({ settings, qc }: any) {
       <Row label="Observed stocks" hint="Yahoo Finance tickers for macro correlation. Comma-separated (e.g. SPY, QQQ, NVDA).">
         <input value={stocks} placeholder="SPY, QQQ, NVDA, AAPL"
           onChange={e => { setStocks(e.target.value); setMsg(null) }}
-          style={{ fontFamily: 'var(--mono)', width: '100%' }} />
+          className="mono w-full" />
       </Row>
       <Row label="Observed xStocks" hint="Bitget ON-series tokenized stocks (e.g. AAPLON/USDT). Comma-separated.">
         <input value={xstocks} placeholder="AAPLON/USDT, TSLAON/USDT"
           onChange={e => { setXstocks(e.target.value); setMsg(null) }}
-          style={{ fontFamily: 'var(--mono)', width: '100%' }} />
+          className="mono w-full" />
       </Row>
       <Row label="Prediction markets" hint="Polymarket category slugs to track. Comma-separated.">
         <input value={predMarkets} placeholder="crypto, politics"
           onChange={e => { setPredMarkets(e.target.value); setMsg(null) }}
-          style={{ fontFamily: 'var(--mono)', width: '100%' }} />
+          className="mono w-full" />
       </Row>
       {dirty && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.5rem 0' }}>
+        <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
           <button onClick={() => mut.mutate()} disabled={mut.isPending}>
             {mut.isPending ? 'Saving…' : 'Save market data config'}
           </button>
@@ -519,7 +519,7 @@ function ExchangeModeRow({ status, qc }: any) {
   })
   return (
     <Row label="Exchange mode" hint="demo uses Bitget paper trading; live requires unlocking below and real credentials.">
-      <select value={String(status.exchange_mode)} onChange={e => mut.mutate(e.target.value)} style={{ width: 'auto' }}>
+      <select value={String(status.exchange_mode)} onChange={e => mut.mutate(e.target.value)} className="w-auto">
         <option value="demo">demo</option>
         <option value="live">live</option>
       </select>
@@ -557,7 +557,7 @@ function ExchangeMarketsRow({ settings, qc }: any) {
         <Toggle checked={futures} label="USDT Futures" onChange={v => { setFutures(v); setMsg(null) }} />
       </Row>
       <Row label="Paper execution mode" hint="Where autonomous paper orders are simulated. bitget_demo uses Bitget demo/simulated trading; paper_internal uses only the local simulator.">
-        <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
+        <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setMsg(null) }} className="w-auto">
           <option value="bitget_demo">bitget_demo</option>
           <option value="paper_internal">paper_internal</option>
         </select>
@@ -653,12 +653,12 @@ function ExchangeCredentialsCard({ qc }: any) {
   })
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <div style={{ marginBottom: '0.8rem' }}>
+    <div className="card mb-0">
+      <div className="mb-3">
         <ExchangeProfileStatus profile="demo" configured={!!data?.demo?.api_key?.configured} />
         <ExchangeProfileStatus profile="live" configured={!!data?.live?.api_key?.configured} />
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.8rem' }}>
+      <div className="flex gap-2 mb-3">
         {(['demo', 'live'] as const).map(p => (
           <button key={p} className={profile === p ? '' : 'secondary'} onClick={() => { setProfile(p); setResult(null) }}>{p}</button>
         ))}
@@ -677,7 +677,7 @@ function ExchangeCredentialsCard({ qc }: any) {
           <input type="password" value={passphrase} placeholder={cur?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} />
         </label>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+      <div className="flex gap-2 mt-3">
         <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
           {verifyAndSave.isPending ? 'Verifying…' : `Verify & Save ${profile}`}
         </button>
@@ -729,37 +729,37 @@ function TradingParamsCard({ settings, qc }: any) {
   if (!trading) return null
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
+    <div className="card mb-0">
+      <div className="form-grid mb-3">
         <label>
           <span>Default stop-loss (%)</span>
           <input type="number" min={0.1} max={50} step={0.1} value={stopLoss}
             onChange={e => { setStopLoss(e.target.value); setMsg(null) }}
-            style={{ fontFamily: 'var(--mono)' }} />
+            className="mono" />
         </label>
         <label>
           <span>Default take-profit (%)</span>
           <input type="number" min={0.1} max={100} step={0.1} value={takeProfit}
             onChange={e => { setTakeProfit(e.target.value); setMsg(null) }}
-            style={{ fontFamily: 'var(--mono)' }} />
+            className="mono" />
         </label>
         <label>
           <span>Max hold time (hours)</span>
           <input type="number" min={1} max={8760} step={1} value={holdHours}
             onChange={e => { setHoldHours(e.target.value); setMsg(null) }}
-            style={{ fontFamily: 'var(--mono)' }} />
+            className="mono" />
         </label>
         <label>
           <span>Paper slippage (bps)</span>
           <input type="number" min={0} max={200} step={0.5} value={slippageBps}
             onChange={e => { setSlippageBps(e.target.value); setMsg(null) }}
-            style={{ fontFamily: 'var(--mono)' }} />
+            className="mono" />
         </label>
         <label>
           <span>Execution fee (%)</span>
           <input type="number" min={0} max={5} step={0.01} value={executionFeePct}
             onChange={e => { setExecutionFeePct(e.target.value); setMsg(null) }}
-            style={{ fontFamily: 'var(--mono)' }} />
+            className="mono" />
         </label>
         <label>
           <span>Min confidence to trade</span>
@@ -774,12 +774,12 @@ function TradingParamsCard({ settings, qc }: any) {
           label="Auto-adopt external demo positions into local management"
           onChange={v => { setAutoAdopt(v); setMsg(null) }}
         />
-        <p className="hint" style={{ marginTop: '0.35rem' }}>
+        <p className="hint mt-1">
           When ON, demo positions found on the exchange can be brought under Aletheia management and may receive default exits.
           Live positions are never auto-adopted.
         </p>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="flex gap-2">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
       </div>
       <SaveMsg msg={msg} />
@@ -857,7 +857,7 @@ function SymbolsCard({ settings, qc }: any) {
   const chipTone = mode === 'whitelist' ? 'allow' : 'deny'
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
+    <div className="card mb-0">
       {/* Mode toggle */}
       <div className="flex items-center gap-2 mb-3">
         <span className="text-sm text-muted">Mode:</span>
@@ -874,7 +874,7 @@ function SymbolsCard({ settings, qc }: any) {
           </span>
         ))}
         {draft.length === 0 && (
-          <span className="hint" style={{ margin: 0 }}>
+          <span className="hint m-0">
             {mode === 'whitelist' ? 'No symbols — add at least one.' : 'Empty — all symbols are tradable.'}
           </span>
         )}
@@ -980,24 +980,24 @@ function RiskCard({ settings, qc }: any) {
   if (!risk) return null
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
+    <div className="card mb-0">
       {/* Immutable fields notice */}
       <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', padding: '0.45rem 0.75rem', background: 'var(--bg)', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', marginBottom: '1.25rem' }}>
-        <span style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>
-          allowed_exchange: <span style={{ fontFamily: 'var(--mono)', color: 'var(--text)' }}>{risk.allowed_exchange}</span>
+        <span className="text-xs text-muted">
+          allowed_exchange: <span className="mono">{risk.allowed_exchange}</span>
         </span>
-        <span style={{ fontSize: '0.73rem', color: 'var(--muted)' }}>
+        <span className="text-xs text-muted">
           require_risk_check: <span className={`badge ${risk.require_risk_check_for_all_orders ? 'badge-green' : 'badge-red'}`}>{humanizeBool(risk.require_risk_check_for_all_orders)}</span>
           <span className="text-xs" style={{ marginLeft: 'var(--space-1)' }}>locked</span>
         </span>
       </div>
 
       {/* Live limits */}
-      <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', marginBottom: '0.5rem' }}>Live limits</div>
+      <div className="section-label">Live limits</div>
       <NumGrid fields={RISK_LIVE} vals={vals} set={set} />
 
       {/* Demo limits */}
-      <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', margin: '1rem 0 0.5rem' }}>Demo / paper limits</div>
+      <div className="section-label mt-4">Demo / paper limits</div>
       <NumGrid fields={RISK_DEMO} vals={vals} set={set} />
 
       <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
@@ -1085,7 +1085,7 @@ function DisplayRow() {
         onChange={e => setDecimals(Number(e.target.value))}
         className="decimals-input" style={{ width: '70px' }}
       />
-      <span className="hint mono" style={{ margin: 0 }}>e.g. {fmtNum(1234.5, { decimals })} · {fmtNum(0, { decimals })}</span>
+      <span className="hint mono m-0">e.g. {fmtNum(1234.5, { decimals })} · {fmtNum(0, { decimals })}</span>
     </Row>
   )
 }
@@ -1109,18 +1109,18 @@ function AppRows({ settings, qc }: any) {
   return (
     <>
       <Row label="App name" hint="Read-only product identity from config.yaml.">
-        <span className="mono" style={{ fontSize: '0.82rem' }}>{app.name || 'Aletheia Trading OS'}</span>
+        <span className="mono text-sm">{app.name || 'Aletheia Trading OS'}</span>
       </Row>
       <Row label="Dashboard port" hint={`Currently listening on :${app.dashboard_port || 8787}. Change requires gateway restart.`}>
-        <span className="mono" style={{ fontSize: '0.82rem' }}>{app.dashboard_port || 8787}</span>
-        <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>(read-only — set via config.yaml)</span>
+        <span className="mono text-sm">{app.dashboard_port || 8787}</span>
+        <span className="text-xs text-muted">(read-only — set via config.yaml)</span>
       </Row>
       <Row label="Bind host" hint="Loopback is safest. Non-loopback hosts expose the local API without multi-user auth.">
-        <span className="mono" style={{ fontSize: '0.82rem' }}>{app.bind_host || '127.0.0.1'}</span>
-        <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>(read-only — set via config.yaml)</span>
+        <span className="mono text-sm">{app.bind_host || '127.0.0.1'}</span>
+        <span className="text-xs text-muted">(read-only — set via config.yaml)</span>
       </Row>
       <Row label="Gateway mode" hint="Process lifecycle mode used by the CLI/supervisor.">
-        <span className="mono" style={{ fontSize: '0.82rem' }}>{runtime.gateway_mode || 'background'}</span>
+        <span className="mono text-sm">{runtime.gateway_mode || 'background'}</span>
       </Row>
       <Row label="Auto-open browser" hint="Open the dashboard in a browser tab automatically when the gateway starts.">
         <Toggle checked={autoBrowser} onChange={v => appMut.mutate({ auto_open_browser: v })} disabled={appMut.isPending} />
@@ -1182,8 +1182,8 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     .sort((a, b) => a.key.localeCompare(b.key))
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <p className="hint" style={{ marginTop: 0 }}>
+    <div className="card mb-0">
+      <p className="hint m-0">
         This matrix is intentionally read-only. It prevents hidden config drift; dedicated controls above remain the only editable surface for safety-sensitive settings.
       </p>
       <div style={{ maxHeight: '420px', overflow: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
@@ -1262,7 +1262,7 @@ function HealthCard({ settings, qc }: any) {
   ]
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
+    <div className="card mb-0">
       <ToggleGrid fields={HEALTH_TOGGLES} vals={vals} set={set} />
       <NumGrid fields={HEALTH_FIELDS} vals={vals} set={set} />
       <div className="settings-action-row">
@@ -1306,9 +1306,9 @@ function RetentionCard({ settings, qc }: any) {
   ]
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
+    <div className="card mb-0">
       <NumGrid fields={RETENTION_FIELDS} vals={vals} set={set} />
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="flex gap-2">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
       </div>
       <SaveMsg msg={msg} />
@@ -1352,18 +1352,18 @@ function TelegramCard({ settings, qc }: any) {
   }
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <div style={{ marginBottom: '0.75rem' }}>
+    <div className="card mb-0">
+      <div className="mb-3">
         <ConnectionStatus label="telegram bot" state={state} text={connText} />
       </div>
-      <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
-        <label style={{ gridColumn: '1 / -1' }}>
+      <div className="form-grid mb-3">
+        <label className="col-full">
           <span>Allowed chat IDs</span>
           <input
             value={chatIdsInput}
             placeholder="123456789, 987654321"
             onChange={e => { setChatIdsInput(e.target.value); setMsg(null) }}
-            style={{ fontFamily: 'var(--mono)' }}
+            className="mono"
           />
         </label>
       </div>
@@ -1421,12 +1421,12 @@ function UpdateCard({ settings, qc }: any) {
   else if (data?.ok && !data.has_update) badge = <span className="badge badge-green">up to date</span>
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
+    <div className="card mb-0">
       {/* Status line */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
         {badge}
         {data?.ok && (
-          <span className="hint mono" style={{ margin: 0 }}>
+          <span className="hint mono m-0">
             {data.branch} · {data.current_commit?.slice(0, 8)}{data.has_update ? ` → ${data.remote_commit?.slice(0, 8)}` : ''}
           </span>
         )}
@@ -1438,19 +1438,19 @@ function UpdateCard({ settings, qc }: any) {
           >Apply update</button>
         )}
       </div>
-      {applyMsg && <p className="hint" style={{ marginBottom: '0.75rem' }}>{applyMsg}</p>}
+      {applyMsg && <p className="hint mb-3">{applyMsg}</p>}
 
       {/* Config */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+      <div className="flex items-center gap-2 mb-3">
         <Toggle checked={enabled} onChange={v => { setEnabled(v); setCfgMsg(null) }} />
       </div>
-      <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
+      <div className="form-grid mb-3">
         <label>
           <span>Branch</span>
-          <input value={branch} onChange={e => { setBranch(e.target.value); setCfgMsg(null) }} style={{ fontFamily: 'var(--mono)' }} />
+          <input value={branch} onChange={e => { setBranch(e.target.value); setCfgMsg(null) }} className="mono" />
         </label>
       </div>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="flex gap-2">
         <button className="secondary" onClick={() => cfgMut.mutate()} disabled={cfgMut.isPending}>{cfgMut.isPending ? 'Saving…' : 'Save config'}</button>
       </div>
       <SaveMsg msg={cfgMsg} />
@@ -1483,11 +1483,11 @@ function AutostartCard({ qc }: any) {
   }
 
   return (
-    <div className="card" style={{ marginBottom: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+    <div className="card mb-0">
+      <div className="flex items-center gap-3 flex-wrap">
         {badge}
         {supported === false ? (
-          <span className="hint" style={{ margin: 0 }}>Not available{data?.reason ? ` (${data.reason})` : ''}. Uses Windows Task Scheduler.</span>
+          <span className="hint m-0">Not available{data?.reason ? ` (${data.reason})` : ''}. Uses Windows Task Scheduler.</span>
         ) : (
           <>
             {enabled === true && <button className="secondary" onClick={() => mut.mutate(false)} disabled={mut.isPending}>Disable</button>}
@@ -1496,9 +1496,9 @@ function AutostartCard({ qc }: any) {
             <button className="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['autostart'] })}>Re-check</button>
           </>
         )}
-        {msg && <span className="hint" style={{ margin: 0 }}>{msg}</span>}
+        {msg && <span className="hint m-0">{msg}</span>}
       </div>
-      <p className="hint" style={{ marginTop: '0.6rem' }}>Starts the gateway on login and watchdogs it every 5 min. Runs gated start — live trading stays disabled.</p>
+      <p className="hint mt-2">Starts the gateway on login and watchdogs it every 5 min. Runs gated start — live trading stays disabled.</p>
     </div>
   )
 }
@@ -1545,15 +1545,15 @@ function NetworkCard({ settings, qc }: any) {
   else if (isConfigured && testResult && !testResult.reachable) statusDot = <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>●</span>
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+    <div className="flex flex-col gap-2">
       <Row label="Proxy URL" hint="Applied to all outbound HTTP (LLM, exchange, market data). Leave empty for direct connection.">
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div className="flex gap-2 items-center">
           {statusDot}
           <input
             type="text" value={proxyUrl}
             onChange={e => setProxyUrl(e.target.value)}
             placeholder="http://127.0.0.1:7897"
-            style={{ width: '220px', fontFamily: 'monospace', fontSize: '0.8rem' }}
+            className="mono text-sm" style={{ width: '220px' }}
           />
         </div>
       </Row>
@@ -1562,10 +1562,10 @@ function NetworkCard({ settings, qc }: any) {
           type="text" value={noProxy}
           onChange={e => setNoProxy(e.target.value)}
           placeholder="127.0.0.1,localhost"
-          style={{ width: '220px', fontFamily: 'monospace', fontSize: '0.8rem' }}
+          className="mono text-sm" style={{ width: '220px' }}
         />
       </Row>
-      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <div className="flex gap-2 flex-wrap">
         <button onClick={handleSave} disabled={mut.isPending}>Save</button>
         <button className="secondary" onClick={handleTest} disabled={testing}>
           {testing ? 'Testing…' : 'Test Connection'}
@@ -1594,7 +1594,7 @@ function ModelProviderCard({ qc }: any) {
   if (!data) return <p className="hint">Loading providers…</p>
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+    <div className="flex flex-col gap-2">
       <ModelPingButton />
       {ALL_PROVIDERS.map(p => (
         <ProviderCard
@@ -1707,7 +1707,7 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
           }}>DEFAULT</span>
         )}
         {/* Spacer */}
-        <span style={{ flex: 1 }} />
+        <span className="flex-1" />
         <span
           onClick={e => e.stopPropagation()}
           style={{ display: 'inline-flex', alignItems: 'center', marginRight: '0.35rem' }}
@@ -1858,7 +1858,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
     <div className="form-grid" style={{ paddingTop: '0.75rem', gridTemplateColumns: '1fr 1fr' }}>
       {/* Row 1: Base URL — full width (hidden for native providers) */}
       {!isNative && (
-        <label style={{ gridColumn: '1 / -1' }}>
+        <label className="col-full">
           Base URL
           <input value={baseUrl} placeholder="http://localhost:8000/v1" onChange={e => { setBaseUrl(e.target.value); setResult(null); setDetectedModels(null) }} />
         </label>
@@ -1895,7 +1895,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
                 onMouseEnter={e => (e.currentTarget.style.background = 'var(--accent-dim)')}
                 onMouseLeave={e => (e.currentTarget.style.background = m.slug === model ? 'var(--accent-dim)' : 'transparent')}
               >
-                <span style={{ flex: 1 }}>{m.display_name}</span>
+                <span className="flex-1">{m.display_name}</span>
                 {(m as any).tier && (
                   <span style={{
                     fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase',
@@ -1936,7 +1936,7 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
       {!isOpenAI && !isAnthropic && !isNative && <div />}
 
       {/* Row 3: API Key — full width */}
-      <label style={{ gridColumn: '1 / -1' }}>
+      <label className="col-full">
         API Key
         {config?.api_key?.configured && <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.62rem' }}>··{config.api_key.last4}</span>}
         <input type="password" value={apiKey} placeholder={config?.api_key?.configured ? '•••••• (leave blank to keep)' : 'paste key'} onChange={e => { setApiKey(e.target.value); setResult(null) }} />
@@ -1957,12 +1957,12 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
         </button>
       </div>
       {result && (
-        <div style={{ gridColumn: '1 / -1' }} className={`settings-save-msg ${result.ok ? 'ok' : 'err'}`}>
+        <div className={`col-full settings-save-msg ${result.ok ? 'ok' : 'err'}`}>
           {result.ok ? '✓' : '✗'} {result.msg}
         </div>
       )}
       {detectMut.isError && (
-        <div style={{ gridColumn: '1 / -1' }} className="settings-save-msg err">
+        <div className="col-full settings-save-msg err">
           ✗ detection failed
         </div>
       )}
@@ -1989,29 +1989,29 @@ function ClaudeCLIPanel({ config, health, isDefault, qc }: {
   const loading = !health
 
   return (
-    <div style={{ paddingTop: '0.75rem' }}>
+    <div className="pt-3">
       {loading ? (
         <p className="hint">Checking CLI…</p>
       ) : notInstalled ? (
         <p className="hint">Claude Code CLI not found in PATH. Install it first.</p>
       ) : available ? (
         <div>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+          <div className="flex gap-3 items-center flex-wrap mb-2">
             <span className="badge badge-green">connected</span>
-            {health.model && <span style={{ fontSize: '0.75rem', fontFamily: 'var(--mono)', color: 'var(--muted)' }}>model: {health.model}</span>}
+            {health.model && <span className="text-xs mono text-muted">model: {health.model}</span>}
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div className="flex gap-2 items-center">
             {!isDefault && (
               <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}>
                 Set as Default
               </button>
             )}
           </div>
-          <p className="hint" style={{ marginTop: '0.5rem' }}>Auth managed by Claude Code CLI. Aletheia stores no credentials.</p>
+          <p className="hint mt-2">Auth managed by Claude Code CLI. Aletheia stores no credentials.</p>
         </div>
       ) : (
         <div>
-          <p className="hint" style={{ marginBottom: '0.5rem' }}>CLI detected but not enabled or not authenticated.</p>
+          <p className="hint mb-2">CLI detected but not enabled or not authenticated.</p>
           <button onClick={() => enableMut.mutate()} disabled={enableMut.isPending}>Enable</button>
         </div>
       )}
@@ -2047,14 +2047,14 @@ function CodexCLIPanel({ config, health, qc }: { config: any; health: any; qc: a
   const available = health?.available
 
   return (
-    <div style={{ paddingTop: '0.75rem' }}>
+    <div className="pt-3">
       {notInstalled ? (
         <p className="hint">Codex CLI not found in PATH. Install it and log in with your ChatGPT subscription.</p>
       ) : available ? (
         <div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <div className="flex gap-2 items-center mb-2">
             <span className="badge badge-green">connected</span>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via ChatGPT subscription</span>
+            <span className="text-xs text-muted">via ChatGPT subscription</span>
           </div>
           <div className="form-grid" style={{ maxWidth: '320px' }}>
             <label>
@@ -2065,20 +2065,20 @@ function CodexCLIPanel({ config, health, qc }: { config: any; health: any; qc: a
               </select>
             </label>
           </div>
-          <p className="hint" style={{ marginTop: '0.5rem' }}>OAuth token managed by Codex CLI (~/.codex). Aletheia stores no token.</p>
+          <p className="hint mt-2">OAuth token managed by Codex CLI (~/.codex). Aletheia stores no token.</p>
         </div>
       ) : (
         <div>
-          <p style={{ marginBottom: '0.5rem' }}>
+          <p className="mb-2">
             <span className="badge badge-red">not logged in</span>
             <span style={{ fontSize: '0.75rem', color: 'var(--muted)', marginLeft: '0.5rem' }}>CLI installed but no active session.</span>
           </p>
           {login?.state === 'awaiting_authorization' && login.verification_uri ? (
-            <div style={{ fontSize: '0.78rem' }}>
+            <div className="text-sm">
               <p>1. Open <a href={login.verification_uri} target="_blank" rel="noreferrer">{login.verification_uri}</a></p>
-              <p>2. Enter code: <strong style={{ fontFamily: 'var(--mono)' }}>{login.user_code}</strong></p>
+              <p>2. Enter code: <strong className="mono">{login.user_code}</strong></p>
               <p className="hint">Waiting… ({statusPoll.data?.state || 'polling'})</p>
-              <button className="secondary" onClick={() => cancel.mutate()} style={{ marginTop: '0.4rem' }}>Cancel</button>
+              <button className="secondary mt-2" onClick={() => cancel.mutate()}>Cancel</button>
             </div>
           ) : login?.state === 'failed' ? (
             <p className="hint"><span className="badge badge-red">failed</span> {login.error === 'device_auth_parse_failed' ? 'Run `codex login` in a terminal instead.' : login.error}</p>
@@ -2140,20 +2140,20 @@ function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc
   const currentModel = config?.model && config.model !== 'default' ? config.model : null
 
   return (
-    <div style={{ paddingTop: '0.75rem' }}>
+    <div className="pt-3">
       {available ? (
         <div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <div className="flex gap-2 items-center mb-2">
             <span className="badge badge-green">connected</span>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via ChatGPT OAuth (experimental)</span>
+            <span className="text-xs text-muted">via ChatGPT OAuth (experimental)</span>
           </div>
-          <div style={{ marginBottom: '0.5rem' }}>
-            <label style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Model</label>
+          <div className="mb-2">
+            <label className="text-xs text-muted mb-1" style={{ display: 'block' }}>Model</label>
             {models.length > 0 ? (
               <select
                 value={currentModel || ''}
                 onChange={e => pickModel.mutate(e.target.value)}
-                style={{ width: '100%', fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
+                className="w-full text-sm mono"
               >
                 {!currentModel && <option value="">Select a model</option>}
                 {modelMeta.length > 0
@@ -2166,46 +2166,44 @@ function OpenAIOAuthPanel({ config, health, qc }: { config: any; health: any; qc
                 }
               </select>
             ) : (
-              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+              <div className="flex gap-1 items-center">
                 <input
                   type="text" value={manualModel}
                   onChange={e => setManualModel(e.target.value)}
                   placeholder={currentModel || 'gpt-4o'}
-                  style={{ flex: 1, fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
+                  className="flex-1 text-sm mono"
                 />
-                <button className="secondary" onClick={() => { if (manualModel.trim()) pickModel.mutate(manualModel.trim()) }}
-                  disabled={!manualModel.trim() || pickModel.isPending}
-                  style={{ fontSize: '0.72rem' }}>Save</button>
+                <button className="secondary text-xs" onClick={() => { if (manualModel.trim()) pickModel.mutate(manualModel.trim()) }}
+                  disabled={!manualModel.trim() || pickModel.isPending}>Save</button>
               </div>
             )}
-            {currentModel && <span style={{ fontSize: '0.68rem', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>current: {currentModel}</span>}
+            {currentModel && <span className="text-2xs text-muted mono">current: {currentModel}</span>}
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}
-              style={{ fontSize: '0.72rem' }}>Set as default</button>
-            <button className="secondary" onClick={() => { if (confirm('Disconnect OpenAI OAuth?')) disconnect.mutate() }}
-              disabled={disconnect.isPending} style={{ fontSize: '0.72rem', color: 'var(--red)' }}>Disconnect</button>
-            <p className="hint" style={{ margin: 0 }}>Auto-refreshes before expiry.</p>
+          <div className="flex gap-2 items-center">
+            <button className="secondary text-xs" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}>Set as default</button>
+            <button className="secondary text-xs" onClick={() => { if (confirm('Disconnect OpenAI OAuth?')) disconnect.mutate() }}
+              disabled={disconnect.isPending} style={{ color: 'var(--red)' }}>Disconnect</button>
+            <p className="hint m-0">Auto-refreshes before expiry.</p>
           </div>
         </div>
       ) : oauthState?.state === 'awaiting' ? (
-        <div style={{ fontSize: '0.78rem' }}>
+        <div className="text-sm">
           <p>Waiting for authorization in browser...</p>
           <p className="hint">Complete login at auth.openai.com, then return here.</p>
-          <button className="secondary" onClick={() => cancel.mutate()} style={{ marginTop: '0.4rem' }}>Cancel</button>
+          <button className="secondary mt-2" onClick={() => cancel.mutate()}>Cancel</button>
         </div>
       ) : oauthState?.state === 'failed' ? (
         <div>
           <p className="hint"><span className="badge badge-red">failed</span> {oauthState.error}</p>
-          <button onClick={() => start.mutate()} disabled={start.isPending} style={{ marginTop: '0.4rem' }}>Retry</button>
+          <button onClick={() => start.mutate()} disabled={start.isPending} className="mt-2">Retry</button>
         </div>
       ) : (
         <div>
-          <p style={{ fontSize: '0.78rem', marginBottom: '0.5rem', color: 'var(--muted)' }}>
+          <p className="text-sm text-muted mb-2">
             Sign in with your ChatGPT Plus or Pro account via OAuth. Availability depends on your subscription entitlement.
           </p>
           <button onClick={() => start.mutate()} disabled={start.isPending}>Connect ChatGPT</button>
-          <p className="hint" style={{ marginTop: '0.4rem' }}>If this fails, use an API key via OpenAI Compatible provider instead.</p>
+          <p className="hint mt-2">If this fails, use an API key via OpenAI Compatible provider instead.</p>
         </div>
       )}
     </div>
@@ -2256,20 +2254,20 @@ function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc
   const currentModel = config?.model && config.model !== 'default' ? config.model : null
 
   return (
-    <div style={{ paddingTop: '0.75rem' }}>
+    <div className="pt-3">
       {available ? (
         <div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <div className="flex gap-2 items-center mb-2">
             <span className="badge badge-green">connected</span>
-            <span style={{ fontSize: '0.72rem', color: 'var(--muted)' }}>via Claude OAuth (experimental)</span>
+            <span className="text-xs text-muted">via Claude OAuth (experimental)</span>
           </div>
-          <div style={{ marginBottom: '0.5rem' }}>
-            <label style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'block', marginBottom: '0.25rem' }}>Model</label>
+          <div className="mb-2">
+            <label className="text-xs text-muted mb-1" style={{ display: 'block' }}>Model</label>
             {models.length > 0 ? (
               <select
                 value={currentModel || ''}
                 onChange={e => pickModel.mutate(e.target.value)}
-                style={{ width: '100%', fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
+                className="w-full text-sm mono"
               >
                 {!currentModel && <option value="">Select a model</option>}
                 {modelMeta.length > 0
@@ -2282,55 +2280,53 @@ function ClaudeOAuthPanel({ config, health, qc }: { config: any; health: any; qc
                 }
               </select>
             ) : (
-              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+              <div className="flex gap-1 items-center">
                 <input
                   type="text" value={manualModel}
                   onChange={e => setManualModel(e.target.value)}
                   placeholder={currentModel || 'claude-sonnet-4-6'}
-                  style={{ flex: 1, fontSize: '0.78rem', fontFamily: 'var(--mono)' }}
+                  className="flex-1 text-sm mono"
                 />
-                <button className="secondary" onClick={() => { if (manualModel.trim()) pickModel.mutate(manualModel.trim()) }}
-                  disabled={!manualModel.trim() || pickModel.isPending}
-                  style={{ fontSize: '0.72rem' }}>Save</button>
+                <button className="secondary text-xs" onClick={() => { if (manualModel.trim()) pickModel.mutate(manualModel.trim()) }}
+                  disabled={!manualModel.trim() || pickModel.isPending}>Save</button>
               </div>
             )}
-            {currentModel && <span style={{ fontSize: '0.68rem', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>current: {currentModel}</span>}
+            {currentModel && <span className="text-2xs text-muted mono">current: {currentModel}</span>}
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}
-              style={{ fontSize: '0.72rem' }}>Set as default</button>
-            <button className="secondary" onClick={() => { if (confirm('Disconnect Claude OAuth?')) disconnect.mutate() }}
-              disabled={disconnect.isPending} style={{ fontSize: '0.72rem', color: 'var(--red)' }}>Disconnect</button>
-            <p className="hint" style={{ margin: 0 }}>Auto-refreshes before expiry.</p>
+          <div className="flex gap-2 items-center">
+            <button className="secondary text-xs" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}>Set as default</button>
+            <button className="secondary text-xs" onClick={() => { if (confirm('Disconnect Claude OAuth?')) disconnect.mutate() }}
+              disabled={disconnect.isPending} style={{ color: 'var(--red)' }}>Disconnect</button>
+            <p className="hint m-0">Auto-refreshes before expiry.</p>
           </div>
         </div>
       ) : oauthState?.state === 'awaiting_code' ? (
-        <div style={{ fontSize: '0.78rem' }}>
-          <p style={{ marginBottom: '0.4rem' }}>1. Complete login at claude.ai in your browser</p>
-          <p style={{ marginBottom: '0.4rem' }}>2. Copy the authorization code shown on the page</p>
-          <p style={{ marginBottom: '0.5rem' }}>3. Paste it below:</p>
-          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+        <div className="text-sm">
+          <p className="mb-1">1. Complete login at claude.ai in your browser</p>
+          <p className="mb-1">2. Copy the authorization code shown on the page</p>
+          <p className="mb-2">3. Paste it below:</p>
+          <div className="flex gap-1 items-center">
             <input
               type="text" value={code} onChange={e => setCode(e.target.value)}
               placeholder="Paste authorization code"
-              style={{ flex: 1, fontFamily: 'var(--mono)', fontSize: '0.78rem' }}
+              className="flex-1 mono text-sm"
             />
             <button onClick={() => complete.mutate()} disabled={!code.trim() || complete.isPending}>Submit</button>
           </div>
-          <button className="secondary" onClick={() => cancel.mutate()} style={{ marginTop: '0.4rem' }}>Cancel</button>
+          <button className="secondary mt-2" onClick={() => cancel.mutate()}>Cancel</button>
         </div>
       ) : oauthState?.state === 'failed' ? (
         <div>
           <p className="hint"><span className="badge badge-red">failed</span> {oauthState.error}</p>
-          <button onClick={() => start.mutate()} disabled={start.isPending} style={{ marginTop: '0.4rem' }}>Retry</button>
+          <button onClick={() => start.mutate()} disabled={start.isPending} className="mt-2">Retry</button>
         </div>
       ) : (
         <div>
-          <p style={{ fontSize: '0.78rem', marginBottom: '0.5rem', color: 'var(--muted)' }}>
+          <p className="text-sm text-muted mb-2">
             Sign in with your Claude Max or Pro account via OAuth. Availability depends on your subscription entitlement.
           </p>
           <button onClick={() => start.mutate()} disabled={start.isPending}>Connect Claude</button>
-          <p className="hint" style={{ marginTop: '0.4rem' }}>If this fails, use an API key via Anthropic Compatible provider instead.</p>
+          <p className="hint mt-2">If this fails, use an API key via Anthropic Compatible provider instead.</p>
         </div>
       )}
     </div>

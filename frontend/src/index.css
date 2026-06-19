@@ -736,10 +736,20 @@ th.sortable:hover { color: var(--text); }
 .mt-2 { margin-top: var(--space-2); }
 .mt-3 { margin-top: var(--space-3); }
 .mt-4 { margin-top: var(--space-4); }
+.mb-0 { margin-bottom: 0; }
 .mb-1 { margin-bottom: var(--space-1); }
 .mb-2 { margin-bottom: var(--space-2); }
 .mb-3 { margin-bottom: var(--space-3); }
 .mb-4 { margin-bottom: var(--space-4); }
+.m-0 { margin: 0; }
+.w-auto { width: auto; }
+.w-full { width: 100%; }
+.col-full { grid-column: 1 / -1; }
+.justify-end { justify-content: flex-end; }
+.flex-1 { flex: 1; }
+.pt-3 { padding-top: var(--space-3); }
+.text-2xs { font-size: 0.68rem; }
+.section-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: var(--space-2); }
 /* Standalone PnL coloring (the .hero-value/.metric-value scoped variants exist
    separately; these let any element use semantic up/down color). */
 .pnl-positive { color: var(--green); }
