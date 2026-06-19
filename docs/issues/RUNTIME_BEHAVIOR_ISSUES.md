@@ -997,3 +997,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-19 06:21 UTC] ✓ 系统正常 — Features=1753/h (亚盘早盘稳定). Opportunities=5551 (+92/h). §17 timed_out=167 (+5); errors.log §17 明文再现 "abandoned threads=3". Knowledge=691 (+11/h, 知识产出回升). Ghost=0, Stale=251. dreaming_agent: 1 completed (正常完成). §18: FOLKS/SPX OHLCV 常规噪音. 42h+ 连续无中断.
 
 [2026-06-19 07:21 UTC] ✓ 系统正常 — Features=1759/h (亚盘早盘持续稳定). Opportunities=5640 (+89/h). §17 timed_out=171 (+4). Knowledge=695 (+4/h). Ghost=0, Stale=251. dreaming_agent: 1 completed. §18: BSB/FOLKS/M 常规 Bitget-only. 43h+ 连续无中断.
+
+[2026-06-19 08:21 UTC] ✓ 系统正常 — Features=1775/h (亚盘早盘小幅上升). Opportunities=5727 (+87/h). §17 timed_out=175 (+4). Knowledge=703 (+8/h). Ghost=0, Stale=251. dreaming_agent: 1 completed. errors.log: no_price_for_entry:DEXE/USDT (偶发价格缺失, 非阻断). §18: SOXL/DRAM 常规 Bitget-only. 44h+ 连续无中断.
