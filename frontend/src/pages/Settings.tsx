@@ -228,6 +228,8 @@ function UniverseConfigCard({ settings, qc }: any) {
   const [snapshotTtlHours, setSnapshotTtlHours] = useState('24')
   const [blacklist, setBlacklist] = useState('')
   const [fallbackSymbols, setFallbackSymbols] = useState('BTC/USDT, ETH/USDT, SOL/USDT')
+  const [marketType, setMarketType] = useState('crypto')
+  const [familyQuota, setFamilyQuota] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -244,23 +246,34 @@ function UniverseConfigCard({ settings, qc }: any) {
     setSnapshotTtlHours(String(universe.snapshot_ttl_hours ?? 24))
     setBlacklist(listToCsv(universe.blacklist))
     setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
+    setMarketType(universe.market_type || 'crypto')
+    const fq = universe.family_quota || { momentum: 0.3, mean_reversion: 0.2, derivatives: 0.3, event: 0.2 }
+    const stringified: Record<string, string> = {}
+    for (const [k, v] of Object.entries(fq)) stringified[k] = String(v)
+    setFamilyQuota(stringified)
   }, [settings])
 
   const mut = useMutation({
-    mutationFn: () => api.updateUniverseConfig({
-      enabled,
-      refresh_interval_min: parseInt(refreshMin),
-      max_candidates: parseInt(maxCandidates),
-      core_pool_size: parseInt(corePool),
-      min_volume_24h_usdt: parseFloat(minVolume),
-      max_spread_bps: parseFloat(maxSpread),
-      min_depth_10bps_usd: parseFloat(minDepth),
-      explore_ratio: parseFloat(exploreRatio),
-      snapshot_ttl_enabled: snapshotTtlEnabled,
-      snapshot_ttl_hours: parseFloat(snapshotTtlHours),
-      blacklist: parseCsvList(blacklist),
-      fallback_symbols: parseCsvList(fallbackSymbols),
-    }),
+    mutationFn: () => {
+      const fqParsed: Record<string, number> = {}
+      for (const [k, v] of Object.entries(familyQuota)) fqParsed[k] = parseFloat(v) || 0
+      return api.updateUniverseConfig({
+        enabled,
+        refresh_interval_min: parseInt(refreshMin),
+        max_candidates: parseInt(maxCandidates),
+        core_pool_size: parseInt(corePool),
+        min_volume_24h_usdt: parseFloat(minVolume),
+        max_spread_bps: parseFloat(maxSpread),
+        min_depth_10bps_usd: parseFloat(minDepth),
+        explore_ratio: parseFloat(exploreRatio),
+        snapshot_ttl_enabled: snapshotTtlEnabled,
+        snapshot_ttl_hours: parseFloat(snapshotTtlHours),
+        blacklist: parseCsvList(blacklist),
+        fallback_symbols: parseCsvList(fallbackSymbols),
+        market_type: marketType,
+        family_quota: fqParsed,
+      })
+    },
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
@@ -334,9 +347,27 @@ function UniverseConfigCard({ settings, qc }: any) {
             style={{ fontFamily: 'var(--mono)' }} />
         </label>
       </div>
-      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-        <span className="hint" style={{ margin: 0 }}>market_type: <code>{universe.market_type || 'crypto'}</code></span>
-        <span className="hint" style={{ margin: 0 }}>family_quota: <code>{JSON.stringify(universe.family_quota || {})}</code></span>
+      <div className="form-grid" style={{ marginBottom: '0.75rem' }}>
+        <label>
+          <span>Market type</span>
+          <select value={marketType} onChange={e => { setMarketType(e.target.value); setMsg(null) }} style={{ width: 'auto' }}>
+            <option value="crypto">crypto</option>
+            <option value="stocks">stocks</option>
+            <option value="mixed">mixed</option>
+          </select>
+        </label>
+      </div>
+      <div style={{ marginBottom: '0.75rem' }}>
+        <span className="settings-field-label">Family quota (must sum to 1.0)</span>
+        <div className="settings-field-grid">
+          {Object.entries(familyQuota).map(([family, val]) => (
+            <label className="settings-field" key={family}>
+              <span>{humanize(family)}</span>
+              <input type="number" min={0} max={1} step={0.05} value={val}
+                onChange={e => { setFamilyQuota(prev => ({ ...prev, [family]: e.target.value })); setMsg(null) }} />
+            </label>
+          ))}
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
@@ -345,7 +376,6 @@ function UniverseConfigCard({ settings, qc }: any) {
       <p className="hint">
         When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
         and feeds the top {maxCandidates} to agents. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.
-        Interval and TTL changes take effect after gateway restart.
         Interval and TTL changes take effect after gateway restart.
       </p>
     </div>
@@ -397,6 +427,9 @@ function MarketDataCard({ settings, qc }: any) {
   const [fallback, setFallback] = useState(md.ccxt_fallback || 'bybit')
   const [cacheTtl, setCacheTtl] = useState(md.ohlcv_cache_ttl_min ?? 10)
   const [yfinance, setYfinance] = useState(!!md.enable_yfinance_macro)
+  const [stocks, setStocks] = useState(listToCsv(md.observed_stocks))
+  const [xstocks, setXstocks] = useState(listToCsv(md.observed_xstocks))
+  const [predMarkets, setPredMarkets] = useState(listToCsv(md.observed_prediction_markets))
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -404,6 +437,9 @@ function MarketDataCard({ settings, qc }: any) {
     setFallback(md.ccxt_fallback || 'bybit')
     setCacheTtl(md.ohlcv_cache_ttl_min ?? 10)
     setYfinance(!!md.enable_yfinance_macro)
+    setStocks(listToCsv(md.observed_stocks))
+    setXstocks(listToCsv(md.observed_xstocks))
+    setPredMarkets(listToCsv(md.observed_prediction_markets))
   }, [settings])
 
   const mut = useMutation({
@@ -412,6 +448,9 @@ function MarketDataCard({ settings, qc }: any) {
       ccxt_fallback: fallback,
       ohlcv_cache_ttl_min: cacheTtl,
       enable_yfinance_macro: yfinance,
+      observed_stocks: parseCsvList(stocks),
+      observed_xstocks: parseCsvList(xstocks),
+      observed_prediction_markets: parseCsvList(predMarkets),
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -421,6 +460,9 @@ function MarketDataCard({ settings, qc }: any) {
     || fallback !== (md.ccxt_fallback || 'bybit')
     || cacheTtl !== (md.ohlcv_cache_ttl_min ?? 10)
     || yfinance !== !!md.enable_yfinance_macro
+    || stocks !== listToCsv(md.observed_stocks)
+    || xstocks !== listToCsv(md.observed_xstocks)
+    || predMarkets !== listToCsv(md.observed_prediction_markets)
 
   return (
     <>
@@ -442,6 +484,21 @@ function MarketDataCard({ settings, qc }: any) {
       </Row>
       <Row label="Yahoo Finance macro" hint="Enable macro indicator collection (DXY, VIX, S&P 500) via yfinance. Requires network access to Yahoo.">
         <Toggle checked={yfinance} label="" onChange={v => { setYfinance(v); setMsg(null) }} />
+      </Row>
+      <Row label="Observed stocks" hint="Yahoo Finance tickers for macro correlation. Comma-separated (e.g. SPY, QQQ, NVDA).">
+        <input value={stocks} placeholder="SPY, QQQ, NVDA, AAPL"
+          onChange={e => { setStocks(e.target.value); setMsg(null) }}
+          style={{ fontFamily: 'var(--mono)', width: '100%' }} />
+      </Row>
+      <Row label="Observed xStocks" hint="Bitget ON-series tokenized stocks (e.g. AAPLON/USDT). Comma-separated.">
+        <input value={xstocks} placeholder="AAPLON/USDT, TSLAON/USDT"
+          onChange={e => { setXstocks(e.target.value); setMsg(null) }}
+          style={{ fontFamily: 'var(--mono)', width: '100%' }} />
+      </Row>
+      <Row label="Prediction markets" hint="Polymarket category slugs to track. Comma-separated.">
+        <input value={predMarkets} placeholder="crypto, politics"
+          onChange={e => { setPredMarkets(e.target.value); setMsg(null) }}
+          style={{ fontFamily: 'var(--mono)', width: '100%' }} />
       </Row>
       {dirty && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0.5rem 0' }}>
@@ -1102,14 +1159,16 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'health.self_heal_min_interval_sec', 'health.self_heal_max_per_hour',
     'health.startup_gate_max_retries', 'health.startup_gate_retry_delay_sec',
     'retention.agent_runs_days', 'retention.tool_calls_days', 'retention.run_steps_days',
-    'retention.market_snapshots_days', 'retention.portfolio_snapshots_days', 'retention.jsonl_max_mb',
+    'retention.market_snapshots_days', 'retention.portfolio_snapshots_days', 'retention.opportunity_ttl_hours', 'retention.jsonl_max_mb',
     'telegram.enabled', 'telegram.allowed_chat_ids',
     'update.enabled', 'update.branch',
     'universe.enabled', 'universe.refresh_interval_min', 'universe.max_candidates', 'universe.core_pool_size',
     'universe.min_volume_24h_usdt', 'universe.max_spread_bps', 'universe.min_depth_10bps_usd',
     'universe.explore_ratio', 'universe.blacklist', 'universe.fallback_symbols',
+    'universe.market_type', 'universe.family_quota',
     'tunnel.enabled', 'tunnel.tunnel_id', 'tunnel.hostname',
     'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min', 'market_data.enable_yfinance_macro',
+    'market_data.observed_stocks', 'market_data.observed_xstocks', 'market_data.observed_prediction_markets',
     'network.proxy_url', 'network.no_proxy',
   ])
   const readOnlyPrefixes = [
@@ -1242,6 +1301,7 @@ function RetentionCard({ settings, qc }: any) {
     { key: 'run_steps_days',           label: 'Run steps',           unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
     { key: 'market_snapshots_days',    label: 'Market snapshots',    unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
     { key: 'portfolio_snapshots_days', label: 'Portfolio snapshots', unit: 'days', min: 1, max: 9999, step: 1, isInt: true },
+    { key: 'opportunity_ttl_hours',    label: 'Opportunity TTL',     unit: 'hours', min: 1, max: 720, step: 1, isInt: true },
     { key: 'jsonl_max_mb',             label: 'JSONL max size',      unit: 'MB',   min: 1, max: 99999, step: 10, isInt: true },
   ]
 

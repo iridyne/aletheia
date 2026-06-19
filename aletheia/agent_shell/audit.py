@@ -17,7 +17,7 @@ def record_command(session_id: str, command: str, parameters: dict,
         "INSERT INTO agent_shell_commands (id, session_id, command, parameters, "
         "permitted, result_summary, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
         (cmd_id, session_id, command, json.dumps(parameters), int(permitted),
-         result_summary[:500]),
+         result_summary[:2000]),
     )
     db.commit()
     append_session_log(
@@ -28,7 +28,7 @@ def record_command(session_id: str, command: str, parameters: dict,
             "command": command,
             "parameters": parameters,
             "permitted": permitted,
-            "result_summary": result_summary[:500],
+            "result_summary": result_summary[:2000],
         },
     )
 
