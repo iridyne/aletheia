@@ -96,3 +96,68 @@ def _current_regime() -> str:
     except Exception:
         pass
     return "unknown"
+
+
+def resolve_shadow_trades_for_position(position: dict) -> int:
+    """Resolve all shadow trades matching the position's opportunity.
+
+    Called at position close time to stamp exit_price and pnl on all shadow
+    trades from the same batch (counterfactuals included).
+
+    Returns number of rows updated.
+    """
+    from aletheia.storage.repositories import _select_all, _update
+    from datetime import datetime, timezone
+
+    opp_id = position.get("opportunity_id") or position.get("proposal_opportunity_id")
+    if not opp_id:
+        return 0
+
+    # Find the shadow row that was_selected for this opportunity
+    selected_rows = _select_all(
+        "shadow_trades",
+        where="opportunity_id = ? AND was_selected = 1 AND resolved_at IS NULL",
+        params=(opp_id,),
+        limit=1,
+    )
+    if not selected_rows:
+        return 0
+
+    batch_id = selected_rows[0].get("batch_id")
+    if not batch_id:
+        return 0
+
+    # Resolve ALL shadows in the batch (both selected and counterfactuals)
+    batch_rows = _select_all(
+        "shadow_trades",
+        where="batch_id = ? AND resolved_at IS NULL",
+        params=(batch_id,),
+        limit=50,
+    )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    updated = 0
+    for row in batch_rows:
+        entry = row.get("entry_price")
+        if entry is None or entry <= 0:
+            continue
+        symbol = row.get("symbol", "")
+        exit_price = _current_price(symbol)
+        if exit_price is None:
+            continue
+        direction = row.get("direction", "long")
+        if direction == "long":
+            pnl_pct = round((exit_price - entry) / entry * 100, 3)
+        else:
+            pnl_pct = round((entry - exit_price) / entry * 100, 3)
+
+        try:
+            _update("shadow_trades", row["id"], {
+                "exit_price": exit_price,
+                "pnl_pct": pnl_pct,
+                "resolved_at": now_iso,
+            })
+            updated += 1
+        except Exception as exc:
+            logger.warning("shadow resolve failed for %s: %s", row["id"], exc)
+    return updated

@@ -1377,6 +1377,8 @@ _ADDITIVE_COLUMNS = [
     ("strategy_type", "strategy_records", "TEXT DEFAULT 'scanner'"),
     # Batch 2 ATR sizing: volatility-scaled position notional
     ("atr_pct", "universe_members", "REAL"),
+    # LLM structured observations preserved from market_observer output
+    ("key_observations", "opportunities", "TEXT NOT NULL DEFAULT ''"),
 ]
 
 

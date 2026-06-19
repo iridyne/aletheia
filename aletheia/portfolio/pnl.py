@@ -140,6 +140,12 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         "after": {"status": "closed", "realized_pnl": realized, "close_reason": reason},
         "message": f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); realized={realized}",
     })
+    # Resolve shadow trades for this position batch
+    try:
+        from aletheia.analytics.shadow_trades import resolve_shadow_trades_for_position
+        resolve_shadow_trades_for_position(row)
+    except Exception:
+        pass
     return {"position_id": position_id, "realized_pnl": realized, "exit_price": exit_price, "reason": reason}
 
 

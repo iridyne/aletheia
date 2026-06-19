@@ -6,6 +6,7 @@ was sent to the LLM together but only symbols[0] was used for the resulting
 opportunity.
 """
 
+import json
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -286,6 +287,8 @@ async def _analyze_symbol(
         existing = find_open_opportunity_by_symbol_snapshot(symbol, universe_snapshot_id)
         if existing:
             updates: dict = {"thesis": thesis}
+            if observations:
+                updates["key_observations"] = json.dumps(observations)
             if confidence_score is not None:
                 old_score = existing.get("confidence_score") or 0
                 updates["confidence_score"] = max(old_score, confidence_score)
@@ -309,6 +312,7 @@ async def _analyze_symbol(
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
         scanner_family=scanner_family,
+        key_observations=json.dumps(observations) if observations else "",
     )
     insert_opportunity(opp)
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
@@ -365,9 +369,11 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     memory_block = ""
     try:
         from aletheia.knowledge.router import build_advisory_context
+        guard_ctx = {"symbols": symbols, "asset_class": "crypto"}
         memory_block = build_advisory_context(
             role="market_observer",
             query=f"{' '.join(symbols)} market regime risk funding volatility",
+            guard_context=guard_ctx,
             k=3,
         )
         log_tool(run_id, "retrieve_lessons", "observe", True,

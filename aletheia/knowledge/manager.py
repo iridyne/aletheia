@@ -103,7 +103,7 @@ def create_dreaming_log(title: str, content: str) -> KnowledgeItem | None:
         item_type="dreaming_log",
         title=title,
         file_path=str(path),
-        confidence="medium_confidence",
+        confidence="high_confidence",
         content_hash=ch,
     )
     try:
@@ -121,7 +121,7 @@ def create_daily_review(title: str, content: str) -> KnowledgeItem:
         item_type="daily_review",
         title=title,
         file_path=str(path),
-        confidence="medium_confidence",
+        confidence="high_confidence",
     )
     try:
         insert_knowledge_item(item)

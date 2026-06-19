@@ -77,6 +77,7 @@ class Opportunity(BaseModel):
     stop_loss_hint: float | None = None
     tp_hint: float | None = None
     regime_tag: str | None = None
+    key_observations: str = ""
 
 
 class ShadowTrade(BaseModel):

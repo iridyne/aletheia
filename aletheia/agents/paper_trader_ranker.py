@@ -646,7 +646,7 @@ def _lookup_strategy_evidence(strategy: dict) -> dict:
                 "avg(realized_pnl_pct) as avg_pnl, "
                 "sum(CASE WHEN realized_pnl_pct > 0 THEN 1 ELSE 0 END) as wins "
                 "FROM positions WHERE strategy_id = ? AND status = 'closed' "
-                "AND trading_mode = 'paper'",
+                "AND execution_mode = 'paper_internal'",
                 (strategy["id"],),
             ).fetchone()
             if paper_row and paper_row[0] > 0:

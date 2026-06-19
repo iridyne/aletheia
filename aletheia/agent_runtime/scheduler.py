@@ -1151,7 +1151,7 @@ def _get_observed_symbols(cfg) -> list[str]:
     # Primary: active universe members
     try:
         from aletheia.storage import repositories as repo
-        members = repo.get_active_universe_members(limit=20)
+        members = repo.get_active_universe_members(limit=cfg.universe.max_candidates)
         if members:
             return [m["symbol"] for m in members if m.get("symbol")]
     except Exception:

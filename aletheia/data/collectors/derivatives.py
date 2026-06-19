@@ -151,11 +151,24 @@ def _parse_oi(
     if "sumOpenInterest" in info:
         oi_coin = float(info["sumOpenInterest"])
 
+    # Compute 1h change pct against previous snapshot
+    oi_change_1h_pct = None
+    try:
+        from aletheia.storage.repositories import latest_open_interest
+        prev = latest_open_interest(symbol)
+        if prev and prev.get("open_interest_usd"):
+            prev_oi = float(prev["open_interest_usd"])
+            if prev_oi > 0:
+                oi_change_1h_pct = round((oi_usd - prev_oi) / prev_oi * 100, 2)
+    except Exception:
+        pass
+
     return OpenInterestSnapshot(
         symbol=symbol,
         exchange=exchange,
         open_interest_usd=oi_usd,
         open_interest_coin=oi_coin,
+        oi_change_1h_pct=oi_change_1h_pct,
         observed_at=datetime.now(timezone.utc).isoformat(),
     )
 

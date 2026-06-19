@@ -98,6 +98,7 @@ async def settle_due() -> int:
         price = prices.get(symbol)
         if price is None or price <= 0:
             repo.fail_forward_outcome(row["id"], settled_at=now_iso)
+            logger.warning("forward_outcome FAILED: symbol=%s horizon=%s — price unavailable", symbol, row.get("horizon"))
             continue
 
         entry = row["entry_price_usd"]
@@ -109,6 +110,7 @@ async def settle_due() -> int:
         ratio = price / entry
         if ratio > 10.0 or ratio < 0.1:
             repo.fail_forward_outcome(row["id"], settled_at=now_iso)
+            logger.warning("forward_outcome FAILED: symbol=%s horizon=%s — price unavailable", symbol, row.get("horizon"))
             logger.warning(
                 "Rejected anomalous exit price for %s: entry=%.8g exit=%.8g ratio=%.2f",
                 symbol, entry, price, ratio,

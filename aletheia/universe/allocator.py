@@ -65,6 +65,25 @@ def get_family_multipliers(max_step: float = 0.40) -> dict[str, float]:
         adjustment = (hit_rate - 0.5) * (max_step / 0.15)
         adjustment = max(-max_step, min(max_step, adjustment))
         multipliers[family] = 1.0 + adjustment
+
+    # Blend in real PnL signal from family_scorecard (trades actually closed)
+    try:
+        from aletheia.analytics.family_scorecard import compute_family_scorecard
+        for card in compute_family_scorecard():
+            family = card.get("family") or card.get("scanner_family")
+            if not family or card.get("trade_count", 0) < _MIN_CALIBRATION_SAMPLES:
+                continue
+            real_wr = card.get("win_rate", 0.5)
+            real_adj = (real_wr - 0.5) * (max_step / 0.15)
+            real_adj = max(-max_step, min(max_step, real_adj))
+            real_mult = 1.0 + real_adj
+            if family in multipliers:
+                multipliers[family] = 0.6 * real_mult + 0.4 * multipliers[family]
+            else:
+                multipliers[family] = real_mult
+    except Exception:
+        pass
+
     return multipliers
 
 

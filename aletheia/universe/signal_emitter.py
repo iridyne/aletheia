@@ -81,7 +81,7 @@ def emit_deterministic_opportunities(
         # Prefer scanner-intrinsic direction; fallback to _infer_direction
         direction = feat.get("scanner_direction") or _infer_direction(family, feat)
         if direction is None:
-            logger.debug(
+            logger.warning(
                 "no direction for %s family=%s score=%.0f — skipped",
                 symbol, family, total_score,
             )
