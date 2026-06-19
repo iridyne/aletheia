@@ -216,75 +216,60 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
 function StrategyFactoryCard({ settings, qc }: any) {
   const sf = settings?.strategy_factory as any
-  const [backtestGate, setBacktestGate] = useState(true)
-  const [sweepEnabled, setSweepEnabled] = useState(true)
-  const [sweepMax, setSweepMax] = useState('100')
-  const [eventDriven, setEventDriven] = useState(true)
-  const [eventCooldown, setEventCooldown] = useState('30')
-  const [eventMinScore, setEventMinScore] = useState('60')
-  const [wfEnabled, setWfEnabled] = useState(true)
-  const [wfFolds, setWfFolds] = useState('3')
-  const [wfMinBars, setWfMinBars] = useState('150')
-  const [highTradeThreshold, setHighTradeThreshold] = useState('30')
-  const [minRuntimeRelaxed, setMinRuntimeRelaxed] = useState('3')
+  const [vals, setVals] = useState<Record<string, unknown>>({})
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     if (!sf) return
-    setBacktestGate(sf.backtest_gate_enabled ?? true)
-    setSweepEnabled(sf.sweep_enabled ?? true)
-    setSweepMax(String(sf.sweep_max_variants ?? 100))
-    setEventDriven(sf.event_driven_enabled ?? true)
-    setEventCooldown(String(sf.event_cooldown_minutes ?? 30))
-    setEventMinScore(String(sf.event_min_score ?? 60))
-    setWfEnabled(sf.walk_forward_enabled ?? true)
-    setWfFolds(String(sf.walk_forward_folds ?? 3))
-    setWfMinBars(String(sf.walk_forward_min_bars ?? 150))
-    setHighTradeThreshold(String(sf.high_trade_count_threshold ?? 30))
-    setMinRuntimeRelaxed(String(sf.min_runtime_days_relaxed ?? 3))
+    setVals({
+      backtest_gate_enabled: sf.backtest_gate_enabled ?? true,
+      sweep_enabled: sf.sweep_enabled ?? true,
+      sweep_max_variants: sf.sweep_max_variants ?? 100,
+      event_driven_enabled: sf.event_driven_enabled ?? true,
+      event_cooldown_minutes: sf.event_cooldown_minutes ?? 30,
+      event_min_score: sf.event_min_score ?? 60,
+      walk_forward_enabled: sf.walk_forward_enabled ?? true,
+      walk_forward_folds: sf.walk_forward_folds ?? 3,
+      walk_forward_min_bars: sf.walk_forward_min_bars ?? 150,
+      high_trade_count_threshold: sf.high_trade_count_threshold ?? 30,
+      min_runtime_days_relaxed: sf.min_runtime_days_relaxed ?? 3,
+    })
   }, [sf])
 
-  const { mutate: save, status } = useMutation({
-    mutationFn: () => api.updateStrategyFactoryConfig({
-      backtest_gate_enabled: backtestGate,
-      sweep_enabled: sweepEnabled,
-      sweep_max_variants: Number(sweepMax),
-      event_driven_enabled: eventDriven,
-      event_cooldown_minutes: Number(eventCooldown),
-      event_min_score: Number(eventMinScore),
-      walk_forward_enabled: wfEnabled,
-      walk_forward_folds: Number(wfFolds),
-      walk_forward_min_bars: Number(wfMinBars),
-      high_trade_count_threshold: Number(highTradeThreshold),
-      min_runtime_days_relaxed: Number(minRuntimeRelaxed),
-    }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  const { mutate: save } = useMutation({
+    mutationFn: () => api.updateStrategyFactoryConfig(vals as any),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
+    onError: (e: any) => setMsg({ ok: false, text: e.message }),
   })
 
   if (!sf) return null
 
   const boolFields: BoolField[] = [
-    { label: 'Backtest gate', value: backtestGate, set: setBacktestGate, help: 'Kill strategies instantly if backtest fails' },
-    { label: 'Parameter sweep', value: sweepEnabled, set: setSweepEnabled, help: 'Generate parameter variants of surviving strategies' },
-    { label: 'Event-driven design', value: eventDriven, set: setEventDriven, help: 'Trigger strategy design on high-score universe signals' },
-    { label: 'Walk-forward validation', value: wfEnabled, set: setWfEnabled, help: 'OOS validation in daily orchestrator' },
+    { key: 'backtest_gate_enabled', label: 'Backtest gate' },
+    { key: 'sweep_enabled', label: 'Parameter sweep' },
+    { key: 'event_driven_enabled', label: 'Event-driven design' },
+    { key: 'walk_forward_enabled', label: 'Walk-forward validation' },
   ]
 
   const numFields: NumField[] = [
-    { label: 'Sweep max variants', value: sweepMax, set: setSweepMax, min: 10, max: 500 },
-    { label: 'Event cooldown (min)', value: eventCooldown, set: setEventCooldown, min: 5, max: 120 },
-    { label: 'Event min score', value: eventMinScore, set: setEventMinScore, min: 45, max: 80 },
-    { label: 'Walk-forward folds', value: wfFolds, set: setWfFolds, min: 2, max: 10 },
-    { label: 'Walk-forward min bars', value: wfMinBars, set: setWfMinBars, min: 60, max: 1000 },
-    { label: 'High-trade threshold', value: highTradeThreshold, set: setHighTradeThreshold, min: 10, max: 100 },
-    { label: 'Min runtime days (relaxed)', value: minRuntimeRelaxed, set: setMinRuntimeRelaxed, min: 1, max: 14 },
+    { key: 'sweep_max_variants', label: 'Sweep max variants', unit: '', min: 10, max: 500, step: 10, isInt: true },
+    { key: 'event_cooldown_minutes', label: 'Event cooldown', unit: 'min', min: 5, max: 120, step: 1, isInt: true },
+    { key: 'event_min_score', label: 'Event min score', unit: '', min: 45, max: 80, step: 1, isInt: true },
+    { key: 'walk_forward_folds', label: 'Walk-forward folds', unit: '', min: 2, max: 10, step: 1, isInt: true },
+    { key: 'walk_forward_min_bars', label: 'Walk-forward min bars', unit: '', min: 60, max: 1000, step: 10, isInt: true },
+    { key: 'high_trade_count_threshold', label: 'High-trade threshold', unit: '', min: 10, max: 100, step: 1, isInt: true },
+    { key: 'min_runtime_days_relaxed', label: 'Min runtime days (relaxed)', unit: 'days', min: 1, max: 14, step: 1, isInt: true },
   ]
+
+  const setBool = (key: string, value: boolean) => setVals(v => ({ ...v, [key]: value }))
+  const setNum = (key: string, value: number) => setVals(v => ({ ...v, [key]: value }))
 
   return (
     <div className="space-y-4">
-      <ToggleGrid fields={boolFields} />
-      <NumGrid fields={numFields} />
+      <ToggleGrid fields={boolFields} vals={vals} set={setBool} />
+      <NumGrid fields={numFields} vals={vals} set={setNum} />
       <button onClick={() => save()} className="btn btn-primary btn-sm mt-2">Save Strategy Factory</button>
-      <SaveMsg status={status} />
+      <SaveMsg msg={msg} />
     </div>
   )
 }

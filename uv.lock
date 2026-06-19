@@ -176,6 +176,7 @@ dev = [
 dev = [
     { name = "hypothesis" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
 ]
 
 [package.metadata]
@@ -204,6 +205,7 @@ provides-extras = ["dev"]
 dev = [
     { name = "hypothesis", specifier = ">=6.155.3" },
     { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
 ]
 
 [[package]]

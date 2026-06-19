@@ -39,3 +39,10 @@ def get_trade_stats():
     """Trade analytics: by-source and by-family aggregation for the Analytics panel."""
     from aletheia.analytics.trade_stats import build_trade_stats
     return build_trade_stats()
+
+
+@router.get("/trade-insights")
+def get_trade_insights():
+    """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc."""
+    from aletheia.analytics.trade_insights import build_trade_insights
+    return build_trade_insights()

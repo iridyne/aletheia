@@ -607,6 +607,7 @@ export const api = {
 
   // Trade Analytics panel
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
+  getTradeInsights: () => fetchJson<TradeInsights>('/analytics/trade-insights'),
 
   // Generic helpers for pages that need simple get/post
   get: <T = any>(path: string) => fetchJson<T>(path),
@@ -647,4 +648,92 @@ export interface TradeStats {
     median_hold_hours: number
     total_pnl: number
   }
+}
+
+// ── Trade Insights (comprehensive charts) ────────────────────────────────────
+
+export interface EquityPoint {
+  time: string
+  pnl: number
+  cumulative_pnl: number
+}
+
+export interface DrawdownPoint {
+  time: string
+  drawdown: number
+}
+
+export interface DirectionStats {
+  trade_count: number
+  win_rate: number
+  total_pnl: number
+  avg_pnl_pct: number
+  avg_hold_hours: number
+}
+
+export interface ProfitFactorData {
+  gross_profit: number
+  gross_loss: number
+  profit_factor: number | null
+  avg_win: number
+  avg_loss: number
+  largest_win: number
+  largest_loss: number
+  win_count: number
+  loss_count: number
+}
+
+export interface DayStats {
+  day: string
+  trade_count: number
+  win_rate: number
+  avg_pnl_pct: number
+}
+
+export interface HourStats {
+  hour: number
+  trade_count: number
+  win_rate: number
+  avg_pnl_pct: number
+}
+
+export interface PnlBin {
+  bin: string
+  count: number
+}
+
+export interface RegimeStats {
+  regime: string
+  trade_count: number
+  win_rate: number
+  avg_pnl_pct: number
+}
+
+export interface StreakData {
+  max_consecutive_wins: number
+  max_consecutive_losses: number
+  current_streak: number
+  current_streak_type: string
+  total_wins: number
+  total_losses: number
+}
+
+export interface HoldPnlPoint {
+  hold_hours: number
+  pnl_pct: number
+  direction: string
+  symbol: string
+}
+
+export interface TradeInsights {
+  equity_curve: EquityPoint[]
+  drawdown_curve: DrawdownPoint[]
+  by_direction: Record<string, DirectionStats>
+  profit_factor: ProfitFactorData
+  by_day_of_week: DayStats[]
+  by_hour: HourStats[]
+  pnl_distribution: PnlBin[]
+  by_regime: RegimeStats[]
+  streaks: StreakData
+  hold_vs_pnl: HoldPnlPoint[]
 }
