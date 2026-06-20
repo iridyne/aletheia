@@ -458,6 +458,13 @@ function ExecutionTab({ status, settings, qc }: any) {
         <ExchangeCredentialsCard qc={qc} />
       </Section>
 
+      <Section
+        title="Binance Futures Testnet"
+        description="Credentials for Binance USDT-M Futures Testnet (556 pairs). Get keys from testnet.binancefuture.com."
+      >
+        <BinanceTestnetCredentialsCard qc={qc} />
+      </Section>
+
       <Section title="Trading Mode" description="Switch between demo (paper trading) and live execution. Live requires explicit unlock below.">
         <ExchangeModeRow status={status} qc={qc} />
         <ExchangeMarketsRow settings={settings} qc={qc} />
@@ -618,8 +625,9 @@ function ExchangeMarketsRow({ settings, qc }: any) {
         <Toggle checked={spot} label="Spot" onChange={v => { setSpot(v); setMsg(null) }} />
         <Toggle checked={futures} label="USDT Futures" onChange={v => { setFutures(v); setMsg(null) }} />
       </Row>
-      <Row label="Paper execution mode" hint="Where autonomous paper orders are simulated. bitget_demo uses Bitget demo/simulated trading; paper_internal uses only the local simulator.">
+      <Row label="Paper execution mode" hint="Where autonomous paper orders execute. binance_testnet = Binance Futures Testnet (556 pairs, highest coverage); bitget_demo = Bitget demo API (42 pairs); paper_internal = local simulator (no exchange).">
         <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setMsg(null) }} className="w-auto">
+          <option value="binance_testnet">binance_testnet</option>
           <option value="bitget_demo">bitget_demo</option>
           <option value="paper_internal">paper_internal</option>
         </select>
@@ -746,6 +754,72 @@ function ExchangeCredentialsCard({ qc }: any) {
       </div>
       {result && <div className={`settings-save-msg ${result.ok ? 'ok' : 'err'}`}>{result.msg}</div>}
       <p className="hint">Enter all three fields to test the connection live before saving. Credentials are write-only.</p>
+    </div>
+  )
+}
+
+// ─── Binance Testnet credentials ───
+
+function BinanceTestnetCredentialsCard({ qc }: any) {
+  const { data } = useQuery({ queryKey: ['binanceTestnetCreds'], queryFn: api.getBinanceTestnetCredStatus })
+  const [apiKey, setApiKey] = useState('')
+  const [apiSecret, setApiSecret] = useState('')
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  const testConn = useQuery({
+    queryKey: ['binance-testnet-test'],
+    queryFn: () => api.testBinanceTestnet(),
+    refetchInterval: 15000,
+    enabled: !!(data?.api_key?.configured && data?.api_secret?.configured),
+  })
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      setResult(null)
+      await api.setBinanceTestnetCredentials({
+        api_key: apiKey || undefined,
+        api_secret: apiSecret || undefined,
+      })
+    },
+    onSuccess: () => {
+      setApiKey(''); setApiSecret('')
+      setResult({ ok: true, msg: '✓ saved' })
+      qc.invalidateQueries({ queryKey: ['binanceTestnetCreds'] })
+      qc.invalidateQueries({ queryKey: ['binance-testnet-test'] })
+    },
+    onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message}` }),
+  })
+
+  let connState: ConnState = 'muted'
+  let connText = 'not configured'
+  if (data?.api_key?.configured && data?.api_secret?.configured) {
+    if (!testConn.data) { connState = 'yellow'; connText = 'checking…' }
+    else if (testConn.data.connected) { connState = 'green'; connText = 'connected' }
+    else { connState = 'red'; connText = `✗ ${testConn.data.error || 'unreachable'}` }
+  }
+
+  return (
+    <div className="card mb-0">
+      <div className="mb-3">
+        <ConnectionStatus label="binance testnet" state={connState} text={connText} />
+      </div>
+      <div className="form-grid">
+        <label>
+          <span>API Key{data?.api_key?.configured ? ` (··${data.api_key.last4})` : ''}</span>
+          <input type="password" value={apiKey} placeholder={data?.api_key?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiKey(e.target.value)} />
+        </label>
+        <label>
+          <span>API Secret{data?.api_secret?.configured ? ' (set)' : ''}</span>
+          <input type="password" value={apiSecret} placeholder={data?.api_secret?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiSecret(e.target.value)} />
+        </label>
+      </div>
+      <div className="flex gap-2 mt-3">
+        <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || (!apiKey && !apiSecret)}>
+          {saveMut.isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {result && <div className={`settings-save-msg ${result.ok ? 'ok' : 'err'}`}>{result.msg}</div>}
+      <p className="hint">Get testnet credentials from testnet.binancefuture.com. No passphrase needed.</p>
     </div>
   )
 }

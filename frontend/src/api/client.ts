@@ -253,6 +253,13 @@ export const api = {
   testBitgetCandidate: (body: { profile: string; api_key: string; api_secret: string; passphrase: string }) =>
     post<{ connected: boolean; profile: string; error?: string }>('/bitget/test-candidate', body),
 
+  // Binance Testnet credentials + connection test
+  getBinanceTestnetCredStatus: () => fetchJson<{ api_key: any; api_secret: any }>('/binance-testnet/credentials-status'),
+  setBinanceTestnetCredentials: (body: { api_key?: string; api_secret?: string }) =>
+    post('/settings/binance-testnet-credentials', body),
+  testBinanceTestnet: () =>
+    post<{ connected: boolean; positions_count?: number; error?: string }>('/binance-testnet/test-connection', {}),
+
   // Telegram bot reachability (facet A — never returns the token)
   getTelegramHealth: () => fetchJson<{ reachable: boolean; username?: string; error?: string }>('/telegram/health'),
 
@@ -355,6 +362,7 @@ export const api = {
   getPositions: () => fetchJson<any[]>('/positions'),
   getPositionsReconciliation: () => fetchJson<import('../types').PositionsReconciliation>('/positions/reconciliation'),
   getPortfolio: () => fetchJson<Record<string, any>>('/portfolio'),
+  getUtaState: () => fetchJson<Record<string, any>>('/uta/state'),
   getStrategies: () => fetchJson<any[]>('/strategies'),
   promoteStrategy: (id: string, target_state: string) => post(`/strategies/${id}/promote`, { target_state }),
   retireStrategy: (id: string) => post(`/strategies/${id}/retire`),

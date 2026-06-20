@@ -256,6 +256,22 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     except Exception:
         sync_status = "error"
 
+    # UTA unified state (multi-broker aggregate, cached)
+    uta_state = None
+    try:
+        from aletheia.portfolio import exchange_sync
+        unified = exchange_sync.get_unified_cached_state()
+        if unified is not None:
+            uta_age = unified.get("age_seconds")
+            if uta_age is not None and uta_age < 600:
+                uta_state = unified
+                # When unified state is available and has data, use as hero number
+                uta_equity = unified.get("total_equity_usdt")
+                if uta_equity and uta_equity > 0:
+                    final_total_value = float(uta_equity)
+    except Exception:
+        pass
+
     return {
         "total_value_usdt": round(final_total_value, 4),
         "unrealized_pnl": round(final_unrealized, 4),
@@ -272,6 +288,8 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "exchange_external_summary": exchange_external_summary,
         "exchange_sync_status": sync_status,
         "exchange_asset_breakdown": exchange_asset_breakdown,
+        # UTA unified view (multi-broker aggregate).
+        "uta_state": uta_state,
     }
 
 

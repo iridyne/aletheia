@@ -73,6 +73,16 @@ def to_bitget(symbol: str) -> str:
     return canon.replace("/", "")
 
 
+def to_binance(symbol: str) -> str:
+    """Convert any format to Binance execution form (concatenated, upper-case).
+
+    Binance Futures uses the same concatenated format as Bitget (BTCUSDT).
+    Kept as a separate function for semantic clarity and future divergence.
+    """
+    canon = to_canonical(symbol)
+    return canon.replace("/", "")
+
+
 def to_ccxt(symbol: str) -> str:
     """Convert any format to canonical CCXT spot symbol (alias of to_canonical)."""
     return to_canonical(symbol)

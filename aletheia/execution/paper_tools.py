@@ -8,7 +8,7 @@ through the Execution Gateway + Risk Engine (no direct exchange access).
 
 from aletheia.execution.gateway import submit_proposal
 
-_PAPER_MODES = {"paper_internal", "bitget_demo"}
+_PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet"}
 
 
 def create_paper_proposal(

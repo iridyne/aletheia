@@ -160,18 +160,23 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             _trip(reason=f"daily loss {realized} breached limit -{daily_loss_limit}", actor="system")
 
     # 9a. Exchange allowlist — reject if target exchange != allowed_exchange.
-    if risk.allowed_exchange and cfg.exchange.name != risk.allowed_exchange:
-        violations.append(f"exchange_not_allowed:{cfg.exchange.name}!={risk.allowed_exchange}")
-    # 9. Account mode match — order mode and exchange account must agree.
-    #    A live order requires exchange.mode == 'live'; a real demo order requires
-    #    exchange.mode == 'demo'. Without the demo side of this check, a bitget_demo
-    #    proposal evaluated while exchange.mode == 'live' would place a REAL live order
-    #    through the demo path (trust-boundary hole). paper_internal is local sim and
-    #    is exempt (it never touches the exchange).
-    if _is_live(proposal.execution_mode) and cfg.exchange.mode != "live":
-        violations.append(f"account_mode_mismatch:order=live,exchange={cfg.exchange.mode}")
-    if proposal.execution_mode == "bitget_demo" and cfg.exchange.mode != "demo":
-        violations.append(f"account_mode_mismatch:order=demo,exchange={cfg.exchange.mode}")
+    # binance_testnet is self-contained (own credentials, independent of cfg.exchange)
+    # so it's exempt from the allowlist and mode-match checks.
+    if proposal.execution_mode == "binance_testnet":
+        pass  # testnet uses its own credentials, no mode-match needed
+    else:
+        if risk.allowed_exchange and cfg.exchange.name != risk.allowed_exchange:
+            violations.append(f"exchange_not_allowed:{cfg.exchange.name}!={risk.allowed_exchange}")
+        # 9. Account mode match — order mode and exchange account must agree.
+        #    A live order requires exchange.mode == 'live'; a real demo order requires
+        #    exchange.mode == 'demo'. Without the demo side of this check, a bitget_demo
+        #    proposal evaluated while exchange.mode == 'live' would place a REAL live order
+        #    through the demo path (trust-boundary hole). paper_internal is local sim and
+        #    is exempt (it never touches the exchange).
+        if _is_live(proposal.execution_mode) and cfg.exchange.mode != "live":
+            violations.append(f"account_mode_mismatch:order=live,exchange={cfg.exchange.mode}")
+        if proposal.execution_mode == "bitget_demo" and cfg.exchange.mode != "demo":
+            violations.append(f"account_mode_mismatch:order=demo,exchange={cfg.exchange.mode}")
 
     # 10. Max leverage (futures). Demo and live have separate caps.
     if proposal.market_type == "usdt_futures" and proposal.leverage:

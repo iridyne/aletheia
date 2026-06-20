@@ -56,11 +56,34 @@ function AssetTooltip({ items }: { items: AssetItem[] }) {
   )
 }
 
+interface UTAAccount {
+  broker_id: string
+  display_name: string
+  equity_usdt: number
+  available_usdt: number
+  unrealized_pnl: number
+}
+
+function BrokerBreakdown({ accounts }: { accounts: UTAAccount[] }) {
+  if (accounts.length <= 1) return null
+  return (
+    <div className="broker-breakdown">
+      {accounts.map(a => (
+        <div key={a.broker_id} className="broker-row">
+          <span className="broker-name">{a.display_name}</span>
+          <span className="broker-equity">{fmtNum(a.equity_usdt)} USDT</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** PnL / Account zone — hero account value (exchange_equity_usdt when synced) + context tiles + equity curve. */
 export default function PnLZone() {
   const navigate = useNavigate()
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
+  const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000 })
   const [hovered, setHovered] = useState(false)
 
   const exchangeMode = String((status as any)?.exchange_mode || 'demo')
@@ -69,16 +92,24 @@ export default function PnLZone() {
   const toneOf = (n: number | null) => (n == null ? 'muted' : n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
 
   const p = portfolio as any
+  const uta = utaState as any
+
+  // UTA unified equity takes priority when available and has multiple accounts
+  const utaEquity = uta?.sync_status === 'ok' && uta?.total_equity_usdt > 0 ? uta.total_equity_usdt : null
+  const utaAccounts: UTAAccount[] = uta?.accounts ?? []
+
   const exchangeEquity = p?.exchange_equity_usdt
-  const syncStatus: string = p?.exchange_sync_status ?? 'unconfigured'
-  const totalRaw = exchangeEquity ?? p?.total_value_usdt
+  const syncStatus: string = utaEquity != null ? (uta?.sync_status ?? 'ok') : (p?.exchange_sync_status ?? 'unconfigured')
+  const totalRaw = utaEquity ?? exchangeEquity ?? p?.total_value_usdt
   const totalValue = fmtNum(totalRaw)
   const syncCaveat =
-    exchangeEquity != null
-      ? syncStatus === 'stale' ? 'data stale' : 'live'
-      : syncStatus === 'unconfigured' ? 'exchange not configured'
-      : syncStatus === 'error' ? 'sync error'
-      : 'exchange sync pending'
+    utaEquity != null
+      ? utaAccounts.length > 1 ? `${utaAccounts.length} accounts · unified` : 'unified'
+      : exchangeEquity != null
+        ? syncStatus === 'stale' ? 'data stale' : 'live'
+        : syncStatus === 'unconfigured' ? 'exchange not configured'
+        : syncStatus === 'error' ? 'sync error'
+        : 'exchange sync pending'
 
   const breakdown: AssetItem[] = p?.exchange_asset_breakdown ?? []
 
@@ -123,6 +154,7 @@ export default function PnLZone() {
             )}
           </div>
           {hovered && breakdown.length > 0 && <AssetTooltip items={breakdown} />}
+          {utaAccounts.length > 1 && <BrokerBreakdown accounts={utaAccounts} />}
         </div>
 
         {/* Context tiles */}

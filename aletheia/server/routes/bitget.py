@@ -1,6 +1,6 @@
-"""Bitget connection + credentials API routes.
+"""Exchange connection + credentials API routes (Bitget + Binance Testnet).
 
-Credentials are write-only over the API: POST accepts api_key/secret/passphrase,
+Credentials are write-only over the API: POST accepts api_key/secret,
 GET only reports configured + last-4. Raw secrets are never returned.
 """
 
@@ -113,3 +113,122 @@ async def test_candidate_credentials(req: TestCandidateCredsRequest):
         elif "connect" in str(e).lower():
             err_msg = "connection_failed"
         return {"connected": False, "profile": req.profile, "error": err_msg}
+
+
+# ─── Binance Futures Testnet credentials ───
+
+
+def _binance_testnet_cred_status() -> dict:
+    out = {}
+    for field in ("api_key", "api_secret"):
+        val = get_secret(f"binance.testnet.{field}")
+        out[field] = {
+            "configured": bool(val),
+            "last4": (val[-4:] if val and len(val) >= 4 else None),
+        }
+    return out
+
+
+@router.get("/binance-testnet/credentials-status")
+async def binance_testnet_credentials_status():
+    return _binance_testnet_cred_status()
+
+
+class BinanceTestnetCredentialsRequest(BaseModel):
+    api_key: str | None = None
+    api_secret: str | None = None
+
+
+@router.post("/settings/binance-testnet-credentials")
+async def set_binance_testnet_credentials(req: BinanceTestnetCredentialsRequest):
+    fields_set = []
+    for field, value in (("api_key", req.api_key), ("api_secret", req.api_secret)):
+        if value:
+            set_secret(f"binance.testnet.{field}", value)
+            fields_set.append(field)
+
+    if not fields_set:
+        raise HTTPException(400, "No credential fields provided")
+
+    write_audit({
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "exchange_credentials_changed",
+        "entity_type": "binance_testnet_credentials",
+        "entity_id": "testnet",
+        "message": f"Binance testnet credentials updated: {', '.join(fields_set)}",
+    })
+
+    return {"updated": fields_set, "status": _binance_testnet_cred_status()}
+
+
+@router.post("/binance-testnet/test-connection")
+async def binance_testnet_test_connection():
+    """Test Binance Futures Testnet connectivity with stored credentials."""
+    try:
+        from aletheia.exchanges.binance.client import BinanceTestnetClient
+        client = BinanceTestnetClient()
+        positions = await client.get_positions()
+        await client.close()
+        return {"connected": True, "positions_count": len(positions)}
+    except Exception as e:
+        err_msg = str(e)
+        if "not configured" in err_msg.lower():
+            return {"connected": False, "error": "credentials_not_configured"}
+        if "timeout" in err_msg.lower():
+            return {"connected": False, "error": "connection_timeout"}
+        return {"connected": False, "error": err_msg[:200]}
+
+
+@router.get("/uta/state")
+async def uta_state():
+    """Return the cached unified (multi-broker) account state.
+
+    Fast path: reads the in-memory cache written by sync_all_exchanges().
+    Falls back to per-broker Bitget cache when the unified cache is empty
+    (first run before the scheduler has fired).
+    Never blocks on a network call.
+    """
+    from aletheia.portfolio.exchange_sync import (
+        get_unified_cached_state, get_cached_state, status_for
+    )
+
+    unified = get_unified_cached_state()
+    if unified is not None:
+        age = unified.get("age_seconds")
+        sync_status = "ok" if (age is not None and age <= 600) else "stale"
+        return {**unified, "sync_status": sync_status}
+
+    # Fallback: wrap the Bitget-only cache in the unified shape
+    bitget = get_cached_state()
+    if bitget is not None:
+        sync_status = status_for(bitget)
+        return {
+            "total_equity_usdt": bitget.get("equity_usdt", 0),
+            "total_available_usdt": bitget.get("available_usdt", 0),
+            "total_unrealized_pnl": bitget.get("futures_unrealized_pnl", 0),
+            "accounts": [{
+                "broker_id": "bitget_demo",
+                "display_name": "Bitget Demo",
+                "equity_usdt": bitget.get("equity_usdt", 0),
+                "available_usdt": bitget.get("available_usdt", 0),
+                "frozen_usdt": bitget.get("frozen_usdt", 0),
+                "unrealized_pnl": bitget.get("futures_unrealized_pnl", 0),
+                "asset_breakdown": bitget.get("asset_breakdown", []),
+            }],
+            "positions": bitget.get("positions", []),
+            "errors": [],
+            "fetched_at": bitget.get("fetched_at", ""),
+            "sync_status": sync_status,
+        }
+
+    return {
+        "total_equity_usdt": 0,
+        "total_available_usdt": 0,
+        "total_unrealized_pnl": 0,
+        "accounts": [],
+        "positions": [],
+        "errors": [],
+        "fetched_at": None,
+        "sync_status": "unconfigured",
+    }

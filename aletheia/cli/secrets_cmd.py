@@ -15,6 +15,8 @@ KNOWN_KEYS = [
     "bitget.live.api_key",
     "bitget.live.api_secret",
     "bitget.live.passphrase",
+    "binance.testnet.api_key",
+    "binance.testnet.api_secret",
     "telegram.bot_token",
     "model.openai_compatible.api_key",
     "model.anthropic_compatible.api_key",

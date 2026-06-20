@@ -53,10 +53,10 @@ class ExchangeConfig(BaseModel):
     #   "whitelist" → only these may trade; "blacklist" → these are blocked.
     symbol_list: list[str] = Field(default_factory=list)
     # Where autonomous paper trades execute:
-    #   "bitget_demo"   → real Bitget demo/simulated-trading API (paptrading header,
-    #                     USDT-futures only; exchange-side record, higher fidelity).
-    #   "paper_internal"→ local simulated fills (no exchange call). Fallback when the
-    #                     demo endpoint is unavailable. Requires mode == "demo".
+    #   "binance_testnet" → Binance Futures Testnet via CCXT (556 pairs, highest coverage).
+    #   "bitget_demo"     → Bitget demo/simulated-trading API (paptrading header,
+    #                       USDT-futures only, 42 pairs). Requires mode == "demo".
+    #   "paper_internal"  → local simulated fills (no exchange call).
     paper_execution_mode: str = "bitget_demo"
 
 

@@ -125,6 +125,9 @@ def evaluate_open_positions() -> dict:
             if p.get("execution_mode") == "bitget_demo":
                 from aletheia.execution.bitget_broker import close_demo_position
                 close_demo_position(p["id"], reason=reason)
+            elif p.get("execution_mode") == "binance_testnet":
+                from aletheia.execution.binance_broker import close_testnet_position
+                close_testnet_position(p["id"], reason=reason)
             else:
                 close_position(p["id"], exit_price=exit_price, reason=reason)
             closed += 1

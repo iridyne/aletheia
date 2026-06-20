@@ -658,8 +658,8 @@ def _run_exchange_sync():
     if cfg.runtime.paused:
         return
     try:
-        from aletheia.portfolio.exchange_sync import sync_exchange_account
-        _run_sync_with_timeout("exchange_sync", sync_exchange_account)
+        from aletheia.portfolio.exchange_sync import sync_all_exchanges
+        _run_sync_with_timeout("exchange_sync", sync_all_exchanges)
         _record_job_success("exchange_sync")
     except TimeoutError:
         logger.warning(

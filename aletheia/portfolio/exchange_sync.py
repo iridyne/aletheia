@@ -194,6 +194,75 @@ def _run_async(coro, timeout: float = 10.0):
         pool.shutdown(wait=False)
 
 
+def sync_all_exchanges() -> Optional[dict]:
+    """Fetch unified account state from all configured brokers (UTA layer).
+
+    Stores the result in settings as `exchange_account_state.unified`.
+    Also triggers the legacy Bitget-only sync for backwards compatibility.
+    """
+    try:
+        from aletheia.portfolio.uta.manager import get_unified_state_sync
+        state = get_unified_state_sync()
+
+        payload = json.dumps({
+            "total_equity_usdt": state.total_equity_usdt,
+            "total_available_usdt": state.total_available_usdt,
+            "total_unrealized_pnl": state.total_unrealized_pnl,
+            "accounts": state.accounts,
+            "positions": state.positions,
+            "errors": state.errors,
+            "fetched_at": state.fetched_at,
+        })
+
+        from aletheia.storage.sqlite import db_path
+        import sqlite3 as _sqlite3
+
+        for attempt in range(3):
+            conn = None
+            try:
+                conn = _sqlite3.connect(str(db_path()), isolation_level=None, timeout=30)
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute(
+                    "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                    (f"{_KEY_PREFIX}.unified", payload),
+                )
+                break
+            except _sqlite3.OperationalError as exc:
+                if "database is locked" not in str(exc).lower() or attempt >= 2:
+                    raise
+                time.sleep(0.25 * (attempt + 1))
+            finally:
+                if conn:
+                    conn.close()
+
+        logger.info(
+            "sync_all_exchanges: unified equity=%.2f, %d accounts, %d errors",
+            state.total_equity_usdt, len(state.accounts), len(state.errors),
+        )
+        return {
+            "total_equity_usdt": state.total_equity_usdt,
+            "total_available_usdt": state.total_available_usdt,
+            "total_unrealized_pnl": state.total_unrealized_pnl,
+            "accounts": state.accounts,
+            "positions": state.positions,
+            "errors": state.errors,
+            "fetched_at": state.fetched_at,
+        }
+    except Exception as e:
+        logger.warning("sync_all_exchanges failed: %s", e)
+        return None
+
+
+def get_unified_cached_state() -> Optional[dict]:
+    """Return the cached unified (multi-broker) state."""
+    raw = _read_raw("unified")
+    if raw is None:
+        return None
+    raw["age_seconds"] = _age_seconds(raw.get("fetched_at", ""))
+    return raw
+
+
 def sync_exchange_account() -> Optional[ExchangeAccountState]:
     """Fetch the real account state from Bitget once and cache it.
 
@@ -329,3 +398,72 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
         except Exception:
             pass
         return None
+
+
+def sync_all_exchanges() -> Optional[dict]:
+    """Parallel-query all configured brokers via UTA and cache the unified state.
+
+    Also refreshes the Bitget-specific cache so the legacy get_cached_state() path
+    stays warm for callers that haven't migrated to get_unified_cached_state() yet.
+    Returns the serialised UnifiedState dict, or None on total failure.
+    """
+    from aletheia.portfolio.uta.manager import get_unified_state_sync
+
+    try:
+        sync_exchange_account()
+    except Exception as e:
+        logger.debug("legacy bitget sync failed (non-fatal): %s", e)
+
+    try:
+        unified = get_unified_state_sync()
+        payload = {
+            "total_equity_usdt": unified.total_equity_usdt,
+            "total_available_usdt": unified.total_available_usdt,
+            "total_unrealized_pnl": unified.total_unrealized_pnl,
+            "accounts": unified.accounts,
+            "positions": unified.positions,
+            "errors": unified.errors,
+            "fetched_at": unified.fetched_at,
+        }
+        _store_unified(payload)
+        return payload
+    except Exception as e:
+        logger.warning("sync_all_exchanges failed: %s", e)
+        return None
+
+
+def _store_unified(payload: dict) -> None:
+    import json
+    import sqlite3
+    import time as _time
+    from aletheia.storage.sqlite import db_path
+
+    key = f"{_KEY_PREFIX}.unified"
+    data = json.dumps(payload)
+    for attempt in range(3):
+        conn = None
+        try:
+            conn = sqlite3.connect(str(db_path()), isolation_level=None, timeout=30)
+            conn.execute("PRAGMA busy_timeout=30000")
+            conn.execute(
+                "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (key, data),
+            )
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower() or attempt >= 2:
+                raise
+            _time.sleep(0.25 * (attempt + 1))
+        finally:
+            if conn:
+                conn.close()
+
+
+def get_unified_cached_state() -> Optional[dict]:
+    """Return the cached unified (multi-broker) state, or None if never fetched."""
+    raw = _read_raw("unified")
+    if raw is None:
+        return None
+    raw["age_seconds"] = _age_seconds(raw.get("fetched_at", ""))
+    return raw
