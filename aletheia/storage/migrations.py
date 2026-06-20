@@ -1384,6 +1384,10 @@ _ADDITIVE_COLUMNS = [
     ("key_observations", "opportunities", "TEXT NOT NULL DEFAULT ''"),
     # Trailing stop high-water mark for open positions
     ("trail_high_water", "positions", "REAL"),
+    # Backtest equity curve (JSON array of floats, one per bar)
+    ("equity_curve_json", "backtest_runs", "TEXT"),
+    # Correlation guard: BTC beta for universe assets
+    ("btc_beta", "universe_feature_snapshots", "REAL"),
 ]
 
 

@@ -19,13 +19,13 @@ def insert_backtest_run(run: BacktestRun) -> None:
             initial_capital, cost_model_json, ruleset_json,
             trade_count, win_rate, total_return_pct, expectancy,
             profit_factor, max_drawdown_pct, sharpe_approx, avg_trade_bars,
-            status, error_message, created_at
+            equity_curve_json, status, error_message, created_at
         ) VALUES (
             :id, :strategy_id, :symbol, :timeframe, :direction, :bar_count,
             :initial_capital, :cost_model_json, :ruleset_json,
             :trade_count, :win_rate, :total_return_pct, :expectancy,
             :profit_factor, :max_drawdown_pct, :sharpe_approx, :avg_trade_bars,
-            :status, :error_message, :created_at
+            :equity_curve_json, :status, :error_message, :created_at
         )
         """,
         d,
@@ -56,6 +56,16 @@ def list_backtest_runs(
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def update_backtest_run_equity_curve(run_id: str, equity_curve: list[float]) -> None:
+    import json
+    db = get_db()
+    db.execute(
+        "UPDATE backtest_runs SET equity_curve_json = ? WHERE id = ?",
+        (json.dumps(equity_curve), run_id),
+    )
+    db.commit()
 
 
 def insert_backtest_trades(trades: list[BacktestTrade]) -> None:

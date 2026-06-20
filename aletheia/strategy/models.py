@@ -28,6 +28,8 @@ class BacktestRun(BaseModel):
     sharpe_approx: float = 0.0
     avg_trade_bars: float = 0.0
 
+    equity_curve_json: str | None = None  # JSON list[float], one per bar
+
     status: str = "completed"        # "completed" | "failed" | "running"
     error_message: str | None = None
     created_at: str = Field(default_factory=_utcnow)

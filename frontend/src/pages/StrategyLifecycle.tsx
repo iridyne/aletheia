@@ -8,6 +8,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, TableWrap } from '../components/ui'
 import { humanize, fmtTimestamp } from '../lib/format'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 const STATES = ['draft', 'research_note', 'strategy_hypothesis', 'paper_candidate', 'paper_running', 'paper_passed', 'live_candidate', 'live_limited', 'retired']
 
@@ -51,7 +52,7 @@ function PipelineStepper({ currentState }: { currentState: string }) {
 
 export default function StrategyLifecycle() {
   const qc = useQueryClient()
-  const { data = [] } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
+  const { data = [], isLoading: strategiesLoading } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
   const [selected, setSelected] = useState<StrategyRecord | null>(null)
   const [promoteError, setPromoteError] = useState<string | null>(null)
 
@@ -62,11 +63,13 @@ export default function StrategyLifecycle() {
   })
   const retire = useMutation({
     mutationFn: (id: string) => api.retireStrategy(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['strategies'] }),
+    onSuccess: () => { setPromoteError(null); qc.invalidateQueries({ queryKey: ['strategies'] }) },
+    onError: (e: any) => setPromoteError(e.message || 'Retirement failed'),
   })
   const setVenue = useMutation({
     mutationFn: ({ id, venue }: { id: string; venue: string | null }) => api.setStrategyVenue(id, venue),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['strategies'] }),
+    onError: (e: any) => setPromoteError(e.message || 'Venue update failed'),
   })
 
   const rows = data as StrategyRecord[]
@@ -75,6 +78,11 @@ export default function StrategyLifecycle() {
     if (!selected) return
     const next = NEXT_STATE[selected.state]
     if (!next) return
+    const isLivePath = next === 'live_candidate' || next === 'live_limited'
+    const msg = isLivePath
+      ? `Promote "${selected.name}" to ${humanize(next)}? This strategy may route to live execution.`
+      : `Promote "${selected.name}" to ${humanize(next)}?`
+    if (!confirm(msg)) return
     setPromoteError(null)
     promote.mutate({ id: selected.id, target: next })
   }
@@ -86,12 +94,14 @@ export default function StrategyLifecycle() {
         role="Evolve · the promotion pipeline (draft → research → hypothesis → paper → live-limited). Click a strategy to see its promotion gates and advance or retire it."
       />
       <Card>
-        <DataTable
-          data={rows}
-          columns={columns}
-          onRowClick={setSelected}
-          emptyMessage="No strategies yet."
-        />
+        {strategiesLoading
+          ? <div className="skeleton"><div className="skeleton-bar"/><div className="skeleton-bar"/><div className="skeleton-bar"/></div>
+          : <DataTable
+              data={rows}
+              columns={columns}
+              onRowClick={setSelected}
+              emptyMessage="No strategies yet."
+            />}
       </Card>
 
       <DetailDrawer open={!!selected} onClose={() => { setSelected(null); setPromoteError(null) }} title={selected?.name || 'Strategy'}>
@@ -125,8 +135,9 @@ export default function StrategyLifecycle() {
               <DrawerField label="Updated" value={fmtTimestamp(selected.updated_at)} mono />
             </DrawerSection>
             <PromotionGates strategyId={selected.id} />
+            <BacktestHistory strategyId={selected.id} />
             {promoteError && (
-              <DrawerSection label="Promotion Error">
+              <DrawerSection label="Action Error">
                 <div className="promote-error">
                   {parsePromotionError(promoteError)}
                 </div>
@@ -139,7 +150,10 @@ export default function StrategyLifecycle() {
                 </Button>
               )}
               {selected.state !== 'retired' && selected.state !== 'deprecated' && (
-                <Button variant="secondary" onClick={() => retire.mutate(selected.id)} disabled={retire.isPending}>
+                <Button variant="danger" onClick={() => {
+                  if (!confirm(`Retire "${selected.name}"? This cannot be undone.`)) return
+                  retire.mutate(selected.id)
+                }} disabled={retire.isPending}>
                   Retire
                 </Button>
               )}
@@ -208,4 +222,72 @@ function parsePromotionError(raw: string): React.ReactNode {
     } catch { /* fall through */ }
   }
   return <p className="text-sm pnl-negative">{raw}</p>
+}
+
+
+function BacktestHistory({ strategyId }: { strategyId: string }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const { data: runs, isLoading } = useQuery({
+    queryKey: ['backtest-runs', strategyId],
+    queryFn: () => api.getBacktestRuns(strategyId),
+    enabled: !!strategyId,
+  })
+  const { data: detail } = useQuery({
+    queryKey: ['backtest-detail', expandedId],
+    queryFn: () => api.getBacktestRunDetail(expandedId!),
+    enabled: !!expandedId,
+  })
+
+  if (isLoading) return <DrawerSection label="Backtest History"><p className="text-muted text-sm">Loading...</p></DrawerSection>
+  if (!runs || runs.length === 0) return null
+
+  return (
+    <DrawerSection label="Backtest History">
+      <TableWrap>
+        <table className="table-sm">
+          <thead><tr>
+            <th>Date</th><th>Trades</th><th>Return</th><th>Win%</th><th>MDD</th>
+          </tr></thead>
+          <tbody>
+            {runs.slice(0, 5).map((r: any) => (
+              <tr key={r.id} onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
+                  style={{ cursor: 'pointer' }} className={expandedId === r.id ? 'row-selected' : ''}>
+                <td className="mono text-xs">{r.created_at?.slice(0, 10)}</td>
+                <td>{r.trade_count}</td>
+                <td className={r.total_return_pct >= 0 ? 'pnl-positive' : 'pnl-negative'}>
+                  {r.total_return_pct?.toFixed(1)}%
+                </td>
+                <td>{(r.win_rate * 100).toFixed(0)}%</td>
+                <td className="pnl-negative">{r.max_drawdown_pct?.toFixed(1)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
+      {expandedId && detail?.equity_curve?.length > 0 && (
+        <BacktestEquityChart curve={detail.equity_curve} />
+      )}
+    </DrawerSection>
+  )
+}
+
+
+function BacktestEquityChart({ curve }: { curve: number[] }) {
+  const data = curve.map((v: number, i: number) => ({ bar: i, equity: v }))
+  const minY = Math.min(...curve) * 0.98
+  const maxY = Math.max(...curve) * 1.02
+
+  return (
+    <div className="mt-2" style={{ height: 180 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" />
+          <XAxis dataKey="bar" tick={false} />
+          <YAxis domain={[minY, maxY]} tick={{ fontSize: 10 }} width={50} />
+          <Tooltip formatter={(v: any) => `$${Number(v).toFixed(2)}`} />
+          <Area type="monotone" dataKey="equity" stroke="#2ee6a8" fill="#2ee6a8" fillOpacity={0.15} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
 }

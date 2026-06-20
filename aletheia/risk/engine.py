@@ -242,6 +242,10 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     lesson_violations = _check_lesson_constraints(proposal)
     violations.extend(lesson_violations)
 
+    # 16. Portfolio correlation guard — sector concentration + portfolio BTC beta.
+    correlation_violations = _check_correlation_exposure(proposal, cfg)
+    violations.extend(correlation_violations)
+
     # Determine execution mode
     if not violations:
         allowed_mode = proposal.execution_mode
@@ -378,3 +382,139 @@ def _current_live_exposure() -> float:
         except (TypeError, ValueError):
             continue
     return total
+
+
+def _check_correlation_exposure(proposal: TradeProposal, cfg) -> list[str]:
+    """Check #16: sector concentration + portfolio BTC beta.
+
+    Returns an empty list when correlation_guard_enabled=False or data is insufficient.
+    Never raises — any DB error silently returns [] (non-blocking guard).
+    """
+    risk = cfg.risk
+    if not getattr(risk, "correlation_guard_enabled", True):
+        return []
+    violations: list[str] = []
+    try:
+        from aletheia.storage.repositories import list_positions, list_opportunities
+        from aletheia.storage.sqlite import get_db
+
+        open_positions = list_positions(status="open")
+        if not open_positions:
+            return []
+
+        # ── Sector concentration ──────────────────────────────────────────────
+        # Gather scanner_family for each open position via its opportunity_id
+        families: list[str] = []
+        prop_notional = 0.0
+        if proposal.price and proposal.quantity:
+            prop_notional = abs(proposal.price * proposal.quantity)
+
+        pos_notionals: dict[str, float] = {}
+        for pos in open_positions:
+            sym = pos.get("symbol", "")
+            try:
+                qty = float(pos.get("quantity") or 0.0)
+                price = float(pos.get("current_price") or pos.get("entry_price") or 0.0)
+                pos_notionals[sym] = abs(qty * price)
+            except (TypeError, ValueError):
+                pos_notionals[sym] = 0.0
+
+            opp_id = pos.get("opportunity_id")
+            if opp_id:
+                try:
+                    db = get_db()
+                    row = db.execute(
+                        "SELECT scanner_family FROM opportunities WHERE id = ?", (opp_id,)
+                    ).fetchone()
+                    if row and row[0]:
+                        families.append(row[0])
+                except Exception:
+                    pass
+
+        # Determine proposal's own family from its opportunity
+        prop_family: str | None = None
+        if proposal.opportunity_id:
+            try:
+                db = get_db()
+                row = db.execute(
+                    "SELECT scanner_family FROM opportunities WHERE id = ?",
+                    (proposal.opportunity_id,)
+                ).fetchone()
+                if row and row[0]:
+                    prop_family = row[0]
+            except Exception:
+                pass
+
+        if prop_family and families:
+            total_notional = sum(pos_notionals.values()) + prop_notional
+            if total_notional > 0:
+                family_notional = sum(
+                    n for sym, n in pos_notionals.items()
+                    if _symbol_family(sym, open_positions) == prop_family
+                ) + prop_notional
+                sector_pct = (family_notional / total_notional) * 100
+                max_pct = getattr(risk, "max_sector_concentration_pct", 60.0)
+                if sector_pct > max_pct:
+                    violations.append(
+                        f"sector_concentration:{prop_family}:{sector_pct:.0f}%>{max_pct:.0f}%"
+                    )
+
+        # ── Portfolio BTC beta ────────────────────────────────────────────────
+        max_beta = getattr(risk, "max_portfolio_beta", 3.0)
+        prop_beta = _lookup_beta(proposal.symbol)
+        if prop_beta is not None and prop_notional > 0:
+            total_notional = sum(pos_notionals.values()) + prop_notional
+            if total_notional > 0:
+                weighted_beta = prop_beta * prop_notional
+                for pos in open_positions:
+                    sym = pos.get("symbol", "")
+                    b = _lookup_beta(sym)
+                    n = pos_notionals.get(sym, 0.0)
+                    if b is not None and n > 0:
+                        weighted_beta += abs(b) * n
+                portfolio_beta = weighted_beta / total_notional
+                if portfolio_beta > max_beta:
+                    violations.append(
+                        f"portfolio_beta:{portfolio_beta:.1f}>{max_beta:.1f}"
+                    )
+    except Exception as exc:
+        logger.debug("_check_correlation_exposure skipped: %s", exc)
+    return violations
+
+
+def _lookup_beta(symbol: str) -> float | None:
+    """Fetch the most recent btc_beta for a symbol from universe_feature_snapshots."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT btc_beta FROM universe_feature_snapshots "
+            "WHERE symbol = ? ORDER BY ts DESC LIMIT 1",
+            (symbol,)
+        ).fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+    except Exception:
+        pass
+    return None
+
+
+def _symbol_family(symbol: str, positions: list[dict]) -> str | None:
+    """Look up scanner_family for a symbol via its open position's opportunity_id."""
+    for pos in positions:
+        if pos.get("symbol") != symbol:
+            continue
+        opp_id = pos.get("opportunity_id")
+        if not opp_id:
+            continue
+        try:
+            from aletheia.storage.sqlite import get_db
+            db = get_db()
+            row = db.execute(
+                "SELECT scanner_family FROM opportunities WHERE id = ?", (opp_id,)
+            ).fetchone()
+            if row and row[0]:
+                return row[0]
+        except Exception:
+            pass
+    return None

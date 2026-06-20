@@ -144,7 +144,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
     # Compute sizing
     if decision.action == "trade" and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
-        decision.position_size_usdt = _compute_position_size(decision.conviction)
+        decision.position_size_usdt = _compute_position_size(decision.conviction, symbol=decision.symbol)
     else:
         decision.action = "skip"
 
@@ -279,12 +279,18 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 
 # ── sizing ────────────────────────────────────────────────────────────────────
 
-def _compute_position_size(conviction: int) -> float:
-    """Compute notional position size from conviction score (0-100)."""
+def _compute_position_size(conviction: int, symbol: str | None = None) -> float:
+    """Compute notional position size from conviction score (0-100).
+
+    When vol_sizing_enabled and symbol is provided, uses ATR-normalized sizing.
+    """
     from aletheia.config.loader import load_config
-    from aletheia.trading.sizing import compute_position_size
     cfg = load_config()
-    base = getattr(cfg.trading, "default_notional_usdt", 25.0)
+    if cfg.trading.vol_sizing_enabled and symbol:
+        from aletheia.trading.sizing import vol_target_size
+        return vol_target_size(symbol, conviction=conviction)
+    from aletheia.trading.sizing import compute_position_size
+    base = cfg.trading.default_notional_usdt
     return compute_position_size(conviction, base)
 
 

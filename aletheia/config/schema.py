@@ -215,6 +215,10 @@ class RiskConfig(BaseModel):
     allow_short_demo: bool = True
     allow_short_live: bool = True
     require_risk_check_for_all_orders: bool = True
+    # Portfolio correlation guard (check #16)
+    correlation_guard_enabled: bool = True
+    max_sector_concentration_pct: float = 60.0
+    max_portfolio_beta: float = 3.0
 
 
 class TelegramConfig(BaseModel):
@@ -305,6 +309,13 @@ class TradingConfig(BaseModel):
     # get default stops/TP from position_manager and MAY be auto-closed. LIVE
     # positions are NEVER auto-adopted regardless of this flag (human-confirmed only).
     auto_adopt_enabled: bool = True
+    # Volatility-target sizing: normalize risk per trade to ATR
+    default_notional_usdt: float = 25.0
+    vol_sizing_enabled: bool = True
+    vol_target_risk_usdt: float = 25.0
+    vol_target_pct: float = 1.5
+    vol_kelly_cap_fraction: float = 0.25
+    # Trailing stop / breakeven
     trail_enabled: bool = False
     trail_atr_mult: float = 1.5
     trail_pct: float = 1.0

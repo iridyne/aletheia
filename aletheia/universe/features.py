@@ -291,6 +291,7 @@ async def _fetch_single_feature(
         open_interest=open_interest,
         oi_delta_1h=oi_delta_1h,
         data_freshness_sec=data_freshness_sec,
+        btc_beta=btc_beta,
     )
     repo.insert_universe_feature_snapshot(snap)
 

@@ -68,3 +68,61 @@ def conviction_to_multiplier(conviction: int) -> float:
     """Quick multiplier lookup without Kelly/drawdown adjustments. Used for display."""
     result = compute_position_size(conviction, 1.0)
     return round(result, 3)
+
+
+def vol_target_size(
+    symbol: str,
+    *,
+    conviction: int = 70,
+    drawdown_pct: float = 0.0,
+    atr_pct_override: float | None = None,
+) -> float:
+    """Unified volatility-target sizing: risk_budget / ATR% * conviction scale.
+
+    Reads config for risk budget and caps. Falls back to flat base_notional
+    when vol_sizing_enabled=False or no ATR data is available.
+    """
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    base = cfg.trading.default_notional_usdt
+    if not cfg.trading.vol_sizing_enabled:
+        return compute_position_size(conviction, base, drawdown_pct=drawdown_pct)
+
+    # Get ATR%
+    atr_pct = atr_pct_override
+    if atr_pct is None:
+        atr_pct = _lookup_atr_pct(symbol)
+
+    if not atr_pct or atr_pct <= 0:
+        return compute_position_size(conviction, base, drawdown_pct=drawdown_pct)
+
+    # Core formula: size such that 1 ATR move = risk_budget
+    # raw_size = risk_budget / (atr_pct / 100)
+    risk_budget = cfg.trading.vol_target_risk_usdt
+    raw_size = risk_budget / (atr_pct / 100.0)
+
+    # Kelly cap: single position <= kelly_cap_fraction of base notional
+    # base * kelly_cap_fraction * 4 * _MAX_MULTIPLIER keeps the range in-line with compute_position_size output
+    kelly_cap = base * (cfg.trading.vol_kelly_cap_fraction * 4) * _MAX_MULTIPLIER
+    sized = min(raw_size, kelly_cap)
+
+    # Apply conviction multiplier and drawdown scale
+    return compute_position_size(conviction, sized, drawdown_pct=drawdown_pct)
+
+
+def _lookup_atr_pct(symbol: str) -> float | None:
+    """Fetch ATR% from universe_feature_snapshots (most recent row)."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT atr_pct FROM universe_feature_snapshots "
+            "WHERE symbol = ? ORDER BY snapshot_at DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        if row and row[0]:
+            return float(row[0])
+    except Exception:
+        pass
+    return None

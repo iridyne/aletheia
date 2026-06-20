@@ -414,6 +414,9 @@ class RiskConfigUpdate(SettingsRequest):
     allow_short_live: Optional[bool] = None
     kill_switch_enabled_live: Optional[bool] = None
     kill_switch_enabled_demo: Optional[bool] = None
+    correlation_guard_enabled: Optional[bool] = None
+    max_sector_concentration_pct: Optional[float] = None
+    max_portfolio_beta: Optional[float] = None
 
 
 # Fields that must never be changed via the dashboard (safety invariants).
@@ -432,6 +435,8 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_futures_leverage_demo": (1, 125),
     "max_open_positions_live": (1, 50),
     "max_open_positions_demo": (1, 200),
+    "max_sector_concentration_pct": (10.0, 100.0),
+    "max_portfolio_beta": (0.5, 10.0),
 }
 
 
@@ -550,6 +555,11 @@ class TradingConfigUpdate(SettingsRequest):
     trail_atr_mult: Optional[float] = None
     trail_pct: Optional[float] = None
     breakeven_trigger_pct: Optional[float] = None
+    default_notional_usdt: Optional[float] = None
+    vol_sizing_enabled: Optional[bool] = None
+    vol_target_risk_usdt: Optional[float] = None
+    vol_target_pct: Optional[float] = None
+    vol_kelly_cap_fraction: Optional[float] = None
 
 
 _TRADING_BOUNDS: dict[str, tuple[float, float]] = {

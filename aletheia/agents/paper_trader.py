@@ -35,8 +35,8 @@ from aletheia.trading.ruleset_scanner import RuleSetSignal, scan_active_rulesets
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
 
-_BASE_NOTIONAL_USDT = 25.0
-_ATR_TARGET_PCT = 1.5  # 1 ATR move ≈ 1.5% portfolio risk
+_BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
+_ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
 
 
 def _resolve_venue(strategy_id: str | None, global_mode: str) -> str:
@@ -49,16 +49,24 @@ def _resolve_venue(strategy_id: str | None, global_mode: str) -> str:
     return global_mode
 
 
-def _atr_adjusted_notional(atr_pct: float | None) -> float:
-    """Scale notional so 1 ATR move = ~1.5% of position.
+def _atr_adjusted_notional(atr_pct: float | None, symbol: str | None = None) -> float:
+    """Scale notional via volatility-target sizing when enabled.
 
-    Low-vol (BTC 0.5% ATR) → capped at 2x = $50; high-vol (PEPE 5% ATR) → floored at 0.4x = $10.
+    Delegates to unified vol_target_size() when vol_sizing_enabled=True.
+    Falls back to legacy ATR inversion otherwise.
     """
+    from aletheia.config.loader import load_config
+    cfg = load_config()
+    if cfg.trading.vol_sizing_enabled and symbol:
+        from aletheia.trading.sizing import vol_target_size
+        return vol_target_size(symbol, atr_pct_override=atr_pct)
+    base = cfg.trading.default_notional_usdt
     if not atr_pct or atr_pct <= 0:
-        return _BASE_NOTIONAL_USDT
-    scale = _ATR_TARGET_PCT / (atr_pct * 100)
+        return base
+    target = cfg.trading.vol_target_pct
+    scale = target / (atr_pct * 100)
     scale = max(0.4, min(2.0, scale))
-    return round(_BASE_NOTIONAL_USDT * scale, 2)
+    return round(base * scale, 2)
 
 
 @register_agent("paper_trader")
@@ -150,7 +158,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     strategy_id = selected.get("strategy_id")
     resolved_mode = _resolve_venue(strategy_id, execution_mode)
 
-    notional = _atr_adjusted_notional(selected.get("atr_pct"))
+    notional = _atr_adjusted_notional(selected.get("atr_pct"), symbol=symbol)
     quantity = round(notional / price, 6) or 0.000001
 
     stop_pct = cfg.trading.default_stop_loss_pct
@@ -220,7 +228,8 @@ def _handle_ruleset_entry(
         return None
 
     price = float(price)
-    quantity = round(_BASE_NOTIONAL_USDT / price, 6) or 0.000001
+    notional = _atr_adjusted_notional(None, symbol=sig.symbol)
+    quantity = round(notional / price, 6) or 0.000001
 
     # Use RuleSet-derived stop if available, else fall back to config %
     stop_price = sig.stop_price

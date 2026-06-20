@@ -300,6 +300,7 @@ export const api = {
     max_open_positions_live: number; max_open_positions_demo: number
     allow_short_demo: boolean; allow_short_live: boolean
     kill_switch_enabled_live: boolean; kill_switch_enabled_demo: boolean
+    correlation_guard_enabled: boolean; max_sector_concentration_pct: number; max_portfolio_beta: number
   }>) => post<{ updated: Record<string, any>; risk: Record<string, any> }>('/settings/risk', body),
   updateSymbolFilter: (body: { mode: string; symbols: string[] }) =>
     post<{ mode: string; symbols: string[] }>('/settings/symbols', body),
@@ -310,6 +311,8 @@ export const api = {
     max_position_hold_hours: number; slippage_bps: number; execution_fee_pct: number
     min_confidence_to_trade: string; auto_adopt_enabled: boolean
     trail_enabled: boolean; trail_atr_mult: number; trail_pct: number; breakeven_trigger_pct: number
+    default_notional_usdt: number; vol_sizing_enabled: boolean
+    vol_target_risk_usdt: number; vol_target_pct: number; vol_kelly_cap_fraction: number
   }>) => post<{ updated: Record<string, any>; trading: Record<string, any> }>('/settings/trading', body),
 
   setAutonomousLearning: (enabled: boolean) =>
@@ -637,6 +640,13 @@ export const api = {
   // Trade Analytics panel
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
   getTradeInsights: () => fetchJson<TradeInsights>('/analytics/trade-insights'),
+
+  getBacktestRuns: (strategyId?: string) =>
+    fetchJson<any[]>(`/analytics/backtest/runs${strategyId ? `?strategy_id=${strategyId}` : ''}`),
+  getBacktestRunDetail: (runId: string) =>
+    fetchJson<any>(`/analytics/backtest/runs/${runId}`),
+  getBacktestCompare: (strategyId: string) =>
+    fetchJson<any>(`/analytics/backtest/compare/${strategyId}`),
 
   // Generic helpers for pages that need simple get/post
   get: <T = any>(path: string) => fetchJson<T>(path),

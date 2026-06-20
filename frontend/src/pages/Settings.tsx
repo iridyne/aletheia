@@ -953,6 +953,11 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [trailAtrMult, setTrailAtrMult] = useState('1.5')
   const [trailPct, setTrailPct] = useState('1.0')
   const [breakevenTriggerPct, setBreakevenTriggerPct] = useState('1.5')
+  const [volSizingEnabled, setVolSizingEnabled] = useState(true)
+  const [defaultNotional, setDefaultNotional] = useState('25')
+  const [volRiskUsdt, setVolRiskUsdt] = useState('25')
+  const [volTargetPct, setVolTargetPct] = useState('1.5')
+  const [volKellyCap, setVolKellyCap] = useState('0.25')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -968,6 +973,11 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
     setTrailAtrMult(String(trading.trail_atr_mult ?? 1.5))
     setTrailPct(String(trading.trail_pct ?? 1.0))
     setBreakevenTriggerPct(String(trading.breakeven_trigger_pct ?? 1.5))
+    setVolSizingEnabled(trading.vol_sizing_enabled !== false)
+    setDefaultNotional(String(trading.default_notional_usdt ?? 25))
+    setVolRiskUsdt(String(trading.vol_target_risk_usdt ?? 25))
+    setVolTargetPct(String(trading.vol_target_pct ?? 1.5))
+    setVolKellyCap(String(trading.vol_kelly_cap_fraction ?? 0.25))
   }, [settings])
 
   const mut = useMutation({
@@ -983,6 +993,11 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
       trail_atr_mult: parseFloat(trailAtrMult),
       trail_pct: parseFloat(trailPct),
       breakeven_trigger_pct: parseFloat(breakevenTriggerPct),
+      vol_sizing_enabled: volSizingEnabled,
+      default_notional_usdt: parseFloat(defaultNotional),
+      vol_target_risk_usdt: parseFloat(volRiskUsdt),
+      vol_target_pct: parseFloat(volTargetPct),
+      vol_kelly_cap_fraction: parseFloat(volKellyCap),
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -1072,6 +1087,40 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
           </label>
         </div>
       )}
+      <div className="settings-inline-note">
+        <Toggle
+          checked={volSizingEnabled}
+          label="Volatility-target sizing (ATR-normalized)"
+          onChange={v => { setVolSizingEnabled(v); setMsg(null) }}
+        />
+        <p className="hint mt-1">
+          Normalize position size so 1 ATR move ≈ risk_budget. High-vol coins get smaller positions, low-vol get larger.
+        </p>
+      </div>
+      <div className="form-grid mb-3">
+        <label>
+          <span>Base notional (USDT)</span>
+          <input type="number" min={5} max={1000} step={5} value={defaultNotional}
+            onChange={e => { setDefaultNotional(e.target.value); setMsg(null) }} className="mono" />
+        </label>
+        {volSizingEnabled && (<>
+          <label>
+            <span>Risk budget (USDT)</span>
+            <input type="number" min={5} max={500} step={5} value={volRiskUsdt}
+              onChange={e => { setVolRiskUsdt(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+          <label>
+            <span>ATR target (%)</span>
+            <input type="number" min={0.5} max={10} step={0.1} value={volTargetPct}
+              onChange={e => { setVolTargetPct(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+          <label>
+            <span>Kelly cap fraction</span>
+            <input type="number" min={0.05} max={1} step={0.05} value={volKellyCap}
+              onChange={e => { setVolKellyCap(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+        </>)}
+      </div>
       <div className="flex gap-2">
         <button onClick={() => {
           const checks: [string, string][] = [
@@ -1374,6 +1423,12 @@ const RISK_BOOLS: BoolField[] = [
   { key: 'kill_switch_enabled_demo', label: 'Kill switch auto-trigger (demo)' },
   { key: 'allow_short_live', label: 'Allow short selling (live)' },
   { key: 'allow_short_demo', label: 'Allow short selling (demo)' },
+  { key: 'correlation_guard_enabled', label: 'Correlation guard (sector + beta)' },
+]
+
+const RISK_CORR: NumField[] = [
+  { key: 'max_sector_concentration_pct', label: 'Max sector concentration', unit: '%',  min: 10, max: 100, step: 5 },
+  { key: 'max_portfolio_beta',           label: 'Max portfolio BTC beta',   unit: '',   min: 0.5, max: 10, step: 0.5 },
 ]
 
 function RiskCard({ settings, qc }: any) {
@@ -1384,7 +1439,7 @@ function RiskCard({ settings, qc }: any) {
   useEffect(() => {
     if (!risk) return
     const init: Record<string, any> = {}
-    ;[...RISK_LIVE, ...RISK_DEMO].forEach(f => { init[f.key] = risk[f.key] })
+    ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_CORR].forEach(f => { init[f.key] = risk[f.key] })
     RISK_BOOLS.forEach(f => { init[f.key] = risk[f.key] })
     setVals(init)
   }, [settings])
@@ -1425,6 +1480,14 @@ function RiskCard({ settings, qc }: any) {
       <NumGrid fields={RISK_DEMO} vals={vals} set={set} />
 
       <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
+
+      {/* Correlation guard thresholds — only shown when guard is enabled */}
+      {vals.correlation_guard_enabled && (
+        <>
+          <div className="section-label mt-4">Correlation guard thresholds</div>
+          <NumGrid fields={RISK_CORR} vals={vals} set={set} />
+        </>
+      )}
 
       {/* Kill switch trigger conditions — always visible for transparency */}
       <div className="kill-switch-info">
@@ -1616,9 +1679,11 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     ...RISK_LIVE.map(f => `risk.${f.key}`),
     ...RISK_DEMO.map(f => `risk.${f.key}`),
     ...RISK_BOOLS.map(f => `risk.${f.key}`),
+    ...RISK_CORR.map(f => `risk.${f.key}`),
     'trading.default_stop_loss_pct', 'trading.default_take_profit_pct', 'trading.max_position_hold_hours',
     'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.min_confidence_to_trade', 'trading.auto_adopt_enabled',
     'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct',
+    'trading.default_notional_usdt', 'trading.vol_sizing_enabled', 'trading.vol_target_risk_usdt', 'trading.vol_target_pct', 'trading.vol_kelly_cap_fraction',
     'health.enabled', 'health.alert_via_telegram', 'health.alert_via_windows_toast', 'health.require_llm_at_startup',
     'health.self_heal_enabled', 'health.self_heal_code_drift', 'health.self_heal_market_data', 'health.self_heal_port_cleanup',
     'health.max_agent_failure_ratio', 'health.llm_unavailable_alert_after', 'health.market_data_max_staleness_min',

@@ -46,3 +46,57 @@ def get_trade_insights():
     """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc."""
     from aletheia.analytics.trade_insights import build_trade_insights
     return build_trade_insights()
+
+
+@router.get("/backtest/runs")
+def get_backtest_runs(strategy_id: str | None = None, limit: int = 20):
+    """List backtest runs, optionally filtered by strategy."""
+    from aletheia.strategy.repositories import list_backtest_runs
+    runs = list_backtest_runs(strategy_id=strategy_id, limit=limit)
+    for r in runs:
+        r.pop("equity_curve_json", None)
+        r.pop("ruleset_json", None)
+    return runs
+
+
+@router.get("/backtest/runs/{run_id}")
+def get_backtest_run_detail(run_id: str):
+    """Single backtest run with equity curve and trades."""
+    import json as _json
+    from aletheia.strategy.repositories import get_backtest_run, list_backtest_trades
+    run = get_backtest_run(run_id)
+    if not run:
+        from fastapi import HTTPException
+        raise HTTPException(404, "backtest run not found")
+    curve_raw = run.pop("equity_curve_json", None)
+    run["equity_curve"] = _json.loads(curve_raw) if curve_raw else []
+    run["trades"] = list_backtest_trades(run_id, limit=500)
+    return run
+
+
+@router.get("/backtest/compare/{strategy_id}")
+def get_backtest_compare(strategy_id: str):
+    """Latest backtest equity curve vs paper trade PnL for a strategy."""
+    import json as _json
+    from aletheia.strategy.repositories import list_backtest_runs
+    from aletheia.storage.repositories import list_strategy_positions
+
+    runs = list_backtest_runs(strategy_id=strategy_id, limit=1)
+    if not runs:
+        return {"strategy_id": strategy_id, "backtest": [], "paper": []}
+
+    run = runs[0]
+    curve_raw = run.get("equity_curve_json")
+    backtest_curve = _json.loads(curve_raw) if curve_raw else []
+
+    # Paper: closed positions for this strategy, cumulative PnL
+    positions = list_strategy_positions(strategy_id, status="closed", limit=500)
+    positions.sort(key=lambda p: p.get("closed_at") or "")
+    cumulative = 100.0
+    paper_curve = [cumulative]
+    for p in positions:
+        pnl_pct = float(p.get("realized_pnl_pct") or 0)
+        cumulative = round(cumulative * (1 + pnl_pct / 100), 4)
+        paper_curve.append(cumulative)
+
+    return {"strategy_id": strategy_id, "backtest": backtest_curve, "paper": paper_curve}

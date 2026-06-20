@@ -21,7 +21,7 @@ from aletheia.strategy.backtest import BacktestConfig, load_bars_from_db, run_ba
 from aletheia.strategy.cost_model import CostModel
 from aletheia.strategy.dsl import RuleSet
 from aletheia.strategy.models import BacktestRun, BacktestTrade
-from aletheia.strategy.repositories import insert_backtest_run, insert_backtest_trades
+from aletheia.strategy.repositories import insert_backtest_run, insert_backtest_trades, update_backtest_run_equity_curve
 from aletheia.strategy.review import StrategyVerdict, Verdict, evaluate_strategy
 
 logger = logging.getLogger("aletheia.strategy.orchestrator")
@@ -165,6 +165,9 @@ def run_all_backtests(
             m = result.metrics
 
             # Persist backtest results
+            eq_curve = result.equity_curve
+            eq_json = json.dumps([round(v, 2) for v in eq_curve]) if eq_curve else None
+
             run_record = BacktestRun(
                 strategy_id=sid,
                 symbol=symbol, timeframe=timeframe, direction=direction,
@@ -176,6 +179,7 @@ def run_all_backtests(
                 profit_factor=m.profit_factor if m.profit_factor != float('inf') else 999.0,
                 max_drawdown_pct=m.max_drawdown_pct, sharpe_approx=m.sharpe_approx,
                 avg_trade_bars=m.avg_trade_bars,
+                equity_curve_json=eq_json,
             )
             insert_backtest_run(run_record)
 

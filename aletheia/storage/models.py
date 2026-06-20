@@ -710,6 +710,7 @@ class UniverseFeatureSnapshot(BaseModel):
     open_interest: float | None = None
     oi_delta_1h: float | None = None
     data_freshness_sec: int | None = None
+    btc_beta: float | None = None
     raw: str = "{}"
 
 
