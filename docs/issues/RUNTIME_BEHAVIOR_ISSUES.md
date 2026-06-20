@@ -1049,3 +1049,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 > **§21 [NEW] dreaming_agent stale 积累**: 首现 round 90 (2026-06-20 06:21 UTC), round 91 仍 stale=2. 日周期 agent 约每 24h 运行一次, stale 表明上一次运行超时未清理. 影响: 日度知识合成/lesson 提取可能跳过. 建议: 检查 dreaming_agent timeout 配置与 stale 清理逻辑; 下次 gateway restart 后观察是否自动消除.
 
 [2026-06-20 08:21 UTC] ✓ 系统正常 — Features=1488/h (亚盘持稳). Opportunities=7972 (+95/h); opp_last_1h=745 (亚盘持续爬升). Knowledge=1086 (+24/h). §17 timed_out=263 (+4). Ghost=0, Stale=284 (+1). §21 dreaming_agent stale=2 持续第 3 轮. market_observer stale=4 (较上轮 +2). §18 持续: LAB/USDT OHLCV fetch failed. OKX auth 本轮日志未见 (可能暂时消失或窗口错开). 68h+ 连续无中断.
+
+[2026-06-20 09:21 UTC] ⚠️ **§22 universe scanner 停滞** — Features=246/h (骤降, 正常值 1200-1900/h). 最新 feature ts=2026-06-20T08:29 UTC, 已 52 分钟无新数据. 三条最新记录 ts 完全相同 (同批次写入后卡住). gateway 进程存活 (PID 33948), 无崩溃日志, 属 scheduler job internal hang. Opportunities=8019 (+47/h 趋缓). Knowledge=1115 (+29/h, 亚盘爬升). §17 timed_out=266 (+3). §21 dreaming_agent stale=2 持续第 4 轮. 影响: feature pipeline 停产, 所有依赖 feature snapshot 的下游分析 (strategy_designer, risk_critic) 将消耗陈旧数据. 建议: gateway restart 可恢复 (scheduler 重新注册 job); 根因可能是 §18 某符号 OHLCV 阻塞整个 scanner cycle.
