@@ -49,7 +49,7 @@ async def test_status(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["live_state"] == "live_disabled"
-    assert data["permission_mode"] == "Observe"
+    assert data["permission_mode"] == "Paper"
     assert data["exchange_mode"] == "demo"
 
 

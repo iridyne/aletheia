@@ -325,12 +325,68 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     }
 
 
+def _try_get_tpsl_fill_price(local: dict) -> tuple[float | None, str | None]:
+    """Attempt to find the real fill price from a triggered TPSL order.
+
+    Reads exchange_tpsl_order_id from the position, queries Bitget plan order
+    history, and returns (fill_price, close_reason) if a triggered order is found.
+    Returns (None, None) on any failure (non-critical).
+    """
+    import asyncio
+    import json as _json
+
+    tpsl_raw = local.get("exchange_tpsl_order_id")
+    if not tpsl_raw:
+        return None, None
+    try:
+        tpsl_ids = _json.loads(tpsl_raw) if isinstance(tpsl_raw, str) else tpsl_raw
+    except (ValueError, TypeError):
+        return None, None
+    if not isinstance(tpsl_ids, dict):
+        return None, None
+
+    try:
+        from aletheia.exchanges.bitget.client import BitgetClient
+        client = BitgetClient()
+
+        async def _query():
+            for plan_type, order_id in [("sl", tpsl_ids.get("sl")), ("tp", tpsl_ids.get("tp"))]:
+                if not order_id:
+                    continue
+                try:
+                    history = await client.get_plan_order_history(order_id=order_id)
+                    for h in history:
+                        if h.get("orderId") == order_id and h.get("status") == "executed":
+                            price = float(h.get("executePrice") or h.get("triggerPrice") or 0)
+                            if price > 0:
+                                reason = "stop_loss" if plan_type == "sl" else "take_profit"
+                                return price, reason
+                except Exception:
+                    continue
+            return None, None
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, _query()).result(timeout=10)
+        else:
+            return asyncio.run(_query())
+    except Exception as e:
+        logger.debug("TPSL fill price lookup failed (non-critical): %s", e)
+        return None, None
+
+
 def reconcile_close_orphan(item: ReconcileItem) -> dict:
     """Close an orphaned position (local open, exchange gone) via local bookkeeping.
 
-    Uses the last known price (current_price or entry_price) as exit. This is a
-    pure local close — no exchange call — same pattern as position_manager's
-    internal close path. Returns the close result dict from pnl.close_position.
+    First attempts to find the real fill price from triggered TPSL orders on the
+    exchange. Falls back to last known price (current_price or entry_price).
+    Returns the close result dict from pnl.close_position.
 
     Only call on DEMO orphans. Live orphans are alert-only (caller enforces).
     """
@@ -341,19 +397,30 @@ def reconcile_close_orphan(item: ReconcileItem) -> dict:
         raise ValueError("reconcile_close_orphan: item has no local position")
 
     position_id = local["id"]
-    exit_price = float(local.get("current_price") or local.get("entry_price") or 0)
-    if exit_price <= 0:
-        exit_price = float(local.get("entry_price") or 0)
+
+    # Try to get actual fill price from exchange TPSL history
+    tpsl_price, tpsl_reason = _try_get_tpsl_fill_price(local)
+
+    if tpsl_price and tpsl_price > 0:
+        exit_price = tpsl_price
+        close_reason = tpsl_reason or "reconciled_gone"
+    else:
+        exit_price = float(local.get("current_price") or local.get("entry_price") or 0)
+        if exit_price <= 0:
+            exit_price = float(local.get("entry_price") or 0)
+        close_reason = "reconciled_gone"
+
     if exit_price <= 0:
         raise ValueError(
             f"reconcile_close_orphan: cannot close {position_id} — no price available"
         )
 
-    result = close_position(position_id, exit_price, reason="reconciled_gone")
+    result = close_position(position_id, exit_price, reason=close_reason)
     logger.info(
-        "Reconcile-closed orphan %s %s %s @ %.6f (realized=%.4f)",
+        "Reconcile-closed orphan %s %s %s @ %.6f (realized=%.4f, reason=%s, tpsl=%s)",
         position_id, item.symbol, item.direction, exit_price,
-        result.get("realized_pnl", 0),
+        result.get("realized_pnl", 0), close_reason,
+        "exchange" if tpsl_price else "fallback",
     )
     return result
 

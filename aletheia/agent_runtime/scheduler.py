@@ -379,6 +379,11 @@ def init_scheduler() -> BackgroundScheduler | None:
         executor="io",
     )
     _scheduler.add_job(
+        _guarded("tpsl_fill_check", _run_tpsl_fill_check), "interval", seconds=90, id="tpsl_fill_check",
+        misfire_grace_time=30, next_run_time=datetime.now() + timedelta(seconds=45),
+        executor="io",
+    )
+    _scheduler.add_job(
         _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
         misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
@@ -772,14 +777,17 @@ def _run_pi_trading_decision():
     try:
         from aletheia.agent_shell.commands import evaluate_trading_opportunity
         result = _run_async_with_timeout("pi_trading_decision", evaluate_trading_opportunity({}))
-        if result.get("action") == "trade":
+        action = result.get("action", "skip")
+        if action in ("trade", "scale_in", "flip"):
             logger.info(
-                "pi_trading_decision: %s %s conviction=%s proposal=%s",
-                result.get("direction"), result.get("symbol"),
+                "pi_trading_decision: %s %s %s conviction=%s proposal=%s",
+                action, result.get("direction"), result.get("symbol"),
                 result.get("conviction"), result.get("proposal_id"),
             )
+        elif action == "watch":
+            logger.info("pi_trading_decision: watch %s — %s", result.get("symbol"), result.get("reasoning", "")[:60])
         else:
-            logger.debug("pi_trading_decision: skip — %s", result.get("reasoning", "")[:80])
+            logger.debug("pi_trading_decision: %s — %s", action, result.get("reasoning", "")[:80])
     except TimeoutError:
         logger.warning("pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300))
     except Exception as e:
@@ -822,6 +830,85 @@ def _run_position_reconcile():
             raise
     except Exception as e:
         logger.warning("position_reconcile job failed: %s", e)
+
+
+def _run_tpsl_fill_check():
+    """Fast TPSL fill detection — catches triggered SL/TP before the 5min reconciler.
+
+    Scans open positions with exchange_tpsl_order_id, queries Bitget plan order
+    history, and proactively closes positions with accurate fill prices when a
+    TPSL has been triggered on the exchange.
+    """
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        import asyncio
+        import json as _json
+        from aletheia.storage.repositories import list_positions
+        from aletheia.portfolio.pnl import close_position
+        from aletheia.exchanges.bitget.client import BitgetClient
+
+        positions = list_positions(status="open")
+        candidates = []
+        for p in positions:
+            tpsl_raw = p.get("exchange_tpsl_order_id")
+            if not tpsl_raw:
+                continue
+            try:
+                tpsl_ids = _json.loads(tpsl_raw) if isinstance(tpsl_raw, str) else tpsl_raw
+            except (ValueError, TypeError):
+                continue
+            if isinstance(tpsl_ids, dict) and (tpsl_ids.get("sl") or tpsl_ids.get("tp")):
+                candidates.append((p, tpsl_ids))
+
+        if not candidates:
+            return
+
+        client = BitgetClient()
+
+        async def _check_all():
+            closed = []
+            for pos, tpsl_ids in candidates:
+                for plan_type, order_id in [("sl", tpsl_ids.get("sl")), ("tp", tpsl_ids.get("tp"))]:
+                    if not order_id:
+                        continue
+                    try:
+                        history = await client.get_plan_order_history(order_id=order_id)
+                        for h in history:
+                            if h.get("orderId") == order_id and h.get("status") == "executed":
+                                price = float(h.get("executePrice") or h.get("triggerPrice") or 0)
+                                if price > 0:
+                                    reason = "stop_loss" if plan_type == "sl" else "take_profit"
+                                    from aletheia.storage.repositories import _select_one
+                                    fresh = _select_one("positions", pos["id"])
+                                    if not fresh or fresh.get("status") != "open":
+                                        break
+                                    result = close_position(pos["id"], price, reason=reason)
+                                    closed.append(result)
+                                    logger.info(
+                                        "TPSL fill detected: %s %s @ %.6f (%s)",
+                                        pos["symbol"], pos["direction"], price, reason,
+                                    )
+                                break
+                    except Exception as e:
+                        logger.debug("TPSL check failed for %s: %s", order_id, e)
+                        continue
+            return closed
+
+        closed = asyncio.run(_check_all())
+        if closed:
+            from aletheia.files.jsonl import write_audit
+            write_audit({
+                "actor": "system",
+                "source": "tpsl_fill_check",
+                "event_type": "tpsl_proactive_close",
+                "entity_type": "portfolio",
+                "message": f"Proactively closed {len(closed)} positions via TPSL fill detection",
+                "after": {"closed": [c["position_id"] for c in closed]},
+            })
+    except Exception as e:
+        logger.warning("tpsl_fill_check job failed: %s", e)
 
 
 def _run_equity_observer():

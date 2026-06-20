@@ -112,7 +112,11 @@ def test_risk_rejects_live_when_disabled(tmp_path, monkeypatch):
 
 def test_risk_rejects_insufficient_permission(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    # Default permission is Research — cannot do demo execution
+    # Observe mode cannot do demo execution
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.agent.permission_mode = "Observe"
+    save_config(cfg)
     proposal = TradeProposal(
         symbol="BTCUSDT", market_type="spot", direction="long",
         execution_mode="bitget_demo",

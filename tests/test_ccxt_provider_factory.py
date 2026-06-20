@@ -17,10 +17,15 @@ from types import SimpleNamespace
 
 from aletheia.config import loader
 from aletheia.data.ccxt_provider import get_market_data_provider, CCXTProvider
+from aletheia.data.sources.chain import FallbackChainProvider
 
 
-def _fake_config(exchange="binance", fallback="bybit"):
-    md = SimpleNamespace(ccxt_exchange=exchange, ccxt_fallback=fallback)
+def _fake_config(exchange="binance", fallback="bybit", crypto_fallback=True):
+    md = SimpleNamespace(
+        ccxt_exchange=exchange,
+        ccxt_fallback=fallback,
+        enable_crypto_fallback=crypto_fallback,
+    )
     return SimpleNamespace(market_data=md)
 
 
@@ -28,9 +33,11 @@ def test_factory_uses_config_exchanges(monkeypatch):
     monkeypatch.setattr(loader, "load_config",
                         lambda: _fake_config("binance", "bybit"))
     p = get_market_data_provider()
-    assert isinstance(p, CCXTProvider)
-    assert p._primary_name == "binance"
-    assert p._fallback_name == "bybit"
+    assert isinstance(p, FallbackChainProvider)
+    ccxt = p._providers[0]
+    assert isinstance(ccxt, CCXTProvider)
+    assert ccxt._primary_name == "binance"
+    assert ccxt._fallback_name == "bybit"
 
 
 def test_factory_exchange_override_keeps_config_fallback(monkeypatch):
@@ -39,8 +46,9 @@ def test_factory_exchange_override_keeps_config_fallback(monkeypatch):
     # Override the primary (e.g. ?exchange=kraken on the OHLCV route); the
     # fallback still comes from config, never from the override.
     p = get_market_data_provider("kraken")
-    assert p._primary_name == "kraken"
-    assert p._fallback_name == "bybit"
+    ccxt = p._providers[0]
+    assert ccxt._primary_name == "kraken"
+    assert ccxt._fallback_name == "bybit"
 
 
 def test_factory_returns_fresh_instance_each_call(monkeypatch):

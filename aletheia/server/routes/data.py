@@ -666,8 +666,11 @@ async def get_positions():
 @router.get("/portfolio")
 async def get_portfolio():
     _ensure_db()
+    from aletheia.config.loader import load_config
     from aletheia.portfolio.pnl import compute_portfolio
-    return compute_portfolio()
+    cfg = load_config()
+    mode = cfg.exchange.paper_execution_mode or "paper_internal"
+    return compute_portfolio(execution_mode=mode)
 
 
 @router.get("/exchange/account")

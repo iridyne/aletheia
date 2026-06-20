@@ -1814,7 +1814,7 @@ async def propose_extension_enablement(params: dict) -> dict:
 
 async def evaluate_trading_opportunity(params: dict) -> dict:
     """PI agent evaluates market state and submits a paper proposal if conviction >= 55."""
-    from aletheia.agent_shell.context import build_app_context
+    from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.agent_shell.trading_decision import (
         evaluate_trading_opportunity as _evaluate,
         submit_decision_as_proposal,
@@ -1824,10 +1824,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     cfg = load_config()
     execution_mode = cfg.exchange.paper_execution_mode
 
-    # Build rich context
-    ctx = build_app_context(sections=["market", "trading", "proposals", "strategies", "risk"])
+    # Build three-layer enriched context
+    ctx = build_enriched_trading_context()
 
-    # Enrich with RuleSet signals and recent lessons
+    # Enrich with RuleSet signals (passed separately to prompt builder)
     try:
         from aletheia.trading.ruleset_scanner import scan_active_rulesets
         signals = scan_active_rulesets(execution_mode=execution_mode)
@@ -1844,17 +1844,6 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     except Exception:
         ctx["ruleset_signals"] = []
 
-    try:
-        items = list_knowledge_items(limit=10)
-        ctx["lessons"] = [
-            {"action": i.get("item_type"), "symbol": i.get("metadata", {}).get("symbol"),
-             "body": i.get("content", "")[:100]}
-            for i in items
-            if i.get("item_type") in ("lesson", "accepted_lesson", "research_note")
-        ]
-    except Exception:
-        ctx["lessons"] = []
-
     # Run PI agent decision loop
     decision = await _evaluate(ctx)
 
@@ -1867,7 +1856,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "debate_bear": decision.debate_bear_confidence,
     }
 
-    if decision.action == "trade" and decision.symbol:
+    # trade / scale_in / flip all produce proposals
+    if decision.action in ("trade", "scale_in", "flip") and decision.symbol:
         result["symbol"] = decision.symbol
         result["direction"] = decision.direction
         result["position_size_usdt"] = decision.position_size_usdt
@@ -1878,6 +1868,13 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             result["proposal_status"] = proposal_result.get("status")
         else:
             result["proposal_error"] = "price_unavailable_or_proposal_rejected"
+
+    # Record decision for next-cycle reflection loop
+    try:
+        from aletheia.agent_shell.reflection import record_decision
+        record_decision(result)
+    except Exception:
+        pass
 
     return result
 

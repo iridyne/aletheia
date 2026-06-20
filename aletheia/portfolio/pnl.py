@@ -9,13 +9,8 @@ from aletheia.storage.repositories import (
 
 
 def _latest_price(symbol: str) -> float | None:
-    from aletheia.data.price_feed import get_cached_price
-    cached = get_cached_price(symbol)
-    if cached is not None:
-        return cached
-    from aletheia.trading.market_data import latest_snapshot
-    snap = latest_snapshot(symbol)
-    return float(snap["price"]) if snap else None
+    from aletheia.data.price_feed import get_price_for_pnl
+    return get_price_for_pnl(symbol)
 
 
 def _btc_price_at_close() -> float | None:
@@ -245,7 +240,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
             exc_upnl = cached.get("futures_unrealized_pnl")
             if exc_upnl is not None:
                 final_unrealized = float(exc_upnl)
-                final_today_pnl = float(exc_upnl)
+                final_today_pnl = float(exc_upnl) + total_today_realized
 
             exc_positions = cached.get("positions") or []
             if exc_positions:

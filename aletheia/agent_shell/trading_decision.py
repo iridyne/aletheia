@@ -75,7 +75,7 @@ class DebateResult:
 _DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce"]},
+        "action": {"type": "string", "enum": ["trade", "skip", "close", "reduce", "watch", "scale_in", "flip"]},
         "symbol": {"type": "string"},
         "direction": {"type": "string", "enum": ["long", "short"]},
         "conviction": {"type": "integer", "minimum": 0, "maximum": 100},
@@ -117,7 +117,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     1. Assess opportunities using structured LLM with full context
     2. If conviction in uncertain range (40-80), run Bull/Bear debate
     3. Compute conviction-based position size
-    4. Return TradingDecision (caller submits proposal if action="trade")
+    4. Return TradingDecision (caller submits proposal if action="trade"|"scale_in"|"flip")
     """
     decision_raw = await _assess_opportunity(trading_context)
     if decision_raw is None:
@@ -128,8 +128,15 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
     decision = _parse_decision(decision_raw)
 
+    # "watch" → record interest, no trade (treated as informational skip)
+    if decision.action == "watch":
+        return decision
+
+    # "scale_in" and "flip" are trade-like actions that go through debate+sizing
+    trade_actions = ("trade", "scale_in", "flip")
+
     # Run debate for uncertain conviction range
-    if (decision.action == "trade"
+    if (decision.action in trade_actions
             and decision.symbol
             and _DEBATE_RANGE[0] <= decision.conviction <= _DEBATE_RANGE[1]):
         debate = await _run_debate(decision.symbol, decision.direction, trading_context)
@@ -142,10 +149,10 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                 decision.action = "skip"
                 decision.reasoning += f" [debate lowered conviction to {decision.conviction} → skip]"
 
-    # Compute sizing
-    if decision.action == "trade" and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
+    # Compute sizing for trade-like actions
+    if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
         decision.position_size_usdt = _compute_position_size(decision.conviction, symbol=decision.symbol)
-    else:
+    elif decision.action in trade_actions:
         decision.action = "skip"
 
     return decision
@@ -228,7 +235,10 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
 
     system = (
         "You are the Trading Decision Authority for an autonomous paper trading system. "
-        "Return a JSON object matching the schema provided."
+        "You receive a structured three-layer context: (1) current environment snapshot, "
+        "(2) your recent 7-day performance, (3) accumulated wisdom from past trades. "
+        "The risk/guard system operates independently after your decision — "
+        "focus on WHAT to trade, not HOW MUCH. Return a JSON object matching the schema."
     )
     user = _build_assessment_prompt(ctx)
     schema_text = _json_schema_hint(_DECISION_SCHEMA)
@@ -297,95 +307,212 @@ def _compute_position_size(conviction: int, symbol: str | None = None) -> float:
 # ── prompt builders ───────────────────────────────────────────────────────────
 
 def _build_assessment_prompt(ctx: dict) -> str:
-    open_positions = ctx.get("trading", {}).get("open_positions", [])
-    recent_proposals = ctx.get("proposals", {}).get("recent", [])
-    market_snaps = ctx.get("market", [])[:10]
-    strategies = ctx.get("strategies", [])
+    """Build the three-layer assessment prompt from enriched trading context."""
+    layer1 = ctx.get("layer1", {})
+    layer2 = ctx.get("layer2", {})
+    layer3 = ctx.get("layer3", {})
     ruleset_signals = ctx.get("ruleset_signals", [])
-    lessons = ctx.get("lessons", [])
-    risk = ctx.get("risk", {})
 
-    pos_summary = "\n".join(
-        f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} upnl={p.get('unrealized_pnl', '?')}"
-        for p in open_positions[:5]
+    # ── Layer 1: Environment Snapshot ──
+    positions = layer1.get("positions", [])
+    pos_lines = "\n".join(
+        f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} "
+        f"uPnL={p.get('unrealized_pnl', '?')} hold={p.get('hold_hours', '?')}h"
+        for p in positions[:5]
     ) or "  (none)"
 
-    market_summary = "\n".join(
-        f"  {s['symbol']} price={s['price']} 24h={s.get('change_24h', '?')}%"
-        for s in market_snaps
+    balance = layer1.get("balance")
+    balance_line = (
+        f"  Equity: ${balance['equity_usdt']:.0f} | Available: ${balance['available_usdt']:.0f}"
+        if balance else "  (unavailable)"
+    )
+
+    today_pnl = layer1.get("today_pnl")
+    pnl_line = f"  Today realized: ${today_pnl:+.2f}" if today_pnl is not None else "  (no trades today)"
+
+    regime = layer1.get("regime")
+    regime_line = (
+        f"  {regime['state'].upper()} (conf={regime['confidence']:.0%}, "
+        f"long_bias={regime['long_bias']:.0%}, short_bias={regime['short_bias']:.0%})"
+        if regime else "  (unknown)"
+    )
+
+    features = layer1.get("features", [])
+    feature_lines = "\n".join(
+        f"  {f['symbol']}: RSI={f.get('rsi_14', '?'):.0f} ATR={f.get('atr_pct', '?'):.1f}% "
+        f"1h={f.get('return_1h', 0):+.1f}% 4h={f.get('return_4h', 0):+.1f}% "
+        f"24h={f.get('return_24h', 0):+.1f}% "
+        f"FR={_fmt_funding(f.get('funding_rate'))} OI_Δ1h={f.get('oi_delta_1h', '?')}"
+        if f.get('rsi_14') is not None else
+        f"  {f['symbol']}: price={f.get('price', '?')}"
+        for f in features[:10]
+    ) or "  (no data)"
+
+    risk = layer1.get("risk", {})
+
+    signal_lines = "\n".join(
+        f"  {s['symbol']} {s['signal_type']} {s.get('direction', '')} via {s['strategy']}"
+        for s in ruleset_signals[:7]
+    ) or "  (none active)"
+
+    # ── Layer 2: Short-term Memory ──
+    reflection = layer2.get("reflection")
+
+    stats = layer2.get("outcome_stats")
+    if stats:
+        stats_block = (
+            f"  7d: {stats['total_trades']} trades, {stats['win_rate']}% win rate, "
+            f"PnL=${stats['total_pnl']:+.2f}, avg=${stats['avg_pnl_per_trade']:+.2f}/trade\n"
+            f"  Best: ${stats['best_win']:+.2f} | Worst: ${stats['worst_loss']:+.2f}"
+        )
+    else:
+        stats_block = "  (no recent trades)"
+
+    per_sym = layer2.get("per_symbol", [])
+    sym_lines = "\n".join(
+        f"  {s['symbol']}: {s['trades']}T {s['wins']}W PnL=${s['pnl']:+.2f}"
+        for s in per_sym[:5]
+    ) or ""
+
+    strat_perf = layer2.get("strategies", [])
+    strat_lines = "\n".join(
+        f"  {s['name']}: WR={s.get('win_rate', '?')}% PnL={s.get('total_pnl', '?')} trades={s.get('trade_count', 0)}"
+        for s in strat_perf[:5]
+    ) or "  (none active)"
+
+    # ── Layer 3: Long-term Wisdom ──
+    lessons = layer3.get("lessons", [])
+    lesson_lines = "\n".join(
+        f"  [{l['type']}] {l.get('symbol') or 'general'}: {l['content']}"
+        for l in lessons[:7]
     ) or "  (none)"
 
-    signal_summary = "\n".join(
-        f"  {s['symbol']} {s['signal_type']} via {s['strategy']}"
-        for s in ruleset_signals[:5]
-    ) or "  (none)"
+    guards = layer3.get("guard_candidates", [])
+    guard_lines = "\n".join(
+        f"  ⚠ {g.get('symbol', '?')}: {g['content']}"
+        for g in guards[:3]
+    ) or ""
 
-    lesson_summary = "\n".join(
-        f"  [{l.get('action')}] {l.get('symbol', 'any')}: {l.get('body', '')[:80]}"
-        for l in lessons[:5]
-    ) or "  (none)"
+    # ── Assemble prompt ──
+    parts = [
+        "# Layer 1: Environment Snapshot (current state)",
+        "",
+        "## Portfolio",
+        pos_lines,
+        "",
+        "## Account",
+        balance_line,
+        pnl_line,
+        "",
+        "## Market Regime",
+        regime_line,
+        "",
+        "## Technical Features (top universe assets)",
+        feature_lines,
+        "",
+        "## Active Signals",
+        signal_lines,
+        "",
+        f"## Risk: kill_switch={risk.get('kill_switch', False)}, "
+        f"max_daily_loss={risk.get('max_daily_loss_pct', '?')}%, "
+        f"max_positions={risk.get('max_open_positions', '?')}",
+        "",
+        "---",
+        "# Layer 2: Short-term Memory (past 7 days)",
+        "",
+    ]
+    if reflection:
+        parts.append("## Last Decision Reflection")
+        parts.append(f"  {reflection}")
+        parts.append("")
+    parts += [
+        "## Recent Performance",
+        stats_block,
+    ]
+    if sym_lines:
+        parts.append(sym_lines)
+    parts += [
+        "",
+        "## Strategy Performance",
+        strat_lines,
+        "",
+        "---",
+        "# Layer 3: Long-term Wisdom",
+        "",
+        "## Lessons & Guards",
+        lesson_lines,
+    ]
+    if guard_lines:
+        parts.append("")
+        parts.append("## Pending Guard Candidates (patterns that failed recently)")
+        parts.append(guard_lines)
 
-    return f"""You are the Trading Decision Authority for an autonomous paper trading system.
-Your role: decide whether to open, close, or skip a trade right now.
+    parts += [
+        "",
+        "---",
+        "# Your Reasoning Space",
+        "",
+        "Consider freely — there are no fixed rules for what you must do:",
+        "- What is the dominant market narrative right now? Is it already priced in?",
+        "- Am I seeing confluence (multiple signals aligning) or conflict?",
+        "- Given my recent 7-day performance, should I be more or less aggressive?",
+        "- Is there an asymmetric risk/reward setup I'm missing?",
+        "- Do the lessons or guard candidates warn against this specific setup?",
+        "- What would make me change my mind about this trade?",
+        "",
+        "The guard chain handles risk limits independently — focus purely on:",
+        "SHOULD this trade happen, in WHAT direction, with WHAT conviction?",
+        "",
+        "Actions available:",
+        "- trade: open a new position",
+        "- skip: no action now",
+        "- close: close an existing position",
+        "- reduce: reduce an existing position size",
+        "- watch: mark a symbol for observation (interested but not ready)",
+        "- scale_in: add to an existing winning position",
+        "- flip: reverse direction (close existing + open opposite)",
+        "",
+        "Return: action, symbol (BTC/USDT format), direction (long/short), "
+        "conviction (0-100), reasoning, risk_factors, supporting_signals, opposing_signals.",
+    ]
 
-## Current Portfolio
-{pos_summary}
+    return "\n".join(parts)
 
-## Market Conditions (latest snapshots)
-{market_summary}
 
-## Active RuleSet Signals
-{signal_summary}
-
-## Recent Lessons (accepted)
-{lesson_summary}
-
-## Risk State
-Kill switch: {risk.get('kill_switch', False)}
-Max daily loss %: {risk.get('max_daily_loss_pct', '?')}
-Max open positions (demo): {risk.get('max_open_positions_demo', '?')}
-
-## Instructions
-Evaluate the current state and return a trading decision. Consider:
-- Are there high-conviction entry opportunities (price momentum, ruleset signals, strong thesis)?
-- Is the current portfolio overexposed or well-balanced?
-- Do any accepted lessons block specific symbols or directions?
-- What is the best single action to take right now?
-
-If action="trade": specify symbol (canonical BTC/USDT format), direction (long/short), and conviction (0-100).
-If action="skip": explain why now is not the right time.
-If action="close": specify which symbol to close and why.
-Conviction above 75 = high confidence, 55-75 = moderate, below 55 = skip."""
+def _fmt_funding(rate: float | None) -> str:
+    if rate is None:
+        return "?"
+    return f"{rate * 100:+.4f}%"
 
 
 def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
-    market_snaps = {s["symbol"]: s for s in ctx.get("market", [])}
-    snap = market_snaps.get(symbol, {})
-    return f"""You are a bull analyst. Your job is to make the STRONGEST possible case for trading {symbol} {direction or 'long'} RIGHT NOW.
+    features = ctx.get("layer1", {}).get("features", [])
+    snap = next((f for f in features if f.get("symbol") == symbol), {})
+    regime = ctx.get("layer1", {}).get("regime")
+    regime_str = f"Regime: {regime['state']} (conf={regime['confidence']:.0%})" if regime else ""
 
-Market data: price={snap.get('price', '?')}, 24h change={snap.get('change_24h', '?')}%
+    return f"""You are a bull analyst. Make the STRONGEST case for {symbol} {direction or 'long'} RIGHT NOW.
 
-Using all available evidence, build the most compelling bull thesis. Be specific about:
-- Technical setup (momentum, trend, support levels)
-- Macro/regime context if favorable
-- Risk/reward at current price
+Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}
+{regime_str}
 
-Return confidence (0-100) where 100 = near-certain win. Provide 3-5 concrete evidence points."""
+Be specific: technical setup, regime alignment, risk/reward.
+Return confidence (0-100) where 100 = near-certain win. Provide 3-5 evidence points."""
 
 
 def _build_bear_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
-    market_snaps = {s["symbol"]: s for s in ctx.get("market", [])}
-    snap = market_snaps.get(symbol, {})
-    return f"""You are a bear analyst. Your job is to find every reason why trading {symbol} {direction or 'long'} RIGHT NOW is a BAD idea.
+    features = ctx.get("layer1", {}).get("features", [])
+    snap = next((f for f in features if f.get("symbol") == symbol), {})
+    regime = ctx.get("layer1", {}).get("regime")
+    regime_str = f"Regime: {regime['state']} (conf={regime['confidence']:.0%})" if regime else ""
 
-Market data: price={snap.get('price', '?')}, 24h change={snap.get('change_24h', '?')}%
+    return f"""You are a bear analyst. Find every reason why {symbol} {direction or 'long'} RIGHT NOW is a BAD idea.
 
-Challenge the bull case aggressively. Focus on:
-- What could go wrong immediately (resistance, overbought, funding rates)
-- Macro risks or adverse regime
-- Better entry timing exists
+Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}
+{regime_str}
 
-Return confidence (0-100) where 100 = trade will definitely fail. Provide 3-5 concrete counter-evidence points."""
+Challenge aggressively: overbought/oversold, adverse regime, funding cost, better entry timing.
+Return confidence (0-100) where 100 = trade will definitely fail. Provide 3-5 counter-evidence points."""
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────

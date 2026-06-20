@@ -29,7 +29,7 @@ async def test_status_command(tmp_path, monkeypatch):
     resp = await bot.handle_message(123, "/status")
     assert "Gateway" in resp
     assert "live_disabled" in resp
-    assert "Observe" in resp
+    assert "Paper" in resp
     reset_db()
 
 

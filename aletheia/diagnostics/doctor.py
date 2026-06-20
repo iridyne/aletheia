@@ -336,6 +336,48 @@ def _probe_market_data(report: Report) -> None:
         report.add("data.market", "ok", detail)
 
 
+def _probe_data_quality(report: Report) -> None:
+    """Check data provenance: are prices coming from fallback sources?"""
+    try:
+        from aletheia.storage.repositories import list_market_snapshots
+        rows = list_market_snapshots(limit=50)
+    except Exception:
+        return
+    if not rows:
+        return
+
+    recent = [r for r in rows if _age_minutes(r.get("snapshot_at") or "") is not None
+              and _age_minutes(r.get("snapshot_at") or "") < 30]  # type: ignore[operator]
+    if not recent:
+        return
+
+    fallback_providers = {"coingecko", "binance_public"}
+    fallback_count = sum(1 for r in recent if (r.get("provider") or "").lower() in fallback_providers)
+    total = len(recent)
+    ratio = fallback_count / total if total else 0
+
+    if ratio > 0.2:
+        report.add(
+            "data.quality", "warn",
+            f"{fallback_count}/{total} recent snapshots from fallback sources "
+            f"({ratio:.0%}) — CCXT primary may be degraded",
+            "check network/exchange API status; consider disabling cross_source_check temporarily",
+        )
+    else:
+        report.add("data.quality", "ok",
+                   f"data sources healthy ({fallback_count}/{total} fallback)")
+
+    # Price cache freshness
+    try:
+        from aletheia.data.price_feed import cache_stats
+        stats = cache_stats()
+        if stats.get("oldest_sec") and stats["oldest_sec"] > 80:
+            report.add("data.cache_freshness", "info",
+                       f"price cache oldest entry {stats['oldest_sec']:.0f}s (threshold 90s)")
+    except Exception:
+        pass
+
+
 def _probe_trading_loop(report: Report) -> None:
     """The 'is the closed loop actually turning' probe — counts, not narrative."""
     try:
@@ -531,6 +573,7 @@ def build_report() -> Report:
         _probe_config_consistency,
         _probe_credentials,
         _probe_market_data,
+        _probe_data_quality,
         _probe_trading_loop,
         _probe_health,
         _probe_webui_static,

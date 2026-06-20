@@ -100,6 +100,12 @@ class MarketDataConfig(BaseModel):
     observed_xstocks: list[str] = Field(
         default_factory=lambda: ["AAPLON/USDT", "TSLAON/USDT", "NVDAON/USDT", "SPYON/USDT"]
     )
+    # Third-tier fallback: CoinGecko + Binance public API when CCXT primary+fallback both fail.
+    enable_crypto_fallback: bool = True
+    # Cross-source price divergence detection.
+    price_divergence_threshold_pct: float = 2.0
+    price_divergence_alert_enabled: bool = True
+    cross_source_check_enabled: bool = False
 
 
 class LiveConfig(BaseModel):
@@ -108,7 +114,7 @@ class LiveConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    permission_mode: str = "Observe"
+    permission_mode: str = "Paper"
     autonomous_learning: bool = True
 
 

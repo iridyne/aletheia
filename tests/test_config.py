@@ -13,7 +13,7 @@ def test_default_config_has_correct_values():
     assert cfg.app.dashboard_port == 8787
     assert cfg.exchange.mode == "demo"
     assert cfg.live.state == "live_disabled"
-    assert cfg.agent.permission_mode == "Observe"
+    assert cfg.agent.permission_mode == "Paper"
     assert cfg.risk.max_daily_loss_pct == 1.0
     assert cfg.risk.symbol_filter_mode == "blacklist"
     assert cfg.risk.symbol_list == []

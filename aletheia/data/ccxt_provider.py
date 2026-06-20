@@ -215,14 +215,27 @@ def _opt_float(value) -> float | None:
         return None
 
 
-def get_market_data_provider(exchange: str | None = None) -> CCXTProvider:
+def get_market_data_provider(exchange: str | None = None):
     """Construct a FRESH market-data provider (never cached — see module docstring).
 
     Primary defaults to ``market_data.ccxt_exchange`` (overridable via ``exchange``);
     the fallback ALWAYS comes from ``market_data.ccxt_fallback``, never the override.
+
+    When ``enable_crypto_fallback`` is True (default), returns a FallbackChainProvider
+    wrapping [CCXTProvider, CoinGeckoProvider, BinancePublicProvider]. Otherwise
+    returns a bare CCXTProvider as before.
     """
     from aletheia.config.loader import load_config
 
     md = load_config().market_data
     primary = exchange or md.ccxt_exchange
-    return CCXTProvider(exchange=primary, fallback_exchange=md.ccxt_fallback)
+    ccxt = CCXTProvider(exchange=primary, fallback_exchange=md.ccxt_fallback)
+
+    if not getattr(md, "enable_crypto_fallback", True):
+        return ccxt
+
+    from aletheia.data.sources.binance_public import BinancePublicProvider
+    from aletheia.data.sources.chain import FallbackChainProvider
+    from aletheia.data.sources.coingecko import CoinGeckoProvider
+
+    return FallbackChainProvider([ccxt, CoinGeckoProvider(), BinancePublicProvider()])

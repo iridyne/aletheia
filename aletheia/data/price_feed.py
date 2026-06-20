@@ -44,6 +44,21 @@ def get_cached_price(symbol: str) -> float | None:
         return entry["price"]
 
 
+def get_cached_price_with_meta(symbol: str) -> dict | None:
+    """Return full cache entry {price, ts, provider, volume_24h} if fresh, else None."""
+    from aletheia.data.symbols import to_canonical
+
+    key = to_canonical(symbol)
+    with _cache_lock:
+        entry = _price_cache.get(key)
+        if not entry:
+            return None
+        age = (datetime.now(timezone.utc) - entry["ts"]).total_seconds()
+        if age > _STALE_THRESHOLD_SEC:
+            return None
+        return dict(entry)
+
+
 def get_watched_symbols() -> list[str]:
     """Return canonical symbols for open positions (always) + universe members (tick-gated)."""
     from aletheia.data.symbols import to_canonical
@@ -125,6 +140,7 @@ async def refresh_watched_prices() -> dict:
                                 "ts": now,
                                 "prev_price": prev_price,
                                 "volume_24h": volume_24h,
+                                "provider": getattr(ticker, "provider", None) or "unknown",
                             }
 
                         if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
@@ -206,3 +222,67 @@ def cache_stats() -> dict:
             "oldest_sec": round(max(ages), 1),
             "newest_sec": round(min(ages), 1),
         }
+
+
+# ---------------------------------------------------------------------------
+# Semantic price accessors (Phase 3)
+# ---------------------------------------------------------------------------
+
+_PRIMARY_EXCHANGE_PROVIDERS = frozenset({"binance", "bybit", "bitget", "okx"})
+
+
+def get_price_for_pnl(symbol: str) -> float | None:
+    """Venue last-trade price for PnL calculation.
+
+    Prefers CCXT-sourced cache entry. Falls back to any cached price (with
+    warning log when from fallback source), then SQLite snapshot.
+    """
+    meta = get_cached_price_with_meta(symbol)
+    if meta is not None:
+        provider = meta.get("provider", "unknown")
+        if provider not in _PRIMARY_EXCHANGE_PROVIDERS:
+            logger.warning(
+                "pnl price for %s sourced from fallback (%s) — may differ from venue",
+                symbol, provider,
+            )
+        return meta["price"]
+    from aletheia.trading.market_data import latest_snapshot
+    snap = latest_snapshot(symbol)
+    return float(snap["price"]) if snap else None
+
+
+def get_price_for_risk(symbol: str) -> float | None:
+    """Conservative price for risk checks.
+
+    When the cache entry came from a fallback source, also checks the SQLite
+    snapshot (5-min cadence, possibly CCXT-sourced). Returns whichever is more
+    conservative (higher value — worst-case for position sizing).
+    """
+    meta = get_cached_price_with_meta(symbol)
+    cache_price = meta["price"] if meta else None
+    cache_provider = (meta.get("provider") or "unknown") if meta else "unknown"
+
+    if cache_price is None:
+        from aletheia.trading.market_data import latest_snapshot
+        snap = latest_snapshot(symbol)
+        return float(snap["price"]) if snap else None
+
+    if cache_provider in _PRIMARY_EXCHANGE_PROVIDERS:
+        return cache_price
+
+    # Fallback source — cross-check with SQLite snapshot for conservatism.
+    from aletheia.trading.market_data import latest_snapshot
+    snap = latest_snapshot(symbol)
+    snap_price = float(snap["price"]) if snap else None
+    if snap_price is None:
+        return cache_price
+    return max(cache_price, snap_price)
+
+
+def get_price_for_liquidation(symbol: str) -> float | None:
+    """Exchange mark price for liquidation estimation.
+
+    Currently delegates to get_price_for_pnl(). When exchange mark price
+    endpoint becomes available (futures), this will use that instead.
+    """
+    return get_price_for_pnl(symbol)
