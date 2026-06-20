@@ -251,7 +251,7 @@ function BacktestHistory({ strategyId }: { strategyId: string }) {
           <tbody>
             {runs.slice(0, 5).map((r: any) => (
               <tr key={r.id} onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}
-                  style={{ cursor: 'pointer' }} className={expandedId === r.id ? 'row-selected' : ''}>
+                  className={`clickable ${expandedId === r.id ? 'row-selected' : ''}`}>
                 <td className="mono text-xs">{r.created_at?.slice(0, 10)}</td>
                 <td>{r.trade_count}</td>
                 <td className={r.total_return_pct >= 0 ? 'pnl-positive' : 'pnl-negative'}>
@@ -278,7 +278,7 @@ function BacktestEquityChart({ curve }: { curve: number[] }) {
   const maxY = Math.max(...curve) * 1.02
 
   return (
-    <div className="mt-2" style={{ height: 180 }}>
+    <div className="mt-2 chart-h-sm">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--c-border)" />

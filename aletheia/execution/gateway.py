@@ -146,6 +146,12 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     from aletheia.execution.okx_broker import execute_live_order
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
+                _cfg = load_config()
+                _tp_pct = _cfg.trading.default_take_profit_pct
+                _entry = proposal.price or 0.0
+                _tp = None
+                if _tp_pct and _entry > 0:
+                    _tp = round(_entry * (1 + _tp_pct / 100.0), 8) if proposal.direction in ("long", "buy") else round(_entry * (1 - _tp_pct / 100.0), 8)
                 result = execute_live_order(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
@@ -154,9 +160,11 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     direction=proposal.direction,
                     order_type=proposal.order_type,
                     quantity=proposal.quantity or 0.0,
-                    price=proposal.price or 0.0,
+                    price=_entry,
                     strategy_id=proposal.strategy_id,
                     execution_mode=allowed_mode,
+                    stop_price=proposal.stop_price,
+                    take_profit_price=_tp,
                 )
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({
@@ -210,6 +218,12 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     from aletheia.execution.binance_broker import execute_live_order
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
+                _cfg2 = load_config()
+                _tp_pct2 = _cfg2.trading.default_take_profit_pct
+                _entry2 = proposal.price or 0.0
+                _tp2 = None
+                if _tp_pct2 and _entry2 > 0:
+                    _tp2 = round(_entry2 * (1 + _tp_pct2 / 100.0), 8) if proposal.direction in ("long", "buy") else round(_entry2 * (1 - _tp_pct2 / 100.0), 8)
                 result = execute_live_order(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
@@ -218,9 +232,11 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     direction=proposal.direction,
                     order_type=proposal.order_type,
                     quantity=proposal.quantity or 0.0,
-                    price=proposal.price or 0.0,
+                    price=_entry2,
                     strategy_id=proposal.strategy_id,
                     execution_mode=allowed_mode,
+                    stop_price=proposal.stop_price,
+                    take_profit_price=_tp2,
                 )
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({

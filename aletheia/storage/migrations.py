@@ -1388,6 +1388,8 @@ _ADDITIVE_COLUMNS = [
     ("equity_curve_json", "backtest_runs", "TEXT"),
     # Correlation guard: BTC beta for universe assets
     ("btc_beta", "universe_feature_snapshots", "REAL"),
+    # Exchange-native TPSL bracket order IDs (JSON {"sl": id, "tp": id})
+    ("exchange_tpsl_order_id", "positions", "TEXT"),
 ]
 
 

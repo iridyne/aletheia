@@ -950,6 +950,7 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [confidence, setConfidence] = useState('medium')
   const [autoAdopt, setAutoAdopt] = useState(true)
   const [trailEnabled, setTrailEnabled] = useState(false)
+  const [exchangeTpslEnabled, setExchangeTpslEnabled] = useState(false)
   const [trailAtrMult, setTrailAtrMult] = useState('1.5')
   const [trailPct, setTrailPct] = useState('1.0')
   const [breakevenTriggerPct, setBreakevenTriggerPct] = useState('1.5')
@@ -970,6 +971,7 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
     setConfidence(trading.min_confidence_to_trade ?? 'medium')
     setAutoAdopt(trading.auto_adopt_enabled !== false)
     setTrailEnabled(!!trading.trail_enabled)
+    setExchangeTpslEnabled(!!trading.exchange_tpsl_enabled)
     setTrailAtrMult(String(trading.trail_atr_mult ?? 1.5))
     setTrailPct(String(trading.trail_pct ?? 1.0))
     setBreakevenTriggerPct(String(trading.breakeven_trigger_pct ?? 1.5))
@@ -990,6 +992,7 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
       min_confidence_to_trade: confidence,
       auto_adopt_enabled: autoAdopt,
       trail_enabled: trailEnabled,
+      exchange_tpsl_enabled: exchangeTpslEnabled,
       trail_atr_mult: parseFloat(trailAtrMult),
       trail_pct: parseFloat(trailPct),
       breakeven_trigger_pct: parseFloat(breakevenTriggerPct),
@@ -1120,6 +1123,17 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
               onChange={e => { setVolKellyCap(e.target.value); setMsg(null) }} className="mono" />
           </label>
         </>)}
+      </div>
+      <div className="settings-inline-note">
+        <Toggle
+          checked={exchangeTpslEnabled}
+          label="Exchange-native TPSL bracket (Bitget demo/live)"
+          onChange={v => { setExchangeTpslEnabled(v); setMsg(null) }}
+        />
+        <p className="hint mt-1">
+          When ON, stop-loss and take-profit orders are placed directly on Bitget at position open.
+          The local polling loop remains active as a fallback. Enable only after verifying demo behavior.
+        </p>
       </div>
       <div className="flex gap-2">
         <button onClick={() => {
@@ -1682,7 +1696,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     ...RISK_CORR.map(f => `risk.${f.key}`),
     'trading.default_stop_loss_pct', 'trading.default_take_profit_pct', 'trading.max_position_hold_hours',
     'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.min_confidence_to_trade', 'trading.auto_adopt_enabled',
-    'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct',
+    'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct', 'trading.exchange_tpsl_enabled',
     'trading.default_notional_usdt', 'trading.vol_sizing_enabled', 'trading.vol_target_risk_usdt', 'trading.vol_target_pct', 'trading.vol_kelly_cap_fraction',
     'health.enabled', 'health.alert_via_telegram', 'health.alert_via_windows_toast', 'health.require_llm_at_startup',
     'health.self_heal_enabled', 'health.self_heal_code_drift', 'health.self_heal_market_data', 'health.self_heal_port_cleanup',

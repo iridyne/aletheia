@@ -62,6 +62,8 @@ def execute_live_order(
     strategy_id: str | None = None,
     execution_mode: str = "bitget_live_limited",
     fee_rate: float = _LIVE_FEE_RATE,
+    stop_price: float | None = None,
+    take_profit_price: float | None = None,
 ) -> dict:
     """Place a real Bitget order (live or demo) and record order/fill/position locally.
 
@@ -147,6 +149,18 @@ def execute_live_order(
                 )
                 insert_position(position)
                 position_id = position.id
+                # Optionally place exchange-native TPSL bracket (non-fatal on failure)
+                if cfg.trading.exchange_tpsl_enabled and execution_mode in ("bitget_demo", "bitget_live_limited"):
+                    _try_place_tpsl(
+                        client=client,
+                        position_id=position_id,
+                        exchange_symbol=exchange_symbol,
+                        hold_side="long" if direction in ("long", "buy") else "short",
+                        size=fill_qty,
+                        stop_price=stop_price,
+                        take_profit_price=take_profit_price,
+                        cfg=cfg,
+                    )
         else:
             position_id = None
     except Exception as e:
@@ -215,6 +229,15 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
     quantity = float(row["quantity"])
     exchange_symbol = to_bitget(row["symbol"])
 
+    # Cancel any pending TPSL bracket before the close order fires — otherwise the
+    # exchange bracket may re-trigger on an already-closed position.
+    if cfg.trading.exchange_tpsl_enabled:
+        _try_cancel_tpsl(client, exchange_symbol, row.get("exchange_tpsl_order_id"))
+
+    # Cancel any pending TPSL brackets before closing (prevents ghost triggers).
+    if cfg.trading.exchange_tpsl_enabled and row.get("exchange_tpsl_order_id"):
+        _try_cancel_tpsl(client, exchange_symbol, row["exchange_tpsl_order_id"])
+
     # Write a pending close order BEFORE the exchange call (same §1.3 hazard logic).
     close_order = Order(
         proposal_id=row.get("proposal_id"),
@@ -269,3 +292,102 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
     result["exchange_order_id"] = exchange_order_id
     result["close_order_id"] = close_order.id
     return result
+
+
+# ─── TPSL bracket helpers ────────────────────────────────────────────────────
+
+def _try_place_tpsl(
+    client: BitgetClient,
+    position_id: str,
+    exchange_symbol: str,
+    hold_side: str,
+    size: float,
+    stop_price: float | None,
+    take_profit_price: float | None,
+    cfg,
+) -> None:
+    """Place SL and/or TP trigger orders on the exchange. Non-fatal on failure."""
+    import json as _json
+    tpsl_ids: dict = {}
+
+    if stop_price:
+        try:
+            sl_id = _run_coro(client.place_tpsl_order(
+                symbol=exchange_symbol, plan_type="pos_loss",
+                trigger_price=stop_price, hold_side=hold_side, size=size,
+            ))
+            if sl_id:
+                tpsl_ids["sl"] = sl_id
+        except Exception as e:
+            logger.warning("TPSL SL placement failed for %s: %s", position_id, e)
+
+    if take_profit_price:
+        try:
+            tp_id = _run_coro(client.place_tpsl_order(
+                symbol=exchange_symbol, plan_type="pos_profit",
+                trigger_price=take_profit_price, hold_side=hold_side, size=size,
+            ))
+            if tp_id:
+                tpsl_ids["tp"] = tp_id
+        except Exception as e:
+            logger.warning("TPSL TP placement failed for %s: %s", position_id, e)
+
+    if tpsl_ids:
+        update_position(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
+
+
+def _try_cancel_tpsl(client: BitgetClient, exchange_symbol: str, tpsl_json: str) -> None:
+    """Cancel all pending TPSL triggers for a position. Non-fatal."""
+    import json as _json
+    try:
+        ids = _json.loads(tpsl_json) if isinstance(tpsl_json, str) else {}
+    except (ValueError, TypeError):
+        return
+    if not isinstance(ids, dict):
+        ids = {"sl": str(ids)}
+    for key in ("sl", "tp"):
+        oid = ids.get(key)
+        if oid:
+            try:
+                _run_coro(client.cancel_plan_order(exchange_symbol, oid))
+            except Exception as e:
+                logger.warning("cancel TPSL %s %s failed: %s", key, oid, e)
+
+
+def replace_exchange_stop(position_id: str, new_stop_price: float) -> None:
+    """Cancel old SL trigger and place a new one at the updated stop price."""
+    import json as _json
+    from aletheia.storage import repositories as repo
+
+    row = repo._select_one("positions", position_id)
+    if not row or not row.get("exchange_tpsl_order_id"):
+        return
+    cfg = load_config()
+    client = BitgetClient(mode=cfg.exchange.mode)
+    exchange_symbol = to_bitget(row["symbol"])
+    hold_side = "long" if row["direction"] in ("long", "buy") else "short"
+
+    try:
+        tpsl_ids = _json.loads(row["exchange_tpsl_order_id"])
+    except (ValueError, TypeError):
+        return
+    if not isinstance(tpsl_ids, dict):
+        tpsl_ids = {}
+
+    old_sl = tpsl_ids.get("sl")
+    if old_sl:
+        try:
+            _run_coro(client.cancel_plan_order(exchange_symbol, old_sl))
+        except Exception as e:
+            logger.warning("cancel old SL %s failed: %s", old_sl, e)
+
+    try:
+        new_sl_id = _run_coro(client.place_tpsl_order(
+            symbol=exchange_symbol, plan_type="pos_loss",
+            trigger_price=new_stop_price, hold_side=hold_side,
+            size=float(row["quantity"]),
+        ))
+        tpsl_ids["sl"] = new_sl_id
+        update_position(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
+    except Exception as e:
+        logger.warning("replace SL for %s failed: %s", position_id, e)

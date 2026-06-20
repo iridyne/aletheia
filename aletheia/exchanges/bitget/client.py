@@ -429,3 +429,77 @@ class BitgetClient:
         if data.get("code") != "00000":
             raise RuntimeError(f"Bitget API error: {data.get('msg')}")
         return data.get("data", []) or []
+
+    # ─── TPSL Trigger Orders ─────────────────────────────────────────────────
+
+    async def place_tpsl_order(
+        self,
+        symbol: str,
+        plan_type: str,
+        trigger_price: float,
+        hold_side: str,
+        size: float,
+        execute_price: float | None = None,
+        client_oid: str | None = None,
+    ) -> str:
+        """Place a TP/SL trigger order attached to a position.
+
+        plan_type: "pos_loss" (stop-loss) or "pos_profit" (take-profit).
+        Returns the exchange plan order ID.
+        """
+        import json as _json
+        path = "/api/v2/mix/order/place-tpsl-order"
+        body_data: dict = {
+            "symbol": symbol,
+            "productType": "USDT-FUTURES",
+            "marginMode": "crossed",
+            "marginCoin": "USDT",
+            "planType": plan_type,
+            "triggerPrice": str(trigger_price),
+            "triggerType": "fill_price",
+            "holdSide": hold_side,
+            "size": str(size),
+        }
+        if execute_price is not None:
+            body_data["executePrice"] = str(execute_price)
+        if client_oid:
+            body_data["clientOid"] = client_oid
+        body = _json.dumps(body_data)
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget place_tpsl_order error: {data.get('msg')}")
+        return data.get("data", {}).get("orderId", "")
+
+    async def cancel_plan_order(self, symbol: str, order_id: str) -> dict:
+        """Cancel a pending TP/SL trigger order. Returns {cancelled, order_id}."""
+        import json as _json
+        path = "/api/v2/mix/order/cancel-plan-order"
+        body_data = {
+            "symbol": symbol,
+            "productType": "USDT-FUTURES",
+            "orderIdList": [{"orderId": order_id}],
+        }
+        body = _json.dumps(body_data)
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return {"cancelled": False, "order_id": order_id, "error": data.get("msg", "unknown")}
+        return {"cancelled": True, "order_id": order_id}
+
+    async def get_pending_plan_orders(self, symbol: str | None = None) -> list[dict]:
+        """List pending TP/SL trigger orders for USDT-FUTURES."""
+        path = "/api/v2/mix/order/orders-plan-pending?productType=USDT-FUTURES"
+        if symbol:
+            path += f"&symbol={symbol}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        return data.get("data", {}).get("entrustedList", []) or []

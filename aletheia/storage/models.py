@@ -191,6 +191,7 @@ class Position(BaseModel):
     # Regime tag at entry time: "risk_on" | "risk_off" | "unknown".
     regime_tag: str | None = None
     entry_market_summary: str | None = None
+    exchange_tpsl_order_id: str | None = None
 
 
 class MarketRegimeRecord(BaseModel):

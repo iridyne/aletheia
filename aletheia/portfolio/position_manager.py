@@ -142,6 +142,14 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
     if updates:
         from aletheia.storage.repositories import update_position
         update_position(position["id"], **updates)
+        # Sync the exchange TPSL bracket when the stop price changes
+        new_stop = updates.get("stop_price")
+        if new_stop and cfg.trading.exchange_tpsl_enabled and position.get("execution_mode") in ("bitget_demo", "bitget_live_limited"):
+            try:
+                from aletheia.execution.bitget_broker import replace_exchange_stop
+                replace_exchange_stop(position["id"], float(new_stop))
+            except Exception as e:
+                logger.warning("exchange stop sync failed pos=%s: %s", position["id"], e)
 
 
 def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
@@ -167,6 +175,57 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
     return None
 
 
+def _sync_exchange_closed(cfg) -> int:
+    """Detect positions the exchange bracket already closed and mark them locally.
+
+    For bitget_demo positions: fetches live exchange positions and closes any local
+    'open' position that the exchange no longer holds. Only runs when
+    exchange_tpsl_enabled=True to avoid spurious calls in pure-paper mode.
+    Returns count of positions synced.
+    """
+    if not cfg.trading.exchange_tpsl_enabled:
+        return 0
+    demo_positions = [p for p in list_positions(status="open") if p.get("execution_mode") == "bitget_demo"]
+    if not demo_positions:
+        return 0
+
+    try:
+        from aletheia.exchanges.bitget.client import BitgetClient
+        from aletheia.data.symbols import to_bitget
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+        client = BitgetClient(mode=cfg.exchange.mode)
+        try:
+            asyncio.get_running_loop()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                exchange_pos = pool.submit(asyncio.run, client.get_positions()).result()
+        except RuntimeError:
+            exchange_pos = asyncio.run(client.get_positions())
+    except Exception as e:
+        logger.warning("_sync_exchange_closed: get_positions failed: %s", e)
+        return 0
+
+    # Build set of (canonical_symbol, hold_side) that exchange still holds
+    exchange_open: set = set()
+    for ep in exchange_pos:
+        qty = float(ep.quantity) if hasattr(ep, "quantity") else 0.0
+        if qty > 0:
+            from aletheia.data.symbols import to_canonical
+            exchange_open.add((to_canonical(ep.symbol), ep.side))
+
+    synced = 0
+    for p in demo_positions:
+        hold_side = "long" if p["direction"] in ("long", "buy") else "short"
+        if (p["symbol"], hold_side) not in exchange_open:
+            exit_price = _latest_price(p["symbol"]) or float(p.get("current_price") or p["entry_price"])
+            try:
+                close_position(p["id"], exit_price=float(exit_price), reason="exchange_bracket_triggered")
+                synced += 1
+            except Exception as e:
+                logger.warning("_sync_exchange_closed: close failed %s: %s", p["id"], e)
+    return synced
+
+
 def evaluate_open_positions() -> dict:
     """Evaluate all open paper positions and close any that hit an exit rule.
 
@@ -176,6 +235,9 @@ def evaluate_open_positions() -> dict:
     cfg = load_config()
     closed = 0
     checked = 0
+
+    # Check for exchange-bracket-triggered closes before the local polling loop
+    _sync_exchange_closed(cfg)
 
     # Collect RuleSet exit signals once (avoids redundant bar fetches per position)
     ruleset_exit_position_ids: set[str] = set()

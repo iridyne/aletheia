@@ -560,6 +560,7 @@ class TradingConfigUpdate(SettingsRequest):
     vol_target_risk_usdt: Optional[float] = None
     vol_target_pct: Optional[float] = None
     vol_kelly_cap_fraction: Optional[float] = None
+    exchange_tpsl_enabled: Optional[bool] = None
 
 
 _TRADING_BOUNDS: dict[str, tuple[float, float]] = {

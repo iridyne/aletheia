@@ -320,6 +320,9 @@ class TradingConfig(BaseModel):
     trail_atr_mult: float = 1.5
     trail_pct: float = 1.0
     breakeven_trigger_pct: float = 1.5
+    # Exchange-native TPSL bracket orders (Bitget demo/live only). Default off —
+    # enable after verifying Bitget TPSL API behavior in demo mode.
+    exchange_tpsl_enabled: bool = False
 
 
 class UpdateConfig(BaseModel):
