@@ -1073,3 +1073,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-20 19:21 UTC] ⚠️ **§22 部分自愈** — **scanner 于 18:23 UTC 自行恢复** (停滞 ~594 分钟后, watchdog 重启触发). features_18:21-19:21=62 (极低, ~10 条/分钟 vs 正常 25-30 条/分钟). latest_feature_ts=19:13 UTC. Opportunities=8151 (+40/h, 回升). Knowledge=1263 (+14/h). §17 timed_out=266 (+0). Ghost=0, Stale=289 (持平). market_observer stale=8/post_trade_reviewer stale=1 均持平. **§22 根因 (`registry.py:52` NotSupported) 未修复, 下次 registry refresh 触发时仍会复发. 节奏降至 40%正常值, 仍需修复.**
 
 [2026-06-20 20:21 UTC] ⚠️ **§22 降速严重** — features_19:21-20:21=60 (固定 10条/10分钟, ~60/h). **对比停滞前 07-08:30 UTC: 90分钟出 2232 条 (~25条/分); 恢复后 19-20:21 UTC: 80分钟出 80 条 (~1条/分). 产出率降至 3.6% 正常水平.** Universe asset 规模疑似因 registry refresh 失败大幅萎缩. Opportunities=8178 (+27/h 低位). Knowledge=1270 (+7/h). §17 timed_out=266 (+0). Stale=289. **§22 根因未修, universe 规模需重建.**
+
+[2026-06-20 21:21 UTC] ⚠️ **§22 持续降速** — features_20:21-21:21=60 (仍固定 10条/10分钟, 连续 3轮稳定低吞吐). Opportunities=8223 (+45/h, US开盘前小幅回升). Knowledge=1277 (+7/h). §17 timed_out=266 (+0). Stale=289. 各 agent 运行正常: paper_trader 58 completed, risk_critic 34 completed. **§22 universe 萎缩已稳定为新平衡态, 根因 `registry.py:52` 未修复.**
