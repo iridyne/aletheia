@@ -1155,7 +1155,7 @@ function RiskTab({ settings, qc, onDirty }: any) {
         title="Universe Board"
         description="Controls the dynamic candidate selector shown on Universe Board. When disabled, agents use the static fallback list instead."
       >
-        <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+        <UniverseConfigCard settings={settings} qc={qc} />
       </Section>
 
       <Section

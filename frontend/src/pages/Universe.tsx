@@ -220,30 +220,30 @@ export default function Universe() {
         return (
           <Card className="mb-3">
             <div className="metric-label mb-2">Scanner Calibration <span className="text-muted">(win rate, n≥10)</span></div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+            <div className="cal-scroll">
+              <table className="cal-table">
                 <thead>
                   <tr>
-                    <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--color-text-muted)' }}>Family</th>
+                    <th className="cal-th cal-th-left">Family</th>
                     {horizons.map(h => (
-                      <th key={h} style={{ textAlign: 'center', padding: '4px 8px', color: 'var(--color-text-muted)' }}>{h}</th>
+                      <th key={h} className="cal-th cal-th-center">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {calFamilies.sort().map(fam => (
                     <tr key={fam}>
-                      <td style={{ padding: '4px 8px' }}>
+                      <td className="cal-td">
                         <span className={familyClass(fam)}>{humanize(fam)}</span>
                       </td>
                       {horizons.map(h => {
                         const cell = calMap[fam]?.[h]
-                        if (!cell) return <td key={h} style={{ textAlign: 'center', padding: '4px 8px', color: 'var(--color-text-muted)' }}>—</td>
+                        if (!cell) return <td key={h} className="cal-td cal-td-center cal-td-muted">—</td>
                         const tone = cell.wr >= 52 ? 'pnl-positive' : cell.wr <= 48 ? 'pnl-negative' : ''
                         return (
-                          <td key={h} style={{ textAlign: 'center', padding: '4px 8px' }}>
+                          <td key={h} className="cal-td cal-td-center">
                             <span className={`mono ${tone}`}>{cell.wr.toFixed(0)}%</span>
-                            <span className="text-muted" style={{ fontSize: '0.75em', display: 'block' }}>n={cell.n}</span>
+                            <span className="cal-n">n={cell.n}</span>
                           </td>
                         )
                       })}
