@@ -7,7 +7,72 @@
 
 ## Last Updated
 
-2026-06-19 (Trade Analytics 面板上线；Batch 2 code-review 4 bugs 修复)
+2026-06-20 (P1 竞品 Gap — 历史数据管理 / Optuna 参数优化 / 事件驱动触发)
+
+---
+
+## Recent Change (P1 竞品 Gap 三功能 — 2026-06-20, c1e67a5)
+
+> **目标**：竞品差距分析 P1 — 加速策略迭代：(A) 本地历史数据避免每次回测拉 API；
+> (B) Optuna Bayesian 搜索替换暴力 param_sweep；(C) 事件驱动 30s 价格/量监测 + 触发。
+
+**Feature A: 历史数据管理**
+- `aletheia/data/history_downloader.py` (新建)：`download_symbol_history()` 增量下载 + `check_coverage()`；分页 500 bars，0.35s 限速，检测 `get_ohlcv_newest_ts()` 决定增量起点
+- `aletheia/storage/repositories.py`：`upsert_ohlcv_candles` 新增 `window=None` 动态裁剪；新增 `get_ohlcv_coverage()` + `get_ohlcv_newest_ts()`
+- `aletheia/strategy/backtest.py`：`load_bars_from_db(limit=None)` 读 config `max_bars_per_pair`
+- `aletheia/agent_runtime/scheduler.py`：`_run_ohlcv_nightly_backfill()` + cron 注册（CST 03:30）+ price_feed timeout 25s→45s
+- `aletheia/cli/data_cmd.py` (新建)：`aletheia data download SYMBOL` + `aletheia data coverage SYMBOL`
+- `aletheia/main.py`：挂载 `data_app` typer
+
+**Feature B: Optuna 智能参数优化**
+- `pyproject.toml`：新增 `optuna>=3.6`
+- `aletheia/config/schema.py`：`StrategyFactoryConfig` 新增 `sweep_use_optuna=False`、`sweep_n_trials=60`、`sweep_optuna_timeout_sec=120.0`、`sweep_top_k=10`
+- `aletheia/strategy/param_sweep.py`：`_run_optuna_sweep()` 用 `TPESampler(seed=42)` + `MedianPruner`；`run_parameter_sweep()` 按 flag 派发；`_run_brute_force_sweep()` 提取原逻辑
+- Settings 前端 + route：4 个新字段复用 `POST /strategy_factory`
+
+**Feature C: 事件驱动触发**
+- `aletheia/config/schema.py`：新增 `EventTriggerConfig`（enabled / price_move_pct_threshold / volume_surge_multiplier 等）
+- `aletheia/data/price_feed.py`：缓存结构扩展 `prev_price` + `volume_24h`；tick-gating（universe 每 3 tick/90s）；`_check_event_triggers()` 检测价格/量突破；`_notify()` 封装
+- 新增 `POST /settings/event_triggers` route
+
+**测试**：17 new tests 全绿（test_history_downloader.py × 5、test_param_sweep_optuna.py × 3、test_event_triggers.py × 9）
+
+---
+
+---
+
+## Recent Change (Exchange-native TPSL bracket — 2026-06-20, f9e8dfb)
+
+> **目标**：竞品 Gap 分析后，实施最高 ROI 改进：在 Bitget 交易所层面挂 SL + TP trigger
+> orders，让止损/止盈在价格触及时毫秒级响应，不再依赖 scheduler 5-min 轮询。
+
+**设计决策**：
+- 两个独立 trigger（`pos_loss` + `pos_profit`）而非 combined `profit_loss` planType，
+  因为 Bitget OCO 联动语义文档不明确，独立挂单行为确定。
+- 本地 position_manager 轮询保留为 fallback（belt-and-suspenders）。
+- 失败不阻塞开仓：TPSL 挂单失败仅 log warning，position 仍正常创建。
+- 功能开关 `exchange_tpsl_enabled: bool = False`，需用户在 Settings 前端显式开启。
+- Exchange-triggered close 检测：`_sync_exchange_closed()` 在每次 evaluate 周期开头
+  调用 `get_positions()` 对比，发现本地持仓已不在交易所 → 以 `exchange_bracket_triggered` 关仓。
+
+**文件变动**：
+- `aletheia/exchanges/bitget/client.py`：新增 place_tpsl_order / cancel_plan_order / get_pending_plan_orders
+- `aletheia/execution/bitget_broker.py`：_try_place_tpsl / _try_cancel_tpsl / replace_exchange_stop；
+  execute_live_order 新增 stop_price + take_profit_price 参数；平仓前取消 bracket
+- `aletheia/execution/gateway.py`：demo + live bitget 分支均计算 TP 并传 broker
+- `aletheia/portfolio/position_manager.py`：_sync_exchange_closed；trailing stop 联动 replace_exchange_stop；
+  close_position 改为 top-level import（修复 patch 路径以支持测试）
+- `aletheia/storage/migrations.py + models.py`：exchange_tpsl_order_id TEXT 列（additive）
+- `aletheia/config/schema.py`：exchange_tpsl_enabled: bool = False
+- `aletheia/server/routes/settings.py`：TradingConfigUpdate 新增字段
+- `frontend/src/pages/Settings.tsx`：Exchange-native TPSL Toggle UI
+- `tests/test_tpsl.py`：11 tests，全部通过
+
+**也修复了 4 个 pre-existing test failures**（commit e069d56）：
+- Universe.tsx Scanner Calibration 表：6 个 inline style → CSS class
+- Settings.tsx UniverseConfigCard：去除多余 onDirty prop
+- index.css：新增 button:active { transform: none; }
+- docs/_ai/PROJECT_CONTEXT.md：补充 :8787 端口
 
 ---
 
