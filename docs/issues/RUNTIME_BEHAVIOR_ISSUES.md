@@ -1077,3 +1077,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-20 21:21 UTC] ⚠️ **§22 持续降速** — features_20:21-21:21=60 (仍固定 10条/10分钟, 连续 3轮稳定低吞吐). Opportunities=8223 (+45/h, US开盘前小幅回升). Knowledge=1277 (+7/h). §17 timed_out=266 (+0). Stale=289. 各 agent 运行正常: paper_trader 58 completed, risk_critic 34 completed. **§22 universe 萎缩已稳定为新平衡态, 根因 `registry.py:52` 未修复.**
 
 [2026-06-20 22:21 UTC] ⚠️ **§22 持续** — features=60/h (第 4 轮固定低吞吐). Opportunities=8250 (+27/h). Knowledge=1284 (+7/h). §17 timed_out=266 (+0). Stale=289. paper_trader 61 completed, risk_critic 35 completed (其他管道正常). **§22 `registry.py:52` 待修复.**
+
+[2026-06-20 23:21 UTC] ⚠️ **§22 持续** — features=60/h (第 5 轮固定低吞吐, 连续 10条/10分钟). Opportunities=8286 (+36/h). Knowledge=1291 (+7/h). §17 timed_out=266 (+0). Stale=289. paper_trader 65 completed (2h). **§22 `registry.py:52` 待修复.**
