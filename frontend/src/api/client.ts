@@ -311,6 +311,7 @@ export const api = {
     max_position_hold_hours: number; slippage_bps: number; execution_fee_pct: number
     min_confidence_to_trade: string; auto_adopt_enabled: boolean
     trail_enabled: boolean; trail_atr_mult: number; trail_pct: number; breakeven_trigger_pct: number
+    exchange_tpsl_enabled: boolean
     default_notional_usdt: number; vol_sizing_enabled: boolean
     vol_target_risk_usdt: number; vol_target_pct: number; vol_kelly_cap_fraction: number
   }>) => post<{ updated: Record<string, any>; trading: Record<string, any> }>('/settings/trading', body),
