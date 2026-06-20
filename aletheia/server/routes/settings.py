@@ -546,6 +546,10 @@ class TradingConfigUpdate(SettingsRequest):
     execution_fee_pct: Optional[float] = None
     min_confidence_to_trade: Optional[str] = None
     auto_adopt_enabled: Optional[bool] = None
+    trail_enabled: Optional[bool] = None
+    trail_atr_mult: Optional[float] = None
+    trail_pct: Optional[float] = None
+    breakeven_trigger_pct: Optional[float] = None
 
 
 _TRADING_BOUNDS: dict[str, tuple[float, float]] = {

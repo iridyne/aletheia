@@ -1382,6 +1382,8 @@ _ADDITIVE_COLUMNS = [
     ("entry_market_summary", "positions", "TEXT"),
     # LLM structured observations preserved from market_observer output
     ("key_observations", "opportunities", "TEXT NOT NULL DEFAULT ''"),
+    # Trailing stop high-water mark for open positions
+    ("trail_high_water", "positions", "REAL"),
 ]
 
 

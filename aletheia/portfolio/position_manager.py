@@ -61,6 +61,89 @@ def _effective_take_profit(position: dict, cfg) -> float | None:
     return round(entry * (1 - pct / 100.0), 8)
 
 
+def _get_atr_pct(symbol: str) -> float | None:
+    """Return latest ATR% for a symbol from universe_feature_snapshots, or None."""
+    try:
+        from aletheia.storage.repositories import _select_all
+        rows = _select_all(
+            "universe_feature_snapshots",
+            where="symbol = ?",
+            params=(symbol,),
+            order_by="created_at DESC",
+            limit=1,
+        )
+        if rows:
+            val = rows[0].get("atr_pct")
+            if val and float(val) > 0:
+                return float(val)
+    except Exception:
+        pass
+    return None
+
+
+def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
+    """Update stop_price for trailing stop and breakeven logic. Writes DB on change.
+
+    Called before _decide_exit() so the updated stop is evaluated this cycle.
+    No-op when trail_enabled=False.
+    """
+    if not cfg.trading.trail_enabled:
+        return
+    direction = position["direction"]
+    is_long = direction in ("long", "buy")
+    entry = float(position["entry_price"])
+    current_stop = position.get("stop_price")
+    if current_stop is not None:
+        current_stop = float(current_stop)
+
+    # 1. Breakeven move: when profit > breakeven_trigger_pct, floor stop at entry
+    if current_stop is not None and entry > 0:
+        profit_pct = ((price - entry) / entry * 100.0) if is_long else ((entry - price) / entry * 100.0)
+        if profit_pct >= cfg.trading.breakeven_trigger_pct:
+            if is_long and current_stop < entry:
+                from aletheia.storage.repositories import update_position
+                update_position(position["id"], stop_price=entry)
+                position["stop_price"] = entry
+                current_stop = entry
+            elif not is_long and current_stop > entry:
+                from aletheia.storage.repositories import update_position
+                update_position(position["id"], stop_price=entry)
+                position["stop_price"] = entry
+                current_stop = entry
+
+    # 2. Trailing stop: keep stop within trail_distance of best seen price
+    high_water = position.get("trail_high_water")
+    high_water = float(high_water) if high_water is not None else price
+
+    atr_pct = _get_atr_pct(position.get("symbol", ""))
+    if atr_pct:
+        trail_distance = price * (atr_pct / 100.0) * cfg.trading.trail_atr_mult
+    else:
+        trail_distance = price * (cfg.trading.trail_pct / 100.0)
+
+    updates: dict = {}
+    if is_long:
+        new_hw = max(high_water, price)
+        new_stop = new_hw - trail_distance
+        if current_stop is None or new_stop > current_stop:
+            updates["stop_price"] = round(new_stop, 8)
+            position["stop_price"] = updates["stop_price"]
+        if new_hw != high_water:
+            updates["trail_high_water"] = round(new_hw, 8)
+    else:
+        new_hw = min(high_water, price)
+        new_stop = new_hw + trail_distance
+        if current_stop is None or new_stop < current_stop:
+            updates["stop_price"] = round(new_stop, 8)
+            position["stop_price"] = updates["stop_price"]
+        if new_hw != high_water:
+            updates["trail_high_water"] = round(new_hw, 8)
+
+    if updates:
+        from aletheia.storage.repositories import update_position
+        update_position(position["id"], **updates)
+
+
 def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
     """Return (reason, exit_price) if the position should close, else None."""
     is_long = position["direction"] in ("long", "buy")
@@ -112,6 +195,9 @@ def evaluate_open_positions() -> dict:
         price = _latest_price(p["symbol"])
         if price is None:
             continue  # no honest exit price — skip, never fabricate
+
+        # Update trailing stop / breakeven before evaluating exit (modifies p in-place)
+        _maybe_update_trailing_stop(p, float(price), cfg)
 
         # Determine exit reason: price-based first, then RuleSet signal
         decision = _decide_exit(p, float(price), cfg)

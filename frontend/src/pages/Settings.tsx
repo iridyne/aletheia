@@ -949,6 +949,10 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [executionFeePct, setExecutionFeePct] = useState('')
   const [confidence, setConfidence] = useState('medium')
   const [autoAdopt, setAutoAdopt] = useState(true)
+  const [trailEnabled, setTrailEnabled] = useState(false)
+  const [trailAtrMult, setTrailAtrMult] = useState('1.5')
+  const [trailPct, setTrailPct] = useState('1.0')
+  const [breakevenTriggerPct, setBreakevenTriggerPct] = useState('1.5')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -960,6 +964,10 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
     setExecutionFeePct(String(trading.execution_fee_pct ?? 0.1))
     setConfidence(trading.min_confidence_to_trade ?? 'medium')
     setAutoAdopt(trading.auto_adopt_enabled !== false)
+    setTrailEnabled(!!trading.trail_enabled)
+    setTrailAtrMult(String(trading.trail_atr_mult ?? 1.5))
+    setTrailPct(String(trading.trail_pct ?? 1.0))
+    setBreakevenTriggerPct(String(trading.breakeven_trigger_pct ?? 1.5))
   }, [settings])
 
   const mut = useMutation({
@@ -971,11 +979,15 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
       execution_fee_pct: parseFloat(executionFeePct),
       min_confidence_to_trade: confidence,
       auto_adopt_enabled: autoAdopt,
+      trail_enabled: trailEnabled,
+      trail_atr_mult: parseFloat(trailAtrMult),
+      trail_pct: parseFloat(trailPct),
+      breakeven_trigger_pct: parseFloat(breakevenTriggerPct),
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
-  const dirty = !!trading && (stopLoss !== String(trading.default_stop_loss_pct ?? 2) || takeProfit !== String(trading.default_take_profit_pct ?? 4) || holdHours !== String(trading.max_position_hold_hours ?? 72) || slippageBps !== String(trading.slippage_bps ?? 5) || executionFeePct !== String(trading.execution_fee_pct ?? 0.1) || confidence !== (trading.min_confidence_to_trade ?? 'medium') || autoAdopt !== (trading.auto_adopt_enabled !== false))
+  const dirty = !!trading && (stopLoss !== String(trading.default_stop_loss_pct ?? 2) || takeProfit !== String(trading.default_take_profit_pct ?? 4) || holdHours !== String(trading.max_position_hold_hours ?? 72) || slippageBps !== String(trading.slippage_bps ?? 5) || executionFeePct !== String(trading.execution_fee_pct ?? 0.1) || confidence !== (trading.min_confidence_to_trade ?? 'medium') || autoAdopt !== (trading.auto_adopt_enabled !== false) || trailEnabled !== !!trading.trail_enabled)
   useEffect(() => { onDirty?.('trading-params', dirty) }, [dirty])
 
   if (!trading) return null
@@ -1031,6 +1043,35 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
           Live positions are never auto-adopted.
         </p>
       </div>
+      <div className="settings-inline-note">
+        <Toggle
+          checked={trailEnabled}
+          label="Trailing stop + breakeven move (paper positions)"
+          onChange={v => { setTrailEnabled(v); setMsg(null) }}
+        />
+        <p className="hint mt-1">
+          Moves stop-loss up as price rises. Breakeven trigger: profit ≥ threshold → floor stop at entry price. Default off — enable only after verifying stop parameters.
+        </p>
+      </div>
+      {trailEnabled && (
+        <div className="form-grid mb-3">
+          <label>
+            <span>Trail ATR multiplier</span>
+            <input type="number" min={0.5} max={5} step={0.1} value={trailAtrMult}
+              onChange={e => { setTrailAtrMult(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+          <label>
+            <span>Trail % (fallback, no ATR)</span>
+            <input type="number" min={0.1} max={10} step={0.1} value={trailPct}
+              onChange={e => { setTrailPct(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+          <label>
+            <span>Breakeven trigger (%)</span>
+            <input type="number" min={0.1} max={20} step={0.1} value={breakevenTriggerPct}
+              onChange={e => { setBreakevenTriggerPct(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+        </div>
+      )}
       <div className="flex gap-2">
         <button onClick={() => {
           const checks: [string, string][] = [
@@ -1577,6 +1618,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     ...RISK_BOOLS.map(f => `risk.${f.key}`),
     'trading.default_stop_loss_pct', 'trading.default_take_profit_pct', 'trading.max_position_hold_hours',
     'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.min_confidence_to_trade', 'trading.auto_adopt_enabled',
+    'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct',
     'health.enabled', 'health.alert_via_telegram', 'health.alert_via_windows_toast', 'health.require_llm_at_startup',
     'health.self_heal_enabled', 'health.self_heal_code_drift', 'health.self_heal_market_data', 'health.self_heal_port_cleanup',
     'health.max_agent_failure_ratio', 'health.llm_unavailable_alert_after', 'health.market_data_max_staleness_min',

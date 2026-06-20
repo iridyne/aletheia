@@ -305,6 +305,10 @@ class TradingConfig(BaseModel):
     # get default stops/TP from position_manager and MAY be auto-closed. LIVE
     # positions are NEVER auto-adopted regardless of this flag (human-confirmed only).
     auto_adopt_enabled: bool = True
+    trail_enabled: bool = False
+    trail_atr_mult: float = 1.5
+    trail_pct: float = 1.0
+    breakeven_trigger_pct: float = 1.5
 
 
 class UpdateConfig(BaseModel):
