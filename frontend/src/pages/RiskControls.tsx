@@ -10,7 +10,7 @@ export default function RiskControls() {
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
   const { data: boundaries } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
-  const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
+  const { data: killSwitch, isLoading: ksLoading } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
 
   const engageKill = useMutation({
@@ -77,15 +77,20 @@ export default function RiskControls() {
         <Card>
           <CardHeader
             title="Kill Switch"
-            actions={<StatusText tone={killed ? 'red' : 'green'}>{killed ? 'ENGAGED' : 'INACTIVE'}</StatusText>}
+            actions={ksLoading
+              ? <span className="skeleton-bar-inline" />
+              : <StatusText tone={killed ? 'red' : 'green'}>{killed ? 'ENGAGED' : 'INACTIVE'}</StatusText>
+            }
           />
           <p className="text-sm text-muted mb-3">
-            {killed
-              ? 'All trading is halted. No new proposals will be executed until released.'
-              : 'Kill switch is inactive. The system can execute approved proposals.'}
+            {ksLoading
+              ? <span className="skeleton-bar" />
+              : killed
+                ? 'All trading is halted. No new proposals will be executed until released.'
+                : 'Kill switch is inactive. The system can execute approved proposals.'}
           </p>
           <ActionRow align="start">
-            {!killed && (
+            {!ksLoading && !killed && (
               <Button
                 variant="danger"
                 onClick={() => { if (confirm('Engage kill switch? All trading will halt immediately.')) engageKill.mutate() }}
@@ -93,8 +98,11 @@ export default function RiskControls() {
                 Engage Kill Switch
               </Button>
             )}
-            {killed && (
-              <Button onClick={() => releaseKill.mutate()}>
+            {!ksLoading && killed && (
+              <Button onClick={() => {
+                if (!confirm('Release Kill Switch? Trading will resume immediately.')) return
+                releaseKill.mutate()
+              }}>
                 Release Kill Switch
               </Button>
             )}

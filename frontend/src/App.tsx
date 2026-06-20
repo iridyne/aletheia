@@ -101,7 +101,7 @@ function extractResumeError(e: any): string {
 function parseIssue(raw: string): { label: string; value: string; tone: 'yellow' | 'red'; hint: string } {
   if (raw.startsWith('market_data_stale:')) return { label: 'market_data_stale', value: raw.split(':')[1], tone: 'yellow', hint: 'Feed will refresh automatically on next 5-min cycle. If stuck >30 min, restart the gateway.' }
   if (raw.startsWith('agent_failure_ratio:')) return { label: 'agent_failure_ratio', value: raw.split(':')[1], tone: 'red', hint: 'Multiple agents failing. Check gateway logs for errors.' }
-  if (raw === 'kill_switch_active') return { label: 'kill_switch', value: 'active', tone: 'red', hint: 'All trading blocked. Go to Settings → Risk → Kill Switch to deactivate.' }
+  if (raw === 'kill_switch_active') return { label: 'kill_switch', value: 'active', tone: 'red', hint: 'All trading blocked. Go to Risk & Controls → Kill Switch to release.' }
   if (raw === 'trading_paused') return { label: 'trading', value: 'paused', tone: 'yellow', hint: 'Click the Resume button in the top bar to restart the trading loop.' }
   if (raw.startsWith('llm_unavailable:')) return { label: 'llm_unavailable', value: raw.split(':')[1], tone: 'red', hint: 'LLM provider unreachable. Check Settings → Model Provider, then click Resume.' }
   return { label: raw, value: '', tone: 'yellow', hint: '' }
@@ -426,7 +426,9 @@ function StatusBar() {
         className="perm-mode-btn mono"
         onClick={() => {
           const idx = PERMISSION_MODES.indexOf(perm as any)
+          if (idx < 0) return
           const next = PERMISSION_MODES[(idx + 1) % PERMISSION_MODES.length]
+          if (next === 'Full' && !confirm('Switch to Full permission mode? This enables live order execution.')) return
           permMut.mutate(next)
         }}
         title={`Permission mode: ${perm} — click to cycle`}

@@ -64,14 +64,17 @@ export default function Proposals() {
   const qc = useQueryClient()
   const { data = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
   const [selected, setSelected] = useState<TradeProposal | null>(null)
+  const [pendingId, setPendingId] = useState<string | null>(null)
 
   const approve = useMutation({
     mutationFn: (id: string) => api.approveProposal(id),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['proposals'] }); qc.invalidateQueries({ queryKey: ['positions'] }) },
+    onError: (e: any) => console.error('approve failed:', e),
   })
   const reject = useMutation({
     mutationFn: (id: string) => api.rejectProposal(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['proposals'] }),
+    onError: (e: any) => console.error('reject failed:', e),
   })
 
   const rows = data as TradeProposal[]
@@ -79,12 +82,17 @@ export default function Proposals() {
   const decided = rows.filter(p => p.status !== 'pending')
 
   function doApprove(p: TradeProposal) {
-    if (!confirm(`Approve ${p.direction.toUpperCase()} ${p.symbol} via ${p.execution_mode}?\n\nThis routes the order through the execution gateway.`)) return
-    approve.mutate(p.id)
+    const modeLabel = p.execution_mode === 'paper_internal'
+      ? 'Paper simulation — no real order.'
+      : p.execution_mode
+    if (!confirm(`Approve ${p.direction.toUpperCase()} ${p.symbol}\nMode: ${modeLabel}\n\nConfirm?`)) return
+    setPendingId(p.id)
+    approve.mutate(p.id, { onSettled: () => setPendingId(null) })
   }
   function doReject(p: TradeProposal) {
     if (!confirm(`Reject ${p.direction.toUpperCase()} ${p.symbol}?`)) return
-    reject.mutate(p.id)
+    setPendingId(p.id)
+    reject.mutate(p.id, { onSettled: () => setPendingId(null) })
   }
 
   return (
@@ -113,7 +121,7 @@ export default function Proposals() {
               onApprove={() => doApprove(p)}
               onReject={() => doReject(p)}
               onOpenDetail={() => setSelected(p)}
-              busy={approve.isPending || reject.isPending}
+              busy={p.id === pendingId}
               navigate={navigate}
             />
           ))}
