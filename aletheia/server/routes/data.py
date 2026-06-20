@@ -625,6 +625,38 @@ async def get_trades():
     return repo.list_orders()
 
 
+@router.get("/trades/export")
+async def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int = Query(default=5000, le=50000)):
+    """Export trade history as CSV for tax/PnL reporting."""
+    from fastapi.responses import StreamingResponse
+    import csv
+    import io
+
+    _ensure_db()
+    rows = repo.list_orders(limit=limit)
+    if not rows:
+        return StreamingResponse(
+            iter(["no data\n"]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=trades_export.csv"},
+        )
+
+    columns = ["created_at", "symbol", "direction", "order_type", "quantity", "price",
+               "execution_mode", "status", "filled_at", "market_type", "exchange_order_id"]
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(columns)
+    for row in rows:
+        writer.writerow([row.get(c, "") for c in columns])
+
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=trades_export.csv"},
+    )
+
+
 @router.get("/positions")
 async def get_positions():
     _ensure_db()

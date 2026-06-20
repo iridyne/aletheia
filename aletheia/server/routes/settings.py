@@ -66,6 +66,7 @@ async def get_settings():
         "health": cfg.health.model_dump(mode="json"),
         "retention": cfg.retention.model_dump(mode="json"),
         "telegram": cfg.telegram.model_dump(mode="json"),
+        "webhook": {k: v for k, v in cfg.webhook.model_dump(mode="json").items() if k != "secret"},
         "market_data": cfg.market_data.model_dump(mode="json"),
         "universe": cfg.universe.model_dump(mode="json"),
         "guard": cfg.guard.model_dump(mode="json"),
@@ -129,6 +130,64 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
                  "after": cfg.exchange.model_dump(mode="json"),
                  "message": "exchange config updated"})
     return cfg.exchange.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# Primary exchange unification
+# ---------------------------------------------------------------------------
+
+_EXCHANGE_UNIFICATION_MAP: dict[str, tuple[str, str]] = {
+    "okx": ("okx", "okx_demo"),
+    "bitget": ("bitget", "bitget_demo"),
+    "binance": ("binance", "binance_testnet"),
+}
+
+
+class PrimaryExchangeRequest(SettingsRequest):
+    exchange_id: str
+
+
+@router.post("/primary-exchange")
+async def set_primary_exchange(req: PrimaryExchangeRequest):
+    """Atomically set primary exchange across data, execution, and risk axes."""
+    eid = req.exchange_id.strip().lower()
+    valid = set(_EXCHANGE_UNIFICATION_MAP.keys()) | {"paper_internal"}
+    if eid not in valid:
+        raise HTTPException(400, f"exchange_id must be one of: {sorted(valid)}")
+
+    cfg = load_config()
+    old = {
+        "exchange.name": cfg.exchange.name,
+        "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
+        "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
+        "risk.allowed_exchange": cfg.risk.allowed_exchange,
+    }
+
+    if eid == "paper_internal":
+        cfg.exchange.paper_execution_mode = "paper_internal"
+    else:
+        ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
+        cfg.exchange.name = eid
+        cfg.market_data.ccxt_exchange = ccxt_ex
+        cfg.exchange.paper_execution_mode = paper_mode
+        cfg.risk.allowed_exchange = eid
+
+    save_config(cfg)
+    after = {
+        "exchange.name": cfg.exchange.name,
+        "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
+        "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
+        "risk.allowed_exchange": cfg.risk.allowed_exchange,
+    }
+    from aletheia.files.jsonl import write_audit
+    write_audit({
+        "actor": "human", "source": "dashboard",
+        "event_type": "primary_exchange_changed",
+        "entity_type": "exchange_config",
+        "before": old, "after": after,
+        "message": f"Primary exchange set to {eid}",
+    })
+    return {"exchange_id": eid, **after}
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +390,36 @@ async def update_telegram_config(req: TelegramConfigUpdate):
                  "entity_type": "telegram_config", "before": old,
                  "after": cfg.telegram.model_dump(mode="json"),
                  "message": f"Telegram config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# Webhook config
+# ---------------------------------------------------------------------------
+
+class WebhookConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
+    url: Optional[str] = None
+    secret: Optional[str] = None
+    notify_trade_fills: Optional[bool] = None
+    notify_alerts: Optional[bool] = None
+    notify_daily_summary: Optional[bool] = None
+    timeout_sec: Optional[float] = None
+
+
+@router.post("/webhook")
+async def update_webhook_config(req: WebhookConfigUpdate):
+    cfg = load_config()
+    old = cfg.webhook.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.webhook, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "webhook_config_changed",
+                 "entity_type": "webhook_config", "before": old,
+                 "after": cfg.webhook.model_dump(mode="json"),
+                 "message": f"Webhook config updated: {list(updates.keys())}"})
     return {"updated": updates}
 
 

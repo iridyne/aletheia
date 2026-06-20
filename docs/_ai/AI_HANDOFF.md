@@ -7,7 +7,30 @@
 
 ## Last Updated
 
-2026-06-20 (P1 竞品 Gap — 历史数据管理 / Optuna 参数优化 / 事件驱动触发)
+2026-06-20 (Exchange 统一选择 — 数据+执行一键联动)
+
+---
+
+## Recent Change (Exchange 统一选择 — 2026-06-20)
+
+> **目标**：消除三轴分裂（market_data.ccxt_exchange / exchange.paper_execution_mode / exchange.name 各指不同交易所）。
+> 新增 `POST /api/settings/primary-exchange`，一次调用原子同步全部 4 个字段。
+
+**根因**：系统原本允许用户在不同地方单独配置数据源和执行交易所，导致产生三轴不一致的状态（如 name=bitget，ccxt=okx，paper_mode=okx_demo）。
+
+**修改文件**：
+- `aletheia/server/routes/settings.py`：新增 `_EXCHANGE_UNIFICATION_MAP`（okx/bitget/binance 三个映射）+ `PrimaryExchangeRequest` + `POST /primary-exchange` endpoint；paper_internal 选项只改 paper_execution_mode，不动 name/ccxt；直接写 `cfg.risk.allowed_exchange`（绕过 `_RISK_IMMUTABLE`，这是设计）
+- `aletheia/diagnostics/config_consistency.py`：扩展 `_DEMO_CRED_MAP` 覆盖 okx_demo + binance_testnet；新增 `_check_exchange_consistency` 检查 name≠ccxt 时输出 info warning
+- `frontend/src/api/client.ts`：新增 `setPrimaryExchange()` API 方法
+- `frontend/src/pages/Settings.tsx`：新增 `PrimaryExchangeCard`（4-tile 选择器，放在 ExchangeConnectionCard 前）；ExchangeModeRow hint 改为动态；Trading Mode → "Trading Mode — Advanced"
+- `frontend/src/index.css`：新增 `.exchange-tiles` / `.exchange-tile` / `.exchange-tile-active` 等 CSS
+
+**验证**：
+- `npm run build` 0 error（777 modules）
+- `pytest -k "config or settings"` 79/79 pass
+- API smoke test：POST `{"exchange_id":"okx"}` → 4 字段全部变为 okx；切回 bitget → 全部变为 bitget
+
+**xStocks 例外**：3 处 `CCXTProvider(exchange="bitget")` 硬编码（ON-series 代币仅在 Bitget 上市），未动。
 
 ---
 

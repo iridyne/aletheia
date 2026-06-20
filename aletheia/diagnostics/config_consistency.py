@@ -27,6 +27,7 @@ def check_config_consistency(cfg: "AletheiaConfig") -> list[ConfigInconsistency]
     checks = [
         _check_default_provider,
         _check_demo_credentials,
+        _check_exchange_consistency,
         _check_whitelist_empty,
         _check_scheduler_needs_llm,
         _check_live_state,
@@ -62,24 +63,46 @@ def _check_default_provider(cfg: "AletheiaConfig") -> ConfigInconsistency | None
     return None
 
 
+_DEMO_CRED_MAP: dict[str, tuple[str, str]] = {
+    "bitget_demo": ("bitget.demo.api_key", "Set BITGET_API_KEY_DEMO / BITGET_API_SECRET_DEMO / BITGET_PASSPHRASE_DEMO"),
+    "okx_demo": ("okx.demo.api_key", "Set OKX_API_KEY_DEMO / OKX_API_SECRET_DEMO / OKX_PASSPHRASE_DEMO"),
+    "binance_testnet": ("binance.testnet.api_key", "Set BINANCE_API_KEY_TESTNET / BINANCE_API_SECRET_TESTNET"),
+}
+
+
 def _check_demo_credentials(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
     if cfg.exchange.mode != "demo":
         return None
-    if cfg.exchange.paper_execution_mode != "bitget_demo":
+    pem = cfg.exchange.paper_execution_mode
+    if pem not in _DEMO_CRED_MAP:
         return None
-    # Check if demo API key exists in secrets store
+    secret_key, fix_hint = _DEMO_CRED_MAP[pem]
     try:
         from aletheia.config.secrets import get_secret
-        key = get_secret("bitget.demo.api_key")
+        key = get_secret(secret_key)
         if not key:
             return ConfigInconsistency(
                 field_path="exchange.paper_execution_mode",
                 severity="warning",
-                message="paper_execution_mode=bitget_demo but demo API credentials are missing",
-                fix_hint="Set BITGET_API_KEY_DEMO / BITGET_API_SECRET_DEMO / BITGET_PASSPHRASE_DEMO in settings, or switch paper_execution_mode to 'paper_internal'",
+                message=f"paper_execution_mode={pem} but demo API credentials are missing",
+                fix_hint=f"{fix_hint} in settings, or switch paper_execution_mode to 'paper_internal'",
             )
     except Exception:  # noqa: BLE001 — secrets layer might not be available
         pass
+    return None
+
+
+def _check_exchange_consistency(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
+    pem = cfg.exchange.paper_execution_mode
+    if pem == "paper_internal":
+        return None
+    if cfg.exchange.name != cfg.market_data.ccxt_exchange:
+        return ConfigInconsistency(
+            field_path="exchange.name",
+            severity="info",
+            message=f"Data source ({cfg.market_data.ccxt_exchange}) differs from exchange identity ({cfg.exchange.name})",
+            fix_hint="Use Settings → Primary Exchange to unify, or ignore if intentional",
+        )
     return None
 
 

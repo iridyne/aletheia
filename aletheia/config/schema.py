@@ -232,6 +232,16 @@ class TelegramConfig(BaseModel):
     dnd_end_hour: int = 7
 
 
+class WebhookConfig(BaseModel):
+    enabled: bool = False
+    url: str = ""
+    secret: str = ""
+    notify_trade_fills: bool = True
+    notify_alerts: bool = True
+    notify_daily_summary: bool = True
+    timeout_sec: float = 10.0
+
+
 class HealthConfig(BaseModel):
     enabled: bool = True
     alert_via_telegram: bool = True
@@ -436,6 +446,7 @@ class AletheiaConfig(BaseModel):
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    webhook: WebhookConfig = Field(default_factory=WebhookConfig)
     update: UpdateConfig = Field(default_factory=UpdateConfig)
     trading: TradingConfig = Field(default_factory=TradingConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)

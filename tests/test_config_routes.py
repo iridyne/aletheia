@@ -163,7 +163,7 @@ async def test_settings_response_covers_sanitized_config_schema(client):
         ".oauth_token_ref",
         ".oauth_refresh_ref",
     )
-    hidden_keys = {"tunnel.credentials_path"}
+    hidden_keys = {"tunnel.credentials_path", "webhook.secret"}
     expected_visible = {
         key for key in expected_keys
         if not (key.startswith("models.providers.") and key.endswith(secret_suffixes))

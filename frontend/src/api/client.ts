@@ -320,6 +320,8 @@ export const api = {
     post<{ old: boolean; new: boolean }>('/settings/autonomous-learning', { enabled }),
   setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean; paper_execution_mode?: string }) =>
     post<Record<string, any>>('/settings/exchange-markets', body),
+  setPrimaryExchange: (exchange_id: string) =>
+    post<{ exchange_id: string; 'exchange.name': string; 'exchange.paper_execution_mode': string; 'market_data.ccxt_exchange': string; 'risk.allowed_exchange': string }>('/settings/primary-exchange', { exchange_id }),
   updateRuntimeConfig: (body: Partial<{
     scheduler_enabled: boolean
     git_enabled: boolean
@@ -348,6 +350,8 @@ export const api = {
   }>) => post<{ updated: Record<string, any> }>('/settings/retention', body),
   updateTelegramConfig: (body: Partial<{ enabled: boolean; allowed_chat_ids: number[]; notify_trade_fills: boolean; notify_daily_summary: boolean; daily_summary_hour_cst: number; dnd_enabled: boolean; dnd_start_hour: number; dnd_end_hour: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/telegram', body),
+  updateWebhookConfig: (body: Partial<{ enabled: boolean; url: string; secret: string; notify_trade_fills: boolean; notify_alerts: boolean; notify_daily_summary: boolean; timeout_sec: number }>) =>
+    post<{ updated: Record<string, any> }>('/settings/webhook', body),
   updateUpdateConfig: (body: Partial<{ enabled: boolean; branch: string }>) =>
     post<{ enabled: boolean; branch: string }>('/settings/update-config', body),
 
@@ -382,6 +386,7 @@ export const api = {
   rejectProposal: (id: string) => post(`/proposals/${id}/reject`),
   getProposalRiskDecision: (id: string) => fetchJson<{ proposal_id: string; decision: any }>(`/proposals/${id}/risk-decision`),
   getTrades: () => fetchJson<any[]>('/trades'),
+  exportTradesCsv: () => `${BASE}/trades/export?fmt=csv`,
   getPositions: () => fetchJson<any[]>('/positions'),
   getPositionsReconciliation: () => fetchJson<import('../types').PositionsReconciliation>('/positions/reconciliation'),
   getPortfolio: () => fetchJson<Record<string, any>>('/portfolio'),

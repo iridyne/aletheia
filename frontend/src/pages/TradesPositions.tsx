@@ -159,6 +159,7 @@ export default function TradesPositions() {
             <div className="blotter-section-head">
               <h3>Orders &amp; Fills</h3>
               <span className="text-muted text-sm">click a row for the causal chain</span>
+              <a href={api.exportTradesCsv()} download className="btn btn-secondary btn-sm ml-auto">Export CSV</a>
             </div>
             <Card>
               <DataTable

@@ -606,13 +606,14 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
     <div>
       <Section
         title="Exchange Connection"
-        description="Configure exchange API credentials. Select an exchange and profile, then enter your credentials."
+        description="Select primary exchange to unify data source, paper execution, and risk allowlist. Then configure API credentials below."
       >
+        <PrimaryExchangeCard settings={settings} qc={qc} />
         <ExchangeConnectionCard qc={qc} />
       </Section>
 
-      <Section title="Trading Mode" description="Switch between demo (paper trading) and live execution. Live requires explicit unlock below.">
-        <ExchangeModeRow status={status} qc={qc} />
+      <Section title="Trading Mode — Advanced" description="Switch between demo (paper trading) and live execution. Live requires explicit unlock below. Individual overrides for data source and execution mode are available in Market Data Sources below.">
+        <ExchangeModeRow status={status} qc={qc} settings={settings} />
         <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
         <div className="danger-zone">
           <div className="danger-zone-header">Danger Zone</div>
@@ -732,13 +733,65 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
   )
 }
 
-function ExchangeModeRow({ status, qc }: any) {
+const PRIMARY_EXCHANGES = [
+  { id: 'okx',           label: 'OKX',             desc: 'Data + paper execution via OKX Demo' },
+  { id: 'bitget',        label: 'Bitget',           desc: 'Data + paper execution via Bitget Demo' },
+  { id: 'binance',       label: 'Binance',          desc: 'Data + paper execution via Binance Testnet' },
+  { id: 'paper_internal',label: 'Paper (internal)', desc: 'No exchange — local fill simulation only' },
+] as const
+
+function PrimaryExchangeCard({ settings, qc }: any) {
+  const exchangeName = String((settings?.exchange as any)?.name || 'bitget')
+  const paperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
+  const effective = paperMode === 'paper_internal' ? 'paper_internal' : exchangeName
+
+  const [err, setErr] = useState<string | null>(null)
+  const mut = useMutation({
+    mutationFn: (id: string) => api.setPrimaryExchange(id),
+    onSuccess: () => { setErr(null); qc.invalidateQueries({ queryKey: ['settings'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onError: (e: any) => setErr(e.message || 'Failed to switch exchange'),
+  })
+
+  function select(id: string) {
+    if (id === effective) return
+    const label = PRIMARY_EXCHANGES.find(e => e.id === id)?.label ?? id
+    if (!confirm(`Switch primary exchange to ${label}?\n\nThis atomically updates data source, paper execution mode, and risk allowlist.`)) return
+    mut.mutate(id)
+  }
+
+  return (
+    <div className="mb-4">
+      <p className="text-muted text-sm mb-3">One click unifies market data source, paper order execution, and risk allowlist.</p>
+      <div className="exchange-tiles">
+        {PRIMARY_EXCHANGES.map(ex => (
+          <button
+            key={ex.id}
+            className={`exchange-tile${effective === ex.id ? ' exchange-tile-active' : ''}`}
+            onClick={() => select(ex.id)}
+            disabled={mut.isPending}
+          >
+            <span className="exchange-tile-label">{ex.label}</span>
+            <span className="exchange-tile-desc">{ex.desc}</span>
+          </button>
+        ))}
+      </div>
+      {err && <div className="settings-save-msg err mt-2">{err}</div>}
+    </div>
+  )
+}
+
+function ExchangeModeRow({ status, qc, settings }: any) {
+  const paperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
+  const modeLabel: Record<string, string> = {
+    okx_demo: 'OKX Demo', bitget_demo: 'Bitget Demo',
+    binance_testnet: 'Binance Testnet', paper_internal: 'Paper (internal)',
+  }
   const mut = useMutation({
     mutationFn: (mode: string) => api.setExchangeMode(mode),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
   })
   return (
-    <Row label="Exchange mode" hint="demo uses Bitget paper trading; live requires unlocking below and real credentials.">
+    <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? paperMode} for paper trading; live requires unlocking below and real credentials.`}>
       <select value={String(status.exchange_mode)} onChange={e => {
         const next = e.target.value
         if (next === 'live' && !confirm('Switch to live mode? Real orders will execute against real funds.')) return
@@ -1654,6 +1707,10 @@ function HealthNotificationsTab({ settings, qc }: any) {
       <Section title="Telegram" description="Alert delivery when agents act or limits are breached. Token is stored in secrets (write-only via CLI).">
         <TelegramCard settings={settings} qc={qc} />
       </Section>
+
+      <Section title="Webhook" description="Push JSON events to an external URL (Slack, Discord, n8n, etc). Payloads are HMAC-signed when a secret is set.">
+        <WebhookCard settings={settings} qc={qc} />
+      </Section>
     </div>
   )
 }
@@ -2098,6 +2155,93 @@ function TelegramCard({ settings, qc }: any) {
       <p className="hint">
         Bot token is write-only — set via <code>aletheia secrets set telegram.bot_token</code>.
         Chat IDs are comma-separated Telegram user or group IDs.
+      </p>
+    </div>
+  )
+}
+
+// ─── Webhook ───
+
+function WebhookCard({ settings, qc }: any) {
+  const wh = settings?.webhook as any || {}
+  const [enabled, setEnabled] = useState(false)
+  const [url, setUrl] = useState('')
+  const [secret, setSecret] = useState('')
+  const [notifyFills, setNotifyFills] = useState(true)
+  const [notifyAlerts, setNotifyAlerts] = useState(true)
+  const [notifySummary, setNotifySummary] = useState(true)
+  const [timeoutSec, setTimeoutSec] = useState(10)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!wh) return
+    setEnabled(!!wh.enabled)
+    setUrl(wh.url || '')
+    setNotifyFills(wh.notify_trade_fills !== false)
+    setNotifyAlerts(wh.notify_alerts !== false)
+    setNotifySummary(wh.notify_daily_summary !== false)
+    setTimeoutSec(wh.timeout_sec ?? 10)
+  }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateWebhookConfig({
+      enabled, url, secret: secret || undefined,
+      notify_trade_fills: notifyFills,
+      notify_alerts: notifyAlerts,
+      notify_daily_summary: notifySummary,
+      timeout_sec: timeoutSec,
+    }),
+    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); setSecret(''); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  return (
+    <div className="card mb-0">
+      <div className="form-grid mb-3">
+        <label className="col-full">
+          <span>Webhook URL</span>
+          <input
+            value={url}
+            placeholder="https://hooks.slack.com/services/..."
+            onChange={e => { setUrl(e.target.value); setMsg(null) }}
+            className="mono"
+          />
+        </label>
+        <label className="col-full">
+          <span>HMAC secret (write-only)</span>
+          <input
+            type="password"
+            value={secret}
+            placeholder={wh.url ? '••••••• (unchanged)' : 'optional'}
+            onChange={e => { setSecret(e.target.value); setMsg(null) }}
+            className="mono"
+          />
+        </label>
+        <label>
+          <span>Timeout (sec)</span>
+          <input type="number" min={1} max={60} value={timeoutSec}
+            onChange={e => { setTimeoutSec(parseFloat(e.target.value) || 10); setMsg(null) }} />
+        </label>
+      </div>
+      <div className="settings-action-row settings-action-row-start">
+        <Toggle checked={enabled} label="Webhook delivery" onChange={v => { setEnabled(v); setMsg(null) }} />
+      </div>
+      <div className="settings-action-row settings-action-row-start">
+        <Toggle checked={notifyAlerts} label="Alert events" onChange={v => { setNotifyAlerts(v); setMsg(null) }} />
+      </div>
+      <div className="settings-action-row settings-action-row-start">
+        <Toggle checked={notifyFills} label="Trade fill events" onChange={v => { setNotifyFills(v); setMsg(null) }} />
+      </div>
+      <div className="settings-action-row settings-action-row-start">
+        <Toggle checked={notifySummary} label="Daily summary event" onChange={v => { setNotifySummary(v); setMsg(null) }} />
+      </div>
+      <div className="settings-action-row">
+        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
+      </div>
+      <SaveMsg msg={msg} />
+      <p className="hint">
+        Payload is signed with <code>X-Aletheia-Signature</code> (HMAC SHA-256) when a secret is set.
+        Secret is write-only — leave blank to keep the current value.
       </p>
     </div>
   )

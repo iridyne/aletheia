@@ -102,6 +102,35 @@ def _send_telegram_alert(message: str, *, level: str = "warning") -> None:
         logger.warning("Telegram notification failed (non-critical): %s", e)
 
 
+def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
+    """POST JSON payload to configured webhook URL. Never raises."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        if not cfg.webhook.enabled or not cfg.webhook.url:
+            return
+        import hashlib
+        import hmac
+        import json
+        import urllib.request
+
+        body = json.dumps({"event": event_type, **payload}).encode()
+        req = urllib.request.Request(
+            cfg.webhook.url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        if cfg.webhook.secret:
+            sig = hmac.new(cfg.webhook.secret.encode(), body, hashlib.sha256).hexdigest()
+            req.add_header("X-Aletheia-Signature", sig)
+
+        timeout = cfg.webhook.timeout_sec or 10.0
+        urllib.request.urlopen(req, timeout=timeout)
+    except Exception as e:
+        logger.debug("Webhook notification failed (non-critical): %s", e)
+
+
 def notify_operator(
     title: str,
     message: str,
@@ -164,6 +193,13 @@ def notify_operator(
     if telegram:
         _send_telegram_alert(f"{clean_title}: {clean_message}", level=level)
 
+    _send_webhook({
+        "title": clean_title,
+        "message": clean_message,
+        "level": level,
+        "source": source,
+    }, event_type="alert")
+
 
 def notify_trade_fill(
     symbol: str,
@@ -200,6 +236,16 @@ def notify_trade_fill(
     lines.append(f"pos/{position_id[:8]}")
     msg = "\n".join(lines)
     _send_telegram_alert(msg, level="info")
+    _send_webhook({
+        "symbol": symbol,
+        "direction": dir_label,
+        "quantity": quantity,
+        "fill_price": fill_price,
+        "position_id": position_id,
+        "execution_mode": execution_mode,
+        "stop_price": stop_price,
+        "take_profit_price": take_profit_price,
+    }, event_type="trade_fill")
 
 
 def notify_daily_summary() -> None:
@@ -228,5 +274,11 @@ def notify_daily_summary() -> None:
             f"Portfolio value: {total:.2f} USDT",
         ]
         _send_telegram_alert("\n".join(lines), level="info")
+        _send_webhook({
+            "realized_pnl": realized,
+            "unrealized_pnl": unrealized,
+            "open_positions": open_count,
+            "total_value_usdt": total,
+        }, event_type="daily_summary")
     except Exception as e:
         logger.warning("notify_daily_summary failed: %s", e)
