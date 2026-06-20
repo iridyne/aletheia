@@ -1043,3 +1043,7 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-20 05:21 UTC] ✓ 系统正常 — Features=1238/h (亚盘早市缓降). Opportunities=7720 (+83/h net); opp_last_1h=493 (亚盘持续回升). Knowledge=1022 (+17/h). §17 timed_out=252 (+2). Ghost=0, Stale=279. paper_trader: 18 completed (2h). §18 持续: NVDA/SPX/AAOI 等 Bitget-only ticker fetch failed. 65h+ 连续无中断.
 
 [2026-06-20 06:21 UTC] ⚠️ 新信号 — Features=983/h (亚盘低谷). Opportunities=7782 (+62/h net); opp_last_1h=555 (回升). Knowledge=1044 (+22/h). §17 timed_out=255 (+3). Ghost=0, **Stale=282 (+3)**. 异常: (1) **dreaming_agent stale=2** (首次出现, 日周期 agent 卡住, 观察下一轮是否自愈); (2) **OKX "Invalid Sign" auth error** (equity_observer OKX demo 账户签名失败, 可能密钥过期/时区漂移, 当前仅影响 demo 账户余额查询). §18 持续: SIREN/HYPE/SOXL 等 ticker fetch failed. 66h+ 连续无中断.
+
+[2026-06-20 07:21 UTC] ⚠️ 持续 — Features=1490/h (亚盘爬升回归). Opportunities=7877 (+95/h). Knowledge=1062 (+18/h). §17 timed_out=259 (+4). Ghost=0, Stale=283 (+1). **dreaming_agent stale=2 持续第 2 轮 (未自愈, §21 升级为已知问题)**. OKX Invalid Sign 持续 (BTW/XAG §18 ticker failed 同步). market_observer running=1 (执行中). 67h+ 连续无中断.
+
+> **§21 [NEW] dreaming_agent stale 积累**: 首现 round 90 (2026-06-20 06:21 UTC), round 91 仍 stale=2. 日周期 agent 约每 24h 运行一次, stale 表明上一次运行超时未清理. 影响: 日度知识合成/lesson 提取可能跳过. 建议: 检查 dreaming_agent timeout 配置与 stale 清理逻辑; 下次 gateway restart 后观察是否自动消除.
