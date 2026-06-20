@@ -974,7 +974,16 @@ def prune_portfolio_snapshots(days: int = 90) -> int:
 # OHLCV rolling window store
 # ---------------------------------------------------------------------------
 
-_OHLCV_WINDOW = 2000  # max bars kept per (symbol, timeframe) pair
+_OHLCV_WINDOW_DEFAULT = 50_000  # max bars kept per (symbol, timeframe) pair
+
+
+def _ohlcv_window() -> int:
+    """Read max_bars_per_pair from config, fallback to default."""
+    try:
+        from aletheia.config.loader import load_config
+        return load_config().historical_data.max_bars_per_pair
+    except Exception:
+        return _OHLCV_WINDOW_DEFAULT
 
 
 def upsert_ohlcv_candles(
@@ -983,9 +992,11 @@ def upsert_ohlcv_candles(
     candles: list,  # list of Candle dataclass from aletheia.data.providers
     provider: str = "ccxt",
     exchange: str = "",
+    window: int | None = None,
 ) -> None:
-    """Insert or replace OHLCV bars, then prune to _OHLCV_WINDOW newest rows.
+    """Insert or replace OHLCV bars, then prune to rolling window.
 
+    window: explicit bar limit; None reads from config (default 50000).
     exchange: source exchange name (e.g. "binance"). Stored for query filtering;
     does not affect the PRIMARY KEY (symbol, timeframe, ts) — last-writer wins
     for the same bar across exchanges (acceptable MVP tradeoff).
@@ -993,6 +1004,7 @@ def upsert_ohlcv_candles(
     if not candles:
         return
     effective_exchange = exchange or provider
+    effective_window = window if window is not None else _ohlcv_window()
     db = get_db()
     db.executemany(
         "INSERT OR REPLACE INTO market_ohlcv "
@@ -1004,7 +1016,6 @@ def upsert_ohlcv_candles(
             for c in candles
         ],
     )
-    # Prune to rolling window: delete any row outside the newest 500
     db.execute(
         "DELETE FROM market_ohlcv "
         "WHERE symbol = ? AND timeframe = ? "
@@ -1013,8 +1024,33 @@ def upsert_ohlcv_candles(
         "  WHERE symbol = ? AND timeframe = ? "
         "  ORDER BY ts DESC LIMIT ?"
         ")",
-        (symbol, timeframe, symbol, timeframe, _OHLCV_WINDOW),
+        (symbol, timeframe, symbol, timeframe, effective_window),
     )
+
+
+def get_ohlcv_coverage(symbol: str, timeframe: str) -> dict:
+    """Return coverage stats for a symbol+timeframe pair."""
+    db = get_db()
+    row = db.execute(
+        "SELECT COUNT(*) as cnt, MIN(ts) as oldest_ts, MAX(ts) as newest_ts "
+        "FROM market_ohlcv WHERE symbol = ? AND timeframe = ?",
+        (symbol, timeframe),
+    ).fetchone()
+    return {
+        "bar_count": row[0] or 0,
+        "oldest_ts": row[1],
+        "newest_ts": row[2],
+    }
+
+
+def get_ohlcv_newest_ts(symbol: str, timeframe: str) -> int | None:
+    """Return the newest timestamp stored for a symbol+timeframe, or None."""
+    db = get_db()
+    row = db.execute(
+        "SELECT MAX(ts) FROM market_ohlcv WHERE symbol = ? AND timeframe = ?",
+        (symbol, timeframe),
+    ).fetchone()
+    return row[0] if row else None
 
 
 def get_ohlcv_candles(

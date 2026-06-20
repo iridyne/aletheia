@@ -295,8 +295,17 @@ def _compute_metrics(
 
 # ── data loading helper ───────────────────────────────────────────────────────
 
-def load_bars_from_db(symbol: str, timeframe: str, limit: int = 2000) -> list[BarData]:
-    """Load OHLCV bars from the existing market_ohlcv SQLite table."""
+def load_bars_from_db(symbol: str, timeframe: str, limit: int | None = None) -> list[BarData]:
+    """Load OHLCV bars from the existing market_ohlcv SQLite table.
+
+    limit=None reads config historical_data.max_bars_per_pair (default 50000).
+    """
+    if limit is None:
+        try:
+            from aletheia.config.loader import load_config
+            limit = load_config().historical_data.max_bars_per_pair
+        except Exception:
+            limit = 50_000
     from aletheia.storage.repositories import get_ohlcv_candles
     candles = get_ohlcv_candles(symbol, timeframe, limit=limit)
     return [

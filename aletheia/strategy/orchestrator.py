@@ -371,18 +371,15 @@ def generate_daily_report(result: OrchestratorResult) -> str:
 
 
 def _request_ohlcv_backfill(symbol: str, timeframe: str) -> None:
-    """Best-effort async OHLCV fetch to populate data for next backtest cycle."""
+    """Best-effort async OHLCV fetch to populate data for next backtest cycle.
+
+    Uses the incremental history downloader — fetches 1 month of missing data.
+    """
     try:
-        from aletheia.data.ccxt_provider import get_market_data_provider
+        from aletheia.data.history_downloader import download_symbol_history
 
-        async def _fetch():
-            provider = get_market_data_provider()
-            try:
-                await provider.get_ohlcv(symbol, timeframe=timeframe, limit=200)
-            finally:
-                await provider.close()
-
-        asyncio.run(_fetch())
-        logger.info("ohlcv_backfill completed: %s/%s (200 bars)", symbol, timeframe)
+        result = asyncio.run(download_symbol_history(symbol, timeframe, months=1))
+        logger.info("ohlcv_backfill completed: %s/%s (%d bars)",
+                    symbol, timeframe, result.bars_fetched)
     except Exception as e:
         logger.debug("ohlcv_backfill failed for %s/%s: %s", symbol, timeframe, e)

@@ -49,9 +49,20 @@ class SweepResult:
 
 
 def run_parameter_sweep(config: SweepConfig, bars: list[BarData]) -> SweepResult:
-    """Generate parameter variants of a base RuleSet, backtest each, return survivors."""
+    """Generate parameter variants of a base RuleSet, backtest each, return survivors.
+
+    Dispatches to Optuna TPE search when sweep_use_optuna=True (config flag).
+    """
     if len(bars) < 30:
         return SweepResult(0, 0, None, None, [])
+
+    try:
+        from aletheia.config.loader import load_config as _lc
+        sf_cfg = _lc().strategy_factory
+        if sf_cfg.sweep_use_optuna:
+            return _run_optuna_sweep(config, bars, sf_cfg)
+    except Exception:
+        pass
 
     variants = _generate_variants(config)
     if not variants:
@@ -194,3 +205,158 @@ def _frange(start: float, stop: float, step: float) -> list[float]:
         result.append(round(val, 2))
         val += step
     return result
+
+
+def _run_optuna_sweep(config: SweepConfig, bars: list[BarData], sf_cfg) -> SweepResult:
+    """Bayesian (TPE) parameter sweep using Optuna. Falls back silently on import error."""
+    try:
+        import optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+    except ImportError:
+        logger.warning("optuna not installed; falling back to brute-force sweep")
+        return _run_brute_force_sweep(config, bars)
+
+    bt_cfg = BacktestConfig(
+        symbol=config.symbol, timeframe=config.timeframe,
+        direction=config.direction, cost_model=config.cost_model,
+    )
+    n_trials = getattr(sf_cfg, "sweep_n_trials", 60)
+    timeout = getattr(sf_cfg, "sweep_optuna_timeout_sec", 120.0)
+    top_k = getattr(sf_cfg, "sweep_top_k", 10)
+
+    # Build search space bounds from the base ruleset
+    period_lo, period_hi = config.period_range[0], config.period_range[1]
+    sl_lo, sl_hi = config.stop_loss_range[0], config.stop_loss_range[1]
+
+    def objective(trial):
+        variant = deepcopy(config.base_ruleset)
+        # Mutate first period-bearing indicator in entry conditions
+        for cond in _flat_conditions(variant.entry):
+            if isinstance(cond, Condition) and "period" in cond.left.params:
+                cond.left.params["period"] = trial.suggest_int("period", period_lo, period_hi)
+                break
+        # Mutate first numeric threshold
+        for cond in _flat_conditions(variant.entry):
+            if isinstance(cond, Condition) and isinstance(cond.right, (int, float)) and cond.right != 0:
+                delta_pct = trial.suggest_float("threshold_delta", -0.3, 0.3)
+                cond.right = cond.right * (1 + delta_pct)
+                break
+        # Mutate stop-loss
+        if variant.stop_loss and variant.stop_loss.mode == "fixed_pct":
+            variant.stop_loss = StopLoss(
+                mode="fixed_pct",
+                value=trial.suggest_float("stop_loss_pct", sl_lo, sl_hi),
+            )
+
+        try:
+            result = run_backtest(variant, bars, bt_cfg)
+            m = result.metrics
+            if m.trade_count < 2:
+                return -999.0
+            return m.expectancy
+        except Exception:
+            return -999.0
+
+    sampler = optuna.samplers.TPESampler(seed=42)
+    pruner = optuna.pruners.MedianPruner(n_startup_trials=5)
+    study = optuna.create_study(
+        direction="maximize", storage=None,
+        sampler=sampler, pruner=pruner,
+    )
+    study.optimize(objective, n_trials=n_trials, timeout=timeout, show_progress_bar=False)
+
+    # Rebuild top-K survivors
+    best_trials = sorted(
+        [t for t in study.trials if t.value is not None and t.value > -999.0],
+        key=lambda t: t.value,
+        reverse=True,
+    )[:top_k]
+
+    survivors: list[tuple[RuleSet, BacktestMetrics]] = []
+    for trial in best_trials:
+        variant = deepcopy(config.base_ruleset)
+        if "period" in trial.params:
+            for cond in _flat_conditions(variant.entry):
+                if isinstance(cond, Condition) and "period" in cond.left.params:
+                    cond.left.params["period"] = trial.params["period"]
+                    break
+        if "threshold_delta" in trial.params:
+            for cond in _flat_conditions(variant.entry):
+                if isinstance(cond, Condition) and isinstance(cond.right, (int, float)) and cond.right != 0:
+                    cond.right = cond.right * (1 + trial.params["threshold_delta"])
+                    break
+        if "stop_loss_pct" in trial.params and variant.stop_loss:
+            variant.stop_loss = StopLoss(mode="fixed_pct", value=trial.params["stop_loss_pct"])
+
+        try:
+            result = run_backtest(variant, bars, bt_cfg)
+            m = result.metrics
+            pf = min(m.profit_factor, 999.0)
+            verdict = evaluate_strategy(
+                trade_count=m.trade_count, win_rate=m.win_rate,
+                expectancy=m.expectancy, profit_factor=pf,
+                max_drawdown_pct=m.max_drawdown_pct,
+                total_return_pct=m.total_return_pct,
+            )
+            if verdict.verdict == Verdict.KEEP:
+                survivors.append((variant, m))
+        except Exception:
+            continue
+
+    best = survivors[0] if survivors else (None, None)
+    logger.info(
+        "optuna_sweep: %d trials, %d top-k, %d survived (symbol=%s, tf=%s)",
+        len(study.trials), len(best_trials), len(survivors),
+        config.symbol, config.timeframe,
+    )
+    return SweepResult(
+        variants_tested=len(study.trials),
+        variants_survived=len(survivors),
+        best_variant=best[0],
+        best_metrics=best[1],
+        all_survivors=survivors,
+    )
+
+
+def _run_brute_force_sweep(config: SweepConfig, bars: list[BarData]) -> SweepResult:
+    """Original brute-force sweep, extracted to be callable from Optuna fallback."""
+    variants = _generate_variants(config)
+    if not variants:
+        return SweepResult(0, 0, None, None, [])
+
+    bt_cfg = BacktestConfig(
+        symbol=config.symbol, timeframe=config.timeframe,
+        direction=config.direction, cost_model=config.cost_model,
+    )
+    survivors: list[tuple[RuleSet, BacktestMetrics]] = []
+    best: tuple[RuleSet | None, BacktestMetrics | None] = (None, None)
+    best_expectancy = float("-inf")
+
+    for variant in variants:
+        try:
+            result = run_backtest(variant, bars, bt_cfg)
+            m = result.metrics
+            if m.trade_count < 2:
+                continue
+            pf = min(m.profit_factor, 999.0)
+            verdict = evaluate_strategy(
+                trade_count=m.trade_count, win_rate=m.win_rate,
+                expectancy=m.expectancy, profit_factor=pf,
+                max_drawdown_pct=m.max_drawdown_pct,
+                total_return_pct=m.total_return_pct,
+            )
+            if verdict.verdict == Verdict.KEEP:
+                survivors.append((variant, m))
+                if m.expectancy > best_expectancy:
+                    best_expectancy = m.expectancy
+                    best = (variant, m)
+        except Exception:
+            continue
+
+    return SweepResult(
+        variants_tested=len(variants),
+        variants_survived=len(survivors),
+        best_variant=best[0],
+        best_metrics=best[1],
+        all_survivors=survivors,
+    )

@@ -632,6 +632,20 @@ export const api = {
     observed_prediction_markets: string[];
   }>) => post<{ updated: Record<string, any>; market_data: Record<string, any> }>('/settings/market-data', body),
 
+  // Historical data config
+  updateHistoricalDataConfig: (body: Partial<{
+    enabled: boolean; max_bars_per_pair: number; default_months: number;
+    nightly_backfill_enabled: boolean; nightly_backfill_hour_cst: number;
+    min_bars_for_backtest: number;
+  }>) => post<any>('/settings/historical_data', body),
+
+  // Event trigger config
+  updateEventTriggerConfig: (body: Partial<{
+    enabled: boolean; price_move_pct_threshold: number; volume_surge_multiplier: number;
+    watch_universe_members: boolean; trigger_strategy_design: boolean;
+    strategy_design_min_move_pct: number;
+  }>) => post<any>('/settings/event_triggers', body),
+
   // Network / proxy config
   updateNetworkConfig: (body: Partial<{ proxy_url: string; no_proxy: string }>) =>
     post<{ updated: Record<string, any>; network: { proxy_url: string; no_proxy: string } }>('/settings/network', body),

@@ -40,8 +40,9 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "exchange_sync": 60.0,
     "portfolio_snapshot": 45.0,
     "backtest_orchestrator": 600.0,
-    "price_feed": 25.0,
+    "price_feed": 45.0,
     "daily_summary": 60.0,
+    "ohlcv_nightly_backfill": 3600.0,
 }
 
 
@@ -433,6 +434,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("backtest_orchestrator", _run_backtest_orchestrator), "cron", hour=4, minute=0,
         id="backtest_orchestrator", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
     )
+    # Nightly OHLCV backfill — bulk-download history for universe + observed symbols.
+    if cfg.historical_data.nightly_backfill_enabled:
+        _scheduler.add_job(
+            _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
+            "cron", hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30,
+            id="ohlcv_nightly_backfill", misfire_grace_time=600,
+            executor="io", timezone="Asia/Shanghai",
+        )
     # OKX demo symbol list refresh — keeps the O(1) filter cache warm.
     _scheduler.add_job(
         _guarded("okx_demo_symbols", _run_okx_demo_symbols), "interval", hours=4,
@@ -1059,6 +1068,49 @@ def _backtest_orchestrator_body():
     logger.info("Lifecycle automation: %s", lc_result)
 
 
+def _run_ohlcv_nightly_backfill():
+    """Nightly bulk download of OHLCV history for universe + observed symbols."""
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        _run_sync_with_timeout("ohlcv_nightly_backfill", _ohlcv_backfill_body)
+    except TimeoutError:
+        logger.warning("ohlcv_nightly_backfill timed out after %.0fs",
+                       _ASYNC_JOB_TIMEOUT_SEC["ohlcv_nightly_backfill"])
+    except Exception as e:
+        logger.warning("ohlcv_nightly_backfill failed: %s", e)
+
+
+def _ohlcv_backfill_body():
+    import asyncio as _asyncio
+    from aletheia.data.history_downloader import download_symbol_history
+    from aletheia.storage.repositories import get_active_universe_members
+
+    cfg = load_config()
+    months = cfg.historical_data.default_months
+    symbols: set[str] = set()
+    try:
+        members = get_active_universe_members()
+        for m in members:
+            symbols.add(m.get("symbol", ""))
+    except Exception:
+        pass
+    symbols.update(cfg.market_data.observed_symbols or [])
+    symbols.discard("")
+
+    total_bars = 0
+    for sym in sorted(symbols):
+        for tf in ("1h", "4h"):
+            try:
+                result = _asyncio.run(download_symbol_history(sym, tf, months=months))
+                total_bars += result.bars_fetched
+            except Exception as e:
+                logger.debug("nightly_backfill skip %s/%s: %s", sym, tf, e)
+    logger.info("ohlcv_nightly_backfill: %d symbols, %d total bars fetched",
+                len(symbols), total_bars)
+
+
 def _run_okx_demo_symbols():
     try:
         from aletheia.execution.okx_broker import refresh_okx_demo_symbols
@@ -1226,3 +1278,44 @@ def _run_okx_demo_symbols():
         logger.debug("okx_demo_symbols refreshed: %d symbols", count)
     except Exception as e:
         logger.warning("okx_demo_symbols refresh failed: %s", e)
+
+
+def _run_ohlcv_nightly_backfill():
+    """Nightly incremental OHLCV backfill for all active universe symbols."""
+    try:
+        cfg = load_config()
+        if not cfg.historical_data.enabled:
+            return
+
+        from aletheia.storage import repositories as repo
+        from aletheia.data.history_downloader import download_symbol_history
+
+        symbols = []
+        try:
+            members = repo.get_active_universe_members(limit=200)
+            symbols = [m["symbol"] for m in members if m.get("symbol")]
+        except Exception:
+            pass
+        for sym in cfg.market_data.observed_symbols or []:
+            if sym not in symbols:
+                symbols.append(sym)
+
+        if not symbols:
+            logger.debug("ohlcv_nightly_backfill: no symbols to backfill")
+            return
+
+        months = cfg.historical_data.default_months
+        timeframes = ["1h", "4h"]
+        total_bars = 0
+        for sym in symbols:
+            for tf in timeframes:
+                try:
+                    import asyncio
+                    result = asyncio.run(download_symbol_history(sym, tf, months=months))
+                    total_bars += result.bars_fetched
+                except Exception as e:
+                    logger.debug("nightly_backfill: %s/%s failed: %s", sym, tf, e)
+
+        logger.info("ohlcv_nightly_backfill: +%d bars across %d symbols", total_bars, len(symbols))
+    except Exception as e:
+        logger.warning("ohlcv_nightly_backfill failed: %s", e)

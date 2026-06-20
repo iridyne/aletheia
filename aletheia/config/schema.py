@@ -361,11 +361,35 @@ class RegimeConfig(BaseModel):
     short_enabled: bool = True
 
 
+class HistoricalDataConfig(BaseModel):
+    """Local OHLCV storage and bulk download settings."""
+    enabled: bool = True
+    max_bars_per_pair: int = 50_000
+    default_months: int = 6
+    nightly_backfill_enabled: bool = True
+    nightly_backfill_hour_cst: int = 3
+    min_bars_for_backtest: int = 200
+
+
+class EventTriggerConfig(BaseModel):
+    """Real-time-ish event detection on price_feed ticks."""
+    enabled: bool = True
+    price_move_pct_threshold: float = 3.0
+    volume_surge_multiplier: float = 3.0
+    watch_universe_members: bool = True
+    trigger_strategy_design: bool = True
+    strategy_design_min_move_pct: float = 5.0
+
+
 class StrategyFactoryConfig(BaseModel):
     """Controls strategy generation velocity and validation gates."""
     backtest_gate_enabled: bool = True
     sweep_enabled: bool = True
     sweep_max_variants: int = 100
+    sweep_use_optuna: bool = False
+    sweep_n_trials: int = 60
+    sweep_optuna_timeout_sec: float = 120.0
+    sweep_top_k: int = 10
     event_driven_enabled: bool = True
     event_cooldown_minutes: int = 30
     event_min_score: float = 60.0
@@ -422,3 +446,5 @@ class AletheiaConfig(BaseModel):
     guard: GuardConfig = Field(default_factory=GuardConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
     network: NetworkConfig = Field(default_factory=NetworkConfig)
+    historical_data: HistoricalDataConfig = Field(default_factory=HistoricalDataConfig)
+    event_triggers: EventTriggerConfig = Field(default_factory=EventTriggerConfig)

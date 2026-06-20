@@ -250,6 +250,10 @@ function StrategyFactoryCard({ settings, qc }: any) {
       backtest_gate_enabled: sf.backtest_gate_enabled ?? true,
       sweep_enabled: sf.sweep_enabled ?? true,
       sweep_max_variants: sf.sweep_max_variants ?? 100,
+      sweep_use_optuna: sf.sweep_use_optuna ?? false,
+      sweep_n_trials: sf.sweep_n_trials ?? 60,
+      sweep_optuna_timeout_sec: sf.sweep_optuna_timeout_sec ?? 120,
+      sweep_top_k: sf.sweep_top_k ?? 10,
       event_driven_enabled: sf.event_driven_enabled ?? true,
       event_cooldown_minutes: sf.event_cooldown_minutes ?? 30,
       event_min_score: sf.event_min_score ?? 60,
@@ -272,12 +276,16 @@ function StrategyFactoryCard({ settings, qc }: any) {
   const boolFields: BoolField[] = [
     { key: 'backtest_gate_enabled', label: 'Backtest gate' },
     { key: 'sweep_enabled', label: 'Parameter sweep' },
+    { key: 'sweep_use_optuna', label: 'Optuna (Bayesian)' },
     { key: 'event_driven_enabled', label: 'Event-driven design' },
     { key: 'walk_forward_enabled', label: 'Walk-forward validation' },
   ]
 
   const numFields: NumField[] = [
     { key: 'sweep_max_variants', label: 'Sweep max variants', unit: '', min: 10, max: 500, step: 10, isInt: true },
+    { key: 'sweep_n_trials', label: 'Optuna trials', unit: '', min: 10, max: 300, step: 10, isInt: true },
+    { key: 'sweep_optuna_timeout_sec', label: 'Optuna timeout', unit: 's', min: 30, max: 600, step: 10, isInt: false },
+    { key: 'sweep_top_k', label: 'Optuna top-K', unit: '', min: 3, max: 30, step: 1, isInt: true },
     { key: 'event_cooldown_minutes', label: 'Event cooldown', unit: 'min', min: 5, max: 120, step: 1, isInt: true },
     { key: 'event_min_score', label: 'Event min score', unit: '', min: 45, max: 80, step: 1, isInt: true },
     { key: 'walk_forward_folds', label: 'Walk-forward folds', unit: '', min: 2, max: 10, step: 1, isInt: true },
@@ -294,6 +302,108 @@ function StrategyFactoryCard({ settings, qc }: any) {
       <ToggleGrid fields={boolFields} vals={vals} set={setBool} />
       <NumGrid fields={numFields} vals={vals} set={setNum} />
       <button onClick={() => save()} className="btn btn-primary btn-sm mt-2">Save Strategy Factory</button>
+      <SaveMsg msg={msg} />
+    </div>
+  )
+}
+
+// ─── Historical Data config ───
+
+function HistoricalDataCard({ settings, qc }: any) {
+  const hd = settings?.historical_data as any
+  const [vals, setVals] = useState<Record<string, unknown>>({})
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!hd) return
+    setVals({
+      enabled: hd.enabled ?? true,
+      max_bars_per_pair: hd.max_bars_per_pair ?? 50000,
+      default_months: hd.default_months ?? 6,
+      nightly_backfill_enabled: hd.nightly_backfill_enabled ?? true,
+      nightly_backfill_hour_cst: hd.nightly_backfill_hour_cst ?? 3,
+      min_bars_for_backtest: hd.min_bars_for_backtest ?? 200,
+    })
+  }, [hd])
+
+  const { mutate: save } = useMutation({
+    mutationFn: () => api.updateHistoricalDataConfig(vals as any),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
+    onError: (e: any) => setMsg({ ok: false, text: e.message }),
+  })
+
+  if (!hd) return null
+
+  const boolFields: BoolField[] = [
+    { key: 'enabled', label: 'Enabled' },
+    { key: 'nightly_backfill_enabled', label: 'Nightly backfill' },
+  ]
+  const numFields: NumField[] = [
+    { key: 'max_bars_per_pair', label: 'Max bars/pair', unit: '', min: 1000, max: 200000, step: 5000, isInt: true },
+    { key: 'default_months', label: 'Default months', unit: 'mo', min: 1, max: 24, step: 1, isInt: true },
+    { key: 'nightly_backfill_hour_cst', label: 'Backfill hour (CST)', unit: 'h', min: 0, max: 23, step: 1, isInt: true },
+    { key: 'min_bars_for_backtest', label: 'Min bars for backtest', unit: '', min: 30, max: 5000, step: 10, isInt: true },
+  ]
+
+  const setBool = (key: string, value: boolean) => setVals(v => ({ ...v, [key]: value }))
+  const setNum = (key: string, value: number) => setVals(v => ({ ...v, [key]: value }))
+
+  return (
+    <div className="space-y-4">
+      <ToggleGrid fields={boolFields} vals={vals} set={setBool} />
+      <NumGrid fields={numFields} vals={vals} set={setNum} />
+      <button onClick={() => save()} className="btn btn-primary btn-sm mt-2">Save Historical Data</button>
+      <SaveMsg msg={msg} />
+    </div>
+  )
+}
+
+// ─── Event Triggers config ───
+
+function EventTriggerCard({ settings, qc }: any) {
+  const et = settings?.event_triggers as any
+  const [vals, setVals] = useState<Record<string, unknown>>({})
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!et) return
+    setVals({
+      enabled: et.enabled ?? true,
+      price_move_pct_threshold: et.price_move_pct_threshold ?? 3.0,
+      volume_surge_multiplier: et.volume_surge_multiplier ?? 3.0,
+      watch_universe_members: et.watch_universe_members ?? true,
+      trigger_strategy_design: et.trigger_strategy_design ?? true,
+      strategy_design_min_move_pct: et.strategy_design_min_move_pct ?? 5.0,
+    })
+  }, [et])
+
+  const { mutate: save } = useMutation({
+    mutationFn: () => api.updateEventTriggerConfig(vals as any),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
+    onError: (e: any) => setMsg({ ok: false, text: e.message }),
+  })
+
+  if (!et) return null
+
+  const boolFields: BoolField[] = [
+    { key: 'enabled', label: 'Enabled' },
+    { key: 'watch_universe_members', label: 'Watch universe' },
+    { key: 'trigger_strategy_design', label: 'Trigger design' },
+  ]
+  const numFields: NumField[] = [
+    { key: 'price_move_pct_threshold', label: 'Price move threshold', unit: '%', min: 0.5, max: 20, step: 0.5, isInt: false },
+    { key: 'volume_surge_multiplier', label: 'Volume surge multiplier', unit: '×', min: 1.5, max: 20, step: 0.5, isInt: false },
+    { key: 'strategy_design_min_move_pct', label: 'Design trigger min move', unit: '%', min: 1, max: 30, step: 0.5, isInt: false },
+  ]
+
+  const setBool = (key: string, value: boolean) => setVals(v => ({ ...v, [key]: value }))
+  const setNum = (key: string, value: number) => setVals(v => ({ ...v, [key]: value }))
+
+  return (
+    <div className="space-y-4">
+      <ToggleGrid fields={boolFields} vals={vals} set={setBool} />
+      <NumGrid fields={numFields} vals={vals} set={setNum} />
+      <button onClick={() => save()} className="btn btn-primary btn-sm mt-2">Save Event Triggers</button>
       <SaveMsg msg={msg} />
     </div>
   )
@@ -1180,6 +1290,13 @@ function RiskTab({ settings, qc, onDirty }: any) {
       </Section>
 
       <Section
+        title="Event Triggers"
+        description="Real-time price/volume breakout detection. Fires notifications and optionally triggers strategy design when thresholds are breached."
+      >
+        <EventTriggerCard settings={settings} qc={qc} />
+      </Section>
+
+      <Section
         title="Tradable Symbols"
         description="Coins agents are allowed to analyse and trade. Applied to both the risk engine and exchange config atomically."
       >
@@ -1554,6 +1671,10 @@ function RuntimeSystemTab({ settings, qc, onDirty }: any) {
 
       <Section title="App" description="Dashboard process settings.">
         <AppRows settings={settings} qc={qc} />
+      </Section>
+
+      <Section title="Historical Data" description="Controls local OHLCV bulk storage for backtesting. Nightly backfill downloads missing candles so backtests run entirely offline.">
+        <HistoricalDataCard settings={settings} qc={qc} />
       </Section>
 
       <Section title="Data Retention" description="How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.">

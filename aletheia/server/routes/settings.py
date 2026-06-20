@@ -74,6 +74,8 @@ async def get_settings():
         "regime": cfg.regime.model_dump(mode="json"),
         "network": cfg.network.model_dump(mode="json"),
         "strategy_factory": cfg.strategy_factory.model_dump(mode="json"),
+        "historical_data": cfg.historical_data.model_dump(mode="json"),
+        "event_triggers": cfg.event_triggers.model_dump(mode="json"),
     }
 
 
@@ -744,6 +746,10 @@ class StrategyFactoryConfigUpdate(SettingsRequest):
     walk_forward_min_bars: int | None = None
     high_trade_count_threshold: int | None = None
     min_runtime_days_relaxed: int | None = None
+    sweep_use_optuna: bool | None = None
+    sweep_n_trials: int | None = None
+    sweep_optuna_timeout_sec: float | None = None
+    sweep_top_k: int | None = None
 
 
 @router.post("/strategy_factory")
@@ -864,3 +870,88 @@ async def test_network_proxy():
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
         return {"reachable": False, "latency_ms": latency_ms, "error": str(e)[:200]}
+
+
+# ---------------------------------------------------------------------------
+# Historical Data config
+# ---------------------------------------------------------------------------
+
+class HistoricalDataConfigUpdate(SettingsRequest):
+    enabled: bool | None = None
+    max_bars_per_pair: int | None = None
+    default_months: int | None = None
+    nightly_backfill_enabled: bool | None = None
+    nightly_backfill_hour_cst: int | None = None
+    min_bars_for_backtest: int | None = None
+
+
+_HIST_DATA_BOUNDS: dict[str, tuple[float, float]] = {
+    "max_bars_per_pair": (1_000, 200_000),
+    "default_months": (1, 24),
+    "nightly_backfill_hour_cst": (0, 23),
+    "min_bars_for_backtest": (30, 5_000),
+}
+
+
+@router.post("/historical_data")
+async def update_historical_data_config(req: HistoricalDataConfigUpdate):
+    """Update historical OHLCV data management settings."""
+    cfg = load_config()
+    old = cfg.historical_data.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        if field in _HIST_DATA_BOUNDS:
+            lo, hi = _HIST_DATA_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {int(lo)} and {int(hi)}")
+        setattr(cfg.historical_data, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard",
+                 "event_type": "historical_data_config_changed",
+                 "entity_type": "historical_data_config", "before": old,
+                 "after": cfg.historical_data.model_dump(mode="json"),
+                 "message": f"Historical data config updated: {list(updates.keys())}"})
+    return {"updated": updates, "historical_data": cfg.historical_data.model_dump(mode="json")}
+
+
+# ---------------------------------------------------------------------------
+# Event Trigger config
+# ---------------------------------------------------------------------------
+
+class EventTriggerConfigUpdate(SettingsRequest):
+    enabled: bool | None = None
+    price_move_pct_threshold: float | None = None
+    volume_surge_multiplier: float | None = None
+    watch_universe_members: bool | None = None
+    trigger_strategy_design: bool | None = None
+    strategy_design_min_move_pct: float | None = None
+
+
+_EVENT_TRIGGER_BOUNDS: dict[str, tuple[float, float]] = {
+    "price_move_pct_threshold": (0.5, 20.0),
+    "volume_surge_multiplier": (1.5, 20.0),
+    "strategy_design_min_move_pct": (1.0, 30.0),
+}
+
+
+@router.post("/event_triggers")
+async def update_event_trigger_config(req: EventTriggerConfigUpdate):
+    """Update event-driven trigger thresholds."""
+    cfg = load_config()
+    old = cfg.event_triggers.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        if field in _EVENT_TRIGGER_BOUNDS:
+            lo, hi = _EVENT_TRIGGER_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        setattr(cfg.event_triggers, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard",
+                 "event_type": "event_trigger_config_changed",
+                 "entity_type": "event_trigger_config", "before": old,
+                 "after": cfg.event_triggers.model_dump(mode="json"),
+                 "message": f"Event trigger config updated: {list(updates.keys())}"})
+    return {"updated": updates, "event_triggers": cfg.event_triggers.model_dump(mode="json")}

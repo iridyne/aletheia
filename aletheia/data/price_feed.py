@@ -1,4 +1,4 @@
-"""Fast in-memory price cache for open-position symbols.
+"""Fast in-memory price cache for open-position symbols + universe watchlist.
 
 Refreshed every 30s via scheduler (batch CCXT fetch_tickers).
 position_manager and pnl reads check this cache first, falling back to
@@ -10,6 +10,8 @@ Design:
   fall back to the 5-min SQLite snapshots.
 - fail-open: if the refresh fails, stale entries remain until they expire
   and callers transparently fall back to SQLite.
+- Universe members tick-gated: refreshed every 3rd tick (90s) to stay
+  within the scheduler's 45s timeout budget at large symbol counts.
 """
 
 import logging
@@ -22,6 +24,9 @@ _price_cache: dict[str, dict] = {}
 _cache_lock = threading.Lock()
 
 _STALE_THRESHOLD_SEC = 90.0
+_UNIVERSE_TICK_EVERY = 3  # universe members refresh every N ticks
+_tick_counter = 0
+_tick_lock = threading.Lock()
 
 
 def get_cached_price(symbol: str) -> float | None:
@@ -40,27 +45,49 @@ def get_cached_price(symbol: str) -> float | None:
 
 
 def get_watched_symbols() -> list[str]:
-    """Return canonical symbols for all currently open positions."""
+    """Return canonical symbols for open positions (always) + universe members (tick-gated)."""
+    from aletheia.data.symbols import to_canonical
+
+    seen: set[str] = set()
+    result: list[str] = []
+
+    # Always watch open position symbols
     try:
         from aletheia.storage.repositories import list_positions
-        from aletheia.data.symbols import to_canonical
-
-        positions = list_positions(status="open")
-        seen: set[str] = set()
-        result: list[str] = []
-        for p in positions:
+        for p in list_positions(status="open"):
             sym = to_canonical(p.get("symbol", ""))
             if sym and sym not in seen:
                 seen.add(sym)
                 result.append(sym)
-        return result
     except Exception as e:
-        logger.warning("price_feed: failed to get watched symbols: %s", e)
-        return []
+        logger.warning("price_feed: failed to get position symbols: %s", e)
+
+    # Universe members — tick-gated
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        if cfg.event_triggers.enabled and cfg.event_triggers.watch_universe_members:
+            with _tick_lock:
+                global _tick_counter
+                _tick_counter += 1
+                do_universe = (_tick_counter % _UNIVERSE_TICK_EVERY == 0)
+
+            if do_universe:
+                from aletheia.storage.repositories import get_active_universe_members
+                members = get_active_universe_members(limit=50)
+                for m in members:
+                    sym = to_canonical(m.get("symbol", ""))
+                    if sym and sym not in seen:
+                        seen.add(sym)
+                        result.append(sym)
+    except Exception as e:
+        logger.debug("price_feed: universe expansion failed: %s", e)
+
+    return result
 
 
 async def refresh_watched_prices() -> dict:
-    """Batch-fetch tickers for open-position symbols and update in-memory cache.
+    """Batch-fetch tickers for watched symbols and update in-memory cache.
 
     Uses a fresh CCXTProvider per call (CCXT binds aiohttp to the creating loop).
     Single network round-trip where exchange supports batch fetch_tickers.
@@ -90,10 +117,20 @@ async def refresh_watched_prices() -> dict:
                     ticker = await provider.get_ticker(iid)
                     if ticker and ticker.last_price and ticker.last_price > 0:
                         with _cache_lock:
+                            prev_entry = _price_cache.get(sym, {})
+                            prev_price = prev_entry.get("price")
+                            volume_24h = getattr(ticker, "volume_24h", None) or prev_entry.get("volume_24h")
                             _price_cache[sym] = {
                                 "price": ticker.last_price,
                                 "ts": now,
+                                "prev_price": prev_price,
+                                "volume_24h": volume_24h,
                             }
+
+                        if prev_price and prev_price > 0 and cfg.event_triggers.enabled:
+                            pct = (ticker.last_price - prev_price) / prev_price * 100
+                            _check_event_triggers(sym, pct, volume_24h, prev_entry.get("volume_24h"), cfg)
+
                         refreshed.append(sym)
                 except Exception as e:
                     errors.append(f"{sym}: {e}")
@@ -109,6 +146,51 @@ async def refresh_watched_prices() -> dict:
         logger.warning("price_feed: %d errors: %s", len(errors), errors[:3])
 
     return {"refreshed": len(refreshed), "symbols": refreshed, "errors": errors}
+
+
+def _check_event_triggers(
+    symbol: str,
+    price_change_pct: float,
+    volume_24h: float | None,
+    prev_volume_24h: float | None,
+    cfg,
+) -> None:
+    """Fire notifications and on-demand strategy evaluation on price/volume events."""
+    try:
+        et = cfg.event_triggers
+        abs_pct = abs(price_change_pct)
+        direction = "+" if price_change_pct >= 0 else "-"
+
+        # Price move notification
+        if abs_pct >= et.price_move_pct_threshold:
+            _notify(f"Price alert {symbol}: {direction}{abs_pct:.1f}% (30s)")
+
+        # Volume surge notification
+        if (volume_24h and prev_volume_24h and prev_volume_24h > 0
+                and volume_24h > prev_volume_24h * et.volume_surge_multiplier):
+            surge = volume_24h / prev_volume_24h
+            _notify(f"Volume surge {symbol}: {surge:.1f}x 24h vol")
+
+        # Trigger strategy designer on significant move
+        if et.trigger_strategy_design and abs_pct >= et.strategy_design_min_move_pct:
+            try:
+                from aletheia.agent_runtime.scheduler import trigger_strategy_designer_on_demand
+                trigger_strategy_designer_on_demand()
+                logger.info("event_trigger: designer on-demand fired for %s (%.1f%%)", symbol, price_change_pct)
+            except Exception as e:
+                logger.debug("event_trigger: designer trigger failed: %s", e)
+
+    except Exception as e:
+        logger.debug("_check_event_triggers: %s", e)
+
+
+def _notify(message: str) -> None:
+    """Best-effort operator notification."""
+    try:
+        from aletheia.notifications import notify_operator
+        notify_operator(message)
+    except Exception:
+        pass
 
 
 def cache_stats() -> dict:
