@@ -341,7 +341,7 @@ export const api = {
     market_snapshots_days: number; portfolio_snapshots_days: number
     opportunity_ttl_hours: number; jsonl_max_mb: number
   }>) => post<{ updated: Record<string, any> }>('/settings/retention', body),
-  updateTelegramConfig: (body: Partial<{ enabled: boolean; allowed_chat_ids: number[] }>) =>
+  updateTelegramConfig: (body: Partial<{ enabled: boolean; allowed_chat_ids: number[]; notify_trade_fills: boolean; notify_daily_summary: boolean; daily_summary_hour_cst: number; dnd_enabled: boolean; dnd_start_hour: number; dnd_end_hour: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/telegram', body),
   updateUpdateConfig: (body: Partial<{ enabled: boolean; branch: string }>) =>
     post<{ enabled: boolean; branch: string }>('/settings/update-config', body),

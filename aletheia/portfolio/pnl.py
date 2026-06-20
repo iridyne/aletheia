@@ -9,6 +9,10 @@ from aletheia.storage.repositories import (
 
 
 def _latest_price(symbol: str) -> float | None:
+    from aletheia.data.price_feed import get_cached_price
+    cached = get_cached_price(symbol)
+    if cached is not None:
+        return cached
     from aletheia.trading.market_data import latest_snapshot
     snap = latest_snapshot(symbol)
     return float(snap["price"]) if snap else None

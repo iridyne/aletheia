@@ -220,6 +220,12 @@ class RiskConfig(BaseModel):
 class TelegramConfig(BaseModel):
     enabled: bool = False
     allowed_chat_ids: list[int] = Field(default_factory=list)
+    notify_trade_fills: bool = True
+    notify_daily_summary: bool = True
+    daily_summary_hour_cst: int = 8
+    dnd_enabled: bool = False
+    dnd_start_hour: int = 23
+    dnd_end_hour: int = 7
 
 
 class HealthConfig(BaseModel):

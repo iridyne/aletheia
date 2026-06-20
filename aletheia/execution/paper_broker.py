@@ -63,6 +63,7 @@ def execute_paper_order(
     insert_fill(fill)
 
     # Check if we have an existing position to update
+    filled_take_profit: float | None = None
     existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
     if existing:
         new_qty = existing["quantity"] + quantity
@@ -78,6 +79,7 @@ def execute_paper_order(
         position_id = existing["id"]
     else:
         take_profit_price = _take_profit_for(direction, fill_price)
+        filled_take_profit = take_profit_price
         # BTC benchmark: record BTC price at entry for alpha/beta separation
         btc_entry_price = _btc_price_now()
         # Regime tag at entry time
@@ -117,13 +119,23 @@ def execute_paper_order(
         insert_position(position)
         position_id = position.id
 
-    return {
+    result = {
         "order_id": order.id,
         "fill_id": fill.id,
         "position_id": position_id,
         "fill_price": fill_price,
         "fill_quantity": quantity,
     }
+    try:
+        from aletheia.notifications import notify_trade_fill
+        notify_trade_fill(
+            symbol, direction, quantity, fill_price, position_id, execution_mode,
+            stop_price=stop_price,
+            take_profit_price=filled_take_profit,
+        )
+    except Exception:
+        pass
+    return result
 
 
 def _btc_price_now() -> float | None:

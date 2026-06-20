@@ -40,6 +40,8 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "exchange_sync": 60.0,
     "portfolio_snapshot": 45.0,
     "backtest_orchestrator": 600.0,
+    "price_feed": 25.0,
+    "daily_summary": 60.0,
 }
 
 
@@ -92,6 +94,7 @@ _EXECUTOR_WORKERS = {
     # more reliable than parallel scheduled writers that frequently collide and
     # cascade into ``database is locked`` across unrelated jobs.
     "io": 1,
+    "fast_io": 1,
     "observer": 1,
     # LLM-backed jobs also write run logs/artifacts. Keep them serial so a slow
     # model call cannot make two agent jobs compete for SQLite at once.
@@ -362,6 +365,10 @@ def init_scheduler() -> BackgroundScheduler | None:
         next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
     )
     _scheduler.add_job(
+        _guarded("price_feed", _run_price_feed), "interval", seconds=30, id="price_feed",
+        misfire_grace_time=15, executor="fast_io",
+    )
+    _scheduler.add_job(
         _guarded("position_manager", _run_position_manager), "interval", minutes=5, id="position_manager",
         misfire_grace_time=60, executor="io",
     )
@@ -431,6 +438,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("okx_demo_symbols", _run_okx_demo_symbols), "interval", hours=4,
         id="okx_demo_symbols", misfire_grace_time=600, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=45),
+    )
+    # Daily PnL summary pushed to Telegram (configurable hour, CST/UTC+8).
+    _summary_hour = cfg.telegram.daily_summary_hour_cst if hasattr(cfg.telegram, 'daily_summary_hour_cst') else 8
+    _scheduler.add_job(
+        _guarded("daily_summary", _run_daily_summary), "cron", hour=_summary_hour, minute=0,
+        id="daily_summary", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
 
     _scheduler.start()
@@ -533,6 +546,27 @@ def status_snapshot() -> dict:
         "state": label,
         "job_count": job_count,
     }
+
+
+def _run_price_feed():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        from aletheia.data.price_feed import refresh_watched_prices
+        _run_async_with_timeout("price_feed", refresh_watched_prices())
+    except TimeoutError:
+        logger.debug("price_feed job timed out")
+    except Exception as e:
+        logger.debug("price_feed job failed: %s", e)
+
+
+def _run_daily_summary():
+    try:
+        from aletheia.notifications import notify_daily_summary
+        notify_daily_summary()
+    except Exception as e:
+        logger.warning("daily_summary job failed: %s", e)
 
 
 def _run_market_data():

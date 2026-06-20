@@ -1586,6 +1586,8 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'retention.agent_runs_days', 'retention.tool_calls_days', 'retention.run_steps_days',
     'retention.market_snapshots_days', 'retention.portfolio_snapshots_days', 'retention.opportunity_ttl_hours', 'retention.jsonl_max_mb',
     'telegram.enabled', 'telegram.allowed_chat_ids',
+    'telegram.notify_trade_fills', 'telegram.notify_daily_summary', 'telegram.daily_summary_hour_cst',
+    'telegram.dnd_enabled', 'telegram.dnd_start_hour', 'telegram.dnd_end_hour',
     'update.enabled', 'update.branch',
     'universe.enabled', 'universe.refresh_interval_min', 'universe.max_candidates', 'universe.core_pool_size',
     'universe.min_volume_24h_usdt', 'universe.max_spread_bps', 'universe.min_depth_10bps_usd',
@@ -1751,18 +1753,38 @@ function TelegramCard({ settings, qc }: any) {
   const tg = settings?.telegram as any || {}
   const [enabled, setEnabled] = useState(false)
   const [chatIdsInput, setChatIdsInput] = useState('')
+  const [notifyFills, setNotifyFills] = useState(true)
+  const [notifySummary, setNotifySummary] = useState(true)
+  const [summaryHour, setSummaryHour] = useState(8)
+  const [dndEnabled, setDndEnabled] = useState(false)
+  const [dndStart, setDndStart] = useState(23)
+  const [dndEnd, setDndEnd] = useState(7)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     if (!tg) return
     setEnabled(!!tg.enabled)
     setChatIdsInput((tg.allowed_chat_ids || []).join(', '))
+    setNotifyFills(tg.notify_trade_fills !== false)
+    setNotifySummary(tg.notify_daily_summary !== false)
+    setSummaryHour(tg.daily_summary_hour_cst ?? 8)
+    setDndEnabled(!!tg.dnd_enabled)
+    setDndStart(tg.dnd_start_hour ?? 23)
+    setDndEnd(tg.dnd_end_hour ?? 7)
   }, [settings])
 
   const mut = useMutation({
     mutationFn: () => {
       const ids = chatIdsInput.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
-      return api.updateTelegramConfig({ enabled, allowed_chat_ids: ids })
+      return api.updateTelegramConfig({
+        enabled, allowed_chat_ids: ids,
+        notify_trade_fills: notifyFills,
+        notify_daily_summary: notifySummary,
+        daily_summary_hour_cst: summaryHour,
+        dnd_enabled: dndEnabled,
+        dnd_start_hour: dndStart,
+        dnd_end_hour: dndEnd,
+      })
     },
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -1795,6 +1817,38 @@ function TelegramCard({ settings, qc }: any) {
       <div className="settings-action-row settings-action-row-start">
         <Toggle checked={enabled} label="Telegram delivery" onChange={v => { setEnabled(v); setMsg(null) }} />
       </div>
+      <div className="settings-action-row settings-action-row-start">
+        <Toggle checked={notifyFills} label="Trade fill notifications" onChange={v => { setNotifyFills(v); setMsg(null) }} />
+      </div>
+      <div className="settings-action-row settings-action-row-start">
+        <Toggle checked={notifySummary} label="Daily PnL summary (08:00 CST)" onChange={v => { setNotifySummary(v); setMsg(null) }} />
+      </div>
+      {notifySummary && (
+        <div className="form-grid mb-3">
+          <label>
+            <span>Summary hour (CST)</span>
+            <input type="number" min={0} max={23} value={summaryHour}
+              onChange={e => { setSummaryHour(parseInt(e.target.value) || 8); setMsg(null) }} />
+          </label>
+        </div>
+      )}
+      <div className="settings-action-row settings-action-row-start">
+        <Toggle checked={dndEnabled} label="Do-not-disturb (suppress info alerts)" onChange={v => { setDndEnabled(v); setMsg(null) }} />
+      </div>
+      {dndEnabled && (
+        <div className="form-grid mb-3">
+          <label>
+            <span>DND start hour</span>
+            <input type="number" min={0} max={23} value={dndStart}
+              onChange={e => { setDndStart(parseInt(e.target.value) || 23); setMsg(null) }} />
+          </label>
+          <label>
+            <span>DND end hour</span>
+            <input type="number" min={0} max={23} value={dndEnd}
+              onChange={e => { setDndEnd(parseInt(e.target.value) || 7); setMsg(null) }} />
+          </label>
+        </div>
+      )}
       <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
       </div>

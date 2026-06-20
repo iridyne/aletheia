@@ -65,10 +65,7 @@ async def get_settings():
         "trading": cfg.trading.model_dump(mode="json"),
         "health": cfg.health.model_dump(mode="json"),
         "retention": cfg.retention.model_dump(mode="json"),
-        "telegram": {
-            "enabled": cfg.telegram.enabled,
-            "allowed_chat_ids": cfg.telegram.allowed_chat_ids,
-        },
+        "telegram": cfg.telegram.model_dump(mode="json"),
         "market_data": cfg.market_data.model_dump(mode="json"),
         "universe": cfg.universe.model_dump(mode="json"),
         "guard": cfg.guard.model_dump(mode="json"),
@@ -311,6 +308,12 @@ async def update_retention_config(req: RetentionConfigUpdate):
 class TelegramConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     allowed_chat_ids: Optional[list[int]] = None
+    notify_trade_fills: Optional[bool] = None
+    notify_daily_summary: Optional[bool] = None
+    daily_summary_hour_cst: Optional[int] = None
+    dnd_enabled: Optional[bool] = None
+    dnd_start_hour: Optional[int] = None
+    dnd_end_hour: Optional[int] = None
 
 
 @router.post("/telegram")

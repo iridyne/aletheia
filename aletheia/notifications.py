@@ -11,6 +11,7 @@ import os
 import platform
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from html import escape
 
 logger = logging.getLogger("aletheia.notifications")
@@ -49,12 +50,34 @@ def send_windows_toast(title: str, message: str) -> None:
         logger.debug("Toast notification failed (non-critical): %s", e)
 
 
-def _send_telegram_alert(message: str) -> None:
-    """Send a Telegram alert to allowed chats when configured. Never raises."""
+def _is_dnd() -> bool:
+    """Return True if current local hour is within do-not-disturb window."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        if not cfg.telegram.dnd_enabled:
+            return False
+        h = datetime.now().hour
+        start, end = cfg.telegram.dnd_start_hour, cfg.telegram.dnd_end_hour
+        if start <= end:
+            return start <= h < end
+        return h >= start or h < end
+    except Exception:
+        return False
+
+
+def _send_telegram_alert(message: str, *, level: str = "warning") -> None:
+    """Send a Telegram alert to allowed chats when configured. Never raises.
+
+    P1 alerts (info level) are suppressed during DND hours.
+    P0 alerts (warning/error/critical) always go through.
+    """
     try:
         from aletheia.config.loader import load_config
         cfg = load_config()
         if not cfg.health.alert_via_telegram or not cfg.telegram.enabled:
+            return
+        if level == "info" and _is_dnd():
             return
         from aletheia.telegram.bot import TelegramBot
         bot = TelegramBot()
@@ -139,4 +162,71 @@ def notify_operator(
             pass
 
     if telegram:
-        _send_telegram_alert(f"{clean_title}: {clean_message}")
+        _send_telegram_alert(f"{clean_title}: {clean_message}", level=level)
+
+
+def notify_trade_fill(
+    symbol: str,
+    direction: str,
+    quantity: float,
+    fill_price: float,
+    position_id: str,
+    execution_mode: str,
+    *,
+    stop_price: float | None = None,
+    take_profit_price: float | None = None,
+) -> None:
+    """Push trade fill notification to Telegram. No-op if disabled or DND.
+
+    Best-effort only — never raises, never blocks the execution path.
+    """
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        if not cfg.telegram.enabled or not cfg.telegram.notify_trade_fills:
+            return
+    except Exception:
+        return
+
+    dir_label = "LONG" if direction in ("long", "buy") else "SHORT"
+    mode_label = execution_mode.replace("_", " ").title()
+    lines = [f"Trade Fill [{mode_label}]",
+             f"{dir_label} {symbol}",
+             f"Qty: {quantity}  @ {fill_price:.4f}"]
+    if stop_price:
+        lines.append(f"SL: {stop_price:.4f}")
+    if take_profit_price:
+        lines.append(f"TP: {take_profit_price:.4f}")
+    lines.append(f"pos/{position_id[:8]}")
+    msg = "\n".join(lines)
+    _send_telegram_alert(msg, level="info")
+
+
+def notify_daily_summary() -> None:
+    """Push daily PnL summary to Telegram at scheduled time. Best-effort."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        if not cfg.telegram.enabled or not cfg.telegram.notify_daily_summary:
+            return
+    except Exception:
+        return
+
+    try:
+        from aletheia.portfolio.pnl import today_realized_pnl, compute_portfolio
+        realized = today_realized_pnl()
+        portfolio = compute_portfolio()
+        unrealized = portfolio.get("unrealized_pnl", 0.0)
+        open_count = portfolio.get("positions_count", 0)
+        total = portfolio.get("total_value_usdt", 0.0)
+        sign = "+" if realized >= 0 else ""
+        lines = [
+            "Daily Summary",
+            f"Realized: {sign}{realized:.2f} USDT",
+            f"Unrealized: {unrealized:+.2f} USDT",
+            f"Open positions: {open_count}",
+            f"Portfolio value: {total:.2f} USDT",
+        ]
+        _send_telegram_alert("\n".join(lines), level="info")
+    except Exception as e:
+        logger.warning("notify_daily_summary failed: %s", e)

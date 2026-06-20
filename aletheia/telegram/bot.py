@@ -13,13 +13,14 @@ logger = logging.getLogger("aletheia.telegram")
 
 
 class TelegramBot:
-    """Minimal Telegram bot with polling. Handles /status /pause /resume /latest /help."""
+    """Minimal Telegram bot with polling. Handles /status /pause /resume /latest /positions /pnl /kill /help."""
 
     def __init__(self):
         self.token: str | None = None
         self.allowed_chat_ids: set[int] = set()
         self._offset = 0
         self._running = False
+        self._pending_kill_chat: int | None = None
 
     def configure(self) -> bool:
         """Load config and token. Returns True if bot is ready."""
@@ -76,6 +77,14 @@ class TelegramBot:
             return await self._cmd_resume()
         elif cmd == "/latest":
             return self._cmd_latest()
+        elif cmd == "/positions":
+            return self._cmd_positions()
+        elif cmd == "/pnl":
+            return self._cmd_pnl()
+        elif cmd == "/kill":
+            return self._cmd_kill_request(chat_id)
+        elif cmd == "/kill confirm":
+            return self._cmd_kill_confirm(chat_id)
         elif cmd in ("/help", "/start"):
             return self._cmd_help()
         else:
@@ -133,6 +142,65 @@ class TelegramBot:
             lines.append(f"- {r['agent_name']}: {r['status']} ({r['started_at'][:16]})")
         return "Recent runs:\n" + "\n".join(lines)
 
+    def _cmd_positions(self) -> str:
+        try:
+            from aletheia.storage.repositories import list_positions
+            positions = list_positions(status="open")
+            if not positions:
+                return "No open positions."
+            lines = []
+            for p in positions[:10]:
+                direction = "L" if p["direction"] in ("long", "buy") else "S"
+                lines.append(
+                    f"{direction} {p['symbol']} x{p['quantity']:.4f} "
+                    f"@ {p['entry_price']:.4f} ({p.get('execution_mode', '?')[:6]})"
+                )
+            suffix = f"\n...+{len(positions)-10} more" if len(positions) > 10 else ""
+            return f"Open positions ({len(positions)}):\n" + "\n".join(lines) + suffix
+        except Exception as e:
+            return f"Error fetching positions: {e}"
+
+    def _cmd_pnl(self) -> str:
+        try:
+            from aletheia.portfolio.pnl import today_realized_pnl, compute_portfolio
+            realized = today_realized_pnl()
+            portfolio = compute_portfolio()
+            unrealized = portfolio.get("unrealized_pnl", 0.0)
+            sign = "+" if realized >= 0 else ""
+            return (
+                f"Today PnL\n"
+                f"Realized: {sign}{realized:.2f} USDT\n"
+                f"Unrealized: {unrealized:+.2f} USDT\n"
+                f"Total: {realized + unrealized:+.2f} USDT"
+            )
+        except Exception as e:
+            return f"Error fetching PnL: {e}"
+
+    def _cmd_kill_request(self, chat_id: int) -> str:
+        self._pending_kill_chat = chat_id
+        return (
+            "WARNING: This will activate the kill switch and halt all trading.\n"
+            "Reply /kill confirm to proceed, or ignore to cancel."
+        )
+
+    def _cmd_kill_confirm(self, chat_id: int) -> str:
+        if self._pending_kill_chat != chat_id:
+            return "No pending kill request. Send /kill first."
+        self._pending_kill_chat = None
+        try:
+            cfg = load_config()
+            cfg.runtime.kill_switch_active = True
+            save_config(cfg)
+            write_audit({
+                "actor": "telegram",
+                "source": "telegram",
+                "event_type": "kill_switch_activated",
+                "message": f"Kill switch activated via Telegram by chat_id={chat_id}",
+            })
+            return "Kill switch ACTIVATED. All new trading halted."
+        except Exception as e:
+            return f"Failed to activate kill switch: {e}"
+
     def _cmd_help(self) -> str:
         return (
             "Aletheia Trading OS\n\n"
@@ -140,6 +208,9 @@ class TelegramBot:
             "/pause — Pause all agents\n"
             "/resume — Resume agents\n"
             "/latest — Recent agent runs\n"
+            "/positions — Open positions\n"
+            "/pnl — Today PnL summary\n"
+            "/kill — Activate kill switch (2-step)\n"
             "/help — This message"
         )
 
