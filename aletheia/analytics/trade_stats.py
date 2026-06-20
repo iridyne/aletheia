@@ -2,7 +2,104 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+
+def compute_rolling_trade_stats(days: int = 7) -> dict:
+    """Compute windowed trade stats for the last N days.
+
+    Returns: {total_trades, wins, losses, win_rate, total_pnl, avg_pnl,
+              best_win, worst_loss, per_symbol: [{symbol, trades, wins, pnl}]}
+    """
+    from aletheia.storage.repositories import list_positions
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    closed = list_positions(status="closed", limit=500)
+    recent = [p for p in closed if (p.get("closed_at") or "") >= cutoff]
+
+    if not recent:
+        return {
+            "days": days, "total_trades": 0, "wins": 0, "losses": 0,
+            "win_rate": 0.0, "total_pnl": 0.0, "avg_pnl": 0.0,
+            "best_win": 0.0, "worst_loss": 0.0, "per_symbol": [],
+        }
+
+    wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
+    total_pnl = sum(p.get("realized_pnl", 0) for p in recent)
+    pnls = [p.get("realized_pnl", 0) for p in recent]
+
+    # Per-symbol breakdown (top 8)
+    from collections import Counter
+    sym_counts = Counter(p.get("symbol") for p in recent)
+    per_symbol = []
+    for sym, _ in sym_counts.most_common(8):
+        sym_trades = [p for p in recent if p.get("symbol") == sym]
+        sym_wins = [p for p in sym_trades if (p.get("realized_pnl") or 0) > 0]
+        sym_pnl = sum(p.get("realized_pnl", 0) for p in sym_trades)
+        per_symbol.append({
+            "symbol": sym, "trades": len(sym_trades),
+            "wins": len(sym_wins), "pnl": round(sym_pnl, 2),
+        })
+
+    return {
+        "days": days,
+        "total_trades": len(recent),
+        "wins": len(wins),
+        "losses": len(recent) - len(wins),
+        "win_rate": round(len(wins) / len(recent) * 100, 1),
+        "total_pnl": round(total_pnl, 2),
+        "avg_pnl": round(total_pnl / len(recent), 2),
+        "best_win": round(max(pnls), 2),
+        "worst_loss": round(min(pnls), 2),
+        "per_symbol": per_symbol,
+    }
+
+
+def compute_order_stats(days: int = 7) -> dict:
+    """Compute order fill rate and error breakdown for the last N days.
+
+    Returns: {total, filled, errors, fill_rate_pct, error_breakdown: [{pattern, count, symbols}]}
+    """
+    from aletheia.storage.sqlite import get_db
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    rows = db.execute(
+        "SELECT symbol, status, error_reason FROM orders WHERE created_at > ?",
+        (cutoff,),
+    ).fetchall()
+
+    filled = sum(1 for r in rows if r["status"] == "filled")
+    errored = [r for r in rows if r["status"] == "error"]
+    total = filled + len(errored)  # fill rate = filled / (filled + errors)
+
+    # Group errors by pattern
+    error_groups: dict[str, list[str]] = {}
+    for r in errored:
+        reason = r["error_reason"] or "unknown"
+        # Normalize: strip variable symbol names from "Parameter XXXUSDT does not exist"
+        import re
+        pattern = re.sub(r"Parameter \w+ does not exist", "Parameter XXXUSDT does not exist", reason)
+        pattern = re.sub(r"symbol=\w+", "symbol=XXX", pattern)
+        if pattern not in error_groups:
+            error_groups[pattern] = []
+        sym = r["symbol"] or "?"
+        if sym not in error_groups[pattern]:
+            error_groups[pattern].append(sym)
+
+    breakdown = sorted(
+        [{"pattern": p, "count": len(syms), "symbols": syms[:5]} for p, syms in error_groups.items()],
+        key=lambda x: x["count"], reverse=True,
+    )
+
+    return {
+        "days": days,
+        "total": total,
+        "filled": filled,
+        "errors": len(errored),
+        "fill_rate_pct": round(filled / total * 100, 1) if total else 0.0,
+        "error_breakdown": breakdown[:5],
+    }
 
 
 def build_trade_stats() -> dict:
@@ -125,3 +222,53 @@ def _bucket_hold_times(hours_list: list[float]) -> list[dict]:
             "pct": round(count / total * 100, 1) if total else 0.0,
         })
     return result
+
+
+def compute_7d_trade_stats(days: int = 7) -> dict:
+    """Rolling N-day closed-position stats reusable by CLI and agent context.
+
+    Returns {outcome_stats, per_symbol, cutoff_days}.
+    outcome_stats: total_trades, wins, losses, win_rate, total_pnl,
+                   avg_pnl_per_trade, worst_loss, best_win.
+    per_symbol: top-10 by trade count, each with trades/wins/losses/pnl.
+    """
+    from collections import Counter
+    from datetime import timedelta
+
+    from aletheia.storage.repositories import list_positions
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    closed = list_positions(status="closed", limit=500)
+    recent = [p for p in closed if (p.get("closed_at") or "") >= cutoff]
+
+    if not recent:
+        return {"outcome_stats": None, "per_symbol": [], "cutoff_days": days}
+
+    wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
+    total_pnl = sum(p.get("realized_pnl", 0) for p in recent)
+
+    outcome_stats = {
+        "total_trades": len(recent),
+        "wins": len(wins),
+        "losses": len(recent) - len(wins),
+        "win_rate": round(len(wins) / len(recent) * 100, 1),
+        "total_pnl": round(total_pnl, 2),
+        "avg_pnl_per_trade": round(total_pnl / len(recent), 2),
+        "worst_loss": round(min((p.get("realized_pnl", 0) for p in recent), default=0), 2),
+        "best_win": round(max((p.get("realized_pnl", 0) for p in recent), default=0), 2),
+    }
+
+    sym_counts = Counter(p.get("symbol") for p in recent)
+    per_symbol = []
+    for sym, _ in sym_counts.most_common(10):
+        sym_trades = [p for p in recent if p.get("symbol") == sym]
+        sym_wins = [p for p in sym_trades if (p.get("realized_pnl") or 0) > 0]
+        per_symbol.append({
+            "symbol": sym,
+            "trades": len(sym_trades),
+            "wins": len(sym_wins),
+            "losses": len(sym_trades) - len(sym_wins),
+            "pnl": round(sum(p.get("realized_pnl", 0) for p in sym_trades), 2),
+        })
+
+    return {"outcome_stats": outcome_stats, "per_symbol": per_symbol, "cutoff_days": days}

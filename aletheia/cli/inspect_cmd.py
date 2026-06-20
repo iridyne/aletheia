@@ -5,7 +5,7 @@ modify config, or trigger side effects. Designed for Agent / developer use.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import typer
@@ -134,10 +134,27 @@ def risk(
 @inspect_app.command("orders")
 def orders(
     status: str = typer.Option("all", help="Filter: pending | filled | cancelled | failed | all"),
+    stats: bool = typer.Option(False, "--stats", help="Show aggregate fill rate + error breakdown"),
+    days: int = typer.Option(7, "--days", "-d", help="Lookback window for --stats mode"),
     limit: int = typer.Option(20, "--limit", "-n"),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """List orders with execution details."""
+    """List orders with execution details. Use --stats for aggregated view."""
+    if stats:
+        from aletheia.analytics.trade_stats import compute_order_stats
+        result = compute_order_stats(days=days)
+        if json_output:
+            typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+            return
+        typer.echo(f"=== {days}-Day Order Stats ===")
+        typer.echo(f"  total: {result['total']}  filled: {result['filled']}  errors: {result['errors']}  fill_rate: {result['fill_rate_pct']}%")
+        if result["error_breakdown"]:
+            typer.echo("")
+            typer.echo("=== Error Breakdown ===")
+            for e in result["error_breakdown"]:
+                typer.echo(f"  \"{e['pattern']}\": x{e['count']} ({', '.join(e['symbols'][:5])})")
+        return
+
     from aletheia.storage.repositories import list_orders
     rows = list_orders(limit=limit)
     if status != "all":
@@ -409,3 +426,219 @@ def scorecard(
     from aletheia.analytics.family_scorecard import compute_family_scorecard
     rows = compute_family_scorecard()
     _output(rows, json_output)
+
+
+# ---------------------------------------------------------------------------
+# 13. status (aggregated dashboard)
+# ---------------------------------------------------------------------------
+
+@inspect_app.command("status")
+def status(
+    days: int = typer.Option(7, "--days", "-d", help="Lookback window for PnL/orders"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """One-shot system dashboard: portfolio, PnL, orders, universe, data quality."""
+    from aletheia.analytics.trade_stats import compute_rolling_trade_stats, compute_order_stats
+    from aletheia.data.price_feed import cache_stats
+    from aletheia.portfolio.pnl import today_realized_pnl, mark_positions_to_market
+    from aletheia.storage.repositories import (
+        get_active_universe_snapshot, get_active_universe_members,
+    )
+
+    # Portfolio
+    positions = mark_positions_to_market(persist=False)
+    open_pos = [p for p in positions if p.get("status") == "open"]
+
+    portfolio_section = {
+        "open_positions": len(open_pos),
+        "positions": [
+            {
+                "symbol": p["symbol"],
+                "direction": p["direction"],
+                "quantity": p["quantity"],
+                "entry_price": p["entry_price"],
+                "unrealized_pnl": round(p.get("unrealized_pnl", 0), 4),
+            }
+            for p in open_pos[:5]
+        ],
+    }
+
+    # Exchange equity (best-effort)
+    try:
+        from aletheia.portfolio.exchange_sync import get_cached_state, status_for
+        cached = get_cached_state()
+        if cached and status_for(cached) in ("ok", "stale"):
+            portfolio_section["equity_usdt"] = cached.get("equity_usdt")
+            portfolio_section["exchange_age_sec"] = cached.get("age_seconds")
+    except Exception:
+        pass
+
+    # PnL
+    today_pnl = today_realized_pnl()
+    rolling = compute_rolling_trade_stats(days=days)
+    pnl_section = {
+        "today_realized": round(today_pnl, 2),
+        **{k: rolling[k] for k in (
+            "days", "total_trades", "wins", "losses", "win_rate",
+            "total_pnl", "avg_pnl", "best_win", "worst_loss",
+        )},
+    }
+
+    # Orders
+    order_section = compute_order_stats(days=days)
+
+    # Universe
+    snap = get_active_universe_snapshot()
+    universe_section: dict = {"snapshot": None}
+    if snap:
+        age_sec = (datetime.now(timezone.utc) - datetime.fromisoformat(
+            snap["created_at"].replace("Z", "+00:00")
+        )).total_seconds()
+        members = get_active_universe_members(limit=5)
+        universe_section = {
+            "snapshot_id": snap["id"][:12],
+            "created_at": snap["created_at"],
+            "age_hours": round(age_sec / 3600, 1),
+            "stale": age_sec > 86400,
+            "top_members": [f"{m['symbol']}({m.get('total_score', 0):.0f})" for m in members],
+        }
+
+    # Data quality
+    data_section = cache_stats()
+
+    result = {
+        "portfolio": portfolio_section,
+        "pnl": pnl_section,
+        "orders": order_section,
+        "universe": universe_section,
+        "data_quality": data_section,
+    }
+
+    if json_output:
+        typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return
+
+    # Human-readable output
+    typer.echo("=== Portfolio ===")
+    eq = portfolio_section.get("equity_usdt")
+    typer.echo(f"  equity: {eq or '?'} USDT  |  open_positions: {portfolio_section['open_positions']}")
+    for p in portfolio_section["positions"]:
+        typer.echo(f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} uPnL={p['unrealized_pnl']}")
+
+    typer.echo("")
+    typer.echo(f"=== PnL ({days}d) ===")
+    typer.echo(f"  today: {pnl_section['today_realized']} USDT  |  {days}d: {rolling['total_pnl']} USDT ({rolling['total_trades']} trades, {rolling['win_rate']}% win)")
+    typer.echo(f"  best: {rolling['best_win']}  worst: {rolling['worst_loss']}  avg: {rolling['avg_pnl']}")
+
+    typer.echo("")
+    typer.echo(f"=== Orders ({days}d) ===")
+    typer.echo(f"  filled: {order_section['filled']}  errors: {order_section['errors']}  fill_rate: {order_section['fill_rate_pct']}%")
+    for e in order_section["error_breakdown"][:3]:
+        typer.echo(f"  {e['pattern']}: x{e['count']} ({', '.join(e['symbols'][:3])})")
+
+    typer.echo("")
+    typer.echo("=== Universe ===")
+    if universe_section.get("snapshot_id"):
+        stale_flag = " (STALE!)" if universe_section["stale"] else ""
+        typer.echo(f"  age: {universe_section['age_hours']}h{stale_flag}  snapshot: {universe_section['snapshot_id']}")
+        typer.echo(f"  top: {' '.join(universe_section['top_members'])}")
+    else:
+        typer.echo("  (no active snapshot)")
+
+    typer.echo("")
+    typer.echo("=== Data Quality ===")
+    oldest = data_section.get("oldest_sec")
+    oldest_str = f"{oldest}s" if oldest is not None else "empty"
+    typer.echo(f"  price_feed: {data_section.get('entries', 0)} symbols cached, oldest {oldest_str}")
+
+
+# ---------------------------------------------------------------------------
+# 14. pnl (detailed PnL analysis)
+# ---------------------------------------------------------------------------
+
+@inspect_app.command("pnl")
+def pnl(
+    days: int = typer.Option(7, "--days", "-d", help="Lookback window"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Detailed PnL breakdown: today, rolling window, per-symbol, open positions."""
+    from aletheia.analytics.trade_stats import compute_rolling_trade_stats
+    from aletheia.portfolio.pnl import today_realized_pnl, mark_positions_to_market
+    from aletheia.storage.repositories import list_positions
+
+    # Today detail
+    today_str = datetime.now(timezone.utc).date().isoformat()
+    closed = list_positions(status="closed", limit=200)
+    today_closed = [
+        p for p in closed
+        if (p.get("closed_at") or "")[:10] == today_str
+    ]
+    today_total = today_realized_pnl()
+    today_detail = [
+        {
+            "symbol": p["symbol"], "direction": p["direction"],
+            "pnl": round(p.get("realized_pnl", 0), 2),
+            "close_reason": p.get("close_reason", "?"),
+        }
+        for p in today_closed
+    ]
+
+    # Rolling stats
+    rolling = compute_rolling_trade_stats(days=days)
+
+    # Open positions
+    open_pos = mark_positions_to_market(persist=False)
+    positions_out = [
+        {
+            "symbol": p["symbol"], "direction": p["direction"],
+            "entry_price": p["entry_price"],
+            "unrealized_pnl": round(p.get("unrealized_pnl", 0), 4),
+            "hold_hours": _hold_hours_since(p.get("opened_at")),
+        }
+        for p in open_pos
+    ]
+
+    result = {
+        "today": {"date": today_str, "realized": round(today_total, 2), "trades": today_detail},
+        "rolling": rolling,
+        "open_positions": positions_out,
+    }
+
+    if json_output:
+        typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return
+
+    # Human-readable
+    typer.echo(f"=== Today ({today_str} UTC) ===")
+    typer.echo(f"  realized: {today_total:.2f} USDT ({len(today_detail)} trades)")
+    for t in today_detail:
+        typer.echo(f"  {t['symbol']} {t['direction']}: {t['pnl']:+.2f} ({t['close_reason']})")
+
+    typer.echo("")
+    typer.echo(f"=== {days}-Day Rolling ===")
+    typer.echo(f"  trades: {rolling['total_trades']}  wins: {rolling['wins']}  losses: {rolling['losses']}  win_rate: {rolling['win_rate']}%")
+    typer.echo(f"  total: {rolling['total_pnl']:+.2f}  avg: {rolling['avg_pnl']:+.2f}  best: {rolling['best_win']:+.2f}  worst: {rolling['worst_loss']:+.2f}")
+
+    if rolling["per_symbol"]:
+        typer.echo("")
+        typer.echo(f"=== Per-Symbol ({days}d) ===")
+        for s in rolling["per_symbol"]:
+            typer.echo(f"  {s['symbol']:12s} {s['trades']} trades  {s['wins']}W/{s['trades']-s['wins']}L  pnl={s['pnl']:+.2f}")
+
+    if positions_out:
+        typer.echo("")
+        typer.echo("=== Open Positions ===")
+        for p in positions_out:
+            typer.echo(f"  {p['symbol']} {p['direction']}  entry={p['entry_price']}  uPnL={p['unrealized_pnl']}  hold={p['hold_hours']}h")
+
+
+def _hold_hours_since(iso_str: str | None) -> float | None:
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return round((datetime.now(timezone.utc) - dt).total_seconds() / 3600, 1)
+    except (ValueError, TypeError):
+        return None
