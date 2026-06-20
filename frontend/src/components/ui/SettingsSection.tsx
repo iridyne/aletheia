@@ -88,7 +88,13 @@ export function NumberFieldGrid({
             max={f.max}
             step={f.step}
             value={(vals[f.key] as string | number | undefined) ?? ''}
-            onChange={e => set(f.key, f.isInt ? parseInt(e.target.value) : parseFloat(e.target.value))}
+            onChange={e => {
+              const raw = e.target.value
+              if (raw === '' || raw === '-') return
+              const n = f.isInt ? parseInt(raw, 10) : parseFloat(raw)
+              if (!Number.isFinite(n)) return
+              set(f.key, n)
+            }}
           />
         </label>
       ))}

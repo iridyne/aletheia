@@ -1,11 +1,14 @@
-"""Binance Futures Testnet client — thin CCXT wrapper.
+"""Binance Futures client — thin CCXT wrapper supporting testnet and live modes.
 
-Only implements the minimal surface the broker needs:
+Implements the minimal surface the broker needs:
 - place_order(OrderRequest) -> OrderResponse
 - get_positions() -> list of exchange Position dicts
+- fetch_balance() -> CCXT unified balance dict
+- fetch_time() -> Unix ms (connectivity probe)
 - close() for session teardown
 
-Uses ccxt.binanceusdm with sandbox mode enabled (testnet.binancefuture.com).
+Testnet: ccxt.binanceusdm with sandbox mode (testnet.binancefuture.com).
+Live: ccxt.binanceusdm production (fapi.binance.com).
 """
 
 import logging
@@ -39,16 +42,17 @@ class OrderResponse:
     filled_quantity: float | None = None
 
 
-class BinanceTestnetClient:
-    """Binance USDT-M Futures testnet via CCXT sandbox mode."""
+class BinanceClient:
+    """Binance USDT-M Futures via CCXT. Supports testnet and live modes."""
 
-    def __init__(self):
-        api_key = get_secret("binance.testnet.api_key")
-        api_secret = get_secret("binance.testnet.api_secret")
+    def __init__(self, mode: str = "testnet"):
+        self._mode = mode
+        api_key = get_secret(f"binance.{mode}.api_key")
+        api_secret = get_secret(f"binance.{mode}.api_secret")
         if not api_key or not api_secret:
             raise RuntimeError(
-                "Binance testnet credentials not configured. "
-                "Set binance.testnet.api_key and binance.testnet.api_secret "
+                f"Binance {mode} credentials not configured. "
+                f"Set binance.{mode}.api_key and binance.{mode}.api_secret "
                 "via Settings → Credentials."
             )
         self._exchange = ccxt.binanceusdm({
@@ -57,10 +61,11 @@ class BinanceTestnetClient:
             "enableRateLimit": True,
             "options": {"defaultType": "future"},
         })
-        self._exchange.set_sandbox_mode(True)
+        if mode == "testnet":
+            self._exchange.set_sandbox_mode(True)
 
     async def place_order(self, order: OrderRequest) -> OrderResponse:
-        """Place a market or limit order on Binance Futures Testnet."""
+        """Place a market or limit order on Binance Futures."""
         ccxt_symbol = f"{order.symbol}:USDT"  # CCXT perp format: BTC/USDT:USDT
 
         params = {}
@@ -79,8 +84,8 @@ class BinanceTestnetClient:
                 params=params,
             )
         except ccxt.BaseError as e:
-            logger.error("Binance testnet order failed: %s", e)
-            raise RuntimeError(f"Binance testnet: {e}") from e
+            logger.error("Binance %s order failed: %s", self._mode, e)
+            raise RuntimeError(f"Binance {self._mode}: {e}") from e
 
         status = self._map_status(resp.get("status", ""))
         fill_price = None
@@ -98,7 +103,7 @@ class BinanceTestnetClient:
         )
 
     async def get_positions(self) -> list[dict]:
-        """Fetch open positions from testnet."""
+        """Fetch open positions."""
         try:
             positions = await self._exchange.fetch_positions()
             result = []
@@ -116,23 +121,23 @@ class BinanceTestnetClient:
                 })
             return result
         except ccxt.BaseError as e:
-            logger.error("Binance testnet get_positions failed: %s", e)
-            raise RuntimeError(f"Binance testnet positions: {e}") from e
+            logger.error("Binance %s get_positions failed: %s", self._mode, e)
+            raise RuntimeError(f"Binance {self._mode} positions: {e}") from e
 
     async def fetch_balance(self) -> dict:
-        """Fetch account balance from testnet. Returns CCXT unified balance."""
+        """Fetch account balance. Returns CCXT unified balance."""
         try:
             return await self._exchange.fetch_balance()
         except ccxt.BaseError as e:
-            logger.error("Binance testnet fetch_balance failed: %s", e)
-            raise RuntimeError(f"Binance testnet balance: {e}") from e
+            logger.error("Binance %s fetch_balance failed: %s", self._mode, e)
+            raise RuntimeError(f"Binance {self._mode} balance: {e}") from e
 
     async def fetch_time(self) -> int:
         """Fetch server time (connectivity test). Returns Unix ms."""
         try:
             return await self._exchange.fetch_time()
         except ccxt.BaseError as e:
-            raise RuntimeError(f"Binance testnet time: {e}") from e
+            raise RuntimeError(f"Binance {self._mode} time: {e}") from e
 
     async def close(self):
         """Close the underlying CCXT session."""
@@ -147,3 +152,7 @@ class BinanceTestnetClient:
             "expired": "cancelled",
         }
         return mapping.get(raw, raw)
+
+
+# Backward-compatible alias
+BinanceTestnetClient = lambda: BinanceClient(mode="testnet")  # noqa: E731

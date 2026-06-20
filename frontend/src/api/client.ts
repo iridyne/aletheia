@@ -242,32 +242,41 @@ export const api = {
   claudeOAuthCancel: () => post('/model/claude-oauth/cancel'),
   claudeOAuthDisconnect: () => post<{ disconnected: boolean }>('/model/claude-oauth/disconnect'),
 
-  // Bitget credentials + connection test (write-only secrets)
+  // Exchange credentials — unified per-exchange APIs
   getBitgetCredStatus: () => fetchJson<{ demo: any; live: any }>('/bitget/credentials-status'),
-  setExchangeCredentials: (body: {
+  setBitgetCredentials: (body: {
     profile: string; api_key?: string; api_secret?: string; passphrase?: string
   }) => post('/settings/exchange-credentials', body),
   testBitget: (mode?: string) =>
-    post<{ connected: boolean; mode: string; error?: string }>('/bitget/test-connection', mode ? { mode } : {}),
-  // Verify-before-commit: test candidate exchange creds (NOT persisted)
+    post<{ connected: boolean; mode?: string; error?: string }>('/bitget/test-connection', mode ? { mode } : {}),
   testBitgetCandidate: (body: { profile: string; api_key: string; api_secret: string; passphrase: string }) =>
-    post<{ connected: boolean; profile: string; error?: string }>('/bitget/test-candidate', body),
+    post<{ connected: boolean; profile?: string; error?: string }>('/bitget/test-candidate', body),
 
-  // Binance Testnet credentials + connection test
+  getBinanceCredStatus: () => fetchJson<{ testnet: any; live: any }>('/binance/credentials-status'),
+  setBinanceCredentials: (body: { profile: string; api_key?: string; api_secret?: string }) =>
+    post('/settings/binance-credentials', body),
+  testBinance: (mode?: string) =>
+    post<{ connected: boolean; mode?: string; error?: string }>('/binance/test-connection', mode ? { mode } : {}),
+  testBinanceCandidate: (body: { mode: string; api_key: string; api_secret: string }) =>
+    post<{ connected: boolean; mode?: string; error?: string }>('/binance/test-candidate', body),
+
+  getOkxCredStatus: () => fetchJson<{ demo: any; live: any }>('/okx/credentials-status'),
+  setOkxCredentials: (body: { profile?: string; api_key?: string; api_secret?: string; passphrase?: string }) =>
+    post('/settings/okx-credentials', body),
+  testOkx: (mode?: string) =>
+    post<{ connected: boolean; mode?: string; error?: string }>('/okx/test-connection', mode ? { mode } : {}),
+  testOkxCandidate: (body: { mode?: string; api_key: string; api_secret: string; passphrase: string }) =>
+    post<{ connected: boolean; mode?: string; error?: string }>('/okx/test-candidate', body),
+
+  // Legacy aliases (keep for any remaining callers)
+  setExchangeCredentials: (body: {
+    profile: string; api_key?: string; api_secret?: string; passphrase?: string
+  }) => post('/settings/exchange-credentials', body),
   getBinanceTestnetCredStatus: () => fetchJson<{ api_key: any; api_secret: any }>('/binance-testnet/credentials-status'),
   setBinanceTestnetCredentials: (body: { api_key?: string; api_secret?: string }) =>
     post('/settings/binance-testnet-credentials', body),
   testBinanceTestnet: () =>
     post<{ connected: boolean; positions_count?: number; error?: string }>('/binance-testnet/test-connection', {}),
-
-  // OKX credentials + connection test
-  getOkxCredStatus: () => fetchJson<{ api_key: any; api_secret: any; passphrase: any }>('/okx/credentials-status'),
-  setOkxCredentials: (body: { api_key?: string; api_secret?: string; passphrase?: string }) =>
-    post('/settings/okx-credentials', body),
-  testOkx: () =>
-    post<{ connected: boolean; error?: string }>('/okx/test-connection', {}),
-  testOkxCandidate: (body: { api_key: string; api_secret: string; passphrase: string }) =>
-    post<{ connected: boolean; error?: string }>('/okx/test-candidate', body),
 
   // Telegram bot reachability (facet A — never returns the token)
   getTelegramHealth: () => fetchJson<{ reachable: boolean; username?: string; error?: string }>('/telegram/health'),
@@ -375,6 +384,8 @@ export const api = {
   getStrategies: () => fetchJson<any[]>('/strategies'),
   promoteStrategy: (id: string, target_state: string) => post(`/strategies/${id}/promote`, { target_state }),
   retireStrategy: (id: string) => post(`/strategies/${id}/retire`),
+  setStrategyVenue: (id: string, execution_venue: string | null) =>
+    fetchJson<any>(`/strategies/${id}/venue`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ execution_venue }) }),
   getKnowledge: (type = 'research_note') => fetchJson<any[]>(`/knowledge?type=${encodeURIComponent(type)}`),
   getStrategyMemory: () => fetchJson<any[]>('/knowledge/strategy-memory'),
   getDreamingLogs: () => fetchJson<any[]>('/knowledge/dreaming-logs'),

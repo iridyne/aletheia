@@ -1,9 +1,7 @@
-"""Binance Futures Testnet broker — routes approved proposals to Binance testnet.
+"""Binance Futures broker — routes approved proposals to Binance testnet or live.
 
-Parallel to bitget_broker.py. Reached from the ExecutionGateway for mode
-`binance_testnet`. Uses CCXT binanceusdm with sandbox mode for the testnet at
-testnet.binancefuture.com. No real funds, exchange-side record for high-fidelity
-paper trading with 556 USDT-M pairs (vs Bitget demo's 42).
+Parallel to bitget_broker.py. Reached from the ExecutionGateway for modes
+`binance_testnet` and `binance_live_limited`.
 
 State-consistency protocol is identical to bitget_broker:
 1. Write pending Order row BEFORE exchange call (§1.3 hazard protection)
@@ -17,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from aletheia.data.symbols import to_binance
-from aletheia.exchanges.binance.client import BinanceTestnetClient, OrderRequest
+from aletheia.exchanges.binance.client import BinanceClient, OrderRequest
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     insert_order, insert_fill, insert_position, list_positions, update_position,
@@ -52,11 +50,13 @@ def execute_live_order(
     execution_mode: str = "binance_testnet",
     fee_rate: float = _TESTNET_FEE_RATE,
 ) -> dict:
-    """Place an order on Binance Futures Testnet and record locally.
+    """Place an order on Binance Futures (testnet or live) and record locally.
 
     Signature matches bitget_broker.execute_live_order for gateway compatibility.
+    execution_mode: "binance_testnet" or "binance_live_limited"
     """
-    client = BinanceTestnetClient()
+    mode = "live" if execution_mode == "binance_live_limited" else "testnet"
+    client = BinanceClient(mode=mode)
     side = "buy" if direction in ("long", "buy") else "sell"
     exchange_symbol = to_binance(symbol)  # noqa: F841 — kept for logging
 
@@ -175,7 +175,7 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
     if row.get("status") != "open":
         raise ValueError(f"position {position_id} is not open (status={row.get('status')})")
 
-    client = BinanceTestnetClient()
+    client = BinanceClient(mode="testnet")
     direction = row["direction"]
     is_long = direction in ("long", "buy")
     # Close = opposite side + reduceOnly

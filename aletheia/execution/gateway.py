@@ -188,7 +188,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 return {"status": "error", "proposal_id": proposal.id, "message": str(e),
                         "exchange_order_id": exchange_oid}
 
-        elif allowed_mode in ("bitget_live_limited", "okx_live_limited"):
+        elif allowed_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited"):
             # Defense in depth: risk engine already checked live_disabled, but re-check here.
             if cfg.live.state == "live_disabled":
                 update_trade_proposal(proposal.id, status="rejected")
@@ -206,6 +206,8 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
             try:
                 if allowed_mode == "okx_live_limited":
                     from aletheia.execution.okx_broker import execute_live_order
+                elif allowed_mode == "binance_live_limited":
+                    from aletheia.execution.binance_broker import execute_live_order
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
                 result = execute_live_order(

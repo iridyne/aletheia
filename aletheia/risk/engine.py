@@ -30,7 +30,7 @@ _LIVE_ELIGIBLE_STATES = {"live_candidate", "live_limited"}
 
 
 def _is_live(execution_mode: str) -> bool:
-    return execution_mode in ("bitget_live_limited", "okx_live_limited")
+    return execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited")
 
 
 def _market_data_age_seconds(symbol: str) -> float | None:
@@ -98,7 +98,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
 
     # 3. Live state
     live_state = cfg.live.state
-    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited") and live_state == "live_disabled":
+    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited") and live_state == "live_disabled":
         violations.append("live_disabled")
 
     # 4. Permission mode
@@ -160,9 +160,9 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             _trip(reason=f"daily loss {realized} breached limit -{daily_loss_limit}", actor="system")
 
     # 9a. Exchange allowlist — reject if target exchange != allowed_exchange.
-    # binance_testnet and okx_demo/okx_live_limited are self-contained (own credentials,
-    # independent of cfg.exchange) so they're exempt from allowlist and mode-match checks.
-    if proposal.execution_mode in ("binance_testnet", "okx_demo", "okx_live_limited"):
+    # binance_testnet/binance_live_limited and okx_demo/okx_live_limited are self-contained
+    # (own credentials, independent of cfg.exchange) so exempt from allowlist checks.
+    if proposal.execution_mode in ("binance_testnet", "binance_live_limited", "okx_demo", "okx_live_limited"):
         pass  # self-contained exchange modes use their own credentials
     else:
         if risk.allowed_exchange and cfg.exchange.name != risk.allowed_exchange:

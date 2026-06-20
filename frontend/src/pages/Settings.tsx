@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
@@ -94,6 +94,11 @@ export default function Settings() {
   const [tab, setTab] = useState<Tab>(() => {
     return parseTab(searchParams.get('tab')) ?? 'agent'
   })
+  const dirtyRef = useRef<Set<string>>(new Set())
+  const registerDirty = (id: string, isDirty: boolean) => {
+    if (isDirty) dirtyRef.current.add(id)
+    else dirtyRef.current.delete(id)
+  }
 
   useEffect(() => {
     const requestedTab = parseTab(searchParams.get('tab'))
@@ -110,6 +115,10 @@ export default function Settings() {
   }, [searchParams, tab, settings])
 
   const selectTab = (next: Tab) => {
+    if (dirtyRef.current.size > 0) {
+      if (!confirm('You have unsaved changes on this tab. Switch tabs and discard them?')) return
+    }
+    dirtyRef.current.clear()
     setTab(next)
     const nextParams = new URLSearchParams(searchParams)
     nextParams.set('tab', next)
@@ -117,7 +126,16 @@ export default function Settings() {
     setSearchParams(nextParams, { replace: true })
   }
 
-  if (!status || !settings) return <p className="hint">Loading…</p>
+  if (!status || !settings) return (
+    <div className="skeleton" style={{ maxWidth: '600px', paddingTop: 'var(--space-6)' }}>
+      <div className="skeleton-bar" />
+      <div className="skeleton-bar" />
+      <div className="skeleton-bar" />
+      <div className="skeleton-bar" style={{ width: '38%' }} />
+      <div className="skeleton-bar" style={{ width: '62%', marginTop: 'var(--space-4)' }} />
+      <div className="skeleton-bar" />
+    </div>
+  )
 
   return (
     <div>
@@ -137,10 +155,10 @@ export default function Settings() {
         </aside>
         <div className="settings-panel">
           {tab === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} />}
-          {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} />}
-          {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} />}
+          {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
+          {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} />}
-          {tab === 'runtime'   && <RuntimeSystemTab      settings={settings} qc={qc} />}
+          {tab === 'runtime'   && <RuntimeSystemTab      settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'advanced'  && <AdvancedTab           settings={settings} />}
         </div>
       </div>
@@ -180,7 +198,11 @@ function AgentModelsTab({ status, settings, qc }: any) {
         description="Controls how much autonomy agents have over trading decisions. Changes are audited."
       >
         <Row label="Permission mode" hint="Observe → Paper → Full. Increasing autonomy at each step.">
-          <select value={perm} onChange={e => permMut.mutate(e.target.value)} className="w-auto">
+          <select value={perm} onChange={e => {
+            const next = e.target.value
+            if (!confirm(`Change permission mode to "${next}"? This affects agent autonomy and is audited.`)) return
+            permMut.mutate(next)
+          }} className="w-auto">
             {PERMISSION_MODES.map(m => <option key={m}>{m}</option>)}
           </select>
         </Row>
@@ -199,7 +221,10 @@ function AgentModelsTab({ status, settings, qc }: any) {
         >
           <Toggle
             checked={schedulerEnabled}
-            onChange={v => runtimeMut.mutate({ scheduler_enabled: v })}
+            onChange={v => {
+              if (!v && !confirm('Disable the scheduler? All agent jobs will stop firing automatically.')) return
+              runtimeMut.mutate({ scheduler_enabled: v })
+            }}
             disabled={runtimeMut.isPending}
           />
         </Row>
@@ -276,7 +301,7 @@ function StrategyFactoryCard({ settings, qc }: any) {
 
 // ─── Universe config ───
 
-function UniverseConfigCard({ settings, qc }: any) {
+function UniverseConfigCard({ settings, qc, onDirty }: any) {
   const universe = settings?.universe as any
   const [enabled, setEnabled] = useState(false)
   const [refreshMin, setRefreshMin] = useState('10')
@@ -293,6 +318,7 @@ function UniverseConfigCard({ settings, qc }: any) {
   const [marketType, setMarketType] = useState('crypto')
   const [familyQuota, setFamilyQuota] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [changed, setChanged] = useState(false)
 
   useEffect(() => {
     if (!universe) return
@@ -336,62 +362,67 @@ function UniverseConfigCard({ settings, qc }: any) {
         family_quota: fqParsed,
       })
     },
-    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); setChanged(false); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
+
+  useEffect(() => {
+    onDirty?.('universe-config', changed)
+    return () => onDirty?.('universe-config', false)
+  }, [changed])
 
   if (!universe) return null
 
   return (
     <div className="card mb-0">
       <div className="flex items-center gap-3 mb-3">
-        <Toggle checked={enabled} onChange={v => { setEnabled(v); setMsg(null) }} />
+        <Toggle checked={enabled} onChange={v => { setEnabled(v); setChanged(true); setMsg(null) }} />
         {!enabled && <span className="hint m-0">Agents use static symbol list (BTC/ETH/SOL) when disabled.</span>}
       </div>
       <div className="settings-field-grid">
         <label className="settings-field">
           <span>Refresh interval (min)</span>
           <input type="number" min={1} max={60} step={1} value={refreshMin}
-            onChange={e => { setRefreshMin(e.target.value); setMsg(null) }} />
+            onChange={e => { setRefreshMin(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <label className="settings-field">
           <span>Max candidates</span>
           <input type="number" min={5} max={100} step={1} value={maxCandidates}
-            onChange={e => { setMaxCandidates(e.target.value); setMsg(null) }} />
+            onChange={e => { setMaxCandidates(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <label className="settings-field">
           <span>Core pool size</span>
           <input type="number" min={1} max={50} step={1} value={corePool}
-            onChange={e => { setCorePool(e.target.value); setMsg(null) }} />
+            onChange={e => { setCorePool(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <label className="settings-field">
           <span>Min 24h volume (USDT)</span>
           <input type="number" min={100000} max={500000000} step={100000} value={minVolume}
-            onChange={e => { setMinVolume(e.target.value); setMsg(null) }} />
+            onChange={e => { setMinVolume(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <label className="settings-field">
           <span>Max spread (bps)</span>
           <input type="number" min={1} max={200} step={1} value={maxSpread}
-            onChange={e => { setMaxSpread(e.target.value); setMsg(null) }} />
+            onChange={e => { setMaxSpread(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <label className="settings-field">
           <span>Min depth @ 10bps (USD)</span>
           <input type="number" min={1000} max={10000000} step={1000} value={minDepth}
-            onChange={e => { setMinDepth(e.target.value); setMsg(null) }} />
+            onChange={e => { setMinDepth(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <label className="settings-field">
           <span>Explore ratio</span>
           <input type="number" min={0} max={0.5} step={0.05} value={exploreRatio}
-            onChange={e => { setExploreRatio(e.target.value); setMsg(null) }} />
+            onChange={e => { setExploreRatio(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <label className="settings-field">
           <span>Snapshot TTL</span>
           <div className="flex items-center gap-2">
-            <Toggle checked={snapshotTtlEnabled} onChange={v => { setSnapshotTtlEnabled(v); setMsg(null) }} />
+            <Toggle checked={snapshotTtlEnabled} onChange={v => { setSnapshotTtlEnabled(v); setChanged(true); setMsg(null) }} />
             <input type="number" min={1} max={72} step={1} value={snapshotTtlHours}
               disabled={!snapshotTtlEnabled}
-              onChange={e => { setSnapshotTtlHours(e.target.value); setMsg(null) }} />
-            <span className="hint m-0">hrs</span>
+              onChange={e => { setSnapshotTtlHours(e.target.value); setChanged(true); setMsg(null) }} />
+            <span className="hint m-0">hrs{!snapshotTtlEnabled ? ' (disabled — toggle on to edit)' : ''}</span>
           </div>
         </label>
       </div>
@@ -399,20 +430,20 @@ function UniverseConfigCard({ settings, qc }: any) {
         <label>
           <span>Universe blacklist</span>
           <input value={blacklist} placeholder="DOGE/USDT, PEPE/USDT"
-            onChange={e => { setBlacklist(e.target.value); setMsg(null) }}
+            onChange={e => { setBlacklist(e.target.value); setChanged(true); setMsg(null) }}
             className="mono" />
         </label>
         <label>
           <span>Fallback symbols</span>
           <input value={fallbackSymbols} placeholder="BTC/USDT, ETH/USDT, SOL/USDT"
-            onChange={e => { setFallbackSymbols(e.target.value); setMsg(null) }}
+            onChange={e => { setFallbackSymbols(e.target.value); setChanged(true); setMsg(null) }}
             className="mono" />
         </label>
       </div>
       <div className="form-grid mb-3">
         <label>
           <span>Market type</span>
-          <select value={marketType} onChange={e => { setMarketType(e.target.value); setMsg(null) }} className="w-auto">
+          <select value={marketType} onChange={e => { setMarketType(e.target.value); setChanged(true); setMsg(null) }} className="w-auto">
             <option value="crypto">crypto</option>
             <option value="stocks">stocks</option>
             <option value="mixed">mixed</option>
@@ -426,13 +457,25 @@ function UniverseConfigCard({ settings, qc }: any) {
             <label className="settings-field" key={family}>
               <span>{humanize(family)}</span>
               <input type="number" min={0} max={1} step={0.05} value={val}
-                onChange={e => { setFamilyQuota(prev => ({ ...prev, [family]: e.target.value })); setMsg(null) }} />
+                onChange={e => { setFamilyQuota(prev => ({ ...prev, [family]: e.target.value })); setChanged(true); setMsg(null) }} />
             </label>
           ))}
         </div>
+        {(() => {
+          const total = Object.values(familyQuota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
+          const ok = Math.abs(total - 1.0) < 0.001
+          return <div style={{ fontSize: '0.72rem', color: ok ? 'var(--green)' : 'var(--red)', marginTop: 'var(--space-1)' }}>Total: {total.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
+        })()}
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
+        <button onClick={() => {
+          const total = Object.values(familyQuota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
+          if (Math.abs(total - 1.0) > 0.001) {
+            setMsg({ ok: false, text: `Family quota must sum to 1.0 (currently ${total.toFixed(3)})` })
+            return
+          }
+          mut.mutate()
+        }} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
       </div>
       <SaveMsg msg={msg} />
       <p className="hint">
@@ -448,54 +491,43 @@ function UniverseConfigCard({ settings, qc }: any) {
 // EXECUTION TAB — exchange, credentials, mode, markets, live unlock, trading params
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ExecutionTab({ status, settings, qc }: any) {
+function ExecutionTab({ status, settings, qc, onDirty }: any) {
   return (
     <div>
       <Section
         title="Exchange Connection"
-        description="Bitget API credentials for demo and live profiles. All three fields must be present for a live connection test."
+        description="Configure exchange API credentials. Select an exchange and profile, then enter your credentials."
       >
-        <ExchangeCredentialsCard qc={qc} />
-      </Section>
-
-      <Section
-        title="Binance Futures Testnet"
-        description="Credentials for Binance USDT-M Futures Testnet (556 pairs). Get keys from testnet.binancefuture.com."
-      >
-        <BinanceTestnetCredentialsCard qc={qc} />
-      </Section>
-
-      <Section
-        title="OKX Simulated Trading"
-        description="Credentials for OKX demo (simulated trading) account. Unsupported symbols are auto-filtered with O(1) lookup."
-      >
-        <OkxCredentialsCard qc={qc} />
+        <ExchangeConnectionCard qc={qc} />
       </Section>
 
       <Section title="Trading Mode" description="Switch between demo (paper trading) and live execution. Live requires explicit unlock below.">
         <ExchangeModeRow status={status} qc={qc} />
-        <ExchangeMarketsRow settings={settings} qc={qc} />
-        <LiveStateRow status={status} qc={qc} />
+        <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
+        <div className="danger-zone">
+          <div className="danger-zone-header">Danger Zone</div>
+          <LiveStateRow status={status} qc={qc} />
+        </div>
       </Section>
 
       <Section
         title="Paper Trading Parameters"
         description="Default exit rules applied when the paper position manager opens a new trade."
       >
-        <TradingParamsCard settings={settings} qc={qc} />
+        <TradingParamsCard settings={settings} qc={qc} onDirty={onDirty} />
       </Section>
 
       <Section
         title="Market Data Sources"
         description="Primary and fallback exchanges for OHLCV, orderbook, and ticker data. Agents use CCXT for all market queries."
       >
-        <MarketDataCard settings={settings} qc={qc} />
+        <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
       </Section>
     </div>
   )
 }
 
-function MarketDataCard({ settings, qc }: any) {
+function MarketDataCard({ settings, qc, onDirty }: any) {
   const md = settings?.market_data || {}
   const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'gate', 'kucoin', 'htx']
 
@@ -539,6 +571,8 @@ function MarketDataCard({ settings, qc }: any) {
     || stocks !== listToCsv(md.observed_stocks)
     || xstocks !== listToCsv(md.observed_xstocks)
     || predMarkets !== listToCsv(md.observed_prediction_markets)
+
+  useEffect(() => { onDirty?.('market-data', dirty) }, [dirty])
 
   return (
     <>
@@ -595,7 +629,11 @@ function ExchangeModeRow({ status, qc }: any) {
   })
   return (
     <Row label="Exchange mode" hint="demo uses Bitget paper trading; live requires unlocking below and real credentials.">
-      <select value={String(status.exchange_mode)} onChange={e => mut.mutate(e.target.value)} className="w-auto">
+      <select value={String(status.exchange_mode)} onChange={e => {
+        const next = e.target.value
+        if (next === 'live' && !confirm('Switch to live mode? Real orders will execute against real funds.')) return
+        mut.mutate(next)
+      }} className="w-auto">
         <option value="demo">demo</option>
         <option value="live">live</option>
       </select>
@@ -603,7 +641,7 @@ function ExchangeModeRow({ status, qc }: any) {
   )
 }
 
-function ExchangeMarketsRow({ settings, qc }: any) {
+function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
   const markets = (settings?.exchange as any)?.enabled_markets || { spot: true, usdt_futures: true }
   const serverPaperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
   const [spot, setSpot] = useState(!!markets.spot)
@@ -626,6 +664,8 @@ function ExchangeMarketsRow({ settings, qc }: any) {
   const dirty = spot !== !!markets.spot || futures !== !!markets.usdt_futures
     || paperMode !== serverPaperMode
 
+  useEffect(() => { onDirty?.('exchange-markets', dirty) }, [dirty])
+
   return (
     <>
       <Row label="Enabled markets" hint="Which Bitget market types agents can place orders in. At least one must be enabled.">
@@ -634,10 +674,10 @@ function ExchangeMarketsRow({ settings, qc }: any) {
       </Row>
       <Row label="Paper execution mode" hint="Where autonomous paper orders execute. okx_demo = OKX simulated trading (broad coverage); binance_testnet = Binance Futures Testnet (556 pairs); bitget_demo = Bitget demo API (42 pairs); paper_internal = local simulator (no exchange).">
         <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setMsg(null) }} className="w-auto">
-          <option value="okx_demo">okx_demo</option>
-          <option value="binance_testnet">binance_testnet</option>
-          <option value="bitget_demo">bitget_demo</option>
-          <option value="paper_internal">paper_internal</option>
+          <option value="okx_demo">OKX Demo</option>
+          <option value="binance_testnet">Binance Testnet</option>
+          <option value="bitget_demo">Bitget Demo</option>
+          <option value="paper_internal">Paper (internal)</option>
         </select>
         {dirty && (
           <button className="secondary" onClick={() => mut.mutate()} disabled={mut.isPending || (!spot && !futures)}>
@@ -683,64 +723,184 @@ function LiveStateRow({ status, qc }: any) {
 
 // ─── Exchange credentials ───
 
-function ExchangeProfileStatus({ profile, configured }: { profile: 'demo' | 'live'; configured: boolean }) {
-  const { data } = useQuery({
-    queryKey: ['bitget-test', profile], queryFn: () => api.testBitget(profile),
-    refetchInterval: 10000, enabled: configured,
-  })
-  let state: ConnState = 'muted'
-  let text = 'not configured'
-  if (configured) {
-    if (!data) { state = 'yellow'; text = 'checking…' }
-    else if (data.connected) { state = 'green'; text = 'connected' }
-    else { state = 'red'; text = `✗ ${data.error || 'unreachable'}` }
-  }
-  return <ConnectionStatus label={`bitget ${profile}`} state={state} text={text} />
-}
+// ─── Unified Exchange Connection Card ───
 
-function ExchangeCredentialsCard({ qc }: any) {
-  const { data } = useQuery({ queryKey: ['bitgetCreds'], queryFn: api.getBitgetCredStatus })
-  const [profile, setProfile] = useState<'demo' | 'live'>('demo')
+const EXCHANGE_CONFIG = [
+  { id: 'bitget', name: 'Bitget', profiles: ['demo', 'live'] as const, hasPassphrase: true },
+  { id: 'binance', name: 'Binance', profiles: ['testnet', 'live'] as const, hasPassphrase: false },
+  { id: 'okx', name: 'OKX', profiles: ['demo', 'live'] as const, hasPassphrase: true },
+] as const
+
+type ExchangeId = typeof EXCHANGE_CONFIG[number]['id']
+
+function ExchangeConnectionCard({ qc }: any) {
+  const [exchange, setExchange] = useState<ExchangeId>('bitget')
+  const exCfg = EXCHANGE_CONFIG.find(e => e.id === exchange)!
+  const [profile, setProfile] = useState<string>(exCfg.profiles[0])
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
-  const cur = data?.[profile]
-  const fullTriple = !!(apiKey && apiSecret && passphrase)
+  // Reset form when switching exchange/profile
+  useEffect(() => {
+    setApiKey(''); setApiSecret(''); setPassphrase(''); setResult(null)
+  }, [exchange, profile])
 
+  // Ensure profile is valid for the selected exchange
+  useEffect(() => {
+    const cfg = EXCHANGE_CONFIG.find(e => e.id === exchange)!
+    if (!cfg.profiles.includes(profile as any)) {
+      setProfile(cfg.profiles[0])
+    }
+  }, [exchange, profile])
+
+  // Credential status queries
+  const bitgetCreds = useQuery({ queryKey: ['bitgetCreds'], queryFn: api.getBitgetCredStatus })
+  const binanceCreds = useQuery({ queryKey: ['binanceCreds'], queryFn: api.getBinanceCredStatus })
+  const okxCreds = useQuery({ queryKey: ['okxCreds'], queryFn: api.getOkxCredStatus })
+
+  const getCredData = () => {
+    if (exchange === 'bitget') return bitgetCreds.data
+    if (exchange === 'binance') return binanceCreds.data
+    return okxCreds.data
+  }
+
+  const credData = getCredData()
+  const cur = credData?.[profile as keyof typeof credData] as any
+
+  // Connection test queries for all profiles of current exchange
+  const bitgetDemoTest = useQuery({
+    queryKey: ['exchange-test', 'bitget', 'demo'],
+    queryFn: () => api.testBitget('demo'),
+    refetchInterval: 12000,
+    enabled: !!bitgetCreds.data?.demo?.api_key?.configured,
+  })
+  const bitgetLiveTest = useQuery({
+    queryKey: ['exchange-test', 'bitget', 'live'],
+    queryFn: () => api.testBitget('live'),
+    refetchInterval: 12000,
+    enabled: !!bitgetCreds.data?.live?.api_key?.configured,
+  })
+  const binanceTestnetTest = useQuery({
+    queryKey: ['exchange-test', 'binance', 'testnet'],
+    queryFn: () => api.testBinance('testnet'),
+    refetchInterval: 15000,
+    enabled: !!binanceCreds.data?.testnet?.api_key?.configured,
+  })
+  const binanceLiveTest = useQuery({
+    queryKey: ['exchange-test', 'binance', 'live'],
+    queryFn: () => api.testBinance('live'),
+    refetchInterval: 15000,
+    enabled: !!binanceCreds.data?.live?.api_key?.configured,
+  })
+  const okxDemoTest = useQuery({
+    queryKey: ['exchange-test', 'okx', 'demo'],
+    queryFn: () => api.testOkx('demo'),
+    refetchInterval: 15000,
+    enabled: !!okxCreds.data?.demo?.api_key?.configured,
+  })
+  const okxLiveTest = useQuery({
+    queryKey: ['exchange-test', 'okx', 'live'],
+    queryFn: () => api.testOkx('live'),
+    refetchInterval: 15000,
+    enabled: !!okxCreds.data?.live?.api_key?.configured,
+  })
+
+  const getTestResult = (exId: string, prof: string) => {
+    const map: Record<string, any> = {
+      'bitget:demo': bitgetDemoTest, 'bitget:live': bitgetLiveTest,
+      'binance:testnet': binanceTestnetTest, 'binance:live': binanceLiveTest,
+      'okx:demo': okxDemoTest, 'okx:live': okxLiveTest,
+    }
+    return map[`${exId}:${prof}`]
+  }
+
+  const getConnStatus = (exId: string, prof: string): { state: ConnState; text: string } => {
+    const cData = exId === 'bitget' ? bitgetCreds.data : exId === 'binance' ? binanceCreds.data : okxCreds.data
+    const profData = cData?.[prof as keyof typeof cData] as any
+    const configured = !!profData?.api_key?.configured
+    if (!configured) return { state: 'muted', text: 'not configured' }
+    const testQ = getTestResult(exId, prof)
+    if (!testQ?.data) return { state: 'yellow', text: 'checking…' }
+    if (testQ.data.connected) return { state: 'green', text: 'connected' }
+    return { state: 'red', text: `✗ ${testQ.data.error || 'unreachable'}` }
+  }
+
+  // Verify & Save
   const verifyAndSave = useMutation({
     mutationFn: async () => {
       setResult(null)
-      if (fullTriple) {
-        const test = await api.testBitgetCandidate({ profile, api_key: apiKey, api_secret: apiSecret, passphrase })
-        if (!test.connected) throw new Error(test.error || 'connection failed')
+      const hasAllRequired = exCfg.hasPassphrase
+        ? !!(apiKey && apiSecret && passphrase)
+        : !!(apiKey && apiSecret)
+
+      if (hasAllRequired) {
+        // Test candidate before saving
+        let testResult: any
+        if (exchange === 'bitget') {
+          testResult = await api.testBitgetCandidate({ profile, api_key: apiKey, api_secret: apiSecret, passphrase })
+        } else if (exchange === 'binance') {
+          testResult = await api.testBinanceCandidate({ mode: profile, api_key: apiKey, api_secret: apiSecret })
+        } else {
+          testResult = await api.testOkxCandidate({ mode: profile, api_key: apiKey, api_secret: apiSecret, passphrase })
+        }
+        if (!testResult.connected) throw new Error(testResult.error || 'connection failed')
       }
-      await api.setExchangeCredentials({
-        profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined, passphrase: passphrase || undefined,
-      })
-      return fullTriple
+
+      // Save credentials
+      if (exchange === 'bitget') {
+        await api.setBitgetCredentials({ profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined, passphrase: passphrase || undefined })
+      } else if (exchange === 'binance') {
+        await api.setBinanceCredentials({ profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined })
+      } else {
+        await api.setOkxCredentials({ profile, api_key: apiKey || undefined, api_secret: apiSecret || undefined, passphrase: passphrase || undefined })
+      }
+
+      return hasAllRequired
     },
     onSuccess: (tested) => {
       setApiKey(''); setApiSecret(''); setPassphrase('')
       setResult({ ok: true, msg: tested ? '✓ verified & saved' : '✓ saved (partial)' })
       qc.invalidateQueries({ queryKey: ['bitgetCreds'] })
-      qc.invalidateQueries({ queryKey: ['bitget-test', profile] })
+      qc.invalidateQueries({ queryKey: ['binanceCreds'] })
+      qc.invalidateQueries({ queryKey: ['okxCreds'] })
+      qc.invalidateQueries({ queryKey: ['exchange-test', exchange, profile] })
     },
     onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message} — not saved` }),
   })
 
+  const dirty = exCfg.hasPassphrase ? !!(apiKey || apiSecret || passphrase) : !!(apiKey || apiSecret)
+
   return (
     <div className="card mb-0">
-      <div className="mb-3">
-        <ExchangeProfileStatus profile="demo" configured={!!data?.demo?.api_key?.configured} />
-        <ExchangeProfileStatus profile="live" configured={!!data?.live?.api_key?.configured} />
-      </div>
+      {/* Exchange selector */}
       <div className="flex gap-2 mb-3">
-        {(['demo', 'live'] as const).map(p => (
-          <button key={p} className={profile === p ? '' : 'secondary'} onClick={() => { setProfile(p); setResult(null) }}>{p}</button>
+        <select value={exchange} onChange={e => setExchange(e.target.value as ExchangeId)} style={{ flex: 1 }}>
+          {EXCHANGE_CONFIG.map(ex => (
+            <option key={ex.id} value={ex.id}>{ex.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Profile tabs */}
+      <div className="flex gap-2 mb-3">
+        {exCfg.profiles.map(p => (
+          <button key={p} className={profile === p ? '' : 'secondary'} onClick={() => setProfile(p)}>
+            {p === 'testnet' ? 'Testnet' : p === 'demo' ? 'Demo' : 'Live'}
+          </button>
         ))}
       </div>
+
+      {/* Connection status for all profiles of this exchange */}
+      <div className="mb-3">
+        {exCfg.profiles.map(p => {
+          const { state, text } = getConnStatus(exchange, p)
+          return <ConnectionStatus key={p} label={`${exCfg.name} ${p}`} state={state} text={text} />
+        })}
+      </div>
+
+      {/* Credential fields */}
       <div className="form-grid">
         <label>
           <span>API Key{cur?.api_key?.configured ? ` (··${cur.api_key.last4})` : ''}</span>
@@ -750,165 +910,37 @@ function ExchangeCredentialsCard({ qc }: any) {
           <span>API Secret{cur?.api_secret?.configured ? ' (set)' : ''}</span>
           <input type="password" value={apiSecret} placeholder={cur?.api_secret?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiSecret(e.target.value)} />
         </label>
-        <label>
-          <span>Passphrase{cur?.passphrase?.configured ? ' (set)' : ''}</span>
-          <input type="password" value={passphrase} placeholder={cur?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} />
-        </label>
+        {exCfg.hasPassphrase && (
+          <label>
+            <span>Passphrase{cur?.passphrase?.configured ? ' (set)' : ''}</span>
+            <input type="password" value={passphrase} placeholder={cur?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} />
+          </label>
+        )}
       </div>
+
+      {/* Save button */}
       <div className="flex gap-2 mt-3">
-        <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
-          {verifyAndSave.isPending ? 'Verifying…' : `Verify & Save ${profile}`}
+        <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending || !dirty}>
+          {verifyAndSave.isPending ? 'Verifying…' : `Verify & Save`}
         </button>
       </div>
       {result && <div className={`settings-save-msg ${result.ok ? 'ok' : 'err'}`}>{result.msg}</div>}
-      <p className="hint">Enter all three fields to test the connection live before saving. Credentials are write-only.</p>
-    </div>
-  )
-}
-
-// ─── Binance Testnet credentials ───
-
-function BinanceTestnetCredentialsCard({ qc }: any) {
-  const { data } = useQuery({ queryKey: ['binanceTestnetCreds'], queryFn: api.getBinanceTestnetCredStatus })
-  const [apiKey, setApiKey] = useState('')
-  const [apiSecret, setApiSecret] = useState('')
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
-
-  const testConn = useQuery({
-    queryKey: ['binance-testnet-test'],
-    queryFn: () => api.testBinanceTestnet(),
-    refetchInterval: 15000,
-    enabled: !!(data?.api_key?.configured && data?.api_secret?.configured),
-  })
-
-  const saveMut = useMutation({
-    mutationFn: async () => {
-      setResult(null)
-      await api.setBinanceTestnetCredentials({
-        api_key: apiKey || undefined,
-        api_secret: apiSecret || undefined,
-      })
-    },
-    onSuccess: () => {
-      setApiKey(''); setApiSecret('')
-      setResult({ ok: true, msg: '✓ saved' })
-      qc.invalidateQueries({ queryKey: ['binanceTestnetCreds'] })
-      qc.invalidateQueries({ queryKey: ['binance-testnet-test'] })
-    },
-    onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message}` }),
-  })
-
-  let connState: ConnState = 'muted'
-  let connText = 'not configured'
-  if (data?.api_key?.configured && data?.api_secret?.configured) {
-    if (!testConn.data) { connState = 'yellow'; connText = 'checking…' }
-    else if (testConn.data.connected) { connState = 'green'; connText = 'connected' }
-    else { connState = 'red'; connText = `✗ ${testConn.data.error || 'unreachable'}` }
-  }
-
-  return (
-    <div className="card mb-0">
-      <div className="mb-3">
-        <ConnectionStatus label="binance testnet" state={connState} text={connText} />
-      </div>
-      <div className="form-grid">
-        <label>
-          <span>API Key{data?.api_key?.configured ? ` (··${data.api_key.last4})` : ''}</span>
-          <input type="password" value={apiKey} placeholder={data?.api_key?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiKey(e.target.value)} />
-        </label>
-        <label>
-          <span>API Secret{data?.api_secret?.configured ? ' (set)' : ''}</span>
-          <input type="password" value={apiSecret} placeholder={data?.api_secret?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiSecret(e.target.value)} />
-        </label>
-      </div>
-      <div className="flex gap-2 mt-3">
-        <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || (!apiKey && !apiSecret)}>
-          {saveMut.isPending ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-      {result && <div className={`settings-save-msg ${result.ok ? 'ok' : 'err'}`}>{result.msg}</div>}
-      <p className="hint">Get testnet credentials from testnet.binancefuture.com. No passphrase needed.</p>
-    </div>
-  )
-}
-
-function OkxCredentialsCard({ qc }: any) {
-  const { data } = useQuery({ queryKey: ['okxCreds'], queryFn: api.getOkxCredStatus })
-  const [apiKey, setApiKey] = useState('')
-  const [apiSecret, setApiSecret] = useState('')
-  const [passphrase, setPassphrase] = useState('')
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
-
-  const allConfigured = !!(data?.api_key?.configured && data?.api_secret?.configured && data?.passphrase?.configured)
-
-  const testConn = useQuery({
-    queryKey: ['okx-test'],
-    queryFn: () => api.testOkx(),
-    refetchInterval: 15000,
-    enabled: allConfigured,
-  })
-
-  const saveMut = useMutation({
-    mutationFn: async () => {
-      setResult(null)
-      await api.setOkxCredentials({
-        api_key: apiKey || undefined,
-        api_secret: apiSecret || undefined,
-        passphrase: passphrase || undefined,
-      })
-    },
-    onSuccess: () => {
-      setApiKey(''); setApiSecret(''); setPassphrase('')
-      setResult({ ok: true, msg: '✓ saved' })
-      qc.invalidateQueries({ queryKey: ['okxCreds'] })
-      qc.invalidateQueries({ queryKey: ['okx-test'] })
-    },
-    onError: (e: any) => setResult({ ok: false, msg: `✗ ${e.message}` }),
-  })
-
-  let connState: ConnState = 'muted'
-  let connText = 'not configured'
-  if (allConfigured) {
-    if (!testConn.data) { connState = 'yellow'; connText = 'checking…' }
-    else if (testConn.data.connected) { connState = 'green'; connText = 'connected' }
-    else { connState = 'red'; connText = `✗ ${testConn.data.error || 'unreachable'}` }
-  }
-
-  const dirty = !!(apiKey || apiSecret || passphrase)
-
-  return (
-    <div className="card mb-0">
-      <div className="mb-3">
-        <ConnectionStatus label="okx demo" state={connState} text={connText} />
-      </div>
-      <div className="form-grid">
-        <label>
-          <span>API Key{data?.api_key?.configured ? ` (··${data.api_key.last4})` : ''}</span>
-          <input type="password" value={apiKey} placeholder={data?.api_key?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiKey(e.target.value)} />
-        </label>
-        <label>
-          <span>API Secret{data?.api_secret?.configured ? ' (set)' : ''}</span>
-          <input type="password" value={apiSecret} placeholder={data?.api_secret?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setApiSecret(e.target.value)} />
-        </label>
-        <label>
-          <span>Passphrase{data?.passphrase?.configured ? ' (set)' : ''}</span>
-          <input type="password" value={passphrase} placeholder={data?.passphrase?.configured ? '•••••• (keep)' : 'paste'} onChange={e => setPassphrase(e.target.value)} />
-        </label>
-      </div>
-      <div className="flex gap-2 mt-3">
-        <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !dirty}>
-          {saveMut.isPending ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-      {result && <div className={`settings-save-msg ${result.ok ? 'ok' : 'err'}`}>{result.msg}</div>}
-      <p className="hint">OKX simulated trading credentials. Symbols unsupported by OKX demo are automatically filtered before order placement.</p>
+      <p className="hint">
+        {profile === 'live'
+          ? 'Live credentials connect to the real exchange. Ensure risk limits are configured before trading.'
+          : exchange === 'binance'
+            ? 'Get testnet credentials from testnet.binancefuture.com.'
+            : `${exCfg.name} ${profile} uses simulated trading — no real funds at risk.`
+        }
+        {' '}Credentials are write-only.
+      </p>
     </div>
   )
 }
 
 // ─── Trading parameters ───
 
-function TradingParamsCard({ settings, qc }: any) {
+function TradingParamsCard({ settings, qc, onDirty }: any) {
   const trading = settings?.trading as any
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
@@ -943,6 +975,8 @@ function TradingParamsCard({ settings, qc }: any) {
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
+  const dirty = !!trading && (stopLoss !== String(trading.default_stop_loss_pct ?? 2) || takeProfit !== String(trading.default_take_profit_pct ?? 4) || holdHours !== String(trading.max_position_hold_hours ?? 72) || slippageBps !== String(trading.slippage_bps ?? 5) || executionFeePct !== String(trading.execution_fee_pct ?? 0.1) || confidence !== (trading.min_confidence_to_trade ?? 'medium') || autoAdopt !== (trading.auto_adopt_enabled !== false))
+  useEffect(() => { onDirty?.('trading-params', dirty) }, [dirty])
 
   if (!trading) return null
 
@@ -998,7 +1032,20 @@ function TradingParamsCard({ settings, qc }: any) {
         </p>
       </div>
       <div className="flex gap-2">
-        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
+        <button onClick={() => {
+          const checks: [string, string][] = [
+            ['Stop-loss', stopLoss], ['Take-profit', takeProfit],
+            ['Hold hours', holdHours], ['Slippage bps', slippageBps],
+            ['Execution fee', executionFeePct],
+          ]
+          for (const [label, val] of checks) {
+            if (!val || !Number.isFinite(parseFloat(val))) {
+              setMsg({ ok: false, text: `${label} must be a valid number` })
+              return
+            }
+          }
+          mut.mutate()
+        }} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
       </div>
       <SaveMsg msg={msg} />
       <p className="hint">Stop-loss / take-profit apply to new positions only. Existing positions keep their original exits.</p>
@@ -1010,7 +1057,7 @@ function TradingParamsCard({ settings, qc }: any) {
 // RISK & SYMBOLS TAB — allowed symbols, risk limits
 // ─────────────────────────────────────────────────────────────────────────────
 
-function RiskTab({ settings, qc }: any) {
+function RiskTab({ settings, qc, onDirty }: any) {
   return (
     <div>
       <Section
@@ -1018,7 +1065,7 @@ function RiskTab({ settings, qc }: any) {
         title="Universe Board"
         description="Controls the dynamic candidate selector shown on Universe Board. When disabled, agents use the static fallback list instead."
       >
-        <UniverseConfigCard settings={settings} qc={qc} />
+        <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
       </Section>
 
       <Section
@@ -1226,6 +1273,9 @@ function SymbolsCard({ settings, qc }: any) {
           </button>
         )}
       </div>
+      {mode === 'whitelist' && draft.length === 0 && dirty && (
+        <div className="settings-save-msg err" style={{ marginTop: 'var(--space-1)' }}>Add at least one symbol to save in whitelist mode</div>
+      )}
       <SaveMsg msg={msg} />
       <p className="hint">
         {mode === 'whitelist'
@@ -1377,7 +1427,7 @@ function HealthNotificationsTab({ settings, qc }: any) {
 // RUNTIME & SYSTEM TAB — display, app, retention, updates, autostart, network
 // ─────────────────────────────────────────────────────────────────────────────
 
-function RuntimeSystemTab({ settings, qc }: any) {
+function RuntimeSystemTab({ settings, qc, onDirty }: any) {
   return (
     <div>
       <Section title="Display" description="Visual formatting applied across the dashboard.">
@@ -1448,6 +1498,12 @@ function AppRows({ settings, qc }: any) {
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
+  const runtimePending = useRef(false)
+  const safeRuntimeMut = (body: any) => {
+    if (runtimePending.current) return
+    runtimePending.current = true
+    runtimeMut.mutate(body, { onSettled: () => { runtimePending.current = false } })
+  }
 
   const gitEnabled = !!runtime.git_enabled
 
@@ -1471,28 +1527,34 @@ function AppRows({ settings, qc }: any) {
         <Toggle checked={autoBrowser} onChange={v => appMut.mutate({ auto_open_browser: v })} disabled={appMut.isPending} />
       </Row>
       <Row label="Git versioning of data" hint="When enabled, knowledge, playbooks, and reports are committed to git automatically for history and rollback.">
-        <Toggle checked={gitEnabled} onChange={v => runtimeMut.mutate({ git_enabled: v })} disabled={runtimeMut.isPending} />
+        <Toggle checked={gitEnabled} onChange={v => {
+          if (!v && !confirm('Disable git versioning? Knowledge, playbooks, and reports will no longer be committed.')) return
+          safeRuntimeMut({ git_enabled: v })
+        }} disabled={runtimeMut.isPending} />
       </Row>
       <Row label="Auto-reload Python changes" hint="Development convenience for hot-reloading backend code. Turn off before a controlled live run.">
-        <Toggle checked={runtime.auto_reload !== false} onChange={v => runtimeMut.mutate({ auto_reload: v })} disabled={runtimeMut.isPending} />
+        <Toggle checked={runtime.auto_reload !== false} onChange={v => {
+          if (v && !confirm('Enable auto-reload? Code changes will hot-reload mid-run. Disable before controlled live sessions.')) return
+          safeRuntimeMut({ auto_reload: v })
+        }} disabled={runtimeMut.isPending} />
       </Row>
       <Row label="Enable autostart on gateway start" hint="When enabled, gateway start attempts to register the Windows watchdog/autostart task.">
-        <Toggle checked={runtime.autostart_on_start !== false} onChange={v => runtimeMut.mutate({ autostart_on_start: v })} disabled={runtimeMut.isPending} />
+        <Toggle checked={runtime.autostart_on_start !== false} onChange={v => safeRuntimeMut({ autostart_on_start: v })} disabled={runtimeMut.isPending} />
       </Row>
       <Row label="Runtime continuity" hint="Experimental: enables shadow gateway staging for zero-disruption upgrades. When off, updates use legacy restart.">
-        <Toggle checked={!!runtime.runtime_continuity_enabled} onChange={v => runtimeMut.mutate({ runtime_continuity_enabled: v })} disabled={runtimeMut.isPending} />
+        <Toggle checked={!!runtime.runtime_continuity_enabled} onChange={v => safeRuntimeMut({ runtime_continuity_enabled: v })} disabled={runtimeMut.isPending} />
       </Row>
       {!!runtime.runtime_continuity_enabled && (
         <>
           <Row label="Promote lock TTL" hint="Seconds the exclusive promote/rollback lock is held. Prevents concurrent transitions.">
             <input type="number" min={30} max={3600} value={runtime.runtime_continuity_lock_ttl_sec ?? 300}
-              onChange={e => runtimeMut.mutate({ runtime_continuity_lock_ttl_sec: Math.max(30, Math.min(3600, parseInt(e.target.value) || 300)) })}
+              onChange={e => safeRuntimeMut({ runtime_continuity_lock_ttl_sec: Math.max(30, Math.min(3600, parseInt(e.target.value) || 300)) })}
               disabled={runtimeMut.isPending} style={{ width: '80px' }} />
             <span className="hint m-0">sec</span>
           </Row>
           <Row label="Shadow port offset" hint="Shadow gateway listens on dashboard_port + this offset (e.g. 8787 + 100 = 8887).">
             <input type="number" min={1} max={10000} value={runtime.runtime_continuity_shadow_port_offset ?? 100}
-              onChange={e => runtimeMut.mutate({ runtime_continuity_shadow_port_offset: Math.max(1, Math.min(10000, parseInt(e.target.value) || 100)) })}
+              onChange={e => safeRuntimeMut({ runtime_continuity_shadow_port_offset: Math.max(1, Math.min(10000, parseInt(e.target.value) || 100)) })}
               disabled={runtimeMut.isPending} style={{ width: '80px' }} />
           </Row>
         </>
@@ -1965,6 +2027,7 @@ function ModelProviderCard({ qc }: any) {
           name={p}
           config={data.providers?.[p]}
           health={(health as any[]).find(x => x.provider === p)}
+          allHealth={health as any[]}
           isDefault={p === data.default_provider}
           isExpanded={expanded === p}
           onToggle={() => setExpanded(expanded === p ? null : p)}
@@ -1994,8 +2057,8 @@ function ModelPingButton() {
   )
 }
 
-function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, qc }: {
-  name: string; config: any; health: any; isDefault: boolean
+function ProviderCard({ name, config, health, allHealth, isDefault, isExpanded, onToggle, qc }: {
+  name: string; config: any; health: any; allHealth: any[]; isDefault: boolean
   isExpanded: boolean; onToggle: () => void; qc: any
 }) {
   const isHTTP = HTTP_PROVIDERS.has(name)
@@ -2078,7 +2141,15 @@ function ProviderCard({ name, config, health, isDefault, isExpanded, onToggle, q
         >
           <Toggle
             checked={enabled}
-            onCheckedChange={checked => toggleEnabled.mutate(checked)}
+            onCheckedChange={checked => {
+              if (!checked) {
+                const available = (allHealth || []).filter((h: any) => h.available)
+                if (available.length === 1 && available[0].provider === name) {
+                  if (!confirm(`"${PROVIDER_LABELS[name] || name}" is your only available provider. Disabling it will cut off all agents from LLM access. Disable anyway?`)) return
+                }
+              }
+              toggleEnabled.mutate(checked)
+            }}
             disabled={isDefault || toggleEnabled.isPending}
             aria-label={`${enabled ? 'Disable' : 'Enable'} ${PROVIDER_LABELS[name] || name}`}
           />

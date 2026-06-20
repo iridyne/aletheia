@@ -55,8 +55,8 @@ def test_settings_controls_match_backend_config_fields():
         assert field in settings
         assert field in client
 
-    assert '<option value="bitget_demo">bitget_demo</option>' in settings
-    assert '<option value="paper_internal">paper_internal</option>' in settings
+    assert '<option value="bitget_demo">' in settings
+    assert '<option value="paper_internal">' in settings
 
 
 def test_settings_uses_vertical_information_architecture_and_switches():

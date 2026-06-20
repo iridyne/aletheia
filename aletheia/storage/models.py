@@ -222,6 +222,7 @@ class StrategyRecord(BaseModel):
     direction_affinity: str = "both"
     applicable_regimes: str = "all"
     strategy_type: str = "scanner"
+    execution_venue: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
 

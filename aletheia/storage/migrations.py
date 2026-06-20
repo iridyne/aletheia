@@ -1375,6 +1375,8 @@ _ADDITIVE_COLUMNS = [
     ("direction_affinity", "strategy_records", "TEXT DEFAULT 'both'"),
     ("applicable_regimes", "strategy_records", "TEXT DEFAULT 'all'"),
     ("strategy_type", "strategy_records", "TEXT DEFAULT 'scanner'"),
+    # Strategy-Exchange Affinity: per-strategy execution venue override
+    ("execution_venue", "strategy_records", "TEXT"),
     # Batch 2 ATR sizing: volatility-scaled position notional
     ("atr_pct", "universe_members", "REAL"),
     ("entry_market_summary", "positions", "TEXT"),

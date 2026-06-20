@@ -194,6 +194,7 @@ export interface StrategyRecord {
   description: string | null
   state: string
   parameters: string | null
+  execution_venue: string | null
   created_at: string
   updated_at: string | null
 }

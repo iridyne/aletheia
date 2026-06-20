@@ -882,6 +882,25 @@ async def get_strategy(strategy_id: str):
     return s
 
 
+_VALID_VENUES = {"bitget_demo", "binance_testnet", "okx_demo", "paper_internal", None}
+
+
+class SetVenueRequest(BaseModel):
+    execution_venue: str | None = None
+
+
+@router.patch("/strategies/{strategy_id}/venue")
+async def set_strategy_venue(strategy_id: str, req: SetVenueRequest):
+    _ensure_db()
+    s = repo.get_strategy(strategy_id)
+    if s is None:
+        raise HTTPException(404, "Strategy not found")
+    if req.execution_venue and req.execution_venue not in _VALID_VENUES:
+        raise HTTPException(400, f"Invalid venue: {req.execution_venue}")
+    repo.update_strategy(strategy_id, execution_venue=req.execution_venue)
+    return {"strategy_id": strategy_id, "execution_venue": req.execution_venue}
+
+
 class PromoteRequest(BaseModel):
     target_state: str
 

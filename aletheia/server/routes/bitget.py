@@ -115,36 +115,50 @@ async def test_candidate_credentials(req: TestCandidateCredsRequest):
         return {"connected": False, "profile": req.profile, "error": err_msg}
 
 
-# ─── Binance Futures Testnet credentials ───
+# ─── Binance credentials ───
 
 
-def _binance_testnet_cred_status() -> dict:
+def _binance_cred_status() -> dict:
     out = {}
-    for field in ("api_key", "api_secret"):
-        val = get_secret(f"binance.testnet.{field}")
-        out[field] = {
-            "configured": bool(val),
-            "last4": (val[-4:] if val and len(val) >= 4 else None),
-        }
+    for profile in ("testnet", "live"):
+        profile_out = {}
+        for field in ("api_key", "api_secret"):
+            val = get_secret(f"binance.{profile}.{field}")
+            profile_out[field] = {
+                "configured": bool(val),
+                "last4": (val[-4:] if val and len(val) >= 4 else None),
+            }
+        out[profile] = profile_out
     return out
 
 
+@router.get("/binance/credentials-status")
+async def binance_credentials_status():
+    return _binance_cred_status()
+
+
+# Legacy endpoint — keep for backward compat during transition
 @router.get("/binance-testnet/credentials-status")
 async def binance_testnet_credentials_status():
-    return _binance_testnet_cred_status()
+    full = _binance_cred_status()
+    return full["testnet"]
 
 
-class BinanceTestnetCredentialsRequest(BaseModel):
+class BinanceCredentialsRequest(BaseModel):
+    profile: str = "testnet"
     api_key: str | None = None
     api_secret: str | None = None
 
 
-@router.post("/settings/binance-testnet-credentials")
-async def set_binance_testnet_credentials(req: BinanceTestnetCredentialsRequest):
+@router.post("/settings/binance-credentials")
+async def set_binance_credentials(req: BinanceCredentialsRequest):
+    if req.profile not in ("testnet", "live"):
+        raise HTTPException(400, "profile must be 'testnet' or 'live'")
+
     fields_set = []
     for field, value in (("api_key", req.api_key), ("api_secret", req.api_secret)):
         if value:
-            set_secret(f"binance.testnet.{field}", value)
+            set_secret(f"binance.{req.profile}.{field}", value)
             fields_set.append(field)
 
     if not fields_set:
@@ -154,27 +168,77 @@ async def set_binance_testnet_credentials(req: BinanceTestnetCredentialsRequest)
         "actor": "human",
         "source": "dashboard",
         "event_type": "exchange_credentials_changed",
-        "entity_type": "binance_testnet_credentials",
-        "entity_id": "testnet",
-        "message": f"Binance testnet credentials updated: {', '.join(fields_set)}",
+        "entity_type": "binance_credentials",
+        "entity_id": req.profile,
+        "message": f"Binance {req.profile} credentials updated: {', '.join(fields_set)}",
     })
 
-    return {"updated": fields_set, "status": _binance_testnet_cred_status()}
+    return {"updated": fields_set, "status": _binance_cred_status()}
 
 
-@router.post("/binance-testnet/test-connection")
-async def binance_testnet_test_connection():
-    """Test Binance Futures Testnet connectivity with stored credentials."""
+# Legacy endpoint
+@router.post("/settings/binance-testnet-credentials")
+async def set_binance_testnet_credentials_legacy(req: BinanceCredentialsRequest):
+    req.profile = "testnet"
+    return await set_binance_credentials(req)
+
+
+class BinanceTestRequest(BaseModel):
+    mode: str = "testnet"
+
+
+@router.post("/binance/test-connection")
+async def binance_test_connection(req: BinanceTestRequest = BinanceTestRequest()):
+    """Test Binance Futures connectivity with stored credentials."""
+    if req.mode not in ("testnet", "live"):
+        raise HTTPException(400, "mode must be 'testnet' or 'live'")
     try:
-        from aletheia.exchanges.binance.client import BinanceTestnetClient
-        client = BinanceTestnetClient()
+        from aletheia.exchanges.binance.client import BinanceClient
+        client = BinanceClient(mode=req.mode)
         positions = await client.get_positions()
         await client.close()
-        return {"connected": True, "positions_count": len(positions)}
+        return {"connected": True, "mode": req.mode, "positions_count": len(positions)}
     except Exception as e:
         err_msg = str(e)
         if "not configured" in err_msg.lower():
             return {"connected": False, "error": "credentials_not_configured"}
+        if "timeout" in err_msg.lower():
+            return {"connected": False, "error": "connection_timeout"}
+        return {"connected": False, "error": err_msg[:200]}
+
+
+# Legacy endpoint
+@router.post("/binance-testnet/test-connection")
+async def binance_testnet_test_connection():
+    return await binance_test_connection(BinanceTestRequest(mode="testnet"))
+
+
+class BinanceCandidateRequest(BaseModel):
+    mode: str = "testnet"
+    api_key: str
+    api_secret: str
+
+
+@router.post("/binance/test-candidate")
+async def binance_test_candidate(req: BinanceCandidateRequest):
+    """Test Binance connectivity with candidate (unsaved) credentials."""
+    if req.mode not in ("testnet", "live"):
+        raise HTTPException(400, "mode must be 'testnet' or 'live'")
+    try:
+        import ccxt.async_support as ccxt
+        exchange = ccxt.binanceusdm({
+            "apiKey": req.api_key,
+            "secret": req.api_secret,
+            "enableRateLimit": True,
+            "options": {"defaultType": "future"},
+        })
+        if req.mode == "testnet":
+            exchange.set_sandbox_mode(True)
+        await exchange.fetch_time()
+        await exchange.close()
+        return {"connected": True, "mode": req.mode}
+    except Exception as e:
+        err_msg = str(e)
         if "timeout" in err_msg.lower():
             return {"connected": False, "error": "connection_timeout"}
         return {"connected": False, "error": err_msg[:200]}
@@ -185,12 +249,15 @@ async def binance_testnet_test_connection():
 
 def _okx_cred_status() -> dict:
     out = {}
-    for field in ("api_key", "api_secret", "passphrase"):
-        val = get_secret(f"okx.demo.{field}")
-        out[field] = {
-            "configured": bool(val),
-            "last4": (val[-4:] if val and len(val) >= 4 else None),
-        }
+    for profile in ("demo", "live"):
+        profile_out = {}
+        for field in ("api_key", "api_secret", "passphrase"):
+            val = get_secret(f"okx.{profile}.{field}")
+            profile_out[field] = {
+                "configured": bool(val),
+                "last4": (val[-4:] if val and len(val) >= 4 else None),
+            }
+        out[profile] = profile_out
     return out
 
 
@@ -200,6 +267,7 @@ async def okx_credentials_status():
 
 
 class OkxCredentialsRequest(BaseModel):
+    profile: str = "demo"
     api_key: str | None = None
     api_secret: str | None = None
     passphrase: str | None = None
@@ -207,10 +275,13 @@ class OkxCredentialsRequest(BaseModel):
 
 @router.post("/settings/okx-credentials")
 async def set_okx_credentials(req: OkxCredentialsRequest):
+    if req.profile not in ("demo", "live"):
+        raise HTTPException(400, "profile must be 'demo' or 'live'")
+
     fields_set = []
     for field, value in (("api_key", req.api_key), ("api_secret", req.api_secret), ("passphrase", req.passphrase)):
         if value:
-            set_secret(f"okx.demo.{field}", value)
+            set_secret(f"okx.{req.profile}.{field}", value)
             fields_set.append(field)
 
     if not fields_set:
@@ -221,22 +292,28 @@ async def set_okx_credentials(req: OkxCredentialsRequest):
         "source": "dashboard",
         "event_type": "exchange_credentials_changed",
         "entity_type": "okx_credentials",
-        "entity_id": "demo",
-        "message": f"OKX demo credentials updated: {', '.join(fields_set)}",
+        "entity_id": req.profile,
+        "message": f"OKX {req.profile} credentials updated: {', '.join(fields_set)}",
     })
 
     return {"updated": fields_set, "status": _okx_cred_status()}
 
 
+class OkxTestRequest(BaseModel):
+    mode: str = "demo"
+
+
 @router.post("/okx/test-connection")
-async def okx_test_connection():
-    """Test OKX demo connectivity with stored credentials."""
+async def okx_test_connection(req: OkxTestRequest = OkxTestRequest()):
+    """Test OKX connectivity with stored credentials."""
+    if req.mode not in ("demo", "live"):
+        raise HTTPException(400, "mode must be 'demo' or 'live'")
     try:
         from aletheia.exchanges.okx.client import OKXClient
-        client = OKXClient(mode="demo")
+        client = OKXClient(mode=req.mode)
         await client.fetch_time()
         await client.close()
-        return {"connected": True}
+        return {"connected": True, "mode": req.mode}
     except Exception as e:
         err_msg = str(e)
         if "not configured" in err_msg.lower():
@@ -247,6 +324,7 @@ async def okx_test_connection():
 
 
 class OkxCandidateRequest(BaseModel):
+    mode: str = "demo"
     api_key: str
     api_secret: str
     passphrase: str
@@ -255,6 +333,8 @@ class OkxCandidateRequest(BaseModel):
 @router.post("/okx/test-candidate")
 async def okx_test_candidate(req: OkxCandidateRequest):
     """Test OKX connectivity with candidate (unsaved) credentials."""
+    if req.mode not in ("demo", "live"):
+        raise HTTPException(400, "mode must be 'demo' or 'live'")
     try:
         import ccxt.async_support as ccxt
         exchange = ccxt.okx({
@@ -263,10 +343,11 @@ async def okx_test_candidate(req: OkxCandidateRequest):
             "password": req.passphrase,
             "enableRateLimit": True,
         })
-        exchange.set_sandbox_mode(True)
+        if req.mode == "demo":
+            exchange.set_sandbox_mode(True)
         await exchange.fetch_time()
         await exchange.close()
-        return {"connected": True}
+        return {"connected": True, "mode": req.mode}
     except Exception as e:
         err_msg = str(e)
         if "timeout" in err_msg.lower():

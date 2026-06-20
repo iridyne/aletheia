@@ -17,6 +17,8 @@ KNOWN_KEYS = [
     "bitget.live.passphrase",
     "binance.testnet.api_key",
     "binance.testnet.api_secret",
+    "binance.live.api_key",
+    "binance.live.api_secret",
     "okx.demo.api_key",
     "okx.demo.api_secret",
     "okx.demo.passphrase",

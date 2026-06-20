@@ -29,7 +29,7 @@ from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_b
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.execution.paper_tools import create_paper_proposal
-from aletheia.storage.repositories import update_opportunity
+from aletheia.storage.repositories import update_opportunity, get_strategy
 from aletheia.trading.market_data import latest_snapshot
 from aletheia.trading.ruleset_scanner import RuleSetSignal, scan_active_rulesets
 
@@ -37,6 +37,16 @@ logger = logging.getLogger("aletheia.agents.paper_trader")
 
 _BASE_NOTIONAL_USDT = 25.0
 _ATR_TARGET_PCT = 1.5  # 1 ATR move ≈ 1.5% portfolio risk
+
+
+def _resolve_venue(strategy_id: str | None, global_mode: str) -> str:
+    """Resolve execution venue: strategy.execution_venue overrides global mode."""
+    if not strategy_id:
+        return global_mode
+    strategy = get_strategy(strategy_id)
+    if strategy and strategy.get("execution_venue"):
+        return strategy["execution_venue"]
+    return global_mode
 
 
 def _atr_adjusted_notional(atr_pct: float | None) -> float:
@@ -77,7 +87,8 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             if sig.signal_type == "exit" and sig.position_id:
                 out = _handle_ruleset_exit(sig, run_id)
             else:
-                out = _handle_ruleset_entry(sig, cfg, execution_mode, run_id)
+                sig_venue = _resolve_venue(sig.strategy_id, execution_mode)
+                out = _handle_ruleset_entry(sig, cfg, sig_venue, run_id)
             if out:
                 outputs.append(out)
         except Exception as e:
@@ -137,6 +148,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     direction = selected["direction"]
     opp_id = selected["opportunity_id"]
     strategy_id = selected.get("strategy_id")
+    resolved_mode = _resolve_venue(strategy_id, execution_mode)
 
     notional = _atr_adjusted_notional(selected.get("atr_pct"))
     quantity = round(notional / price, 6) or 0.000001
@@ -163,7 +175,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         quantity=quantity,
         price=price,
         stop_price=stop_price,
-        execution_mode=execution_mode,
+        execution_mode=resolved_mode,
         strategy_id=strategy_id,
         opportunity_id=opp_id,
         agent_rationale=rationale[:500],

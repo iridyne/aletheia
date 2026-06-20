@@ -66,18 +66,7 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
         def _symbol_allowed(sym: str) -> bool:
             return not filter_set or to_canonical(sym) in filter_set
 
-    # OKX demo symbol filter: overlay exchange-capability check when active
-    if cfg.exchange.paper_execution_mode == "okx_demo":
-        try:
-            from aletheia.execution.okx_broker import _get_demo_symbols
-            _okx_supported = _get_demo_symbols()
-            if _okx_supported is not None:
-                _base_allowed = _symbol_allowed
-
-                def _symbol_allowed(sym: str) -> bool:  # noqa: F811
-                    return _base_allowed(sym) and to_canonical(sym) in _okx_supported
-        except Exception:
-            pass
+    global_venue = cfg.exchange.paper_execution_mode
 
     min_conf = cfg.trading.min_confidence_to_trade
 
@@ -85,7 +74,7 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
     opportunities = list_opportunities(limit=limit)
 
     for opp in opportunities:
-        candidate = _evaluate_candidate(opp, cfg, now_iso, _symbol_allowed, min_conf)
+        candidate = _evaluate_candidate(opp, cfg, now_iso, _symbol_allowed, min_conf, global_venue)
         if candidate is not None:
             candidates.append(candidate)
 
@@ -108,6 +97,7 @@ def _evaluate_candidate(
     now_iso: str,
     symbol_allowed,
     min_conf: str,
+    global_venue: str = "bitget_demo",
 ) -> dict | None:
     """Evaluate a single opportunity as a paper trade candidate.
 
@@ -181,6 +171,18 @@ def _evaluate_candidate(
                 strategy_id = s["id"]
                 strategy = s
                 break
+
+    # Venue-aware symbol filter: apply OKX demo filter when resolved venue is okx_demo
+    resolved_venue = (strategy.get("execution_venue") if strategy else None) or global_venue
+    if resolved_venue == "okx_demo":
+        try:
+            from aletheia.execution.okx_broker import _get_demo_symbols
+            _okx_supported = _get_demo_symbols()
+            if _okx_supported is not None and to_canonical(symbol) not in _okx_supported:
+                return _make_candidate(opp, skip_reason="okx_demo_symbol_not_supported",
+                                       direction=direction, strategy_id=strategy_id)
+        except Exception:
+            pass
 
     # Regime-aware strategy filtering (P0: direction_affinity + applicable_regimes)
     regime = get_current_regime()

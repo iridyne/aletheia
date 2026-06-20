@@ -64,6 +64,10 @@ export default function StrategyLifecycle() {
     mutationFn: (id: string) => api.retireStrategy(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['strategies'] }),
   })
+  const setVenue = useMutation({
+    mutationFn: ({ id, venue }: { id: string; venue: string | null }) => api.setStrategyVenue(id, venue),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['strategies'] }),
+  })
 
   const rows = data as StrategyRecord[]
 
@@ -100,6 +104,23 @@ export default function StrategyLifecycle() {
               <DrawerField label="Name" value={selected.name} />
               <DrawerField label="State" value={<StatusBadge status={selected.state} />} />
               <DrawerField label="Description" value={selected.description} />
+              <DrawerField label="Execution Venue" value={
+                <select
+                  className="input"
+                  value={selected.execution_venue || ''}
+                  onChange={e => {
+                    const v = e.target.value || null
+                    setVenue.mutate({ id: selected.id, venue: v })
+                    setSelected({ ...selected, execution_venue: v })
+                  }}
+                >
+                  <option value="">Global default</option>
+                  <option value="bitget_demo">bitget_demo</option>
+                  <option value="okx_demo">okx_demo</option>
+                  <option value="binance_testnet">binance_testnet</option>
+                  <option value="paper_internal">paper_internal</option>
+                </select>
+              } />
               <DrawerField label="Created" value={fmtTimestamp(selected.created_at)} mono />
               <DrawerField label="Updated" value={fmtTimestamp(selected.updated_at)} mono />
             </DrawerSection>
