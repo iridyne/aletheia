@@ -1037,3 +1037,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-20 02:21 UTC] ✓ 系统正常 — Features=1544/h (亚盘深夜低谷). Opportunities=7446 (+94/h net); opp_last_1h=219 (亚盘低谷正常). Knowledge=977 (+9/h). §17 timed_out=244 (+4, 轻微回升). Ghost=0, Stale=279. dreaming_agent/equity_observer 2h 窗口静默 (深夜低频, 正常). paper_trader: 9 completed (2h 亚盘缩量). §18 持续: US/USDT、1000BONK/USDT、QCOM/USDT 等 ticker fetch failed. 62h+ 连续无中断.
 
 [2026-06-20 03:21 UTC] ✓ 系统正常 — Features=1550/h (亚盘持稳). Opportunities=7538 (+92/h net); opp_last_1h=311 (亚盘小幅回升). Knowledge=988 (+11/h). §17 timed_out=246 (+2). Ghost=0, Stale=279. paper_trader: 13 completed (2h 亚盘低频). §18 持续: FOLKS/AIO 等 Bitget-only 符号 ticker fetch failed. 63h+ 连续无中断.
+
+[2026-06-20 04:21 UTC] ✓ 系统正常 — Features=1507/h (亚盘早市前). **Knowledge=1005 (+50/h, 首次突破 1000)**. Opportunities=7637 (+99/h net); opp_last_1h=410 (亚盘回升). §17 timed_out=250 (+4). Ghost=0, Stale=279. paper_trader: 16 completed (2h). §18 持续: UB/INTC/BZ/SOXL/FOLKS/AIO forward_outcome FAILED. 64h+ 连续无中断.
