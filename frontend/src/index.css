@@ -1352,7 +1352,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .cc-action-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 0.6rem;
 }
 @media (max-width: 700px) {
@@ -1667,10 +1667,9 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .broker-name { color: var(--muted); }
 .broker-equity { font-family: var(--mono); color: var(--text); }
 .pnl-tiles {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3);
 }
-@media (max-width: 1100px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 480px) { .pnl-tiles { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
 .metric-context { font-size: 0.68rem; color: var(--muted); margin-top: var(--space-1); }
 .card.clickable { cursor: pointer; transition: border-color 0.12s, background 0.12s, transform 60ms; }
 .card.clickable:hover { border-color: var(--border-2); background: var(--surface-2); }
@@ -1905,9 +1904,9 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 
 /* ---------- Account Snapshot row + MetricTile ---------- */
 .account-snapshot {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4);
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4);
 }
-@media (max-width: 900px) { .account-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .account-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .metric-tile { margin-bottom: 0; padding: var(--space-2) var(--space-3); min-height: 68px; }
 .metric-label {
   font-size: 0.62rem; font-weight: 600; color: var(--muted);
@@ -2343,11 +2342,11 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
 /* ── Trade Analytics Panel ──────────────────────────────────────────────── */
 .analytics-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
-@media (max-width: 700px) { .analytics-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 480px) { .analytics-grid { grid-template-columns: repeat(2, 1fr); } }
 
 .analytics-metric-tile {
   background: var(--surface);
