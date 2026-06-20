@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, lazy, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
@@ -13,7 +13,7 @@ import Tabs from '../components/Tabs'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
 import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp } from '../lib/format'
 import TradeAnalyticsPanel from '../charts/TradeAnalyticsPanel'
-import TradeInsightsPanel from '../charts/TradeInsightsPanel'
+const TradeInsightsPanel = lazy(() => import('../charts/TradeInsightsPanel'))
 
 /**
  * Trades & Positions (WEBUI_PAGE_MAP.md — Positions + Paper Trades MERGED).
@@ -185,7 +185,7 @@ export default function TradesPositions() {
           </>
         )},
         { id: 'analytics', label: 'Analytics', render: () => <TradeAnalyticsPanel /> },
-        { id: 'insights', label: 'Insights', render: () => <TradeInsightsPanel /> },
+        { id: 'insights', label: 'Insights', render: () => <Suspense fallback={<Card><p className="text-muted text-sm">Loading charts…</p></Card>}><TradeInsightsPanel /></Suspense> },
       ]} />
 
       <DetailDrawer
