@@ -1041,3 +1041,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-20 04:21 UTC] ✓ 系统正常 — Features=1507/h (亚盘早市前). **Knowledge=1005 (+50/h, 首次突破 1000)**. Opportunities=7637 (+99/h net); opp_last_1h=410 (亚盘回升). §17 timed_out=250 (+4). Ghost=0, Stale=279. paper_trader: 16 completed (2h). §18 持续: UB/INTC/BZ/SOXL/FOLKS/AIO forward_outcome FAILED. 64h+ 连续无中断.
 
 [2026-06-20 05:21 UTC] ✓ 系统正常 — Features=1238/h (亚盘早市缓降). Opportunities=7720 (+83/h net); opp_last_1h=493 (亚盘持续回升). Knowledge=1022 (+17/h). §17 timed_out=252 (+2). Ghost=0, Stale=279. paper_trader: 18 completed (2h). §18 持续: NVDA/SPX/AAOI 等 Bitget-only ticker fetch failed. 65h+ 连续无中断.
+
+[2026-06-20 06:21 UTC] ⚠️ 新信号 — Features=983/h (亚盘低谷). Opportunities=7782 (+62/h net); opp_last_1h=555 (回升). Knowledge=1044 (+22/h). §17 timed_out=255 (+3). Ghost=0, **Stale=282 (+3)**. 异常: (1) **dreaming_agent stale=2** (首次出现, 日周期 agent 卡住, 观察下一轮是否自愈); (2) **OKX "Invalid Sign" auth error** (equity_observer OKX demo 账户签名失败, 可能密钥过期/时区漂移, 当前仅影响 demo 账户余额查询). §18 持续: SIREN/HYPE/SOXL 等 ticker fetch failed. 66h+ 连续无中断.
