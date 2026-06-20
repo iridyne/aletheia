@@ -426,6 +426,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("backtest_orchestrator", _run_backtest_orchestrator), "cron", hour=4, minute=0,
         id="backtest_orchestrator", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
     )
+    # OKX demo symbol list refresh — keeps the O(1) filter cache warm.
+    _scheduler.add_job(
+        _guarded("okx_demo_symbols", _run_okx_demo_symbols), "interval", hours=4,
+        id="okx_demo_symbols", misfire_grace_time=600, executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=45),
+    )
 
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
@@ -1018,6 +1024,15 @@ def _backtest_orchestrator_body():
     logger.info("Lifecycle automation: %s", lc_result)
 
 
+def _run_okx_demo_symbols():
+    try:
+        from aletheia.execution.okx_broker import refresh_okx_demo_symbols
+        count = refresh_okx_demo_symbols()
+        logger.info("okx_demo_symbols refreshed: %d symbols", count)
+    except Exception as e:
+        logger.warning("okx_demo_symbols refresh failed: %s", e)
+
+
 async def _async_universe_refresh():
     from aletheia.universe.service import UniverseService
     from aletheia.files.jsonl import write_agent_run_log
@@ -1166,3 +1181,13 @@ def _get_observed_symbols(cfg) -> list[str]:
         return list(cfg.market_data.observed_symbols or [])[:20]
     except Exception:
         return []
+
+
+def _run_okx_demo_symbols():
+    """Refresh the OKX demo symbol cache (O(1) filter for unsupported pairs)."""
+    try:
+        from aletheia.execution.okx_broker import refresh_okx_demo_symbols
+        count = refresh_okx_demo_symbols()
+        logger.debug("okx_demo_symbols refreshed: %d symbols", count)
+    except Exception as e:
+        logger.warning("okx_demo_symbols refresh failed: %s", e)

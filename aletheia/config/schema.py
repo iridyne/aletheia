@@ -53,6 +53,7 @@ class ExchangeConfig(BaseModel):
     #   "whitelist" → only these may trade; "blacklist" → these are blocked.
     symbol_list: list[str] = Field(default_factory=list)
     # Where autonomous paper trades execute:
+    #   "okx_demo"        → OKX simulated trading via CCXT (auto-filtered symbol set).
     #   "binance_testnet" → Binance Futures Testnet via CCXT (556 pairs, highest coverage).
     #   "bitget_demo"     → Bitget demo/simulated-trading API (paptrading header,
     #                       USDT-futures only, 42 pairs). Requires mode == "demo".

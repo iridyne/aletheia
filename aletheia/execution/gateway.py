@@ -134,7 +134,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
             })
             return {"status": "executed", "proposal_id": proposal.id, **result}
 
-        elif allowed_mode in ("bitget_demo", "binance_testnet"):
+        elif allowed_mode in ("bitget_demo", "binance_testnet", "okx_demo"):
             # Real exchange demo/testnet order — exchange-side record, no live guard
             # (live_disabled gates real funds only; demo/testnet is risk-free). On any
             # failure we mark the proposal error and audit; we NEVER fall back to a
@@ -142,6 +142,8 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
             try:
                 if allowed_mode == "binance_testnet":
                     from aletheia.execution.binance_broker import execute_live_order
+                elif allowed_mode == "okx_demo":
+                    from aletheia.execution.okx_broker import execute_live_order
                 else:
                     from aletheia.execution.bitget_broker import execute_live_order
                 result = execute_live_order(
@@ -186,52 +188,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 return {"status": "error", "proposal_id": proposal.id, "message": str(e),
                         "exchange_order_id": exchange_oid}
 
-        elif allowed_mode == "binance_testnet":
-            try:
-                from aletheia.execution.binance_broker import execute_live_order as binance_execute
-                result = binance_execute(
-                    proposal_id=proposal.id,
-                    risk_decision_id=risk_result.decision_id,
-                    symbol=proposal.symbol,
-                    market_type=proposal.market_type,
-                    direction=proposal.direction,
-                    order_type=proposal.order_type,
-                    quantity=proposal.quantity or 0.0,
-                    price=proposal.price or 0.0,
-                    strategy_id=proposal.strategy_id,
-                    execution_mode="binance_testnet",
-                )
-                update_trade_proposal(proposal.id, status="executed")
-                write_audit({
-                    "actor": "system", "source": "execution_gateway",
-                    "event_type": "testnet_order_executed", "entity_type": "order",
-                    "entity_id": result["order_id"],
-                    "before": {"status": proposal.status},
-                    "after": {"status": "executed"},
-                    "message": (
-                        f"Binance testnet order placed: {proposal.symbol} {proposal.direction} "
-                        f"{proposal.quantity or 0.0}@{result.get('fill_price') or proposal.price or 0.0} "
-                        f"(ex:{result['exchange_order_id']})"
-                    ),
-                })
-                return {"status": "executed", "proposal_id": proposal.id, **result}
-            except Exception as e:
-                exchange_oid = getattr(e, "exchange_order_id", None)
-                with transaction():
-                    update_trade_proposal(proposal.id, status="error")
-                msg = f"Binance testnet order failed: {e}"
-                if exchange_oid:
-                    msg += f" (exchange_order_id={exchange_oid})"
-                write_audit({
-                    "actor": "system", "source": "execution_gateway",
-                    "event_type": "testnet_order_error", "entity_type": "trade_proposal",
-                    "entity_id": proposal.id, "before": {"status": proposal.status},
-                    "after": {"status": "error"}, "message": msg,
-                })
-                return {"status": "error", "proposal_id": proposal.id, "message": str(e),
-                        "exchange_order_id": exchange_oid}
-
-        elif allowed_mode == "bitget_live_limited":
+        elif allowed_mode in ("bitget_live_limited", "okx_live_limited"):
             # Defense in depth: risk engine already checked live_disabled, but re-check here.
             if cfg.live.state == "live_disabled":
                 update_trade_proposal(proposal.id, status="rejected")
@@ -247,7 +204,10 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 })
                 return {"status": "rejected", "proposal_id": proposal.id, "message": "Live trading is disabled"}
             try:
-                from aletheia.execution.bitget_broker import execute_live_order
+                if allowed_mode == "okx_live_limited":
+                    from aletheia.execution.okx_broker import execute_live_order
+                else:
+                    from aletheia.execution.bitget_broker import execute_live_order
                 result = execute_live_order(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
@@ -258,6 +218,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     quantity=proposal.quantity or 0.0,
                     price=proposal.price or 0.0,
                     strategy_id=proposal.strategy_id,
+                    execution_mode=allowed_mode,
                 )
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({

@@ -60,3 +60,8 @@ def _ensure_registered() -> None:
         register_broker("binance_testnet", BinanceTestnetAdapter)
     except Exception:
         pass
+    try:
+        from aletheia.portfolio.uta.okx_adapter import OkxDemoAdapter
+        register_broker("okx_demo", OkxDemoAdapter)
+    except Exception:
+        pass

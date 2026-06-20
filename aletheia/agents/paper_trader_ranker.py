@@ -66,6 +66,19 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
         def _symbol_allowed(sym: str) -> bool:
             return not filter_set or to_canonical(sym) in filter_set
 
+    # OKX demo symbol filter: overlay exchange-capability check when active
+    if cfg.exchange.paper_execution_mode == "okx_demo":
+        try:
+            from aletheia.execution.okx_broker import _get_demo_symbols
+            _okx_supported = _get_demo_symbols()
+            if _okx_supported is not None:
+                _base_allowed = _symbol_allowed
+
+                def _symbol_allowed(sym: str) -> bool:  # noqa: F811
+                    return _base_allowed(sym) and to_canonical(sym) in _okx_supported
+        except Exception:
+            pass
+
     min_conf = cfg.trading.min_confidence_to_trade
 
     candidates: list[dict] = []

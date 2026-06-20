@@ -22,7 +22,7 @@ from aletheia.storage.repositories import list_positions
 
 logger = logging.getLogger("aletheia.position_manager")
 
-_PAPER_MODES = {"paper_internal", "bitget_demo"}
+_PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -128,6 +128,9 @@ def evaluate_open_positions() -> dict:
             elif p.get("execution_mode") == "binance_testnet":
                 from aletheia.execution.binance_broker import close_testnet_position
                 close_testnet_position(p["id"], reason=reason)
+            elif p.get("execution_mode") in ("okx_demo", "okx_live_limited"):
+                from aletheia.execution.okx_broker import close_okx_position
+                close_okx_position(p["id"], reason=reason)
             else:
                 close_position(p["id"], exit_price=exit_price, reason=reason)
             closed += 1

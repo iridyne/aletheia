@@ -30,7 +30,7 @@ _LIVE_ELIGIBLE_STATES = {"live_candidate", "live_limited"}
 
 
 def _is_live(execution_mode: str) -> bool:
-    return execution_mode == "bitget_live_limited"
+    return execution_mode in ("bitget_live_limited", "okx_live_limited")
 
 
 def _market_data_age_seconds(symbol: str) -> float | None:
@@ -98,7 +98,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
 
     # 3. Live state
     live_state = cfg.live.state
-    if proposal.execution_mode in ("bitget_live_limited",) and live_state == "live_disabled":
+    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited") and live_state == "live_disabled":
         violations.append("live_disabled")
 
     # 4. Permission mode
@@ -115,7 +115,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     drawdown_scale = _portfolio_drawdown_scale(proposal.execution_mode)
     if proposal.quantity and proposal.price:
         notional = proposal.quantity * proposal.price
-        if proposal.execution_mode == "bitget_live_limited":
+        if _is_live(proposal.execution_mode):
             effective_cap = risk.max_live_position_notional_usdt * drawdown_scale
             if notional > effective_cap:
                 violations.append(f"exceeds_max_position_notional:{notional}>{effective_cap}")
@@ -126,20 +126,20 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
 
     # 6. Max open positions
     open_positions = list_positions(status="open")
-    if proposal.execution_mode == "bitget_live_limited":
-        live_positions = [p for p in open_positions if p.get("execution_mode") == "bitget_live_limited"]
+    if _is_live(proposal.execution_mode):
+        live_positions = [p for p in open_positions if _is_live(p.get("execution_mode", ""))]
         if len(live_positions) >= risk.max_open_positions_live:
             violations.append(f"max_live_positions_reached:{len(live_positions)}")
     else:
-        demo_positions = [p for p in open_positions if p.get("execution_mode") != "bitget_live_limited"]
+        demo_positions = [p for p in open_positions if not _is_live(p.get("execution_mode", ""))]
         if len(demo_positions) >= risk.max_open_positions_demo:
             violations.append(f"max_demo_positions_reached:{len(demo_positions)}")
 
     # 7. Short allowed
     if proposal.direction == "short":
-        if proposal.execution_mode == "bitget_live_limited" and not risk.allow_short_live:
+        if _is_live(proposal.execution_mode) and not risk.allow_short_live:
             violations.append("short_not_allowed_live")
-        elif proposal.execution_mode != "bitget_live_limited" and not risk.allow_short_demo:
+        elif not _is_live(proposal.execution_mode) and not risk.allow_short_demo:
             violations.append("short_not_allowed_demo")
 
     # 8. Max daily loss — global brake. If today's realized loss breaches the limit,
@@ -160,10 +160,10 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             _trip(reason=f"daily loss {realized} breached limit -{daily_loss_limit}", actor="system")
 
     # 9a. Exchange allowlist — reject if target exchange != allowed_exchange.
-    # binance_testnet is self-contained (own credentials, independent of cfg.exchange)
-    # so it's exempt from the allowlist and mode-match checks.
-    if proposal.execution_mode == "binance_testnet":
-        pass  # testnet uses its own credentials, no mode-match needed
+    # binance_testnet and okx_demo/okx_live_limited are self-contained (own credentials,
+    # independent of cfg.exchange) so they're exempt from allowlist and mode-match checks.
+    if proposal.execution_mode in ("binance_testnet", "okx_demo", "okx_live_limited"):
+        pass  # self-contained exchange modes use their own credentials
     else:
         if risk.allowed_exchange and cfg.exchange.name != risk.allowed_exchange:
             violations.append(f"exchange_not_allowed:{cfg.exchange.name}!={risk.allowed_exchange}")
@@ -232,7 +232,7 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         # not trade against a frozen feed. paper_internal (local sim) is exempt: it has
         # no exchange-side price and runs even when collection is paused. Looser bound
         # than live (see _MAX_DEMO_DATA_AGE_SECONDS).
-        if proposal.execution_mode == "bitget_demo":
+        if proposal.execution_mode in ("bitget_demo", "okx_demo"):
             demo_age = _market_data_age_seconds(proposal.symbol)
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")
@@ -369,7 +369,7 @@ def _current_live_exposure() -> float:
     """Sum absolute notional exposure for live open positions."""
     total = 0.0
     for row in list_positions(status="open"):
-        if row.get("execution_mode") != "bitget_live_limited":
+        if not _is_live(row.get("execution_mode", "")):
             continue
         try:
             quantity = float(row.get("quantity") or 0.0)

@@ -260,6 +260,15 @@ export const api = {
   testBinanceTestnet: () =>
     post<{ connected: boolean; positions_count?: number; error?: string }>('/binance-testnet/test-connection', {}),
 
+  // OKX credentials + connection test
+  getOkxCredStatus: () => fetchJson<{ api_key: any; api_secret: any; passphrase: any }>('/okx/credentials-status'),
+  setOkxCredentials: (body: { api_key?: string; api_secret?: string; passphrase?: string }) =>
+    post('/settings/okx-credentials', body),
+  testOkx: () =>
+    post<{ connected: boolean; error?: string }>('/okx/test-connection', {}),
+  testOkxCandidate: (body: { api_key: string; api_secret: string; passphrase: string }) =>
+    post<{ connected: boolean; error?: string }>('/okx/test-candidate', body),
+
   // Telegram bot reachability (facet A — never returns the token)
   getTelegramHealth: () => fetchJson<{ reachable: boolean; username?: string; error?: string }>('/telegram/health'),
 

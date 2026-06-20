@@ -1,0 +1,307 @@
+"""OKX broker — routes approved proposals to OKX demo or live.
+
+State-consistency protocol identical to binance_broker/bitget_broker:
+1. Write pending Order row BEFORE exchange call
+2. Call exchange
+3. Backfill exchange_order_id, fill, position
+
+Includes an O(1) symbol filter for OKX demo mode: a frozenset of supported
+symbols is cached module-level and refreshed every 4h by the scheduler.
+"""
+
+import asyncio
+import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+from aletheia.data.symbols import to_canonical
+from aletheia.exchanges.okx.client import OKXClient, OrderRequest
+from aletheia.files.jsonl import write_audit
+from aletheia.storage.models import Order, Fill, Position
+from aletheia.storage.repositories import (
+    insert_order, insert_fill, insert_position, list_positions, update_position,
+    update_order,
+)
+
+logger = logging.getLogger("aletheia.okx_broker")
+
+_OKX_FEE_RATE = 0.0005  # OKX futures taker fee
+
+# ---------------------------------------------------------------------------
+# O(1) Symbol filter cache for OKX demo
+# ---------------------------------------------------------------------------
+
+_okx_demo_symbols: frozenset | None = None
+_okx_demo_symbols_loaded_at: float = 0.0
+_OKX_SYMBOLS_TTL = 14400  # 4h
+_symbols_lock = threading.Lock()
+
+
+def _get_demo_symbols() -> frozenset | None:
+    """Return cached OKX demo supported symbols, loading lazily if missing or stale.
+
+    Returns None only when the initial load fails (fail-open: allow the order through).
+    """
+    global _okx_demo_symbols, _okx_demo_symbols_loaded_at
+    if _okx_demo_symbols is not None and (time.time() - _okx_demo_symbols_loaded_at) < _OKX_SYMBOLS_TTL:
+        return _okx_demo_symbols
+    # Cache missing or stale — trigger a synchronous refresh
+    refresh_okx_demo_symbols()
+    return _okx_demo_symbols  # may still be None if refresh failed (fail-open)
+
+
+def refresh_okx_demo_symbols() -> int:
+    """Refresh the OKX demo symbol cache. Called by scheduler every 4h.
+
+    Returns the number of supported symbols loaded.
+    """
+    global _okx_demo_symbols, _okx_demo_symbols_loaded_at
+
+    async def _load():
+        from aletheia.exchanges.okx.client import OKXClient
+        return await OKXClient.load_demo_markets()
+
+    with _symbols_lock:
+        try:
+            symbols = _run_coro(_load())
+            _okx_demo_symbols = symbols
+            _okx_demo_symbols_loaded_at = time.time()
+            logger.info("OKX demo symbols refreshed: %d pairs", len(symbols))
+            return len(symbols)
+        except Exception as e:
+            logger.warning("Failed to refresh OKX demo symbols: %s", e)
+            return 0
+
+
+# ---------------------------------------------------------------------------
+# Async runner helper
+# ---------------------------------------------------------------------------
+
+def _run_coro(coro):
+    """Run a coroutine to completion from sync code."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+# ---------------------------------------------------------------------------
+# Order execution
+# ---------------------------------------------------------------------------
+
+def execute_live_order(
+    proposal_id: str,
+    risk_decision_id: str | None,
+    symbol: str,
+    market_type: str,
+    direction: str,
+    order_type: str,
+    quantity: float,
+    price: float,
+    strategy_id: str | None = None,
+    execution_mode: str = "okx_demo",
+    fee_rate: float = _OKX_FEE_RATE,
+) -> dict:
+    """Place an order on OKX and record locally.
+
+    For okx_demo: checks the O(1) symbol filter first. Unsupported symbols
+    are rejected with an audit record before any exchange call.
+    """
+    # O(1) symbol filter for demo mode
+    if execution_mode == "okx_demo":
+        supported = _get_demo_symbols()
+        if supported is not None and to_canonical(symbol) not in supported:
+            write_audit({
+                "actor": "system",
+                "source": "okx_broker",
+                "event_type": "okx_demo_symbol_not_supported",
+                "entity_type": "trade_proposal",
+                "entity_id": proposal_id,
+                "message": f"OKX demo does not support {symbol} — filtered before order",
+            })
+            raise RuntimeError(f"OKX demo does not support {symbol}")
+
+    mode = "demo" if execution_mode == "okx_demo" else "live"
+    client = OKXClient(mode=mode)
+    side = "buy" if direction in ("long", "buy") else "sell"
+
+    order = Order(
+        proposal_id=proposal_id,
+        risk_decision_id=risk_decision_id,
+        symbol=symbol,
+        market_type=market_type,
+        direction=direction,
+        order_type=order_type,
+        quantity=quantity,
+        price=price,
+        execution_mode=execution_mode,
+        status="pending",
+    )
+    insert_order(order)
+
+    try:
+        order_resp = _run_coro(client.place_order(OrderRequest(
+            symbol=symbol, market_type=market_type, side=side,
+            order_type=order_type, quantity=quantity,
+            price=price if order_type == "limit" else None,
+            client_oid=proposal_id,
+        )))
+    except Exception as e:
+        update_order(order.id, status="error", error_reason=str(e)[:500])
+        raise
+    finally:
+        try:
+            _run_coro(client.close())
+        except Exception:
+            pass
+
+    exchange_order_id = order_resp.order_id or ""
+    resolved_status = order_resp.status if order_resp.status in ("filled", "partially_filled") else "submitted"
+    update_order(order.id, exchange_order_id=exchange_order_id, status=resolved_status)
+
+    filled = order_resp.status in ("filled", "partially_filled")
+    fill_price = order_resp.fill_price if (filled and order_resp.fill_price) else price
+    fill_qty = order_resp.filled_quantity if (filled and order_resp.filled_quantity) else quantity
+
+    try:
+        if filled:
+            fill = Fill(
+                order_id=order.id,
+                fill_price=fill_price,
+                fill_quantity=fill_qty,
+                fee=fill_qty * fill_price * fee_rate,
+            )
+            insert_fill(fill)
+            update_order(order.id, status="filled", filled_at=datetime.utcnow().isoformat())
+
+            existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
+            if existing:
+                new_qty = existing["quantity"] + fill_qty
+                new_entry = (existing["entry_price"] * existing["quantity"] + fill_price * fill_qty) / new_qty
+                update_position(existing["id"], quantity=new_qty, entry_price=new_entry, current_price=fill_price)
+                position_id = existing["id"]
+            else:
+                position = Position(
+                    symbol=symbol, market_type=market_type, direction=direction,
+                    quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
+                    execution_mode=execution_mode, strategy_id=strategy_id,
+                    proposal_id=proposal_id, order_id=order.id,
+                )
+                insert_position(position)
+                position_id = position.id
+        else:
+            position_id = None
+    except Exception as e:
+        err = RuntimeError(f"Post-submit DB error: {e}")
+        err.exchange_order_id = exchange_order_id  # type: ignore[attr-defined]
+        raise err from e
+
+    return {
+        "order_id": order.id,
+        "exchange_order_id": exchange_order_id,
+        "fill_id": fill.id if filled else None,
+        "position_id": position_id,
+        "fill_price": fill_price if filled else None,
+        "fill_quantity": fill_qty if filled else 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Position close
+# ---------------------------------------------------------------------------
+
+def _find_open_position(
+    symbol: str,
+    market_type: str,
+    direction: str,
+    execution_mode: str,
+    strategy_id: str | None,
+) -> dict | None:
+    for p in list_positions(status="open"):
+        if (p["symbol"] == symbol and p["market_type"] == market_type
+                and p["direction"] == direction
+                and p["execution_mode"] == execution_mode):
+            if strategy_id is not None and p.get("strategy_id") not in (None, "", strategy_id):
+                continue
+            return p
+    return None
+
+
+def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
+    """Close an OKX position with a reduceOnly order.
+
+    Works for both okx_demo and okx_live_limited positions.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.portfolio.pnl import close_position
+
+    row = repo._select_one("positions", position_id)
+    if row is None:
+        raise ValueError(f"position not found: {position_id}")
+    if row.get("execution_mode") not in ("okx_demo", "okx_live_limited"):
+        raise ValueError(f"close_okx_position only handles OKX modes, got {row.get('execution_mode')!r}")
+    if row.get("status") != "open":
+        raise ValueError(f"position {position_id} is not open (status={row.get('status')})")
+
+    mode = "demo" if row["execution_mode"] == "okx_demo" else "live"
+    client = OKXClient(mode=mode)
+    direction = row["direction"]
+    is_long = direction in ("long", "buy")
+    side = "sell" if is_long else "buy"
+    quantity = float(row["quantity"])
+
+    close_order = Order(
+        proposal_id=row.get("proposal_id"),
+        symbol=row["symbol"],
+        market_type=row["market_type"],
+        direction=direction,
+        order_type="market",
+        quantity=quantity,
+        price=row.get("current_price") or row["entry_price"],
+        execution_mode=row["execution_mode"],
+        status="pending",
+    )
+    insert_order(close_order)
+
+    try:
+        order_resp = _run_coro(client.place_order(OrderRequest(
+            symbol=row["symbol"],
+            market_type=row["market_type"],
+            side=side,
+            order_type="market",
+            quantity=quantity,
+            reduce_only=True,
+            client_oid=close_order.id,
+        )))
+    except Exception as e:
+        update_order(close_order.id, status="error", error_reason=str(e)[:500])
+        raise
+    finally:
+        try:
+            _run_coro(client.close())
+        except Exception:
+            pass
+
+    exchange_order_id = order_resp.order_id or ""
+    update_order(close_order.id, exchange_order_id=exchange_order_id, status="filled",
+                 filled_at=datetime.utcnow().isoformat())
+
+    fill_price = order_resp.fill_price if order_resp.fill_price else float(row.get("current_price") or row["entry_price"])
+    fill_qty = order_resp.filled_quantity if order_resp.filled_quantity else quantity
+
+    fill = Fill(order_id=close_order.id, fill_price=fill_price, fill_quantity=fill_qty,
+                fee=fill_qty * fill_price * _OKX_FEE_RATE)
+    insert_fill(fill)
+
+    close_position(position_id, exit_price=fill_price, reason=reason)
+
+    return {
+        "order_id": close_order.id,
+        "exchange_order_id": exchange_order_id,
+        "fill_price": fill_price,
+        "fill_quantity": fill_qty,
+    }

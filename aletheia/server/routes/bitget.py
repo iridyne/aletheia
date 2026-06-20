@@ -1,4 +1,4 @@
-"""Exchange connection + credentials API routes (Bitget + Binance Testnet).
+"""Exchange connection + credentials API routes (Bitget + Binance Testnet + OKX).
 
 Credentials are write-only over the API: POST accepts api_key/secret,
 GET only reports configured + last-4. Raw secrets are never returned.
@@ -175,6 +175,100 @@ async def binance_testnet_test_connection():
         err_msg = str(e)
         if "not configured" in err_msg.lower():
             return {"connected": False, "error": "credentials_not_configured"}
+        if "timeout" in err_msg.lower():
+            return {"connected": False, "error": "connection_timeout"}
+        return {"connected": False, "error": err_msg[:200]}
+
+
+# ─── OKX credentials ───
+
+
+def _okx_cred_status() -> dict:
+    out = {}
+    for field in ("api_key", "api_secret", "passphrase"):
+        val = get_secret(f"okx.demo.{field}")
+        out[field] = {
+            "configured": bool(val),
+            "last4": (val[-4:] if val and len(val) >= 4 else None),
+        }
+    return out
+
+
+@router.get("/okx/credentials-status")
+async def okx_credentials_status():
+    return _okx_cred_status()
+
+
+class OkxCredentialsRequest(BaseModel):
+    api_key: str | None = None
+    api_secret: str | None = None
+    passphrase: str | None = None
+
+
+@router.post("/settings/okx-credentials")
+async def set_okx_credentials(req: OkxCredentialsRequest):
+    fields_set = []
+    for field, value in (("api_key", req.api_key), ("api_secret", req.api_secret), ("passphrase", req.passphrase)):
+        if value:
+            set_secret(f"okx.demo.{field}", value)
+            fields_set.append(field)
+
+    if not fields_set:
+        raise HTTPException(400, "No credential fields provided")
+
+    write_audit({
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "exchange_credentials_changed",
+        "entity_type": "okx_credentials",
+        "entity_id": "demo",
+        "message": f"OKX demo credentials updated: {', '.join(fields_set)}",
+    })
+
+    return {"updated": fields_set, "status": _okx_cred_status()}
+
+
+@router.post("/okx/test-connection")
+async def okx_test_connection():
+    """Test OKX demo connectivity with stored credentials."""
+    try:
+        from aletheia.exchanges.okx.client import OKXClient
+        client = OKXClient(mode="demo")
+        await client.fetch_time()
+        await client.close()
+        return {"connected": True}
+    except Exception as e:
+        err_msg = str(e)
+        if "not configured" in err_msg.lower():
+            return {"connected": False, "error": "credentials_not_configured"}
+        if "timeout" in err_msg.lower():
+            return {"connected": False, "error": "connection_timeout"}
+        return {"connected": False, "error": err_msg[:200]}
+
+
+class OkxCandidateRequest(BaseModel):
+    api_key: str
+    api_secret: str
+    passphrase: str
+
+
+@router.post("/okx/test-candidate")
+async def okx_test_candidate(req: OkxCandidateRequest):
+    """Test OKX connectivity with candidate (unsaved) credentials."""
+    try:
+        import ccxt.async_support as ccxt
+        exchange = ccxt.okx({
+            "apiKey": req.api_key,
+            "secret": req.api_secret,
+            "password": req.passphrase,
+            "enableRateLimit": True,
+        })
+        exchange.set_sandbox_mode(True)
+        await exchange.fetch_time()
+        await exchange.close()
+        return {"connected": True}
+    except Exception as e:
+        err_msg = str(e)
         if "timeout" in err_msg.lower():
             return {"connected": False, "error": "connection_timeout"}
         return {"connected": False, "error": err_msg[:200]}
