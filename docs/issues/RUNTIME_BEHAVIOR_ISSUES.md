@@ -1061,3 +1061,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-20 13:21 UTC] ⚠️ **§22 根因确认 — 停滞 292 分钟 (第 5 轮零产出)**. **根因: `universe/registry.py:52` `exchange.load_markets()` 抛出 `ccxt.NotSupported: bitget does not support linear market` → `universe/service.py:142 refresh()` 失败 → 整个 universe refresh 中断, scanner 停止产出.** Opportunities=8041 (+13/h, 极低). Knowledge=1167 (+20/h). §17 timed_out=266 (+0). Ghost=0, Stale=284. dreaming_agent stale=2 第 8 轮. 修复方向: `registry.py:sync_registry()` 中捕获 `ccxt.NotSupported` 并跳过该 market type, 或在调用 `load_markets()` 前过滤掉 linear market type 参数.
 
 [2026-06-20 14:21 UTC] ⚠️ **§22 持续 — 停滞 352 分钟 (第 6 轮零产出, ~6 小时)**. latest_feature_ts 仍 08:29 UTC. Opportunities=8053 (+12/h, 极低). Knowledge=1174 (+7/h). §17 timed_out=266 (+0). Ghost=0, Stale=284. dreaming_agent stale=2 第 9 轮. market_observer stale=4/timed_out=29 持平. **§22 根因已确认, 待修复.**
+
+[2026-06-20 15:21 UTC] ⚠️ **§22 持续 — 停滞 412 分钟 (第 7 轮零产出, ~7 小时)**. Opportunities=8065 (+12/h). Knowledge=1187 (+13/h). §17 timed_out=266 (+0). Ghost=0, Stale=285 (+1). market_observer stale=5 (+1). dreaming_agent stale=2 第 10 轮. **§22 根因已确认 (`registry.py:52` NotSupported), 待修复.**
