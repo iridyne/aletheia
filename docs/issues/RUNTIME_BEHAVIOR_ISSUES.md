@@ -1065,3 +1065,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-20 15:21 UTC] ⚠️ **§22 持续 — 停滞 412 分钟 (第 7 轮零产出, ~7 小时)**. Opportunities=8065 (+12/h). Knowledge=1187 (+13/h). §17 timed_out=266 (+0). Ghost=0, Stale=285 (+1). market_observer stale=5 (+1). dreaming_agent stale=2 第 10 轮. **§22 根因已确认 (`registry.py:52` NotSupported), 待修复.**
 
 [2026-06-20 16:21 UTC] ⚠️ **§22 持续 — 停滞 472 分钟 (第 8 轮零产出, ~8 小时)**. Opportunities=8080 (+15/h). Knowledge=1201 (+14/h). §17 timed_out=266 (+0). Ghost=0, Stale=285. dreaming_agent stale=2 第 11 轮. market_observer stale=5/timed_out=29 持平. **§22 `registry.py:52` NotSupported 待修复.**
+
+[2026-06-20 17:21 UTC] ⚠️ **§22 持续 — 停滞 532 分钟 (第 9 轮零产出, ~9 小时)**. Opportunities=8095 (+15/h 极低). Knowledge=1227 (+26/h, EU开盘提速). §17 timed_out=266 (+0). Ghost=0, Stale=285. dreaming_agent stale=2 第 12 轮. market_observer: 43 completed + 1 CWE + stale=5 + timed_out=29. **§22 `registry.py:52` NotSupported 持续待修复.**
