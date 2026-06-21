@@ -187,7 +187,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     evidence_text, err = await llm_complete(
         system=evidence_system,
         user=f"Research context:\n{research_context}\n\nCollect relevant evidence.",
-        max_tokens=2000,
+        max_tokens=16384,
     )
     if err:
         if "429" in err or "rate" in err.lower():
@@ -231,7 +231,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     claims_text, err = await llm_complete(
         system=_CLAIMS_SYSTEM,
         user=f"Evidence:\n{evidence_summary}\n\nExtract structured claims.",
-        max_tokens=2000,
+        max_tokens=8192,
     )
     if err:
         if "429" in err or "rate" in err.lower():
@@ -274,7 +274,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     themes_text, err = await llm_complete(
         system=_THEMES_SYSTEM,
         user=f"Claims:\n{claims_for_prompt}\n\nCluster into investment research themes.",
-        max_tokens=2000,
+        max_tokens=8192,
     )
     if err:
         if "429" in err or "rate" in err.lower():
@@ -331,7 +331,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         opps_text, err = await llm_complete(
             system=_OPPORTUNITIES_SYSTEM,
             user=f"Research themes:\n{themes_for_prompt}\n\nIdentify potential opportunities.",
-            max_tokens=1500,
+            max_tokens=8192,
         )
         if not err:
             opp_items = _parse_json_array(opps_text, "opportunities")
@@ -383,7 +383,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
 
 
 def _parse_json_array(text: str | None, label: str) -> list[dict]:
-    """Parse LLM output as a JSON array, with fallback for markdown-wrapped output."""
+    """Parse LLM output as a JSON array, with fallback for markdown-wrapped and truncated output."""
     if not text:
         return []
     text = text.strip()
@@ -398,9 +398,46 @@ def _parse_json_array(text: str | None, label: str) -> list[dict]:
         if isinstance(result, dict) and label in result:
             return result[label]
         return []
-    except json.JSONDecodeError as e:
-        logger.warning("Failed to parse %s JSON: %s", label, e)
-        return []
+    except json.JSONDecodeError:
+        pass
+
+    # Truncation repair: find last complete object in array and close it
+    repaired = _repair_truncated_json_array(text)
+    if repaired:
+        logger.info("Repaired truncated %s JSON: %d items recovered", label, len(repaired))
+        return repaired
+
+    logger.warning("Failed to parse %s JSON (len=%d, tail=...%s)", label, len(text), text[-60:])
+    return []
+
+
+def _repair_truncated_json_array(text: str) -> list[dict] | None:
+    """Attempt to recover items from a truncated JSON array."""
+    if not text.startswith("["):
+        return None
+    # Find the last complete "}" that closes an object in the array
+    last_close = text.rfind("}")
+    if last_close < 1:
+        return None
+    # Try closing the array after the last complete object
+    candidate = text[:last_close + 1] + "]"
+    try:
+        result = json.loads(candidate)
+        if isinstance(result, list) and all(isinstance(x, dict) for x in result):
+            return result
+    except json.JSONDecodeError:
+        pass
+    # More aggressive: find last "},\n" or "}\n" pattern
+    import re
+    for m in re.finditer(r'\}\s*,?\s*$', text[:last_close + 1], re.MULTILINE):
+        candidate = text[:m.end()].rstrip().rstrip(",") + "]"
+        try:
+            result = json.loads(candidate)
+            if isinstance(result, list) and all(isinstance(x, dict) for x in result):
+                return result
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _update_stage(run_id: str, stage: str) -> None:
