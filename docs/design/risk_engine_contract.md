@@ -1,0 +1,118 @@
+# Risk Engine 决策契约 (L2 金标准)
+
+> **角色**:定义 Risk Engine 作为"agent 不可绕过的硬墙"的完整决策契约。
+> 这是 trust 边界的核心——[VISION](../product/VISION.md) 把它定义为"给 AI 买到的犯错许可证"。
+> **基线**:以代码现状为底(file:line 可核),意图差距标 ⚠️;冲突时文档为准,偏差落 [issues](../issues/BACKEND_ISSUES.md)。
+> **不变式来源**:[trust_and_change_control §6.3](../governance/trust_and_change_control.md)。
+> Last updated: 2026-06-21 · 维护者:Aletheia Dev
+
+---
+
+## 1. 入口与序列化
+
+| 项 | 值 | 位置 |
+|----|----|----|
+| 主入口 | `evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult` | `aletheia/risk/engine.py:64` |
+| 并发保护 | 全局线程锁 `_eval_lock`,防 kill-switch TOCTOU | `engine.py:27, 70-71` |
+
+**契约**:所有 proposal 必须且仅能通过 `evaluate_proposal` 取得放行;同一时刻只有一个 proposal 在评估(序列化)。
+
+---
+
+## 2. 检查关卡(代码实际 16 关)
+
+> ⚠️ **偏差**:[SYSTEM_ARCHITECTURE_GUIDE](../SYSTEM_ARCHITECTURE_GUIDE.md) 第五章称"五关审批",代码实际是 16 关。
+> 以下 16 关为金标准;ARCH_GUIDE 的"五关"是简化叙事,待该文档批次3标注。
+
+| # | 关卡 | 判断 | config 字段 | 失败标签 | 位置 |
+|---|------|------|------------|---------|------|
+| 0 | Kill Switch | `runtime.kill_switch_active` | `runtime.kill_switch_active` | `kill_switch_active` | engine.py:80 |
+| 1 | Symbol Filter | white/blacklist | `risk.symbol_filter_mode/symbol_list` | `symbol_blocked/not_allowed:{sym}` | :83 |
+| 2 | Market Allowed | spot/futures 开关 | `exchange.enabled_markets` | `{spot/futures}_market_disabled` | :93 |
+| 3 | Live State | 非 `live_disabled` | `live.state` | `live_disabled` | :99 |
+| 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
+| 5 | Max Position Notional | live/demo 上限 + 回撤缩放 | `risk.max_{live/demo}_position_notional_usdt` | `exceeds_max_position_notional:{n}>{cap}` | :109 |
+| 6 | Max Open Positions | live/demo 持仓数 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
+| 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
+| 8 | Max Daily Loss | 日损突破→**自动触发 kill switch** | `risk.max_daily_loss_pct`, `kill_switch_enabled_{live/demo}` | `max_daily_loss_exceeded:{r}<=-{lim}` | :145 |
+| 9a | Exchange Allowlist | 交易所匹配(self-contained 豁免) | `risk.allowed_exchange` | `exchange_not_allowed:{a}!={e}` | :162 |
+| 9b | Account Mode Match | live↔mode=live / demo↔mode=demo | `exchange.mode` | `account_mode_mismatch:...` | :170 |
+| 10 | Max Leverage | 期货杠杆上限 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
+| 11 | Data Freshness | live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` | `stale_market_data:age={a}` | :188 |
+| 12 | Total Live Exposure | 敞口+新单<上限 | `risk.max_total_live_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` | :194 |
+| 13 | Single Trade Risk | 止损距离×数量<上限 | `risk.max_{/demo_}single_trade_risk_pct` | `exceeds_single_trade_risk:{r}>{max}` | :202 |
+| 14 | Strategy Lifecycle | live 仅 `live_candidate/live_limited` | `_LIVE_ELIGIBLE_STATES` | `strategy_not_live_eligible:{state}` | :211 |
+| 15 | Lesson Constraints | 已接受教训的 block_{symbol/direction/scanner} | `LessonStore.recommendation_json` | `lesson_block_{symbol/...}:{id}:{v}` | :240 |
+| 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta` | `sector_concentration/portfolio_beta:...` | :245,387 |
+
+> ⚠️ 关卡 #11 的 `_MAX_DATA_AGE_SECONDS` 是模块常量,非 config 字段。若要 config 化需迁移 + 测试。
+
+---
+
+## 3. 返回结构
+
+```python
+@dataclass  # engine.py:54-62, 镜像 storage/models.py:125
+class RiskCheckResult:
+    approved: bool = False
+    risk_score: float = 0.0          # len(violations)*0.2, cap 1.0
+    violations: list[str]            # 所有失败标签(见 §2)
+    allowed_execution_mode: str = "paper_internal"  # approved=原模式; rejected=降级 paper_internal
+    message: str = ""
+    decision_id: str | None          # 持久化的 RiskDecision.id
+```
+
+**契约**:每次评估**必须**持久化一条 `RiskDecision`(`engine.py:267-277`),无论批准或拒绝——这是因果链 `proposal→risk_decision→order` 的一环([trust §1.1](../governance/trust_and_change_control.md))。
+
+---
+
+## 4. Kill Switch
+
+| 行为 | 实现 | 位置 |
+|------|------|------|
+| 触发 | 手动 `activate(reason, actor)` 或日损突破自动触发(#8) | `kill_switch.py:21`, `engine.py:159` |
+| 持久化 | `runtime.kill_switch_active=True` → `save_config` 落盘(重启不丢) | `kill_switch.py:25` |
+| 恢复 | 仅 `deactivate(actor="human")`,**actor 硬编码 human,agent 无路径** | `kill_switch.py:39` |
+| 审计 | 激活/恢复均写 JSONL | `kill_switch.py:27,45` |
+
+**不变式**:kill switch 是 §2 第 0 关,激活后任何 proposal 必被拒;恢复是不可被 agent 触达的人工操作。详见 [daily-loss killswitch UTC 陷阱](../../记忆 aletheia-daily-loss-killswitch-utc)。
+
+---
+
+## 5. 仓位计算(两条路径,诚实标注)
+
+> ⚠️ 当前有**两条并存的 sizing 路径**,这是 [execution_path_honesty §1.1](../governance/execution_path_honesty.md) 揭示的事实:
+
+| 路径 | 公式 | 位置 |
+|------|------|------|
+| paper_trader(规则路径) | 固定 `notional=$25 / price` | `paper_trader.py:124` |
+| PI Agent(conviction 路径) | `compute_position_size(conviction, base, kelly, dd)` — conviction 0-100 映射 [0.3,2.5]× × quarter-Kelly × 回撤缩放 | `trading/sizing.py:19-64`, 调用于 `trading_decision.py:154` |
+
+config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_sizing_enabled=True`(`schema.py:329`)。
+
+**关键契约**:sizing 计算结果**不是**最终下单量——仍须过 §2 第 5 关(Max Position Notional)裁剪。sizing 决定"想要多少",Risk Engine 决定"允许多少"。
+
+---
+
+## 6. 硬限不可绕过的保证
+
+1. **入口白名单**:`create_paper_proposal()` 硬编码 `_PAPER_MODES`,非 paper 模式抛 ValueError(`paper_tools.py:11-35`)——agent 无法构造 live proposal。
+2. **序列化锁**:`_eval_lock` 防 TOCTOU(§1)。
+3. **纵深防御**:Risk Engine 放行后,Execution Gateway 再查一次 live/account mode(`gateway.py:201`)。
+4. **持久化**:kill switch 落盘,重启保持。
+5. **审计**:所有决策入 DB + JSONL。
+
+**[trust §6.3](../governance/trust_and_change_control.md) 红线**:不得在未经显式用户批准下削弱或移除任何 risk check;新增 check 必须持久化 RiskDecision 且对 API/UI 可见;测试须覆盖 approved + rejected 两条路径。
+
+---
+
+## 7. 已知缺陷(待批次5核实后落 issue)
+
+- ⚠️ `engine.py:324, 481` 使用 `logger` 但疑似未导入 → 触发这两条分支时可能 NameError。**批次5核实**。
+
+---
+
+## 8. 目标态差距(意图领先代码)
+
+- [execution_path_honesty §1.2](../governance/execution_path_honesty.md):LLM 的 `direction_bias` 直接驱动下单方向,Risk Engine **不验证方向是否合理**——它只管账户/订单安全,不管"这个方向对不对"。这是有意的职责边界(risk 不依赖市场状态判断),但意味着"方向正确性"无硬约束。
+- ⚠️ 不要把 market-state guard(如资金费率熔断)塞进 Risk Engine——见 [north_star §10.6](../references/north_star.md),那属策略层。
