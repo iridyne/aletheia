@@ -2,7 +2,8 @@
 
 > Last updated: 2026-06-21
 > Status: Living document — authoritative source for "what we're building and why"
-> Companion docs: [METRICS.md](METRICS.md) · [PHASE_GATES.md](PHASE_GATES.md)
+> 顶层愿景（赌什么 / 为谁 / 什么叫赢）见 **[VISION.md](VISION.md)**；本文件承接它，定义范围与边界。
+> Companion docs: [VISION.md](VISION.md) · [METRICS.md](METRICS.md) · [PHASE_GATES.md](PHASE_GATES.md)
 
 ---
 
