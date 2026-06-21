@@ -136,6 +136,48 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     except Exception:
         layer["features"] = []
 
+    # Open opportunities (what market_observer has flagged — PI Agent was blind to these)
+    try:
+        from aletheia.storage.repositories import _select_all
+        opps = _select_all(
+            "opportunities",
+            where="status = 'open' AND asset_class = 'crypto'",
+            order="created_at DESC",
+            limit=10,
+        )
+        layer["opportunities"] = [
+            {
+                "symbol": o.get("symbol"),
+                "direction_bias": o.get("direction_bias"),
+                "confidence": o.get("confidence"),
+                "confidence_score": o.get("confidence_score"),
+                "scanner_family": o.get("scanner_family"),
+                "thesis": (o.get("thesis") or "")[:150],
+            }
+            for o in opps
+        ]
+    except Exception:
+        layer["opportunities"] = []
+
+    # Factor feedback status (which scanner+direction combos are blocked/preferred)
+    try:
+        from aletheia.analytics.factor_feedback import build_factor_feedback
+        all_factors = build_factor_feedback(limit=200, min_trades=3)
+        layer["factor_feedback"] = [
+            {
+                "key": f.get("key"),
+                "group_type": f.get("group_type"),
+                "status": f.get("status"),
+                "win_rate": f.get("win_rate"),
+                "expectancy": f.get("expectancy"),
+                "trade_count": f.get("trade_count"),
+            }
+            for f in all_factors
+            if f.get("status") in ("blocked_candidate", "preferred", "paper_failing")
+        ][:10]
+    except Exception:
+        layer["factor_feedback"] = []
+
     # Risk state
     try:
         from aletheia.config.loader import load_config
@@ -235,6 +277,76 @@ def _build_layer2_short_term() -> dict[str, Any]:
         layer["strategies"] = strat_perf
     except Exception:
         layer["strategies"] = []
+
+    # Trading Memo — structured insights from historical performance analysis
+    try:
+        from aletheia.analytics.insight_synthesizer import get_latest_memo, render_memo_for_observer
+        memo = get_latest_memo()
+        if memo:
+            layer["trading_memo"] = {
+                "generated_at": memo.get("generated_at"),
+                "sample_size": memo.get("sample_size"),
+                "direction_summary": memo.get("direction_summary"),
+                "regime_playbook": memo.get("regime_playbook", [])[:3],
+                "anti_patterns": memo.get("anti_patterns", [])[:3],
+                "key_insight": memo.get("key_insight", ""),
+                "rendered": render_memo_for_observer(memo),
+            }
+        else:
+            layer["trading_memo"] = None
+    except Exception:
+        layer["trading_memo"] = None
+
+    # Reasoning quality feedback — rolling pattern win rates from historical proposals
+    try:
+        from aletheia.analytics.reasoning_feedback import get_latest_reasoning_feedback, render_feedback_for_pi
+        fb = get_latest_reasoning_feedback()
+        layer["reasoning_feedback"] = render_feedback_for_pi(fb) if fb else None
+    except Exception:
+        layer["reasoning_feedback"] = None
+
+    # Conviction calibration — actual vs expected win rate per conviction bucket
+    try:
+        from aletheia.analytics.confidence_calibration import get_latest_calibration_report, render_calibration_for_pi
+        cal = get_latest_calibration_report()
+        layer["calibration_feedback"] = render_calibration_for_pi(cal) if cal else None
+    except Exception:
+        layer["calibration_feedback"] = None
+
+    # Ranker candidates — what paper_trader would pick right now
+    try:
+        from aletheia.agents.paper_trader_ranker import build_paper_candidates
+        candidates = build_paper_candidates(limit=30)
+        layer["ranker_candidates"] = [
+            {
+                "symbol": c.get("symbol"),
+                "direction": c.get("direction_bias"),
+                "trade_score": c.get("trade_score"),
+                "skip_reason": c.get("skip_reason"),
+                "scanner_family": c.get("scanner_family"),
+            }
+            for c in candidates[:8]
+        ]
+    except Exception:
+        layer["ranker_candidates"] = []
+
+    # Phase 4b: Pending signals awaiting PI Agent evaluation
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        rows = db.execute(
+            "SELECT symbol, direction, reasoning, created_at FROM pi_decisions "
+            "WHERE action = 'signal_pending' AND created_at >= ? "
+            "ORDER BY created_at DESC LIMIT 5",
+            (cutoff,),
+        ).fetchall()
+        layer["pending_signals"] = [
+            {"symbol": r[0], "direction": r[1], "reasoning": r[2][:100], "at": r[3]}
+            for r in rows
+        ]
+    except Exception:
+        layer["pending_signals"] = []
 
     return layer
 

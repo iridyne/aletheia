@@ -160,7 +160,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
 async def submit_decision_as_proposal(decision: TradingDecision, execution_mode: str) -> dict | None:
     """Submit a TradingDecision as a paper proposal. Returns result dict or None."""
-    if decision.action != "trade" or not decision.symbol or not decision.direction:
+    if decision.action not in ("trade", "scale_in", "flip") or not decision.symbol or not decision.direction:
         return None
 
     from aletheia.trading.market_data import latest_snapshot
@@ -487,6 +487,31 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "## Active Signals",
         signal_lines,
         "",
+    ]
+
+    # Opportunities from market_observer
+    opps = layer1.get("opportunities", [])
+    if opps:
+        opp_lines = "\n".join(
+            f"  {o['symbol']} {o.get('direction_bias', '?')} "
+            f"conf={o.get('confidence_score', '?')} "
+            f"[{o.get('scanner_family', '')}]: {o.get('thesis', '')}"
+            for o in opps[:8]
+        )
+        parts += ["## Open Opportunities (market_observer output)", opp_lines, ""]
+
+    # Factor feedback — blocked/preferred categories
+    factors = layer1.get("factor_feedback", [])
+    if factors:
+        factor_lines = "\n".join(
+            f"  {f['key']} ({f['group_type']}): {f['status']} "
+            f"WR={f.get('win_rate', '?')}% exp={f.get('expectancy', '?')} "
+            f"n={f.get('trade_count', 0)}"
+            for f in factors
+        )
+        parts += ["## Factor Feedback (historical pattern performance)", factor_lines, ""]
+
+    parts += [
         f"## Risk: kill_switch={risk.get('kill_switch', False)}, "
         f"max_daily_loss={risk.get('max_daily_loss_pct', '?')}%, "
         f"max_positions={risk.get('max_open_positions', '?')}",
@@ -510,6 +535,33 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "## Strategy Performance",
         strat_lines,
         "",
+    ]
+
+    # Ranker candidates (what paper_trader would do)
+    ranker = layer2.get("ranker_candidates", [])
+    if ranker:
+        ranker_lines = "\n".join(
+            f"  {c['symbol']} {c.get('direction', '?')} score={c.get('trade_score', '?')}"
+            + (f" SKIP:{c['skip_reason']}" if c.get("skip_reason") else " ✓ eligible")
+            for c in ranker[:6]
+        )
+        parts += ["## Ranker Candidates (paper_trader's ranked picks)", ranker_lines, ""]
+
+    # Phase 4b: Pending signals awaiting your decision
+    pending = layer2.get("pending_signals", [])
+    if pending:
+        pending_lines = "\n".join(
+            f"  {p['symbol']} {p.get('direction', '?')}: {p.get('reasoning', '')}"
+            for p in pending
+        )
+        parts += [
+            "## ⚡ Pending Signals (awaiting your decision)",
+            "These signals were collected by the scanner pipeline. You are the sole decision maker —",
+            "evaluate each and decide: trade, skip, or watch.",
+            pending_lines, "",
+        ]
+
+    parts += [
         "---",
         "# Layer 3: Long-term Wisdom",
         "",
