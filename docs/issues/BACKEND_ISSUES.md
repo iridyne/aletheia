@@ -372,6 +372,29 @@
 
 ## 3. 🟡 Dead code / cosmetic / future-violation tripwire
 
+> **2026-06-21 追加(文档金标准化批次5一致性核对发现)**:以下条目来自核对 L2 契约 vs 代码。
+
+- **`risk/engine.py` 用 `logger` 但未导入 → 异常路径触发 NameError**
+  - 佐证:`engine.py:324` `logger.warning(...)`、`:481` `logger.debug(...)`,但全文件无 `import logging` / `logger = getLogger`(已 grep 确认)
+  - 影响:🔴-adjacent(在 trust 边界 risk engine 内)。正常路径不触发;一旦 `_check_lesson_constraints`(324)或 `_check_correlation_exposure`(481)的 `except` 块被触发,`NameError: name 'logger' is not defined` 会**掩盖原始异常**,真实风控检查失败原因丢失
+  - 最小修复:文件顶部加 `import logging` + `logger = logging.getLogger(__name__)`;补一个让该 except 触发的回归测试断言不抛 NameError
+  - 契约:[risk_engine_contract §7](../design/risk_engine_contract.md)
+
+- **晋级门"高频放松规则"代码有、trust §5.2 意图未记录**
+  - 佐证:`strategy_lifecycle.py:228-241`——`paper_trade_count≥30` 时 runtime 门槛从 14d 放松到 3d;[trust §5.2](../governance/trust_and_change_control.md) 只写 14d 无放松条款
+  - 影响:🟡 文档↔代码偏差。契约已采纳此规则为金标准([promotion_gates_contract §4](../design/promotion_gates_contract.md) 偏差1),trust §5.2 待补注一行说明放松条件
+  - 最小修复:trust_and_change_control §5.2 补"若 trade_count≥min_paper_trades 则 runtime 门槛降至 3d"
+
+- **`paper_candidate→paper_running` 无 PI 批准门(意图领先代码)**
+  - 佐证:`strategy_lifecycle.py:142-189` `promote_strategy()` 可直接推进到 paper_running,门检查只在 paper_passed/live_candidate;但 [VISION/ARCH_GUIDE 第八章](../SYSTEM_ARCHITECTURE_GUIDE.md) 称"激活需 PI Agent 确认"
+  - 影响:🟡 目标态差距。PI 当前是异步推荐(`operator_loop.py:299-358` recommend_*),无单点批准卡口
+  - 最小修复:或补 PI 批准门(对齐意图),或修正 ARCH_GUIDE 措辞(对齐代码)。需用户定夺方向。详见 [promotion_gates_contract §4](../design/promotion_gates_contract.md) 偏差2
+
+- **两套 permissions.py 并存,trust §6.1 只列其一**
+  - 佐证:`aletheia/agent_runtime/permissions.py`(trust §6.1 列为控制模块)**与** `aletheia/agent_shell/permissions.py`(agent shell 双面 permission + `registry.py:415` FORBIDDEN_INTENTS)**两者都存在**
+  - 影响:🟡 不是路径过时,是职责未澄清——哪个是 worker-surface 权威、哪个是 operator-surface?是否有重叠/冲突的权限判定?[live_unlock_contract §6](../design/live_unlock_contract.md) 已标此偏差
+  - 最小修复:核对两文件职责边界,在 trust §6.1 同时列出并注明各自管辖面;若有重叠判定需澄清优先级
+
 - **`paper_trader` 死导入 `llm_complete` + `get_trade_proposal`**
   - 佐证：`agents/paper_trader.py:16,21`；文件内 0 调用
   - 最小修复：删导入 + 修 docstring 别暗示有 LLM rationale
