@@ -642,3 +642,452 @@ def _hold_hours_since(iso_str: str | None) -> float | None:
         return round((datetime.now(timezone.utc) - dt).total_seconds() / 3600, 1)
     except (ValueError, TypeError):
         return None
+
+
+# ===========================================================================
+# HIGH PRIORITY — regime, fills, liquidations, calibration
+# ===========================================================================
+
+
+@inspect_app.command("regime")
+def regime(
+    history: int = typer.Option(1, "--history", "-n", help="Number of recent regime records"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show current market regime (state, confidence, bias, signals)."""
+    from aletheia.storage.repositories import list_market_regimes
+    rows = list_market_regimes(limit=history)
+    if not rows:
+        typer.echo("(no regime data)")
+        return
+    result = []
+    for r in rows:
+        signals = r.get("signals") or "{}"
+        if isinstance(signals, str):
+            try:
+                signals = json.loads(signals)
+            except Exception:
+                pass
+        result.append({
+            "state": r.get("state"),
+            "confidence": r.get("confidence"),
+            "long_bias": r.get("long_bias"),
+            "short_bias": r.get("short_bias"),
+            "detected_at": r.get("detected_at"),
+            "signals": signals,
+        })
+    if json_output:
+        _output(result, True)
+        return
+    for rec in result:
+        typer.echo(f"  {rec['state'].upper()} conf={rec['confidence']:.0%} long={rec['long_bias']:.0%} short={rec['short_bias']:.0%}  @{rec['detected_at']}")
+        if isinstance(rec["signals"], dict) and rec["signals"]:
+            for k, v in rec["signals"].items():
+                typer.echo(f"    {k}: {v}")
+
+
+@inspect_app.command("fills")
+def fills(
+    order_id: Optional[str] = typer.Option(None, "--order-id", help="Filter by order ID"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """List trade fills with execution details and fees."""
+    from aletheia.storage.repositories import list_fills
+    rows = list_fills(limit=limit)
+    if order_id:
+        rows = [r for r in rows if r.get("order_id") == order_id]
+    display = []
+    for r in rows:
+        display.append({
+            "id": r.get("id"),
+            "order_id": r.get("order_id"),
+            "symbol": r.get("symbol"),
+            "quantity": r.get("quantity"),
+            "fill_price": r.get("fill_price"),
+            "fee_usdt": r.get("fee_usdt"),
+            "execution_mode": r.get("execution_mode"),
+            "filled_at": r.get("filled_at"),
+        })
+    _output(display, json_output)
+
+
+@inspect_app.command("liquidations")
+def liquidations(
+    symbol: Optional[str] = typer.Option(None, "--symbol", "-s", help="Filter by symbol"),
+    hours: int = typer.Option(4, "--hours", help="Lookback window in hours"),
+    limit: int = typer.Option(30, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show recent liquidation events from Binance Futures."""
+    from aletheia.storage.repositories import recent_liquidations
+    from aletheia.storage.repositories import get_active_universe_members
+    if symbol:
+        rows = recent_liquidations(symbol, hours=hours)[:limit]
+    else:
+        members = get_active_universe_members()
+        rows = []
+        for m in members:
+            sym = m.get("symbol", "")
+            if sym:
+                rows.extend(recent_liquidations(sym, hours=hours))
+        rows.sort(key=lambda r: r.get("event_time", ""), reverse=True)
+        rows = rows[:limit]
+    display = []
+    for r in rows:
+        display.append({
+            "symbol": r.get("symbol"),
+            "side": r.get("side"),
+            "quantity": r.get("quantity"),
+            "price": r.get("price"),
+            "event_time": r.get("event_time"),
+            "exchange": r.get("exchange"),
+        })
+    _output(display, json_output)
+
+
+@inspect_app.command("calibration")
+def calibration(
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show signal calibration stats — scanner family × horizon win rates."""
+    from aletheia.storage.repositories import calibration_stats
+    stats = calibration_stats()
+    if not stats:
+        typer.echo("(no calibration data)")
+        return
+    if json_output:
+        _output(stats, True)
+        return
+    typer.echo("=== Signal Calibration (forward outcomes) ===")
+    typer.echo(f"  {'family':<20s} {'horizon':<6s} {'n':>4s} {'win%':>6s} {'avg_ret':>8s}")
+    typer.echo(f"  {'-'*20} {'-'*6} {'-'*4} {'-'*6} {'-'*8}")
+    for row in stats:
+        family = row.get("scanner_family") or "unknown"
+        horizon = row.get("horizon") or "?"
+        n = row.get("total_count") or row.get("n") or 0
+        win_count = row.get("win_count", 0)
+        win_pct = (win_count / n * 100) if n else 0
+        avg_ret = row.get("avg_return") or row.get("avg_return_pct") or 0
+        typer.echo(f"  {family:<20s} {horizon:<6s} {n:>4d} {win_pct:>5.1f}% {avg_ret:>+7.2f}%")
+
+
+# ===========================================================================
+# MEDIUM PRIORITY — factor-feedback, microstructure, serenity, shadow-trades,
+#                   agent-runs, equity, reflection, infra-events
+# ===========================================================================
+
+
+@inspect_app.command("factor-feedback")
+def factor_feedback(
+    status_filter: Optional[str] = typer.Option(None, "--status", help="Filter: preferred | active | watch | blocked_candidate"),
+    limit: int = typer.Option(30, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show scanner factor feedback classification (win_rate, expectancy, status)."""
+    from aletheia.analytics.factor_feedback import build_factor_feedback
+    rows = build_factor_feedback(limit=200, min_trades=2)
+    if status_filter:
+        rows = [r for r in rows if r.get("status") == status_filter]
+    rows = rows[:limit]
+    if json_output:
+        _output(rows, True)
+        return
+    if not rows:
+        typer.echo("(no factor feedback data — need closed trades)")
+        return
+    typer.echo(f"  {'key':<30s} {'trades':>6s} {'win%':>5s} {'expect':>7s} {'PF':>5s} {'status':<18s}")
+    for r in rows:
+        key = (r.get("factor_key") or r.get("scanner") or "?")[:30]
+        trades = r.get("total_trades") or r.get("n") or 0
+        wr = r.get("win_rate", 0)
+        exp = r.get("expectancy", 0)
+        pf = r.get("profit_factor", 0)
+        st = r.get("status", "?")
+        typer.echo(f"  {key:<30s} {trades:>6d} {wr:>4.0f}% {exp:>+6.2f} {pf:>5.2f} {st:<18s}")
+
+
+@inspect_app.command("microstructure")
+def microstructure(
+    symbol: Optional[str] = typer.Option(None, "--symbol", "-s", help="Show single symbol details"),
+    limit: int = typer.Option(10, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show latest funding rate, OI, and orderbook data per symbol."""
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.repositories import get_active_universe_members
+    if symbol:
+        symbols = [symbol]
+    else:
+        members = get_active_universe_members()
+        symbols = [m.get("symbol") for m in members if m.get("symbol")][:limit]
+
+    result = []
+    for sym in symbols:
+        fr = repo.latest_funding_rate(sym)
+        oi = repo.latest_open_interest(sym)
+        ob = repo.latest_orderbook(sym)
+        entry = {"symbol": sym}
+        if fr:
+            entry["funding_rate"] = fr.get("funding_rate")
+            entry["predicted_rate"] = fr.get("predicted_rate")
+        if oi:
+            entry["oi_usd"] = oi.get("open_interest_usd")
+            entry["oi_delta_1h"] = oi.get("oi_change_1h_pct")
+        if ob:
+            entry["spread_bps"] = ob.get("spread_bps")
+            entry["depth_10bps_usd"] = ob.get("total_depth_10bps_usd")
+            entry["imbalance"] = ob.get("bid_ask_imbalance")
+        result.append(entry)
+    _output(result, json_output)
+
+
+@inspect_app.command("serenity")
+def serenity(
+    what: str = typer.Argument("opps", help="What to show: themes | runs | opps"),
+    status_filter: Optional[str] = typer.Option(None, "--status", help="Filter by status"),
+    limit: int = typer.Option(10, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show Serenity research data (themes, runs, or opportunities)."""
+    from aletheia.storage import repositories as repo
+    if what == "themes":
+        rows = repo.list_serenity_themes(status=status_filter or "active", limit=limit)
+        display = [{
+            "id": r.get("id", "")[:8],
+            "name": r.get("name"),
+            "status": r.get("status"),
+            "confidence": r.get("confidence"),
+            "created_at": r.get("created_at"),
+        } for r in rows]
+    elif what == "runs":
+        rows = repo.list_serenity_research_runs(limit=limit)
+        display = [{
+            "id": r.get("id", "")[:8],
+            "status": r.get("status"),
+            "trigger_type": r.get("trigger_type"),
+            "mode": r.get("mode"),
+            "stage": r.get("stage"),
+            "started_at": r.get("started_at"),
+        } for r in rows]
+    else:
+        rows = repo.list_serenity_opportunities(status=status_filter, limit=limit)
+        display = [{
+            "id": r.get("id", "")[:8],
+            "symbol": r.get("symbol"),
+            "direction": r.get("direction"),
+            "confidence_score": r.get("confidence_score"),
+            "evidence_tier": r.get("evidence_tier"),
+            "thesis": (r.get("thesis") or "")[:80],
+            "status": r.get("status"),
+        } for r in rows]
+    _output(display, json_output)
+
+
+@inspect_app.command("shadow-trades")
+def shadow_trades(
+    scanner: Optional[str] = typer.Option(None, "--scanner", help="Filter by scanner_family"),
+    resolved: bool = typer.Option(False, "--resolved", help="Only show resolved trades"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show shadow trades (counterfactual: what if we traded #2/#3 candidate)."""
+    from aletheia.storage.repositories import list_shadow_trades
+    rows = list_shadow_trades(
+        scanner_family=scanner,
+        resolved=resolved or None,
+        limit=limit,
+    )
+    display = [{
+        "batch_id": r.get("batch_id", "")[:8],
+        "symbol": r.get("symbol"),
+        "direction": r.get("direction"),
+        "scanner_family": r.get("scanner_family"),
+        "rank": r.get("rank"),
+        "trade_score": r.get("trade_score"),
+        "was_selected": r.get("was_selected"),
+        "pnl_pct": r.get("pnl_pct"),
+        "resolved_at": r.get("resolved_at"),
+    } for r in rows]
+    _output(display, json_output)
+
+
+@inspect_app.command("agent-runs")
+def agent_runs(
+    agent: Optional[str] = typer.Option(None, "--agent", help="Filter by agent name"),
+    limit: int = typer.Option(15, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show agent run history with status and duration."""
+    from aletheia.storage.repositories import list_agent_runs
+    rows = list_agent_runs(limit=limit)
+    if agent:
+        rows = [r for r in rows if r.get("agent_name") == agent]
+    display = []
+    for r in rows:
+        started = r.get("started_at") or ""
+        completed = r.get("completed_at") or ""
+        duration_s = None
+        if started and completed:
+            try:
+                s = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                e = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+                duration_s = round((e - s).total_seconds(), 1)
+            except Exception:
+                pass
+        display.append({
+            "id": r.get("id", "")[:8],
+            "agent": r.get("agent_name"),
+            "status": r.get("status"),
+            "duration_s": duration_s,
+            "error": (r.get("error") or "")[:60],
+            "started_at": started,
+        })
+    _output(display, json_output)
+
+
+@inspect_app.command("equity")
+def equity(
+    days: int = typer.Option(7, "--days", "-d", help="Lookback window in days"),
+    limit: int = typer.Option(50, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show portfolio equity time series (from portfolio_snapshots)."""
+    from aletheia.storage.repositories import list_portfolio_snapshots
+    rows = list_portfolio_snapshots(days=days, limit=limit)
+    display = [{
+        "snapshot_at": r.get("snapshot_at"),
+        "equity_usdt": r.get("equity_usdt"),
+        "available_usdt": r.get("available_usdt"),
+        "unrealized_pnl": r.get("unrealized_pnl"),
+        "realized_pnl_today": r.get("realized_pnl_today"),
+        "open_positions": r.get("open_positions"),
+    } for r in rows]
+    if json_output:
+        _output(display, True)
+        return
+    if not display:
+        typer.echo("(no portfolio snapshots)")
+        return
+    typer.echo(f"=== Equity Curve ({days}d, {len(display)} snapshots) ===")
+    for d in display[:30]:
+        eq = d.get("equity_usdt") or 0
+        upnl = d.get("unrealized_pnl") or 0
+        pos = d.get("open_positions") or 0
+        typer.echo(f"  {d['snapshot_at']}  eq=${eq:.0f}  uPnL={upnl:+.2f}  pos={pos}")
+
+
+@inspect_app.command("reflection")
+def reflection(
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show PI Agent's last trading decision (from reflection state)."""
+    from aletheia.agent_shell.reflection import get_last_reflection
+    ref = get_last_reflection()
+    if not ref:
+        typer.echo("(no reflection state — PI agent hasn't made a decision yet)")
+        return
+    if json_output:
+        _output(ref if isinstance(ref, dict) else {"reflection": ref}, True)
+        return
+    if isinstance(ref, dict):
+        for k, v in ref.items():
+            typer.echo(f"  {k}: {v}")
+    else:
+        typer.echo(f"  {ref}")
+
+
+@inspect_app.command("infra-events")
+def infra_events(
+    severity: Optional[str] = typer.Option(None, "--severity", help="Filter: info | warning | critical"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show in-memory infra event buffer (diagnostic runtime events)."""
+    from aletheia.infra.events import list_infra_events
+    rows = list_infra_events(limit=limit, min_severity=severity)
+    display = [{
+        "severity": r.get("severity"),
+        "source": r.get("source"),
+        "code": r.get("code"),
+        "message": (r.get("message") or "")[:100],
+        "action": r.get("action"),
+        "created_at": r.get("created_at") or r.get("ts"),
+    } for r in rows]
+    _output(display, json_output)
+
+
+# ===========================================================================
+# LOW PRIORITY — audit-events, predictions, agent-status
+# ===========================================================================
+
+
+@inspect_app.command("audit-events")
+def audit_events(
+    event_type: Optional[str] = typer.Option(None, "--event-type", help="Filter by event_type"),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show audit trail entries (security/trust events)."""
+    from aletheia.storage.repositories import list_audit_events
+    rows = list_audit_events(limit=limit)
+    if event_type:
+        rows = [r for r in rows if r.get("event_type") == event_type]
+    display = [{
+        "id": r.get("id", "")[:8],
+        "event_type": r.get("event_type"),
+        "entity_type": r.get("entity_type"),
+        "actor": r.get("actor"),
+        "message": (str(r.get("details") or ""))[:80],
+        "created_at": r.get("created_at"),
+    } for r in rows]
+    _output(display, json_output)
+
+
+@inspect_app.command("predictions")
+def predictions(
+    what: str = typer.Argument("events", help="What to show: events | runs"),
+    limit: int = typer.Option(10, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show prediction market data (events or runs)."""
+    from aletheia.storage import repositories as repo
+    if what == "runs":
+        rows = repo.list_prediction_runs(limit=limit)
+        display = [{
+            "id": r.get("id", "")[:8],
+            "status": r.get("status"),
+            "events_found": r.get("events_found"),
+            "started_at": r.get("started_at"),
+        } for r in rows]
+    else:
+        rows = repo.list_prediction_events(limit=limit)
+        display = [{
+            "id": r.get("id", "")[:8],
+            "title": (r.get("title") or "")[:60],
+            "category": r.get("category"),
+            "status": r.get("status"),
+            "source_url": r.get("source_url"),
+        } for r in rows]
+    _output(display, json_output)
+
+
+@inspect_app.command("agent-status")
+def agent_status(
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show operator agent heartbeat and queue state."""
+    from aletheia.agent_shell.operator_store import get_latest_heartbeat
+    hb = get_latest_heartbeat()
+    if not hb:
+        typer.echo("(no heartbeat — operator agent has not run yet)")
+        return
+    display = {
+        "status": hb.get("status"),
+        "mode": hb.get("mode"),
+        "queue_size": hb.get("queue_size"),
+        "current_intent": hb.get("current_intent"),
+        "last_error": hb.get("last_error"),
+        "heartbeat_at": hb.get("heartbeat_at") or hb.get("updated_at"),
+    }
+    _output(display, json_output)
