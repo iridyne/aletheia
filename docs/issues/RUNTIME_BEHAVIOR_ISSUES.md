@@ -1111,3 +1111,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-21 08:08 UTC] ⚠️ **§23 再发作** — features=54/h. Opportunities=8634 (+40/h). Knowledge=1430 (+31/h, 亚盘收尾回升). §17 timed_out=266. Stale=295. **§23**: 07:51–08:03 UTC 3 批重启 (PID 34952→19604→11684), 08:05 features 恢复, 间隔 06:26→07:51 约 85min. §22/§23 根因未修. 83h+ 连续运行.
 
 [2026-06-21 08:21 UTC] ⚠️ **§23 持续间歇** — features=54/h. Opportunities=8642 (+8/h). Knowledge=1445 (+15/h). §17 timed_out=266. Stale=295. **§23**: 08:14 和 08:21 各 1 批 (PID 19908/16536), 约每 10min 发作一次; features 08:15 已自愈. §22/§23 根因未修. 83h+ 连续运行.
+
+[2026-06-21 09:08 UTC] ⚠️ **§23 暂稳 45min** — features=54/h. Opportunities=8666 (+24/h). Knowledge=1464 (+19/h). §17 timed_out=266. Stale=296 (+1: market_observer stale=4). **§23**: 最后 08:23 (PID 30036), 45min 无新事件. §22/§23 根因未修. 84h+ 连续运行.
