@@ -1,0 +1,62 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a9eff', 'lineColor': '#4a9eff', 'fontFamily': 'sans-serif'}}}%%
+flowchart TB
+    subgraph INPUT["PI Agent 输入: 三层上下文"]
+        direction LR
+
+        subgraph L1["Layer 1: 市场现状"]
+            S1["价格快照 (所有币)"]
+            S2["特征: RSI/BB/FR/vol_ratio<br/>taker_ratio/OI_divergence"]
+            S3["开放 Opportunities"]
+            S4["Factor Feedback<br/>(历史胜率/期望)"]
+        end
+
+        subgraph L2["Layer 2: 组合状态"]
+            P1["当前持仓<br/>(symbol/direction/pnl)"]
+            P2["Ranker Candidates<br/>(评分后排名)"]
+            P3["Pending Signals<br/>(等待决策)"]
+        end
+
+        subgraph L3["Layer 3: 智慧"]
+            W1["上次决策回顾<br/>(action + 结果)"]
+            W2["知识教训<br/>(过去犯的错)"]
+            W3["研究洞察<br/>(Serenity output)"]
+        end
+    end
+
+    subgraph REASONING["推理过程"]
+        direction TB
+        RULES["信号解读规则注入:<br/>FR > 0.01% → bearish<br/>FR < -0.01% → bullish<br/>OI_div=+1 → reversal long<br/>taker > 1.2 → buy confirm"]
+        DEBATE["Bull vs Bear 辩论<br/>(高 conviction 时触发)"]
+        SYNTH["综合判断"]
+
+        RULES --> DEBATE --> SYNTH
+    end
+
+    subgraph OUTPUT["决策输出"]
+        direction LR
+        TRADE["✅ trade<br/>symbol + direction<br/>+ conviction (1-10)"]
+        SKIP["⏭️ skip<br/>reasoning"]
+        WATCH["👁️ watch<br/>加入观察"]
+        SCALE["📈 scale_in<br/>加仓现有"]
+        FLIP["🔄 flip<br/>反转方向"]
+    end
+
+    subgraph PERSIST["决策记录"]
+        REC["record_decision()<br/>→ pi_decisions DB<br/>→ reflection.json"]
+    end
+
+    INPUT --> REASONING --> OUTPUT
+    OUTPUT --> PERSIST
+    PERSIST -.->|"下一轮反馈"| W1
+
+    classDef layer1 fill:#1a2e1a,stroke:#88ff88,stroke-width:1px,color:#88ff88
+    classDef layer2 fill:#1a1a2e,stroke:#4a9eff,stroke-width:1px,color:#4a9eff
+    classDef layer3 fill:#2e1a2e,stroke:#cc88ff,stroke-width:1px,color:#cc88ff
+    classDef action fill:#0f3460,stroke:#ffd700,stroke-width:2px,color:#ffd700
+    classDef record fill:#2e2e1a,stroke:#ffcc44,stroke-width:2px,color:#ffcc44
+
+    class S1,S2,S3,S4 layer1
+    class P1,P2,P3 layer2
+    class W1,W2,W3 layer3
+    class TRADE,SKIP,WATCH,SCALE,FLIP action
+    class REC record

@@ -1,0 +1,45 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a9eff', 'lineColor': '#4a9eff', 'fontFamily': 'sans-serif'}}}%%
+flowchart TB
+    subgraph PATH_B["Path B: 机会发现管线 (Observer → Ranker)"]
+        direction TB
+
+        OBS_START["Market Observer 每10分钟启动"]
+        OBS_SCAN["扫描 observed_symbols 列表<br/>(BTC, ETH, SOL, ...)"]
+        OBS_LLM["LLM 分析每个 symbol<br/>输入: price/volume/FR/技术指标<br/>输出: direction_bias + confidence"]
+
+        OPP_WRITE["写入 Opportunity<br/>symbol=ETH/USDT<br/>direction=long<br/>confidence=high"]
+
+        RANK_START["Paper Trader Ranker 消费"]
+        RANK_FILTER["过滤层:<br/>- 中性方向? → skip<br/>- 信心不足? → skip<br/>- 执行不可用? → skip<br/>- TTL 过期? → skip"]
+        RANK_SCORE["评分引擎:<br/>confidence_score × 1.0<br/>+ scanner_family bonus<br/>+ strategy_evidence<br/>+ factor_feedback<br/>- blocked_candidate 惩罚"]
+        RANK_SORT["排序 → Top 3 输出"]
+
+        OBS_START --> OBS_SCAN --> OBS_LLM --> OPP_WRITE
+        OPP_WRITE --> RANK_START --> RANK_FILTER --> RANK_SCORE --> RANK_SORT
+    end
+
+    subgraph PATH_A["Path A: 策略触发管线 (RuleSet)"]
+        direction TB
+
+        RS_START["Paper Trader 每5分钟启动"]
+        RS_SCAN["scan_active_rulesets()<br/>遍历所有 paper_running 策略"]
+        RS_EVAL["评估每个 RuleSet 条件<br/>例: RSI(14) < 30 且 BB squeeze"]
+        RS_FIRE["条件满足 → 触发信号<br/>symbol + direction + stop_price"]
+
+        RS_START --> RS_SCAN --> RS_EVAL --> RS_FIRE
+    end
+
+    subgraph COLLECT["信号汇聚点"]
+        PI_DB[("pi_decisions 表<br/>action = 'signal_pending'")]
+    end
+
+    RANK_SORT -->|"signal_pending<br/>Top 3 candidates"| PI_DB
+    RS_FIRE -->|"signal_pending<br/>RuleSet entry"| PI_DB
+
+    classDef pathB fill:#1a2e1a,stroke:#88ff88,stroke-width:2px,color:#88ff88
+    classDef pathA fill:#2e2e1a,stroke:#ffcc44,stroke-width:2px,color:#ffcc44
+    classDef db fill:#0f3460,stroke:#ffd700,stroke-width:3px,color:#ffd700
+
+    class OBS_START,OBS_SCAN,OBS_LLM,OPP_WRITE,RANK_START,RANK_FILTER,RANK_SCORE,RANK_SORT pathB
+    class RS_START,RS_SCAN,RS_EVAL,RS_FIRE pathA
+    class PI_DB db

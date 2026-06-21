@@ -1,0 +1,44 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a9eff', 'lineColor': '#4a9eff', 'fontFamily': 'sans-serif'}}}%%
+flowchart LR
+    subgraph EXCHANGES["交易所 API"]
+        BG["Bitget"]
+        BN["Binance"]
+        OKX["OKX"]
+    end
+
+    subgraph CCXT["CCXT Provider (统一接口)"]
+        direction TB
+        K1["OHLCV<br/>1h + 4h<br/>168根K线"]
+        K2["Ticker<br/>price / volume<br/>24h change"]
+        K3["Funding Rate<br/>多空费率"]
+        K4["Open Interest<br/>持仓量变化"]
+        K5["Taker Ratio<br/>主动买卖比"]
+        K6["Liquidations<br/>爆仓事件"]
+    end
+
+    subgraph STORAGE["持久化"]
+        SNAP[("market_snapshots<br/>实时价格快照")]
+        UFS[("universe_feature_snapshots<br/>计算后特征")]
+        LIQ[("liquidation_events<br/>大额爆仓")]
+    end
+
+    subgraph FEATURES["特征计算引擎"]
+        RSI["RSI (14/21)"]
+        BB["Bollinger Bands<br/>squeeze 检测"]
+        VOL["vol_ratio<br/>(当前/均值)"]
+        RS["relative_strength<br/>(vs BTC 24h)"]
+        OI_DIV["OI-Price 背离<br/>隐性积累/弱势反弹"]
+    end
+
+    BG & BN & OKX --> CCXT
+    K1 & K2 & K3 & K4 & K5 & K6 --> SNAP & LIQ
+    SNAP --> FEATURES
+    FEATURES --> UFS
+
+    classDef exchange fill:#2e1a1a,stroke:#ff8844,stroke-width:2px,color:#ff8844
+    classDef data fill:#1a2e1a,stroke:#88ff88,stroke-width:2px,color:#88ff88
+    classDef store fill:#1a1a2e,stroke:#4a9eff,stroke-width:2px,color:#4a9eff
+
+    class BG,BN,OKX exchange
+    class K1,K2,K3,K4,K5,K6 data
+    class SNAP,UFS,LIQ store

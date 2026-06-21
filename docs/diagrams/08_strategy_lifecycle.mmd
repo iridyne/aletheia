@@ -1,0 +1,59 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a9eff', 'lineColor': '#4a9eff', 'fontFamily': 'sans-serif'}}}%%
+flowchart LR
+    subgraph CREATE["策略创建"]
+        SD["Strategy Designer<br/>(事件触发/Operator触发)"]
+        BT["回测验证<br/>(backtest gate)"]
+    end
+
+    subgraph AUTO["自动升阶 (无需 PI Agent)"]
+        DRAFT["draft"]
+        RN["research_note"]
+        SH["strategy_hypothesis"]
+        PC["paper_candidate<br/>⛔ 自动停止"]
+    end
+
+    subgraph PI_GATE["PI Agent 决策门"]
+        REC_P["recommend_promote<br/>(写入 pi_decisions)"]
+        PI_EVAL["PI Agent 评估:<br/>策略质量? 与现有冲突?<br/>资金够? 相关性如何?"]
+    end
+
+    subgraph RUNNING["策略运行"]
+        PR["paper_running<br/>✅ RuleSet 激活<br/>产生 Path A 信号"]
+    end
+
+    subgraph MONITOR["策略监控 (Operator 60min)"]
+        OP_ASSESS["Operator 评估:<br/>表现如何? 需要调整?"]
+        REC_R["recommend_retire<br/>(写入 pi_decisions)"]
+        REC_D["recommend_demote<br/>(写入 pi_decisions)"]
+        PI_CONF["PI Agent 确认"]
+    end
+
+    subgraph END_STATES["终态"]
+        RETIRED["retired ☠️"]
+        PAUSED["paused ⏸️"]
+    end
+
+    SD --> BT -->|"passed"| DRAFT
+    BT -->|"killed (负期望)"| RETIRED
+    DRAFT --> RN --> SH --> PC
+    PC --> REC_P --> PI_EVAL
+    PI_EVAL -->|"approve"| PR
+    PI_EVAL -->|"reject"| PC
+    PR --> OP_ASSESS
+    OP_ASSESS --> REC_R & REC_D
+    REC_R & REC_D --> PI_CONF
+    PI_CONF -->|"confirm retire"| RETIRED
+    PI_CONF -->|"confirm demote"| PAUSED
+    PI_CONF -->|"reject"| PR
+
+    classDef auto fill:#1a2e1a,stroke:#88ff88,stroke-width:1px,color:#88ff88
+    classDef gate fill:#0f3460,stroke:#ffd700,stroke-width:3px,color:#ffd700
+    classDef running fill:#1a1a2e,stroke:#4a9eff,stroke-width:2px,color:#4a9eff
+    classDef end_state fill:#2d1b1b,stroke:#ff6b6b,stroke-width:2px,color:#ff6b6b
+    classDef stop fill:#4d1b1b,stroke:#ff4444,stroke-width:3px,color:#ff4444
+
+    class DRAFT,RN,SH auto
+    class PC stop
+    class REC_P,PI_EVAL,PI_CONF gate
+    class PR running
+    class RETIRED,PAUSED end_state

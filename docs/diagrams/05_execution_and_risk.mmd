@@ -1,0 +1,61 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a9eff', 'lineColor': '#4a9eff', 'fontFamily': 'sans-serif'}}}%%
+flowchart TB
+    PI_TRADE["PI Agent: trade<br/>ETH/USDT long conviction=8"]
+
+    subgraph SIZING["仓位计算"]
+        VOL_SIZE["波动率目标 Sizing<br/>notional = target_risk / ATR%"]
+        QTY["quantity = notional / price"]
+        STOP["stop_price = price × (1 - SL%)"]
+    end
+
+    subgraph RISK["Risk Engine 审批"]
+        direction TB
+        R1{"持仓数量 < max?"}
+        R2{"同方向暴露 < limit?"}
+        R3{"相关性检查<br/>与现有持仓不过度相关?"}
+        R4{"当日亏损 < daily_limit?"}
+        R5{"Kill Switch 未激活?"}
+
+        R1 -->|"通过"| R2 -->|"通过"| R3 -->|"通过"| R4 -->|"通过"| R5
+    end
+
+    subgraph EXECUTION["下单执行"]
+        direction TB
+        MODE{"execution_mode?"}
+        PAPER["paper_internal<br/>本地模拟成交"]
+        DEMO["bitget_demo<br/>交易所模拟盘"]
+        LIVE["bitget_live_limited<br/>实盘 (需人工确认)"]
+
+        MODE -->|"paper"| PAPER
+        MODE -->|"demo"| DEMO
+        MODE -->|"live"| LIVE
+    end
+
+    subgraph RESULT["成交结果"]
+        PROPOSAL["Trade Proposal"]
+        ORDER["Order 创建"]
+        FILL["Order Fill<br/>fill_price + timestamp"]
+        POSITION["Position 开仓"]
+        TPSL["Exchange TPSL 挂单<br/>(止盈止损委托)"]
+    end
+
+    subgraph REJECTED["拒绝路径"]
+        REJ_LOG["记录拒绝原因<br/>→ pi_decisions"]
+        NOTIFY["通知: 交易被风控拦截"]
+    end
+
+    PI_TRADE --> SIZING --> RISK
+    R5 -->|"全部通过"| EXECUTION
+    R1 & R2 & R3 & R4 & R5 -->|"任一失败"| REJECTED
+    EXECUTION --> RESULT
+    PROPOSAL --> ORDER --> FILL --> POSITION --> TPSL
+
+    classDef pi fill:#0f3460,stroke:#ffd700,stroke-width:3px,color:#ffd700
+    classDef risk fill:#2d1b1b,stroke:#ff6b6b,stroke-width:2px,color:#ff6b6b
+    classDef exec fill:#1a2e1a,stroke:#88ff88,stroke-width:2px,color:#88ff88
+    classDef reject fill:#4d1b1b,stroke:#ff4444,stroke-width:2px,color:#ff4444
+
+    class PI_TRADE pi
+    class R1,R2,R3,R4,R5 risk
+    class PAPER,DEMO,LIVE exec
+    class REJ_LOG,NOTIFY reject

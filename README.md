@@ -66,6 +66,18 @@ origin is the canonical API + UI surface.
 - Paper/demo first; live strictly gated behind explicit human unlock, with order
   reconciliation against the exchange
 
+### System Overview
+
+![System Overview](docs/diagrams/01_system_overview.png)
+
+### Trading Flow (PI Agent Sole Decision Maker)
+
+![Trading Flow](docs/diagrams/trading_flow_pi_sole_decision_maker.png)
+
+> For detailed flow diagrams (data collection, signal discovery, decision process,
+> execution, position management, feedback loop, strategy lifecycle), see
+> **[docs/SYSTEM_ARCHITECTURE_GUIDE.md](docs/SYSTEM_ARCHITECTURE_GUIDE.md)**.
+
 ## Safety invariants
 
 - Live trading off by default (`live_disabled`); first unlock requires human action

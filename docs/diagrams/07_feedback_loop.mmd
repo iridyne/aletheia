@@ -1,0 +1,48 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a9eff', 'lineColor': '#4a9eff', 'fontFamily': 'sans-serif'}}}%%
+flowchart TB
+    OUTCOME["Trade Outcome<br/>ETH/USDT long<br/>entry=3800 exit=3950<br/>PnL=+3.9% ✅"]
+
+    subgraph LEARN["学习系统"]
+        direction TB
+
+        subgraph FACTOR["Factor Feedback 更新"]
+            FF1["找到对应 factor_key<br/>(scanner_family + direction)"]
+            FF2["更新统计:<br/>win_rate +=1 trade<br/>expectancy = avg(pnl)"]
+            FF3["状态升阶:<br/>watch → active → preferred"]
+        end
+
+        subgraph KNOWLEDGE["知识教训提取"]
+            KL1["自动分析:<br/>什么做对了? 什么可以改进?"]
+            KL2["写入 Knowledge Lesson<br/>(type, severity, insight)"]
+        end
+
+        subgraph STRATEGY_FB["策略证据积累"]
+            SF1["paper_trades count +1"]
+            SF2["paper_expectancy 更新"]
+            SF3["promotion_gates 检查:<br/>trades >= 5?<br/>expectancy > 0?"]
+        end
+    end
+
+    subgraph INJECT["反馈注入 (下一轮)"]
+        direction LR
+        INJ1["PI Agent Layer 1:<br/>factor_feedback 评分影响"]
+        INJ2["PI Agent Layer 3:<br/>最近教训 + 上次回顾"]
+        INJ3["Ranker 评分:<br/>factor_status bonus/penalty"]
+        INJ4["Strategy Designer:<br/>evidence_status 判定"]
+    end
+
+    OUTCOME --> LEARN
+    FACTOR --> INJ1 & INJ3
+    KNOWLEDGE --> INJ2
+    STRATEGY_FB --> INJ4
+
+    INJ1 & INJ2 -.->|"5分钟后<br/>下一轮 PI Agent 决策"| NEXT["PI Agent<br/>更好的下一个决策"]
+
+    classDef outcome fill:#1a2e1a,stroke:#88ff88,stroke-width:2px,color:#88ff88
+    classDef learn fill:#1a1a2e,stroke:#4a9eff,stroke-width:2px,color:#4a9eff
+    classDef inject fill:#0f3460,stroke:#ffd700,stroke-width:2px,color:#ffd700
+
+    class OUTCOME outcome
+    class FF1,FF2,FF3,KL1,KL2,SF1,SF2,SF3 learn
+    class INJ1,INJ2,INJ3,INJ4 inject
+    class NEXT inject

@@ -1,0 +1,181 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a9eff', 'lineColor': '#4a9eff', 'secondaryColor': '#16213e', 'tertiaryColor': '#0f3460', 'fontFamily': 'monospace'}}}%%
+flowchart TD
+    %% ============================================================
+    %% PHASE 1: 数据采集 (每5分钟 Scheduler 触发)
+    %% ============================================================
+    subgraph DATA["📡 Phase 1: 数据采集 (Scheduler 5min)"]
+        direction TB
+        MDP["Market Data Provider<br/>(CCXT multi-exchange)"]
+        OHLCV["OHLCV 1h/4h 168根"]
+        FR["Funding Rate"]
+        TBR["Taker Buy/Sell Ratio"]
+        OI["Open Interest"]
+        LIQ["Liquidation Events"]
+        SNAP["Market Snapshots<br/>(price, volume, 24h change)"]
+
+        MDP --> OHLCV & FR & TBR & OI & LIQ & SNAP
+    end
+
+    %% ============================================================
+    %% PHASE 2: 信号发现 (两条并行路径)
+    %% ============================================================
+    subgraph DISCOVERY["🔍 Phase 2: 信号发现"]
+        direction TB
+
+        subgraph PATH_A_SRC["Path A: RuleSet 策略触发"]
+            RS["scan_active_rulesets()<br/>检查所有 paper_running 策略"]
+            RSI_CHK["技术指标条件检查<br/>(RSI/BB/MA cross)"]
+            RS --> RSI_CHK
+        end
+
+        subgraph PATH_B_SRC["Path B: Observer → Ranker 管线"]
+            OBS["Market Observer (10min)<br/>LLM 分析每个 symbol"]
+            OPP["创建 Opportunity<br/>(direction + confidence)"]
+            FEAT["Universe Features<br/>(vol_ratio, RS, BB, FR, taker)"]
+            RANK["Paper Trader Ranker<br/>多维评分 + 排序"]
+
+            OBS --> OPP --> FEAT --> RANK
+        end
+    end
+
+    %% ============================================================
+    %% PHASE 3: 信号收集 (Paper Trader 5min)
+    %% ============================================================
+    subgraph COLLECTOR["📥 Phase 3: 信号收集 (Paper Trader 5min)"]
+        direction TB
+
+        SIG_A["Path A 信号<br/>RuleSet entry → signal_pending"]
+        SIG_B["Path B 信号<br/>Top 3 candidates → signal_pending"]
+
+        PI_DB[("pi_decisions 表<br/>action = signal_pending<br/>symbol / direction / reasoning")]
+
+        SIG_A --> PI_DB
+        SIG_B --> PI_DB
+    end
+
+    %% ============================================================
+    %% PHASE 4: PI Agent 决策 (唯一决策者, 5min)
+    %% ============================================================
+    subgraph PI["🧠 Phase 4: PI Agent 决策 (Sole Decision Maker)"]
+        direction TB
+
+        CTX["Enriched Trading Context<br/>三层数据注入"]
+
+        subgraph LAYERS["Context Layers"]
+            L1["Layer 1: Market State<br/>snapshots + features + FR<br/>+ opportunities + factor_feedback"]
+            L2["Layer 2: Portfolio<br/>positions + ranker_candidates<br/>+ pending_signals"]
+            L3["Layer 3: Wisdom<br/>reflection + lessons + serenity"]
+        end
+
+        PROMPT["Trading Decision Prompt<br/>+ Signal Rules 解读<br/>+ Pending Signals 列表"]
+        LLM["LLM 自由推理<br/>(Bull/Bear debate optional)"]
+
+        subgraph ACTIONS["决策输出"]
+            ACT_TRADE["trade (symbol, direction, conviction)"]
+            ACT_SKIP["skip (reasoning)"]
+            ACT_WATCH["watch (add to watchlist)"]
+            ACT_SCALE["scale_in / flip"]
+        end
+
+        CTX --> LAYERS --> PROMPT --> LLM --> ACTIONS
+    end
+
+    %% ============================================================
+    %% PHASE 5: 执行 (仅 PI Agent trade 决策触发)
+    %% ============================================================
+    subgraph EXEC["⚡ Phase 5: 执行"]
+        direction TB
+
+        PROPOSAL["create_paper_proposal()<br/>(symbol, direction, qty, stop)"]
+        RISK["Risk Engine 审批<br/>(position limit, correlation,<br/>daily loss, kill switch)"]
+        ORDER["Order 创建"]
+        FILL["Order Fill<br/>(paper_internal or bitget_demo)"]
+        POS["Position 开仓<br/>+ Exchange TPSL 挂单"]
+
+        PROPOSAL --> RISK
+        RISK -->|"approved"| ORDER --> FILL --> POS
+        RISK -->|"rejected"| REJ["拒绝 (记录原因)"]
+    end
+
+    %% ============================================================
+    %% PHASE 6: 持仓管理 (自治安全层)
+    %% ============================================================
+    subgraph MANAGE["🛡️ Phase 6: 持仓管理 (自治, 不经 PI Agent)"]
+        direction TB
+
+        TRAIL["Trailing Stop 追踪止损<br/>(ATR-based, breakeven移动)"]
+        SL["Stop Loss 触发"]
+        TP["Take Profit 触发"]
+        MAXH["Max Hold Time 超时平仓"]
+        SYNC["Position Sync<br/>(exchange-triggered close 检测)"]
+
+        TRAIL & SL & TP & MAXH & SYNC
+    end
+
+    %% ============================================================
+    %% PHASE 7: 反馈闭环
+    %% ============================================================
+    subgraph FEEDBACK["🔄 Phase 7: 反馈闭环"]
+        direction TB
+
+        REC["record_decision()<br/>→ pi_decisions 表<br/>→ reflection JSON"]
+        OUTCOME["Trade Outcome<br/>(win/loss/pnl)"]
+        FACTOR["Factor Feedback 更新<br/>(win_rate, expectancy)"]
+        LESSON["Knowledge Lesson 提取"]
+        REFLECT["下轮 PI Agent 回顾<br/>(上次决策 + 结果)"]
+
+        REC --> OUTCOME --> FACTOR & LESSON --> REFLECT
+    end
+
+    %% ============================================================
+    %% PHASE 8: 策略生命周期
+    %% ============================================================
+    subgraph LIFECYCLE["♻️ Phase 8: 策略生命周期"]
+        direction TB
+
+        DESIGN["Strategy Designer<br/>创建新策略"]
+        DRAFT["draft → research_note<br/>→ strategy_hypothesis"]
+        PC["paper_candidate<br/>(自动止步)"]
+        PI_PROMOTE["PI Agent 确认<br/>recommend_promote"]
+        PR["paper_running<br/>(RuleSet 激活)"]
+
+        RETIRE_REC["Operator: recommend_retire"]
+        DEMOTE_REC["Operator: recommend_demote"]
+        PI_CONFIRM["PI Agent 确认<br/>执行 retire/demote"]
+
+        DESIGN --> DRAFT --> PC
+        PC -->|"PI Agent approve"| PR
+        PR --> RETIRE_REC & DEMOTE_REC
+        RETIRE_REC & DEMOTE_REC --> PI_CONFIRM
+    end
+
+    %% ============================================================
+    %% 连接线
+    %% ============================================================
+    DATA --> DISCOVERY
+    PATH_A_SRC --> SIG_A
+    PATH_B_SRC --> SIG_B
+    PI_DB --> CTX
+    ACTIONS -->|"trade"| PROPOSAL
+    POS --> MANAGE
+    MANAGE --> OUTCOME
+    ACTIONS --> REC
+    REFLECT -.->|"下一轮"| CTX
+    FACTOR -.->|"scoring"| RANK
+    LESSON -.->|"layer 3"| L3
+    PI_PROMOTE -.-> PI
+    LIFECYCLE -.->|"paper_running 策略"| RS
+
+    %% ============================================================
+    %% 样式
+    %% ============================================================
+    classDef phaseBox fill:#1a1a2e,stroke:#4a9eff,stroke-width:2px,color:#e0e0e0
+    classDef piAgent fill:#0f3460,stroke:#ffd700,stroke-width:3px,color:#ffd700
+    classDef signal fill:#16213e,stroke:#00ff88,stroke-width:2px,color:#00ff88
+    classDef danger fill:#2d1b1b,stroke:#ff4444,stroke-width:2px,color:#ff4444
+    classDef db fill:#1a2e1a,stroke:#88ff88,stroke-width:2px,color:#88ff88
+
+    class LLM,PROMPT,CTX piAgent
+    class PI_DB,REC db
+    class SIG_A,SIG_B signal
+    class RISK,REJ danger

@@ -1,0 +1,50 @@
+%%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#1a1a2e', 'primaryTextColor': '#e0e0e0', 'primaryBorderColor': '#4a9eff', 'lineColor': '#4a9eff', 'fontFamily': 'sans-serif'}}}%%
+flowchart TB
+    POS["Position 已开仓<br/>ETH/USDT long @ 3800<br/>stop=3686 qty=0.5"]
+
+    subgraph AUTONOMOUS["自治安全层 (不经 PI Agent, 每分钟检查)"]
+        direction TB
+
+        subgraph TRAILING["追踪止损"]
+            T1["价格上涨 → ATR trailing 跟进"]
+            T2["涨幅 > breakeven_threshold<br/>→ 止损移动到成本价"]
+            T3["继续上涨 → 止损跟随最高点"]
+        end
+
+        subgraph HARD_STOP["硬止损"]
+            SL["price <= stop_price<br/>→ 立即平仓"]
+        end
+
+        subgraph TAKE_PROFIT["止盈"]
+            TP["price >= target_price<br/>→ 获利了结"]
+        end
+
+        subgraph MAX_HOLD["超时保护"]
+            MH["持仓时间 > max_hold_hours<br/>→ 强制平仓<br/>(避免僵尸仓位)"]
+        end
+
+        subgraph EXCHANGE_SYNC["交易所同步"]
+            ES["检测 exchange-triggered close<br/>(交易所端 TPSL 成交)"]
+            EU["同步 trailing stop 到交易所<br/>(replace_exchange_stop)"]
+        end
+    end
+
+    subgraph CLOSE["平仓"]
+        direction LR
+        CLOSE_ORD["Close Order"]
+        FILL_CLOSE["Fill (平仓价)"]
+        PNL["计算 PnL<br/>realized_pnl = (exit - entry) × qty"]
+        OUTCOME["Trade Outcome<br/>win / loss / breakeven"]
+    end
+
+    POS --> AUTONOMOUS
+    TRAILING & HARD_STOP & TAKE_PROFIT & MAX_HOLD & EXCHANGE_SYNC -->|"触发"| CLOSE
+    CLOSE_ORD --> FILL_CLOSE --> PNL --> OUTCOME
+
+    classDef pos fill:#1a2e1a,stroke:#88ff88,stroke-width:2px,color:#88ff88
+    classDef safe fill:#2d1b1b,stroke:#ff6b6b,stroke-width:2px,color:#ff6b6b
+    classDef close fill:#2e2e1a,stroke:#ffcc44,stroke-width:2px,color:#ffcc44
+
+    class POS pos
+    class SL,TP,MH safe
+    class OUTCOME close
