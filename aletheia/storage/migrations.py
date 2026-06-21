@@ -1396,6 +1396,14 @@ _ADDITIVE_COLUMNS = [
     ("relative_strength_24h", "universe_feature_snapshots", "REAL"),
     # OI-price divergence: +1=hidden_accumulation, -1=weak_rally, 0=neutral
     ("oi_price_divergence", "universe_feature_snapshots", "INTEGER"),
+    # Decision explainability: PI Agent reasoning chain at entry time
+    ("decision_reasoning", "positions", "TEXT"),
+    # Cost visibility: itemized fee/slippage for transparency
+    ("entry_fee", "positions", "REAL"),
+    ("exit_fee", "positions", "REAL"),
+    ("slippage_cost", "positions", "REAL"),
+    # Knowledge item payload storage (was missing — memo/feedback persist via this column)
+    ("content", "knowledge_items", "TEXT"),
 ]
 
 
@@ -1584,6 +1592,23 @@ CREATE INDEX IF NOT EXISTS idx_market_regimes_detected ON market_regimes(detecte
 
 
 
+_PI_DECISIONS_DDL = """
+CREATE TABLE IF NOT EXISTS pi_decisions (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    symbol TEXT,
+    direction TEXT,
+    action TEXT NOT NULL DEFAULT 'skip',
+    conviction INTEGER NOT NULL DEFAULT 0,
+    reasoning TEXT DEFAULT '',
+    proposal_id TEXT,
+    debate_ran INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_pi_decisions_symbol ON pi_decisions(symbol, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pi_decisions_created ON pi_decisions(created_at DESC);
+"""
+
+
 def _run_all_ddl(db) -> None:
     """Execute every DDL statement against db (used for both real and blueprint DBs)."""
     db.executescript(SCHEMA_SQL)
@@ -1592,6 +1617,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_PREDICTION_NORMALIZED_DDL)
     db.executescript(_STRATEGY_BACKTEST_DDL)
     db.executescript(_MARKET_REGIME_DDL)
+    db.executescript(_PI_DECISIONS_DDL)
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts(db)

@@ -192,6 +192,10 @@ class Position(BaseModel):
     regime_tag: str | None = None
     entry_market_summary: str | None = None
     exchange_tpsl_order_id: str | None = None
+    decision_reasoning: str | None = None
+    entry_fee: float | None = None
+    exit_fee: float | None = None
+    slippage_cost: float | None = None
 
 
 class MarketRegimeRecord(BaseModel):
@@ -237,6 +241,7 @@ class KnowledgeItem(BaseModel):
     confidence: str = "medium_confidence"
     status: str = "active"
     tags: str = "[]"
+    content: str | None = None
     content_hash: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
@@ -801,3 +806,15 @@ class UniversePolicy(BaseModel):
     max_weight_step: float = 0.15
     change_reason: str | None = None
     previous_policy_id: str | None = None
+
+
+class PiDecision(BaseModel):
+    id: str = Field(default_factory=new_id)
+    created_at: str = Field(default_factory=_utcnow)
+    symbol: str | None = None
+    direction: str | None = None
+    action: str = "skip"
+    conviction: int = 0
+    reasoning: str = ""
+    proposal_id: str | None = None
+    debate_ran: bool = False

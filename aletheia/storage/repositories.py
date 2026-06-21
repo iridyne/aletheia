@@ -117,6 +117,29 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str) -> d
     return dict(row) if row else None
 
 
+# --- PI Decisions ---
+
+def insert_pi_decision(decision) -> None:
+    """Persist a PI Agent trading decision to the database."""
+    _insert("pi_decisions", decision.model_dump() if hasattr(decision, "model_dump") else decision)
+
+
+def latest_pi_decision(symbol: str, max_age_minutes: int = 30) -> dict | None:
+    """Get the most recent PI decision for a symbol within max_age_minutes."""
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM pi_decisions WHERE symbol = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1",
+        (symbol, cutoff),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_pi_decisions(limit: int = 20) -> list[dict]:
+    return _select_all("pi_decisions", order="created_at DESC", limit=limit)
+
+
 # --- Prediction Observer Runs ---
 
 def insert_prediction_run(run_id: str, categories: list) -> None:
