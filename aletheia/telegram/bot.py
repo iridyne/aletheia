@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from aletheia.net import httpx_client
@@ -10,6 +11,10 @@ from aletheia.config.secrets import get_secret
 from aletheia.files.jsonl import write_audit
 
 logger = logging.getLogger("aletheia.telegram")
+
+_KILL_CONFIRM_TIMEOUT_SEC = 300.0  # 5 minutes to confirm kill
+_RATE_LIMIT_PER_SEC = 1.0  # max 1 message per second per chat (well under Telegram's 30/s)
+_rate_limit_last_send: dict[int, float] = {}  # chat_id → monotonic time of last send
 
 
 class TelegramBot:
@@ -20,7 +25,8 @@ class TelegramBot:
         self.allowed_chat_ids: set[int] = set()
         self._offset = 0
         self._running = False
-        self._pending_kill_chat: int | None = None
+        self._pending_kills: dict[int, float] = {}  # chat_id → monotonic timestamp
+        self._consecutive_poll_failures = 0
 
     def configure(self) -> bool:
         """Load config and token. Returns True if bot is ready."""
@@ -37,9 +43,20 @@ class TelegramBot:
     def _api_url(self, method: str) -> str:
         return f"https://api.telegram.org/bot{self.token}/{method}"
 
-    async def send_message(self, chat_id: int, text: str) -> None:
+    async def send_message(self, chat_id: int, text: str, *, parse_mode: str | None = "HTML") -> None:
+        # Per-chat rate limit: wait if sending too fast
+        now = time.monotonic()
+        last = _rate_limit_last_send.get(chat_id, 0.0)
+        wait = _RATE_LIMIT_PER_SEC - (now - last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _rate_limit_last_send[chat_id] = time.monotonic()
+
+        payload: dict = {"chat_id": chat_id, "text": text}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         async with httpx_client(timeout=10) as client:
-            await client.post(self._api_url("sendMessage"), json={"chat_id": chat_id, "text": text})
+            await client.post(self._api_url("sendMessage"), json=payload)
 
     def _is_authorized(self, chat_id: int) -> bool:
         return self._authorization_error(chat_id) is None
@@ -93,11 +110,11 @@ class TelegramBot:
     def _cmd_status(self) -> str:
         cfg = load_config()
         return (
-            f"Gateway: running\n"
-            f"Paused: {cfg.runtime.paused}\n"
-            f"Exchange: {cfg.exchange.name} ({cfg.exchange.mode})\n"
-            f"Live: {cfg.live.state}\n"
-            f"Permission: {cfg.agent.permission_mode}"
+            f"<b>Gateway:</b> running\n"
+            f"<b>Paused:</b> {cfg.runtime.paused}\n"
+            f"<b>Exchange:</b> {cfg.exchange.name} ({cfg.exchange.mode})\n"
+            f"<b>Live:</b> {cfg.live.state}\n"
+            f"<b>Permission:</b> {cfg.agent.permission_mode}"
         )
 
     def _cmd_pause(self) -> str:
@@ -152,11 +169,11 @@ class TelegramBot:
             for p in positions[:10]:
                 direction = "L" if p["direction"] in ("long", "buy") else "S"
                 lines.append(
-                    f"{direction} {p['symbol']} x{p['quantity']:.4f} "
-                    f"@ {p['entry_price']:.4f} ({p.get('execution_mode', '?')[:6]})"
+                    f"<code>{direction} {p['symbol']} x{p['quantity']:.4f} "
+                    f"@ {p['entry_price']:.4f}</code> ({p.get('execution_mode', '?')[:6]})"
                 )
             suffix = f"\n...+{len(positions)-10} more" if len(positions) > 10 else ""
-            return f"Open positions ({len(positions)}):\n" + "\n".join(lines) + suffix
+            return f"<b>Open positions ({len(positions)}):</b>\n" + "\n".join(lines) + suffix
         except Exception as e:
             return f"Error fetching positions: {e}"
 
@@ -168,25 +185,27 @@ class TelegramBot:
             unrealized = portfolio.get("unrealized_pnl", 0.0)
             sign = "+" if realized >= 0 else ""
             return (
-                f"Today PnL\n"
-                f"Realized: {sign}{realized:.2f} USDT\n"
-                f"Unrealized: {unrealized:+.2f} USDT\n"
-                f"Total: {realized + unrealized:+.2f} USDT"
+                f"<b>Today PnL</b>\n"
+                f"Realized: <code>{sign}{realized:.2f} USDT</code>\n"
+                f"Unrealized: <code>{unrealized:+.2f} USDT</code>\n"
+                f"Total: <code>{realized + unrealized:+.2f} USDT</code>"
             )
         except Exception as e:
             return f"Error fetching PnL: {e}"
 
     def _cmd_kill_request(self, chat_id: int) -> str:
-        self._pending_kill_chat = chat_id
+        self._pending_kills[chat_id] = time.monotonic()
         return (
             "WARNING: This will activate the kill switch and halt all trading.\n"
-            "Reply /kill confirm to proceed, or ignore to cancel."
+            "Reply /kill confirm within 5 minutes to proceed, or ignore to cancel."
         )
 
     def _cmd_kill_confirm(self, chat_id: int) -> str:
-        if self._pending_kill_chat != chat_id:
+        requested_at = self._pending_kills.pop(chat_id, None)
+        if requested_at is None:
             return "No pending kill request. Send /kill first."
-        self._pending_kill_chat = None
+        if time.monotonic() - requested_at > _KILL_CONFIRM_TIMEOUT_SEC:
+            return "Kill request expired (>5 min). Send /kill again."
         try:
             cfg = load_config()
             cfg.runtime.kill_switch_active = True
@@ -203,7 +222,7 @@ class TelegramBot:
 
     def _cmd_help(self) -> str:
         return (
-            "Aletheia Trading OS\n\n"
+            "<b>Aletheia Trading OS</b>\n\n"
             "/status — System status\n"
             "/pause — Pause all agents\n"
             "/resume — Resume agents\n"
@@ -222,14 +241,21 @@ class TelegramBot:
             logger.warning("Telegram enabled but no allowed_chat_ids are configured.")
             return
         self._running = True
+        self._consecutive_poll_failures = 0
         backoff = poll_interval
         async with httpx_client(timeout=20) as client:
             while self._running:
                 try:
                     updates = await self._fetch_updates(client)
                     backoff = poll_interval
+                    if self._consecutive_poll_failures > 0:
+                        logger.info("Telegram polling recovered after %d failures", self._consecutive_poll_failures)
+                    self._consecutive_poll_failures = 0
                 except Exception as exc:
-                    logger.warning("Telegram polling failed: %s", exc)
+                    self._consecutive_poll_failures += 1
+                    logger.warning("Telegram polling failed (%d consecutive): %s", self._consecutive_poll_failures, exc)
+                    if self._consecutive_poll_failures == 5:
+                        self._escalate_poll_failure(exc)
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60.0)
                     continue
@@ -239,6 +265,25 @@ class TelegramBot:
 
     def stop(self) -> None:
         self._running = False
+
+    def _escalate_poll_failure(self, exc: Exception) -> None:
+        """Notify operator via non-Telegram channels when polling repeatedly fails."""
+        try:
+            from aletheia.files.jsonl import write_error
+            write_error({
+                "source": "telegram_bot",
+                "message": f"Telegram polling failed 5 consecutive times: {exc}",
+            })
+        except Exception:
+            pass
+        try:
+            from aletheia.notifications import send_windows_toast
+            send_windows_toast(
+                "Telegram Bot Disconnected",
+                f"Polling failed 5x: {type(exc).__name__}",
+            )
+        except Exception:
+            pass
 
     async def _fetch_updates(self, client) -> list[dict[str, Any]]:
         resp = await client.get(self._api_url("getUpdates"), params={"offset": self._offset, "timeout": 20})

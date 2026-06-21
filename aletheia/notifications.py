@@ -6,10 +6,12 @@ streams, Windows toast, and Telegram when configured.
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 import platform
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from html import escape
@@ -17,6 +19,11 @@ from html import escape
 logger = logging.getLogger("aletheia.notifications")
 
 _IS_WINDOWS = platform.system() == "Windows"
+
+# Message dedup: suppress identical messages within this window
+_DEDUP_WINDOW_SEC = 120.0
+_recent_messages: dict[str, float] = {}  # hash → monotonic timestamp
+_DEDUP_MAX_ENTRIES = 200
 
 
 def send_windows_toast(title: str, message: str) -> None:
@@ -66,13 +73,32 @@ def _is_dnd() -> bool:
         return False
 
 
+def _is_duplicate(message: str) -> bool:
+    """Return True if this message was sent within the dedup window."""
+    now = time.monotonic()
+    key = hashlib.md5(message.encode(), usedforsecurity=False).hexdigest()
+    # Evict stale entries periodically
+    if len(_recent_messages) > _DEDUP_MAX_ENTRIES:
+        stale = [k for k, ts in _recent_messages.items() if now - ts > _DEDUP_WINDOW_SEC]
+        for k in stale:
+            del _recent_messages[k]
+    last_sent = _recent_messages.get(key)
+    if last_sent is not None and now - last_sent < _DEDUP_WINDOW_SEC:
+        return True
+    _recent_messages[key] = now
+    return False
+
+
 def _send_telegram_alert(message: str, *, level: str = "warning") -> None:
     """Send a Telegram alert to allowed chats when configured. Never raises.
 
     P1 alerts (info level) are suppressed during DND hours.
     P0 alerts (warning/error/critical) always go through.
+    Duplicate messages within 120s are suppressed.
     """
     try:
+        if _is_duplicate(message):
+            return
         from aletheia.config.loader import load_config
         cfg = load_config()
         if not cfg.health.alert_via_telegram or not cfg.telegram.enabled:
@@ -84,10 +110,12 @@ def _send_telegram_alert(message: str, *, level: str = "warning") -> None:
         if not bot.configure():
             return
 
+        safe_msg = escape(message, quote=False)
+
         async def _send_all():
             for chat_id in bot.allowed_chat_ids:
                 try:
-                    await bot.send_message(chat_id, f"⚠️ Aletheia: {message}")
+                    await bot.send_message(chat_id, f"⚠️ <b>Aletheia:</b> {safe_msg}")
                 except Exception:
                     pass
 
@@ -226,14 +254,15 @@ def notify_trade_fill(
 
     dir_label = "LONG" if direction in ("long", "buy") else "SHORT"
     mode_label = execution_mode.replace("_", " ").title()
-    lines = [f"Trade Fill [{mode_label}]",
-             f"{dir_label} {symbol}",
-             f"Qty: {quantity}  @ {fill_price:.4f}"]
+    safe_symbol = escape(symbol, quote=False)
+    lines = [f"<b>Trade Fill [{mode_label}]</b>",
+             f"{dir_label} {safe_symbol}",
+             f"<code>Qty: {quantity}  @ {fill_price:.4f}</code>"]
     if stop_price:
-        lines.append(f"SL: {stop_price:.4f}")
+        lines.append(f"<code>SL: {stop_price:.4f}</code>")
     if take_profit_price:
-        lines.append(f"TP: {take_profit_price:.4f}")
-    lines.append(f"pos/{position_id[:8]}")
+        lines.append(f"<code>TP: {take_profit_price:.4f}</code>")
+    lines.append(f"<code>pos/{position_id[:8]}</code>")
     msg = "\n".join(lines)
     _send_telegram_alert(msg, level="info")
     _send_webhook({
@@ -267,11 +296,11 @@ def notify_daily_summary() -> None:
         total = portfolio.get("total_value_usdt", 0.0)
         sign = "+" if realized >= 0 else ""
         lines = [
-            "Daily Summary",
-            f"Realized: {sign}{realized:.2f} USDT",
-            f"Unrealized: {unrealized:+.2f} USDT",
+            "<b>Daily Summary</b>",
+            f"Realized: <code>{sign}{realized:.2f} USDT</code>",
+            f"Unrealized: <code>{unrealized:+.2f} USDT</code>",
             f"Open positions: {open_count}",
-            f"Portfolio value: {total:.2f} USDT",
+            f"Portfolio value: <code>{total:.2f} USDT</code>",
         ]
         _send_telegram_alert("\n".join(lines), level="info")
         _send_webhook({
