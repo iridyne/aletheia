@@ -195,31 +195,45 @@
 
 ### SQLite Concurrency
 
-All agents share the same SQLite DB. Invariants that MUST hold:
-1. WAL mode + `busy_timeout=8000ms`
+All agents share the same SQLite DB. Invariants that MUST hold (full detail in [data_model §1, §9](data_model.md)):
+1. WAL mode + `busy_timeout=30000ms` (30s) — `storage/sqlite.py:43`
 2. One connection per thread via `threading.local`
 3. `was_in_tx = db.in_transaction` captured BEFORE writes; commit only `if not was_in_tx`
 4. Scheduler `max_workers=3` (do not raise)
 
-### Error Handling
+### Job Timeouts (hard wall-clock bound, per-job — `scheduler.py:25-50`)
 
-- Agents catch LLM failures and degrade gracefully (produce partial output or skip)
-- Scheduler `_run_job_guarded()` wraps every job: rolls back leaked transactions, logs errors
-- Consecutive failure threshold triggers infra events (visible in dashboard)
-- Agent timeout: 300s default (configurable per-job)
+> Not a single 300s default — each job has its own cap. Timeout = listed value + 15s grace.
 
-### Permission Modes
+| Job | Timeout | Job | Timeout |
+|-----|---------|-----|---------|
+| market_data | 90s | dreaming_agent | 300s |
+| market_observer | 240s | strategy_designer | 300s |
+| paper_trader | 300s | pi_trading_decision | 300s |
+| post_trade_reviewer | 300s | exchange_sync | 60s |
 
-- **Read Only**: no agent can execute trades or modify state
-- **Operator**: can pause/resume, trigger manual runs
-- **Full**: can approve proposals, unlock live
+Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_sync_with_timeout` (`:141`). `misfire_grace_time` 60-300s per `add_job`.
 
-### LLM Provider Resolution
+### Error Handling & Failure Isolation
 
-All agents use `llm_complete(system, user)` from `aletheia/llm/`. Provider is resolved from config priority:
-1. Agent-specific override (if configured)
-2. Default provider from settings
-3. Fallback chain (local Ollama -> cloud providers)
+- **Per-job degradation**: each job wrapped in catch-all; one failure logs a warning and does NOT cascade (`scheduler.py:708-793`). Agents coupled only through shared SQLite tables (blackboard), never direct calls — so an upstream failure cannot crash a downstream agent.
+- **Leaked-tx cleanup**: scheduler rolls back any leaked transaction before/after each job.
+- **Consecutive-failure alert**: ≥3 consecutive failures → `infra_event` (dashboard-visible), `_record_job_failure` (`scheduler.py:67-79`). Non-cascading.
+- **Stale-input expiry**: if paper_trader stalls, its opportunities expire after 48h rather than blocking reviewers (`repositories.py:1597`).
+
+### LLM Fallback (request-level, unified — `model_provider/fallback.py:215-299`)
+
+- `complete_with_fallback()`: on **transient** errors (429/502/503/504, rate-limit — `is_transient_model_error:64`), tries next candidate model (primary → config `fallback_models` → discovered).
+- **Cooldown**: a model with ≥2 consecutive failures is benched 300s (`_record_model_failure:116`).
+- Non-transient errors or last-candidate failure → raised. Each agent then catches and degrades (e.g. market_observer → technical-only signals).
+
+### Permission Modes (two surfaces — see [live_unlock_contract §5](live_unlock_contract.md))
+
+> ⚠️ Corrected: not a flat Read Only/Operator/Full. There are TWO ranked surfaces:
+- **Worker** (Agent Shell): `Observe < Paper < Full` (default `Paper`)
+- **Operator** (PI/Dashboard): `ReadOnly < Research < PaperAuto < AllowEditing < Auto` (default `ReadOnly`)
+
+`FORBIDDEN_INTENTS` (enable_live / bypass_risk / change_risk_limits / ...) are uncallable in ANY mode — `agent_shell/registry.py:415`.
 
 ---
 

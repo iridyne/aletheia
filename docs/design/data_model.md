@@ -9,7 +9,7 @@
 
 ## 1. Architecture Overview
 
-- **Engine**: SQLite 3, WAL mode, `busy_timeout=8000ms`
+- **Engine**: SQLite 3, WAL mode, `busy_timeout=30000ms` (30s), `synchronous=NORMAL`, `wal_autocheckpoint=1000`, `isolation_level=None` (true autocommit, no implicit BEGIN) — `storage/sqlite.py:32-44`
 - **Concurrency**: one connection per thread via `threading.local`; scheduler capped at `max_workers=3`
 - **Transaction safety**: `was_in_tx = db.in_transaction` captured BEFORE every write; commit only `if not was_in_tx`
 - **Migrations**: additive-only (new tables, new columns with defaults); never DROP/RENAME in production
@@ -253,3 +253,56 @@ All models in `aletheia/storage/models.py`. Key mapping:
 3. Never: DROP TABLE, DROP COLUMN, RENAME (breaks existing data)
 4. Pattern: check `pragma_table_info` before ALTER to avoid "duplicate column" errors
 5. Test: `run_migrations()` is called in every test setup; full schema always available
+
+---
+
+## 7. Retention & Cleanup (data lifecycle)
+
+> Cleanup job runs daily (`scheduler.py:_run_cleanup`); writes an audit event `data_pruned`.
+> Two-class rule: **trust-bearing tables are NEVER pruned; only telemetry/market-data tables are.**
+
+### 7.1 Prunable tables (telemetry only)
+
+| Table | Retention | Configurable | Source |
+|-------|-----------|--------------|--------|
+| `agent_runs` / `agent_run_steps` / `agent_tool_calls` | 30d | yes (`retention.*`) | `repositories.py:990-999` |
+| `market_snapshots` | 30d | yes | `repositories.py:1002` |
+| `portfolio_snapshots` | 90d | yes | `repositories.py:1006` |
+| `orderbook_snapshots` / `liquidation_events` | 7d | hardcoded | `repositories.py:1539-1556` |
+| `funding_rate_snapshots` / `open_interest_snapshots` / `universe_feature_snapshots` | 30d | hardcoded | `repositories.py:1559-1585` |
+| `macro_snapshots` | 90d | hardcoded | `repositories.py:1587` |
+| `opportunities` (open) | 48h → `expired` | yes | `repositories.py:1597-1612` |
+
+### 7.2 NEVER-pruned (trust-bearing) — enforced by `_PRUNABLE` allowlist (`repositories.py:959-971`)
+
+`trade_proposals` · `risk_decisions` · `orders` · `fills` · `positions` · `audit_events` · `knowledge_items`
+
+> **Invariant**: the causal record chain (§2) is permanent. Any new prune target MUST be added to `_PRUNABLE` explicitly and MUST NOT include a trust-bearing table.
+
+### 7.3 JSONL rotation
+
+- Trigger: file ≥ `retention.jsonl_max_mb` (default 50MB) → rename `x.jsonl` → `x.jsonl.1` → `.2`... (`files/jsonl.py:27-104`)
+- Rotated files are **kept** (no auto-delete); new writes append to fresh file.
+- `audit.jsonl`: SHA-256 `_prev_hash` chain across rotations, tamper-evident (`jsonl.py:182-207`).
+
+---
+
+## 8. JSON Column Handling
+
+- **Write**: bare `json.dumps()` / Pydantic `model_dump()` — **no explicit schema validation at the SQLite boundary**. Validity relies on the Pydantic model upstream.
+- **Read**: tolerant — bad JSON is skipped or left as raw string, never raised:
+  - Row JSON: `try: json.loads(); except (JSONDecodeError, TypeError): pass` (`repositories.py:1666`)
+  - JSONL replay: bad lines `continue`-skipped (`files/jsonl.py:116-119`)
+- **Backward-compat**: field remap supported (e.g. `before/after` → `before_state/after_state`, `jsonl.py:220-227`).
+
+> ⚠️ Target-state gap: JSON columns have no write-time schema enforcement. Acceptable for MVP (Pydantic guards upstream); revisit if untrusted writers appear.
+
+---
+
+## 9. Concurrency Recovery Protocol
+
+> Three pillars (see [CLAUDE.md SQLite rule](../../CLAUDE.md)). Recovery specifics:
+
+- **No explicit retry loop** for `database is locked` — relies on `busy_timeout=30000` (SQLite auto-retries 30s).
+- **Transaction-leak cleanup**: scheduler calls `rollback_if_in_transaction()` before/after each job (`sqlite.py:56-69`, `scheduler.py:125-134`) — prevents a daemon thread from permanently holding the WAL writer lock (the historical `database is locked` root cause; see [db-lock memory](../../记忆 aletheia-db-lock-root-cause)).
+- **`isolation_level=None`** is the structural fix: no implicit BEGIN means a failed DML does not leave the thread `in_transaction=True`.

@@ -14,6 +14,32 @@
 - **Pagination**: `?limit=N&offset=M` where supported
 - **Timestamps**: ISO 8601 UTC strings in request/response bodies
 
+### Status code semantics
+
+| Code | Meaning in this API |
+|------|---------------------|
+| 200 | OK |
+| 400 | Malformed request / invalid parameter |
+| 403 | Blocked by permission mode or a safety gate (e.g. live action without unlock) |
+| 404 | Entity not found |
+| 409 | State conflict (e.g. unlocking live when already unlocked; approving an already-executed proposal) |
+| 422 | Pydantic validation failure (FastAPI default) |
+| 503 | Backend dependency unavailable (DB/scheduler/exchange/model) — per [UI truthfulness](../governance/trust_and_change_control.md), surface as `not available`, never as healthy |
+
+> **Response schemas are NOT mirrored here.** Per "docs follow code", response bodies are defined by the Pydantic models in [data_model §4](data_model.md) and the route handlers. This file is the authoritative **endpoint index**; field-level truth lives in code to avoid drift.
+
+### Trust-boundary endpoints (extra requirements)
+
+These endpoints cross a [trust boundary](../governance/trust_and_change_control.md) and carry obligations beyond a normal route — each MUST write an audit event:
+
+| Endpoint | Requirement | Contract |
+|----------|-------------|----------|
+| `POST /live-unlock` | explicit `confirm=true`; first unlock needs `acknowledge_first_unlock` | [live_unlock_contract](live_unlock_contract.md) |
+| `POST /kill-switch/activate` · `/release` | release requires confirmation; human-only | [risk_engine_contract §4](risk_engine_contract.md) |
+| `POST /settings/exchange-credentials` (+ binance/okx) | write-only; GET never returns raw secret | trust §6.3 secrets |
+| `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](live_unlock_contract.md) |
+| `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row) | [execution_contract §1](execution_contract.md) |
+
 ---
 
 ## Core / Health
@@ -152,7 +178,7 @@
 | POST | `/settings/telegram` | Telegram bot config |
 | POST | `/settings/webhook` | Webhook notification config |
 | POST | `/settings/update-config` | Auto-update settings |
-| POST | `/settings/permission-mode` | Permission mode (read_only/operator/full) |
+| POST | `/settings/permission-mode` | Permission mode — worker (Observe/Paper/Full) + operator (ReadOnly/Research/PaperAuto/AllowEditing/Auto); see [live_unlock_contract §5](live_unlock_contract.md) |
 | POST | `/settings/exchange-mode` | Exchange mode (paper_internal/paper_demo/live) |
 | POST | `/settings/risk` | Risk limit parameters |
 | POST | `/settings/symbols` | Crypto symbol config |
