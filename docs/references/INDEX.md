@@ -29,6 +29,7 @@
 | **nautilus-practice** | `_refs/nautilus-practice` | 4.4M | github.com/iridite/nautilus-practice（用户自有） | `649d889` |
 | **AlphaQuanter** | `_refs/AlphaQuanter` | 6.9M | github.com/AlphaQuanter/AlphaQuanter（arXiv:2510.14264 配套） | `e909ed4` |
 | **hermes-agent** | `_refs/hermes-agent` | 175M | github.com/NousResearch/hermes-agent（NousResearch 官方） | `5aec00f` |
+| **RD-Agent** | `_refs/RD-Agent` | 21M | github.com/microsoft/RD-Agent（含 RD-Agent(Q) 量化研发闭环，与 self-evolution 对照） | 浅克隆 |
 
 > **未克隆（无公开代码，仅论文/营销页，参考价值停留在范式层）**：
 > - **Sophia**（arXiv:2512.18202）— 持久数字生命体研究框架，研究级远期。

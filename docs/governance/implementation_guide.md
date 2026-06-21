@@ -1,5 +1,12 @@
 # Aletheia Trading OS — Local-first Agentic Trading System Implementation Guide
 
+> ⚠️ **v1 实现规范,部分内容已被上层文档取代(2026-06-21 标注):**
+> 本文件是 MVP 初版的完整实现规范。其中"为什么做/做什么"已被 [VISION](../product/VISION.md) +
+> [PRD](../product/PRD.md) 取代;具体子系统契约以 [docs/design/](../design/) 的 L2 金标准为准
+> (Risk/Execution/Live/Promotion/data_model/agent_contracts/api_reference)。
+> 本文件仍保留有效的 CLI/目录结构/部分实现细节作参考;**契约层冲突时以 L2 design 文档为准**。
+> 长期不变的开发红线在 [trust_and_change_control](trust_and_change_control.md)。文档分层见 [DOC_SYSTEM_PLAN](../product/DOC_SYSTEM_PLAN.md)。
+
 > **Target implementer:** Claude Code / Codex / Cursor / other AI coding agents  
 > **Target user:** one-person local AI-native trading system  
 > **Product name:** **Aletheia Trading OS**  

@@ -1,5 +1,13 @@
 # Aletheia Trading OS — Phased Development Roadmap
 
+> ⚠️ **文档金字塔定位(2026-06-21):** 本文件**混合**两类内容,引用时务必区分:
+> - **长期有效(契约级)**:Design Philosophy、Red Lines、Phase 定义与 observation gate
+>   —— 这部分是金标准,Phase 通过标准的权威版在 [PHASE_GATES](../product/PHASE_GATES.md)。
+> - **易腐(状态级)**:各 Track 的"已落地"清单、scheduler job 进度快照
+>   —— 会随实现过期,**不可当金标准**;现状真相源是 `aletheia doctor`,非本文。
+>
+> 上层愿景见 [VISION](../product/VISION.md);全局文档分层见 [DOC_SYSTEM_PLAN](../product/DOC_SYSTEM_PLAN.md)。
+
 > Last updated: 2026-06-18
 > Sources: PIPELINE_STATUS.md + deep research (102 agents, 20 sources) + WORLD_MAP.md (full architecture vision)
 >   + external Agent Framework Research Report 2025–2026 (validation only — see [agent_framework_research_2025_2026.md](../references/agent_framework_research_2025_2026.md))

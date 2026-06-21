@@ -3,6 +3,10 @@
 > Source: External AI consultation (2026-06-08)
 > Role: Architecture reference — full system vision for module design and data contracts.
 > NOT an execution plan. See ROADMAP.md for phased implementation.
+>
+> ⚠️ **目标态架构,非当前状态(2026-06-21 标注):** 下面的 9 步认知循环是**理想形态**,
+> 当前代码尚未全部走完(如 Synthesize/Evolve 仍在路上)。这是金字塔的 [L2 契约层](../product/DOC_SYSTEM_PLAN.md)
+> "系统该是什么样"的总览;细节契约见 [docs/design/](../design/),现状看 `aletheia doctor`。
 
 ---
 
