@@ -1120,6 +1120,33 @@ def upsert_universe_asset(asset: UniverseAsset) -> None:
         db.commit()
 
 
+def deactivate_universe_assets_not_in_venue(active_venue: str) -> int:
+    """Mark all registry rows from other venues as inactive."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    result = db.execute(
+        "UPDATE universe_registry SET status='inactive' WHERE venue != ? AND status='active'",
+        (active_venue,),
+    )
+    if not was_in_tx:
+        db.commit()
+    return result.rowcount
+
+
+def deactivate_stale_universe_assets(venue: str, cutoff_iso: str) -> int:
+    """Mark registry rows for this venue not seen since cutoff as inactive."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    result = db.execute(
+        "UPDATE universe_registry SET status='inactive' "
+        "WHERE venue = ? AND status='active' AND last_seen_at < ?",
+        (venue, cutoff_iso),
+    )
+    if not was_in_tx:
+        db.commit()
+    return result.rowcount
+
+
 def list_universe_assets(venue: str | None = None, active_only: bool = True, limit: int = 500) -> list[dict]:
     db = get_db()
     sql = "SELECT * FROM universe_registry"
@@ -1298,6 +1325,18 @@ def fail_forward_outcome(outcome_id: str, settled_at: str) -> None:
         "settled_at": settled_at,
         "status": "failed",
     })
+
+
+def cancel_all_pending_forward_outcomes() -> int:
+    """Batch-cancel all pending forward outcomes (used on venue/strategy switch)."""
+    db = get_db()
+    was_in_tx = db.in_transaction
+    result = db.execute(
+        "UPDATE universe_forward_outcomes SET status = 'cancelled' WHERE status = 'pending'",
+    )
+    if not was_in_tx:
+        db.commit()
+    return result.rowcount
 
 
 def list_forward_outcomes_by_member(member_id: str) -> list[dict]:

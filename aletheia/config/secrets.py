@@ -22,6 +22,7 @@ def _fallback_path() -> Path:
 
 def set_secret(key: str, value: str) -> None:
     """Store a secret. Tries keyring first, falls back to encrypted file."""
+    value = value.strip()
     kr = _get_keyring()
     if kr:
         kr.set_password(_SERVICE_NAME, key, value)

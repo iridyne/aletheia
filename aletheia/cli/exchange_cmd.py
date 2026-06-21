@@ -5,29 +5,23 @@ Switch primary exchange, toggle demo/live mode, and show current state.
 
 import typer
 
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, VALID_EXCHANGES
+
 exchange_app = typer.Typer(no_args_is_help=True)
-
-_EXCHANGE_UNIFICATION_MAP: dict[str, tuple[str, str]] = {
-    "okx": ("okx", "okx_demo"),
-    "bitget": ("bitget", "bitget_demo"),
-    "binance": ("binance", "binance_testnet"),
-}
-
-_VALID_EXCHANGES = sorted(_EXCHANGE_UNIFICATION_MAP.keys()) + ["paper_internal"]
 
 
 @exchange_app.command("use")
 def use(
     exchange_id: str = typer.Argument(
-        ..., help=f"Exchange to activate: {', '.join(_VALID_EXCHANGES)}"
+        ..., help=f"Exchange to activate: {', '.join(VALID_EXCHANGES)}"
     ),
 ):
     """Switch primary exchange (atomically sets data source, execution, and risk)."""
     from aletheia.config.loader import load_config, save_config
 
     eid = exchange_id.strip().lower()
-    if eid not in _VALID_EXCHANGES:
-        typer.echo(f"Error: exchange_id must be one of: {_VALID_EXCHANGES}", err=True)
+    if eid not in VALID_EXCHANGES:
+        typer.echo(f"Error: exchange_id must be one of: {VALID_EXCHANGES}", err=True)
         raise typer.Exit(1)
 
     cfg = load_config()
@@ -37,9 +31,10 @@ def use(
     if eid == "paper_internal":
         cfg.exchange.paper_execution_mode = "paper_internal"
     else:
-        ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
+        ccxt_ex, paper_mode = EXCHANGE_UNIFICATION_MAP[eid]
         cfg.exchange.name = eid
         cfg.market_data.ccxt_exchange = ccxt_ex
+        cfg.market_data.ccxt_fallback = ccxt_ex
         cfg.exchange.paper_execution_mode = paper_mode
         cfg.risk.allowed_exchange = eid
 
@@ -75,6 +70,10 @@ def mode(
     if val not in ("demo", "live"):
         typer.echo("Error: mode must be 'demo' or 'live'", err=True)
         raise typer.Exit(1)
+
+    if val == "live":
+        typer.echo("WARNING: switching to LIVE mode enables real-money trading.", err=True)
+        typer.confirm("Are you sure you want to enable live mode?", abort=True)
 
     cfg = load_config()
     old = cfg.exchange.mode

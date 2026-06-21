@@ -105,6 +105,8 @@ def execute_live_order(
     strategy_id: str | None = None,
     execution_mode: str = "okx_demo",
     fee_rate: float = _OKX_FEE_RATE,
+    stop_price: float | None = None,
+    take_profit_price: float | None = None,
 ) -> dict:
     """Place an order on OKX and record locally.
 

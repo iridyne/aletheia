@@ -121,9 +121,14 @@ def test_permission_status(tmp_path, monkeypatch):
 # inspect status / pnl / orders --stats
 # ---------------------------------------------------------------------------
 
+import pytest
 
-def test_inspect_status(tmp_path, monkeypatch):
-    """inspect status runs without error and produces expected sections."""
+
+@pytest.fixture()
+def cli_db(tmp_path, monkeypatch):
+    """Set up isolated DB + config for CLI tests."""
+    import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
@@ -134,89 +139,43 @@ def test_inspect_status(tmp_path, monkeypatch):
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     reset_db()
     sq._db_conn = None
-    import sqlite3
     conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    yield tmp_path
+    reset_db()
 
+
+def test_inspect_status(cli_db):
+    """inspect status runs without error and produces expected sections."""
     result = runner.invoke(app, ["inspect", "status"])
     assert result.exit_code == 0
     assert "=== Portfolio ===" in result.output
     assert "=== PnL" in result.output
     assert "=== Orders" in result.output
     assert "=== Data Quality ===" in result.output
-    reset_db()
 
 
-def test_inspect_pnl(tmp_path, monkeypatch):
+def test_inspect_pnl(cli_db):
     """inspect pnl runs without error."""
-    import aletheia.config.loader as loader
-    import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage.sqlite import reset_db
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    reset_db()
-    sq._db_conn = None
-    import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
-    run_migrations()
-
     result = runner.invoke(app, ["inspect", "pnl"])
     assert result.exit_code == 0
     assert "Today" in result.output
     assert "Rolling" in result.output
-    reset_db()
 
 
-def test_inspect_orders_stats(tmp_path, monkeypatch):
+def test_inspect_orders_stats(cli_db):
     """inspect orders --stats runs without error."""
-    import aletheia.config.loader as loader
-    import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage.sqlite import reset_db
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    reset_db()
-    sq._db_conn = None
-    import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
-    run_migrations()
-
     result = runner.invoke(app, ["inspect", "orders", "--stats"])
     assert result.exit_code == 0
     assert "Order Stats" in result.output
     assert "fill_rate" in result.output
-    reset_db()
 
 
-def test_inspect_status_json(tmp_path, monkeypatch):
+def test_inspect_status_json(cli_db):
     """inspect status --json outputs valid JSON."""
     import json as json_mod
-    import aletheia.config.loader as loader
-    import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage.sqlite import reset_db
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    reset_db()
-    sq._db_conn = None
-    import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
-    run_migrations()
 
     result = runner.invoke(app, ["inspect", "status", "--json"])
     assert result.exit_code == 0
@@ -224,7 +183,6 @@ def test_inspect_status_json(tmp_path, monkeypatch):
     assert "portfolio" in data
     assert "pnl" in data
     assert "orders" in data
-    reset_db()
 
 
 def test_strategy_list_and_status(tmp_path, monkeypatch):

@@ -49,6 +49,8 @@ def execute_live_order(
     strategy_id: str | None = None,
     execution_mode: str = "binance_testnet",
     fee_rate: float = _TESTNET_FEE_RATE,
+    stop_price: float | None = None,
+    take_profit_price: float | None = None,
 ) -> dict:
     """Place an order on Binance Futures (testnet or live) and record locally.
 

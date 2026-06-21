@@ -136,11 +136,7 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
 # Primary exchange unification
 # ---------------------------------------------------------------------------
 
-_EXCHANGE_UNIFICATION_MAP: dict[str, tuple[str, str]] = {
-    "okx": ("okx", "okx_demo"),
-    "bitget": ("bitget", "bitget_demo"),
-    "binance": ("binance", "binance_testnet"),
-}
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP as _EXCHANGE_UNIFICATION_MAP
 
 
 class PrimaryExchangeRequest(SettingsRequest):
@@ -169,6 +165,7 @@ async def set_primary_exchange(req: PrimaryExchangeRequest):
         ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
         cfg.exchange.name = eid
         cfg.market_data.ccxt_exchange = ccxt_ex
+        cfg.market_data.ccxt_fallback = ccxt_ex
         cfg.exchange.paper_execution_mode = paper_mode
         cfg.risk.allowed_exchange = eid
 

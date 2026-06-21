@@ -1,4 +1,8 @@
-"""Asset registry sync — fetches all tradable pairs from the exchange via CCXT."""
+"""Asset registry sync — fetches tradable pairs from the active exchange via CCXT.
+
+When running in demo mode (e.g. okx_demo), the registry is narrowed to only
+symbols actually supported on the demo environment — no wasted scanning.
+"""
 
 from __future__ import annotations
 
@@ -30,10 +34,40 @@ def _is_excluded(symbol_info: dict) -> bool:
     return False
 
 
+async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
+    """Load the demo symbol whitelist for the active execution mode.
+
+    Returns None if no demo filtering is needed (live mode or full-access demos).
+    """
+    if paper_execution_mode == "okx_demo":
+        from aletheia.exchanges.okx.client import OKXClient
+        return await OKXClient.load_demo_markets()
+    # bitget_demo and binance_testnet support their full perp list — no extra filter
+    return None
+
+
+def _invalidate_stale_pipeline_data() -> None:
+    """Flush stale universe pipeline data after a venue/strategy change.
+
+    Expires active snapshots and cancels all pending forward outcomes so
+    downstream jobs (data_collectors, outcome_recorder) don't operate on
+    symbols that no longer exist on the active exchange.
+    """
+    repo.expire_universe_snapshots(market_type="crypto")
+    cancelled = repo.cancel_all_pending_forward_outcomes()
+    logger.info(
+        "Pipeline invalidated: snapshots superseded, %d pending outcomes cancelled",
+        cancelled,
+    )
+
+
 async def sync_registry(cfg: AletheiaConfig) -> int:
     """Sync the universe_registry from the configured exchange.
 
     Uses CCXT load_markets() to get all active USDT-quoted pairs.
+    When in demo mode with a restricted symbol set (e.g. OKX demo),
+    only symbols actually executable on demo are registered.
+
     Returns count of assets upserted.
     """
     from aletheia.data.ccxt_provider import CCXTProvider
@@ -41,16 +75,21 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
     venue = cfg.market_data.ccxt_exchange
     provider = CCXTProvider(exchange=venue, fallback_exchange=venue)
     count = 0
+    sync_started_at = datetime.now(timezone.utc).isoformat()
 
     try:
+        # Load demo whitelist if applicable
+        demo_whitelist = await _load_demo_whitelist(cfg.exchange.paper_execution_mode)
+        if demo_whitelist is not None:
+            logger.info("Demo whitelist active: %d symbols for %s",
+                        len(demo_whitelist), cfg.exchange.paper_execution_mode)
+
         exchange = provider._ensure_primary()
-        market_types = ["spot"]
-        if cfg.exchange.enabled_markets.get("usdt_futures"):
-            market_types.append("linear")
-        exchange.options["defaultType"] = "spot"
-        exchange.options["fetchMarkets"] = market_types
+        # Don't set fetchMarkets — OKX rejects 'linear' (uses 'SWAP' internally).
+        # Load all markets and filter in the loop below.
         await exchange.load_markets()
         markets = exchange.markets
+        include_futures = cfg.exchange.enabled_markets.get("usdt_futures", False)
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -68,9 +107,18 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
                 continue
 
             canonical = f"{base}/{quote}"
-            market_type = "spot"
-            if info.get("swap") or info.get("future"):
-                market_type = "perp"
+
+            # Determine market type and filter
+            is_perp = info.get("swap") or info.get("future")
+            if is_perp and not include_futures:
+                continue
+            if info.get("option"):
+                continue
+            market_type = "perp" if is_perp else "spot"
+
+            # Demo whitelist filter: skip symbols not executable on demo
+            if demo_whitelist is not None and canonical not in demo_whitelist:
+                continue
 
             limits = info.get("limits") or {}
             cost_limits = limits.get("cost") or {}
@@ -100,7 +148,23 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             repo.upsert_universe_asset(asset)
             count += 1
 
-        logger.info("Registry sync: %d assets from %s", count, venue)
+        # Deactivate other venues' assets (exchange was switched)
+        deactivated_other = repo.deactivate_universe_assets_not_in_venue(venue)
+        if deactivated_other:
+            logger.info("Deactivated %d assets from other venues", deactivated_other)
+
+        # Deactivate symbols no longer seen on current venue
+        deactivated_stale = repo.deactivate_stale_universe_assets(venue, sync_started_at)
+        if deactivated_stale:
+            logger.info("Deactivated %d stale assets from %s", deactivated_stale, venue)
+
+        # If registry changed significantly, invalidate stale universe pipeline data
+        # so downstream jobs (data_collectors, outcome_recorder) don't operate on
+        # symbols that no longer exist on the active exchange.
+        if deactivated_other or deactivated_stale:
+            _invalidate_stale_pipeline_data()
+
+        logger.info("Registry sync: %d active assets from %s", count, venue)
     finally:
         await provider.close()
 

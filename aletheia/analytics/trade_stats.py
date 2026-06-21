@@ -73,22 +73,22 @@ def compute_order_stats(days: int = 7) -> dict:
     errored = [r for r in rows if r["status"] == "error"]
     total = filled + len(errored)  # fill rate = filled / (filled + errors)
 
-    # Group errors by pattern
-    error_groups: dict[str, list[str]] = {}
+    # Group errors by pattern — count occurrences + track affected symbols
+    import re
+    error_groups: dict[str, dict] = {}
     for r in errored:
         reason = r["error_reason"] or "unknown"
-        # Normalize: strip variable symbol names from "Parameter XXXUSDT does not exist"
-        import re
         pattern = re.sub(r"Parameter \w+ does not exist", "Parameter XXXUSDT does not exist", reason)
         pattern = re.sub(r"symbol=\w+", "symbol=XXX", pattern)
         if pattern not in error_groups:
-            error_groups[pattern] = []
+            error_groups[pattern] = {"count": 0, "symbols": []}
+        error_groups[pattern]["count"] += 1
         sym = r["symbol"] or "?"
-        if sym not in error_groups[pattern]:
-            error_groups[pattern].append(sym)
+        if sym not in error_groups[pattern]["symbols"]:
+            error_groups[pattern]["symbols"].append(sym)
 
     breakdown = sorted(
-        [{"pattern": p, "count": len(syms), "symbols": syms[:5]} for p, syms in error_groups.items()],
+        [{"pattern": p, "count": g["count"], "symbols": g["symbols"][:5]} for p, g in error_groups.items()],
         key=lambda x: x["count"], reverse=True,
     )
 
@@ -224,51 +224,3 @@ def _bucket_hold_times(hours_list: list[float]) -> list[dict]:
     return result
 
 
-def compute_7d_trade_stats(days: int = 7) -> dict:
-    """Rolling N-day closed-position stats reusable by CLI and agent context.
-
-    Returns {outcome_stats, per_symbol, cutoff_days}.
-    outcome_stats: total_trades, wins, losses, win_rate, total_pnl,
-                   avg_pnl_per_trade, worst_loss, best_win.
-    per_symbol: top-10 by trade count, each with trades/wins/losses/pnl.
-    """
-    from collections import Counter
-    from datetime import timedelta
-
-    from aletheia.storage.repositories import list_positions
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    closed = list_positions(status="closed", limit=500)
-    recent = [p for p in closed if (p.get("closed_at") or "") >= cutoff]
-
-    if not recent:
-        return {"outcome_stats": None, "per_symbol": [], "cutoff_days": days}
-
-    wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
-    total_pnl = sum(p.get("realized_pnl", 0) for p in recent)
-
-    outcome_stats = {
-        "total_trades": len(recent),
-        "wins": len(wins),
-        "losses": len(recent) - len(wins),
-        "win_rate": round(len(wins) / len(recent) * 100, 1),
-        "total_pnl": round(total_pnl, 2),
-        "avg_pnl_per_trade": round(total_pnl / len(recent), 2),
-        "worst_loss": round(min((p.get("realized_pnl", 0) for p in recent), default=0), 2),
-        "best_win": round(max((p.get("realized_pnl", 0) for p in recent), default=0), 2),
-    }
-
-    sym_counts = Counter(p.get("symbol") for p in recent)
-    per_symbol = []
-    for sym, _ in sym_counts.most_common(10):
-        sym_trades = [p for p in recent if p.get("symbol") == sym]
-        sym_wins = [p for p in sym_trades if (p.get("realized_pnl") or 0) > 0]
-        per_symbol.append({
-            "symbol": sym,
-            "trades": len(sym_trades),
-            "wins": len(sym_wins),
-            "losses": len(sym_trades) - len(sym_wins),
-            "pnl": round(sum(p.get("realized_pnl", 0) for p in sym_trades), 2),
-        })
-
-    return {"outcome_stats": outcome_stats, "per_symbol": per_symbol, "cutoff_days": days}

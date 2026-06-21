@@ -57,6 +57,13 @@ class FallbackChainProvider:
             raise ValueError("FallbackChainProvider requires at least one provider")
         self._providers = providers
 
+    @property
+    def _primary_name(self) -> str:
+        return getattr(self._providers[0], "_primary_name", "unknown")
+
+    def _ensure_primary(self):
+        return self._providers[0]._ensure_primary()
+
     async def get_ticker(self, symbol) -> Ticker:
         last_err: Exception | None = None
         result: Ticker | None = None
