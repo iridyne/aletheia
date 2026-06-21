@@ -256,6 +256,30 @@ async def update_app_config(req: AppConfigUpdate):
 
 
 # ---------------------------------------------------------------------------
+# Operator config
+# ---------------------------------------------------------------------------
+
+class OperatorConfigUpdate(SettingsRequest):
+    loop_enabled: Optional[bool] = None
+
+
+@router.post("/operator")
+async def update_operator_config(req: OperatorConfigUpdate):
+    cfg = load_config()
+    old = cfg.operator.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.operator, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "operator_config_changed",
+                 "entity_type": "operator_config", "before": old,
+                 "after": cfg.operator.model_dump(mode="json"),
+                 "message": f"Operator config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
 # Health monitoring config
 # ---------------------------------------------------------------------------
 

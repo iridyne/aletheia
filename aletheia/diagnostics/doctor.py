@@ -439,6 +439,38 @@ def _probe_health(report: Report) -> None:
         report.add("health.rollup", "warn", f"degraded: {issues}")
 
 
+def _probe_operator_loop(report: Report) -> None:
+    """PI Operator Loop liveness — checks if it has run within expected cadence."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        if not cfg.operator.loop_enabled:
+            report.add("operator.loop", "info", "operator loop disabled in config")
+            return
+
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT tags, created_at FROM knowledge_items "
+            "WHERE item_type='operator_assessment' ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            report.add("operator.loop", "info", "no operator assessment yet (first run pending)")
+            return
+
+        age = _age_minutes(row["created_at"])
+        if age is None:
+            report.add("operator.loop", "info", "cannot parse last assessment timestamp")
+        elif age > 300:  # 5h — missed at least one 4h cadence
+            report.add("operator.loop", "warn",
+                       f"last operator assessment {_fmt_age(age)} — missed scheduled cadence",
+                       "operator loop should run every 4h; check scheduler/gateway")
+        else:
+            report.add("operator.loop", "ok", f"last assessment {_fmt_age(age)}")
+    except Exception as e:
+        report.add("operator.loop", "info", f"probe error: {e}")
+
+
 def _probe_webui_static(report: Report) -> None:
     """WebUI 静态文件完整性检查（新增诊断维度）。"""
     from pathlib import Path
@@ -683,6 +715,7 @@ def build_report() -> Report:
         _probe_signal_effectiveness,
         _probe_trading_loop,
         _probe_health,
+        _probe_operator_loop,
         _probe_webui_static,
         _probe_network,
         _probe_audit_chain,

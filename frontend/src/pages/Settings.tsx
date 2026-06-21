@@ -187,10 +187,15 @@ function AgentModelsTab({ status, settings, qc }: any) {
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
+  const operatorMut = useMutation({
+    mutationFn: (body: any) => api.updateOperatorConfig(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
   const autoLearn = !!agent.autonomous_learning
   const schedulerEnabled = runtime.scheduler_enabled !== false
+  const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
 
   return (
     <div>
@@ -227,6 +232,19 @@ function AgentModelsTab({ status, settings, qc }: any) {
               runtimeMut.mutate({ scheduler_enabled: v })
             }}
             disabled={runtimeMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Operator loop"
+          hint="When enabled, the PI Operator runs system-level assessments every 4h and takes Level 1 actions automatically."
+        >
+          <Toggle
+            checked={operatorLoopEnabled}
+            onChange={v => {
+              if (!v && !confirm('Disable the operator loop? Automated system governance will stop.')) return
+              operatorMut.mutate({ loop_enabled: v })
+            }}
+            disabled={operatorMut.isPending}
           />
         </Row>
       </Section>
@@ -1905,10 +1923,11 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min', 'market_data.enable_yfinance_macro',
     'market_data.observed_stocks', 'market_data.observed_xstocks', 'market_data.observed_prediction_markets',
     'network.proxy_url', 'network.no_proxy',
+    'operator.loop_enabled',
   ])
   const readOnlyPrefixes = [
     'app.', 'runtime.paused', 'runtime.kill_switch_active',
-    'operator.', 'guard.', 'update.last_', 'update.current_commit',
+    'guard.', 'update.last_', 'update.current_commit',
     'live.first_live_confirmation_done', 'tunnel.credentials_path', 'tunnel.cloudflared_path', 'tunnel.metrics_port',
   ]
 

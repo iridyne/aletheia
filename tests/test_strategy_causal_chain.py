@@ -56,6 +56,32 @@ def _set_mode(mode="Paper", kill=False, **_kwargs):
     save_config(cfg)
 
 
+_MOCK_EXEC_SPEC = {
+    "symbol": "BTC/USDT",
+    "timeframe": "1h",
+    "direction_bias": "long",
+    "entry_conditions": [
+        {"indicator": "rsi", "indicator_params": {"period": 14},
+         "comparator": "lt", "threshold": 30.0}
+    ],
+    "exit_conditions": [
+        {"indicator": "rsi", "indicator_params": {"period": 14},
+         "comparator": "gt", "threshold": 70.0}
+    ],
+    "stop_loss_pct": 3.0,
+}
+
+
+def _patch_llm_structured(monkeypatch):
+    """Mock llm_structured to return a valid executable strategy spec."""
+    async def fake_llm_structured(system, user, schema=None, max_tokens=800):
+        return _MOCK_EXEC_SPEC, None
+
+    monkeypatch.setattr(
+        "aletheia.agents.strategy_designer.llm_structured", fake_llm_structured
+    )
+
+
 # --- create_strategy parameters persistence ---
 
 def test_create_strategy_persists_parameters(tmp_path, monkeypatch):
@@ -82,7 +108,8 @@ def test_create_strategy_parameters_default_empty(tmp_path, monkeypatch):
 
 async def test_designer_creates_tradable_strategy(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    _set_mode("Paper")  # research_tool permitted; LLM unavailable -> graceful default
+    _set_mode("Paper")
+    _patch_llm_structured(monkeypatch)
 
     result = await run_agent("strategy_designer", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")
@@ -102,11 +129,19 @@ async def test_designer_creates_tradable_strategy(tmp_path, monkeypatch):
 async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
+    _patch_llm_structured(monkeypatch)
 
     # Producer: a tradable strategy exists.
     await run_agent("strategy_designer", trigger_type="manual")
     strat = repo.list_strategies(limit=10)[0]
     assert strat["state"] == "paper_running"
+
+    # Strip RuleSet from parameters so opportunity-path B doesn't hit the entry-
+    # condition evaluator (no OHLCV bars in test DB). This test validates the
+    # strategy_id causal chain, not the RuleSet signal engine.
+    params = json.loads(strat["parameters"])
+    params.pop("ruleset", None)
+    repo.update_strategy(strat["id"], parameters=json.dumps(params))
 
     # A market snapshot so the trader can price the order.
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000.0))
@@ -142,9 +177,16 @@ async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
 async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
+    _patch_llm_structured(monkeypatch)
 
     await run_agent("strategy_designer", trigger_type="manual")
     strat = repo.list_strategies(limit=10)[0]
+
+    # Strip RuleSet so opportunity path B doesn't require OHLCV bars for entry eval.
+    params = json.loads(strat["parameters"])
+    params.pop("ruleset", None)
+    repo.update_strategy(strat["id"], parameters=json.dumps(params))
+
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000.0))
 
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",

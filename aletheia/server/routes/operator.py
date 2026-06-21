@@ -895,6 +895,35 @@ async def operator_recommendations(limit: int = 10):
     return build_recommendations(limit=limit)
 
 
+@router.get("/loop/latest")
+async def operator_loop_latest(limit: int = 5):
+    """Get the most recent operator loop assessments."""
+    from aletheia.storage.repositories import list_knowledge_items
+    items = list_knowledge_items(item_type="operator_assessment", limit=limit)
+    results = []
+    for item in items:
+        try:
+            tags_data = json.loads(item.get("tags") or "{}") if isinstance(item.get("tags"), str) else {}
+        except (json.JSONDecodeError, TypeError):
+            tags_data = {}
+        results.append({
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "created_at": item.get("created_at"),
+            "summary": tags_data,
+        })
+    return results
+
+
+@router.post("/loop/trigger")
+async def operator_loop_trigger():
+    """Manually trigger an operator loop run."""
+    import asyncio
+    from aletheia.agent_shell.operator_loop import run_operator_loop
+    summary = await asyncio.to_thread(run_operator_loop, trigger="manual")
+    return summary
+
+
 @router.get("/events")
 async def operator_events(
     limit: int = 100,

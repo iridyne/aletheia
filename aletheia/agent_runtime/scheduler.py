@@ -43,6 +43,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "price_feed": 45.0,
     "daily_summary": 60.0,
     "ohlcv_nightly_backfill": 3600.0,
+    "pi_operator_loop": 120.0,
 }
 
 
@@ -460,6 +461,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="daily_summary", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
 
+    # PI Operator Loop — system governance assessment + auto-actions every 4h.
+    _scheduler.add_job(
+        _guarded("pi_operator_loop", _run_operator_loop), "cron",
+        hour="0,4,8,12,16,20", minute=15,
+        id="pi_operator_loop", misfire_grace_time=600, executor="agents",
+        timezone="Asia/Shanghai",
+    )
+
     _scheduler.start()
     # If config says paused at boot, immediately pause the scheduler.
     if cfg.runtime.paused:
@@ -792,6 +801,34 @@ def _run_pi_trading_decision():
         logger.warning("pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300))
     except Exception as e:
         logger.warning("pi_trading_decision job failed: %s", e)
+
+
+def _run_operator_loop():
+    """PI Operator Loop — system-level assessment + auto-actions (4h cadence)."""
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    if not cfg.operator.loop_enabled:
+        return
+    if cfg.agent.permission_mode not in ("Paper", "Full"):
+        return
+    try:
+        from aletheia.agent_shell.operator_loop import run_operator_loop
+        summary = _run_sync_with_timeout("pi_operator_loop", lambda: run_operator_loop(trigger="scheduled"))
+        status = summary.get("status", "") if summary else ""
+        if status == "skipped":
+            logger.debug("pi_operator_loop: skipped — %s", summary.get("reason"))
+        else:
+            logger.info(
+                "pi_operator_loop: %d actions decided, %d executed, %d proposed",
+                summary.get("actions_decided", 0),
+                summary.get("actions_executed", 0),
+                summary.get("actions_proposed", 0),
+            )
+    except TimeoutError:
+        logger.warning("pi_operator_loop timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_operator_loop", 120))
+    except Exception as e:
+        logger.warning("pi_operator_loop job failed: %s", e)
 
 
 def _run_position_manager():
