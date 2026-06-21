@@ -22,6 +22,10 @@ logger = logging.getLogger("aletheia.data.collectors.derivatives")
 # not as confirmation of events on the configured primary exchange.
 _BINANCE_LIQUIDATIONS_URL = "https://fapi.binance.com/fapi/v1/forceOrders"
 
+# Window for liquidation event collection. 4h gives enough events even during low-activity
+# periods; events are deduplicated by id (event_time+symbol+side+price hash) on insert.
+_LIQUIDATION_WINDOW_HOURS = 4
+
 
 class _CCXTLiquidationsUnsupported(Exception):
     """Raised when the exchange's CCXT driver lacks fetch_liquidations support."""
@@ -73,27 +77,26 @@ class DerivativesCollector:
             try:
                 ccxt_liqs = await _fetch_liquidations_ccxt(exchange, primary_name, symbols)
                 liquidations.extend(ccxt_liqs)
-                logger.debug(
+                logger.info(
                     "liquidations via ccxt/%s: %d events", primary_name, len(ccxt_liqs)
                 )
             except _CCXTLiquidationsUnsupported:
                 if primary_name != "binance":
-                    logger.debug(
-                        "liquidations: %s does not support fetch_liquidations via CCXT; "
-                        "falling back to Binance Futures REST — liquidation records will "
-                        "carry exchange='binance', not '%s'",
-                        primary_name,
+                    logger.info(
+                        "liquidations: %s lacks CCXT fetchLiquidations; "
+                        "falling back to Binance Futures REST (exchange='binance' on records)",
                         primary_name,
                     )
                 try:
                     binance_liqs = await _fetch_liquidations_binance_rest(symbols)
                     liquidations.extend(binance_liqs)
+                    logger.info("liquidations via binance_rest: %d events", len(binance_liqs))
                 except Exception as e:
                     errors.append(f"liquidations: {e}")
-                    logger.debug("liquidation fetch (binance fallback) failed: %s", e)
+                    logger.warning("liquidation fetch (binance fallback) failed: %s", e)
             except Exception as e:
                 errors.append(f"liquidations: {e}")
-                logger.debug("liquidation fetch failed: %s", e)
+                logger.warning("liquidation fetch failed: %s", e)
 
         finally:
             await provider.close()
@@ -186,14 +189,14 @@ async def _fetch_liquidations_ccxt(
 
     results: list[LiquidationEvent] = []
     now = datetime.now(timezone.utc)
-    since_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
+    since_ms = int((now - timedelta(hours=_LIQUIDATION_WINDOW_HOURS)).timestamp() * 1000)
 
     for sym in symbols[:10]:  # cap to avoid rate limits
         perp_sym = _to_perp_symbol(sym, exchange)
         if not perp_sym:
             continue
         try:
-            raw_list = await exchange.fetch_liquidations(perp_sym, since=since_ms, limit=20)
+            raw_list = await exchange.fetch_liquidations(perp_sym, since=since_ms, limit=50)
             for item in raw_list:
                 price = float(item.get("price") or 0)
                 qty = float(item.get("amount") or item.get("quantity") or 0)
@@ -216,7 +219,7 @@ async def _fetch_liquidations_ccxt(
                     observed_at=now.isoformat(),
                 ))
         except Exception as e:
-            logger.debug("ccxt liquidations fetch failed for %s: %s", sym, e)
+            logger.warning("ccxt liquidations fetch failed for %s: %s", sym, e)
 
     return results
 
@@ -230,8 +233,10 @@ async def _fetch_liquidations_binance_rest(
     Binance, returned events carry exchange='binance' and represent Binance market
     conditions, not the configured primary.
     """
+    logger.info("fetching liquidations from Binance fapi for %d symbols", len(symbols))
     results: list[LiquidationEvent] = []
     now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=_LIQUIDATION_WINDOW_HOURS)
 
     async with httpx_client(timeout=10) as client:
         for sym in symbols[:10]:  # cap to avoid rate limits
@@ -239,23 +244,27 @@ async def _fetch_liquidations_binance_rest(
             try:
                 resp = await client.get(
                     _BINANCE_LIQUIDATIONS_URL,
-                    params={"symbol": binance_sym, "limit": 20},
+                    params={"symbol": binance_sym, "limit": 50},
                 )
                 if resp.status_code != 200:
+                    logger.warning("liq binance %s: HTTP %d", binance_sym, resp.status_code)
                     continue
-                for item in resp.json():
+                raw_items = resp.json()
+                in_window = 0
+                for item in raw_items:
                     side = "long" if item.get("side", "").upper() == "SELL" else "short"
                     price = float(item.get("price", 0))
                     qty = float(item.get("origQty", 0))
                     event_time = item.get("time", 0)
                     if event_time:
                         et = datetime.fromtimestamp(event_time / 1000, tz=timezone.utc)
-                        if (now - et) > timedelta(hours=1):
+                        if et < cutoff:
                             continue
                         event_str = et.isoformat()
                     else:
                         event_str = now.isoformat()
 
+                    in_window += 1
                     results.append(LiquidationEvent(
                         symbol=sym,
                         exchange="binance",
@@ -265,7 +274,9 @@ async def _fetch_liquidations_binance_rest(
                         event_time=event_str,
                         observed_at=now.isoformat(),
                     ))
-            except Exception:
-                continue
+                if len(raw_items) > 0 and in_window == 0:
+                    logger.info("liq %s: %d raw events, 0 in %dh window", sym, len(raw_items), _LIQUIDATION_WINDOW_HOURS)
+            except Exception as e:
+                logger.warning("liq fetch for %s failed: %s", sym, e)
 
     return results

@@ -105,6 +105,12 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 continue
             seen.add(sym)
             price_meta = get_cached_price_with_meta(sym)
+            fr = s.get("funding_rate")
+            oi_delta = s.get("oi_delta_1h")
+            crowding_signal = (
+                fr is not None and oi_delta is not None
+                and abs(fr) > 0.0005 and abs(oi_delta) > 5
+            )
             features.append({
                 "symbol": sym,
                 "price": s.get("price"),
@@ -114,10 +120,15 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "return_1h": s.get("return_1h"),
                 "return_4h": s.get("return_4h"),
                 "return_24h": s.get("return_24h"),
-                "funding_rate": s.get("funding_rate"),
-                "oi_delta_1h": s.get("oi_delta_1h"),
+                "funding_rate": fr,
+                "oi_delta_1h": oi_delta,
                 "btc_beta": s.get("btc_beta"),
                 "volume_24h": s.get("quote_volume_24h"),
+                "taker_buy_ratio": s.get("taker_buy_ratio"),
+                "vol_ratio": s.get("vol_ratio"),
+                "relative_strength_24h": s.get("relative_strength_24h"),
+                "oi_price_divergence": s.get("oi_price_divergence"),
+                "crowding_signal": crowding_signal,
             })
             if len(features) >= 10:
                 break
@@ -270,6 +281,23 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         layer["guard_candidates"] = guards
     except Exception:
         layer["guard_candidates"] = []
+
+    # Serenity research opportunities (most recent active, for PI Agent consumption)
+    try:
+        from aletheia.storage.repositories import list_serenity_opportunities
+        opps = list_serenity_opportunities(status="active", limit=10)
+        serenity_opps: list[dict] = []
+        for o in opps[:5]:
+            serenity_opps.append({
+                "symbol": o.get("symbol"),
+                "direction": o.get("direction"),
+                "thesis": (o.get("thesis") or "")[:200],
+                "confidence_score": o.get("confidence_score"),
+                "evidence_tier": o.get("evidence_tier"),
+            })
+        layer["serenity_opportunities"] = serenity_opps
+    except Exception:
+        layer["serenity_opportunities"] = []
 
     return layer
 

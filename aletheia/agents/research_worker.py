@@ -70,6 +70,23 @@ _OPPORTUNITIES_SYSTEM = (
     "Return 0-5 opportunities. Return empty array if no clear opportunities. Return raw JSON array, no markdown."
 )
 
+_ICT_METHODOLOGY_SYSTEM = (
+    "You are a trading methodology analyst specializing in ICT (Inner Circle Trader) and SMC (Smart Money Concepts) "
+    "for crypto futures markets. Your job is to produce ACTIONABLE trading methodology knowledge. "
+    "Return ONLY a JSON array of evidence objects. Each object must have: "
+    '"title" (string: concept name like "Order Block Entry"), '
+    '"source" (string: "ict_methodology" or "smc_methodology" or "price_action"), '
+    '"source_ref" (string: specific concept, e.g. "ICT Order Block / BOS"), '
+    '"summary" (string: specific entry criteria, invalidation conditions, optimal timeframe, and R:R expectation), '
+    '"symbol" (string or null: most applicable asset, e.g. "BTC/USDT"), '
+    '"tier" (string: "verified"), "confidence" (string: "verified"), "supports" (boolean: true). '
+    "Cover these concepts: order blocks, fair value gaps (FVG), liquidity sweeps, market structure shifts (MSS/BOS/CHoCH), "
+    "breaker blocks, power of 3 (accumulation/manipulation/distribution), optimal trade entry (OTE), "
+    "equal highs/lows as liquidity targets, and displacement/imbalance. "
+    "For each concept include: setup condition, entry trigger, invalidation level, preferred timeframe (15m/1h/4h), "
+    "and typical risk/reward ratio. Return 8-12 evidence items. Return raw JSON array, no markdown."
+)
+
 
 def enqueue_research_run(run_id: str) -> None:
     """Enqueue a research run for background execution."""
@@ -163,8 +180,12 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     _update_stage(run_id, "collect_evidence")
     _emit_event(run_id, "stage.started", stage="collect_evidence", message="Collecting evidence")
 
+    evidence_system = (
+        _ICT_METHODOLOGY_SYSTEM if run.get("mode") == "methodology"
+        else _EVIDENCE_SYSTEM
+    )
     evidence_text, err = await llm_complete(
-        system=_EVIDENCE_SYSTEM,
+        system=evidence_system,
         user=f"Research context:\n{research_context}\n\nCollect relevant evidence.",
         max_tokens=2000,
     )

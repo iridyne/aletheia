@@ -1390,6 +1390,12 @@ _ADDITIVE_COLUMNS = [
     ("btc_beta", "universe_feature_snapshots", "REAL"),
     # Exchange-native TPSL bracket order IDs (JSON {"sl": id, "tp": id})
     ("exchange_tpsl_order_id", "positions", "TEXT"),
+    # Derivatives signal dimensions for PI Agent direction guidance
+    ("taker_buy_ratio", "universe_feature_snapshots", "REAL"),
+    ("vol_ratio", "universe_feature_snapshots", "REAL"),
+    ("relative_strength_24h", "universe_feature_snapshots", "REAL"),
+    # OI-price divergence: +1=hidden_accumulation, -1=weak_rally, 0=neutral
+    ("oi_price_divergence", "universe_feature_snapshots", "INTEGER"),
 ]
 
 

@@ -306,6 +306,54 @@ def _compute_position_size(conviction: int, symbol: str | None = None) -> float:
 
 # ── prompt builders ───────────────────────────────────────────────────────────
 
+_OI_DIV_LABEL = {1: "hidden_acc", -1: "weak_rally", 0: ""}
+
+def _fmt_feature_line(f: dict) -> str:
+    """Format one universe feature entry for the assessment prompt."""
+    sym = f["symbol"]
+    rsi = f.get("rsi_14")
+    atr = f.get("atr_pct")
+    r1 = f.get("return_1h") or 0.0
+    r4 = f.get("return_4h") or 0.0
+    r24 = f.get("return_24h") or 0.0
+    fr_str = _fmt_funding(f.get("funding_rate"))
+    oi = f.get("oi_delta_1h")
+    rs = f.get("relative_strength_24h")
+    vr = f.get("vol_ratio")
+    tkr = f.get("taker_buy_ratio")
+    div = f.get("oi_price_divergence")
+    crowding = f.get("crowding_signal", False)
+
+    base = (
+        f"  {sym}: RSI={rsi:.0f} ATR={atr:.1f}% "
+        f"1h={r1:+.1f}% 4h={r4:+.1f}% 24h={r24:+.1f}% "
+        f"FR={fr_str} OI_Δ={oi if oi is not None else '?'}"
+    )
+    extras = []
+    if rs is not None:
+        extras.append(f"RS24h={rs:+.1f}%")
+    if vr is not None:
+        extras.append(f"vol_r={vr:.1f}x")
+    if tkr is not None:
+        extras.append(f"taker={tkr:.2f}")
+    if div and div != 0:
+        extras.append(_OI_DIV_LABEL.get(div, ""))
+    if crowding:
+        extras.append("CROWDED")
+    return base + (" [" + " ".join(x for x in extras if x) + "]" if extras else "")
+
+
+_SIGNAL_RULES = """\
+Signal interpretation (same logic as the scanner chain):
+  FR>+0.01%: crowded longs → bearish bias for trend; bullish for mean-reversion
+  FR<-0.01%: crowded shorts → bullish bias for trend; bearish for mean-reversion
+  OI_div=hidden_acc (OI↑+price↓): possible accumulation → potential long setup
+  OI_div=weak_rally (OI↓+price↑): distribution risk → potential short setup
+  taker>1.2: aggressive buyers confirm momentum; taker<0.8: aggressive sellers
+  vol_ratio>2x: volume breakout — confirms any directional trade
+  CROWDED: high funding + large OI move together — elevated reversal risk"""
+
+
 def _build_assessment_prompt(ctx: dict) -> str:
     """Build the three-layer assessment prompt from enriched trading context."""
     layer1 = ctx.get("layer1", {})
@@ -339,11 +387,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
 
     features = layer1.get("features", [])
     feature_lines = "\n".join(
-        f"  {f['symbol']}: RSI={f.get('rsi_14', '?'):.0f} ATR={f.get('atr_pct', '?'):.1f}% "
-        f"1h={f.get('return_1h', 0):+.1f}% 4h={f.get('return_4h', 0):+.1f}% "
-        f"24h={f.get('return_24h', 0):+.1f}% "
-        f"FR={_fmt_funding(f.get('funding_rate'))} OI_Δ1h={f.get('oi_delta_1h', '?')}"
-        if f.get('rsi_14') is not None else
+        _fmt_feature_line(f) if f.get('rsi_14') is not None else
         f"  {f['symbol']}: price={f.get('price', '?')}"
         for f in features[:10]
     ) or "  (no data)"
@@ -393,6 +437,12 @@ def _build_assessment_prompt(ctx: dict) -> str:
         for g in guards[:3]
     ) or ""
 
+    serenity_opps = layer3.get("serenity_opportunities", [])
+    serenity_lines = "\n".join(
+        f"  {o['symbol']} {o.get('direction', '?')} [conf={o.get('confidence_score', '?')} tier={o.get('evidence_tier', '?')}]: {o.get('thesis', '')}"
+        for o in serenity_opps
+    ) or ""
+
     # ── Data Health Alerts ──
     data_health = layer1.get("data_health", {})
     health_alerts: list[str] = []
@@ -432,6 +482,8 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "## Technical Features (top universe assets)",
         feature_lines,
         "",
+        _SIGNAL_RULES,
+        "",
         "## Active Signals",
         signal_lines,
         "",
@@ -468,6 +520,10 @@ def _build_assessment_prompt(ctx: dict) -> str:
         parts.append("")
         parts.append("## Pending Guard Candidates (patterns that failed recently)")
         parts.append(guard_lines)
+    if serenity_lines:
+        parts.append("")
+        parts.append("## Research-sourced Opportunities (from Serenity agent)")
+        parts.append(serenity_lines)
 
     parts += [
         "",
@@ -513,10 +569,14 @@ def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     regime = ctx.get("layer1", {}).get("regime")
     regime_str = f"Regime: {regime['state']} (conf={regime['confidence']:.0%})" if regime else ""
 
+    oi_div = snap.get("oi_price_divergence")
+    deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')} RS24h={snap.get('relative_strength_24h', '?')}%"
+    div_note = f" [{_OI_DIV_LABEL[oi_div]}]" if oi_div else ""
     return f"""You are a bull analyst. Make the STRONGEST case for {symbol} {direction or 'long'} RIGHT NOW.
 
-Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}
+Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
+Note: FR<-0.01% = crowded shorts → bullish; taker>1.2 = buyer aggression; OI_div=hidden_acc = potential reversal long.
 
 Be specific: technical setup, regime alignment, risk/reward.
 Return confidence (0-100) where 100 = near-certain win. Provide 3-5 evidence points."""
@@ -528,10 +588,14 @@ def _build_bear_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     regime = ctx.get("layer1", {}).get("regime")
     regime_str = f"Regime: {regime['state']} (conf={regime['confidence']:.0%})" if regime else ""
 
+    oi_div = snap.get("oi_price_divergence")
+    deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')} RS24h={snap.get('relative_strength_24h', '?')}%"
+    div_note = f" [{_OI_DIV_LABEL[oi_div]}]" if oi_div else ""
     return f"""You are a bear analyst. Find every reason why {symbol} {direction or 'long'} RIGHT NOW is a BAD idea.
 
-Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}
+Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
+Note: FR>+0.01% = crowded longs → bearish; taker<0.8 = seller aggression; OI_div=weak_rally = distribution risk.
 
 Challenge aggressively: overbought/oversold, adverse regime, funding cost, better entry timing.
 Return confidence (0-100) where 100 = trade will definitely fail. Provide 3-5 counter-evidence points."""

@@ -275,6 +275,17 @@ async def _fetch_single_feature(
         "taker_buy_ratio": taker_buy_ratio,
     }
 
+    # OI-price divergence: +1=hidden_accumulation (OI↑ price↓ = possible accumulation),
+    # -1=weak_rally (OI↓ price↑ = weak rally, distribution risk), 0=neutral
+    oi_price_divergence = None
+    if oi_delta_1h is not None and return_1h is not None:
+        if oi_delta_1h > 3 and return_1h < -0.5:
+            oi_price_divergence = 1
+        elif oi_delta_1h < -3 and return_1h > 0.5:
+            oi_price_divergence = -1
+        else:
+            oi_price_divergence = 0
+
     snap = UniverseFeatureSnapshot(
         asset_id=asset_id,
         ts=now.isoformat(),
@@ -292,6 +303,10 @@ async def _fetch_single_feature(
         oi_delta_1h=oi_delta_1h,
         data_freshness_sec=data_freshness_sec,
         btc_beta=btc_beta,
+        taker_buy_ratio=taker_buy_ratio,
+        vol_ratio=vol_ratio,
+        relative_strength_24h=relative_strength_24h,
+        oi_price_divergence=oi_price_divergence,
     )
     repo.insert_universe_feature_snapshot(snap)
 

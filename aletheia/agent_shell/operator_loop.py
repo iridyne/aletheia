@@ -33,6 +33,7 @@ _COOLDOWN_SECONDS = 7200  # 2h same-param cooldown
 _MAX_STRATEGY_DESIGNER_TRIGGERS_PER_DAY = 3
 _MAX_OPTUNA_TRIGGERS_PER_DAY = 2
 _MAX_NOTIFICATIONS_PER_DAY = 10
+_MAX_RESEARCH_TRIGGERS_PER_DAY = 1
 
 _action_log: list[dict] = []  # in-memory log for rate limiting within process lifetime
 
@@ -80,6 +81,7 @@ _LEVEL_1_ACTIONS = {
     "trigger_strategy_designer", "trigger_optuna_sweep",
     "tighten_confidence", "reduce_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "request_backfill", "notify_operator",
+    "trigger_strategy_research",
 }
 
 _LEVEL_2_ACTIONS = {
@@ -286,6 +288,8 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_request_backfill(action)
     elif action.action_type == "notify_operator":
         result = _action_notify(action)
+    elif action.action_type == "trigger_strategy_research":
+        result = _action_trigger_strategy_research(action)
     else:
         result["reason"] = f"unknown action type: {action.action_type}"
 
@@ -338,6 +342,39 @@ def _action_trigger_strategy_designer(action: OperatorAction) -> dict:
         return {"action": "trigger_strategy_designer", "status": "executed"}
     except Exception as e:
         return {"action": "trigger_strategy_designer", "status": "error", "reason": str(e)}
+
+
+_ICT_RESEARCH_BRIEF = (
+    "Research ICT (Inner Circle Trader), SMC (Smart Money Concepts), and Price Action "
+    "trading methodologies applicable to crypto futures (BTC/ETH/SOL/AVAX). "
+    "Focus on: order blocks, fair value gaps, liquidity sweeps, market structure shifts, "
+    "breaker blocks, and power of 3 (accumulation/manipulation/distribution). "
+    "For each concept, document: specific entry criteria, invalidation conditions, "
+    "optimal timeframes (15m/1h/4h), and risk-reward expectations. "
+    "Identify 3-5 actionable trading opportunities applicable to current crypto market conditions."
+)
+
+
+def _action_trigger_strategy_research(action: OperatorAction) -> dict:
+    if _count_actions_today("trigger_strategy_research") >= _MAX_RESEARCH_TRIGGERS_PER_DAY:
+        return {"action": "trigger_strategy_research", "status": "rate_limited",
+                "reason": f"already triggered {_MAX_RESEARCH_TRIGGERS_PER_DAY}x today"}
+    try:
+        from aletheia.storage.models import SerenityResearchRun
+        from aletheia.storage import repositories as _repo
+        from aletheia.agents.research_worker import enqueue_research_run
+        run = SerenityResearchRun(
+            trigger_type="operator",
+            mode="methodology",
+            brief_snapshot=action.params.get("brief", _ICT_RESEARCH_BRIEF),
+        )
+        _repo.insert_serenity_research_run(run)
+        enqueue_research_run(run.id)
+        _record_action("trigger_strategy_research")
+        logger.info("operator: triggered strategy research run %s — %s", run.id, action.reason)
+        return {"action": "trigger_strategy_research", "status": "executed", "run_id": run.id}
+    except Exception as e:
+        return {"action": "trigger_strategy_research", "status": "error", "reason": str(e)}
 
 
 def _action_trigger_optuna_sweep(action: OperatorAction) -> dict:
@@ -547,6 +584,25 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
             action_type="request_backfill",
             level=1,
             reason="OHLCV data insufficient for backtest",
+        ))
+
+    # Stage 3b: Strategy Research — trigger ICT/SMC methodology research
+    should_research = (
+        _count_actions_today("trigger_strategy_research") == 0
+        and (
+            len(assessment.uncovered_symbols) > 3
+            or (assessment.strategies_paper_running < 2 and assessment.strategies_retired_24h >= 3)
+        )
+    )
+    if should_research:
+        actions.append(OperatorAction(
+            action_type="trigger_strategy_research",
+            level=1,
+            reason=(
+                f"uncovered_symbols={len(assessment.uncovered_symbols)}, "
+                f"paper_running={assessment.strategies_paper_running}, "
+                f"retired_24h={assessment.strategies_retired_24h}"
+            ),
         ))
 
     # Stage 4: Risk adaptation (proposals only for loosening)

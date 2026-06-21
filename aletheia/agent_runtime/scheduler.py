@@ -1338,11 +1338,15 @@ async def _async_data_collectors(cfg, tick: int) -> None:
             repo.insert_open_interest_snapshot(snap.model_dump())
         except Exception as e:
             logger.debug("OI persist failed: %s", e)
+    liq_count = 0
     for event in deriv_result.get("liquidations", []):
         try:
             repo.insert_liquidation_event(event.model_dump())
+            liq_count += 1
         except Exception as e:
             logger.debug("liquidation persist failed: %s", e)
+    if liq_count:
+        logger.info("liquidations persisted: %d", liq_count)
 
     # --- Phase B: macro + volume scanner (every 5th tick = ~10 min) ---
     if tick % 5 == 1:

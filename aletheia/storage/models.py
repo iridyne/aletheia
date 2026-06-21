@@ -712,6 +712,10 @@ class UniverseFeatureSnapshot(BaseModel):
     oi_delta_1h: float | None = None
     data_freshness_sec: int | None = None
     btc_beta: float | None = None
+    taker_buy_ratio: float | None = None
+    vol_ratio: float | None = None
+    relative_strength_24h: float | None = None
+    oi_price_divergence: int | None = None  # +1=hidden_accumulation, -1=weak_rally, 0=neutral
     raw: str = "{}"
 
 
