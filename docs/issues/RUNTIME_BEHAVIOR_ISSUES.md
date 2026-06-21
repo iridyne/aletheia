@@ -1089,3 +1089,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-21 02:24 UTC] ⚠️ **§22 持续** — features=60/h (第 9 轮, 10/10min 均匀). Opportunities=8394 (+0, 3min 窗口). Knowledge=1313. §17 timed_out=266 (+0). Stale=289. 亚盘深夜. **§22 `registry.py:52` 待修复. 77h+ 连续运行.**
 
 [2026-06-21 02:58 UTC] ⚠️ **§22 持续** — features=50/h (第 10 轮低吞吐). Opportunities=8412 (+18/h). Knowledge=1320 (+7/h). §17 timed_out=266 (+0). Stale=289. price_fallback 警告仅 §18 已知(兜底正常). **§22 `registry.py:52` 待修复. 78h+ 连续运行.**
+
+[2026-06-21 03:21 UTC] ⚠️ **§22 持续 + §23 新观察: frontdoor 短暂重启** — features=60/h (第 11 轮低吞吐). Opportunities=8430 (+18/h). Knowledge=1327 (+7/h). §17 timed_out=266 (+0). Stale=289. **新**: `gateway_supervisor` 03:07/03:08 UTC 连续两次重启 frontdoor (PID 7000 未响应 :8787); 03:10 后已自愈 (features 恢复正常). 影响范围: 约 2min Web UI 不可用, pipeline 后端不受影响. **§22 `registry.py:52` 待修复. 78h+ 连续运行.**
