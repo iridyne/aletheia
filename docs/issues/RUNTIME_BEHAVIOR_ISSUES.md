@@ -1119,3 +1119,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-21 10:08 UTC] ⚠️ **§23 间歇持续** — features=49/h. Opportunities=8702 (+28/h). Knowledge=1484 (+15/h). §17 timed_out=266. Stale=298. **§23**: 10:00/10:02/10:04 UTC 3 批 (PID 34704/18224/3528), 间隔 09:21→10:00 约 39min, features 10:07 自愈. §22/§23 根因未修. 85h+ 连续运行.
 
 [2026-06-21 10:21 UTC] ⚠️ **§23 暂稳 17min** — features=48/h. Opportunities=8710 (+8/h). Knowledge=1497 (+13/h). §17 timed_out=266. Stale=298. §23 最后 10:04, 暂稳. §22/§23 根因未修. 85h+ 连续运行.
+
+[2026-06-21 11:08 UTC] ⚠️ **§23 间歇持续** — features=40/h (50min桶0为10:26发作artifact). Opportunities=8731 (+21/h). Knowledge=1509 (+12/h). §17 timed_out=266. Stale=298. **§23**: 10:26/10:28 UTC 2 批 (PID 33000/30572), 间隔 10:04→10:26 约 22min, 11:01 features 自愈. §22/§23 根因未修. 86h+ 连续运行.
