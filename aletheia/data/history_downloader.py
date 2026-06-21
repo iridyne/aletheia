@@ -58,12 +58,25 @@ async def download_symbol_history(
     start_ts = now_ms - months * 30 * 24 * 3600 * 1000
 
     newest_existing = get_ohlcv_newest_ts(symbol, timeframe)
-    if newest_existing and newest_existing > start_ts:
+
+    # Determine the oldest bar to detect left-gap (history before existing data)
+    from aletheia.storage.repositories import get_ohlcv_coverage
+    cov = get_ohlcv_coverage(symbol, timeframe)
+    oldest_existing = cov.get("oldest_ts")
+
+    # Two gaps can exist: left (before oldest) and right (after newest).
+    # Prioritize the left gap when oldest > start_ts (missing deep history).
+    if oldest_existing and oldest_existing > start_ts + tf_ms:
+        fetch_since = start_ts
+        fetch_until = oldest_existing - tf_ms
+    elif newest_existing and newest_existing > start_ts:
         fetch_since = newest_existing + tf_ms
+        fetch_until = now_ms
     else:
         fetch_since = start_ts
+        fetch_until = now_ms
 
-    if fetch_since >= now_ms:
+    if fetch_since >= fetch_until:
         return DownloadResult(symbol, timeframe, 0, newest_existing, newest_existing)
 
     provider = get_market_data_provider(exchange=exchange)
@@ -74,7 +87,7 @@ async def download_symbol_history(
     current_since = fetch_since
 
     try:
-        while current_since < now_ms and total_fetched < max_bars:
+        while current_since < fetch_until and total_fetched < max_bars:
             try:
                 candles = await provider.get_ohlcv(
                     symbol, timeframe, limit=_PAGE_SIZE, since=current_since

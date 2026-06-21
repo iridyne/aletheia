@@ -563,6 +563,111 @@ def _probe_fts_coverage(report: Report) -> None:
                    "experience loop severely degraded — restart gateway or run: uv run aletheia kb reindex")
 
 
+def _probe_ohlcv_coverage(report: Report) -> None:
+    """Check OHLCV historical data coverage for active universe members."""
+    try:
+        from aletheia.storage.repositories import get_active_universe_members
+        from aletheia.storage.sqlite import get_db
+        from aletheia.config.loader import load_config
+
+        db = get_db()
+        total = db.execute("SELECT COUNT(*) FROM market_ohlcv").fetchone()[0]
+        if total == 0:
+            report.add("data.ohlcv", "warn",
+                       "market_ohlcv is empty — backtest and Optuna cannot run",
+                       "run: uv run aletheia data backfill")
+            return
+
+        cfg = load_config()
+        min_bars = cfg.historical_data.min_bars_for_backtest
+        members = get_active_universe_members()
+        if not members:
+            report.add("data.ohlcv", "info",
+                       f"market_ohlcv: {total} total bars (no active members to verify coverage)")
+            return
+
+        gaps: list[str] = []
+        for m in members:
+            sym = m.get("symbol", "")
+            if not sym:
+                continue
+            bars = db.execute(
+                "SELECT COUNT(*) FROM market_ohlcv WHERE symbol=? AND timeframe='1h'",
+                (sym,),
+            ).fetchone()[0]
+            if bars < min_bars:
+                gaps.append(f"{sym}({bars})")
+
+        symbols_covered = db.execute(
+            "SELECT COUNT(DISTINCT symbol) FROM market_ohlcv WHERE timeframe='1h'"
+        ).fetchone()[0]
+
+        if gaps:
+            report.add(
+                "data.ohlcv", "warn",
+                f"{len(gaps)}/{len(members)} active members below {min_bars} bars: "
+                + ", ".join(gaps[:5]) + ("…" if len(gaps) > 5 else ""),
+                "run: uv run aletheia data backfill",
+            )
+        else:
+            report.add(
+                "data.ohlcv", "ok",
+                f"OHLCV: {total} total bars, {symbols_covered} symbols, "
+                f"all {len(members)} active members ≥{min_bars} bars",
+            )
+    except Exception:
+        pass
+
+
+def _probe_signal_effectiveness(report: Report) -> None:
+    """Check universe signal win-rate over the last 7 days."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        from datetime import timedelta
+
+        db = get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+        # 24h horizon — most meaningful for strategy effectiveness
+        row = db.execute(
+            """SELECT COUNT(*),
+                      SUM(CASE WHEN forward_return_pct > 0 THEN 1 ELSE 0 END),
+                      AVG(forward_return_pct)
+               FROM universe_forward_outcomes
+               WHERE status = 'settled'
+                 AND horizon = '24h'
+                 AND settled_at >= ?
+                 AND ABS(forward_return_pct) <= 100""",
+            (cutoff,),
+        ).fetchone()
+
+        total, wins, avg_ret = row if row else (0, None, None)
+
+        if not total:
+            report.add("data.signal", "info",
+                       "insufficient settled outcomes in last 7d — signal effectiveness unknown")
+            return
+
+        win_rate = (wins or 0) / total * 100
+        avg_str = f"{avg_ret:.3f}%" if avg_ret is not None else "n/a"
+
+        if win_rate < 40:
+            report.add(
+                "data.signal", "warn",
+                f"24h signal win_rate {win_rate:.1f}% ({total} settled, avg={avg_str}) — "
+                "universe selection may be degraded",
+                "review scanner weights; consider updating Optuna strategy params",
+            )
+        elif win_rate >= 55:
+            report.add("data.signal", "ok",
+                       f"24h signal win_rate {win_rate:.1f}% ({total} settled, avg={avg_str})")
+        else:
+            report.add("data.signal", "info",
+                       f"24h signal win_rate {win_rate:.1f}% ({total} settled, avg={avg_str}) — near-random")
+    except Exception:
+        pass
+
+
 def build_report() -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing."""
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -574,6 +679,8 @@ def build_report() -> Report:
         _probe_credentials,
         _probe_market_data,
         _probe_data_quality,
+        _probe_ohlcv_coverage,
+        _probe_signal_effectiveness,
         _probe_trading_loop,
         _probe_health,
         _probe_webui_static,

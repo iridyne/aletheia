@@ -137,6 +137,9 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     except Exception:
         layer["risk"] = {}
 
+    # Data health — lets PI Agent reason about its own environment quality
+    layer["data_health"] = _get_data_health_summary()
+
     return layer
 
 
@@ -269,6 +272,76 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         layer["guard_candidates"] = []
 
     return layer
+
+
+# ── data health ─────────────────────────────────────────────────────────────
+
+
+def _get_data_health_summary() -> dict[str, Any]:
+    """Build a concise data-health dict for PI Agent context injection."""
+    try:
+        from aletheia.storage.repositories import get_active_universe_members
+        from aletheia.storage.sqlite import get_db
+        from aletheia.config.loader import load_config
+
+        cfg = load_config()
+        min_bars = cfg.historical_data.min_bars_for_backtest
+        db = get_db()
+
+        members = get_active_universe_members()
+        total_members = len(members)
+        ready_count = 0
+        for m in members:
+            sym = m.get("symbol", "")
+            if not sym:
+                continue
+            bars = db.execute(
+                "SELECT COUNT(*) FROM market_ohlcv WHERE symbol=? AND timeframe='1h'",
+                (sym,),
+            ).fetchone()[0]
+            if bars >= min_bars:
+                ready_count += 1
+
+        ohlcv_ready = ready_count == total_members and total_members > 0
+
+        # Signal effectiveness (7d, 24h horizon)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        row = db.execute(
+            """SELECT COUNT(*),
+                      SUM(CASE WHEN forward_return_pct > 0 THEN 1 ELSE 0 END)
+               FROM universe_forward_outcomes
+               WHERE status = 'settled' AND horizon = '24h'
+                 AND settled_at >= ? AND ABS(forward_return_pct) <= 100""",
+            (cutoff,),
+        ).fetchone()
+        settled, wins = row if row else (0, None)
+        win_rate = round((wins or 0) / settled * 100, 1) if settled else None
+
+        if win_rate is None:
+            signal_status = "insufficient_data"
+        elif win_rate < 40:
+            signal_status = "degraded"
+        elif win_rate >= 55:
+            signal_status = "healthy"
+        else:
+            signal_status = "neutral"
+
+        return {
+            "ohlcv_ready": ohlcv_ready,
+            "members_with_full_coverage": ready_count,
+            "total_members": total_members,
+            "signal_win_rate_24h": win_rate,
+            "signal_status": signal_status,
+        }
+    except Exception as e:
+        logger.debug("data_health_summary failed: %s", e)
+        return {
+            "ohlcv_ready": False,
+            "members_with_full_coverage": 0,
+            "total_members": 0,
+            "signal_win_rate_24h": None,
+            "signal_status": "unknown",
+        }
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

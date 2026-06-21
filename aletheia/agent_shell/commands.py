@@ -1812,6 +1812,22 @@ async def propose_extension_enablement(params: dict) -> dict:
     }
 
 
+def _emit_self_heal_action(action: str, reason: str) -> None:
+    """Record a system_action knowledge item for audit trail and self-heal."""
+    try:
+        from aletheia.storage.models import KnowledgeItem
+        from aletheia.storage.repositories import insert_knowledge_item
+        item = KnowledgeItem(
+            item_type="system_action",
+            title=f"self_heal:{action}",
+            tags=json.dumps(["self_heal", action]),
+        )
+        insert_knowledge_item(item)
+        logger.info("self_heal_action: %s — %s", action, reason)
+    except Exception:
+        pass
+
+
 async def evaluate_trading_opportunity(params: dict) -> dict:
     """PI agent evaluates market state and submits a paper proposal if conviction >= 55."""
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
@@ -1873,6 +1889,22 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     try:
         from aletheia.agent_shell.reflection import record_decision
         record_decision(result)
+    except Exception:
+        pass
+
+    # Self-heal: emit system_action when data environment is degraded
+    try:
+        data_health = ctx.get("layer1", {}).get("data_health", {})
+        if data_health.get("signal_status") == "degraded":
+            _emit_self_heal_action(
+                "pause_low_conviction",
+                reason=f"24h signal win_rate {data_health.get('signal_win_rate_24h', '?')}% below threshold",
+            )
+        elif not data_health.get("ohlcv_ready"):
+            _emit_self_heal_action(
+                "request_backfill",
+                reason=f"only {data_health.get('members_with_full_coverage', 0)}/{data_health.get('total_members', 0)} members have full OHLCV coverage",
+            )
     except Exception:
         pass
 

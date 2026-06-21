@@ -393,8 +393,30 @@ def _build_assessment_prompt(ctx: dict) -> str:
         for g in guards[:3]
     ) or ""
 
+    # ── Data Health Alerts ──
+    data_health = layer1.get("data_health", {})
+    health_alerts: list[str] = []
+    if not data_health.get("ohlcv_ready"):
+        health_alerts.append(
+            "ℹ️ Historical data not yet complete for all members "
+            f"({data_health.get('members_with_full_coverage', 0)}/{data_health.get('total_members', 0)} ready). "
+            "Backtest/Optuna offline — operate conservatively."
+        )
+    if data_health.get("signal_status") == "degraded":
+        wr = data_health.get("signal_win_rate_24h", "?")
+        health_alerts.append(
+            f"⚠️ SIGNAL DEGRADATION: 24h universe win_rate={wr}% (below 40%). "
+            "Consider: reducing position sizing, tightening stops, skipping low-conviction trades."
+        )
+
     # ── Assemble prompt ──
-    parts = [
+    parts = []
+    if health_alerts:
+        parts.append("# ⚠️ System Health Alerts")
+        parts.extend(health_alerts)
+        parts.append("")
+
+    parts += [
         "# Layer 1: Environment Snapshot (current state)",
         "",
         "## Portfolio",

@@ -224,3 +224,34 @@ def _bucket_hold_times(hours_list: list[float]) -> list[dict]:
     return result
 
 
+def build_strategy_kpis() -> dict[str, dict]:
+    """Per-strategy KPI summary: trade_count, win_rate, total_pnl.
+
+    Returns a dict keyed by strategy_id.
+    """
+    from aletheia.storage.repositories import get_db
+
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT strategy_id,
+               COUNT(*) as trade_count,
+               SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+               COALESCE(SUM(realized_pnl), 0) as total_pnl
+        FROM positions
+        WHERE status = 'closed' AND strategy_id IS NOT NULL
+        GROUP BY strategy_id
+        """
+    ).fetchall()
+    result = {}
+    for r in rows:
+        row = dict(r)
+        tc = row["trade_count"]
+        result[row["strategy_id"]] = {
+            "trade_count": tc,
+            "win_rate": round(row["wins"] / tc * 100, 1) if tc > 0 else 0.0,
+            "total_pnl": round(row["total_pnl"], 2),
+        }
+    return result
+
+

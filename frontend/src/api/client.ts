@@ -486,7 +486,7 @@ export const api = {
     })
     return fetchJson<any>(`/market/ohlcv?${params}`)
   },
-  getPortfolioHistory: () => fetchJson<any[]>('/market/portfolio-history'),
+  getPortfolioHistory: (days?: number) => fetchJson<any[]>(`/market/portfolio-history${days ? `?days=${days}` : ''}`),
 
   // Audit / Activity
   getAuditEvents: (limit = 50) => fetchJson<any[]>(`/audit/events?limit=${limit}`),
@@ -659,6 +659,7 @@ export const api = {
 
   // Trade Analytics panel
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
+  getStrategyKpis: () => fetchJson<Record<string, { trade_count: number; win_rate: number; total_pnl: number }>>('/analytics/strategy-kpis'),
   getTradeInsights: () => fetchJson<TradeInsights>('/analytics/trade-insights'),
 
   getBacktestRuns: (strategyId?: string) =>

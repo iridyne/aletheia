@@ -105,7 +105,7 @@ export default function MarketTicker() {
             <span className="ticker-label">{label}</span>
             <span className={`ticker-price${flashes[sym] ? ` tick-flash-${flashes[sym]}` : ''}`}>{price != null ? fmtNum(price) : '—'}</span>
             <span className={`ticker-pct ticker-${tone}`}>
-              {pct != null ? `${fmtSigned(pct)}%` : ''}
+              {pct != null ? `${pct > 0 ? '▲' : pct < 0 ? '▼' : ''}${fmtSigned(pct)}%` : ''}
             </span>
           </span>
         )

@@ -7,7 +7,7 @@ import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, TableWrap } from '../components/ui'
-import { humanize, fmtTimestamp } from '../lib/format'
+import { humanize, fmtTimestamp, fmtDelta } from '../lib/format'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 const STATES = ['draft', 'research_note', 'strategy_hypothesis', 'paper_candidate', 'paper_running', 'paper_passed', 'live_candidate', 'live_limited', 'retired']
@@ -22,13 +22,40 @@ const NEXT_STATE: Record<string, string> = {
   live_candidate: 'live_limited',
 }
 
-const col = createColumnHelper<StrategyRecord>()
+const col = createColumnHelper<StrategyRecord & { _kpi?: { trade_count: number; win_rate: number; total_pnl: number } }>()
 
 const columns = [
   col.accessor('name', { header: 'Name' }),
   col.accessor('state', {
     header: 'State',
     cell: info => <StatusBadge status={info.getValue()} />,
+  }),
+  col.display({
+    id: 'trades',
+    header: 'Trades',
+    cell: info => {
+      const kpi = (info.row.original as any)._kpi
+      return <span className="mono">{kpi ? kpi.trade_count : '—'}</span>
+    },
+  }),
+  col.display({
+    id: 'win_rate',
+    header: 'Win%',
+    cell: info => {
+      const kpi = (info.row.original as any)._kpi
+      if (!kpi || kpi.trade_count === 0) return <span className="text-muted">—</span>
+      return <span className="mono">{kpi.win_rate.toFixed(1)}%</span>
+    },
+  }),
+  col.display({
+    id: 'pnl',
+    header: 'PnL',
+    cell: info => {
+      const kpi = (info.row.original as any)._kpi
+      if (!kpi || kpi.trade_count === 0) return <span className="text-muted">—</span>
+      const tone = kpi.total_pnl > 0 ? 'pnl-positive' : kpi.total_pnl < 0 ? 'pnl-negative' : ''
+      return <span className={`mono ${tone}`}>{fmtDelta(kpi.total_pnl)}</span>
+    },
   }),
   col.accessor('created_at', {
     header: 'Created',
@@ -53,6 +80,7 @@ function PipelineStepper({ currentState }: { currentState: string }) {
 export default function StrategyLifecycle() {
   const qc = useQueryClient()
   const { data = [], isLoading: strategiesLoading } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
+  const { data: kpis = {} } = useQuery({ queryKey: ['strategy-kpis'], queryFn: api.getStrategyKpis, staleTime: 60000 })
   const [selected, setSelected] = useState<StrategyRecord | null>(null)
   const [promoteError, setPromoteError] = useState<string | null>(null)
 
@@ -72,7 +100,8 @@ export default function StrategyLifecycle() {
     onError: (e: any) => setPromoteError(e.message || 'Venue update failed'),
   })
 
-  const rows = data as StrategyRecord[]
+  const kpiMap = kpis as Record<string, { trade_count: number; win_rate: number; total_pnl: number }>
+  const rows = (data as StrategyRecord[]).map(s => ({ ...s, _kpi: kpiMap[s.id] }))
 
   function handlePromote() {
     if (!selected) return

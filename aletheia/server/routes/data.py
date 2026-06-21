@@ -1059,9 +1059,9 @@ async def get_market_ohlcv(
 
 
 @router.get("/market/portfolio-history")
-async def get_portfolio_history(limit: int = 100):
+async def get_portfolio_history(limit: int = 500, days: int | None = None):
     _ensure_db()
-    return repo.list_portfolio_snapshots(limit=limit)
+    return repo.list_portfolio_snapshots(limit=limit, days=days)
 
 
 @router.get("/market/macro")

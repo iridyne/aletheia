@@ -41,6 +41,13 @@ def get_trade_stats():
     return build_trade_stats()
 
 
+@router.get("/strategy-kpis")
+def get_strategy_kpis():
+    """Per-strategy KPI summary: trade_count, win_rate, total_pnl."""
+    from aletheia.analytics.trade_stats import build_strategy_kpis
+    return build_strategy_kpis()
+
+
 @router.get("/trade-insights")
 def get_trade_insights():
     """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc."""

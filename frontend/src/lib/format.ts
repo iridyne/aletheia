@@ -85,6 +85,19 @@ export function fmtSigned(
   return `${n >= 0 ? '+' : ''}${fmtNum(n, opts)}`
 }
 
+/** fmtSigned with ▲/▼ direction arrow prepended (WCAG 1.4.1 — not color-only). */
+export function fmtDelta(
+  value: number | string | null | undefined,
+  opts?: { decimals?: number; dash?: string },
+): string {
+  const dash = opts?.dash ?? '—'
+  if (value == null || value === '') return dash
+  const n = Number(value)
+  if (!Number.isFinite(n)) return dash
+  const arrow = n > 0 ? '▲' : n < 0 ? '▼' : ''
+  return `${arrow}${n >= 0 ? '+' : ''}${fmtNum(n, opts)}`
+}
+
 // ---------- Machine-code humanization ----------
 // Backend enums/states arrive as snake_case machine tokens (e.g. "paper_running",
 // "live_disabled", "mean_reversion"). The design system requires humanized display.

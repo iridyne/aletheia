@@ -4,21 +4,24 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { chartTheme } from './theme'
 
-export default function PnLChart() {
+interface Props {
+  days?: number
+}
+
+export default function PnLChart({ days }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const { data = [] } = useQuery({ queryKey: ['portfolio-history'], queryFn: api.getPortfolioHistory })
+  const { data = [] } = useQuery({
+    queryKey: ['portfolio-history', days],
+    queryFn: () => api.getPortfolioHistory(days),
+  })
 
   const allRows = data as any[]
   const hasExchangeData = allRows.some((s: any) => s.exchange_equity_usdt != null)
 
-  // When exchange data exists, only use rows that have it (filter stale all-zero rows
-  // captured before the exchange sync was wired in). Avoids misleading flat→jump shape.
   const rows = allRows
     .filter((s: any) => !hasExchangeData || s.exchange_equity_usdt != null)
     .map((s: any) => {
-      // snapshot_at comes as "2026-06-14T20:21:26+00:00" — already has timezone.
-      // Do NOT append 'Z' (that produces an invalid "...+00:00Z" string → NaN).
       const raw = s.snapshot_at ?? ''
       const t = Math.floor(new Date(raw.endsWith('Z') ? raw : raw.replace(/\+00:00$/, 'Z')).getTime() / 1000)
       const value = s.exchange_equity_usdt != null

@@ -848,27 +848,41 @@ def insert_portfolio_snapshot(snap) -> None:
     _insert("portfolio_snapshots", snap.model_dump())
 
 
-def list_portfolio_snapshots(limit: int = 100) -> list[dict]:
+def list_portfolio_snapshots(limit: int = 100, days: int | None = None) -> list[dict]:
     """Return the latest snapshot window in chronological order.
 
     UI chart consumers need ascending timestamps, but the window itself must be
     selected from the newest rows so long-lived databases do not show stale
     history forever once the table grows beyond `limit`.
+
+    If `days` is provided, only return snapshots within the last N days.
     """
     db = get_db()
-    rows = db.execute(
-        """
-        SELECT *
-        FROM (
+    if days is not None and days > 0:
+        rows = db.execute(
+            """
             SELECT *
             FROM portfolio_snapshots
-            ORDER BY snapshot_at DESC, id DESC
+            WHERE snapshot_at >= datetime('now', ?)
+            ORDER BY snapshot_at ASC, id ASC
             LIMIT ?
-        )
-        ORDER BY snapshot_at ASC, id ASC
-        """,
-        (limit,),
-    ).fetchall()
+            """,
+            (f"-{days} days", limit),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            """
+            SELECT *
+            FROM (
+                SELECT *
+                FROM portfolio_snapshots
+                ORDER BY snapshot_at DESC, id DESC
+                LIMIT ?
+            )
+            ORDER BY snapshot_at ASC, id ASC
+            """,
+            (limit,),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 

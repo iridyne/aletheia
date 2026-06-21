@@ -1667,6 +1667,12 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .card.clickable:hover { border-color: var(--border-2); background: var(--surface-2); }
 .card.clickable:active { transform: scale(0.995); }
 .pnl-curve { margin-bottom: 0; }
+.pnl-curve-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.pnl-curve-header h3 { margin: 0; }
+.time-range-selector { display: flex; gap: 2px; background: var(--surface-2); border-radius: 6px; padding: 2px; }
+.time-range-btn { padding: 4px 10px; font-size: 0.7rem; font-weight: 500; border: none; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; transition: background 0.12s, color 0.12s; }
+.time-range-btn:hover { color: var(--text); }
+.time-range-btn.active { background: var(--accent-dim); color: var(--text); }
 
 /* ---------- Segmented toggle (feed mode switch) ---------- */
 .seg-toggle {
@@ -2587,4 +2593,27 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
 .exchange-tile-active { border-color: var(--accent); background: rgba(99,102,241,0.06); }
 .exchange-tile-label { font-weight: 600; font-size: 0.9rem; }
 .exchange-tile-desc { font-size: 0.75rem; color: var(--muted); }
+
+/* ---------- Toast notifications ---------- */
+.toast-container { position: fixed; top: 56px; right: 16px; z-index: 300; display: flex; flex-direction: column; gap: 8px; pointer-events: none; max-width: 380px; }
+.toast-item { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border-2); box-shadow: 0 4px 12px rgba(0,0,0,0.4); pointer-events: auto; animation: toast-in 0.2s ease-out; }
+.toast-icon { font-size: 1rem; flex-shrink: 0; width: 20px; text-align: center; }
+.toast-msg { flex: 1; font-size: 0.8rem; color: var(--text); }
+.toast-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 0 4px; }
+.toast-close:hover { color: var(--text); }
+.toast-success .toast-icon { color: var(--green); }
+.toast-error .toast-icon { color: var(--red); }
+.toast-warning .toast-icon { color: var(--yellow); }
+.toast-info .toast-icon { color: var(--blue); }
+@keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+
+/* ---------- Confirm modal ---------- */
+.confirm-backdrop { position: fixed; inset: 0; z-index: 250; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+.confirm-modal { background: var(--surface); border: 1px solid var(--border-2); border-radius: 12px; padding: 24px; max-width: 420px; width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+.confirm-title { margin: 0 0 8px; font-size: 1rem; font-weight: 600; }
+.confirm-title.confirm-danger { color: var(--red); }
+.confirm-title.confirm-warning { color: var(--yellow); }
+.confirm-desc { margin: 0 0 12px; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+.confirm-detail { margin: 0 0 16px; padding: 10px 12px; background: var(--bg-2); border-radius: 6px; font-size: 0.75rem; color: var(--text); font-family: var(--font-mono); line-height: 1.6; }
+.confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
 

@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
 import PnLChart from '../charts/PnLChart'
-import { fmtNum, fmtSigned, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, fmtDelta, useDecimals } from '../lib/format'
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
 const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6']
@@ -85,6 +85,7 @@ export default function PnLZone() {
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000 })
   const [hovered, setHovered] = useState(false)
+  const [rangeDays, setRangeDays] = useState<number | undefined>(30)
 
   const exchangeMode = String((status as any)?.exchange_mode || 'demo')
 
@@ -161,18 +162,18 @@ export default function PnLZone() {
         <div className="pnl-tiles">
           <MetricTile
             label="Today PnL"
-            value={todayNum == null ? 'not available' : fmtSigned(todayNum)}
+            value={todayNum == null ? 'not available' : fmtDelta(todayNum)}
             tone={toneOf(todayNum)}
-            context={todayNum == null ? 'no data' : dayPct != null ? `${fmtSigned(dayPct)}% of managed` : undefined}
+            context={todayNum == null ? 'no data' : dayPct != null ? `${fmtDelta(dayPct)}% of managed` : undefined}
           />
           <MetricTile
             label="Unrealized"
-            value={fmtSigned(unrealNum)}
+            value={fmtDelta(unrealNum)}
             tone={toneOf(unrealNum)}
           />
           <MetricTile
             label="Realized"
-            value={fmtSigned(realNum)}
+            value={fmtDelta(realNum)}
             tone={toneOf(realNum)}
             context="all-time"
           />
@@ -188,8 +189,21 @@ export default function PnLZone() {
 
       {/* Equity curve */}
       <div className="card pnl-curve">
-        <h3 className="mb-2">Equity Curve</h3>
-        <PnLChart />
+        <div className="pnl-curve-header">
+          <h3>Equity Curve</h3>
+          <div className="time-range-selector">
+            {([{ label: '7D', days: 7 }, { label: '30D', days: 30 }, { label: '90D', days: 90 }, { label: 'All', days: undefined }] as const).map(opt => (
+              <button
+                key={opt.label}
+                className={`time-range-btn${rangeDays === opt.days ? ' active' : ''}`}
+                onClick={() => setRangeDays(opt.days)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <PnLChart days={rangeDays} />
       </div>
     </div>
   )

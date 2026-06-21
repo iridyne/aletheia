@@ -6,7 +6,7 @@ import Sparkline from '../components/Sparkline'
 import MacroBar from '../components/MacroBar'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
-import { fmtNum, fmtSigned, fmtTimestamp, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, fmtDelta, fmtTimestamp, useDecimals } from '../lib/format'
 
 const FALLBACK_SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
 const TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
@@ -59,7 +59,7 @@ function WatchlistGrid({
               <div className="charts-card-change">
                 {change != null && (
                   <span className={`mono ${change > 0 ? 'pnl-positive' : change < 0 ? 'pnl-negative' : 'text-muted'}`}>
-                    {fmtSigned(change)}%
+                    {fmtDelta(change)}%
                   </span>
                 )}
                 {snap?.volume_24h != null && (

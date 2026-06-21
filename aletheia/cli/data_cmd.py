@@ -1,6 +1,7 @@
 """CLI: aletheia data — historical OHLCV management."""
 
 import asyncio
+from typing import Optional
 
 import typer
 
@@ -29,6 +30,42 @@ def download(
     if result.error:
         typer.echo(f"\nCompleted with error: {result.error}")
     typer.echo(f"\nDone: {result.bars_fetched} bars [{result.oldest_ts} → {result.newest_ts}]")
+
+
+@data_app.command("backfill")
+def backfill(
+    months: int = typer.Option(1, help="Months of history to backfill"),
+    symbols: Optional[str] = typer.Option(None, help="Comma-separated symbols (default: all active members)"),
+    timeframes: str = typer.Option("1h,4h", help="Comma-separated timeframes"),
+):
+    """Batch-backfill OHLCV history for all active universe members."""
+    from aletheia.data.history_downloader import download_symbol_history
+    from aletheia.storage.repositories import get_active_universe_members
+
+    if symbols:
+        sym_list = [s.strip() for s in symbols.split(",")]
+    else:
+        members = get_active_universe_members()
+        sym_list = [m["symbol"] for m in members if m.get("symbol")]
+
+    if not sym_list:
+        typer.echo("No symbols to backfill (empty universe).")
+        raise typer.Exit(1)
+
+    tf_list = [t.strip() for t in timeframes.split(",")]
+    typer.echo(f"Backfilling {len(sym_list)} symbols × {len(tf_list)} timeframes ({months}mo)...")
+
+    total_bars = 0
+    for sym in sym_list:
+        for tf in tf_list:
+            result = asyncio.run(download_symbol_history(sym, tf, months=months))
+            total_bars += result.bars_fetched
+            status = f"  {sym}/{tf}: +{result.bars_fetched} bars"
+            if result.error:
+                status += f" (error: {result.error})"
+            typer.echo(status)
+
+    typer.echo(f"\nTotal: +{total_bars} bars")
 
 
 @data_app.command("coverage")
