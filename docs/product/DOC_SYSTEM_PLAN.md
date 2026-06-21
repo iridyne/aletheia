@@ -107,6 +107,9 @@ implementation_guide 44KB)。真问题是:
   implementation_guide 标注 v1。
 - **批次 4 — L2/L3 收口**:
   plans/ 归档 2 份;把 plans 里的契约内容上浮;建 design/README 索引串起金字塔。
+  > ✅ 完成。归档 NAUTILUS/data_layer_backlog 到 plans/archived/;建 design/README.md 作金字塔导航中枢。
+  > **决定(克制)**:plans 里未实现功能的契约**不预先上浮**为 L2——否则制造一堆"未实现"金标准、
+  > 违反"代码为底"。新功能契约等实现时再上浮;现有部分实现的已在 README 标"🟡 契约(部分实现)"。
 - **批次 5 — 一致性核对**:
   抽样核对 L2 契约 vs 代码,偏差落 issues/。
 
