@@ -1127,3 +1127,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-21 11:21 UTC] ⚠️ **§23 storm 持续** — features=40/h (20min桶=0为storm gap). Opportunities=8735 (+4/10min). Knowledge=1509. §17 timed_out=266. Stale=301(+3). **§23 storm**: 11:09→11:11→11:14→11:17→11:19 UTC 5批次 (PID 25856/33372/20428/14364/4320/5480), 每批间隔~2-3min, storm尚未结束. features 11:19 自愈信号. §22/§23 根因未修. 87h+ 连续运行.
 
 [2026-06-21 12:08 UTC] ✓ **§23 自愈, 稳定39min** — features=40/h (§22持续; 60min桶=0为11:09-11:28 storm gap). Opportunities=8762 (+27). Knowledge=1535 (+26, 知识活跃). §17 timed_out=266. Stale=301. §23 storm完整历程: 11:09→11:11→11:14→11:17→11:19→11:21→11:24→11:26→11:28 UTC 9批次 约19min, 末次11:28, 现自愈39min. §22/§23 根因未修. 88h+ 连续运行.
+
+[2026-06-21 12:21 UTC] ⚠️ **§23 再发(单次)** — features=40/h (§22持续; 40min桶=0为12:10发作gap). Opportunities=8769 (+7). Knowledge=1546 (+11). §17 timed_out=266. Stale=301. §23: 12:10 UTC 单次 (PID 32884), 间隔11:28→12:10=42min, 单次后即自愈. 无storm. §22/§23 根因未修. 88h+ 连续运行.

@@ -25,6 +25,7 @@ def record_decision(decision_result: dict) -> None:
     """Record the PI agent's latest decision for next-cycle reflection.
 
     Called after evaluate_trading_opportunity() returns.
+    Persists to both JSON (reflection) and DB (pi_decisions for audit trail).
     """
     record = {
         "action": decision_result.get("action"),
@@ -36,11 +37,29 @@ def record_decision(decision_result: dict) -> None:
         "decided_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    # JSON file for reflection loop
     try:
         _REFLECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
         _REFLECTION_FILE.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
         logger.debug("reflection record failed: %s", e)
+
+    # DB persistence for audit trail + downstream consumers (Phase 2 of PI sole decision maker)
+    try:
+        from aletheia.storage.models import PiDecision
+        from aletheia.storage.repositories import insert_pi_decision
+        pi_dec = PiDecision(
+            symbol=record["symbol"],
+            direction=record["direction"],
+            action=record["action"] or "skip",
+            conviction=record.get("conviction") or 0,
+            reasoning=record.get("reasoning") or "",
+            proposal_id=record.get("proposal_id"),
+            debate_ran=decision_result.get("debate_ran", False),
+        )
+        insert_pi_decision(pi_dec)
+    except Exception as e:
+        logger.debug("pi_decision db persist failed: %s", e)
 
 
 def get_last_reflection() -> str | None:

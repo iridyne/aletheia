@@ -110,14 +110,25 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         raise ValueError(f"position not found: {position_id}")
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
-    # Deduct estimated round-trip fees (entry + exit) based on execution mode rate
+    # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation
     fee_rate = 0.001 if row.get("execution_mode", "").startswith("paper") else 0.0006
-    entry_fee = row["entry_price"] * row["quantity"] * fee_rate
+    entry_fee = row.get("entry_fee") or (row["entry_price"] * row["quantity"] * fee_rate)
     exit_fee = exit_price * row["quantity"] * fee_rate
     realized = gross_pnl - entry_fee - exit_fee
 
     # BTC benchmark at exit for alpha/beta separation
     btc_exit = _btc_price_at_close()
+
+    # Estimate round-trip slippage for cost visibility
+    try:
+        from aletheia.config.loader import load_config as _lc
+        _cfg = _lc()
+        _sbps = _cfg.trading.slippage_bps
+        _entry_slip = row["entry_price"] * row["quantity"] * (_sbps / 10_000.0)
+        _exit_slip = exit_price * row["quantity"] * (_sbps / 10_000.0)
+        slippage_cost = round(_entry_slip + _exit_slip, 8)
+    except Exception:
+        slippage_cost = None
 
     update_position(
         position_id,
@@ -128,6 +139,9 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         close_reason=reason,
         closed_at=datetime.now(timezone.utc).isoformat(),
         btc_exit_price=btc_exit,
+        entry_fee=round(entry_fee, 8),
+        exit_fee=round(exit_fee, 8),
+        slippage_cost=slippage_cost,
     )
     write_audit({
         "actor": "system",
@@ -302,7 +316,7 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     Called from the scheduler thread — uses persist=True to also write
     mark-to-market prices back to the positions table.
     """
-    summary = compute_portfolio(persist_marks=True)
+    summary = compute_portfolio(execution_mode=execution_mode, persist_marks=True)
 
     # Row 1: paper-local (pure mark-to-market, ignoring exchange equity override)
     local_positions = [p for p in summary.get("positions", [])

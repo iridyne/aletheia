@@ -99,6 +99,18 @@ def execute_paper_order(
             }, default=str)[:2000]
         except Exception:
             pass
+        # Decision explainability: pull reasoning from the originating proposal
+        decision_reasoning = None
+        try:
+            from aletheia.storage.repositories import _select_one
+            proposal = _select_one("trade_proposals", proposal_id)
+            if proposal:
+                decision_reasoning = proposal.get("agent_rationale")
+        except Exception:
+            pass
+        # Cost visibility: record entry-leg fee and slippage at open time
+        entry_fee_val = round(fill_price * quantity * fee_rate, 8)
+        slippage_cost_val = round(abs(fill_price - price) * quantity, 8)
         position = Position(
             symbol=symbol,
             market_type=market_type,
@@ -115,6 +127,9 @@ def execute_paper_order(
             btc_entry_price=btc_entry_price,
             regime_tag=regime_tag,
             entry_market_summary=entry_market_summary,
+            decision_reasoning=decision_reasoning,
+            entry_fee=entry_fee_val,
+            slippage_cost=slippage_cost_val,
         )
         insert_position(position)
         position_id = position.id
