@@ -1091,3 +1091,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-21 02:58 UTC] ⚠️ **§22 持续** — features=50/h (第 10 轮低吞吐). Opportunities=8412 (+18/h). Knowledge=1320 (+7/h). §17 timed_out=266 (+0). Stale=289. price_fallback 警告仅 §18 已知(兜底正常). **§22 `registry.py:52` 待修复. 78h+ 连续运行.**
 
 [2026-06-21 03:21 UTC] ⚠️ **§22 持续 + §23 新观察: frontdoor 短暂重启** — features=60/h (第 11 轮低吞吐). Opportunities=8430 (+18/h). Knowledge=1327 (+7/h). §17 timed_out=266 (+0). Stale=289. **新**: `gateway_supervisor` 03:07/03:08 UTC 连续两次重启 frontdoor (PID 7000 未响应 :8787); 03:10 后已自愈 (features 恢复正常). 影响范围: 约 2min Web UI 不可用, pipeline 后端不受影响. **§22 `registry.py:52` 待修复. 78h+ 连续运行.**
+
+[2026-06-21 04:08 UTC] ⚠️ **§22 持续 + §23 重复: frontdoor 第2次重启** — features=68/h (轻微回升). Opportunities=8464 (+34/h). Knowledge=1338 (+11/h). §17 timed_out=266 (+0). Stale=291 (+2: market_observer+1, post_trade_reviewer+1). **§23**: 04:07:49/04:07:50 UTC frontdoor (PID 11784) 再次被 supervisor 重启, 上次 03:07, **间隔约 1h, 疑似周期性 OOM 或内存泄漏**. 建议检查 frontdoor 内存占用和重启根因. **§22 `registry.py:52` 待修复. 79h+ 连续运行.**
