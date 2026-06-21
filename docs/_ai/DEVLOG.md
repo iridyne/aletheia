@@ -1,5 +1,32 @@
 # Development Log
 
+## 2026-06-21 — 数据质量自检 + PI Agent 自愈闭环 (5e5f4fe)
+
+### 背景
+Universe signal 24h win_rate 只有 36.7%（低于40%阈值），但系统对此无感知。
+Doctor 只检查进程/网络/配置，不检查数据积累和信号有效性。PI Agent 不了解自身数据环境。
+
+### Phase A — Doctor OHLCV/Signal probes
+- `_probe_ohlcv_coverage`: 检查所有 active members 是否满足 min_bars_for_backtest(200)；不足 → warn + hint backfill
+- `_probe_signal_effectiveness`: 过去7天 24h horizon forward outcomes win_rate；<40% → warn signal degraded
+- `aletheia audit data [--json]`: per-symbol×timeframe bar count 矩阵 + signal effectiveness
+- `aletheia data backfill`: 批量下载所有 active members OHLCV
+
+### Phase B — PI Agent 自检+自愈
+- `trading_context._get_data_health_summary()`: 新函数，返回 {ohlcv_ready, signal_status, win_rate, coverage}
+- Layer 1 自动注入 `data_health` 字段；PI Agent 每轮决策都感知数据环境
+- `_build_assessment_prompt()`: signal_status=degraded → 注入 ⚠ SIGNAL DEGRADATION 警告；ohlcv not ready → 保守提示
+- `commands.evaluate_trading_opportunity()`: 决策后触发自愈 — degraded → pause_low_conviction；缺数据 → request_backfill（写 system_action knowledge item）
+
+### Phase C（上轮完成）
+8 个 OKX active members 全部 ≥200 1h bars；backfill 直接绕过 incremental logic 完成
+
+### 验证
+- `aletheia doctor`: `data.ohlcv: ok`, `data.signal: warn(36.7%)`
+- `aletheia audit data --json`: 结构化覆盖率 ✓
+- `layer1["data_health"]`: `signal_status=degraded` 正确触发
+
+
 ## 2026-06-17 — Self-Evolution Tier 1 实施(worktree-self-evolution-tier1)
 
 > 研究 → 三层设计 → Tier 1 全量实现 + 文档整理，一次会话完成。

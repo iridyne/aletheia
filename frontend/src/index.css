@@ -594,6 +594,11 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .settings-save-msg { font-size: 0.78rem; display: block; padding: 0.28rem 0.55rem; border-radius: var(--r-sm); margin-top: var(--space-2); border: 1px solid transparent; }
 .settings-save-msg.ok { color: var(--green); background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.22); }
 .settings-save-msg.err { color: var(--red); background: rgba(255,93,108,0.08); border-color: rgba(255,93,108,0.25); }
+.settings-collapsible { border: 1px solid var(--border); border-radius: var(--r); margin-top: var(--space-3); overflow: hidden; }
+.settings-collapsible-toggle { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2) var(--space-3); background: var(--surface); border: none; color: var(--text); font-size: 0.82rem; font-weight: 500; cursor: pointer; text-align: left; transition: background 0.12s; }
+.settings-collapsible-toggle:hover { background: var(--surface-2); }
+.settings-collapsible-chevron { font-size: 0.9rem; color: var(--muted); width: 1rem; text-align: center; }
+.settings-collapsible-body { padding: var(--space-3); border-top: 1px solid var(--border); }
 /* Symbol whitelist/blacklist chips — color follows mode via a modifier, no inline rgba. */
 .symbol-chip { display: inline-flex; align-items: center; gap: var(--space-1); padding: 0.18rem 0.5rem; border-radius: var(--r-sm); font-size: 0.79rem; font-family: var(--mono); border: 1px solid transparent; }
 .symbol-chip.allow { background: rgba(34,211,238,0.10); border-color: rgba(34,211,238,0.25); }

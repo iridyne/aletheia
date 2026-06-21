@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useState } from 'react'
 import { Switch } from './Switch'
 
 export interface NumField {
@@ -59,6 +59,27 @@ export function SettingsRow({
       <div className="settings-row-control">
         {children}
       </div>
+    </div>
+  )
+}
+
+export function CollapsibleSection({
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  title: string
+  defaultOpen?: boolean
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className={`settings-collapsible${open ? ' open' : ''}`}>
+      <button className="settings-collapsible-toggle" onClick={() => setOpen(!open)}>
+        <span className="settings-collapsible-chevron">{open ? '▾' : '▸'}</span>
+        <span>{title}</span>
+      </button>
+      {open && <div className="settings-collapsible-body">{children}</div>}
     </div>
   )
 }

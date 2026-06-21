@@ -103,7 +103,7 @@ function ChartTab({
   )
 
   const bitgetSymbol = symbol.replace('/', '')
-  const markers = (trades as any[])
+  const tradeMarkers = (trades as any[])
     .filter(o => (o.symbol === symbol || o.symbol === bitgetSymbol) && o.filled_at)
     .map(o => ({
       time: Math.floor(new Date(
@@ -114,6 +114,21 @@ function ChartTab({
       id: o.id,
     }))
     .filter(m => !Number.isNaN(m.time))
+
+  const signalMarkers = symbolOpportunities
+    .filter((o: any) => o.created_at)
+    .map((o: any) => {
+      const ts = o.created_at.endsWith('Z') || o.created_at.includes('+') ? o.created_at : o.created_at + 'Z'
+      return {
+        time: Math.floor(new Date(ts).getTime() / 1000),
+        side: (o.direction_bias === 'long' || o.direction_bias === 'bullish' ? 'buy' : 'sell') as 'buy' | 'sell',
+        price: 0,
+        id: `signal-${o.id}`,
+      }
+    })
+    .filter((m: any) => !Number.isNaN(m.time))
+
+  const markers = [...tradeMarkers, ...signalMarkers]
 
   const selectedTrade = selectedOrder ? (trades as any[]).find(t => t.id === selectedOrder) : null
 

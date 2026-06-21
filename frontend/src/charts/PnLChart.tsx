@@ -43,11 +43,22 @@ export default function PnLChart({ days }: Props) {
       timeScale: { timeVisible: true },
     })
     chartRef.current = chart
-    const series = chart.addLineSeries({ color: chartTheme.lineColor, lineWidth: 2 })
 
     if (rows.length) {
       const seen = new Set<number>()
       const unique = rows.filter(r => { const k = r.time as number; if (seen.has(k)) return false; seen.add(k); return true })
+
+      const baseValue = unique[0]?.value ?? 0
+      const series = chart.addBaselineSeries({
+        baseValue: { type: 'price', price: baseValue },
+        topLineColor: '#2ee6a8',
+        topFillColor1: 'rgba(46, 230, 168, 0.18)',
+        topFillColor2: 'rgba(46, 230, 168, 0.02)',
+        bottomLineColor: '#ff5d6c',
+        bottomFillColor1: 'rgba(255, 93, 108, 0.02)',
+        bottomFillColor2: 'rgba(255, 93, 108, 0.18)',
+        lineWidth: 2,
+      })
       series.setData(unique)
       chart.timeScale().fitContent()
     }

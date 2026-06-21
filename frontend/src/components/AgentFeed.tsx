@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useReducer } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -95,6 +95,10 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
     setMode(m)
     try { localStorage.setItem(MODE_KEY, m) } catch { /* ignore */ }
   }
+
+  // Re-render every 30s to update relative timestamps
+  const [, forceUpdate] = useReducer(x => x + 1, 0)
+  useEffect(() => { const t = setInterval(forceUpdate, 30000); return () => clearInterval(t) }, [])
 
   const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000 })
   const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })

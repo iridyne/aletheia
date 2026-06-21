@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import ConnectionStatus, { ConnState } from '../components/ConnectionStatus'
 import PageHeader from '../components/PageHeader'
 import {
+  CollapsibleSection as Collapsible,
   NumberFieldGrid as NumGrid,
   SaveMessage as SaveMsg,
   SettingsRow as Row,
@@ -629,10 +630,12 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
       </Section>
 
       <Section
-        title="Market Data Sources"
-        description="Primary and fallback exchanges for OHLCV, orderbook, and ticker data. Agents use CCXT for all market queries."
+        title="Market Data Sources (Advanced)"
+        description="Override primary exchange data routing. Normally managed by the Primary Exchange selector above."
       >
-        <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
+        <Collapsible title="Data Source Overrides">
+          <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
+        </Collapsible>
       </Section>
     </div>
   )
@@ -1339,14 +1342,18 @@ function RiskTab({ settings, qc, onDirty }: any) {
         title="Strategy Factory"
         description="Controls how fast the system generates, validates, and eliminates trading strategies. Higher velocity = faster edge discovery."
       >
-        <StrategyFactoryCard settings={settings} qc={qc} />
+        <Collapsible title="Strategy Factory Parameters">
+          <StrategyFactoryCard settings={settings} qc={qc} />
+        </Collapsible>
       </Section>
 
       <Section
         title="Event Triggers"
         description="Real-time price/volume breakout detection. Fires notifications and optionally triggers strategy design when thresholds are breached."
       >
-        <EventTriggerCard settings={settings} qc={qc} />
+        <Collapsible title="Trigger Thresholds">
+          <EventTriggerCard settings={settings} qc={qc} />
+        </Collapsible>
       </Section>
 
       <Section
@@ -1731,7 +1738,9 @@ function RuntimeSystemTab({ settings, qc, onDirty }: any) {
       </Section>
 
       <Section title="Historical Data" description="Controls local OHLCV bulk storage for backtesting. Nightly backfill downloads missing candles so backtests run entirely offline.">
-        <HistoricalDataCard settings={settings} qc={qc} />
+        <Collapsible title="Backfill & Storage Parameters">
+          <HistoricalDataCard settings={settings} qc={qc} />
+        </Collapsible>
       </Section>
 
       <Section title="Data Retention" description="How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.">

@@ -114,6 +114,16 @@ Microstructure/Derivatives/Macro 三表段，平均每个 symbol 多 ~200 token 
 
 ---
 
+## 数据质量自检 + PI Agent 自愈 — 完成 (5e5f4fe, 2026-06-21)
+
+- `aletheia doctor`: 新增 `data.ohlcv` + `data.signal` probe
+- `aletheia audit data [--json]`: per-symbol bar count + signal win_rate
+- `aletheia data backfill`: 批量 OHLCV 回灌
+- PI Agent Layer 1 注入 `data_health`; signal_status=degraded 触发自愈 action
+- 当前状态: data.ohlcv: ok (8/8 ≥200), data.signal: warn (win_rate 36.7%)
+
+---
+
 ## 待办(下一步可做的事 — 不含"现在状态如何")
 
 0. **Self-Evolution Tier 2（计划 2026-07-01）**：
