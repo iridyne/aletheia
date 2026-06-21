@@ -1083,3 +1083,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-21 00:21 UTC] ⚠️ **§22 持续** — features=60/h (第 6 轮固定低吞吐). Opportunities=8322 (+36/h). Knowledge=1298 (+7/h). §17 timed_out=266 (+0). Stale=289. paper_trader 69 completed (2h). **§22 `registry.py:52` 待修复. 75h+ 连续运行, 其他管道稳定.**
 
 [2026-06-21 01:21 UTC] ⚠️ **§22 持续** — features=60/h (第 7 轮固定低吞吐). Opportunities=8358 (+36/h net); opp_last_1h=45/knowledge_last_1h=8 为 UTC 午夜换日窗口效应, 非真实下降. §17 timed_out=266 (+0). Stale=289. paper_trader 73 completed (2h). **§22 `registry.py:52` 待修复. 76h+ 连续运行.**
+
+[2026-06-21 02:21 UTC] ⚠️ **§22 持续** — features=60/h (第 8 轮固定低吞吐). Opportunities=8394 (+36/h). Knowledge=1313 (+7/h). §17 timed_out=266 (+0). Stale=289. 亚盘深夜低频 (dreaming_agent/equity_observer 静默, 正常). **§22 `registry.py:52` 待修复. 77h+ 连续运行.**
