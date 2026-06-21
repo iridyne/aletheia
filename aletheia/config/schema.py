@@ -443,9 +443,9 @@ class NetworkConfig(BaseModel):
 
 class PiDaemonConfig(BaseModel):
     enabled: bool = True
-    debounce_sec: float = 8.0      # collect burst signals before evaluating
-    cooldown_sec: float = 60.0     # minimum gap between evaluation cycles
-    heartbeat_sec: float = 300.0   # fallback polling interval (5 min)
+    debounce_sec: float = 2.0      # collect burst signals before evaluating
+    cooldown_sec: float = 45.0     # minimum gap between evaluation cycles
+    heartbeat_sec: float = 60.0    # fallback polling interval (safety net)
 
 
 class AletheiaConfig(BaseModel):

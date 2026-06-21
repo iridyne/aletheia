@@ -49,6 +49,16 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
         _write_watchdog_tick("already_running")
         raise typer.Exit(0)
 
+    # Detect abnormal termination: pid file exists (was running) but process is dead.
+    # Normal first-start or clean stop leaves no pid file.
+    _stale_pid = read_pid()
+    if _stale_pid is not None:
+        _notify_gateway_problem(
+            "Gateway abnormal termination detected",
+            f"Previous process (PID {_stale_pid}) died unexpectedly. Watchdog restarting.",
+            source="watchdog",
+        )
+
     # Port guard: if the port stays held throughout a short grace window with no
     # tracked gateway, attempt to auto-clean our own orphans before giving up.
     # This self-heals the common case where the supervisor died but the inner

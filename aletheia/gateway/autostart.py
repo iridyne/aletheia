@@ -38,7 +38,7 @@ from aletheia.gateway.pidfile import _no_window_kwargs
 TASK_NAME = "Aletheia Trading OS Gateway"
 
 # How often the task re-checks the gateway (and resurrects a dead supervisor).
-WATCHDOG_INTERVAL = "PT2M"
+WATCHDOG_INTERVAL = "PT30S"
 
 _XML_NS = "http://schemas.microsoft.com/windows/2004/02/mit/task"
 
@@ -152,7 +152,7 @@ def _build_task_xml() -> str:
         "  <RegistrationInfo>\n"
         f"    <Author>{user}</Author>\n"
         "    <Description>Aletheia Trading OS gateway autostart (on logon) plus a "
-        "2-minute watchdog that restarts the supervisor if it dies.</Description>\n"
+        "30-second watchdog that restarts the supervisor if it dies.</Description>\n"
         "  </RegistrationInfo>\n"
         "  <Triggers>\n"
         "    <LogonTrigger>\n"
