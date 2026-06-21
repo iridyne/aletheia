@@ -342,7 +342,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             universe_snapshot_id = universe_members[0]["snapshot_id"]
 
     if universe_members and universe_snapshot_id:
-        from aletheia.data.symbols import InstrumentId, MARKET_SPOT
+        from aletheia.data.symbols import InstrumentId, MARKET_SPOT, to_canonical
         instruments = []
         for m in universe_members:
             sym = m.get("symbol", "")
@@ -353,17 +353,27 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 cfg.market_data.ccxt_exchange, sym, mt
             ))
     else:
+        from aletheia.data.symbols import to_canonical
         instruments = observed_instruments_from_config(cfg)
         universe_members = []
 
     symbols = [i.symbol for i in instruments]  # canonical list for memory query
 
-    # Find an active strategy to link all opportunities from this run.
-    linked_strategy_id = None
+    # Build symbol→strategy map so each opportunity links to a matching strategy.
+    _strategy_by_symbol: dict[str, str] = {}
     for s in list_strategies(limit=50):
         if is_active_paper_strategy(s):
-            linked_strategy_id = s["id"]
-            break
+            params_raw = s.get("parameters") or "{}"
+            try:
+                import json as _json_mod
+                params = _json_mod.loads(params_raw) if isinstance(params_raw, str) else params_raw
+            except (ValueError, TypeError):
+                params = {}
+            strat_sym = params.get("symbol")
+            if strat_sym:
+                _strategy_by_symbol[to_canonical(strat_sym)] = s["id"]
+            else:
+                _strategy_by_symbol.setdefault("__generic__", s["id"])
 
     # Experience-loop advisory context (lessons + case studies + guard advisories)
     memory_block = ""
@@ -402,12 +412,14 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     for instrument in instruments:
         try:
             u_member = _universe_lookup.get(instrument.symbol)
+            _sym_canonical = to_canonical(instrument.symbol)
+            _linked_sid = _strategy_by_symbol.get(_sym_canonical) or _strategy_by_symbol.get("__generic__")
             opp_id, err = await _analyze_symbol(
                 symbol=instrument.symbol,
                 market_type=instrument.market_type,
                 permission_mode=permission_mode,
                 run_id=run_id,
-                linked_strategy_id=linked_strategy_id,
+                linked_strategy_id=_linked_sid,
                 memory_block=memory_block,
                 asset_class="crypto",
                 universe_snapshot_id=universe_snapshot_id,

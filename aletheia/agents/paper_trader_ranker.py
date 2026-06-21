@@ -158,16 +158,35 @@ def _evaluate_candidate(
             if universe_member.get("expires_at") and universe_member["expires_at"] < now_iso:
                 return _make_candidate(opp, skip_reason="ttl_expired")
 
-    # Strategy resolution
+    # Strategy resolution — must match opportunity symbol or be generic (no symbol field)
     strategy_id = opp.get("linked_strategy_id")
     strategy = None
     if strategy_id:
         strategy = _safe_get(get_strategy, strategy_id)
-        if strategy and is_paper_trading_paused(strategy):
-            return _make_candidate(opp, skip_reason=f"paused_strategy:{strategy_id}")
+        if strategy:
+            if is_paper_trading_paused(strategy):
+                return _make_candidate(opp, skip_reason=f"paused_strategy:{strategy_id}")
+            # Verify linked strategy actually targets this symbol (or is generic)
+            params_raw = strategy.get("parameters") or "{}"
+            try:
+                _p = _json.loads(params_raw) if isinstance(params_raw, str) else params_raw
+            except (ValueError, TypeError):
+                _p = {}
+            _strat_sym = _p.get("symbol")
+            if _strat_sym and to_canonical(_strat_sym) != to_canonical(symbol):
+                strategy_id = None
+                strategy = None
     if not strategy_id:
         for s in list_strategies(limit=50):
-            if is_active_paper_strategy(s):
+            if not is_active_paper_strategy(s):
+                continue
+            s_params_raw = s.get("parameters") or "{}"
+            try:
+                s_params = _json.loads(s_params_raw) if isinstance(s_params_raw, str) else s_params_raw
+            except (ValueError, TypeError):
+                s_params = {}
+            s_sym = s_params.get("symbol")
+            if not s_sym or to_canonical(s_sym) == to_canonical(symbol):
                 strategy_id = s["id"]
                 strategy = s
                 break
