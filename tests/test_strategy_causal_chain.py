@@ -107,6 +107,7 @@ def test_create_strategy_parameters_default_empty(tmp_path, monkeypatch):
 # --- designer auto-advances a strategy to paper_running ---
 
 async def test_designer_creates_tradable_strategy(tmp_path, monkeypatch):
+    """Phase 4e: Strategy auto-advances to paper_candidate; PI Agent decides paper_running."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
     _patch_llm_structured(monkeypatch)
@@ -117,64 +118,67 @@ async def test_designer_creates_tradable_strategy(tmp_path, monkeypatch):
     strategies = repo.list_strategies(limit=10)
     assert len(strategies) == 1
     s = strategies[0]
-    # Auto-advanced through the ungated path to paper_running (tradable), no further.
-    assert s["state"] == "paper_running"
+    # Phase 4e: stops at paper_candidate (PI Agent must confirm promotion to paper_running)
+    assert s["state"] == "paper_candidate"
     # Parameters snapshot persisted (not the empty default).
     assert json.loads(s["parameters"]) != {}
+
+    # A recommend_promote entry should exist in pi_decisions
+    from aletheia.storage.repositories import list_pi_decisions
+    decisions = list_pi_decisions(limit=5)
+    promote_recs = [d for d in decisions if d.get("action") == "recommend_promote"]
+    assert len(promote_recs) >= 1
     reset_db()
 
 
 # --- full causal chain: strategy_id survives end to end ---
 
 async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
+    """Phase 4a/4e: Strategy stops at paper_candidate. After PI Agent promotes it,
+    paper_trader writes signal_pending entries for PI Agent to execute."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
     _patch_llm_structured(monkeypatch)
 
-    # Producer: a tradable strategy exists.
+    # Producer: strategy is created (stops at paper_candidate per Phase 4e).
     await run_agent("strategy_designer", trigger_type="manual")
     strat = repo.list_strategies(limit=10)[0]
+    assert strat["state"] == "paper_candidate"
+
+    # Simulate PI Agent approving promotion to paper_running
+    from aletheia.trading.strategy_lifecycle import promote_strategy
+    promote_strategy(strat["id"], "paper_running")
+    strat = repo.get_strategy(strat["id"])
     assert strat["state"] == "paper_running"
 
-    # Strip RuleSet from parameters so opportunity-path B doesn't hit the entry-
-    # condition evaluator (no OHLCV bars in test DB). This test validates the
-    # strategy_id causal chain, not the RuleSet signal engine.
+    # Strip RuleSet so opportunity-path B doesn't require OHLCV bars.
     params = json.loads(strat["parameters"])
     params.pop("ruleset", None)
     repo.update_strategy(strat["id"], parameters=json.dumps(params))
 
-    # A market snapshot so the trader can price the order.
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000.0))
 
-    # Seed a directional opportunity bound to the strategy.
-    # (In production the observer creates this; in tests LLM is unavailable so we
-    # seed directly to test the strategy_id causal chain without network dependency.)
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
                       thesis="causal chain test", confidence="medium",
                       source_agent="market_observer",
                       linked_strategy_id=strat["id"])
     repo.insert_opportunity(opp)
-    opp_id = opp.id
 
     await run_agent("paper_trader", trigger_type="manual")
 
-    # The proposal that consumed our opportunity must carry the strategy_id.
-    proposals = [p for p in repo.list_trade_proposals() if p.get("opportunity_id") == opp_id]
-    assert len(proposals) == 1
-    p = proposals[0]
-    assert p["strategy_id"] == strat["id"]
-    assert p["status"] == "executed"
-
-    # And it must survive into the position row.
-    positions = repo.list_positions(status="open")
-    assert positions
-    assert any(pos["strategy_id"] == strat["id"] for pos in positions)
+    # Phase 4a: Paper trader writes signal_pending for PI Agent
+    from aletheia.storage.repositories import list_pi_decisions
+    decisions = list_pi_decisions(limit=10)
+    pending = [d for d in decisions if d.get("action") == "signal_pending" and d.get("symbol") == "BTC/USDT"]
+    assert len(pending) >= 1
     reset_db()
 
 
 # --- promotion gate actually counts paper trades now (was always 0) ---
 
 async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
+    """Phase 4a/4e: Paper trader now writes signals. To test promotion gates,
+    we simulate PI Agent creating a position for the strategy."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
     _patch_llm_structured(monkeypatch)
@@ -182,21 +186,20 @@ async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
     await run_agent("strategy_designer", trigger_type="manual")
     strat = repo.list_strategies(limit=10)[0]
 
-    # Strip RuleSet so opportunity path B doesn't require OHLCV bars for entry eval.
-    params = json.loads(strat["parameters"])
-    params.pop("ruleset", None)
-    repo.update_strategy(strat["id"], parameters=json.dumps(params))
+    # Simulate PI Agent promoting and then creating a trade for this strategy
+    from aletheia.trading.strategy_lifecycle import promote_strategy
+    promote_strategy(strat["id"], "paper_running")
 
+    # Simulate a completed paper trade (as PI Agent would create via submit_decision_as_proposal)
+    from aletheia.execution.paper_tools import create_paper_proposal
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000.0))
-
-    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
-                      thesis="bound", confidence="medium", source_agent="market_observer",
-                      linked_strategy_id=strat["id"])
-    repo.insert_opportunity(opp)
-    await run_agent("paper_trader", trigger_type="manual")
+    create_paper_proposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=0.001, price=60000.0, stop_price=58800.0,
+        execution_mode="paper_internal", strategy_id=strat["id"],
+    )
 
     gates = check_promotion_gates(strat["id"])
-    # The headline regression: paper_trades is no longer structurally stuck at 0.
     assert gates["metrics"]["paper_trades"] >= 1
     reset_db()
 

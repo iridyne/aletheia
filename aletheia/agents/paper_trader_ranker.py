@@ -263,15 +263,6 @@ def _evaluate_candidate(
     }
     factor_signal = lookup_factor_signal(candidate_for_factor)
 
-    if factor_signal["status"] == "blocked_candidate":
-        return _make_candidate(
-            opp, skip_reason=f"blocked_factor:{factor_signal['reason']}",
-            direction=direction, strategy_id=strategy_id,
-            strategy_has_ruleset=strategy_has_ruleset,
-            universe_member=universe_member, factor_signal=factor_signal,
-            strategy_evidence=strategy_evidence,
-        )
-
     # Guard evaluation (deterministic, no LLM)
     guard_eval = _evaluate_guards_safe(
         opp, universe_member, factor_signal, direction, confidence,
@@ -342,6 +333,8 @@ def _compute_trade_score(
     factor_status = factor_signal.get("status", "watch")
     if factor_status == "preferred":
         score += 20
+    elif factor_status == "blocked_candidate":
+        score -= 50
     elif factor_status == "active":
         score += 5
     elif factor_status == "watch":
@@ -398,6 +391,9 @@ def _compute_trade_score(
         else:
             score -= 5
 
+    # Trading Memo scoring — historical performance insights as soft preference
+    score += _memo_scoring(opp.get("symbol"), direction, regime)
+
     return round(score, 2)
 
 
@@ -422,6 +418,50 @@ def _lesson_penalty(symbol: str | None, direction: str | None, scanner_family: s
             if any(neg in snippet_lower for neg in ("loss", "失败", "failed", "stopped", "drawdown")):
                 penalty -= 8.0 * lesson.score
         return max(-25.0, penalty)
+    except Exception:
+        return 0.0
+
+
+def _memo_scoring(symbol: str | None, direction: str | None, regime: MarketRegime) -> float:
+    """Apply TradingMemo insights as soft scoring adjustments (±45 max)."""
+    try:
+        from aletheia.analytics.insight_synthesizer import get_latest_memo
+        memo = get_latest_memo()
+        if not memo:
+            return 0.0
+
+        adj = 0.0
+
+        # Regime × direction alignment (±12)
+        for rule in memo.get("regime_playbook", []):
+            if rule["regime"] == regime.state and rule["direction"] == direction:
+                if rule["edge"] == "strong":
+                    adj += 12
+                elif rule["edge"] == "weak":
+                    adj -= 12
+                elif rule["edge"] == "contra":
+                    adj -= 20
+                break
+
+        # Symbol affinity (±8)
+        if symbol:
+            for sr in memo.get("symbol_affinity", []):
+                if sr["symbol"] == symbol:
+                    if sr["status"] == "hot":
+                        adj += 8
+                    elif sr["status"] == "cold":
+                        adj -= 8
+                    break
+
+        # Anti-pattern penalty (-15)
+        if direction and regime.state:
+            pattern_key = f"{direction} in {regime.state}"
+            for ap in memo.get("anti_patterns", []):
+                if ap["pattern"] == pattern_key:
+                    adj -= 15
+                    break
+
+        return max(-45.0, min(45.0, adj))
     except Exception:
         return 0.0
 

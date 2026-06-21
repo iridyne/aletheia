@@ -134,6 +134,7 @@ async def test_paper_trader_skips_low_confidence(tmp_path, monkeypatch):
 
 
 async def test_paper_trader_trades_directional_and_sets_stop(tmp_path, monkeypatch):
+    """Phase 4a: Paper trader Path B now writes signal_pending entries for PI Agent."""
     setup_env(tmp_path, monkeypatch)
     _set_paperauto(monkeypatch)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
@@ -141,14 +142,13 @@ async def test_paper_trader_trades_directional_and_sets_stop(tmp_path, monkeypat
                       confidence="medium", source_agent="market_observer")
     repo.insert_opportunity(opp)
 
-    await run_agent("paper_trader", trigger_type="manual")
-    proposals = repo.list_trade_proposals()
-    assert len(proposals) == 1
-    p = proposals[0]
-    assert p["direction"] == "long"
-    assert p["stop_price"] is not None
-    # long stop is below entry (2% default)
-    assert p["stop_price"] < p["price"]
+    result = await run_agent("paper_trader", trigger_type="manual")
+    # Phase 4a: Path B writes signal_pending instead of creating proposals directly
+    from aletheia.storage.repositories import list_pi_decisions
+    decisions = list_pi_decisions(limit=5)
+    pending = [d for d in decisions if d.get("action") == "signal_pending"]
+    assert len(pending) >= 1
+    assert pending[0]["symbol"] == "BTC/USDT"
 
 
 # --- Symbol format: market_observer stores canonical BTC/USDT format ---
@@ -207,10 +207,10 @@ async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
     assert len(opps) == 1
     assert opps[0]["symbol"] == "BTC/USDT"
 
-    # Step 2: paper_trader finds and consumes it
+    # Step 2: paper_trader writes signal_pending for PI Agent (Phase 4a)
     await run_agent("paper_trader", trigger_type="manual")
-    proposals = repo.list_trade_proposals()
-    assert len(proposals) == 1
-    assert proposals[0]["direction"] == "long"
-    # opportunity should be marked proposed (not still open)
-    assert repo.get_opportunity(opps[0]["id"])["status"] == "proposed"
+    from aletheia.storage.repositories import list_pi_decisions
+    decisions = list_pi_decisions(limit=5)
+    pending = [d for d in decisions if d.get("action") == "signal_pending"]
+    assert len(pending) >= 1
+    assert pending[0]["symbol"] == "BTC/USDT"

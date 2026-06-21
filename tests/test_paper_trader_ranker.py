@@ -125,13 +125,23 @@ def test_expired_universe_member_skipped():
 
 
 def test_blocked_factor_skipped():
+    """Phase 3d: blocked_candidate now applies heavy penalty (-50) instead of hard-skip."""
     from aletheia.agents.paper_trader_ranker import build_paper_candidates
 
     opps = [_make_opp()]
+
+    # First: verify with blocked_candidate the score is significantly penalized
     with _patch_deps(opps, factor_status="blocked_candidate"):
-        candidates = build_paper_candidates(limit=50)
-    assert len(candidates) == 1
-    assert "blocked_factor" in candidates[0]["skip_reason"]
+        blocked_candidates = build_paper_candidates(limit=50)
+    assert len(blocked_candidates) == 1
+    assert blocked_candidates[0]["skip_reason"] is None  # no hard-skip
+
+    # Compare with "active" status to verify penalty applied
+    with _patch_deps(opps, factor_status="active"):
+        active_candidates = build_paper_candidates(limit=50)
+    assert len(active_candidates) == 1
+    # blocked_candidate score should be 55 points lower than active (+5 vs -50)
+    assert blocked_candidates[0]["trade_score"] < active_candidates[0]["trade_score"] - 40
 
 
 # ---------------------------------------------------------------------------

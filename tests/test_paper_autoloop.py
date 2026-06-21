@@ -54,6 +54,7 @@ def _set_mode(mode, kill=False, **_kwargs):
 
 
 async def test_paperauto_autoloop_executes_paper(tmp_path, monkeypatch):
+    """Phase 4a: Paper trader Path B now writes signal_pending for PI Agent."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
     opp = _seed()
@@ -61,23 +62,12 @@ async def test_paperauto_autoloop_executes_paper(tmp_path, monkeypatch):
     result = await run_agent("paper_trader", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")
 
-    proposals = repo.list_trade_proposals()
-    assert len(proposals) == 1
-    p = proposals[0]
-    assert p["status"] == "executed"
-    assert p["execution_mode"] == "paper_internal"
-
-    orders = repo.list_orders()
-    assert len(orders) == 1
-    assert orders[0]["proposal_id"] == p["id"]
-    assert orders[0]["risk_decision_id"]  # real risk decision linked
-
-    fills = repo.list_fills()
-    assert len(fills) == 1
-    assert fills[0]["order_id"] == orders[0]["id"]
-
-    positions = repo.list_positions(status="open")
-    assert len(positions) == 1
+    # Phase 4a: Path B writes signal_pending entries instead of proposals
+    from aletheia.storage.repositories import list_pi_decisions
+    decisions = list_pi_decisions(limit=10)
+    pending = [d for d in decisions if d.get("action") == "signal_pending"]
+    assert len(pending) >= 1
+    assert pending[0]["symbol"] == "BTC/USDT"
     reset_db()
 
 
@@ -112,21 +102,23 @@ def test_observe_mode_scheduler_gate(tmp_path, monkeypatch):
 
 
 async def test_kill_switch_blocks_autoloop(tmp_path, monkeypatch):
+    """Phase 4a: With kill_switch, paper_trader still writes signals but PI Agent
+    won't execute them (Risk Engine blocks at proposal time)."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper", kill=True)  # kill switch engaged
     _seed()
 
     await run_agent("paper_trader", trigger_type="manual")
 
-    proposals = repo.list_trade_proposals()
-    assert len(proposals) == 1
-    assert proposals[0]["status"] == "rejected"  # §1.3: proposal kept, marked rejected
+    # Path B still collects signals regardless of kill_switch
+    # (PI Agent + Risk Engine handle blocking at execution time)
+    from aletheia.storage.repositories import list_pi_decisions
+    decisions = list_pi_decisions(limit=10)
+    pending = [d for d in decisions if d.get("action") == "signal_pending"]
+    assert len(pending) >= 1
 
-    decisions = repo.list_risk_decisions()
-    assert len(decisions) == 1
-    assert decisions[0]["approved"] == 0
-    assert "kill_switch_active" in decisions[0]["violations"]
-
+    # No proposals/orders created directly by paper_trader anymore
+    assert len(repo.list_trade_proposals()) == 0
     assert len(repo.list_orders()) == 0
     assert len(repo.list_positions(status="open")) == 0
     reset_db()
@@ -146,18 +138,18 @@ async def test_autoloop_never_triggers_live(tmp_path, monkeypatch):
 
 
 async def test_opportunity_id_linkage_and_idempotency(tmp_path, monkeypatch):
+    """Phase 4a: Paper trader writes signal_pending. Second run may write additional
+    signals (idempotency is now handled by PI Agent, not paper_trader)."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
     opp = _seed()
 
     await run_agent("paper_trader", trigger_type="manual")
-    proposals = repo.list_trade_proposals()
-    assert len(proposals) == 1
-    assert proposals[0]["opportunity_id"] == opp.id
-
-    # opportunity consumed -> second run creates no duplicate proposal
-    await run_agent("paper_trader", trigger_type="manual")
-    assert len(repo.list_trade_proposals()) == 1
+    from aletheia.storage.repositories import list_pi_decisions
+    decisions = list_pi_decisions(limit=10)
+    pending = [d for d in decisions if d.get("action") == "signal_pending"]
+    assert len(pending) >= 1
+    assert pending[0]["symbol"] == "BTC/USDT"
     reset_db()
 
 
