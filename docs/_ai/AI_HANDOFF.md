@@ -7,7 +7,7 @@
 
 ## Last Updated
 
-2026-06-20 (Exchange 统一选择 — 数据+执行一键联动)
+2026-06-21 (PI Agent 信号增强 + Liquidation 采集修复 + Operator ICT 策略研究)
 
 ---
 
@@ -328,6 +328,13 @@ hold_distribution/totals 字段完整）；前端构建 0 error；gateway 已重
 - position_reconciler.classify_positions() + adopt_position()
 - source 列(native/adopted) + 诚实合成链
 - trust §1.1 修订
+
+### 2026-06-21 — PI Agent 信号增强 + Liquidation 修复 + Operator ICT 研究 (ce0360d)
+- Task A: UniverseFeatureSnapshot 新增 4 列 (taker_buy_ratio/vol_ratio/relative_strength_24h/oi_price_divergence)
+  features.py 写入; trading_context.py Layer 1 读取+crowding_signal; trading_decision.py prompt 增强+_SIGNAL_RULES
+- Task B: derivatives.py 日志提升 debug→warning; 时间窗口 1h→4h; "0 in window" 诊断; scheduler persist 计数日志
+- Task C: operator_loop.py trigger_strategy_research action (每日限频1次); research_worker.py _ICT_METHODOLOGY_SYSTEM +
+  mode="methodology" 分支; trading_context.py Layer 3 注入 serenity_opportunities; trading_decision.py 渲染 Research-sourced 小节
 
 ### 2026-06-10 — CLI 分层 + 运营命令软弃用
 - bootstrap 内核(gateway/doctor/version)保留
