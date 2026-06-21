@@ -1079,3 +1079,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-20 22:21 UTC] ⚠️ **§22 持续** — features=60/h (第 4 轮固定低吞吐). Opportunities=8250 (+27/h). Knowledge=1284 (+7/h). §17 timed_out=266 (+0). Stale=289. paper_trader 61 completed, risk_critic 35 completed (其他管道正常). **§22 `registry.py:52` 待修复.**
 
 [2026-06-20 23:21 UTC] ⚠️ **§22 持续** — features=60/h (第 5 轮固定低吞吐, 连续 10条/10分钟). Opportunities=8286 (+36/h). Knowledge=1291 (+7/h). §17 timed_out=266 (+0). Stale=289. paper_trader 65 completed (2h). **§22 `registry.py:52` 待修复.**
+
+[2026-06-21 00:21 UTC] ⚠️ **§22 持续** — features=60/h (第 6 轮固定低吞吐). Opportunities=8322 (+36/h). Knowledge=1298 (+7/h). §17 timed_out=266 (+0). Stale=289. paper_trader 69 completed (2h). **§22 `registry.py:52` 待修复. 75h+ 连续运行, 其他管道稳定.**
