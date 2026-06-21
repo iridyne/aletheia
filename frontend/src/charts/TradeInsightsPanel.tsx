@@ -17,11 +17,12 @@ import { useQuery } from '@tanstack/react-query'
 import {
   AreaChart, Area, BarChart, Bar, ScatterChart, Scatter,
   RadarChart, Radar, PolarGrid, PolarAngleAxis,
+  PieChart, Pie,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   ReferenceLine, Cell,
 } from 'recharts'
 import { api } from '../api/client'
-import type { TradeInsights } from '../api/client'
+import type { TradeInsights, CalibrationReport } from '../api/client'
 import { Card } from '../components/ui'
 
 // ── Palette (matches CSS vars) ────────────────────────────────────────────────
@@ -355,6 +356,320 @@ function StreakSummary({ data }: { data: TradeInsights['streaks'] }) {
   )
 }
 
+// ── 8. Hour × Day Heatmap ────────────────────────────────────────────────────
+function HourDayHeatmap({ data }: { data: TradeInsights['hour_day_heatmap'] }) {
+  const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  const maxAbs = Math.max(0.01, ...data.map(d => Math.abs(d.avg_pnl_pct)))
+
+  function cellColor(val: number): string {
+    if (val === 0) return C.surface
+    const intensity = Math.min(1, Math.abs(val) / maxAbs)
+    return val > 0
+      ? `rgba(46, 230, 168, ${0.15 + intensity * 0.7})`
+      : `rgba(255, 93, 108, ${0.15 + intensity * 0.7})`
+  }
+
+  return (
+    <Card>
+      <SectionLabel>Hour × Day Heatmap (Avg PnL%)</SectionLabel>
+      <div className="heatmap-grid">
+        <div className="heatmap-corner" />
+        {Array.from({ length: 24 }, (_, h) => (
+          <div key={h} className="heatmap-col-label">{h}</div>
+        ))}
+        {DOW.map((day, di) => (
+          <>
+            <div key={`row-${di}`} className="heatmap-row-label">{day}</div>
+            {Array.from({ length: 24 }, (_, h) => {
+              const cell = data.find(c => c.day === di && c.hour === h)
+              const val = cell?.avg_pnl_pct ?? 0
+              const count = cell?.trade_count ?? 0
+              return (
+                <div
+                  key={`${di}-${h}`}
+                  className="heatmap-cell"
+                  style={{ background: cellColor(val) }}
+                  title={`${day} ${h}:00 — ${val.toFixed(2)}% (${count} trades)`}
+                />
+              )
+            })}
+          </>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+// ── 9. Trade Frequency Dots ──────────────────────────────────────────────────
+function TradeFrequencyDots({ data }: { data: TradeInsights['trade_frequency'] }) {
+  const maxTrades = Math.max(1, ...data.map(d => d.trades.length))
+  return (
+    <Card>
+      <SectionLabel>Trade Frequency (last 90 days)</SectionLabel>
+      <div className="dotmatrix-container">
+        {data.map(day => (
+          <div key={day.date} className="dotmatrix-col" title={`${day.date} — ${day.trades.length} trades`}>
+            {day.trades.map((t, i) => (
+              <div
+                key={i}
+                className="dotmatrix-dot"
+                style={{ background: t.pnl_pct >= 0 ? C.green : C.red }}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="insights-scatter-legend">
+        <span style={{ color: C.green }}>● Win</span>
+        <span style={{ color: C.red }}>● Loss</span>
+        <span style={{ color: C.muted }}>Cols = days, dots = trades</span>
+      </div>
+    </Card>
+  )
+}
+
+// ── 10. Symbol × Direction Matrix ────────────────────────────────────────────
+function SymbolDirectionMatrix({ data }: { data: TradeInsights['symbol_direction_matrix'] }) {
+  if (!data.length) return null
+  function wrColor(wr: number): string {
+    if (wr >= 60) return C.green
+    if (wr >= 45) return C.yellow
+    return C.red
+  }
+  return (
+    <Card>
+      <SectionLabel>Symbol × Direction Win Rate</SectionLabel>
+      <div className="sdm-table">
+        <div className="sdm-header">
+          <span>Symbol</span><span>Dir</span><span>WR%</span><span>Avg PnL%</span><span>#</span>
+        </div>
+        {data.slice(0, 15).map((row, i) => (
+          <div key={i} className="sdm-row">
+            <span className="mono">{row.symbol.replace('/USDT', '')}</span>
+            <span className="mono" style={{ color: row.direction === 'long' ? C.accent : C.yellow }}>
+              {row.direction}
+            </span>
+            <span className="mono" style={{ color: wrColor(row.win_rate) }}>{row.win_rate.toFixed(0)}%</span>
+            <span className={`mono ${row.avg_pnl_pct >= 0 ? 'pos' : 'neg'}`}>{row.avg_pnl_pct >= 0 ? '+' : ''}{row.avg_pnl_pct.toFixed(2)}%</span>
+            <span className="mono text-muted">{row.trade_count}</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+// ── 11. Hold Duration Buckets ────────────────────────────────────────────────
+function HoldDurationBuckets({ data }: { data: TradeInsights['hold_duration_buckets'] }) {
+  return (
+    <Card>
+      <SectionLabel>Hold Duration Analysis</SectionLabel>
+      <ResponsiveContainer width="100%" height={200}>
+        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid {...gridProps} />
+          <XAxis dataKey="bucket" tick={axisStyle} />
+          <YAxis tick={axisStyle} width={40} tickFormatter={v => `${v}%`} />
+          <Tooltip {...tooltipStyle} formatter={(v: any, name: any) => [`${Number(v).toFixed(2)}%`, name]} />
+          <ReferenceLine y={0} stroke={C.muted} />
+          <Bar dataKey="avg_win_pct" name="Avg Win" fill={C.green} fillOpacity={0.7} radius={[3, 3, 0, 0]} />
+          <Bar dataKey="avg_loss_pct" name="Avg Loss" fill={C.red} fillOpacity={0.7} radius={[3, 3, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="sdm-table" style={{ marginTop: 8 }}>
+        <div className="sdm-header">
+          <span>Bucket</span><span>#</span><span>WR%</span><span>Avg%</span>
+        </div>
+        {data.map((b, i) => (
+          <div key={i} className="sdm-row">
+            <span className="mono">{b.bucket}</span>
+            <span className="mono text-muted">{b.trade_count}</span>
+            <span className={`mono ${b.win_rate >= 50 ? 'pos' : 'neg'}`}>{b.win_rate.toFixed(0)}%</span>
+            <span className={`mono ${b.avg_pnl_pct >= 0 ? 'pos' : 'neg'}`}>{b.avg_pnl_pct >= 0 ? '+' : ''}{b.avg_pnl_pct.toFixed(2)}%</span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+// ── 12. R-Multiple Distribution ──────────────────────────────────────────────
+function RMultipleDistribution({ data }: { data: TradeInsights['r_multiple_distribution'] }) {
+  return (
+    <Card>
+      <SectionLabel>R-Multiple Distribution (Risk-Normalized)</SectionLabel>
+      <ResponsiveContainer width="100%" height={180}>
+        <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 24 }}>
+          <CartesianGrid {...gridProps} />
+          <XAxis dataKey="bin" tick={{ ...axisStyle, fontSize: 9 }} angle={-35} textAnchor="end" />
+          <YAxis tick={axisStyle} width={32} />
+          <Tooltip {...tooltipStyle} />
+          <Bar dataKey="count" name="Trades" radius={[2, 2, 0, 0]}>
+            {data.map((d, i) => {
+              const isNeg = d.bin.startsWith('-') || d.bin.startsWith('<')
+              return <Cell key={i} fill={isNeg ? C.red : C.green} fillOpacity={0.75} />
+            })}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </Card>
+  )
+}
+
+// ── 13. Exit Reason Breakdown ────────────────────────────────────────────────
+function ExitReasonBreakdown({ data }: { data: TradeInsights['by_exit_reason'] }) {
+  const PIE_COLORS = [C.accent, C.green, C.yellow, C.red, C.purple, '#60a5fa', '#f472b6']
+  return (
+    <Card>
+      <SectionLabel>Exit Reason Breakdown</SectionLabel>
+      <div className="insights-2col" style={{ alignItems: 'start' }}>
+        <ResponsiveContainer width="100%" height={180}>
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="trade_count"
+              nameKey="reason"
+              cx="50%"
+              cy="50%"
+              outerRadius={70}
+              innerRadius={35}
+              strokeWidth={1}
+              stroke={C.surface}
+            >
+              {data.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} fillOpacity={0.85} />)}
+            </Pie>
+            <Tooltip {...tooltipStyle} formatter={(v: any, name: any) => [v, name]} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="sdm-table">
+          <div className="sdm-header">
+            <span>Reason</span><span>#</span><span>WR%</span><span>PnL</span>
+          </div>
+          {data.map((row, i) => (
+            <div key={i} className="sdm-row">
+              <span className="mono" style={{ color: PIE_COLORS[i % PIE_COLORS.length] }}>{row.reason}</span>
+              <span className="mono text-muted">{row.trade_count}</span>
+              <span className={`mono ${row.win_rate >= 50 ? 'pos' : 'neg'}`}>{row.win_rate.toFixed(0)}%</span>
+              <span className={`mono ${row.total_pnl >= 0 ? 'pos' : 'neg'}`}>{row.total_pnl >= 0 ? '+' : ''}{row.total_pnl.toFixed(4)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+// ── 14. Conviction Calibration Chart ─────────────────────────────────────────
+function ConvictionCalibrationChart() {
+  const { data, isLoading } = useQuery<CalibrationReport>({
+    queryKey: ['confidence-calibration'],
+    queryFn: api.getConfidenceCalibration,
+    staleTime: 300_000,
+  })
+
+  if (isLoading) return <Card><SectionLabel>Conviction Calibration</SectionLabel><p className="text-muted text-sm">Loading…</p></Card>
+  if (!data || data.status === 'no_data' || !data.buckets?.length) {
+    return (
+      <Card>
+        <SectionLabel>Conviction Calibration (ECE)</SectionLabel>
+        <p className="text-muted text-sm">No calibration data yet — requires PI Agent decisions with closed positions.</p>
+      </Card>
+    )
+  }
+
+  const chartData = data.buckets.map(b => ({
+    range: b.conviction_range,
+    actual: Math.round(b.actual_win_rate * 100),
+    expected: Math.round(b.expected_win_rate * 100),
+    reliable: b.reliable,
+    n: b.sample_size,
+    error: b.calibration_error,
+  }))
+
+  const eceColor = !data.ece ? C.muted
+    : data.ece < 0.05 ? C.green
+    : data.ece < 0.10 ? C.accent
+    : data.ece < 0.20 ? C.yellow
+    : C.red
+
+  return (
+    <Card>
+      <SectionLabel>Conviction Calibration — Actual vs Expected Win Rate</SectionLabel>
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+          <CartesianGrid {...gridProps} />
+          <XAxis dataKey="range" tick={axisStyle} label={{ value: 'Conviction', position: 'insideBottom', offset: -2, fill: C.muted, fontSize: 10 }} />
+          <YAxis tick={axisStyle} width={40} tickFormatter={v => `${v}%`} domain={[0, 100]} />
+          <Tooltip
+            {...tooltipStyle}
+            content={({ active, payload, label }) => {
+              if (!active || !payload?.length) return null
+              const bucket = data.buckets.find(b => b.conviction_range === label)
+              return (
+                <div style={tooltipStyle.contentStyle}>
+                  <div style={{ color: C.text }}>Conviction {label}</div>
+                  <div style={{ color: C.green }}>Actual: {payload.find(p => p.dataKey === 'actual')?.value}%</div>
+                  <div style={{ color: C.muted }}>Expected: {payload.find(p => p.dataKey === 'expected')?.value}%</div>
+                  {bucket && <div style={{ color: bucket.reliable ? C.text : C.muted }}>
+                    n={bucket.sample_size} {!bucket.reliable ? '(unreliable)' : `· err=${bucket.calibration_error.toFixed(3)}`}
+                  </div>}
+                </div>
+              )
+            }}
+          />
+          <ReferenceLine y={50} stroke={C.muted} strokeDasharray="3 3" />
+          <Bar dataKey="actual" name="Actual Win%" radius={[3, 3, 0, 0]}>
+            {chartData.map((d, i) => (
+              <Cell
+                key={i}
+                fill={d.actual >= d.expected ? C.green : C.red}
+                fillOpacity={d.reliable ? 0.85 : 0.25}
+              />
+            ))}
+          </Bar>
+          <Bar dataKey="expected" name="Expected Win%" fill={C.accent} fillOpacity={0.35} radius={[3, 3, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+
+      <div className="insights-calibration-summary">
+        <div className="analytics-metric-tile">
+          <div className="analytics-metric-label">ECE Score</div>
+          <div className="analytics-metric-value mono" style={{ color: eceColor }}>
+            {data.ece != null ? data.ece.toFixed(3) : '—'}
+          </div>
+        </div>
+        <div className="analytics-metric-tile">
+          <div className="analytics-metric-label">Grade</div>
+          <div className="analytics-metric-value mono" style={{ color: eceColor }}>{data.ece_grade ?? '—'}</div>
+        </div>
+        <div className="analytics-metric-tile">
+          <div className="analytics-metric-label">Trades</div>
+          <div className="analytics-metric-value mono">{data.total_executed ?? 0}</div>
+        </div>
+        <div className="analytics-metric-tile">
+          <div className="analytics-metric-label">Overall WR</div>
+          <div className="analytics-metric-value mono">
+            {data.overall_win_rate != null ? `${Math.round(data.overall_win_rate * 100)}%` : '—'}
+          </div>
+        </div>
+      </div>
+
+      {data.calibration_summary && (
+        <p className="insights-calibration-text">{data.calibration_summary}</p>
+      )}
+      {(data.overconfident_buckets?.length ?? 0) > 0 && (
+        <p className="insights-calibration-text" style={{ color: C.red }}>
+          Overconfident: {data.overconfident_buckets!.join(', ')} — actual win rate below expected.
+        </p>
+      )}
+      {(data.underconfident_buckets?.length ?? 0) > 0 && (
+        <p className="insights-calibration-text" style={{ color: C.accent }}>
+          Underconfident: {data.underconfident_buckets!.join(', ')} — outperforming stated probability.
+        </p>
+      )}
+    </Card>
+  )
+}
+
 // ── Main Panel ────────────────────────────────────────────────────────────────
 export default function TradeInsightsPanel() {
   const { data, isLoading, error } = useQuery({
@@ -395,6 +710,22 @@ export default function TradeInsightsPanel() {
       </div>
 
       <StreakSummary data={data.streaks} />
+
+      {/* ── Multi-dimensional analytics ── */}
+      <HourDayHeatmap data={data.hour_day_heatmap} />
+      <TradeFrequencyDots data={data.trade_frequency} />
+
+      <div className="insights-2col">
+        <SymbolDirectionMatrix data={data.symbol_direction_matrix} />
+        <HoldDurationBuckets data={data.hold_duration_buckets} />
+      </div>
+
+      <div className="insights-2col">
+        <RMultipleDistribution data={data.r_multiple_distribution} />
+        <ExitReasonBreakdown data={data.by_exit_reason} />
+      </div>
+
+      <ConvictionCalibrationChart />
     </div>
   )
 }

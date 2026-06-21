@@ -107,3 +107,49 @@ def get_backtest_compare(strategy_id: str):
         paper_curve.append(cumulative)
 
     return {"strategy_id": strategy_id, "backtest": backtest_curve, "paper": paper_curve}
+
+
+@router.get("/go-live-scorecard")
+def get_go_live_scorecard():
+    """Quantitative go-live readiness scorecard."""
+    from aletheia.analytics.go_live_scorecard import compute_scorecard
+    return compute_scorecard()
+
+
+@router.get("/cost-summary")
+def get_cost_summary():
+    """Aggregate fee/slippage totals across all closed positions."""
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    row = db.execute(
+        "SELECT SUM(COALESCE(entry_fee,0)) as total_entry_fees, "
+        "SUM(COALESCE(exit_fee,0)) as total_exit_fees, "
+        "SUM(COALESCE(slippage_cost,0)) as total_slippage "
+        "FROM positions WHERE status='closed'"
+    ).fetchone()
+    total_fees = round((row["total_entry_fees"] or 0) + (row["total_exit_fees"] or 0), 8)
+    total_slippage = round(row["total_slippage"] or 0, 8)
+    return {
+        "total_entry_fees": round(row["total_entry_fees"] or 0, 8),
+        "total_exit_fees": round(row["total_exit_fees"] or 0, 8),
+        "total_fees": total_fees,
+        "total_slippage": total_slippage,
+        "total_costs": round(total_fees + total_slippage, 8),
+    }
+
+
+@router.get("/confidence-calibration")
+def get_confidence_calibration():
+    """Conviction calibration report — actual vs expected win rate per conviction bucket."""
+    from aletheia.analytics.confidence_calibration import get_latest_calibration_report, build_calibration_report
+    report = get_latest_calibration_report()
+    if not report:
+        report = build_calibration_report()
+    return report or {"status": "no_data", "buckets": [], "ece": None, "ece_grade": "insufficient_data"}
+
+
+@router.get("/reasoning-feedback")
+def get_reasoning_feedback():
+    """Reasoning quality feedback — proposal rejection patterns and approval win rates."""
+    from aletheia.analytics.reasoning_feedback import get_latest_reasoning_feedback
+    return get_latest_reasoning_feedback() or {"status": "no_data"}

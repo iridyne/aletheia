@@ -74,6 +74,10 @@ export interface Position {
   source?: string  // "native" | "adopted"
   opened_at: string
   closed_at: string | null
+  decision_reasoning?: string | null
+  entry_fee?: number | null
+  exit_fee?: number | null
+  slippage_cost?: number | null
 }
 
 export type AssetClass = 'crypto' | 'equity' | 'prediction'

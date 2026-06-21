@@ -334,6 +334,18 @@ function PositionDetail({ position }: { position: Position }) {
         <DrawerField label="Unrealized" value={position.unrealized_pnl} mono />
         <DrawerField label="Realized" value={position.realized_pnl} mono />
       </DrawerSection>
+      {(position.entry_fee != null || position.exit_fee != null || position.slippage_cost != null) && (
+        <DrawerSection label="Costs">
+          <DrawerField label="Entry Fee" value={position.entry_fee != null ? `-${position.entry_fee.toFixed(4)}` : null} mono />
+          <DrawerField label="Exit Fee" value={position.exit_fee != null ? `-${position.exit_fee.toFixed(4)}` : null} mono />
+          <DrawerField label="Slippage (est.)" value={position.slippage_cost != null ? `-${position.slippage_cost.toFixed(4)}` : null} mono />
+        </DrawerSection>
+      )}
+      {position.decision_reasoning && (
+        <DrawerSection label="AI Decision">
+          <pre className="decision-reasoning">{position.decision_reasoning}</pre>
+        </DrawerSection>
+      )}
       <DrawerSection label="Metadata">
         <DrawerField label="Strategy ID" value={position.strategy_id} mono />
         <DrawerField label="Close Reason" value={position.close_reason ? humanize(position.close_reason) : null} />
