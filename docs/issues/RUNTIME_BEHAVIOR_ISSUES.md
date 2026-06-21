@@ -1103,3 +1103,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-21 06:08 UTC] 🔴 **§23 持续 + §21 dreaming_agent 错误率高** — features=72/h (轻微回升). Opportunities=8554 (+42/h). Knowledge=1380 (+19/h). §17 timed_out=266. Stale=294. **§23**: 05:22–05:51 UTC 再 5 批重启, frontdoor 风暴持续, backend pipeline 未受影响. **§21 新**: dreaming_agent 2h 内 12 completed_with_errors / 1 completed, 错误率 92% — 亚盘日周期触发但 LLM 调用大量失败. §22 `registry.py:52` 待修复. 81h+ 连续运行.
 
 [2026-06-21 06:21 UTC] ⚠️ **§23 暂稳 30min** — features=72/h. Opportunities=8562 (+8/h). Knowledge=1384 (+4/h). §17 timed_out=266. Stale=295. **§23**: 最后一次重启 05:51 UTC, 06:17 features 正常, 暂稳 ~30min. dreaming_agent 12/13 completed_with_errors 同一批次未新增. §22 `registry.py:52` 待修复. 81h+ 连续运行.
+
+[2026-06-21 07:08 UTC] ⚠️ **§23 间歇性发作** — features=54/h. Opportunities=8586 (+24/h). Knowledge=1399 (+15/h). §17 timed_out=266. Stale=294. **§23**: 06:26 UTC 新增 1 批重启 (PID 24796), 之后 07:07 features 正常, 暂稳 ~42min. **规律: §23 约每 30–60min 发作一次**, 每次持续 5–25min 后自愈. 根因 WinError 64 IOCP 未修复. §22 `registry.py:52` 待修复. 82h+ 连续运行.
