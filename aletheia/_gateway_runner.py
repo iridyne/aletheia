@@ -337,12 +337,20 @@ def run_supervised(spawn_fn=None) -> dict:
             _publish_frontdoor_route(cfg, backend_port=backend_port, reason="supervisor_start")
             frontdoor_proc = _ensure_frontdoor_running(cfg, backend_port, frontdoor_proc)
         while True:
-            if frontdoor_enabled:
-                frontdoor_proc = _ensure_frontdoor_running(cfg, backend_port, frontdoor_proc)
-                _cleanup_backend_before_spawn(cfg, backend_port)
-            else:
-                _cleanup_before_spawn(cfg)
-            code = spawn_fn()
+            code: int | None = None
+            try:
+                if frontdoor_enabled:
+                    frontdoor_proc = _ensure_frontdoor_running(cfg, backend_port, frontdoor_proc)
+                    _cleanup_backend_before_spawn(cfg, backend_port)
+                else:
+                    _cleanup_before_spawn(cfg)
+                code = spawn_fn()
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as exc:
+                _record_supervisor_exception(exc)
+                code = 1
+
             if code == 0:
                 return {"gave_up": False, "restarts": restarts}  # clean shutdown
 
@@ -367,6 +375,17 @@ def run_supervised(spawn_fn=None) -> dict:
             except Exception:
                 pass
         operator_monitor.stop()
+
+
+def _record_supervisor_exception(exc: Exception) -> None:
+    try:
+        from aletheia.files.jsonl import write_error
+        write_error({
+            "source": "gateway_supervisor",
+            "message": f"Supervisor loop caught unexpected exception: {type(exc).__name__}: {exc}",
+        })
+    except Exception:
+        pass
 
 
 def _record_give_up(attempts: int) -> None:
