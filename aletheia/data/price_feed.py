@@ -196,6 +196,17 @@ def _check_event_triggers(
             except Exception as e:
                 logger.debug("event_trigger: designer trigger failed: %s", e)
 
+        # Wake PI Agent on any significant price/volume event
+        if abs_pct >= et.price_move_pct_threshold or (
+            volume_24h and prev_volume_24h and prev_volume_24h > 0
+            and volume_24h > prev_volume_24h * et.volume_surge_multiplier
+        ):
+            try:
+                from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+                notify_pi_daemon(source=f"event_trigger:{symbol}")
+            except Exception:
+                pass
+
     except Exception as e:
         logger.debug("_check_event_triggers: %s", e)
 

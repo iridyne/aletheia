@@ -315,6 +315,11 @@ async def _analyze_symbol(
         key_observations=json.dumps(observations) if observations else "",
     )
     insert_opportunity(opp)
+    try:
+        from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+        notify_pi_daemon(source="market_observer")
+    except Exception:
+        pass
     log_tool(run_id, "create_opportunity", "observe", True, output=opp.id)
     return opp.id, llm_error
 
