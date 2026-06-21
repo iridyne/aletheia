@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
+import type { GoLiveScorecard } from '../api/client'
 import SetupBanner from '../components/SetupBanner'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
@@ -188,9 +189,77 @@ export default function Overview() {
               </tbody>
             </table>
           </Card>
+
+          {/* Go-Live Scorecard */}
+          <GoLiveScoreCard />
         </div>
       </div>
     </div>
+  )
+}
+
+// ── Go-Live Scorecard Card ───────────────────────────────────────────────────
+function GoLiveScoreCard() {
+  const [expanded, setExpanded] = useState(false)
+  const { data } = useQuery<GoLiveScorecard>({
+    queryKey: ['go-live-scorecard'],
+    queryFn: api.getGoLiveScorecard,
+    staleTime: 60_000,
+  })
+  if (!data) return null
+
+  const color = data.traffic_light === 'green' ? 'var(--green)'
+    : data.traffic_light === 'yellow' ? 'var(--yellow)' : 'var(--red)'
+  const label = data.traffic_light === 'green' ? 'READY'
+    : data.traffic_light === 'yellow' ? 'CAUTION' : 'NOT READY'
+
+  const circumference = 2 * Math.PI * 36
+  const offset = circumference * (1 - data.composite_score / 100)
+
+  return (
+    <Card className="rail-card scorecard-panel">
+      <div className="scorecard-header" onClick={() => setExpanded(!expanded)}>
+        <svg width="56" height="56" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r="36" fill="none" stroke="var(--border)" strokeWidth="6" />
+          <circle cx="40" cy="40" r="36" fill="none" stroke={color} strokeWidth="6"
+            strokeDasharray={circumference} strokeDashoffset={offset}
+            strokeLinecap="round" transform="rotate(-90 40 40)" />
+          <text x="40" y="44" textAnchor="middle" fill={color}
+            fontSize="16" fontWeight="700" fontFamily="var(--font-mono)">
+            {Math.round(data.composite_score)}
+          </text>
+        </svg>
+        <div className="scorecard-title">
+          <h3>Go-Live</h3>
+          <StatusText tone={data.traffic_light === 'green' ? 'green' : data.traffic_light === 'yellow' ? 'yellow' : 'red'}>
+            {label}
+          </StatusText>
+        </div>
+        <span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
+      </div>
+      {expanded && (
+        <div className="scorecard-criteria">
+          {data.criteria.map(c => {
+            const barFill = { width: `${c.score}%`, background: c.status === 'pass' ? 'var(--green)' : c.status === 'warning' ? 'var(--yellow)' : 'var(--red)' }
+            return (
+              <div key={c.key} className="scorecard-row">
+                <span className="scorecard-label">{c.label}</span>
+                <div className="scorecard-bar-bg">
+                  <div className="scorecard-bar-fill" style={barFill} />
+                </div>
+                <span className="scorecard-detail">{c.detail}</span>
+              </div>
+            )
+          })}
+          {data.blockers.length > 0 && (
+            <div className="scorecard-blockers">
+              <span className="text-xs text-error">Blockers:</span>
+              {data.blockers.map((b, i) => <span key={i} className="text-xs text-error"> · {b}</span>)}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
   )
 }
 
