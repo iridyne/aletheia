@@ -334,6 +334,8 @@ export const api = {
     post<{ updated: Record<string, any> }>('/settings/runtime', body),
   updateAppConfig: (body: Partial<{ auto_open_browser: boolean }>) =>
     post<{ updated: Record<string, any> }>('/settings/app', body),
+  updatePiDaemonConfig: (body: Partial<{ enabled: boolean; debounce_sec: number; cooldown_sec: number; heartbeat_sec: number }>) =>
+    post<{ updated: Record<string, any> }>('/settings/pi_daemon', body),
   updateOperatorConfig: (body: Partial<{ loop_enabled: boolean }>) =>
     post<{ updated: Record<string, any> }>('/settings/operator', body),
   updateHealthConfig: (body: Partial<{
@@ -663,6 +665,10 @@ export const api = {
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
   getStrategyKpis: () => fetchJson<Record<string, { trade_count: number; win_rate: number; total_pnl: number }>>('/analytics/strategy-kpis'),
   getTradeInsights: () => fetchJson<TradeInsights>('/analytics/trade-insights'),
+  getGoLiveScorecard: () => fetchJson<GoLiveScorecard>('/analytics/go-live-scorecard'),
+  getCostSummary: () => fetchJson<CostSummary>('/analytics/cost-summary'),
+  getConfidenceCalibration: () => fetchJson<CalibrationReport>('/analytics/confidence-calibration'),
+  getReasoningFeedback: () => fetchJson<ReasoningFeedback>('/analytics/reasoning-feedback'),
 
   getBacktestRuns: (strategyId?: string) =>
     fetchJson<any[]>(`/analytics/backtest/runs${strategyId ? `?strategy_id=${strategyId}` : ''}`),
@@ -787,6 +793,49 @@ export interface HoldPnlPoint {
   symbol: string
 }
 
+export interface HourDayCell {
+  day: number
+  hour: number
+  avg_pnl_pct: number
+  trade_count: number
+}
+
+export interface TradeFrequencyDay {
+  date: string
+  trades: { pnl_pct: number; direction: string }[]
+}
+
+export interface SymbolDirectionEntry {
+  symbol: string
+  direction: string
+  win_rate: number
+  avg_pnl_pct: number
+  trade_count: number
+}
+
+export interface HoldDurationBucket {
+  bucket: string
+  trade_count: number
+  win_rate: number
+  avg_pnl_pct: number
+  avg_win_pct: number
+  avg_loss_pct: number
+}
+
+export interface RMultipleBin {
+  bin: string
+  count: number
+}
+
+export interface ExitReasonEntry {
+  reason: string
+  trade_count: number
+  win_rate: number
+  avg_pnl_pct: number
+  total_pnl: number
+  pnl_contribution_pct: number
+}
+
 export interface TradeInsights {
   equity_curve: EquityPoint[]
   drawdown_curve: DrawdownPoint[]
@@ -798,4 +847,75 @@ export interface TradeInsights {
   by_regime: RegimeStats[]
   streaks: StreakData
   hold_vs_pnl: HoldPnlPoint[]
+  hour_day_heatmap: HourDayCell[]
+  trade_frequency: TradeFrequencyDay[]
+  symbol_direction_matrix: SymbolDirectionEntry[]
+  hold_duration_buckets: HoldDurationBucket[]
+  r_multiple_distribution: RMultipleBin[]
+  by_exit_reason: ExitReasonEntry[]
+}
+
+export interface GoLiveCriterion {
+  key: string
+  label: string
+  score: number
+  weight: number
+  weighted_contribution: number
+  detail: string
+  status: 'pass' | 'warning' | 'fail'
+}
+
+export interface GoLiveScorecard {
+  composite_score: number
+  traffic_light: 'red' | 'yellow' | 'green'
+  criteria: GoLiveCriterion[]
+  blockers: string[]
+  computed_at: string
+}
+
+export interface CostSummary {
+  total_entry_fees: number
+  total_exit_fees: number
+  total_fees: number
+  total_slippage: number
+  total_costs: number
+}
+
+export interface CalibrationBucket {
+  label: string
+  conviction_range: string
+  sample_size: number
+  win_count: number
+  actual_win_rate: number
+  expected_win_rate: number
+  calibration_error: number
+  reliable: boolean
+}
+
+export interface CalibrationReport {
+  generated_at?: string
+  window_days?: number
+  total_executed?: number
+  buckets: CalibrationBucket[]
+  ece: number | null
+  ece_grade: string
+  overall_win_rate?: number
+  overconfident_buckets?: string[]
+  underconfident_buckets?: string[]
+  calibration_summary?: string
+  status?: string
+}
+
+export interface ReasoningFeedback {
+  generated_at?: string
+  window_days?: number
+  sample_proposals?: number
+  sample_executed?: number
+  approval_outcomes?: { pattern_label: string; win_rate: number; sample_size: number; avg_pnl: number; avg_conviction: number }[]
+  rejection_patterns?: { pattern_label: string; rejection_rate: number; rejection_count: number }[]
+  recommended_avoid?: string[]
+  recommended_pursue?: string[]
+  high_conviction_win_rate?: number | null
+  low_conviction_win_rate?: number | null
+  status?: string
 }

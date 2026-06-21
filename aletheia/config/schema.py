@@ -441,6 +441,13 @@ class NetworkConfig(BaseModel):
     no_proxy: str = ""    # comma-separated bypass list, e.g. "127.0.0.1,localhost"
 
 
+class PiDaemonConfig(BaseModel):
+    enabled: bool = True
+    debounce_sec: float = 8.0      # collect burst signals before evaluating
+    cooldown_sec: float = 60.0     # minimum gap between evaluation cycles
+    heartbeat_sec: float = 300.0   # fallback polling interval (5 min)
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -465,3 +472,4 @@ class AletheiaConfig(BaseModel):
     network: NetworkConfig = Field(default_factory=NetworkConfig)
     historical_data: HistoricalDataConfig = Field(default_factory=HistoricalDataConfig)
     event_triggers: EventTriggerConfig = Field(default_factory=EventTriggerConfig)
+    pi_daemon: PiDaemonConfig = Field(default_factory=PiDaemonConfig)

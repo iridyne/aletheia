@@ -191,11 +191,17 @@ function AgentModelsTab({ status, settings, qc }: any) {
     mutationFn: (body: any) => api.updateOperatorConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
+  const piDaemonMut = useMutation({
+    mutationFn: (body: any) => api.updatePiDaemonConfig(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
   const autoLearn = !!agent.autonomous_learning
   const schedulerEnabled = runtime.scheduler_enabled !== false
   const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
+  const piDaemon = (settings?.pi_daemon ?? {}) as any
+  const piDaemonEnabled = piDaemon.enabled !== false
 
   return (
     <div>
@@ -247,6 +253,56 @@ function AgentModelsTab({ status, settings, qc }: any) {
             disabled={operatorMut.isPending}
           />
         </Row>
+        <Row
+          label="PI daemon (event-driven)"
+          hint="When ON, PI Agent wakes instantly on signal arrival instead of polling every 15 min. Disable to revert to legacy polling."
+        >
+          <Toggle
+            checked={piDaemonEnabled}
+            onChange={v => {
+              if (!v && !confirm('Disable the PI daemon? The agent will revert to 15-minute polling intervals.')) return
+              piDaemonMut.mutate({ enabled: v })
+            }}
+            disabled={piDaemonMut.isPending}
+          />
+        </Row>
+        {piDaemonEnabled && (
+          <>
+            <Row label="Debounce (s)" hint="How long to wait after a signal before evaluating (collects burst signals). Range 0–60.">
+              <input
+                type="number" min={0} max={60} step={1}
+                defaultValue={piDaemon.debounce_sec ?? 8}
+                className="w-20"
+                onBlur={e => {
+                  const v = parseFloat(e.target.value)
+                  if (!isNaN(v)) piDaemonMut.mutate({ debounce_sec: v })
+                }}
+              />
+            </Row>
+            <Row label="Cooldown (s)" hint="Minimum gap between two evaluations. Range 0–600.">
+              <input
+                type="number" min={0} max={600} step={5}
+                defaultValue={piDaemon.cooldown_sec ?? 60}
+                className="w-20"
+                onBlur={e => {
+                  const v = parseFloat(e.target.value)
+                  if (!isNaN(v)) piDaemonMut.mutate({ cooldown_sec: v })
+                }}
+              />
+            </Row>
+            <Row label="Heartbeat (s)" hint="Fallback polling interval when no signals arrive. Range 60–3600.">
+              <input
+                type="number" min={60} max={3600} step={60}
+                defaultValue={piDaemon.heartbeat_sec ?? 300}
+                className="w-20"
+                onBlur={e => {
+                  const v = parseFloat(e.target.value)
+                  if (!isNaN(v)) piDaemonMut.mutate({ heartbeat_sec: v })
+                }}
+              />
+            </Row>
+          </>
+        )}
       </Section>
 
       <Section title="AI Model Providers" description="LLM endpoints used by all agents. Verify & Save tests the connection before persisting. API keys are write-only.">

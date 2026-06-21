@@ -123,76 +123,48 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     except Exception as _shadow_err:
         logger.debug("shadow trade persistence failed: %s", _shadow_err)
 
-    # Select best candidate with price fallback: iterate ranked candidates until
-    # one has a valid market snapshot (fixes stall when top candidate has no price).
+    # Phase 4a: Path B is now a pure signal collector — write top candidates as
+    # signal_pending for PI Agent to evaluate (PI Agent is the sole decision maker).
     eligible = [c for c in candidates if not c.get("skip_reason")]
     if not eligible:
         if not outputs:
             outputs.append("no_ranked_candidate")
         return {"outputs": outputs, "errors": errors}
 
-    selected = None
-    price = None
-    no_price_symbols: list[str] = []
-    for candidate in eligible:
-        sym = candidate["symbol"]
-        snap = latest_snapshot(sym)
-        p = (snap or {}).get("price")
-        if p:
-            selected = candidate
-            price = float(p)
-            break
-        no_price_symbols.append(sym)
+    # Write top 3 eligible candidates as pending signals for PI Agent
+    signals_written = 0
+    for candidate in eligible[:3]:
+        try:
+            from aletheia.storage.models import PiDecision
+            from aletheia.storage.repositories import insert_pi_decision
+            pi_dec = PiDecision(
+                symbol=candidate["symbol"],
+                direction=candidate.get("direction"),
+                action="signal_pending",
+                conviction=0,
+                reasoning=(
+                    f"Ranker candidate: score={candidate.get('trade_score')} "
+                    f"scanner={candidate.get('scanner_family')} "
+                    f"factor={candidate.get('factor_status')}"
+                ),
+                proposal_id=None,
+                debate_ran=False,
+            )
+            insert_pi_decision(pi_dec)
+            signals_written += 1
+            try:
+                from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+                notify_pi_daemon(source="paper_trader_path_b")
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug("signal_pending write failed for %s: %s", candidate.get("symbol"), e)
 
-    if no_price_symbols:
-        errors.append(f"no_price_for:{','.join(no_price_symbols[:5])}")
-
-    if selected is None or price is None:
-        if not outputs:
-            outputs.append("no_priced_candidate")
-        return {"outputs": outputs, "errors": errors}
-
-    symbol = selected["symbol"]
-    direction = selected["direction"]
-    opp_id = selected["opportunity_id"]
-    strategy_id = selected.get("strategy_id")
-    resolved_mode = _resolve_venue(strategy_id, execution_mode)
-
-    notional = _atr_adjusted_notional(selected.get("atr_pct"), symbol=symbol)
-    quantity = round(notional / price, 6) or 0.000001
-
-    stop_pct = cfg.trading.default_stop_loss_pct
-    if direction == "long":
-        stop_price = round(price * (1 - stop_pct / 100.0), 8)
+    if signals_written:
+        outputs.append(f"signals_pending:{signals_written}")
     else:
-        stop_price = round(price * (1 + stop_pct / 100.0), 8)
+        outputs.append("no_signals_written")
 
-    rationale = (
-        f"Autonomous paper trade from ranked candidate.\n"
-        f"opportunity_id={opp_id}\n"
-        f"trade_score={selected.get('trade_score')}\n"
-        f"factor_key={selected.get('factor_key')}\n"
-        f"factor_status={selected.get('factor_status')}\n"
-        f"ruleset_entry_confirmed={selected.get('ruleset_entry_result')}"
-    )
-
-    result = create_paper_proposal(
-        symbol=symbol,
-        market_type="usdt_futures",
-        direction=direction,
-        quantity=quantity,
-        price=price,
-        stop_price=stop_price,
-        execution_mode=resolved_mode,
-        strategy_id=strategy_id,
-        opportunity_id=opp_id,
-        agent_rationale=rationale[:500],
-    )
-    log_tool(run_id, "create_paper_proposal", "paper", True, output=result.get("proposal_id"))
-    update_opportunity(opp_id, status="proposed")
-
-    pid = result.get("proposal_id")
-    outputs.append(f"proposal:{pid}:{result.get('status')}")
     return {"outputs": outputs, "errors": errors}
 
 
@@ -220,7 +192,10 @@ def _handle_ruleset_entry(
     execution_mode: str,
     run_id: str | None,
 ) -> str | None:
-    """Open a new position triggered by RuleSet entry signal."""
+    """Record a RuleSet entry signal as signal_pending for PI Agent to evaluate.
+
+    PI Agent is the sole decision maker — Path A writes signals, not proposals.
+    """
     snap = latest_snapshot(sig.symbol)
     price = (snap or {}).get("price")
     if not price:
@@ -228,8 +203,6 @@ def _handle_ruleset_entry(
         return None
 
     price = float(price)
-    notional = _atr_adjusted_notional(None, symbol=sig.symbol)
-    quantity = round(notional / price, 6) or 0.000001
 
     # Use RuleSet-derived stop if available, else fall back to config %
     stop_price = sig.stop_price
@@ -240,28 +213,32 @@ def _handle_ruleset_entry(
         else:
             stop_price = round(price * (1 + stop_pct / 100.0), 8)
 
-    rationale = (
-        f"RuleSet entry signal.\n"
-        f"strategy={sig.strategy_id}\n"
-        f"strategy_name={sig.strategy_name}\n"
-        f"timeframe={sig.timeframe}\n"
-        f"stop_price={stop_price}"
-    )
+    try:
+        from aletheia.storage.models import PiDecision
+        from aletheia.storage.repositories import insert_pi_decision
+        pi_dec = PiDecision(
+            symbol=sig.symbol,
+            direction=sig.direction,
+            action="signal_pending",
+            conviction=0,
+            reasoning=(
+                f"RuleSet entry: strategy={sig.strategy_id[:8]} "
+                f"name={sig.strategy_name} tf={sig.timeframe} "
+                f"price={price} stop={stop_price}"
+            ),
+            proposal_id=None,
+            debate_ran=False,
+        )
+        insert_pi_decision(pi_dec)
+        try:
+            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+            notify_pi_daemon(source="paper_trader_ruleset")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.debug("signal_pending write failed for ruleset %s: %s", sig.symbol, e)
 
-    result = create_paper_proposal(
-        symbol=sig.symbol,
-        market_type="usdt_futures",
-        direction=sig.direction,
-        quantity=quantity,
-        price=price,
-        stop_price=stop_price,
-        execution_mode=execution_mode,
-        strategy_id=sig.strategy_id,
-        opportunity_id=None,
-        agent_rationale=rationale[:500],
-    )
-    log_tool(run_id, "create_paper_proposal", "paper", True, output=result.get("proposal_id"))
+    logger.info("ruleset_signal_pending: %s %s strategy=%s", sig.direction, sig.symbol, sig.strategy_id[:8])
+    return f"ruleset_signal_pending:{sig.symbol}:{sig.strategy_id[:8]}"
 
-    pid = result.get("proposal_id")
-    logger.info("ruleset_entry: proposal %s for %s %s", pid, sig.direction, sig.symbol)
-    return f"ruleset_entry:{sig.symbol}:{sig.strategy_id[:8]}:{result.get('status')}"
+

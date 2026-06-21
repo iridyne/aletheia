@@ -77,6 +77,7 @@ async def get_settings():
         "strategy_factory": cfg.strategy_factory.model_dump(mode="json"),
         "historical_data": cfg.historical_data.model_dump(mode="json"),
         "event_triggers": cfg.event_triggers.model_dump(mode="json"),
+        "pi_daemon": cfg.pi_daemon.model_dump(mode="json"),
     }
 
 
@@ -252,6 +253,44 @@ async def update_app_config(req: AppConfigUpdate):
                  "entity_type": "app_config", "before": old,
                  "after": cfg.app.model_dump(mode="json"),
                  "message": f"App config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# PI Daemon config
+# ---------------------------------------------------------------------------
+
+class PiDaemonConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
+    debounce_sec: Optional[float] = None
+    cooldown_sec: Optional[float] = None
+    heartbeat_sec: Optional[float] = None
+
+
+_PI_DAEMON_BOUNDS: dict[str, tuple[float, float]] = {
+    "debounce_sec": (0.0, 60.0),
+    "cooldown_sec": (0.0, 600.0),
+    "heartbeat_sec": (60.0, 3600.0),
+}
+
+
+@router.post("/pi_daemon")
+async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
+    cfg = load_config()
+    old = cfg.pi_daemon.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        if field in _PI_DAEMON_BOUNDS:
+            lo, hi = _PI_DAEMON_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        setattr(cfg.pi_daemon, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "pi_daemon_config_changed",
+                 "entity_type": "pi_daemon_config", "before": old,
+                 "after": cfg.pi_daemon.model_dump(mode="json"),
+                 "message": f"PI daemon config updated: {list(updates.keys())}"})
     return {"updated": updates}
 
 

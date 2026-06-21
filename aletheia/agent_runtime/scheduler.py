@@ -44,6 +44,9 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "daily_summary": 60.0,
     "ohlcv_nightly_backfill": 3600.0,
     "pi_operator_loop": 120.0,
+    "insight_synthesizer": 120.0,
+    "confidence_calibration": 30.0,
+    "reasoning_feedback": 60.0,
 }
 
 
@@ -332,6 +335,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
     )
     _scheduler.add_job(
+        _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
+        id="insight_synthesizer", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
+    )
+    _scheduler.add_job(
+        _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
+        id="confidence_calibration", misfire_grace_time=300, executor="io",
+    )
+    _scheduler.add_job(
         _guarded("strategy_designer_daily", _run_strategy_designer), "cron", hour=1, minute=0, id="strategy_designer_daily",
         misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
     )
@@ -358,11 +369,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         executor="io",
     )
     _scheduler.add_job(
-        _guarded("paper_trader", _run_paper_trader), "interval", minutes=15, id="paper_trader",
+        _guarded("paper_trader", _run_paper_trader), "interval", minutes=5, id="paper_trader",
         misfire_grace_time=60, executor="agents",
     )
+    _pi_heartbeat_min = max(1, int(cfg.pi_daemon.heartbeat_sec / 60)) if cfg.pi_daemon.enabled else 15
     _scheduler.add_job(
-        _guarded("pi_trading_decision", _run_pi_trading_decision), "interval", minutes=15,
+        _guarded("pi_trading_decision", _run_pi_trading_decision), "interval", minutes=_pi_heartbeat_min,
         id="pi_trading_decision", misfire_grace_time=120,
         next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
     )
@@ -777,12 +789,30 @@ def _run_paper_trader():
 
 
 def _run_pi_trading_decision():
-    """PI Agent trading decision — evaluates market state and submits proposals."""
+    """PI Agent heartbeat — notifies the event-driven daemon or runs inline as fallback.
+
+    When pi_daemon is enabled and running, this job simply wakes the daemon
+    (which handles debounce, cooldown, and the actual LLM evaluation). The daemon
+    provides sub-second response to signal events; this job is the 5-min safety net.
+
+    When pi_daemon is disabled or not running, runs the evaluation inline (legacy path).
+    """
     cfg = load_config()
     if cfg.runtime.paused:
         return
     if cfg.agent.permission_mode not in ("Paper", "Full"):
         return
+
+    # Daemon path: delegate to the event-driven loop
+    try:
+        from aletheia.agent_runtime.pi_daemon import is_daemon_running, notify_pi_daemon
+        if cfg.pi_daemon.enabled and is_daemon_running():
+            notify_pi_daemon(source="heartbeat")
+            return
+    except Exception:
+        pass
+
+    # Legacy fallback: daemon disabled or not started — run inline
     try:
         from aletheia.agent_shell.commands import evaluate_trading_opportunity
         result = _run_async_with_timeout("pi_trading_decision", evaluate_trading_opportunity({}))
@@ -1072,6 +1102,58 @@ def _run_risk_critic():
         )
     except Exception as e:
         logger.warning("risk_critic job failed: %s", e)
+
+
+def _run_insight_synthesizer():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        import asyncio
+        from aletheia.analytics.insight_synthesizer import synthesize_trading_memo
+
+        loop = asyncio.new_event_loop()
+        try:
+            memo = loop.run_until_complete(
+                asyncio.wait_for(synthesize_trading_memo(), timeout=_ASYNC_JOB_TIMEOUT_SEC["insight_synthesizer"])
+            )
+            if memo:
+                _record_job_success("insight_synthesizer")
+                logger.info("insight_synthesizer produced memo: %d trades", memo.get("sample_size", 0))
+            else:
+                _record_job_success("insight_synthesizer")
+        finally:
+            loop.close()
+    except asyncio.TimeoutError:
+        logger.warning("insight_synthesizer timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["insight_synthesizer"])
+    except Exception as e:
+        logger.warning("insight_synthesizer failed: %s", e)
+        _record_job_failure("insight_synthesizer", str(e))
+
+    # Piggyback: reasoning feedback aggregation (no LLM, cheap)
+    try:
+        from aletheia.analytics.reasoning_feedback import build_reasoning_feedback
+        fb = build_reasoning_feedback()
+        if fb:
+            logger.info("reasoning_feedback built: %d proposals, %d executed",
+                        fb.get("sample_proposals", 0), fb.get("sample_executed", 0))
+    except Exception as e:
+        logger.debug("reasoning_feedback piggyback failed: %s", e)
+
+
+def _run_confidence_calibration():
+    try:
+        from aletheia.analytics.confidence_calibration import build_calibration_report
+        report = build_calibration_report()
+        if report:
+            _record_job_success("confidence_calibration")
+            logger.info("confidence_calibration: ECE=%.3f (%s), %d trades",
+                        report.get("ece", 0), report.get("ece_grade", "?"), report.get("total_executed", 0))
+        else:
+            _record_job_success("confidence_calibration")
+    except Exception as e:
+        logger.warning("confidence_calibration job failed: %s", e)
+        _record_job_failure("confidence_calibration", str(e))
 
 
 def _cleanup_stale_scanner_runs():

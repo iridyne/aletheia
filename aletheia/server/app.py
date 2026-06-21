@@ -310,6 +310,21 @@ async def lifespan(app: FastAPI):
     # cfg.runtime.paused, and the only time-sensitive job (market_data) is
     # harmless to run once. See _llm_startup_gate.
     llm_gate_task = asyncio.create_task(_llm_startup_gate(cfg)) if background_services_enabled else None
+
+    # PI Agent event-driven daemon — wakes immediately on signal arrival
+    pi_daemon_task = None
+    if background_services_enabled and cfg.pi_daemon.enabled:
+        try:
+            from aletheia.agent_runtime.pi_daemon import start_pi_daemon
+            pi_daemon_task = start_pi_daemon(
+                loop=asyncio.get_running_loop(),
+                debounce_sec=cfg.pi_daemon.debounce_sec,
+                cooldown_sec=cfg.pi_daemon.cooldown_sec,
+                heartbeat_sec=cfg.pi_daemon.heartbeat_sec,
+            )
+        except Exception as e:
+            logger.warning("PI daemon failed to start: %s", e)
+
     telegram_bot = None
     telegram_task = None
     if background_services_enabled:
@@ -346,6 +361,16 @@ async def lifespan(app: FastAPI):
             try:
                 await telegram_task
             except asyncio.CancelledError:
+                pass
+        except Exception:
+            pass
+    if pi_daemon_task is not None and not pi_daemon_task.done():
+        try:
+            from aletheia.agent_runtime.pi_daemon import stop_pi_daemon
+            stop_pi_daemon()
+            try:
+                await pi_daemon_task
+            except (asyncio.CancelledError, Exception):
                 pass
         except Exception:
             pass

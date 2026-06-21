@@ -595,23 +595,38 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         except Exception as e:
             errors.append(f"backtest_gate_error:{e}")
 
-    # Advance through the ungated lifecycle states so the paper trader can bind to it.
-    # Advisory-only strategies (no compiled RuleSet) stop at paper_candidate — they
-    # cannot be validated by the backtest engine, so giving them paper_running slots
-    # wastes resources.
-    # Backtest-killed strategies are retired immediately — no paper resources wasted.
+    # Phase 4e: All auto-promotion stops at paper_candidate. Promotion to
+    # paper_running requires PI Agent confirmation (sole decision maker principle).
+    # Backtest-killed strategies are retired immediately.
     if backtest_killed:
         promote_strategy(strategy.id, "retired")
         outputs.append("strategy_state:retired")
     else:
-        activation_limit = "paper_running" if ruleset_json else "paper_candidate"
         state = "draft"
         for target in _ACTIVATION_PATH:
-            if target == "paper_running" and activation_limit == "paper_candidate":
-                from aletheia.storage.repositories import update_strategy
-                update_strategy(strategy.id, paper_trading_paused=True,
-                               paper_pause_reason="no_ruleset")
-                outputs.append("advisory_only:paused_at_paper_candidate")
+            if target == "paper_running":
+                # Write recommendation for PI Agent to promote
+                try:
+                    from aletheia.storage.models import PiDecision
+                    from aletheia.storage.repositories import insert_pi_decision
+                    pi_dec = PiDecision(
+                        symbol=None,
+                        direction=None,
+                        action="recommend_promote",
+                        conviction=0,
+                        reasoning=f"Strategy Designer: strategy {strategy.id[:8]} passed gates, recommend promote to paper_running",
+                        proposal_id=strategy.id,
+                        debate_ran=False,
+                    )
+                    insert_pi_decision(pi_dec)
+                    try:
+                        from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+                        notify_pi_daemon(source="strategy_designer_promote")
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                outputs.append("awaiting_pi_promotion:paper_candidate→paper_running")
                 break
             result = promote_strategy(strategy.id, target)
             if not result.get("success"):
@@ -653,6 +668,29 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
                         parameters=variant_params,
                     )
                     for t in _ACTIVATION_PATH:
+                        if t == "paper_running":
+                            # PI Agent sole decision maker — stop at paper_candidate
+                            try:
+                                from aletheia.storage.models import PiDecision
+                                from aletheia.storage.repositories import insert_pi_decision
+                                pi_dec = PiDecision(
+                                    symbol=None,
+                                    direction=None,
+                                    action="recommend_promote",
+                                    conviction=0,
+                                    reasoning=f"Strategy Designer: sweep variant {v_strat.id[:8]} passed gates, recommend promote to paper_running",
+                                    proposal_id=v_strat.id,
+                                    debate_ran=False,
+                                )
+                                insert_pi_decision(pi_dec)
+                                try:
+                                    from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+                                    notify_pi_daemon(source="strategy_designer_sweep")
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                            break
                         r = promote_strategy(v_strat.id, t)
                         if not r.get("success"):
                             break

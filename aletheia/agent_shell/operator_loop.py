@@ -297,27 +297,63 @@ def _execute_level1_action(action: OperatorAction) -> dict:
 
 
 def _action_retire_strategy(action: OperatorAction) -> dict:
+    """Phase 4d: Write recommendation to pi_decisions instead of direct retirement.
+    PI Agent will see this in pending_signals and confirm the action."""
     strategy_id = action.params.get("strategy_id", "")
     if not strategy_id:
         return {"action": "retire_strategy", "status": "skipped", "reason": "no strategy_id"}
     try:
-        repo.update_strategy(strategy_id, state="retired")
-        _record_action("retire_strategy", param=strategy_id, detail=action.reason)
-        logger.info("operator: retired strategy %s — %s", strategy_id, action.reason)
-        return {"action": "retire_strategy", "status": "executed", "strategy_id": strategy_id}
+        from aletheia.storage.models import PiDecision
+        from aletheia.storage.repositories import insert_pi_decision
+        pi_dec = PiDecision(
+            symbol=None,
+            direction=None,
+            action="recommend_retire",
+            conviction=0,
+            reasoning=f"Operator recommends retiring strategy {strategy_id[:8]}: {action.reason}",
+            proposal_id=strategy_id,
+            debate_ran=False,
+        )
+        insert_pi_decision(pi_dec)
+        try:
+            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+            notify_pi_daemon(source="operator_loop_retire")
+        except Exception:
+            pass
+        _record_action("retire_strategy", param=strategy_id, detail=f"recommendation queued: {action.reason}")
+        logger.info("operator: recommend retire strategy %s — %s", strategy_id, action.reason)
+        return {"action": "retire_strategy", "status": "recommended", "strategy_id": strategy_id}
     except Exception as e:
         return {"action": "retire_strategy", "status": "error", "reason": str(e)}
 
 
 def _action_demote_strategy(action: OperatorAction) -> dict:
+    """Phase 4d: Write recommendation to pi_decisions instead of direct demotion.
+    PI Agent will see this in pending_signals and confirm the action."""
     strategy_id = action.params.get("strategy_id", "")
     if not strategy_id:
         return {"action": "demote_strategy", "status": "skipped", "reason": "no strategy_id"}
     try:
-        repo.update_strategy(strategy_id, state="research_note")
-        _record_action("demote_strategy", param=strategy_id, detail=action.reason)
-        logger.info("operator: demoted strategy %s — %s", strategy_id, action.reason)
-        return {"action": "demote_strategy", "status": "executed", "strategy_id": strategy_id}
+        from aletheia.storage.models import PiDecision
+        from aletheia.storage.repositories import insert_pi_decision
+        pi_dec = PiDecision(
+            symbol=None,
+            direction=None,
+            action="recommend_demote",
+            conviction=0,
+            reasoning=f"Operator recommends demoting strategy {strategy_id[:8]}: {action.reason}",
+            proposal_id=strategy_id,
+            debate_ran=False,
+        )
+        insert_pi_decision(pi_dec)
+        try:
+            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+            notify_pi_daemon(source="operator_loop_demote")
+        except Exception:
+            pass
+        _record_action("demote_strategy", param=strategy_id, detail=f"recommendation queued: {action.reason}")
+        logger.info("operator: recommend demote strategy %s — %s", strategy_id, action.reason)
+        return {"action": "demote_strategy", "status": "recommended", "strategy_id": strategy_id}
     except Exception as e:
         return {"action": "demote_strategy", "status": "error", "reason": str(e)}
 

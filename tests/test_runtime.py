@@ -67,14 +67,15 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     s = sched.init_scheduler()
     assert s is not None
     assert sched.is_running()
-    # market_data + market_observer + dreaming_daily + strategy_designer_daily
-    # + strategy_designer_eu + strategy_designer_us
+    # market_data + market_observer + dreaming_daily + insight_synthesizer
+    # + strategy_designer_daily + strategy_designer_eu + strategy_designer_us
     # + reconciliation + portfolio_snapshot + exchange_sync + paper_trader
     # + pi_trading_decision + position_manager + cleanup + health_check
     # + stock_observer + prediction_observer + post_trade_reviewer + risk_critic
     # + universe_refresh + position_reconcile + data_collectors + backtest_orchestrator
     # + okx_demo_symbols + price_feed + daily_summary + tpsl_fill_check + pi_operator_loop
-    assert len(s.get_jobs()) == 28
+    # + insight_synthesizer + confidence_calibration
+    assert len(s.get_jobs()) == 30
     market_observer_job = s.get_job("market_observer")
     assert market_observer_job is not None
     assert market_observer_job.next_run_time <= started_at.astimezone(market_observer_job.next_run_time.tzinfo) + timedelta(seconds=120)
