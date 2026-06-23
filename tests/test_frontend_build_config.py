@@ -2,16 +2,15 @@ from pathlib import Path
 import json
 
 
-def test_vite_build_does_not_empty_served_dashboard_dir():
-    """Production UI builds must not create an API-only restart window.
+def test_vite_build_empties_output_dir():
+    """Build must clean stale assets — emptyOutDir: true prevents dead file accumulation.
 
-    Vite's default `emptyOutDir` deletes dashboard_static before writing the new
-    bundle. If the gateway starts in that window, "/" can stay unavailable until
-    the next restart. The shipped config keeps old hashed assets while writing
-    the new bundle.
+    The build is an offline operation (npm run build + commit), not a hot-swap
+    while the gateway is serving. emptyOutDir: true ensures only current-build
+    files exist in dashboard_static/ — no orphan hashed assets from prior builds.
     """
     cfg = Path("frontend/vite.config.ts").read_text(encoding="utf-8")
-    assert "emptyOutDir: false" in cfg
+    assert "emptyOutDir: true" in cfg
 
 
 def test_dev_launcher_uses_single_gateway_port():
