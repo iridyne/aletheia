@@ -111,7 +111,8 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
     # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation
-    fee_rate = 0.001 if row.get("execution_mode", "").startswith("paper") else 0.0006
+    _DEMO_MODES = ("paper_internal", "bitget_demo", "binance_testnet", "okx_demo")
+    fee_rate = 0.001 if row.get("execution_mode", "") in _DEMO_MODES else 0.0006
     entry_fee = row.get("entry_fee") or (row["entry_price"] * row["quantity"] * fee_rate)
     exit_fee = exit_price * row["quantity"] * fee_rate
     realized = gross_pnl - entry_fee - exit_fee

@@ -26,6 +26,20 @@ class MarketSignalContext:
     atr_pct: float | None = None
 
 
+def _normalize_direction(raw: str | None) -> str | None:
+    """Normalize direction_bias to 'long'/'short'/'neutral' vocabulary."""
+    if not raw:
+        return None
+    low = raw.lower().strip()
+    if low in ("long", "bullish", "buy"):
+        return "long"
+    if low in ("short", "bearish", "sell"):
+        return "short"
+    if low in ("neutral", "flat", "none"):
+        return "neutral"
+    return raw
+
+
 def get_market_signals_for_positions(
     symbols: list[str],
     max_signal_age_min: float = 35.0,
@@ -75,7 +89,7 @@ def get_market_signals_for_positions(
                 age = None
             result[sym] = MarketSignalContext(
                 symbol=sym,
-                direction_bias=row["direction_bias"],
+                direction_bias=_normalize_direction(row["direction_bias"]),
                 confidence_score=row["confidence_score"],
                 signal_age_min=round(age, 1) if age is not None else None,
             )
