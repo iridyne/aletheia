@@ -249,23 +249,34 @@ and intended use.
 
 ### 4.1 Allowed Item Types
 
-The allowed `knowledge_items.item_type` values are:
+The allowed `knowledge_items.item_type` values and their authoritative sources
+are:
 
-```text
-research_note
-strategy_memory
-dreaming_log
-daily_review
-post_trade_review
-```
+| item_type | Primary source | Purpose |
+|---|---|---|
+| `research_note` | Research Agent, Market Observer, human import | Evidence, hypotheses, market observations, counterarguments |
+| `strategy_memory` | Strategy Designer, strategy lifecycle updates | Strategy descriptions, parameters, lifecycle context, rationale |
+| `dreaming_log` | Dreaming Agent | System-level consolidation, pattern extraction, suggested focus |
+| `daily_review` | Dreaming Agent or scheduled daily review | Daily operational summary, trading review, system health notes |
+| `post_trade_review` | Post-trade Reviewer or human review | Execution quality, what worked, what failed, improvement notes |
+| `trade_case_study` | Trade case study builder (closed positions) | Structured per-trade analysis for learning and strategy review |
+| `trading_guard` | Guard promotion flow (human-confirmed or seeded) | Active behavioral rules enforced at decision time |
+| `guard_candidate` | Dreaming Agent or operator review | Provisional guard pattern pending human confirmation |
+| `system_action` | Self-heal layer (`commands._emit_self_heal_action`) | Audit trail for automated system-corrective actions |
+| `operator_assessment` | Operator loop (`operator_loop.py`) | Periodic operator review summaries of agent decisions and execution |
+| `trading_memo` | Insight synthesizer (`analytics/insight_synthesizer.py`) | Rolling tactical memo synthesized from recent trade signals |
+| `reasoning_feedback` | Reasoning feedback tracker (`analytics/reasoning_feedback.py`) | Calibration records comparing predicted vs actual outcomes |
+| `calibration_report` | Confidence calibration engine (`analytics/confidence_calibration.py`) | Periodic confidence scoring accuracy reports |
 
-Do not introduce a new item type without updating:
+Adding a new item type requires 5 synchronised updates:
 
-- Knowledge manager creation functions.
-- API validation.
-- Dashboard query logic.
-- Tests.
-- This document.
+1. `aletheia/knowledge/manager.py` — add a `create_<type>()` function.
+2. `aletheia/storage/` — confirm the type is accepted by `insert_knowledge_item`
+   (no enum constraint; the column is free-text, so validation is by convention).
+3. API route (if dashboard-queryable) — add or extend a `/knowledge/...` route in
+   `aletheia/server/routes/data.py`.
+4. `tests/specs/spec_data_model.py` — declare a `SpecClaim` for the new type.
+5. This document — add a row to the table above.
 
 ### 4.2 Type Definitions
 
@@ -307,6 +318,63 @@ Do not introduce a new item type without updating:
 - Storage directory: `data/knowledge/post_trade_reviews/`.
 - Dashboard: Reports / Post-Trade Reviews when present; may also inform Strategy
   Lifecycle gates.
+
+`trade_case_study`
+
+- Source: Trade case study builder, triggered on closed positions.
+- Purpose: structured per-trade narrative for retrospective learning and strategy
+  review gates.
+- Storage directory: `data/knowledge/trade_case_studies/`.
+- Dashboard: Knowledge Base / Trade Case Studies.
+
+`trading_guard`
+
+- Source: Guard promotion flow; requires human confirmation or explicit seeding.
+- Purpose: active behavioral constraints retrieved at AI decision time.
+- Storage directory: `data/knowledge/trading_guards/`.
+- Dashboard: Guards panel.
+
+`guard_candidate`
+
+- Source: Dreaming Agent or operator review.
+- Purpose: provisional guard pattern; `medium_confidence`; not retrieved by the
+  active recall path until promoted to `trading_guard`.
+- Storage directory: `data/knowledge/guard_candidates/`.
+- Dashboard: Guards panel (pending section).
+
+`system_action`
+
+- Source: Self-heal layer (`aletheia/agent_shell/commands.py:_emit_self_heal_action`).
+- Purpose: audit trail for automated corrective actions taken without human
+  initiation.
+- Storage: inline content only (no file path).
+- Must not contain: order placement intent or risk bypass signals.
+
+`operator_assessment`
+
+- Source: Operator loop (`aletheia/agent_shell/operator_loop.py`).
+- Purpose: periodic structured summary of operator-loop decisions and execution
+  outcomes; used for drift detection and performance review.
+
+`trading_memo`
+
+- Source: Insight synthesizer (`aletheia/analytics/insight_synthesizer.py`).
+- Purpose: rolling tactical context memo derived from recent signals; injected
+  into AI decision context.
+- Storage: inline content; one active memo at a time (older memos remain as
+  history).
+
+`reasoning_feedback`
+
+- Source: Reasoning feedback tracker (`aletheia/analytics/reasoning_feedback.py`).
+- Purpose: comparison of prediction vs actual outcome for calibration; drives
+  confidence accuracy reporting.
+
+`calibration_report`
+
+- Source: Confidence calibration engine (`aletheia/analytics/confidence_calibration.py`).
+- Purpose: periodic accuracy report on confidence scores; one active report
+  replaced on each calibration run.
 
 ### 4.3 No Type Laundering
 
@@ -522,8 +590,22 @@ aletheia/exchanges/bitget/auth.py
 aletheia/exchanges/bitget/client.py
 aletheia/config/secrets.py
 aletheia/agent_runtime/permissions.py
+aletheia/agent_shell/registry.py
+aletheia/agent_runtime/tool_registry.py
+aletheia/files/jsonl.py
 aletheia/server/routes/live.py
 ```
+
+- `aletheia/agent_shell/registry.py`: defines `FORBIDDEN_INTENTS` (line 415) —
+  the frozenset of command names that are always blocked regardless of permission
+  mode. Modifying this set changes which agent intents are structurally
+  unreachable.
+- `aletheia/agent_runtime/tool_registry.py`: defines `RESTRICTED_TOOLS` (line
+  39) — the list of tool names that are never callable by LLM-driven agents.
+  Removing a name here grants agents live, credential, or risk-limit capabilities.
+- `aletheia/files/jsonl.py`: the append-only JSONL writer backing
+  `data/logs/audit.jsonl`. Any change to write semantics, append guarantees, or
+  file-path routing directly affects the §1.4 audit chain invariant.
 
 Changes here require stricter review and testing.
 

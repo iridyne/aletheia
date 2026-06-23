@@ -1,9 +1,9 @@
 # Agent Contracts
 
-> Input/output contracts for all 14 registered agents and 30 scheduler jobs.
+> Input/output contracts for all 19 registered agents and 30 scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-06-21
+> Last updated: 2026-06-23 (频率全量修正 + 5 新 agent 补充)
 
 ---
 
@@ -12,35 +12,35 @@
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
 | 1 | market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
-| 2 | market_observer | 15min (jitter 120s) | observer | Scan for trading opportunities |
-| 3 | stock_observer | 4h | observer | xStocks/equity market scan |
-| 4 | prediction_observer | 6h | observer | Prediction market scan |
+| 2 | market_observer | 15min | observer | Scan for trading opportunities |
+| 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
+| 4 | prediction_observer | 30min | agents | Prediction market scan |
 | 5 | paper_trader | 5min | agents | Execute paper trades from pending signals |
-| 6 | pi_trading_decision | 5min | agents | PI Agent heartbeat (daemon fallback) |
-| 7 | position_manager | 10min | agents | Manage open positions (trailing stop, exit) |
-| 8 | tpsl_fill_check | 2min | io | Check exchange TP/SL order fills |
-| 9 | position_reconcile | 30min | io | Reconcile local vs exchange positions |
-| 10 | post_trade_reviewer | 2h | agents | Review closed trades for lessons |
-| 11 | risk_critic | 1h | agents | Evaluate risk exposure, flag violations |
-| 12 | dreaming_daily | daily 02:00 UTC | agents | Synthesize daily knowledge summary |
-| 13 | strategy_designer_daily | daily 03:00 UTC | agents | Generate new strategy proposals |
-| 14 | strategy_designer_eu | daily 08:00 UTC | agents | EU session strategy generation |
-| 15 | strategy_designer_us | daily 14:00 UTC | agents | US session strategy generation |
-| 16 | insight_synthesizer | daily 04:00 UTC | agents | Cross-agent insight synthesis |
-| 17 | confidence_calibration | 6h | agents | Compute ECE calibration metrics |
-| 18 | pi_operator_loop | 1h | agents | High-level operator assessment loop |
-| 19 | health_check | 2min | io | Doctor health probe |
-| 20 | cleanup | daily 05:00 UTC | io | Data retention cleanup |
-| 21 | exchange_sync | 30s | io | Refresh exchange account cache |
-| 22 | portfolio_snapshot | 15min | io | Store portfolio equity snapshot |
-| 23 | reconciliation | 6h | io | Full state reconciliation |
-| 24 | price_feed | 30s | io | In-memory price cache refresh |
-| 25 | daily_summary | daily 00:00 UTC | io | Generate daily performance summary |
+| 6 | pi_trading_decision | ~15min (configurable) | agents | PI Agent heartbeat (daemon fallback) |
+| 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
+| 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
+| 9 | position_reconcile | 5min | io | Reconcile local vs exchange positions |
+| 10 | post_trade_reviewer | 4h | agents | Review closed trades for lessons |
+| 11 | risk_critic | 6h | agents | Evaluate risk exposure, flag violations |
+| 12 | dreaming_daily | cron 02:00 CST | agents | Synthesize daily knowledge summary |
+| 13 | strategy_designer_daily | cron 01:00 CST | agents | Generate new strategy proposals |
+| 14 | strategy_designer_eu | cron 09:00 CST | agents | EU session strategy generation |
+| 15 | strategy_designer_us | cron 17:00 CST | agents | US session strategy generation |
+| 16 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
+| 17 | confidence_calibration | 6h | io | Compute ECE calibration metrics |
+| 18 | pi_operator_loop | cron 每4h:15 CST | agents | High-level operator assessment loop |
+| 19 | health_check | 10min | io | Doctor health probe |
+| 20 | cleanup | cron 03:17 CST | io | Data retention cleanup |
+| 21 | exchange_sync | 5min | io | Refresh exchange account cache |
+| 22 | portfolio_snapshot | 10min | default | Store portfolio equity snapshot |
+| 23 | reconciliation | 2min (live only) | io | Full state reconciliation |
+| 24 | price_feed | 30s | fast_io | In-memory price cache refresh |
+| 25 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
 | 26 | data_collectors | 2min | io | Funding rate, OI, liquidation, orderbook |
-| 27 | okx_demo_symbols | daily | io | Refresh OKX demo symbol list |
-| 28 | backtest_orchestrator | 4h | agents | Run pending backtests |
-| 29 | universe_refresh | 15min | io | Universe composition refresh |
-| 30 | ohlcv_nightly_backfill | daily 01:00 UTC | io | Historical OHLCV gap fill |
+| 27 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
+| 28 | backtest_orchestrator | cron 04:00 CST | agents | Run pending backtests |
+| 29 | universe_refresh | 10min | io | Universe composition refresh |
+| 30 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
 
 ---
 
@@ -57,21 +57,57 @@
 - **Side effects**: Writes to `opportunities` table; triggers PI daemon wake via `notify_pi_daemon()`
 - **Error behavior**: Degrades to basic technical-only signals when LLM unavailable
 
-#### stock_observer
+#### equity_observer (replaces stock_observer)
 
-- **Trigger**: scheduler every 4h
-- **Inputs**: xStocks config, ON-series market data
+- **Trigger**: cron 工作日 14:00-21:00 UTC, every 30min
+- **Inputs**: yfinance daily bars + Bitget xStocks real-time price cross-validation
 - **LLM**: Yes
-- **Outputs**: opportunities table (xStocks symbols)
+- **Outputs**: opportunities table (equity-linked symbols)
 - **Side effects**: Same as market_observer but for equity-linked tokens
+- **Condition**: config.market_data.observed_equities non-empty
+
+#### stock_observer (removed 2026-06-17 — superseded by equity_observer)
 
 #### prediction_observer
 
-- **Trigger**: scheduler every 6h
-- **Inputs**: prediction market APIs, existing prediction_markets table
+- **Trigger**: scheduler every 30min
+- **Inputs**: prediction market APIs (Polymarket/Kalshi), existing prediction_markets table
 - **LLM**: No (structured data parsing)
-- **Outputs**: prediction_events, prediction_markets, prediction_probability_snapshots
-- **Side effects**: Creates prediction_market_claims when probability crosses thresholds
+- **Outputs**: prediction_runs, prediction_markets, prediction_probability_snapshots
+- **Side effects**: Chains divergence_scanner on completion
+
+#### divergence_scanner (chained from prediction_observer)
+
+- **Trigger**: runs after prediction_observer completes
+- **Inputs**: prediction market prices vs spot prices
+- **LLM**: No
+- **Outputs**: divergence alerts → opportunities table
+- **Side effects**: None
+
+#### paper_trader_ranker (internal to paper_trader)
+
+- **Trigger**: called within paper_trader job
+- **Inputs**: opportunities + universe_scores + trading_guards + PiDecision
+- **LLM**: No (deterministic ranking, 8-dimension scoring)
+- **Outputs**: ranked + filtered opportunity list → PI daemon signal
+- **Side effects**: None
+- **Contract**: Must NEVER call LLM directly
+
+#### research_agent / research_worker
+
+- **Trigger**: enqueued by dreaming_agent or manual
+- **Inputs**: topic query + knowledge context
+- **LLM**: Yes (research_worker makes LLM calls)
+- **Outputs**: knowledge_items(research_note), serenity_profile_snapshots
+- **Side effects**: FTS index update
+
+#### portfolio_agent
+
+- **Trigger**: manual (not scheduled)
+- **Inputs**: current positions + portfolio metrics
+- **LLM**: Yes
+- **Outputs**: portfolio rebalancing recommendations
+- **Side effects**: None (advisory only)
 
 ---
 
@@ -101,7 +137,7 @@
 
 #### position_manager
 
-- **Trigger**: scheduler every 10min
+- **Trigger**: scheduler every 5min
 - **Inputs**: Open positions, current prices, strategy exit rules, PI exit decisions
 - **LLM**: No
 - **Outputs**: Position closes (status=closed, realized_pnl computed)
@@ -135,7 +171,7 @@
 
 #### post_trade_reviewer
 
-- **Trigger**: scheduler every 2h
+- **Trigger**: scheduler every 4h
 - **Inputs**: Recently closed positions (no existing review), market context at entry/exit
 - **LLM**: Yes (analysis of trade quality)
 - **Outputs**: knowledge_items (item_type=post_trade_review)
@@ -143,7 +179,7 @@
 
 #### risk_critic
 
-- **Trigger**: scheduler every 1h
+- **Trigger**: scheduler every 6h
 - **Inputs**: Open positions, risk config, recent violations, portfolio exposure
 - **LLM**: Yes (risk assessment)
 - **Outputs**: knowledge_items (item_type=risk_lesson), risk flag annotations on opportunities
@@ -159,7 +195,7 @@
 
 #### insight_synthesizer
 
-- **Trigger**: daily 04:00 UTC
+- **Trigger**: daily 02:30 CST (= 18:30 UTC previous day)
 - **Inputs**: knowledge_items, opportunities, positions, strategy performance
 - **LLM**: Yes
 - **Outputs**: Synthesized insights; reasoning_feedback piggyback (per-bucket statistics)
@@ -219,7 +255,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
 - **Per-job degradation**: each job wrapped in catch-all; one failure logs a warning and does NOT cascade (`scheduler.py:708-793`). Agents coupled only through shared SQLite tables (blackboard), never direct calls — so an upstream failure cannot crash a downstream agent.
 - **Leaked-tx cleanup**: scheduler rolls back any leaked transaction before/after each job.
 - **Consecutive-failure alert**: ≥3 consecutive failures → `infra_event` (dashboard-visible), `_record_job_failure` (`scheduler.py:67-79`). Non-cascading.
-- **Stale-input expiry**: if paper_trader stalls, its opportunities expire after 48h rather than blocking reviewers (`repositories.py:1597`).
+- **Stale-input expiry**: if paper_trader stalls, its opportunities expire after 48h rather than blocking reviewers (`repositories.py:1632`).
 
 ### LLM Fallback (request-level, unified — `model_provider/fallback.py:215-299`)
 
@@ -252,7 +288,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
                    |
                    v
         +-------------------+
-        |   opportunities   |------> risk_critic (1h)
+        |   opportunities   |------> risk_critic (6h)
         +-------------------+              |
                    |                       v
                    v               risk_decisions
@@ -271,7 +307,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
                                           |
                           +---------------+---------------+
                           v                               v
-                  trade_proposals              position_manager (10min)
+                  trade_proposals              position_manager (5min)
                           |                               |
                           v                               v
                   risk engine                    close positions
@@ -280,7 +316,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
                   orders -> fills            portfolio_snapshots
                           |                               |
                           v                               v
-                     positions             post_trade_reviewer (2h)
+                     positions             post_trade_reviewer (4h)
                                                           |
                                                           v
                                                   knowledge_items

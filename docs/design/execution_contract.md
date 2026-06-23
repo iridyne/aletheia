@@ -54,7 +54,7 @@ trade_proposals.id
 | `binance_testnet` | 是(testnet) | binance_broker | `binance_broker.py:40` |
 | `bitget/okx/binance_live_limited` | 是(**真实资金**) | 同上 broker 同函数 | — |
 
-`_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:32`)。
+`_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:35`)。
 
 ---
 
@@ -62,8 +62,8 @@ trade_proposals.id
 
 | 项 | 行为 | 位置 |
 |----|------|------|
-| 时机 | 新仓首次成交后(叠仓不下) | `bitget_broker.py:152` |
-| 内容 | `place_tpsl_order(plan_type=pos_loss/pos_profit, trigger_price, hold_side, size)` | `bitget_broker.py:315` |
+| 时机 | 新仓首次成交后(叠仓不下) | `bitget_broker.py:153-163` |
+| 内容 | `place_tpsl_order(plan_type=pos_loss/pos_profit, trigger_price, hold_side, size)` | `bitget_broker.py:299-336` |
 | SL | `trigger=proposal.stop_price` | :313 |
 | TP | `trigger=default_take_profit_price`(config/proposal) | `gateway.py:150` |
 | 开关 | `trading.exchange_tpsl_enabled`(`schema.py:341`) | — |
@@ -113,7 +113,10 @@ trade_proposals.id
 
 ---
 
-## 8. 目标态差距(意图领先代码)
+## 8. 已交付
 
-- ⚠️ [execution_path_honesty §1.3](../governance/execution_path_honesty.md):strategy 的 `entry_rule/exit_rule` 是**从不被解析执行的死字符串**。交易方向实际来自 opportunity 的 LLM `direction_bias`,strategy 仅提供 `strategy_id` 供晋级门挂靠统计。**契约诚实声明**:当前"策略规则驱动交易"不成立;策略层是 advisory。诚实化三路径(命名/确定性 gate/真 DSL)见该文档 §7,均需显式授权。
-- ⚠️ 审计链当前**无 hash 链**(2026-06-15 已补 `_prev_hash`,见 execution_path_honesty 顶部修正)——核实见批次5。
+- ✅ **审计链 `_prev_hash` hash 链**:每条 audit 记录写入前追加前一行的 SHA-256(`_prev_hash`),验证逻辑在同文件。实现位置:`aletheia/files/jsonl.py:182-200`(写入)、`jsonl.py:259-320`(校验)。历史 ⚠️ 注记已失效,此条目已交付。
+
+## 9. 目标态差距 — 当前活跃
+
+- ⚠️ [execution_path_honesty §1.3](../governance/execution_path_honesty.md):strategy 的 `entry_rule/exit_rule` 是**从不被解析执行的死字符串**(`models.py:216-219`,`strategy_designer.py:68-69,488-489`)。交易方向实际来自 opportunity 的 LLM `direction_bias`,strategy 仅提供 `strategy_id` 供晋级门挂靠统计。`strategy/dsl.py` 的 `RuleSet` 是预期替代路径,但尚未接入执行链。**契约诚实声明**:当前"策略规则驱动交易"不成立;策略层是 advisory。诚实化三路径(命名/确定性 gate/真 DSL)见该文档 §7,均需显式授权。

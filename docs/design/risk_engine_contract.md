@@ -12,8 +12,8 @@
 
 | 项 | 值 | 位置 |
 |----|----|----|
-| 主入口 | `evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult` | `aletheia/risk/engine.py:64` |
-| 并发保护 | 全局线程锁 `_eval_lock`,防 kill-switch TOCTOU | `engine.py:27, 70-71` |
+| 主入口 | `evaluate_proposal(proposal: TradeProposal) -> RiskCheckResult` | `aletheia/risk/engine.py:67` |
+| 并发保护 | 全局线程锁 `_eval_lock`,防 kill-switch TOCTOU | `engine.py:30, 70-71` |
 
 **契约**:所有 proposal 必须且仅能通过 `evaluate_proposal` 取得放行;同一时刻只有一个 proposal 在评估(序列化)。
 
@@ -31,16 +31,16 @@
 | 2 | Market Allowed | spot/futures 开关 | `exchange.enabled_markets` | `{spot/futures}_market_disabled` | :93 |
 | 3 | Live State | 非 `live_disabled` | `live.state` | `live_disabled` | :99 |
 | 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
-| 5 | Max Position Notional | live/demo 上限 + 回撤缩放 | `risk.max_{live/demo}_position_notional_usdt` | `exceeds_max_position_notional:{n}>{cap}` | :109 |
+| 5 | Max Position Notional | live/demo 上限 + 回撤缩放 | `risk.max_{live/demo}_position_notional_usdt` | `exceeds_max_position_notional:{n}>{cap}` (live path); `exceeds_demo_position_notional:{n}>{cap}` (demo path, engine.py:128) | :109 |
 | 6 | Max Open Positions | live/demo 持仓数 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
 | 8 | Max Daily Loss | 日损突破→**自动触发 kill switch** | `risk.max_daily_loss_pct`, `kill_switch_enabled_{live/demo}` | `max_daily_loss_exceeded:{r}<=-{lim}` | :145 |
 | 9a | Exchange Allowlist | 交易所匹配(self-contained 豁免) | `risk.allowed_exchange` | `exchange_not_allowed:{a}!={e}` | :162 |
 | 9b | Account Mode Match | live↔mode=live / demo↔mode=demo | `exchange.mode` | `account_mode_mismatch:...` | :170 |
 | 10 | Max Leverage | 期货杠杆上限 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
-| 11 | Data Freshness | live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` | `stale_market_data:age={a}` | :188 |
+| 11 | Data Freshness | live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` | `stale_market_data:age={a}` (live path); `stale_market_data_demo:age={a}` (demo path for bitget_demo/okx_demo only, engine.py:238-241) | :188 |
 | 12 | Total Live Exposure | 敞口+新单<上限 | `risk.max_total_live_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` | :194 |
-| 13 | Single Trade Risk | 止损距离×数量<上限 | `risk.max_{/demo_}single_trade_risk_pct` | `exceeds_single_trade_risk:{r}>{max}` | :202 |
+| 13 | Single Trade Risk | 止损距离×数量<上限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo) | :202 |
 | 14 | Strategy Lifecycle | live 仅 `live_candidate/live_limited` | `_LIVE_ELIGIBLE_STATES` | `strategy_not_live_eligible:{state}` | :211 |
 | 15 | Lesson Constraints | 已接受教训的 block_{symbol/direction/scanner} | `LessonStore.recommendation_json` | `lesson_block_{symbol/...}:{id}:{v}` | :240 |
 | 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta` | `sector_concentration/portfolio_beta:...` | :245,387 |
@@ -106,9 +106,9 @@ config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_s
 
 ---
 
-## 7. 已知缺陷(待批次5核实后落 issue)
+## 7. 已知缺陷
 
-- ⚠️ `engine.py:324, 481` 使用 `logger` 但疑似未导入 → 触发这两条分支时可能 NameError。**批次5核实**。
+§7 已知缺陷: 截至 2026-06-23, 无已知缺陷待修。
 
 ---
 

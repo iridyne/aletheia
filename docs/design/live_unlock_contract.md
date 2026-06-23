@@ -36,7 +36,7 @@ class LiveConfig:
 - `live.py` 路由**不得**下单。
 - 测试须覆盖"默认 disabled"+"解锁审计"。
 
-> ⚠️ 当前无代码层调用方权限检查(靠 dashboard HTTP 层隔离)。目标态:解锁路由应校验 operator permission_mode。批次5核实是否需补。
+> **[BACKLOG-LU-01] severity: moderate** — 解锁路由没有操作员 `permission_mode` 代码层检查,当前仅靠 dashboard HTTP 层隔离。目标态:解锁路由应在服务端显式校验 operator permission_mode。详见 [docs/issues/BACKEND_ISSUES.md](../issues/BACKEND_ISSUES.md)。
 
 ---
 

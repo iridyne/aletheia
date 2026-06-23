@@ -74,12 +74,15 @@ def ticker_to_xstock(ticker: str) -> str | None:
 ```
 
 **InstrumentId 约定**：
-- yfinance：`InstrumentId(exchange="yfinance", symbol="AAPL/USD", market_type="spot")`
-  - 符号格式：`{TICKER}/USD`（统一用 USD，非 USDT）
+- yfinance：`InstrumentId(exchange="yfinance", symbol="AAPL/USDT", market_type="spot")`
+  - 符号格式：`{TICKER}/USDT`（与 xStocks canonical 格式保持一致）
   - 这样 `InstrumentId.__post_init__` 的 `/` 检查可以通过
 - xStocks：保持现有 `InstrumentId(exchange="bitget", symbol="AAPLON/USDT", market_type="spot")`
 
-`to_canonical()` 对 `AAPL/USD` 原样返回（已含 `/`），无需修改。
+`to_canonical()` 对 `AAPL/USDT` 原样返回（已含 `/`），无需修改。
+
+> ⚠️ 设计稿原写 `{TICKER}/USD`；实际实现（`equity_observer.py` line 399）使用
+> `symbol=f"{ticker}/USDT"`，与 Bitget xStock canonical 格式一致。文档已同步更新。
 
 ---
 
@@ -108,7 +111,7 @@ equity_observer (每 30 min，US market hours gate)
 │       ├── compose prompt: yfinance_data + xstocks_price + deviation + advisory
 │       ├── LLM → MarketRead
 │       └── write Opportunity(
-│               symbol=f"{ticker}/USD",          # canonical equity format
+│               symbol=f"{ticker}/USDT",         # canonical /USDT format (equity_observer.py:399)
 │               asset_class="equity",
 │               asset_subclass="xstock" | "equity_daily",  # in metadata
 │               execution_eligible=False,         # 显式关闭
@@ -127,19 +130,28 @@ market_data:
   observed_xstocks: ["AAPLON/USDT", ...]   # Bitget symbols
 ```
 
-**改后**：
+**改后（已实施）**：
 ```yaml
 market_data:
   observed_equities: ["AAPL", "TSLA", "NVDA", "SPY"]  # 唯一入口，canonical ticker
-  # xStocks 是否启用改为派生：凡是 ticker 有对应 xstock mapping 且在 Bitget 上市即启用
-  # observed_xstocks 字段保留但标为 deprecated（向后兼容）
+  observed_xstocks: ["AAPLON/USDT", "TSLAON/USDT"]    # 仍需手动配置：决定哪些 ticker 激活 xStock 子路径
 ```
 
-`config/schema.py` 加：
+> ⚠️ 设计稿原计划将 xStocks 激活改为"从 mapping table 自动派生"（无需 `observed_xstocks`）。
+> 实际实现（`equity_observer.py` line 285）仍做 `xstock_symbol in observed_xstocks` gate 检查，
+> 即 xStock 子路径**仍需手动配置** `observed_xstocks`。自动派生方案尚未实施；`observed_xstocks`
+> 字段未废弃。配置说明以当前代码为准。
+
+`config/schema.py` 字段：
 ```python
 observed_equities: list[str] = Field(default_factory=list)
 # US equity tickers (Yahoo Finance canonical). equity_observer fetches daily bars
 # via yfinance + real-time price via Bitget xStocks if available.
+
+observed_xstocks: list[str] = Field(default_factory=list)
+# Bitget ON-series symbols (e.g. "AAPLON/USDT") to activate the xStock sub-path.
+# Only tickers whose mapped xstock symbol appears here get live cross-validation.
+# Required until auto-derivation from mapping table is implemented.
 ```
 
 ---
@@ -218,7 +230,14 @@ query = f"{ticker} earnings momentum sector rotation relative_strength"
 
 ### 6.3 equity 知识回流
 
-`equity_observer` 生成 Opportunity 后，如果 LLM 给出高置信度分析，写入 KB：
+> ⚠️ **Phase 3，未实现（2026-06-23）**
+>
+> 下面代码块是设计意图，**尚未在 `equity_observer.py` 中实现**。
+> `grep "research_note\|kb_write" aletheia/agents/equity_observer.py` 无匹配。
+> 已登记为待办：`docs/issues/BACKEND_ISSUES.md`（equity KB write-back 缺失）。
+
+设计意图（Phase 3 实施时参考）：
+
 ```python
 # 类似 market_observer 的 experience loop
 if read.confidence > 0.7:
@@ -235,19 +254,22 @@ if read.confidence > 0.7:
 
 **目标**：equity 机会进入 ranker 但标记为只学习，不下单。
 
-`paper_trader_ranker.py` 改动（第 103-106 行）：
+`paper_trader_ranker.py` 改动（已实施，line 121）：
 ```python
 # 现在：
 if ac != "crypto":
     return None  # hard kill
 
-# 改为：
+# 改为（已实施）：
 if ac != "crypto":
     if ac == "equity" and opp.get("execution_eligible") == False:
         # Shadow track only: score but mark no_execute
-        return {**candidate_dict, "skip_reason": "equity_observation_only"}
+        return _make_candidate(opp, skip_reason="equity_shadow_track", direction=direction, trade_score=score)
     return None
 ```
+
+> ⚠️ 设计稿原写 `skip_reason="equity_observation_only"`；实际实现（`paper_trader_ranker.py` line 121）
+> 使用 `skip_reason="equity_shadow_track"`。文档已同步更新。
 
 **意义**：
 - equity 机会有真实的因子评分
@@ -273,7 +295,7 @@ xStocks（Bitget ON-series）是代币化美股，存在**溢价/折价**（通�
 ### Phase 1：符号统一 + 配置重构（基础层，无破坏）
 
 1. `data/symbols.py`：加 `xstock_to_ticker()`、`ticker_to_xstock()`
-2. `config/schema.py`：加 `observed_equities`，保留 `observed_xstocks` 作 deprecated
+2. `config/schema.py`：加 `observed_equities`，保留 `observed_xstocks`（仍为活跃字段；自动派生方案未实施）
 3. `storage/models.py`：Opportunity 加 `asset_subclass`、`canonical_ticker`（+ migrations）
 
 ### Phase 2：equity_observer agent（核心）

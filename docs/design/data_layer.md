@@ -1,7 +1,7 @@
 # Data Layer Refactoring Plan
 
 **Created:** 2026-06-08  
-**Last updated:** 2026-06-08 (OpenAlice/OpenBB 源码深读后修订)  
+**Last updated:** 2026-06-23 (Phase 3 状态修正 + 实际 provider chain 补文档)  
 **Status:** IMPLEMENTED — shipped 2026-06-08 (see AI_HANDOFF.md + DEVLOG 2026-06-08)  
 **Scope:** Market data sources only. Execution/account/order paths untouched.
 
@@ -272,14 +272,82 @@ market_data:
 
 **目标：** 清理遗留的交易所耦合，确保数据一致性。
 
-| # | 变更 | 文件 | 备注 |
+| # | 变更 | 文件 | 状态 |
 |---|---|---|---|
-| 3.1 | `instruments.py` 删除 `BITGET_GRANULARITY`，改为通用 `TIMEFRAME_MAP` | `aletheia/trading/instruments.py` | |
+| 3.1 | `instruments.py` 删除 `BITGET_GRANULARITY`，改为通用 `TIMEFRAME_MAP` | `aletheia/trading/instruments.py` | ⚠️ 未完成 (2026-06-23) |
 | 3.2 | `config/schema.py` — `ExchangeConfig.tradable_symbols` 改为仅控制交易白名单；行情观察改由 `MarketDataConfig.observed_symbols` 管控 | `aletheia/config/schema.py` | |
 | 3.3 | `RiskConfig.allowed_symbols` 改为 canonical 格式 | `aletheia/config/schema.py` | 需同步更新 risk engine 消费点 |
 | 3.4 | `BitgetClient` 删除 `get_ticker` / `get_ohlcv` 的公开行情路径的外部调用，注释标明"执行上下文内使用" | `aletheia/exchanges/bitget/client.py` | **change-controlled** |
 | 3.5 | 数据库迁移：`market_snapshots` 新增 `provider` 列，允许多源数据共存 | `aletheia/storage/migrations.py` | |
-| 3.6 | 更新 `instruments.py` 中 `tradable_symbols_from_config()` 返回 canonical 格式 | | |
+| 3.6 | 更新 `instruments.py` 中 `tradable_symbols_from_config()` 返回 canonical 格式 | `aletheia/trading/instruments.py` | ⚠️ 未完成 (2026-06-23) |
+
+**Phase 3 未完成项说明（截至 2026-06-23）：**
+
+- **3.1 未完成**：`BITGET_GRANULARITY` 仍存在于 `aletheia/trading/instruments.py:21`，未替换为通用 `TIMEFRAME_MAP`。代码注释标注为 "execution-context only"，但尚未完成从 `instruments.py` 中删除的迁移。详见 [docs/issues/BACKEND_ISSUES.md](../issues/BACKEND_ISSUES.md)。
+
+- **3.6 未完成**：`tradable_symbols_from_config()` (`aletheia/trading/instruments.py:30`) 的 docstring 声明返回 "Bitget format"（如 `"BTCUSDT"`），实现直接返回 `cfg.exchange.symbol_list`（该字段存储 Bitget 格式）。计划中的 canonical 格式迁移未执行。详见 [docs/issues/BACKEND_ISSUES.md](../issues/BACKEND_ISSUES.md)。
+
+---
+
+## 3a. 实际实现差异
+
+本节记录已实现代码与上述 Phase 1–3 计划之间的已知差异，作为契约更新的规范来源。
+
+### 3a.1 Provider Chain：3-tier FallbackChainProvider（已实现增强）
+
+**计划描述（§2 目标架构）**：CCXTProvider (Binance 主) + CCXTProvider (Bybit 备)，两者均通过 `CCXTProvider` 内部 primary/fallback 机制处理。
+
+**实际实现**：`get_market_data_provider()` (`aletheia/data/ccxt_provider.py:218`) 在 `enable_crypto_fallback=True`（默认）时返回：
+
+```
+FallbackChainProvider([
+    CCXTProvider(primary=ccxt_exchange, fallback=ccxt_fallback),  # tier 1
+    CoinGeckoProvider(),                                            # tier 2
+    BinancePublicProvider(),                                        # tier 3
+])
+```
+
+各 tier 职责：
+
+| Tier | Provider | 文件 | 覆盖范围 | 限制 |
+|------|----------|------|----------|------|
+| 1 | `CCXTProvider` | `aletheia/data/ccxt_provider.py:56` | 全部加密品种，OHLCV + ticker | 需 CCXT 支持的交易所 |
+| 2 | `CoinGeckoProvider` | `aletheia/data/sources/coingecko.py:43` | 主流加密 ticker；OHLCV 仅 "4h"/"1d" | 免费限速 1 req/6s；"1h" 降级为 "4h"；"5m"/"15m" 抛 `NotImplementedError` |
+| 3 | `BinancePublicProvider` | `aletheia/data/sources/binance_public.py:30` | Binance 公开端点备用 | 无 API key 需求 |
+
+**降级规则**（由 `FallbackChainProvider` 实现，`aletheia/data/sources/chain.py:52`）：
+- `NotImplementedError` → 静默跳过当前 provider（如 CoinGecko 不支持 5m）
+- 其他异常 → 记录 debug 日志并尝试下一 provider
+- 全部失败 → 抛出最后一个异常
+- Tier 1 失败且 Tier 2/3 成功 → 发出 operator 通知（`price_fallback` 事件，每 symbol 限频 5 min）
+
+**锁定为契约**：此 3-tier 链为当前生产行为，下述不变量必须保持：
+1. `get_market_data_provider()` 在默认配置下返回 `FallbackChainProvider` 实例（非裸 `CCXTProvider`）
+2. 链顺序：CCXTProvider 始终为 tier 1
+3. `enable_crypto_fallback=False` 时退化为裸 `CCXTProvider`（向后兼容开关）
+
+### 3a.2 xStocks ON-series 直连 Bitget 覆写
+
+ON-series xStocks（如 `AAPLON/USDT`、`TSLAON/USDT`）是 Bitget 独有的代币化美股，只在 Bitget 上市，通用 Binance/Bybit 路径无法拉取。
+
+**实现位置**（`aletheia/trading/market_data.py:118–130`）：
+
+```python
+# market_data.py:122-123
+if xstocks:
+    xprovider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
+```
+
+此处**刻意绕过** `get_market_data_provider()`，直接构造 `CCXTProvider(exchange="bitget", fallback_exchange="bitget")`，原因：
+
+- 两个 exchange 均为 `"bitget"`，确保 primary 失败时 fallback 不切换到其他交易所
+- xStocks 不在 FallbackChainProvider 的 CoinGecko/Binance 链中存在，多级降级会静默失败
+
+xStocks 标识通过 `aletheia/data/symbols.py:111` 的 `_XSTOCK_MAP` 维护，映射关系为 `{"AAPLON": "AAPL", "TSLAON": "TSLA", ...}`。
+
+**契约锁定**：xStocks 数据路径必须满足：
+- 调用 `CCXTProvider(exchange="bitget", fallback_exchange="bitget")` — 不得路由到 `get_market_data_provider()`
+- `InstrumentId.from_parts("bitget", symbol, MARKET_SPOT)` 构造（`aletheia/trading/instruments.py:64`）
 
 ---
 

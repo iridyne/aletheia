@@ -81,7 +81,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `liquidation_events` | Large liquidation events | symbol, side, quantity, price |
 | `macro_snapshots` | Macro economic indicators | indicator, value, source |
 
-### E. Agent Runtime (7 tables)
+### E. Agent Runtime (10 tables)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
@@ -92,6 +92,9 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `settings` | Runtime configuration store | key, value |
 | `runtime_registry` | Service/process registry | service_name, pid, started_at, health |
 | `runtime_checkpoints` | Long-running task progress | task_id, checkpoint_data (JSON), progress_pct |
+| `runtime_events` | Event bus persistence | event_type, payload (JSON), emitted_at |
+| `runtime_exclusive_lock` | Distributed lock (single-writer) | lock_name, holder, acquired_at, expires_at |
+| `runtime_ownership` | Task ownership tracking | task_id, owner, claimed_at |
 
 ### F. Agent Shell / Command Center (7 tables)
 
@@ -117,7 +120,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `universe_forward_outcomes` | Post-scan price performance | opportunity_id, pnl_15m, pnl_1h, pnl_4h, pnl_24h |
 | `universe_policies` | Universe selection rules | policy_name, filters (JSON), priority |
 
-### H. Serenity Pipeline (12 tables)
+### H. Serenity Pipeline (14 tables)
 
 | Table | Purpose |
 |-------|---------|
@@ -133,8 +136,10 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `serenity_profile_snapshots` | Profile state snapshots |
 | `serenity_feedback_events` | Feedback loop events |
 | `serenity_claims` | Falsifiable claims from research |
+| `serenity_theme_claims` | Junction: themes ↔ claims mapping |
+| `serenity_agent_locks` | Concurrency lock for Serenity agent runs |
 
-### I. PS (Production System) Layer (12 tables)
+### I. PS (Production System) Layer (14 tables)
 
 | Table | Purpose |
 |-------|---------|
@@ -151,6 +156,14 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `ps_lessons` | PS-derived lessons |
 | `ps_skills` | Learned trading skills |
 | `ps_policy_versions` | Policy version history |
+| `ps_scheduled_jobs` | Scheduled job definitions for PS layer |
+| `ps_job_runs` | Job execution history |
+
+### I-bis. Capital (1 table, additive migration)
+
+| Table | Purpose |
+|-------|---------|
+| `capital_events` | Deposits/withdrawals/transfers tracking (detected_at, amount, event_type) |
 
 ### J. Prediction Markets (5 tables)
 
@@ -242,7 +255,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 - **JSON columns**: Stored as TEXT; Python dict/list serialized via `json.dumps()`
 - **Nullable**: Most columns allow NULL; defaults specified in DDL
 - **Indexes**: Created on high-query columns (symbol, status, created_at)
-- **FTS5**: Virtual table `knowledge_items_fts` for full-text search on knowledge
+- **FTS5**: Virtual table `knowledge_fts` for full-text search on knowledge
 
 ---
 
@@ -273,7 +286,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | `macro_snapshots` | 90d | hardcoded | `repositories.py:1587` |
 | `opportunities` (open) | 48h → `expired` | yes | `repositories.py:1597-1612` |
 
-### 7.2 NEVER-pruned (trust-bearing) — enforced by `_PRUNABLE` allowlist (`repositories.py:959-971`)
+### 7.2 NEVER-pruned (trust-bearing) — enforced by `_PRUNABLE` allowlist (`repositories.py:1000-1006`)
 
 `trade_proposals` · `risk_decisions` · `orders` · `fills` · `positions` · `audit_events` · `knowledge_items`
 
@@ -291,7 +304,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 
 - **Write**: bare `json.dumps()` / Pydantic `model_dump()` — **no explicit schema validation at the SQLite boundary**. Validity relies on the Pydantic model upstream.
 - **Read**: tolerant — bad JSON is skipped or left as raw string, never raised:
-  - Row JSON: `try: json.loads(); except (JSONDecodeError, TypeError): pass` (`repositories.py:1666`)
+  - Row JSON: `try: json.loads(); except (JSONDecodeError, TypeError): pass` (`repositories.py:1701-1702`)
   - JSONL replay: bad lines `continue`-skipped (`files/jsonl.py:116-119`)
 - **Backward-compat**: field remap supported (e.g. `before/after` → `before_state/after_state`, `jsonl.py:220-227`).
 

@@ -144,9 +144,9 @@
 ### 数值约束（防 overshoot）
 
 Level 1 自动调整有 **per-cycle cap**：
-- `min_confidence_to_trade`: 单次调整 ≤ ±10 (范围 40-90)
+- `min_confidence_to_trade`: 分类阶梯，单次移动 1 步，梯级为 `["speculative", "medium", "high"]`，中性值 `"medium"`
 - `max_demo_position_notional_usdt`: 单次调整 ≤ ±30% 当前值
-- `default_stop_loss_pct`: 单次调整 ≤ ±1.0 (范围 1.0-8.0)
+- `default_stop_loss_pct`: 单次调整 ≤ ±1.0 (范围 1.0-5.0)
 - `scanner family multiplier`: 单次调整 ≤ ±0.2 (范围 0.6-1.4)
 - 每 24h 最多执行 **3 次 Level 1 config patch**（防止 LLM 幻觉连续触发）
 

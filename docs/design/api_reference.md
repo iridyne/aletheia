@@ -2,7 +2,7 @@
 
 > Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
 > All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-06-21
+> Last updated: 2026-06-23 (补充 capital/persistence/audit/analytics-additional/infra 共30+端点)
 
 ---
 
@@ -34,8 +34,8 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 
 | Endpoint | Requirement | Contract |
 |----------|-------------|----------|
-| `POST /live-unlock` | explicit `confirm=true`; first unlock needs `acknowledge_first_unlock` | [live_unlock_contract](live_unlock_contract.md) |
-| `POST /kill-switch/activate` · `/release` | release requires confirmation; human-only | [risk_engine_contract §4](risk_engine_contract.md) |
+| `POST /settings/live-unlock` | explicit `confirm=true`; first unlock needs `acknowledge_first_unlock` | [live_unlock_contract](live_unlock_contract.md) |
+| `POST /risk/kill-switch` | body `{"active": true\|false}`; human-only; release does NOT enforce confirm token in current code — see ⚠️ note in §Risk / Kill Switch | [risk_engine_contract §4](risk_engine_contract.md) |
 | `POST /settings/exchange-credentials` (+ binance/okx) | write-only; GET never returns raw secret | trust §6.3 secrets |
 | `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](live_unlock_contract.md) |
 | `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row) | [execution_contract §1](execution_contract.md) |
@@ -317,12 +317,22 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 
 ## Risk / Kill Switch
 
+### 风控查询端点
+
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/risk/status` | Current risk state (ok/warning/blocked) + violations |
-| GET | `/kill-switch` | Kill switch state |
-| POST | `/kill-switch/activate` | Activate kill switch |
-| POST | `/kill-switch/release` | Release kill switch (requires confirmation) |
+| GET | `/risk/boundaries` | 硬性风控限额（只读，`aletheia/server/routes/risk.py:17`） |
+| GET | `/risk/status` | Current risk state (ok/warning/blocked) + violations (`risk.py:28`) |
+| GET | `/risk/summary` | Operator-facing summary of recent risk rejections and pending boundary proposals (`risk.py:74`) |
+
+### Kill Switch
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/risk/kill-switch` | Kill switch current state `{"active": bool}` |
+| POST | `/risk/kill-switch` | Engage or release the global trading brake; body: `{"active": true\|false, "reason": ""}` |
+
+> ⚠️ **已知缺陷**：`POST /risk/kill-switch` 的 release 路径（`active: false`）在代码中**不要求 confirm token**——这与原始安全设计（两步确认）矛盾。已记录于 `docs/issues/BACKEND_ISSUES.md`，条目标识 `kill-switch-release-missing-confirm`（后续任务修复）。
 
 ---
 
@@ -330,8 +340,8 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/live-unlock` | Unlock live trading (requires explicit confirmation) |
-| POST | `/live-lock` | Lock live trading |
+| POST | `/settings/live-unlock` | Unlock live trading (requires `confirm=true`; first unlock also requires `acknowledge_first_unlock=true`) |
+| POST | `/settings/live-lock` | Lock live trading back to `live_disabled` |
 
 ---
 
@@ -396,3 +406,69 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/update/status` | Update availability |
 | POST | `/update/apply` | Apply pending update |
 | POST | `/update/continuity` | Report continuity after update |
+
+---
+
+## Capital
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/capital/net-deposits` | Net deposit total |
+| GET | `/capital/events` | List capital events (deposits/withdrawals) |
+| POST | `/capital/events` | Record new capital event |
+
+## Persistence / Data Management
+
+> Internal data management endpoints. Not exposed in frontend UI — used via CLI/API.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/persistence/gateway/status` | PS gateway status |
+| GET | `/persistence/gateway/sessions` | PS gateway sessions |
+| GET | `/persistence/gateway/reconciliation-reports` | Reconciliation report history |
+| GET | `/persistence/events` | Event log |
+| GET | `/persistence/orders` | PS-layer orders |
+| GET | `/persistence/positions` | PS-layer positions |
+| GET | `/persistence/backups` | List backups |
+| POST | `/persistence/backups` | Create backup |
+| POST | `/persistence/backups/verify` | Verify backup integrity |
+| POST | `/persistence/export` | Export data |
+| POST | `/persistence/import` | Import data |
+| GET | `/persistence/lessons` | List lessons (LessonStore) |
+| GET | `/persistence/lessons/{id}` | Get lesson detail |
+| GET | `/persistence/skills` | List skills (SkillStore) |
+| GET | `/persistence/policies` | List policies |
+| GET | `/persistence/policies/{type}` | Get policy by type |
+| GET | `/persistence/policies/{type}/versions` | Policy version history |
+| GET | `/persistence/policies/diff` | Policy diff between versions |
+
+## Audit
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/audit/events` | Query audit event trail |
+
+## Analytics (additional)
+
+> These endpoints exist in code but are not yet wired to frontend UI.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/analytics/equity-curve` | Portfolio equity curve data |
+| GET | `/analytics/strategy-evidence` | Per-strategy evidence snapshots |
+| GET | `/analytics/backtest-paper-drift` | Backtest vs paper trading drift |
+| GET | `/analytics/exit-policy-advice` | Exit strategy diagnostics |
+| GET | `/analytics/trade-paths` | MFE/MAE path analysis |
+| GET | `/analytics/family-scorecard` | Strategy family scorecard |
+| GET | `/analytics/shadow-trades` | Shadow trade comparison |
+
+## Infrastructure (internal)
+
+> `/_infra/` routes — not proxied via frontend, direct backend access only.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/_infra/livez` | Liveness probe |
+| GET | `/_infra/readyz` | Readiness probe |
+| GET | `/version` | Build version info |
+| GET | `/stability` | System stability metrics |

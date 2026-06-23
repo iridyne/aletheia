@@ -21,11 +21,14 @@
 > 本文的安全边界（§6 Pi 无权限系统、§7 能/不能做、§10 Command Registry 禁令）与
 > [AGENTS.md](../../AGENTS.md) 红线一致;落地实现时以 AGENTS.md 为准。
 >
-> **2026-06-10 详细化补充**：本文继续承担**概念设计**角色。针对当前 repo / `worktree-dev`
-> 的**双进程实现转换蓝图**，权威细化文档是
-> [superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md](superpowers/specs/2026-06-10-pi-operator-agent-dual-process-design.md)，
-> 其参考文件覆盖矩阵是
-> [superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md](superpowers/specs/2026-06-10-pi-operator-agent-design-crosswalk.md)。
+> **2026-06-10 详细化补充**：本文继续承担**概念设计**角色。针对当前 repo 的**双进程实现转换蓝图**，
+> 权威细化文档已移至：
+> - [specs/2026-06-10-pi-operator-agent-dual-process-design.md](specs/2026-06-10-pi-operator-agent-dual-process-design.md)
+> - 参考文件覆盖矩阵：[specs/2026-06-10-pi-operator-agent-design-crosswalk.md](specs/2026-06-10-pi-operator-agent-design-crosswalk.md)
+>
+> （原路径 `superpowers/specs/` 已被废弃；上述文件对应 `docs/design/specs/` 目录，
+> 由 `docs/design/README.md` 中的 frozen-sweep 分类保留。
+> 更高层权威文档：[PI_OPERATOR_DESIGN_DECISIONS.md](PI_OPERATOR_DESIGN_DECISIONS.md)。）
 
 ---
 
@@ -482,6 +485,25 @@ Forbidden Direct Commands
 - hard_delete_knowledge
 ```
 
+### retire_strategy / demote_strategy — Phase 4d 间接执行
+
+> ⚠️ **实际实现注意**：§9 的 Level 1 分类（Apex Agent Shell 直接自动操作）对
+> `retire_strategy` / `demote_strategy` 并不准确。
+> 代码中这两个动作均通过 `pi_decisions` 表**间接执行**（Phase 4d 模式）：
+> `_action_retire_strategy`（`operator_loop.py:552`）和
+> `_action_demote_strategy`（`operator_loop.py:583`）只向表中写入
+> `recommend_retire` / `recommend_demote` 记录，由 PI Agent 消费后才真正执行策略生命周期变更。
+> 直接退出/降级不发生；`_execute_level1_action` 调用这两个函数时，返回 `status: "recommended"` 而非 `status: "executed"`。
+
+### loosen_confidence / increase_sizing / widen_stop_loss — Level 分类不一致（已知待清理项）
+
+> ⚠️ **代码不一致**：`loosen_confidence`、`increase_sizing`、`widen_stop_loss` 三个动作
+> 在 `_LEVEL_2_ACTIONS` 集合中定义（`operator_loop.py:265-267`，**权威分类**，需要 proposal），
+> 但同时也出现在 `_execute_level1_action` 的分支中（`operator_loop.py:526-535`）。
+> 以 `_LEVEL_2_ACTIONS` 为准——这三个动作属于 Level 2，不能由 Operator 直接自动执行。
+> `_execute_level1_action` 中的对应分支属于历史遗留，应在后续清理时移除。
+> 本文档 §9 中描述的 "Level 1 auto operations" 不包含这三个动作。
+
 ### Permission behavior
 
 ```text
@@ -504,6 +526,11 @@ Auto:
 ---
 
 ## 11. Command Flow
+
+> ⚠️ **retire/demote 的实际流程**：对于 `retire_strategy` / `demote_strategy` 命令，
+> Operator 执行后不立即修改策略状态，而是向 `pi_decisions` 表写入推荐记录（Phase 4d 间接执行，
+> `operator_loop.py:553-578`）。PI Agent 在下次轮询时消费该记录并完成实际生命周期变更。
+> 命令返回 `status: "recommended"`，不是 `status: "executed"`。
 
 ```text
 User or scheduler asks:
