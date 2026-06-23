@@ -1,0 +1,110 @@
+"""Spec conformance matrix — coverage report and structural validation.
+
+Run with: uv run pytest tests/test_spec_conformance.py -v -s
+Prints the full conformance matrix showing claim_id -> test -> status.
+"""
+
+import pytest
+
+from tests.specs.spec_meta import SPEC_REGISTRY
+
+
+def _import_all_specs():
+    """Import all spec modules to populate SPEC_REGISTRY."""
+    from tests.specs import (  # noqa: F401
+        spec_risk_engine,
+        spec_execution,
+        spec_live_unlock,
+        spec_promotion_gates,
+        spec_data_model,
+        spec_agent_contracts,
+        spec_api_reference,
+        spec_data_layer,
+        spec_operator_loop,
+        spec_subsystem_observers,
+    )
+
+
+_import_all_specs()
+
+REQUIRED_CONTRACTS = [
+    "risk_engine_contract",
+    "execution_contract",
+    "live_unlock_contract",
+    "promotion_gates_contract",
+    "data_model",
+    "agent_contracts",
+    "api_reference",
+    "data_layer_contract",
+    "operator_layer",
+    # subsystem observer claims register under "agent_contracts" by design —
+    # equity_observer / prediction_observer are agents, not a separate contract.
+]
+
+
+class TestConformanceStructure:
+    """Validate the spec registry itself is well-formed."""
+
+    def test_every_required_contract_has_claims(self):
+        for contract in REQUIRED_CONTRACTS:
+            claims = SPEC_REGISTRY.get(contract, [])
+            assert claims, f"CONFORMANCE GAP: no claims for '{contract}'"
+
+    def test_every_claim_has_callable_test(self):
+        for contract, entries in SPEC_REGISTRY.items():
+            for claim, test_fn in entries:
+                assert callable(test_fn), (
+                    f"ORPHAN: {claim.claim_id} in {contract} has no callable test"
+                )
+
+    def test_claim_ids_unique_within_contract(self):
+        for contract, entries in SPEC_REGISTRY.items():
+            ids = [c.claim_id for c, _ in entries]
+            seen = set()
+            for cid in ids:
+                assert cid not in seen, (
+                    f"DUPLICATE claim_id '{cid}' in {contract}"
+                )
+                seen.add(cid)
+
+    def test_all_levels_represented(self):
+        """Each required contract should have at least one L2a claim."""
+        for contract in REQUIRED_CONTRACTS:
+            entries = SPEC_REGISTRY.get(contract, [])
+            levels = {c.level for c, _ in entries}
+            assert "L2a" in levels, (
+                f"{contract} has no L2a (structural) claims"
+            )
+
+
+def test_print_conformance_matrix(capsys):
+    """Print the full matrix (always passes — informational output)."""
+    lines = ["\n{'='*60}", "  SPEC CONFORMANCE MATRIX", f"{'='*60}\n"]
+    total = implemented = 0
+
+    for contract in sorted(SPEC_REGISTRY.keys()):
+        entries = SPEC_REGISTRY[contract]
+        lines.append(f"\n  {contract} ({len(entries)} claims)")
+        for claim, test_fn in sorted(entries, key=lambda x: x[0].claim_id):
+            total += 1
+            icon = {
+                "implemented": "+",
+                "partial": "~",
+                "missing": "-",
+            }.get(claim.status, "?")
+            if claim.status == "implemented":
+                implemented += 1
+            invariant_short = claim.invariant[:55]
+            lines.append(
+                f"    [{icon}] {claim.level} {claim.claim_id}: "
+                f"{invariant_short}..."
+                f"\n        -> {test_fn.__name__}"
+            )
+
+    coverage = (implemented / total * 100) if total else 0
+    lines.append(f"\n  Total: {total} | Implemented: {implemented} | "
+                 f"Coverage: {coverage:.0f}%")
+    lines.append(f"{'='*60}\n")
+
+    with capsys.disabled():
+        print("\n".join(lines))
