@@ -183,7 +183,12 @@ def _build_layer1_snapshot() -> dict[str, Any]:
         from aletheia.config.loader import load_config
         cfg = load_config()
         layer["risk"] = {
-            "kill_switch": cfg.risk.kill_switch_active,
+            # kill_switch_active lives on RuntimeConfig, not RiskConfig. The old
+            # cfg.risk.kill_switch_active raised AttributeError, silently caught
+            # below → the entire risk block was {} and the prompt showed
+            # "max_daily_loss=?%, max_positions=?", blinding the PI Agent to its
+            # own risk limits (2026-06-23 profit-loop audit, freeze exception).
+            "kill_switch": cfg.runtime.kill_switch_active,
             "max_daily_loss_pct": cfg.risk.max_daily_loss_pct,
             "max_open_positions": cfg.risk.max_open_positions_demo,
         }
@@ -215,9 +220,16 @@ def _build_layer2_short_term() -> dict[str, Any]:
     try:
         from aletheia.storage.repositories import list_positions
         closed = list_positions(status="closed", limit=200)
+        # Exclude one-time technical/reconcile closes (e.g. units_bug_cleanup —
+        # the 3 contractSize-inflated positions force-closed 2026-06-23). These
+        # are migration debt, NOT strategy performance; counting them poisoned the
+        # 7d stats (total_pnl -13.46 vs real +9.80, worst -23.13 vs real -6.95),
+        # making the PI Agent see a phantom crisis and skip every signal.
+        _NON_STRATEGY_CLOSE_REASONS = {"units_bug_cleanup", "reconciled_gone"}
         recent = [
             p for p in closed
             if (p.get("closed_at") or "") >= cutoff
+            and p.get("close_reason") not in _NON_STRATEGY_CLOSE_REASONS
         ]
 
         if recent:
@@ -265,7 +277,10 @@ def _build_layer2_short_term() -> dict[str, Any]:
     try:
         from aletheia.storage.repositories import list_strategies
         strategies = list_strategies(limit=20)
-        active = [s for s in strategies if s.get("status") in ("paper_running", "active")]
+        # strategy_records column is `state`, not `status` — the old s.get("status")
+        # always returned None so the filter matched nothing and the PI Agent saw
+        # "(none active)" while 4 strategies were paper_running (2026-06-23 audit).
+        active = [s for s in strategies if s.get("state") in ("paper_running", "active")]
         strat_perf: list[dict] = []
         for strat in active[:5]:
             strat_perf.append({

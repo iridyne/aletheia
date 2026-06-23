@@ -187,3 +187,50 @@ ECE: 不可计算 — 62笔全部来自旧管道(opportunity→paper_trader→pr
 | 日期 | 变更 |
 |------|------|
 | 2026-06-22 | 初版。协议生效,Round 1 开始。基线数据记录 |
+| 2026-06-23 | **冻结例外 #1(用户授权)** — 见下方记录。Round 1 起点保留 6/22,标注本修复点 |
+
+---
+
+## 冻结例外记录
+
+> 冻结区改动需用户显式授权 + 留痕。此处记录每次例外的根因、范围、判决影响。
+
+### 例外 #1 — 2026-06-23:最小赚钱循环 context-injection bug 修复
+
+**触发**:Round 1 期间发现"最小赚钱循环"断流——20h 零开仓。805 opportunities
+持续生成但 PI Agent 100% skip。
+
+**根因(逐行核实)**:PI Agent(LLM)被喂了一批**错误事实**,构建出"账户濒临破产"
+的幻觉危机:
+1. 余额读错:`get_cached_state()` 默认读 bitget 闲置缓存 $167,真实 okx_demo 是 $88k
+   (此项在 `exchange_sync.py` 修,**非冻结**,先行修复)
+2. 7d 统计被 `units_bug_cleanup` 一次性强平污染(-13.46/58笔 vs 真实 +1.94/50笔)
+3. `cfg.risk.kill_switch_active` AttributeError → 整个 risk block 为 {},LLM 看不到限额
+4. 策略过滤用 `status` 但 DB 字段是 `state` → 4 条活跃策略对 LLM 不可见
+5. `win_rate 46.6%` 裸百分比被 LLM 误读为 "-45.8% drawdown"
+6. `long_bias/short_bias` 标签读起来像方向否决而非概率权重
+7. signal `win_rate` 与 7d trade `win_rate` 同名异义,可叠加成双重危机读法
+8. debate 公式 `50+(bull-bear)` 丢弃 initial conviction,系统性拉回 50(<阈值55)
+
+**授权范围**(用户 2026-06-23 授权全部修复,含 debate 公式):
+- `agent_shell/trading_context.py`:kill_switch 属性路径 / state typo / cleanup 过滤(3 处)
+- `agent_shell/trading_decision.py`:win_rate W/L 计数 / PnL 改名 / signal 改名 /
+  bias→weight 标签 / debate 公式锚定 initial(5 处)
+- `agent_shell/trading_decision.py`:ohlcv 过度保守阈值(非冻结渲染层,1 处)
+
+**判决依据**:命中协议"Bug fix — 会导致系统挂起的 bug"例外(20h 零开仓=循环挂起),
+且全部为"纠正错误事实",非"逻辑可以更好"。修复后 AI 基于**准确事实**自主决策。
+
+**未纳入**:bear prompt 量纲(TD-4)——判断改 prompt 语气风险大于收益,debate
+锚定公式已解决核心问题。
+
+**判决影响(用户决定)**:Round 1 起点**保留 6/22**,不重置。判决时区分修复前/后数据
+——6/22→6/23 的 skip/proposal 数据是在错误事实下产生,不计入策略表现评估;
+6/23 修复生效后的数据才是 Round 1 的有效样本。
+
+**生效验证**:修复后 PI 决策(@13:55)reasoning 引用 "23W/27L, +$1.94 over 50 trades"
+(干净数据),不再出现 $167/破产/恢复模式。幻觉危机消除,LLM 转为基于真实 46% 胜率
+的诚实谨慎(仍 skip,但理由真实可学习)。全量 1646 测试通过。
+
+**监测固化**:doctor `loop.profit` 探针 + `spec_pipeline_profit_loop.py`(PL-PROFIT-01..04)
+防止此类静默断流再次无声发生。

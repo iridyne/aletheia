@@ -139,15 +139,29 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     if (decision.action in trade_actions
             and decision.symbol
             and _DEBATE_RANGE[0] <= decision.conviction <= _DEBATE_RANGE[1]):
+        initial_conviction = decision.conviction
         debate = await _run_debate(decision.symbol, decision.direction, trading_context)
         if debate:
             decision.debate_ran = True
             decision.debate_bull_confidence = debate.bull_confidence
             decision.debate_bear_confidence = debate.bear_confidence
-            decision.conviction = debate.final_conviction
+            # Debate ADJUSTS the initial conviction, it does not REPLACE it. The
+            # old code set conviction = 50 + (bull-bear), discarding the initial
+            # assessment and pulling every result toward 50 — below the 55 trade
+            # threshold, so an initial 65 could exit debate at 45 and skip. The
+            # initial decision already weighed the full context; the bull/bear
+            # advantage is a correction term, not a fresh verdict (2026-06-23
+            # profit-loop freeze exception). 0.3 weight keeps debate meaningful
+            # without letting it override a confident initial read.
+            advantage = debate.bull_confidence - debate.bear_confidence
+            adjusted = int(round(initial_conviction + advantage * 0.3))
+            decision.conviction = max(0, min(100, adjusted))
             if decision.conviction < _MIN_CONVICTION_TO_TRADE:
                 decision.action = "skip"
-                decision.reasoning += f" [debate lowered conviction to {decision.conviction} → skip]"
+                decision.reasoning += (
+                    f" [debate adjusted conviction {initial_conviction}→{decision.conviction} "
+                    f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}) → skip]"
+                )
 
     # Compute sizing for trade-like actions
     if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
@@ -379,9 +393,13 @@ def _build_assessment_prompt(ctx: dict) -> str:
     pnl_line = f"  Today realized: ${today_pnl:+.2f}" if today_pnl is not None else "  (no trades today)"
 
     regime = layer1.get("regime")
+    # "long_bias=25%, short_bias=75%" read like directional VETOES to the LLM
+    # (i.e. "never go long"); they are probability weights. Renamed to *_weight
+    # with an explicit note so the LLM treats them as priors, not prohibitions.
     regime_line = (
         f"  {regime['state'].upper()} (conf={regime['confidence']:.0%}, "
-        f"long_bias={regime['long_bias']:.0%}, short_bias={regime['short_bias']:.0%})"
+        f"long_weight={regime['long_bias']:.0%}, short_weight={regime['short_bias']:.0%}) "
+        f"[probability weights, not vetoes]"
         if regime else "  (unknown)"
     )
 
@@ -404,9 +422,14 @@ def _build_assessment_prompt(ctx: dict) -> str:
 
     stats = layer2.get("outcome_stats")
     if stats:
+        # Render win_rate as "NW/ML (X% win rate)" — a bare "46.6% win rate" next
+        # to a negative PnL was misread by the LLM as "-45.8% drawdown" and drove
+        # a phantom-crisis all-skip. Explicit W/L counts make the metric
+        # unambiguous. PnL labelled "realized_PnL" to distinguish from drawdown.
         stats_block = (
-            f"  7d: {stats['total_trades']} trades, {stats['win_rate']}% win rate, "
-            f"PnL=${stats['total_pnl']:+.2f}, avg=${stats['avg_pnl_per_trade']:+.2f}/trade\n"
+            f"  7d: {stats['total_trades']} trades, "
+            f"{stats['wins']}W/{stats['losses']}L ({stats['win_rate']}% win rate), "
+            f"realized_PnL=${stats['total_pnl']:+.2f}, avg=${stats['avg_pnl_per_trade']:+.2f}/trade\n"
             f"  Best: ${stats['best_win']:+.2f} | Worst: ${stats['worst_loss']:+.2f}"
         )
     else:
@@ -446,16 +469,25 @@ def _build_assessment_prompt(ctx: dict) -> str:
     # ── Data Health Alerts ──
     data_health = layer1.get("data_health", {})
     health_alerts: list[str] = []
-    if not data_health.get("ohlcv_ready"):
+    # Only inject the conservative-bias alert below MEANINGFUL coverage (<50%).
+    # Firing it at 13/15 (87%) put an "operate conservatively" instruction in
+    # every prompt regardless of signal quality — a third systematic skip-bias
+    # stacked on the win_rate/regime misreads (2026-06-23 audit).
+    _ready = data_health.get("members_with_full_coverage", 0)
+    _total = data_health.get("total_members", 0) or 1
+    if _ready < _total * 0.5:
         health_alerts.append(
-            "ℹ️ Historical data not yet complete for all members "
-            f"({data_health.get('members_with_full_coverage', 0)}/{data_health.get('total_members', 0)} ready). "
-            "Backtest/Optuna offline — operate conservatively."
+            "ℹ️ Historical data sparse "
+            f"({_ready}/{_total} members ready, <50%). "
+            "Backtest/Optuna coverage thin — weight live signals over backtested ones."
         )
     if data_health.get("signal_status") == "degraded":
         wr = data_health.get("signal_win_rate_24h", "?")
+        # Labelled signal_accuracy_24h (not win_rate) to avoid colliding with the
+        # 7d trade win_rate in the stats block — two same-named metrics let the
+        # LLM stack them into a double-crisis reading.
         health_alerts.append(
-            f"⚠️ SIGNAL DEGRADATION: 24h universe win_rate={wr}% (below 40%). "
+            f"⚠️ SIGNAL DEGRADATION: 24h universe signal_accuracy_24h={wr}% (below 40%). "
             "Consider: reducing position sizing, tightening stops, skipping low-conviction trades."
         )
 
