@@ -78,7 +78,7 @@ function BrokerBreakdown({ accounts }: { accounts: UTAAccount[] }) {
   )
 }
 
-/** PnL / Account zone — hero account value (exchange_equity_usdt when synced) + context tiles + equity curve. */
+/** PnL / Account zone — hero account value (UTA unified > exchange > local notional) + context tiles + equity curve. */
 export default function PnLZone() {
   const navigate = useNavigate()
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
@@ -119,7 +119,7 @@ export default function PnLZone() {
   const dayPct = todayNum != null && totalRaw ? (todayNum / Number(totalRaw)) * 100 : null
 
   const unrealNum = p?.unrealized_pnl == null ? null : Number(p.unrealized_pnl)
-  const realNum = p?.realized_pnl == null ? null : Number(p.realized_pnl)
+  const realNum = p?.all_realized_pnl == null ? null : Number(p.all_realized_pnl)
 
   const exposure = (p?.exposure_by_symbol || {}) as Record<string, number>
   const exposureTotal = Object.values(exposure).reduce((a, b) => a + Number(b || 0), 0)
