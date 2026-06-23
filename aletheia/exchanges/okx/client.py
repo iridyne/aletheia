@@ -69,9 +69,35 @@ class OKXClient:
         if mode == "demo":
             self._exchange.set_sandbox_mode(True)
 
+    async def _contract_size(self, ccxt_symbol: str) -> float:
+        """Return the contractSize for an OKX swap symbol (coins per contract).
+
+        CCXT's `amount` for OKX swaps is denominated in CONTRACTS, not coins.
+        Each contract represents `contractSize` coins (e.g. TRX=1000, ETH=0.1,
+        SOL=1, BTC=0.01). We store/risk/PnL everything in coin quantity, so the
+        order path divides coins→contracts and the read path multiplies back.
+        Defaults to 1.0 when markets are unavailable (safe for contractSize==1).
+        """
+        try:
+            if not self._exchange.markets:
+                await self._exchange.load_markets()
+            m = self._exchange.markets.get(ccxt_symbol) or {}
+            cs = m.get("contractSize")
+            return float(cs) if cs else 1.0
+        except Exception as e:
+            logger.warning("OKX contractSize lookup failed for %s: %s — defaulting to 1.0", ccxt_symbol, e)
+            return 1.0
+
     async def place_order(self, order: OrderRequest) -> OrderResponse:
-        """Place a market or limit order on OKX."""
+        """Place a market or limit order on OKX.
+
+        `order.quantity` is in COIN units (our canonical internal unit). OKX/CCXT
+        expects CONTRACTS, so we convert coins→contracts via contractSize before
+        submitting, and convert the filled contracts back to coins on the way out.
+        """
         ccxt_symbol = f"{order.symbol}:USDT"  # CCXT perp format: BTC/USDT:USDT
+        contract_size = await self._contract_size(ccxt_symbol)
+        amount_contracts = order.quantity / contract_size if contract_size else order.quantity
 
         params = {}
         if order.reduce_only:
@@ -84,7 +110,7 @@ class OKXClient:
                 symbol=ccxt_symbol,
                 type=order.order_type,
                 side=order.side,
-                amount=order.quantity,
+                amount=amount_contracts,
                 price=order.price if order.order_type == "limit" else None,
                 params=params,
             )
@@ -112,7 +138,10 @@ class OKXClient:
         filled_qty = None
         if status == "filled":
             fill_price = float(resp["average"]) if resp.get("average") else None
-            filled_qty = float(resp["filled"]) if resp.get("filled") else None
+            # resp["filled"] is in CONTRACTS — convert back to coin units to match
+            # our internal/storage convention.
+            if resp.get("filled"):
+                filled_qty = float(resp["filled"]) * contract_size
 
         return OrderResponse(
             order_id=order_id,
@@ -123,14 +152,22 @@ class OKXClient:
         )
 
     async def get_positions(self) -> list[dict]:
-        """Fetch open positions."""
+        """Fetch open positions.
+
+        CCXT reports `contracts` (contract count); we expose `quantity` in COIN
+        units (contracts × contractSize) so storage/PnL/adoption stay consistent
+        with the rest of the system. CCXT's per-position `contractSize` is used
+        directly (no markets lookup needed).
+        """
         try:
             positions = await self._exchange.fetch_positions()
             result = []
             for p in positions:
-                qty = abs(float(p.get("contracts", 0) or 0))
-                if qty == 0:
+                contracts = abs(float(p.get("contracts", 0) or 0))
+                if contracts == 0:
                     continue
+                contract_size = float(p.get("contractSize") or 1.0)
+                qty = contracts * contract_size
                 result.append({
                     "symbol": p.get("symbol", ""),
                     "side": p.get("side", ""),

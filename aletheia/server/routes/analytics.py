@@ -106,6 +106,21 @@ def get_equity_curve(
     ).fetchone()
     total_upnl = round((open_row["total_upnl"] or 0.0), 4)
 
+    # Prefer authoritative cross-broker exchange uPnL (real mark-price + funding)
+    # when not filtering by a single mode — keeps the chart's end point consistent
+    # with the Overview UNREALIZED card, which also reads UTA uPnL.
+    if not execution_mode:
+        try:
+            from aletheia.portfolio import exchange_sync
+            unified = exchange_sync.get_unified_cached_state()
+            if unified is not None:
+                uta_age = unified.get("age_seconds")
+                uta_upnl = unified.get("total_unrealized_pnl")
+                if uta_age is not None and uta_age < 600 and uta_upnl is not None:
+                    total_upnl = round(float(uta_upnl), 4)
+        except Exception:
+            pass
+
     return {
         "points": points,
         "current_unrealized": total_upnl,

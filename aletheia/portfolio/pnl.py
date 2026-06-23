@@ -305,6 +305,18 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                 uta_equity = unified.get("total_equity_usdt")
                 if uta_equity and uta_equity > 0:
                     final_total_value = float(uta_equity)
+                # UTA uPnL is the authoritative cross-broker unrealized PnL. The
+                # legacy single-broker Bitget cache above sets final_unrealized to
+                # 0 when the active account is on another broker (e.g. OKX), which
+                # contradicted the equity-curve's local estimate. Prefer UTA here
+                # so the UNREALIZED card matches the real exchange mark-price uPnL.
+                uta_count = len(unified.get("positions") or [])
+                uta_upnl = unified.get("total_unrealized_pnl")
+                if uta_upnl is not None:
+                    final_unrealized = float(uta_upnl)
+                    final_today_pnl = float(uta_upnl) + total_today_realized
+                if uta_count:
+                    final_positions_count = uta_count
     except Exception:
         pass
 
