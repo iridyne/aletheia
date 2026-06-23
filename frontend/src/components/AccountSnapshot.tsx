@@ -16,16 +16,17 @@ export default function AccountSnapshot() {
 
   const p = portfolio as any
 
-  // Prefer real exchange balance; fall back to local managed notional
-  const exchangeEquity = p?.exchange_equity_usdt
+  // total_value_usdt already prefers UTA unified > exchange_equity > local notional
   const syncStatus: string = p?.exchange_sync_status ?? 'unconfigured'
-  const displayValue = fmtNum(exchangeEquity ?? p?.total_value_usdt)
+  const displayValue = fmtNum(p?.total_value_usdt)
   const syncCaveat =
-    exchangeEquity != null
-      ? syncStatus === 'stale' ? 'exchange · data stale' : 'exchange · live'
-      : syncStatus === 'unconfigured' ? 'exchange not configured'
-      : syncStatus === 'error' ? 'exchange sync error'
-      : 'exchange sync pending'
+    p?.uta_state != null
+      ? 'unified · live'
+      : p?.exchange_equity_usdt != null
+        ? syncStatus === 'stale' ? 'exchange · data stale' : 'exchange · live'
+        : syncStatus === 'unconfigured' ? 'exchange not configured'
+        : syncStatus === 'error' ? 'exchange sync error'
+        : 'exchange sync pending'
 
   // "Today PnL" prefers the real day figure; when it's absent we fall back to
   // unrealized PnL — but say so, rather than mislabel open-position drift as today's result.
