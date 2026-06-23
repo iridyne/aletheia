@@ -355,7 +355,21 @@ Operator loop 自调节:
 
 ## 观察期内新发现(随时追加)
 
-_Round 1 进行中遇到的新想法记在这里,不实施。_
+### Round 2 必修: paper_trader_ranker evidence query 硬编码 paper_internal
+
+**文件**: `aletheia/agents/paper_trader_ranker.py:723`
+**问题**: `WHERE execution_mode = 'paper_internal'` 忽略 bitget_demo/okx_demo 等所有其他 demo 模式的交易证据
+**影响**: 策略在 OKX demo 上跑了 20 笔但 evidence = 0 → 被分类为"untested" → ranker 给惩罚分
+**修复**: 改为 `WHERE execution_mode IN ('paper_internal','bitget_demo','binance_testnet','okx_demo')`
+**为什么现在不修**: 文件在 EXPERIMENT FREEZE 冻结区内，改动会影响 AI 决策（evidence score 变化 → trade_score 变化）
+
+### Round 2 必修: trading_context.py today_pnl 字段名歧义
+
+**文件**: `aletheia/agent_shell/trading_context.py:75`
+**问题**: 字段名 `today_pnl` 存的是 realized-only，但 /api/portfolio 的 `today_pnl` 是 realized+unrealized
+**影响**: Agent 被告知的"今日 PnL"与用户在 Dashboard 看到的数字语义不同
+**修复**: 字段改名为 `today_realized_pnl` 并在 prompt 中标注清楚
+**为什么现在不修**: 文件在 EXPERIMENT FREEZE 冻结区内
 
 ---
 
