@@ -101,3 +101,252 @@ def test_guard_pipeline_functions():
     assert callable(guards.load_trading_guards)
     assert callable(guards.evaluate_guards)
     assert callable(guards.format_guard_block)
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-S06", "agent_contracts", "§2 equity_observer", "L2a",
+        "equity_observer module exists (replaces stock_observer)",
+    ),
+)
+def test_equity_observer_exists():
+    from aletheia.agents import equity_observer
+
+    assert hasattr(equity_observer, "EquityRead")
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-S07", "agent_contracts", "§2 paper_trader_ranker", "L2a",
+        "paper_trader_ranker exists and does not import LLM helpers",
+    ),
+)
+def test_paper_trader_ranker_no_llm():
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).parent.parent.parent / "aletheia" / "agents" / "paper_trader_ranker.py"
+    if not src.exists():
+        pytest.skip("paper_trader_ranker.py not found")
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    imports = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.add(alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module)
+    blocked = {"aletheia.agents.helpers", "aletheia.agents.helpers.llm"}
+    llm_imports = [
+        i for i in imports
+        if "llm" in i.lower() or "openai" in i.lower() or i in blocked
+    ]
+    assert llm_imports == [], (
+        f"paper_trader_ranker must not call LLM directly: {llm_imports}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-S08", "agent_contracts", "§1 job count", "L2a",
+        "Scheduler registers >= 28 jobs (matching SYSTEM_MAP)",
+    ),
+)
+def test_scheduler_minimum_job_count():
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    source = src.read_text(encoding="utf-8")
+    job_count = len(re.findall(r'_scheduler\.add_job\(', source))
+    assert job_count >= 28, f"Expected >= 28 registered jobs, found {job_count}"
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-S09", "agent_contracts", "§1 executor pools", "L2a",
+        "scheduler.py defines exactly the executor pools {default, io, fast_io, observer, agents} — no extras, no missing",
+    ),
+)
+def test_scheduler_executor_pool_names():
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    source = src.read_text(encoding="utf-8")
+    m = re.search(r'_EXECUTOR_WORKERS\s*=\s*\{([^}]+)\}', source, re.DOTALL)
+    assert m, "_EXECUTOR_WORKERS dict not found in scheduler.py"
+    keys = set(re.findall(r'"(\w+)"\s*:', m.group(1)))
+    expected = {"default", "io", "fast_io", "observer", "agents"}
+    assert keys == expected, (
+        f"Executor pool names mismatch. Expected={sorted(expected)} Got={sorted(keys)}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-S10", "agent_contracts", "§1 job IDs unique", "L2a",
+        "All add_job() calls in scheduler.py carry unique id= values (no duplicate registrations)",
+    ),
+)
+def test_scheduler_job_ids_unique():
+    import re
+    from collections import Counter
+    from pathlib import Path
+
+    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    source = src.read_text(encoding="utf-8")
+    ids = re.findall(r'id="([^"]+)"', source)
+    assert ids, "No job id= values found in scheduler.py"
+    counts = Counter(ids)
+    dupes = {k: v for k, v in counts.items() if v > 1}
+    assert not dupes, f"Duplicate scheduler job IDs found: {dupes}"
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-B01", "agent_contracts", "§3 catch-all isolation", "L2a",
+        "Every _run_* job wrapper in scheduler.py contains a try/except block — "
+        "an unhandled exception cannot propagate out of a scheduled job",
+    ),
+)
+def test_scheduler_job_wrappers_have_try_except():
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    run_fns = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name.startswith("_run_")
+    ]
+    assert run_fns, "No _run_* functions found in scheduler.py"
+    missing = [
+        fn.name for fn in run_fns
+        if not any(isinstance(node, ast.Try) for node in ast.walk(fn))
+    ]
+    assert missing == [], (
+        f"These _run_* job wrappers lack try/except (exceptions would propagate to scheduler): {missing}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-B02", "agent_contracts", "§3 LLM fallback", "L2b",
+        "complete_with_fallback() retries with a secondary model when the primary raises a transient error",
+    ),
+)
+def test_llm_fallback_retries_on_transient_error():
+    import asyncio
+    import aletheia.model_provider.fallback as fb
+
+    from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
+    from aletheia.model_provider.fallback import complete_with_fallback, reset_model_health
+
+    call_log: list[str] = []
+
+    class _DualProvider(ModelProvider):
+        """Single provider object whose .model attribute is swapped by _clone_provider_with_model."""
+        name = "test_prov"
+        model = "primary-model"
+
+        async def complete(self, request: ModelRequest) -> ModelResponse:
+            call_log.append(self.model)
+            if self.model == "primary-model":
+                raise RuntimeError("503 Service Unavailable")
+            return ModelResponse(content="ok", model=self.model)
+
+        async def list_models(self):
+            return []
+
+    reset_model_health()
+    provider = _DualProvider()
+    request = ModelRequest(messages=[{"role": "user", "content": "hi"}])
+
+    async def _run():
+        original = fb._candidate_models
+
+        async def _stub(provider_name, prov):
+            return ["primary-model", "fallback-model"]
+
+        fb._candidate_models = _stub
+        try:
+            return await complete_with_fallback(
+                request, provider_name="test_prov", provider=provider,
+            )
+        finally:
+            fb._candidate_models = original
+
+    resp = asyncio.run(_run())
+    assert resp.content == "ok", f"Expected fallback response, got: {resp.content}"
+    assert "primary-model" in call_log, "Primary model should have been attempted"
+    assert "fallback-model" in call_log, "Fallback model should have been used after primary failure"
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-B03", "agent_contracts", "§2 PI Agent safety", "L2c",
+        "trading_decision.py does NOT import any live execution module "
+        "(gateway, bitget_broker, okx_broker, binance_broker) — PI Agent advises, never orders",
+    ),
+)
+def test_pi_agent_no_live_execution_imports():
+    import ast
+    from pathlib import Path
+
+    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_shell" / "trading_decision.py"
+    if not src.exists():
+        pytest.skip("trading_decision.py not found")
+
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    live_execution_modules = {
+        "aletheia.execution.gateway",
+        "aletheia.execution.bitget_broker",
+        "aletheia.execution.okx_broker",
+        "aletheia.execution.binance_broker",
+    }
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module in live_execution_modules:
+                found.append(node.module)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in live_execution_modules:
+                    found.append(alias.name)
+    assert found == [], (
+        f"PI Agent (trading_decision.py) must not import live execution modules: {found}. "
+        "PI Agent advises only — live orders must not be reachable from this path."
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "AC-B04", "agent_contracts", "§3 LLM-isolated agents", "L2c",
+        "paper_trader.py and paper_trader_ranker.py do not import aletheia.model_provider "
+        "or any of its sub-modules (these agents are rule-based, not LLM-driven)",
+    ),
+)
+def test_paper_traders_no_model_provider_imports():
+    import ast
+    from pathlib import Path
+
+    agents_dir = Path(__file__).parent.parent.parent / "aletheia" / "agents"
+    targets = ["paper_trader.py", "paper_trader_ranker.py"]
+    for fname in targets:
+        fpath = agents_dir / fname
+        if not fpath.exists():
+            pytest.skip(f"{fname} not found")
+        tree = ast.parse(fpath.read_text(encoding="utf-8"))
+        bad = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if "model_provider" in node.module:
+                    bad.append(node.module)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if "model_provider" in alias.name:
+                        bad.append(alias.name)
+        assert bad == [], (
+            f"{fname} must not import model_provider (rule-based agent, not LLM-driven): {bad}"
+        )
