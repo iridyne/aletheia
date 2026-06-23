@@ -272,6 +272,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
         max_tokens=700,
     )
     log_tool(run_id, "llm_complete", "observe", True)
+    item = None
     if err:
         errors.append(err)
         logger.info("dreaming_agent: LLM unavailable, skipping dreaming_log write")
@@ -321,11 +322,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     # after the nightly consolidation. No-op when git_enabled is off; never raises.
     try:
         from aletheia.files.git import commit_all
-        try:
-            _label = item.id
-        except NameError:
-            _label = "nightly"
-        commit = commit_all(f"daily snapshot ({_label})")
+        commit = commit_all(f"daily snapshot ({getattr(item, 'id', 'nightly')})")
         if commit.get("committed"):
             log_tool(run_id, "git_commit_all", "observe", True, output=commit.get("message"))
             outputs.append("git_snapshot:committed")

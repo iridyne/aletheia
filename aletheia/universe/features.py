@@ -221,21 +221,22 @@ async def _fetch_single_feature(
         except Exception:
             pass  # Keep DB cached value as fallback
 
-        # Taker buy/sell ratio from Binance fapi
-        try:
-            raw_sym = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
-            taker_data = await asyncio.wait_for(
-                exchange.fapipublic_get_takerlongshortratio({
-                    "symbol": raw_sym, "period": "1h", "limit": 1,
-                }),
-                timeout=5.0,
-            )
-            if taker_data and len(taker_data) > 0:
-                ratio = float(taker_data[0].get("buySellRatio", 0))
-                if ratio > 0:
-                    taker_buy_ratio = ratio
-        except Exception:  # Binance-only API; silent on Bitget/other exchanges
-            pass
+        # Taker buy/sell ratio — only available on Binance (fapi endpoint)
+        if getattr(exchange, "id", "") == "binance":
+            try:
+                raw_sym = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
+                taker_data = await asyncio.wait_for(
+                    exchange.fapipublic_get_takerlongshortratio({
+                        "symbol": raw_sym, "period": "1h", "limit": 1,
+                    }),
+                    timeout=5.0,
+                )
+                if taker_data and len(taker_data) > 0:
+                    ratio = float(taker_data[0].get("buySellRatio", 0))
+                    if ratio > 0:
+                        taker_buy_ratio = ratio
+            except Exception:
+                pass
 
     if spread is None and ob_row:
         spread = ob_row.get("spread_bps")

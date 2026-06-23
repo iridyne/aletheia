@@ -56,12 +56,15 @@ class OKXClient:
                 f"Set okx.{mode}.api_key, okx.{mode}.api_secret, and okx.{mode}.passphrase "
                 "via Settings → Credentials."
             )
+        from aletheia.net import aiohttp_session
+        self._session = aiohttp_session()
         self._exchange = ccxt.okx({
             "apiKey": api_key,
             "secret": api_secret,
             "password": passphrase,
             "enableRateLimit": True,
             "options": {"defaultType": "swap"},
+            "session": self._session,
         })
         if mode == "demo":
             self._exchange.set_sandbox_mode(True)
@@ -90,6 +93,21 @@ class OKXClient:
             raise RuntimeError(f"OKX: {e}") from e
 
         status = self._map_status(resp.get("status", ""))
+        order_id = resp.get("id", "")
+
+        # OKX market orders fill instantly but CCXT create_order may return
+        # status "open" before the exchange updates. Poll once to confirm fill.
+        if status != "filled" and order.order_type == "market" and order_id:
+            import asyncio as _aio
+            await _aio.sleep(0.3)
+            try:
+                fetched = await self._exchange.fetch_order(order_id, ccxt_symbol)
+                status = self._map_status(fetched.get("status", status))
+                if status == "filled":
+                    resp = fetched
+            except Exception as e:
+                logger.debug("fetch_order after market order failed: %s", e)
+
         fill_price = None
         filled_qty = None
         if status == "filled":
@@ -97,7 +115,7 @@ class OKXClient:
             filled_qty = float(resp["filled"]) if resp.get("filled") else None
 
         return OrderResponse(
-            order_id=resp.get("id", ""),
+            order_id=order_id,
             client_oid=resp.get("clientOrderId"),
             status=status,
             fill_price=fill_price,
@@ -142,8 +160,9 @@ class OKXClient:
             raise RuntimeError(f"OKX time: {e}") from e
 
     async def close(self):
-        """Close the underlying CCXT session."""
+        """Close the underlying CCXT session and owned aiohttp session."""
         await self._exchange.close()
+        await self._session.close()
 
     @staticmethod
     async def load_demo_markets() -> frozenset:
@@ -151,7 +170,13 @@ class OKXClient:
 
         Returns a frozenset of canonical symbols (e.g. {"BTC/USDT", "ETH/USDT"}).
         """
-        exchange = ccxt.okx({"enableRateLimit": True, "options": {"defaultType": "swap"}})
+        from aletheia.net import aiohttp_session
+        session = aiohttp_session()
+        exchange = ccxt.okx({
+            "enableRateLimit": True,
+            "options": {"defaultType": "swap"},
+            "session": session,
+        })
         exchange.set_sandbox_mode(True)
         try:
             await exchange.load_markets()
@@ -169,6 +194,7 @@ class OKXClient:
             return frozenset(symbols)
         finally:
             await exchange.close()
+            await session.close()
 
     @staticmethod
     def _map_status(raw: str) -> str:

@@ -147,6 +147,8 @@ async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
 
     # Simulate PI Agent approving promotion to paper_running
     from aletheia.trading.strategy_lifecycle import promote_strategy
+    from aletheia.storage.models import PiDecision
+    repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strat["id"], debate_ran=False))
     promote_strategy(strat["id"], "paper_running")
     strat = repo.get_strategy(strat["id"])
     assert strat["state"] == "paper_running"
@@ -188,6 +190,8 @@ async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
 
     # Simulate PI Agent promoting and then creating a trade for this strategy
     from aletheia.trading.strategy_lifecycle import promote_strategy
+    from aletheia.storage.models import PiDecision
+    repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strat["id"], debate_ran=False))
     promote_strategy(strat["id"], "paper_running")
 
     # Simulate a completed paper trade (as PI Agent would create via submit_decision_as_proposal)
@@ -209,6 +213,8 @@ async def test_paused_strategy_is_not_linked_or_traded(tmp_path, monkeypatch):
     _set_mode("Paper")
 
     strat = create_strategy("Paused Momentum", "paper strategy")
+    from aletheia.storage.models import PiDecision
+    repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strat.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         from aletheia.trading.strategy_lifecycle import promote_strategy
 

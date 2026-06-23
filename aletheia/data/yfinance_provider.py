@@ -41,11 +41,14 @@ def _fetch_macro_sync() -> str:
             try:
                 hist = yf.download(
                     ticker, period=f"{_DAILY_BARS}d", interval="1d",
-                    auto_adjust=True, progress=False, show_errors=False,
+                    auto_adjust=True, progress=False,
                 )
                 if hist is None or hist.empty:
                     continue
-                closes = [float(x) for x in hist["Close"].dropna().tolist()]
+                close_data = hist["Close"]
+                if hasattr(close_data, "columns"):
+                    close_data = close_data.iloc[:, 0]
+                closes = [float(x) for x in close_data.dropna().tolist()]
                 if len(closes) < 6:
                     continue
                 last = closes[-1]

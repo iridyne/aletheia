@@ -409,3 +409,314 @@ class TestRunOperatorLoop:
         result = _create_proposal(action)
         assert result["status"] == "proposed"
         assert "artifact_id" in result
+
+
+# ─── Bidirectional Feedback System ───────────────────────────────────────────
+
+class TestParamDrift:
+    def test_drift_detects_tightened_confidence(self, tmp_path, monkeypatch):
+        import yaml
+        _init_test_db(tmp_path, monkeypatch)
+        cfg_dict = {
+            "runtime": {"paused": False, "kill_switch_active": False},
+            "agent": {"permission_mode": "Paper"},
+            "trading": {"min_confidence_to_trade": "high", "default_stop_loss_pct": 3.0},
+            "risk": {"max_demo_position_notional_usdt": 200.0},
+            "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
+        }
+        (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
+        from aletheia.agent_shell.operator_loop import _get_param_drift
+        assert _get_param_drift("min_confidence_to_trade") == "tightened"
+
+    def test_drift_detects_neutral_confidence(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import _get_param_drift
+        assert _get_param_drift("min_confidence_to_trade") == "neutral"
+
+    def test_drift_detects_tightened_sizing(self, tmp_path, monkeypatch):
+        import yaml
+        _init_test_db(tmp_path, monkeypatch)
+        cfg_dict = {
+            "runtime": {"paused": False, "kill_switch_active": False},
+            "agent": {"permission_mode": "Paper"},
+            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
+            "risk": {"max_demo_position_notional_usdt": 100.0},
+            "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
+        }
+        (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
+        from aletheia.agent_shell.operator_loop import _get_param_drift
+        assert _get_param_drift("max_demo_position_notional_usdt") == "tightened"
+
+
+class TestLoosenRules:
+    def test_rule5a_activity_dead_zone_proposes_loosen(self, tmp_path, monkeypatch):
+        """12h+ no trades + confidence tightened → loosen_confidence L2."""
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
+
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            ohlcv_ready=True,
+            signal_status="healthy",
+            signal_win_rate=55.0,
+            strategies_paper_running=3,
+            trades_24h=0,
+            trades_48h=0,
+            hours_since_last_trade=15.0,
+            param_drift={"min_confidence_to_trade": "tightened",
+                         "max_demo_position_notional_usdt": "neutral",
+                         "default_stop_loss_pct": "neutral"},
+        )
+        actions = decide_actions(assessment)
+        loosen = [a for a in actions if a.action_type == "loosen_confidence"]
+        assert len(loosen) == 1
+        assert loosen[0].level == 2
+
+    def test_rule5a_does_not_fire_if_not_tightened(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
+
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            ohlcv_ready=True,
+            signal_status="healthy",
+            signal_win_rate=55.0,
+            strategies_paper_running=3,
+            trades_24h=0,
+            hours_since_last_trade=15.0,
+            param_drift={"min_confidence_to_trade": "neutral",
+                         "max_demo_position_notional_usdt": "neutral",
+                         "default_stop_loss_pct": "neutral"},
+        )
+        actions = decide_actions(assessment)
+        loosen = [a for a in actions if a.action_type == "loosen_confidence"]
+        assert len(loosen) == 0
+
+    def test_rule5b_winning_streak_proposes_sizing_increase(self, tmp_path, monkeypatch):
+        """3+ streak + PF>1.5 + sizing tightened → increase_sizing L2."""
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
+
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            ohlcv_ready=True,
+            signal_status="healthy",
+            signal_win_rate=55.0,
+            strategies_paper_running=3,
+            trades_24h=5,
+            recent_streak=4,
+            profit_factor_7d=2.0,
+            win_rate_7d=60.0,
+            param_drift={"min_confidence_to_trade": "neutral",
+                         "max_demo_position_notional_usdt": "tightened",
+                         "default_stop_loss_pct": "neutral"},
+        )
+        actions = decide_actions(assessment)
+        inc = [a for a in actions if a.action_type == "increase_sizing"]
+        assert len(inc) == 1
+        assert inc[0].level == 2
+
+    def test_rule5c_tp_dominated_proposes_widen_stop(self, tmp_path, monkeypatch):
+        """70%+ TP exits + stop tightened → widen_stop_loss L2."""
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
+
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            ohlcv_ready=True,
+            signal_status="healthy",
+            signal_win_rate=55.0,
+            strategies_paper_running=3,
+            trades_24h=5,
+            win_rate_7d=60.0,
+            exit_composition_7d={"take_profit": 8, "stop_loss": 2},
+            param_drift={"min_confidence_to_trade": "neutral",
+                         "max_demo_position_notional_usdt": "neutral",
+                         "default_stop_loss_pct": "tightened"},
+        )
+        actions = decide_actions(assessment)
+        widen = [a for a in actions if a.action_type == "widen_stop_loss"]
+        assert len(widen) == 1
+        assert widen[0].level == 2
+
+    def test_rule5d_neutral_drift_on_healthy_wr(self, tmp_path, monkeypatch):
+        """Healthy WR + trades_48h + drifted param → neutral_drift proposal."""
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
+
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            ohlcv_ready=True,
+            signal_status="healthy",
+            signal_win_rate=55.0,
+            strategies_paper_running=3,
+            trades_24h=5,
+            trades_48h=8,
+            win_rate_7d=50.0,
+            param_drift={"min_confidence_to_trade": "tightened",
+                         "max_demo_position_notional_usdt": "neutral",
+                         "default_stop_loss_pct": "neutral"},
+        )
+        actions = decide_actions(assessment)
+        drift = [a for a in actions if a.action_type.startswith("neutral_drift_")]
+        assert len(drift) == 1
+        assert drift[0].level == 2
+        assert "min_confidence_to_trade" in drift[0].action_type
+
+    def test_rule5d_only_one_param_per_cycle(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
+
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            ohlcv_ready=True,
+            signal_status="healthy",
+            signal_win_rate=55.0,
+            strategies_paper_running=3,
+            trades_24h=5,
+            trades_48h=8,
+            win_rate_7d=50.0,
+            param_drift={"min_confidence_to_trade": "tightened",
+                         "max_demo_position_notional_usdt": "tightened",
+                         "default_stop_loss_pct": "tightened"},
+        )
+        actions = decide_actions(assessment)
+        drift = [a for a in actions if a.action_type.startswith("neutral_drift_")]
+        assert len(drift) == 1  # only one per cycle
+
+
+class TestConsecutiveEscalation:
+    def test_escalation_after_3_consecutive_tightens(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import (
+            OperatorAction, _maybe_escalate, _persist_action
+        )
+
+        # Simulate 3 prior tighten actions
+        for _ in range(3):
+            _persist_action("config_patch", param="min_confidence_to_trade",
+                           before="medium", after="high", direction="tighten")
+
+        action = OperatorAction(
+            action_type="tighten_confidence", level=1,
+            reason="signal degraded",
+        )
+        result = _maybe_escalate(action, "min_confidence_to_trade", "tighten")
+        assert result.level == 2
+        assert "[ESCALATED" in result.reason
+
+    def test_no_escalation_below_threshold(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import (
+            OperatorAction, _maybe_escalate, _persist_action
+        )
+
+        # Only 2 prior tightens
+        for _ in range(2):
+            _persist_action("config_patch", param="min_confidence_to_trade",
+                           before="medium", after="high", direction="tighten")
+
+        action = OperatorAction(
+            action_type="tighten_confidence", level=1,
+            reason="signal degraded",
+        )
+        result = _maybe_escalate(action, "min_confidence_to_trade", "tighten")
+        assert result.level == 1
+
+
+class TestPersistentActionLog:
+    def test_persist_action_survives_memory_clear(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import (
+            _persist_action, _count_actions_today_persistent,
+            _last_action_time_persistent, _action_log,
+        )
+
+        _persist_action("config_patch", param="test_param",
+                        before="a", after="b", direction="tighten")
+
+        # Clear memory cache
+        _action_log.clear()
+
+        # Should still find the action from DB
+        count = _count_actions_today_persistent("config_patch", "test_param")
+        assert count == 1
+
+        last = _last_action_time_persistent("config_patch", "test_param")
+        assert last is not None
+
+
+class TestLoosenHandlers:
+    def test_loosen_confidence_never_below_neutral(self, tmp_path, monkeypatch):
+        import yaml
+        _init_test_db(tmp_path, monkeypatch)
+        # Set confidence to "high" (tightened above neutral "medium")
+        cfg_dict = {
+            "runtime": {"paused": False, "kill_switch_active": False},
+            "agent": {"permission_mode": "Paper"},
+            "trading": {"min_confidence_to_trade": "high", "default_stop_loss_pct": 3.0},
+            "risk": {"max_demo_position_notional_usdt": 200.0},
+            "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
+        }
+        (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
+        from aletheia.agent_shell.operator_loop import OperatorAction, _action_loosen_confidence
+        from aletheia.config.loader import load_config
+
+        action = OperatorAction(action_type="loosen_confidence", level=2, reason="test")
+        result = _action_loosen_confidence(action)
+        assert result["status"] == "executed"
+        assert result["new"] == "medium"  # back to neutral, not below
+
+    def test_increase_sizing_caps_at_neutral(self, tmp_path, monkeypatch):
+        import yaml
+        _init_test_db(tmp_path, monkeypatch)
+        # Set sizing to 180 (below neutral=200), +20% = 216 → capped at 200
+        cfg_dict = {
+            "runtime": {"paused": False, "kill_switch_active": False},
+            "agent": {"permission_mode": "Paper"},
+            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
+            "risk": {"max_demo_position_notional_usdt": 180.0},
+            "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
+        }
+        (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
+        from aletheia.agent_shell.operator_loop import OperatorAction, _action_increase_sizing
+        from aletheia.config.loader import load_config
+
+        action = OperatorAction(action_type="increase_sizing", level=2,
+                                params={"increase_pct": 20}, reason="test")
+        result = _action_increase_sizing(action)
+        assert result["status"] == "executed"
+        # 180 * 1.2 = 216, capped at neutral 200
+        assert result["new"] == 200.0
+
+    def test_widen_stop_loss_caps_at_neutral(self, tmp_path, monkeypatch):
+        import yaml
+        _init_test_db(tmp_path, monkeypatch)
+        # Set stop loss to 1.0 (tightened below neutral=2.0)
+        cfg_dict = {
+            "runtime": {"paused": False, "kill_switch_active": False},
+            "agent": {"permission_mode": "Paper"},
+            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 1.0},
+            "risk": {"max_demo_position_notional_usdt": 200.0},
+            "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
+        }
+        (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
+        from aletheia.agent_shell.operator_loop import OperatorAction, _action_widen_stop_loss
+        from aletheia.config.loader import load_config
+
+        # Request +1.5 delta, should cap at neutral=2.0
+        action = OperatorAction(action_type="widen_stop_loss", level=2,
+                                params={"delta": 1.5}, reason="test")
+        result = _action_widen_stop_loss(action)
+        assert result["status"] == "executed"
+        assert result["new"] == 2.0  # capped at neutral

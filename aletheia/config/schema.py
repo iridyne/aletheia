@@ -302,6 +302,19 @@ class RetentionConfig(BaseModel):
     opportunity_ttl_hours: int = 48
 
 
+class MarketAwareExitsConfig(BaseModel):
+    """Market-aware exit intelligence for position_manager."""
+    enabled: bool = False
+    min_hold_hours_before_market_exit: float = 0.5
+    max_signal_age_min: float = 35.0
+    urgent_exit_score: int = 80
+    urgent_exit_max_pnl_pct: float = -0.3
+    tighten_stop_score: int = 60
+    confidence_collapse_score: int = 30
+    tighten_atr_mult: float = 0.8
+    tighten_pct: float = 0.8
+
+
 class TradingConfig(BaseModel):
     # Paper position exit rules used by the position_manager. Non-zero defaults so
     # the autonomous loop actually closes positions and realizes PnL.
@@ -339,6 +352,9 @@ class TradingConfig(BaseModel):
     # Exchange-native TPSL bracket orders (Bitget demo/live only). Default off —
     # enable after verifying Bitget TPSL API behavior in demo mode.
     exchange_tpsl_enabled: bool = False
+    # Market-aware exit intelligence: uses Market Observer signals to dynamically
+    # tighten stops or exit early when market conditions deteriorate.
+    market_aware_exits: "MarketAwareExitsConfig" = Field(default_factory=lambda: MarketAwareExitsConfig())
 
 
 class UpdateConfig(BaseModel):

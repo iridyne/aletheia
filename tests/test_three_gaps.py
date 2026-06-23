@@ -151,7 +151,10 @@ def test_ledger_activation_ratio_reflects_state(tmp_path, monkeypatch):
     """A strategy promoted to paper_running should bump activation ratio above 0."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
     s = create_strategy("Active", parameters={"k": "v"})
+    insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=s.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         promote_strategy(s.id, target)
 

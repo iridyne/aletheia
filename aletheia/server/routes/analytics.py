@@ -48,6 +48,71 @@ def get_strategy_kpis():
     return build_strategy_kpis()
 
 
+@router.get("/equity-curve")
+def get_equity_curve(
+    execution_mode: str | None = None,
+    days: int | None = None,
+    limit: int = 5000,
+):
+    """Trade-by-trade equity curve for the PnL chart on Overview.
+
+    Query params:
+      execution_mode — filter to a single mode (e.g. 'paper_internal', 'okx_demo')
+      days — only include positions closed within the last N days
+      limit — max data points returned (default 5000)
+    """
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+
+    conditions = ["status = 'closed'", "closed_at IS NOT NULL"]
+    params: list = []
+    if execution_mode:
+        conditions.append("execution_mode = ?")
+        params.append(execution_mode)
+    if days and days > 0:
+        conditions.append("closed_at >= datetime('now', ?)")
+        params.append(f"-{days} days")
+
+    where = " AND ".join(conditions)
+    sql = (
+        f"SELECT realized_pnl, closed_at "
+        f"FROM positions WHERE {where} "
+        f"ORDER BY closed_at ASC LIMIT ?"
+    )
+    params.append(limit)
+    rows = db.execute(sql, params).fetchall()
+
+    cum = 0.0
+    points = []
+    for r in rows:
+        pnl = r["realized_pnl"] or 0.0
+        cum += pnl
+        points.append({
+            "time": r["closed_at"],
+            "pnl": round(pnl, 4),
+            "cumulative_pnl": round(cum, 4),
+        })
+
+    # Unrealized PnL for open positions (same mode filter if specified)
+    upnl_conditions = ["status='open'"]
+    upnl_params: list = []
+    if execution_mode:
+        upnl_conditions.append("execution_mode = ?")
+        upnl_params.append(execution_mode)
+    upnl_where = " AND ".join(upnl_conditions)
+    open_row = db.execute(
+        f"SELECT SUM(unrealized_pnl) as total_upnl FROM positions WHERE {upnl_where}",
+        upnl_params,
+    ).fetchone()
+    total_upnl = round((open_row["total_upnl"] or 0.0), 4)
+
+    return {
+        "points": points,
+        "current_unrealized": total_upnl,
+        "total_realized": round(cum, 4),
+    }
+
+
 @router.get("/trade-insights")
 def get_trade_insights():
     """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc."""

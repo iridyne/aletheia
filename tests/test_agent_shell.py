@@ -1410,6 +1410,9 @@ async def test_pause_paper_strategy_marks_strategy_paused_and_reviews_open_oppor
     from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
 
     strategy = create_strategy("Paused Strategy", "pause this strategy")
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+    insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         promote_strategy(strategy.id, target)
 
@@ -1450,6 +1453,9 @@ async def test_propose_strategy_promotion_creates_artifact_with_gate_preview(tmp
     from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
 
     strategy = create_strategy("Promotion Candidate", "paper strategy")
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+    insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         promote_strategy(strategy.id, target)
 

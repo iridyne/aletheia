@@ -229,12 +229,13 @@ def _sync_exchange_closed(cfg) -> int:
 def evaluate_open_positions() -> dict:
     """Evaluate all open paper positions and close any that hit an exit rule.
 
-    Checks both price-based rules (stop/TP/max-hold) and RuleSet exit signals
-    from the strategy's compiled RuleSet (if any).
+    Checks price-based rules (stop/TP/max-hold), RuleSet exit signals,
+    and market-aware exit intelligence (when enabled).
     """
     cfg = load_config()
     closed = 0
     checked = 0
+    market_exits = 0
 
     # Check for exchange-bracket-triggered closes before the local polling loop
     _sync_exchange_closed(cfg)
@@ -249,22 +250,59 @@ def evaluate_open_positions() -> dict:
     except Exception as e:
         logger.warning("ruleset exit scan failed: %s", e)
 
+    # Build market signal index once per cycle (batch query, not per-position)
+    market_signal_index: dict = {}
+    if cfg.trading.market_aware_exits.enabled:
+        try:
+            from aletheia.portfolio.market_signal_reader import get_market_signals_for_positions
+            all_open = list_positions(status="open")
+            syms = list({p["symbol"] for p in all_open if p.get("execution_mode") in _PAPER_MODES})
+            if syms:
+                market_signal_index = get_market_signals_for_positions(
+                    syms, max_signal_age_min=cfg.trading.market_aware_exits.max_signal_age_min,
+                )
+        except Exception as e:
+            logger.warning("market_signal_index build failed: %s", e)
+
     for p in list_positions(status="open"):
-        # Never auto-close live positions (future + human-only).
         if p.get("execution_mode") not in _PAPER_MODES:
             continue
         checked += 1
         price = _latest_price(p["symbol"])
         if price is None:
-            continue  # no honest exit price — skip, never fabricate
+            continue
 
-        # Update trailing stop / breakeven before evaluating exit (modifies p in-place)
         _maybe_update_trailing_stop(p, float(price), cfg)
 
-        # Determine exit reason: price-based first, then RuleSet signal
         decision = _decide_exit(p, float(price), cfg)
         if decision is None and p["id"] in ruleset_exit_position_ids:
             decision = ("ruleset_exit_signal", float(price))
+
+        # Market-aware exit: only when mechanical exits didn't fire
+        if decision is None and cfg.trading.market_aware_exits.enabled:
+            signal = market_signal_index.get(p["symbol"])
+            if signal is not None:
+                try:
+                    from aletheia.portfolio.exit_rules import evaluate_market_exit_rules
+                    action = evaluate_market_exit_rules(p, float(price), signal, cfg)
+                    if action.action == "urgent_exit":
+                        decision = ("market_signal_exit", float(price))
+                        market_exits += 1
+                        logger.info("market_signal_exit: %s reason=%s", p["symbol"], action.reason)
+                    elif action.action == "tighten_stop" and action.new_stop_price is not None:
+                        from aletheia.storage.repositories import update_position
+                        update_position(
+                            p["id"],
+                            stop_price=action.new_stop_price,
+                            last_market_signal_action="tighten_stop",
+                            last_market_signal_reason=action.reason[:200],
+                            last_market_signal_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                        p["stop_price"] = action.new_stop_price
+                        logger.info("market_tighten_stop: %s new_stop=%.6f reason=%s",
+                                    p["symbol"], action.new_stop_price, action.reason)
+                except Exception as e:
+                    logger.warning("market_aware_exit failed %s: %s", p["id"], e)
 
         if decision is None:
             continue
@@ -284,4 +322,4 @@ def evaluate_open_positions() -> dict:
             closed += 1
         except Exception as e:
             logger.warning("close failed for %s: %s", p["id"], e)
-    return {"checked": checked, "closed": closed}
+    return {"checked": checked, "closed": closed, "market_exits": market_exits}

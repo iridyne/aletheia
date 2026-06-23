@@ -704,6 +704,13 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
       </Section>
 
       <Section
+        title="Capital Events"
+        description="Record deposits and withdrawals so the equity curve shows true PnL performance. Initial deposits are auto-recorded when a broker first syncs."
+      >
+        <CapitalEventsCard />
+      </Section>
+
+      <Section
         title="Market Data Sources (Advanced)"
         description="Override primary exchange data routing. Normally managed by the Primary Exchange selector above."
       >
@@ -711,6 +718,70 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
           <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
         </Collapsible>
       </Section>
+    </div>
+  )
+}
+
+function CapitalEventsCard() {
+  const qc = useQueryClient()
+  const { data: events = [] } = useQuery({ queryKey: ['capital-events'], queryFn: api.getCapitalEvents })
+  const { data: netData } = useQuery({ queryKey: ['capital-net-deposits'], queryFn: api.getNetDeposits })
+  const [brokerId, setBrokerId] = useState('')
+  const [eventType, setEventType] = useState<'deposit' | 'withdraw'>('deposit')
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: () => api.createCapitalEvent({
+      broker_id: brokerId || 'manual',
+      event_type: eventType,
+      amount_usdt: parseFloat(amount),
+      note: note || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['capital-events'] })
+      qc.invalidateQueries({ queryKey: ['capital-net-deposits'] })
+      setAmount('')
+      setNote('')
+      setMsg('Recorded')
+      setTimeout(() => setMsg(null), 3000)
+    },
+    onError: (e: any) => setMsg(e.message || 'Failed'),
+  })
+
+  const netDeposits = netData?.net_deposits_usdt ?? 0
+
+  return (
+    <div>
+      <p className="text-muted text-sm mb-2">Net deposits: <strong>{netDeposits.toFixed(2)} USDT</strong></p>
+      <div className="capital-form">
+        <select value={eventType} onChange={e => setEventType(e.target.value as any)}>
+          <option value="deposit">Deposit</option>
+          <option value="withdraw">Withdraw</option>
+        </select>
+        <input type="text" placeholder="Broker ID (e.g. bitget, okx)" value={brokerId} onChange={e => setBrokerId(e.target.value)} />
+        <input type="number" placeholder="Amount (USDT)" min={0} step={0.01} value={amount} onChange={e => setAmount(e.target.value)} />
+        <input type="text" placeholder="Note (optional)" value={note} onChange={e => setNote(e.target.value)} />
+        <button className="btn btn-primary" disabled={!amount || parseFloat(amount) <= 0} onClick={() => mutation.mutate()}>Record</button>
+      </div>
+      {msg && <p className="save-msg mt-1">{msg}</p>}
+      {(events as any[]).length > 0 && (
+        <table className="mini-table mt-2">
+          <thead><tr><th>Date</th><th>Type</th><th>Broker</th><th>Amount</th><th>Note</th></tr></thead>
+          <tbody>
+            {(events as any[]).slice(0, 20).map((e: any) => (
+              <tr key={e.id}>
+                <td>{(e.detected_at || '').slice(0, 10)}</td>
+                <td>{e.event_type}</td>
+                <td>{e.broker_id}</td>
+                <td>{Number(e.amount_usdt).toFixed(2)}</td>
+                <td>{e.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }

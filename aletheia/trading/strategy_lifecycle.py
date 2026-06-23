@@ -139,6 +139,17 @@ def create_strategy(
     return strategy
 
 
+def _has_pi_approval(strategy_id: str) -> bool:
+    """Check that PI Agent has written a recommend_promote record for this strategy."""
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    row = db.execute(
+        "SELECT 1 FROM pi_decisions WHERE proposal_id = ? AND action = 'recommend_promote' LIMIT 1",
+        (strategy_id,),
+    ).fetchone()
+    return row is not None
+
+
 def promote_strategy(strategy_id: str, target_state: str) -> dict:
     """Promote a strategy to a new state (forward-only)."""
     record = get_strategy(strategy_id)
@@ -153,6 +164,12 @@ def promote_strategy(strategy_id: str, target_state: str) -> dict:
             "error": f"Cannot transition from '{current}' to '{target_state}'. Allowed: {allowed}",
         }
 
+    if target_state == "paper_running":
+        if not _has_pi_approval(strategy_id):
+            return {
+                "success": False,
+                "error": "Promotion to paper_running requires PI Agent approval (recommend_promote record not found)",
+            }
     if target_state == "paper_passed":
         gate_result = check_promotion_gates(strategy_id)
         if not gate_result["passed"]:

@@ -46,6 +46,15 @@ def pytest_configure(config):
         "real_db: test requires a real file-backed SQLite DB (WAL/lock/cross-connection) "
         "— opt out of the in-memory DB injection.",
     )
+    # SDD spec-level markers
+    config.addinivalue_line("markers", "spec: spec-driven development test")
+    config.addinivalue_line("markers", "L2a: structural spec (static, fast)")
+    config.addinivalue_line("markers", "L2b: behavioral spec (needs fixtures)")
+    config.addinivalue_line("markers", "L2c: invariant spec (cross-operation)")
+    config.addinivalue_line("markers", "spec: spec-driven development test")
+    config.addinivalue_line("markers", "L2a: structural spec check (static, fast)")
+    config.addinivalue_line("markers", "L2b: behavioral spec check (needs fixtures)")
+    config.addinivalue_line("markers", "L2c: invariant spec check (cross-operation)")
 
 
 @pytest.fixture(autouse=True)

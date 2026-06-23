@@ -137,41 +137,53 @@ thesis_parts.append("Observations: " + " | ".join(observations))
 
 ## P2 — 数据黑洞（资源浪费）
 
-### 10. `dreaming_log` / `daily_review` / `strategy_memory` — KB 三类型零消费
+### 10. `dreaming_log` / `daily_review` / `strategy_memory` — KB 三类型零消费 ✅ FIXED
 
 **位置**：`aletheia/knowledge/manager.py:90-183`
 
-三种 knowledge_items 均为 `medium_confidence`，不进 FTS 索引，无代码读取。LLM 产出纯浪费。
+~~三种 knowledge_items 均为 `medium_confidence`，不进 FTS 索引，无代码读取。LLM 产出纯浪费。~~
 
-### 11. `_latest_volume_ranking` 进程内存无消费
+**修复**：`dreaming_log`/`daily_review` 已是 `high_confidence`（可 FTS 检索）；`strategy_memory` 从 `medium_confidence` 提升为 `high_confidence`。前端 `/api/data` routes 也已提供查询接口。
+
+### 11. `_latest_volume_ranking` 进程内存无消费 ✅ FIXED (prior commit)
 
 **位置**：`scheduler.py:79` + `:1133`
 
-Phase B 每 10 分钟更新 volume ranking，`get_latest_volume_ranking()` 全库零调用。
+~~Phase B 每 10 分钟更新 volume ranking，`get_latest_volume_ranking()` 全库零调用。~~
 
-### 12. `universe_feature_snapshots` 只写不读
+**修复**：`aletheia/universe/service.py:150` 已消费此数据。
+
+### 12. `universe_feature_snapshots` 只写不读 ✅ FIXED (prior commit)
 
 **位置**：`aletheia/universe/features.py:295`
 
-每次 universe 刷新都写历史快照，无查询函数读取。
+~~每次 universe 刷新都写历史快照，无查询函数读取。~~
 
-### 13. Post-Trade Reviewer 无入场/出场市场上下文
+**修复**：多处消费：`risk/engine.py`(btc_beta)、`trading/sizing.py`(ATR)、`portfolio/position_manager.py`(ATR)、`agent_shell/trading_context.py`、`regime/collector.py`。
+
+### 13. Post-Trade Reviewer 无入场/出场市场上下文 ✅ FIXED (prior commit)
 
 **位置**：`aletheia/agents/post_trade_reviewer.py:53-58`
 
-传给 LLM 的只有 fills/orders 数量，无 price/ATR/regime 数据，review 质量上限受限。
+~~传给 LLM 的只有 fills/orders 数量，无 price/ATR/regime 数据，review 质量上限受限。~~
 
-### 14. `taker_buy_ratio` 在 Bitget 环境下永远 None
+**修复**：现已查询 position 详情（entry_price, current_price, regime_tag, entry_market_summary）并传入 LLM context。
 
-**位置**：`aletheia/universe/features.py:229`
+### 14. `taker_buy_ratio` 在 Bitget 环境下永远 None ✅ FIXED
 
-调用 Binance 专属 API，Bitget 下静默返回 None。
+**位置**：`aletheia/universe/features.py:224-238`
 
-### 15. 未知 scanner family 静默丢弃
+~~调用 Binance 专属 API，Bitget 下静默返回 None。~~
+
+**修复**：加 `exchange.id == "binance"` guard，非 Binance 交易所跳过此调用（避免无意义 exception + 5s timeout 浪费）。
+
+### 15. 未知 scanner family 静默丢弃 ✅ FIXED (prior commit)
 
 **位置**：`aletheia/universe/signal_emitter.py:73-80`
 
-`_infer_direction` 只处理 4 个已知 family，新增 family 静默消失无 warning。
+~~`_infer_direction` 只处理 4 个已知 family，新增 family 静默消失无 warning。~~
+
+**修复**：`signal_emitter.py:84` 已有 `logger.warning("no direction for %s family=%s ...")` 覆盖 direction=None 的情况（含未知 family 返回 None）。
 
 ---
 

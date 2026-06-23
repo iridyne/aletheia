@@ -1404,6 +1404,10 @@ _ADDITIVE_COLUMNS = [
     ("slippage_cost", "positions", "REAL"),
     # Knowledge item payload storage (was missing — memo/feedback persist via this column)
     ("content", "knowledge_items", "TEXT"),
+    # Market-aware exit audit trail
+    ("last_market_signal_action", "positions", "TEXT"),
+    ("last_market_signal_reason", "positions", "TEXT"),
+    ("last_market_signal_at", "positions", "TEXT"),
 ]
 
 
@@ -1608,6 +1612,19 @@ CREATE INDEX IF NOT EXISTS idx_pi_decisions_symbol ON pi_decisions(symbol, creat
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_created ON pi_decisions(created_at DESC);
 """
 
+_CAPITAL_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS capital_events (
+    id TEXT PRIMARY KEY,
+    broker_id TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN ('deposit','withdraw')),
+    amount_usdt REAL NOT NULL,
+    equity_at_event REAL,
+    detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+    note TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_capital_events_detected ON capital_events(detected_at);
+"""
+
 
 def _run_all_ddl(db) -> None:
     """Execute every DDL statement against db (used for both real and blueprint DBs)."""
@@ -1618,6 +1635,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_STRATEGY_BACKTEST_DDL)
     db.executescript(_MARKET_REGIME_DDL)
     db.executescript(_PI_DECISIONS_DDL)
+    db.executescript(_CAPITAL_EVENTS_DDL)
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts(db)

@@ -92,6 +92,33 @@ def _market_data_stale_minutes(cfg) -> float | None:
         return None
 
 
+def _observer_stale_minutes() -> float | None:
+    """Minutes since the last opportunity was created. None if no data."""
+    try:
+        from datetime import datetime, timezone
+        from aletheia.storage.sqlite import get_db
+        row = get_db().execute("SELECT MAX(created_at) as t FROM opportunities").fetchone()
+        if not row or not row["t"]:
+            return None
+        dt = datetime.fromisoformat(row["t"].replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+    except Exception:
+        return None
+
+
+def _okx_reachable() -> bool:
+    """Quick connectivity probe to OKX public API (5s timeout, uses system proxy)."""
+    try:
+        import httpx
+        with httpx.Client(timeout=5.0, trust_env=True) as c:
+            r = c.get("https://www.okx.com/api/v5/public/time")
+            return r.status_code == 200
+    except Exception:
+        return False
+
+
 def compute_health() -> dict:
     """Compute current health from real backend data. Returns {healthy, issues}."""
     cfg = load_config()
@@ -125,6 +152,18 @@ def compute_health() -> dict:
 
     if _llm_consecutive_failures >= cfg.health.llm_unavailable_alert_after:
         issues.append(f"llm_unavailable:{_llm_consecutive_failures}")
+
+    # Observer stale: Market Observer should produce opportunities every 15 min.
+    # If nothing in 45 min while running, the analysis loop has silently broken.
+    if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
+        obs_age = _observer_stale_minutes()
+        if obs_age is not None and obs_age > 45:
+            issues.append(f"observer_stale:{obs_age:.0f}min")
+
+    # OKX connectivity: can't trade if the exchange API is unreachable.
+    if cfg.exchange.name == "okx" and not cfg.runtime.paused:
+        if not _okx_reachable():
+            issues.append("okx_unreachable")
 
     # Stale-process guard: disk source committed past what this process booted on.
     from aletheia.agent_runtime.build_info import code_drift_issue

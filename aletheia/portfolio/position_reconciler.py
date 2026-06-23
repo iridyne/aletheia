@@ -46,10 +46,17 @@ _QTY_REL_TOL = 0.02  # 2%
 # which also drives management: position_manager auto-manages bitget_demo and SKIPS
 # bitget_live_limited (live stays human-only). Mapping the exchange account mode to
 # the execution_mode is the single point where the demo-auto / live-human split is set.
-_MODE_TO_EXECUTION = {
-    "demo": "bitget_demo",
-    "live": "bitget_live_limited",
-}
+_LIVE_EXECUTION_MODE = "bitget_live_limited"
+
+
+def _execution_mode_for(account_mode: str) -> str | None:
+    """Resolve execution_mode from account mode, respecting paper_execution_mode config."""
+    if account_mode == "live":
+        return _LIVE_EXECUTION_MODE
+    if account_mode == "demo":
+        from aletheia.config.loader import load_config
+        return load_config().exchange.paper_execution_mode
+    return None
 
 
 def _norm_direction(side: str) -> str:
@@ -119,7 +126,20 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     `sync_status` reflects why — we never infer `orphaned` from a missing cache,
     because "no exchange data" must not look like "the exchange has no positions".
     """
-    cached = exchange_sync.get_cached_state(mode)
+    # Prefer unified (UTA) state — covers all brokers (OKX/Bitget/Binance).
+    # Fall back to legacy Bitget-only cache for backwards compat.
+    cached = None
+    unified = exchange_sync.get_unified_cached_state()
+    if unified is not None:
+        age = unified.get("age_seconds")
+        if age is not None and age < 600:
+            cached = {
+                "positions": unified.get("positions") or [],
+                "age_seconds": age,
+                "fetched_at": unified.get("fetched_at", ""),
+            }
+    if cached is None:
+        cached = exchange_sync.get_cached_state(mode)
     sync_status = exchange_sync.status_for(cached)
 
     local_open = list_positions(status="open")
@@ -219,7 +239,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     )
     from aletheia.files.jsonl import write_audit
 
-    execution_mode = _MODE_TO_EXECUTION.get(account_mode)
+    execution_mode = _execution_mode_for(account_mode)
     if execution_mode is None:
         raise ValueError(f"adopt_position: unknown account_mode {account_mode!r}")
 
@@ -314,6 +334,19 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         },
         "message": rationale,
     })
+    try:
+        from aletheia.notifications import notify_operator
+        notify_operator(
+            title=f"Position Adopted: {symbol}",
+            message=f"{direction} qty={quantity} @ {entry_price:.4f} ({execution_mode})",
+            level="info",
+            event_type="trade_notification",
+            entity_type="position",
+            entity_id=position.id,
+            error_log=False,
+        )
+    except Exception:
+        pass
 
     return {
         "position_id": position.id,

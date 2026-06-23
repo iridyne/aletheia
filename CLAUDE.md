@@ -18,6 +18,7 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 
 - Smallest change principle — MVP, not greenfield
 - No uncontrolled expansion: no new exchanges, no Docker/Postgres/Redis, no vector search, no web ingestion
+- **EXPERIMENT FREEZE (2026-06-22 → Round 结束)**: AI 决策链代码在观察期内**禁止修改**。详见 `docs/product/EXPERIMENT_PROTOCOL.md`。冻结路径: `agent_shell/trading_context.py`, `agent_shell/trading_decision.py`, `agents/market_observer.py`, `agents/paper_trader*.py`, `agents/pi_agent*`, `strategy/`, `learning/`。判断标准:"这个改动会不会让同一市场状况下 AI 做出不同决策?" → 是 = 禁止。
 - Trust boundaries (change-controlled — touch only for tasks that explicitly require it):
   `aletheia/risk/`, `aletheia/execution/`, `exchanges/bitget/auth.py`, `exchanges/bitget/client.py`,
   `config/secrets.py`, `agent_runtime/permissions.py`, `server/routes/live.py`
@@ -56,6 +57,21 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 会话结束：更新 `docs/_ai/AI_HANDOFF.md`、`DEVLOG.md`、`CURRENT_TASK.md`（只写计划/意图，不写运行态）。架构决策记入 `docs/_ai/DECISIONS.md`。
 
 Issue 分工：`docs/issues/BACKEND_ISSUES.md`（bugs/contract drift/dead code，带 file:line）；`docs/issues/FRONTEND_ISSUES.md`（UI spec gaps/honesty breaches）。
+
+## Spec-Driven Development (SDD)
+
+Spec as Code：L2 契约文档的关键断言已编码为 `tests/specs/spec_*.py` 中的可执行测试。
+
+**开发流程**：
+1. 新功能先在对应 `spec_*.py` 中声明 `SpecClaim(status="missing")` → 写 L2a 测试（RED）→ 实现代码 → GREEN → 补 L2b/L2c
+2. 修改 risk/execution/trust 模块前，先检查 `tests/specs/` 中是否有 claim 会被影响
+3. 修改 `DEFAULT_PROMOTION_GATES` 值 → 同步更新 `promotion_gates_contract.md` + `spec_promotion_gates.py`
+4. 新增 `FORBIDDEN_INTENTS`/`RESTRICTED_TOOLS` 条目 → 同步 spec + 契约文档
+
+**运行命令**：
+- `uv run pytest tests/test_architecture_fitness.py -q` — L2a 依赖方向检查（< 1s）
+- `uv run pytest tests/specs/ -q` — 全部 spec claims（< 2s）
+- `uv run pytest tests/test_spec_conformance.py -v -s` — 打印 Conformance Matrix
 
 ## Safety Rules
 

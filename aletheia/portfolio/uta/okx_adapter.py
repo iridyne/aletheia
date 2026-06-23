@@ -32,27 +32,46 @@ class OkxDemoAdapter:
     async def get_account(self) -> AccountInfo:
         balance = await self._client.fetch_balance()
 
-        total_equity = float(balance.get("total", {}).get("USDT", 0) or 0)
+        # OKX unified account: info.data[0].totalEq is the full-asset USD equity
+        # (includes all spot holdings + derivatives equity, priced by OKX).
+        # Fallback to balance.total.USDT only if totalEq is unavailable.
+        info = balance.get("info", {})
+        total_equity = 0.0
+        for detail in info.get("data", []) or []:
+            total_eq_raw = detail.get("totalEq")
+            if total_eq_raw:
+                total_equity = float(total_eq_raw)
+                break
+        if total_equity <= 0:
+            total_equity = float(balance.get("total", {}).get("USDT", 0) or 0)
+
         free = float(balance.get("free", {}).get("USDT", 0) or 0)
         used = float(balance.get("used", {}).get("USDT", 0) or 0)
 
-        info = balance.get("info", {})
+        # Per-currency breakdown from OKX unified account details
         unrealized = 0.0
+        breakdown = []
         for detail in info.get("data", []) or []:
             for acct_detail in detail.get("details", []) or []:
-                if acct_detail.get("ccy") == "USDT":
-                    unrealized = float(acct_detail.get("upl", 0) or 0)
-                    break
+                ccy = (acct_detail.get("ccy") or "").upper()
+                eq_val = float(acct_detail.get("eqUsd") or acct_detail.get("eq") or 0)
+                upl = float(acct_detail.get("upl") or 0)
+                unrealized += upl
+                if eq_val > 0 and ccy:
+                    breakdown.append({"coin": ccy, "usdt_value": round(eq_val, 4), "pct": 0.0})
 
-        breakdown = []
-        if total_equity > 0:
+        # Compute pct from breakdown
+        if breakdown and total_equity > 0:
+            for item in breakdown:
+                item["pct"] = round(item["usdt_value"] / total_equity * 100, 2)
+        elif total_equity > 0 and not breakdown:
             breakdown = [{"coin": "USDT", "usdt_value": total_equity, "pct": 100.0}]
 
         return AccountInfo(
-            equity_usdt=total_equity,
-            available_usdt=free,
-            frozen_usdt=used,
-            unrealized_pnl=unrealized,
+            equity_usdt=round(total_equity, 4),
+            available_usdt=round(free, 4),
+            frozen_usdt=round(used, 4),
+            unrealized_pnl=round(unrealized, 4),
             asset_breakdown=breakdown,
         )
 

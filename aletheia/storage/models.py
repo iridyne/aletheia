@@ -818,3 +818,13 @@ class PiDecision(BaseModel):
     reasoning: str = ""
     proposal_id: str | None = None
     debate_ran: bool = False
+
+
+class CapitalEvent(BaseModel):
+    id: str = Field(default_factory=new_id)
+    broker_id: str
+    event_type: str  # "deposit" | "withdraw"
+    amount_usdt: float
+    equity_at_event: float | None = None
+    detected_at: str = Field(default_factory=_utcnow)
+    note: str = ""

@@ -81,19 +81,13 @@ class DerivativesCollector:
                     "liquidations via ccxt/%s: %d events", primary_name, len(ccxt_liqs)
                 )
             except _CCXTLiquidationsUnsupported:
-                if primary_name != "binance":
-                    logger.info(
-                        "liquidations: %s lacks CCXT fetchLiquidations; "
-                        "falling back to Binance Futures REST (exchange='binance' on records)",
-                        primary_name,
-                    )
-                try:
-                    binance_liqs = await _fetch_liquidations_binance_rest(symbols)
-                    liquidations.extend(binance_liqs)
-                    logger.info("liquidations via binance_rest: %d events", len(binance_liqs))
-                except Exception as e:
-                    errors.append(f"liquidations: {e}")
-                    logger.warning("liquidation fetch (binance fallback) failed: %s", e)
+                # Binance forceOrders REST endpoint requires API key since 2025.
+                # Skip fallback silently — liquidation data has no downstream consumer.
+                logger.debug(
+                    "liquidations: %s lacks CCXT fetchLiquidations; "
+                    "Binance REST fallback disabled (requires auth)",
+                    primary_name,
+                )
             except Exception as e:
                 errors.append(f"liquidations: {e}")
                 logger.warning("liquidation fetch failed: %s", e)

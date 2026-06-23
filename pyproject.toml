@@ -45,6 +45,9 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
 addopts = "-p no:cacheprovider"
+markers = [
+    "e2e: end-to-end pipeline tests (deselect with -m 'not e2e')",
+]
 
 [tool.aletheia]
 # marker so tooling can detect repo root

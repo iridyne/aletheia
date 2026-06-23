@@ -161,6 +161,9 @@ async def test_strategy_summary_reports_strategies_needing_operator_evaluation(c
     from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
 
     strategy = create_strategy("Operator Review Candidate", "paper strategy awaiting review")
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+    insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         result = promote_strategy(strategy.id, target)
         assert result["success"] is True
@@ -200,6 +203,9 @@ async def test_strategy_summary_reports_promotion_ready_strategies_needing_propo
     from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
 
     strategy = create_strategy("Promotion Candidate", "paper strategy ready for graduation")
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+    insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         result = promote_strategy(strategy.id, target)
         assert result["success"] is True

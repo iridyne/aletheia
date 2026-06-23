@@ -140,6 +140,38 @@ def list_pi_decisions(limit: int = 20) -> list[dict]:
     return _select_all("pi_decisions", order="created_at DESC", limit=limit)
 
 
+# --- Capital Events ---
+
+def insert_capital_event(event) -> None:
+    _insert("capital_events", event.model_dump() if hasattr(event, "model_dump") else event)
+
+
+def list_capital_events(limit: int = 200) -> list[dict]:
+    return _select_all("capital_events", order="detected_at DESC", limit=limit)
+
+
+def get_net_deposits() -> float:
+    """Sum of all deposits minus withdrawals."""
+    db = get_db()
+    row = db.execute(
+        "SELECT COALESCE(SUM(CASE WHEN event_type='deposit' THEN amount_usdt ELSE -amount_usdt END), 0) AS net FROM capital_events"
+    ).fetchone()
+    return float(row["net"]) if row else 0.0
+
+
+def has_capital_event_for_broker(broker_id: str) -> bool:
+    db = get_db()
+    row = db.execute("SELECT 1 FROM capital_events WHERE broker_id = ? LIMIT 1", (broker_id,)).fetchone()
+    return row is not None
+
+
+def get_first_capital_event_time() -> str | None:
+    """Earliest detected_at across all capital events (ISO string or None)."""
+    db = get_db()
+    row = db.execute("SELECT MIN(detected_at) AS t FROM capital_events").fetchone()
+    return row["t"] if row and row["t"] else None
+
+
 # --- Prediction Observer Runs ---
 
 def insert_prediction_run(run_id: str, categories: list) -> None:
@@ -884,11 +916,14 @@ def list_portfolio_snapshots(limit: int = 100, days: int | None = None) -> list[
     if days is not None and days > 0:
         rows = db.execute(
             """
-            SELECT *
-            FROM portfolio_snapshots
-            WHERE snapshot_at >= datetime('now', ?)
+            SELECT * FROM (
+                SELECT *
+                FROM portfolio_snapshots
+                WHERE snapshot_at >= datetime('now', ?)
+                ORDER BY snapshot_at DESC, id DESC
+                LIMIT ?
+            )
             ORDER BY snapshot_at ASC, id ASC
-            LIMIT ?
             """,
             (f"-{days} days", limit),
         ).fetchall()

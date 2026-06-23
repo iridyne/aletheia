@@ -38,31 +38,209 @@ _MAX_RESEARCH_TRIGGERS_PER_DAY = 1
 _action_log: list[dict] = []  # in-memory log for rate limiting within process lifetime
 
 
-def _count_actions_today(action_type: str) -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    return sum(
-        1 for a in _action_log
-        if a["type"] == action_type and a["ts"] > cutoff
+# ─── ParamSpec Registry ──────────────────────────────────────────────────────
+
+@dataclass
+class ParamSpec:
+    name: str
+    config_section: str  # "trading" | "risk"
+    neutral: Any         # schema default = homeostatic target
+    tighten_direction: str  # "up" | "down"
+    floor: Any
+    ceiling: Any
+    step: Any            # per-cycle cap (pct for numeric, 1 step for ladder)
+    ladder: list | None  # categorical params only
+
+
+PARAM_REGISTRY: dict[str, ParamSpec] = {
+    "min_confidence_to_trade": ParamSpec(
+        "min_confidence_to_trade", "trading",
+        neutral="medium", tighten_direction="up",
+        floor="speculative", ceiling="high", step=1,
+        ladder=["speculative", "medium", "high"]),
+    "max_demo_position_notional_usdt": ParamSpec(
+        "max_demo_position_notional_usdt", "risk",
+        neutral=200.0, tighten_direction="down",
+        floor=20.0, ceiling=500.0, step=0.30,
+        ladder=None),
+    "default_stop_loss_pct": ParamSpec(
+        "default_stop_loss_pct", "trading",
+        neutral=2.0, tighten_direction="down",
+        floor=1.0, ceiling=5.0, step=1.0,
+        ladder=None),
+}
+
+
+def _get_param_drift(param_name: str) -> str:
+    """Return 'tightened', 'loosened', or 'neutral' for a registered param."""
+    spec = PARAM_REGISTRY.get(param_name)
+    if not spec:
+        return "neutral"
+    cfg = load_config()
+    section = getattr(cfg, spec.config_section, None)
+    if section is None:
+        return "neutral"
+    current = getattr(section, spec.name, spec.neutral)
+
+    if spec.ladder:
+        try:
+            cur_idx = spec.ladder.index(current)
+            neu_idx = spec.ladder.index(spec.neutral)
+        except ValueError:
+            return "neutral"
+        if spec.tighten_direction == "up":
+            if cur_idx > neu_idx:
+                return "tightened"
+            elif cur_idx < neu_idx:
+                return "loosened"
+        else:
+            if cur_idx < neu_idx:
+                return "tightened"
+            elif cur_idx > neu_idx:
+                return "loosened"
+        return "neutral"
+    else:
+        if spec.tighten_direction == "down":
+            if current < spec.neutral:
+                return "tightened"
+            elif current > spec.neutral:
+                return "loosened"
+        else:
+            if current > spec.neutral:
+                return "tightened"
+            elif current < spec.neutral:
+                return "loosened"
+        return "neutral"
+
+
+# ─── Persistent Action Log ───────────────────────────────────────────────────
+
+_CONSECUTIVE_ESCALATION_THRESHOLD = 3
+
+
+def _persist_action(event_type: str, param: str | None = None,
+                    before: str = "", after: str = "",
+                    direction: str = "", reason: str = "") -> None:
+    """Write action to audit_events (persistent) + in-memory cache."""
+    from aletheia.storage.models import AuditEvent
+    from aletheia.storage.repositories import insert_audit_event
+
+    message = f"{direction}:{param}:{before}→{after}" if direction else f"{param}:{before}→{after}"
+    event = AuditEvent(
+        actor="operator_loop",
+        source="operator_loop",
+        event_type=event_type,
+        entity_type="config_param" if param else None,
+        entity_id=param,
+        before_state=before,
+        after_state=after,
+        message=message,
     )
+    try:
+        insert_audit_event(event)
+    except Exception as e:
+        logger.debug("_persist_action: audit write failed: %s", e)
+
+    _action_log.append({
+        "type": event_type,
+        "param": param,
+        "detail": f"{before}→{after}",
+        "direction": direction,
+        "ts": datetime.now(timezone.utc),
+    })
+    if len(_action_log) > 500:
+        _action_log[:] = _action_log[-200:]
 
 
-def _last_action_time(action_type: str, param: str | None = None) -> datetime | None:
+def _count_actions_today_persistent(event_type: str, param: str | None = None) -> int:
+    """Count actions in last 24h from DB (survives restarts)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        where = "actor = 'operator_loop' AND event_type = ? AND timestamp > ?"
+        params_tup: tuple = (event_type, cutoff)
+        if param:
+            where += " AND entity_id = ?"
+            params_tup = (event_type, cutoff, param)
+        rows = repo._select_all("audit_events", where=where, params=params_tup, limit=100)
+        return len(rows)
+    except Exception:
+        cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=24)
+        return sum(
+            1 for a in _action_log
+            if a["type"] == event_type and a["ts"] > cutoff_dt
+            and (param is None or a.get("param") == param)
+        )
+
+
+def _last_action_time_persistent(event_type: str, param: str | None = None) -> datetime | None:
+    """Get last action time from DB (survives restarts)."""
+    try:
+        where = "actor = 'operator_loop' AND event_type = ?"
+        params_tup: tuple = (event_type,)
+        if param:
+            where += " AND entity_id = ?"
+            params_tup = (event_type, param)
+        rows = repo._select_all("audit_events", where=where, params=params_tup,
+                                order="timestamp DESC", limit=1)
+        if rows:
+            ts_str = rows[0].get("timestamp", "")
+            if ts_str:
+                return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except Exception:
+        pass
     for a in reversed(_action_log):
-        if a["type"] == action_type:
+        if a["type"] == event_type:
             if param is None or a.get("param") == param:
                 return a["ts"]
     return None
 
 
+def _count_consecutive_same_direction(param: str, direction: str) -> int:
+    """Count consecutive recent actions in the same direction for a param."""
+    try:
+        where = "actor = 'operator_loop' AND event_type = 'config_patch' AND entity_id = ?"
+        rows = repo._select_all("audit_events", where=where, params=(param,),
+                                order="timestamp DESC", limit=10)
+        count = 0
+        for row in rows:
+            msg = row.get("message", "")
+            if msg.startswith(f"{direction}:"):
+                count += 1
+            else:
+                break
+        return count
+    except Exception:
+        count = 0
+        for a in reversed(_action_log):
+            if a.get("param") == param and a["type"] == "config_patch":
+                if a.get("direction") == direction:
+                    count += 1
+                else:
+                    break
+        return count
+
+
+def _maybe_escalate(action: OperatorAction, param: str, direction: str) -> OperatorAction:
+    """If 3+ consecutive same-direction changes, escalate to Level 2."""
+    consecutive = _count_consecutive_same_direction(param, direction)
+    if consecutive >= _CONSECUTIVE_ESCALATION_THRESHOLD:
+        action.level = 2
+        action.reason = f"[ESCALATED: {consecutive}x consecutive {direction}] {action.reason}"
+    return action
+
+
+# ─── Legacy helpers (delegate to persistent versions) ────────────────────────
+
+def _count_actions_today(action_type: str) -> int:
+    return _count_actions_today_persistent(action_type)
+
+
+def _last_action_time(action_type: str, param: str | None = None) -> datetime | None:
+    return _last_action_time_persistent(action_type, param)
+
+
 def _record_action(action_type: str, param: str | None = None, detail: str = "") -> None:
-    _action_log.append({
-        "type": action_type,
-        "param": param,
-        "detail": detail,
-        "ts": datetime.now(timezone.utc),
-    })
-    if len(_action_log) > 500:
-        _action_log[:] = _action_log[-200:]
+    _persist_action(action_type, param=param, before="", after=detail, reason=detail)
 
 
 # ─── Action Definitions ──────────────────────────────────────────────────────
@@ -86,6 +264,7 @@ _LEVEL_1_ACTIONS = {
 
 _LEVEL_2_ACTIONS = {
     "promote_strategy", "loosen_confidence", "increase_sizing",
+    "widen_stop_loss", "neutral_drift",
     "add_universe_symbol",
 }
 
@@ -99,6 +278,8 @@ def classify_action(action_type: str) -> int:
     if action_type in _LEVEL_1_ACTIONS:
         return 1
     if action_type in _LEVEL_2_ACTIONS:
+        return 2
+    if action_type.startswith("neutral_drift_"):
         return 2
     if action_type in _LEVEL_3_ACTIONS:
         return 3
@@ -119,8 +300,13 @@ class SystemAssessment:
     underperforming_strategies: list[dict] = field(default_factory=list)
     # Trading performance
     trades_24h: int = 0
+    trades_48h: int = 0
     win_rate_7d: float | None = None
     total_pnl_7d: float | None = None
+    profit_factor_7d: float | None = None
+    hours_since_last_trade: float | None = None
+    recent_streak: int = 0  # positive = wins, negative = losses
+    exit_composition_7d: dict = field(default_factory=dict)  # close_reason → count
     # Data health
     ohlcv_ready: bool = False
     signal_win_rate: float | None = None
@@ -135,6 +321,8 @@ class SystemAssessment:
     min_confidence: str = "medium"  # speculative < medium < high
     default_stop_loss_pct: float = 3.0
     max_demo_notional: float = 200.0
+    # Param drift state
+    param_drift: dict[str, str] = field(default_factory=dict)
 
 
 def build_system_assessment() -> SystemAssessment:
@@ -191,19 +379,73 @@ def build_system_assessment() -> SystemAssessment:
 
     # Trading performance
     try:
-        cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-        cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        fills_24h = repo.list_fills(limit=500)
+        now = datetime.now(timezone.utc)
+        cutoff_24h = (now - timedelta(hours=24)).isoformat()
+        cutoff_48h = (now - timedelta(hours=48)).isoformat()
+        cutoff_7d = (now - timedelta(days=7)).isoformat()
+        fills_all = repo.list_fills(limit=500)
         assessment.trades_24h = sum(
-            1 for f in fills_24h if (f.get("filled_at") or "") > cutoff_24h
+            1 for f in fills_all if (f.get("filled_at") or "") > cutoff_24h
         )
-        fills_7d = [f for f in fills_24h if (f.get("filled_at") or "") > cutoff_7d]
+        assessment.trades_48h = sum(
+            1 for f in fills_all if (f.get("filled_at") or "") > cutoff_48h
+        )
+        fills_7d = [f for f in fills_all if (f.get("filled_at") or "") > cutoff_7d]
         if fills_7d:
             wins = sum(1 for f in fills_7d if (f.get("realized_pnl") or 0) > 0)
             assessment.win_rate_7d = wins / len(fills_7d) * 100 if fills_7d else None
             assessment.total_pnl_7d = sum(f.get("realized_pnl") or 0 for f in fills_7d)
+            gross_wins = sum(f.get("realized_pnl") or 0 for f in fills_7d if (f.get("realized_pnl") or 0) > 0)
+            gross_losses = abs(sum(f.get("realized_pnl") or 0 for f in fills_7d if (f.get("realized_pnl") or 0) < 0))
+            if gross_losses > 0:
+                assessment.profit_factor_7d = gross_wins / gross_losses
+            elif gross_wins > 0:
+                assessment.profit_factor_7d = 99.0
+
+        # Hours since last trade
+        if fills_all:
+            sorted_fills = sorted(fills_all, key=lambda f: f.get("filled_at") or "", reverse=True)
+            latest_ts = sorted_fills[0].get("filled_at", "")
+            if latest_ts:
+                try:
+                    latest_dt = datetime.fromisoformat(latest_ts.replace("Z", "+00:00"))
+                    assessment.hours_since_last_trade = (now - latest_dt).total_seconds() / 3600
+                except (ValueError, TypeError):
+                    pass
+
+        # Recent streak (consecutive W/L from most recent)
+        if fills_7d:
+            sorted_recent = sorted(fills_7d, key=lambda f: f.get("filled_at") or "", reverse=True)
+            streak = 0
+            first_dir = None
+            for f in sorted_recent:
+                pnl = f.get("realized_pnl") or 0
+                if pnl == 0:
+                    continue
+                direction = 1 if pnl > 0 else -1
+                if first_dir is None:
+                    first_dir = direction
+                if direction == first_dir:
+                    streak += direction
+                else:
+                    break
+            assessment.recent_streak = streak
     except Exception as e:
         logger.debug("assessment: trading performance error: %s", e)
+
+    # Exit composition (close_reason distribution over 7d)
+    try:
+        positions_closed = repo.list_positions(status="closed", limit=200)
+        cutoff_7d_str = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        composition: dict[str, int] = {}
+        for p in positions_closed:
+            if (p.get("closed_at") or p.get("updated_at") or "") < cutoff_7d_str:
+                continue
+            reason = p.get("close_reason") or "unknown"
+            composition[reason] = composition.get(reason, 0) + 1
+        assessment.exit_composition_7d = composition
+    except Exception as e:
+        logger.debug("assessment: exit composition error: %s", e)
 
     # Data health
     try:
@@ -234,6 +476,9 @@ def build_system_assessment() -> SystemAssessment:
     assessment.min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
     assessment.default_stop_loss_pct = getattr(cfg.trading, "default_stop_loss_pct", 3.0)
     assessment.max_demo_notional = getattr(cfg.risk, "max_demo_position_notional_usdt", 200.0)
+
+    # Param drift
+    assessment.param_drift = {name: _get_param_drift(name) for name in PARAM_REGISTRY}
 
     return assessment
 
@@ -278,10 +523,16 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_trigger_optuna_sweep(action)
     elif action.action_type == "tighten_confidence":
         result = _action_tighten_confidence(action)
+    elif action.action_type == "loosen_confidence":
+        result = _action_loosen_confidence(action)
     elif action.action_type == "reduce_sizing":
         result = _action_reduce_sizing(action)
+    elif action.action_type == "increase_sizing":
+        result = _action_increase_sizing(action)
     elif action.action_type == "tighten_stop_loss":
         result = _action_tighten_stop_loss(action)
+    elif action.action_type == "widen_stop_loss":
+        result = _action_widen_stop_loss(action)
     elif action.action_type == "adjust_scanner_weight":
         result = _action_adjust_scanner_weight(action)
     elif action.action_type == "request_backfill":
@@ -290,6 +541,8 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_notify(action)
     elif action.action_type == "trigger_strategy_research":
         result = _action_trigger_strategy_research(action)
+    elif action.action_type.startswith("neutral_drift_"):
+        result = _action_neutral_drift(action)
     else:
         result["reason"] = f"unknown action type: {action.action_type}"
 
@@ -426,9 +679,10 @@ def _action_trigger_optuna_sweep(action: OperatorAction) -> dict:
         return {"action": "trigger_optuna_sweep", "status": "error", "reason": str(e)}
 
 
+_CONFIDENCE_LADDER = ["speculative", "medium", "high"]
+
+
 def _action_tighten_confidence(action: OperatorAction) -> dict:
-    # Confidence levels: speculative (loosest) → medium → high (tightest)
-    _CONFIDENCE_LADDER = ["speculative", "medium", "high"]
     param_name = "min_confidence_to_trade"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
@@ -443,16 +697,57 @@ def _action_tighten_confidence(action: OperatorAction) -> dict:
     try:
         idx = _CONFIDENCE_LADDER.index(current)
     except ValueError:
-        idx = 1  # default to medium
+        idx = 1
     if idx >= len(_CONFIDENCE_LADDER) - 1:
         return {"action": "tighten_confidence", "status": "skipped", "reason": "already at highest"}
 
     new_val = _CONFIDENCE_LADDER[idx + 1]
     cfg.trading.min_confidence_to_trade = new_val
     save_config(cfg)
-    _record_action("config_patch", param=param_name, detail=f"{current} → {new_val}")
+    _persist_action("config_patch", param=param_name,
+                    before=current, after=new_val, direction="tighten",
+                    reason=action.reason)
     logger.info("operator: tightened %s: %s → %s — %s", param_name, current, new_val, action.reason)
     return {"action": "tighten_confidence", "status": "executed",
+            "param": param_name, "old": current, "new": new_val}
+
+
+def _action_loosen_confidence(action: OperatorAction) -> dict:
+    param_name = "min_confidence_to_trade"
+    last = _last_action_time("config_patch", param_name)
+    if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
+        return {"action": "loosen_confidence", "status": "cooldown",
+                "reason": "same param adjusted < 2h ago"}
+    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
+        return {"action": "loosen_confidence", "status": "rate_limited",
+                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+
+    cfg = load_config()
+    current = getattr(cfg.trading, param_name, "medium")
+    spec = PARAM_REGISTRY[param_name]
+    try:
+        idx = _CONFIDENCE_LADDER.index(current)
+    except ValueError:
+        idx = 1
+    neu_idx = _CONFIDENCE_LADDER.index(spec.neutral)
+    if idx <= 0:
+        return {"action": "loosen_confidence", "status": "skipped", "reason": "already at loosest"}
+    # Never loosen past neutral
+    target_idx = max(idx - 1, neu_idx) if spec.tighten_direction == "up" else min(idx + 1, neu_idx)
+    target_idx = idx - 1  # loosen = step down on ladder
+    if target_idx < _CONFIDENCE_LADDER.index(spec.neutral):
+        target_idx = _CONFIDENCE_LADDER.index(spec.neutral)
+
+    new_val = _CONFIDENCE_LADDER[target_idx]
+    if new_val == current:
+        return {"action": "loosen_confidence", "status": "skipped", "reason": "already at neutral"}
+    cfg.trading.min_confidence_to_trade = new_val
+    save_config(cfg)
+    _persist_action("config_patch", param=param_name,
+                    before=current, after=new_val, direction="loosen",
+                    reason=action.reason)
+    logger.info("operator: loosened %s: %s → %s — %s", param_name, current, new_val, action.reason)
+    return {"action": "loosen_confidence", "status": "executed",
             "param": param_name, "old": current, "new": new_val}
 
 
@@ -466,19 +761,51 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
         return {"action": "reduce_sizing", "status": "rate_limited",
                 "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
 
-    pct = min(action.params.get("reduce_pct", 20), 30)  # cap at 30%
+    pct = min(action.params.get("reduce_pct", 20), 30)
     cfg = load_config()
     current = getattr(cfg.risk, param_name, 200.0)
     new_val = round(current * (1 - pct / 100), 2)
-    new_val = max(new_val, 20.0)  # hard floor $20
+    new_val = max(new_val, 20.0)
     if new_val >= current:
         return {"action": "reduce_sizing", "status": "skipped", "reason": "already at floor"}
 
     cfg.risk.max_demo_position_notional_usdt = new_val
     save_config(cfg)
-    _record_action("config_patch", param=param_name, detail=f"{current} → {new_val}")
+    _persist_action("config_patch", param=param_name,
+                    before=str(current), after=str(new_val), direction="tighten",
+                    reason=action.reason)
     logger.info("operator: reduced %s: %.1f → %.1f — %s", param_name, current, new_val, action.reason)
     return {"action": "reduce_sizing", "status": "executed",
+            "param": param_name, "old": current, "new": new_val}
+
+
+def _action_increase_sizing(action: OperatorAction) -> dict:
+    """Loosen sizing back toward neutral (Level 2 proposal)."""
+    param_name = "max_demo_position_notional_usdt"
+    last = _last_action_time("config_patch", param_name)
+    if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
+        return {"action": "increase_sizing", "status": "cooldown",
+                "reason": "same param adjusted < 2h ago"}
+    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
+        return {"action": "increase_sizing", "status": "rate_limited",
+                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+
+    spec = PARAM_REGISTRY[param_name]
+    pct = min(action.params.get("increase_pct", 20), 30)
+    cfg = load_config()
+    current = getattr(cfg.risk, param_name, 200.0)
+    new_val = round(current * (1 + pct / 100), 2)
+    new_val = min(new_val, spec.neutral)  # never exceed neutral
+    if new_val <= current:
+        return {"action": "increase_sizing", "status": "skipped", "reason": "already at or above neutral"}
+
+    cfg.risk.max_demo_position_notional_usdt = new_val
+    save_config(cfg)
+    _persist_action("config_patch", param=param_name,
+                    before=str(current), after=str(new_val), direction="loosen",
+                    reason=action.reason)
+    logger.info("operator: increased %s: %.1f → %.1f — %s", param_name, current, new_val, action.reason)
+    return {"action": "increase_sizing", "status": "executed",
             "param": param_name, "old": current, "new": new_val}
 
 
@@ -492,19 +819,64 @@ def _action_tighten_stop_loss(action: OperatorAction) -> dict:
         return {"action": "tighten_stop_loss", "status": "rate_limited",
                 "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
 
-    delta = min(action.params.get("delta", 0.5), 1.0)  # cap at -1.0
+    delta = min(action.params.get("delta", 0.5), 1.0)
     cfg = load_config()
     current = getattr(cfg.trading, param_name, 3.0)
-    new_val = max(current - delta, 1.0)  # hard floor 1%
+    new_val = max(current - delta, 1.0)
     if new_val >= current:
         return {"action": "tighten_stop_loss", "status": "skipped", "reason": "already at floor"}
 
     cfg.trading.default_stop_loss_pct = new_val
     save_config(cfg)
-    _record_action("config_patch", param=param_name, detail=f"{current} → {new_val}")
+    _persist_action("config_patch", param=param_name,
+                    before=str(current), after=str(new_val), direction="tighten",
+                    reason=action.reason)
     logger.info("operator: tightened %s: %.1f → %.1f — %s", param_name, current, new_val, action.reason)
     return {"action": "tighten_stop_loss", "status": "executed",
             "param": param_name, "old": current, "new": new_val}
+
+
+def _action_widen_stop_loss(action: OperatorAction) -> dict:
+    """Loosen stop loss back toward neutral (Level 2 proposal)."""
+    param_name = "default_stop_loss_pct"
+    last = _last_action_time("config_patch", param_name)
+    if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
+        return {"action": "widen_stop_loss", "status": "cooldown",
+                "reason": "same param adjusted < 2h ago"}
+    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
+        return {"action": "widen_stop_loss", "status": "rate_limited",
+                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
+
+    spec = PARAM_REGISTRY[param_name]
+    delta = min(action.params.get("delta", 0.5), 1.0)
+    cfg = load_config()
+    current = getattr(cfg.trading, param_name, 3.0)
+    new_val = current + delta
+    new_val = min(new_val, spec.neutral)  # never exceed neutral
+    if new_val <= current:
+        return {"action": "widen_stop_loss", "status": "skipped", "reason": "already at or above neutral"}
+
+    cfg.trading.default_stop_loss_pct = new_val
+    save_config(cfg)
+    _persist_action("config_patch", param=param_name,
+                    before=str(current), after=str(new_val), direction="loosen",
+                    reason=action.reason)
+    logger.info("operator: widened %s: %.1f → %.1f — %s", param_name, current, new_val, action.reason)
+    return {"action": "widen_stop_loss", "status": "executed",
+            "param": param_name, "old": current, "new": new_val}
+
+
+def _action_neutral_drift(action: OperatorAction) -> dict:
+    """Route neutral-drift proposals to the appropriate loosen handler."""
+    param_name = action.params.get("param", "")
+    if param_name == "min_confidence_to_trade":
+        return _action_loosen_confidence(action)
+    elif param_name == "max_demo_position_notional_usdt":
+        return _action_increase_sizing(action)
+    elif param_name == "default_stop_loss_pct":
+        return _action_widen_stop_loss(action)
+    return {"action": action.action_type, "status": "skipped",
+            "reason": f"unknown param for neutral_drift: {param_name}"}
 
 
 def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
@@ -595,24 +967,89 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
             reason=f"{len(assessment.uncovered_symbols)} symbols without active strategy",
         ))
 
-    # Stage 3: Parameter Tuning
+    # Stage 3: Parameter Tuning — TIGHTEN rules (Level 1, with escalation)
     if (assessment.signal_status == "degraded"
             and assessment.signal_win_rate is not None
             and assessment.signal_win_rate < 40):
-        actions.append(OperatorAction(
+        act = OperatorAction(
             action_type="tighten_confidence",
             level=1,
             params={"delta": 5},
             reason=f"signal win_rate degraded to {assessment.signal_win_rate:.1f}%",
-        ))
+        )
+        act = _maybe_escalate(act, "min_confidence_to_trade", "tighten")
+        actions.append(act)
 
     if assessment.win_rate_7d is not None and assessment.win_rate_7d < 35:
-        actions.append(OperatorAction(
+        act = OperatorAction(
             action_type="reduce_sizing",
             level=1,
             params={"reduce_pct": 20},
             reason=f"7d win_rate={assessment.win_rate_7d:.1f}% below 35%",
+        )
+        act = _maybe_escalate(act, "max_demo_position_notional_usdt", "tighten")
+        actions.append(act)
+
+    # Stage 3: Parameter Tuning — LOOSEN rules (Level 2 proposals)
+
+    # Rule 5A: Activity dead-zone → loosen confidence
+    if (assessment.hours_since_last_trade is not None
+            and assessment.hours_since_last_trade >= 12
+            and assessment.param_drift.get("min_confidence_to_trade") == "tightened"
+            and (assessment.win_rate_7d is None or assessment.win_rate_7d >= 40)
+            and not assessment.kill_switch_active):
+        actions.append(OperatorAction(
+            action_type="loosen_confidence",
+            level=2,
+            params={},
+            reason=(f"no trades in {assessment.hours_since_last_trade:.0f}h, "
+                    f"confidence tightened above neutral — proposing loosen"),
         ))
+
+    # Rule 5B: Winning streak + high PF → increase sizing
+    if (assessment.recent_streak >= 3
+            and assessment.profit_factor_7d is not None
+            and assessment.profit_factor_7d >= 1.5
+            and assessment.param_drift.get("max_demo_position_notional_usdt") == "tightened"
+            and not assessment.kill_switch_active):
+        actions.append(OperatorAction(
+            action_type="increase_sizing",
+            level=2,
+            params={"increase_pct": 20},
+            reason=(f"streak={assessment.recent_streak}, PF={assessment.profit_factor_7d:.2f} "
+                    f"— sizing tightened, proposing increase toward neutral"),
+        ))
+
+    # Rule 5C: TP-dominated exits → widen stop loss
+    exit_total = sum(assessment.exit_composition_7d.values())
+    tp_exits = assessment.exit_composition_7d.get("take_profit", 0)
+    if (exit_total >= 8
+            and tp_exits / exit_total >= 0.70
+            and assessment.param_drift.get("default_stop_loss_pct") == "tightened"
+            and not assessment.kill_switch_active):
+        actions.append(OperatorAction(
+            action_type="widen_stop_loss",
+            level=2,
+            params={"delta": 0.5},
+            reason=(f"TP exits {tp_exits}/{exit_total} ({tp_exits/exit_total*100:.0f}%) "
+                    f"— stop tightened, proposing widen toward neutral"),
+        ))
+
+    # Rule 5D: Healthy performance → neutral drift (one param per cycle)
+    if (assessment.win_rate_7d is not None
+            and 45 <= assessment.win_rate_7d <= 65
+            and assessment.trades_48h > 0
+            and not assessment.kill_switch_active):
+        for param_name, drift in assessment.param_drift.items():
+            if drift != "neutral":
+                actions.append(OperatorAction(
+                    action_type=f"neutral_drift_{param_name}",
+                    level=2,
+                    params={"param": param_name},
+                    reason=(f"WR={assessment.win_rate_7d:.1f}% healthy, "
+                            f"{param_name} drifted ({drift}) — proposing return to neutral"),
+                ))
+                break  # one param per cycle
 
     # Stage 3: Data Health
     if not assessment.ohlcv_ready:
@@ -681,9 +1118,11 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     actions = decide_actions(assessment)
 
     # Phase 3: Execute actions by level
+    # Use max(action.level, classify_action()) — escalation can raise level but never lower it
     results: list[dict] = []
     for action in actions:
-        level = classify_action(action.action_type)
+        base_level = classify_action(action.action_type)
+        level = max(base_level, action.level)
         if level == 3:
             logger.warning("operator_loop: blocked Level 3 action: %s", action.action_type)
             results.append({"action": action.action_type, "status": "forbidden"})
@@ -705,12 +1144,18 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
             "uncovered_symbols": len(assessment.uncovered_symbols),
             "underperforming": len(assessment.underperforming_strategies),
             "trades_24h": assessment.trades_24h,
+            "trades_48h": assessment.trades_48h,
             "win_rate_7d": assessment.win_rate_7d,
+            "profit_factor_7d": assessment.profit_factor_7d,
+            "hours_since_last_trade": assessment.hours_since_last_trade,
+            "recent_streak": assessment.recent_streak,
+            "exit_composition_7d": assessment.exit_composition_7d,
             "signal_status": assessment.signal_status,
             "signal_win_rate": assessment.signal_win_rate,
             "ohlcv_ready": assessment.ohlcv_ready,
             "kill_switch": assessment.kill_switch_active,
             "open_positions": assessment.open_positions,
+            "param_drift": assessment.param_drift,
         },
         "actions_decided": len(actions),
         "actions_executed": sum(1 for r in results if r.get("status") == "executed"),

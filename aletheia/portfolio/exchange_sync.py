@@ -194,64 +194,6 @@ def _run_async(coro, timeout: float = 10.0):
         pool.shutdown(wait=False)
 
 
-def sync_all_exchanges() -> Optional[dict]:
-    """Fetch unified account state from all configured brokers (UTA layer).
-
-    Stores the result in settings as `exchange_account_state.unified`.
-    Also triggers the legacy Bitget-only sync for backwards compatibility.
-    """
-    try:
-        from aletheia.portfolio.uta.manager import get_unified_state_sync
-        state = get_unified_state_sync()
-
-        payload = json.dumps({
-            "total_equity_usdt": state.total_equity_usdt,
-            "total_available_usdt": state.total_available_usdt,
-            "total_unrealized_pnl": state.total_unrealized_pnl,
-            "accounts": state.accounts,
-            "positions": state.positions,
-            "errors": state.errors,
-            "fetched_at": state.fetched_at,
-        })
-
-        from aletheia.storage.sqlite import db_path
-        import sqlite3 as _sqlite3
-
-        for attempt in range(3):
-            conn = None
-            try:
-                conn = _sqlite3.connect(str(db_path()), isolation_level=None, timeout=30)
-                conn.execute("PRAGMA busy_timeout=30000")
-                conn.execute(
-                    "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
-                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                    (f"{_KEY_PREFIX}.unified", payload),
-                )
-                break
-            except _sqlite3.OperationalError as exc:
-                if "database is locked" not in str(exc).lower() or attempt >= 2:
-                    raise
-                time.sleep(0.25 * (attempt + 1))
-            finally:
-                if conn:
-                    conn.close()
-
-        logger.info(
-            "sync_all_exchanges: unified equity=%.2f, %d accounts, %d errors",
-            state.total_equity_usdt, len(state.accounts), len(state.errors),
-        )
-        return {
-            "total_equity_usdt": state.total_equity_usdt,
-            "total_available_usdt": state.total_available_usdt,
-            "total_unrealized_pnl": state.total_unrealized_pnl,
-            "accounts": state.accounts,
-            "positions": state.positions,
-            "errors": state.errors,
-            "fetched_at": state.fetched_at,
-        }
-    except Exception as e:
-        logger.warning("sync_all_exchanges failed: %s", e)
-        return None
 
 
 def get_unified_cached_state() -> Optional[dict]:
@@ -426,6 +368,30 @@ def sync_all_exchanges() -> Optional[dict]:
             "fetched_at": unified.fetched_at,
         }
         _store_unified(payload)
+
+        # Auto-record initial deposit for newly-seen brokers.
+        # Use available_usdt (excludes unrealized PnL) as the deposit amount
+        # to avoid inflating the baseline when the account already has open gains.
+        try:
+            from aletheia.storage.repositories import has_capital_event_for_broker, insert_capital_event
+            from aletheia.storage.models import CapitalEvent
+            for acct in unified.accounts:
+                broker_id = acct.get("broker_id", "")
+                available = acct.get("available_usdt", 0)
+                equity = acct.get("equity_usdt", 0)
+                deposit_amount = available if available > 0 else equity
+                if broker_id and deposit_amount > 0 and not has_capital_event_for_broker(broker_id):
+                    insert_capital_event(CapitalEvent(
+                        broker_id=broker_id,
+                        event_type="deposit",
+                        amount_usdt=deposit_amount,
+                        equity_at_event=equity,
+                        note="auto:initial_sync",
+                    ))
+                    logger.info("capital_events: auto-recorded initial deposit %.2f for %s", deposit_amount, broker_id)
+        except Exception as cap_err:
+            logger.warning("capital_events auto-record failed: %s", cap_err)
+
         return payload
     except Exception as e:
         logger.warning("sync_all_exchanges failed: %s", e)
@@ -460,10 +426,3 @@ def _store_unified(payload: dict) -> None:
                 conn.close()
 
 
-def get_unified_cached_state() -> Optional[dict]:
-    """Return the cached unified (multi-broker) state, or None if never fetched."""
-    raw = _read_raw("unified")
-    if raw is None:
-        return None
-    raw["age_seconds"] = _age_seconds(raw.get("fetched_at", ""))
-    return raw

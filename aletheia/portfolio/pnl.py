@@ -153,6 +153,24 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         "after": {"status": "closed", "realized_pnl": realized, "close_reason": reason},
         "message": f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); realized={realized}",
     })
+    # Notify operator of trade close (Telegram + toast)
+    try:
+        from aletheia.notifications import notify_operator
+        pnl_emoji = "+" if realized > 0 else ""
+        notify_operator(
+            title=f"Position Closed: {row.get('symbol')}",
+            message=(
+                f"{row.get('direction')} → {reason} @ {exit_price:.4f}\n"
+                f"PnL: {pnl_emoji}{realized:.4f} USDT"
+            ),
+            level="info" if realized >= 0 else "warning",
+            event_type="trade_notification",
+            entity_type="position",
+            entity_id=position_id,
+            error_log=False,
+        )
+    except Exception:
+        pass
     # Resolve shadow trades for this position batch
     try:
         from aletheia.analytics.shadow_trades import resolve_shadow_trades_for_position
@@ -192,11 +210,15 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
     total_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in positions)
     total_today_realized = today_realized_pnl(execution_mode=execution_mode)
 
-    # Account-level realized PnL from closed positions
-    closed = list_positions(status="closed")
+    # Realized PnL: per-mode for the requested execution_mode (paper dashboard),
+    # plus all-mode total for the exchange_account row.
+    all_closed = list_positions(status="closed", limit=10000)
     if execution_mode:
-        closed = [p for p in closed if p["execution_mode"] == execution_mode]
-    total_realized = sum(p.get("realized_pnl", 0.0) for p in closed)
+        mode_closed = [p for p in all_closed if p.get("execution_mode") == execution_mode]
+    else:
+        mode_closed = all_closed
+    total_realized = sum(p.get("realized_pnl", 0.0) for p in mode_closed)
+    all_realized = sum(p.get("realized_pnl", 0.0) for p in all_closed)
 
     # Exposure by symbol
     exposure: dict[str, float] = {}
@@ -289,6 +311,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "total_value_usdt": round(final_total_value, 4),
         "unrealized_pnl": round(final_unrealized, 4),
         "realized_pnl": round(total_realized, 4),
+        "all_realized_pnl": round(all_realized, 4),
         "today_pnl": round(final_today_pnl, 4),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
@@ -318,30 +341,35 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     """
     summary = compute_portfolio(execution_mode=execution_mode, persist_marks=True)
 
-    # Row 1: paper-local (pure mark-to-market, ignoring exchange equity override)
-    local_positions = [p for p in summary.get("positions", [])
-                       if p.get("execution_mode", "").startswith("paper")]
-    local_unrealized = sum(p.get("unrealized_pnl", 0) for p in local_positions)
+    # Row 1: mode-specific (mark-to-market for positions matching execution_mode)
+    mode_positions = [p for p in summary.get("positions", [])
+                      if p.get("execution_mode") == execution_mode]
+    local_unrealized = sum(p.get("unrealized_pnl", 0) for p in mode_positions)
     local_notional = sum(
         p["quantity"] * (p.get("current_price") or p["entry_price"])
-        for p in local_positions
+        for p in mode_positions
     )
     snap = PortfolioSnapshot(
         total_value_usdt=round(local_notional, 4),
         unrealized_pnl=round(local_unrealized, 4),
         realized_pnl=summary["realized_pnl"],
-        positions_count=len(local_positions),
+        positions_count=len(mode_positions),
         execution_mode=execution_mode,
     )
     insert_portfolio_snapshot(snap)
 
-    # Row 2: exchange account (real equity from Bitget cache, when available)
-    exchange_equity = summary.get("exchange_equity_usdt")
+    # Row 2: exchange account — prefer UTA unified equity (multi-broker sum),
+    # fallback to legacy single-broker Bitget cache.
+    uta_state = summary.get("uta_state")
+    uta_equity = None
+    if uta_state:
+        uta_equity = uta_state.get("total_equity_usdt")
+    exchange_equity = uta_equity or summary.get("exchange_equity_usdt")
     if exchange_equity is not None:
         exc_snap = PortfolioSnapshot(
             total_value_usdt=float(exchange_equity),
             unrealized_pnl=summary["unrealized_pnl"],
-            realized_pnl=summary["realized_pnl"],
+            realized_pnl=summary["all_realized_pnl"],
             positions_count=summary["positions_count"],
             execution_mode="exchange_account",
             exchange_equity_usdt=float(exchange_equity),

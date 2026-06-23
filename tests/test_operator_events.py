@@ -316,7 +316,9 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
     from aletheia.storage.models import Position
     from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
 
+    from aletheia.storage.models import PiDecision
     review_strategy = create_strategy("Review Candidate", "needs operator review")
+    repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=review_strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         result = promote_strategy(review_strategy.id, target)
         assert result["success"] is True
@@ -328,6 +330,7 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
     )
 
     promotion_strategy = create_strategy("Promotion Candidate", "promotion proposal due")
+    repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=promotion_strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
         result = promote_strategy(promotion_strategy.id, target)
         assert result["success"] is True

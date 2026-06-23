@@ -3,6 +3,7 @@
 Change-controlled module (guide §31.3). Implements the §21.3 check matrix.
 """
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import RiskDecision, TradeProposal
 from aletheia.storage.repositories import insert_risk_decision, list_positions
+
+logger = logging.getLogger("aletheia.risk.engine")
 
 # Live market data older than this (seconds) is considered stale for live orders.
 _MAX_DATA_AGE_SECONDS = 120

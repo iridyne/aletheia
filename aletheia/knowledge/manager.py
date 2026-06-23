@@ -172,7 +172,7 @@ def create_strategy_memory(strategy_id: str, title: str, content: str) -> Knowle
         item_type="strategy_memory",
         title=title,
         file_path=str(path),
-        confidence="medium_confidence",
+        confidence="high_confidence",
     )
     try:
         insert_knowledge_item(item)

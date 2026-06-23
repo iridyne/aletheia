@@ -448,7 +448,11 @@ def _get_data_health_summary() -> dict[str, Any]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         row = db.execute(
             """SELECT COUNT(*),
-                      SUM(CASE WHEN forward_return_pct > 0 THEN 1 ELSE 0 END)
+                      SUM(CASE
+                        WHEN direction = 'short' AND forward_return_pct < 0 THEN 1
+                        WHEN COALESCE(direction, 'long') != 'short' AND forward_return_pct > 0 THEN 1
+                        ELSE 0
+                      END)
                FROM universe_forward_outcomes
                WHERE status = 'settled' AND horizon = '24h'
                  AND settled_at >= ? AND ABS(forward_return_pct) <= 100""",

@@ -492,6 +492,12 @@ export const api = {
   },
   getPortfolioHistory: (days?: number) => fetchJson<any[]>(`/market/portfolio-history${days ? `?days=${days}` : ''}`),
 
+  // Capital events (deposit/withdraw tracking)
+  getNetDeposits: () => fetchJson<{ net_deposits_usdt: number; first_event_at: string | null }>('/capital/net-deposits'),
+  getCapitalEvents: () => fetchJson<any[]>('/capital/events'),
+  createCapitalEvent: (body: { broker_id: string; event_type: string; amount_usdt: number; note?: string }) =>
+    post<any>('/capital/events', body),
+
   // Audit / Activity
   getAuditEvents: (limit = 50) => fetchJson<any[]>(`/audit/events?limit=${limit}`),
 
@@ -664,6 +670,11 @@ export const api = {
   // Trade Analytics panel
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
   getStrategyKpis: () => fetchJson<Record<string, { trade_count: number; win_rate: number; total_pnl: number }>>('/analytics/strategy-kpis'),
+  getEquityCurve: (days?: number) => fetchJson<{
+    points: { time: string; pnl: number; cumulative_pnl: number }[];
+    current_unrealized: number;
+    total_realized: number;
+  }>(`/analytics/equity-curve${days ? `?days=${days}` : ''}`),
   getTradeInsights: () => fetchJson<TradeInsights>('/analytics/trade-insights'),
   getGoLiveScorecard: () => fetchJson<GoLiveScorecard>('/analytics/go-live-scorecard'),
   getCostSummary: () => fetchJson<CostSummary>('/analytics/cost-summary'),

@@ -29,6 +29,22 @@ def setup_test_env(tmp_path, monkeypatch):
     run_migrations()
 
 
+def _seed_pi_approval(strategy_id: str) -> None:
+    """Plant a PI recommend_promote record so paper_running gate passes."""
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+    pi_dec = PiDecision(
+        symbol=None,
+        direction=None,
+        action="recommend_promote",
+        conviction=0,
+        reasoning="test fixture",
+        proposal_id=strategy_id,
+        debate_ran=False,
+    )
+    insert_pi_decision(pi_dec)
+
+
 def test_create_strategy_in_draft(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Trend Following V1", "Momentum-based")
@@ -71,6 +87,7 @@ def test_skip_transition_blocked(tmp_path, monkeypatch):
 def test_full_lifecycle_forward(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Full Lifecycle")
+    _seed_pi_approval(s.id)
     # paper_passed now runs the full promotion gate, so seed paper evidence
     # while in paper_running before the gated promotion.
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running"]:
@@ -97,6 +114,7 @@ def test_promotion_gate_check_not_in_paper_running_or_passed(tmp_path, monkeypat
 def test_live_candidate_requires_paper_orders(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Paper Order Required")
+    _seed_pi_approval(s.id)
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
         promote_strategy(s.id, target)
     result = check_promotion_gates(s.id)
@@ -108,6 +126,7 @@ def test_live_candidate_requires_paper_orders(tmp_path, monkeypatch):
 def test_live_candidate_counts_only_paper_fills(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Paper Fill Isolation")
+    _seed_pi_approval(s.id)
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
         promote_strategy(s.id, target)
 
@@ -202,6 +221,7 @@ def test_live_candidate_counts_only_paper_fills(tmp_path, monkeypatch):
 def test_positive_expectancy_failure_is_non_positive(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Non-Positive Expectancy")
+    _seed_pi_approval(s.id)
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
         promote_strategy(s.id, target)
     created_at = (datetime.utcnow() - timedelta(days=15)).isoformat()
@@ -262,6 +282,7 @@ def test_positive_expectancy_failure_is_non_positive(tmp_path, monkeypatch):
 def test_live_candidate_requires_paper_passed(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Live Gate Test")
+    _seed_pi_approval(s.id)
     # Advance to paper_running (the last ungated state).
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running"]:
         promote_strategy(s.id, target)
@@ -276,6 +297,7 @@ def test_live_candidate_requires_paper_passed(tmp_path, monkeypatch):
 def test_live_candidate_passes_with_required_paper_evidence(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Evidence Gate Test")
+    _seed_pi_approval(s.id)
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running"]:
         promote_strategy(s.id, target)
     _seed_strategy_evidence(s.id)
@@ -291,6 +313,7 @@ def test_live_candidate_passes_with_required_paper_evidence(tmp_path, monkeypatc
 def test_paper_evidence_includes_bitget_demo_modes(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Demo Evidence Test")
+    _seed_pi_approval(s.id)
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running", "paper_passed"]:
         promote_strategy(s.id, target)
 
@@ -394,6 +417,7 @@ def test_paper_evidence_includes_bitget_demo_modes(tmp_path, monkeypatch):
 def test_strategy_post_trade_review_required_by_strategy(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Strategy-Specific Review Required")
+    _seed_pi_approval(s.id)
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running"]:
         promote_strategy(s.id, target)
     _seed_strategy_evidence(s.id, include_strategy_review=False)
@@ -417,6 +441,7 @@ def test_strategy_post_trade_review_required_by_strategy(tmp_path, monkeypatch):
 def test_live_candidate_to_live_limited_requires_live_unlock_and_permission(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Live Limited Gate Test")
+    _seed_pi_approval(s.id)
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running"]:
         promote_strategy(s.id, target)
     _seed_strategy_evidence(s.id)
@@ -457,6 +482,7 @@ def test_live_candidate_to_live_limited_requires_live_unlock_and_permission(tmp_
 def test_live_limited_rejects_critical_risk_violations(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     s = create_strategy("Live Limited Critical Risk Gate")
+    _seed_pi_approval(s.id)
     for target in ["research_note", "strategy_hypothesis", "paper_candidate", "paper_running"]:
         promote_strategy(s.id, target)
     _seed_strategy_evidence(s.id)
