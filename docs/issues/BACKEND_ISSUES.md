@@ -813,3 +813,40 @@
 - **佐证**：`aletheia/universe/allocator.py:52-68`（只取 `expected_horizon` 行）、`aletheia/storage/repositories.py:calibration_stats()`（已返回全部 horizon 数据）
 - **最小修复**：改为 `multipliers[family] = weighted_average(rows_for_family, weight=n)`，所有 horizon 按样本量加权。需评估持仓周期与 horizon 的匹配关系再决定权重方案。
 - **状态**：🟡 待积累更多数据后评估。数据量充足前改动收益有限。
+
+---
+
+## §13. 跨模块数据契约违规 (2026-06-23 审计)
+
+> 来源：SDD 第一性原理审计 — 逐条 producer-consumer 数据流追踪
+> 已修 2 条，冻结区待修 2 条
+
+### §13.1 🟠 paper_trader_ranker evidence 查询硬编码 paper_internal
+
+- **位置**：`aletheia/agents/paper_trader_ranker.py:723`
+- **问题**：`WHERE execution_mode = 'paper_internal'` 只统计 paper_internal 模式的交易证据，忽略 bitget_demo/okx_demo/binance_testnet 的已平仓 positions
+- **影响**：策略在 OKX demo 跑了 20 笔交易但 evidence = 0 → 被分类为 "needs_backtest" → ranker 给惩罚分 → 好候选被压制。50% 交易数据对决策不可见
+- **修复**：`execution_mode IN ('paper_internal','bitget_demo','binance_testnet','okx_demo')`
+- **状态**：🟠 **EXPERIMENT FREEZE** 冻结区，Round 2 首日修复。影响 AI 决策 → 不能在观察期内动
+
+### §13.2 🟠 trading_context today_pnl 字段名与 API 语义不一致
+
+- **位置**：`aletheia/agent_shell/trading_context.py:75`
+- **问题**：`layer["today_pnl"] = round(today_realized_pnl(), 2)` 存的是 realized-only，但 `/api/portfolio` 的 `today_pnl` = realized + unrealized
+- **影响**：Agent 被告知 "Today PnL: +8.49" (closed only)，Dashboard 显示 "Today PnL: -4.5" (含浮盈) → 同一名称不同语义
+- **修复**：字段改名为 `today_realized_pnl`，prompt 中标注 "closed positions only"
+- **状态**：🟠 **EXPERIMENT FREEZE** 冻结区，Round 2 修复
+
+### §13.3 ✅ fee_rate 前缀判断错误 — 已修 (3377d48)
+
+- **位置**：`aletheia/portfolio/pnl.py:114`
+- **问题**：`startswith("paper")` 只匹配 paper_internal，bitget_demo/okx_demo 被当 live 收费
+- **修复**：改为 `in _DEMO_MODES` 元组精确匹配
+- **状态**：✅ 已修复
+
+### §13.4 ✅ direction_bias 未归一化 — 已修 (3377d48)
+
+- **位置**：`aletheia/portfolio/market_signal_reader.py` → `exit_rules.py:56`
+- **问题**：exit_rules 做 exact match ("long"/"short"/"neutral")，但 opportunities 可能存 "bullish"/"bearish" → 退出规则被完全绕过
+- **修复**：`market_signal_reader` 新增 `_normalize_direction()` 在读取时统一词汇表
+- **状态**：✅ 已修复
