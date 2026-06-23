@@ -194,7 +194,7 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
                 )}
                 {(mode === 'ops' || mode === 'both') && it.run && (
                   <span className="feed-meta mono">
-                    {it.run.trigger_type} · {it.run.model_provider || 'no-model'}
+                    {it.run.trigger_type}{it.run.model_provider ? ` · ${it.run.model_provider}` : ''}
                     {durationOf(it.run) && ` · ${durationOf(it.run)}`}
                     {` · ${outputsCount(it.run)} out`}
                     {it.run.errors && it.run.errors !== '[]' && ' · errored'}
