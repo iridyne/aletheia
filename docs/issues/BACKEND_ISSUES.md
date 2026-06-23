@@ -907,3 +907,81 @@
 - **影响**：长期单向调参无升级阻断，可能让 agent 在自动权限内反复同向 patch。
 - **优先级**：🟡
 - **状态**：🟡 **待修复**
+
+---
+
+## §16. 2026-06-23 SDD 全面代码审计 — 未决修复项 backlog
+
+> 来源：`docs/research/CODE_AUDIT_REPORT_2026-06-23.md`（74 findings，Top 25 修复优先级表）
+> 本节是 §15 之后的增量 backlog，两节合并构成完整未决修复列表。
+> 维护者：Aletheia Dev · 最后更新：2026-06-23
+
+---
+
+### §16.1 已修复（本次会话）
+
+以下 9 个修复项在 2026-06-23 SDD 全面审计会话中完成，代码改动已进入工作树（pending commit）：
+
+- ✅ Rank 3  KL-2  — insight_synthesizer `_persist_memo` 字段对齐（`content=` vs `tags=`），memo_scoring 断路已修；经核实 commit `1fb80c1` 已修正，本次验证确认 (pending)
+- ✅ Rank 11 PM-1  — `_get_atr_pct` 整体查询重写（JOIN `universe_registry`，`ts` 代替 `created_at`，修复 schema 不存在的列名），ATR 自适应追踪止损恢复；PL-PM-05 xfail → pass (pending)
+- ✅ Rank 8  CR-AR-01 — `docs/design/api_reference.md` §Runtime 路径前缀从 `/runtime/` 修正为 `/operator/runtime/`（纯文档修复）(pending)
+- ✅ Rank 25 CR-DM-04 — `aletheia/files/jsonl.py` `datetime.utcnow()` → `datetime.now(timezone.utc)` 补 tz 后缀，时间戳 ISO 8601 合规 (pending)
+- ✅ Rank 16 OL-2  — `_action_trigger_optuna_sweep` 语义谎言修复：`status="executed"` → `status="not_implemented"`；PL-OL-05 xfail 维持 strict（完整实现仍需 optuna_jobs 表，记入 §16.4）(pending)
+- ✅ Rank 21 KL-1  — `create_daily_review` 新增 `_is_quality_pass(content)` 质量门控（80 char 阈值），空体/低质量内容不再污染 FTS (pending)
+- ✅ Rank 18 MD-1  — xStock 连续失败计数器（threshold=3）新增 `infra_event` audit 写入；PL-MD-05 xfail 状态已更新 (pending)
+- ✅ Rank 24 CR-AU-04 — `append_jsonl("audit.jsonl", ...)` 新增结构防护 guard：直接调用抛 `ValueError`，强制走 `write_audit()` 路径 (pending)
+- ✅ Rank 4  CR-AU-01 spec — 新建 `tests/specs/spec_audit_chain.py`，5 个 claims（AU-S01 append-only / AU-S02 `_prev_hash` SHA-256 / AU-S03 verify 新链 valid / AU-S04 direct-append guard / AU-S05 credential 路由委托审计）；Conformance Matrix 覆盖率升至 98% (pending)
+
+---
+
+### §16.2 Trust-boundary（需用户授权）
+
+以下 8 条均触及 trust boundary 模块，**不得在未授权情况下施工**。
+
+| 级别 | ID | 位置 | 一行说明 | 最小修复 | 工作量 |
+|------|-----|------|---------|---------|--------|
+| 🔴 | **CR-RE-01** | `aletheia/risk/engine.py:252-256` | 被拒提案的 `allowed_execution_mode` 写死 `"paper_internal"`，原始模式丢失，致 CR-PG-01 dead branch | 在 `RiskDecision` 增加 `proposal_execution_mode` 字段持久化提案原始模式 | 2h |
+| 🔴 | **CR-PG-01** | `aletheia/trading/strategy_lifecycle.py:395-408` | `_critical_risk_violations` live 分支因 CR-RE-01 根因永久不可达，promotion gate 计数不可信 | 依赖 CR-RE-01 修复；临时在 line 399-402 加注释说明 dead branch | 0.5h* |
+| 🔴 | **CR-EX-01** | `aletheia/execution/reconciliation.py:21` | `_LIVE_MODE = "bitget_live_limited"` 硬编码，OKX/Binance live 订单永久停留 `submitted`，live 敞口低估 | 改为 `_LIVE_MODES = {"bitget_live_limited", "okx_live_limited", "binance_live_limited"}` 用 `IN` 过滤 | 2h |
+| 🔴 | **CR-DL-01** | `aletheia/storage/repositories.py:1049` | `_OHLCV_WINDOW_DEFAULT = 50_000`（契约 500，差 100×），SQLite WAL 延迟风险 | 决策分叉：改 500 并对齐 `historical_data.max_bars_per_pair`，或更新契约承认 50,000 | 0.5h |
+| 🔴 | **CR-DM-01** | `aletheia/storage/models.py:9` | ID `hex[:12]`（12-char, 48bit 熵）vs 契约 UUID4 36-char；百万行时碰撞风险 | 方案A: 改 `str(uuid4())`；方案B: 更新契约承认 12-char hex | 1h |
+| 🟠 | **CR-LU-01** | `aletheia/server/routes/live.py:17-45` | live unlock 路由未检查 `operator.permission_mode`；本机 HTTP POST 可绕过操作员权限层（BACKLOG-LU-01） | 在路由入口检查 `cfg.operator.permission_mode != "ReadOnly"` | 1h |
+| 🟠 | **CR-EX-03** | `aletheia/execution/bitget_broker.py:141-149` | `Position` 行创建时未传 `opportunity_id`；sector 集中度 check #16 对全部实盘/demo 仓位永久静默 | 在 broker 开仓路径传入 `opportunity_id` | 1h |
+| 🟠 | **CR-AU-03** | `aletheia/server/routes/bitget.py` | 凭证保存路由可能未写 `secret_rotated` audit event（AU-S05 spec 需验证） | 审查路由实现，补写 `write_audit(event_type="secret_rotated")` | 1h |
+
+\* CR-PG-01 修复工作量依赖 CR-RE-01 完成后为零成本 follow-up。
+
+---
+
+### §16.3 Frozen-zone（实验冻结期不可修）
+
+以下 3 条根修复路径在 EXPERIMENT FREEZE 区域，**当前 sprint 禁止触碰，待 Round 2 处理**。
+
+| ID | 位置 | 问题摘要 | 状态 |
+|----|------|---------|------|
+| **KL-3** (Rank 9) | `aletheia/agent_shell/trading_context.py:367` | `_build_layer3_wisdom` 过滤 `item_type in ('lesson','accepted_lesson')`，但无任何 producer 写这两种类型；PI Agent Layer 3 wisdom 永远空列表 | 待 Round 2 处理：将类型过滤扩展到 `('post_trade_review','trade_case_study')`，并补 E2E spec |
+| **PT-2** (Rank 12) | `aletheia/agents/paper_trader.py:138` | `PiDecision` 不携带 `opportunity_id`，opportunity 表 open 行持续堆积；PL-PT-04 xfail 严格捕获此 drift | 待 Round 2 处理：paper_trader.py 内修复，不接触冻结区；但 xfail 维持 strict 直至 Round 2 |
+| **PT-1** (Rank 13) | `aletheia/agents/paper_trader.py:137` | `signal_pending` 写入后 source opportunity 状态不更新为 `"reviewed"`，下轮重复评分；PL-PT-05 xfail 严格捕获 | 待 Round 2 处理（注：paper_trader.py 本身不在冻结区，但修改会影响 AI 决策流程，属冻结判断范围） |
+
+---
+
+### §16.4 其余 sprint 项（Top 25 剩余）
+
+以下条目在 Top 25 内，不在已修复 / trust-boundary / frozen-zone 范畴，可在当前或下一 sprint 纳入：
+
+| Rank | ID | 位置 | 说明 | 级别 |
+|------|-----|------|------|------|
+| 10 | **CR-PI-01** | `aletheia/agent_shell/operator_loop.py:882` | scanner family 权重调整不持久化（不调 `save_config()`），自治调校 no-op；需同步 `schema.py` + 前端 Settings | 🔴 |
+| 17 | **CR-SCH-01** | `aletheia/agent_runtime/scheduler.py:771` | 24/30 个 job 无 `_record_job_failure`；持续失败不报警 | 🟠 |
+| 19 | **CR-AR-02** | `aletheia/server/routes/settings.py:12` | `POST /settings/permission-mode` 拒绝全部 5 种 operator 模式 | 🟠 |
+| 22 | **CR-RE-03** | `aletheia/risk/engine.py:154` | `or 0.0` fallback 静默 bypass 日损门控（zero-cap 场景） | 🟠 |
+| 23 | **EC-2** | `aletheia/execution/gateway.py` | OKX symbol-filter 拒绝路径产生双重 audit 记录（噪声，无安全风险） | 🟡 |
+| — | **OL-2 full** | `aletheia/agent_shell/operator_loop.py:669` | Optuna sweep 完整实现（optuna_jobs 表 + background worker + enqueue 状态），OL-2 partial fix 已入 §16.1 | 🟠 |
+
+---
+
+### §16.5 索引
+
+权威源：`docs/research/CODE_AUDIT_REPORT_2026-06-23.md`（74 findings，含 §八 Top 25 修复优先级表、§四 7 条管道健康度、§六 20 条 spec 补强建议）。
+
+**完整未决 backlog = §15（2026-06-23 ultracode 批次，6 条）+ §16（本批次，2026-06-23 SDD 全面审计）**。两节合并阅读构成截至 2026-06-23 的全量待处理工作项。已完成项归入 §10 历史区。
