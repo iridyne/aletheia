@@ -309,8 +309,14 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
             except Exception as e:
                 errors.append(f"learning_ledger_in_review_failed: {e}")
             review = create_daily_review("Daily Review", review_body)
-            log_tool(run_id, "write_daily_review", "observe", True, output=review.id)
-            outputs.append(f"daily_review:{review.id}")
+            # create_daily_review returns None when the body fails the quality gate
+            # (empty / too-short) — don't fabricate a write that didn't happen.
+            if review is not None:
+                log_tool(run_id, "write_daily_review", "observe", True, output=review.id)
+                outputs.append(f"daily_review:{review.id}")
+            else:
+                log_tool(run_id, "write_daily_review", "observe", False,
+                         output="skipped:quality_gate")
 
     # Lesson extraction: mine actionable lessons from today's post-trade reviews
     try:

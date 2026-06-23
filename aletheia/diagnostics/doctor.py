@@ -425,6 +425,83 @@ def _probe_trading_loop(report: Report) -> None:
         report.add("loop.newest_opportunity", "ok", f"newest opportunity {_fmt_age(opp_age)}")
 
 
+def _probe_profit_loop(report: Report) -> None:
+    """Minimum profit loop liveness — the core revenue closed loop.
+
+    The loop is: opportunities -> (paper_trader ranks) -> signal_pending pi_decisions
+    -> PI Agent LLM decides -> trade_proposals -> risk -> orders -> positions.
+
+    A silent stall here is the most dangerous failure class: the observe stage
+    keeps producing opportunities (so loop.newest_opportunity stays green) while
+    NO new proposals are created for hours — the system looks alive but earns and
+    learns nothing. This probe catches that decoupling directly by comparing the
+    age of the newest opportunity against the age of the newest proposal, and by
+    inspecting the recent PI-decision action mix for an all-skip pattern.
+
+    Root precedent: 2026-06-23 the PI Agent saw a phantom $167 balance (wrong
+    broker cache) and skipped every signal for 20h. This probe exists so that
+    class of stall surfaces in `aletheia doctor` instead of reaching the user.
+    """
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.storage.sqlite import get_db
+        cfg = load_config()
+        db = get_db()
+
+        def _newest(table: str) -> str | None:
+            try:
+                row = db.execute(
+                    f"SELECT created_at FROM {table} ORDER BY created_at DESC LIMIT 1"
+                ).fetchone()
+                return row[0] if row else None
+            except Exception:
+                return None
+
+        opp_age = _age_minutes(_newest("opportunities"))
+        prop_age = _age_minutes(_newest("trade_proposals"))
+    except Exception as e:
+        report.add("loop.profit", "info", f"could not read loop tables: {e}")
+        return
+
+    # No opportunities at all → upstream handles it (loop.newest_opportunity).
+    if opp_age is None:
+        report.add("loop.profit", "info", "no opportunities yet — loop not started")
+        return
+
+    # The stall signature: opportunities are flowing (< 60min) but proposals are
+    # stale (> 6h) or absent. This is the decoupling that looks alive but isn't.
+    PROPOSAL_STALL_MIN = 360  # 6h — well beyond the 5min paper_trader cadence
+    if opp_age < 60 and (prop_age is None or prop_age > PROPOSAL_STALL_MIN):
+        # Inspect recent PI-decision action mix to attribute the stall.
+        attribution = ""
+        try:
+            rows = db.execute(
+                "SELECT action, COUNT(*) c FROM pi_decisions "
+                "WHERE created_at >= datetime('now','-12 hours') GROUP BY action"
+            ).fetchall()
+            mix = {r[0]: r[1] for r in rows}
+            skips = mix.get("skip", 0)
+            trades = mix.get("trade", 0) + mix.get("scale_in", 0) + mix.get("flip", 0)
+            if skips > 0 and trades == 0:
+                attribution = (f" — PI Agent returned skip×{skips}/trade×0 in 12h "
+                               f"(check trading_context balance + regime inputs)")
+        except Exception:
+            pass
+        prop_desc = "none ever" if prop_age is None else _fmt_age(prop_age)
+        report.add("loop.profit", "warn",
+                   f"PROFIT LOOP STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
+                   f"newest proposal {prop_desc}{attribution}",
+                   "opportunities flow but produce no proposals — inspect "
+                   "paper_trader_ranker scoring + PI Agent decision inputs "
+                   "(see docs/issues/MINIMUM_PROFIT_LOOP_AUDIT.md)")
+    elif prop_age is not None and prop_age < PROPOSAL_STALL_MIN:
+        report.add("loop.profit", "ok",
+                   f"loop healthy — newest proposal {_fmt_age(prop_age)}")
+    else:
+        report.add("loop.profit", "info",
+                   f"opportunities {_fmt_age(opp_age)}, proposals {_fmt_age(prop_age) if prop_age else 'none'}")
+
+
 def _probe_health(report: Report) -> None:
     try:
         from aletheia.agent_runtime.health import compute_health
@@ -714,6 +791,7 @@ def build_report() -> Report:
         _probe_ohlcv_coverage,
         _probe_signal_effectiveness,
         _probe_trading_loop,
+        _probe_profit_loop,
         _probe_health,
         _probe_operator_loop,
         _probe_webui_static,

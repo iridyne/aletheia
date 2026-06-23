@@ -135,9 +135,29 @@ def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
 
     Adds an `age_seconds` field. Caller decides what to do with stale data.
     Returns None if nothing has ever been fetched for this mode.
+
+    Multi-broker default-path correction: the legacy per-mode cache key is
+    "demo"/"live" and is written ONLY by the Bitget-specific sync
+    (`sync_exchange_account`). When the active paper broker has migrated away
+    from Bitget (e.g. paper_execution_mode="okx_demo"), that "demo" cache holds
+    the stale/idle Bitget balance (~$167), NOT the real active account. Callers
+    that pass `mode=None` (the trading context, PnL, scorecard) want the REAL
+    active-account equity — so on the default path we prefer the unified
+    (multi-broker) cache projection when the active broker isn't Bitget. Callers
+    that pass an explicit `mode` (CLI bitget tools) still get the per-mode cache
+    verbatim. This keeps the PI Agent from seeing a phantom near-bankrupt account
+    and skipping every signal (the "minimum profit loop" stall, 2026-06-23).
     """
+    explicit_mode = mode is not None
     if mode is None:
-        mode = load_config().exchange.mode
+        cfg = load_config()
+        mode = cfg.exchange.mode
+        # Default path + active paper broker is non-Bitget → use unified cache,
+        # which carries the true total equity across all brokers.
+        if not explicit_mode and not cfg.exchange.paper_execution_mode.startswith("bitget"):
+            unified = get_unified_cached_state()
+            if unified is not None and (unified.get("total_equity_usdt") or 0) > 0:
+                return unified
     raw = _read_raw(mode)
     if raw is None:
         return None
