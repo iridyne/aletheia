@@ -368,16 +368,18 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 
 ## Runtime (Canary/Shadow deployment)
 
+> **Path prefix**: `/api/operator/runtime/`, **not** `/api/runtime/` — this router is mounted under the operator prefix. The paths below are correct; `/runtime/...` (without `operator/`) would 404.
+
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/runtime` | Current runtime state |
-| POST | `/runtime/candidate` | Register candidate version |
-| POST | `/runtime/shadow` | Start shadow execution |
-| POST | `/runtime/promote` | Promote candidate to active |
-| POST | `/runtime/drain` | Drain current version |
-| POST | `/runtime/rollback` | Rollback to previous version |
-| GET | `/runtime/events` | Runtime event log |
-| GET | `/runtime/events/stream` | SSE stream of runtime events |
+| GET | `/operator/runtime` | Current runtime state |
+| POST | `/operator/runtime/candidate` | Register candidate version |
+| POST | `/operator/runtime/shadow` | Start shadow execution |
+| POST | `/operator/runtime/promote` | Promote candidate to active |
+| POST | `/operator/runtime/drain` | Drain current version |
+| POST | `/operator/runtime/rollback` | Rollback to previous version |
+| GET | `/operator/runtime/events` | Runtime event log |
+| GET | `/operator/runtime/events/stream` | SSE stream of runtime events |
 
 ---
 

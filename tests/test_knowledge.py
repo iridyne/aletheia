@@ -97,7 +97,7 @@ def test_dreaming_log_creation(tmp_path, monkeypatch):
 
 def test_daily_review_creation(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    item = create_daily_review("Daily Review", "Daily review content")
+    item = create_daily_review("Daily Review", "Daily review content: market opened flat, momentum indicators neutral, no trades taken today, system operating normally.")
     assert item.item_type == "daily_review"
     assert "daily_reviews" in item.file_path
     items = repo.list_knowledge_items(item_type="daily_review")

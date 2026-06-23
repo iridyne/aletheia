@@ -1110,6 +1110,8 @@ async def create_daily_review(params: dict) -> dict:
     from aletheia.knowledge.manager import create_daily_review as _create
 
     item = _create(title=title, content=content)
+    if item is None:
+        return {"error": "Daily review content did not pass quality gate (too short or placeholder)."}
     return {"created": True, "id": item.id, "title": title}
 
 

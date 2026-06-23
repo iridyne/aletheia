@@ -17,6 +17,11 @@ logger = logging.getLogger("aletheia.market_data")
 
 _MAX_DYNAMIC_INSTRUMENTS = 60
 
+# Consecutive xStock fetch failure counter per symbol.
+# Triggers infra_event after XSTOCK_FAILURE_THRESHOLD consecutive failures.
+_xstock_failure_counts: dict[str, int] = {}
+_XSTOCK_FAILURE_THRESHOLD = 3
+
 
 def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
     """Build deduplicated instrument list from config + universe + open positions.
@@ -125,9 +130,27 @@ async def collect_market_snapshots() -> dict:
             for instrument in xstocks:
                 try:
                     collected.append(await _fetch_and_store(instrument, xprovider))
+                    _xstock_failure_counts[instrument.symbol] = 0  # reset on success
                 except Exception as e:
                     errors.append(f"{instrument}: {e}")
                     logger.warning("Failed to fetch xStocks ticker %s: %s", instrument, e)
+                    sym = instrument.symbol
+                    _xstock_failure_counts[sym] = _xstock_failure_counts.get(sym, 0) + 1
+                    if _xstock_failure_counts[sym] >= _XSTOCK_FAILURE_THRESHOLD:
+                        from aletheia.files.jsonl import write_audit
+                        write_audit({
+                            "actor": "system",
+                            "source": "market_data",
+                            "event_type": "infra_event",
+                            "entity_id": sym,
+                            "message": (
+                                f"xStock {sym} fetch failed {_xstock_failure_counts[sym]} "
+                                "consecutive times — provider may be degraded"
+                            ),
+                            "severity": "warning",
+                            "consecutive_failures": _xstock_failure_counts[sym],
+                            "last_error": str(e)[:200],
+                        })
         finally:
             await xprovider.close()
 

@@ -22,6 +22,18 @@ def _import_all_specs():
         spec_data_layer,
         spec_operator_loop,
         spec_subsystem_observers,
+        spec_audit_chain,
+        # End-to-end pipeline specs (PL-* claims). Registered so the conformance
+        # matrix reflects pipeline coverage; not added to REQUIRED_CONTRACTS since
+        # they are behavioral/E2E (L2b) rather than structural (L2a) contracts.
+        spec_pipeline_risk_gate,
+        spec_pipeline_execution_chain,
+        spec_pipeline_live_unlock,
+        spec_pipeline_market_data,
+        spec_pipeline_paper_trade,
+        spec_pipeline_position_manager,
+        spec_pipeline_operator_loop,
+        spec_pipeline_profit_loop,
     )
 
 
@@ -37,6 +49,7 @@ REQUIRED_CONTRACTS = [
     "api_reference",
     "data_layer_contract",
     "operator_layer",
+    "audit_chain_contract",
     # subsystem observer claims register under "agent_contracts" by design —
     # equity_observer / prediction_observer are agents, not a separate contract.
 ]

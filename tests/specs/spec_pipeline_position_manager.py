@@ -310,59 +310,55 @@ def test_position_manager_max_hold_triggered(tmp_path, monkeypatch):
         "PL-PM-05", "pipeline_position_manager", "§4 atr_trailing_stop", "L2b",
         "When universe_feature_snapshots has atr_pct data for a symbol, "
         "_get_atr_pct returns a valid float for ATR-based trailing stop calculation",
-        status="drift",
-    ),
-)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "PM-1 — _get_atr_pct passes order_by= but _select_all only accepts order=. "
-        "_get_atr_pct calls _select_all(..., order_by='created_at DESC') but the "
-        "function signature is _select_all(..., order='rowid DESC'). The kwarg is "
-        "silently ignored, so _get_atr_pct cannot reliably return the latest ATR value. "
-        "Fix: change order_by= to order= in _get_atr_pct call."
+        status="implemented",
     ),
 )
 def test_atr_pct_returned_from_feature_snapshots(tmp_path, monkeypatch):
-    """Verify _get_atr_pct reads the latest ATR% value from universe_feature_snapshots."""
+    """Verify _get_atr_pct reads the latest ATR% value from universe_feature_snapshots.
+
+    Fixed PM-1: _get_atr_pct now joins through universe_registry (asset_id FK)
+    and orders by ts DESC (the real column name), instead of the broken
+    _select_all(order_by=, where="symbol=?") pattern that used wrong columns.
+    """
     conn = _setup_db(tmp_path, monkeypatch)
 
-    # Insert an ATR feature snapshot for BTC/USDT
-    snap_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    # universe_feature_snapshots uses asset_id FK → universe_registry.
+    # Must insert a registry row first, then snapshots with asset_id + ts.
+    asset_id = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO universe_feature_snapshots (id, symbol, atr_pct, created_at) "
+        "INSERT INTO universe_registry (id, venue, symbol, market_type, status) "
+        "VALUES (?,?,?,?,?)",
+        (asset_id, "bitget", "BTC/USDT", "spot", "active"),
+    )
+    conn.commit()
+
+    # Insert newer row (atr_pct=2.5) with a later ts
+    snap_new = str(uuid.uuid4())
+    ts_new = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) "
         "VALUES (?,?,?,?)",
-        (snap_id, "BTC/USDT", 2.5, now),
+        (snap_new, asset_id, ts_new, 2.5),
+    )
+    conn.commit()
+
+    # Insert older row (atr_pct=99.9) with an earlier ts — should NOT be returned
+    snap_old = str(uuid.uuid4())
+    ts_old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    conn.execute(
+        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) "
+        "VALUES (?,?,?,?)",
+        (snap_old, asset_id, ts_old, 99.9),
     )
     conn.commit()
 
     from aletheia.portfolio.position_manager import _get_atr_pct
     result = _get_atr_pct("BTC/USDT")
 
-    # PM-1: _get_atr_pct uses order_by= instead of order= — _select_all ignores
-    # the kwarg, so the ordering is by default rowid DESC (coincidentally correct
-    # for a single row). However, the bug means sort is unreliable for multiple rows.
-    # This test inserts 2 rows with different atr_pct to surface the ordering bug.
-    old_id = str(uuid.uuid4())
-    old_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    conn.execute(
-        "INSERT INTO universe_feature_snapshots (id, symbol, atr_pct, created_at) "
-        "VALUES (?,?,?,?)",
-        (old_id, "BTC/USDT", 99.9, old_ts),  # older row with a very different value
-    )
-    conn.commit()
-
-    result2 = _get_atr_pct("BTC/USDT")
-
-    # The function SHOULD return 2.5 (the newer row), not 99.9 (the older).
-    # With the order_by= bug, _select_all defaults to rowid DESC, which happens
-    # to return the last-inserted row — but this is coincidence, not correctness.
-    # We test the INTENDED behavior: returns the most recent atr_pct by created_at.
-    assert result2 is not None, "_get_atr_pct returned None despite data existing"
-    assert abs(float(result2) - 2.5) < 0.01, (
-        f"Expected _get_atr_pct to return 2.5 (newest row), got {result2}. "
-        "PM-1: order_by= kwarg is ignored — ordering by created_at DESC broken."
+    # Must return 2.5 (newest row by ts DESC), not 99.9 (older row)
+    assert result is not None, "_get_atr_pct returned None despite data existing"
+    assert abs(float(result) - 2.5) < 0.01, (
+        f"Expected _get_atr_pct to return 2.5 (newest row by ts), got {result}."
     )
 
 

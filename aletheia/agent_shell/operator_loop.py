@@ -667,16 +667,25 @@ def _action_trigger_strategy_research(action: OperatorAction) -> dict:
 
 
 def _action_trigger_optuna_sweep(action: OperatorAction) -> dict:
+    # TODO(backlog): Implement a durable sweep-job queue (optuna_jobs table +
+    # background worker) so this action produces real enqueued work.
+    # Tracked as OL-2 in docs/research/CODE_AUDIT_REPORT_2026-06-23.md.
     if _count_actions_today("trigger_optuna_sweep") >= _MAX_OPTUNA_TRIGGERS_PER_DAY:
         return {"action": "trigger_optuna_sweep", "status": "rate_limited",
                 "reason": f"already triggered {_MAX_OPTUNA_TRIGGERS_PER_DAY}x today"}
     strategy_id = action.params.get("strategy_id", "")
-    try:
-        _record_action("trigger_optuna_sweep", param=strategy_id)
-        logger.info("operator: queued Optuna sweep for strategy %s", strategy_id)
-        return {"action": "trigger_optuna_sweep", "status": "executed", "strategy_id": strategy_id}
-    except Exception as e:
-        return {"action": "trigger_optuna_sweep", "status": "error", "reason": str(e)}
+    _record_action("trigger_optuna_sweep", param=strategy_id)
+    logger.info(
+        "operator: Optuna sweep requested for strategy %s — not_implemented: "
+        "no sweep-job queue exists yet",
+        strategy_id,
+    )
+    return {
+        "action": "trigger_optuna_sweep",
+        "status": "not_implemented",
+        "strategy_id": strategy_id,
+        "reason": "no sweep-job queue; see OL-2 backlog",
+    }
 
 
 _CONFIDENCE_LADDER = ["speculative", "medium", "high"]

@@ -218,8 +218,8 @@ def test_market_data_stale_snapshot_triggers_risk_violation(tmp_path, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# PL-MD-05  L2b  xfail  xstock_infra_event: xStock failures don't trigger infra_event
-# Captures MD-1 drift
+# PL-MD-05  L2b  xstock_infra_event: xStock consecutive failures trigger infra_event
+# MD-1 drift fixed: write_audit called at 3rd consecutive xStock failure
 # ---------------------------------------------------------------------------
 
 
@@ -228,55 +228,55 @@ def test_market_data_stale_snapshot_triggers_risk_violation(tmp_path, monkeypatc
         "PL-MD-05", "pipeline_market_data", "§4 xstock_infra_event", "L2b",
         "When xStock fetch fails 3 consecutive times, an infra_event row "
         "must be written to signal infrastructure degradation to operators",
-        status="drift",
-    ),
-)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "MD-1 — xStock consecutive failures don't trigger infra_event. "
-        "When xStock data fetch fails 3x in a row, no infra_event row is written "
-        "to audit_events or knowledge_items. Operators have no visibility into "
-        "persistent infrastructure failures."
+        status="implemented",
     ),
 )
 def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
     """Verify that 3 consecutive xStock fetch failures produce an infra_event row.
 
-    This test captures the MD-1 gap: the xStock provider swallows errors but
-    never surfaces them as structured infra events.
+    Exercises the actual collect_market_snapshots code path with a monkeypatched
+    CCXTProvider that always raises, so the failure counter in market_data.py
+    accumulates and write_audit is called on the 3rd failure.
     """
-    conn = _setup_db(tmp_path, monkeypatch)
-
-    # Simulate 3 consecutive xStock fetch failures by calling the provider
-    # with a patched fetch that always raises
+    import asyncio
+    import aletheia.trading.market_data as md_mod
     import aletheia.data.ccxt_provider as ccxt_mod
 
-    fail_count = [0]
+    conn = _setup_db(tmp_path, monkeypatch)
 
-    class _FailingXStockProvider:
-        def get_ticker(self, symbol):
-            fail_count[0] += 1
-            raise RuntimeError("xstock_api_unavailable")
+    # Reset module-level failure counter so prior test runs don't bleed in
+    md_mod._xstock_failure_counts.clear()
 
-        def get_ohlcv(self, symbol, timeframe="1d", limit=100, since=None):
-            fail_count[0] += 1
+    # Build a minimal config with one xstock symbol
+    from aletheia.config.schema import AletheiaConfig, MarketDataConfig
+    cfg = AletheiaConfig()
+    cfg.market_data = MarketDataConfig(
+        observed_symbols=[],
+        observed_xstocks=["AAPL/USDT"],
+        ccxt_exchange="binance",
+    )
+    monkeypatch.setattr(md_mod, "load_config", lambda: cfg)
+
+    # Patch _build_dynamic_instruments to return empty (no regular instruments)
+    monkeypatch.setattr(md_mod, "_build_dynamic_instruments", lambda cfg: [])
+
+    # Fake CCXTProvider that always raises on get_ticker
+    class _FailingCCXTProvider:
+        async def get_ticker(self, instrument):
             raise RuntimeError("xstock_api_unavailable")
 
         async def close(self):
             pass
 
-    # Trigger 3 failures
-    provider = _FailingXStockProvider()
+    monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingCCXTProvider())
+    # get_market_data_provider also needs to return something that can be closed
+    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FailingCCXTProvider())
+
+    # Run collect_market_snapshots 3 times — each run is one "consecutive failure"
     for _ in range(3):
-        try:
-            provider.get_ticker("AAPL/USDT")
-        except RuntimeError:
-            pass
+        asyncio.run(md_mod.collect_market_snapshots())
 
-    assert fail_count[0] >= 3, "Provider did not fail 3 times as expected"
-
-    # The infra_event should now exist in audit_events or knowledge_items
+    # The infra_event should now exist in audit_events
     audit_rows = conn.execute(
         "SELECT * FROM audit_events WHERE event_type LIKE '%infra%' OR event_type LIKE '%xstock%'",
     ).fetchall()
@@ -286,5 +286,5 @@ def test_xstock_consecutive_failures_trigger_infra_event(tmp_path, monkeypatch):
 
     assert len(audit_rows) + len(ki_rows) >= 1, (
         "No infra_event row written after 3 consecutive xStock fetch failures. "
-        "MD-1 gap: infrastructure failures are silently swallowed."
+        "MD-1: infrastructure failures must surface as structured audit events."
     )

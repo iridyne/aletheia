@@ -115,7 +115,10 @@ def create_dreaming_log(title: str, content: str) -> KnowledgeItem | None:
     return item
 
 
-def create_daily_review(title: str, content: str) -> KnowledgeItem:
+def create_daily_review(title: str, content: str) -> KnowledgeItem | None:
+    if not _is_quality_pass(content):
+        logger.warning("knowledge_skipped:quality_gate item_type=daily_review len=%d", len(content.strip()))
+        return None
     path = write_daily_review(content, title=title)
     item = KnowledgeItem(
         item_type="daily_review",

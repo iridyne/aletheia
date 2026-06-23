@@ -62,18 +62,23 @@ def _effective_take_profit(position: dict, cfg) -> float | None:
 
 
 def _get_atr_pct(symbol: str) -> float | None:
-    """Return latest ATR% for a symbol from universe_feature_snapshots, or None."""
+    """Return latest ATR% for a symbol from universe_feature_snapshots, or None.
+
+    universe_feature_snapshots uses asset_id (FK → universe_registry) + ts,
+    not symbol + created_at. We join through universe_registry to filter by symbol.
+    """
     try:
-        from aletheia.storage.repositories import _select_all
-        rows = _select_all(
-            "universe_feature_snapshots",
-            where="symbol = ?",
-            params=(symbol,),
-            order_by="created_at DESC",
-            limit=1,
-        )
-        if rows:
-            val = rows[0].get("atr_pct")
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT ufs.atr_pct FROM universe_feature_snapshots ufs "
+            "JOIN universe_registry ur ON ufs.asset_id = ur.id "
+            "WHERE ur.symbol = ? "
+            "ORDER BY ufs.ts DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        if row:
+            val = row[0] if not hasattr(row, "get") else row.get("atr_pct")
             if val and float(val) > 0:
                 return float(val)
     except Exception:

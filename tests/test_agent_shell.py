@@ -1084,7 +1084,7 @@ async def test_create_daily_review_handler_preserves_item_type(tmp_path, monkeyp
     from aletheia.agent_shell.commands import create_daily_review
     from aletheia.storage.repositories import list_knowledge_items
 
-    result = await create_daily_review({"title": "Daily Review", "content": "Today was stable."})
+    result = await create_daily_review({"title": "Daily Review", "content": "Today was stable. Markets traded sideways with low volatility. No significant news events. System health nominal, all agents running as expected."})
 
     assert result["created"] is True
     items = list_knowledge_items(item_type="daily_review")

@@ -1,7 +1,7 @@
 """JSONL event stream writer/reader."""
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
@@ -39,7 +39,18 @@ def append_jsonl(filename: str, record: dict) -> None:
     When the active file exceeds the cap it is rotated to the next numeric
     generation (`{filename}.1`, `{filename}.2`, ...). Rotation is best-effort and
     preserves older generations instead of overwriting them.
+
+    .. note::
+        Writing to ``audit.jsonl`` via this function is forbidden.  All audit
+        records must go through :func:`write_audit` which maintains the
+        SHA-256 hash chain.  Direct writes would silently break chain
+        integrity.  See ``docs/design/audit_chain_contract.md §8``.
     """
+    if Path(filename).name == "audit.jsonl":
+        raise ValueError(
+            "Use write_audit() for audit.jsonl — direct append_jsonl bypasses "
+            "the hash chain. See docs/design/audit_chain_contract.md §8."
+        )
     path = _log_dir() / filename
     line = json.dumps(record, default=str, ensure_ascii=False)
     _append_jsonl_line(path, line)
@@ -188,7 +199,7 @@ def write_audit(event: dict) -> None:
     """
     global _last_audit_hash
     if "timestamp" not in event:
-        event["timestamp"] = datetime.utcnow().isoformat()
+        event["timestamp"] = datetime.now(timezone.utc).isoformat()
 
     try:
         with _audit_hash_lock:
@@ -327,5 +338,5 @@ def verify_audit_chain() -> dict:
 def write_error(record: dict) -> None:
     """Write an error to errors.jsonl."""
     if "timestamp" not in record:
-        record["timestamp"] = datetime.utcnow().isoformat()
+        record["timestamp"] = datetime.now(timezone.utc).isoformat()
     append_jsonl("errors.jsonl", record)

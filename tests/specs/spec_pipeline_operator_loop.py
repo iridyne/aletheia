@@ -333,19 +333,21 @@ def test_operator_loop_rate_limit_per_day(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-OL-05", "pipeline_operator_loop", "§5 trigger_optuna_no_op", "L2b",
+        # OL-2 partial fix (2026-06-23): function now returns status='not_implemented'
+        # instead of the false 'executed'. Semantic honesty restored.
+        # Full fix requires a durable optuna_jobs queue + background worker —
+        # tracked as OL-2 in docs/research/CODE_AUDIT_REPORT_2026-06-23.md.
         "trigger_optuna_sweep with a strategy_id actually enqueues an Optuna sweep — "
         "a row in optuna_jobs or similar side effect must exist after execution",
-        status="drift",
+        status="partial",
     ),
 )
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "OL-2 — trigger_optuna_sweep is a no-op that returns 'executed'. "
-        "_action_trigger_optuna_sweep records the action with _record_action() and "
-        "returns status='executed', but never actually schedules or enqueues an Optuna "
-        "sweep job. There is no job queue, no DB row, no subprocess spawn — just a "
-        "log.info() call. The 'executed' status is semantically false."
+        "OL-2 partial — trigger_optuna_sweep now returns 'not_implemented' (honest), "
+        "but still produces no tangible side effect (no job row, no artifact). "
+        "The xfail persists until a real sweep-job queue is implemented."
     ),
 )
 def test_operator_loop_optuna_sweep_has_side_effect(tmp_path, monkeypatch):

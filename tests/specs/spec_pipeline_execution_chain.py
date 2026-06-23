@@ -319,14 +319,6 @@ def test_execution_chain_idempotency(tmp_path, monkeypatch):
         status="implemented",
     ),
 )
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "EC-1 drift probe: gateway.py writes write_audit(event_type='paper_order_executed') "
-        "which calls _write_audit_row() → insert_audit_event(). If audit_events table is "
-        "missing the row this xfail fires. Remove xfail when verified green in CI."
-    ),
-)
 def test_execution_chain_audit_event_in_db(tmp_path, monkeypatch):
     """Verify gateway writes audit row into audit_events table (not just JSONL).
 
