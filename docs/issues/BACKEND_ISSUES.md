@@ -850,3 +850,60 @@
 - **问题**：exit_rules 做 exact match ("long"/"short"/"neutral")，但 opportunities 可能存 "bullish"/"bearish" → 退出规则被完全绕过
 - **修复**：`market_signal_reader` 新增 `_normalize_direction()` 在读取时统一词汇表
 - **状态**：✅ 已修复
+
+---
+
+## §14. API 路径漂移修复后遗留的安全设计缺陷 (2026-06-23)
+
+### §14.1 🔴 kill-switch-release-missing-confirm
+
+- **位置**：`aletheia/server/routes/risk.py:85-92`
+- **问题**：`POST /api/risk/kill-switch` 的 release 路径（`active: false`）**不要求 confirm token**。原始安全设计意图为两步确认（activate 立即生效，release 需额外确认），防止误操作恢复交易。当前代码中 activate 和 release 走同一请求体 `{"active": bool, "reason": ""}` — release 无需任何额外声明即可执行。
+- **影响**：UI 或程序化调用可在无二次确认的情况下恢复全局交易制动器；违反 `docs/design/risk_engine_contract.md §4` 所述的"human-confirmed release"不变量。
+- **最小修复建议**：在 `KillSwitchRequest` 增加 `confirm_release: bool = False` 字段，当 `active=False` 时若 `confirm_release` 非 `True` 则返回 `400`；或引入独立的 `POST /api/risk/kill-switch/release` 端点要求显式确认字段。
+- **优先级**：🔴 信任边界
+- **状态**：🔴 **待修复**（需显式授权后施工，涉及 trust boundary 路径）
+
+---
+
+## §15. SDD spec 声明的代码缺口（2026-06-23 ultracode 全量扩充批次）
+
+### §15.1 OL-C03 🔴 Level-3 操作缺乏 FORBIDDEN_INTENTS 双锁覆盖
+
+- **位置**：`aletheia/agent_shell/operator_loop.py` `_LEVEL_3_ACTIONS` 集合
+- **问题**：`_LEVEL_3_ACTIONS` 含 `deactivate_kill_switch` 与 `modify_permissions` 两项，**均未**出现在 `agent_shell/registry.py:415` 的 `FORBIDDEN_INTENTS` 或 `agent_runtime/tool_registry.py:39` 的 `RESTRICTED_TOOLS` 中。其余三项（`enable_live_mode`/`modify_risk_limits`/`modify_credentials`）已被 `FORBIDDEN_INTENTS` 双锁覆盖。
+- **影响**：违反 `docs/design/operator_layer.md §6 / live_unlock_contract §6` 的"双锁"防御纵深约定。Operator 层声明这两个动作为 Level 3，但 `permissions.check_permission` 不会拒绝它们 — 安全靠 operator_loop 自身分支判定，缺少多层兜底。
+- **Spec 锚点**：`tests/specs/spec_operator_loop.py::test_level3_defense_in_depth`（OL-C03 `status="partial"`），当前 `@pytest.mark.xfail(strict=True)` 声明缺口。
+- **最小修复建议**：在 `agent_shell/registry.py:415` 的 `FORBIDDEN_INTENTS` 追加 `"deactivate_kill_switch", "modify_permissions"`；修复后将 OL-C03 改为 `status="implemented"` 并移除 xfail。
+- **优先级**：🔴 信任边界
+- **状态**：🔴 **待修复**（涉及 trust boundary，需显式授权）
+
+### §15.2 OL-C07 🟡 _execute_level1_action 含 Level-2 死分支
+
+- **位置**：`aletheia/agent_shell/operator_loop.py` `_execute_level1_action` 函数体
+- **问题**：`_execute_level1_action` 内含 `elif action.action_type == "<name>"` 分支处理 `loosen_confidence` / `increase_sizing` / `widen_stop_loss` 三项，但这三项的权威分类是 `_LEVEL_2_ACTIONS`（要求 human proposal）。集合定义正确，但代码路径让 L1 自动执行器也能进入这些 L2 动作的处理逻辑，破坏 L1/L2 边界完整性。
+- **影响**：当前**无实际危害**（调度入口按集合判定优先），但属于"set says L2, code path says L1"的语义自相矛盾。未来重构 dispatch 入口时可能让死分支重新激活，制造静默的权限绕过。
+- **Spec 锚点**：`tests/specs/spec_operator_loop.py::test_loosening_actions_in_level2_not_level1`（OL-C07 `status="missing"`），当前 `@pytest.mark.xfail(strict=True)` 声明缺口。
+- **最小修复建议**：删除 `_execute_level1_action` 中三个 elif 分支；修复后将 OL-C07 改为 `status="implemented"` 并移除 xfail。
+- **优先级**：🟡 dead code / future-violation tripwire
+- **状态**：🟡 **待修复**（operator_loop.py 不在 experiment freeze 区，可直接修）
+
+### §15.3 (跨子条目) data_layer Phase 3 未完成
+
+- 详见 `docs/design/data_layer.md` 中 Phase 3.1/3.6 标注。`BITGET_GRANULARITY` 仍存在于 `aletheia/trading/instruments.py:21`；`tradable_symbols_from_config()` 仍返回 Bitget 格式而非 canonical。
+- **影响**：paper_trader 过滤器处存在静默的符号格式不匹配风险。
+- **优先级**：🟡
+- **状态**：🟡 **待修复**
+
+### §15.4 EQUITY §6.3 Phase 3 KB 写回缺失
+
+- 详见 `docs/design/EQUITY_INTEGRATION_DESIGN.md §6.3`。equity_observer 当 confidence>0.7 时应回写 `research_note` 至 KB，代码无此路径。
+- **优先级**：🟡
+- **状态**：🟡 **待修复**
+
+### §15.5 PI_OPERATOR "连续 3 次同方向升级" 规则未实现
+
+- 详见 `docs/design/PI_OPERATOR_DESIGN_DECISIONS.md` Problem 3。文档规定连续 3 次同方向（如三连续 tighten）应自动升级至 Level 2 请求人工确认，operator_loop 中无 direction-counting 逻辑。
+- **影响**：长期单向调参无升级阻断，可能让 agent 在自动权限内反复同向 patch。
+- **优先级**：🟡
+- **状态**：🟡 **待修复**
