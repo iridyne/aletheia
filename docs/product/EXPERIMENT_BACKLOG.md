@@ -34,6 +34,22 @@
 - 其他方向只能 "watch",不能 "trade"
 - 预估工作量: 小
 
+**2026-06-23 实证强化(profit-loop 修复后实测)**:
+修复 8 个 context-injection bug 后,PI Agent 拿到准确数据,但连续 6+ 轮仍主动 skip。
+关键观察:LLM 面对它**历史最赚钱的交易**仍拒绝开仓——
+- 当前最强信号 = ETH/USDT short(score 125.28),regime=bear 88.9%(支持做空),
+  per_symbol 显示 **ETH short 43T 21W +19.66**(唯一稳定盈利方向)
+- 但 LLM skip,理由 ="整体 46% 胜率(23W/27L) + structural headwinds + signal conflict"
+- **机制发现:PI Agent 用组合层面的平庸表现(46% 总胜率)否决单个最优 edge(ETH short 正期望)**
+
+这把 P2 从"如果确认只有 ETH short 有 edge"升级为**已实测确认的行为缺陷**:
+当前 harness 下 PI Agent 不会单独押注分品种 edge,而是被组合表现拖住。
+这直接对应协议 G2(最优子集 PF≥1.5 即可 Go,允许窄域 edge)——
+**系统有 edge(ETH short),但 AI 的决策机制看不到/不押注它**。
+
+P2 的 allowlist 是对症;更根本的修法是让 PI Agent 的 prompt 能识别"分品种 edge"
+而非只看组合 aggregate。两者都是 Round 2 候选,P2 工作量更小、风险更低,优先。
+
 ---
 
 ### P3 — 加 orderbook 微结构
