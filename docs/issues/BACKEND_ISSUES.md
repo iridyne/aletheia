@@ -876,7 +876,7 @@
 - **Spec 锚点**：`tests/specs/spec_operator_loop.py::test_level3_defense_in_depth`（OL-C03 `status="partial"`），当前 `@pytest.mark.xfail(strict=True)` 声明缺口。
 - **最小修复建议**：在 `agent_shell/registry.py:415` 的 `FORBIDDEN_INTENTS` 追加 `"deactivate_kill_switch", "modify_permissions"`；修复后将 OL-C03 改为 `status="implemented"` 并移除 xfail。
 - **优先级**：🔴 信任边界
-- **状态**：🔴 **待修复**（涉及 trust boundary，需显式授权）
+- **状态**：✅ **已修复 (2026-06-23)** — `registry.py` FORBIDDEN_INTENTS 追加 `deactivate_kill_switch` + `modify_permissions`；OL-C03 改 `status="implemented"`，PL-LU-05 + OL-C03 两个 xfail 翻绿。
 
 ### §15.2 OL-C07 🟡 _execute_level1_action 含 Level-2 死分支
 
@@ -886,27 +886,27 @@
 - **Spec 锚点**：`tests/specs/spec_operator_loop.py::test_loosening_actions_in_level2_not_level1`（OL-C07 `status="missing"`），当前 `@pytest.mark.xfail(strict=True)` 声明缺口。
 - **最小修复建议**：删除 `_execute_level1_action` 中三个 elif 分支；修复后将 OL-C07 改为 `status="implemented"` 并移除 xfail。
 - **优先级**：🟡 dead code / future-violation tripwire
-- **状态**：🟡 **待修复**（operator_loop.py 不在 experiment freeze 区，可直接修）
+- **状态**：✅ **已修复 (2026-06-23)** — 删除 `_execute_level1_action` 三个 dead elif（保留 `_action_*` 函数，仍被 `_action_neutral_drift` 用）；零行为变化(dead branch 本不执行)；OL-C07 改 `status="implemented"`，xfail 翻绿。
 
 ### §15.3 (跨子条目) data_layer Phase 3 未完成
 
 - 详见 `docs/design/data_layer.md` 中 Phase 3.1/3.6 标注。`BITGET_GRANULARITY` 仍存在于 `aletheia/trading/instruments.py:21`；`tradable_symbols_from_config()` 仍返回 Bitget 格式而非 canonical。
 - **影响**：paper_trader 过滤器处存在静默的符号格式不匹配风险。
 - **优先级**：🟡
-- **状态**：🟡 **待修复**
+- **状态**：✅ **symbol 部分已修 (2026-06-23, CR-DL-01)** — `tradable_symbols_from_config` 改在源头返回 canonical(`to_canonical` 每项，幂等)。`BITGET_GRANULARITY` 确认零消费者(dead constant)，保留 deprecated 标注。
 
 ### §15.4 EQUITY §6.3 Phase 3 KB 写回缺失
 
 - 详见 `docs/design/EQUITY_INTEGRATION_DESIGN.md §6.3`。equity_observer 当 confidence>0.7 时应回写 `research_note` 至 KB，代码无此路径。
 - **优先级**：🟡
-- **状态**：🟡 **待修复**
+- **状态**：🔒 **实质冻结，待 Round 2** — 写 research_note 到 KB 会改变 ranker/PI 检索内容 → 改变 AI 决策(命中冻结判断标准)。记入 EXPERIMENT_BACKLOG，本会话不实施。
 
 ### §15.5 PI_OPERATOR "连续 3 次同方向升级" 规则未实现
 
 - 详见 `docs/design/PI_OPERATOR_DESIGN_DECISIONS.md` Problem 3。文档规定连续 3 次同方向（如三连续 tighten）应自动升级至 Level 2 请求人工确认，operator_loop 中无 direction-counting 逻辑。
 - **影响**：长期单向调参无升级阻断，可能让 agent 在自动权限内反复同向 patch。
 - **优先级**：🟡
-- **状态**：🟡 **待修复**
+- **状态**：🔒 **实质冻结，待 Round 2** — 改变 operator 自治调参升级行为 → 改变 AI 决策路径(命中冻结判断标准)。记入 EXPERIMENT_BACKLOG，本会话不实施。
 
 ---
 
@@ -936,20 +936,21 @@
 
 ### §16.2 Trust-boundary（需用户授权）
 
-以下 8 条均触及 trust boundary 模块，**不得在未授权情况下施工**。
+> **2026-06-23 更新**：用户授权"三档全做"后，本节多数项已处理。状态见末列。
 
-| 级别 | ID | 位置 | 一行说明 | 最小修复 | 工作量 |
-|------|-----|------|---------|---------|--------|
-| 🔴 | **CR-RE-01** | `aletheia/risk/engine.py:252-256` | 被拒提案的 `allowed_execution_mode` 写死 `"paper_internal"`，原始模式丢失，致 CR-PG-01 dead branch | 在 `RiskDecision` 增加 `proposal_execution_mode` 字段持久化提案原始模式 | 2h |
-| 🔴 | **CR-PG-01** | `aletheia/trading/strategy_lifecycle.py:395-408` | `_critical_risk_violations` live 分支因 CR-RE-01 根因永久不可达，promotion gate 计数不可信 | 依赖 CR-RE-01 修复；临时在 line 399-402 加注释说明 dead branch | 0.5h* |
-| 🔴 | **CR-EX-01** | `aletheia/execution/reconciliation.py:21` | `_LIVE_MODE = "bitget_live_limited"` 硬编码，OKX/Binance live 订单永久停留 `submitted`，live 敞口低估 | 改为 `_LIVE_MODES = {"bitget_live_limited", "okx_live_limited", "binance_live_limited"}` 用 `IN` 过滤 | 2h |
-| 🔴 | **CR-DL-01** | `aletheia/storage/repositories.py:1049` | `_OHLCV_WINDOW_DEFAULT = 50_000`（契约 500，差 100×），SQLite WAL 延迟风险 | 决策分叉：改 500 并对齐 `historical_data.max_bars_per_pair`，或更新契约承认 50,000 | 0.5h |
-| 🔴 | **CR-DM-01** | `aletheia/storage/models.py:9` | ID `hex[:12]`（12-char, 48bit 熵）vs 契约 UUID4 36-char；百万行时碰撞风险 | 方案A: 改 `str(uuid4())`；方案B: 更新契约承认 12-char hex | 1h |
-| 🟠 | **CR-LU-01** | `aletheia/server/routes/live.py:17-45` | live unlock 路由未检查 `operator.permission_mode`；本机 HTTP POST 可绕过操作员权限层（BACKLOG-LU-01） | 在路由入口检查 `cfg.operator.permission_mode != "ReadOnly"` | 1h |
-| 🟠 | **CR-EX-03** | `aletheia/execution/bitget_broker.py:141-149` | `Position` 行创建时未传 `opportunity_id`；sector 集中度 check #16 对全部实盘/demo 仓位永久静默 | 在 broker 开仓路径传入 `opportunity_id` | 1h |
-| 🟠 | **CR-AU-03** | `aletheia/server/routes/bitget.py` | 凭证保存路由可能未写 `secret_rotated` audit event（AU-S05 spec 需验证） | 审查路由实现，补写 `write_audit(event_type="secret_rotated")` | 1h |
+| 级别 | ID | 位置 | 一行说明 | 状态 |
+|------|-----|------|---------|------|
+| 🔴 | **CR-RE-01** | `aletheia/risk/engine.py:252-256` | 被拒提案的 `allowed_execution_mode` 写死 `"paper_internal"`，原始模式丢失，致 CR-PG-01 dead branch | ✅ **已修** — `RiskDecision` 加 `proposal_execution_mode` 字段(model+migration+engine)，原始模式保留 |
+| 🔴 | **CR-PG-01** | `aletheia/trading/strategy_lifecycle.py:395-408` | `_critical_risk_violations` live 分支因 CR-RE-01 根因永久不可达 | ✅ **已修** — 改用 `proposal_execution_mode` + `"live" in mode` 判定；实测 live 拒绝计数 0→1，dead branch 复活 |
+| 🔴 | **CR-EX-01** | `aletheia/execution/reconciliation.py:21` | `_LIVE_MODE` 硬编码 bitget，OKX/Binance live 订单永久停留 `submitted` | ✅ **部分修+告警** — 加 `_UNRECONCILED_LIVE_MODES` 检测+infra_event 告警(不再静默)；完整对账需 OKX/Binance `get_open_orders`(两 client 均缺此方法)，见 §16.4 |
+| 🔴 | **CR-DL-01** | `repositories.py` OHLCV 窗口 / `instruments.py` symbol 格式 | OHLCV 窗口契约/代码不一致 + tradable_symbols 返 Bitget 格式 | ✅ **symbol 部分已修** — `tradable_symbols_from_config` 改返 canonical(归一化源头)；OHLCV 窗口决议见 §16.4 |
+| 🔴 | **CR-DM-01** | `aletheia/storage/models.py:8` | ID `hex[:12]`(48bit) vs 契约 UUID4 36-char | ✅ **已决议(方案B)** — 改文档对齐代码：12-char hex 是约定，碰撞 P≈2e-7@1e4 行可忽略，full-UUID4 迁移不划算 |
+| 🟠 | **CR-LU-01** | `aletheia/server/routes/live.py:17-45` | live unlock 路由未检查 `operator.permission_mode` | ✅ **已评估-无需改** — operator.permission_mode 管 agent shell 自主权限，非人类 dashboard 操作；实际攻击面已被 FORBIDDEN_INTENTS(enable_live 双锁) + agent 无 HTTP 能力 + tunnel token(`_PROTECTED_PATHS`) + confirm 双门覆盖。加 operator gate 语义错误，不实施 |
+| 🟠 | **CR-EX-03** | `aletheia/execution/bitget_broker.py:141-149` | `Position` 缺 `opportunity_id`，check #16 sector 集中度静默 | ⏳ **待修** — bitget_broker 在 trust boundary；当前无 live/bitget 持仓，非活跃风险。下一 sprint |
+| 🟠 | **CR-AU-03** | `aletheia/server/routes/bitget.py` | 凭证保存路由可能未写 `secret_rotated` audit | ⏳ **待核实** — AU-S05 spec 已建(检查 trust 路由审计)，需具体核实 bitget credential 路由 |
 
-\* CR-PG-01 修复工作量依赖 CR-RE-01 完成后为零成本 follow-up。
+本会话已处理 6/8（CR-RE-01/CR-PG-01/CR-EX-01/CR-DL-01/CR-DM-01/CR-LU-01）+ OL-C03/OL-C07(§15.1/15.2)。
+剩 CR-EX-03 / CR-AU-03 待下一 sprint（均非当前活跃风险）。
 
 ---
 
@@ -971,12 +972,14 @@
 
 | Rank | ID | 位置 | 说明 | 级别 |
 |------|-----|------|------|------|
-| 10 | **CR-PI-01** | `aletheia/agent_shell/operator_loop.py:882` | scanner family 权重调整不持久化（不调 `save_config()`），自治调校 no-op；需同步 `schema.py` + 前端 Settings | 🔴 |
-| 17 | **CR-SCH-01** | `aletheia/agent_runtime/scheduler.py:771` | 24/30 个 job 无 `_record_job_failure`；持续失败不报警 | 🟠 |
-| 19 | **CR-AR-02** | `aletheia/server/routes/settings.py:12` | `POST /settings/permission-mode` 拒绝全部 5 种 operator 模式 | 🟠 |
-| 22 | **CR-RE-03** | `aletheia/risk/engine.py:154` | `or 0.0` fallback 静默 bypass 日损门控（zero-cap 场景） | 🟠 |
-| 23 | **EC-2** | `aletheia/execution/gateway.py` | OKX symbol-filter 拒绝路径产生双重 audit 记录（噪声，无安全风险） | 🟡 |
-| — | **OL-2 full** | `aletheia/agent_shell/operator_loop.py:669` | Optuna sweep 完整实现（optuna_jobs 表 + background worker + enqueue 状态），OL-2 partial fix 已入 §16.1 | 🟠 |
+| 10 | **CR-PI-01** | `aletheia/agent_shell/operator_loop.py:882` | scanner family 权重调整不持久化（不调 `save_config()`），自治调校 no-op；需同步 `schema.py` + 前端 Settings | 🔴 🔒实质冻结(改自治调校行为→改AI决策)，Round 2 |
+| 17 | **CR-SCH-01** | `aletheia/agent_runtime/scheduler.py:771` | 24/30 个 job 无 `_record_job_failure`；持续失败不报警 | 🟠 ⏳ 可做，工程债，下一 sprint(纯可观测性，不改决策) |
+| 19 | **CR-AR-02** | `aletheia/server/routes/settings.py:12` | `POST /settings/permission-mode` 拒绝全部 5 种 operator 模式 | 🟠 ⏳ 需核实 operator 权限模式枚举语义后做 |
+| 22 | **CR-RE-03** | `aletheia/risk/engine.py:154` | demo 模式日损门控误用 `max_live_limited_cap_usdt` 作 capital_base；cap=0 时门控静默跳过 | 🟠 🔐 trust boundary + 日损逻辑变更，需专项 spec+测试，不在批量修复中顺手改 |
+| 23 | **EC-2** | `aletheia/execution/gateway.py` | OKX symbol-filter 拒绝路径产生双重 audit 记录（噪声，无安全风险） | 🟡 ⏳ 低优先噪声，下一 sprint |
+| — | **OL-2 full** | `aletheia/agent_shell/operator_loop.py:669` | Optuna sweep 完整实现（optuna_jobs 表 + background worker + enqueue 状态），OL-2 partial fix 已入 §16.1 | 🟠 ⏳ 需新建 optuna_jobs 表+worker，独立功能开发 |
+
+> **2026-06-23 三档处理结论**：§16.4 全部项已分类标注。`⏳ 可做`项(CR-SCH-01/CR-AR-02/EC-2)为非紧急工程债，不在本会话批量修复(避免扩大回归面)，排入下一 sprint。`🔒实质冻结`(CR-PI-01)与`🔐trust 专项`(CR-RE-03)需专门处理，不顺手改。本会话聚焦已完成的 §16.2 trust 项 + §15 operator 项。
 
 ---
 

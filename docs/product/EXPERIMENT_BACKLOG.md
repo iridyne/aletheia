@@ -387,6 +387,31 @@ Operator loop 自调节:
 **修复**: 字段改名为 `today_realized_pnl` 并在 prompt 中标注清楚
 **为什么现在不修**: 文件在 EXPERIMENT FREEZE 冻结区内
 
+### Round 2 候选: KL-3 — Layer 3 wisdom 类型不匹配(PI Agent 永远拿不到 lessons)
+
+**文件**: `aletheia/agent_shell/trading_context.py:367`
+**问题**: `_build_layer3_wisdom` 过滤 `item_type in ('lesson','accepted_lesson')`，但无任何 producer 写这两种类型 → PI Agent 的 Layer 3 wisdom 永远是空列表
+**修复**: 把类型过滤扩展到实际有 producer 的类型(`post_trade_review`/`trade_case_study`)，补 E2E spec
+**为什么现在不修**: 冻结区(改变 AI 看到的历史经验 → 改决策)。SDD 审计 §16.3 确认
+
+### Round 2 候选: EQUITY §6.3 — equity_observer KB 写回缺失(§15.4)
+
+**文件**: `aletheia/agents/equity_observer.py`
+**问题**: 设计要求 confidence>0.7 时回写 research_note 到 KB，代码无此路径 → equity 学习既不写也不读 KB
+**修复**: 加 KB 写回路径
+**为什么现在不修**: 写 KB 会改变 ranker/PI 检索内容 → 改 AI 决策(实质冻结)。SDD 审计 §15.4 确认
+
+### Round 2 候选: PI_OPERATOR 连续3次同向升级规则(§15.5)
+
+**文件**: `aletheia/agent_shell/operator_loop.py`
+**问题**: 设计规定连续 3 次同向调参应自动升级至 Level 2 人工确认，无此 direction-counting 逻辑
+**修复**: 加方向计数 + 升级触发
+**为什么现在不修**: 改 operator 自治调参升级行为 → 改 AI 决策路径(实质冻结)。SDD 审计 §15.5 确认
+
+> **PI 组合否决单 edge(见上方 P2 实证强化)是本批次最高价值的 Round 2 候选** —
+> 修好全部 context-injection bug 后,PI 仍因 46% 组合胜率否决 ETH short(历史最优 edge)。
+> 这是当前 harness 的核心策略缺陷,直接对应协议 G2(允许窄域 edge)。
+
 ---
 
 ## 已消耗
