@@ -223,24 +223,16 @@ def test_live_unlock_audit_format(tmp_path, monkeypatch):
         "PL-LU-05", "pipeline_live_unlock", "§6 forbidden_intents_double_lock", "L2c",
         "deactivate_kill_switch and modify_permissions are in FORBIDDEN_INTENTS "
         "(double-lock defense-in-depth for Level-3 operator actions)",
-        status="missing",
-    ),
-)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "OL-C03 — BACKEND_ISSUES §15.1: deactivate_kill_switch and "
-        "modify_permissions are in _LEVEL_3_ACTIONS but NOT in FORBIDDEN_INTENTS. "
-        "Fix: append both to registry.py:415 FORBIDDEN_INTENTS frozenset."
+        status="implemented",
     ),
 )
 def test_forbidden_intents_cover_level3_actions():
     """Assert that the two Level-3 operator actions appear in FORBIDDEN_INTENTS.
 
-    Current state: only {enable_live, modify_credentials, bypass_risk,
-    place_live_order, modify_execution_gateway, delete_knowledge,
-    change_risk_limits} — 7 items — missing deactivate_kill_switch and
-    modify_permissions.
+    Fixed 2026-06-23 (OL-C03 / §15.1): both deactivate_kill_switch and
+    modify_permissions are now in FORBIDDEN_INTENTS (registry.py:415), giving
+    the two highest-risk Level-3 operator actions a permission-layer hard wall
+    on top of their Level-3 classification.
     """
     from aletheia.agent_shell.registry import FORBIDDEN_INTENTS
 

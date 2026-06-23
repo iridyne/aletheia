@@ -28,8 +28,17 @@ BITGET_GRANULARITY = {
 
 
 def tradable_symbols_from_config(cfg) -> list[str]:
-    """Return the symbol_list from exchange config (Bitget format)."""
-    return cfg.exchange.symbol_list
+    """Return the symbol_list from exchange config in CANONICAL format (BTC/USDT).
+
+    Previously returned the raw config list (which may hold Bitget-format
+    'BTCUSDT'); consumers like paper_trader_ranker then had to to_canonical()
+    each entry, and any that forgot (strategy_designer) silently mismatched the
+    canonical opportunities/positions and dropped symbols at the filter. Now
+    normalised at the source so every consumer gets canonical form. to_canonical
+    is idempotent, so consumers that still call it are unaffected.
+    (CR-DL-01 / data_layer Phase 3.6, 2026-06-23.)
+    """
+    return [to_canonical(s) for s in cfg.exchange.symbol_list]
 
 
 def observed_symbols_from_config(cfg) -> list[str]:

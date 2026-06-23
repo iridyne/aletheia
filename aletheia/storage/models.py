@@ -129,6 +129,13 @@ class RiskDecision(BaseModel):
     risk_score: float = 0.0
     violations: str = "[]"
     allowed_execution_mode: str | None = None
+    # The proposal's ORIGINAL execution_mode, preserved verbatim. Distinct from
+    # allowed_execution_mode, which is downgraded to "paper_internal" on rejection
+    # — that downgrade destroyed the only record of whether a REJECTED proposal
+    # was a live order, making strategy_lifecycle's "live rejection = critical"
+    # branch permanently dead (CR-RE-01). Keep both: allowed_* = what may execute,
+    # proposal_execution_mode = what was requested.
+    proposal_execution_mode: str | None = None
     message: str | None = None
     created_at: str = Field(default_factory=_utcnow)
 

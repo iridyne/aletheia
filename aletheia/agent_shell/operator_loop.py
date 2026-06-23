@@ -523,16 +523,19 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_trigger_optuna_sweep(action)
     elif action.action_type == "tighten_confidence":
         result = _action_tighten_confidence(action)
-    elif action.action_type == "loosen_confidence":
-        result = _action_loosen_confidence(action)
     elif action.action_type == "reduce_sizing":
         result = _action_reduce_sizing(action)
-    elif action.action_type == "increase_sizing":
-        result = _action_increase_sizing(action)
     elif action.action_type == "tighten_stop_loss":
         result = _action_tighten_stop_loss(action)
-    elif action.action_type == "widen_stop_loss":
-        result = _action_widen_stop_loss(action)
+    # NOTE: loosen_confidence / increase_sizing / widen_stop_loss are Level-2
+    # (loosening = risk-increasing → require human proposal). classify_action
+    # puts them in _LEVEL_2_ACTIONS, so the dispatcher routes them to
+    # _create_proposal and they NEVER reach this Level-1 executor. The former
+    # elif branches here were dead code that contradicted the L1/L2 boundary
+    # (OL-C07, §15.2). Removed 2026-06-23 — if a loosening action ever lands here
+    # it now correctly falls through to the "unknown action type" guard rather
+    # than being silently auto-executed. The handler functions themselves remain
+    # (used by _action_neutral_drift after proposal approval).
     elif action.action_type == "adjust_scanner_weight":
         result = _action_adjust_scanner_weight(action)
     elif action.action_type == "request_backfill":

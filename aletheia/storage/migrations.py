@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS risk_decisions (
     risk_score REAL NOT NULL DEFAULT 0,
     violations TEXT DEFAULT '[]',
     allowed_execution_mode TEXT,
+    proposal_execution_mode TEXT,
     message TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -1263,6 +1264,9 @@ CREATE INDEX IF NOT EXISTS idx_pred_claims_market ON prediction_market_claims(ma
 _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
     ("stop_price", "trade_proposals", "REAL"),
+    # CR-RE-01: preserve the proposal's original execution_mode on the decision row
+    # (allowed_execution_mode gets downgraded to paper_internal on rejection).
+    ("proposal_execution_mode", "risk_decisions", "TEXT"),
     ("strategy_id", "knowledge_items", "TEXT"),
     ("stop_price", "positions", "REAL"),
     ("take_profit_price", "positions", "REAL"),

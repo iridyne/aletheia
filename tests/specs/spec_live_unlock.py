@@ -32,16 +32,26 @@ def test_live_default_disabled():
 @spec_claim(
     SpecClaim(
         "LU-S02", "live_unlock_contract", "§6 forbidden intents", "L2a",
-        "FORBIDDEN_INTENTS is a frozenset with 7 items including enable_live",
+        "FORBIDDEN_INTENTS is a frozenset with >=9 items: the 7 core intents "
+        "plus the 2 OL-C03 double-lock additions (deactivate_kill_switch, "
+        "modify_permissions)",
     ),
 )
 def test_forbidden_intents_structure():
     from aletheia.agent_shell.registry import FORBIDDEN_INTENTS
 
     assert isinstance(FORBIDDEN_INTENTS, frozenset)
-    assert len(FORBIDDEN_INTENTS) == 7
-    assert "enable_live" in FORBIDDEN_INTENTS
-    assert "bypass_risk" in FORBIDDEN_INTENTS
+    # 7 core + 2 added 2026-06-23 for the Level-3 operator double-lock (OL-C03).
+    # Assert the required members rather than an exact count so future additions
+    # of new forbidden intents don't spuriously fail this structural claim.
+    _required = {
+        "enable_live", "modify_credentials", "bypass_risk", "place_live_order",
+        "modify_execution_gateway", "delete_knowledge", "change_risk_limits",
+        "deactivate_kill_switch", "modify_permissions",
+    }
+    missing = _required - FORBIDDEN_INTENTS
+    assert not missing, f"FORBIDDEN_INTENTS missing required intents: {missing}"
+    assert len(FORBIDDEN_INTENTS) >= 9
 
 
 # ---------------------------------------------------------------------------

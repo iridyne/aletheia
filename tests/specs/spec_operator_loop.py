@@ -157,19 +157,8 @@ def test_max_config_patches_per_day():
         "OL-C03", "operator_layer", "§defense_in_depth level3_coverage", "L2c",
         "Every _LEVEL_3_ACTIONS member is in FORBIDDEN_INTENTS or maps to a "
         "RESTRICTED_TOOLS entry — defense-in-depth double-lock",
-        # DRIFT NOTE: deactivate_kill_switch and modify_permissions have no coverage
-        # in either FORBIDDEN_INTENTS or RESTRICTED_TOOLS.  The other three L3 actions
-        # (enable_live_mode, modify_risk_limits, modify_credentials) ARE covered.
-        # Fix: add "deactivate_kill_switch" and "modify_permissions" to FORBIDDEN_INTENTS
-        # in aletheia/agent_shell/registry.py.
-        status="partial",
+        status="implemented",
     ),
-)
-@pytest.mark.xfail(
-    reason="OL-C03 status=partial: deactivate_kill_switch + modify_permissions lack "
-           "FORBIDDEN_INTENTS/RESTRICTED_TOOLS coverage. Tracked in "
-           "docs/issues/BACKEND_ISSUES.md §OL-C03.",
-    strict=True,
 )
 def test_level3_defense_in_depth():
     """Each Level 3 action must be covered by at least one of:
@@ -188,11 +177,11 @@ def test_level3_defense_in_depth():
     # Canonical mapping: L3 action name → (forbidden_intent, restricted_tool)
     # Either entry being present counts as covered.
     coverage_map: dict[str, tuple[str | None, str | None]] = {
-        "deactivate_kill_switch":  (None, None),             # no coverage yet
+        "deactivate_kill_switch":  ("deactivate_kill_switch", None),  # now in FORBIDDEN_INTENTS
         "enable_live_mode":        ("enable_live", "unlock_live"),
         "modify_risk_limits":      ("change_risk_limits", "change_hard_risk_limits"),
         "modify_credentials":      ("modify_credentials", "modify_credentials"),
-        "modify_permissions":      (None, None),             # no coverage yet
+        "modify_permissions":      ("modify_permissions", None),      # now in FORBIDDEN_INTENTS
     }
 
     uncovered: list[str] = []
@@ -238,30 +227,17 @@ def test_level_sets_are_disjoint():
         "OL-C07", "operator_layer", "§permission_model loosen_in_level2_only", "L2c",
         "loosen_confidence/increase_sizing/widen_stop_loss belong to _LEVEL_2_ACTIONS, "
         "not _LEVEL_1_ACTIONS — these loosening actions require human proposal",
-        # DRIFT NOTE: The set classification (_LEVEL_2_ACTIONS) is authoritative and
-        # currently correct.  However, _execute_level1_action() in operator_loop.py
-        # (lines 526-535) contains unreachable handler branches for these three actions,
-        # which are legacy code that should be removed.  This claim covers only the set
-        # membership (the enforced path); the dead-branch cleanup is tracked in
-        # docs/design/operator_layer.md §"loosen_confidence / increase_sizing /
-        # widen_stop_loss — Level 分类不一致（已知待清理项）".
-        status="missing",
+        status="implemented",
     ),
-)
-@pytest.mark.xfail(
-    reason="OL-C07 status=missing: _execute_level1_action contains dead handler "
-           "branches for loosen_confidence/increase_sizing/widen_stop_loss. Tracked in "
-           "docs/issues/BACKEND_ISSUES.md §OL-C07.",
-    strict=True,
 )
 def test_loosening_actions_in_level2_not_level1():
     """Loosening actions must be Level 2 (proposal) only, never Level 1 (auto).
 
-    This claim is marked status='missing' because _execute_level1_action() contains
-    handler branches for loosen_confidence/increase_sizing/widen_stop_loss despite the
-    authoritative _LEVEL_2_ACTIONS set correctly placing them at Level 2.  The dead
-    branches make the module inconsistent: the set says L2 but a code path treats them
-    as L1-executable.  Fix: remove the three elif branches from _execute_level1_action.
+    Fixed 2026-06-23 (OL-C07 / §15.2): the dead elif branches for
+    loosen_confidence/increase_sizing/widen_stop_loss were removed from
+    _execute_level1_action, so the Level-1 executor no longer has any code path
+    that treats a loosening action as auto-executable. The set classification
+    (_LEVEL_2_ACTIONS) and the executor are now consistent.
     """
     import aletheia.agent_shell.operator_loop as ol
 

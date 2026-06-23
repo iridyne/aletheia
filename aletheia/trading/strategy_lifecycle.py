@@ -395,9 +395,14 @@ def _critical_risk_violations(decisions: list[dict]) -> int:
         except json.JSONDecodeError:
             parsed = [violations]
         approved = bool(decision.get("approved"))
-        # Only count rejections from live-eligible execution modes as critical.
-        exec_mode = decision.get("allowed_execution_mode") or ""
-        if not approved and exec_mode.startswith("live"):
+        # Only count rejections of LIVE proposals as critical. Use
+        # proposal_execution_mode (the original requested mode) — NOT
+        # allowed_execution_mode, which is downgraded to paper_internal on every
+        # rejection and so never started with a live marker (CR-RE-01 dead branch).
+        # Fall back to allowed_execution_mode for legacy rows written before the
+        # proposal_execution_mode column existed.
+        exec_mode = decision.get("proposal_execution_mode") or decision.get("allowed_execution_mode") or ""
+        if not approved and "live" in exec_mode:
             count += 1
             continue
         for entry in parsed:

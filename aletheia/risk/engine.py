@@ -274,6 +274,10 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         risk_score=result.risk_score,
         violations=json.dumps(violations),
         allowed_execution_mode=allowed_mode,
+        # Preserve the requested mode verbatim — allowed_mode is downgraded to
+        # paper_internal on rejection, which erased the live/demo signal that
+        # strategy_lifecycle needs to classify a live rejection as critical (CR-RE-01).
+        proposal_execution_mode=proposal.execution_mode,
         message=result.message,
     )
     insert_risk_decision(decision)
@@ -324,7 +328,8 @@ def _check_lesson_constraints(proposal) -> list[str]:
                     violations.append(f"lesson_block_scanner:{lesson.lesson_id}:{blocked_scanner}")
 
     except Exception as e:
-        logger.warning("_check_lesson_constraints failed: %s", e)
+        logger.warning("_check_lesson_constraints failed (safe-reject): %s", e)
+        violations.append("lesson_check_error:internal_failure")
     return violations
 
 
@@ -481,7 +486,8 @@ def _check_correlation_exposure(proposal: TradeProposal, cfg) -> list[str]:
                         f"portfolio_beta:{portfolio_beta:.1f}>{max_beta:.1f}"
                     )
     except Exception as exc:
-        logger.debug("_check_correlation_exposure skipped: %s", exc)
+        logger.warning("_check_correlation_exposure failed (safe-reject): %s", exc)
+        violations.append("correlation_check_error:internal_failure")
     return violations
 
 

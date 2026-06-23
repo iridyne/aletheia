@@ -13,7 +13,7 @@
 - **Concurrency**: one connection per thread via `threading.local`; scheduler capped at `max_workers=3`
 - **Transaction safety**: `was_in_tx = db.in_transaction` captured BEFORE every write; commit only `if not was_in_tx`
 - **Migrations**: additive-only (new tables, new columns with defaults); never DROP/RENAME in production
-- **ID format**: UUID4 string (36 chars) for most entities
+- **ID format**: 12-char hex string — `uuid4().hex[:12]` (48-bit), via `new_id()` in `storage/models.py:8`. NOT a full 36-char UUID4. Collision risk is negligible at this scale (P≈2e-7 at 10⁴ rows, ≈1e-3 at 10⁶); the short form keeps IDs readable in logs/audit. (CR-DM-01: doc corrected to match code 2026-06-23 — code is the convention, full-UUID4 migration deemed unjustified.)
 - **Timestamps**: ISO 8601 UTC strings (`2026-06-21T12:00:00+00:00`)
 - **JSON columns**: TEXT with `json()` validation where applicable
 - **Booleans**: INTEGER 0/1
@@ -250,7 +250,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 
 ## 5. Schema Conventions
 
-- **ID generation**: `str(uuid4())` at insert time (Python-side)
+- **ID generation**: `new_id()` = `uuid4().hex[:12]` at model-construction time (Python-side, `storage/models.py:8`) — 12-char hex, not full UUID4 (see §1 ID format note / CR-DM-01)
 - **Timestamps**: Always UTC ISO 8601; `datetime.now(timezone.utc).isoformat()`
 - **JSON columns**: Stored as TEXT; Python dict/list serialized via `json.dumps()`
 - **Nullable**: Most columns allow NULL; defaults specified in DDL

@@ -72,7 +72,12 @@ def test_agent_shell_does_not_import_exchange_auth():
 
 
 def test_forbidden_intents_complete():
-    """FORBIDDEN_INTENTS contains the 7 contractually required items."""
+    """FORBIDDEN_INTENTS contains the 7 core contractually required items.
+
+    (Subset check — the set also includes the 2 OL-C03 double-lock additions
+    deactivate_kill_switch/modify_permissions since 2026-06-23; this test only
+    asserts the 7 core items are present, so additions never break it.)
+    """
     from aletheia.agent_shell.registry import FORBIDDEN_INTENTS
 
     required = frozenset([
