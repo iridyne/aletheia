@@ -4,6 +4,15 @@ import logging
 import asyncio
 import os
 import sys
+
+# Windows: enforce SelectorEventLoop process-wide BEFORE uvicorn imports this
+# module and creates its server loop, and before any broker asyncio.run() in
+# worker threads. Fixes §17 (IOCP drain hang) + §23/§24 (WinError 64).
+# See aletheia/async_utils.py for the CLI-provider incompatibility constraint.
+from aletheia.async_utils import apply_windows_selector_policy
+
+apply_windows_selector_policy()
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 

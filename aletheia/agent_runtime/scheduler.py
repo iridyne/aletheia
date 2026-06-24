@@ -233,6 +233,10 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
     def _run():
         import sys
         if sys.platform == "win32":
+            # Redundant-but-harmless belt-and-suspenders: the backend process now
+            # installs WindowsSelectorEventLoopPolicy at server/app.py import time
+            # (see aletheia/async_utils.py), so new_event_loop() already returns a
+            # SelectorEventLoop here. Kept explicit for defence in depth.
             loop = asyncio.SelectorEventLoop()
         else:
             loop = asyncio.new_event_loop()
