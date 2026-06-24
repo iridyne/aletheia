@@ -7,7 +7,26 @@
 
 ## Last Updated
 
-2026-06-24 (最小赚钱循环全链路修复 — 五层叠加阻碍 + SDD 体系扩张 + 全面代码审计)
+2026-06-24 (Equity Curve isError 修复 dbde229 + 诊断代理陷阱勘误)
+
+---
+
+## Recent Change (Equity Curve 误报 + 诊断代理陷阱勘误 — 2026-06-24)
+
+**前端 bug**:`PnLChart.tsx` useQuery 未处理 `isError`,请求失败时 data 为空 →
+chartData.length===0 → 走"还没平仓"空态文案,与 DB 里 68 笔平仓事实矛盾。
+违反"onError 必须处理"。修复 dbde229:isError 分支显示 "Failed to load equity
+curve." + Retry 按钮。
+
+**勘误**:dbde229 commit body 把诊断时 curl 探活的 502 错误地外推为"浏览器
+走系统代理被转坏",并建议用户"代理软件绕过列表加 127.0.0.1"。用户当场指出
+后实测纠正:WinINET 系统代理 `ProxyEnable=0` 且 127.* 已 DIRECT,浏览器直连
+无碍;只是**环境变量代理** `HTTP_PROXY=127.0.0.1:7897`+NO_PROXY 空,导致 curl
+误把 localhost 丢给代理产生 502 假象。记忆 [[aletheia-localhost-probe-proxy-trap]]
+已写入。以后诊断:curl 探活 localhost 必须 `--noproxy '*'`;后端死活以 gateway
+status + /api/health 的 status 字段为准。
+
+不 amend dbde229 历史,以 DEVLOG 2026-06-24 条勘误为准。
 
 ---
 

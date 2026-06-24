@@ -1,5 +1,46 @@
 # Development Log
 
+## 2026-06-24 — Equity Curve 误报 + 诊断代理陷阱(dbde229 commit body 勘误)
+
+### 现象
+用户报 Dashboard 显示 "Equity Curve / No trades closed yet — curve appears after
+the first position closes",但 DB 里有 68 笔已平仓(realized -21.36 USDT)+ 3
+笔持仓。空态文案与事实矛盾。
+
+### 真因(两层叠加)
+1. **前端 bug**:`PnLChart.tsx` 的 `useQuery` 只解构 `data`/`isLoading`,**未
+   处理 `isError`**。请求失败时 `data===undefined → points=[] →
+   chartData.length===0`,直接走"还没平仓"的空态分支 —— 违反"onError 必须处理"。
+2. **触发外因**(诊断时归因被误判,见下方勘误):用户浏览器实测访问 localhost
+   完全直连无碍。最初看到空态最可能是 gateway 处于 churn 期端点偶发失败 +
+   PWA 缓存了无 isError 处理的旧 bundle。
+
+### 修复(dbde229)
+PnLChart 新增 `isError` 分支:红色 "Failed to load equity curve." + Retry 按钮
+(`refetch`),与真零交易空态区分。后端 `/api/analytics/equity-curve` 完好
+(days=1/7/30 均返回完整 points)。重建并提交 dashboard_static。
+
+### 勘误 — dbde229 commit body 的代理归因错了
+原 commit body 写"浏览器走系统代理被转坏返回 502"、建议用户"在代理软件
+绕过列表加入 127.0.0.1/localhost"。**这两句都是错的**,用户当场指出后实测纠正:
+
+- **WinINET 系统代理**(浏览器走的):`HKCU:...\Internet Settings\ProxyEnable=0`
+  (关闭),且 `ProxyOverride` 已含 `localhost;127.*;<local>`(DIRECT)。浏览器
+  访问 `127.0.0.1` 不经任何代理。
+- **环境变量代理**(curl/CLI 走的):`HTTP_PROXY=HTTPS_PROXY=http://127.0.0.1:7897`,
+  `NO_PROXY` 空。curl 默认会无脑把 localhost 也丢给代理 → 误返回 502/000。**我**
+  诊断时中招后,把 curl 假象错误地外推成"浏览器/后端故障"。
+
+记忆 [[aletheia-localhost-probe-proxy-trap]] 已写入,以后诊断:
+- curl 探活 localhost **一律加 `--noproxy '*'`**;
+- 验证浏览器体验用 `Invoke-WebRequest`(走 WinINET);
+- 后端死活以 `aletheia gateway status` + `/api/health` 的 `status` 字段为准,
+  不以"curl 是否 502"为准。
+
+不 amend dbde229(避免改写历史),勘误以本条 DEVLOG 为准。
+
+---
+
 ## 2026-06-23→24 — 最小赚钱循环全链路修复 + SDD 扩张 + 代码审计
 
 ### 背景
