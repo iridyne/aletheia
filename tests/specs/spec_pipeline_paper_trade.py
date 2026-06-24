@@ -333,21 +333,17 @@ def test_paper_trader_signal_has_opportunity_id(tmp_path, monkeypatch):
         "PL-PT-05", "pipeline_paper_trade", "§2 signal_consumed", "L2b",
         "After a successful signal_pending is written, the originating opportunity "
         "row has status updated away from 'open' to prevent duplicate signals",
-        status="drift",
-    ),
-)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "PT-1 — signal_pending opportunities are not marked consumed. "
-        "paper_trader v3 writes pi_decisions(action='signal_pending') but does NOT "
-        "call update_opportunity(opp_id, status='reviewed') for these. "
-        "Permanent-skip paths update to 'reviewed', but signal_pending path leaves "
-        "the opportunity in 'open' state — next paper_trader run re-processes it."
+        status="implemented",
     ),
 )
 def test_paper_trader_marks_opportunity_consumed(tmp_path, monkeypatch):
-    """After a signal_pending is written, the source opportunity must not be 'open'."""
+    """After a signal_pending is written, the source opportunity must not be 'open'.
+
+    Fixed 2026-06-24 (PT-1, freeze exception): paper_trader now calls
+    update_opportunity(opp_id, status='reviewed') after writing each signal_pending,
+    so the next cycle won't re-emit the same opportunity as a duplicate signal
+    (which the PI Agent read as "pipeline data integrity compromised" → all-skip).
+    """
     conn = _setup_db(tmp_path, monkeypatch)
 
     monkeypatch.setattr(

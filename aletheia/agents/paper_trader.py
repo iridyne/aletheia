@@ -151,6 +151,18 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 debate_ran=False,
             )
             insert_pi_decision(pi_dec)
+            # Mark the source opportunity reviewed so the next paper_trader cycle
+            # doesn't re-rank and re-emit it as a duplicate signal_pending. Without
+            # this, the same open opportunity was re-written every 5min — ETH short
+            # appeared 4x in pending signals, and the PI Agent read the duplicates
+            # as "pipeline data integrity compromised" and skipped every decision
+            # (PT-1, freeze exception 2026-06-24). Mirrors the reviewed-marking
+            # already done for permanently-skipped candidates at line ~113.
+            if candidate.get("opportunity_id"):
+                try:
+                    update_opportunity(candidate["opportunity_id"], status="reviewed")
+                except Exception:
+                    pass
             signals_written += 1
             try:
                 from aletheia.agent_runtime.pi_daemon import notify_pi_daemon

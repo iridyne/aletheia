@@ -234,3 +234,51 @@ ECE: 不可计算 — 62笔全部来自旧管道(opportunity→paper_trader→pr
 
 **监测固化**:doctor `loop.profit` 探针 + `spec_pipeline_profit_loop.py`(PL-PROFIT-01..04)
 防止此类静默断流再次无声发生。
+
+---
+
+### 例外 #2 — 2026-06-24:PT-1 signal_pending 去重(冻结区 paper_trader.py)
+
+**触发**:例外 #1 修复后 PI 短暂恢复下单,但很快又 100% skip。新理由:LLM 看到
+`signal_pending` 里同一 (symbol,direction) 重复出现(ETH short 4 次),判定
+"pipeline data integrity compromised / 数据损坏",拒绝决策。
+
+**根因(逐行核实)**:`agents/paper_trader.py` Path B 写 `signal_pending` 后**不**标记
+source opportunity 为 reviewed(line ~113 只对被永久跳过的 candidate 标 reviewed,
+eligible→signal_pending 路径漏标)。同一批 open opportunity 每 5min 被 build_paper_candidates
+重新入选、重复写 signal_pending → PI 看到重复 → skip。20min 内 ETH short 累积 4 条。
+
+**授权**:用户 2026-06-24 授权"冻结例外修 PT-1(一行)"。
+
+**修复**:paper_trader.py:153 写 signal_pending 成功后加
+`update_opportunity(candidate["opportunity_id"], status="reviewed")`(与 line 113 同范式)。
+spec `PL-PT-05`(spec_pipeline_paper_trade.py)status drift→implemented,xfail 移除。
+
+**判决影响**:同例外 #1——Round 1 起点保留 6/22,修复前的重复-信号-致-skip 数据不计入
+策略评估;修复生效后才是有效样本。
+
+### 例外 #3 — 2026-06-24:CR-RE-03 demo 日损用 demo 资金基数(trust boundary risk/engine.py)
+
+**触发**:例外 #1+#2 后 PI 真正下单,但全部被风控拒,拒因
+`max_daily_loss_exceeded:-23.26<=-1.0`。
+
+**根因**:risk/engine.py 检查 #8 日损门控对所有模式都用 `max_live_limited_cap_usdt`($100)
+作 capital_base → demo 日损限 = $1。今早清理 contractSize bug 错误仓位的 -23.26 清账损失
+触发了 demo 日损熔断,阻断当日 PI 全部交易。
+
+**授权**:用户 2026-06-24 授权"现在修 CR-RE-03(SDD流程)"。属 trust boundary
+(risk/engine.py change-controlled),非实验冻结区,但走完整 SDD:RE-B13 RED→改→GREEN。
+
+**修复**:engine.py:154 按 `_is_live()` 分流——live 用 max_live_limited_cap_usdt,
+demo 用 starting_capital_usdt(对齐检查 #13 范式)。config 同步 starting_capital
+100→88000(运行态 API,日损限 $1→$880)。
+
+**判决影响**:同上。注:这是 risk 风控参数修正,不改 AI 决策逻辑,但影响哪些 proposal
+被拒,故一并记录。
+
+---
+
+> **三次例外的共同模式**:都是"修复 A 暴露出 B"的连锁——contractSize bug(650f608)→
+> 清理错误仓位→损失触发日损(例外#3);profit-loop context bug(例外#1)→ PI 恢复下单→
+> 暴露 signal 重复(例外#2)。Round 1 起点统一保留 6/22,**所有修复生效前的数据均不计入
+> 策略评估**,6/24 起为干净观察窗口。
