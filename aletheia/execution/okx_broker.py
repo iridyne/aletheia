@@ -18,7 +18,6 @@ from datetime import datetime
 
 from aletheia.data.symbols import to_canonical
 from aletheia.exchanges.okx.client import OKXClient, OrderRequest
-from aletheia.files.jsonl import write_audit
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     insert_order, insert_fill, insert_position, list_positions, update_position,
@@ -113,18 +112,12 @@ def execute_live_order(
     For okx_demo: checks the O(1) symbol filter first. Unsupported symbols
     are rejected with an audit record before any exchange call.
     """
-    # O(1) symbol filter for demo mode
+    # O(1) symbol filter for demo mode. On rejection we just raise — the gateway's
+    # try/except writes a complete demo_order_error audit (incl. proposal status
+    # transition), so a write_audit here only produced a duplicate record (EC-2).
     if execution_mode == "okx_demo":
         supported = _get_demo_symbols()
         if supported is not None and to_canonical(symbol) not in supported:
-            write_audit({
-                "actor": "system",
-                "source": "okx_broker",
-                "event_type": "okx_demo_symbol_not_supported",
-                "entity_type": "trade_proposal",
-                "entity_id": proposal_id,
-                "message": f"OKX demo does not support {symbol} — filtered before order",
-            })
             raise RuntimeError(f"OKX demo does not support {symbol}")
 
     mode = "demo" if execution_mode == "okx_demo" else "live"

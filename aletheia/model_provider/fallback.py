@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, asdict
 import logging
+import threading
 import time
 from typing import Any
 
@@ -44,6 +45,10 @@ _MAX_MODELS_PER_REQUEST = 6
 _COOLDOWN_FAILURE_THRESHOLD = 2
 _COOLDOWN_SEC = 300
 _MODEL_HEALTH: dict[tuple[str, str], "ModelHealthState"] = {}
+# Guards _MODEL_HEALTH against concurrent mutation (agent threads recording
+# success/failure) + iteration (ASGI thread building the health snapshot), which
+# could otherwise raise "dict changed size during iteration" (CC-1).
+_MODEL_HEALTH_LOCK = threading.Lock()
 
 
 @dataclass
@@ -82,11 +87,12 @@ def _clone_provider_with_model(provider: ModelProvider, model: str) -> ModelProv
 
 def _state(provider_name: str, model: str) -> ModelHealthState:
     key = (provider_name, model)
-    state = _MODEL_HEALTH.get(key)
-    if state is None:
-        state = ModelHealthState(provider=provider_name, model=model)
-        _MODEL_HEALTH[key] = state
-    return state
+    with _MODEL_HEALTH_LOCK:
+        state = _MODEL_HEALTH.get(key)
+        if state is None:
+            state = ModelHealthState(provider=provider_name, model=model)
+            _MODEL_HEALTH[key] = state
+        return state
 
 
 def _is_in_cooldown(provider_name: str, model: str) -> bool:
@@ -141,7 +147,11 @@ def get_model_health_snapshot() -> list[dict[str, Any]]:
     """Return sanitized in-process LLM model health for status surfaces."""
     now = time.time()
     snapshot = []
-    for state in _MODEL_HEALTH.values():
+    # Snapshot the values under lock so a concurrent _state() insert can't mutate
+    # the dict mid-iteration (CC-1).
+    with _MODEL_HEALTH_LOCK:
+        states = list(_MODEL_HEALTH.values())
+    for state in states:
         item = asdict(state)
         item["cooling_down"] = state.cooldown_until > now
         item["cooldown_remaining_sec"] = max(0, round(state.cooldown_until - now, 1))
@@ -151,7 +161,8 @@ def get_model_health_snapshot() -> list[dict[str, Any]]:
 
 def reset_model_health() -> None:
     """Test helper."""
-    _MODEL_HEALTH.clear()
+    with _MODEL_HEALTH_LOCK:
+        _MODEL_HEALTH.clear()
 
 
 async def _candidate_models(provider_name: str, provider: ModelProvider) -> list[str]:

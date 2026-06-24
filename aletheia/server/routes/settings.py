@@ -9,6 +9,10 @@ from aletheia.config.loader import load_config, save_config
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
+# Worker/agent permission surface (cfg.agent.permission_mode). Distinct from the
+# Operator surface (cfg.operator.permission_mode: ReadOnly/Research/PaperAuto/
+# AllowEditing/Auto) — this endpoint correctly governs only the worker side, so
+# the 3-value allowlist is intentional, not a bug (CR-AR-02 was a false positive).
 VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
 
 
@@ -341,6 +345,12 @@ class HealthConfigUpdate(SettingsRequest):
     require_llm_at_startup: Optional[bool] = None
     startup_gate_max_retries: Optional[int] = None
     startup_gate_retry_delay_sec: Optional[int] = None
+    # auto_resume_* were on the HealthConfig schema + returned by GET /health but
+    # absent here, so the frontend HealthCard (which POSTs the whole health object
+    # back) hit extra="forbid" → every save returned HTTP 422. Declared so health
+    # config is saveable AND these gate-recovery params are controllable from UI.
+    auto_resume_enabled: Optional[bool] = None
+    auto_resume_interval_sec: Optional[int] = None
 
 
 _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
@@ -354,6 +364,7 @@ _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
     "self_heal_max_per_hour": (0, 12),
     "startup_gate_max_retries": (1, 10),
     "startup_gate_retry_delay_sec": (5, 120),
+    "auto_resume_interval_sec": (30, 3600),
 }
 
 
@@ -694,6 +705,18 @@ async def update_observed_equities(req: EquitiesConfigUpdate):
 # Trading config (paper position management)
 # ---------------------------------------------------------------------------
 
+class MarketAwareExitsUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    min_hold_hours_before_market_exit: Optional[float] = None
+    max_signal_age_min: Optional[float] = None
+    urgent_exit_score: Optional[int] = None
+    urgent_exit_max_pnl_pct: Optional[float] = None
+    tighten_stop_score: Optional[int] = None
+    confidence_collapse_score: Optional[int] = None
+    tighten_atr_mult: Optional[float] = None
+    tighten_pct: Optional[float] = None
+
+
 class TradingConfigUpdate(SettingsRequest):
     default_stop_loss_pct: Optional[float] = None
     default_take_profit_pct: Optional[float] = None
@@ -712,6 +735,7 @@ class TradingConfigUpdate(SettingsRequest):
     vol_target_pct: Optional[float] = None
     vol_kelly_cap_fraction: Optional[float] = None
     exchange_tpsl_enabled: Optional[bool] = None
+    market_aware_exits: Optional[MarketAwareExitsUpdate] = None
 
 
 _TRADING_BOUNDS: dict[str, tuple[float, float]] = {
@@ -732,6 +756,11 @@ async def update_trading_config(req: TradingConfigUpdate):
     updates = req.model_dump(exclude_none=True)
 
     for field, value in updates.items():
+        if field == "market_aware_exits" and isinstance(value, dict):
+            for k, v in value.items():
+                if v is not None:
+                    setattr(cfg.trading.market_aware_exits, k, v)
+            continue
         if field == "min_confidence_to_trade":
             if value not in _VALID_CONFIDENCE:
                 raise HTTPException(400, f"min_confidence_to_trade must be one of {sorted(_VALID_CONFIDENCE)}")

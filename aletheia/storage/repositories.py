@@ -1003,6 +1003,11 @@ _PRUNABLE = {
     "agent_tool_calls": "created_at",
     "market_snapshots": "snapshot_at",
     "portfolio_snapshots": "snapshot_at",
+    # Analytics/telemetry tables that grew unbounded with no prune path (DG-1):
+    # serenity_claims (research evidence) + shadow_trades (counterfactual analysis).
+    # NOT causal-chain tables — safe to prune old rows. 90-day retention.
+    "serenity_claims": "created_at",
+    "shadow_trades": "created_at",
 }
 
 
@@ -1040,6 +1045,14 @@ def prune_market_snapshots(days: int = 30) -> int:
 
 def prune_portfolio_snapshots(days: int = 90) -> int:
     return _delete_old_rows("portfolio_snapshots", days)
+
+
+def prune_serenity_claims(days: int = 90) -> int:
+    return _delete_old_rows("serenity_claims", days)
+
+
+def prune_shadow_trades(days: int = 90) -> int:
+    return _delete_old_rows("shadow_trades", days)
 
 
 # ---------------------------------------------------------------------------

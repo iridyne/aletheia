@@ -1047,6 +1047,8 @@ def _run_cleanup():
             "open_interest_snapshots": repo.prune_open_interest_snapshots(30),
             "macro_snapshots": repo.prune_macro_snapshots(90),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
+            "serenity_claims": repo.prune_serenity_claims(90),
+            "shadow_trades": repo.prune_shadow_trades(90),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
         }
         write_audit({

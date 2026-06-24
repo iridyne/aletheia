@@ -253,7 +253,11 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         cached = exchange_sync.get_cached_state()
         sync_status = exchange_sync.status_for(cached)
         if cached is not None and sync_status in ("ok", "stale"):
-            exchange_equity_usdt = cached.get("equity_usdt")
+            # get_cached_state() default path may now return the unified (multi-broker)
+            # cache, which uses total_equity_usdt instead of the Bitget-specific
+            # equity_usdt. Fall back so exchange_equity_usdt isn't null on non-Bitget
+            # accounts (mirrors trading_context.py:64-65).
+            exchange_equity_usdt = cached.get("equity_usdt") or cached.get("total_equity_usdt")
             exchange_state_age_sec = cached.get("age_seconds")
             # Real account equity is the authoritative total value when present.
             if exchange_equity_usdt is not None:
@@ -274,7 +278,10 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
             exchange_asset_breakdown = cached.get("asset_breakdown") or []
 
             # Override PnL/exposure metrics with real exchange data when available.
+            # Unified cache uses total_unrealized_pnl; Bitget cache uses futures_unrealized_pnl.
             exc_upnl = cached.get("futures_unrealized_pnl")
+            if exc_upnl is None:
+                exc_upnl = cached.get("total_unrealized_pnl")
             if exc_upnl is not None:
                 final_unrealized = float(exc_upnl)
                 final_today_pnl = float(exc_upnl) + total_today_realized

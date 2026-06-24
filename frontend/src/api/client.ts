@@ -314,6 +314,13 @@ export const api = {
     exchange_tpsl_enabled: boolean
     default_notional_usdt: number; vol_sizing_enabled: boolean
     vol_target_risk_usdt: number; vol_target_pct: number; vol_kelly_cap_fraction: number
+    sweep_use_optuna: boolean; sweep_n_trials: number; sweep_optuna_timeout_sec: number; sweep_top_k: number
+    market_aware_exits: Partial<{
+      enabled: boolean; min_hold_hours_before_market_exit: number; max_signal_age_min: number
+      urgent_exit_score: number; urgent_exit_max_pnl_pct: number
+      tighten_stop_score: number; confidence_collapse_score: number
+      tighten_atr_mult: number; tighten_pct: number
+    }>
   }>) => post<{ updated: Record<string, any>; trading: Record<string, any> }>('/settings/trading', body),
 
   setAutonomousLearning: (enabled: boolean) =>
@@ -346,6 +353,7 @@ export const api = {
     self_heal_enabled: boolean; self_heal_min_interval_sec: number; self_heal_max_per_hour: number
     self_heal_code_drift: boolean; self_heal_market_data: boolean; self_heal_port_cleanup: boolean
     require_llm_at_startup: boolean; startup_gate_max_retries: number; startup_gate_retry_delay_sec: number
+    auto_resume_enabled: boolean; auto_resume_interval_sec: number
   }>) => post<{ updated: Record<string, any> }>('/settings/health-config', body),
   updateRetentionConfig: (body: Partial<{
     agent_runs_days: number; tool_calls_days: number; run_steps_days: number

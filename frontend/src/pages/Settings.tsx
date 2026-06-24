@@ -1270,6 +1270,11 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [volRiskUsdt, setVolRiskUsdt] = useState('25')
   const [volTargetPct, setVolTargetPct] = useState('1.5')
   const [volKellyCap, setVolKellyCap] = useState('0.25')
+  const [maeEnabled, setMaeEnabled] = useState(false)
+  const [maeUrgentScore, setMaeUrgentScore] = useState('80')
+  const [maeTightenScore, setMaeTightenScore] = useState('60')
+  const [maeCollapseScore, setMaeCollapseScore] = useState('30')
+  const [maeTightenAtrMult, setMaeTightenAtrMult] = useState('0.8')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -1283,6 +1288,12 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
     setAutoAdopt(trading.auto_adopt_enabled !== false)
     setTrailEnabled(!!trading.trail_enabled)
     setExchangeTpslEnabled(!!trading.exchange_tpsl_enabled)
+    const mae = trading.market_aware_exits || {}
+    setMaeEnabled(!!mae.enabled)
+    setMaeUrgentScore(String(mae.urgent_exit_score ?? 80))
+    setMaeTightenScore(String(mae.tighten_stop_score ?? 60))
+    setMaeCollapseScore(String(mae.confidence_collapse_score ?? 30))
+    setMaeTightenAtrMult(String(mae.tighten_atr_mult ?? 0.8))
     setTrailAtrMult(String(trading.trail_atr_mult ?? 1.5))
     setTrailPct(String(trading.trail_pct ?? 1.0))
     setBreakevenTriggerPct(String(trading.breakeven_trigger_pct ?? 1.5))
@@ -1312,6 +1323,13 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
       vol_target_risk_usdt: parseFloat(volRiskUsdt),
       vol_target_pct: parseFloat(volTargetPct),
       vol_kelly_cap_fraction: parseFloat(volKellyCap),
+      market_aware_exits: {
+        enabled: maeEnabled,
+        urgent_exit_score: parseInt(maeUrgentScore),
+        tighten_stop_score: parseInt(maeTightenScore),
+        confidence_collapse_score: parseInt(maeCollapseScore),
+        tighten_atr_mult: parseFloat(maeTightenAtrMult),
+      },
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -1446,6 +1464,41 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
           The local polling loop remains active as a fallback. Enable only after verifying demo behavior.
         </p>
       </div>
+      <div className="settings-inline-note">
+        <Toggle
+          checked={maeEnabled}
+          label="Market-aware exits (urgent exit / tighten stop / confidence collapse)"
+          onChange={v => { setMaeEnabled(v); setMsg(null) }}
+        />
+        <p className="hint mt-1">
+          When ON, position_manager evaluates market signals and may force-close losing positions early,
+          tighten stops on rising risk, or exit when PI confidence drops below threshold.
+        </p>
+      </div>
+      {maeEnabled && (
+        <div className="form-grid mb-3">
+          <label>
+            <span>Urgent exit score</span>
+            <input type="number" min={50} max={100} step={5} value={maeUrgentScore}
+              onChange={e => { setMaeUrgentScore(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+          <label>
+            <span>Tighten stop score</span>
+            <input type="number" min={30} max={90} step={5} value={maeTightenScore}
+              onChange={e => { setMaeTightenScore(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+          <label>
+            <span>Confidence collapse score</span>
+            <input type="number" min={10} max={50} step={5} value={maeCollapseScore}
+              onChange={e => { setMaeCollapseScore(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+          <label>
+            <span>Tighten ATR multiplier</span>
+            <input type="number" min={0.3} max={2.0} step={0.1} value={maeTightenAtrMult}
+              onChange={e => { setMaeTightenAtrMult(e.target.value); setMsg(null) }} className="mono" />
+          </label>
+        </div>
+      )}
       <div className="flex gap-2">
         <button onClick={() => {
           const checks: [string, string][] = [
@@ -2049,6 +2102,14 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'tunnel.enabled', 'tunnel.tunnel_id', 'tunnel.hostname',
     'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min', 'market_data.enable_yfinance_macro',
     'market_data.observed_stocks', 'market_data.observed_xstocks', 'market_data.observed_prediction_markets',
+    // These DO have UI controls — were missing from the set so the coverage matrix
+    // falsely labelled them "config.yaml only" (CUI-3, honesty fix):
+    'market_data.prediction_enabled',   // PredictionToggleCard
+    'market_data.observed_equities',     // EquitiesCard
+    'trading.market_aware_exits.enabled', 'trading.market_aware_exits.urgent_exit_score',
+    'trading.market_aware_exits.tighten_stop_score', 'trading.market_aware_exits.confidence_collapse_score',
+    'trading.market_aware_exits.tighten_atr_mult',  // TradingParamsCard
+    'health.auto_resume_enabled', 'health.auto_resume_interval_sec',  // HealthCard (DO-1/CUI-4)
     'network.proxy_url', 'network.no_proxy',
     'operator.loop_enabled',
   ])
@@ -2130,6 +2191,7 @@ function HealthCard({ settings, qc }: any) {
     { key: 'self_heal_max_per_hour',       label: 'Self-heal max per hour',   unit: '',    min: 0,  max: 12,    step: 1, isInt: true },
     { key: 'startup_gate_max_retries',     label: 'LLM gate retries',         unit: '',    min: 1,  max: 10,    step: 1, isInt: true },
     { key: 'startup_gate_retry_delay_sec', label: 'LLM gate retry delay',     unit: 'sec', min: 5,  max: 120,   step: 5, isInt: true },
+    { key: 'auto_resume_interval_sec',     label: 'Auto-resume probe interval', unit: 'sec', min: 30, max: 3600,  step: 30, isInt: true },
   ]
   const HEALTH_TOGGLES: BoolField[] = [
     { key: 'enabled', label: 'Health monitoring' },
@@ -2140,6 +2202,7 @@ function HealthCard({ settings, qc }: any) {
     { key: 'self_heal_code_drift', label: 'Restart on code drift' },
     { key: 'self_heal_market_data', label: 'Restart on stale market data' },
     { key: 'self_heal_port_cleanup', label: 'Clean orphan port holders' },
+    { key: 'auto_resume_enabled', label: 'Auto-resume after LLM gate' },
   ]
 
   return (
