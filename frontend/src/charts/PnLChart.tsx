@@ -11,7 +11,7 @@ interface Props {
 export default function PnLChart({ days }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['equity-curve', days],
     queryFn: () => api.getEquityCurve(days),
   })
@@ -65,6 +65,19 @@ export default function PnLChart({ days }: Props) {
 
   if (isLoading) {
     return <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>Loading equity curve...</div>
+  }
+
+  // Distinguish a failed request from genuinely-empty data. Without this, a
+  // network/proxy failure (data === undefined) silently renders the same
+  // "no trades" empty state as a real zero-trade account — masking an error
+  // as a benign empty curve. See feedback: onError must always be handled.
+  if (isError) {
+    return (
+      <div style={{ height: 220, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        <p className="hint" style={{ color: '#ff5d6c' }}>Failed to load equity curve.</p>
+        <button className="time-range-btn" onClick={() => refetch()}>Retry</button>
+      </div>
+    )
   }
 
   return (
