@@ -1031,3 +1031,18 @@
 
 本轮唯一阻断性 bug 是 DO-1(HealthCard 422，已修)。其余为渐进性风险(磁盘增长/低概率并发)
 或诚实性标签。DO-1 修复后系统无已知阻断性缺陷。前端诚实性扫描通过(无静态占位状态)。
+
+### §17.4 OKX 跨 loop 回归 + Binance 同类隐患 (2026-06-24)
+
+- ✅ **OKX-XLOOP 🔴 (已修)** — `OKXClient.__init__` 在同步上下文 eager-建 aiohttp
+  session/exchange，但 `okx_broker._run_coro` 用 ThreadPoolExecutor+asyncio.run
+  在新线程新 loop 跑 → `_contract_size` 的 `load_markets()` 触发
+  "Task got Future attached to a different loop" → contractSize 默认回退 1.0 →
+  contractSize≠1 的 76 个币(DOGE/ETH...)又被放大(650f608 修复在 broker 路径静默破功)。
+  **修复**：OKXClient lazy-init(`_ensure_exchange()` 在首次 async 调用所在 loop 建)。
+  回归测试 `tests/test_okx_broker.py::TestLazyExchangeInit`。日志实测仅 2 次失败
+  (DOGE/ETH)，均在 PI skip 期，无错误规格订单成交。
+- ⏳ **BIN-XLOOP 🟡 (隐患,未启用)** — `BinanceClient.__init__`
+  (`aletheia/exchanges/binance/client.py:58`) 同样 eager-建 exchange，binance_broker
+  也用 `_run_coro`。当前 binance 未启用(paper_execution_mode=okx_demo)且不调
+  load_markets，未观测到错误。**若启用 binance 须同样改 lazy-init**。下一 sprint。

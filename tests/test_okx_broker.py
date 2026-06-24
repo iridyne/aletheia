@@ -18,6 +18,46 @@ def _reset_module_state():
     mod._okx_demo_symbols_loaded_at = 0.0
 
 
+class TestLazyExchangeInit:
+    """OKXClient must NOT create its aiohttp session / ccxt exchange in __init__.
+
+    Regression guard for the cross-loop bug: __init__ runs in a sync context whose
+    event loop differs from the one that later awaits the client (okx_broker
+    _run_coro spins a fresh asyncio.run() in a worker thread). aiohttp binds its
+    connector to the creating loop, so eager construction in __init__ caused
+    "Future attached to a different loop" — which silently failed load_markets()
+    and re-exposed the contractSize sizing bug. The exchange must be created lazily
+    inside the awaiting loop via _ensure_exchange().
+    """
+
+    def _client(self):
+        from aletheia.exchanges.okx.client import OKXClient
+        with patch("aletheia.exchanges.okx.client.get_secret", return_value="x"):
+            return OKXClient(mode="demo")
+
+    def test_init_does_not_build_exchange(self):
+        c = self._client()
+        assert c._exchange is None, "__init__ must not eagerly build the ccxt exchange"
+        assert c._session is None, "__init__ must not eagerly build the aiohttp session"
+
+    def test_init_stores_credentials_for_lazy_build(self):
+        c = self._client()
+        assert c._api_key and c._api_secret and c._passphrase and c._mode == "demo"
+
+    def test_ensure_exchange_is_idempotent(self):
+        c = self._client()
+        with patch("aletheia.net.aiohttp_session", return_value=MagicMock()):
+            ex1 = c._ensure_exchange()
+            ex2 = c._ensure_exchange()
+            assert ex1 is ex2, "_ensure_exchange must reuse the same exchange within one loop"
+
+    def test_close_is_noop_when_never_used(self):
+        import asyncio
+        c = self._client()
+        # Constructed then closed with no awaited call — must not raise on None refs.
+        asyncio.run(c.close())
+
+
 class TestSymbolFilter:
     """O(1) symbol filter tests."""
 

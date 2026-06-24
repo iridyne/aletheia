@@ -56,18 +56,44 @@ class OKXClient:
                 f"Set okx.{mode}.api_key, okx.{mode}.api_secret, and okx.{mode}.passphrase "
                 "via Settings → Credentials."
             )
+        # Do NOT create the aiohttp session / ccxt exchange here. __init__ runs in
+        # a synchronous context (often a different event loop than the one that
+        # will await our methods, e.g. okx_broker._run_coro spins a fresh
+        # asyncio.run() in a worker thread). aiohttp binds its connector to the
+        # CREATING loop, so an exchange built here then used under a different loop
+        # raises "Future attached to a different loop" — which silently broke
+        # load_markets()/contractSize lookup and re-exposed the contractSize bug
+        # (orders mis-sized by contractSize). Defer creation to _ensure_exchange()
+        # so the session is born in the same loop that awaits it (CLAUDE.md: CCXT
+        # binds aiohttp to the creating event loop).
+        self._api_key = api_key
+        self._api_secret = api_secret
+        self._passphrase = passphrase
+        self._mode = mode
+        self._session = None
+        self._exchange = None
+
+    def _ensure_exchange(self):
+        """Lazily build the ccxt exchange + aiohttp session in the CURRENT loop.
+
+        Must only be called from inside an async method (i.e. with a running loop
+        that will also drive every subsequent await on this exchange).
+        """
+        if self._exchange is not None:
+            return self._exchange
         from aletheia.net import aiohttp_session
         self._session = aiohttp_session()
         self._exchange = ccxt.okx({
-            "apiKey": api_key,
-            "secret": api_secret,
-            "password": passphrase,
+            "apiKey": self._api_key,
+            "secret": self._api_secret,
+            "password": self._passphrase,
             "enableRateLimit": True,
             "options": {"defaultType": "swap"},
             "session": self._session,
         })
-        if mode == "demo":
+        if self._mode == "demo":
             self._exchange.set_sandbox_mode(True)
+        return self._exchange
 
     async def _contract_size(self, ccxt_symbol: str) -> float:
         """Return the contractSize for an OKX swap symbol (coins per contract).
@@ -79,9 +105,10 @@ class OKXClient:
         Defaults to 1.0 when markets are unavailable (safe for contractSize==1).
         """
         try:
-            if not self._exchange.markets:
-                await self._exchange.load_markets()
-            m = self._exchange.markets.get(ccxt_symbol) or {}
+            ex = self._ensure_exchange()
+            if not ex.markets:
+                await ex.load_markets()
+            m = ex.markets.get(ccxt_symbol) or {}
             cs = m.get("contractSize")
             return float(cs) if cs else 1.0
         except Exception as e:
@@ -96,6 +123,7 @@ class OKXClient:
         submitting, and convert the filled contracts back to coins on the way out.
         """
         ccxt_symbol = f"{order.symbol}:USDT"  # CCXT perp format: BTC/USDT:USDT
+        ex = self._ensure_exchange()
         contract_size = await self._contract_size(ccxt_symbol)
         amount_contracts = order.quantity / contract_size if contract_size else order.quantity
 
@@ -106,7 +134,7 @@ class OKXClient:
             params["clOrdId"] = order.client_oid[:32]
 
         try:
-            resp = await self._exchange.create_order(
+            resp = await ex.create_order(
                 symbol=ccxt_symbol,
                 type=order.order_type,
                 side=order.side,
@@ -127,7 +155,7 @@ class OKXClient:
             import asyncio as _aio
             await _aio.sleep(0.3)
             try:
-                fetched = await self._exchange.fetch_order(order_id, ccxt_symbol)
+                fetched = await ex.fetch_order(order_id, ccxt_symbol)
                 status = self._map_status(fetched.get("status", status))
                 if status == "filled":
                     resp = fetched
@@ -160,7 +188,7 @@ class OKXClient:
         directly (no markets lookup needed).
         """
         try:
-            positions = await self._exchange.fetch_positions()
+            positions = await self._ensure_exchange().fetch_positions()
             result = []
             for p in positions:
                 contracts = abs(float(p.get("contracts", 0) or 0))
@@ -184,7 +212,7 @@ class OKXClient:
     async def fetch_balance(self) -> dict:
         """Fetch account balance. Returns CCXT unified balance."""
         try:
-            return await self._exchange.fetch_balance()
+            return await self._ensure_exchange().fetch_balance()
         except ccxt.BaseError as e:
             logger.error("OKX fetch_balance failed: %s", e)
             raise RuntimeError(f"OKX balance: {e}") from e
@@ -192,14 +220,20 @@ class OKXClient:
     async def fetch_time(self) -> int:
         """Fetch server time (connectivity test). Returns Unix ms."""
         try:
-            return await self._exchange.fetch_time()
+            return await self._ensure_exchange().fetch_time()
         except ccxt.BaseError as e:
             raise RuntimeError(f"OKX time: {e}") from e
 
     async def close(self):
-        """Close the underlying CCXT session and owned aiohttp session."""
-        await self._exchange.close()
-        await self._session.close()
+        """Close the underlying CCXT session and owned aiohttp session.
+
+        No-op if the exchange was never lazily created (e.g. constructed then
+        closed without any awaited call).
+        """
+        if self._exchange is not None:
+            await self._exchange.close()
+        if self._session is not None:
+            await self._session.close()
 
     @staticmethod
     async def load_demo_markets() -> frozenset:
