@@ -1219,3 +1219,5 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-24 07:14 UTC] ✓ 系统正常 — features=84/h (§22持续, 全桶=14无gap, bucket从11→14新资产纳入). Opportunities=11365 (+52). Knowledge=3438 (+29). §17 timed_out=277. Stale=325. §23/§24: 末次 02:21 UTC, 已约5h稳定无新crash. 130h+ 连续运行.
 
 [2026-06-24 08:01 UTC] ✓ **§23 新事件——5h超长静默后恢复** — features=84/h (§22持续, 全桶=14无gap). Opportunities=11417 (+52). Knowledge=3459 (+21). §17 timed_out=277. Stale=325. §23: 07:18 UTC (PID 22972), 02:21→07:18=297min(约5h), 异常长静默期后恢复周期性崩溃. 130h+ 连续运行.
+
+[2026-06-24 14:22 UTC] ⚠️ **§24 backend storm加剧(4次/1h) + §23第19次** — features=72/h (§22持续, 全桶=12无gap, bucket 14→12资产变化). Opportunities_1h=45. Knowledge=3635 (+176). §17 timed_out=281(+4). market_observer timed_out=7(+4). Stale=327. §23第19次: 08:27 UTC (PID 26256), 07:18→08:27=69min, 预测命中; 末次08:27距今5h57min稳定. **§24 backend storm**: 11:51(15508)→11:54(34608)=3min极短、12:47(20184)→12:59(14032)=12min, 共4次backend(:8788)崩溃; 11:51-12:59=68min内4次, backend稳定性恶化趋势明显. 末次12:59距今约1h23min. 138h+(推算) 连续运行.
