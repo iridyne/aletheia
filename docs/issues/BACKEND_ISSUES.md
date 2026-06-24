@@ -988,3 +988,46 @@
 权威源：`docs/research/CODE_AUDIT_REPORT_2026-06-23.md`（74 findings，含 §八 Top 25 修复优先级表、§四 7 条管道健康度、§六 20 条 spec 补强建议）。
 
 **完整未决 backlog = §15（2026-06-23 ultracode 批次，6 条）+ §16（本批次，2026-06-23 SDD 全面审计）**。两节合并阅读构成截至 2026-06-23 的全量待处理工作项。已完成项归入 §10 历史区。
+
+---
+
+## §17. 第二轮 gap 分析 — 修复 + defer (2026-06-24)
+
+> 来源：fresh-angle workflow(回归检查 / 未审计维度 / config-UI / 可做项 scoping)。
+> 之前几轮查契约漂移+管道断流；本轮查"修复是否留隐患"+"未审计维度"。
+
+### §17.1 已修复(本会话)
+
+- ✅ **DO-1 CUI-1/CUI-4 🔴 阻断性** — HealthCard 每次保存 422。`HealthConfigUpdate(extra=forbid)`
+  缺 `auto_resume_enabled`/`auto_resume_interval_sec`，但前端 `setVals({...health})` 整个回传。
+  补 pydantic 字段 + bounds + 前端 toggle/numfield + ConfigCoverage controlled。实测 422 消除。
+- ✅ **DO-2 PROBE1 遗漏** — pnl.py Phase-1 读 bitget 专属键(`equity_usdt`/`futures_unrealized_pnl`)，
+  unified-cache 模式下 `exchange_equity_usdt`=null。加 `or total_equity_usdt`/`or total_unrealized_pnl`
+  回退(镜像 trading_context.py)。本会话 get_cached_state 默认路径改动的连带遗漏。
+- ✅ **DO-3 EC-2 🟡** — okx_broker symbol-filter 拒绝写双审计。删 okx_broker 内 write_audit
+  (+未用 import)，gateway 的 demo_order_error 更完整(含 proposal status)。
+- ✅ **DO-4 DG-1 🟠** — serenity_claims(280)+shadow_trades(3640) 无 prune 路径，确定性磁盘增长。
+  加 `prune_serenity_claims`/`prune_shadow_trades`(90天) + _PRUNABLE 白名单 + _run_cleanup 注册。
+  均非因果链表，安全。
+- ✅ **DO-5 CC-1 🟡** — `_MODEL_HEALTH` dict 多线程无锁，ASGI 迭代 + agent 修改可触发
+  "dict changed size during iteration"。加 `_MODEL_HEALTH_LOCK`，包裹 `_state` 插入 + snapshot 迭代 + reset。
+- ✅ **DO-6 CUI-3 🟡** — ConfigCoverageCard controlled set 漏列 prediction_enabled/observed_equities/
+  market_aware_exits.*(实有 UI)，误标 "config.yaml only"。补全(诚实性)。
+- ✅ **DO-7 CR-AU-03/CR-AR-02 误报证伪** — credential 路由写 `exchange_credentials_changed` 审计(等价 secret_rotated)；
+  permission-mode 的 3-值 allowlist 是 worker surface 正确(非 operator 5 模式)。均误报，加注释澄清，移出 backlog。
+
+### §17.2 Defer(本轮确认推迟)
+
+| 项 | 原因 |
+|----|------|
+| **EH-1** risk/engine.py fail-open guards(异常返最宽松值) | trust-boundary，需先写 spec claim(RED)再改 |
+| **EH-2** paper_broker btc_entry_price None 级联 | execution trust-adjacent，现有 btc_beta guard 有 except-None 保底 |
+| **CUI-2** RegimeConfig UI(尤其 short_enabled) | regime.* 影响 AI 决策，冻结观察期敏感，Round 2 后 |
+| **CC-2** _consecutive_failures TOCTOU | 纯理论，1-worker pool 不并发同 job_id |
+| **CR-SCH-01** 22 job 补 _record_job_failure | 5 种结构模式非机械包裹，下一 sprint 专项 |
+| **CR-RE-03** demo 日损用 live capital cap | trust-boundary，需 spec 先行 |
+
+### §17.3 系统健康评估
+
+本轮唯一阻断性 bug 是 DO-1(HealthCard 422，已修)。其余为渐进性风险(磁盘增长/低概率并发)
+或诚实性标签。DO-1 修复后系统无已知阻断性缺陷。前端诚实性扫描通过(无静态占位状态)。
