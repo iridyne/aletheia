@@ -2,6 +2,13 @@
 
 import typer
 
+# Windows: enforce SelectorEventLoop before any CLI command calls asyncio.run()
+# (doctor / data backfill / model probe / bitget sync, etc.). See §17 in
+# aletheia/async_utils.py, plus the CLI-provider incompatibility constraint.
+from aletheia.async_utils import apply_windows_selector_policy
+
+apply_windows_selector_policy()
+
 from aletheia.cli.gateway import gateway_app
 from aletheia.cli.model import model_app
 from aletheia.cli.permission import permission_app

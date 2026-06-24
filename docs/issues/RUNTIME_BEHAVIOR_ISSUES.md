@@ -1213,3 +1213,11 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-22 08:08 UTC] ✓ 系统正常 — features=66/h (§22持续, 全桶=11无gap). Opportunities=9559 (+35). Knowledge=2328 (+29). §17 timed_out=266. Stale=304. §23: 末次 07:09 UTC (PID 44344), 已59min; 预测08:09±当前窗口. 108h+ 连续运行.
 
 [2026-06-22 08:21 UTC] ✓ **§23 第18次——60min精确命中** — features=55/h (§22持续, 桶20min=0=crash gap@08:09). Opportunities=9603 (+44). Knowledge=2341 (+13). §17 timed_out=266. Stale=304. §23: 08:09 UTC (PID 35964), 07:09→08:09=60min, 预测08:09±完全命中. 历史序列 41/62/62/62/52/60/62/48/60/61/62/63/37/60min. 108h+ 连续运行.
+
+[2026-06-24 06:27 UTC] ⚠️ **监测恢复 + §23 storm升级 + §24新问题:backend崩溃** — Loop中断约2天(08-22→06-24). features=56/h (§22持续, 桶50/60min=0=近期crash). Opportunities=11313(+7710). Knowledge=3409(+1068). §17 timed_out=277(+11). Stale=325(+21). market_observer timed_out=3/stale=3异常. §23 storm(06-24 01:24-02:21 UTC): 01:24(35588)→01:32(23040)=8min、01:36(35364)→01:50(38976)=14min、02:21(2972)共5次frontdoor在58min内崩溃. **§24[新] 06-24 01:47 UTC: backend(inner server PID 40532)首次崩溃(port 8788)**, 之前仅frontdoor崩溃; backend崩溃可能导致agents mid-run中断. 末次frontdoor 02:21, 已4h. 历史序列 41/62/62/62/52/60/62/48/60/61/62/63/37/60min + 多次storm. 130h+(推算) 连续运行.
+
+[2026-06-24 07:14 UTC] ✓ 系统正常 — features=84/h (§22持续, 全桶=14无gap, bucket从11→14新资产纳入). Opportunities=11365 (+52). Knowledge=3438 (+29). §17 timed_out=277. Stale=325. §23/§24: 末次 02:21 UTC, 已约5h稳定无新crash. 130h+ 连续运行.
+
+[2026-06-24 08:01 UTC] ✓ **§23 新事件——5h超长静默后恢复** — features=84/h (§22持续, 全桶=14无gap). Opportunities=11417 (+52). Knowledge=3459 (+21). §17 timed_out=277. Stale=325. §23: 07:18 UTC (PID 22972), 02:21→07:18=297min(约5h), 异常长静默期后恢复周期性崩溃. 130h+ 连续运行.
+
+[2026-06-24 14:22 UTC] ⚠️ **§24 backend storm加剧(4次/1h) + §23第19次** — features=72/h (§22持续, 全桶=12无gap, bucket 14→12资产变化). Opportunities_1h=45. Knowledge=3635 (+176). §17 timed_out=281(+4). market_observer timed_out=7(+4). Stale=327. §23第19次: 08:27 UTC (PID 26256), 07:18→08:27=69min, 预测命中; 末次08:27距今5h57min稳定. **§24 backend storm**: 11:51(15508)→11:54(34608)=3min极短、12:47(20184)→12:59(14032)=12min, 共4次backend(:8788)崩溃; 11:51-12:59=68min内4次, backend稳定性恶化趋势明显. 末次12:59距今约1h23min. 138h+(推算) 连续运行.

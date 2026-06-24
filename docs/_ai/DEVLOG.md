@@ -1,5 +1,52 @@
 # Development Log
 
+## 2026-06-24 — 进程级 SelectorEventLoop 根治 Windows IOCP 顽疾 §17/§23/§24 (5bfa4a0, fix 分支)
+
+### 现象
+体检发现系统半瘫:Web UI 卡死 3h45min(frontdoor HTTP 不响应但 TCP 仍 listen,
+看门狗 TCP-only 检测误判"还活着"不重启)、trading loop 因 LLM provider 间歇性
+不可用被 startup_gate 自动暂停。errors.log 持续刷 `ProactorEventLoop IOCP drain
+teardown hung 255s`(§17)+ frontdoor `WinError 64` 周期性崩溃(§23/§24)。
+
+### 真因
+整个 `aletheia/` 未设 `WindowsSelectorEventLoopPolicy`,所有 `asyncio.run()` 与
+uvicorn server loop 默认 ProactorEventLoop(IOCP)。Windows 上 ProactorEventLoop
+关闭时 IOCP drain 挂起 + AcceptEx overlapped 操作产生 WinError 64。
+`scheduler._run_async_with_timeout` 此前只局部用 SelectorEventLoop,覆盖不到
+broker `_run_coro` / `exchange_sync._run_async` 在另一 worker 线程另起的裸
+`asyncio.run()` —— 这才是 §17 线程泄漏的真正来源。
+
+### 修复(5bfa4a0)
+进程级设 policy(覆盖全部裸 asyncio.run,修 §17/§24)+ uvicorn 子进程加
+`--loop none`(loop_factory=None → 回退标准 asyncio.run → 遵循进程 policy 而非
+uvicorn 硬编码的 ProactorEventLoop 工厂,修 §23)。
+- `async_utils.py`(新):`apply_windows_selector_policy()` 幂等 helper。
+- `server/app.py` / `gateway/frontdoor.py` / `main.py`:import 顶部调用(三进程)。
+- `_gateway_runner.py`:两处 uvicorn cmd 加 `--loop none`。
+- `scheduler.py`:既有 workaround 加注释(逻辑不变)。
+- `tests/test_event_loop_policy.py`(新):真实子进程断言 policy 生效 + `--loop none`
+  契约回归守卫。
+
+### 关键实证(纠正 agent 推断)
+- uvicorn 0.48.0 `LOOP_FACTORIES` 含 `"none": null`;`--loop selector` 不存在
+  (传了会崩);`--loop asyncio` 在 win32 仍返回 ProactorEventLoop。亲测
+  `Config(loop='none').get_loop_factory()` 返回 None(exit 0)。
+- SelectorEventLoop 唯一破坏路径 = claude_cli/codex_cli 的 8 处
+  create_subprocess_exec,但二者 config `enabled=false`,当前安全。已在
+  async_utils.py 留显著警告:启用前须改这 8 处为线程内同步 subprocess。
+
+### 安全边界
+未触碰任何实验冻结路径(AI 决策链);aiohttp/httpx/ccxt 均纯 socket I/O 兼容
+Selector。改动隔离在 `fix/windows-selector-event-loop` 分支,未动 master。
+
+### 待验证 / 遗留
+- 修复运行时效果由后台监测确认(新进程 errors.log 不再出现 IOCP/WinError 64)。
+- 顺带发现但未修(超本轮 scope):(1) backend 冷启动 ccxt load_markets 耗时
+  20-30s > launcher 15s readiness 窗口,导致 LLM 故障期 `gateway start` 易报
+  "readiness did not pass" 假失败(进程其实在后台继续起);(2) LLM provider =
+  Azure Databricks AI Gateway 端点侧间歇性超时(host/网络层正常,401/可达性
+  1.9s),非本机可控。
+
 ## 2026-06-24 — Equity Curve 误报 + 诊断代理陷阱(dbde229 commit body 勘误)
 
 ### 现象
