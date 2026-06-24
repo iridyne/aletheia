@@ -89,7 +89,7 @@ async def analyze_news(news_id: str, req: AnalyzeRequest = AnalyzeRequest()):
     summary = item.get("summary", "")
 
     try:
-        from aletheia.agents.llm import llm_complete
+        from aletheia.agents.helpers import llm_complete
         prompt = (
             f"Analyze this crypto news for trading impact:\n"
             f"Title: {title}\n"

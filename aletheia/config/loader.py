@@ -116,11 +116,33 @@ def load_config() -> AletheiaConfig:
     return AletheiaConfig()
 
 
+import tempfile
+import threading
+
+_config_write_lock = threading.Lock()
+
+
 def save_config(cfg: AletheiaConfig) -> None:
-    """Persist config to disk. Emits infra events for any cross-field inconsistencies."""
+    """Persist config to disk (atomic write + thread lock)."""
     ensure_data_dirs()
     data = cfg.model_dump(mode="json")
-    CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8")
+    content = yaml.dump(data, default_flow_style=False, sort_keys=False)
+    with _config_write_lock:
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=str(CONFIG_PATH.parent), suffix=".tmp"
+        )
+        try:
+            import os
+            os.write(tmp_fd, content.encode("utf-8"))
+            os.close(tmp_fd)
+            os.replace(tmp_path, str(CONFIG_PATH))
+        except BaseException:
+            os.close(tmp_fd) if not os.get_inheritable(tmp_fd) else None
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     _emit_consistency_events(cfg)
 
 

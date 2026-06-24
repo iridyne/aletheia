@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from aletheia import __version__
+from aletheia.config.loader import load_config
 from aletheia.config.loader import bootstrap
 from aletheia.server.routes.health import infra_router, router as health_router
 from aletheia.server.routes.settings import router as settings_router
@@ -403,6 +404,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Trust-boundary auth: when tunnel is enabled, sensitive endpoints require
+# X-Aletheia-Token header matching the configured tunnel secret.
+_PROTECTED_PATHS = {
+    "/api/settings/live-unlock", "/api/settings/live-lock",
+    "/api/risk/kill-switch",
+    "/api/gateway/restart", "/api/gateway/stop",
+}
+
+
+@app.middleware("http")
+async def _tunnel_auth_guard(request, call_next):
+    """Block unauthenticated access to trust-boundary endpoints when tunnel is active."""
+    if request.url.path in _PROTECTED_PATHS:
+        cfg = load_config()
+        if getattr(cfg, "tunnel", None) and getattr(cfg.tunnel, "enabled", False):
+            from aletheia.config.secrets import get_secret
+            expected = get_secret("tunnel_api_token")
+            if expected:
+                token = request.headers.get("x-aletheia-token", "")
+                if token != expected:
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse(
+                        {"detail": "Unauthorized: X-Aletheia-Token required when tunnel is active"},
+                        status_code=401,
+                    )
+    return await call_next(request)
 
 app.include_router(health_router)
 app.include_router(infra_router)

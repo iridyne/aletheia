@@ -18,6 +18,7 @@ secrets.enc
 node_modules/
 frontend/dist/
 .pytest_cache/
+url-to-markdown/
 
 # === AI Workspace Safety Rules ===
 # Claude Code local/private state

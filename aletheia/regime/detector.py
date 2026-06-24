@@ -255,9 +255,21 @@ def debounced_detect(
 
 
 def get_current_regime() -> MarketRegime:
-    """Return the last published regime (or default sideways)."""
+    """Return the last published regime, recovering from DB if process restarted."""
+    global _published_regime
     if _published_regime is not None:
         return _published_regime
+    try:
+        from aletheia.storage.repositories import get_latest_market_regime
+        row = get_latest_market_regime()
+        if row:
+            _published_regime = MarketRegime(
+                state=row.get("state", REGIME_SIDEWAYS),
+                confidence=float(row.get("confidence", 0.5)),
+            )
+            return _published_regime
+    except Exception:
+        pass
     return MarketRegime()
 
 
