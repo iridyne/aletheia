@@ -502,6 +502,86 @@ def _probe_profit_loop(report: Report) -> None:
                    f"opportunities {_fmt_age(opp_age)}, proposals {_fmt_age(prop_age) if prop_age else 'none'}")
 
 
+def _probe_round1(report: Report) -> None:
+    """Round 1 experiment progress vs Go/Kill thresholds.
+
+    Mirrors the SQL in /api/analytics/round1-progress so both surfaces share
+    one source of truth. Read-only; reports gap toward the 60-trade G6 line.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT COUNT(*) closed, "
+            "  COALESCE(ROUND(SUM(realized_pnl),3),0) realized, "
+            "  COALESCE(SUM(CASE WHEN realized_pnl>0 THEN 1 ELSE 0 END),0) wins, "
+            "  COALESCE(SUM(CASE WHEN realized_pnl>0 THEN realized_pnl ELSE 0 END),0) gp, "
+            "  COALESCE(-SUM(CASE WHEN realized_pnl<0 THEN realized_pnl ELSE 0 END),0) gl "
+            "FROM positions WHERE status='closed' AND closed_at >= ?",
+            ("2026-06-22",),
+        ).fetchone()
+    except Exception as e:
+        report.add("loop.round1", "info", f"could not read positions: {e}")
+        return
+    closed = row["closed"] or 0
+    wins = row["wins"] or 0
+    gp = float(row["gp"] or 0)
+    gl = float(row["gl"] or 0)
+    wr = round(wins / closed * 100, 1) if closed else None
+    pf = round(gp / gl, 3) if gl > 0 else (None if gp == 0 else float("inf"))
+    realized = float(row["realized"] or 0)
+    target = 60
+    gap = max(0, target - closed)
+    detail = (f"closed={closed}/{target} (gap={gap}), realized={realized:+.2f}, "
+              f"WR={wr if wr is not None else '?'}%, PF={pf if pf is not None else '?'}")
+    if closed == 0:
+        report.add("loop.round1", "info", "no closed trades since 2026-06-22")
+    elif gap > 0 and closed < 20:
+        report.add("loop.round1", "warn", f"BEHIND G6: {detail}",
+                   "review pipeline-funnel for stage where conversion drops")
+    elif pf is not None and pf < 1.0 and closed >= 5:
+        report.add("loop.round1", "warn", f"PF below break-even: {detail}",
+                   "check trading_decision skip bias + signal_accuracy_24h")
+    else:
+        report.add("loop.round1", "ok", detail)
+
+
+def _probe_knowledge_flood(report: Report) -> None:
+    """PI's Layer3-wisdom limit=30 window is dominated by system_action noise.
+
+    When the window is occupied by high-frequency events the actual lesson and
+    guard_candidate rows never make it into PI prompt. Mirrors the
+    /api/analytics/learning-funnel observability surface.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        from collections import Counter
+        db = get_db()
+        cnt: Counter = Counter()
+        for r in db.execute(
+            "SELECT item_type FROM knowledge_items ORDER BY rowid DESC LIMIT 30"
+        ):
+            cnt[r["item_type"]] += 1
+        if not cnt:
+            report.add("loop.knowledge_flood", "info", "no knowledge_items yet")
+            return
+        guards = cnt.get("guard_candidate", 0)
+        top_type, top_n = cnt.most_common(1)[0]
+        if guards == 0 and top_n >= 25:
+            report.add("loop.knowledge_flood", "warn",
+                       f"PI guards window 0/30 — flooded by {top_type}×{top_n}",
+                       "see Round 2 Fix L-Bug-A' (trading_context.py:398): "
+                       "list_knowledge_items(item_type='guard_candidate', limit=30)")
+        elif guards == 0:
+            report.add("loop.knowledge_flood", "warn",
+                       f"PI guards window 0/30 — top types: {dict(cnt.most_common(3))}")
+        else:
+            report.add("loop.knowledge_flood", "ok",
+                       f"guards in window: {guards}/30; top: {top_type}×{top_n}")
+    except Exception as e:
+        report.add("loop.knowledge_flood", "info", f"probe error: {e}")
+
+
 def _probe_health(report: Report) -> None:
     try:
         from aletheia.agent_runtime.health import compute_health
@@ -792,6 +872,8 @@ def build_report() -> Report:
         _probe_signal_effectiveness,
         _probe_trading_loop,
         _probe_profit_loop,
+        _probe_round1,
+        _probe_knowledge_flood,
         _probe_health,
         _probe_operator_loop,
         _probe_webui_static,

@@ -196,6 +196,21 @@ export const api = {
   getRuntimeEvents: (limit = 100) => fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
 
+  // Post-trade lessons (LessonStore — see persistence.py:192).
+  // Surface them in the Learning page so the user can see what dreaming_agent
+  // produces, even while PI's decision chain doesn't yet consume them
+  // (Round 2 fix L-Bug-B will wire consumption — until then this is read-only viz).
+  getLessons: (limit = 50, status?: string) => fetchJson<Array<{
+    lesson_id: string
+    source_type?: string
+    source_id?: string
+    category?: string
+    severity?: string
+    summary?: string
+    status?: string
+    created_at?: string
+  }>>(`/persistence/lessons?limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ''}`),
+
   pause: () => post('/gateway/pause'),
   resume: () => post('/gateway/resume'),
   pauseOperator: () => post('/operator/pause'),

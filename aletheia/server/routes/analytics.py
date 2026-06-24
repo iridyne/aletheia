@@ -233,3 +233,236 @@ def get_reasoning_feedback():
     """Reasoning quality feedback — proposal rejection patterns and approval win rates."""
     from aletheia.analytics.reasoning_feedback import get_latest_reasoning_feedback
     return get_latest_reasoning_feedback() or {"status": "no_data"}
+
+
+# --- Round 1 progress / pipeline-funnel / learning-funnel ---
+# Read-only observability endpoints added 2026-06-24 to make the freeze-period
+# experiment status visible without manual SQL. None of these affect AI decisions.
+
+_ROUND1_START_UTC = "2026-06-22"
+_G6_TARGET_TRADES = 60
+_PF_GO_LINE = 1.5
+_WR_GO_LINE = 50.0
+
+
+@router.get("/round1-progress")
+def get_round1_progress():
+    """Round 1 experiment progress vs the Go/Kill thresholds.
+
+    Read-only aggregation of `positions` since the Round 1 start date.
+    Designed so `aletheia doctor` and the UI share one source of truth.
+    """
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    row = db.execute(
+        "SELECT "
+        "  COUNT(*) AS closed_trades, "
+        "  COALESCE(ROUND(SUM(realized_pnl), 4), 0) AS total_realized, "
+        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), 0) AS wins, "
+        "  COALESCE(SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END), 0) AS losses, "
+        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) AS gross_profit, "
+        "  COALESCE(-SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) AS gross_loss, "
+        "  MIN(closed_at) AS first_closed_at, "
+        "  MAX(closed_at) AS last_closed_at "
+        "FROM positions WHERE status='closed' AND closed_at >= ?",
+        (_ROUND1_START_UTC,),
+    ).fetchone()
+    closed = row["closed_trades"] or 0
+    wins = row["wins"] or 0
+    gross_profit = float(row["gross_profit"] or 0)
+    gross_loss = float(row["gross_loss"] or 0)
+    win_rate = round(wins / closed * 100.0, 2) if closed else None
+    profit_factor = round(gross_profit / gross_loss, 4) if gross_loss > 0 else (
+        None if gross_profit == 0 else float("inf")
+    )
+    return {
+        "round1_start_utc": _ROUND1_START_UTC,
+        "closed_trades": closed,
+        "g6_target": _G6_TARGET_TRADES,
+        "g6_gap": max(0, _G6_TARGET_TRADES - closed),
+        "total_realized_pnl": float(row["total_realized"] or 0),
+        "wins": wins,
+        "losses": row["losses"] or 0,
+        "win_rate_pct": win_rate,
+        "wr_go_line_pct": _WR_GO_LINE,
+        "profit_factor": profit_factor,
+        "pf_go_line": _PF_GO_LINE,
+        "first_closed_at": row["first_closed_at"],
+        "last_closed_at": row["last_closed_at"],
+    }
+
+
+@router.get("/pipeline-funnel")
+def get_pipeline_funnel(hours: int = 24):
+    """24h profit-loop funnel: opportunities → signals → PI → risk → fills.
+
+    Answers \"why didn't we open positions in the last N hours?\" by quantifying
+    the conversion rate at each stage. None of the data here affects PI decisions.
+    """
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    window = f"-{int(hours)} hours"
+
+    def _count(sql: str) -> int:
+        try:
+            return int(db.execute(sql, (window,)).fetchone()[0])
+        except Exception:
+            return 0
+
+    opps = _count("SELECT COUNT(*) FROM opportunities WHERE created_at >= datetime('now', ?)")
+    sig_pending = _count(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='signal_pending' "
+        "AND created_at >= datetime('now', ?)"
+    )
+    pi_trade = _count(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action IN ('trade','scale_in','flip') "
+        "AND created_at >= datetime('now', ?)"
+    )
+    pi_skip = _count(
+        "SELECT COUNT(*) FROM pi_decisions WHERE action='skip' "
+        "AND created_at >= datetime('now', ?)"
+    )
+
+    # Risk decisions: count approved/rejected + top rejection violations.
+    try:
+        rd_rows = list(db.execute(
+            "SELECT approved, COUNT(*) n FROM risk_decisions "
+            "WHERE created_at >= datetime('now', ?) GROUP BY approved",
+            (window,),
+        ))
+        risk_approved = next((int(r["n"]) for r in rd_rows if r["approved"] == 1), 0)
+        risk_rejected = next((int(r["n"]) for r in rd_rows if r["approved"] == 0), 0)
+    except Exception:
+        risk_approved = risk_rejected = 0
+
+    rejection_top: list[dict] = []
+    try:
+        for r in db.execute(
+            "SELECT message, COUNT(*) n FROM risk_decisions "
+            "WHERE approved=0 AND created_at >= datetime('now', ?) "
+            "GROUP BY message ORDER BY n DESC LIMIT 5",
+            (window,),
+        ):
+            rejection_top.append({"message": (r["message"] or "")[:200], "count": int(r["n"])})
+    except Exception:
+        pass
+
+    fills = 0
+    try:
+        # fills has filled_at not created_at
+        fills = int(db.execute(
+            "SELECT COUNT(*) FROM fills WHERE filled_at >= datetime('now', ?)",
+            (window,),
+        ).fetchone()[0])
+    except Exception:
+        fills = 0
+
+    risk_total = risk_approved + risk_rejected
+    risk_approve_rate = round(risk_approved / risk_total * 100.0, 2) if risk_total else None
+
+    return {
+        "window_hours": hours,
+        "opportunities": opps,
+        "signal_pending": sig_pending,
+        "pi_decisions": {
+            "trade": pi_trade,
+            "skip": pi_skip,
+        },
+        "risk_decisions": {
+            "approved": risk_approved,
+            "rejected": risk_rejected,
+            "approve_rate_pct": risk_approve_rate,
+            "top_rejection_reasons": rejection_top,
+        },
+        "fills": fills,
+        "conversion": {
+            "opp_to_signal_pct": round(sig_pending / opps * 100.0, 2) if opps else None,
+            "signal_to_pi_trade_pct": round(pi_trade / sig_pending * 100.0, 2) if sig_pending else None,
+            "pi_trade_to_fill_pct": round(fills / pi_trade * 100.0, 2) if pi_trade else None,
+        },
+    }
+
+
+@router.get("/learning-funnel")
+def get_learning_funnel():
+    """Learning subsystem visibility: what gets written vs what PI actually sees.
+
+    Quantifies the freeze-period \"writes active, consumption blocked\" pattern
+    (knowledge_items 24h writes vs PI's limit=30 window contents). Read-only.
+    """
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+
+    # Full-table item_type distribution
+    type_total: list[dict] = []
+    for r in db.execute(
+        "SELECT item_type, COUNT(*) n FROM knowledge_items GROUP BY item_type ORDER BY n DESC"
+    ):
+        type_total.append({"item_type": r["item_type"], "count": int(r["n"])})
+
+    # Most recent 30 (what PI's _build_layer3_wisdom guards-window actually sees)
+    pi_window_30: list[dict] = []
+    from collections import Counter
+    cnt: Counter = Counter()
+    try:
+        for r in db.execute(
+            "SELECT item_type FROM knowledge_items ORDER BY rowid DESC LIMIT 30"
+        ):
+            cnt[r["item_type"]] += 1
+        pi_window_30 = [{"item_type": k, "count": v} for k, v in cnt.most_common()]
+    except Exception:
+        pass
+
+    # Most recent 20 (what PI's lessons-window sees)
+    pi_window_20: list[dict] = []
+    cnt20: Counter = Counter()
+    try:
+        for r in db.execute(
+            "SELECT item_type FROM knowledge_items ORDER BY rowid DESC LIMIT 20"
+        ):
+            cnt20[r["item_type"]] += 1
+        pi_window_20 = [{"item_type": k, "count": v} for k, v in cnt20.most_common()]
+    except Exception:
+        pass
+
+    # ps_lessons summary (status + freshness)
+    ps_summary: dict = {"total": 0, "by_status": [], "latest_created_at": None}
+    try:
+        ps_summary["total"] = int(db.execute("SELECT COUNT(*) FROM ps_lessons").fetchone()[0])
+        for r in db.execute("SELECT status, COUNT(*) n FROM ps_lessons GROUP BY status"):
+            ps_summary["by_status"].append({"status": r["status"], "count": int(r["n"])})
+        ps_summary["latest_created_at"] = db.execute(
+            "SELECT MAX(created_at) FROM ps_lessons"
+        ).fetchone()[0]
+    except Exception:
+        pass
+
+    # Serenity opportunities active count (already directly consumed by PI; useful as reference)
+    serenity_active = 0
+    try:
+        serenity_active = int(db.execute(
+            "SELECT COUNT(*) FROM serenity_opportunities WHERE status='active'"
+        ).fetchone()[0])
+    except Exception:
+        pass
+
+    # The known consumption bugs (currently true; will flip after Round 2 fixes)
+    # Layer3 lessons filter: ('lesson','accepted_lesson','trading_guard') — DB rows for these.
+    layer3_lesson_hits = int(db.execute(
+        "SELECT COUNT(*) FROM knowledge_items "
+        "WHERE item_type IN ('lesson','accepted_lesson','trading_guard')"
+    ).fetchone()[0])
+    layer3_guards_in_window = int(cnt.get("guard_candidate", 0))
+
+    return {
+        "knowledge_items_by_type": type_total,
+        "pi_lessons_window_limit_20_distribution": pi_window_20,
+        "pi_guards_window_limit_30_distribution": pi_window_30,
+        "pi_actual_visibility": {
+            "layer3_lesson_filter_db_hits": layer3_lesson_hits,
+            "layer3_guards_in_recent_30": layer3_guards_in_window,
+            "comment": "both should be > 0 after Round 2 fixes L-Bug-A / L-Bug-A'",
+        },
+        "ps_lessons": ps_summary,
+        "serenity_opportunities_active": serenity_active,
+    }

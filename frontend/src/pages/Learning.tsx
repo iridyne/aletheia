@@ -171,6 +171,10 @@ const KB_TABS = [
   { key: 'strategy', label: 'Strategy Memory', fn: () => api.getStrategyMemory() },
   { key: 'reviews', label: 'Daily Reviews', fn: () => api.getKnowledge('daily_review') },
   { key: 'dreaming', label: 'Dreaming Logs', fn: () => api.getDreamingLogs() },
+  // ps_lessons surfaces dreaming_agent output (LessonStore). PI currently
+  // does NOT consume these (Round 2 fix L-Bug-B); the tab exposes them so the
+  // user can verify the producer is alive even before consumption is wired.
+  { key: 'lessons', label: 'Post-Trade Lessons', fn: () => api.getLessons(100) },
 ] as const
 
 const kbCol = createColumnHelper<KnowledgeItem>()
@@ -181,22 +185,40 @@ const kbColumns = [
   kbCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
+// Lesson row shape (matches /api/persistence/lessons output).
+type LessonRow = {
+  lesson_id: string; source_type?: string; source_id?: string
+  category?: string; severity?: string; summary?: string
+  status?: string; created_at?: string
+}
+const lessonCol = createColumnHelper<LessonRow>()
+const lessonColumns = [
+  lessonCol.accessor('summary', { header: 'Summary', cell: info => <span>{(info.getValue() || '').slice(0, 120)}</span> }),
+  lessonCol.accessor('category', { header: 'Category', cell: info => <Badge tone="blue">{info.getValue() || '—'}</Badge> }),
+  lessonCol.accessor('severity', { header: 'Severity', cell: info => <Badge tone={info.getValue() === 'high' ? 'red' : info.getValue() === 'medium' ? 'yellow' : 'muted'}>{info.getValue() || '—'}</Badge> }),
+  lessonCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue() || ''} /> }),
+  lessonCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
+]
+
 function KnowledgeTab() {
   const [tab, setTab] = useState<typeof KB_TABS[number]['key']>('research')
   const [selected, setSelected] = useState<KnowledgeItem | null>(null)
   const active = KB_TABS.find(t => t.key === tab)!
   const { data = [] } = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
-  const rows = data as KnowledgeItem[]
+  const isLessons = tab === 'lessons'
+  const rows = isLessons ? (data as unknown as LessonRow[]) : (data as KnowledgeItem[])
 
   const { data: d0 } = useQuery({ queryKey: ['knowledge', KB_TABS[0].key], queryFn: KB_TABS[0].fn, staleTime: 60_000 })
   const { data: d1 } = useQuery({ queryKey: ['knowledge', KB_TABS[1].key], queryFn: KB_TABS[1].fn, staleTime: 60_000 })
   const { data: d2 } = useQuery({ queryKey: ['knowledge', KB_TABS[2].key], queryFn: KB_TABS[2].fn, staleTime: 60_000 })
   const { data: d3 } = useQuery({ queryKey: ['knowledge', KB_TABS[3].key], queryFn: KB_TABS[3].fn, staleTime: 60_000 })
+  const { data: d4 } = useQuery({ queryKey: ['knowledge', KB_TABS[4].key], queryFn: KB_TABS[4].fn, staleTime: 60_000 })
   const counts: Record<string, number | undefined> = {
     [KB_TABS[0].key]: Array.isArray(d0) ? d0.length : undefined,
     [KB_TABS[1].key]: Array.isArray(d1) ? d1.length : undefined,
     [KB_TABS[2].key]: Array.isArray(d2) ? d2.length : undefined,
     [KB_TABS[3].key]: Array.isArray(d3) ? d3.length : undefined,
+    [KB_TABS[4].key]: Array.isArray(d4) ? d4.length : undefined,
   }
 
   function parseTags(raw: string | null): string[] {
@@ -214,10 +236,17 @@ function KnowledgeTab() {
         ))}
       </div>
       <Card>
-        <DataTable data={rows} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
+        {isLessons
+          ? <>
+              <p className="text-muted text-sm" style={{ marginBottom: '0.5rem' }}>
+                Producer-only view. PI Agent does not currently consume these (Round 2 fix L-Bug-B).
+              </p>
+              <DataTable data={rows as LessonRow[]} columns={lessonColumns} emptyMessage="No lessons yet." />
+            </>
+          : <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />}
       </Card>
 
-      <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title={selected?.title || 'Knowledge Item'}>
+      <DetailDrawer open={!!selected && !isLessons} onClose={() => setSelected(null)} title={selected?.title || 'Knowledge Item'}>
         {selected && (
           <>
             <DrawerSection label="Metadata">
