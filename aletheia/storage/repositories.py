@@ -1055,6 +1055,32 @@ def prune_shadow_trades(days: int = 90) -> int:
     return _delete_old_rows("shadow_trades", days)
 
 
+# Transient PI-decision actions: pre-decision signals + non-trade outcomes that
+# carry no causal-chain reference (proposal_id is NULL). Decision-bearing actions
+# (trade / close / recommend_promote) are KEPT forever — they are the PI Agent's
+# audit trail. signal_pending in particular accumulated to 1600+ rows (PT-1 bug)
+# and, when duplicated, made the PI read its own pending queue as "data corrupted"
+# and skip every decision. Pruning the transient rows keeps that queue clean.
+_PRUNABLE_PI_ACTIONS = ("signal_pending", "skip", "watch")
+
+
+def prune_pi_decisions(days: int = 7) -> int:
+    """Delete old TRANSIENT pi_decisions (signal_pending/skip/watch), keeping
+    decision-bearing rows (trade/close/recommend_promote) forever. Returns count.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    placeholders = ",".join("?" for _ in _PRUNABLE_PI_ACTIONS)
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        f"DELETE FROM pi_decisions WHERE action IN ({placeholders}) AND created_at < ?",
+        (*_PRUNABLE_PI_ACTIONS, cutoff),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount if cur.rowcount is not None else 0
+
+
 # ---------------------------------------------------------------------------
 # OHLCV rolling window store
 # ---------------------------------------------------------------------------

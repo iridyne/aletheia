@@ -1049,6 +1049,7 @@ def _run_cleanup():
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
+            "pi_decisions_transient": repo.prune_pi_decisions(7),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
         }
         write_audit({

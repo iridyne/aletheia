@@ -89,6 +89,38 @@ def test_cleanup_writes_audit(tmp_path, monkeypatch):
     assert any(e.get("event_type") == "data_pruned" for e in read_jsonl("audit.jsonl"))
 
 
+def test_prune_pi_decisions_keeps_decisions_deletes_transient(tmp_path, monkeypatch):
+    """prune_pi_decisions removes old transient rows (signal_pending/skip/watch)
+    but NEVER touches decision-bearing rows (trade/close/recommend_promote) —
+    they are the PI Agent's audit trail. Regression guard for the PT-1 cleanup."""
+    conn = setup_env(tmp_path, monkeypatch)
+    rows = [
+        ("sp_old", "signal_pending", _old(30)),   # transient, old → delete
+        ("skip_old", "skip", _old(30)),            # transient, old → delete
+        ("watch_old", "watch", _old(30)),          # transient, old → delete
+        ("sp_new", "signal_pending", _recent()),   # transient, recent → keep
+        ("trade_old", "trade", _old(30)),          # decision, old → KEEP
+        ("close_old", "close", _old(30)),          # decision, old → KEEP
+        ("promote_old", "recommend_promote", _old(30)),  # decision, old → KEEP
+    ]
+    for rid, action, ts in rows:
+        conn.execute(
+            "INSERT INTO pi_decisions (id, action, created_at, conviction, debate_ran) "
+            "VALUES (?,?,?,0,0)", (rid, action, ts),
+        )
+    conn.commit()
+
+    deleted = repo.prune_pi_decisions(7)
+    assert deleted == 3, f"expected 3 transient rows deleted, got {deleted}"
+
+    remaining = {r["id"] for r in conn.execute("SELECT id FROM pi_decisions").fetchall()}
+    assert {"trade_old", "close_old", "promote_old"} <= remaining, (
+        "prune_pi_decisions deleted a decision-bearing row — must keep trade/close/recommend_promote"
+    )
+    assert "sp_new" in remaining, "recent signal_pending wrongly deleted"
+    assert not ({"sp_old", "skip_old", "watch_old"} & remaining), "old transient rows not deleted"
+
+
 def test_jsonl_rotation(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     import aletheia.files.jsonl as jsonl
