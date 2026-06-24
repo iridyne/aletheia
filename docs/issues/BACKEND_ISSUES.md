@@ -1046,3 +1046,50 @@
   (`aletheia/exchanges/binance/client.py:58`) 同样 eager-建 exchange，binance_broker
   也用 `_run_coro`。当前 binance 未启用(paper_execution_mode=okx_demo)且不调
   load_markets，未观测到错误。**若启用 binance 须同样改 lazy-init**。下一 sprint。
+
+---
+
+## §18. Code Review 发现 (2026-06-24, 11-angle review)
+
+> 对本会话生产代码改动做完整 code review(10 finder 角度 + sweep)。
+> 修了 2 个本会话引入的真实 bug,其余记录。**注:agent 报的 6 条经核实是误报**
+> (混淆历史未提交 diff / 不成立的调用模式),已否决,不列。
+
+### §18.1 已修复(本会话引入,本次 review 修)
+
+- ✅ **CR-XL-01** `exchange_sync.py:157` 🟠 — `paper_execution_mode.startswith("bitget")`
+  在该字段为 None/空时 AttributeError,被 trading_context except 吞 → balance=None →
+  PI 幻觉破产 stall 复发。改 `(x or "").startswith`。get_cached_state 改动的防御遗漏。
+- ✅ **CR-XL-02** `cli/inspect_cmd.py:471` 🟠 — get_cached_state 改动后第 3 个消费者
+  漏 `total_equity_usdt` 兜底,OKX 模式 CLI 显示 None。加 `or total_equity_usdt`
+  (trading_context/pnl 已加,这个漏了)。
+
+### §18.2 新发现(pre-existing,非本会话,待修)
+
+- 🟠 **OP-WINRATE** `agent_shell/operator_loop.py:395-399` — 7d win_rate/total_pnl/PF
+  从 `list_fills()` 算,但 **fills 表无 realized_pnl 字段**(只有 fill_price/quantity/fee)→
+  `f.get("realized_pnl") or 0` 恒 0 → win_rate_7d 恒 0%、total_pnl_7d 恒 0。
+  operator 据此(< 35% win_rate 路径)可能误触发 tighten 动作。**pre-existing,半冻结区
+  (operator_loop),需改数据源 fills→positions JOIN。Round 2 评估。**
+  (code review 原报为"与 trading_context 的 cleanup-filter 分歧",核实后实为更深的
+  fills-无-pnl bug。)
+
+### §18.3 卫生项(🟡,下一 sprint)
+
+- `paper_trader.py:163` — PT-1 修复的 update_opportunity 包 `except:pass`,DB 锁时
+  静默失败致重复信号复发。应加 logger.debug。(本会话引入,低危)
+- `strategy_lifecycle.py:405` — `"live" in exec_mode` 子串匹配,应用 `_is_live()`
+  与全局一致(future-trap)。
+- `trading_decision.py:300` — debate 重构后 `final_conviction` 字段算了不再被读,
+  reader-trap。caller 用 `initial + advantage*0.3`。
+- `doctor.py:474` — `_probe_profit_loop` day-0(prop_age=None)误报 STALLED。
+- `repositories.py:1067` — prune_pi_decisions 复制 _delete_old_rows tx 模式(4 处重复),
+  altitude:应给 _delete_old_rows 加 where-clause 参数。
+- `trading_context.py:228` — `_NON_STRATEGY_CLOSE_REASONS` 硬编码字符串,altitude:
+  宜用 close_reason 分类机制(如 is_migration_close 列)。
+
+### §18.4 越界发现(非本会话 scope,记录待查)
+
+- 🔴 **APP-HMAC** `server/app.py:428` — tunnel auth guard 用 `token != expected`
+  (timing side-channel),应 `hmac.compare_digest`。守 kill-switch/gateway-restart,
+  tunnel 暴露时是 trust 边界。**非本会话改动,但真实 trust 问题,优先核实修复。**

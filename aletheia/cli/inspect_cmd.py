@@ -468,7 +468,10 @@ def status(
         from aletheia.portfolio.exchange_sync import get_cached_state, status_for
         cached = get_cached_state()
         if cached and status_for(cached) in ("ok", "stale"):
-            portfolio_section["equity_usdt"] = cached.get("equity_usdt")
+            # get_cached_state may return the unified (multi-broker) cache, which
+            # uses total_equity_usdt instead of the Bitget-specific equity_usdt —
+            # fall back so non-Bitget paper accounts show real equity, not None.
+            portfolio_section["equity_usdt"] = cached.get("equity_usdt") or cached.get("total_equity_usdt")
             portfolio_section["exchange_age_sec"] = cached.get("age_seconds")
     except Exception:
         pass

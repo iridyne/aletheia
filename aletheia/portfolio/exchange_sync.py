@@ -154,7 +154,7 @@ def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
         mode = cfg.exchange.mode
         # Default path + active paper broker is non-Bitget → use unified cache,
         # which carries the true total equity across all brokers.
-        if not explicit_mode and not cfg.exchange.paper_execution_mode.startswith("bitget"):
+        if not explicit_mode and not (cfg.exchange.paper_execution_mode or "").startswith("bitget"):
             unified = get_unified_cached_state()
             if unified is not None and (unified.get("total_equity_usdt") or 0) > 0:
                 return unified
