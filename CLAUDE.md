@@ -67,11 +67,17 @@ Spec as Code：L2 契约文档的关键断言已编码为 `tests/specs/spec_*.py
 2. 修改 risk/execution/trust 模块前，先检查 `tests/specs/` 中是否有 claim 会被影响
 3. 修改 `DEFAULT_PROMOTION_GATES` 值 → 同步更新 `promotion_gates_contract.md` + `spec_promotion_gates.py`
 4. 新增 `FORBIDDEN_INTENTS`/`RESTRICTED_TOOLS` 条目 → 同步 spec + 契约文档
+5. 修改 scheduler job 频率 → 同步更新 `agent_contracts.md` job 表 + `SYSTEM_MAP.md`
+6. 新增/删除 API 端点 → 同步更新 `api_reference.md`
+7. 新增/删除数据表 → 同步更新 `data_model.md`
+8. 新增/删除 config 字段 → 同步更新前端 Settings 页面（CLAUDE.md "Config ↔ UI rule"）
+9. 新增/删除信任边界子系统 → 同步 docs/governance/trust_and_change_control.md §6.1 受控模块清单
 
 **运行命令**：
 - `uv run pytest tests/test_architecture_fitness.py -q` — L2a 依赖方向检查（< 1s）
 - `uv run pytest tests/specs/ -q` — 全部 spec claims（< 2s）
 - `uv run pytest tests/test_spec_conformance.py -v -s` — 打印 Conformance Matrix
+- `uv run pytest tests/specs/spec_api_reference.py tests/specs/spec_data_layer.py tests/specs/spec_operator_loop.py tests/specs/spec_subsystem_observers.py -q  # 新增子系统 spec`
 
 ## Safety Rules
 

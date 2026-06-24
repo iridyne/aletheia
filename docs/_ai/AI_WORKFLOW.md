@@ -27,3 +27,24 @@
 4. Append docs/_ai/DECISIONS.md if architectural decisions were made
 5. Summarize changed files
 6. Identify next recommended action
+
+## SDD Development Cycle（非 trivial 功能必须遵循）
+
+参考: [SDD_METHODOLOGY](../design/SDD_METHODOLOGY.md)
+
+### 快速流程
+
+```
+1. Constitution  确认 CLAUDE.md/AGENTS.md 约束仍适用
+2. Specify       找到或创建对应 L2 契约(docs/design/)
+3. Clarify       跑消歧检查清单(错误路径/空态/边界/并发/幂等/安全/可观测)
+4. Plan          写 docs/plans/ 或 CURRENT_TASK.md
+5. Tasks         拆成 1-4h 原子任务
+6. Implement     写 spec_claim(status="missing") → RED → 实现 → GREEN → commit
+```
+
+### Spec-Code 同步规则
+
+- **改动先改 spec**: 发现需要改行为 → 先更新 `*_contract.md` → 再改代码+spec test
+- **Drift = Issue**: `uv run pytest tests/specs/ -q` 失败 → 记 BACKEND_ISSUES.md
+- **Checkpoint**: commit 前 `uv run pytest tests/specs/ tests/test_architecture_fitness.py -q` 必须全绿

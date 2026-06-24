@@ -7,7 +7,72 @@
 
 ## Last Updated
 
-2026-06-21 (PI Agent 信号增强 + Liquidation 采集修复 + Operator ICT 策略研究)
+2026-06-24 (最小赚钱循环全链路修复 — 五层叠加阻碍 + SDD 体系扩张 + 全面代码审计)
+
+---
+
+## Recent Change (最小赚钱循环修复 — 2026-06-23→24)
+
+> **背景**：用户观察到"系统不怎么开仓"。逐层排查发现 PI Agent(Phase 4a 后唯一
+> proposal 创建者)被**五层叠加阻碍**卡死,20h+ 零开仓。每修一层暴露下一层。
+> 最终全部清除后 PI 恢复正常多空交易(02:00+ 5 trade/2 skip,3 笔持仓)。
+
+**五层阻碍 + 修复(按发现顺序)**：
+1. **OKX contractSize 单位混淆** (`650f608`)：CCXT swap `amount`/`contracts` 单位是
+   合约张数非币数,放大 contractSize 倍(TRX 1000×)且绕过风控 notional。
+   okx/client.py 边界换算 coins↔contracts。
+2. **PI 余额幻觉破产** (`6c006cb` 冻结例外#1)：8 个 context-injection bug 喂 LLM
+   错误事实(余额读 bitget 闲置$167 vs 真实 okx_demo $88k / 统计被 cleanup 污染 /
+   kill_switch AttributeError / 策略 status-vs-state typo / win_rate 误读为 drawdown /
+   bias 标签 / debate 公式丢 initial)。trading_context + trading_decision 修。
+3. **OKX 跨 loop 回归** (`d6fc427`)：`_contract_size` 的 `load_markets` 在 `_run_coro`
+   新 loop 跑,但 exchange 在 __init__ 旧 loop 建 → 跨 loop Future → contractSize
+   回退 1.0 → contractSize 修复破功。OKXClient 改 lazy-init(`_ensure_exchange`)。
+4. **日损 $1 误熔断** (`5831bd1` CR-RE-03)：demo 日损门控误用 `max_live_limited_cap`
+   ($100×1%=$1)作基数,清账 -23.26 损失触发熔断阻断当日全部交易。engine.py:154
+   按 `_is_live()` 分流,demo 用 `starting_capital_usdt`。config starting_capital→88000。
+5. **signal 重复→"数据损坏"skip** (`edc15b2` 冻结例外#2 + `079bb9d`)：paper_trader 写
+   signal_pending 后不标 opportunity=reviewed → 每 5min 重复入选 → PI 读重复判
+   "data integrity compromised"。paper_trader.py:153 加 update_opportunity(reviewed);
+   清理 1676 条历史重复;新增 prune_pi_decisions(7d,保护决策行)防堆积。
+
+**修改文件(生产代码)**：okx/client.py / okx_broker.py / exchange_sync.py / pnl.py /
+risk/engine.py(+models/migrations proposal_execution_mode 列) / strategy_lifecycle.py /
+reconciliation.py(OKX/Binance live 订单告警) / paper_trader.py / trading_context.py /
+trading_decision.py / instruments.py(tradable_symbols canonical) / fallback.py(_MODEL_HEALTH 锁) /
+manager.py(daily_review 质量门) / market_data.py(xStock infra_event) / jsonl.py(tz 后缀+guard) /
+doctor.py(_probe_profit_loop 探针) / repositories.py(prune serenity/shadow/pi_decisions) /
+settings.py(HealthCard 422 修) / analytics.py(equity-curve uPnL) / 前端 Settings.tsx+client.ts
+
+**冻结例外(3 次,用户授权,登记 EXPERIMENT_PROTOCOL)**：#1 profit-loop 8 bug /
+#2 PT-1 signal 去重 / #3 CR-RE-03 日损基数。Round 1 起点保留 6/22,**所有修复
+生效前的数据不计入策略评估**,6/24 起为干净观察窗口。
+
+**监测固化**：doctor `loop.profit` 探针(opportunities 流动但 proposal 停滞 6h+ 即告警) +
+`spec_pipeline_profit_loop.py` E2E。这类静默断流再不会无声发生。
+
+**验证**：全量 1651 tests passed;生产路径 E2E(DOGE demo 单 notional $11.84 正确);
+loop.profit ✓ healthy;PI 恢复 trade 决策(SOL/ETH/BTC short,notional 规格正确)。
+
+---
+
+## Recent Change (SDD 体系扩张 + 全面代码审计 — 2026-06-23)
+
+> 在修 bug 之外,本会话还做了 SDD 文档体系的大规模加固 + 一次全面代码审计。
+
+**SDD 扩张**：spec claims 45→114;新建 4 份 spec(api_reference/data_layer/operator_loop/
+subsystem_observers) + 3 份契约(knowledge/scheduler/audit_chain);修 12 份契约漂移;
+扩 6 份现有 spec 到 L2b/L2c。详见 `docs/research/DOC_CONTROL_ANALYSIS_2026-06-23.md`。
+
+**代码审计**：16 契约 spec↔code 对账 + 7 管道 E2E + git log 挖掘 → 74 findings,
+Top 25 修复优先级。详见 `docs/research/CODE_AUDIT_REPORT_2026-06-23.md`。已修 trust 项
+(OL-C03 双锁/CR-RE-01 proposal_execution_mode/CR-EX-01 reconcile 告警/CR-DM-01 ID 决议)。
+未决项分类登记 BACKEND_ISSUES §15-18(trust 待授权/frozen 待 Round2/卫生下 sprint)。
+
+**Code review(11 角度)**：修 2 个 get_cached_state 改动遗漏(exchange_sync None 防御 +
+inspect_cmd 兜底);否决 6 个 agent 误报(混淆历史 diff)。新发现 OP-WINRATE
+(operator_loop fills 无 realized_pnl → win_rate 恒 0,pre-existing,Round 2) + APP-HMAC
+(tunnel auth timing side-channel,待修)。
 
 ---
 

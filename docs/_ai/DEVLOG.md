@@ -1,5 +1,59 @@
 # Development Log
 
+## 2026-06-23→24 — 最小赚钱循环全链路修复 + SDD 扩张 + 代码审计
+
+### 背景
+用户观察"系统不怎么开仓"。逐层排查发现最小赚钱循环(opportunities→paper_trader→
+signal_pending→PI Agent→proposal→risk→execution)被**五层叠加阻碍**卡死,20h+ 零开仓。
+每修一层暴露下一层——典型的"修复 A 暴露 B"连锁。
+
+### Phase 1 — OKX contractSize 单位混淆 (650f608)
+CCXT swap `amount`/`fetch_positions.contracts` 单位是合约张数非币数(TRX=1000/ETH=0.1/
+BTC=0.01)。下单放大 contractSize 倍、绕过风控 notional;mark-to-market 算错。
+okx/client.py 边界换算 coins↔contracts。清理 3 笔被放大的历史错误仓位。
+
+### Phase 2 — PI 余额幻觉破产 (6c006cb, 冻结例外#1)
+Phase 4a 后 PI Agent(LLM)是唯一 proposal 创建者。它被喂 8 个错误事实构建"账户濒临
+破产"幻觉 → 100% skip:余额读 bitget 闲置 $167(真实 okx_demo $88k)/ 7d 统计被
+units_bug_cleanup 污染(-13.46 vs +1.94)/ cfg.risk.kill_switch_active AttributeError →
+risk block 空 / 策略过滤 status-vs-state typo → 0 活跃策略 / win_rate 46.6% 被 LLM
+误读为 -45.8% drawdown / long_bias 读如方向否决 / debate 公式丢弃 initial conviction。
+trading_context + trading_decision 逐项修(冻结例外,用户授权)。
+
+### Phase 3 — OKX 跨 loop 回归 (d6fc427)
+Phase 1 引入的 `_contract_size` 调 `load_markets` 在 `_run_coro` 新线程新 loop 跑,
+但 OKXClient 在 __init__(同步上下文)eager 建 aiohttp session → 跨 loop Future 冲突 →
+load_markets 失败 → contractSize 回退 1.0 → Phase 1 修复在 broker 路径静默破功。
+OKXClient 改 lazy-init:`_ensure_exchange()` 在首次 async 调用所在 loop 建。
+回归测试 TestLazyExchangeInit 钉死"__init__ 不建 exchange"。
+
+### Phase 4 — 日损 $1 误熔断 (5831bd1, CR-RE-03, SDD 流程)
+engine.py 检查 #8 日损门控对所有模式用 `max_live_limited_cap_usdt`($100)作基数 →
+demo 日损限 $1。Phase 1 清账 -23.26 损失触发 demo 日损熔断,阻断当日 PI 全部交易。
+SDD 流程:RE-B13 RED → engine.py:154 按 _is_live 分流(demo 用 starting_capital_usdt,
+对齐 check #13)→ GREEN。config starting_capital 100→88000(日损限 $1→$880)。
+
+### Phase 5 — signal 重复→"数据损坏"skip (edc15b2 例外#2 + 079bb9d)
+paper_trader Path B 写 signal_pending 后只对被跳过的标 reviewed,eligible 漏标 →
+同一批 open opportunity 每 5min 重复写入 → PI 读重复(ETH short 12 次)判
+"pipeline data integrity compromised"。paper_trader.py:153 加
+update_opportunity(reviewed);清理 1676 条历史重复;新增 prune_pi_decisions(7d,
+action 白名单保护 trade/close/recommend_promote)防再堆积。PL-PT-05 xfail→pass。
+
+### 结果
+五层全清 + gateway 稳定后,PI 02:00+ 产出 5 trade/2 skip,开出 3 笔真实持仓
+(ETH/SOL/BTC short),notional 规格正确,integrity 借口消失。最小赚钱循环打通。
+doctor loop.profit ✓ healthy。全量 1651 tests passed。
+
+### 附:SDD 扩张 + 审计 + code review
+- SDD: spec claims 45→114,新建 4 spec+3 契约,修 12 契约漂移(DOC_CONTROL_ANALYSIS)
+- 审计: 16 契约+7 管道+git 挖掘 → 74 findings(CODE_AUDIT_REPORT),已修 trust 项
+- code review(11 角度): 修 2 个 get_cached_state 遗漏,否决 6 误报,新发现 OP-WINRATE/APP-HMAC
+- 监测固化: doctor loop.profit 探针 + spec_pipeline_profit_loop.py
+- 冻结例外 3 次均登记 EXPERIMENT_PROTOCOL;Round 1 起点保留 6/22,修复前数据不计入
+
+---
+
 ## 2026-06-21 — 数据质量自检 + PI Agent 自愈闭环 (5e5f4fe)
 
 ### 背景

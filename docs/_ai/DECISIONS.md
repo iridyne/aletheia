@@ -1,5 +1,42 @@
 # Decisions
 
+## 2026-06-24 - 最小赚钱循环修复期的 4 个架构决策
+
+### Context
+排查"PI 不开仓"暴露五层阻碍,修复中遇到几个需要定调的架构选择。
+
+### Decisions
+
+1. **OKXClient 改 lazy-init(不用静态 contractSize 表)**
+   - CCXT exchange 的 aiohttp session 绑定创建它的 event loop。OKXClient 在 __init__
+     (同步上下文)建 exchange,但经 okx_broker._run_coro 在新线程新 loop 使用 → 跨 loop。
+   - **决定**:`__init__` 只存凭证,`_ensure_exchange()` 在首次 async 调用所在 loop 懒建。
+   - 否决"静态 contractSize 表"备选:OKX swap 有 76 个 contractSize≠1 的币、11 种值、
+     新币持续加入,默认 1.0 绝不安全,必须修真正根因(loop 绑定)而非绕过。
+
+2. **demo 日损用 starting_capital_usdt 基数(CR-RE-03)**
+   - engine.py 检查 #8 原对所有模式用 max_live_limited_cap_usdt → demo 日损限 $1。
+   - **决定**:按 `_is_live()` 分流,demo 用 starting_capital_usdt,对齐检查 #13 既有范式。
+   - 这是 engine 内部一致性修复(check #13 已用 demo 基数,#8 漏了),非新逻辑。
+
+3. **ID 格式:文档对齐代码(12-char hex),不迁移 UUID4**
+   - 契约说 UUID4 36-char,代码用 `uuid4().hex[:12]`(48bit)。
+   - **决定**:改文档对齐代码。碰撞 P≈2e-7@1e4 行可忽略,short 形式利于日志可读;
+     full-UUID4 迁移是无谓的破坏性改动。
+
+4. **冻结例外的判决记账:Round 1 起点保留 6/22,修复前数据不计入**
+   - 3 次冻结/trust 例外(profit-loop 8 bug / PT-1 / CR-RE-03)都在 Round 1 观察期内修。
+   - **决定(用户拍板)**:不重置 Round 1 起点。判决时区分修复前/后——所有修复生效前
+     (6/22→6/24)在错误事实下产生的 skip/proposal 数据**不计入策略评估**,6/24 起为
+     干净观察窗口。所有例外登记 EXPERIMENT_PROTOCOL 冻结例外记录。
+
+### Reasoning
+共同原则:**修真正的根因,不绕过**(lazy-init vs 静态表);**对齐既有范式,不发明新逻辑**
+(日损基数分流跟随 check #13);**文档追代码当代码是既成合理约定**(ID 格式);
+**诚实记账,预承诺不事后改**(实验判决区分污染前后数据)。
+
+---
+
 ## 2026-06-17 - Self-Evolution Tier 1：4h 作为触发窗口，medium_confidence 不进 FTS
 
 ### Context

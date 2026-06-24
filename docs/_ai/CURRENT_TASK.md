@@ -36,6 +36,15 @@
 扫一眼真值,看上述指标是否仍在累积。改动让某项指标退化时再回头调。代码改动后记得
 `uv run aletheia gateway restart --no-browser`,scheduler 跑的是内存中的旧代码。
 
+> **结构性阻碍已清除(意图记录,2026-06-24)**:最小赚钱循环
+> (opportunities→paper_trader→signal_pending→PI→proposal→risk→execution)曾被
+> **五层叠加阻碍**卡死(OKX contractSize 单位 / PI 余额幻觉 8 bug / OKX 跨 loop /
+> demo 日损 $1 误熔断 / signal 重复→"数据损坏"skip)。这些是**代码层面的结构缺陷**,
+> 现已逐层修复并补回归测试(详见 `DEVLOG.md` 2026-06-23→24 条 + `DECISIONS.md`)。
+> 此后 Phase 0 健康指标应能正常累积——**但"现在是否真在累积"仍是运行态事实,以
+> `aletheia doctor` 的 `loop.profit` 探针为准,本文不断言**。实验判决记账见
+> `EXPERIMENT_PROTOCOL.md`:修复生效前(污染期)的 skip/proposal 数据不计入策略评估。
+
 ## 并行开发线:账户级仓位发现 + 纳管("接管即纳管")
 
 > 所有者立场决策:Aletheia 接管账户后全账户仓位(含系统外仓位)统一交由 AI 管理。
