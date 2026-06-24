@@ -598,3 +598,62 @@ def test_paper_proposal_cannot_accept_live_mode():
         f"INVARIANT VIOLATION: live mode(s) {overlap} found inside _PAPER_MODES — "
         "autonomous agents could bypass the live-path guard"
     )
+
+
+# ---------------------------------------------------------------------------
+# RE-B13 — §2 check #8: demo daily-loss uses the DEMO capital base
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("RE-B13", "risk_engine_contract", "§2 check #8", "L2b",
+              "demo daily-loss limit is computed from starting_capital_usdt (demo base), "
+              "NOT max_live_limited_cap_usdt — so a demo loss small relative to the demo "
+              "account does not spuriously trip the daily-loss brake (CR-RE-03)"),
+)
+def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
+    """A demo realized loss that is tiny vs the demo capital base must NOT trip
+    the daily-loss brake just because it exceeds the (much smaller) live cap.
+
+    Setup: starting_capital_usdt=10000 (demo base), max_live_limited_cap_usdt=100
+    (live cap), max_daily_loss_pct=1%. A -$25 demo loss is:
+      - vs demo base: 25 < 10000*1% = 100  → must NOT fire
+      - vs live cap:  25 > 100*1%   = 1    → the OLD bug fired here
+    """
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.models import TradeProposal, Position
+    from aletheia.storage import repositories as repo
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.portfolio.pnl import close_position
+    import aletheia.risk.engine as eng
+
+    _setup_db(tmp_path, monkeypatch)
+
+    cfg = AletheiaConfig()
+    cfg.risk.starting_capital_usdt = 10000.0      # demo base
+    cfg.risk.max_live_limited_cap_usdt = 100.0    # live cap (must NOT drive demo)
+    cfg.risk.max_daily_loss_pct = 1.0
+    cfg.risk.max_demo_position_notional_usdt = 10000.0  # don't let notional gate interfere
+    monkeypatch.setattr(eng, "load_config", lambda: cfg)
+
+    # Create + close a demo position realizing a -$25 loss today.
+    pos = Position(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=100.0, current_price=100.0,
+        execution_mode="okx_demo", status="open",
+    )
+    repo.insert_position(pos)
+    close_position(pos.id, exit_price=75.0, reason="test")  # -25 realized
+
+    # New demo proposal — daily-loss check must NOT reject it.
+    p = TradeProposal(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=0.01, price=100.0,
+    )
+    repo.insert_trade_proposal(p)
+    result = evaluate_proposal(p)
+
+    assert not any("max_daily_loss_exceeded" in v for v in result.violations), (
+        "demo daily-loss brake tripped on a $25 loss against a $10000 demo base — "
+        f"it is wrongly using the $100 live cap (CR-RE-03). violations={result.violations}"
+    )

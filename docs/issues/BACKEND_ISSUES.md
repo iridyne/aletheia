@@ -975,7 +975,7 @@
 | 10 | **CR-PI-01** | `aletheia/agent_shell/operator_loop.py:882` | scanner family 权重调整不持久化（不调 `save_config()`），自治调校 no-op；需同步 `schema.py` + 前端 Settings | 🔴 🔒实质冻结(改自治调校行为→改AI决策)，Round 2 |
 | 17 | **CR-SCH-01** | `aletheia/agent_runtime/scheduler.py:771` | 24/30 个 job 无 `_record_job_failure`；持续失败不报警 | 🟠 ⏳ 可做，工程债，下一 sprint(纯可观测性，不改决策) |
 | 19 | **CR-AR-02** | `aletheia/server/routes/settings.py:12` | `POST /settings/permission-mode` 拒绝全部 5 种 operator 模式 | 🟠 ⏳ 需核实 operator 权限模式枚举语义后做 |
-| 22 | **CR-RE-03** | `aletheia/risk/engine.py:154` | demo 模式日损门控误用 `max_live_limited_cap_usdt` 作 capital_base；cap=0 时门控静默跳过 | 🟠 🔐 trust boundary + 日损逻辑变更，需专项 spec+测试，不在批量修复中顺手改 |
+| 22 | **CR-RE-03** | `aletheia/risk/engine.py:154` | demo 日损门控误用 `max_live_limited_cap_usdt` 作 capital_base | 🟠 ✅ **已修 (2026-06-24 SDD)** — demo 改用 `starting_capital_usdt`(对齐 check #13);RE-B13 RED→GREEN。实证:UTC6/23 清账 -23.26 触发 $1 日损限阻断 PI 全部交易。config 同步 starting_capital 100→88000(日损限 $1→$880) |
 | 23 | **EC-2** | `aletheia/execution/gateway.py` | OKX symbol-filter 拒绝路径产生双重 audit 记录（噪声，无安全风险） | 🟡 ⏳ 低优先噪声，下一 sprint |
 | — | **OL-2 full** | `aletheia/agent_shell/operator_loop.py:669` | Optuna sweep 完整实现（optuna_jobs 表 + background worker + enqueue 状态），OL-2 partial fix 已入 §16.1 | 🟠 ⏳ 需新建 optuna_jobs 表+worker，独立功能开发 |
 

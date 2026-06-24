@@ -151,7 +151,15 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     #    the daily-loss violation is always recorded, but the kill switch only
     #    auto-trips when the matching toggle is enabled.
     from aletheia.portfolio.pnl import today_realized_pnl
-    capital_base = risk.max_live_limited_cap_usdt or 0.0
+    # Capital base is mode-specific (CR-RE-03): demo daily-loss must scale off the
+    # DEMO base (starting_capital_usdt), not the much smaller live cap. Using the
+    # live cap ($100) for a demo account meant a ~$1 daily-loss limit, so any small
+    # demo loss spuriously tripped the brake and rejected every subsequent demo
+    # trade for the rest of the UTC day. Mirrors check #13's demo/live base split.
+    if _is_live(proposal.execution_mode):
+        capital_base = risk.max_live_limited_cap_usdt or 0.0
+    else:
+        capital_base = risk.starting_capital_usdt or 0.0
     daily_loss_limit = capital_base * (risk.max_daily_loss_pct / 100.0)
     realized = today_realized_pnl(execution_mode=proposal.execution_mode)
     if daily_loss_limit > 0 and realized <= -daily_loss_limit:
