@@ -67,6 +67,8 @@ export interface Position {
   realized_pnl: number | null
   execution_mode: string
   strategy_id: string | null
+  proposal_id?: string | null
+  order_id?: string | null
   status: string
   stop_price: number | null
   take_profit_price: number | null
