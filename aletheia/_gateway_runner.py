@@ -183,8 +183,16 @@ def _ensure_frontdoor_running(cfg, backend_port: int, proc: subprocess.Popen | N
     return new_proc
 
 
-def _spawn_server(cfg, *, port: int | None = None, frontdoor_proc: subprocess.Popen | None = None) -> int:
-    """Spawn the inner uvicorn server as a child process; return its exit code."""
+def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None = None) -> int:
+    """Spawn the inner uvicorn server as a child process; return its exit code.
+
+    frontdoor_holder is a 1-element mutable list owned by run_supervised holding
+    the current frontdoor Popen. When the frontdoor is detected unhealthy we
+    restart ONLY the frontdoor (in place) and write the new process back into the
+    holder so run_supervised's finally + next loop iteration see the live one.
+    The backend (`proc`) is NEVER killed for a frontdoor fault — that coupling
+    was the §23→§24 cascade where a frontdoor hiccup also tore down the backend.
+    """
     errors_log = get_data_dir() / "logs" / "errors.log"
     errors_log.parent.mkdir(parents=True, exist_ok=True)
     from aletheia.gateway.logs import rotate_if_needed
@@ -242,13 +250,17 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_proc: subprocess.Po
                     pass
                 return code
 
-            if frontdoor_proc is not None:
+            if frontdoor_holder is not None and frontdoor_holder[0] is not None:
+                frontdoor_proc = frontdoor_holder[0]
                 frontdoor_dead = frontdoor_proc.poll() is not None
                 frontdoor_port_lost = not port_in_use(cfg.app.dashboard_port, cfg.app.bind_host)
                 if frontdoor_dead or frontdoor_port_lost:
-                    _record_frontdoor_restart(cfg.app.dashboard_port, getattr(frontdoor_proc, "pid", 0))
-                    kill_pid_tree(proc.pid)
-                    return 1
+                    # Restart ONLY the frontdoor — keep the backend running.
+                    # _ensure_frontdoor_running records the restart + respawns,
+                    # and we write the new proc back so the holder stays live.
+                    frontdoor_holder[0] = _ensure_frontdoor_running(
+                        cfg, runtime_context["port"], frontdoor_proc
+                    )
 
             now = time.monotonic()
             if port_in_use(runtime_context["port"], runtime_context["host"]):
@@ -325,9 +337,11 @@ def run_supervised(spawn_fn=None) -> dict:
     write_pid()  # supervisor owns the pid file (written exactly once)
     frontdoor_enabled = spawn_fn is None
     backend_port = backend_port_for(cfg) if frontdoor_enabled else cfg.app.dashboard_port
-    frontdoor_proc = None
+    # 1-element mutable holder so _spawn_server can restart the frontdoor in place
+    # (writing the new Popen back) without killing the backend. See _spawn_server.
+    frontdoor_holder: list = [None]
     if spawn_fn is None:
-        spawn_fn = lambda: _spawn_server(cfg, port=backend_port, frontdoor_proc=frontdoor_proc)
+        spawn_fn = lambda: _spawn_server(cfg, port=backend_port, frontdoor_holder=frontdoor_holder)
     from aletheia.gateway.operator_shell import OperatorShellMonitor
     operator_monitor = OperatorShellMonitor(cfg)
     operator_monitor.start()
@@ -345,12 +359,12 @@ def run_supervised(spawn_fn=None) -> dict:
             _cleanup_before_spawn(cfg)
             _cleanup_backend_before_spawn(cfg, backend_port)
             _publish_frontdoor_route(cfg, backend_port=backend_port, reason="supervisor_start")
-            frontdoor_proc = _ensure_frontdoor_running(cfg, backend_port, frontdoor_proc)
+            frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
         while True:
             code: int | None = None
             try:
                 if frontdoor_enabled:
-                    frontdoor_proc = _ensure_frontdoor_running(cfg, backend_port, frontdoor_proc)
+                    frontdoor_holder[0] = _ensure_frontdoor_running(cfg, backend_port, frontdoor_holder[0])
                     _cleanup_backend_before_spawn(cfg, backend_port)
                 else:
                     _cleanup_before_spawn(cfg)
@@ -379,9 +393,10 @@ def run_supervised(spawn_fn=None) -> dict:
             _sleep(backoff)
     finally:
         _stop_vite_watch(vite_proc)
-        if frontdoor_proc is not None:
+        fp = frontdoor_holder[0]
+        if fp is not None:
             try:
-                kill_pid_tree(frontdoor_proc.pid)
+                kill_pid_tree(fp.pid)
             except Exception:
                 pass
         operator_monitor.stop()

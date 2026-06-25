@@ -7,6 +7,8 @@ Pidfile semantics must be preserved (written once, read_pid/is_running still wor
 
 import sqlite3
 
+import pytest
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 
@@ -109,9 +111,10 @@ def test_run_supervised_default_uses_frontdoor_and_internal_backend_port(tmp_pat
     monkeypatch.setattr(runner, "_stop_vite_watch", lambda proc: None)
     monkeypatch.setattr(runner, "kill_pid_tree", lambda pid: captured.setdefault("killed_frontdoor", pid))
 
-    def fake_spawn_server(cfg, *, port=None, frontdoor_proc=None):
+    def fake_spawn_server(cfg, *, port=None, frontdoor_holder=None):
         captured["backend_port"] = port
-        captured["frontdoor_proc"] = frontdoor_proc
+        captured["frontdoor_holder"] = frontdoor_holder
+        captured["frontdoor_proc"] = frontdoor_holder[0] if frontdoor_holder else None
         return 0
 
     monkeypatch.setattr(runner, "_spawn_server", fake_spawn_server)
@@ -123,6 +126,7 @@ def test_run_supervised_default_uses_frontdoor_and_internal_backend_port(tmp_pat
     assert captured["cleanup_port"] == expected_backend_port
     assert captured["frontdoor_port"] == expected_backend_port
     assert captured["backend_port"] == expected_backend_port
+    # _spawn_server receives the live frontdoor via the mutable holder.
     assert isinstance(captured["frontdoor_proc"], FakeFrontdoor)
     assert captured["killed_frontdoor"] == 1234
 
@@ -256,6 +260,76 @@ def test_inner_server_is_restarted_when_port_is_lost_after_start(tmp_path, monke
 
     assert code == 1
     assert killed == [23456]
+
+
+def test_frontdoor_unhealthy_does_not_kill_backend(tmp_path, monkeypatch):
+    """A frontdoor fault must restart ONLY the frontdoor — never the backend.
+
+    Regression (§23→§24 cascade): the monitor loop used to kill_pid_tree(backend)
+    and return 1 when the frontdoor was dead/port-lost, tearing down the backend
+    for a frontdoor hiccup. Now it calls _ensure_frontdoor_running and keeps the
+    backend running.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia import _gateway_runner as runner
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    backend_port = cfg.app.dashboard_port + 1
+    killed: list[int] = []
+    ensured: list = []
+
+    class FakeBackend:
+        pid = 9001
+
+        def poll(self):
+            return None  # backend stays alive throughout
+
+    class FakeOldFrontdoor:
+        pid = 8001
+
+        def poll(self):
+            return 1  # dead → triggers the frontdoor health branch
+
+    class FakeNewFrontdoor:
+        pid = 8002
+
+        def poll(self):
+            return None
+
+    def fake_port_in_use(port, host):  # noqa: ARG001
+        # Dashboard (frontdoor) port reported NOT listening → frontdoor_port_lost;
+        # backend port always listening so the backend liveness check passes.
+        return port != cfg.app.dashboard_port
+
+    # Break out of the otherwise-infinite monitor loop on the 2nd frontdoor
+    # restart — by then we've proven the loop CONTINUED (did not return 1) after
+    # the first frontdoor fault, which is the whole point of the decoupling.
+    def fake_ensure_frontdoor(cfg, port, proc):  # noqa: ARG001
+        ensured.append(getattr(proc, "pid", None))
+        if len(ensured) >= 2:
+            raise KeyboardInterrupt  # clean escape hatch for the test
+        return FakeNewFrontdoor()
+
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *a, **kw: FakeBackend())
+    monkeypatch.setattr(runner, "kill_pid_tree", lambda pid: killed.append(pid))
+    monkeypatch.setattr(runner, "port_in_use", fake_port_in_use)
+    monkeypatch.setattr(runner, "_ensure_frontdoor_running", fake_ensure_frontdoor)
+    monkeypatch.setattr(runner, "_sleep", lambda s: None)
+    monkeypatch.setattr(runner, "_resolve_real_python", lambda: ("python", {}))
+    monkeypatch.setattr(runner, "_publish_frontdoor_route", lambda *a, **kw: None)
+
+    holder = [FakeOldFrontdoor()]
+    with pytest.raises(KeyboardInterrupt):
+        runner._spawn_server(cfg, port=backend_port, frontdoor_holder=holder)
+
+    # The backend was NEVER kill-signalled for the frontdoor fault (the §23→§24
+    # cascade). The old code did kill_pid_tree(9001)+return 1 on frontdoor death.
+    assert 9001 not in killed
+    # The frontdoor health branch fired (loop continued past the first fault and
+    # called _ensure_frontdoor_running again on the next iteration).
+    assert len(ensured) >= 2
+    assert ensured[0] == 8001  # first restart handed the dead old frontdoor
 
 
 # --- Inner-uvicorn console suppression (no Windows Terminal pop-up) ---
