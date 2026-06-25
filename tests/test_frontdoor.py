@@ -118,3 +118,60 @@ async def test_frontdoor_readyz_fails_only_when_static_missing(tmp_path):
     assert resp.json()["static_index"] is False
     assert root.status_code == 503
     assert "dashboard assets are unavailable" in root.text.lower()
+
+
+@pytest.mark.anyio
+async def test_proxy_stream_interrupted_ends_cleanly(tmp_path, monkeypatch):
+    """A mid-stream backend reset must NOT crash the frontdoor response.
+
+    Regression: proxy_api streamed upstream.aiter_raw() with no guard, so an
+    httpx.ReadError mid-body propagated through StreamingResponse and tore down
+    the connection (the observed intermittent frontend disconnect). The guarded
+    generator now ends the body early and emits a proxy_stream_interrupted event.
+    """
+    import httpx
+    from aletheia.gateway import frontdoor
+    from aletheia.infra.events import clear_infra_events, list_infra_events
+
+    clear_infra_events()
+
+    app = frontdoor.create_app(
+        static_dir=_static_fixture(tmp_path),
+        backend_url="http://127.0.0.1:19999",  # never contacted — client is faked
+    )
+
+    async def _crashing_aiter_raw():
+        yield b'{"partial":'
+        raise httpx.ReadError("Connection reset by peer")
+
+    class _FakeUpstream:
+        status_code = 200
+        headers = httpx.Headers([("content-type", "application/json")])
+
+        def aiter_raw(self):
+            return _crashing_aiter_raw()
+
+        async def aclose(self):
+            pass
+
+    class _FakeClient:
+        def build_request(self, method, url, **kwargs):
+            return httpx.Request(method, url)
+
+        async def send(self, request, *, stream=False):
+            return _FakeUpstream()
+
+    monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: _FakeClient())
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://frontdoor"
+    ) as client:
+        resp = await client.get("/api/stream-test")
+
+    # Headers were already sent → status is the upstream 200, not a 500 crash.
+    assert resp.status_code == 200
+    # The partial chunk was delivered before the stream was cut.
+    assert resp.text == '{"partial":'
+    # The interruption was recorded as a diagnostics event.
+    codes = [e["code"] for e in list_infra_events()]
+    assert "proxy_stream_interrupted" in codes

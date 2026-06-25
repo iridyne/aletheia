@@ -18,7 +18,7 @@ apply_windows_selector_policy()
 import os
 import time
 from pathlib import Path
-from typing import Iterable
+from typing import AsyncIterator, Iterable
 
 import httpx
 from fastapi import FastAPI, Request
@@ -128,6 +128,46 @@ def _get_proxy_client() -> httpx.AsyncClient:
 
 async def _close_proxy_response(upstream: httpx.Response) -> None:
     await upstream.aclose()
+
+
+async def _guarded_aiter_raw(
+    upstream: httpx.Response,
+    path: str,
+    backend_url: str,
+) -> AsyncIterator[bytes]:
+    """Stream raw upstream bytes, swallowing a mid-stream read failure gracefully.
+
+    By the time the first byte is yielded, the status line + headers have already
+    been flushed to the client, so we cannot fall back to a 503 here — the only
+    safe action is to end the body early and emit a diagnostics event. Without
+    this, a backend reset mid-stream raises httpx.ReadError straight through
+    StreamingResponse and crashes the connection (the observed intermittent
+    frontend disconnect). `content-length` is stripped by _filtered_headers
+    (it is in _HOP_BY_HOP_HEADERS), so a truncated body causes no length mismatch.
+
+    The caller still passes `upstream` to BackgroundTask(_close_proxy_response),
+    so the underlying connection is released regardless of how this generator ends.
+    """
+    try:
+        async for chunk in upstream.aiter_raw():
+            yield chunk
+    except (httpx.ReadError, httpx.RemoteProtocolError, httpx.StreamError) as exc:
+        emit_infra_event(
+            severity="warning",
+            source="frontdoor",
+            code="proxy_stream_interrupted",
+            entity_id=backend_url,
+            message=f"API proxy stream interrupted for /api/{path}: {type(exc).__name__}",
+            action="gateway_recovering",
+            metadata={
+                "path": f"/api/{path}",
+                "backend_base_url": backend_url,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+            dedupe_sec=5,
+        )
+        # End the body early; client sees a truncated (but not crashed) response.
+        return
 
 
 def _proxy_unavailable(path: str, backend_url: str, route: dict | None, exc: Exception) -> JSONResponse:
@@ -247,7 +287,7 @@ def create_app(
         response_headers = _filtered_headers(upstream.headers.items())
         response_headers["X-Aletheia-Frontdoor"] = "1"
         return StreamingResponse(
-            upstream.aiter_raw(),
+            _guarded_aiter_raw(upstream, path, backend),
             status_code=upstream.status_code,
             headers=response_headers,
             background=BackgroundTask(_close_proxy_response, upstream),
