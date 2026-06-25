@@ -1251,3 +1251,112 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-25 02:02 UTC] ✓ 系统正常 — features=90/h (§22持续, 全桶=15无gap). Opportunities_1h=56. Knowledge=4047 (+31). §17 timed_out=281. Stale=327. §23: 末次00:03 UTC, 距今2h, 已超均值60min进入窗口期. §24 backend: 末次12:59, 距今13h稳定. 146h+ 连续运行.
 
 [2026-06-25 03:02 UTC] ✓ 系统正常 — features=95/h (§22持续; bucket从15升至16, 新资产纳入). Opportunities_1h=59. Knowledge=4079 (+32). §17 timed_out=281. Stale=327. §23: 末次00:03 UTC, 距今3h, 第三次超长静默持续. §24 backend: 末次12:59, 距今14h稳定. 147h+ 连续运行.
+
+[2026-06-25 04:02 UTC] ✓ **§23 第26次——3h25min超长静默** — features=96/h (§22持续, 全桶=16稳定). Opportunities_1h=55. Knowledge=4120 (+41). §17 timed_out=281. Stale=328. §23第26次: 03:28 UTC (PID 36008), 00:03→03:28=3h25min; 连续第三次超长静默(3h6min/4h7min/3h25min), 间隔极不规律, 超长静默成常态. §24 backend: 末次12:59, 距今15h稳定. 148h+ 连续运行.
+
+[2026-06-25 05:02 UTC] ✓ 系统正常 — features=80/h (§22持续; 60min桶=0为03:28崩溃重启后时序边界缺口, 非新崩溃). Opportunities_1h=69. Knowledge=4153 (+33). §17 timed_out=281. Stale=327. §23: 末次03:28 UTC, 距今1h34min, 正常窗口期. §24 backend: 末次12:59, 距今16h稳定. 149h+ 连续运行.
+
+---
+
+## §23/§24 根因纠正(2026-06-25 post-5bfa4a0 重新归因)
+
+> **背景**:5bfa4a0(2026-06-24 13:03 UTC)进程级 `WindowsSelectorEventLoopPolicy`
+> 部署后,errors.log 内 **WinError 64 出现次数 = 0**(本会话亲核 末 2000 行)。
+> 但 monitor 系统继续记录 "§23 第 N 次" 重启,且 commit message 仍按
+> "IOCP/§17 同源"模板。**这是误归因——5bfa4a0 之后 §23 的根因变了**。
+
+### 5bfa4a0 后真实根因(2026-06-25 errors.log 亲核)
+
+不是 IOCP / WinError 64,而是**外部依赖与 LLM 不稳引起 backend 拒服务,
+frontdoor 反向探测失败被 supervisor 重启**:
+
+| 实测异常 | 含义 |
+|---|---|
+| `OKX fetch_balance failed: okx {"code":"50001","msg":"Service temporarily unavailable"}` | OKX REST 间歇性 503 |
+| `data_collectors job failed: okx GET /api/v5/public/instruments?instType=OPTION&uly=ETH-USD` | CCXT `load_markets()` 在 OKX 默认拉所有 instType(含 OPTION),OPTION 端点偶尔 500;**OPTION 错误被 try/except 接住,不让 job 整体失败**(但产生日志噪音) |
+| `LLM structured call failed:` / `LLM assessment failed: llm_unavailable:` | Databricks Gateway / Anthropic-compatible endpoint 间歇 timeout |
+| `OKX does not have market symbol ZEC/USDT:USDT` | universe 含 OKX 不交易的标的(同 backlog §D16) |
+| `sqlite3.OperationalError: database is locked` ×466(累计) | a33dc86 漏修 `operator_store._ensure_session` L88(`INSERT OR IGNORE` 无 commit 路径)— 详见 backlog §D19 |
+
+### 后果链(为什么这些导致 frontdoor 重启)
+
+1. backend (8788) 在 startup_gate / LLM probe / OKX broker init 等卡几十秒
+2. frontdoor (8787) 的 backend healthcheck 探不到 8788 ready
+3. supervisor 在 backend readiness window(15s)超时后重启 backend
+4. backend 重启又触发新一轮 LLM probe / CCXT load_markets
+5. monitor 看到这些重启,**按 IOCP 模板记 "§23 第 N 次"** — 但 errors.log 早已无 WinError 64
+
+### 此前 IOCP 修复仍然有效
+
+- WinError 64 出现次数 = 0(亲核 5bfa4a0 之后)
+- `tests/test_event_loop_policy.py` 5 passed
+- IOCP teardown hang(§17)也已消除
+
+### 修复方向(冻结期不动,Round 2 后看)
+
+**优先级 1**:LLM provider 健壮性 — startup_gate 是否过严
+**优先级 2**:OKX/Binance load_markets 体积过大 — backend 冷启动期被拖慢
+**优先级 3**:supervisor readiness window 是否过短(15s 应改 60s)
+
+**当前冻结状态**:这些改动触 server/scheduler/supervisor。虽未直接列入冻结清单,
+但**任何 backend 启动行为的改动会改变 PI 在某些时段是否能拿到 LLM 响应** = 间接污染。
+全部记录到 `frozen_optimization_backlog.md`(D17 IOCP follow-up + 新 D19 真根因)。
+
+### 给 monitor 系统的建议
+
+monitor commit message 继续按 IOCP 模板归因 → 累积错误叙事。建议:
+- 把 §23/§24 标签固定为"已根因纠正,见 RUNTIME_BEHAVIOR_ISSUES §post-5bfa4a0"
+- 或 monitor 自动 grep errors.log 末 N 行,根据 WinError 64 vs OKX 50001 等分类提示真实根因
+- 长期:monitor 自动化触发频率过高(每小时一行 commit),应改成 batch 6-12h 或异常才 commit
+
+---
+
+## §23/§24 根因纠正(2026-06-25 post-5bfa4a0 重新归因)
+
+> 本节纠正 §23/§24 此前对"IOCP WinError 64"的归因。5bfa4a0 已根治 IOCP 问题,
+> 此后 frontdoor/backend 的 restart 有不同根因。
+
+### 事实(5bfa4a0 之后,2026-06-24 12:59 UTC 起)
+
+1. **§24 (backend restart)**: 最后一次 restart 在 2026-06-24 12:59 UTC,之后 17h+ 稳定 — **已不再复发**
+2. **§23 (frontdoor restart)**: 末次 03:28 UTC(2026-06-25),之后进入超长静默(2h34min+);频率已从每小时降至偶发
+3. **IOCP WinError 64**: errors.log 中出现次数 = 0(5bfa4a0 之后亲核)
+4. **5bfa4a0 后真实 error 来源**:
+   - OKX `50001 services temporarily unavailable`(体量最大)
+   - LLM provider timeout / connection error(startup_gate 触发)
+   - Binance/OKX `load_markets()` 冷启动耗时过长(>15s supervisor readiness)
+
+### 真根因(已非 IOCP)
+
+| 观测 | 旧归因(错误) | 新归因(正确) |
+|---|---|---|
+| §23 frontdoor restart | IOCP WinError 64 | OKX 50001 + LLM timeout → backend 冷启动慢 → supervisor 15s readiness window 超时 → 误判需 restart |
+| §24 backend restart | IOCP event loop 崩溃 | 已自愈 — 5bfa4a0 消除 IOCP;残余重启来自 code_drift 自愈(预期行为) |
+| errors.log WinError 64 | uvicorn IOCP 事件循环 | **不再出现**(post-5bfa4a0) |
+
+### 亲核证据(2026-06-25)
+
+- WinError 64 出现次数 = 0(亲核 5bfa4a0 之后)
+- `tests/test_event_loop_policy.py` 5 passed
+- IOCP teardown hang(§17)也已消除
+
+### 修复方向(冻结期不动,Round 2 后看)
+
+**优先级 1**:LLM provider 健壮性 — startup_gate 是否过严
+**优先级 2**:OKX/Binance load_markets 体积过大 — backend 冷启动期被拖慢
+**优先级 3**:supervisor readiness window 是否过短(15s 应改 60s)
+
+**当前冻结状态**:这些改动触 server/scheduler/supervisor。虽未直接列入冻结清单,
+但**任何 backend 启动行为的改动会改变 PI 在某些时段是否能拿到 LLM 响应** = 间接污染。
+全部记录到 `frozen_optimization_backlog.md`(D17 IOCP follow-up)。
+
+### operator_store DB lock 根因(附录)
+
+**位置**:`aletheia/agent_shell/operator_store.py:88` (`_ensure_session`)
+**问题**:`INSERT OR IGNORE INTO agent_shell_sessions ... ` 后**没有 commit**。
+sqlite3 自动开启了 tx,但 `was_in_tx` 条件已 True(因为 caller 从读变写),
+导致后续 write 在 WAL 上排队 → `database is locked` (466 次 errors.log)。
+**为何不修**:operator_store.py 在 `agent_shell/` 冻结路径内,Round 2 后修。
+关联:CLAUDE.md "SQLite concurrency" 三柱理论第(3)点;`a33dc86` 修了 repositories.py 但漏了 operator_store。
+
+[2026-06-25 06:02 UTC] ✓ 系统正常 — features=96/h (§22持续, 全桶=16无gap, 恢复正常). Opportunities_1h=58. Knowledge=4189 (+36). §17 timed_out=282 (+1). Stale=329 (+2). §23: 末次03:28 UTC, 距今2h34min, 超长静默窗口期. §24 backend: 末次12:59, 距今17h稳定. 150h+ 连续运行.

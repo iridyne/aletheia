@@ -8,9 +8,11 @@
 >
 > 上层愿景见 [VISION](../product/VISION.md);全局文档分层见 [DOC_SYSTEM_PLAN](../product/DOC_SYSTEM_PLAN.md)。
 
-> Last updated: 2026-06-18
+> Last updated: 2026-06-25
 > Sources: PIPELINE_STATUS.md + deep research (102 agents, 20 sources) + WORLD_MAP.md (full architecture vision)
 >   + external Agent Framework Research Report 2025–2026 (validation only — see [agent_framework_research_2025_2026.md](../references/agent_framework_research_2025_2026.md))
+>   + Round 1 experiment data (T+3d: 37 closed, PF=1.416, WR=40.5%) — see [ROUND1_JUDGMENT_PREVIEW](../_ai/ROUND1_JUDGMENT_PREVIEW.md)
+>   + frozen_optimization_backlog (39+3 items) — see [frozen_optimization_backlog](../plans/frozen_optimization_backlog.md)
 > Nature: **Guiding document, not automatic authorization** — each phase requires explicit confirmation before starting
 
 > **2026-06-16 调整**:Phase 0 不再要求专门隔离 72h 不 commit 的观察窗口。改为
@@ -350,7 +352,7 @@ uv run python -c "from aletheia.storage.repositories import list_knowledge_items
 | 0.3 | Test baseline green | DONE |
 | 0.4 | Config: `permission_mode=Paper` (gates paper_trader via `is_tool_permitted`; the old `autonomous_paper_trading` flag was removed in `7117bdf` 5→3 mode refactor) | DONE |
 | 0.5 | Start gateway for unattended run | DONE |
-| 0.6 | Continuous loop-health observation (no isolated window required) | ONGOING — monitor via `aletheia doctor` after each meaningful change |
+| 0.6 | Continuous loop-health observation (no isolated window required) | ONGOING — 28 probes active; 8 warnings tracked in `frozen_optimization_backlog.md` D18-D20 |
 | 0.7 | Deterministic self-heal (code-drift/stale→restart, port cleanup, LLM→alert) | DONE 2026-06-09 (`8a6e008` + rate-limit fix `abd7773`) |
 
 > **2026-06-16 节奏调整**:取消"专门 72h 不 commit 隔离观察"约束。理由 = 每次代码改动

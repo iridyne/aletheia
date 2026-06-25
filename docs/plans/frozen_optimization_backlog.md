@@ -56,6 +56,9 @@
 - [D15] reconciler 批量同秒强平模式 — 需独立调研(2026-06-24 本会话新增)
 - [D16] OKX universe 含不可交易标的 — opportunity 浪费(2026-06-24 本会话新增)
 - [D17] 5bfa4a0 IOCP 修复的 3 个 follow-up(2026-06-24 本会话新增)
+- [D18] trust.audit_chain hash mismatch — audit.jsonl 10 处断链(2026-06-25)
+- [D19] data.signal 24h win_rate 35% — scanner 选品质量偏低(2026-06-25)
+- [D20] 并行 Claude /loop 会话干扰 git history(2026-06-25)
 
 ### E. 战略决策类(需独立讨论)
 - [E1] OKX 51155 compliance 错误的战略含义(换交易所?demo≠live 失效?)
@@ -358,6 +361,41 @@ xfail 标记,Round 2 Fix 完成后移除 xfail
 - universe 模块**可能不在冻结清单**(还要 grep 验)。但**改了它会改 PI prompt 看到的 opportunities** → 间接触冻结
 - 当前每个不可交易的 opportunity 浪费 paper_trader_ranker LLM tokens,**有真实成本**但不阻塞 Round 1
 - **Round 2 解冻后**:在 opportunity 生成处加 OKX 可交易 symbol 集合过滤,或单独 prune `error_reason LIKE '%51155%'` 的 stale opportunities
+
+### [D18] trust.audit_chain hash mismatch(2026-06-25 doctor 新增)
+
+**现象**:doctor `trust.audit_chain` 报 chain BROKEN — `audit.jsonl` 中 10 处 `_prev_hash` mismatch(行号 1783/1790/1874 等)。
+**影响**:审计链完整性破坏,无法证明 audit log 未被篡改(SDD spec `spec_operator_loop.py` 有对应 claim)。
+**根因猜测**:
+- 多进程并发写 audit.jsonl(backend + operator_loop)时 race condition
+- 或 monitor commit 进程在 backend 还在写的时候 checkout/stash 造成行截断
+**为何劣后**:
+- audit.jsonl 是 append-only,已断链无法回溯修复(只能 truncate 重建或标记 gap)
+- 当前 Round 1 冻结期内不能改 audit 写入逻辑(触信任边界 `agent_runtime/permissions.py`)
+- **Round 2 后**:加 file lock 或改 audit 写入为 SQLite WAL 表,消除竞争
+**冻结期能做**:只诊断不修;可以 `--reset-chain` 重建 hash(但需用户授权因为改审计文件)
+
+### [D19] data.signal 24h win_rate 持续偏低(35%,2026-06-25)
+
+**现象**:doctor `data.signal` 报 24h signal win_rate=35%(10264 settled, avg=-0.902%)
+**影响**:universe/scanner 选品质量偏差;PI 拿到的 opportunities 质量不高 → fill 率低 → Round 1 样本不足
+**关联**:[D16] OKX universe 含不可交易标的 + 整体选品算法质量
+**为何劣后**:scanner 权重/Optuna 参数冻结期不能改(影响 AI 决策)
+**Round 2 后**:Optuna re-tune scanner 权重 + 加 symbol 可交易性预过滤
+
+### [D20] 并行 Claude /loop 会话干扰 git history(2026-06-25)
+
+**现象**:git log 中每小时 :02 出现 `monitor(rNNN)` commit,来源非 Task Scheduler 非 scheduled_tasks.json,
+是同 repo 另一个 Claude Code 会话(可能 CronCreate /loop)在定时巡检并 commit
+**影响**:
+- git history 被大量 monitor commits 淹没(r196 表示已 commit 196 次)
+- 偶尔覆盖当前会话未提交的 working tree 修改(git add -A 风险)
+- RUNTIME_BEHAVIOR_ISSUES.md 被反复编辑/提交
+**缓解**:
+- 用户可手动终止该 Claude 会话(找到对应 session)
+- 或在该 session 中 CronDelete 相关 job
+- 本会话已确认:不会 kill 它(可能用户有意保留),但记录干扰事实
+**冻结期能做**:纯文档记录;不改代码
 
 ### [D17] 5bfa4a0 IOCP 修复的 3 个 follow-up(低优先,但记下来)
 
