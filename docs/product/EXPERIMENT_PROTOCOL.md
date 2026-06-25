@@ -318,7 +318,7 @@ risk_decisions 15:22:22 / 15:24:11 / 15:27:56 连续 approved=1 空 violations
 
 **授权**:用户 2026-06-25 授权"按计划完整执行"(前端 + 后端冻结文件)。
 
-**修复(commit 待填)**:
+**修复(commit 85b5807)**:
 - 后端 trading_decision.py:只截 human thesis(`_MAX_RATIONALE_TEXT=600` 常量,带 `…`),**删除整串 `[:500]`** → JSON 永远完整可解析。`agent_rationale` 列是 TEXT 无限制。
 - 前端 Proposals.tsx:`parseDecisionMeta` catch 分支返回分隔符前的干净 text(非整条原始串);`ProposalRationaleDetail`/`ProposalRationale` no-meta 分支渲染 `text` 而非 raw rationale → 坏值也永不向人倒 JSON(防御纵深)。
 - 回归测试 `tests/test_proposal_rationale.py`(3 条):JSON 必可解析 / thesis 单独截断非整串 500 / 短 thesis 不动。
