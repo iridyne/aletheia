@@ -1258,6 +1258,42 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 
 ---
 
+## §23/§24 韧性修复(2026-06-25 14:xx UTC,亲核 errors.log/audit.jsonl 后实施)
+
+> 用户报"前端反复跟后端断开"。亲核(非信 monitor 叙事)定位真根因后,实施 4 个 infra 修复。
+> 关键纠正:monitor 一直记的"IOCP WinError 64"是**误归因**——5bfa4a0 之后近期 errors.log
+> WinError 64=0,两进程实测均带 `--loop none`,IOCP 已根治。frontdoor-errors.log 停写于
+> 06-24 03:14(5bfa4a0 前),里面的 WinError 64 全是旧日志。
+
+**真根因(两个缺陷叠加 + 一个触发器)**:
+- **缺陷 A**:frontdoor 代理 `/api/*` 流式 body(`aiter_raw()`)不在 try 内 → backend 繁忙时
+  连接 mid-stream reset → `httpx.ReadError` 透传 → 响应崩(实测探针 200→**000**→200)。
+- **缺陷 B**:supervisor 监控循环 frontdoor 一抖就 `kill_pid_tree(backend)`+return 1 →
+  §23 frontdoor 重启连带成 §24 backend 重启(audit 实证 `gateway_inner_port_lost`=0,
+  backend 从没自己挂,都是被误杀)。
+- **触发器**:market_observer LLM 调用 DNS `getaddrinfo failed` → backend 事件循环繁忙;
+  LLM startup gate 还因此空烧 3×15s 重试 + readiness window 仅 15s 误杀慢启动 gateway。
+
+**4 修复(commit 5e8772d / 1062f63 / d14158f / abdbf51)**:
+| Fix | 文件 | 改动 |
+|-----|------|------|
+| #1 | `gateway/frontdoor.py` | `_guarded_aiter_raw` 兜住 ReadError/RemoteProtocolError/StreamError → emit `proxy_stream_interrupted` 优雅截断,不崩连接 |
+| #2 | `_gateway_runner.py` | frontdoor 故障改为只重启 frontdoor(可变 holder 回写),**不杀 backend** |
+| #3 | `agent_runtime/startup_gate.py` | `_is_dns_error` 分类;一轮全 DNS 失败 → break 跳过剩余重试(auto_resume 再探) |
+| #4 | `gateway/lifecycle.py` | `_verify_started` readiness window 15s→60s,不误杀慢启动 gateway |
+
+**验证**:全量 1678 passed(+4 新测试),4 个 pre-existing 失败不变,0 回归。gateway restart 后
+frontdoor:8787 `/api/ready` 连续 15/15=200(`--noproxy` 绕过 curl 代理陷阱),backend PID 稳定,
+`inner_port_lost`=0。注意:earlier 502 是 curl localhost 走 HTTP_PROXY 的测量假象,非后端故障。
+
+**残留 + 跟进(本次不做,冻结期 Round 2 后)**:
+- market_observer 生产 LLM 调用 240s 挂起(`asyncio.run() teardown hung` 文案是硬编码误导,
+  真相是 LLM 协程卡住非 IOCP)。根治 = `net.py:httpx_client()` 加 connect timeout。属触发器层。
+- frontdoor 端口偶发 flap 本身未根除,但 #1+#2 已让系统对其**有韧性**(frontdoor 自重启、backend 不受累)。
+- monitor 系统应停止按 IOCP 模板归因 §23;建议自动 grep errors.log 末 N 行分类真因。
+
+---
+
 ## §23/§24 根因纠正(2026-06-25 post-5bfa4a0 重新归因)
 
 > **背景**:5bfa4a0(2026-06-24 13:03 UTC)进程级 `WindowsSelectorEventLoopPolicy`
