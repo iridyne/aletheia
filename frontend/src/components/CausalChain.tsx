@@ -58,9 +58,17 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
   const proposalId = anchor.kind === 'order'
     ? anchor.order.proposal_id
     : anchor.position.proposal_id ?? null
-  const proposal = proposalId
+  const proposalFromList = proposalId
     ? (proposals as TradeProposal[]).find(p => p.id === proposalId) || null
     : null
+
+  // If proposal not in the batch list (limit=50), fetch by ID directly.
+  const { data: proposalById } = useQuery({
+    queryKey: ['proposal', proposalId],
+    queryFn: () => api.getProposal(proposalId as string),
+    enabled: !!proposalId && !proposalFromList,
+  })
+  const proposal = (proposalFromList ?? proposalById ?? null) as TradeProposal | null
 
   const { data: riskData } = useQuery({
     queryKey: ['risk-decision', proposalId],

@@ -571,6 +571,16 @@ async def get_proposals():
     return repo.list_trade_proposals()
 
 
+@router.get("/proposals/{proposal_id}")
+async def get_proposal(proposal_id: str):
+    _ensure_db()
+    row = repo.get_trade_proposal(proposal_id)
+    if not row:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="proposal not found")
+    return row
+
+
 @router.post("/proposals/{proposal_id}/approve-paper")
 async def approve_proposal(proposal_id: str):
     """Approve a proposal and route it through the execution gateway (paper)."""

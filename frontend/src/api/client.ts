@@ -409,6 +409,7 @@ export const api = {
   getDreamingSummary: () => fetchJson<Record<string, any[]>>('/dreaming/summary'),
   getOpportunities: () => fetchJson<any[]>('/opportunities'),
   getProposals: () => fetchJson<any[]>('/proposals'),
+  getProposal: (id: string) => fetchJson<any>(`/proposals/${id}`),
   approveProposal: (id: string) => post(`/proposals/${id}/approve-paper`),
   rejectProposal: (id: string) => post(`/proposals/${id}/reject`),
   getProposalRiskDecision: (id: string) => fetchJson<{ proposal_id: string; decision: any }>(`/proposals/${id}/risk-decision`),
