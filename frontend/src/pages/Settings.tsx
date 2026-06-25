@@ -2063,6 +2063,17 @@ function AppRows({ settings, qc }: any) {
       <Row label="Auto-open browser" hint="Open the dashboard in a browser tab automatically when the gateway starts.">
         <Toggle checked={autoBrowser} onChange={v => appMut.mutate({ auto_open_browser: v })} disabled={appMut.isPending} />
       </Row>
+      <Row label="Equity curve mode" hint="Full cumulative: every range shows the same all-time curve, the end point never changes (standard net-value curve). Window relative: each range re-accumulates from 0, so 7D shows only what was earned in the last 7 days.">
+        <select
+          value={app.equity_curve_mode || 'full_cumulative'}
+          onChange={e => appMut.mutate({ equity_curve_mode: e.target.value })}
+          disabled={appMut.isPending}
+          className="w-auto"
+        >
+          <option value="full_cumulative">Full cumulative (end point fixed)</option>
+          <option value="window_relative">Window relative (per-period PnL)</option>
+        </select>
+      </Row>
       <Row label="Git versioning of data" hint="When enabled, knowledge, playbooks, and reports are committed to git automatically for history and rollback.">
         <Toggle checked={gitEnabled} onChange={v => {
           if (!v && !confirm('Disable git versioning? Knowledge, playbooks, and reports will no longer be committed.')) return

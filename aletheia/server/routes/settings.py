@@ -3,7 +3,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from aletheia.config.loader import load_config, save_config
 
@@ -242,6 +242,14 @@ async def update_runtime_config(req: RuntimeConfigUpdate):
 
 class AppConfigUpdate(SettingsRequest):
     auto_open_browser: Optional[bool] = None
+    equity_curve_mode: Optional[str] = None
+
+    @field_validator("equity_curve_mode")
+    @classmethod
+    def _validate_equity_curve_mode(cls, v):
+        if v is not None and v not in ("full_cumulative", "window_relative"):
+            raise ValueError("equity_curve_mode must be 'full_cumulative' or 'window_relative'")
+        return v
 
 
 @router.post("/app")

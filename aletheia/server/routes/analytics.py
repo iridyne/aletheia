@@ -62,14 +62,27 @@ def get_equity_curve(
       limit — max data points returned (default 5000)
     """
     from aletheia.storage.sqlite import get_db
+    from aletheia.config.loader import load_config
     db = get_db()
 
+    mode = "full_cumulative"
+    try:
+        mode = load_config().app.equity_curve_mode
+    except Exception:
+        pass
+
+    # In full_cumulative mode the running total must include trades BEFORE the
+    # visible window, so we never filter the accumulation by `days` — we compute
+    # cumulative PnL over all history, then slice the window for display. That
+    # keeps the curve's end point identical across 7D/30D/90D/All (a real equity
+    # curve). In window_relative mode the cumulative restarts at 0 inside the
+    # window, so we DO filter by days at the SQL level (period-attribution view).
     conditions = ["status = 'closed'", "closed_at IS NOT NULL"]
     params: list = []
     if execution_mode:
         conditions.append("execution_mode = ?")
         params.append(execution_mode)
-    if days and days > 0:
+    if days and days > 0 and mode == "window_relative":
         conditions.append("closed_at >= datetime('now', ?)")
         params.append(f"-{days} days")
 
@@ -82,11 +95,21 @@ def get_equity_curve(
     params.append(limit)
     rows = db.execute(sql, params).fetchall()
 
+    # Window cutoff (full_cumulative only): accumulate over everything but emit
+    # points whose closed_at is within the requested window. Compared as ISO
+    # strings — both sides are tz-aware UTC isoformat, lexicographically ordered.
+    cutoff: str | None = None
+    if days and days > 0 and mode == "full_cumulative":
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
     cum = 0.0
     points = []
     for r in rows:
         pnl = r["realized_pnl"] or 0.0
-        cum += pnl
+        cum += pnl  # always over full history in full_cumulative mode
+        if cutoff is not None and (r["closed_at"] or "") < cutoff:
+            continue  # accumulated into cum, but outside the visible window
         points.append({
             "time": r["closed_at"],
             "pnl": round(pnl, 4),

@@ -13,12 +13,28 @@ class AppConfig(BaseModel):
     dashboard_port: int = 8787
     auto_open_browser: bool = True
     bind_host: str = "127.0.0.1"
+    # Overview Equity Curve semantics when a time range (7D/30D/90D) is selected:
+    #   full_cumulative  — every point's Y is the all-time cumulative realized PnL;
+    #                      the range only narrows the visible window, so the end
+    #                      point never changes between ranges (standard equity
+    #                      curve; the default).
+    #   window_relative  — cumulative restarts from 0 at the window's first trade,
+    #                      so the end point shows "PnL earned within this window"
+    #                      (differs across ranges; useful for period attribution).
+    equity_curve_mode: str = "full_cumulative"
 
     @field_validator("bind_host")
     @classmethod
     def validate_bind_host(cls, v: str) -> str:
         if v not in _LOOPBACK_HOSTS:
             _logger.warning("bind_host=%s is not loopback — API will be network-exposed without authentication", v)
+        return v
+
+    @field_validator("equity_curve_mode")
+    @classmethod
+    def validate_equity_curve_mode(cls, v: str) -> str:
+        if v not in ("full_cumulative", "window_relative"):
+            return "full_cumulative"
         return v
 
 
