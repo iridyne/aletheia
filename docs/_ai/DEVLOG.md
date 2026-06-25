@@ -1,5 +1,36 @@
 # Development Log
 
+## 2026-06-25 — 回撤刹车误用持仓 notional 当 equity → $0 cap 锁死 demo 开仓 (70a7b64)
+
+### 现象
+用户发现 OKX Demo 一整批期货 Short 被拒,拒因 `Position size over cap — $21.72 > $0 cap`。
+$0 上限 = 任何仓位都开不了 → 整批无差别拒绝(22h 内 144 笔误拒)。
+
+### 真因(亲核,非推理)
+`risk/engine.py:_portfolio_drawdown_scale`(检查 #5 回撤缩放)按 `proposal.execution_mode`
+(okx_demo)过滤 `portfolio_snapshots`,拿到**每个 mode 自己的行**,其 `total_value_usdt`
+是持仓 **notional**(Σqty×price)而非账户 equity(`pnl.py:373` 写入)。13:53-14:03 五笔
+止盈平仓(净赚 +12),持仓 notional 从 ~$272 collapse 到 $16.5 → drawdown 误算
+`(277-16.5)/277=94%` → scale=0 → `effective_cap=26.84×0=$0` → 所有提案被拒。
+**赚钱平仓反而把自己锁死。** 真实账户(`exchange_account` 行)全程稳定 ~$88,400,无回撤。
+
+### 修复(70a7b64,trust boundary,用户授权,走 SDD)
+engine.py:356 交易所模式(okx_demo/*_demo/live)改读 `exchange_account` 行真实 equity;
+`paper_internal` 无交易所账户、mark-to-market `total_value_usdt` 即 equity,保持原路径。
+- `spec_risk_engine.py`:+RE-B05a 回归(notional 272→16 但 equity 平稳 → scale 必须=1.0);
+  RE-B05 分段数学保持绿。
+- `risk_engine_contract.md`:关卡 #5 注明回撤数据源 = exchange_account equity。
+
+### 判决影响
+记入 `EXPERIMENT_PROTOCOL.md` 例外 #4。**关键**:此 bug(6-24 17:25→6-25 15:18 UTC,~22h)
+人为压制了交易样本——Round 1 G6 样本量低(T+2.6 天仅 17 笔)有相当部分归因于此 infra
+误拒,非 PI 不愿交易。该窗口"被拒"不计入"PI 决策质量"评估。
+
+### 生效验证
+重启后 okx_demo scale=1.0、cap 恢复 $26.84;risk_decisions 15:22/15:24/15:27 连续
+approved=1 空 violations(此前 15:18 仍 `...>0.0` 误拒)。全 risk 测试 56 passed。
+同属 notional/equity 混淆家族(余额读错=例外#1;回撤口径=本次)。
+
 ## 2026-06-24 — 进程级 SelectorEventLoop 根治 Windows IOCP 顽疾 §17/§23/§24 (5bfa4a0, fix 分支)
 
 ### 现象

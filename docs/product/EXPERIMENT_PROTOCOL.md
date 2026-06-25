@@ -276,9 +276,46 @@ demo 用 starting_capital_usdt(对齐检查 #13 范式)。config 同步 starting
 **判决影响**:同上。注:这是 risk 风控参数修正,不改 AI 决策逻辑,但影响哪些 proposal
 被拒,故一并记录。
 
+### 例外 #4 — 2026-06-25:回撤刹车误用持仓 notional 当 equity(trust boundary risk/engine.py)
+
+**触发**:用户发现 OKX Demo 一整批期货 Short 被拒,拒因异常:
+`Position size over cap — $21.72 > $0 cap`。$0 上限 = 任何仓位都开不了。
+
+**根因(亲核)**:`risk/engine.py:_portfolio_drawdown_scale`(检查 #5 回撤缩放)按
+`proposal.execution_mode`(okx_demo)过滤 `portfolio_snapshots`,拿到的是**每个 mode
+自己的行**,其 `total_value_usdt` 是持仓 **notional**(Σqty×price)而非账户 equity
+(`portfolio/pnl.py:373` 写入)。6-25 13:53-14:03 五笔止盈平仓(净赚 +12),持仓
+notional 从 ~$272 collapse 到 $16.5 → drawdown 误算 `(277-16.5)/277=94%` → scale=0
+→ `effective_cap = 26.84×0 = $0` → 所有 demo 提案(notional>$0)全被拒。**赚钱平仓
+反而把自己锁死。** 真实账户(`exchange_account` 行)全程稳定 ~$88,400,根本没回撤。
+
+**授权**:用户 2026-06-25 授权方案"drawdown 改用真实 equity",走 SDD。属 trust
+boundary(risk/engine.py change-controlled),非实验冻结区。
+
+**修复(commit 70a7b64)**:engine.py:356 交易所模式(okx_demo/*_demo/live)的
+drawdown 改读 `exchange_account` 行的真实 equity;`paper_internal` 无交易所账户、
+mark-to-market `total_value_usdt` 即 equity,保持原路径。spec RE-B05(分段数学保留)
++ 新增 RE-B05a(数据源回归)。risk_engine_contract.md 关卡 #5 注明数据源。
+
+**判决影响(重要——影响 G6 样本量解读)**:此 bug 自 **2026-06-24 17:25 → 06-25 15:18
+UTC(~22h)** 产生 **144 笔 `$0 cap` 误拒**。这意味着这 22h 内 PI 想开的仓被风控
+无差别拦截,**人为压制了交易样本**——Round 1 的 G6 样本量(T+2.6 天仅 17 笔、远低于
+60 笔门槛)有相当部分归因于此 infra 误拒,而非 PI 自身不愿交易。判决时:**06-24
+17:25 → 06-25 15:18 的"被拒"不能解读为"策略/PI 拒绝交易",而是 infra 故障屏蔽**;
+此窗口的低成交率不计入"PI 决策质量"评估。修复生效(15:22 起 approved=1 无违规)后
+才是 demo 开仓不受此 bug 影响的有效窗口。
+
+**生效验证**:重启后 okx_demo drawdown_scale=1.0、effective_cap 恢复 $26.84;
+risk_decisions 15:22:22 / 15:24:11 / 15:27:56 连续 approved=1 空 violations
+(此前 15:18:16 仍是 `...>0.0` 误拒)。全 risk 测试 56 passed。
+
 ---
 
-> **三次例外的共同模式**:都是"修复 A 暴露出 B"的连锁——contractSize bug(650f608)→
-> 清理错误仓位→损失触发日损(例外#3);profit-loop context bug(例外#1)→ PI 恢复下单→
-> 暴露 signal 重复(例外#2)。Round 1 起点统一保留 6/22,**所有修复生效前的数据均不计入
-> 策略评估**,6/24 起为干净观察窗口。
+> **四次例外的共同模式**:都是"修复 A 暴露出 B"或"语义混淆"的连锁——contractSize
+> bug(650f608)→ 清理错误仓位→损失触发日损(例外#3);profit-loop context bug
+> (例外#1)→ PI 恢复下单→暴露 signal 重复(例外#2);例外 #3/#4 同属 risk/engine.py
+> 的"用错资金基数/用错净值口径"家族(日损用 live cap;回撤用持仓 notional)。
+> **notional vs equity 混淆**两次咬人(余额读错→例外#1;回撤口径→例外#4)。
+> Round 1 起点统一保留 6/22,**所有修复生效前的数据均不计入策略评估**;特别地,
+> 例外#4 的 144 笔 infra 误拒窗口(6-24 17:25→6-25 15:18)不计入"PI 是否愿意交易"
+> 的样本。6-25 15:22 起为 demo 开仓不受已知 infra bug 影响的干净观察窗口。
