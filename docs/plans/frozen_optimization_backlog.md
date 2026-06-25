@@ -53,6 +53,9 @@
 - [D12] detect_contradictions() stub 实现
 - [D13] G2 agents executor 线程数评估
 - [D14] PIPELINE_GAPS §C2 RegimeConfig/GuardConfig 前端控制
+- [D15] reconciler 批量同秒强平模式 — 需独立调研(2026-06-24 本会话新增)
+- [D16] OKX universe 含不可交易标的 — opportunity 浪费(2026-06-24 本会话新增)
+- [D17] 5bfa4a0 IOCP 修复的 3 个 follow-up(2026-06-24 本会话新增)
 
 ### E. 战略决策类(需独立讨论)
 - [E1] OKX 51155 compliance 错误的战略含义(换交易所?demo≠live 失效?)
@@ -329,6 +332,47 @@ xfail 标记,Round 2 Fix 完成后移除 xfail
 
 **问题**:18 个 config 字段在后端 schema 但前端 Settings 页缺控件(违反"Config↔UI rule")
 **为何劣后**:18 字段拆分处理,部分冻结字段不能动,工作量大且分散
+
+### [D15] reconciler 批量同秒强平模式 — 需独立调研
+
+**现象**(2026-06-24 亲核):Round 1 起点至今 25 笔 closed 里 13 笔 `reconciled_gone`,**且全部聚集在 3 个时间窗**:
+- 2026-06-22 15:32 同秒 ×3
+- 2026-06-24 04:14-19 同秒 ×5
+- 2026-06-24 12:07 同秒 ×5
+
+**疑点**:`position_reconciler.py:435` 试图从交易所 TPSL 历史拿 fill price,失败才 fallback;
+本会话亲核 12/13 用了真实 current_price(非 entry_price fallback)→ 看似真实平仓但**同秒批量** = 强模式。
+要么 (a) TPSL 同时触发(可能多个 stop loss 价位接近)、要么 (b) reconciler 周期跑发现一批 orphan 一起处理。
+
+**为何劣后(且不能改)**:`portfolio/position_reconciler.py` 触信任边界(close 路径),冻结期不动。
+**Round 1 期间能做**:doctor 的 `loop.reconciled_ratio` 已落地(2026-06-24 本会话),可观察占比变化。
+**Round 2 后调研**:加 reconciler 日志记录 `_try_get_tpsl_fill_price` 命中率 + trigger 来源(scheduler 周期 vs 事件触发)。
+
+### [D16] OKX universe 含不可交易标的 — opportunity 浪费 + 订单失败
+
+**现象**(2026-06-24 亲核):24h opportunities 表里 **ZEC/USDT=144 次、TRX/USDT=144 次**,但 OKX 实际不交易这些(`okx 51155 local compliance`)。24h 内 10 个 error orders 中 4 个是 ZEC/USDT。
+
+**根因猜测**:universe 来源(`aletheia/data/universe.py` 或类似)从某个全 universe 源拉标的,没按 OKX 实际可交易列表过滤。
+
+**为何劣后**:
+- universe 模块**可能不在冻结清单**(还要 grep 验)。但**改了它会改 PI prompt 看到的 opportunities** → 间接触冻结
+- 当前每个不可交易的 opportunity 浪费 paper_trader_ranker LLM tokens,**有真实成本**但不阻塞 Round 1
+- **Round 2 解冻后**:在 opportunity 生成处加 OKX 可交易 symbol 集合过滤,或单独 prune `error_reason LIKE '%51155%'` 的 stale opportunities
+
+### [D17] 5bfa4a0 IOCP 修复的 3 个 follow-up(低优先,但记下来)
+
+5bfa4a0 进程级 `WindowsSelectorEventLoopPolicy` 三个 follow-up:
+
+1. **`pytest` 测试进程无 selector policy**:`tests/conftest.py` 没 `apply_windows_selector_policy()`,Windows 测试机跑 `test_okx_broker.py` 等调用 broker `asyncio.run()` 的测试可能 IOCP teardown hang ~255s。生产无影响(三个 entry-point 已设),只影响开发测试体验。
+   修复:`tests/conftest.py` 顶部加 `from aletheia.async_utils import apply_windows_selector_policy; apply_windows_selector_policy()`。
+   **冻结期能做**(纯测试基础设施),但本会话排序后劣后。
+
+2. **uvicorn `--loop none` 版本兼容性**:`_gateway_runner.py:132,200` 给 uvicorn 子进程传 `--loop none`,**uvicorn 0.30+ 才有这个 key**。生产部署若装的旧版 → frontdoor/backend 直接 crash。**已被** `tests/test_event_loop_policy.py::test_uvicorn_loop_none_defers_to_process_policy` 守住,但**只在测试机的当前 uvicorn 版本生效**。
+   建议:在 `pyproject.toml`pin `uvicorn>=0.30`,或在 `_spawn_*` 之前用 `uvicorn.config.LOOP_FACTORIES` 探测一次,不支持就降级到不传 `--loop`(但那会回到 Proactor 路径,§23 复发)。
+
+3. **Python 3.14 `asyncio.get_event_loop_policy()` 移除**:当前 cpython 3.12 venv 工作正常,但 Python 3.13 弃用、3.14 计划移除 `get_event_loop_policy` / `set_event_loop_policy`。
+   修复:升级到 Python 3.13+ 时改成 `asyncio.Runner(loop_factory=...)` 模式。
+   **当前可忽略**(venv 锁定 3.12)。
 
 ---
 

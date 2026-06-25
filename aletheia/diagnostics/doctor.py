@@ -582,6 +582,89 @@ def _probe_knowledge_flood(report: Report) -> None:
         report.add("loop.knowledge_flood", "info", f"probe error: {e}")
 
 
+def _probe_reconciled_ratio(report: Report) -> None:
+    """Fraction of recent closes that came from reconciler (positions vanished
+    exchange-side) rather than AI-driven stop_loss / take_profit / pi_close.
+
+    A high reconciled ratio means the Round 1 sample is dominated by orphan
+    sweeping rather than genuine AI exits — judgement numbers (PF / WR) are
+    being driven by data-integrity events instead of strategy performance.
+    Read-only. See ROUND1_JUDGMENT_PREVIEW.md §1D for context.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        rows = list(db.execute(
+            "SELECT close_reason FROM positions "
+            "WHERE status='closed' AND closed_at >= '2026-06-22' "
+            "ORDER BY closed_at DESC LIMIT 50"
+        ))
+        if not rows:
+            report.add("loop.reconciled_ratio", "info",
+                       "no closed positions since 2026-06-22")
+            return
+        from collections import Counter
+        cnt: Counter = Counter(r[0] for r in rows)
+        total = sum(cnt.values())
+        reconciled = cnt.get("reconciled_gone", 0)
+        units_bug = cnt.get("units_bug_cleanup", 0)
+        ai_driven = total - reconciled - units_bug
+        recon_pct = round(reconciled / total * 100, 1) if total else 0
+        ai_pct = round(ai_driven / total * 100, 1) if total else 0
+        detail = (f"last {total}: reconciled={reconciled}({recon_pct}%), "
+                  f"units_bug={units_bug}, ai_driven={ai_driven}({ai_pct}%)")
+        if recon_pct > 50:
+            report.add("loop.reconciled_ratio", "warn",
+                       f"reconciler dominates closes: {detail}",
+                       "judgement PF/WR is driven by orphan sweep, not AI — "
+                       "investigate position_reconciler._try_get_tpsl_fill_price "
+                       "and reconciler trigger frequency")
+        elif recon_pct > 25:
+            report.add("loop.reconciled_ratio", "info",
+                       f"reconciled noticeable: {detail}")
+        else:
+            report.add("loop.reconciled_ratio", "ok", detail)
+    except Exception as e:
+        report.add("loop.reconciled_ratio", "info", f"probe error: {e}")
+
+
+def _probe_concentration(report: Report) -> None:
+    """24h fills concentration — flag if a single symbol×direction dominates.
+
+    A >60% single-bucket concentration means PI is making essentially one bet
+    repeatedly (e.g. \"ETH short\"), which is a 5x-correlated risk exposure
+    instead of a diversified strategy basket. Read-only; observation only.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        rows = list(db.execute(
+            "SELECT o.symbol || ':' || o.direction AS bucket, COUNT(*) n "
+            "FROM fills f JOIN orders o ON f.order_id = o.id "
+            "WHERE f.filled_at >= datetime('now', '-1 day') "
+            "GROUP BY bucket ORDER BY n DESC"
+        ))
+        if not rows:
+            report.add("loop.concentration", "info", "no fills in last 24h")
+            return
+        total = sum(r[1] for r in rows)
+        top_bucket, top_n = rows[0][0], rows[0][1]
+        top_pct = round(top_n / total * 100, 1) if total else 0
+        detail = f"24h fills={total}, top: {top_bucket}={top_n} ({top_pct}%)"
+        if top_pct > 60:
+            report.add("loop.concentration", "warn",
+                       f"PI single-bet bias: {detail}",
+                       "highly correlated exposure — PI may be making one bet "
+                       "repeatedly; check trade_proposals for direction diversity")
+        elif top_pct > 40:
+            report.add("loop.concentration", "info",
+                       f"moderate concentration: {detail}")
+        else:
+            report.add("loop.concentration", "ok", detail)
+    except Exception as e:
+        report.add("loop.concentration", "info", f"probe error: {e}")
+
+
 def _probe_health(report: Report) -> None:
     try:
         from aletheia.agent_runtime.health import compute_health
@@ -874,6 +957,8 @@ def build_report() -> Report:
         _probe_profit_loop,
         _probe_round1,
         _probe_knowledge_flood,
+        _probe_reconciled_ratio,
+        _probe_concentration,
         _probe_health,
         _probe_operator_loop,
         _probe_webui_static,

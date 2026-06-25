@@ -1221,3 +1221,33 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 [2026-06-24 08:01 UTC] ✓ **§23 新事件——5h超长静默后恢复** — features=84/h (§22持续, 全桶=14无gap). Opportunities=11417 (+52). Knowledge=3459 (+21). §17 timed_out=277. Stale=325. §23: 07:18 UTC (PID 22972), 02:21→07:18=297min(约5h), 异常长静默期后恢复周期性崩溃. 130h+ 连续运行.
 
 [2026-06-24 14:22 UTC] ⚠️ **§24 backend storm加剧(4次/1h) + §23第19次** — features=72/h (§22持续, 全桶=12无gap, bucket 14→12资产变化). Opportunities_1h=45. Knowledge=3635 (+176). §17 timed_out=281(+4). market_observer timed_out=7(+4). Stale=327. §23第19次: 08:27 UTC (PID 26256), 07:18→08:27=69min, 预测命中; 末次08:27距今5h57min稳定. **§24 backend storm**: 11:51(15508)→11:54(34608)=3min极短、12:47(20184)→12:59(14032)=12min, 共4次backend(:8788)崩溃; 11:51-12:59=68min内4次, backend稳定性恶化趋势明显. 末次12:59距今约1h23min. 138h+(推算) 连续运行.
+
+[2026-06-24 15:10 UTC] ✓ **§23 第20次——6.2h超长静默后崩溃** — features=72/h (§22持续, 全桶=12无gap). Opportunities_1h=49. Knowledge=3666 (+31). §17 timed_out=281. market_observer timed_out=7(持平). Stale=327. §23第20次: 14:40 UTC (PID 3168), 08:27→14:40=373min(6.2h), 连续两次超长静默(02:21→07:18=5h, 08:27→14:40=6.2h), 超长静默模式强化. §24 backend: 末次12:59, 距今约2h11min稳定. 末次§23 14:40距今约30min. 138h+ 连续运行.
+
+[2026-06-24 15:56 UTC] ⚠️ **§23 第21次——31min短间隔(超长静默后不稳定)** — features=72/h (§22持续, 全桶=12无gap). Opportunities_1h=44. Knowledge=3692 (+26). §17 timed_out=281. Stale=327. §23第21次: 15:11 UTC (PID 2860), 14:40→15:11=31min短间隔, 与历史pattern一致(超长静默后连续崩溃: 02:21→07:18=5h→07:18→08:27=69min; 08:27→14:40=6.2h→14:40→15:11=31min). §24 backend: 末次12:59, 距今约3h稳定. 末次§23 15:11距今约45min. 138h+ 连续运行.
+
+[2026-06-24 16:42 UTC] ✓ 系统正常 — features=72/h (§22持续, 全桶=12无gap). Opportunities_1h=47. Knowledge=3727 (+35). §17 timed_out=281. Stale=327. §23: 末次 15:11 UTC, 已91min超均值; 可能进入超长静默期(pattern: 超长→短→超长循环). §24 backend: 末次12:59, 距今3h43min稳定. 138h+ 连续运行.
+
+[2026-06-24 17:28 UTC] ✓ **§23 第22次——101min(超均值单次)** — features=76/h (§22持续, 全桶12-13无gap, bucket轻微浮动). Opportunities_1h=49. Knowledge=3757 (+30). §17 timed_out=281. Stale=327. §23第22次: 16:52 UTC (PID 6432), 15:11→16:52=101min, 未进入超长静默(预期错误), 但仍超~60min均值. §24 backend: 末次12:59, 距今4h29min稳定. 末次§23 16:52距今约36min. 138h+ 连续运行.
+
+[2026-06-24 18:14 UTC] ✓ 系统正常 — features=84/h (§22持续, 全桶13-15无gap, bucket从12升至15资产持续纳入). Opportunities_1h=51. Knowledge=3786 (+29). §17 timed_out=281. Stale=327. §23: 末次 16:52 UTC, 已82min超均值, 稳定中. §24 backend: 末次12:59, 距今5h15min持续稳定. 139h+ 连续运行.
+
+[2026-06-24 19:00 UTC] ✓ **§23 第23次——92min超均值** — features=90/h (§22持续, 全桶=15无gap). Opportunities_1h=58. Knowledge=3813 (+27). §17 timed_out=281. Stale=327. §23第23次: 18:24 UTC (PID 22328), 16:52→18:24=92min; 近期间隔趋势: 101/92min, frontdoor逐渐趋于稳定. §24 backend: 末次12:59, 距今6h1min持续稳定. 139h+ 连续运行.
+
+[2026-06-24 19:48 UTC] ✓ 系统正常 — features=90/h (§22持续, 全桶=15无gap). Opportunities_1h=56. Knowledge=3840 (+27). §17 timed_out=281. Stale=327. §23: 末次18:24 UTC, 距今84min已超均值60min, 下次窗口临近. §24 backend: 末次12:59, 距今6h49min持续稳定. 140h+ 连续运行.
+
+[2026-06-24 20:02 UTC] ✓ **§23 第24次——92min** — features=90/h (§22持续, 全桶=15无gap). Opportunities_1h=59. Knowledge=3845 (+5). §17 timed_out=281. Stale=328 (+1). §23第24次: 19:56 UTC (PID 12868), 18:24→19:56=92min; 连续两轮92min, 近期趋势稳定偏慢(均值~60min). §24 backend: 末次12:59, 距今7h稳定. 140h+ 连续运行.
+
+[2026-06-24 21:02 UTC] ✓ 系统正常 — features=90/h (§22持续, 全桶=15无gap). Opportunities_1h=56. Knowledge=3883 (+38). §17 timed_out=281. Stale=327. §23: 末次19:56 UTC, 距今66min, 已超均值60min进入窗口期. §24 backend: 末次12:59, 距今8h稳定. 141h+ 连续运行.
+
+[2026-06-24 22:02 UTC] ✓ 系统正常 — features=90/h (§22持续, 总量正常; 50min桶=0/40min桶=30, 时序抖动非崩溃). Opportunities_1h=56. Knowledge=3916 (+33). §17 timed_out=281. Stale=327. §23: 末次19:56 UTC, 距今2h6min超均值, 超长静默期开始. §24 backend: 末次12:59, 距今9h稳定. 142h+ 连续运行.
+
+[2026-06-24 23:02 UTC] ✓ 系统正常 — features=75/h (§22持续; 60min桶22:02-22:12=0缺失，时序边界抖动，总量偏低15，非crash). Opportunities_1h=56. Knowledge=3949 (+33). §17 timed_out=281. Stale=327. §23: 末次19:56 UTC, 距今3h6min, 第二次超长静默期(历史先例02:21→07:18=5h). §24 backend: 末次12:59, 距今10h稳定. 143h+ 连续运行.
+
+[2026-06-25 00:02 UTC] ✓ 系统正常 — features=90/h (§22持续, 全桶=15无gap). Opportunities_1h=54. Knowledge=3981 (+32). §17 timed_out=281. Stale=328. §23: 末次19:56 UTC, 距今4h6min超长静默持续(历史最长5h, 本轮正接近上限). §24 backend: 末次12:59, 距今11h稳定. 144h+ 连续运行.
+
+[2026-06-25 01:02 UTC] ✓ **§23 第25次——4h7min 新纪录超长静默** — features=90/h (§22持续, 全桶=15无gap). Opportunities_1h=48. Knowledge=4016 (+35, 突破4000). §17 timed_out=281. Stale=327. §23第25次: 00:03 UTC (PID 31532), 19:56→00:03=4h7min, 刷新超长静默历史纪录(前纪录5h为06-24 02:21→07:18). 距今59min, 进入下次窗口期. §24 backend: 末次12:59, 距今12h稳定. 145h+ 连续运行.
+
+[2026-06-25 02:02 UTC] ✓ 系统正常 — features=90/h (§22持续, 全桶=15无gap). Opportunities_1h=56. Knowledge=4047 (+31). §17 timed_out=281. Stale=327. §23: 末次00:03 UTC, 距今2h, 已超均值60min进入窗口期. §24 backend: 末次12:59, 距今13h稳定. 146h+ 连续运行.
+
+[2026-06-25 03:02 UTC] ✓ 系统正常 — features=95/h (§22持续; bucket从15升至16, 新资产纳入). Opportunities_1h=59. Knowledge=4079 (+32). §17 timed_out=281. Stale=327. §23: 末次00:03 UTC, 距今3h, 第三次超长静默持续. §24 backend: 末次12:59, 距今14h稳定. 147h+ 连续运行.

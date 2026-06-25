@@ -275,6 +275,64 @@ def get_round1_progress():
     profit_factor = round(gross_profit / gross_loss, 4) if gross_loss > 0 else (
         None if gross_profit == 0 else float("inf")
     )
+
+    # by_close_reason breakdown — judgement-critical: lets the UI / a Round 1
+    # reviewer distinguish AI-driven exits (stop_loss / take_profit / pi_close /
+    # manual_close / flip) from reconciler sweeps (reconciled_gone) and pre-Round
+    # bug cleanup (units_bug_cleanup). See ROUND1_JUDGMENT_PREVIEW.md §1D for
+    # why the headline PF / WR above can be dominated by non-AI events.
+    by_reason: list[dict] = []
+    for r in db.execute(
+        "SELECT close_reason, COUNT(*) n, "
+        "  COALESCE(ROUND(SUM(realized_pnl), 4), 0) net, "
+        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), 0) wins "
+        "FROM positions WHERE status='closed' AND closed_at >= ? "
+        "GROUP BY close_reason ORDER BY n DESC",
+        (_ROUND1_START_UTC,),
+    ):
+        by_reason.append({
+            "close_reason": r["close_reason"],
+            "n": int(r["n"]),
+            "net_realized_pnl": float(r["net"]),
+            "wins": int(r["wins"]),
+        })
+
+    # Strict-cohort: only count AI-driven exits (skip reconciler sweeps + bug cleanups).
+    _AI_REASONS = ("stop_loss", "take_profit", "pi_close", "manual_close", "flip")
+    placeholders = ",".join("?" * len(_AI_REASONS))
+    strict = db.execute(
+        f"SELECT COUNT(*) n, "
+        f"  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), 0) wins, "
+        f"  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) gp, "
+        f"  COALESCE(-SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) gl "
+        f"FROM positions WHERE status='closed' AND closed_at >= ? "
+        f"  AND close_reason IN ({placeholders})",
+        (_ROUND1_START_UTC, *_AI_REASONS),
+    ).fetchone()
+    s_n = int(strict["n"])
+    s_gp = float(strict["gp"])
+    s_gl = float(strict["gl"])
+    s_wins = int(strict["wins"])
+    strict_pf = round(s_gp / s_gl, 4) if s_gl > 0 else (None if s_gp == 0 else float("inf"))
+    strict_wr = round(s_wins / s_n * 100.0, 2) if s_n else None
+
+    # Half-strict: drop only units_bug_cleanup (Round 1 pre-bug cleanup), keep reconciler.
+    hs = db.execute(
+        "SELECT COUNT(*) n, "
+        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END), 0) wins, "
+        "  COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END), 0) gp, "
+        "  COALESCE(-SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl ELSE 0 END), 0) gl "
+        "FROM positions WHERE status='closed' AND closed_at >= ? "
+        "  AND close_reason != 'units_bug_cleanup'",
+        (_ROUND1_START_UTC,),
+    ).fetchone()
+    hs_n = int(hs["n"])
+    hs_gp = float(hs["gp"])
+    hs_gl = float(hs["gl"])
+    hs_wins = int(hs["wins"])
+    hs_pf = round(hs_gp / hs_gl, 4) if hs_gl > 0 else (None if hs_gp == 0 else float("inf"))
+    hs_wr = round(hs_wins / hs_n * 100.0, 2) if hs_n else None
+
     return {
         "round1_start_utc": _ROUND1_START_UTC,
         "closed_trades": closed,
@@ -289,6 +347,21 @@ def get_round1_progress():
         "pf_go_line": _PF_GO_LINE,
         "first_closed_at": row["first_closed_at"],
         "last_closed_at": row["last_closed_at"],
+        "by_close_reason": by_reason,
+        "cohorts": {
+            "raw": {
+                "n": closed, "wr_pct": win_rate, "pf": profit_factor,
+                "note": "all close_reason — judgement-noisy",
+            },
+            "half_strict": {
+                "n": hs_n, "wr_pct": hs_wr, "pf": hs_pf,
+                "note": "excludes units_bug_cleanup (pre-Round bug)",
+            },
+            "strict_ai_driven": {
+                "n": s_n, "wr_pct": strict_wr, "pf": strict_pf,
+                "note": f"only {','.join(_AI_REASONS)} — strongest AI-decision signal",
+            },
+        },
     }
 
 
