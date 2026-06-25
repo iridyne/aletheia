@@ -361,3 +361,62 @@ def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
 
     assert result["allowed"] is True
     assert load_config().runtime.paused is False
+
+
+# --- 9. DNS failure short-circuits the retry loop ---
+
+def test_dns_failure_short_circuits_retries(tmp_path, monkeypatch):
+    """When ALL providers fail with DNS-class errors, retries are skipped.
+
+    A getaddrinfo failure won't resolve within retry_delay; burning
+    max_retries × retry_delay of startup time serves no purpose. The gate
+    must return after exactly 1 attempt and never await the retry sleep.
+
+    Patches at the provider boundary (not _probe_one) so the REAL _probe_one
+    catch path runs and tags the result with dns_error=True.
+    """
+    setup_env(tmp_path, monkeypatch)
+    import httpx
+    from aletheia.agent_runtime import startup_gate
+
+    cfg = _cfg_with({"openai_compatible": True}, "openai_compatible")
+    cfg.health.startup_gate_max_retries = 3
+    cfg.health.startup_gate_retry_delay_sec = 99  # would hang the test if not short-circuited
+
+    # httpx.ConnectError wrapping a gaierror — _is_dns_error matches the message.
+    _patch_providers(monkeypatch, {
+        "openai_compatible": _FakeProvider(exc=httpx.ConnectError("[Errno 11001] getaddrinfo failed")),
+    })
+
+    slept: list = []
+    async def fake_sleep(s):
+        slept.append(s)
+    monkeypatch.setattr(startup_gate.asyncio, "sleep", fake_sleep)
+
+    result = asyncio.run(startup_gate.probe_llm_providers_at_startup(cfg))
+    assert result["any_usable"] is False
+    assert result["attempts"] == 1   # short-circuited, not 3
+    assert slept == []               # the 99s retry sleep was never awaited
+
+
+# --- 10. mixed DNS + transient failures still retry (don't over-short-circuit) ---
+
+def test_mixed_dns_and_non_dns_failures_still_retry(tmp_path, monkeypatch):
+    """If one provider fails DNS but another fails transiently (503), retries
+    must continue — only an ALL-DNS round is hopeless."""
+    setup_env(tmp_path, monkeypatch)
+    import httpx
+    from aletheia.agent_runtime import startup_gate
+
+    cfg = _cfg_with({"a": True, "b": True}, "a")
+    cfg.health.startup_gate_max_retries = 2
+    cfg.health.startup_gate_retry_delay_sec = 0
+
+    _patch_providers(monkeypatch, {
+        "a": _FakeProvider(exc=httpx.ConnectError("getaddrinfo failed")),
+        "b": _FakeProvider(exc=RuntimeError("503 Service Unavailable")),  # transient, not DNS
+    })
+
+    result = asyncio.run(startup_gate.probe_llm_providers_at_startup(cfg))
+    assert result["any_usable"] is False
+    assert result["attempts"] == 2   # ran all retries — no short-circuit

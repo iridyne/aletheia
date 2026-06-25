@@ -20,10 +20,30 @@ This module only DIAGNOSES (returns an honest dict, never raises). The caller
 
 import asyncio
 import logging
+import socket as _socket
 
 from aletheia.model_provider.base import ModelRequest
 
 logger = logging.getLogger("aletheia.startup_gate")
+
+
+def _is_dns_error(exc: BaseException) -> bool:
+    """True when exc looks like a DNS resolution failure (getaddrinfo / WSAHOST_NOT_FOUND).
+
+    DNS failures won't resolve within the inter-attempt retry window, so the
+    caller short-circuits retries when EVERY provider fails this way — the
+    auto-resume gate re-probes on its own schedule once the network returns.
+    """
+    msg = str(exc).lower()
+    if "getaddrinfo" in msg or "name or service not known" in msg:
+        return True
+    # httpx wraps the underlying socket.gaierror in __cause__/__context__.
+    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+    if isinstance(cause, _socket.gaierror):
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) == 11001:  # WSAHOST_NOT_FOUND
+        return True
+    return False
 
 # A real completion can be slow on a cold gateway endpoint; keep the probe short
 # enough that startup isn't blocked for long, but long enough for a genuine call.
@@ -71,7 +91,10 @@ async def _probe_one(name: str) -> dict:
         # 429 means the provider is alive but rate-limiting — not truly unavailable.
         if "429" in str(e):
             return {"provider": name, "usable": True, "error": None}
-        return {"provider": name, "usable": False, "error": str(e)[:200]}
+        return {
+            "provider": name, "usable": False, "error": str(e)[:200],
+            "dns_error": _is_dns_error(e),
+        }
 
 
 async def _probe_all_once(names: list[str]) -> dict:
@@ -112,17 +135,30 @@ async def probe_llm_providers_at_startup(cfg) -> dict:
     retry_delay = getattr(cfg.health, "startup_gate_retry_delay_sec", 15)
 
     result: dict = {}
+    attempt = 0
     for attempt in range(1, max_retries + 1):
         result = await _probe_all_once(names)
         if result["any_usable"]:
             result["attempts"] = attempt
             return result
         if attempt < max_retries:
+            # If EVERY failed provider failed with a DNS-class error, retrying is
+            # futile — DNS won't resolve in retry_delay seconds when it just failed
+            # for all hosts. Bail early; auto_resume re-probes once the net returns.
+            failed = [r for r in result["results"] if not r["usable"]]
+            if failed and all(r.get("dns_error", False) for r in failed):
+                logger.warning(
+                    "LLM startup gate: all providers failed with DNS errors on "
+                    "attempt %d/%d (getaddrinfo) — skipping remaining retries; "
+                    "auto_resume will re-probe when the network recovers",
+                    attempt, max_retries,
+                )
+                break
             logger.warning(
                 "LLM startup gate: attempt %d/%d failed, retrying in %ds...",
                 attempt, max_retries, retry_delay,
             )
             await asyncio.sleep(retry_delay)
 
-    result["attempts"] = max_retries
+    result["attempts"] = attempt
     return result
