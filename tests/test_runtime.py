@@ -74,8 +74,8 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     # + stock_observer + prediction_observer + post_trade_reviewer + risk_critic
     # + universe_refresh + position_reconcile + data_collectors + backtest_orchestrator
     # + okx_demo_symbols + price_feed + daily_summary + tpsl_fill_check + pi_operator_loop
-    # + insight_synthesizer + confidence_calibration
-    assert len(s.get_jobs()) == 30
+    # + insight_synthesizer + confidence_calibration + connectivity_monitor
+    assert len(s.get_jobs()) == 31
     market_observer_job = s.get_job("market_observer")
     assert market_observer_job is not None
     assert market_observer_job.next_run_time <= started_at.astimezone(market_observer_job.next_run_time.tzinfo) + timedelta(seconds=120)

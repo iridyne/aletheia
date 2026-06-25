@@ -208,9 +208,21 @@ def aiohttp_session(**kwargs) -> aiohttp.ClientSession:
         if proxy:
             os.environ["HTTP_PROXY"] = proxy
             os.environ["HTTPS_PROXY"] = proxy
+    timeout = kwargs.pop("timeout", None)
+    if timeout is None:
+        timeout = aiohttp.ClientTimeout(total=15, connect=8)
     connector = aiohttp.TCPConnector(resolver=ThreadedResolver())
     return aiohttp.ClientSession(
         connector=connector,
+        timeout=timeout,
         trust_env=True,
         **kwargs,
     )
+
+
+def ccxt_timeout_options() -> dict:
+    """Return CCXT-compatible timeout options dict (milliseconds).
+
+    Apply to any ccxt exchange constructor: ``ccxt.okx({**ccxt_timeout_options(), ...})``
+    """
+    return {"timeout": 15000}

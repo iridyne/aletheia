@@ -24,12 +24,9 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
-    # The LLM consecutive-failure counter is a module-level global that other
-    # test files (running agents without a provider) leave elevated. Reset it so
-    # health-baseline assertions are deterministic regardless of suite order —
-    # same reason the alert tests reset _last_alerted_unhealthy.
     from aletheia.agent_runtime import health
     health.reset_llm_failures()
+    monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: True)
 
 
 def _add_run(status):

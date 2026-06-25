@@ -35,6 +35,7 @@ def setup_env(tmp_path, monkeypatch):
     health.reset_llm_failures()
     monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
+    monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: True)
 
 
 def _seed_restart_audit(seconds_ago):

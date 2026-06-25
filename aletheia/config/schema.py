@@ -308,6 +308,11 @@ class HealthConfig(BaseModel):
     # and auto-resume when connectivity is restored.
     auto_resume_enabled: bool = True
     auto_resume_interval_sec: int = 300
+    # Exchange connectivity monitor: detect network outages and auto-pause/resume.
+    exchange_probe_interval_sec: int = 30
+    exchange_probe_failure_threshold: int = 3
+    exchange_auto_resume_interval_sec: int = 60
+    exchange_auto_resume_success_threshold: int = 2
 
 
 class RetentionConfig(BaseModel):

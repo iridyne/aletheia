@@ -108,13 +108,12 @@ def _observer_stale_minutes() -> float | None:
         return None
 
 
-def _okx_reachable() -> bool:
-    """Quick connectivity probe to OKX public API (5s timeout, uses system proxy)."""
+def _exchange_reachable(cfg=None) -> bool:
+    """Generic exchange connectivity probe (delegates to connectivity module)."""
     try:
-        import httpx
-        with httpx.Client(timeout=5.0, trust_env=True) as c:
-            r = c.get("https://www.okx.com/api/v5/public/time")
-            return r.status_code == 200
+        from aletheia.agent_runtime.connectivity import probe_exchange_sync
+        result = probe_exchange_sync(cfg)
+        return result.get("reachable", False)
     except Exception:
         return False
 
@@ -160,10 +159,10 @@ def compute_health() -> dict:
         if obs_age is not None and obs_age > 45:
             issues.append(f"observer_stale:{obs_age:.0f}min")
 
-    # OKX connectivity: can't trade if the exchange API is unreachable.
-    if cfg.exchange.name == "okx" and not cfg.runtime.paused:
-        if not _okx_reachable():
-            issues.append("okx_unreachable")
+    # Exchange connectivity: can't trade if the exchange API is unreachable.
+    if not cfg.runtime.paused:
+        if not _exchange_reachable(cfg):
+            issues.append("exchange_unreachable")
 
     # Stale-process guard: disk source committed past what this process booted on.
     from aletheia.agent_runtime.build_info import code_drift_issue
@@ -408,11 +407,18 @@ def run_health_check() -> dict:
     if cfg.health.self_heal_market_data and any(
         i.startswith("market_data_stale") for i in issues
     ):
-        ok, why = _can_self_restart()
-        if ok:
-            _trigger_restart("market_data_stale")
-            return h
-        _alert_suppressed("market_data_stale", why)
+        # If exchange is unreachable, restart won't help — let connectivity
+        # monitor handle pause/resume. Only restart when network is fine but
+        # data is still stale (implies a process/code bug).
+        if not _exchange_reachable(cfg):
+            logger.info("market_data_stale but exchange unreachable — "
+                        "deferring to connectivity_monitor (no restart)")
+        else:
+            ok, why = _can_self_restart()
+            if ok:
+                _trigger_restart("market_data_stale")
+                return h
+            _alert_suppressed("market_data_stale", why)
         return h
 
     if cfg.health.self_heal_port_cleanup:

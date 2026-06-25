@@ -351,6 +351,10 @@ class HealthConfigUpdate(SettingsRequest):
     # config is saveable AND these gate-recovery params are controllable from UI.
     auto_resume_enabled: Optional[bool] = None
     auto_resume_interval_sec: Optional[int] = None
+    exchange_probe_interval_sec: Optional[int] = None
+    exchange_probe_failure_threshold: Optional[int] = None
+    exchange_auto_resume_interval_sec: Optional[int] = None
+    exchange_auto_resume_success_threshold: Optional[int] = None
 
 
 _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
@@ -365,6 +369,10 @@ _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
     "startup_gate_max_retries": (1, 10),
     "startup_gate_retry_delay_sec": (5, 120),
     "auto_resume_interval_sec": (30, 3600),
+    "exchange_probe_interval_sec": (10, 300),
+    "exchange_probe_failure_threshold": (1, 20),
+    "exchange_auto_resume_interval_sec": (10, 600),
+    "exchange_auto_resume_success_threshold": (1, 10),
 }
 
 

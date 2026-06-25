@@ -47,6 +47,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "insight_synthesizer": 120.0,
     "confidence_calibration": 30.0,
     "reasoning_feedback": 60.0,
+    "connectivity_monitor": 15.0,
 }
 
 
@@ -387,6 +388,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=15, executor="fast_io",
     )
     _scheduler.add_job(
+        _guarded("connectivity_monitor", _run_connectivity_monitor), "interval",
+        seconds=cfg.health.exchange_probe_interval_sec, id="connectivity_monitor",
+        misfire_grace_time=15, next_run_time=datetime.now() + timedelta(seconds=10),
+        executor="fast_io",
+    )
+    _scheduler.add_job(
         _guarded("position_manager", _run_position_manager), "interval", minutes=5, id="position_manager",
         misfire_grace_time=60, executor="io",
     )
@@ -596,8 +603,23 @@ def _run_price_feed():
         _run_async_with_timeout("price_feed", refresh_watched_prices())
     except TimeoutError:
         logger.debug("price_feed job timed out")
+        _record_job_failure("price_feed")
     except Exception as e:
         logger.debug("price_feed job failed: %s", e)
+        _record_job_failure("price_feed")
+
+
+def _run_connectivity_monitor():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        from aletheia.agent_runtime.connectivity import run_connectivity_check
+        _run_async_with_timeout("connectivity_monitor", run_connectivity_check())
+    except TimeoutError:
+        logger.debug("connectivity_monitor job timed out")
+    except Exception as e:
+        logger.debug("connectivity_monitor job failed: %s", e)
 
 
 def _run_daily_summary():

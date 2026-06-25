@@ -337,7 +337,9 @@ async def okx_test_candidate(req: OkxCandidateRequest):
         raise HTTPException(400, "mode must be 'demo' or 'live'")
     try:
         import ccxt.async_support as ccxt
+        from aletheia.net import ccxt_timeout_options
         exchange = ccxt.okx({
+            **ccxt_timeout_options(),
             "apiKey": req.api_key,
             "secret": req.api_secret,
             "password": req.passphrase,

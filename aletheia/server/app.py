@@ -328,6 +328,13 @@ async def lifespan(app: FastAPI):
     # harmless to run once. See _llm_startup_gate.
     llm_gate_task = asyncio.create_task(_llm_startup_gate(cfg)) if background_services_enabled else None
 
+    # Exchange connectivity gate — if exchange is unreachable at startup, pause
+    # immediately and start auto-resume (same pattern as LLM gate).
+    exchange_gate_task = None
+    if background_services_enabled:
+        from aletheia.agent_runtime.connectivity import startup_exchange_gate
+        exchange_gate_task = asyncio.create_task(startup_exchange_gate(cfg))
+
     # PI Agent event-driven daemon — wakes immediately on signal arrival
     pi_daemon_task = None
     if background_services_enabled and cfg.pi_daemon.enabled:

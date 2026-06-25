@@ -1362,3 +1362,5 @@ sqlite3 自动开启了 tx,但 `was_in_tx` 条件已 True(因为 caller 从读�
 [2026-06-25 06:02 UTC] ✓ 系统正常 — features=96/h (§22持续, 全桶=16无gap, 恢复正常). Opportunities_1h=58. Knowledge=4189 (+36). §17 timed_out=282 (+1). Stale=329 (+2). §23: 末次03:28 UTC, 距今2h34min, 超长静默窗口期. §24 backend: 末次12:59, 距今17h稳定. 150h+ 连续运行.
 
 [2026-06-25 11:27 UTC] ⚠ **§23 第27-28次+LLM storm** — features=102/h (全桶=17新资产, 无gap). Opportunities_1h=60. Knowledge=4337 (+148累计). §17 timed_out=293 (+11). Stale=329. 事件序列: [06:35]§23第27次(PID 25732, 03:28→06:35=3h7min); [06:38]startup_gate LLM不可用(Databricks/network); [07:06]§23第28次(PID 32828, 06:35→07:06=31min短间隔补发); [07:07]startup_gate LLM不可用(第2次); [07:15-07:16]watchdog readiness连续3次失败. 当前: 末次crash 07:06 UTC, 距今4h21min超长静默再次开始. timed_out新增11因LLM不可用期间market_observer超时. §24 backend: 末次12:59(昨), 距今22h稳定. 155h+ 连续运行.
+
+[2026-06-25 12:02 UTC] ⚠ **§23 第29次——4h52min超长静默** — features=68/h (10min/20min桶=0, crash重启后恢复中). Opportunities_1h=47. Knowledge=4354 (+17). §17 timed_out=294 (+1). Stale=330. §23第29次: 11:58 UTC (PID 26368), 07:06→11:58=4h52min, 仅次于历史最长5h. 近四次间隔: 3h7min/31min/4h52min(超长→短→超长模式再现). §24 backend: 末次昨12:59, 距今23h稳定. 156h+ 连续运行.

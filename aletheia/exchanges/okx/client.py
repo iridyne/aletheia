@@ -81,9 +81,10 @@ class OKXClient:
         """
         if self._exchange is not None:
             return self._exchange
-        from aletheia.net import aiohttp_session
+        from aletheia.net import aiohttp_session, ccxt_timeout_options
         self._session = aiohttp_session()
         self._exchange = ccxt.okx({
+            **ccxt_timeout_options(),
             "apiKey": self._api_key,
             "secret": self._api_secret,
             "password": self._passphrase,
@@ -241,9 +242,10 @@ class OKXClient:
 
         Returns a frozenset of canonical symbols (e.g. {"BTC/USDT", "ETH/USDT"}).
         """
-        from aletheia.net import aiohttp_session
+        from aletheia.net import aiohttp_session, ccxt_timeout_options
         session = aiohttp_session()
         exchange = ccxt.okx({
+            **ccxt_timeout_options(),
             "enableRateLimit": True,
             "options": {"defaultType": "swap"},
             "session": session,

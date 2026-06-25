@@ -2144,6 +2144,8 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'trading.market_aware_exits.tighten_stop_score', 'trading.market_aware_exits.confidence_collapse_score',
     'trading.market_aware_exits.tighten_atr_mult',  // TradingParamsCard
     'health.auto_resume_enabled', 'health.auto_resume_interval_sec',  // HealthCard (DO-1/CUI-4)
+    'health.exchange_probe_interval_sec', 'health.exchange_probe_failure_threshold',
+    'health.exchange_auto_resume_interval_sec', 'health.exchange_auto_resume_success_threshold',
     'network.proxy_url', 'network.no_proxy',
     'operator.loop_enabled',
   ])
@@ -2226,6 +2228,10 @@ function HealthCard({ settings, qc }: any) {
     { key: 'startup_gate_max_retries',     label: 'LLM gate retries',         unit: '',    min: 1,  max: 10,    step: 1, isInt: true },
     { key: 'startup_gate_retry_delay_sec', label: 'LLM gate retry delay',     unit: 'sec', min: 5,  max: 120,   step: 5, isInt: true },
     { key: 'auto_resume_interval_sec',     label: 'Auto-resume probe interval', unit: 'sec', min: 30, max: 3600,  step: 30, isInt: true },
+    { key: 'exchange_probe_interval_sec',  label: 'Exchange probe interval',    unit: 'sec', min: 10, max: 300,   step: 10, isInt: true },
+    { key: 'exchange_probe_failure_threshold', label: 'Exchange fail threshold', unit: '',    min: 1,  max: 20,    step: 1, isInt: true },
+    { key: 'exchange_auto_resume_interval_sec', label: 'Exchange resume interval', unit: 'sec', min: 10, max: 600, step: 10, isInt: true },
+    { key: 'exchange_auto_resume_success_threshold', label: 'Exchange resume successes', unit: '', min: 1, max: 10, step: 1, isInt: true },
   ]
   const HEALTH_TOGGLES: BoolField[] = [
     { key: 'enabled', label: 'Health monitoring' },

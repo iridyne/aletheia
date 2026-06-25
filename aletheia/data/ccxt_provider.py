@@ -80,9 +80,10 @@ class CCXTProvider:
         # inject our own session so ccxt uses it (own_session=False), which means
         # WE are responsible for closing it — done in close().
         # aiohttp_session() also applies proxy from config via apply_proxy_env().
+        from aletheia.net import ccxt_timeout_options
         session = aiohttp_session()
         self._sessions.append(session)
-        return getattr(ccxt, name)({"enableRateLimit": True, "session": session})
+        return getattr(ccxt, name)({**ccxt_timeout_options(), "enableRateLimit": True, "session": session})
 
     def _ensure_primary(self):
         if self._primary is None:
