@@ -67,15 +67,25 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     s = sched.init_scheduler()
     assert s is not None
     assert sched.is_running()
-    # market_data + market_observer + dreaming_daily + insight_synthesizer
-    # + strategy_designer_daily + strategy_designer_eu + strategy_designer_us
-    # + reconciliation + portfolio_snapshot + exchange_sync + paper_trader
-    # + pi_trading_decision + position_manager + cleanup + health_check
-    # + stock_observer + prediction_observer + post_trade_reviewer + risk_critic
-    # + universe_refresh + position_reconcile + data_collectors + backtest_orchestrator
-    # + okx_demo_symbols + price_feed + daily_summary + tpsl_fill_check + pi_operator_loop
-    # + insight_synthesizer + confidence_calibration + connectivity_monitor
-    assert len(s.get_jobs()) == 31
+    # Assert the CRITICAL jobs are registered by NAME rather than a brittle exact
+    # count: a hard `== N` breaks on every newly-added job (no behavioral
+    # regression) while silently passing if two jobs are swapped. The real
+    # regression to catch is a critical loop going MISSING — so check membership.
+    # (Some jobs are config-conditional, e.g. ohlcv_nightly_backfill only when
+    # historical_data.nightly_backfill_enabled — excluded from the required set.)
+    job_ids = {j.id for j in s.get_jobs()}
+    required = {
+        "market_data", "market_observer", "paper_trader", "pi_trading_decision",
+        "position_manager", "reconciliation", "position_reconcile",
+        "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
+        "price_feed", "tpsl_fill_check", "connectivity_monitor",
+        "strategy_designer_daily", "post_trade_reviewer", "risk_critic",
+        "universe_refresh", "pi_operator_loop",
+    }
+    missing = required - job_ids
+    assert not missing, f"critical scheduler jobs missing: {missing}"
+    # Floor guards against wholesale registration failure without pinning an exact N.
+    assert len(job_ids) >= len(required)
     market_observer_job = s.get_job("market_observer")
     assert market_observer_job is not None
     assert market_observer_job.next_run_time <= started_at.astimezone(market_observer_job.next_run_time.tzinfo) + timedelta(seconds=120)

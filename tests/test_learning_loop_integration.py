@@ -213,6 +213,30 @@ class TestPostTradeEventChain:
         with patch("aletheia.agent_runtime.scheduler.trigger_strategy_designer_on_demand", side_effect=ImportError("test")):
             _trigger_strategy_adaptation(2, "run-1")
 
+    def test_adaptation_drives_real_debounce_chain(self):
+        """End-to-end through the REAL trigger: _trigger_strategy_adaptation →
+        trigger_strategy_designer_on_demand → debounce. Mocks ONLY the heavy
+        designer body (_run_strategy_designer), so the actual cooldown logic runs.
+
+        Catches a regression where the review→design chain stops honoring the
+        debounce (would re-run the designer on every post-trade review) — invisible
+        to tests that mock trigger_strategy_designer_on_demand wholesale.
+        """
+        import aletheia.agent_runtime.scheduler as sched
+        from aletheia.agents.post_trade_reviewer import _trigger_strategy_adaptation
+
+        sched._last_event_design_time = 0.0  # reset cooldown
+        with patch.object(sched, "_run_strategy_designer") as mock_run:
+            # First adaptation after enough lessons → designer actually runs.
+            _trigger_strategy_adaptation(3, "run-1")
+            assert mock_run.call_count == 1
+            ts_after_first = sched._last_event_design_time
+            assert ts_after_first > 0  # debounce timestamp was set
+
+            # A second adaptation immediately after → debounced, designer NOT re-run.
+            _trigger_strategy_adaptation(4, "run-2")
+            assert mock_run.call_count == 1  # still 1 — cooldown suppressed it
+
     def test_full_flow_triggers_on_case_studies(self):
         """End-to-end: reviewer produces cases → triggers strategy designer."""
         import asyncio

@@ -1,7 +1,25 @@
 """Tests for aletheia.trust.guard_chain."""
 
+import sqlite3
+
 import pytest
 from unittest.mock import patch
+
+
+def setup_env(tmp_path, monkeypatch):
+    """Real DATA_DIR + DB so run_guards exercises the full chain against real rows."""
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    from aletheia.storage.migrations import run_migrations
+    sq.reset_db()
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    run_migrations()
 
 
 def test_run_guards_all_pass():
@@ -16,6 +34,49 @@ def test_run_guards_all_pass():
     assert len(results) == 4
     summary = summarize(results)
     assert summary["blocks"] == 0
+
+
+def test_run_guards_chain_blocks_and_warns_on_real_data():
+    """Full chain end-to-end: with data that trips BOTH a blocking guard
+    (drawdown) and a warning guard (exposure concentration), run_guards +
+    summarize must report exactly that — not just blocks==0 on empty data.
+
+    Uses the real repo (not a blanket mock) so a regression in any guard's
+    threshold, or in summarize's block/warn counting, would fail here.
+    """
+    from aletheia.trust.guard_chain import run_guards, summarize
+
+    # Two open BTC positions → exposure_concentration warns.
+    open_positions = [
+        {"symbol": "BTC/USDT", "direction": "long"},
+        {"symbol": "BTC/USDT", "direction": "long"},
+    ]
+
+    def fake_list_positions(status=None, **kwargs):
+        return open_positions if status == "open" else []
+
+    with patch("aletheia.trust.guard_chain.repo") as mock_repo, \
+         patch("aletheia.trust.guard_chain.load_config") as mock_cfg:
+        mock_cfg.return_value.risk.max_daily_loss_pct = 5.0
+        mock_repo.list_positions.side_effect = fake_list_positions
+        # 12% drawdown vs 5% limit → drawdown_brake blocks.
+        mock_repo.list_portfolio_snapshots.return_value = [
+            {"total_value": 880},   # latest
+            {"total_value": 1000},  # prev
+        ]
+        results = run_guards({"symbol": "BTC/USDT", "direction": "long"})
+
+    summary = summarize(results)
+    assert summary["guards_run"] == 4
+    # drawdown_brake → block; exposure_concentration → warn.
+    assert summary["blocks"] == 1
+    assert summary["warnings"] >= 1
+    verdicts = {r.guard: r.verdict for r in results}
+    assert verdicts["drawdown_brake"] == "block"
+    assert verdicts["exposure_concentration"] == "warn"
+    # The block detail must be carried into the summary for the audit trail.
+    blocked_guards = [d["guard"] for d in summary["details"] if d["verdict"] == "block"]
+    assert "drawdown_brake" in blocked_guards
 
 
 def test_exposure_concentration_warns():

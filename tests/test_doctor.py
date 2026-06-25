@@ -6,9 +6,26 @@ helpers — those have their own suites. The probes are exercised end-to-end via
 build_report() with a real (empty) DB to prove they never raise.
 """
 
+import sqlite3
 from datetime import datetime, timezone, timedelta
 
 from aletheia.diagnostics import doctor as dx
+
+
+def setup_env(tmp_path, monkeypatch):
+    """Real DATA_DIR + DB + default config so build_report probes run on known state."""
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    from aletheia.storage.migrations import run_migrations
+    sq.reset_db()
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    run_migrations()
 
 
 class _FakeStdout:
@@ -97,6 +114,38 @@ def test_build_report_runs_and_covers_all_dimensions():
         assert expected in names, f"missing probe: {expected}"
     # generated_at is a real ISO timestamp
     assert "T" in report.generated_at
+
+
+def test_build_report_severities_reflect_known_empty_state(tmp_path, monkeypatch):
+    """Beyond 'probes exist': on a fresh DB with a default config, the probes must
+    report the CORRECT severities. Without this, a probe that always returns "ok"
+    (or always "blocker") would pass the coverage test above. Here we pin the
+    config to a known-good baseline and assert each probe's verdict matches it.
+    """
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.runtime.kill_switch_active = False
+    cfg.runtime.paused = False
+    save_config(cfg)
+
+    report = dx.build_report()
+    checks = {c.name: c for c in report.checks}
+
+    # kill switch is OFF → the probe must say ok, NOT blocker (catches an inverted
+    # condition or a hardcoded-ok stub equally).
+    assert checks["config.kill_switch"].severity == "ok"
+    assert "inactive" in checks["config.kill_switch"].detail.lower()
+
+    # Fresh DB has no market snapshots → data.market cannot be "ok" (nothing to be
+    # fresh about). A probe that always returned ok would fail here.
+    assert checks["data.market"].severity in ("warn", "blocker", "info")
+
+    # health.rollup aggregates the others; with no real backend it must not claim ok.
+    assert "health.rollup" in checks
+    # severity is always one of the known buckets (no garbage values leak through)
+    for c in report.checks:
+        assert c.severity in ("ok", "info", "warn", "blocker")
 
 
 def test_kill_switch_active_is_a_blocker(monkeypatch):
