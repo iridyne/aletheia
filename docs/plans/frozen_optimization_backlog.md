@@ -59,6 +59,8 @@
 - [D18] trust.audit_chain hash mismatch — audit.jsonl 10 处断链(2026-06-25)
 - [D19] data.signal 24h win_rate 35% — scanner 选品质量偏低(2026-06-25)
 - [D20] 并行 Claude /loop 会话干扰 git history(2026-06-25)
+- [D21] market_observer LLM 协程 240s 挂起 + aiohttp 泄漏(§17 残留+§19;§23/§24 触发器)(2026-06-25)
+- [D22] 调度器 job missed(§20,LOW,与 D21 同源)(2026-06-25)
 
 ### E. 战略决策类(需独立讨论)
 - [E1] OKX 51155 compliance 错误的战略含义(换交易所?demo≠live 失效?)
@@ -396,6 +398,28 @@ xfail 标记,Round 2 Fix 完成后移除 xfail
 - 或在该 session 中 CronDelete 相关 job
 - 本会话已确认:不会 kill 它(可能用户有意保留),但记录干扰事实
 **冻结期能做**:纯文档记录;不改代码
+
+### [D21] market_observer LLM 协程 240s 挂起 + aiohttp 连接泄漏(§17 残留 + §19,2026-06-25)
+
+**现象**(2026-06-25 亲核 errors.log):
+- `job market_observer: asyncio.run() teardown hung after 255s — executor thread abandoned (ProactorEventLoop IOCP drain)` 仍持续(timed_out 计数一路涨到 ~296)。**注意:这条文案是 `scheduler.py:274-276` 硬编码**,5bfa4a0 之后已是 SelectorEventLoop,IOCP teardown 不再是真因——真相是 market_observer 内部 LLM 调用卡满 240s job timeout(DNS getaddrinfo failed / endpoint timeout),协程本身 hang,不是 teardown。
+- 同源后果(§19):`Unclosed client session / Unclosed connector`(近 3000 行仍 2 次)——market_observer asyncio 线程被 abandon 时 aiohttp TCPConnector 未 close,连接泄漏到进程级。长跑有 fd 耗尽风险。
+
+**根因**:`aletheia/net.py:httpx_client(timeout=N)` 只传标量 total timeout,无独立 connect timeout(对比 `aiohttp_session` 已有 `ClientTimeout(total=15, connect=8)`)。DNS/connect 阶段卡住时,httpx 按 total 等满,LLM provider 调用整体被拖长 → market_observer job 超时 → 线程 abandon → connector 泄漏。
+
+**为何劣后/不能做**:`net.py` **不在冻结清单**,但 `httpx_client` 被所有 LLM provider(anthropic_compatible/openai_compatible/databricks/anthropic_native/openai_native)共用 → 改 connect timeout **会改变冻结 agent(market_observer/PI)拿 LLM 响应的时机** = 间接污染决策。indirect-risk。
+
+**Round 2 后**:给 `httpx_client` 加 `httpx.Timeout(connect=8, read=N, write=10, pool=10)` 替代标量 total;DNS/connect 快速失败,read 阶段保留长超时。同时确认 market_observer 的 asyncio 线程 abandon 路径在 finally 显式 close aiohttp connector(但 market_observer 在冻结清单,只能改其调用的 net 层 helper)。
+
+**§23/§24 关联**:这是前端断连的**触发器**。本会话(2026-06-25)已实施的 4 个 infra 修复(frontdoor 流式守卫 d14158f / supervisor 解耦 abdbf51 / startup_gate DNS 短路 1062f63 / readiness 60s 5e8772d)让系统对此**有韧性**(frontdoor 不崩、backend 不被连累),但触发器本身(本条)未根治。详见 RUNTIME_BEHAVIOR_ISSUES.md "§23/§24 韧性修复" 段 + memory [[aletheia-frontdoor-disconnect-真根因]]。
+
+### [D22] 调度器 job missed(§20,2026-06-25,LOW)
+
+**现象**:`Run time of job 'partial' was missed by 0:01:00` —— APScheduler job 高负载时延迟触发 ~1min,scheduler 线程被占。
+**根因猜测**:max_workers=3(CLAUDE.md SQLite 并发约束硬上限)被长耗时 job(market_observer LLM 卡顿,见 [D21])占满 → 其他 job 排队 missed。与 [D13](executor 线程数评估)同源。
+**影响**:数据采集偶发延迟,非阻断。
+**为何劣后**:max_workers 不可超 3(CLAUDE.md);真正缓解依赖 [D21] 根治(LLM 不再卡满线程)。
+**Round 2 后**:[D21] 修复后观察是否自然消失;否则评估 [D13] 有界异步队列。
 
 ### [D17] 5bfa4a0 IOCP 修复的 3 个 follow-up(低优先,但记下来)
 
