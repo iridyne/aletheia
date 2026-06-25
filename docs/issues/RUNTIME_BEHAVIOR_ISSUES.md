@@ -1360,3 +1360,5 @@ sqlite3 自动开启了 tx,但 `was_in_tx` 条件已 True(因为 caller 从读�
 关联:CLAUDE.md "SQLite concurrency" 三柱理论第(3)点;`a33dc86` 修了 repositories.py 但漏了 operator_store。
 
 [2026-06-25 06:02 UTC] ✓ 系统正常 — features=96/h (§22持续, 全桶=16无gap, 恢复正常). Opportunities_1h=58. Knowledge=4189 (+36). §17 timed_out=282 (+1). Stale=329 (+2). §23: 末次03:28 UTC, 距今2h34min, 超长静默窗口期. §24 backend: 末次12:59, 距今17h稳定. 150h+ 连续运行.
+
+[2026-06-25 11:27 UTC] ⚠ **§23 第27-28次+LLM storm** — features=102/h (全桶=17新资产, 无gap). Opportunities_1h=60. Knowledge=4337 (+148累计). §17 timed_out=293 (+11). Stale=329. 事件序列: [06:35]§23第27次(PID 25732, 03:28→06:35=3h7min); [06:38]startup_gate LLM不可用(Databricks/network); [07:06]§23第28次(PID 32828, 06:35→07:06=31min短间隔补发); [07:07]startup_gate LLM不可用(第2次); [07:15-07:16]watchdog readiness连续3次失败. 当前: 末次crash 07:06 UTC, 距今4h21min超长静默再次开始. timed_out新增11因LLM不可用期间market_observer超时. §24 backend: 末次12:59(昨), 距今22h稳定. 155h+ 连续运行.

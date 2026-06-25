@@ -570,6 +570,17 @@ class RiskConfigUpdate(SettingsRequest):
     max_demo_single_trade_risk_pct: Optional[float] = None
     max_futures_leverage_live: Optional[int] = None
     max_futures_leverage_demo: Optional[int] = None
+    max_leverage_major_demo: Optional[int] = None
+    max_leverage_major_live: Optional[int] = None
+    max_leverage_mid_demo: Optional[int] = None
+    max_leverage_mid_live: Optional[int] = None
+    max_leverage_alt_demo: Optional[int] = None
+    max_leverage_alt_live: Optional[int] = None
+    max_account_leverage_demo: Optional[float] = None
+    max_account_leverage_live: Optional[float] = None
+    futures_margin_warning_ratio: Optional[float] = None
+    futures_margin_force_close_ratio: Optional[float] = None
+    min_liquidation_buffer_pct: Optional[float] = None
     max_open_positions_live: Optional[int] = None
     max_open_positions_demo: Optional[int] = None
     allow_short_demo: Optional[bool] = None
@@ -595,6 +606,17 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_demo_single_trade_risk_pct": (0.01, 20.0),
     "max_futures_leverage_live": (1, 20),
     "max_futures_leverage_demo": (1, 125),
+    "max_leverage_major_demo": (1, 20),
+    "max_leverage_major_live": (1, 10),
+    "max_leverage_mid_demo": (1, 10),
+    "max_leverage_mid_live": (1, 5),
+    "max_leverage_alt_demo": (1, 5),
+    "max_leverage_alt_live": (1, 3),
+    "max_account_leverage_demo": (1.0, 10.0),
+    "max_account_leverage_live": (1.0, 5.0),
+    "futures_margin_warning_ratio": (0.3, 0.95),
+    "futures_margin_force_close_ratio": (0.5, 0.99),
+    "min_liquidation_buffer_pct": (1.0, 20.0),
     "max_open_positions_live": (1, 50),
     "max_open_positions_demo": (1, 200),
     "max_sector_concentration_pct": (10.0, 100.0),

@@ -18,6 +18,7 @@ def create_paper_proposal(
     direction: str,
     quantity: float,
     price: float,
+    leverage: int | None = None,
     execution_mode: str = "paper_internal",
     strategy_id: str | None = None,
     opportunity_id: str | None = None,
@@ -33,6 +34,8 @@ def create_paper_proposal(
         raise ValueError(
             f"create_paper_proposal only accepts paper modes {_PAPER_MODES}, got {execution_mode!r}"
         )
+    if leverage is not None and leverage < 1:
+        raise ValueError(f"leverage must be >= 1, got {leverage}")
     return submit_proposal(
         symbol=symbol,
         market_type=market_type,
@@ -40,6 +43,7 @@ def create_paper_proposal(
         order_type="market",
         quantity=quantity,
         price=price,
+        leverage=leverage,
         stop_price=stop_price,
         execution_mode=execution_mode,
         strategy_id=strategy_id,

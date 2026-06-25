@@ -46,6 +46,10 @@ const openColumns = [
   posCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('entry_price', { header: 'Entry (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('current_price', { header: 'Current (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
+  posCol.display({ id: 'leverage', header: 'Lev', cell: ({ row }) => {
+    const lev = (row.original as any).leverage
+    return lev && lev > 1 ? <span className="badge badge-blue">{lev}x</span> : <span className="text-muted">1x</span>
+  }}),
   posCol.accessor('stop_price', { header: 'Stop (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('take_profit_price', { header: 'TP (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('unrealized_pnl', { header: 'uPnL (USDT)', cell: info => pnlCell(info.getValue()) }),
@@ -329,6 +333,12 @@ function PositionDetail({ position }: { position: Position }) {
         <DrawerField label="Current Price" value={position.current_price} mono />
         <DrawerField label="Stop Price" value={position.stop_price} mono />
         <DrawerField label="Take Profit" value={position.take_profit_price} mono />
+        {position.leverage && position.leverage > 1 && (
+          <>
+            <DrawerField label="Leverage" value={`${position.leverage}x`} />
+            <DrawerField label="Liquidation Price" value={position.liquidation_price} mono />
+          </>
+        )}
       </DrawerSection>
       <DrawerSection label="PnL">
         <DrawerField label="Unrealized" value={position.unrealized_pnl} mono />

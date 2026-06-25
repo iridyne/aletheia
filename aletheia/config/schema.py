@@ -59,6 +59,12 @@ class ExchangeConfig(BaseModel):
     #                       USDT-futures only, 42 pairs). Requires mode == "demo".
     #   "paper_internal"  → local simulated fills (no exchange call).
     paper_execution_mode: str = "bitget_demo"
+    # Futures position mode: "hedge" (long/short separate) or "one_way".
+    position_mode: str = "hedge"
+    # Explicit perp symbol allowlist. Empty = all perps passing universe registry.
+    futures_symbols: list[str] = Field(
+        default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    )
 
 
 class MarketDataConfig(BaseModel):
@@ -212,6 +218,21 @@ class RiskConfig(BaseModel):
     max_demo_single_trade_risk_pct: float = 2.0
     max_futures_leverage_live: int = 2
     max_futures_leverage_demo: int = 5
+    # Per-asset-tier leverage limits (major=BTC/ETH, mid=SOL/BNB/XRP, alt=others)
+    max_leverage_major_demo: int = 5
+    max_leverage_major_live: int = 3
+    max_leverage_mid_demo: int = 3
+    max_leverage_mid_live: int = 2
+    max_leverage_alt_demo: int = 2
+    max_leverage_alt_live: int = 1
+    # Account-level aggregate leverage cap: sum(notional*leverage)/equity
+    max_account_leverage_demo: float = 3.0
+    max_account_leverage_live: float = 1.5
+    # Margin monitoring thresholds
+    futures_margin_warning_ratio: float = 0.70
+    futures_margin_force_close_ratio: float = 0.85
+    # Liquidation buffer: reject if est. liq price within X% of entry
+    min_liquidation_buffer_pct: float = 5.0
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 6
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.

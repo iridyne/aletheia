@@ -189,11 +189,13 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         if proposal.execution_mode == "bitget_demo" and cfg.exchange.mode != "demo":
             violations.append(f"account_mode_mismatch:order=demo,exchange={cfg.exchange.mode}")
 
-    # 10. Max leverage (futures). Demo and live have separate caps.
+    # 10. Max leverage (futures). Per-asset-tier caps + account-level flat cap.
     if proposal.market_type == "usdt_futures" and proposal.leverage:
-        cap = risk.max_futures_leverage_live if _is_live(proposal.execution_mode) else risk.max_futures_leverage_demo
-        if proposal.leverage > cap:
-            violations.append(f"exceeds_max_leverage:{proposal.leverage}>{cap}")
+        from aletheia.trading.instruments import get_max_leverage, get_asset_tier
+        tier_cap = get_max_leverage(proposal.symbol, _is_live(proposal.execution_mode), cfg)
+        if proposal.leverage > tier_cap:
+            tier = get_asset_tier(proposal.symbol)
+            violations.append(f"exceeds_max_leverage:{proposal.leverage}>{tier_cap}(tier={tier})")
 
     # Live-only checks: data freshness, single-trade risk, strategy lifecycle.
     if _is_live(proposal.execution_mode):
@@ -256,6 +258,16 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     # 16. Portfolio correlation guard — sector concentration + portfolio BTC beta.
     correlation_violations = _check_correlation_exposure(proposal, cfg)
     violations.extend(correlation_violations)
+
+    # 17. Account-level leverage ratio (futures only, additive).
+    if proposal.market_type == "usdt_futures":
+        acct_lev_violations = _check_account_leverage_ratio(proposal, cfg)
+        violations.extend(acct_lev_violations)
+
+    # 18. Liquidation buffer (futures only, additive).
+    if proposal.market_type == "usdt_futures" and proposal.leverage and proposal.price:
+        liq_violations = _check_liquidation_buffer(proposal, cfg)
+        violations.extend(liq_violations)
 
     # Determine execution mode
     if not violations:
@@ -535,3 +547,141 @@ def _symbol_family(symbol: str, positions: list[dict]) -> str | None:
         except Exception:
             pass
     return None
+
+
+# ---------------------------------------------------------------------------
+# Check #17: Account-level leverage ratio
+# ---------------------------------------------------------------------------
+
+def _check_account_leverage_ratio(proposal: TradeProposal, cfg) -> list[str]:
+    """Reject if adding this trade would push account leverage ratio above cap.
+
+    account_leverage = sum(|pos_notional| * pos_leverage) / equity
+    Non-blocking when data is unavailable (returns []).
+    """
+    risk = cfg.risk
+    is_live = _is_live(proposal.execution_mode)
+    max_ratio = (
+        getattr(risk, "max_account_leverage_live", 1.5)
+        if is_live else getattr(risk, "max_account_leverage_demo", 3.0)
+    )
+    try:
+        open_positions = list_positions(status="open")
+        relevant = [
+            p for p in open_positions
+            if _is_live(p.get("execution_mode", "")) == is_live
+        ]
+
+        weighted_notional = 0.0
+        for p in relevant:
+            try:
+                qty = float(p.get("quantity") or 0)
+                price = float(p.get("current_price") or p.get("entry_price") or 0)
+                lev = float(p.get("leverage") or 1)
+                weighted_notional += abs(qty * price) * lev
+            except (TypeError, ValueError):
+                continue
+
+        if proposal.price and proposal.quantity:
+            prop_lev = float(proposal.leverage or 1)
+            weighted_notional += abs(proposal.price * proposal.quantity) * prop_lev
+
+        equity = _account_equity(is_live, cfg)
+        if not equity or equity <= 0:
+            return []
+
+        ratio = weighted_notional / equity
+        if ratio > max_ratio:
+            return [f"account_leverage_ratio:{ratio:.2f}x>{max_ratio:.1f}x"]
+    except Exception as e:
+        logger.debug("_check_account_leverage_ratio skipped: %s", e)
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Check #18: Liquidation buffer
+# ---------------------------------------------------------------------------
+
+def _check_liquidation_buffer(proposal: TradeProposal, cfg) -> list[str]:
+    """Reject if estimated liquidation price is within buffer_pct of entry."""
+    if not proposal.leverage or proposal.leverage <= 1:
+        return []
+    risk = cfg.risk
+    buffer_pct = getattr(risk, "min_liquidation_buffer_pct", 5.0) / 100.0
+
+    from aletheia.trading.instruments import calc_liquidation_price
+    liq_price = calc_liquidation_price(
+        proposal.price, proposal.direction, proposal.leverage, proposal.symbol
+    )
+    if liq_price is None:
+        return []
+
+    gap_pct = abs(proposal.price - liq_price) / proposal.price
+    if gap_pct < buffer_pct:
+        return [
+            f"liquidation_too_close:{gap_pct*100:.1f}%<{buffer_pct*100:.1f}%"
+            f"(liq={liq_price:.2f},lev={proposal.leverage}x)"
+        ]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for leverage checks
+# ---------------------------------------------------------------------------
+
+def _account_equity(is_live: bool, cfg) -> float | None:
+    """Best estimate of account equity in USDT."""
+    try:
+        from aletheia.portfolio import exchange_sync
+        cached = exchange_sync.get_cached_state()
+        if cached:
+            equity = cached.get("equity_usdt") or cached.get("total_equity_usdt")
+            if equity:
+                return float(equity)
+    except Exception:
+        pass
+    if is_live:
+        return float(cfg.risk.max_live_limited_cap_usdt or 0) or None
+    return float(cfg.risk.starting_capital_usdt or 0) or None
+
+
+def check_account_leverage(cfg=None) -> dict:
+    """Public API: compute current account leverage ratio (for dashboard/monitoring)."""
+    if cfg is None:
+        cfg = load_config()
+    is_live = cfg.exchange.mode == "live"
+    max_ratio = (
+        getattr(cfg.risk, "max_account_leverage_live", 1.5)
+        if is_live else getattr(cfg.risk, "max_account_leverage_demo", 3.0)
+    )
+    open_positions = list_positions(status="open")
+    relevant = [
+        p for p in open_positions
+        if _is_live(p.get("execution_mode", "")) == is_live
+    ]
+    weighted_notional = 0.0
+    positions_detail = []
+    for p in relevant:
+        try:
+            qty = float(p.get("quantity") or 0)
+            price = float(p.get("current_price") or p.get("entry_price") or 0)
+            lev = float(p.get("leverage") or 1)
+            notional = abs(qty * price)
+            weighted_notional += notional * lev
+            positions_detail.append({
+                "symbol": p.get("symbol"),
+                "notional": notional,
+                "leverage": lev,
+            })
+        except (TypeError, ValueError):
+            continue
+
+    equity = _account_equity(is_live, cfg)
+    ratio = weighted_notional / equity if equity and equity > 0 else None
+    return {
+        "ratio": ratio,
+        "cap": max_ratio,
+        "violation": ratio > max_ratio if ratio is not None else False,
+        "equity": equity,
+        "positions": positions_detail,
+    }

@@ -1820,6 +1820,26 @@ const RISK_CORR: NumField[] = [
   { key: 'max_portfolio_beta',           label: 'Max portfolio BTC beta',   unit: '',   min: 0.5, max: 10, step: 0.5 },
 ]
 
+const RISK_FUTURES_LIVE: NumField[] = [
+  { key: 'max_leverage_major_live', label: 'Major (BTC/ETH)',    unit: 'x', min: 1, max: 10, step: 1, isInt: true },
+  { key: 'max_leverage_mid_live',   label: 'Mid-cap',            unit: 'x', min: 1, max: 5,  step: 1, isInt: true },
+  { key: 'max_leverage_alt_live',   label: 'Alt/Small',          unit: 'x', min: 1, max: 3,  step: 1, isInt: true },
+  { key: 'max_account_leverage_live', label: 'Account leverage cap', unit: 'x', min: 1, max: 5, step: 0.1 },
+]
+
+const RISK_FUTURES_DEMO: NumField[] = [
+  { key: 'max_leverage_major_demo', label: 'Major (BTC/ETH)',    unit: 'x', min: 1, max: 20, step: 1, isInt: true },
+  { key: 'max_leverage_mid_demo',   label: 'Mid-cap',            unit: 'x', min: 1, max: 10, step: 1, isInt: true },
+  { key: 'max_leverage_alt_demo',   label: 'Alt/Small',          unit: 'x', min: 1, max: 5,  step: 1, isInt: true },
+  { key: 'max_account_leverage_demo', label: 'Account leverage cap', unit: 'x', min: 1, max: 10, step: 0.1 },
+]
+
+const RISK_MARGIN: NumField[] = [
+  { key: 'futures_margin_warning_ratio',     label: 'Margin warning at',       unit: '', min: 0.3, max: 0.95, step: 0.05 },
+  { key: 'futures_margin_force_close_ratio', label: 'Margin block at',         unit: '', min: 0.5, max: 0.99, step: 0.05 },
+  { key: 'min_liquidation_buffer_pct',       label: 'Liquidation buffer min',  unit: '%', min: 1, max: 20, step: 0.5 },
+]
+
 function RiskCard({ settings, qc }: any) {
   const risk = settings?.risk as any
   const [vals, setVals] = useState<Record<string, any>>({})
@@ -1828,7 +1848,7 @@ function RiskCard({ settings, qc }: any) {
   useEffect(() => {
     if (!risk) return
     const init: Record<string, any> = {}
-    ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_CORR].forEach(f => { init[f.key] = risk[f.key] })
+    ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_CORR, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN].forEach(f => { init[f.key] = risk[f.key] })
     RISK_BOOLS.forEach(f => { init[f.key] = risk[f.key] })
     setVals(init)
   }, [settings])
@@ -1875,6 +1895,20 @@ function RiskCard({ settings, qc }: any) {
         <>
           <div className="section-label mt-4">Correlation guard thresholds</div>
           <NumGrid fields={RISK_CORR} vals={vals} set={set} />
+        </>
+      )}
+
+      {/* Futures / leverage tier limits — shown when usdt_futures is enabled */}
+      {(settings?.exchange as any)?.enabled_markets?.usdt_futures && (
+        <>
+          <div className="section-label mt-4">Futures leverage — Live (per-tier)</div>
+          <NumGrid fields={RISK_FUTURES_LIVE} vals={vals} set={set} />
+
+          <div className="section-label mt-4">Futures leverage — Demo (per-tier)</div>
+          <NumGrid fields={RISK_FUTURES_DEMO} vals={vals} set={set} />
+
+          <div className="section-label mt-4">Margin safety thresholds</div>
+          <NumGrid fields={RISK_MARGIN} vals={vals} set={set} />
         </>
       )}
 

@@ -138,3 +138,11 @@ def _parse_violations(value: str | None) -> list[str]:
     if isinstance(parsed, list):
         return [str(v) for v in parsed]
     return [str(parsed)]
+
+
+@router.get("/account-leverage")
+async def account_leverage():
+    """Current account-level leverage ratio and margin status."""
+    from aletheia.risk.engine import check_account_leverage
+    cfg = load_config()
+    return check_account_leverage(cfg)

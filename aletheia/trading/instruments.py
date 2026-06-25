@@ -80,7 +80,9 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
     """Return the full InstrumentId list for market data collection.
 
     If observed_instruments is configured (non-empty), parses and returns them.
-    Otherwise derives from observed_symbols + ccxt_exchange + "spot" (legacy path).
+    Otherwise derives from observed_symbols + ccxt_exchange (legacy path).
+    When usdt_futures is enabled, the legacy path emits both spot AND perp
+    instruments so the data pipeline sees futures symbols.
 
     Invalid entries are silently skipped — callers get a best-effort list.
     """
@@ -92,9 +94,107 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
             except (ValueError, Exception):
                 pass
         return result
-    # Legacy path: symbols + exchange from config, all spot
+    # Legacy path: symbols + exchange from config
     exchange = cfg.market_data.ccxt_exchange or "binance"
-    return [
-        InstrumentId.from_parts(exchange, sym, MARKET_SPOT)
-        for sym in cfg.market_data.observed_symbols
-    ]
+    result = []
+    for sym in cfg.market_data.observed_symbols:
+        if cfg.exchange.enabled_markets.get("spot", True):
+            result.append(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
+        if cfg.exchange.enabled_markets.get("usdt_futures", False):
+            result.append(InstrumentId.from_parts(exchange, sym, MARKET_PERP))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Futures helpers: asset tiers, leverage limits, contract sizing
+# ---------------------------------------------------------------------------
+
+MAJOR_BASES = frozenset({"BTC", "ETH"})
+MID_CAP_BASES = frozenset({
+    "BNB", "SOL", "XRP", "ADA", "DOGE", "AVAX", "DOT", "MATIC", "LINK",
+    "UNI", "ATOM", "LTC", "FIL", "APT", "SUI", "ARB", "OP", "INJ",
+    "TIA", "JUP", "WIF", "NEAR", "SAND", "MANA", "RUNE",
+})
+
+FUTURES_CT_VAL: dict[str, float] = {
+    "BTC/USDT": 0.001, "ETH/USDT": 0.01, "SOL/USDT": 1.0,
+    "BNB/USDT": 0.01, "XRP/USDT": 10.0, "DOGE/USDT": 100.0,
+}
+
+FUTURES_MMR: dict[str, float] = {
+    "BTC/USDT": 0.004, "ETH/USDT": 0.004, "SOL/USDT": 0.005,
+    "BNB/USDT": 0.005, "XRP/USDT": 0.006, "DOGE/USDT": 0.008,
+}
+
+
+def get_asset_tier(symbol: str) -> str:
+    """Return "major", "mid", or "alt" for a canonical symbol."""
+    base = to_canonical(symbol).split("/")[0]
+    if base in MAJOR_BASES:
+        return "major"
+    if base in MID_CAP_BASES:
+        return "mid"
+    return "alt"
+
+
+def get_max_leverage(symbol: str, is_live: bool, cfg) -> int:
+    """Return the per-asset-tier maximum leverage from config."""
+    risk = cfg.risk
+    tier = get_asset_tier(symbol)
+    if is_live:
+        account_cap = risk.max_futures_leverage_live
+        if tier == "major":
+            return min(risk.max_leverage_major_live, account_cap)
+        if tier == "mid":
+            return min(risk.max_leverage_mid_live, account_cap)
+        return min(risk.max_leverage_alt_live, account_cap)
+    else:
+        account_cap = risk.max_futures_leverage_demo
+        if tier == "major":
+            return min(risk.max_leverage_major_demo, account_cap)
+        if tier == "mid":
+            return min(risk.max_leverage_mid_demo, account_cap)
+        return min(risk.max_leverage_alt_demo, account_cap)
+
+
+def get_ct_val(symbol: str) -> float:
+    """Return contract value (coins per 1 contract) for a symbol. Defaults to 1.0."""
+    return FUTURES_CT_VAL.get(to_canonical(symbol), 1.0)
+
+
+def notional_to_contracts(notional_usdt: float, price: float, symbol: str) -> float:
+    """Convert USDT notional to contract count for Bitget USDT-M futures."""
+    ct_val = get_ct_val(symbol)
+    if price <= 0:
+        return 0.0
+    coins = notional_usdt / price
+    return coins / ct_val
+
+
+def contracts_to_notional(contracts: float, price: float, symbol: str) -> float:
+    """Convert contract count to USDT notional."""
+    ct_val = get_ct_val(symbol)
+    return abs(contracts) * ct_val * price
+
+
+def calc_liquidation_price(
+    entry_price: float, direction: str, leverage: int, symbol: str
+) -> float | None:
+    """Estimate liquidation price (isolated margin, USDT-M).
+
+    Returns None if leverage <= 1 (spot-equivalent, no liquidation).
+    """
+    if leverage <= 1 or entry_price <= 0:
+        return None
+    mmr = FUTURES_MMR.get(to_canonical(symbol), 0.005)
+    if direction in ("long", "buy"):
+        return entry_price * (1.0 - 1.0 / leverage + mmr)
+    else:
+        return entry_price * (1.0 + 1.0 / leverage - mmr)
+
+
+def futures_instruments_from_config(cfg) -> list[InstrumentId]:
+    """Return InstrumentId list for configured futures symbols."""
+    exchange = cfg.market_data.ccxt_exchange or "binance"
+    symbols = getattr(cfg.exchange, "futures_symbols", []) or []
+    return [InstrumentId.from_parts(exchange, sym, MARKET_PERP) for sym in symbols]
