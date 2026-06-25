@@ -361,6 +361,18 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
     on position size caps.
 
     Scale: 0-5% DD → 1.0, 5-10% DD → linear from 1.0 to 0.5, 10-20% → 0.5 to 0.0
+
+    Data source by mode (this is the bug fix — see below):
+      - Exchange-backed modes (okx_demo / *_demo / live): use the
+        `exchange_account` snapshot rows, whose total_value_usdt is the REAL
+        account equity. The per-mode rows (e.g. okx_demo) store position
+        *notional* (Σ qty×price), NOT equity — so closing a winning position
+        collapses notional (272→16) and the old code misread that as a 94%
+        "drawdown", zeroing the size cap and rejecting every demo proposal
+        while the real account sat untouched at ~$88k. Drawdown must track
+        equity, not how much notional happens to be open right now.
+      - paper_internal: no exchange account exists; its mark-to-market
+        total_value_usdt IS its equity, so keep the existing path.
     """
     try:
         from aletheia.storage.repositories import list_portfolio_snapshots
@@ -368,11 +380,16 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         if len(snapshots) < 3:
             return 1.0
 
-        mode_snapshots = [
-            s for s in snapshots
-            if s.get("execution_mode") == execution_mode
-            or (execution_mode == "paper_internal" and s.get("execution_mode") in ("paper_internal", "bitget_demo"))
-        ]
+        if execution_mode == "paper_internal":
+            mode_snapshots = [
+                s for s in snapshots
+                if s.get("execution_mode") in ("paper_internal", "bitget_demo")
+            ]
+        else:
+            # Real account equity lives in the exchange_account rows.
+            mode_snapshots = [
+                s for s in snapshots if s.get("execution_mode") == "exchange_account"
+            ]
         if len(mode_snapshots) < 3:
             return 1.0
 

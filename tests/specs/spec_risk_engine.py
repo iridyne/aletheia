@@ -268,6 +268,39 @@ def test_drawdown_scale_piecewise(monkeypatch):
     assert _portfolio_drawdown_scale("paper_internal") == 0.0
 
 
+@spec_claim(
+    SpecClaim("RE-B05a", "risk_engine_contract", "§2 check #5 drawdown source", "L2b",
+              "exchange-backed drawdown uses exchange_account equity, not per-mode notional"),
+)
+def test_drawdown_scale_uses_real_equity_not_notional(monkeypatch):
+    """Regression: closing a winning position collapses per-mode position NOTIONAL
+    (e.g. okx_demo total_value_usdt 272→16) but the real account equity is flat.
+    The old code read the okx_demo notional rows and computed a bogus ~94% drawdown
+    → scale 0 → $0 cap → every demo proposal rejected. Drawdown must come from the
+    exchange_account equity rows, which stayed ~88k the whole time."""
+    from aletheia.risk.engine import _portfolio_drawdown_scale
+
+    def _mock_snapshots(limit=50):
+        # Per-mode okx_demo rows: notional cratered 272→16 (winning trades closed).
+        # exchange_account rows: real equity flat at ~88,400 (no drawdown at all).
+        return [
+            {"total_value_usdt": 272.0, "execution_mode": "okx_demo"},
+            {"total_value_usdt": 150.0, "execution_mode": "okx_demo"},
+            {"total_value_usdt": 16.5, "execution_mode": "okx_demo"},
+            {"total_value_usdt": 88400.0, "execution_mode": "exchange_account"},
+            {"total_value_usdt": 88460.0, "execution_mode": "exchange_account"},
+            {"total_value_usdt": 88412.0, "execution_mode": "exchange_account"},
+        ]
+
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.list_portfolio_snapshots", _mock_snapshots
+    )
+
+    # okx_demo must NOT be throttled — the real account never drew down.
+    # (Old buggy behavior would have returned 0.0 from the 272→16 notional series.)
+    assert _portfolio_drawdown_scale("okx_demo") == 1.0
+
+
 # ---------------------------------------------------------------------------
 # Shared DB fixture helper (mirrors test_risk_kill_switch_blocks pattern)
 # ---------------------------------------------------------------------------
