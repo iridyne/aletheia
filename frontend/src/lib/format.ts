@@ -156,13 +156,34 @@ export function humanizeBool(value: unknown): string {
  * (local), e.g. "Jun 14, 09:32". Returns dash for null/invalid.
  * Pass {dateOnly:true} for "MMM D, YYYY".
  */
+/**
+ * Normalize a backend ISO timestamp so JS Date parses it as UTC.
+ *
+ * Backend timestamps come in two shapes: tz-aware (`...+00:00` or `...Z`) and
+ * naive (`...T14:03:25`, implicitly UTC). Only the naive form needs a `Z`
+ * appended. The historical bug: appending `Z` to an already-`+00:00` string
+ * produces `...+00:00Z`, which Date parses to NaN — silently dropping every
+ * tz-aware point (the Equity-Curve "no data" bug). Mirror the guard every other
+ * caller uses: `endsWith('Z') || includes('+')`.
+ */
+export function normalizeIso(iso: string): string {
+  return iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`
+}
+
+/** Parse a backend ISO timestamp to epoch SECONDS, or null if unparseable. */
+export function isoToEpochSeconds(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const ms = new Date(normalizeIso(iso)).getTime()
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000)
+}
+
 export function fmtTimestamp(
   iso: string | null | undefined,
   opts?: { dash?: string; dateOnly?: boolean },
 ): string {
   const dash = opts?.dash ?? '—'
   if (!iso) return dash
-  const norm = iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`
+  const norm = normalizeIso(iso)
   const d = new Date(norm)
   if (Number.isNaN(d.getTime())) return dash
   if (opts?.dateOnly) {
