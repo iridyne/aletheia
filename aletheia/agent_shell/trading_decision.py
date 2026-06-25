@@ -23,6 +23,16 @@ from typing import Any
 
 logger = logging.getLogger("aletheia.agent_shell.trading_decision")
 
+# Max chars of the human-readable thesis stored in agent_rationale. The rationale
+# is "<thesis>\n---\n<decision_meta JSON>"; ONLY the thesis is length-capped here.
+# The JSON half must NEVER be truncated — a sliced JSON is unparseable and both
+# the Proposals drawer (parseDecisionMeta) and analytics/reasoning_feedback.py
+# silently lose all structured fields. The historical bug applied a second
+# `[:500]` cap to the *combined* string, guillotining the ~1.1KB JSON mid-token.
+# trade_proposals.agent_rationale is TEXT (no DB limit), so a generous thesis cap
+# plus a whole JSON blob is safe. 600 fits every observed thesis (~60-400 chars).
+_MAX_RATIONALE_TEXT = 600
+
 
 class _DummySchema:
     """Shim so llm_structured() can call .model_json_schema() on a plain dict schema."""
@@ -221,11 +231,13 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         "opposing": decision.opposing_signals[:5],
         "guards": guard_summary,
     }
-    rationale = (
-        f"{decision.reasoning[:200]}\n"
-        f"---\n"
-        f"{json.dumps(decision_meta)}"
-    )
+    # Cap ONLY the human thesis; append the full JSON AFTER capping so the JSON
+    # is always whole. Do NOT re-truncate the combined string (the old `[:500]`
+    # bug sliced the JSON into unparseable garbage — see _MAX_RATIONALE_TEXT).
+    thesis = decision.reasoning or ""
+    if len(thesis) > _MAX_RATIONALE_TEXT:
+        thesis = thesis[:_MAX_RATIONALE_TEXT].rstrip() + "…"
+    rationale = f"{thesis}\n---\n{json.dumps(decision_meta)}"
 
     return create_paper_proposal(
         symbol=decision.symbol,
@@ -237,7 +249,7 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         execution_mode=execution_mode,
         strategy_id=None,
         opportunity_id=None,
-        agent_rationale=rationale[:500],
+        agent_rationale=rationale,
     )
 
 

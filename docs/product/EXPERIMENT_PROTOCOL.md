@@ -309,13 +309,33 @@ UTC(~22h)** 产生 **144 笔 `$0 cap` 误拒**。这意味着这 22h 内 PI 想�
 risk_decisions 15:22:22 / 15:24:11 / 15:27:56 连续 approved=1 空 violations
 (此前 15:18:16 仍是 `...>0.0` 误拒)。全 risk 测试 56 passed。
 
+### 例外 #5 — 2026-06-25:proposal rationale 双重截断刈断 meta JSON(冻结区 trading_decision.py)
+
+**触发**:用户在 proposal detail 看到 rationale "没搞全"(thesis 半句被切)+ "夹杂弱代码"(原始 `---{"conviction":64,...` JSON 串直接显示)。
+
+**根因(亲核)**:`agent_shell/trading_decision.py` 用脆弱模式拼 rationale:
+`f"{reasoning[:200]}\n---\n{json.dumps(meta)}"` 再 `[:500]`。两层截断:reasoning 砍 200(thesis 断句)+ 整串砍 500,而 meta JSON ~1.1KB → `[:500]` 把 JSON 刈成非法串。实测 5/5 条 `agent_rationale` 恒=500 长、JSON 全部 `Unterminated string`。前端 `Proposals.tsx:parseDecisionMeta` 的 `JSON.parse` 必失败 → 落 catch 把整条原始串(含碎 JSON)当 text 显示 = "弱代码外泄"。
+
+**授权**:用户 2026-06-25 授权"按计划完整执行"(前端 + 后端冻结文件)。
+
+**修复(commit 待填)**:
+- 后端 trading_decision.py:只截 human thesis(`_MAX_RATIONALE_TEXT=600` 常量,带 `…`),**删除整串 `[:500]`** → JSON 永远完整可解析。`agent_rationale` 列是 TEXT 无限制。
+- 前端 Proposals.tsx:`parseDecisionMeta` catch 分支返回分隔符前的干净 text(非整条原始串);`ProposalRationaleDetail`/`ProposalRationale` no-meta 分支渲染 `text` 而非 raw rationale → 坏值也永不向人倒 JSON(防御纵深)。
+- 回归测试 `tests/test_proposal_rationale.py`(3 条):JSON 必可解析 / thesis 单独截断非整串 500 / 短 thesis 不动。
+
+**判决影响(重要——PI 输入信号变化)**:`agent_rationale` 的 meta JSON 会被 `analytics/reasoning_feedback.py:82-89` 解析出 `scanner_family` → 经 `trading_context.py:317-319` 喂回 PI prompt。修复**前** JSON 全损坏 → reasoning_feedback 一直提取失败拿到 "unknown"(等于此信号对 PI 一直缺失)。修复**后** JSON 完整 → reasoning_feedback 首次成功向 PI 提供真实 scanner_family。**这是一个 PI 此前从未收到的新输入信号**,可能微改决策。判决时:**6-25(本修复生效)起,PI 上下文比此前多了 reasoning_feedback 的 scanner_family 维度**;此前 proposal rationale 损坏不影响已落决策(rationale 是决策后产物),但污染了 reasoning_feedback=unknown。视作 PI 输入口径的一次小幅增强,在阶段评估时区分修复前/后。
+
+**生效验证**:见 commit 后的真实 proposal `json.loads(rationale.split('---',1)[1])` 成功 + 前端抽屉无裸 JSON;`tests/test_proposal_rationale.py` 3 passed。
+
 ---
 
-> **四次例外的共同模式**:都是"修复 A 暴露出 B"或"语义混淆"的连锁——contractSize
+> **五次例外的共同模式**:都是"修复 A 暴露出 B"或"语义/格式混淆"的连锁——contractSize
 > bug(650f608)→ 清理错误仓位→损失触发日损(例外#3);profit-loop context bug
 > (例外#1)→ PI 恢复下单→暴露 signal 重复(例外#2);例外 #3/#4 同属 risk/engine.py
 > 的"用错资金基数/用错净值口径"家族(日损用 live cap;回撤用持仓 notional)。
 > **notional vs equity 混淆**两次咬人(余额读错→例外#1;回撤口径→例外#4)。
+> 例外#5 是"human text + machine JSON 拼成单串再截断"的格式脆弱——根治=消除该模式本身。
 > Round 1 起点统一保留 6/22,**所有修复生效前的数据均不计入策略评估**;特别地,
 > 例外#4 的 144 笔 infra 误拒窗口(6-24 17:25→6-25 15:18)不计入"PI 是否愿意交易"
-> 的样本。6-25 15:22 起为 demo 开仓不受已知 infra bug 影响的干净观察窗口。
+> 的样本;例外#5 修复使 PI 自 6-25 起多收到 reasoning_feedback.scanner_family 信号。
+> 6-25 15:22 起为 demo 开仓不受已知 infra bug 影响的干净观察窗口。

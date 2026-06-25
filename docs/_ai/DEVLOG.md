@@ -1,5 +1,38 @@
 # Development Log
 
+## 2026-06-25 — proposal rationale 双重截断刈断 meta JSON(没搞全 + 弱代码外泄)
+
+### 现象
+用户在 proposal detail 看 rationale "没搞全"(thesis 半句断)+ "夹杂弱代码"
+(原始 `---{"conviction":64,...` JSON 串直接显示给人)。
+
+### 真因(亲核)
+`agent_shell/trading_decision.py` 拼 rationale = `f"{reasoning[:200]}\n---\n{json.dumps(meta)}"`
+再 `[:500]`。两层截断:reasoning 砍 200(thesis 断句)+ 整串砍 500,而 meta JSON
+~1.1KB → `[:500]` 把 JSON 刈成非法串。实测 5/5 条 agent_rationale 恒=500、JSON 全
+`Unterminated string`。前端 parseDecisionMeta 的 JSON.parse 必失败 → catch 把整条
+原始串(含碎 JSON)当 text 显示 = 弱代码外泄。两症状同一根因。
+
+### 修复(冻结例外 #5,用户授权,双层防御)
+- 后端 trading_decision.py:`_MAX_RATIONALE_TEXT=600` 只截 human thesis(带 `…`),
+  **删整串 `[:500]`** → JSON 永远完整。agent_rationale 列是 TEXT 无限制。
+- 前端 Proposals.tsx:parseDecisionMeta catch 返回分隔符前干净 text;
+  ProposalRationaleDetail/ProposalRationale no-meta 分支渲染 text 非 raw → 坏值
+  也永不向人倒 JSON(防御纵深,保证不复发)。
+- `tests/test_proposal_rationale.py`(3):JSON 必可解析 / thesis 单独截断非整串 500 /
+  短 thesis 不动。
+
+### 判决影响
+记 EXPERIMENT_PROTOCOL 例外 #5。**PI 输入信号变化**:agent_rationale 的 meta JSON
+被 reasoning_feedback.py 解析出 scanner_family → 喂回 PI prompt。修复前 JSON 全损坏
+→ reasoning_feedback 一直 "unknown";修复后首次成功提供真实 scanner_family = PI 多
+一个此前缺失的输入维度,阶段评估区分修复前/后。
+
+### 根治理念
+根除"human text + machine JSON 拼单串再截断"这个脆弱模式本身(任何 char cap 都会
+刈 JSON),而非调大数字。后端保证 JSON 不被切 + 前端保证坏值不外泄 = belt-and-suspenders。
+全 risk/agent_shell 冻结链 128 测试通过。
+
 ## 2026-06-25 — 回撤刹车误用持仓 notional 当 equity → $0 cap 锁死 demo 开仓 (70a7b64)
 
 ### 现象

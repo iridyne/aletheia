@@ -31,7 +31,10 @@ function parseDecisionMeta(rationale: string | null): { text: string; meta: Deci
     const meta = JSON.parse(rationale.slice(sep + 5)) as DecisionMeta
     return { text, meta }
   } catch {
-    return { text: rationale, meta: null }
+    // Defense in depth: a malformed/truncated meta JSON must NEVER leak the raw
+    // "---{...broken json...}" tail to the user. Show only the clean thesis
+    // (the part before the separator), drop the unparseable remainder.
+    return { text, meta: null }
   }
 }
 
@@ -316,7 +319,7 @@ function ProposalRationale({ rationale }: { rationale: string | null }) {
       ) : (
         <>
           <span className="proposal-rationale-label">WHY</span>
-          <span>{rationale.length > 220 ? rationale.slice(0, 220) + '…' : rationale}</span>
+          <span>{text.length > 220 ? text.slice(0, 220) + '…' : text}</span>
         </>
       )}
     </div>
@@ -326,7 +329,10 @@ function ProposalRationale({ rationale }: { rationale: string | null }) {
 function ProposalRationaleDetail({ rationale }: { rationale: string | null }) {
   const { text, meta } = useMemo(() => parseDecisionMeta(rationale), [rationale])
   if (!rationale) return <p className="feed-thesis">No rationale provided.</p>
-  if (!meta) return <p className="feed-thesis">{rationale}</p>
+  // Use the parsed `text` (clean thesis), never the raw rationale — otherwise a
+  // malformed meta would render the "---{json}" tail verbatim. parseDecisionMeta
+  // guarantees text = rationale when there's no separator, else the clean prefix.
+  if (!meta) return <p className="feed-thesis">{text || 'No rationale provided.'}</p>
   return (
     <div className="decision-detail">
       <ConvictionMeter conviction={meta.conviction} debateRan={meta.debate_ran}
