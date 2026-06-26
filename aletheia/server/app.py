@@ -440,8 +440,9 @@ async def _tunnel_auth_guard(request, call_next):
             from aletheia.config.secrets import get_secret
             expected = get_secret("tunnel_api_token")
             if expected:
+                import hmac as _hmac
                 token = request.headers.get("x-aletheia-token", "")
-                if token != expected:
+                if not _hmac.compare_digest(token, expected):
                     from fastapi.responses import JSONResponse
                     return JSONResponse(
                         {"detail": "Unauthorized: X-Aletheia-Token required when tunnel is active"},

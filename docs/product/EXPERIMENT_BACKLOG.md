@@ -414,6 +414,21 @@ Operator loop 自调节:
 
 ---
 
+### P6 — Agent 自主选择 Spot / Perp
+
+**诊断**: `trading_decision.py:244` 硬编码 `market_type="usdt_futures"`，OKXClient `defaultType: "swap"` 也固定为永续合约。系统架构上已支持 spot + usdt_futures 两条路径（config `enabled_markets`、risk engine 分流检查、Bitget client spot 分支均就绪），但决策层只输出一种。Agent 无法根据场景选择现货（无爆仓风险、适合长持）或永续（可做空、适合短线）。
+
+**具体改动**:
+- `trading_decision.py`: PI 决策结构体新增 `market_type` 字段,LLM 输出 spot/usdt_futures
+- OKXClient: 增加 spot 下单能力(CCXT `defaultType` per-order 或 spot client 分支)
+- Position reconciler: adopt 时根据交易所 instType 动态设 market_type(非硬编码)
+- 预估工作量: 中(决策层 + 执行层 + reconciler,三处联动)
+- 影响: 直接改变 AI 决策输出 → 消耗轮间改动配额
+
+**前置条件**: Round 1 结束解冻后方可实施。
+
+---
+
 ## 已消耗
 
 | 轮次 | 使用的改动 | 来源 |

@@ -402,7 +402,7 @@ def _critical_risk_violations(decisions: list[dict]) -> int:
         # Fall back to allowed_execution_mode for legacy rows written before the
         # proposal_execution_mode column existed.
         exec_mode = decision.get("proposal_execution_mode") or decision.get("allowed_execution_mode") or ""
-        if not approved and "live" in exec_mode:
+        if not approved and exec_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited"):
             count += 1
             continue
         for entry in parsed:

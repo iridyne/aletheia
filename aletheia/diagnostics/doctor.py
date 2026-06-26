@@ -471,6 +471,18 @@ def _probe_profit_loop(report: Report) -> None:
     # The stall signature: opportunities are flowing (< 60min) but proposals are
     # stale (> 6h) or absent. This is the decoupling that looks alive but isn't.
     PROPOSAL_STALL_MIN = 360  # 6h — well beyond the 5min paper_trader cadence
+    # Day-0 grace: if no proposals have EVER been created AND the oldest
+    # opportunity is itself < 6h old, the pipeline simply hasn't had time to
+    # complete its first cycle — report info, not warn (avoids false STALLED).
+    if prop_age is None and opp_age < 60:
+        oldest_opp = _age_minutes(db.execute(
+            "SELECT created_at FROM opportunities ORDER BY created_at ASC LIMIT 1"
+        ).fetchone()[0]) if db.execute("SELECT 1 FROM opportunities LIMIT 1").fetchone() else 0
+        if oldest_opp is not None and oldest_opp < PROPOSAL_STALL_MIN:
+            report.add("loop.profit", "info",
+                       f"pipeline warming up — opportunities flowing ({_fmt_age(opp_age)}) "
+                       f"but no proposals yet (first opp {_fmt_age(oldest_opp)} ago)")
+            return
     if opp_age < 60 and (prop_age is None or prop_age > PROPOSAL_STALL_MIN):
         # Inspect recent PI-decision action mix to attribute the stall.
         attribution = ""

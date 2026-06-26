@@ -161,8 +161,8 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             if candidate.get("opportunity_id"):
                 try:
                     update_opportunity(candidate["opportunity_id"], status="reviewed")
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.debug("opportunity reviewed-mark failed: %s", _e)
             signals_written += 1
             try:
                 from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
