@@ -1975,11 +1975,117 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   border-top: 1px dashed var(--border-2); font-style: italic;
 }
 
-/* ---------- Risk & Controls grid ---------- */
+/* ---------- Risk & Controls ---------- */
+/* align-items:start so a tall card (exposure) never stretches its shorter peer. */
 .risk-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);
+  align-items: start; margin-bottom: var(--space-3);
 }
 @media (max-width: 900px) { .risk-grid { grid-template-columns: 1fr; } }
+
+/* --- Zone 1: master-caution console band (the page's one bold element) --- */
+.risk-console {
+  position: relative; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  box-shadow: var(--shadow); margin-bottom: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+/* left accent rail — color follows the derived master state */
+.risk-console::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--rc-accent, var(--faint));
+}
+.risk-console-green  { --rc-accent: var(--green); }
+.risk-console-yellow { --rc-accent: var(--yellow); }
+.risk-console-red    { --rc-accent: var(--red); }
+.risk-console-blue   { --rc-accent: var(--blue); }
+.risk-console-muted  { --rc-accent: var(--faint); }
+
+.risk-console-top { display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap; }
+.risk-console-state { display: flex; align-items: center; gap: var(--space-3); flex: 1; min-width: 240px; }
+.risk-console-state-text { min-width: 0; }
+.risk-console-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  background: var(--rc-accent); box-shadow: 0 0 10px var(--rc-accent);
+}
+/* only the all-clear state breathes; alarm states hold steady */
+.risk-console-green .risk-console-dot { animation: pulse 2.6s ease infinite; }
+.risk-console-word {
+  font-family: var(--display); font-size: 1.5rem; font-weight: 700;
+  letter-spacing: 0.05em; line-height: 1.05; color: var(--rc-accent);
+}
+.risk-console-detail { font-size: 0.78rem; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+
+.risk-console-levers { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.risk-lever {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); min-width: 168px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm);
+}
+.risk-lever-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.risk-lever-label {
+  font-size: 0.64rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--muted);
+}
+.risk-lever > button { width: 100%; }
+.risk-lever-actions { display: flex; gap: var(--space-2); }
+.risk-lever-actions button { flex: 1; }
+
+.risk-console-meta {
+  display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5);
+  padding-top: var(--space-3); border-top: 1px solid var(--border);
+}
+.risk-console-meta-item { display: inline-flex; align-items: baseline; gap: var(--space-2); }
+.risk-console-meta-label {
+  font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted);
+}
+.risk-console-meta-value { font-family: var(--mono); font-size: 0.74rem; color: var(--text); }
+
+/* --- Zone 2: live exposure as per-symbol magnitude bars --- */
+.exposure-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.exposure-row {
+  display: grid; grid-template-columns: minmax(64px, auto) 1fr minmax(84px, auto);
+  align-items: center; gap: var(--space-3);
+}
+.exposure-sym { font-size: 0.78rem; color: var(--text); white-space: nowrap; }
+.exposure-bar-track { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.exposure-bar { display: block; height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+.exposure-bar.pos { background: var(--accent-dim); }
+.exposure-bar.neg { background: var(--red); }
+.exposure-val { font-size: 0.78rem; text-align: right; white-space: nowrap; }
+.exposure-total {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
+  margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--border);
+}
+.exposure-total-label {
+  font-size: 0.64rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--muted);
+}
+.exposure-total-val { font-size: 0.82rem; color: var(--text); }
+
+/* --- Zone 3: configured limits, grouped + live/demo paired --- */
+.limits-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: var(--space-3) var(--space-6); }
+.limits-group { min-width: 0; }
+.limits-group-title {
+  font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--accent); margin-bottom: var(--space-1);
+  padding-bottom: var(--space-1); border-bottom: 1px solid var(--border);
+}
+.limit-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-1) 0; font-size: 0.8rem; border-bottom: 1px solid var(--border);
+}
+.limit-row:last-child { border-bottom: none; }
+.limit-label { color: var(--muted); min-width: 0; }
+.limit-single { font-family: var(--mono); color: var(--text); white-space: nowrap; }
+.limit-pair { display: inline-flex; gap: var(--space-3); flex-shrink: 0; }
+.limit-seg { display: inline-flex; align-items: baseline; gap: 4px; }
+.limit-seg-tag { font-size: 0.56rem; font-weight: 700; letter-spacing: 0.08em; color: var(--faint); }
+/* the live cap is the tighter, real-money one — tag it so the asymmetry reads at a glance */
+.limit-seg.live .limit-seg-tag { color: var(--yellow); }
+.limit-seg-val { font-family: var(--mono); color: var(--text); white-space: nowrap; }
 
 /* ---------- Reports — strategy metrics ---------- */
 .strategy-metrics-row {
@@ -2090,11 +2196,15 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .heartbeat { animation: pulse 2s ease infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-/* Destructive button (kill switch engage, etc.) — danger affordance on a plain button. */
+/* Destructive button (kill switch engage, etc.) — danger affordance on a plain button.
+   Must override the base `button { background: var(--accent) }` (cyan) AND `border: none`,
+   or the rest state reads as a cyan box with red text. */
 button.danger, .btn.danger {
-  border-color: rgba(255,93,108,0.40); color: var(--red);
+  background: rgba(255,93,108,0.10); border: 1px solid rgba(255,93,108,0.40); color: var(--red);
 }
-button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
+button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
+  background: rgba(255,93,108,0.18); filter: none;
+}
 /* Slightly larger status badge for the kill-switch headline state. */
 .badge-lg { font-size: 0.85rem; padding: var(--space-1) var(--space-3); }
 
@@ -2110,6 +2220,11 @@ button.danger:hover, .btn.danger:hover { background: rgba(255,93,108,0.12); }
 .skeleton-bar:nth-child(1) { width: 45%; }
 .skeleton-bar:nth-child(2) { width: 70%; }
 .skeleton-bar:nth-child(3) { width: 55%; }
+/* Inline skeleton (single-line, e.g. next to a label while loading) */
+.skeleton-bar-inline {
+  display: inline-block; width: 60px; height: 12px; border-radius: var(--r-sm);
+  background: var(--surface-2); animation: shimmer 1.4s ease infinite; vertical-align: middle;
+}
 @keyframes shimmer { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 /* ---------- Tick flash (price change pulse) ---------- */
