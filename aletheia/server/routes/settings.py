@@ -1171,3 +1171,47 @@ async def update_event_trigger_config(req: EventTriggerConfigUpdate):
                  "after": cfg.event_triggers.model_dump(mode="json"),
                  "message": f"Event trigger config updated: {list(updates.keys())}"})
     return {"updated": updates, "event_triggers": cfg.event_triggers.model_dump(mode="json")}
+
+
+# ---------------------------------------------------------------------------
+# News feeds config
+# ---------------------------------------------------------------------------
+
+class NewsFeedUpdate(SettingsRequest):
+    name: str
+    url: str
+    source: str
+    enabled: bool
+
+
+class NewsConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
+    fetch_interval_minutes: Optional[int] = None
+    retention_days: Optional[int] = None
+    feeds: Optional[list[NewsFeedUpdate]] = None
+
+
+@router.post("/news")
+async def update_news_config(req: NewsConfigUpdate):
+    cfg = load_config()
+    old = cfg.news.model_dump(mode="json")
+    if req.enabled is not None:
+        cfg.news.enabled = req.enabled
+    if req.fetch_interval_minutes is not None:
+        if not (5 <= req.fetch_interval_minutes <= 120):
+            raise HTTPException(400, "fetch_interval_minutes must be 5-120")
+        cfg.news.fetch_interval_minutes = req.fetch_interval_minutes
+    if req.retention_days is not None:
+        if not (1 <= req.retention_days <= 90):
+            raise HTTPException(400, "retention_days must be 1-90")
+        cfg.news.retention_days = req.retention_days
+    if req.feeds is not None:
+        from aletheia.config.schema import NewsFeedEntry
+        cfg.news.feeds = [NewsFeedEntry(**f.model_dump()) for f in req.feeds]
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "news_config_changed",
+                 "entity_type": "news_config", "before": old,
+                 "after": cfg.news.model_dump(mode="json"),
+                 "message": "News config updated"})
+    return {"news": cfg.news.model_dump(mode="json")}

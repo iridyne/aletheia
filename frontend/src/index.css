@@ -620,6 +620,11 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .news-prose { line-height: 1.6; }
+.news-feeds-grid { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-3); }
+.news-feed-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-1) 0; }
+.news-feed-info { display: flex; flex-direction: column; }
+.news-feed-name { font-size: 0.82rem; }
+.news-feed-source { font-family: var(--mono); }
 .news-add-form { display: flex; flex-direction: column; gap: var(--space-2); }
 .news-add-form input, .news-add-form select, .news-add-form textarea {
   width: 100%; font-size: 0.82rem; font-family: var(--mono);

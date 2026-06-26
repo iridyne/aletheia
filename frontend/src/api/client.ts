@@ -538,6 +538,7 @@ export const api = {
   analyzeNews: (id: string) => post<any>(`/news/${id}/analyze`),
   createNews: (body: { title: string; source?: string; summary?: string; symbols_mentioned?: string[]; sentiment?: string }) =>
     post<any>('/news', body),
+  updateNewsConfig: (body: any) => post<any>('/settings/news', body),
 
   // Command Center
   sendCommand: (input: string, context?: Record<string, string>) =>

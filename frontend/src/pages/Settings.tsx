@@ -1997,6 +1997,10 @@ function RuntimeSystemTab({ settings, qc, onDirty }: any) {
         </Collapsible>
       </Section>
 
+      <Section title="News Feeds" description="Automated RSS news ingestion. Feeds are fetched periodically and displayed on the News Intelligence page.">
+        <NewsFeedsCard settings={settings} qc={qc} />
+      </Section>
+
       <Section title="Data Retention" description="How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.">
         <RetentionCard settings={settings} qc={qc} />
       </Section>
@@ -2284,6 +2288,70 @@ function HealthCard({ settings, qc }: any) {
       <NumGrid fields={HEALTH_FIELDS} vals={vals} set={set} />
       <div className="settings-action-row">
         <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
+      </div>
+      <SaveMsg msg={msg} />
+    </div>
+  )
+}
+
+// ─── News Feeds config ───
+
+function NewsFeedsCard({ settings, qc }: any) {
+  const news = settings?.news as any
+  const [enabled, setEnabled] = useState(true)
+  const [interval, setInterval_] = useState(15)
+  const [feeds, setFeeds] = useState<any[]>([])
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!news) return
+    setEnabled(news.enabled ?? true)
+    setInterval_(news.fetch_interval_minutes ?? 15)
+    setFeeds(news.feeds ?? [])
+  }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateNewsConfig({
+      enabled,
+      fetch_interval_minutes: interval,
+      feeds: feeds.map((f: any) => ({ name: f.name, url: f.url, source: f.source, enabled: f.enabled })),
+    }),
+    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const toggleFeed = (idx: number) => {
+    setFeeds(prev => prev.map((f, i) => i === idx ? { ...f, enabled: !f.enabled } : f))
+    setMsg(null)
+  }
+
+  if (!news) return null
+
+  return (
+    <div className="card mb-0">
+      <Row label="News ingestion" hint="Master switch for automatic RSS feed collection.">
+        <Toggle checked={enabled} onChange={setEnabled} />
+      </Row>
+      <Row label="Fetch interval" hint="Minutes between feed checks (5–120).">
+        <input type="number" min={5} max={120} step={5} value={interval}
+          onChange={e => { setInterval_(Number(e.target.value)); setMsg(null) }}
+          className="mono" style={{ width: '70px' }}
+        />
+      </Row>
+      <div className="section-label mt-4">Feeds</div>
+      <div className="news-feeds-grid">
+        {feeds.map((f: any, i: number) => (
+          <div key={f.url} className="news-feed-row">
+            <Toggle checked={f.enabled} onChange={() => toggleFeed(i)} />
+            <div className="news-feed-info">
+              <span className="news-feed-name">{f.name}</span>
+              <span className="news-feed-source text-muted text-xs">{f.source}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="settings-action-row">
+        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save news config'}</button>
       </div>
       <SaveMsg msg={msg} />
     </div>
