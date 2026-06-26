@@ -1668,11 +1668,6 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: flex; justify-content: space-between; align-items: center;
   font-size: 0.75rem; padding: 3px 0;
 }
-.broker-toggle {
-  all: unset; cursor: pointer; font-size: 0.72rem; color: var(--muted);
-  padding: 2px 0; width: 100%; text-align: left;
-}
-.broker-toggle:hover { color: var(--text); }
 .broker-name { color: var(--muted); }
 .broker-equity { font-family: var(--mono); color: var(--text); }
 .pnl-tiles {

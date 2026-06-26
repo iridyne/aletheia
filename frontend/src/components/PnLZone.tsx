@@ -64,15 +64,11 @@ interface UTAAccount {
   unrealized_pnl: number
 }
 
-function BrokerBreakdown({ accounts }: { accounts: UTAAccount[] }) {
-  const [open, setOpen] = useState(false)
-  if (accounts.length <= 1) return null
+function BrokerBreakdown({ accounts, open }: { accounts: UTAAccount[]; open: boolean }) {
+  if (!open || accounts.length <= 1) return null
   return (
     <div className="broker-breakdown">
-      <button className="broker-toggle" onClick={() => setOpen(o => !o)}>
-        {accounts.length} accounts {open ? '▾' : '▸'}
-      </button>
-      {open && accounts.map(a => (
+      {accounts.map(a => (
         <div key={a.broker_id} className="broker-row">
           <span className="broker-name">{a.display_name}</span>
           <span className="broker-equity">{fmtNum(a.equity_usdt)} USDT</span>
@@ -89,6 +85,7 @@ export default function PnLZone() {
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000 })
   const [hovered, setHovered] = useState(false)
+  const [brokerOpen, setBrokerOpen] = useState(false)
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
 
   const exchangeMode = String((status as any)?.exchange_mode || 'demo')
@@ -138,8 +135,11 @@ export default function PnLZone() {
   return (
     <div className="pnl-zone">
       <div className="pnl-cluster">
-        {/* Hero — account value + pie + hover tooltip */}
-        <div className="card pnl-hero">
+        {/* Hero — account value + pie + hover tooltip; click toggles broker breakdown */}
+        <div
+          className={`card pnl-hero${utaAccounts.length > 1 ? ' clickable' : ''}`}
+          onClick={() => utaAccounts.length > 1 && setBrokerOpen(o => !o)}
+        >
           <div
             className="pnl-hero-inner"
             onMouseEnter={() => setHovered(true)}
@@ -159,7 +159,7 @@ export default function PnLZone() {
             )}
           </div>
           {hovered && breakdown.length > 0 && <AssetTooltip items={breakdown} />}
-          {utaAccounts.length > 1 && <BrokerBreakdown accounts={utaAccounts} />}
+          <BrokerBreakdown accounts={utaAccounts} open={brokerOpen} />
         </div>
 
         {/* Context tiles */}

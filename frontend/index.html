@@ -10,6 +10,10 @@
 </head>
 <body>
 <div id="root"></div>
+<script>
+// Unregister any legacy Service Worker (PWA removed — localhost dashboard needs no offline cache)
+if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(r => r.forEach(sw => sw.unregister()));
+</script>
 <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>
