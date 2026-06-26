@@ -25,10 +25,15 @@ export default function RiskControls() {
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
   const { data: boundaries } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
   const { data: killSwitch, isLoading: ksLoading } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
-  const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
+  const { data: portfolio, isLoading: portfolioLoading } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
   // Open positions supply the market type per symbol so the exposure list can render the
-  // spot/derivative convention (perp → no slash, spot → slash) via fmtSymbol.
-  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
+  // spot/derivative convention (perp → no slash, spot → slash) via fmtSymbol. We MUST wait
+  // for positions to load before rendering the exposure list — otherwise the dict is empty,
+  // fmtSymbol can't tell perp from spot, and the rule says "never guess": it falls back to
+  // the canonical (slashed) form, briefly displaying "ETH/USDT" for a USDT-perp until the
+  // positions query settles. That violates the immutable owner rule (CLAUDE.md 2026-06-26).
+  const { data: positions = [], isLoading: positionsLoading } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
+  const exposureLoading = portfolioLoading || positionsLoading
 
   const engageKill = useMutation({
     mutationFn: () => api.setKillSwitch(true, 'manual_engage'),
@@ -173,9 +178,11 @@ export default function RiskControls() {
         <Card>
           <CardHeader
             title="Live Exposure"
-            meta={exposure.length > 0 ? `${exposure.length} symbol${exposure.length > 1 ? 's' : ''} open` : undefined}
+            meta={!exposureLoading && exposure.length > 0 ? `${exposure.length} symbol${exposure.length > 1 ? 's' : ''} open` : undefined}
           />
-          {exposure.length > 0 ? (
+          {exposureLoading ? (
+            <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
+          ) : exposure.length > 0 ? (
             <>
               <ul className="exposure-list">
                 {exposure.map(([sym, val]) => (
