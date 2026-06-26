@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
@@ -8,59 +8,34 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import Tabs from '../components/Tabs'
 import PnLChart from '../charts/PnLChart'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, TableWrap } from '../components/ui'
-import { fmtNum, humanize, fmtTimestamp } from '../lib/format'
+import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
+import type { StatusTone } from '../components/ui'
+import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
 
 /**
- * Learning (WEBUI_PAGE_MAP.md — Dreaming + Knowledge Base + Reports MERGED).
+ * Learning — the memory & evolution surface (Evolve · §23.5/23.6, three sources MERGED).
  *
- * All three read knowledge_items, differing only in temporal framing:
- *   DREAMING — live "what was consolidated recently" (§23.5).
- *   KNOWLEDGE — searchable library, the §4 type taxonomy as sub-tabs (§23.6).
- *   REPORTS  — periodic daily/post-trade reviews + strategy performance metrics.
+ * The page answers three human questions, one per tab:
+ *   DREAMING  — "What did the AI just figure out?"  Each dreaming run is rendered as a
+ *               cognition session (tools it called, how long it thought, what it produced),
+ *               then this cycle's outputs grouped by kind. This narrative IS the signature.
+ *   KNOWLEDGE — "What does it know?"  The §4 type taxonomy as sub-tabs, searchable library.
+ *   REPORTS   — "Is it getting better?"  Portfolio PnL + a strategy-promotion board showing
+ *               each paper strategy's distance to its next lifecycle gate.
  *
- * CRITICAL honesty: the §4 knowledge-item taxonomy is preserved — each Knowledge sub-tab
- * queries its real item_type; no type laundering to fill a tab. Every empty/missing/
- * file-not-found state from the source pages is carried over verbatim.
+ * Honesty (CLAUDE.md): the §4 taxonomy is preserved — each Knowledge sub-tab queries its real
+ * item_type, no laundering. Every empty/missing/file-not-found state is carried verbatim.
+ * Enum values (confidence, severity, status) are humanized for display but never relabeled.
  */
-
-// ---- shared markdown content (read from /knowledge/{id}/content) ----
-function MarkdownContent({ itemId }: { itemId: string }) {
-  const { data, isLoading } = useQuery({
-    queryKey: ['knowledge-content', itemId],
-    queryFn: () => api.getKnowledgeContent(itemId),
-    enabled: !!itemId,
-  })
-  if (isLoading) return <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
-  if (!data || data.error) return <p className="text-muted text-sm">{data?.error === 'file_not_found' ? 'File not found on disk.' : 'No content available.'}</p>
-  if (!data.content) return <p className="text-muted text-sm">Empty file.</p>
-  return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
-}
-
-// Minimal markdown→HTML (escapes first, then a small subset). Carried from KnowledgeBase.
-function renderMarkdown(src: string): string {
-  return src
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-    .replace(/^---$/gm, '<hr/>')
-    .replace(/\n{2,}/g, '</p><p>')
-    .replace(/^(?!<[hluop])(.+)$/gm, '<p>$1</p>')
-}
 
 export default function Learning() {
   return (
     <div>
       <PageHeader
         title="Learning"
-        role="Evolve · the memory surface. Dreaming = what was just consolidated; Knowledge Base = the searchable library by type; Reports = periodic reviews and strategy performance."
+        role="Evolve · the memory surface. Dreaming = what was just consolidated; Knowledge Base = the searchable library by type; Reports = performance and strategy progress."
       />
+      <LearningPulse />
       <Tabs
         tabs={[
           { id: 'dreaming', label: 'Dreaming', render: () => <DreamingTab /> },
@@ -72,65 +47,101 @@ export default function Learning() {
   )
 }
 
+/* ============================ PULSE BAND ============================ */
+// A quiet read-out strip — four live numbers that answer "is the system still learning,
+// and how much?" at a glance. Deliberately NOT a hero state-word band (that's the Risk
+// page's signature); here the four metrics are the point.
+function LearningPulse() {
+  const { data: summary } = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
+  const { data: strategies = [] } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
+  const { data: lessons = [] } = useQuery({ queryKey: ['lessons-all'], queryFn: () => api.getLessons(100) })
+
+  const runs = (summary?.recent_dreaming_runs as any[]) || []
+  const lastRun = runs[0]
+  const new24h =
+    (summary?.recent_research_notes?.length || 0) +
+    (summary?.recent_strategy_hypotheses?.length || 0) +
+    (summary?.recent_dreaming_logs?.length || 0) +
+    ((summary as any)?.recent_daily_reviews?.length || 0)
+  const active = (strategies as StrategyRecord[]).filter(s => s.state !== 'draft' && s.state !== 'retired')
+  const lessonCount = Array.isArray(lessons) ? lessons.length : 0
+
+  return (
+    <section className="learn-pulse">
+      <PulseStat
+        label="Last consolidation"
+        value={lastRun ? fmtRelative(lastRun.started_at) : 'Never'}
+        tone={runTone(lastRun?.status)}
+      />
+      <PulseStat label="New knowledge · 24h" value={new24h} tone={new24h > 0 ? 'cyan' : 'muted'} />
+      <PulseStat label="Strategies in paper" value={active.length} tone={active.length > 0 ? 'blue' : 'muted'} />
+      <PulseStat label="Lessons logged" value={lessonCount} tone={lessonCount > 0 ? 'yellow' : 'muted'} />
+    </section>
+  )
+}
+
+/** Pulse-band read-out: label over a toned value. Uses the shared .stat CSS structure. */
+function PulseStat({ label, value, tone }: { label: string; value: ReactNode; tone?: StatusTone }) {
+  return (
+    <div className="stat">
+      <span className="stat-label">{label}</span>
+      <span className={`stat-value${tone ? ` stat-value-${tone}` : ''}`}>{value}</span>
+    </div>
+  )
+}
+
 /* ============================ DREAMING ============================ */
 function DreamingTab() {
   const { data: summary } = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
   const { data: allLogs = [] } = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
   const [selectedItem, setSelectedItem] = useState<any>(null)
 
-  const recentRuns = summary?.recent_dreaming_runs || []
-  const recentResearch = summary?.recent_research_notes || []
-  const recentHypotheses = summary?.recent_strategy_hypotheses || []
-  const deprecatedMemories = summary?.deprecated_memories || []
-  const recentLogs = summary?.recent_dreaming_logs || []
+  const runs = (summary?.recent_dreaming_runs as any[]) || []
+  const research = (summary?.recent_research_notes as any[]) || []
+  const hypotheses = (summary?.recent_strategy_hypotheses as any[]) || []
+  const deprecated = (summary?.deprecated_memories as any[]) || []
+  const logs = (summary?.recent_dreaming_logs?.length ? summary.recent_dreaming_logs : (allLogs as any[]).slice(0, 10)) as any[]
 
   return (
     <>
-      {recentRuns.length > 0 && (
+      {/* Signature — dreaming runs as cognition sessions */}
+      <Card>
+        <CardHeader title="Dreaming sessions" meta="What the agent consolidated · most recent first" />
+        {runs.length === 0 ? (
+          <p className="text-muted text-sm">No dreaming runs in the last 24 hours.</p>
+        ) : (
+          <div className="dream-sessions">
+            {runs.map((r: any) => <DreamSession key={r.id} run={r} />)}
+          </div>
+        )}
+      </Card>
+
+      {/* This cycle's output, grouped by kind */}
+      <div className="learn-grid">
         <Card>
-          <h3>Current Dreaming Task</h3>
-          {recentRuns.map((r: any) => (
-            <p key={r.id} className="text-sm">
-              <StatusBadge status={r.status} />
-              {' '}<span className="mono">{fmtTimestamp(r.started_at)}</span> — {r.agent_name}
-            </p>
-          ))}
+          <CardHeader title="Consolidations" />
+          <ItemList items={logs} onSelect={setSelectedItem} empty="No consolidations yet." />
         </Card>
-      )}
-
-      <Card>
-        <h3>Consolidations</h3>
-        {recentLogs.length === 0 && (allLogs as any[]).length === 0
-          ? <p className="text-muted text-sm">No dreaming logs yet.</p>
-          : <ItemList items={recentLogs.length > 0 ? recentLogs : (allLogs as any[]).slice(0, 10)} onSelect={setSelectedItem} />}
-      </Card>
-
-      <Card>
-        <h3>Research Notes <span className="text-muted text-sm">24h</span></h3>
-        {recentResearch.length === 0
-          ? <p className="text-muted text-sm">No new research notes in the last 24 hours.</p>
-          : <ItemList items={recentResearch} onSelect={setSelectedItem} />}
-      </Card>
-
-      <Card>
-        <h3>Strategy Hypotheses <span className="text-muted text-sm">24h</span></h3>
-        {recentHypotheses.length === 0
-          ? <p className="text-muted text-sm">No new strategy hypotheses in the last 24 hours.</p>
-          : <ItemList items={recentHypotheses} onSelect={setSelectedItem} />}
-      </Card>
-
-      <Card>
-        <h3>Deprecated Memories <span className="text-muted text-sm">7d</span></h3>
-        {deprecatedMemories.length === 0
-          ? <p className="text-muted text-sm">No memories deprecated in the last 7 days.</p>
-          : <ItemList items={deprecatedMemories} onSelect={setSelectedItem} />}
-      </Card>
+        <Card>
+          <CardHeader title="Research notes" meta="24h" />
+          <ItemList items={research} onSelect={setSelectedItem} empty="No new research notes in the last 24 hours." />
+        </Card>
+        <Card>
+          <CardHeader title="Strategy hypotheses" meta="24h" />
+          <ItemList items={hypotheses} onSelect={setSelectedItem} empty="No new strategy hypotheses in the last 24 hours." />
+        </Card>
+        <Card>
+          <CardHeader title="Deprecated memories" meta="7d" />
+          <ItemList items={deprecated} onSelect={setSelectedItem} empty="No memories deprecated in the last 7 days." />
+        </Card>
+      </div>
 
       <DetailDrawer open={!!selectedItem} onClose={() => setSelectedItem(null)} title={selectedItem?.title || 'Knowledge Item'}>
         {selectedItem && (
           <>
             <DrawerSection label="Details">
               <DrawerField label="Type" value={humanize(selectedItem.item_type)} />
+              <DrawerField label="Confidence" value={<ConfidenceBadge value={selectedItem.confidence} />} />
               <DrawerField label="Status" value={<StatusBadge status={selectedItem.status || 'active'} />} />
               <DrawerField label="Created" value={fmtTimestamp(selectedItem.created_at)} mono />
               <DrawerField label="Strategy" value={selectedItem.strategy_id} mono />
@@ -145,22 +156,45 @@ function DreamingTab() {
   )
 }
 
-function ItemList({ items, onSelect }: { items: any[]; onSelect: (item: any) => void }) {
+/** One dreaming run rendered as a cognition session: status · trigger · timing · tools · output. */
+function DreamSession({ run }: { run: any }) {
+  const tools = parseJsonArray(run.tools_called)
+  const outputs = parseJsonArray(run.outputs_created)
+  const errors = parseJsonArray(run.errors)
+  const dur = fmtDuration(run.started_at, run.ended_at)
+
   return (
-    <TableWrap>
-    <table>
-      <thead><tr><th>Title</th><th>Type</th><th>Created</th></tr></thead>
-      <tbody>
-        {items.map((item: any) => (
-          <tr key={item.id} className="clickable" onClick={() => onSelect(item)}>
-            <td>{item.title || '(untitled)'}</td>
-            <td>{humanize(item.item_type)}</td>
-            <td className="mono">{fmtTimestamp(item.created_at)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-    </TableWrap>
+    <div className="dream-session">
+      <div className="dream-session-head">
+        <StatusText tone={runTone(run.status)}>{humanize(run.status)}</StatusText>
+        <span className="dream-session-trigger">{humanize(run.trigger_type)}{run.model_provider ? ` · ${humanize(run.model_provider)}` : ''}</span>
+        <span className="dream-session-time mono">{fmtTimestamp(run.started_at)}{dur ? ` · ${dur}` : ''}</span>
+      </div>
+      {tools.length > 0 && (
+        <div className="dream-tools">
+          {tools.map((t, i) => <span key={i} className="dream-chip mono">{t}</span>)}
+        </div>
+      )}
+      <div className="dream-session-out">
+        <span>{outputs.length} output{outputs.length === 1 ? '' : 's'} created</span>
+        {errors.length > 0 && <span className="text-error"> · {errors.length} error{errors.length === 1 ? '' : 's'}</span>}
+      </div>
+    </div>
+  )
+}
+
+/** Compact clickable list of knowledge items — title + timestamp (type is the group header). */
+function ItemList({ items, onSelect, empty }: { items: any[]; onSelect: (item: any) => void; empty: string }) {
+  if (!items || items.length === 0) return <p className="text-muted text-sm">{empty}</p>
+  return (
+    <ul className="learn-items">
+      {items.map((item: any) => (
+        <li key={item.id} className="learn-item clickable" onClick={() => onSelect(item)}>
+          <span className="learn-item-title">{item.title || '(untitled)'}</span>
+          <span className="learn-item-meta mono">{fmtTimestamp(item.created_at)}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -171,16 +205,16 @@ const KB_TABS = [
   { key: 'strategy', label: 'Strategy Memory', fn: () => api.getStrategyMemory() },
   { key: 'reviews', label: 'Daily Reviews', fn: () => api.getKnowledge('daily_review') },
   { key: 'dreaming', label: 'Dreaming Logs', fn: () => api.getDreamingLogs() },
-  // ps_lessons surfaces dreaming_agent output (LessonStore). PI currently
-  // does NOT consume these (Round 2 fix L-Bug-B); the tab exposes them so the
-  // user can verify the producer is alive even before consumption is wired.
+  // ps_lessons surfaces dreaming_agent output (LessonStore). PI currently does NOT
+  // consume these (Round 2 fix L-Bug-B); the tab exposes them so the user can verify
+  // the producer is alive even before consumption is wired.
   { key: 'lessons', label: 'Post-Trade Lessons', fn: () => api.getLessons(100) },
 ] as const
 
 const kbCol = createColumnHelper<KnowledgeItem>()
 const kbColumns = [
   kbCol.accessor('title', { header: 'Title' }),
-  kbCol.accessor('confidence', { header: 'Confidence', cell: info => <span className="mono">{info.getValue() != null ? info.getValue() : '—'}</span> }),
+  kbCol.accessor('confidence', { header: 'Confidence', cell: info => <ConfidenceBadge value={info.getValue()} /> }),
   kbCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
   kbCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
@@ -193,9 +227,10 @@ type LessonRow = {
 }
 const lessonCol = createColumnHelper<LessonRow>()
 const lessonColumns = [
-  lessonCol.accessor('summary', { header: 'Summary', cell: info => <span>{(info.getValue() || '').slice(0, 120)}</span> }),
-  lessonCol.accessor('category', { header: 'Category', cell: info => <Badge tone="blue">{info.getValue() || '—'}</Badge> }),
-  lessonCol.accessor('severity', { header: 'Severity', cell: info => <Badge tone={info.getValue() === 'high' ? 'red' : info.getValue() === 'medium' ? 'yellow' : 'muted'}>{info.getValue() || '—'}</Badge> }),
+  lessonCol.accessor('summary', { header: 'Summary', cell: info => <span>{(info.getValue() || '').slice(0, 140)}</span> }),
+  lessonCol.accessor('category', { header: 'Category', cell: info => <Badge tone="blue">{humanize(info.getValue() || '—')}</Badge> }),
+  // severity enum is warning/critical/info (NOT high/medium/low) — map by meaning, not literal.
+  lessonCol.accessor('severity', { header: 'Severity', cell: info => <Badge tone={severityTone(info.getValue())}>{humanize(info.getValue() || '—')}</Badge> }),
   lessonCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue() || ''} /> }),
   lessonCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
@@ -221,29 +256,26 @@ function KnowledgeTab() {
     [KB_TABS[4].key]: Array.isArray(d4) ? d4.length : undefined,
   }
 
-  function parseTags(raw: string | null): string[] {
-    if (!raw) return []
-    try { return JSON.parse(raw) } catch { return [] }
-  }
-
   return (
     <>
-      <div className="flex gap-2 mb-3">
+      <div className="kb-subtabs">
         {KB_TABS.map(t => (
-          <Button key={t.key} variant={tab === t.key ? 'primary' : 'secondary'} onClick={() => setTab(t.key)}>
+          <Button key={t.key} variant={tab === t.key ? 'primary' : 'secondary'} size="sm" onClick={() => setTab(t.key)}>
             {t.label}{counts[t.key] != null && counts[t.key]! > 0 && <span className="tab-badge">{counts[t.key]}</span>}
           </Button>
         ))}
       </div>
       <Card>
-        {isLessons
-          ? <>
-              <p className="text-muted text-sm mb-2">
-                Producer-only view. PI Agent does not currently consume these (Round 2 fix L-Bug-B).
-              </p>
-              <DataTable data={rows as LessonRow[]} columns={lessonColumns} emptyMessage="No lessons yet." />
-            </>
-          : <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />}
+        {isLessons ? (
+          <>
+            <p className="text-muted text-sm mb-2">
+              Producer-only view. The PI agent does not consume these yet (Round 2 fix L-Bug-B).
+            </p>
+            <DataTable data={rows as LessonRow[]} columns={lessonColumns} emptyMessage="No lessons yet." />
+          </>
+        ) : (
+          <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
+        )}
       </Card>
 
       <DetailDrawer open={!!selected && !isLessons} onClose={() => setSelected(null)} title={selected?.title || 'Knowledge Item'}>
@@ -251,7 +283,7 @@ function KnowledgeTab() {
           <>
             <DrawerSection label="Metadata">
               <DrawerField label="Type" value={humanize(selected.item_type)} />
-              <DrawerField label="Confidence" value={selected.confidence} mono />
+              <DrawerField label="Confidence" value={<ConfidenceBadge value={selected.confidence} />} />
               <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
               <DrawerField label="Strategy ID" value={selected.strategy_id} mono />
               <DrawerField label="Created" value={fmtTimestamp(selected.created_at)} mono />
@@ -259,7 +291,7 @@ function KnowledgeTab() {
             </DrawerSection>
             <DrawerSection label="Tags">
               {(() => {
-                const tags = parseTags(selected.tags)
+                const tags = parseJsonArray(selected.tags)
                 return tags.length > 0
                   ? <div className="flex flex-wrap gap-1">{tags.map(t => <Badge key={t} tone="blue">{t}</Badge>)}</div>
                   : <span className="text-muted text-sm">No tags</span>
@@ -287,56 +319,224 @@ function ReportsTab() {
   return (
     <>
       <Card>
-        <h3>Portfolio PnL</h3>
+        <CardHeader title="Portfolio PnL" />
         <PnLChart />
       </Card>
-      {activeStrategies.length > 0 && (
+
+      <Card>
+        <CardHeader title="Strategy promotion" meta={`${activeStrategies.length} in paper / live`} />
+        {activeStrategies.length === 0 ? (
+          <p className="text-muted text-sm">No strategies in paper or live — promote candidates from the Strategies page.</p>
+        ) : (
+          <div className="promo-grid">
+            {activeStrategies.map(s => <PromoCard key={s.id} strategy={s} />)}
+          </div>
+        )}
+      </Card>
+
+      <div className="learn-grid">
         <Card>
-          <h3>Strategy Metrics</h3>
-          {activeStrategies.map(s => <StrategyMetrics key={s.id} strategy={s} />)}
+          <CardHeader title="Daily reviews" />
+          <ReviewList items={reviews as any[]} empty="No daily reviews yet — generated by the dreaming cycle." />
         </Card>
-      )}
-      <Card>
-        <h3>Daily Reviews</h3>
-        {(reviews as any[]).length === 0
-          ? <p className="hint">No daily reviews yet — generated by the dreaming cycle.</p>
-          : (reviews as any[]).slice(0, 10).map((r: any) => <p key={r.id} className="text-sm">{r.title} — <span className="mono text-muted">{fmtTimestamp(r.created_at)}</span></p>)}
-      </Card>
-      <Card>
-        <h3>Recent Consolidations</h3>
-        {(dreaming as any[]).length === 0
-          ? <p className="hint">No consolidations yet.</p>
-          : (dreaming as any[]).slice(0, 10).map((d: any) => <p key={d.id} className="text-sm">{d.title} — <span className="mono text-muted">{fmtTimestamp(d.created_at)}</span></p>)}
-      </Card>
-      <Card>
-        <h3>Post-Trade Reviews</h3>
-        {(postTradeReviews as any[]).length === 0
-          ? <p className="hint">No post-trade reviews yet.</p>
-          : (postTradeReviews as any[]).slice(0, 10).map((r: any) => <p key={r.id} className="text-sm">{r.title} — <span className="mono text-muted">{fmtTimestamp(r.created_at)}</span></p>)}
-      </Card>
+        <Card>
+          <CardHeader title="Post-trade reviews" />
+          <ReviewList items={postTradeReviews as any[]} empty="No post-trade reviews yet." />
+        </Card>
+        <Card>
+          <CardHeader title="Recent consolidations" />
+          <ReviewList items={(dreaming as any[]).slice(0, 10)} empty="No consolidations yet." />
+        </Card>
+      </div>
     </>
   )
 }
 
-function StrategyMetrics({ strategy }: { strategy: StrategyRecord }) {
+// The metrics we surface per strategy, in priority order. Whitelisted (not Object.entries)
+// so the nested `gates: {}` object can never leak through as "[object Object]", and a null
+// value renders an honest dash instead of vanishing.
+const PROMO_METRICS: { key: string; label: string; fmt: (v: number) => string }[] = [
+  { key: 'total_trades', label: 'Trades', fmt: v => String(Math.round(v)) },
+  { key: 'win_rate', label: 'Win rate', fmt: pctMaybeRatio },
+  { key: 'profit_factor', label: 'Profit factor', fmt: v => fmtNum(v) },
+  { key: 'sharpe', label: 'Sharpe', fmt: v => fmtNum(v) },
+  { key: 'max_drawdown', label: 'Max DD', fmt: pctMaybeRatio },
+  { key: 'total_pnl', label: 'PnL', fmt: v => fmtSigned(v) },
+]
+
+function PromoCard({ strategy }: { strategy: StrategyRecord }) {
   const { data } = useQuery({
     queryKey: ['strategy-gates', strategy.id],
     queryFn: () => api.getStrategyGates(strategy.id),
     enabled: !!strategy.id,
   })
-  const metrics = data?.metrics as Record<string, any> | undefined
-  if (!metrics) return null
+  const metrics = (data?.metrics || {}) as Record<string, any>
+  const passed = !!data?.passed
+  const promoteTo = data?.promote_to as string | undefined
+  const totalTrades = Number(metrics.total_trades) || 0
+
   return (
-    <div className="strategy-metrics-row">
-      <p className="strategy-metrics-name">{strategy.name} <StatusBadge status={strategy.state} /></p>
-      <div className="strategy-metrics-grid">
-        {Object.entries(metrics).filter(([, v]) => v != null && typeof v !== 'string').map(([k, v]) => (
-          <div key={k} className="text-sm">
-            <span className="text-muted">{humanize(k)}</span>
-            <br /><span className="mono">{typeof v === 'number' ? (Number.isInteger(v) ? v : fmtNum(v)) : String(v)}</span>
-          </div>
-        ))}
+    <div className="promo-card">
+      <div className="promo-head">
+        <span className="promo-name">{strategy.name}</span>
+        <span className="promo-flow">
+          <StatusBadge status={strategy.state} />
+          {promoteTo && (
+            <>
+              <span className="promo-arrow">→</span>
+              <Badge tone={passed ? 'green' : 'muted'}>{humanize(promoteTo)}</Badge>
+            </>
+          )}
+        </span>
+      </div>
+      <div className="promo-gate">
+        {passed ? (
+          <StatusText tone="green">Gates passed — ready to promote</StatusText>
+        ) : (
+          <span className="text-muted text-sm">{totalTrades > 0 ? 'Below promotion gates' : 'Awaiting trade data'}</span>
+        )}
+      </div>
+      <div className="promo-metrics">
+        {PROMO_METRICS.map(m => {
+          const raw = metrics[m.key]
+          const has = raw != null && Number.isFinite(Number(raw))
+          return (
+            <div key={m.key} className="promo-metric">
+              <span className="promo-metric-label">{m.label}</span>
+              <span className="promo-metric-val mono">{has ? m.fmt(Number(raw)) : '—'}</span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
+}
+
+/** Compact title + timestamp list for periodic reviews (read-only). */
+function ReviewList({ items, empty }: { items: any[]; empty: string }) {
+  if (!items || items.length === 0) return <p className="text-muted text-sm">{empty}</p>
+  return (
+    <ul className="learn-items">
+      {items.slice(0, 10).map((r: any) => (
+        <li key={r.id} className="learn-item">
+          <span className="learn-item-title">{r.title || '(untitled)'}</span>
+          <span className="learn-item-meta mono">{fmtTimestamp(r.created_at)}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/* ============================ SHARED ============================ */
+function ConfidenceBadge({ value }: { value: unknown }) {
+  if (value == null || value === '') return <span className="text-faint">—</span>
+  return <Badge tone={confidenceTone(value)}>{confidenceLabel(value)}</Badge>
+}
+
+// shared markdown content (read from /knowledge/{id}/content)
+function MarkdownContent({ itemId }: { itemId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['knowledge-content', itemId],
+    queryFn: () => api.getKnowledgeContent(itemId),
+    enabled: !!itemId,
+  })
+  if (isLoading) return <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
+  if (!data || data.error) return <p className="text-muted text-sm">{data?.error === 'file_not_found' ? 'File not found on disk.' : 'No content available.'}</p>
+  if (!data.content) return <p className="text-muted text-sm">Empty file.</p>
+  return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(data.content) }} />
+}
+
+// Minimal markdown→HTML (escapes first, then a small subset).
+function renderMarkdown(src: string): string {
+  return src
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+    .replace(/^---$/gm, '<hr/>')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/^(?!<[hluop])(.+)$/gm, '<p>$1</p>')
+}
+
+/* ---- small format/derivation helpers ---- */
+
+/** Parse a JSON-array string column (tools_called, tags, outputs_created) defensively. */
+function parseJsonArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw as string[]
+  if (typeof raw !== 'string' || !raw) return []
+  try { const v = JSON.parse(raw); return Array.isArray(v) ? v.map(String) : [] } catch { return [] }
+}
+
+/** UTC-safe parse (mirrors lib/format normalizeIso) → epoch ms, or NaN. */
+function isoMs(iso?: string | null): number {
+  if (!iso) return NaN
+  const norm = iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`
+  return new Date(norm).getTime()
+}
+
+/** "6h ago" relative time from an ISO timestamp. */
+function fmtRelative(iso?: string | null): string {
+  const t = isoMs(iso)
+  if (!Number.isFinite(t)) return '—'
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000))
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
+/** Elapsed time between two ISO stamps, e.g. "20s" / "3m 12s". Null if unknown. */
+function fmtDuration(start?: string | null, end?: string | null): string | null {
+  const a = isoMs(start); const b = isoMs(end)
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null
+  const s = Math.round((b - a) / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60); const r = s % 60
+  return r ? `${m}m ${r}s` : `${m}m`
+}
+
+/** Format a value that may be a 0–1 ratio or an already-scaled percent. */
+function pctMaybeRatio(v: number): string {
+  const pct = Math.abs(v) <= 1 ? v * 100 : v
+  return `${pct.toFixed(1)}%`
+}
+
+function runTone(status?: string): StatusTone {
+  const v = String(status || '').toLowerCase()
+  if (v === 'completed' || v === 'completed_empty') return 'green'
+  if (v.includes('error') || v === 'failed') return 'red'
+  if (v === 'running' || v === 'in_progress') return 'yellow'
+  return 'muted'
+}
+
+function confidenceTone(c: unknown): StatusTone {
+  const v = String(c ?? '').toLowerCase()
+  if (v.includes('high')) return 'green'
+  if (v.includes('medium') || v.includes('moderate')) return 'yellow'
+  if (v.includes('low')) return 'muted'
+  // numeric confidence (0–1): high if strong
+  const n = Number(c)
+  if (Number.isFinite(n)) return n >= 0.66 ? 'green' : n >= 0.33 ? 'yellow' : 'muted'
+  return 'blue'
+}
+
+/** "high_confidence" → "High"; numeric 0–1 → "0.80". */
+function confidenceLabel(c: unknown): string {
+  if (typeof c === 'number') return fmtNum(c)
+  const s = String(c).trim()
+  const stripped = s.replace(/_?confidence$/i, '')
+  return humanize(stripped || s)
+}
+
+function severityTone(s: unknown): StatusTone {
+  const v = String(s ?? '').toLowerCase()
+  if (v === 'critical' || v === 'high' || v === 'error') return 'red'
+  if (v === 'warning' || v === 'medium' || v === 'warn') return 'yellow'
+  if (v === 'info' || v === 'low') return 'blue'
+  return 'muted'
 }
