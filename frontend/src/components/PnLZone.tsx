@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -80,6 +80,53 @@ function BrokerBreakdown({ accounts, open }: { accounts: UTAAccount[]; open: boo
 
 type Tone = 'neutral' | 'positive' | 'negative' | 'muted'
 
+const TOOLTIP_GAP = 6      // px gap between trigger and tooltip
+const VIEWPORT_MARGIN = 8  // px min distance the tooltip keeps from any viewport edge
+
+/**
+ * Position a tooltip relative to its trigger with viewport boundary detection.
+ * Prefers opening BELOW the trigger; flips above only when there isn't room
+ * below but there is above. Horizontally clamps the box inside the viewport so
+ * its content is never cut off. Uses position:fixed so it escapes any ancestor
+ * `overflow:hidden` clipping (e.g. the sticky topbar / card).
+ */
+function useTooltipPosition(open: boolean) {
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return }
+    const trigger = triggerRef.current
+    const tip = tooltipRef.current
+    if (!trigger || !tip) return
+
+    const t = trigger.getBoundingClientRect()
+    const tw = tip.offsetWidth
+    const th = tip.offsetHeight
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+
+    // Vertical: below by default, flip above only if it doesn't fit below but fits above.
+    const spaceBelow = vh - t.bottom
+    const fitsBelow = spaceBelow >= th + TOOLTIP_GAP + VIEWPORT_MARGIN
+    const fitsAbove = t.top >= th + TOOLTIP_GAP + VIEWPORT_MARGIN
+    const placeAbove = !fitsBelow && fitsAbove
+    let top = placeAbove ? t.top - th - TOOLTIP_GAP : t.bottom + TOOLTIP_GAP
+    // Last-resort clamp so a too-tall tooltip still stays on screen.
+    top = Math.max(VIEWPORT_MARGIN, Math.min(top, vh - th - VIEWPORT_MARGIN))
+
+    // Horizontal: align to trigger's left, then clamp both edges into the viewport.
+    let left = t.left
+    left = Math.min(left, vw - tw - VIEWPORT_MARGIN)
+    left = Math.max(VIEWPORT_MARGIN, left)
+
+    setPos({ top, left })
+  }, [open])
+
+  return { triggerRef, tooltipRef, pos }
+}
+
 function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }: {
   label: string; value: React.ReactNode; tone?: Tone; context?: React.ReactNode
   onClick?: () => void; tooltip: Record<string, number>
@@ -87,8 +134,11 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
   const [show, setShow] = useState(false)
   const entries = Object.entries(tooltip).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
   const toneClass = tone === 'positive' ? 'pnl-positive' : tone === 'negative' ? 'pnl-negative' : tone === 'muted' ? 'text-muted' : ''
+  const hasTooltip = entries.length > 0
+  const { triggerRef, tooltipRef, pos } = useTooltipPosition(show && hasTooltip)
   return (
     <div
+      ref={triggerRef}
       className={`card metric-tile clickable`}
       onClick={onClick}
       onMouseEnter={() => setShow(true)}
@@ -98,8 +148,16 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
       <div className="metric-label">{label}</div>
       <div className={`metric-value ${toneClass}`}>{value}</div>
       {context && <div className="metric-context">{context}</div>}
-      {show && entries.length > 0 && (
-        <div className="tile-tooltip">
+      {show && hasTooltip && (
+        <div
+          ref={tooltipRef}
+          className="tile-tooltip"
+          // Render off-screen on the first measuring pass (pos === null) to avoid a flash
+          // at the wrong spot, then snap to the computed viewport-clamped position.
+          style={pos
+            ? { top: pos.top, left: pos.left, visibility: 'visible' }
+            : { top: 0, left: 0, visibility: 'hidden' }}
+        >
           {entries.map(([sym, val]) => (
             <div key={sym} className="tile-tooltip-row">
               <span className="mono">{sym.replace('/USDT', '')}</span>

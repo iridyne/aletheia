@@ -2006,9 +2006,12 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .metric-value.pnl-negative { color: var(--red); }
 .metric-value.text-muted { color: var(--muted); }
 .metric-caveat { font-size: 0.65rem; color: var(--faint); margin-top: var(--space-1); letter-spacing: 0.02em; }
-/* Per-symbol hover tooltip on metric tiles — opens ABOVE to avoid pushing equity curve */
+/* Per-symbol hover tooltip on metric tiles */
 .tile-tooltip {
-  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 50;
+  /* position:fixed + JS-computed top/left (useTooltipPosition) so the tooltip
+     escapes ancestor overflow:hidden, opens downward by default, and clamps to
+     the viewport. z-index sits above the sticky topbar (z-index:10). */
+  position: fixed; z-index: 200;
   background: var(--surface-2); border: 1px solid var(--border-2);
   border-radius: var(--r-sm); padding: 6px 10px;
   min-width: 140px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
