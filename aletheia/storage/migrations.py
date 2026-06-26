@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS fills (
     fill_quantity REAL NOT NULL,
     fee REAL DEFAULT 0,
     fee_currency TEXT DEFAULT 'USDT',
+    fee_source TEXT DEFAULT 'estimated',
     filled_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -1289,6 +1290,9 @@ _ADDITIVE_COLUMNS = [
     ("high_24h", "market_snapshots", "REAL"),
     ("low_24h", "market_snapshots", "REAL"),
     ("provider", "market_snapshots", "TEXT"),
+    # Fee provenance (2026-06-26): 'estimated' (flat-rate broker fee) vs 'reconciled'
+    # (real exchange fillId fee). Honesty: estimated fees must be distinguishable.
+    ("fee_source", "fills", "TEXT DEFAULT 'estimated'"),
     # Multi-asset class support (2026-06-08): "crypto" | "equity" | "prediction"
     ("asset_class", "opportunities", "TEXT"),
     # Exchange-aware instrument identity (2026-06-08): which exchange supplied the data.

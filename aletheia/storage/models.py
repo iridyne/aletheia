@@ -166,6 +166,11 @@ class Fill(BaseModel):
     fill_quantity: float
     fee: float = 0.0
     fee_currency: str = "USDT"
+    # Provenance of the fee figure: "estimated" (flat-rate taker fee computed by the
+    # broker at fill time — paper + all exchange brokers do this) or "reconciled"
+    # (reconciliation backfilled the exchange's real fillId fee). Defaults estimated
+    # so an estimate is never silently mistaken for an actual exchange fee.
+    fee_source: str = "estimated"
     filled_at: str = Field(default_factory=_utcnow)
 
 

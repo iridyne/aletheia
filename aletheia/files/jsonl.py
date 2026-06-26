@@ -222,7 +222,12 @@ def _write_audit_row(event: dict) -> None:
     try:
         from aletheia.storage.models import AuditEvent
         from aletheia.storage.repositories import insert_audit_event
-    except Exception:
+    except Exception as e:
+        # Pure-JSONL deployments have no storage layer — the JSONL chain above is
+        # the source of truth, so skipping the sqlite mirror is expected. Log at
+        # debug so an *unexpected* missing-storage condition is still observable
+        # (previously this swallowed silently with zero trace).
+        logger.debug("audit sqlite mirror skipped (storage layer unavailable): %s", e)
         return
 
     payload = dict(event)

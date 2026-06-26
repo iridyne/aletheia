@@ -464,3 +464,52 @@ def test_order_proposal_foreign_key_integrity(tmp_path, monkeypatch):
             f"Order {order_row['id']} references proposal_id={pid!r} "
             "which does not exist in trade_proposals"
         )
+
+
+# ---------------------------------------------------------------------------
+# EX-B08 — fee honesty: fills declare fee_source provenance ('estimated' vs 'reconciled')
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B08", "execution_contract", "§5 fee honesty", "L2b",
+        "Fills carry a fee_source provenance marker defaulting to 'estimated' (the "
+        "flat-rate computed fee used by paper + all exchange brokers) so estimated "
+        "fees are never mistaken for the exchange's real fee; reconciliation may "
+        "later backfill the actual fee and set fee_source='reconciled'.",
+        status="implemented",
+    ),
+)
+def test_fill_fee_source_marks_estimated(tmp_path, monkeypatch):
+    """A paper execution's fill must round-trip with fee_source='estimated'."""
+    _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.execution.gateway import submit_proposal
+    from aletheia.storage import repositories as repo
+
+    result = submit_proposal(
+        symbol="BTC/USDT", direction="long", quantity=0.001,
+        price=60000.0, execution_mode="paper_internal", market_type="spot",
+    )
+    if result.get("status") != "executed":
+        pytest.skip("Proposal not executed (risk rejected) — no fill to inspect")
+
+    fills = repo.list_fills(limit=10)
+    assert fills, "paper execution must produce a fill row"
+    for f in fills:
+        assert f.get("fee_source") == "estimated", (
+            f"Fill must declare fee_source='estimated' (flat-rate estimate), "
+            f"got {f.get('fee_source')!r}. Estimated fees must be distinguishable "
+            "from reconciled exchange fees (honesty)."
+        )
+
+
+def test_fill_model_defaults_fee_source_estimated():
+    """All brokers construct Fill(...) without fee_source — the model default is the
+    single source of the 'estimated' marker (clone-path guard: bitget/okx/binance/
+    paper all rely on it)."""
+    from aletheia.storage.models import Fill
+
+    f = Fill(order_id="o1", fill_price=100.0, fill_quantity=1.0, fee=0.06)
+    assert f.fee_source == "estimated"

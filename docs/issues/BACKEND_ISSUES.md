@@ -927,7 +927,7 @@
 | F2 | Universe `POST /policy` 路由缺失（repo fn 存在不可达） | `repositories.py:1368` insert_universe_policy；`routes/universe.py` 只有 GET |
 | E2 | UTA 无法区分 0 余额 vs 缺凭据（无 connected_brokers 字段） | `portfolio/uta/manager.py:14-21` UnifiedState 无 broker 连接列表 |
 | G7 | Fernet key 与密文同目录 | `config/secrets.py:47` `.secret.key` 同 data/，仅 gitignore 保护 |
-| G9 | 权限模型只在 agent_shell；execution gateway 入口无 Observe 门 | `execution/gateway.py:16` submit_proposal 只过 risk，无 permission/FORBIDDEN_INTENTS 断言 |
+| ~~G9~~ ❎非issue | permission 门**已在 risk engine** `engine.py:108-110`（spec RE-B08 锁定）：Observe 拒 demo/live、**故意放行 paper_internal**（无风险 carve-out，来自 7117bdf）；gateway 已按 risk 结果拒单。加 gateway 门会推翻 RE-B08 或纯冗余引入 clone-divergence。2026-06-26 核实关闭。 | — |
 | I1 | price_feed docstring 称 batch 实为串行 | `data/price_feed.py:129` `for sym in symbols:` 逐个 get_ticker |
 | E3 | volume_scanner 排名内存态，重启丢失 | `universe/service.py:162` 内存 global 未持久化 |
 | E5 | operator retire_strategy 无超时降级，PI 不在跑则卡住 | `operator_loop.py:555` 写 pi_decisions 无 24h 兜底 |
