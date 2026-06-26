@@ -553,3 +553,197 @@ tr.clickable:active { background: var(--bg); }
 ### 新增 health issue 的 checklist
 
 添加新的 health issue 时，必须同步在 `parseIssue()` 里加对应的 `hint`，否则用户只能看到裸 key 字符串和一个 ⚠。
+
+---
+
+## 18. UI 重构教训汇总（2026-06-26 会话）
+
+本节汇总一次密集 UI 重构会话（Risk & Controls / Learning / Overview / 多页一致性）暴露出的**系统性教训**，作为后续 UI 修改的强制参考。每条都带可执行结论与失败实例。
+
+### L1. 验证必看 computed style，不看 className
+
+**规则**：凡涉及 `var(--xxx)` 令牌、tone/variant prop 驱动的 class、骨架/loading 状态，最终判活死的标准必须是 `getComputedStyle(el).{color,backgroundColor,fontFamily,fontSize}` 真实值，而不是元素是否被设置了对应 class。
+
+**为什么**：两类静默缺陷只能靠 computed style 抓到——
+1. **未定义 `var()` 静默回退**：CSS 不报错，直接回退到父继承色/初始值。本会话实例：误用 `--text-faint`/`--text-dim`/`--font-mono`/`--accent-glow`（canonical 是 `--faint`/`--muted`/`--mono`），className 看着完美但 computed color 是父亮色。
+2. **死 class**：渲染了 `stat-value-green` 但 `.stat-value-green` 规则压根不存在。同次 commit 中 PulseStat 的 tone prop 是 4 个 stat 的"死功能"，全部默认色。
+
+**实施**：
+```js
+// 验证脚本必须读真值，至少抽样关键元素
+const cs = getComputedStyle(el)
+return { color: cs.color, bg: cs.backgroundColor, font: cs.fontFamily }
+```
+单看 `toneClass: 'stat-value-green'` 这种字段是**有害的伪验证**——会让人以为通过实际没过。
+
+### L2. 多 viewport 强制横扫，单一 viewport 不算验收
+
+**规则**：涉及 grid / flex / auto-fit 的改动，验收必须横扫至少 3 个 viewport：
+- **主流笔记本** ~1080–1440px
+- **窄屏** ~900–1024px（media boundary 附近最易翻车）
+- **移动** ~375–480px
+
+**为什么**：本会话用户实测 1082×826 时,5 个 Overview tile 排成 3+1 错位、Risk "Pause All" 文字换行——这些在 1440 测试时全部正常。auto-fit grid 在不同容器宽度下列数会突变。
+
+**预防**：
+- 验证流程模板:截图 + computed measurements 在 3 个 viewport 各一遍
+- 当某项不易在自动化里看,至少 preview_eval 量 `getBoundingClientRect()` 确认元素排版
+
+### L3. Grid 列数确定时写死 N 列,不用 `auto-fit`
+
+**规则**：当卡片数量是已知固定数(如 4 个 PnL tile),用 `grid-template-columns: repeat(N, minmax(0, 1fr))` + 显式媒体查询 fallback。`auto-fit + minmax(Xpx, 1fr)` 仅在"列数本质不固定"(品类瓦片、chip 列表)时用。
+
+**为什么**：auto-fit 的列数由 `(容器宽 + gap) / minmax 最小值` 决定，容器变窄时可能突然从 4 列掉到 3 列,产生 3+1 留空。本会话 `.pnl-tiles` 用 `minmax(150px, 1fr)`,在 1024px 容器只有 498px 时装不下 4 列(需 516px),掉成 3 列 → 错位。
+
+**写死 + fallback 范例**:
+```css
+.pnl-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+@media (max-width: 700px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
+```
+
+`minmax(0, 1fr)` 而非 `1fr`：防止内容超长撑破 1fr(intrinsic min-content)。
+
+### L4. 两栏垂直空缺 — 主从 Bento + 内容充实
+
+**问题**：1fr/1fr 两栏布局,左右内容长度不等 → 短卡下方大段空白,视觉很丑。`align-items: stretch` 让短卡被拉等高但内部内容靠上(下半空白带边框);`align-items: start` 让短卡保留自然高度(长卡旁边大段无背景空白)。
+
+**两套解法,按场景选**:
+
+**A. 内容充实(Substantiveness Pattern)** — 当短卡是因为"信息密度不够"而短时,把它做"实",**不靠 CSS 兜底**。范例: Risk Active Risk 健康态下原本只显示"No active violations"(60px),改造为含 3 段 section:
+- **24h Activity**: 系统在过去 24h 的工作数据(approved/rejected count + 主因 + fills)
+- **Headroom**: 当前与每条限额的距离(positions / largest position / daily loss 各自百分比 + bar)
+- **Latest Check**: 最近一次风险审计的结果
+
+效果: 60px → 367px,与右列 Live Exposure 293px 几乎齐(差 74px)。**额外收益**: headroom 第一次暴露出"持仓 $153.6 vs cap $26.84"这种隐藏违规,UI 充实成了 honesty 工具。
+
+**B. Bento 主从不对称(Asymmetric Pairing)** — 当数据本身极不均衡(Research notes 20 条 vs Deprecated memories 0 条)无法靠内容充实补齐时,用 `grid-template-columns: 2fr 1fr` 把"长卡群"放主区、"短卡群"放辅区,让"视觉不对称"成为有意的设计语言而非失败的对称。范例: Learning Dreaming 4 卡 → 主区 2fr 堆 Research + Hypotheses,辅区 1fr 堆 Consolidations + Deprecated。
+
+```css
+.learn-grid.asym { grid-template-columns: 2fr 1fr; }
+.learn-col-main, .learn-col-aside { display: flex; flex-direction: column; gap: var(--space-4); }
+@media (max-width: 900px) { .learn-grid.asym { grid-template-columns: 1fr; } }
+```
+
+并搭配列表 `max-height: 380px; overflow-y: auto` 防超长卡片把主区拉到 800px+ 让不对称比例失控。
+
+**禁忌**: 不要用 Masonry(Pinterest 砖墙)在仪表盘上 — 阅读顺序变 Z 字形,密度型 UI 大忌。
+
+### L5. CSS `var()` 未定义令牌静默回退陷阱
+
+**Aletheia canonical token 清单**(`:root` 第 9-55 行):
+
+| 概念 | canonical token | ❌ 误用 |
+|---|---|---|
+| 强度文字色阶 | `--text` / `--muted` / `--faint` | ~~`--text-dim`~~ / ~~`--text-faint`~~ |
+| 字体 | `--mono` / `--sans` / `--display` | ~~`--font-mono`~~ |
+| 强调色衰减 | `--accent-dim` 或 `rgba(34,211,238,0.10)` 字面值 | ~~`--accent-glow`~~ |
+
+**规则**: 写 `var(--xxx)` 之前先 grep `:root` 确认令牌存在; CI 可以加一个 lint 检查所有 `var(--*)` 引用都能在 `:root` 找到定义。
+
+### L6. 信任路径 onError 必须 inline,辅助路径用 toast
+
+**规则**:
+- **信任 / destructive 路径**(kill switch / proposals approve+reject / pause+resume / live unlock):**inline error**,显示在按钮下方,sticky 直到下次操作。**不能用 toast** — toast 自动消失,操作员可能错过失败信号。
+- **辅助路径**(start agent / news create / refresh / send chat):**toast** — 不阻塞,辅助通知即可。
+
+**为什么**: trading 系统里"操作员认为急停成功实际请求失败"是最高危的 honesty 缺陷。silent failure 对资金状态不可控。
+
+**inline error CSS pattern** (`.lever-err`):
+```css
+.lever-err {
+  margin-top: var(--space-2);
+  padding: 6px 8px;
+  background: rgba(255, 93, 108, 0.10);
+  border: 1px solid rgba(255, 93, 108, 0.40);
+  border-radius: var(--r-sm);
+  color: var(--red);
+  font-size: 0.74rem;
+  word-break: break-word;
+}
+```
+配 `role="alert"` 让 SR 通知。
+
+### L7. 状态推导单一来源,避免 N 面色分歧
+
+**规则**: 同一原始信号在不同 surface 必须显示同一颜色 + 同一标签。任何"surface 各自从原始 status 算 tone"的代码 = 跨页分歧来源。
+
+**实施**: `lib/systemState.ts` 导出 `deriveMasterState({gatewayRunning, killed, paused, riskState, operatorStatus})`,返回 `{word, tone, detail}`。所有 surface(topbar StatusBar / Risk console / Overview System 卡)调用同一函数。
+
+**Priority ladder**(严重性优先):
+1. !gatewayRunning → OFFLINE red
+2. killed → HALTED red
+3. riskState=blocked → BLOCKED red
+4. operator=offline → OFFLINE red
+5. operator=stale → STALE yellow
+6. paused → PAUSED yellow
+7. riskState=warning → CAUTION yellow
+8. riskState=healthy → OPERATIONAL green
+9. (default) → STANDBY blue
+
+### L8. Symbol 显示竞态 — 等数据齐再渲染
+
+**问题**: `fmtSymbol(sym, marketType)` 在 marketType 为 undefined 时按"never guess"原则保留 canonical 斜杠 — 但若 marketTypeBySymbol 来源(positions query)尚未加载,exposure 列表(来自更早 settle 的 portfolio query)会短暂显示带斜杠的错误形式(`ETH/USDT` for a perp,应该 `ETHUSDT`)。
+
+**修法**: 等 `positionsLoading || portfolioLoading` 都为 false 才渲染列表,期间显示 skeleton。**绝不 fallback 猜测**(`marketTypeBySymbol[sym] || 'usdt_futures'` 是有害的,某些 spot 持仓会显错)。
+
+### L9. Tab 系统单一实现 — controlled + uncontrolled 双模式
+
+**规则**: 全站只一份 Tab 实现 = `components/Tabs.tsx`。手写 tab-bar / pred-tabs / lens-tabs 全部应迁移过来。
+
+**双模式**:
+- 不传 `value`/`onChange` → 内部 state (`initial` 设置默认)
+- 传 `value` + `onChange` → 外部 state(父组件控制切换,适合 deep-link / 跨组件触发)
+
+```tsx
+// uncontrolled
+<Tabs tabs={[...]} initial="overview" />
+// controlled
+<Tabs value={tab} onChange={setTab} tabs={[...]} />
+```
+
+不允许新增页面手写 tab bar — 即使外观一样也是分歧源(键盘/ARIA/badge 易漂移)。
+
+### L10. Primitive 优先采纳,新页面不重写已有组件
+
+**规则**: 新增 / 重构页面时,**先 grep `components/ui` 和 `components/` 看有没有现成 primitive**:
+- 数字 → `fmtNum` / `fmtSigned` / `fmtPct`
+- 时间戳 → `fmtTimestamp`
+- Symbol → `fmtSymbol(sym, marketType)`
+- Enum → `humanize(snake_case)`
+- 状态 badge → `<StatusBadge status=… />`
+- 状态色文字 → `<StatusText tone=…>…</StatusText>`
+- Card → `<Card><CardHeader title=… meta=… />…</Card>`
+- Confirm → `useConfirm()` 而非原生 `window.confirm()`
+- Toast → `useToast()` 而非 `console.error()`
+- Tab → `<Tabs>` 而非手写 tab-bar
+
+**Anti-pattern**: 800+ 行单文件 grab-bag(SerenityLens 原状),内部用 `.toFixed(0)` / 裸 e.symbol / 裸 e.source / 手写 lens-tabs 五件事各违反一条铁律。重整时不需要重写 IA,**只需逐项采纳已有 primitive**,代码量净减少同时一致性归位。
+
+### L11. 构建必走 `npm run build`,不用 `vite build` 兜底
+
+**规则**: 项目 build 命令是 `tsc -b && vite build`,纯 `vite build` 会**跳过类型检查**。`node node_modules/vite/bin/vite.js build` 是用来绕开 npm cache 权限问题的兜底,**仅当 `npm` 本身坏掉时用**,且必须**先单独跑 `tsc -b`**。
+
+**实例**: commit `5e654e2` 引入 `tone="cyan"`(StatusTone 没 cyan)+ `size="sm"`(Button 没 size prop)两处 TS 错误,我用纯 `vite build` 通过了,推上去之后并发会话才用 `tsc -b` 抓到错误并修(`57cc5c8`)。
+
+---
+
+## 19. 验收清单(强制 checklist)
+
+任何 UI 改动 commit 前必须过完这份清单:
+
+- [ ] **tsc**: `cd frontend && node node_modules/typescript/bin/tsc -b` 退出 0
+- [ ] **build**: `vite build` 通过
+- [ ] **令牌**: `grep "var(--" frontend/src/index.css | grep -oE "var\\(--[a-z0-9-]+\\)" | sort -u` 对每个值能在 `:root` 找到定义
+- [ ] **多 viewport**: 至少 3 个尺寸(主流笔记本 / 窄屏 / 移动)实测无错位 + 无溢出
+- [ ] **computed style**: 涉及 var/tone 的元素,用 `getComputedStyle()` 抽样确认真实色彩 / 字体不是默认回退
+- [ ] **fmtSymbol**: 任何新 symbol 渲染都走 `fmtSymbol(sym, market_type)`
+- [ ] **fmt 数字**: 任何新百分数/金额都走 `fmtPct` / `fmtNum` / `fmtSigned`,**不** `.toFixed(0)` / `(x*100).toFixed`
+- [ ] **humanize enum**: 任何新机器码 snake_case 显示都走 `humanize()`,**不**裸字符串
+- [ ] **status badge**: 任何 status 渲染都走 `<StatusBadge>` 或 `<StatusText>`,**不**自造色映射
+- [ ] **onError**: 任何新 `useMutation` 必须有 onError(信任路径 inline / 辅助路径 toast),**不**只 `console.error`
+- [ ] **空态文案诚实**: 区分 loading / error / empty 三态,**不**用 empty 文案掩盖 error
+- [ ] **inline style**: 仅当值是动态计算结果(`width: ${pct}%`),静态值必须走 CSS class
