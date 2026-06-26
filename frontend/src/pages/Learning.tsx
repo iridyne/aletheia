@@ -73,7 +73,7 @@ function LearningPulse() {
         value={lastRun ? fmtRelative(lastRun.started_at) : 'Never'}
         tone={runTone(lastRun?.status)}
       />
-      <PulseStat label="New knowledge · 24h" value={new24h} tone={new24h > 0 ? 'cyan' : 'muted'} />
+      <PulseStat label="New knowledge · 24h" value={new24h} tone={new24h > 0 ? 'green' : 'muted'} />
       <PulseStat label="Strategies in paper" value={active.length} tone={active.length > 0 ? 'blue' : 'muted'} />
       <PulseStat label="Lessons logged" value={lessonCount} tone={lessonCount > 0 ? 'yellow' : 'muted'} />
     </section>
