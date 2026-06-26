@@ -194,7 +194,16 @@ export default function PnLZone() {
             )}
           </div>
           {hovered && breakdown.length > 0 && <AssetTooltip items={breakdown} />}
-          {hovered && <BrokerBreakdown accounts={utaAccounts} open={true} />}
+          {hovered && utaAccounts.length > 1 && (
+            <div className="broker-tooltip">
+              {utaAccounts.map(a => (
+                <div key={a.broker_id} className="broker-row">
+                  <span className="broker-name">{a.display_name}</span>
+                  <span className="broker-equity">{fmtNum(a.equity_usdt)} USDT</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Context tiles — hover shows per-symbol breakdown, click navigates */}

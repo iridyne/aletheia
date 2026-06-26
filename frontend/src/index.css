@@ -1664,10 +1664,12 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .asset-coin { font-family: var(--mono); font-weight: 600; min-width: 36px; }
 .asset-value { flex: 1; font-family: var(--mono); color: var(--text); }
 .asset-pct { color: var(--muted); font-size: 0.72rem; min-width: 38px; text-align: right; }
-.broker-breakdown {
-  margin-top: 8px; padding: 6px 10px;
-  background: var(--surface-2); border-radius: var(--r-sm, 6px);
-  border: 1px solid var(--border);
+.broker-tooltip {
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 50;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  border-radius: var(--r-sm, 6px); padding: 8px 12px;
+  min-width: 180px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  pointer-events: none;
 }
 .broker-row {
   display: flex; justify-content: space-between; align-items: center;
