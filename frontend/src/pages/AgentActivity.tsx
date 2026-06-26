@@ -8,6 +8,7 @@ import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
+import ThesisText from '../components/ThesisText'
 import { Badge, Button, Card } from '../components/ui'
 import { humanize, fmtTimestamp } from '../lib/format'
 
@@ -205,7 +206,9 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
               </DrawerSection>
             )}
             <DrawerSection label="Thesis">
-              <p className="opp-thesis">{selected.thesis || 'No thesis provided.'}</p>
+              {selected.thesis
+                ? <ThesisText text={selected.thesis} />
+                : <p className="opp-thesis">No thesis provided.</p>}
             </DrawerSection>
             <DrawerSection label="Links">
               <DrawerField label="Linked Strategy" value={selected.linked_strategy_id ? (

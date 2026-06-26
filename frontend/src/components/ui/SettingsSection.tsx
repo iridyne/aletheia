@@ -89,35 +89,46 @@ export function SaveMessage({ msg }: { msg: { ok: boolean; text: string } | null
   return <div className={`settings-save-msg ${msg.ok ? 'ok' : 'err'}`} title={msg.text}>{msg.text}</div>
 }
 
+function NumInput({ field: f, value, set }: { field: NumField; value: unknown; set: (v: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const displayed = draft ?? String((value as string | number | undefined) ?? '')
+  return (
+    <label className="settings-field">
+      <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
+      <input
+        type="number"
+        step={f.step}
+        value={displayed}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => {
+          if (draft == null) return
+          const n = f.isInt ? parseInt(draft, 10) : parseFloat(draft)
+          if (Number.isFinite(n)) set(n)
+          setDraft(null)
+        }}
+      />
+    </label>
+  )
+}
+
 export function NumberFieldGrid({
   fields,
   vals,
   set,
+  errors,
 }: {
   fields: NumField[]
   vals: Record<string, unknown>
   set: (key: string, value: number) => void
+  errors?: Record<string, string>
 }) {
   return (
     <div className="settings-field-grid">
       {fields.map(f => (
-        <label key={f.key} className="settings-field">
-          <span>{f.label}{f.unit ? ` (${f.unit})` : ''}</span>
-          <input
-            type="number"
-            min={f.min}
-            max={f.max}
-            step={f.step}
-            value={(vals[f.key] as string | number | undefined) ?? ''}
-            onChange={e => {
-              const raw = e.target.value
-              if (raw === '' || raw === '-') return
-              const n = f.isInt ? parseInt(raw, 10) : parseFloat(raw)
-              if (!Number.isFinite(n)) return
-              set(f.key, n)
-            }}
-          />
-        </label>
+        <div key={f.key}>
+          <NumInput field={f} value={vals[f.key]} set={v => set(f.key, v)} />
+          {errors?.[f.key] && <div className="settings-field-error">{errors[f.key]}</div>}
+        </div>
       ))}
     </div>
   )

@@ -120,7 +120,10 @@ const HUMANIZE_OVERRIDES: Record<string, string> = {
   paper_internal: 'Paper (internal)',
   bitget_demo: 'Bitget Demo',
   bitget_live_limited: 'Bitget Live (limited)',
-  usdt_futures: 'USDT Futures',
+  okx_demo: 'OKX Demo',
+  okx_live: 'OKX Live',
+  usdt_futures: 'USDT-M Perp',
+  spot: 'Spot',
   // run / task statuses
   completed_empty: 'Completed (no output)',
   completed_with_errors: 'Completed (errors)',

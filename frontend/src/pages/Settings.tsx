@@ -1853,7 +1853,29 @@ function RiskCard({ settings, qc }: any) {
     setVals(init)
   }, [settings])
 
-  const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null) }
+  const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null); setErrors({}) }
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const allNumFields = [...RISK_LIVE, ...RISK_DEMO, ...RISK_CORR, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN]
+
+  const validateAndSave = () => {
+    const errs: Record<string, string> = {}
+    for (const f of allNumFields) {
+      const v = vals[f.key]
+      if (v == null || v === '') continue
+      if (typeof v === 'number') {
+        if (v < f.min) errs[f.key] = `Min ${f.min}`
+        else if (v > f.max) errs[f.key] = `Max ${f.max}`
+      }
+    }
+    if (Object.keys(errs).length) {
+      setErrors(errs)
+      setMsg({ ok: false, text: `✗ ${Object.keys(errs).length} field(s) out of range` })
+      return
+    }
+    setErrors({})
+    mut.mutate()
+  }
 
   const mut = useMutation({
     mutationFn: () => api.updateRiskConfig(vals as any),
@@ -1882,11 +1904,11 @@ function RiskCard({ settings, qc }: any) {
 
       {/* Live limits */}
       <div className="section-label">Live limits</div>
-      <NumGrid fields={RISK_LIVE} vals={vals} set={set} />
+      <NumGrid fields={RISK_LIVE} vals={vals} set={set} errors={errors} />
 
       {/* Demo limits */}
       <div className="section-label mt-4">Demo / paper limits</div>
-      <NumGrid fields={RISK_DEMO} vals={vals} set={set} />
+      <NumGrid fields={RISK_DEMO} vals={vals} set={set} errors={errors} />
 
       <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
 
@@ -1894,7 +1916,7 @@ function RiskCard({ settings, qc }: any) {
       {vals.correlation_guard_enabled && (
         <>
           <div className="section-label mt-4">Correlation guard thresholds</div>
-          <NumGrid fields={RISK_CORR} vals={vals} set={set} />
+          <NumGrid fields={RISK_CORR} vals={vals} set={set} errors={errors} />
         </>
       )}
 
@@ -1902,13 +1924,13 @@ function RiskCard({ settings, qc }: any) {
       {(settings?.exchange as any)?.enabled_markets?.usdt_futures && (
         <>
           <div className="section-label mt-4">Futures leverage — Live (per-tier)</div>
-          <NumGrid fields={RISK_FUTURES_LIVE} vals={vals} set={set} />
+          <NumGrid fields={RISK_FUTURES_LIVE} vals={vals} set={set} errors={errors} />
 
           <div className="section-label mt-4">Futures leverage — Demo (per-tier)</div>
-          <NumGrid fields={RISK_FUTURES_DEMO} vals={vals} set={set} />
+          <NumGrid fields={RISK_FUTURES_DEMO} vals={vals} set={set} errors={errors} />
 
           <div className="section-label mt-4">Margin safety thresholds</div>
-          <NumGrid fields={RISK_MARGIN} vals={vals} set={set} />
+          <NumGrid fields={RISK_MARGIN} vals={vals} set={set} errors={errors} />
         </>
       )}
 
@@ -1925,7 +1947,7 @@ function RiskCard({ settings, qc }: any) {
       </div>
 
       <div className="settings-action-row">
-        <button onClick={() => mut.mutate()} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save risk limits'}</button>
+        <button onClick={validateAndSave} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save risk limits'}</button>
       </div>
       <SaveMsg msg={msg} />
     </div>

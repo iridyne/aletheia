@@ -5,6 +5,7 @@ import PageHeader from '../components/PageHeader'
 import { StatusBadge } from '../components/DataTable'
 import { Badge, Button, Card, StatusDot, StatusText, Switch, TableWrap, type StatusTone } from '../components/ui'
 import { fmtTimestamp, humanize } from '../lib/format'
+import ThesisText from '../components/ThesisText'
 
 type Tab = 'overview' | 'runs' | 'themes' | 'evidence' | 'profile'
 
@@ -447,7 +448,7 @@ function ThemesTab() {
               {humanize(t.status)}
             </StatusText>
           </div>
-          {t.thesis && <p className="lens-theme-thesis">{t.thesis}</p>}
+          {t.thesis && <ThesisText text={t.thesis} className="lens-theme-thesis" />}
           {!t.thesis && t.description && <p>{t.description}</p>}
           {t.demand_wave && <p className="text-muted">Wave: {t.demand_wave}</p>}
           {(t.confidence != null || t.novelty_score != null || t.actionability_score != null) && (
@@ -521,7 +522,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
         <StatusText tone={theme.status === 'active' ? 'green' : 'yellow'}>{theme.status}</StatusText>
       </div>
 
-      {theme.thesis && <p className="lens-theme-thesis"><b>Thesis:</b> {theme.thesis}</p>}
+      {theme.thesis && <ThesisText text={theme.thesis} className="lens-theme-thesis" />}
       {theme.description && <p>{theme.description}</p>}
 
       {(theme.confidence || theme.novelty_score || theme.actionability_score || theme.evidence_strength) && (

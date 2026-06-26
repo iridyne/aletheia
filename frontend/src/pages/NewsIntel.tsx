@@ -34,6 +34,8 @@ export default function NewsIntel() {
   const [selected, setSelected] = useState<NewsItem | null>(null)
   const [analysis, setAnalysis] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
+  const [showAdd, setShowAdd] = useState(false)
+  const [addForm, setAddForm] = useState({ title: '', source: '', url: '', summary: '', symbols: '', sentiment: 'neutral' })
 
   const analyzeMut = useMutation({
     mutationFn: (id: string) => api.analyzeNews(id),
@@ -42,6 +44,27 @@ export default function NewsIntel() {
       qc.invalidateQueries({ queryKey: ['news'] })
     },
   })
+
+  const createMut = useMutation({
+    mutationFn: (body: any) => api.createNews(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['news'] })
+      setShowAdd(false)
+      setAddForm({ title: '', source: '', url: '', summary: '', symbols: '', sentiment: 'neutral' })
+    },
+  })
+
+  const handleCreate = () => {
+    if (!addForm.title.trim()) return
+    createMut.mutate({
+      title: addForm.title.trim(),
+      source: addForm.source.trim() || 'manual',
+      url: addForm.url.trim() || undefined,
+      summary: addForm.summary.trim() || undefined,
+      symbols_mentioned: addForm.symbols.split(',').map(s => s.trim()).filter(Boolean),
+      sentiment: addForm.sentiment,
+    })
+  }
 
   const items = (news as NewsItem[]).filter(item => {
     if (filter === 'all') return true
@@ -54,15 +77,8 @@ export default function NewsIntel() {
     <div>
       <PageHeader
         title="News Intelligence"
-        role="Operate · out-of-MVP-spec surface (§17.3 lists news ingestion as future). No automated feed runs — items are entered manually via the API."
+        role="Operate · curated market news and events that may impact trading decisions. Add items manually or via API integration."
       />
-
-      <div className="notice-banner">
-        <span className="notice-icon">⚠</span>
-        <span className="notice-text">
-          <b>Manual entry only.</b> The automated news-ingestion pipeline is not configured (it is future scope per §17.3 / AGENTS.md). What you see here is whatever has been added by hand via <span className="mono">POST /api/news</span> — this is not a live market-news feed.
-        </span>
-      </div>
 
       <div className="flex items-center gap-2 mb-3">
         {['all', 'new', 'reviewed'].map(f => (
@@ -78,7 +94,31 @@ export default function NewsIntel() {
         <span className="text-muted text-sm">
           {items.length} items
         </span>
+        <Button variant="secondary" className="btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setShowAdd(v => !v)}>
+          {showAdd ? 'Cancel' : '+ Add News'}
+        </Button>
       </div>
+
+      {showAdd && (
+        <Card className="mb-3">
+          <div className="news-add-form">
+            <input placeholder="Title *" value={addForm.title} onChange={e => setAddForm(f => ({ ...f, title: e.target.value }))} />
+            <input placeholder="Source (e.g. CoinDesk)" value={addForm.source} onChange={e => setAddForm(f => ({ ...f, source: e.target.value }))} />
+            <input placeholder="URL (optional)" value={addForm.url} onChange={e => setAddForm(f => ({ ...f, url: e.target.value }))} />
+            <input placeholder="Symbols (comma-separated, e.g. BTC,ETH)" value={addForm.symbols} onChange={e => setAddForm(f => ({ ...f, symbols: e.target.value }))} />
+            <select value={addForm.sentiment} onChange={e => setAddForm(f => ({ ...f, sentiment: e.target.value }))}>
+              <option value="neutral">Neutral</option>
+              <option value="bullish">Bullish</option>
+              <option value="bearish">Bearish</option>
+              <option value="mixed">Mixed</option>
+            </select>
+            <textarea placeholder="Summary / key points" value={addForm.summary} onChange={e => setAddForm(f => ({ ...f, summary: e.target.value }))} rows={3} />
+            <Button onClick={handleCreate} disabled={createMut.isPending || !addForm.title.trim()}>
+              {createMut.isPending ? 'Adding…' : 'Add Item'}
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {items.length === 0 ? (
         <Card>

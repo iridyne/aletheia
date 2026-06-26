@@ -65,10 +65,14 @@ interface UTAAccount {
 }
 
 function BrokerBreakdown({ accounts }: { accounts: UTAAccount[] }) {
+  const [open, setOpen] = useState(false)
   if (accounts.length <= 1) return null
   return (
     <div className="broker-breakdown">
-      {accounts.map(a => (
+      <button className="broker-toggle" onClick={() => setOpen(o => !o)}>
+        {accounts.length} accounts {open ? '▾' : '▸'}
+      </button>
+      {open && accounts.map(a => (
         <div key={a.broker_id} className="broker-row">
           <span className="broker-name">{a.display_name}</span>
           <span className="broker-equity">{fmtNum(a.equity_usdt)} USDT</span>

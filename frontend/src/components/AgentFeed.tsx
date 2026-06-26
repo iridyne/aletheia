@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { AgentRun, Opportunity, TradeProposal } from '../types'
 import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
+import ThesisText from './ThesisText'
 
 /**
  * Agent activity feed (OVERVIEW_REDESIGN.md Decision 2).
@@ -243,7 +244,9 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
             <DrawerField label="Source" value={item.opportunity.source_agent} />
           </DrawerSection>
           <DrawerSection label="Thesis">
-            <p className="feed-thesis">{item.opportunity.thesis || 'No thesis recorded.'}</p>
+            {item.opportunity.thesis
+              ? <ThesisText text={item.opportunity.thesis} />
+              : <p className="feed-thesis">No thesis recorded.</p>}
           </DrawerSection>
           <div className="flex gap-2 mt-3">
             <button className="btn-control secondary" onClick={() => { onClose(); navigate('/agent-activity') }}>Open in Agent Activity →</button>
