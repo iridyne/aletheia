@@ -33,4 +33,7 @@ async def telegram_health():
             return {"reachable": True, "username": data.get("result", {}).get("username")}
         return {"reachable": False, "error": data.get("description", "unknown")}
     except Exception as e:
-        return {"reachable": False, "error": str(e)}
+        # Defense-in-depth: this path holds the bot token in the request URL.
+        # Return only the exception class name, never the raw str(e) (which an
+        # unexpected exception type could echo the token-bearing URL into).
+        return {"reachable": False, "error": type(e).__name__}

@@ -1683,7 +1683,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3);
 }
 @media (max-width: 480px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
-.metric-context { font-size: 0.68rem; color: var(--muted); margin-top: var(--space-1); }
+/* Single-line so the Exposure tile's holdings summary ("ETH 25% · AAVE 18% · …")
+   stays the same height as the peer tiles; full text on hover via title attr. */
+.metric-context { font-size: 0.68rem; color: var(--muted); margin-top: var(--space-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card.clickable { cursor: pointer; transition: border-color 0.12s, background 0.12s, transform 60ms; }
 .card.clickable:hover { border-color: var(--border-2); background: var(--surface-2); }
 .card.clickable:active { transform: scale(0.995); }

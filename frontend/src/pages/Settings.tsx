@@ -127,6 +127,15 @@ export default function Settings() {
     setSearchParams(nextParams, { replace: true })
   }
 
+  // Auto-select a numeric field's value on focus so typing replaces it instead
+  // of appending (e.g. editing "1" → "3" no longer forces deleting the 1 first).
+  // Delegated on the shell: React focus events bubble through child tab components,
+  // so this covers every <input type="number"> without touching each one.
+  const handleNumericFocus = (e: React.FocusEvent<HTMLDivElement>) => {
+    const el = e.target as HTMLElement
+    if (el instanceof HTMLInputElement && el.type === 'number') el.select()
+  }
+
   if (!status || !settings) return (
     <div className="skeleton" style={{ maxWidth: '600px', paddingTop: 'var(--space-6)' }}>
       <div className="skeleton-bar" />
@@ -145,7 +154,7 @@ export default function Settings() {
         role="Operate · Configure AI agent behaviour, exchange connections, risk limits, and system infrastructure. Secrets are write-only and never displayed."
       />
 
-      <div className="settings-shell">
+      <div className="settings-shell" onFocus={handleNumericFocus}>
         <aside className="settings-nav" aria-label="Settings sections">
           {TABS.map(t => (
             <button key={t.id} className={`settings-nav-item ${tab === t.id ? 'active' : ''}`} onClick={() => selectTab(t.id)}>

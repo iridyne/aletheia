@@ -28,7 +28,9 @@ export default function MetricTile({ label, value, tone = 'neutral', caveat, con
     >
       <div className="metric-label">{label}</div>
       <div className={`metric-value ${TONE_CLASS[tone]}`}>{value}</div>
-      {context && <div className="metric-context">{context}</div>}
+      {context && (
+        <div className="metric-context" title={typeof context === 'string' ? context : undefined}>{context}</div>
+      )}
       {caveat && <div className="metric-caveat">{caveat}</div>}
     </div>
   )

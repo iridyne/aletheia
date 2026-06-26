@@ -3,7 +3,8 @@
 Two cheap gates that catch the common ways a pulled update can brick the box:
   1. import gate — a fresh subprocess imports the critical modules, so it reflects
      the NEW code on disk (not modules already loaded in the running process).
-  2. fast test gate — a tiny pytest subset (config + risk engine) with a timeout.
+  2. fast test gate — a tiny pytest subset (config, risk engine, secrets
+     isolation, and the proposal→risk→execution workflow routes) with a timeout.
 
 Returns {ok, stage, detail}. Never raises. The full test suite is deliberately
 NOT run here — too slow for an unattended update path.
@@ -23,6 +24,7 @@ _FAST_TESTS = [
     "tests/test_config.py",
     "tests/test_risk_engine.py",
     "tests/test_secrets.py",
+    "tests/test_workflow_routes.py",
 ]
 
 _SECRET_PREFIXES = ("BITGET_", "OPENAI_", "ANTHROPIC_", "LLM_", "TELEGRAM_BOT_TOKEN")

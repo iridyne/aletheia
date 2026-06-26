@@ -1,6 +1,6 @@
 # Agent Contracts
 
-> Input/output contracts for all 19 registered agents and 30 scheduler jobs.
+> Input/output contracts for all 12 registered agent functions and 32 scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
 > Last updated: 2026-06-23 (频率全量修正 + 5 新 agent 补充)
