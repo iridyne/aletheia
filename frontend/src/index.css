@@ -1625,13 +1625,13 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 /* hero (dominant) + context tiles share one dense row */
 .pnl-cluster {
   display: grid; grid-template-columns: 1.1fr 2.4fr; gap: var(--space-3);
-  margin-bottom: var(--space-3); align-items: start;
+  margin-bottom: var(--space-3); align-items: stretch;
 }
 @media (max-width: 900px) { .pnl-cluster { grid-template-columns: 1fr; } }
 .pnl-hero {
   margin-bottom: 0; display: flex; flex-direction: column; justify-content: flex-start;
   position: relative; min-width: 0; overflow: visible;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3); min-height: 68px;
 }
 .pnl-hero-inner {
   display: flex; align-items: center; gap: var(--space-4);
@@ -1642,8 +1642,8 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .pnl-hero-value {
   font-family: var(--mono); font-weight: 600; color: var(--text);
   font-feature-settings: 'tnum' 1; line-height: 1.1;
-  font-size: clamp(1.1rem, 4vw, 2rem);
-  white-space: nowrap; margin: var(--space-1) 0;
+  font-size: 1.3rem;
+  white-space: nowrap;
 }
 .pnl-hero-value.is-muted { color: var(--muted); }
 .pnl-hero-value .hero-unit { font-size: 1rem; color: var(--faint); font-weight: 500; }
