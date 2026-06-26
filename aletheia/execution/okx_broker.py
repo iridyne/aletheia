@@ -18,6 +18,7 @@ from datetime import datetime
 
 from aletheia.data.symbols import to_canonical
 from aletheia.exchanges.okx.client import OKXClient, OrderRequest
+from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     insert_order, insert_fill, insert_position, list_positions, update_position,
@@ -177,7 +178,12 @@ def execute_live_order(
             if existing:
                 new_qty = existing["quantity"] + fill_qty
                 new_entry = (existing["entry_price"] * existing["quantity"] + fill_price * fill_qty) / new_qty
-                update_position(existing["id"], quantity=new_qty, entry_price=new_entry, current_price=fill_price)
+                update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": fill_price}
+                # Tighten (never loosen) the protective stop when averaging in.
+                merged_stop = merge_protective_stop(direction, stop_price, existing.get("stop_price"))
+                if merged_stop is not None:
+                    update_kwargs["stop_price"] = merged_stop
+                update_position(existing["id"], **update_kwargs)
                 position_id = existing["id"]
             else:
                 position = Position(
@@ -185,6 +191,9 @@ def execute_live_order(
                     quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
                     execution_mode=execution_mode, strategy_id=strategy_id,
                     proposal_id=proposal_id, order_id=order.id,
+                    # Persist protective stop/TP so position_manager acts on the AI's
+                    # intended levels, not just the default-% fallback (regression EC-stop).
+                    stop_price=stop_price, take_profit_price=take_profit_price,
                 )
                 insert_position(position)
                 position_id = position.id
