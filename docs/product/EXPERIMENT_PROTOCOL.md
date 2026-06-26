@@ -325,7 +325,9 @@ risk_decisions 15:22:22 / 15:24:11 / 15:27:56 连续 approved=1 空 violations
 
 **判决影响(重要——PI 输入信号变化)**:`agent_rationale` 的 meta JSON 会被 `analytics/reasoning_feedback.py:82-89` 解析出 `scanner_family` → 经 `trading_context.py:317-319` 喂回 PI prompt。修复**前** JSON 全损坏 → reasoning_feedback 一直提取失败拿到 "unknown"(等于此信号对 PI 一直缺失)。修复**后** JSON 完整 → reasoning_feedback 首次成功向 PI 提供真实 scanner_family。**这是一个 PI 此前从未收到的新输入信号**,可能微改决策。判决时:**6-25(本修复生效)起,PI 上下文比此前多了 reasoning_feedback 的 scanner_family 维度**;此前 proposal rationale 损坏不影响已落决策(rationale 是决策后产物),但污染了 reasoning_feedback=unknown。视作 PI 输入口径的一次小幅增强,在阶段评估时区分修复前/后。
 
-**生效验证**:见 commit 后的真实 proposal `json.loads(rationale.split('---',1)[1])` 成功 + 前端抽屉无裸 JSON;`tests/test_proposal_rationale.py` 3 passed。
+**生效验证**:`tests/test_proposal_rationale.py` 3 passed;端到端实证 — 2026-06-25 16:12 UTC 在重启后跑了一次真实 `submit_decision_as_proposal`(reasoning ~470 字、meta JSON ~1.1KB),落库 rationale **总长 1704**(旧 bug 恒=500)、`json.loads(rationale.split('\n---\n')[1])` **成功**(conviction=64, debate_bear=72, supporting 5条齐全)、thesis 在 600 处带 `…` 优雅断,**不再半句断**。
+
+**验证副作用透明披露**:该端到端测试用真 reasoning 跑通整条生产链路 → 在 okx_demo 实际下单 (proposal `da6ce654db3c`, order `ee2f22270dca`, exchange order `3687683239182241792`, qty=0.2 contracts=20 XRP short @ avg $1.0396, fill notional ~$20.79)。此 20 XRP 被 reconciler 在 9 小时内并入既有合法 XRP 短仓 `bd77e55f`(局部仓表 qty 42、交易所 0.42 contracts/42 XRP 完全对齐),**未产生孤儿仓位、未在 positions 表创建独立行**(`order_id` / `proposal_id` 关联到 positions 行均为 0),**Round 1 realized_pnl 评估不受污染**(读 `positions.realized_pnl`,该位置仍 open 且累计在合法仓上)。仅交易所侧多承担了 ~$20.8 的额外 short 暴露,平仓时 PnL 影响视市场而定但归属合法仓的整体盈亏轨迹,不视作独立"测试交易"。**判决时此细节不计入 G1-G6/K1-K4 任何指标**(无独立 closed trade、无独立 realized_pnl),仅作运维痕迹保留。
 
 ---
 
