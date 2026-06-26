@@ -69,7 +69,7 @@ export default function PnLChart({ days }: Props) {
   }, [chartData.length, days, hasData])
 
   if (isLoading) {
-    return <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>Loading equity curve...</div>
+    return <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>Loading PnL curve...</div>
   }
 
   // Distinguish a failed request from genuinely-empty data. Without this, a
@@ -79,7 +79,7 @@ export default function PnLChart({ days }: Props) {
   if (isError) {
     return (
       <div style={{ height: 220, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-        <p className="hint" style={{ color: '#ff5d6c' }}>Failed to load equity curve.</p>
+        <p className="hint" style={{ color: '#ff5d6c' }}>Failed to load PnL curve.</p>
         <button className="time-range-btn" onClick={() => refetch()}>Retry</button>
       </div>
     )
@@ -90,10 +90,20 @@ export default function PnLChart({ days }: Props) {
     return <p className="hint">No trades closed yet — curve appears after the first position closes.</p>
   }
 
+  // Caveat must stay honest: the line is cumulative *realized* PnL, but when
+  // positions are open we append one extra end point that folds in current
+  // unrealized PnL (see chartData above) — so the last point is realized+open,
+  // not pure realized. Spell that out instead of labelling the whole thing "realized".
+  const realizedTxt = data?.total_realized !== undefined
+    ? `${data.total_realized >= 0 ? '+' : ''}${data.total_realized.toFixed(2)} USDT`
+    : ''
+  const openTxt = currentUnrealized !== 0
+    ? ` · last point incl. open ${currentUnrealized >= 0 ? '+' : ''}${currentUnrealized.toFixed(2)}`
+    : ''
   return (
     <div>
       <p className="metric-caveat" style={{ marginBottom: '4px' }}>
-        cumulative realized PnL (trade-by-trade) · {data?.total_realized !== undefined ? `${data.total_realized >= 0 ? '+' : ''}${data.total_realized.toFixed(2)} USDT` : ''}
+        cumulative realized PnL (trade-by-trade){realizedTxt && ` · ${realizedTxt}`}{openTxt}
       </p>
       <div ref={containerRef} style={{ width: '100%' }} />
     </div>

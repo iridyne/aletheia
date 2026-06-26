@@ -714,7 +714,7 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
 
       <Section
         title="Capital Events"
-        description="Record deposits and withdrawals so the equity curve shows true PnL performance. Initial deposits are auto-recorded when a broker first syncs."
+        description="Record deposits and withdrawals so the Cumulative PnL curve reflects true performance. Initial deposits are auto-recorded when a broker first syncs."
       >
         <CapitalEventsCard />
       </Section>
@@ -2098,7 +2098,7 @@ function AppRows({ settings, qc }: any) {
       <Row label="Auto-open browser" hint="Open the dashboard in a browser tab automatically when the gateway starts.">
         <Toggle checked={autoBrowser} onChange={v => appMut.mutate({ auto_open_browser: v })} disabled={appMut.isPending} />
       </Row>
-      <Row label="Equity curve mode" hint="Full cumulative: every range shows the same all-time curve, the end point never changes (standard net-value curve). Window relative: each range re-accumulates from 0, so 7D shows only what was earned in the last 7 days.">
+      <Row label="Cumulative PnL mode" hint="Full cumulative: every range shows the same all-time curve, the end point never changes. Window relative: each range re-accumulates from 0, so 7D shows only what was earned in the last 7 days.">
         <select
           value={app.equity_curve_mode || 'full_cumulative'}
           onChange={e => appMut.mutate({ equity_curve_mode: e.target.value })}

@@ -298,10 +298,10 @@ export default function PnLZone() {
         </div>
       </div>
 
-      {/* Equity curve */}
+      {/* Cumulative PnL curve (realized; last point includes open unrealized) */}
       <div className="card pnl-curve">
         <div className="pnl-curve-header">
-          <h3>Equity Curve</h3>
+          <h3>Cumulative PnL</h3>
           <div className="time-range-selector">
             {([{ label: '7D', days: 7 }, { label: '30D', days: 30 }, { label: '90D', days: 90 }, { label: 'All', days: undefined }] as const).map(opt => (
               <button

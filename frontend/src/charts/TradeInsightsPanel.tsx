@@ -58,7 +58,7 @@ function EquityCurve({ data }: { data: TradeInsights['equity_curve'] }) {
   const color = isPositive ? C.green : C.red
   return (
     <Card>
-      <SectionLabel>Equity Curve (Cumulative PnL, USDT)</SectionLabel>
+      <SectionLabel>Cumulative PnL (USDT)</SectionLabel>
       <ResponsiveContainer width="100%" height={220}>
         <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <CartesianGrid {...gridProps} />
