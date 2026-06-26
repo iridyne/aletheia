@@ -1680,9 +1680,15 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .broker-name { color: var(--muted); }
 .broker-equity { font-family: var(--mono); color: var(--text); }
 .pnl-tiles {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3);
+  /* Always 4 columns above the small-screen fallback. auto-fit + minmax was unreliable —
+     at 1024×768 the tiles container is ~498px and 4×120+3×gap=516 dropped to 3 columns,
+     producing a 3+1 misalignment beside the hero. Fixed 4-col makes layout deterministic.
+     minmax(0,1fr) prevents long values forcing a column past 1fr (intrinsic min sizing).
+     ≤700px stacks to 2 columns (covers narrow laptops + tablets); ≤900px the parent
+     pnl-cluster already collapses hero+tiles to one column. */
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3);
 }
-@media (max-width: 480px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 700px) { .pnl-tiles { grid-template-columns: repeat(2, 1fr); } }
 /* Single-line so the Exposure tile's holdings summary ("ETH 25% · AAVE 18% · …")
    stays the same height as the peer tiles; full text on hover via title attr. */
 .metric-context { font-size: 0.68rem; color: var(--muted); margin-top: var(--space-1);
@@ -2030,7 +2036,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .risk-lever > button { width: 100%; }
 .risk-lever-actions { display: flex; gap: var(--space-2); }
-.risk-lever-actions button { flex: 1; }
+.risk-lever-actions button { flex: 1; white-space: nowrap; }
 
 .risk-console-meta {
   display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5);

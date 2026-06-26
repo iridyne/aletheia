@@ -119,7 +119,7 @@ export default function RiskControls() {
                 </StatusText>
               </div>
               <div className="risk-lever-actions">
-                <Button variant="secondary" onClick={() => pauseMut.mutate()} disabled={paused || !gatewayRunning || pauseMut.isPending}>Pause All</Button>
+                <Button variant="secondary" onClick={() => pauseMut.mutate()} disabled={paused || !gatewayRunning || pauseMut.isPending}>Pause</Button>
                 <Button onClick={() => resumeMut.mutate()} disabled={!paused || resumeMut.isPending}>Resume</Button>
               </div>
             </div>
