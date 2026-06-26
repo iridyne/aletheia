@@ -48,7 +48,7 @@ const openColumns = [
   posCol.accessor('current_price', { header: 'Current (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.display({ id: 'leverage', header: 'Lev', cell: ({ row }) => {
     const lev = (row.original as any).leverage
-    return lev && lev > 1 ? <span className="badge badge-blue">{lev}x</span> : <span className="text-muted">1x</span>
+    return lev && lev > 1 ? <Badge tone="blue">{lev}x</Badge> : <span className="text-muted">1x</span>
   }}),
   posCol.accessor('stop_price', { header: 'Stop (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('take_profit_price', { header: 'TP (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),

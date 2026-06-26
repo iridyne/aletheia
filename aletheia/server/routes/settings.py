@@ -82,6 +82,7 @@ async def get_settings():
         "historical_data": cfg.historical_data.model_dump(mode="json"),
         "event_triggers": cfg.event_triggers.model_dump(mode="json"),
         "pi_daemon": cfg.pi_daemon.model_dump(mode="json"),
+        "news": cfg.news.model_dump(mode="json"),
     }
 
 

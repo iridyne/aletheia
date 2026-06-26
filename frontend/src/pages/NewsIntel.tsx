@@ -94,7 +94,7 @@ export default function NewsIntel() {
         <span className="text-muted text-sm">
           {items.length} items
         </span>
-        <Button variant="secondary" className="btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setShowAdd(v => !v)}>
+        <Button variant="secondary" className="btn-sm ml-auto" onClick={() => setShowAdd(v => !v)}>
           {showAdd ? 'Cancel' : '+ Add News'}
         </Button>
       </div>

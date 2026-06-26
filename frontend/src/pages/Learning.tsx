@@ -238,7 +238,7 @@ function KnowledgeTab() {
       <Card>
         {isLessons
           ? <>
-              <p className="text-muted text-sm" style={{ marginBottom: '0.5rem' }}>
+              <p className="text-muted text-sm mb-2">
                 Producer-only view. PI Agent does not currently consume these (Round 2 fix L-Bug-B).
               </p>
               <DataTable data={rows as LessonRow[]} columns={lessonColumns} emptyMessage="No lessons yet." />

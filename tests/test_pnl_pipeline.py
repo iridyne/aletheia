@@ -226,8 +226,14 @@ class TestEquityCurveEndpoint:
         ))
         resp = await c.get("/api/analytics/equity-curve?days=7")
         body = resp.json()
+        # `days` windows the DISPLAYED points (only the in-window trade is emitted)…
         assert len(body["points"]) == 1
-        assert body["total_realized"] == 3.0
+        assert body["points"][0]["pnl"] == 3.0
+        # …but in the default full_cumulative mode the running total accumulates over
+        # ALL history, so the curve's end point includes the pre-window +5.0 trade.
+        # This keeps the equity curve's end point identical across 7D/30D/All.
+        assert body["points"][0]["cumulative_pnl"] == 8.0
+        assert body["total_realized"] == 8.0
 
     async def test_respects_limit(self, client):
         c, _ = client
