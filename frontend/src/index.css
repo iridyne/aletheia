@@ -2240,7 +2240,21 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   padding: var(--space-3) var(--space-5);
   margin-bottom: var(--space-4);
 }
-.learn-pulse .stat { min-width: 116px; }
+.learn-pulse .stat { min-width: 116px; display: flex; flex-direction: column; gap: 4px; }
+.learn-pulse .stat-label {
+  font-size: 0.72rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.learn-pulse .stat-value {
+  font-family: var(--display); font-size: 1.4rem; font-weight: 600; color: var(--text);
+}
+/* Tone variants — drive the PulseStat `tone` prop. Scoped to .learn-pulse so a future
+   .stat-value elsewhere is not silently colored. Mirrors the StatusTone vocabulary. */
+.learn-pulse .stat-value-green  { color: var(--green); }
+.learn-pulse .stat-value-yellow { color: var(--yellow); }
+.learn-pulse .stat-value-red    { color: var(--red); }
+.learn-pulse .stat-value-blue   { color: var(--blue); }
+.learn-pulse .stat-value-muted  { color: var(--faint); }
 
 /* Two-up grid for grouped output / reviews; align-items:start so a tall column never
    stretches its short peer (same fix as the Risk page). */
@@ -2272,7 +2286,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.learn-item-meta { font-size: 0.72rem; color: var(--text-faint); flex-shrink: 0; }
+.learn-item-meta { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; }
 
 /* Dreaming sessions — cognition narrative (the page signature). */
 .dream-sessions { display: flex; flex-direction: column; gap: var(--space-3); }
@@ -2290,18 +2304,18 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   gap: var(--space-2) var(--space-3);
   margin-bottom: var(--space-2);
 }
-.dream-session-trigger { font-size: 0.74rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
-.dream-session-time { font-size: 0.74rem; color: var(--text-faint); margin-left: auto; }
+.dream-session-trigger { font-size: 0.74rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.dream-session-time { font-size: 0.74rem; color: var(--faint); margin-left: auto; }
 .dream-tools { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-2); }
 .dream-chip {
   font-size: 0.68rem;
   color: var(--accent);
-  background: var(--accent-glow);
+  background: rgba(34, 211, 238, 0.10); /* faint accent tint — no token, intentional */
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: 1px 6px;
 }
-.dream-session-out { font-size: 0.74rem; color: var(--text-dim); }
+.dream-session-out { font-size: 0.74rem; color: var(--muted); }
 
 /* Knowledge sub-tab button row. */
 .kb-subtabs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
@@ -2324,7 +2338,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 .promo-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .promo-name { font-weight: 600; font-size: 0.9rem; color: var(--text); }
 .promo-flow { display: inline-flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
-.promo-arrow { color: var(--text-faint); }
+.promo-arrow { color: var(--faint); }
 .promo-gate { font-size: 0.78rem; }
 .promo-metrics {
   display: grid;
@@ -2334,7 +2348,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   padding-top: var(--space-2);
 }
 .promo-metric { display: flex; flex-direction: column; gap: 1px; }
-.promo-metric-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); }
+.promo-metric-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .promo-metric-val { font-size: 0.9rem; color: var(--text); }
 @keyframes shimmer { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
