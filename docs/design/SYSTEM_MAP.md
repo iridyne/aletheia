@@ -83,7 +83,7 @@
 
 ---
 
-## 六、已确认的管道断裂（详见 [PIPELINE_GAPS](../issues/PIPELINE_GAPS.md)）
+## 六、已确认的管道断裂（详见 [PIPELINE_GAPS](../issues/archive/PIPELINE_GAPS.md)）
 
 | 级别 | 问题 | 影响 |
 |------|------|------|

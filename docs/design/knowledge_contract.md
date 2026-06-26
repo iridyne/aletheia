@@ -230,7 +230,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 **影响**: Dreaming Agent 的结构化提炼工作完全进入死路，不影响任何后续决策。
 
-**前向链接**: `docs/issues/PIPELINE_GAPS.md §A1`
+**前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §A1`
 
 ### A2. ps_skills 无生产者（SkillStore 空壳）
 
@@ -238,7 +238,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 **影响**: "技能学习"系统有 schema 无内容；如有相关 UI 页面，应标注"coming soon"而非空白。
 
-**前向链接**: `docs/issues/PIPELINE_GAPS.md §A2`
+**前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §A2`
 
 ### B1. detect_contradictions() 是 stub
 
@@ -246,7 +246,7 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 **影响**: 知识库中可能同时存在矛盾的 guard/lesson/research_note，系统无法检测。调用方不得将 stub 结果呈现为"已检查无矛盾"。
 
-**前向链接**: `docs/issues/PIPELINE_GAPS.md §B1`
+**前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §B1`
 
 ---
 

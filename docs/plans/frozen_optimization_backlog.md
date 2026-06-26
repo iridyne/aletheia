@@ -178,7 +178,7 @@ trade_case_study 496 行 + post_trade_review 1679 行
 
 ---
 
-### [A12] = [A3](去重,源自 PIPELINE_GAPS.md A1)
+### [A12] = [A3](去重,源自 archive/PIPELINE_GAPS.md A1)
 
 ---
 

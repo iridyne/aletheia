@@ -1,3 +1,5 @@
+> **⚠️ 已归档(2026-06-26)** — 本报告是 2026-06-19→06-23 的点对点快照。4-agent 对 HEAD 逐条核实:列举项绝大多数已修或已被 `FIX_PLAN_2026-06-26.md` / `frozen_optimization_backlog.md` 捕获;仍开放且未被别处记录的残余项已迁入 `../BACKEND_ISSUES.md` §19。当前开放 backlog 以 FIX_PLAN 为准。
+
 # Pipeline Gaps — 断管道登记簿
 
 > 审计日期: 2026-06-23
