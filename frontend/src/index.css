@@ -39,6 +39,35 @@
   --space-6: 24px;
   --space-8: 32px;
 
+  /* ─── Font-size token scale (Bloomberg-density 9 steps) ─────────────────────
+     Until 2026-06-27 the codebase had 36 distinct font-size literals (0.55, 0.6,
+     0.62, 0.64, 0.65, 0.66, 0.68, 0.7, 0.72, 0.73, 0.74, 0.75, 0.76, 0.78, 0.79,
+     0.8, 0.82, 0.83, 0.84, 0.85, 0.86, 0.88, 0.9, 0.95, 1, 1.05, 1.1, 1.2, 1.25,
+     1.3, 1.4, 1.5, 1.8, 2, 2.2) — many sub-perceptual clusters (0.62..0.68 are
+     visually identical at terminal density). The scale below collapses them to
+     9 steps. Migration is *opt-in* per file: when you touch a `font-size:` line,
+     pick the nearest --fs-* token. Don't do a global s/literal/var/g sweep — it
+     would force a multi-viewport re-test on the entire dashboard.
+     Mapping guide:
+       0.55-0.62  → --fs-2xs   (.625rem)   tiny labels, status-row eyebrows
+       0.64-0.68  → --fs-xs    (.6875rem)  small uppercase eyebrows, metric-label
+       0.70-0.74  → --fs-sm    (.75rem)    table cells, captions, timestamps
+       0.75-0.80  → --fs-base  (.8125rem)  body text (the dense default)
+       0.82-0.88  → --fs-md    (.875rem)   slightly emphasized body, card titles
+       0.90-0.95  → --fs-lg    (.9375rem)  section headings inside cards
+       1.00-1.10  → --fs-xl    (1.0rem)    page headers, hero values
+       1.20-1.40  → --fs-2xl   (1.25rem)   prominent numbers, modal titles
+       1.50+      → --fs-3xl   (1.5rem)    hero display (master state word, etc.) */
+  --fs-2xs:  0.625rem;
+  --fs-xs:   0.6875rem;
+  --fs-sm:   0.75rem;
+  --fs-base: 0.8125rem;
+  --fs-md:   0.875rem;
+  --fs-lg:   0.9375rem;
+  --fs-xl:   1rem;
+  --fs-2xl:  1.25rem;
+  --fs-3xl:  1.5rem;
+
   /* Responsive breakpoints — CSS can't use vars in @media, so these are
      canonical documentation tokens. All @media in this file must use one of:
        --bp-sm: 480px   (phone)
@@ -452,6 +481,46 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 
 /* ---------- Settings page primitives ---------- */
 /* Settings uses a vertical IA: left section nav + right detail panel. */
+
+/* ─── Inline search — fuzzy-find across all 28 sections + 6 tabs ─── */
+.settings-search { position: relative; margin-bottom: var(--space-3); max-width: 480px; }
+.settings-search-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+}
+.settings-search-input:focus { border-color: var(--accent); outline: none; }
+.settings-search-results {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow);
+  max-height: 320px; overflow-y: auto;
+}
+.settings-search-empty {
+  padding: 10px 12px; color: var(--muted); font-size: var(--fs-sm);
+}
+.settings-search-result {
+  width: 100%; display: flex; justify-content: space-between; align-items: baseline;
+  gap: var(--space-3);
+  background: transparent; border: none; padding: 8px 12px;
+  color: var(--text); cursor: pointer; text-align: left;
+  font: inherit; font-size: var(--fs-sm);
+}
+.settings-search-result:hover,
+.settings-search-result.active { background: var(--surface); filter: none; }
+.settings-search-title { color: var(--text); }
+.settings-search-tab {
+  color: var(--accent); font-size: var(--fs-xs);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+
 .settings-shell {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
@@ -1617,7 +1686,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .risk-activity-key  { color: var(--muted); }
 .risk-activity-val  { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.risk-activity-meta { color: var(--faint); font-size: 0.72rem; }
+.risk-activity-meta { color: var(--faint); font-size: var(--fs-sm); }
 .risk-good  { color: var(--green); }
 .risk-bad   { color: var(--red); }
 .risk-faint { color: var(--faint); padding: 0 4px; }
@@ -1659,7 +1728,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   font-size: 0.78rem;
 }
 .latest-check-time { color: var(--faint); }
-.latest-check-meta { color: var(--faint); font-size: 0.72rem; }
+.latest-check-meta { color: var(--faint); font-size: var(--fs-sm); }
 
 
 /* System status board — tabular, old-school console feel with status lights */
@@ -1803,7 +1872,10 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .risk-panel   { max-height: 240px; }
 .system-panel { max-height: 280px; }
 
-/* Go-Live Scorecard */
+/* Go-Live Scorecard — Overview.tsx GoLiveScoreCard EXCLUSIVE namespace.
+   Any new component that wants this style should rename to its own prefix; a second
+   `.scorecard-*` block elsewhere would silently override this via source order (the
+   exact bug audit caught — a duplicate set at line ~3160 was removed). */
 .scorecard-panel { max-height: 400px; overflow-y: auto; }
 .scorecard-header {
   display: flex;
@@ -2088,7 +2160,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   font-family: var(--display); font-size: 1.5rem; font-weight: 700;
   letter-spacing: 0.05em; line-height: 1.05; color: var(--rc-accent);
 }
-.risk-console-detail { font-size: 0.78rem; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+.risk-console-detail { font-size: var(--fs-base); color: var(--muted); margin-top: 3px; line-height: 1.4; }
 
 .risk-console-levers { display: flex; gap: var(--space-3); flex-wrap: wrap; }
 .risk-lever {
@@ -2189,6 +2261,22 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 @media (max-width: 600px) { .account-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .metric-tile { margin-bottom: 0; padding: var(--space-2) var(--space-3); min-height: 68px; overflow: visible; position: relative; }
+/* When .metric-tile is rendered as <button> (clickable variant), reset the global
+   button defaults (cyan accent fill, bold sans, scale-on-active) — the tile must
+   still LOOK like a card to the eye even though it BEHAVES like a button to the
+   keyboard. Specificity matches the global `button {}` selector via the tag prefix. */
+button.metric-tile {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  display: block;
+}
+button.metric-tile:hover { filter: none; background: var(--surface-2); }
+button.metric-tile:active:not(:disabled) { transform: none; filter: none; }
 .metric-label {
   font-size: 0.62rem; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: var(--space-1);
@@ -2390,7 +2478,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.learn-item-meta { font-size: 0.72rem; color: var(--faint); flex-shrink: 0; }
+.learn-item-meta { font-size: var(--fs-sm); color: var(--faint); flex-shrink: 0; }
 
 /* Dreaming sessions — cognition narrative (the page signature). */
 .dream-sessions { display: flex; flex-direction: column; gap: var(--space-3); }
@@ -2408,8 +2496,8 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   gap: var(--space-2) var(--space-3);
   margin-bottom: var(--space-2);
 }
-.dream-session-trigger { font-size: 0.74rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.dream-session-time { font-size: 0.74rem; color: var(--faint); margin-left: auto; }
+.dream-session-trigger { font-size: var(--fs-sm); color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.dream-session-time { font-size: var(--fs-sm); color: var(--faint); margin-left: auto; }
 .dream-tools { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-2); }
 .dream-chip {
   font-size: 0.68rem;
@@ -2419,7 +2507,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   border-radius: var(--r-sm);
   padding: 1px 6px;
 }
-.dream-session-out { font-size: 0.74rem; color: var(--muted); }
+.dream-session-out { font-size: var(--fs-sm); color: var(--muted); }
 
 /* Knowledge sub-tab button row. */
 .kb-subtabs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
@@ -2440,10 +2528,10 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   gap: var(--space-2);
 }
 .promo-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.promo-name { font-weight: 600; font-size: 0.9rem; color: var(--text); }
+.promo-name { font-weight: 600; font-size: var(--fs-md); color: var(--text); }
 .promo-flow { display: inline-flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
 .promo-arrow { color: var(--faint); }
-.promo-gate { font-size: 0.78rem; }
+.promo-gate { font-size: var(--fs-base); }
 .promo-metrics {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2452,8 +2540,8 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   padding-top: var(--space-2);
 }
 .promo-metric { display: flex; flex-direction: column; gap: 1px; }
-.promo-metric-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-.promo-metric-val { font-size: 0.9rem; color: var(--text); }
+.promo-metric-label { font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.promo-metric-val { font-size: var(--fs-md); color: var(--text); }
 @keyframes shimmer { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 /* ---------- Tick flash (price change pulse) ---------- */
@@ -3140,79 +3228,11 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 @keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
 
 /* ---------- Go-Live Scorecard ---------- */
-.scorecard-panel { }
-.scorecard-ring-wrap {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-2) 0 var(--space-3);
-}
-.scorecard-ring { flex-shrink: 0; }
-.scorecard-ring-center { text-align: left; }
-.scorecard-score {
-  font-size: 1.8rem;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  line-height: 1;
-}
-.scorecard-label {
-  flex: 1;
-  font-size: 0.72rem;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.scorecard-criteria { display: flex; flex-direction: column; gap: 5px; margin-top: var(--space-2); }
-.scorecard-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: 0.72rem;
-}
-.scorecard-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-}
-.scorecard-dot.pass   { background: var(--green); }
-.scorecard-dot.warning { background: var(--yellow); }
-.scorecard-dot.fail   { background: var(--red); }
-.scorecard-row-label { flex: 1; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.scorecard-row-detail { color: var(--muted); font-size: 0.68rem; flex-shrink: 0; }
-.scorecard-blockers {
-  margin-top: var(--space-2);
-  padding: var(--space-2);
-  background: rgba(255,93,108,0.08);
-  border-left: 2px solid var(--red);
-  border-radius: 0 4px 4px 0;
-  font-size: 0.7rem;
-  color: var(--red);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.scorecard-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding-bottom: var(--space-2);
-  cursor: pointer;
-}
-.scorecard-title { flex: 1; }
-.scorecard-title h3 { margin: 0 0 2px; font-size: 0.85rem; }
-.scorecard-bar-bg {
-  flex: 1;
-  height: 5px;
-  background: var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-  min-width: 40px;
-}
-.scorecard-bar-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-.scorecard-detail { font-size: 0.65rem; color: var(--muted); flex-shrink: 0; max-width: 90px; text-align: right; }
+/* Second .scorecard-* block removed — it duplicated the canonical set near line 1806
+   under the same class names with materially different layout (flex vs grid), and 7
+   of its rules (ring/ring-wrap/ring-center/score/dot/row-label/row-detail) were dead
+   code with zero .tsx references. Source-order would have made Overview render this
+   block instead of the intent above — a latent visual-collision bug. */
 
 /* ---------- Decision Reasoning (trade drawer) ---------- */
 .decision-reasoning {
@@ -3252,4 +3272,23 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 .confirm-desc { margin: 0 0 12px; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
 .confirm-detail { margin: 0 0 16px; padding: 10px 12px; background: var(--bg-2); border-radius: 6px; font-size: 0.75rem; color: var(--text); font-family: var(--font-mono); line-height: 1.6; }
 .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* ============================ prefers-reduced-motion ============================
+ * Respect the OS-level "Reduce motion" preference (WCAG 2.3.3 Animation from
+ * Interactions / vestibular disorder safety). Aletheia is an always-on cockpit
+ * with looped pulse + shimmer + tick-flash; running these unconditionally is
+ * exactly the kind of motion the media query exists to suppress.
+ *
+ * Strategy: blanket-suppress all animations/transitions to ~instant, then keep
+ * iteration to 1 so any in-flight `infinite` loop stops at the next cycle. The
+ * `!important` is necessary because component rules win specificity battles.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 

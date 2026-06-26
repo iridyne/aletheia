@@ -91,7 +91,9 @@ const VIEWPORT_MARGIN = 8  // px min distance the tooltip keeps from any viewpor
  * `overflow:hidden` clipping (e.g. the sticky topbar / card).
  */
 function useTooltipPosition(open: boolean) {
-  const triggerRef = useRef<HTMLDivElement>(null)
+  // HTMLElement (not HTMLDivElement) so callers can attach to <button> too — we only
+  // need getBoundingClientRect/offsetWidth/offsetHeight, available on any element.
+  const triggerRef = useRef<HTMLElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
 
@@ -136,14 +138,22 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
   const toneClass = tone === 'positive' ? 'pnl-positive' : tone === 'negative' ? 'pnl-negative' : tone === 'muted' ? 'text-muted' : ''
   const hasTooltip = entries.length > 0
   const { triggerRef, tooltipRef, pos } = useTooltipPosition(show && hasTooltip)
+  const open = () => setShow(true)
+  const close = () => setShow(false)
   return (
-    <div
-      ref={triggerRef}
-      className={`card metric-tile clickable`}
+    // Real <button> so Tab/Enter/Space reach the tile, and focus also reveals the
+    // tooltip (parity with hover) — WCAG 2.1.1 keyboard + 1.4.13 content-on-hover.
+    // position:relative moved to .metric-tile.clickable in CSS (no inline style).
+    <button
+      ref={triggerRef as React.RefObject<HTMLButtonElement>}
+      type="button"
+      className="card metric-tile clickable"
       onClick={onClick}
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-      style={{ position: 'relative' }}
+      onMouseEnter={open}
+      onMouseLeave={close}
+      onFocus={open}
+      onBlur={close}
+      onKeyDown={(e) => { if (e.key === 'Escape') close() }}
     >
       <div className="metric-label">{label}</div>
       <div className={`metric-value ${toneClass}`}>{value}</div>
@@ -168,7 +178,7 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
           ))}
         </div>
       )}
-    </div>
+    </button>
   )
 }
 

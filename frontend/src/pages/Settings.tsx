@@ -51,6 +51,60 @@ const TAB_ALIASES: Record<string, Tab> = {
   infrastructure: 'runtime',
 }
 
+/**
+ * Inline-search index — fuzzy-find a Section across all 6 tabs.
+ *
+ * Settings is 3500+ lines and split into 6 tabs, so the operator has no fast way
+ * to jump to e.g. "Risk Limits → Margin warning ratio". This index lets a search
+ * box at the top of the page match any Section by title, returning the tab it
+ * lives on; clicking a result switches tabs (and the existing ?section= deep-link
+ * mechanism takes care of scrolling).
+ *
+ * MAINTAIN INVARIANT: every `<Section title="X">` in this file must have a
+ * matching entry below. Drift means the search will miss that section.
+ */
+const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
+  // Agent & Models
+  { title: 'Permission Mode',          tab: 'agent', alt: ['autonomy', 'observe', 'paper', 'full'] },
+  { title: 'Learning',                 tab: 'agent', alt: ['dreaming', 'research', 'pi daemon'] },
+  { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
+  { title: 'AI Model Providers',       tab: 'agent', alt: ['llm', 'openai', 'anthropic', 'claude', 'codex'] },
+  // Execution
+  { title: 'Exchange Connection',      tab: 'execution', alt: ['bitget', 'okx', 'binance', 'api key'] },
+  { title: 'Trading Mode',             tab: 'execution', alt: ['demo', 'live unlock', 'paper'] },
+  { title: 'Paper Trading Parameters', tab: 'execution', alt: ['stop loss', 'take profit', 'hold time', 'confidence'] },
+  { title: 'Capital Events',           tab: 'execution', alt: ['deposit', 'withdrawal', 'pnl baseline'] },
+  { title: 'Market Data Sources',      tab: 'execution', alt: ['ohlcv', 'data provider', 'override'] },
+  // Risk & Universe
+  { title: 'Universe Board',           tab: 'risk', alt: ['scanner', 'tradable universe'] },
+  { title: 'Strategy Factory',         tab: 'risk', alt: ['auto-strategy', 'designer'] },
+  { title: 'Event Triggers',           tab: 'risk', alt: ['threshold', 'fire conditions'] },
+  { title: 'Tradable Symbols',         tab: 'risk', alt: ['allowlist', 'symbol filter'] },
+  { title: 'Observed US Equities',     tab: 'risk', alt: ['xstocks', 'equity'] },
+  { title: 'Prediction Markets',       tab: 'risk', alt: ['polymarket', 'categories'] },
+  { title: 'Risk Limits',              tab: 'risk', alt: ['notional cap', 'leverage', 'daily loss', 'margin ratio', 'kill switch', 'force close'] },
+  // Health & Alerts
+  { title: 'Health Monitoring',        tab: 'health', alt: ['alert thresholds', 'self-heal'] },
+  { title: 'Telegram',                 tab: 'health', alt: ['bot', 'chat id', 'notification'] },
+  { title: 'Webhook',                  tab: 'health', alt: ['slack', 'discord', 'n8n', 'hmac'] },
+  // Runtime & System
+  { title: 'Display',                  tab: 'runtime', alt: ['decimals', 'theme'] },
+  { title: 'App',                      tab: 'runtime', alt: ['dashboard', 'shell'] },
+  { title: 'Historical Data',          tab: 'runtime', alt: ['backfill', 'ohlcv storage', 'backtest'] },
+  { title: 'News Feeds',               tab: 'runtime', alt: ['rss', 'ingestion'] },
+  { title: 'Data Retention',           tab: 'runtime', alt: ['prune', 'cleanup', 'telemetry'] },
+  { title: 'Software Updates',         tab: 'runtime', alt: ['git pull', 'upgrade', 'self-update'] },
+  // Advanced
+  { title: 'Configuration Coverage',   tab: 'advanced', alt: ['coverage matrix', 'config audit'] },
+]
+
+function matchesSearch(item: typeof SETTINGS_INDEX[number], q: string): boolean {
+  const needle = q.toLowerCase().trim()
+  if (!needle) return false
+  if (item.title.toLowerCase().includes(needle)) return true
+  return (item.alt || []).some(a => a.toLowerCase().includes(needle))
+}
+
 function parseTab(value: string | null): Tab | null {
   if (!value) return null
   if (TABS.some(t => t.id === value)) return value as Tab
@@ -154,6 +208,8 @@ export default function Settings() {
         role="Operate · Configure AI agent behaviour, exchange connections, risk limits, and system infrastructure. Secrets are write-only and never displayed."
       />
 
+      <SettingsSearch onPick={selectTab} />
+
       <div className="settings-shell" onFocus={handleNumericFocus}>
         <aside className="settings-nav" aria-label="Settings sections">
           {TABS.map(t => (
@@ -172,6 +228,81 @@ export default function Settings() {
           {tab === 'advanced'  && <AdvancedTab           settings={settings} />}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Inline fuzzy search across all Settings sections. ⌘/Ctrl + K to focus, Esc to close.
+ * Results are tab-aware: clicking a result switches the current tab and lets the
+ * existing ?section= deep-link mechanism handle scroll-to-section.
+ */
+function SettingsSearch({ onPick }: { onPick: (tab: Tab) => void }) {
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState(false)
+  const [activeIdx, setActiveIdx] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Cmd/Ctrl+K from anywhere on the page → focus search.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === 'k' || e.key === 'K') && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        inputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  const results = q.trim() ? SETTINGS_INDEX.filter(it => matchesSearch(it, q)) : []
+  const pick = (it: typeof SETTINGS_INDEX[number]) => {
+    onPick(it.tab)
+    setQ(''); setOpen(false); setActiveIdx(0)
+    inputRef.current?.blur()
+  }
+  return (
+    <div className="settings-search">
+      <input
+        ref={inputRef}
+        type="search"
+        className="settings-search-input"
+        placeholder="Search settings…  (⌘K)"
+        value={q}
+        onChange={e => { setQ(e.target.value); setOpen(true); setActiveIdx(0) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        onKeyDown={e => {
+          if (e.key === 'Escape') { setQ(''); setOpen(false); inputRef.current?.blur() }
+          else if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, results.length - 1)) }
+          else if (e.key === 'ArrowUp')   { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)) }
+          else if (e.key === 'Enter' && results[activeIdx]) { e.preventDefault(); pick(results[activeIdx]) }
+        }}
+        aria-label="Search settings"
+        aria-autocomplete="list"
+        aria-expanded={open && results.length > 0}
+      />
+      {open && q.trim() && (
+        <div className="settings-search-results" role="listbox">
+          {results.length === 0 ? (
+            <div className="settings-search-empty">No matches.</div>
+          ) : results.map((it, i) => (
+            <button
+              key={it.title}
+              type="button"
+              role="option"
+              aria-selected={i === activeIdx}
+              className={`settings-search-result${i === activeIdx ? ' active' : ''}`}
+              // Use onMouseDown so the parent input's onBlur (which closes the dropdown)
+              // doesn't fire BEFORE our click — onClick on a child that's about to be
+              // unmounted by the blur would never run.
+              onMouseDown={(e) => { e.preventDefault(); pick(it) }}
+              onMouseEnter={() => setActiveIdx(i)}
+            >
+              <span className="settings-search-title">{it.title}</span>
+              <span className="settings-search-tab">{TABS.find(t => t.id === it.tab)?.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
