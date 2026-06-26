@@ -329,33 +329,46 @@ function ProposalRationale({ rationale }: { rationale: string | null }) {
 function ProposalRationaleDetail({ rationale }: { rationale: string | null }) {
   const { text, meta } = useMemo(() => parseDecisionMeta(rationale), [rationale])
   if (!rationale) return <p className="feed-thesis">No rationale provided.</p>
-  // Use the parsed `text` (clean thesis), never the raw rationale — otherwise a
-  // malformed meta would render the "---{json}" tail verbatim. parseDecisionMeta
-  // guarantees text = rationale when there's no separator, else the clean prefix.
   if (!meta) return <p className="feed-thesis">{text || 'No rationale provided.'}</p>
   return (
     <div className="decision-detail">
       <ConvictionMeter conviction={meta.conviction} debateRan={meta.debate_ran}
         bull={meta.debate_bull} bear={meta.debate_bear} />
-      <p className="feed-thesis mt-2">{text}</p>
+
+      <div className="decision-section mt-2">
+        <div className="decision-section-label">Thesis</div>
+        <p className="decision-thesis">{text}</p>
+      </div>
+
       {meta.supporting.length > 0 && (
-        <div className="decision-signals mt-2">
-          <span className="text-muted text-sm">Supporting:</span>
-          <div className="signal-tags">{meta.supporting.map((s, i) => <Badge key={i} tone="green">{s}</Badge>)}</div>
+        <div className="decision-section mt-2">
+          <div className="decision-section-label">Supporting Signals</div>
+          <ul className="decision-signal-list">
+            {meta.supporting.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
         </div>
       )}
+
       {meta.opposing.length > 0 && (
-        <div className="decision-signals mt-1">
-          <span className="text-muted text-sm">Opposing:</span>
-          <div className="signal-tags">{meta.opposing.map((s, i) => <Badge key={i} tone="red">{s}</Badge>)}</div>
+        <div className="decision-section mt-2">
+          <div className="decision-section-label">Opposing Signals</div>
+          <ul className="decision-signal-list opposing">
+            {meta.opposing.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
         </div>
       )}
-      {meta.guards.warnings > 0 && (
-        <div className="decision-guards mt-2">
-          <span className="text-muted text-sm">Guard warnings:</span>
-          {meta.guards.details.map((d: any, i: number) => (
-            <span key={i} className="guard-warn-tag">{d.guard}: {d.reason}</span>
-          ))}
+
+      {meta.guards && (
+        <div className="decision-section mt-2">
+          <div className="decision-section-label">Risk Guards</div>
+          <span className="text-muted text-sm">
+            {meta.guards.guards_run} checked · {meta.guards.blocks} blocked · {meta.guards.warnings} warned
+          </span>
+          {meta.guards.details.length > 0 && (
+            <ul className="decision-signal-list opposing">
+              {meta.guards.details.map((d: any, i: number) => <li key={i}>{d.guard}: {d.reason}</li>)}
+            </ul>
+          )}
         </div>
       )}
     </div>
