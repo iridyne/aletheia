@@ -68,16 +68,22 @@ export default function Proposals() {
   const { data = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
   const [selected, setSelected] = useState<TradeProposal | null>(null)
   const [pendingId, setPendingId] = useState<string | null>(null)
+  // Inline per-proposal error — trust path, the operator MUST see an approve/reject failure
+  // (silent failure means "approved button reset" while order never landed). Stays until
+  // the next action on that proposal or until the proposals list refreshes.
+  const [errorByProposal, setErrorByProposal] = useState<Record<string, string>>({})
+  const setErr = (id: string, msg: string) => setErrorByProposal(prev => ({ ...prev, [id]: msg }))
+  const clearErr = (id: string) => setErrorByProposal(prev => { const n = { ...prev }; delete n[id]; return n })
 
   const approve = useMutation({
-    mutationFn: (id: string) => api.approveProposal(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['proposals'] }); qc.invalidateQueries({ queryKey: ['positions'] }) },
-    onError: (e: any) => console.error('approve failed:', e),
+    mutationFn: (id: string) => api.approveProposal(id).then(r => ({ id, r })),
+    onSuccess: ({ id }) => { clearErr(id); qc.invalidateQueries({ queryKey: ['proposals'] }); qc.invalidateQueries({ queryKey: ['positions'] }) },
+    onError: (e: any, id: string) => setErr(id, String(e?.message || 'approve failed')),
   })
   const reject = useMutation({
-    mutationFn: (id: string) => api.rejectProposal(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['proposals'] }),
-    onError: (e: any) => console.error('reject failed:', e),
+    mutationFn: (id: string) => api.rejectProposal(id).then(r => ({ id, r })),
+    onSuccess: ({ id }) => { clearErr(id); qc.invalidateQueries({ queryKey: ['proposals'] }) },
+    onError: (e: any, id: string) => setErr(id, String(e?.message || 'reject failed')),
   })
 
   const rows = data as TradeProposal[]
@@ -126,6 +132,7 @@ export default function Proposals() {
               onOpenDetail={() => setSelected(p)}
               busy={p.id === pendingId}
               navigate={navigate}
+              errorMsg={errorByProposal[p.id]}
             />
           ))}
         </div>
@@ -190,7 +197,7 @@ export default function Proposals() {
 
 /** A pending proposal as a full decision card — everything visible without a click. */
 function ProposalCard({
-  p, onApprove, onReject, onOpenDetail, busy, navigate,
+  p, onApprove, onReject, onOpenDetail, busy, navigate, errorMsg,
 }: {
   p: TradeProposal
   onApprove: () => void
@@ -198,6 +205,7 @@ function ProposalCard({
   onOpenDetail: () => void
   busy: boolean
   navigate: (path: string) => void
+  errorMsg?: string
 }) {
   const dirClass = p.direction === 'long' || p.direction === 'buy' ? 'dir-long' : 'dir-short'
   return (
@@ -235,6 +243,7 @@ function ProposalCard({
           </Button>
         )}
       </div>
+      {errorMsg && <div className="lever-err" role="alert">✗ {errorMsg}</div>}
     </Card>
   )
 }

@@ -2104,6 +2104,18 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .risk-lever > button { width: 100%; }
 .risk-lever-actions { display: flex; gap: var(--space-2); }
 .risk-lever-actions button { flex: 1; white-space: nowrap; }
+/* Trust-critical inline error — sits under the lever's buttons, sticky until next action. */
+.lever-err {
+  margin-top: var(--space-2);
+  padding: 6px 8px;
+  background: rgba(255, 93, 108, 0.10);
+  border: 1px solid rgba(255, 93, 108, 0.40);
+  border-radius: var(--r-sm);
+  color: var(--red);
+  font-size: 0.74rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
 
 .risk-console-meta {
   display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5);

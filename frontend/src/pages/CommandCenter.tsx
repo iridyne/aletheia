@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { humanize } from '../lib/format'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, ListRowButton, StatusText, TableWrap } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast } from '../components/ui'
 import type {
   OperatorCommandAudit,
   OperatorCommandPreview,
@@ -565,6 +565,7 @@ export default function CommandCenter() {
     }
   }, [qc])
 
+  const { toast } = useToast()
   const commandMut = useMutation({
     mutationFn: () => api.sendOperatorCommand(input, { sessionId: selectedSessionId }),
     onSuccess: () => {
@@ -575,6 +576,9 @@ export default function CommandCenter() {
       qc.invalidateQueries({ queryKey: ['operator-recommendations'] })
       qc.invalidateQueries({ queryKey: ['operator-events'] })
     },
+    // Send failure preserves the typed input (no setInput('')) so the operator can retry,
+    // and surfaces the error via toast — silent loss of a typed command is the worst case.
+    onError: (e: any) => toast('error', `Send failed: ${e?.message || 'request failed'}`),
   })
   const activeBranchMut = useMutation({
     mutationFn: (sessionId: string) => api.setOperatorActiveBranch(sessionId),

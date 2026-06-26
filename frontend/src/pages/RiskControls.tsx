@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
@@ -5,6 +6,11 @@ import { Card, CardHeader, Button, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtSigned, fmtNum, useDecimals, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
+
+/** Extract a human-readable error from a fetch/mutation failure. */
+function errMsg(e: any): string {
+  return String(e?.message || e?.error || 'request failed')
+}
 
 /**
  * Risk & Controls — the brakes console (master-caution panel × Bloomberg risk monitor).
@@ -38,16 +44,33 @@ export default function RiskControls() {
   const { data: funnel } = useQuery({ queryKey: ['pipeline-funnel-24h'], queryFn: () => api.getPipelineFunnel(24), refetchInterval: 60_000 })
   const exposureLoading = portfolioLoading || positionsLoading
 
+  // Inline error state — the brakes-console levers are trust-critical, so a silent
+  // mutation failure is the worst-case (operator THINKS they halted trading but didn't).
+  // Errors stick under the failing lever and only clear when the action is retried/succeeds.
+  // Project rule: error feedback below the button, block layout — never a toast that auto-dismisses.
+  const [killErr, setKillErr] = useState('')
+  const [schedErr, setSchedErr] = useState('')
+
   const engageKill = useMutation({
     mutationFn: () => api.setKillSwitch(true, 'manual_engage'),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
+    onSuccess: () => { setKillErr(''); qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
+    onError: (e: any) => setKillErr(errMsg(e)),
   })
   const releaseKill = useMutation({
     mutationFn: () => api.setKillSwitch(false),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
+    onSuccess: () => { setKillErr(''); qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
+    onError: (e: any) => setKillErr(errMsg(e)),
   })
-  const pauseMut = useMutation({ mutationFn: api.pause, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
-  const resumeMut = useMutation({ mutationFn: api.resume, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
+  const pauseMut = useMutation({
+    mutationFn: api.pause,
+    onSuccess: () => { setSchedErr(''); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onError: (e: any) => setSchedErr(errMsg(e)),
+  })
+  const resumeMut = useMutation({
+    mutationFn: api.resume,
+    onSuccess: () => { setSchedErr(''); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onError: (e: any) => setSchedErr(errMsg(e)),
+  })
 
   useDecimals() // re-render when the display-decimals setting changes
   const s = (status ?? {}) as any
@@ -149,6 +172,7 @@ export default function RiskControls() {
                   Release Kill Switch
                 </Button>
               )}
+              {killErr && <div className="lever-err" role="alert">✗ {killErr}</div>}
             </div>
 
             {/* Scheduler — pause/resume all agents. */}
@@ -163,6 +187,7 @@ export default function RiskControls() {
                 <Button variant="secondary" onClick={() => pauseMut.mutate()} disabled={paused || !gatewayRunning || pauseMut.isPending}>Pause</Button>
                 <Button onClick={() => resumeMut.mutate()} disabled={!paused || resumeMut.isPending}>Resume</Button>
               </div>
+              {schedErr && <div className="lever-err" role="alert">✗ {schedErr}</div>}
             </div>
           </div>
         </div>

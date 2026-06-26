@@ -9,7 +9,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
 import ThesisText from '../components/ThesisText'
-import { Badge, Button, Card } from '../components/ui'
+import { Badge, Button, Card, useToast } from '../components/ui'
 import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 
 /**
@@ -89,10 +89,12 @@ export default function AgentActivity() {
 
 function RunsTab({ runs }: { runs: AgentRun[] }) {
   const qc = useQueryClient()
+  const { toast } = useToast()
   const [selected, setSelected] = useState<AgentRun | null>(null)
   const run = useMutation({
-    mutationFn: (name: string) => api.startAgentRun(name),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-runs'] }),
+    mutationFn: (name: string) => api.startAgentRun(name).then(r => ({ name, r })),
+    onSuccess: ({ name }) => { toast('success', `${name} started`); qc.invalidateQueries({ queryKey: ['agent-runs'] }) },
+    onError: (e: any, name: string) => toast('error', `${name}: ${e?.message || 'failed to start'}`),
   })
 
   return (

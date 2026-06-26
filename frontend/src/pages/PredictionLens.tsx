@@ -5,7 +5,7 @@ import type { PredictionMarket, PredictionStatus, PredictionObserverRun, Predict
 import PageHeader from '../components/PageHeader'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { StatusBadge } from '../components/DataTable'
-import { Badge, Button, Card, StatusText, TableWrap, type StatusTone } from '../components/ui'
+import { Badge, Button, Card, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
 import ProbabilityChart from '../charts/ProbabilityChart'
 import { fmtTimestamp } from '../lib/format'
 
@@ -260,12 +260,15 @@ function PreferencesTab() {
     queryFn: api.getPredictionPreferences,
   })
   const [cats, setCats] = useState('')
+  const { toast } = useToast()
   const updateMut = useMutation({
     mutationFn: (categories: string[]) => api.updatePredictionPreferences({ categories }),
     onSuccess: () => {
+      toast('success', 'Preferences saved')
       qc.invalidateQueries({ queryKey: ['prediction-preferences'] })
       qc.invalidateQueries({ queryKey: ['prediction-status'] })
     },
+    onError: (e: any) => toast('error', `Save failed: ${e?.message || 'request failed'}`),
   })
 
   const currentCats = prefs?.categories ?? []
@@ -480,13 +483,16 @@ export default function PredictionLens() {
     enabled: !isDisabled,
   })
 
+  const { toast } = useToast()
   const refresh = useMutation({
     mutationFn: api.refreshPrediction,
     onSuccess: () => {
+      toast('success', 'Prediction refresh triggered')
       qc.invalidateQueries({ queryKey: ['prediction-status'] })
       qc.invalidateQueries({ queryKey: ['prediction-markets'] })
       qc.invalidateQueries({ queryKey: ['prediction-runs'] })
     },
+    onError: (e: any) => toast('error', `Refresh failed: ${e?.message || 'request failed'}`),
   })
 
   return (

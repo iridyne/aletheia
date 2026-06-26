@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card } from '../components/ui'
+import { Badge, Button, Card, useToast } from '../components/ui'
 import { humanize, fmtTimestamp } from '../lib/format'
 
 type NewsItem = {
@@ -37,21 +37,25 @@ export default function NewsIntel() {
   const [showAdd, setShowAdd] = useState(false)
   const [addForm, setAddForm] = useState({ title: '', source: '', url: '', summary: '', symbols: '', sentiment: 'neutral' })
 
+  const { toast } = useToast()
   const analyzeMut = useMutation({
     mutationFn: (id: string) => api.analyzeNews(id),
     onSuccess: (data: any) => {
       setAnalysis(data.analysis)
       qc.invalidateQueries({ queryKey: ['news'] })
     },
+    onError: (e: any) => toast('error', `Analyze failed: ${e?.message || 'request failed'}`),
   })
 
   const createMut = useMutation({
     mutationFn: (body: any) => api.createNews(body),
     onSuccess: () => {
+      toast('success', 'News item added')
       qc.invalidateQueries({ queryKey: ['news'] })
       setShowAdd(false)
       setAddForm({ title: '', source: '', url: '', summary: '', symbols: '', sentiment: 'neutral' })
     },
+    onError: (e: any) => toast('error', `Add failed: ${e?.message || 'request failed'}`),
   })
 
   const handleCreate = () => {
