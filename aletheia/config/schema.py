@@ -506,6 +506,35 @@ class PiDaemonConfig(BaseModel):
     heartbeat_sec: float = 60.0    # fallback polling interval (safety net)
 
 
+class NewsFeedEntry(BaseModel):
+    name: str
+    url: str
+    source: str
+    categories: list[str] = Field(default_factory=list)
+    enabled: bool = True
+
+
+_DEFAULT_NEWS_FEEDS: list[dict] = [
+    {"name": "CoinDesk", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "source": "coindesk", "categories": ["crypto"], "enabled": True},
+    {"name": "CoinTelegraph", "url": "https://cointelegraph.com/rss", "source": "cointelegraph", "categories": ["crypto"], "enabled": True},
+    {"name": "Federal Reserve Press", "url": "https://www.federalreserve.gov/feeds/press_all.xml", "source": "fed", "categories": ["macro"], "enabled": True},
+    {"name": "MarketWatch Top Stories", "url": "http://feeds.marketwatch.com/marketwatch/topstories/", "source": "marketwatch", "categories": ["markets"], "enabled": True},
+    {"name": "CNBC Economy", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", "source": "cnbc-economy", "categories": ["macro"], "enabled": True},
+    {"name": "The Block", "url": "https://www.theblock.co/rss.xml", "source": "theblock", "categories": ["crypto"], "enabled": False},
+    {"name": "Decrypt", "url": "https://decrypt.co/feed", "source": "decrypt", "categories": ["crypto"], "enabled": False},
+    {"name": "Bitcoin Magazine", "url": "https://bitcoinmagazine.com/feed", "source": "bitcoinmagazine", "categories": ["crypto"], "enabled": False},
+    {"name": "Nikkei Asia", "url": "https://asia.nikkei.com/rss/feed/nar", "source": "nikkei-asia", "categories": ["markets", "asia"], "enabled": False},
+    {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex", "source": "yahoo-finance", "categories": ["markets"], "enabled": False},
+]
+
+
+class NewsConfig(BaseModel):
+    enabled: bool = True
+    fetch_interval_minutes: int = 15
+    retention_days: int = 7
+    feeds: list[NewsFeedEntry] = Field(default_factory=lambda: [NewsFeedEntry(**f) for f in _DEFAULT_NEWS_FEEDS])
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -531,3 +560,4 @@ class AletheiaConfig(BaseModel):
     historical_data: HistoricalDataConfig = Field(default_factory=HistoricalDataConfig)
     event_triggers: EventTriggerConfig = Field(default_factory=EventTriggerConfig)
     pi_daemon: PiDaemonConfig = Field(default_factory=PiDaemonConfig)
+    news: NewsConfig = Field(default_factory=NewsConfig)

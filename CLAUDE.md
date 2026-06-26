@@ -17,7 +17,7 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 ## Development Rules
 
 - Smallest change principle — MVP, not greenfield
-- No uncontrolled expansion: no new exchanges, no Docker/Postgres/Redis, no vector search, no web ingestion
+- No uncontrolled expansion: no new exchanges, no Docker/Postgres/Redis, no vector search
 - **EXPERIMENT FREEZE (2026-06-22 → Round 结束)**: AI 决策链代码在观察期内**禁止修改**。详见 `docs/product/EXPERIMENT_PROTOCOL.md`。冻结路径: `agent_shell/trading_context.py`, `agent_shell/trading_decision.py`, `agents/market_observer.py`, `agents/paper_trader*.py`, `agents/pi_agent*`, `strategy/`, `learning/`。判断标准:"这个改动会不会让同一市场状况下 AI 做出不同决策?" → 是 = 禁止。
 - Trust boundaries (change-controlled — touch only for tasks that explicitly require it):
   `aletheia/risk/`, `aletheia/execution/`, `exchanges/bitget/auth.py`, `exchanges/bitget/client.py`,

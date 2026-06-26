@@ -20,6 +20,7 @@ dependencies = [
     "yfinance>=1.4.1",
     "aiohttp>=3.9",
     "optuna>=3.6",
+    "feedparser>=6.0",
 ]
 
 [project.scripts]

@@ -1412,6 +1412,9 @@ _ADDITIVE_COLUMNS = [
     ("last_market_signal_action", "positions", "TEXT"),
     ("last_market_signal_reason", "positions", "TEXT"),
     ("last_market_signal_at", "positions", "TEXT"),
+    # News collector dedup + full content
+    ("dedup_key", "news_items", "TEXT"),
+    ("content", "news_items", "TEXT"),
 ]
 
 
@@ -1530,6 +1533,7 @@ CREATE INDEX IF NOT EXISTS idx_risk_decisions_proposal_id ON risk_decisions(prop
 CREATE INDEX IF NOT EXISTS idx_positions_strategy_id ON positions(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_type_status ON knowledge_items(item_type, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_news_dedup ON news_items(dedup_key);
 """
 
 

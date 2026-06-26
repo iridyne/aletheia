@@ -48,6 +48,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "confidence_calibration": 30.0,
     "reasoning_feedback": 60.0,
     "connectivity_monitor": 15.0,
+    "news_fetch": 120.0,
 }
 
 
@@ -414,6 +415,13 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
         misfire_grace_time=120, executor="io",
+    )
+    # News RSS feed collector — fetches enabled feeds every N minutes (default 15).
+    _scheduler.add_job(
+        _guarded("news_fetch", _run_news_fetch), "interval",
+        minutes=cfg.news.fetch_interval_minutes, id="news_fetch",
+        misfire_grace_time=120, executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=30),
     )
     # US equity observer — runs every 30 min Mon–Fri during US market hours
     # (14:30–21:00 UTC = 09:30–16:00 Eastern). Unified agent: yfinance daily bars
@@ -1077,6 +1085,7 @@ def _run_cleanup():
             "shadow_trades": repo.prune_shadow_trades(90),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
+            "news_items": _prune_news(cfg),
         }
         write_audit({
             "actor": "system", "source": "scheduler",
@@ -1085,6 +1094,31 @@ def _run_cleanup():
         })
     except Exception as e:
         logger.warning("cleanup job failed: %s", e)
+
+
+def _prune_news(cfg) -> int:
+    try:
+        from aletheia.data.news_collector import prune_old_news
+        return prune_old_news(cfg.news.retention_days)
+    except Exception:
+        return 0
+
+
+def _run_news_fetch():
+    cfg = load_config()
+    if cfg.runtime.paused or not cfg.news.enabled:
+        return
+    try:
+        _run_async_with_timeout("news_fetch", _async_news_fetch())
+    except TimeoutError:
+        logger.warning("news_fetch timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["news_fetch"])
+    except Exception as e:
+        logger.warning("news_fetch failed: %s", e)
+
+
+async def _async_news_fetch():
+    from aletheia.data.news_collector import fetch_news_feeds
+    await fetch_news_feeds()
 
 
 def _run_health_check():
