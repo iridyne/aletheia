@@ -1,6 +1,6 @@
 import { useState, lazy, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
 import type { Order, Position, PortfolioSummary, ReconcileItem } from '../types'
@@ -84,6 +84,8 @@ type Selection =
 
 export default function TradesPositions() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const initialTab = searchParams.get('tab') || 'blotter'
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   const { data: orders = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
@@ -112,7 +114,7 @@ export default function TradesPositions() {
       />
       <AccountSnapshot />
 
-      <Tabs tabs={[
+      <Tabs initial={initialTab} tabs={[
         { id: 'blotter', label: 'Blotter', badge: open.length > 0 ? <Badge tone="green">{open.length}</Badge> : undefined, render: () => (
           <>
             {/* OPEN POSITIONS — the live book */}

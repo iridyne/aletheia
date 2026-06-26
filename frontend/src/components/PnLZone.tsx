@@ -78,6 +78,42 @@ function BrokerBreakdown({ accounts, open }: { accounts: UTAAccount[]; open: boo
   )
 }
 
+type Tone = 'neutral' | 'positive' | 'negative' | 'muted'
+
+function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }: {
+  label: string; value: React.ReactNode; tone?: Tone; context?: React.ReactNode
+  onClick?: () => void; tooltip: Record<string, number>
+}) {
+  const [show, setShow] = useState(false)
+  const entries = Object.entries(tooltip).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+  const toneClass = tone === 'positive' ? 'pnl-positive' : tone === 'negative' ? 'pnl-negative' : tone === 'muted' ? 'text-muted' : ''
+  return (
+    <div
+      className={`card metric-tile clickable`}
+      onClick={onClick}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+      style={{ position: 'relative' }}
+    >
+      <div className="metric-label">{label}</div>
+      <div className={`metric-value ${toneClass}`}>{value}</div>
+      {context && <div className="metric-context">{context}</div>}
+      {show && entries.length > 0 && (
+        <div className="tile-tooltip">
+          {entries.map(([sym, val]) => (
+            <div key={sym} className="tile-tooltip-row">
+              <span className="mono">{sym.replace('/USDT', '')}</span>
+              <span className={`mono ${val > 0 ? 'pnl-positive' : val < 0 ? 'pnl-negative' : ''}`}>
+                {val > 0 ? '+' : ''}{fmtNum(val)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** PnL / Account zone — hero account value (UTA unified > exchange > local notional) + context tiles + equity curve. */
 export default function PnLZone() {
   const navigate = useNavigate()
@@ -85,7 +121,6 @@ export default function PnLZone() {
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000 })
   const [hovered, setHovered] = useState(false)
-  const [brokerOpen, setBrokerOpen] = useState(false)
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
 
   const exchangeMode = String((status as any)?.exchange_mode || 'demo')
@@ -132,14 +167,14 @@ export default function PnLZone() {
     })
   const positionsCount = Number(p?.positions_count ?? 0)
 
+  const todayPnlBySymbol = (p?.today_pnl_by_symbol || {}) as Record<string, number>
+  const unrealBySymbol = (p?.unrealized_by_symbol || {}) as Record<string, number>
+
   return (
     <div className="pnl-zone">
       <div className="pnl-cluster">
-        {/* Hero — account value + pie + hover tooltip; click toggles broker breakdown */}
-        <div
-          className={`card pnl-hero${utaAccounts.length > 1 ? ' clickable' : ''}`}
-          onClick={() => utaAccounts.length > 1 && setBrokerOpen(o => !o)}
-        >
+        {/* Hero — account value + pie + hover shows broker breakdown */}
+        <div className="card pnl-hero">
           <div
             className="pnl-hero-inner"
             onMouseEnter={() => setHovered(true)}
@@ -159,34 +194,39 @@ export default function PnLZone() {
             )}
           </div>
           {hovered && breakdown.length > 0 && <AssetTooltip items={breakdown} />}
-          <BrokerBreakdown accounts={utaAccounts} open={brokerOpen} />
+          {hovered && <BrokerBreakdown accounts={utaAccounts} open={true} />}
         </div>
 
-        {/* Context tiles */}
+        {/* Context tiles — hover shows per-symbol breakdown, click navigates */}
         <div className="pnl-tiles">
-          <MetricTile
+          <HoverTile
             label="Today PnL"
             value={todayNum == null ? 'not available' : fmtDelta(todayNum)}
             tone={toneOf(todayNum)}
             context={todayNum == null ? 'no data' : dayPct != null ? `${fmtDelta(dayPct)}% of managed` : undefined}
+            onClick={() => navigate('/trades?tab=blotter')}
+            tooltip={todayPnlBySymbol}
           />
-          <MetricTile
+          <HoverTile
             label="Unrealized"
             value={fmtDelta(unrealNum)}
             tone={toneOf(unrealNum)}
+            onClick={() => navigate('/trades?tab=blotter')}
+            tooltip={unrealBySymbol}
           />
           <MetricTile
             label="Realized"
             value={fmtDelta(realNum)}
             tone={toneOf(realNum)}
             context="all-time"
+            onClick={() => navigate('/trades?tab=analytics')}
           />
           <MetricTile
             label="Exposure"
             value={positionsCount === 0 ? 'flat' : `${positionsCount} pos`}
             tone={positionsCount > 0 ? 'neutral' : 'muted'}
             context={exposureParts.length ? exposureParts.slice(0, 3).join(' · ') : 'no open exposure'}
-            onClick={() => navigate('/trades')}
+            onClick={() => navigate('/trades?tab=blotter')}
           />
         </div>
       </div>

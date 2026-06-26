@@ -201,6 +201,27 @@ def today_realized_pnl(execution_mode: str | None = None) -> float:
     return round(total, 8)
 
 
+def today_pnl_by_symbol(execution_mode: str | None = None) -> dict[str, float]:
+    """Per-symbol realized PnL for positions closed today (UTC)."""
+    from aletheia.storage.repositories import _select_all
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = _select_all("positions", where="status = ?", params=("closed",), limit=1000)
+    by_sym: dict[str, float] = {}
+    for r in rows:
+        closed_at = r.get("closed_at") or ""
+        try:
+            closed_date = datetime.fromisoformat(closed_at).date().isoformat()
+        except (ValueError, TypeError):
+            continue
+        if closed_date != today:
+            continue
+        if execution_mode and r.get("execution_mode") != execution_mode:
+            continue
+        sym = r.get("symbol", "?")
+        by_sym[sym] = round(by_sym.get(sym, 0.0) + (r.get("realized_pnl") or 0.0), 4)
+    return by_sym
+
+
 def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = False) -> dict:
     """Aggregate open positions into a portfolio summary (marks to market first)."""
     positions = mark_positions_to_market(persist=persist_marks)
@@ -335,6 +356,8 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "today_pnl": round(final_today_pnl, 4),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
+        "unrealized_by_symbol": {p["symbol"]: round(p["unrealized_pnl"], 4) for p in positions if p.get("unrealized_pnl")},
+        "today_pnl_by_symbol": today_pnl_by_symbol(execution_mode),
         "positions": positions,
         "today_realized_pnl": round(total_today_realized, 4),
         # Exchange-account view (closes WEBUI_BACKEND_HANDOFF #3 / portfolio-sync-gap).

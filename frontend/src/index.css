@@ -1997,6 +1997,18 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .metric-value.pnl-negative { color: var(--red); }
 .metric-value.text-muted { color: var(--muted); }
 .metric-caveat { font-size: 0.65rem; color: var(--faint); margin-top: var(--space-1); letter-spacing: 0.02em; }
+/* Per-symbol hover tooltip on metric tiles */
+.tile-tooltip {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 50;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  border-radius: var(--r-sm); padding: 6px 10px;
+  min-width: 140px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  pointer-events: none;
+}
+.tile-tooltip-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 0.75rem; padding: 2px 0;
+}
 
 /* ---------- Activity Timeline ---------- */
 /* Adaptive height so it never starves the main area; collapsed by default (C3). */
