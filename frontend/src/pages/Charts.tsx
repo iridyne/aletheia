@@ -5,6 +5,8 @@ import PriceChart from '../charts/PriceChart'
 import Sparkline from '../components/Sparkline'
 import MacroBar from '../components/MacroBar'
 import PageHeader from '../components/PageHeader'
+import Tabs from '../components/Tabs'
+import type { TabDef } from '../components/Tabs'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
 import { fmtNum, fmtSigned, fmtDelta, fmtTimestamp, useDecimals, fmtSymbol } from '../lib/format'
 
@@ -464,40 +466,37 @@ export default function Charts() {
         marketType={boardMarketType}
       />
 
-      {/* Lower panel: tab-switched detail areas */}
-      <div className="tab-bar" role="tablist">
-        {(['chart', 'signals', 'news', 'predictions'] as const).map(id => (
-          <Button
-            key={id}
-            variant="ghost"
-            role="tab"
-            aria-selected={activeTab === id}
-            className={`tab${activeTab === id ? ' tab-active' : ''}`}
-            onClick={() => setActiveTab(id)}
-          >
-            {id === 'chart' ? 'Chart'
-              : id === 'signals' ? <>Signals{signalCount > 0 && <span className="tab-badge">{signalCount}</span>}</>
-              : id === 'news' ? 'News'
-              : 'Predictions'}
-          </Button>
-        ))}
-      </div>
-      <div className="tab-panel">
-        {activeTab === 'chart' && (
-          <ChartTab
-            symbol={symbol}
-            symbols={watchlistSymbols}
-            onSymbolChange={setSymbol}
-            snapshotMap={snapshotMap}
-            dataProvider={dataProvider}
-            lastUpdatedLabel={lastUpdatedLabel}
-            marketType={boardMarketType}
-          />
-        )}
-        {activeTab === 'signals' && <SignalsTab onSymbolSelect={handleSignalSymbolSelect} />}
-        {activeTab === 'news' && <NewsTab />}
-        {activeTab === 'predictions' && <PredictionsTab />}
-      </div>
+      {/* Lower panel — controlled Tabs because watchlist row clicks switch to Chart
+          from outside the tab bar (setActiveTab in onSelect / handleSignalSymbolSelect). */}
+      <Tabs
+        value={activeTab}
+        onChange={(id) => setActiveTab(id as typeof activeTab)}
+        tabs={([
+          {
+            id: 'chart',
+            label: 'Chart',
+            render: () => (
+              <ChartTab
+                symbol={symbol}
+                symbols={watchlistSymbols}
+                onSymbolChange={setSymbol}
+                snapshotMap={snapshotMap}
+                dataProvider={dataProvider}
+                lastUpdatedLabel={lastUpdatedLabel}
+                marketType={boardMarketType}
+              />
+            ),
+          },
+          {
+            id: 'signals',
+            label: 'Signals',
+            badge: signalCount > 0 ? signalCount : undefined,
+            render: () => <SignalsTab onSymbolSelect={handleSignalSymbolSelect} />,
+          },
+          { id: 'news', label: 'News', render: () => <NewsTab /> },
+          { id: 'predictions', label: 'Predictions', render: () => <PredictionsTab /> },
+        ]) as TabDef[]}
+      />
     </div>
   )
 }

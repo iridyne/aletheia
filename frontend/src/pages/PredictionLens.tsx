@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { PredictionMarket, PredictionStatus, PredictionObserverRun, PredictionClaim } from '../types'
 import PageHeader from '../components/PageHeader'
+import Tabs from '../components/Tabs'
+import type { TabDef } from '../components/Tabs'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { StatusBadge } from '../components/DataTable'
 import { Badge, Button, Card, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
@@ -516,27 +518,19 @@ export default function PredictionLens() {
 
         <ObserverStatusCard status={status} />
 
-        <div className="pred-tabs">
-          <Button variant="ghost" className={`pred-tab ${tab === 'radar' ? 'pred-tab-active' : ''}`} onClick={() => setTab('radar')}>
-            Market Radar {markets.length > 0 && <span className="tab-badge">{markets.length}</span>}
-          </Button>
-          <Button variant="ghost" className={`pred-tab ${tab === 'movers' ? 'pred-tab-active' : ''}`} onClick={() => setTab('movers')}>
-            Probability Movers
-          </Button>
-          <Button variant="ghost" className={`pred-tab ${tab === 'runs' ? 'pred-tab-active' : ''}`} onClick={() => setTab('runs')}>
-            Observer Runs {runs.length > 0 && <span className="tab-badge">{runs.length}</span>}
-          </Button>
-          <Button variant="ghost" className={`pred-tab ${tab === 'preferences' ? 'pred-tab-active' : ''}`} onClick={() => setTab('preferences')}>
-            Preferences
-          </Button>
-        </div>
-
-        <div className="pred-tab-content">
-          {tab === 'radar' && <MarketRadarTab markets={markets} onSelect={setSelected} />}
-          {tab === 'movers' && <ProbabilityMoversTab markets={markets} onSelect={setSelected} />}
-          {tab === 'runs' && <ObserverRunsTab runs={runs} />}
-          {tab === 'preferences' && <PreferencesTab />}
-        </div>
+        <Tabs
+          value={tab}
+          onChange={(id) => setTab(id as Tab)}
+          tabs={([
+            { id: 'radar', label: 'Market Radar', badge: markets.length > 0 ? markets.length : undefined,
+              render: () => <MarketRadarTab markets={markets} onSelect={setSelected} /> },
+            { id: 'movers', label: 'Probability Movers',
+              render: () => <ProbabilityMoversTab markets={markets} onSelect={setSelected} /> },
+            { id: 'runs', label: 'Observer Runs', badge: runs.length > 0 ? runs.length : undefined,
+              render: () => <ObserverRunsTab runs={runs} /> },
+            { id: 'preferences', label: 'Preferences', render: () => <PreferencesTab /> },
+          ]) as TabDef[]}
+        />
       </div>
 
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Prediction Market Detail">
