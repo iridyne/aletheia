@@ -50,6 +50,16 @@
 P2 的 allowlist 是对症;更根本的修法是让 PI Agent 的 prompt 能识别"分品种 edge"
 而非只看组合 aggregate。两者都是 Round 2 候选,P2 工作量更小、风险更低,优先。
 
+**2026-06-26 干净窗实证再强化(P2 当前最强候选)**:
+Round 1 干净窗(6-25 15:22 UTC 后,新 PI 引擎真实样本)23 笔:WR 13%、PF 0.063
+(排除 reconciled_gone 后 14 笔 WR 7.1%、PF 0.005)。**注意 doctor 的混合 PF=0.769
+是被 6/9-6/21 旧版盈利 ETH-short 数据粉饰的假象**,新引擎真实表现远差。
+失效模式高度集中于**方向**:**short 17T / long 6T**,空头一边倒撞上一波上涨被集体止损
+(ETH short -24.92 + XRP short -7.22 = 全部亏损 68%)。这正是 P2 描述的反面——不是
+"否决单 edge",而是"铺一个全相关的一边倒空头书"。两者同根:PI 缺乏组合层面的
+方向/相关性约束。**判决性质**:样本仅 23 笔/~1 天,K4(回撤)未触发($-47/$88k demo
+= 0.05%),不构成提前 Kill,是强负面先行信号。Round 1 应跑满 14 天再判。
+
 ---
 
 ### P3 — 加 orderbook 微结构
@@ -441,6 +451,85 @@ Operator loop 自调节:
 - 影响: 直接改变 AI 看到的信息 → 消耗轮间改动配额
 
 **前置条件**: Round 1 结束解冻后方可实施。需确认 news_analyzer 输出质量稳定。
+
+---
+
+### P8 — Trading Session(全球流动性时段)注入 PI Agent Context
+
+**提出**: 2026-06-26(用户)。**状态**: 休眠件已建好 + 测试通过,等 Round 1 解冻一键接线。
+
+**诊断**: PI Agent 当前对"现在是几点、哪个时段"完全无感——同一组 RSI/funding/momentum
+数字,无论出现在亚盘凌晨(美欧休市、盘薄、易震荡假突破)还是 EU/US overlap(峰值流动性、
+突破最有延续性),AI 看到的输入完全一样,因此决策也一样。但加密 24/7 的流动性/波动率
+其实严格跟随 TradFi 时段钟摆(机构盘 + BTC↔美股相关性 + 美国宏观数据都集中在伦敦/纽约盘)。
+
+**假设**: 当前 Round 1 的部分亏损来自"在错误时段做对方向"——例如亚盘追突破(无量延续)、
+late-US/周末薄盘被插针止损。给 AI 注入时段事实后,它能据此自适应:亚盘缩量/提高 conviction
+门槛/偏均值回归,overlap/US 盘才放开追趋势。这正是用户的原话场景("当前是亚盘时间,
+美股流动性低,要针对性处理")。
+
+**冻结边界**: 命中冻结判据正中(改变 AI 看到的信息 → 改决策)。**消耗轮间唯一改动配额**。
+属协议第 113 行明文合法改动("给 AI 新的数据维度")。**非 bug,走不了冻结例外通道**,
+必须等 Round 1 收盘。
+
+**已就绪(冻结安全,2026-06-26 建)**:
+- `aletheia/trading/market_session.py`(非冻结纯函数,**当前零行为影响**——没有任何冻结文件
+  import 它):`classify_session(now_utc) -> SessionInfo` + `render_for_prompt()`。
+  时段划分(UTC,weekday): 00–07 asian(low) / 07–13 european(medium) / 13–16 overlap(high) /
+  16–21 us(high) / 21–24 late_us(low) / 周末 weekend(low);`us_equities_open` 精确到
+  NYSE 14:30–21:00 UTC(对齐 equity_observer 调度门)。
+- `tests/test_market_session.py`:13 条单测全过(边界半开区间、NYSE 开闭分秒、周末覆盖、
+  naive datetime 当 UTC、render 紧凑性)。
+
+**Round 2 接线(仅当解冻,改 2 个冻结文件,各一处)**:
+
+1. `agent_shell/trading_context.py` `_build_layer1_snapshot()` 末尾加:
+   ```python
+   from aletheia.trading.market_session import classify_session
+   s = classify_session()
+   layer["session"] = {
+       "label": s.label, "name": s.name, "liquidity": s.liquidity,
+       "us_equities_open": s.us_equities_open, "note": s.note,
+   }
+   ```
+2. `agent_shell/trading_decision.py` `_build_assessment_prompt()` 的 `# Layer 1` 段(Market Regime 之后)插:
+   ```python
+   from aletheia.trading.market_session import render_for_prompt
+   parts += ["## Trading Session", render_for_prompt(), ""]
+   ```
+   (render 逻辑刻意放在非冻结模块,接线就是一行 import + 一次 append → 改动面最小、最易审。)
+
+**设计原则**: 注入**事实**(哪个时段/美股开闭/流动性档/一句特征描述),**不注入硬规则**
+("亚盘禁止开仓")——与现有 prompt"Consider freely, there are no fixed rules" + health_alerts
+的"Consider: ..."措辞一致,让 LLM 自主推理而非被规则锁死。
+
+**预估工作量**: 极小(接线 ~6 行;分类器+测试已完成)。
+
+**验证标准**:
+- 主判据同 P1: Round(带 P8) vs 上一轮 PF 差异 > 0.15;
+- 分时段 breakdown: 低流动性时段(asian/late_us/weekend)的开仓数下降或这些时段的亏损率下降
+  (证明 AI 真在据时段自适应,而非无视该信息);
+- Kill: 分时段成交分布与未注入时无统计差异(p>0.1)→ 说明 LLM 忽略该维度,回退。
+
+**与其他候选的优先级**: P1(价格结构)/P2(分品种 edge)有 Round 1 实证支撑,信息价值更高;
+P8 工作量最小、风险最低,且用户主动提出。可作为 P1/P2 之后的次选,或在某轮专门验证"时段"
+单一变量时优先。**注意协议铁律:每轮只取一个**,P8 与 P1–P7 互斥竞争同一配额。
+
+**⚠ 2026-06-26 实证检验(本样本不支持 P8,记录留痕)**:
+用 `market_session.classify_session` 对 Round 1 干净窗(6-25 15:22 UTC 后,23 笔)按
+**开仓时段**打标,假设若成立则亏损应扎堆低流动性时段(asian/late_us)。结果**相反**:
+
+```
+overlap (峰值流动性):  4T 0W  PnL=-33.78  ← 最差时段(两笔大止损恰开在此)
+european            :  4T 1W  PnL= -6.66
+us                  :  2T 0W  PnL= -3.04
+asian (假设的弱时段) : 13T 2W  PnL= -3.58  ← 单笔亏损反而最小
+```
+
+亏损集中在**高流动性 overlap 窗**而非亚盘,"亚盘缩量"规则在此样本帮不上忙。真正失效模式
+是**方向集中**(short 17T / long 6T,空头一边倒撞上涨)→ 指向 P2,不是 P8。
+**结论**: P8 仍保留为低优先候选(成本低、已就绪),但**本样本不支持**抬升其优先级
+(注意:样本仅 23 笔/~1 天,是"不支持"非"已证伪",分布可能随数据翻转)。
 
 ---
 
