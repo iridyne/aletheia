@@ -26,6 +26,7 @@ import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
 import type { InfraEvent } from './types'
+import { deriveMasterState } from './lib/systemState'
 
 export type NavItem = { to: string; label: string }
 export type NavGroup = { group: string; items: NavItem[] }
@@ -231,29 +232,22 @@ function StatusBar() {
   const liveLight = liveOn ? 'yellow' : 'muted'
   const killLight = killed ? 'red' : 'muted'
 
-  // Top-line state word + tone.
+  // Top-line state word + tone — single source via lib/systemState so this matches
+  // the Risk console exactly (no more "Overview says yellow, Risk says blue" mismatches).
+  // Risk verdict is fetched lazily (see riskStatus query above? — topbar doesn't query it).
+  // We DO query risk-status in App's StatusBar via the popover content above; reuse it here.
+  // (If absent the helper falls through to STANDBY, which matches old behavior at boot.)
   const operatorStatus = String((operator as any)?.status || 'offline')
   const operatorMode = String((operator as any)?.mode || (paused ? 'Paused' : 'Observing'))
-  const stateWord = killed
-    ? 'KILL'
-    : !running
-      ? 'Stopped'
-      : operatorStatus === 'stale'
-        ? 'Stale'
-        : paused
-          ? 'Paused'
-          : operatorMode
-  const stateTone = killed
-    ? 'red'
-    : !running
-      ? 'red'
-      : operatorStatus === 'stale'
-        ? 'yellow'
-        : operatorStatus === 'offline'
-          ? 'red'
-          : paused
-            ? 'yellow'
-            : 'green'
+  const riskState = String((data as any)?.risk_status || (data as any)?.risk?.status || '')
+  const master = deriveMasterState({
+    gatewayRunning: running, killed, paused, riskState, operatorStatus,
+  })
+  // Topbar shows the master word, BUT when everything is healthy + operator is actively
+  // working on something, prefer the operator's working mode (Working / Observing / …)
+  // since that's the more specific signal at a glance. Master word always wins on alarms.
+  const stateWord = master.tone === 'green' ? operatorMode : master.word
+  const stateTone = master.tone
 
   return (
     <div className="topbar-status">

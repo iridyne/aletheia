@@ -6,6 +6,7 @@ import { Card, CardHeader, Button, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtSigned, fmtNum, useDecimals, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
+import { deriveMasterState } from '../lib/systemState'
 
 /** Extract a human-readable error from a fetch/mutation failure. */
 function errMsg(e: any): string {
@@ -350,24 +351,8 @@ export default function RiskControls() {
   )
 }
 
-interface MasterState { word: string; tone: StatusTone; detail: string }
-
-/**
- * Derive the single console headline from real signals, in priority order of severity.
- * Never hides the underlying state — the kill-switch / scheduler / risk components are all
- * still rendered beside it in the band.
- */
-function deriveMasterState(p: {
-  gatewayRunning: boolean; killed: boolean; riskState: string; paused: boolean
-}): MasterState {
-  if (!p.gatewayRunning) return { word: 'OFFLINE', tone: 'muted', detail: 'Gateway is stopped — no agents are running.' }
-  if (p.killed) return { word: 'HALTED', tone: 'red', detail: 'Kill switch engaged. All trading is stopped until released.' }
-  if (p.riskState === 'blocked') return { word: 'BLOCKED', tone: 'red', detail: 'Risk engine is rejecting new orders. Clear the violations below.' }
-  if (p.paused) return { word: 'PAUSED', tone: 'yellow', detail: 'Scheduler is paused. Agents are idle until resumed.' }
-  if (p.riskState === 'warning') return { word: 'CAUTION', tone: 'yellow', detail: 'Running with active risk warnings — review the violations below.' }
-  if (p.riskState === 'healthy') return { word: 'OPERATIONAL', tone: 'green', detail: 'Agents are running within all risk limits.' }
-  return { word: 'STANDBY', tone: 'blue', detail: 'Risk state has not been evaluated yet.' }
-}
+/* deriveMasterState moved to lib/systemState.ts — shared with topbar StatusBar so
+ * the same signals never produce two different colors on two surfaces (#2 unified). */
 
 /** "Rejected: max_demo_positions_reached:6" → "max demo positions reached". */
 function shortReject(msg: string): string {
