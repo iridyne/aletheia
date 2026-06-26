@@ -326,7 +326,7 @@ function ProposalRationale({ rationale }: { rationale: string | null }) {
   )
 }
 
-function ProposalRationaleDetail({ rationale }: { rationale: string | null }) {
+export function ProposalRationaleDetail({ rationale }: { rationale: string | null }) {
   const { text, meta } = useMemo(() => parseDecisionMeta(rationale), [rationale])
   if (!rationale) return <p className="feed-thesis">No rationale provided.</p>
   if (!meta) return <p className="feed-thesis">{text || 'No rationale provided.'}</p>

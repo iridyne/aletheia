@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { AgentRun, Opportunity, TradeProposal } from '../types'
 import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
 import ThesisText from './ThesisText'
+import { ProposalRationaleDetail } from '../pages/Proposals'
 
 /**
  * Agent activity feed (OVERVIEW_REDESIGN.md Decision 2).
@@ -262,7 +263,9 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
             <DrawerField label="Status" value={item.proposal.status} />
           </DrawerSection>
           <DrawerSection label="Agent Rationale">
-            <p className="feed-thesis">{item.proposal.agent_rationale || 'No rationale recorded.'}</p>
+            {item.proposal.agent_rationale
+              ? <ProposalRationaleDetail rationale={item.proposal.agent_rationale} />
+              : <p className="feed-thesis">No rationale recorded.</p>}
           </DrawerSection>
           <div className="flex gap-2 mt-3">
             <button className="btn-control" onClick={() => { onClose(); navigate('/proposals') }}>Review in Proposals →</button>
