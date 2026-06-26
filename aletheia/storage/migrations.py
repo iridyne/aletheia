@@ -1412,9 +1412,11 @@ _ADDITIVE_COLUMNS = [
     ("last_market_signal_action", "positions", "TEXT"),
     ("last_market_signal_reason", "positions", "TEXT"),
     ("last_market_signal_at", "positions", "TEXT"),
-    # News collector dedup + full content
+    # News collector dedup + full content + analysis
     ("dedup_key", "news_items", "TEXT"),
     ("content", "news_items", "TEXT"),
+    ("impact_summary", "news_items", "TEXT"),
+    ("analyzed_at", "news_items", "TEXT"),
 ]
 
 

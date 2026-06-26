@@ -1470,3 +1470,5 @@ sqlite3 自动开启了 tx,但 `was_in_tx` 条件已 True(因为 caller 从读�
 [2026-06-26 02:02 UTC] ✓ 系统正常 — features=112/h (10min桶=32翻倍: 01:52 crash后积压补偿效应,非新crash;errors.jsonl确认末次仍01:52). Opportunities_1h=62. Knowledge=4670(+0). §17 timed_out=321(+0). Stale=335(+1). §23: 末次01:52 UTC, 距今10min静默, 第10轮延续中. 第11轮约02:22触发. §24 backend: 末次昨12:59, 距今39h稳定. 170h+ 连续运行.
 
 [2026-06-26 02:22 UTC] ⚠ **§23 第78次——第11轮首次crash(静默26min)** — features=129/h (20/30min桶=32: crash补偿叠加,正常). Opportunities_1h=76. Knowledge=4675(+5). §17 timed_out=322(+1). Stale=336(+2,缓慢累积). §23: [02:18]第78次(PID 592, 01:52→02:18=26min). 第11轮静默窗口26min(较前几轮缩短4min). 后续10min crash预计02:28/02:38. §24 backend: 末次昨12:59, 距今39.5h稳定. 170h+ 连续运行.
+
+[2026-06-26 02:28 UTC] ✓ 系统正常 — features=130/h (10min桶=34: crash补偿叠加,正常). Opportunities_1h=73. Knowledge=4675(+0). §17 timed_out=322(+0). Stale=338(+2). §23: 末次02:18 UTC, 距今10min, 第11轮第2次crash临近(预计02:28). §24 backend: 末次昨12:59, 距今39.5h稳定. 170h+ 连续运行.

@@ -26,6 +26,38 @@ logger = logging.getLogger("aletheia.research_worker")
 
 _EXECUTOR_LOCK = threading.Lock()
 
+
+def _get_recent_news_for_research() -> str:
+    """Fetch recent high-relevance analyzed news for injection into research context."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        import json as _json
+        db = get_db()
+        rows = db.execute(
+            "SELECT title, source, impact_summary, sentiment, symbols_mentioned "
+            "FROM news_items WHERE status = 'analyzed' AND relevance_score >= 0.6 "
+            "AND fetched_at >= datetime('now', '-24 hours') "
+            "ORDER BY relevance_score DESC LIMIT 20"
+        ).fetchall()
+        if not rows:
+            return ""
+        lines = []
+        for r in rows:
+            syms = ""
+            try:
+                s = _json.loads(r["symbols_mentioned"] or "[]")
+                if s:
+                    syms = f" [{', '.join(s)}]"
+            except (ValueError, TypeError):
+                pass
+            impact = r["impact_summary"] or ""
+            lines.append(f"- [{r['source']}] {r['title']} — {impact} ({r['sentiment']}{syms})")
+        return "\n\nRecent News Headlines (last 24h, auto-analyzed):\n" + "\n".join(lines)
+    except Exception as e:
+        logger.debug("news injection into research context failed: %s", e)
+        return ""
+
+
 # --- Stage prompts ---
 
 _EVIDENCE_SYSTEM = (
@@ -168,11 +200,13 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             t["name"] for t in existing_themes[:10]
         )
 
+    news_block = _get_recent_news_for_research()
     research_context = (
         f"Research profile:\n{profile_context}\n"
         f"Brief: {brief}\n"
         f"{existing_context}\n"
         f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+        f"{news_block}"
     )
 
     # --- Stage 1: Collect Evidence ---

@@ -429,6 +429,21 @@ Operator loop 自调节:
 
 ---
 
+### P7 — News 信号注入 PI Agent Trading Context
+
+**诊断**: RSS news 自动抓取 + LLM sentiment 分析已实现（`news_collector.py` + `news_analyzer.py`），Serenity 研究管道已注入新闻。但 PI Agent 的 `trading_context.py` Layer 1 尚未消费新闻信号——AI 做交易决策时看不到实时新闻上下文。
+
+**具体改动**:
+- `trading_context.py` `_build_layer1_snapshot()` 新增 `layer["news_signals"]`
+- 只取 `relevance_score >= 0.7` + 包含当前持仓/候选 symbol 的新闻（限 5 条）
+- `_build_assessment_prompt()` 渲染为 `## Recent News Context` section
+- 预估工作量: 小（~20 行，数据管道已就绪）
+- 影响: 直接改变 AI 看到的信息 → 消耗轮间改动配额
+
+**前置条件**: Round 1 结束解冻后方可实施。需确认 news_analyzer 输出质量稳定。
+
+---
+
 ## 已消耗
 
 | 轮次 | 使用的改动 | 来源 |

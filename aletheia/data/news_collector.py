@@ -134,6 +134,15 @@ async def fetch_news_feeds() -> dict:
     else:
         logger.debug("news: fetched %d items from %d feeds, 0 new", total_fetched, len(active_feeds))
 
+    # Tail step: LLM sentiment analysis on newly fetched items
+    try:
+        from aletheia.data.news_analyzer import analyze_pending_news
+        analyzed = await analyze_pending_news(batch_size=15)
+        if analyzed:
+            logger.info("news: analyzed %d new items", analyzed)
+    except Exception as e:
+        logger.warning("news analysis step failed (non-fatal): %s", e)
+
     return {"fetched": total_fetched, "new": total_new}
 
 
