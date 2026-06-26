@@ -174,12 +174,12 @@ export default function PnLZone() {
     <div className="pnl-zone">
       <div className="pnl-cluster">
         {/* Hero — account value + pie + hover shows broker breakdown */}
-        <div className="card pnl-hero">
-          <div
-            className="pnl-hero-inner"
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
-          >
+        <div
+          className="card pnl-hero"
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          <div className="pnl-hero-inner">
             <div className="pnl-hero-text">
               <div className="metric-label">Account Value</div>
               <div className={`pnl-hero-value${totalRaw == null ? ' is-muted' : ''}`}>
