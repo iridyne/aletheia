@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import ccxt.async_support as ccxt
 
 from aletheia.config.secrets import get_secret
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import to_canonical, to_ccxt_perp
 
 logger = logging.getLogger("aletheia.okx_client")
 
@@ -123,7 +123,10 @@ class OKXClient:
         expects CONTRACTS, so we convert coins→contracts via contractSize before
         submitting, and convert the filled contracts back to coins on the way out.
         """
-        ccxt_symbol = f"{order.symbol}:USDT"  # CCXT perp format: BTC/USDT:USDT
+        # CCXT perp format with settle suffix derived from the quote currency
+        # (BTC/USDT:USDT, BTC/USDC:USDC) — not a hardcoded :USDT, which breaks any
+        # non-USDT-quote instrument.
+        ccxt_symbol = to_ccxt_perp(order.symbol)
         ex = self._ensure_exchange()
         contract_size = await self._contract_size(ccxt_symbol)
         amount_contracts = order.quantity / contract_size if contract_size else order.quantity
@@ -151,21 +154,29 @@ class OKXClient:
         order_id = resp.get("id", "")
 
         # OKX market orders fill instantly but CCXT create_order may return
-        # status "open" before the exchange updates. Poll once to confirm fill.
+        # status "open" before the exchange updates. Poll once to confirm fill;
+        # adopt the refreshed order unconditionally so we also capture a partial
+        # fill's price/qty detail (not just the fully-filled case).
         if status != "filled" and order.order_type == "market" and order_id:
             import asyncio as _aio
             await _aio.sleep(0.3)
             try:
                 fetched = await ex.fetch_order(order_id, ccxt_symbol)
                 status = self._map_status(fetched.get("status", status))
-                if status == "filled":
-                    resp = fetched
+                resp = fetched
             except Exception as e:
                 logger.debug("fetch_order after market order failed: %s", e)
 
+        # Detect a partial fill: CCXT reports it as status "open" with a non-zero
+        # `filled`, which _map_status flattens to "submitted" — the broker would then
+        # treat a real partial position as unfilled and never record it. Bitget's
+        # client already emits "partially_filled"; mirror it here.
+        if status != "filled" and float(resp.get("filled") or 0) > 0:
+            status = "partially_filled"
+
         fill_price = None
         filled_qty = None
-        if status == "filled":
+        if status in ("filled", "partially_filled"):
             fill_price = float(resp["average"]) if resp.get("average") else None
             # resp["filled"] is in CONTRACTS — convert back to coin units to match
             # our internal/storage convention.

@@ -34,6 +34,8 @@ def _import_all_specs():
         spec_pipeline_position_manager,
         spec_pipeline_operator_loop,
         spec_pipeline_profit_loop,
+        spec_pipeline_stop_propagation,
+        spec_pipeline_entry_enrichment,
     )
 
 

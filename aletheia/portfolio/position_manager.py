@@ -25,6 +25,60 @@ logger = logging.getLogger("aletheia.position_manager")
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
 
 
+def close_position_routed(
+    position_id: str,
+    reason: str,
+    fallback_exit_price: float | None = None,
+    *,
+    allow_live: bool = False,
+) -> dict:
+    """Close a position through the correct path for its execution_mode.
+
+    SINGLE SOURCE OF TRUTH for close routing. Real-exchange modes (demo AND
+    live-limited) MUST close via their broker so the exchange position is actually
+    reduced and the exit price is the exchange's real fill. A local-only close would
+    (a) leave a dangling real position — the §1.3 desync, and on *_live_limited that
+    position holds REAL funds — and (b) fabricate the exit from a local mark, breaking
+    the "never fabricate an exit" honesty invariant. Only paper_internal closes purely
+    locally.
+
+    Used by BOTH the auto-exit loop (evaluate_open_positions) and any manual/agent
+    close (e.g. PI portfolio review) so neither can silently desync a real position.
+
+    LIVE GUARD (governance, see module docstring §LIVE): a `*_live_limited` position is
+    human-only — NEVER auto-closed. Because this router is the chokepoint, the guard
+    lives HERE: autonomous callers (auto-exit loop, PI portfolio review) leave
+    `allow_live=False`, so a live position raises instead of silently placing a REAL
+    exchange order (CLAUDE.md: "Never place live orders ... autonomously"). Only an
+    explicit human-initiated close passes `allow_live=True`.
+    """
+    from aletheia.storage.repositories import _select_one
+
+    row = _select_one("positions", position_id)
+    mode = (row or {}).get("execution_mode")
+    if mode and mode.endswith("_live_limited") and not allow_live:
+        raise RuntimeError(
+            f"refusing to autonomously close live position {position_id} "
+            f"(mode={mode}); live closes are human-only (pass allow_live=True to override)"
+        )
+    if mode in ("bitget_demo", "bitget_live_limited"):
+        from aletheia.execution.bitget_broker import close_demo_position
+        return close_demo_position(position_id, reason=reason)
+    if mode in ("binance_testnet", "binance_live_limited"):
+        from aletheia.execution.binance_broker import close_testnet_position
+        return close_testnet_position(position_id, reason=reason)
+    if mode in ("okx_demo", "okx_live_limited"):
+        from aletheia.execution.okx_broker import close_okx_position
+        return close_okx_position(position_id, reason=reason)
+    # paper_internal — pure local simulation; needs a mark to realize PnL.
+    if fallback_exit_price is None:
+        px = _latest_price(row["symbol"]) if row else None
+        if px is None:
+            raise RuntimeError(f"no price available to close paper position {position_id}")
+        fallback_exit_price = float(px)
+    return close_position(position_id, exit_price=fallback_exit_price, reason=reason)
+
+
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -313,17 +367,10 @@ def evaluate_open_positions() -> dict:
             continue
         reason, exit_price = decision
         try:
-            if p.get("execution_mode") == "bitget_demo":
-                from aletheia.execution.bitget_broker import close_demo_position
-                close_demo_position(p["id"], reason=reason)
-            elif p.get("execution_mode") == "binance_testnet":
-                from aletheia.execution.binance_broker import close_testnet_position
-                close_testnet_position(p["id"], reason=reason)
-            elif p.get("execution_mode") in ("okx_demo", "okx_live_limited"):
-                from aletheia.execution.okx_broker import close_okx_position
-                close_okx_position(p["id"], reason=reason)
-            else:
-                close_position(p["id"], exit_price=exit_price, reason=reason)
+            # Route through the shared helper so the exchange leg is never skipped
+            # (live positions are already filtered out above; demo modes still need
+            # their real exchange close, paper closes locally).
+            close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
             closed += 1
         except Exception as e:
             logger.warning("close failed for %s: %s", p["id"], e)

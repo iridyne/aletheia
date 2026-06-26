@@ -18,6 +18,7 @@ from datetime import datetime
 
 from aletheia.data.symbols import to_canonical
 from aletheia.exchanges.okx.client import OKXClient, OrderRequest
+from aletheia.execution.position_enrichment import build_entry_enrichment
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
@@ -186,6 +187,14 @@ def execute_live_order(
                 update_position(existing["id"], **update_kwargs)
                 position_id = existing["id"]
             else:
+                # Stamp the same entry-time metadata paper_broker records (btc benchmark,
+                # regime, market summary, reasoning, fees) via the shared helper, so
+                # live-broker positions are not blind to alpha/regime/cost analytics
+                # (clone-divergence guard — see position_enrichment).
+                enrichment = build_entry_enrichment(
+                    symbol=symbol, fill_price=fill_price, quantity=fill_qty,
+                    requested_price=price, fee_rate=fee_rate, proposal_id=proposal_id,
+                )
                 position = Position(
                     symbol=symbol, market_type=market_type, direction=direction,
                     quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
@@ -194,9 +203,21 @@ def execute_live_order(
                     # Persist protective stop/TP so position_manager acts on the AI's
                     # intended levels, not just the default-% fallback (regression EC-stop).
                     stop_price=stop_price, take_profit_price=take_profit_price,
+                    **enrichment,
                 )
                 insert_position(position)
                 position_id = position.id
+            # Notify operator of the fill (best-effort; mirrors paper_broker so demo/live
+            # opens are not silent while only paper opens notify).
+            try:
+                from aletheia.notifications import notify_trade_fill
+                notify_trade_fill(
+                    symbol, direction, fill_qty, fill_price, position_id, execution_mode,
+                    stop_price=stop_price,
+                    take_profit_price=take_profit_price if not existing else None,
+                )
+            except Exception:
+                pass
         else:
             position_id = None
     except Exception as e:

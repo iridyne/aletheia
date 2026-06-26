@@ -1983,7 +1983,14 @@ Return JSON: {_json.dumps(schema)}"""
             price = _latest_price(sym)
             if price:
                 try:
-                    close_position(pos["id"], exit_price=float(price), reason="pi_agent_portfolio_review")
+                    # Route by execution_mode: demo/live positions MUST close via their
+                    # exchange broker (real reduce + real exit price), not a local-only
+                    # close that fabricates the exit and desyncs the exchange book.
+                    from aletheia.portfolio.position_manager import close_position_routed
+                    close_position_routed(
+                        pos["id"], reason="pi_agent_portfolio_review",
+                        fallback_exit_price=float(price),
+                    )
                     closed_count += 1
                 except Exception as e:
                     result["close_error"] = str(e)[:100]

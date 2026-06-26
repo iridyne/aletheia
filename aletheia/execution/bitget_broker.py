@@ -25,6 +25,7 @@ from datetime import datetime
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_bitget
 from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+from aletheia.execution.position_enrichment import build_entry_enrichment
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
@@ -146,6 +147,14 @@ def execute_live_order(
                 update_position(existing["id"], **update_kwargs)
                 position_id = existing["id"]
             else:
+                # Stamp the same entry-time metadata paper_broker records (btc benchmark,
+                # regime, market summary, reasoning, fees) via the shared helper, so
+                # live-broker positions are not blind to alpha/regime/cost analytics
+                # (clone-divergence guard — see position_enrichment).
+                enrichment = build_entry_enrichment(
+                    symbol=symbol, fill_price=fill_price, quantity=fill_qty,
+                    requested_price=price, fee_rate=fee_rate, proposal_id=proposal_id,
+                )
                 position = Position(
                     symbol=symbol, market_type=market_type, direction=direction,
                     quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
@@ -155,6 +164,7 @@ def execute_live_order(
                     # Persist protective stop/TP so position_manager acts on the AI's
                     # intended levels, not just the default-% fallback (regression EC-stop).
                     stop_price=stop_price, take_profit_price=take_profit_price,
+                    **enrichment,
                 )
                 insert_position(position)
                 position_id = position.id
@@ -170,6 +180,17 @@ def execute_live_order(
                         take_profit_price=take_profit_price,
                         cfg=cfg,
                     )
+            # Notify operator of the fill (best-effort; mirrors paper_broker so demo/live
+            # opens are not silent while only paper opens notify).
+            try:
+                from aletheia.notifications import notify_trade_fill
+                notify_trade_fill(
+                    symbol, direction, fill_qty, fill_price, position_id, execution_mode,
+                    stop_price=stop_price,
+                    take_profit_price=take_profit_price if not existing else None,
+                )
+            except Exception:
+                pass
         else:
             position_id = None
     except Exception as e:
@@ -205,9 +226,11 @@ def _find_open_position(
 
 
 def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
-    """Close a `bitget_demo` position with a REAL hedge-mode close order, then realize
-    PnL locally. Keeps the exchange and local books consistent (state-consistency is
-    the top priority): a local-only close would leave a dangling real demo position.
+    """Close a Bitget position (demo OR live-limited) with a REAL hedge-mode close
+    order, then realize PnL locally. Keeps the exchange and local books consistent
+    (state-consistency is the top priority): a local-only close would leave a
+    dangling real position on the exchange — the exact §1.3 hazard, and on
+    `bitget_live_limited` that dangling position holds REAL funds.
 
     Hedge-mode close (DECISIONS.md 2026-06-09): tradeSide:"close" + holdSide (the
     position's side), with `side` SAME as the original open side — close a long =
@@ -223,13 +246,16 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
     row = repo._select_one("positions", position_id)
     if row is None:
         raise ValueError(f"position not found: {position_id}")
-    if row.get("execution_mode") != "bitget_demo":
-        raise ValueError(f"close_demo_position only handles bitget_demo, got {row.get('execution_mode')!r}")
+    if row.get("execution_mode") not in ("bitget_demo", "bitget_live_limited"):
+        raise ValueError(f"close_demo_position only handles Bitget modes, got {row.get('execution_mode')!r}")
     if row.get("status") != "open":
         raise ValueError(f"position {position_id} is not open (status={row.get('status')})")
 
     cfg = load_config()
-    client = BitgetClient(mode=cfg.exchange.mode)
+    # Derive the client mode from the POSITION's execution_mode, not cfg.exchange.mode:
+    # a bitget_live_limited position must close on the live account even if the operator
+    # has since flipped cfg.exchange.mode to demo (mirrors close_testnet_position).
+    client = BitgetClient(mode="live" if row["execution_mode"] == "bitget_live_limited" else "demo")
     direction = row["direction"]
     is_long = direction in ("long", "buy")
     hold_side = "long" if is_long else "short"
@@ -258,7 +284,7 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         order_type="market",
         quantity=quantity,
         price=row.get("current_price") or row["entry_price"],
-        execution_mode="bitget_demo",
+        execution_mode=row["execution_mode"],
         status="pending",
     )
     insert_order(close_order)

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import ccxt.async_support as ccxt
 
 from aletheia.config.secrets import get_secret
+from aletheia.data.symbols import to_ccxt_perp
 
 logger = logging.getLogger("aletheia.binance_client")
 
@@ -66,7 +67,10 @@ class BinanceClient:
 
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         """Place a market or limit order on Binance Futures."""
-        ccxt_symbol = f"{order.symbol}:USDT"  # CCXT perp format: BTC/USDT:USDT
+        # CCXT perp format with settle suffix derived from the quote currency
+        # (BTC/USDT:USDT, BTC/USDC:USDC) — not a hardcoded :USDT, which breaks any
+        # non-USDT-quote instrument.
+        ccxt_symbol = to_ccxt_perp(order.symbol)
 
         params = {}
         if order.reduce_only:
@@ -88,14 +92,33 @@ class BinanceClient:
             raise RuntimeError(f"Binance {self._mode}: {e}") from e
 
         status = self._map_status(resp.get("status", ""))
+        order_id = resp.get("id", "")
+
+        # Binance Futures create_order can return status "new"/"open" for a market
+        # order that fills milliseconds later. Poll once to confirm (mirrors OKX) so
+        # a real fill is not under-recorded as "submitted" and the position lost.
+        if status != "filled" and order.order_type == "market" and order_id:
+            import asyncio as _aio
+            await _aio.sleep(0.3)
+            try:
+                fetched = await self._exchange.fetch_order(order_id, ccxt_symbol)
+                status = self._map_status(fetched.get("status", status))
+                resp = fetched
+            except Exception as e:
+                logger.debug("fetch_order after market order failed: %s", e)
+
+        # Detect a partial fill (CCXT status "open" + filled>0) — mirror OKX/Bitget.
+        if status != "filled" and float(resp.get("filled") or 0) > 0:
+            status = "partially_filled"
+
         fill_price = None
         filled_qty = None
-        if status == "filled":
+        if status in ("filled", "partially_filled"):
             fill_price = float(resp["average"]) if resp.get("average") else None
             filled_qty = float(resp["filled"]) if resp.get("filled") else None
 
         return OrderResponse(
-            order_id=resp.get("id", ""),
+            order_id=order_id,
             client_oid=resp.get("clientOrderId"),
             status=status,
             fill_price=fill_price,

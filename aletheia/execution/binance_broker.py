@@ -16,6 +16,7 @@ from datetime import datetime
 
 from aletheia.data.symbols import to_binance
 from aletheia.exchanges.binance.client import BinanceClient, OrderRequest
+from aletheia.execution.position_enrichment import build_entry_enrichment
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
@@ -124,6 +125,14 @@ def execute_live_order(
                 update_position(existing["id"], **update_kwargs)
                 position_id = existing["id"]
             else:
+                # Stamp the same entry-time metadata paper_broker records (btc benchmark,
+                # regime, market summary, reasoning, fees) via the shared helper, so
+                # live-broker positions are not blind to alpha/regime/cost analytics
+                # (clone-divergence guard — see position_enrichment).
+                enrichment = build_entry_enrichment(
+                    symbol=symbol, fill_price=fill_price, quantity=fill_qty,
+                    requested_price=price, fee_rate=fee_rate, proposal_id=proposal_id,
+                )
                 position = Position(
                     symbol=symbol, market_type=market_type, direction=direction,
                     quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
@@ -132,9 +141,21 @@ def execute_live_order(
                     # Persist protective stop/TP so position_manager acts on the AI's
                     # intended levels, not just the default-% fallback (regression EC-stop).
                     stop_price=stop_price, take_profit_price=take_profit_price,
+                    **enrichment,
                 )
                 insert_position(position)
                 position_id = position.id
+            # Notify operator of the fill (best-effort; mirrors paper_broker so demo/live
+            # opens are not silent while only paper opens notify).
+            try:
+                from aletheia.notifications import notify_trade_fill
+                notify_trade_fill(
+                    symbol, direction, fill_qty, fill_price, position_id, execution_mode,
+                    stop_price=stop_price,
+                    take_profit_price=take_profit_price if not existing else None,
+                )
+            except Exception:
+                pass
         else:
             position_id = None
     except Exception as e:
@@ -170,10 +191,12 @@ def _find_open_position(
 
 
 def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
-    """Close a `binance_testnet` position with a reduceOnly order on the testnet.
+    """Close a Binance position (testnet OR live-limited) with a reduceOnly order.
 
-    Unlike Bitget's hedge-mode close, Binance testnet uses reduceOnly=True with the
-    opposite side (close long = sell reduceOnly, close short = buy reduceOnly).
+    Unlike Bitget's hedge-mode close, Binance uses reduceOnly=True with the opposite
+    side (close long = sell reduceOnly, close short = buy reduceOnly). A local-only
+    close would leave a dangling real position on the exchange (§1.3 hazard); on
+    `binance_live_limited` that dangling position holds REAL funds.
     """
     from aletheia.storage import repositories as repo
     from aletheia.portfolio.pnl import close_position
@@ -181,12 +204,13 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
     row = repo._select_one("positions", position_id)
     if row is None:
         raise ValueError(f"position not found: {position_id}")
-    if row.get("execution_mode") != "binance_testnet":
-        raise ValueError(f"close_testnet_position only handles binance_testnet, got {row.get('execution_mode')!r}")
+    if row.get("execution_mode") not in ("binance_testnet", "binance_live_limited"):
+        raise ValueError(f"close_testnet_position only handles Binance modes, got {row.get('execution_mode')!r}")
     if row.get("status") != "open":
         raise ValueError(f"position {position_id} is not open (status={row.get('status')})")
 
-    client = BinanceClient(mode="testnet")
+    mode = "live" if row["execution_mode"] == "binance_live_limited" else "testnet"
+    client = BinanceClient(mode=mode)
     direction = row["direction"]
     is_long = direction in ("long", "buy")
     # Close = opposite side + reduceOnly
@@ -201,7 +225,7 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
         order_type="market",
         quantity=quantity,
         price=row.get("current_price") or row["entry_price"],
-        execution_mode="binance_testnet",
+        execution_mode=row["execution_mode"],
         status="pending",
     )
     insert_order(close_order)
