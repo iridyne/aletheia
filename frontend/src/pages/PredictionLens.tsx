@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { PredictionMarket, PredictionStatus, PredictionObserverRun, PredictionClaim } from '../types'
@@ -430,6 +430,18 @@ function DisabledOverlay() {
   )
 }
 
+// Last-known enabled flag, persisted so the disabled mask shows instantly on
+// reload instead of flashing the full page until the status query resolves.
+const PRED_ENABLED_CACHE = 'aletheia.prediction.enabled'
+function readCachedEnabled(): boolean | undefined {
+  try {
+    const v = localStorage.getItem(PRED_ENABLED_CACHE)
+    return v == null ? undefined : v === 'true'
+  } catch {
+    return undefined
+  }
+}
+
 // --- Main Page ---
 export default function PredictionLens() {
   const qc = useQueryClient()
@@ -441,16 +453,31 @@ export default function PredictionLens() {
     queryFn: api.getPredictionStatus,
     refetchInterval: 30000,
   })
+
+  // Resolve "is this feature off?" from the freshest source available: the live
+  // status query if loaded, otherwise the last-known value persisted on the
+  // previous visit. Only `undefined` (never observed) falls through to enabled.
+  const cachedEnabled = readCachedEnabled()
+  const effectiveEnabled = status?.enabled ?? cachedEnabled
+  const isDisabled = effectiveEnabled === false
+
+  // Persist the authoritative flag whenever the live query reports it.
+  useEffect(() => {
+    if (status?.enabled != null) {
+      try { localStorage.setItem(PRED_ENABLED_CACHE, String(status.enabled)) } catch { /* ignore */ }
+    }
+  }, [status?.enabled])
+
   const { data: markets = [] } = useQuery({
     queryKey: ['prediction-markets'],
     queryFn: api.getPredictionMarkets,
     refetchInterval: 60000,
-    enabled: status?.enabled !== false,
+    enabled: !isDisabled,
   })
   const { data: runs = [] } = useQuery({
     queryKey: ['prediction-runs'],
     queryFn: api.getPredictionRuns,
-    enabled: status?.enabled !== false,
+    enabled: !isDisabled,
   })
 
   const refresh = useMutation({
@@ -461,8 +488,6 @@ export default function PredictionLens() {
       qc.invalidateQueries({ queryKey: ['prediction-runs'] })
     },
   })
-
-  const isDisabled = status?.enabled === false
 
   return (
     <div className="pred-page-wrapper">
