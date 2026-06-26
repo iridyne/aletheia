@@ -1630,7 +1630,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 @media (max-width: 900px) { .pnl-cluster { grid-template-columns: 1fr; } }
 .pnl-hero {
   margin-bottom: 0; display: flex; flex-direction: column; justify-content: center;
-  position: relative; min-width: 0;
+  position: relative; min-width: 0; overflow: visible;
 }
 .pnl-hero-inner {
   display: flex; align-items: center; gap: var(--space-4);
@@ -1986,7 +1986,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4);
 }
 @media (max-width: 600px) { .account-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.metric-tile { margin-bottom: 0; padding: var(--space-2) var(--space-3); min-height: 68px; }
+.metric-tile { margin-bottom: 0; padding: var(--space-2) var(--space-3); min-height: 68px; overflow: visible; position: relative; }
 .metric-label {
   font-size: 0.62rem; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: var(--space-1);
