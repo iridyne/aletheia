@@ -116,24 +116,36 @@ function DreamingTab() {
         )}
       </Card>
 
-      {/* This cycle's output, grouped by kind */}
-      <div className="learn-grid">
-        <Card>
-          <CardHeader title="Consolidations" />
-          <ItemList items={logs} onSelect={setSelectedItem} empty="No consolidations yet." />
-        </Card>
-        <Card>
-          <CardHeader title="Research notes" meta="24h" />
-          <ItemList items={research} onSelect={setSelectedItem} empty="No new research notes in the last 24 hours." />
-        </Card>
-        <Card>
-          <CardHeader title="Strategy hypotheses" meta="24h" />
-          <ItemList items={hypotheses} onSelect={setSelectedItem} empty="No new strategy hypotheses in the last 24 hours." />
-        </Card>
-        <Card>
-          <CardHeader title="Deprecated memories" meta="7d" />
-          <ItemList items={deprecated} onSelect={setSelectedItem} empty="No memories deprecated in the last 7 days." />
-        </Card>
+      {/*
+        This cycle's output, grouped by kind. Layout: asymmetric 2fr/1fr Bento split.
+        Research notes can have 20+ items (~800px tall) while Consolidations/Deprecated
+        often have 0-1 (~90px). A 1fr/1fr grid leaves ~500px of empty alignment gap
+        beside the long column. The 2fr/1fr split + manual column grouping turns that
+        gap into intentional visual hierarchy: the main outputs (Research / Hypotheses)
+        are wide on the left; the meta/decay info (Consolidations / Deprecated) is
+        narrow on the right.
+      */}
+      <div className="learn-grid asym">
+        <div className="learn-col-main">
+          <Card>
+            <CardHeader title="Research notes" meta="24h" />
+            <ItemList items={research} onSelect={setSelectedItem} empty="No new research notes in the last 24 hours." />
+          </Card>
+          <Card>
+            <CardHeader title="Strategy hypotheses" meta="24h" />
+            <ItemList items={hypotheses} onSelect={setSelectedItem} empty="No new strategy hypotheses in the last 24 hours." />
+          </Card>
+        </div>
+        <div className="learn-col-aside">
+          <Card>
+            <CardHeader title="Consolidations" />
+            <ItemList items={logs} onSelect={setSelectedItem} empty="No consolidations yet." />
+          </Card>
+          <Card>
+            <CardHeader title="Deprecated memories" meta="7d" />
+            <ItemList items={deprecated} onSelect={setSelectedItem} empty="No memories deprecated in the last 7 days." />
+          </Card>
+        </div>
       </div>
 
       <DetailDrawer open={!!selectedItem} onClose={() => setSelectedItem(null)} title={selectedItem?.title || 'Knowledge Item'}>

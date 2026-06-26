@@ -33,6 +33,9 @@ export default function RiskControls() {
   // the canonical (slashed) form, briefly displaying "ETH/USDT" for a USDT-perp until the
   // positions query settles. That violates the immutable owner rule (CLAUDE.md 2026-06-26).
   const { data: positions = [], isLoading: positionsLoading } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
+  // 24h pipeline counts — surfaces "the system IS guarding" in the healthy state.
+  // Refetches every 60s; the underlying SQL is a single COUNT GROUP BY so it's cheap.
+  const { data: funnel } = useQuery({ queryKey: ['pipeline-funnel-24h'], queryFn: () => api.getPipelineFunnel(24), refetchInterval: 60_000 })
   const exposureLoading = portfolioLoading || positionsLoading
 
   const engageKill = useMutation({
@@ -68,6 +71,39 @@ export default function RiskControls() {
     : []
   const exposureMax = exposure.reduce((m, [, v]) => Math.max(m, Math.abs(v)), 0) || 1
   const exposureTotal = exposure.reduce((sum, [, v]) => sum + v, 0)
+
+  // ── Active Risk · headroom ───────────────────────────────────────────────
+  // We surface 3 caps the operator cares about most: open-positions count,
+  // largest single-position notional, today's loss vs daily-loss budget.
+  // Caps come from `boundaries` (demo vs live picked by exchange_mode).
+  const exchangeMode = String(s.exchange_mode || 'demo').toLowerCase()
+  const isLive = exchangeMode === 'live' || exchangeMode === 'bitget_live_limited'
+  const b = (boundaries || {}) as Record<string, any>
+  const equity = Number((portfolio as any)?.exchange_equity_usdt) || Number((portfolio as any)?.total_value_usdt) || 0
+  const positionsCount = Number((portfolio as any)?.positions_count) || (positions as any[]).length || 0
+  const posCap = Number(isLive ? b.max_open_positions_live : b.max_open_positions_demo) || null
+  const notionalCap = Number(isLive ? b.max_live_position_notional_usdt : b.max_demo_position_notional_usdt) || null
+  const dailyLossPct = Number(b.max_daily_loss_pct) || null
+  const dailyLossCapUsdt = (dailyLossPct != null && equity > 0) ? equity * dailyLossPct / 100 : null
+  const todayPnl = Number((portfolio as any)?.today_pnl) || 0
+  const todayLoss = todayPnl < 0 ? Math.abs(todayPnl) : 0
+  // positions API has no notional field — derive from quantity × current_price, open only.
+  const largestPos = (positions as any[]).reduce((m, p) => {
+    if (p?.status && p.status !== 'open') return m
+    const qty = Math.abs(Number(p?.quantity) || 0)
+    const px  = Number(p?.current_price) || Number(p?.entry_price) || 0
+    return Math.max(m, qty * px)
+  }, 0)
+
+  const headroomRows = [
+    posCap != null && { label: 'Open positions', used: positionsCount, cap: posCap, fmtUsed: (v: number) => String(Math.round(v)), fmtCap: (v: number) => String(Math.round(v)) },
+    notionalCap != null && { label: 'Largest position', used: largestPos, cap: notionalCap, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
+    dailyLossCapUsdt != null && { label: 'Daily loss', used: todayLoss, cap: dailyLossCapUsdt, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
+  ].filter(Boolean) as { label: string; used: number; cap: number; fmtUsed: (v: number) => string; fmtCap: (v: number) => string }[]
+
+  const fnl = funnel?.risk_decisions
+  const topRejection = fnl?.top_rejection_reasons?.[0]
+  const latest = (riskStatus as any)?.latest_risk_decision
 
   return (
     <div>
@@ -173,6 +209,73 @@ export default function RiskControls() {
               <span className="text-muted text-sm">No active violations — operating within all limits.</span>
             </div>
           )}
+
+          {/* 24h ACTIVITY — proves the guard is alive even in the healthy state. */}
+          {fnl && (
+            <div className="risk-section">
+              <div className="risk-section-label">24h Activity</div>
+              <div className="risk-activity">
+                <div className="risk-activity-row">
+                  <span className="risk-activity-key">Risk checks</span>
+                  <span className="risk-activity-val mono">
+                    <span className="risk-good">{fnl.approved}</span>
+                    <span className="risk-faint">/</span>
+                    <span className={fnl.rejected > 0 ? 'risk-bad' : 'risk-faint'}>{fnl.rejected}</span>
+                  </span>
+                  <span className="risk-activity-meta">{fnl.approve_rate_pct != null ? `${Math.round(fnl.approve_rate_pct)}% pass` : '—'}</span>
+                </div>
+                {topRejection && (
+                  <div className="risk-activity-row">
+                    <span className="risk-activity-key">Top reject</span>
+                    <span className="risk-activity-val" title={topRejection.message}>{shortReject(topRejection.message)}</span>
+                    <span className="risk-activity-meta">{topRejection.count}×</span>
+                  </div>
+                )}
+                {funnel?.fills != null && (
+                  <div className="risk-activity-row">
+                    <span className="risk-activity-key">Fills</span>
+                    <span className="risk-activity-val mono">{funnel.fills}</span>
+                    <span className="risk-activity-meta">orders executed</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* HEADROOM — how close are we to each cap. */}
+          {headroomRows.length > 0 && (
+            <div className="risk-section">
+              <div className="risk-section-label">Headroom · {humanize(exchangeMode)}</div>
+              <div className="headroom-list">
+                {headroomRows.map(row => {
+                  const pct = row.cap > 0 ? (row.used / row.cap) * 100 : 0
+                  const tone = pct >= 100 ? 'crit' : pct >= 70 ? 'warn' : 'ok'
+                  const w = Math.min(100, Math.max(2, pct))
+                  return (
+                    <div key={row.label} className="headroom-row">
+                      <span className="headroom-label">{row.label}</span>
+                      <span className="headroom-bar-track">
+                        <span className={`headroom-bar-fill ${tone}`} style={{ width: `${w}%` }} />
+                      </span>
+                      <span className="headroom-val mono">{row.fmtUsed(row.used)} <span className="risk-faint">/ {row.fmtCap(row.cap)}</span></span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* LATEST CHECK — when did the risk engine last decide anything. */}
+          {latest && (
+            <div className="risk-section">
+              <div className="risk-section-label">Latest Check</div>
+              <div className="latest-check">
+                <span className="latest-check-time mono">{fmtRelative(latest.created_at)}</span>
+                <StatusText tone={latest.approved ? 'green' : 'red'}>{latest.approved ? 'Approved' : 'Rejected'}</StatusText>
+                {latest.risk_score != null && <span className="latest-check-meta">risk score {latest.risk_score}</span>}
+              </div>
+            </div>
+          )}
         </Card>
 
         <Card>
@@ -239,6 +342,24 @@ function deriveMasterState(p: {
   if (p.riskState === 'warning') return { word: 'CAUTION', tone: 'yellow', detail: 'Running with active risk warnings — review the violations below.' }
   if (p.riskState === 'healthy') return { word: 'OPERATIONAL', tone: 'green', detail: 'Agents are running within all risk limits.' }
   return { word: 'STANDBY', tone: 'blue', detail: 'Risk state has not been evaluated yet.' }
+}
+
+/** "Rejected: max_demo_positions_reached:6" → "max demo positions reached". */
+function shortReject(msg: string): string {
+  return (msg || '').replace(/^Rejected:\s*/, '').replace(/:[\d.>=,\s]+/g, ' ').replace(/_/g, ' ').trim().slice(0, 64)
+}
+
+/** UTC-safe ISO → "6h ago" etc. Mirrors lib/format normalizeIso behavior. */
+function fmtRelative(iso?: string | null): string {
+  if (!iso) return '—'
+  const norm = iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`
+  const t = new Date(norm).getTime()
+  if (!Number.isFinite(t)) return '—'
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000))
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
 }
 
 // ── Configured limits — grouped by concern, live/demo paired ─────────────────

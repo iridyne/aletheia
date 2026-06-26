@@ -1594,6 +1594,73 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .risk-clear { display: flex; align-items: center; gap: var(--space-2); }
 .risk-clear .risk-dot { margin-top: 0; }
 
+/* ── Active Risk · substantive sections (24h / Headroom / Latest Check) ───
+   Healthy state has no violations to list, so we fill the card with proof-of-life
+   data instead of leaving a 60px tile beside a 400px exposure list. Each section
+   sits under a thin divider with a small uppercase label in accent color. */
+.risk-section {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.risk-section-label {
+  font-size: 0.64rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--accent);
+  margin-bottom: var(--space-2);
+}
+
+.risk-activity { display: flex; flex-direction: column; gap: 4px; }
+.risk-activity-row {
+  display: grid; grid-template-columns: 88px 1fr auto;
+  align-items: baseline; gap: var(--space-3);
+  font-size: 0.78rem; line-height: 1.4;
+}
+.risk-activity-key  { color: var(--muted); }
+.risk-activity-val  { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.risk-activity-meta { color: var(--faint); font-size: 0.72rem; }
+.risk-good  { color: var(--green); }
+.risk-bad   { color: var(--red); }
+.risk-faint { color: var(--faint); padding: 0 4px; }
+
+.headroom-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.headroom-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 110px;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.78rem;
+}
+.headroom-label { color: var(--muted); }
+.headroom-bar-track {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.headroom-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width .3s ease;
+}
+.headroom-bar-fill.ok   { background: var(--accent-dim); }
+.headroom-bar-fill.warn { background: var(--yellow); }
+.headroom-bar-fill.crit { background: var(--red); }
+.headroom-val {
+  font-family: var(--mono);
+  color: var(--text);
+  text-align: right;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.latest-check {
+  display: flex; align-items: center; gap: var(--space-3);
+  font-size: 0.78rem;
+}
+.latest-check-time { color: var(--faint); }
+.latest-check-meta { color: var(--faint); font-size: 0.72rem; }
+
 
 /* System status board — tabular, old-school console feel with status lights */
 .status-board { width: 100%; }
@@ -2273,8 +2340,27 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 }
 @media (max-width: 900px) { .learn-grid { grid-template-columns: 1fr; } }
 
+/* Asymmetric Bento variant — main outputs (2fr) + aside meta info (1fr). Each
+   column stacks multiple cards vertically (gap matches grid gap for consistency),
+   so visual heights converge without faking alignment. ≤900px collapses to a
+   single linear scroll, aside coming after main. */
+.learn-grid.asym { grid-template-columns: 2fr 1fr; }
+.learn-col-main, .learn-col-aside {
+  display: flex; flex-direction: column; gap: var(--space-4);
+}
+@media (max-width: 900px) {
+  .learn-grid.asym { grid-template-columns: 1fr; }
+}
+
 /* Compact knowledge-item list (title + timestamp). */
-.learn-items { list-style: none; margin: 0; padding: 0; }
+.learn-items {
+  list-style: none; margin: 0; padding: 0;
+  /* Cap list height so a 20+ item Research notes column doesn't run away to 800px
+     and make the asymmetric Bento ratio (left main · right aside) become ridiculous.
+     Knowledge Base tab still shows the full list — this is a glance view. */
+  max-height: 380px;
+  overflow-y: auto;
+}
 .learn-item {
   display: flex;
   align-items: baseline;

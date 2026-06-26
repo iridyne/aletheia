@@ -303,6 +303,17 @@ export const api = {
   // Risk: boundaries display + kill switch + editable config
   getRiskBoundaries: () => fetchJson<Record<string, any>>('/risk/boundaries'),
   getRiskStatus: () => fetchJson<Record<string, any>>('/risk/status'),
+  // 24h pipeline counts — used by Risk Active Risk panel to surface "the system is
+  // actively guarding" (approved/rejected/top rejection reason) even in the healthy state.
+  getPipelineFunnel: (hours = 24) => fetchJson<{
+    window_hours: number
+    risk_decisions: {
+      approved: number; rejected: number
+      approve_rate_pct: number | null
+      top_rejection_reasons: { message: string; count: number }[]
+    }
+    fills: number
+  }>(`/analytics/pipeline-funnel?hours=${hours}`),
   getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
   setKillSwitch: (active: boolean, reason = '') =>
     post<{ active: boolean }>('/risk/kill-switch', { active, reason }),
