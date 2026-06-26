@@ -299,6 +299,9 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
                     "unrealized_pnl": float(p.unrealized_pnl or 0),
                     "leverage": p.leverage,
                     "mark_price": float(p.mark_price or 0),
+                    # get_positions() returns derivative positions only — tag the
+                    # type so symbol display (perp → no slash) stays correct.
+                    "market_type": "usdt_futures",
                 }
                 for p in futures
             ]

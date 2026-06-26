@@ -24,6 +24,7 @@ import {
 import { api } from '../api/client'
 import type { TradeInsights, CalibrationReport } from '../api/client'
 import { Card } from '../components/ui'
+import { fmtSymbol } from '../lib/format'
 
 // ── Palette (matches CSS vars) ────────────────────────────────────────────────
 const C = {
@@ -308,7 +309,7 @@ function HoldScatter({ data }: { data: TradeInsights['hold_vs_pnl'] }) {
               const d = payload[0].payload
               return (
                 <div style={tooltipStyle.contentStyle}>
-                  <div style={{ color: C.text }}>{d.symbol}</div>
+                  <div style={{ color: C.text }}>{fmtSymbol(d.symbol, d.market_type)}</div>
                   <div style={{ color: C.muted }}>Hold: {d.hold_hours}h · PnL: {d.pnl_pct}%</div>
                 </div>
               )

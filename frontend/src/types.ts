@@ -280,6 +280,7 @@ export interface ReconcileItem {
   symbol: string
   direction: string
   classification: 'managed' | 'external' | 'orphaned'
+  market_type: string | null
   local: Position | null
   exchange: ExchangePosition | null
   qty_drift: number | null

@@ -8,7 +8,7 @@ import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
 import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
-import { humanize, fmtTimestamp } from '../lib/format'
+import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 
 /**
  * Cockpit / Overview (OVERVIEW_REDESIGN.md Decision 3).
@@ -112,7 +112,7 @@ export default function Overview() {
                 <ul className="approval-list">
                   {pendingProposals.slice(0, 4).map((p: any) => (
                     <li key={p.id}>
-                      <span><span className="mono">{p.symbol}</span> {humanize(p.direction)}</span>
+                      <span><span className="mono">{fmtSymbol(p.symbol, p.market_type)}</span> {humanize(p.direction)}</span>
                       <span className="ts mono">{fmtTimestamp(p.created_at)}</span>
                     </li>
                   ))}

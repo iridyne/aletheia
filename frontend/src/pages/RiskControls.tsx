@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
 import { ActionRow, Card, CardHeader, Button, StatusText, TableWrap } from '../components/ui'
-import { fmtSigned, useDecimals, humanize } from '../lib/format'
+import { fmtSigned, useDecimals, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 
 export default function RiskControls() {
@@ -12,6 +12,9 @@ export default function RiskControls() {
   const { data: boundaries } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
   const { data: killSwitch, isLoading: ksLoading } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
+  // Open positions supply the market type per symbol so the exposure table can
+  // render the spot/derivative convention (perp → no slash, spot → slash).
+  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
 
   const engageKill = useMutation({
     mutationFn: () => api.setKillSwitch(true, 'manual_engage'),
@@ -32,6 +35,10 @@ export default function RiskControls() {
   const riskTone = riskState === 'blocked' ? 'red' : riskState === 'warning' ? 'yellow' : riskState === 'healthy' ? 'green' : 'blue'
 
   const exposure = (portfolio as any)?.exposure_by_symbol as Record<string, number> | undefined
+  const marketTypeBySymbol: Record<string, string> = {}
+  for (const p of positions as any[]) {
+    if (p?.symbol && p?.market_type) marketTypeBySymbol[p.symbol] = p.market_type
+  }
 
   return (
     <div>
@@ -136,7 +143,7 @@ export default function RiskControls() {
               <tbody>
                 {Object.entries(exposure).map(([sym, val]) => (
                   <tr key={sym}>
-                    <td className="mono">{sym}</td>
+                    <td className="mono">{fmtSymbol(sym, marketTypeBySymbol[sym])}</td>
                     <td className={`mono ${val >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
                       {fmtSigned(val)}
                     </td>

@@ -12,7 +12,7 @@ def build_trade_insights() -> dict:
 
     db = get_db()
     rows = db.execute(
-        "SELECT id, symbol, direction, realized_pnl, entry_price, quantity, "
+        "SELECT id, symbol, market_type, direction, realized_pnl, entry_price, quantity, "
         "       opened_at, closed_at, regime_tag, close_reason, stop_price "
         "FROM positions "
         "WHERE status = 'closed' "
@@ -319,6 +319,7 @@ def _hold_vs_pnl(rows) -> list[dict]:
             "pnl_pct": round(_pnl_pct(r), 2),
             "direction": r["direction"] or "unknown",
             "symbol": r["symbol"] or "",
+            "market_type": r["market_type"] or "",
         })
     return result
 

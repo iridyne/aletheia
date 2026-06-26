@@ -6,6 +6,7 @@ import type { AgentRun, Opportunity, TradeProposal } from '../types'
 import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
 import ThesisText from './ThesisText'
 import { ProposalRationaleDetail } from '../pages/Proposals'
+import { fmtSymbol } from '../lib/format'
 
 /**
  * Agent activity feed (OVERVIEW_REDESIGN.md Decision 2).
@@ -134,7 +135,7 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
         kind: 'opportunity',
         agent: o.source_agent || 'agent',
         icon: agentIcon(o.source_agent || ''),
-        headline: `${o.source_agent || 'Agent'} found ${o.direction_bias} opportunity on ${o.symbol}${conf}`,
+        headline: `${o.source_agent || 'Agent'} found ${o.direction_bias} opportunity on ${fmtSymbol(o.symbol, o.market)}${conf}`,
         detail: o.thesis || undefined,
         opportunity: o,
       })
@@ -148,7 +149,7 @@ export default function AgentFeed({ maxHeight }: { maxHeight?: number } = {}) {
         agent: 'strategy',
         icon: '📐',
         status: p.status,
-        headline: `Proposal: ${p.direction} ${p.symbol} (${p.execution_mode})`,
+        headline: `Proposal: ${p.direction} ${fmtSymbol(p.symbol, p.market_type)} (${p.execution_mode})`,
         detail: p.agent_rationale || undefined,
         proposal: p,
       })
@@ -239,7 +240,7 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
       {item?.kind === 'opportunity' && item.opportunity && (
         <>
           <DrawerSection label="Opportunity">
-            <DrawerField label="Symbol" value={item.opportunity.symbol} mono />
+            <DrawerField label="Symbol" value={fmtSymbol(item.opportunity.symbol, item.opportunity.market)} mono />
             <DrawerField label="Bias" value={item.opportunity.direction_bias} />
             <DrawerField label="Confidence" value={item.opportunity.confidence_score != null ? `${item.opportunity.confidence_score}%` : item.opportunity.confidence ?? null} mono />
             <DrawerField label="Source" value={item.opportunity.source_agent} />
@@ -257,7 +258,7 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
       {item?.kind === 'proposal' && item.proposal && (
         <>
           <DrawerSection label="Proposal">
-            <DrawerField label="Symbol" value={item.proposal.symbol} mono />
+            <DrawerField label="Symbol" value={fmtSymbol(item.proposal.symbol, item.proposal.market_type)} mono />
             <DrawerField label="Direction" value={item.proposal.direction} />
             <DrawerField label="Mode" value={item.proposal.execution_mode} />
             <DrawerField label="Status" value={item.proposal.status} />

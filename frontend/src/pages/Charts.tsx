@@ -6,7 +6,7 @@ import Sparkline from '../components/Sparkline'
 import MacroBar from '../components/MacroBar'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
-import { fmtNum, fmtSigned, fmtDelta, fmtTimestamp, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, fmtDelta, fmtTimestamp, useDecimals, fmtSymbol } from '../lib/format'
 
 const FALLBACK_SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
 const TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
@@ -23,7 +23,7 @@ function ProviderChip({ provider }: { provider?: string | null }) {
 // ─── Watchlist Grid ─────────────────────────────────────────────────────────
 
 function WatchlistGrid({
-  symbols, snapshotMap, flashes, activeSymbol, onSelect, opportunityMap,
+  symbols, snapshotMap, flashes, activeSymbol, onSelect, opportunityMap, marketType,
 }: {
   symbols: string[]
   snapshotMap: Record<string, any>
@@ -31,6 +31,7 @@ function WatchlistGrid({
   activeSymbol: string
   onSelect: (sym: string) => void
   opportunityMap: Record<string, any>
+  marketType?: string | null
 }) {
   return (
     <div className="charts-watchlist">
@@ -46,7 +47,7 @@ function WatchlistGrid({
             onClick={() => onSelect(sym)}
           >
             <div className="charts-card-head">
-              <span className="charts-card-symbol">{sym}</span>
+              <span className="charts-card-symbol">{fmtSymbol(sym, marketType ?? snap?.market_type)}</span>
               {opp && (
                 <span className={`charts-bias-dot bias-${opp.direction_bias}`} title={`AI: ${opp.direction_bias} (${opp.confidence_score ?? opp.confidence})`} />
               )}
@@ -83,11 +84,14 @@ function WatchlistGrid({
 // ─── Tab: Chart ──────────────────────────────────────────────────────────────
 
 function ChartTab({
-  symbol, symbols, onSymbolChange, snapshotMap, dataProvider, lastUpdatedLabel,
+  symbol, symbols, onSymbolChange, snapshotMap, dataProvider, lastUpdatedLabel, marketType,
 }: {
   symbol: string; symbols: string[]; onSymbolChange: (s: string) => void
   snapshotMap: Record<string, any>; dataProvider: string | null; lastUpdatedLabel: string | null
+  marketType?: string | null
 }) {
+  // Resolve a symbol's market type for display: board type first, snapshot fallback.
+  const mtFor = (s: string) => marketType ?? (snapshotMap[s] ?? snapshotMap[s.replace('/', '')])?.market_type
   const [timeframe, setTimeframe] = useState('1h')
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null)
 
@@ -144,7 +148,7 @@ function ChartTab({
       <Card>
         <div className="charts-controls">
           <select value={symbol} onChange={e => onSymbolChange(e.target.value)}>
-            {symbols.map(s => <option key={s} value={s}>{s}</option>)}
+            {symbols.map(s => <option key={s} value={s}>{fmtSymbol(s, mtFor(s))}</option>)}
           </select>
           <div className="seg-toggle">
             {TIMEFRAMES.map(t => (
@@ -159,7 +163,7 @@ function ChartTab({
 
       {symbolOpportunities.length > 0 && (
         <Card>
-          <CardHeader title={`Open Opportunities — ${symbol}`} />
+          <CardHeader title={`Open Opportunities — ${fmtSymbol(symbol, mtFor(symbol))}`} />
           <TableWrap>
             <table>
               <thead>
@@ -236,7 +240,7 @@ function SignalsTab({ onSymbolSelect }: { onSymbolSelect: (sym: string) => void 
                 className={`clickable signals-row-${opp.direction_bias}`}
                 onClick={() => onSymbolSelect(opp.symbol)}
               >
-                <td className="mono">{opp.symbol}</td>
+                <td className="mono">{fmtSymbol(opp.symbol, opp.market)}</td>
                 <td>
                   <Badge tone={opp.direction_bias === 'long' ? 'green' : opp.direction_bias === 'short' ? 'red' : 'blue'}>
                     {opp.direction_bias}
@@ -365,6 +369,10 @@ export default function Charts() {
     refetchInterval: 60_000,
   })
 
+  // The universe board's market type — authoritative for watchlist symbol display
+  // (perp → no slash, spot → slash). Undefined under the static fallback.
+  const boardMarketType: string | null | undefined = (universe as any)?.snapshot?.market_type
+
   // Dynamic watchlist: universe members (ranked) or fallback
   const watchlistSymbols = useMemo<string[]>(() => {
     const members = (universe as any)?.members
@@ -453,6 +461,7 @@ export default function Charts() {
         activeSymbol={symbol}
         onSelect={s => { setSymbol(s); setActiveTab('chart') }}
         opportunityMap={opportunityMap}
+        marketType={boardMarketType}
       />
 
       {/* Lower panel: tab-switched detail areas */}
@@ -482,6 +491,7 @@ export default function Charts() {
             snapshotMap={snapshotMap}
             dataProvider={dataProvider}
             lastUpdatedLabel={lastUpdatedLabel}
+            marketType={boardMarketType}
           />
         )}
         {activeTab === 'signals' && <SignalsTab onSymbolSelect={handleSignalSymbolSelect} />}

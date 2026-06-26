@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Order, Position, TradeProposal } from '../types'
+import { fmtSymbol } from '../lib/format'
 
 /**
  * Causal-chain inspector (WEBUI_PAGE_MAP.md — cross-cutting, lives in Trades & Positions).
@@ -119,7 +120,7 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
               <>
                 <div className="mono cc-id">{proposalId}</div>
                 {proposal
-                  ? <div>{proposal.direction?.toUpperCase()} {proposal.symbol} · {proposal.execution_mode}
+                  ? <div>{proposal.direction?.toUpperCase()} {fmtSymbol(proposal.symbol, proposal.market_type)} · {proposal.execution_mode}
                       {proposal.agent_rationale && <div className="cc-why">{proposal.agent_rationale.slice(0, 160)}{proposal.agent_rationale.length > 160 ? '…' : ''}</div>}
                     </div>
                   : <div className="text-muted text-sm">(detail not in recent list)</div>}
@@ -156,7 +157,7 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
             facts={
               <>
                 <div className="mono cc-id">{anchor.order.id}</div>
-                <div>{anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {anchor.order.symbol} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div>
+                <div>{anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {fmtSymbol(anchor.order.symbol, anchor.order.market_type)} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div>
               </>
             }
           />
@@ -167,7 +168,7 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
               facts={resolvedOrder ? (
                 <>
                   <div className="mono cc-id">{anchor.position.order_id}</div>
-                  <div>{resolvedOrder.direction?.toUpperCase()} {resolvedOrder.quantity} {resolvedOrder.symbol} @ {resolvedOrder.price ?? 'mkt'} · {resolvedOrder.status}</div>
+                  <div>{resolvedOrder.direction?.toUpperCase()} {resolvedOrder.quantity} {fmtSymbol(resolvedOrder.symbol, resolvedOrder.market_type)} @ {resolvedOrder.price ?? 'mkt'} · {resolvedOrder.status}</div>
                 </>
               ) : (
                 <>
@@ -213,7 +214,7 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
             facts={
               <>
                 <div className="mono cc-id">{anchor.position.id}</div>
-                <div>{anchor.position.direction?.toUpperCase()} {anchor.position.quantity} {anchor.position.symbol} · {anchor.position.status}</div>
+                <div>{anchor.position.direction?.toUpperCase()} {anchor.position.quantity} {fmtSymbol(anchor.position.symbol, anchor.position.market_type)} · {anchor.position.status}</div>
               </>
             }
           />

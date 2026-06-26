@@ -10,7 +10,7 @@ import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, StatusText } from '../components/ui'
 import { ConvictionMeter } from '../components/ConvictionMeter'
 import { formatViolation, formatViolationText } from '../lib/riskViolations'
-import { humanize, fmtTimestamp } from '../lib/format'
+import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 
 interface DecisionMeta {
   conviction: number
@@ -54,7 +54,7 @@ function parseDecisionMeta(rationale: string | null): { text: string; meta: Deci
 const col = createColumnHelper<TradeProposal>()
 
 const historyColumns = [
-  col.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  col.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
   col.accessor('market_type', { header: 'Market', cell: info => humanize(info.getValue()) }),
   col.accessor('direction', { header: 'Direction', cell: info => humanize(info.getValue()) }),
   col.accessor('execution_mode', { header: 'Mode', cell: info => humanize(info.getValue()) }),
@@ -88,12 +88,12 @@ export default function Proposals() {
     const modeLabel = p.execution_mode === 'paper_internal'
       ? 'Paper simulation — no real order.'
       : p.execution_mode
-    if (!confirm(`Approve ${p.direction.toUpperCase()} ${p.symbol}\nMode: ${modeLabel}\n\nConfirm?`)) return
+    if (!confirm(`Approve ${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}\nMode: ${modeLabel}\n\nConfirm?`)) return
     setPendingId(p.id)
     approve.mutate(p.id, { onSettled: () => setPendingId(null) })
   }
   function doReject(p: TradeProposal) {
-    if (!confirm(`Reject ${p.direction.toUpperCase()} ${p.symbol}?`)) return
+    if (!confirm(`Reject ${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}?`)) return
     setPendingId(p.id)
     reject.mutate(p.id, { onSettled: () => setPendingId(null) })
   }
@@ -146,7 +146,7 @@ export default function Proposals() {
         {selected && (
           <>
             <DrawerSection label="Trade">
-              <DrawerField label="Symbol" value={selected.symbol} mono />
+              <DrawerField label="Symbol" value={fmtSymbol(selected.symbol, selected.market_type)} mono />
               <DrawerField label="Market" value={humanize(selected.market_type)} />
               <DrawerField label="Direction" value={humanize(selected.direction)} />
               <DrawerField label="Mode" value={humanize(selected.execution_mode)} />
@@ -205,7 +205,7 @@ function ProposalCard({
       <div className="proposal-card-head">
         <div className="flex items-center gap-2">
           <span className={`dir-tag ${dirClass}`}>{p.direction.toUpperCase()}</span>
-          <span className="proposal-symbol mono">{p.symbol}</span>
+          <span className="proposal-symbol mono">{fmtSymbol(p.symbol, p.market_type)}</span>
           <Badge tone="blue">{humanize(p.market_type)}</Badge>
           <Badge tone="yellow">{humanize(p.execution_mode)}</Badge>
         </div>

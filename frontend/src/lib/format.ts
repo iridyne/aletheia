@@ -153,6 +153,43 @@ export function humanizeBool(value: unknown): string {
   return value ? 'ON' : 'OFF'
 }
 
+// ---------- Instrument symbol display ----------
+// Project-wide convention (owner rule, 2026-06-26): the symbol's slash IS the
+// spot-vs-derivative signal, so it must never contradict the instrument type.
+//   - Perpetual / futures  → NO slash   (BTCUSDT)
+//   - Spot                 → slash       (BTC/USDT)
+// Symbols are stored canonically with a slash (BTC/USDT) everywhere internally
+// (aletheia/data/symbols.py); this is a pure DISPLAY transform — strip the slash
+// only when we positively know the instrument is a derivative. Unknown market
+// type keeps the canonical (slashed) form rather than guessing.
+
+const PERP_MARKET_TYPES = new Set([
+  'usdt_futures', 'usdc_futures', 'coin_futures',
+  'perp', 'perpetual', 'futures', 'swap',
+])
+
+/** True when a backend market_type / market string denotes a derivative (no-slash display). */
+export function isPerpMarket(marketType: string | null | undefined): boolean {
+  if (!marketType) return false
+  return PERP_MARKET_TYPES.has(String(marketType).trim().toLowerCase())
+}
+
+/**
+ * Display an instrument symbol per the project's spot/derivative convention.
+ * Perp/futures → concatenated (BTCUSDT); spot or unknown → canonical slash (BTC/USDT).
+ * Returns the dash placeholder for null/empty.
+ */
+export function fmtSymbol(
+  symbol: string | null | undefined,
+  marketType?: string | null,
+  dash = '—',
+): string {
+  if (symbol == null || symbol === '') return dash
+  const s = String(symbol).trim()
+  if (!s) return dash
+  return isPerpMarket(marketType) ? s.replace(/\//g, '') : s
+}
+
 /**
  * Consistent timestamp formatting across the whole dashboard.
  * Backend sends ISO strings (sometimes without timezone). Output: "MMM D, HH:mm"

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
@@ -9,7 +9,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import PageHeader from '../components/PageHeader'
 import MetricTile from '../components/MetricTile'
 import { Badge, Button, Card } from '../components/ui'
-import { humanize, fmtTimestamp } from '../lib/format'
+import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 
 const col = createColumnHelper<UniverseMember>()
 
@@ -40,13 +40,15 @@ function timeAgo(isoStr: string | null | undefined): string {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
-const columns = [
+// Built per-snapshot so the symbol cell can render per the board's market type
+// (perp → no slash, spot → slash). All members in one snapshot share a market type.
+const makeColumns = (marketType?: string | null) => [
   col.accessor('rank', { header: '#', cell: info => <span className="mono">{info.getValue()}</span> }),
   col.accessor('symbol', {
     header: 'Symbol',
     cell: info => (
       <span className="flex items-center gap-1">
-        <span className="mono">{info.getValue()}</span>
+        <span className="mono">{fmtSymbol(info.getValue(), marketType)}</span>
         {info.row.original.stale && <Badge tone="warning">stale</Badge>}
       </span>
     ),
@@ -138,6 +140,8 @@ export default function Universe() {
   const statusTone = !enabled ? 'muted' : isFallback ? 'negative' : isStale ? 'warning' : 'positive'
   const statusText = !enabled ? 'Off' : isFallback ? 'Fallback' : isStale ? 'Stale' : 'Active'
 
+  const columns = useMemo(() => makeColumns(snapshot?.market_type), [snapshot?.market_type])
+
   return (
     <div>
       <PageHeader
@@ -195,7 +199,7 @@ export default function Universe() {
                 <div className="metric-value">{count} <span className="text-sm text-muted">assets</span></div>
                 {top && (
                   <div className="metric-caveat">
-                    Top: <span className="mono">{top.symbol}</span> ({top.total_score.toFixed(0)})
+                    Top: <span className="mono">{fmtSymbol(top.symbol, snapshot?.market_type)}</span> ({top.total_score.toFixed(0)})
                   </div>
                 )}
               </Card>
@@ -291,13 +295,13 @@ export default function Universe() {
 
       {/* Detail drawer */}
       {selected && (
-        <MemberDrawer member={selected} onClose={() => setSelected(null)} />
+        <MemberDrawer member={selected} marketType={snapshot?.market_type} onClose={() => setSelected(null)} />
       )}
     </div>
   )
 }
 
-function MemberDrawer({ member, onClose }: { member: UniverseMember; onClose: () => void }) {
+function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember; marketType?: string | null; onClose: () => void }) {
   const { data } = useQuery<UniverseMemberDetail>({
     queryKey: ['universe-member', member.id],
     queryFn: () => api.getUniverseMember(member.id),
@@ -307,7 +311,7 @@ function MemberDrawer({ member, onClose }: { member: UniverseMember; onClose: ()
   const opportunities = data?.opportunities ?? []
 
   return (
-    <DetailDrawer open={true} title={`${member.symbol} — Rank #${member.rank}`} onClose={onClose}>
+    <DetailDrawer open={true} title={`${fmtSymbol(member.symbol, marketType)} — Rank #${member.rank}`} onClose={onClose}>
       <DrawerSection label="Scores">
         <DrawerField label="Total Score" value={member.total_score?.toFixed(1)} mono />
         <DrawerField label="Opportunity" value={member.opportunity_score?.toFixed(1) ?? '—'} mono />
@@ -366,7 +370,7 @@ function MemberDrawer({ member, onClose }: { member: UniverseMember; onClose: ()
         <DrawerSection label="Linked Opportunities">
           {opportunities.map((opp) => (
             <div key={opp.id} className="flex justify-between text-sm">
-              <span><span className="mono">{opp.symbol}</span> · {opp.direction_bias ? humanize(opp.direction_bias) : '—'}</span>
+              <span><span className="mono">{fmtSymbol(opp.symbol, marketType)}</span> · {opp.direction_bias ? humanize(opp.direction_bias) : '—'}</span>
               <span className="text-muted">{humanize(opp.status)} · <span className="mono">{fmtTimestamp(opp.created_at)}</span></span>
             </div>
           ))}

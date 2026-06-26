@@ -1,9 +1,9 @@
-import { useState, lazy, Suspense } from 'react'
+import { useState, useMemo, lazy, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
-import type { Order, Position, PortfolioSummary, ReconcileItem } from '../types'
+import type { Order, Position, ReconcileItem } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import AccountSnapshot from '../components/AccountSnapshot'
@@ -11,7 +11,7 @@ import CausalChain from '../components/CausalChain'
 import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
 import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
-import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp } from '../lib/format'
+import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 import TradeAnalyticsPanel from '../charts/TradeAnalyticsPanel'
 const TradeInsightsPanel = lazy(() => import('../charts/TradeInsightsPanel'))
 
@@ -41,7 +41,7 @@ const pnlCell = (v: number | null | undefined) => {
 }
 
 const openColumns = [
-  posCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  posCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
   posCol.accessor('direction', { header: 'Dir', cell: info => humanize(info.getValue()) }),
   posCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('entry_price', { header: 'Entry (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
@@ -56,7 +56,7 @@ const openColumns = [
 ]
 
 const closedColumns = [
-  posCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  posCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
   posCol.accessor('direction', { header: 'Dir', cell: info => humanize(info.getValue()) }),
   posCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('entry_price', { header: 'Entry (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
@@ -66,7 +66,7 @@ const closedColumns = [
 ]
 
 const orderColumns = [
-  ordCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  ordCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
   ordCol.accessor('direction', { header: 'Dir', cell: info => humanize(info.getValue()) }),
   ordCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   ordCol.accessor('price', { header: 'Price (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
@@ -88,7 +88,6 @@ export default function TradesPositions() {
   const initialTab = searchParams.get('tab') || 'blotter'
   const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions })
   const { data: orders = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
-  const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
   const { data: reconciliation } = useQuery({ queryKey: ['positions-reconciliation'], queryFn: api.getPositionsReconciliation })
   const [sel, setSel] = useState<Selection>(null)
   useDecimals() // re-render tables when the display-decimals setting changes
@@ -104,7 +103,26 @@ export default function TradesPositions() {
     ;(openGroups[key] ||= []).push(p)
   }
 
-  const exposure = (portfolio as PortfolioSummary | undefined)?.exposure_by_symbol
+  // Per-position notional (local book), same formula as the backend exposure_by_symbol
+  // (pnl.py:248): quantity × (current_price ?? entry_price). Total over all open
+  // positions is the denominator for each row's exposure %.
+  const posNotional = (p: Position) => p.quantity * (p.current_price ?? p.entry_price)
+  const totalNotional = open.reduce((s, p) => s + posNotional(p), 0)
+
+  // Exposure column folded into the open-positions blotter (USDT / % share of total
+  // open notional), replacing the standalone "Exposure by Symbol" card.
+  const openColumnsWithExposure = useMemo(() => [
+    ...openColumns,
+    posCol.accessor(p => posNotional(p), {
+      id: 'exposure',
+      header: 'Exposure (USDT / %)',
+      cell: info => {
+        const notional = info.getValue() as number
+        const pct = totalNotional > 0 ? (notional / totalNotional) * 100 : 0
+        return <span className="mono">{fmtNum(notional)} / {pct.toFixed(1)}%</span>
+      },
+    }),
+  ], [totalNotional])
 
   return (
     <div>
@@ -130,7 +148,7 @@ export default function TradesPositions() {
               Object.entries(openGroups).map(([group, items]) => (
                 <Card key={group}>
                   <CardHeader title={<h4 className="blotter-group-label">{group}</h4>} />
-                  <DataTable data={items} columns={openColumns} onRowClick={p => setSel({ kind: 'position', position: p })} />
+                  <DataTable data={items} columns={openColumnsWithExposure} onRowClick={p => setSel({ kind: 'position', position: p })} />
                 </Card>
               ))
             )}
@@ -140,26 +158,6 @@ export default function TradesPositions() {
               orphaned={reconciliation?.orphaned ?? []}
               syncStatus={reconciliation?.sync_status}
             />
-
-            {exposure && Object.keys(exposure).length > 0 && (
-              <Card>
-                <CardHeader title={<h4 className="blotter-group-label">Exposure by Symbol</h4>} />
-                <p className="text-muted text-sm mt-1">
-                  {reconciliation?.sync_status === 'ok' || reconciliation?.sync_status === 'stale'
-                    ? 'Open notional from the live exchange account view.'
-                    : 'aletheia-managed open notional · exchange sync unavailable (local view may drift from the exchange)'}
-                </p>
-                <TableWrap>
-                <table>
-                  <tbody>
-                    {Object.entries(exposure).map(([sym, v]) => (
-                      <tr key={sym}><th>{sym}</th><td className="mono">{fmtNum(v)} USDT</td></tr>
-                    ))}
-                  </tbody>
-                </table>
-                </TableWrap>
-              </Card>
-            )}
 
             {/* ORDER / FILL HISTORY */}
             <div className="blotter-section-head">
@@ -241,7 +239,7 @@ function ReconciliationCard({
             <tbody>
               {external.map((i, idx) => (
                 <tr key={`ext-${i.symbol}-${i.direction}-${idx}`}>
-                  <td className="mono">{i.symbol}</td>
+                  <td className="mono">{fmtSymbol(i.symbol, i.market_type)}</td>
                   <td>{humanize(i.direction)}</td>
                   <td className="mono">{fmtNum(i.exchange?.quantity)}</td>
                   <td className="mono">{fmtNum(i.exchange?.entry_price)}</td>
@@ -267,7 +265,7 @@ function ReconciliationCard({
             <tbody>
               {orphaned.map((i, idx) => (
                 <tr key={`orph-${i.symbol}-${i.direction}-${idx}`}>
-                  <td className="mono">{i.symbol}</td>
+                  <td className="mono">{fmtSymbol(i.symbol, i.market_type)}</td>
                   <td>{humanize(i.direction)}</td>
                   <td className="mono">{fmtNum(i.local?.quantity)}</td>
                   <td className="mono">{fmtNum(i.local?.entry_price)}</td>
@@ -287,7 +285,7 @@ function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) 
   return (
     <>
       <DrawerSection label="Order">
-        <DrawerField label="Symbol" value={order.symbol} mono />
+        <DrawerField label="Symbol" value={fmtSymbol(order.symbol, order.market_type)} mono />
         <DrawerField label="Market" value={humanize(order.market_type)} />
         <DrawerField label="Direction" value={humanize(order.direction)} />
         <DrawerField label="Order Type" value={humanize(order.order_type)} />
@@ -320,7 +318,7 @@ function PositionDetail({ position }: { position: Position }) {
   return (
     <>
       <DrawerSection label="Position">
-        <DrawerField label="Symbol" value={position.symbol} mono />
+        <DrawerField label="Symbol" value={fmtSymbol(position.symbol, position.market_type)} mono />
         <DrawerField label="Market" value={humanize(position.market_type)} />
         <DrawerField label="Direction" value={humanize(position.direction)} />
         <DrawerField label="Mode" value={humanize(position.execution_mode)} />

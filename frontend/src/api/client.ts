@@ -827,6 +827,7 @@ export interface HoldPnlPoint {
   pnl_pct: number
   direction: string
   symbol: string
+  market_type?: string
 }
 
 export interface HourDayCell {

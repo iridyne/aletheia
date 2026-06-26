@@ -75,6 +75,9 @@ async def get_unified_state() -> UnifiedState:
                 "unrealized_pnl": p.unrealized_pnl,
                 "leverage": p.leverage,
                 "mark_price": p.mark_price,
+                # get_positions() returns derivative positions only — tag the type
+                # so symbol display (perp → no slash) stays correct downstream.
+                "market_type": "usdt_futures",
             })
 
     return UnifiedState(

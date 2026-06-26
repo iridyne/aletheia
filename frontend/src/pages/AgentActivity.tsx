@@ -10,7 +10,7 @@ import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
 import ThesisText from '../components/ThesisText'
 import { Badge, Button, Card } from '../components/ui'
-import { humanize, fmtTimestamp } from '../lib/format'
+import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 
 /**
  * Agent Activity (WEBUI_PAGE_MAP.md — Agent Runs + Opportunities MERGED).
@@ -54,7 +54,7 @@ const runColumns = [
 ]
 
 const oppColumns = [
-  oppCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{info.getValue()}</span> }),
+  oppCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market)}</span> }),
   oppCol.accessor('market', { header: 'Market', cell: info => humanize(info.getValue()) }),
   oppCol.accessor('direction_bias', { header: 'Direction', cell: info => humanize(info.getValue()) }),
   oppCol.accessor('confidence_score', { header: 'Confidence', cell: info => <span className="mono">{info.getValue() != null ? `${info.getValue()}%` : '—'}</span> }),
@@ -186,7 +186,7 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
         {selected && (
           <>
             <DrawerSection label="Market Signal">
-              <DrawerField label="Symbol" value={selected.symbol} mono />
+              <DrawerField label="Symbol" value={fmtSymbol(selected.symbol, selected.market)} mono />
               <DrawerField label="Market" value={humanize(selected.market)} />
               <DrawerField label="Asset Class" value={
                 <Badge tone={selected.asset_class === 'prediction' ? 'blue' : selected.asset_class === 'equity' ? 'yellow' : 'green'}>

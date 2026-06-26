@@ -86,10 +86,19 @@ class ReconcileItem:
     qty_drift: Optional[float] = None  # exchange_qty - local_qty, when both present
 
     def to_dict(self) -> dict:
+        # market_type lets the frontend render the symbol per the spot/derivative
+        # convention (perp → no slash, spot → slash). Prefer the local row's type;
+        # fall back to the exchange row's when this position is exchange-only.
+        market_type = None
+        if self.local:
+            market_type = self.local.get("market_type")
+        if not market_type and self.exchange:
+            market_type = self.exchange.get("market_type")
         return {
             "symbol": self.symbol,
             "direction": self.direction,
             "classification": self.classification,
+            "market_type": market_type,
             "local": self.local,
             "exchange": self.exchange,
             "qty_drift": self.qty_drift,
