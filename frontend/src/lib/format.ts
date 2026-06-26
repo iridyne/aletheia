@@ -85,6 +85,25 @@ export function fmtSigned(
   return `${n >= 0 ? '+' : ''}${fmtNum(n, opts)}`
 }
 
+/**
+ * Format a 0-1 ratio (e.g. `0.83`) OR an already-scaled percent (e.g. `83`) as `83%`.
+ * Auto-detects by magnitude (|v| ≤ 1 ⇒ ratio, ×100; |v| > 1 ⇒ already %). Returns dash
+ * for null/NaN. Decimals default to 0 (terminal density); pass `{decimals: 1}` for
+ * finer micro-values.
+ */
+export function fmtPct(
+  value: number | string | null | undefined,
+  opts?: { decimals?: number; dash?: string },
+): string {
+  const dash = opts?.dash ?? '—'
+  if (value == null || value === '') return dash
+  const n = Number(value)
+  if (!Number.isFinite(n)) return dash
+  const pct = Math.abs(n) <= 1 ? n * 100 : n
+  const d = opts?.decimals ?? 0
+  return `${pct.toFixed(d)}%`
+}
+
 /** fmtSigned with ▲/▼ direction arrow prepended (WCAG 1.4.1 — not color-only). */
 export function fmtDelta(
   value: number | string | null | undefined,

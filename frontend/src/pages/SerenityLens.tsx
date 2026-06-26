@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
+import Tabs from '../components/Tabs'
+import type { TabDef } from '../components/Tabs'
 import { StatusBadge } from '../components/DataTable'
 import { Badge, Button, Card, StatusDot, StatusText, Switch, TableWrap, type StatusTone } from '../components/ui'
-import { fmtTimestamp, humanize } from '../lib/format'
+import { fmtTimestamp, fmtPct, humanize, fmtSymbol } from '../lib/format'
 import ThesisText from '../components/ThesisText'
 
 type Tab = 'overview' | 'runs' | 'themes' | 'evidence' | 'profile'
@@ -453,9 +455,9 @@ function ThemesTab() {
           {t.demand_wave && <p className="text-muted">Wave: {t.demand_wave}</p>}
           {(t.confidence != null || t.novelty_score != null || t.actionability_score != null) && (
             <div className="lens-theme-scores">
-              {t.confidence != null && <span className="lens-score">Conf: {(t.confidence * 100).toFixed(0)}%</span>}
-              {t.novelty_score != null && <span className="lens-score">Novel: {(t.novelty_score * 100).toFixed(0)}%</span>}
-              {t.actionability_score != null && <span className="lens-score">Action: {(t.actionability_score * 100).toFixed(0)}%</span>}
+              {t.confidence != null && <span className="lens-score">Conf: {fmtPct(t.confidence)}</span>}
+              {t.novelty_score != null && <span className="lens-score">Novel: {fmtPct(t.novelty_score)}</span>}
+              {t.actionability_score != null && <span className="lens-score">Action: {fmtPct(t.actionability_score)}</span>}
             </div>
           )}
           <div className="lens-theme-actions">
@@ -527,10 +529,10 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
 
       {(theme.confidence || theme.novelty_score || theme.actionability_score || theme.evidence_strength) && (
         <div className="lens-theme-scores">
-          {theme.confidence != null && <span className="lens-score">Confidence: {(theme.confidence * 100).toFixed(0)}%</span>}
-          {theme.novelty_score != null && <span className="lens-score">Novelty: {(theme.novelty_score * 100).toFixed(0)}%</span>}
-          {theme.actionability_score != null && <span className="lens-score">Actionability: {(theme.actionability_score * 100).toFixed(0)}%</span>}
-          {theme.evidence_strength != null && <span className="lens-score">Evidence: {(theme.evidence_strength * 100).toFixed(0)}%</span>}
+          {theme.confidence != null && <span className="lens-score">Confidence: {fmtPct(theme.confidence)}</span>}
+          {theme.novelty_score != null && <span className="lens-score">Novelty: {fmtPct(theme.novelty_score)}</span>}
+          {theme.actionability_score != null && <span className="lens-score">Actionability: {fmtPct(theme.actionability_score)}</span>}
+          {theme.evidence_strength != null && <span className="lens-score">Evidence: {fmtPct(theme.evidence_strength)}</span>}
         </div>
       )}
 
@@ -543,7 +545,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
               <span className="lens-claim-meta">
                 {c.support_level && <StatusText tone={c.support_level === 'strong' ? 'green' : c.support_level === 'medium' ? 'blue' : 'yellow'}>{c.support_level}</StatusText>}
                 {c.price_relevant ? <StatusText tone="green">price-relevant</StatusText> : null}
-                <span className="text-muted">{(c.confidence * 100).toFixed(0)}%</span>
+                <span className="text-muted">{fmtPct(c.confidence)}</span>
               </span>
             </div>
           ))}
@@ -559,9 +561,9 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
               {evidence.map((e: any) => (
                 <tr key={e.id}>
                   <td>{e.title}</td>
-                  <td>{e.source}</td>
-                  <td>{e.tier}</td>
-                  <td>{e.symbol || '—'}</td>
+                  <td>{humanize(e.source)}</td>
+                  <td>{humanize(e.tier)}</td>
+                  <td className="mono">{e.symbol ? fmtSymbol(e.symbol, e.market_type) : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -578,10 +580,10 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
               <tbody>
                 {opportunities.map((o: any) => (
                   <tr key={o.id}>
-                    <td>{o.symbol}</td>
-                    <td>{o.direction}</td>
-                    <td>{o.evidence_tier}</td>
-                    <td>{o.status}</td>
+                    <td className="mono">{fmtSymbol(o.symbol, o.market || o.market_type)}</td>
+                    <td>{humanize(o.direction)}</td>
+                    <td>{humanize(o.evidence_tier)}</td>
+                    <td><StatusBadge status={o.status} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -641,7 +643,7 @@ function EvidenceTab() {
           <tbody>
             {evidence.map((e: any) => (
               <tr key={e.id}>
-                <td>{e.symbol || '—'}</td>
+                <td className="mono">{e.symbol ? fmtSymbol(e.symbol, e.market_type) : '—'}</td>
                 <td>
                   {e.title}
                   {e.source === 'prediction_market' && (
@@ -776,26 +778,17 @@ export default function SerenityLens() {
 
       <ResearchStatusCard />
 
-      <div className="lens-tabs">
-        {(['overview', 'runs', 'themes', 'evidence', 'profile'] as Tab[]).map(tab => (
-          <Button
-            variant="ghost"
-            key={tab}
-            className={`lens-tab ${activeTab === tab ? 'lens-tab-active' : ''}`}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </Button>
-        ))}
-      </div>
-
-      <div className="lens-tab-content">
-        {activeTab === 'overview' && <OverviewTab />}
-        {activeTab === 'runs' && <RunsTab />}
-        {activeTab === 'themes' && <ThemesTab />}
-        {activeTab === 'evidence' && <EvidenceTab />}
-        {activeTab === 'profile' && <ProfileTab />}
-      </div>
+      <Tabs
+        value={activeTab}
+        onChange={(id) => setActiveTab(id as Tab)}
+        tabs={([
+          { id: 'overview', label: 'Overview', render: () => <OverviewTab /> },
+          { id: 'runs',     label: 'Runs',     render: () => <RunsTab /> },
+          { id: 'themes',   label: 'Themes',   render: () => <ThemesTab /> },
+          { id: 'evidence', label: 'Evidence', render: () => <EvidenceTab /> },
+          { id: 'profile',  label: 'Profile',  render: () => <ProfileTab /> },
+        ]) as TabDef[]}
+      />
     </div>
   )
 }
