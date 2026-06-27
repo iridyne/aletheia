@@ -126,8 +126,8 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | Table | Purpose |
 |-------|---------|
 | `serenity_themes` | Research themes/hypotheses |
-| `serenity_evidence` | Evidence supporting themes |
-| `serenity_opportunities` | Theme-derived trading opportunities |
+| `serenity_evidence` | Evidence supporting themes. D2 generator/evaluator split: `tier`/`confidence` = generator's self-proposal; `assessed_tier`/`assessed_by` (additive) = authoritative grade from the independent deterministic evaluator (`trading/serenity_evidence.py`) that gates scoring |
+| `serenity_opportunities` | Theme-derived trading opportunities. `evidence_tier` = self-graded proposal; `assessed_tier`/`assessed_by` (additive) = authoritative tier derived from strongest assessed supporting evidence (NULL → scored as `speculative`) |
 | `serenity_risk_gates` | Risk checks for Serenity trades |
 | `serenity_replay_snapshots` | Decision replay for learning |
 | `serenity_post_mortems` | Post-trade analysis |

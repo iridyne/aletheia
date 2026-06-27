@@ -531,7 +531,11 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 "direction": o.get("direction"),
                 "thesis": (o.get("thesis") or "")[:200],
                 "confidence_score": o.get("confidence_score"),
-                "evidence_tier": o.get("evidence_tier"),
+                # D2: PI must judge on the INDEPENDENTLY assessed tier, not the generator's
+                # self-grade. `assessed_tier` NULL (legacy/unassessed) → "unassessed" so PI
+                # treats it as ungraded rather than trusting an inflated proposal.
+                "assessed_tier": o.get("assessed_tier") or "unassessed",
+                "evidence_tier": o.get("evidence_tier"),  # generator's self-grade (advisory)
             })
         layer["serenity_opportunities"] = serenity_opps
     except Exception:

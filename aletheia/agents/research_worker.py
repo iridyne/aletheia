@@ -21,6 +21,9 @@ from aletheia.storage.models import (
     SerenityRunEvent, SerenityEvidence, SerenityTheme, SerenityClaim,
     SerenityOpportunity,
 )
+from aletheia.trading.serenity_evidence import (
+    assess_evidence_tier, assess_opportunity_tier, normalize_tier,
+)
 
 logger = logging.getLogger("aletheia.research_worker")
 
@@ -67,8 +70,10 @@ _EVIDENCE_SYSTEM = (
     '"title" (string), "source" (string: the source type like "market_data", "news", "research"), '
     '"source_ref" (string: specific reference), "summary" (string: 1-2 sentences), '
     '"symbol" (string or null: related asset symbol like "BTC/USDT"), '
-    '"tier" (string: "verified", "credible", "speculative"), '
-    '"confidence" (string: same as tier), "supports" (boolean: supports thesis). '
+    '"tier" (string, your PROPOSED evidence grade: one of "disclosed", "high_confidence", "likely", "speculative" '
+    '— "disclosed" only for officially disclosed/filed facts with a checkable external URL/reference; '
+    'an independent evaluator re-grades this, so propose honestly), '
+    '"confidence" (string: same scale as tier), "supports" (boolean: supports thesis). '
     "Return 5-15 evidence items. Return raw JSON array, no markdown."
 )
 
@@ -97,7 +102,9 @@ _OPPORTUNITIES_SYSTEM = (
     "You are an opportunity identifier. Given research themes with evidence, identify potential opportunities. "
     "Return ONLY a JSON array of opportunity objects. Each must have: "
     '"symbol" (string: canonical format like "BTC/USDT"), "direction" (string: "long" or "short"), '
-    '"thesis" (string: why this is an opportunity), "evidence_tier" (string: "verified", "credible", "speculative"), '
+    '"thesis" (string: why this is an opportunity), '
+    '"evidence_tier" (string, your PROPOSED grade: one of "disclosed", "high_confidence", "likely", "speculative" '
+    '— an independent evaluator assigns the authoritative tier from the supporting evidence), '
     '"confidence_score" (integer 0-100), "risk_flags" (array of strings). '
     "Return 0-5 opportunities. Return empty array if no clear opportunities. Return raw JSON array, no markdown."
 )
@@ -111,7 +118,8 @@ _ICT_METHODOLOGY_SYSTEM = (
     '"source_ref" (string: specific concept, e.g. "ICT Order Block / BOS"), '
     '"summary" (string: specific entry criteria, invalidation conditions, optimal timeframe, and R:R expectation), '
     '"symbol" (string or null: most applicable asset, e.g. "BTC/USDT"), '
-    '"tier" (string: "verified"), "confidence" (string: "verified"), "supports" (boolean: true). '
+    '"tier" (string: "speculative" — methodology heuristics are not disclosed facts), '
+    '"confidence" (string: "speculative"), "supports" (boolean: true). '
     "Cover these concepts: order blocks, fair value gaps (FVG), liquidity sweeps, market structure shifts (MSS/BOS/CHoCH), "
     "breaker blocks, power of 3 (accumulation/manipulation/distribution), optimal trade entry (OTE), "
     "equal highs/lows as liquidity targets, and displacement/imbalance. "
@@ -239,10 +247,13 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             source_ref=item.get("source_ref", ""),
             title=item.get("title", "Untitled evidence"),
             summary=item.get("summary", ""),
-            tier=item.get("tier", "speculative"),
+            # `tier` is the generator's self-proposal (normalized into the canonical ladder).
+            # The independent evaluator assigns the authoritative `assessed_tier` that gates scoring.
+            tier=normalize_tier(item.get("tier")),
             supports=item.get("supports", True),
-            confidence=item.get("confidence", "speculative"),
+            confidence=normalize_tier(item.get("confidence")),
         )
+        ev.assessed_tier, ev.assessed_by = assess_evidence_tier(ev.model_dump())
         try:
             repo.insert_serenity_evidence(ev)
             persisted_evidence_ids.append(ev.id)
@@ -372,12 +383,19 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             for i, item in enumerate(opp_items[:5]):
                 theme_id = persisted_themes[min(i, len(persisted_themes) - 1)] if persisted_themes else None
                 if theme_id:
+                    # The opportunity's authoritative tier is derived from the strongest
+                    # INDEPENDENTLY ASSESSED supporting evidence under this theme, not the
+                    # LLM's self-graded `evidence_tier` (which is kept only as a proposal).
+                    theme_evidence = repo.list_serenity_evidence(theme_id=theme_id, limit=200)
+                    assessed_tier, assessed_by = assess_opportunity_tier({}, theme_evidence)
                     opp = SerenityOpportunity(
                         theme_id=theme_id,
                         symbol=item.get("symbol", "BTC/USDT"),
                         direction=item.get("direction", "long"),
                         thesis=item.get("thesis"),
-                        evidence_tier=item.get("evidence_tier", "speculative"),
+                        evidence_tier=normalize_tier(item.get("evidence_tier")),
+                        assessed_tier=assessed_tier,
+                        assessed_by=assessed_by,
                         confidence_score=item.get("confidence_score"),
                         risk_flags=json.dumps(item.get("risk_flags", [])),
                     )

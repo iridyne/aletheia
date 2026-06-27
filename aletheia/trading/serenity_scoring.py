@@ -173,7 +173,12 @@ def score_serenity_opportunity(
     - Risk gates and manual risk flags subtract points (fail > warn > flags).
     - Confidence score adds a bounded precision edge.
     """
-    evidence_tier = _normalize_text(opportunity.get("evidence_tier"), "speculative")
+    # D2 (2026-06-27): gate evidence weight on the INDEPENDENTLY assessed tier, not
+    # the generator's self-grade. `assessed_tier` is set by the deterministic evaluator
+    # (aletheia/trading/serenity_evidence.py) at insert time; NULL (legacy/unassessed)
+    # floors to "speculative". `evidence_tier` is kept only as the advisory proposal.
+    proposed_tier = _normalize_text(opportunity.get("evidence_tier"), "speculative")
+    evidence_tier = _normalize_text(opportunity.get("assessed_tier"), "speculative")
     stage = _normalize_stage_for_score(opportunity.get("stage"), "research")
     average_mode = _normalize_text(opportunity.get("average_mode"), "none")
 
@@ -268,7 +273,8 @@ def score_serenity_opportunity(
         "average_engine": average_engine,
         "stage_index": _stage_index(opportunity.get("stage") or "research"),
         "reasons": {
-            "evidence_tier": evidence_tier or "speculative",
+            "evidence_tier": evidence_tier or "speculative",  # authoritative (assessed)
+            "proposed_tier": proposed_tier or "speculative",   # generator's self-grade (advisory)
             "stage": stage or "research",
             "average_mode": average_mode or "none",
             "risk_gate_failures": fail_gates,
