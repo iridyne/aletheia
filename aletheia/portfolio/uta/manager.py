@@ -18,6 +18,10 @@ class UnifiedState:
     accounts: list[dict] = field(default_factory=list)
     positions: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # E2: broker_ids that actually returned an account this fetch — lets consumers/UI
+    # distinguish "broker connected but 0 balance" from "broker not connected / missing
+    # creds / query failed" (the raw accounts/errors lists already carry the detail).
+    connected_brokers: list[str] = field(default_factory=list)
     fetched_at: str = ""
 
 
@@ -87,6 +91,7 @@ async def get_unified_state() -> UnifiedState:
         accounts=accounts,
         positions=all_positions,
         errors=errors,
+        connected_brokers=[a["broker_id"] for a in accounts],
         fetched_at=datetime.now(timezone.utc).isoformat(),
     )
 
