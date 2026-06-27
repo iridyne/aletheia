@@ -128,10 +128,16 @@
 - **Inputs**: 
   - Layer 1: market context (opportunities, factor_feedback, regime, positions)
   - Layer 2: strategy context (ranker candidates, pending signals, universe features)
-  - Layer 3: reflection (previous decisions, outcomes, Serenity research)
+  - Layer 3: reflection (previous decisions, outcomes, Serenity research). Each
+    Serenity opportunity surfaces `id`/`score`/`bucket`/`evidence_count`/`key_evidence`
+    + the independently `assessed_tier` (D2), annotated as long-horizon analyst input —
+    NOT a same-day setup and NOT to be rubber-stamped (PI remains sole decision maker).
 - **LLM**: Yes (structured decision with Bull/Bear debate)
-- **Outputs**: PiDecision (action, symbol, conviction, reasoning JSON)
+- **Outputs**: PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source)
 - **Side effects**: Writes to pi_decisions table; triggers paper_trader signal consumption
+- **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
+  (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
+  disambiguates the two bare-uuid id spaces. Phase 2 of Serenity Option A.
 - **Actions**: enter/exit/hold/watch/scale_in/flip
 - **Safety**: Never executes orders; outputs decisions that paper_trader/position_manager consume
 

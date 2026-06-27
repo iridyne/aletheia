@@ -1286,6 +1286,9 @@ _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
     # A13: link signal_pending pi_decisions back to their source opportunity
     ("opportunity_id", "pi_decisions", "TEXT"),
+    # Phase 2 (Serenity Option A): discriminator for which table opportunity_id
+    # points at ('market_observer' → opportunities; 'serenity' → serenity_opportunities).
+    ("signal_source", "pi_decisions", "TEXT"),
     ("stop_price", "trade_proposals", "REAL"),
     # CR-RE-01: preserve the proposal's original execution_mode on the decision row
     # (allowed_execution_mode gets downgraded to paper_internal on rejection).
