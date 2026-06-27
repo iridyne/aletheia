@@ -102,11 +102,14 @@ def get_watched_symbols() -> list[str]:
 
 
 async def refresh_watched_prices() -> dict:
-    """Batch-fetch tickers for watched symbols and update in-memory cache.
+    """Fetch tickers for watched symbols (SERIALLY) and update in-memory cache.
 
     Uses a fresh CCXTProvider per call (CCXT binds aiohttp to the creating loop).
-    Single network round-trip where exchange supports batch fetch_tickers.
-    Never raises — errors are logged and cache entries left stale.
+    NOTE: fetches one symbol at a time — one network round-trip each, NOT a batch
+    fetch_tickers call (I1 docstring-honesty fix: the prior docstring claimed a
+    single batch round-trip, which the per-symbol loop below never did). The
+    watched set is small so serial is acceptable; switch to a provider batch call
+    if it grows. Never raises — errors are logged and cache entries left stale.
     """
     symbols = get_watched_symbols()
     if not symbols:

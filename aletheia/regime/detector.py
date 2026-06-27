@@ -263,9 +263,18 @@ def get_current_regime() -> MarketRegime:
         from aletheia.storage.repositories import get_latest_market_regime
         row = get_latest_market_regime()
         if row:
+            # A11 (LEARNING_LOOP_AUDIT): on restart-recovery also restore long/short
+            # bias — the old code left them at the 0.50/0.50 default, so a recovered
+            # bear/bull regime fed NEUTRAL bias to consumers (ranker / risk / PI) until
+            # the next detection cycle. Derive from _BIAS_TABLE so recovered bias is
+            # consistent with the recovered state.
+            state = row.get("state", REGIME_SIDEWAYS)
+            lb, sb = _BIAS_TABLE.get(state, (0.50, 0.50))
             _published_regime = MarketRegime(
-                state=row.get("state", REGIME_SIDEWAYS),
+                state=state,
                 confidence=float(row.get("confidence", 0.5)),
+                long_bias=lb,
+                short_bias=sb,
             )
             return _published_regime
     except Exception:
