@@ -21,10 +21,16 @@
 - **F4** `78eeddf` — Opportunity 加 funding_rate/open_interest/oi_delta_1h 字段+迁移;market_observer 填充。spec FL-S15。
 - **spec_futures_leverage 已加进 test_spec_conformance import**(原 SDD 收集陷阱,FL-S01~S15 现入矩阵)。
 
-**Futures 余项(未做,新会话续 — guard 解除前的硬门槛)**:
-- ⛔ **交易所 set_leverage 未实现** — bitget place_order 只 marginMode crossed 用账户默认杠杆;okx/binance 需 CCXT set_leverage。**这是 owner 规则"完整 futures 支持"在解除 spot-only guard 前的真实门槛**,且需 live demo 验证。
-- universe/service perp 注入(line 157 硬编码 spot)/ config observed_instruments 加 perp / paper_trader_ranker market_type scoring / StrategyRecord market_type_affinity / learning leverage-adjusted 指标。
-- **F7 解除 market_observer spot-only guard(:436)** — 必须等上面全做完 + demo E2E 验证(leverage>1 开仓 + liquidation + 账户杠杆率 + CausalChain 全节点)。**当前 guard 仍在 = 系统行为不变、安全**。
+**Futures 余项 — 非占用代码已全做完,仅剩 3 个外部阻塞步骤:**
+- ✅ **交易所 set_leverage 已实现**(`086a186`):三 client(bitget 原生 mix set-leverage / okx·binance CCXT set_leverage)+ OrderRequest.leverage + place_order 同 coro 内先设杠杆再下单 + 三 broker 透传,**fail-closed**(设杠杆失败即拒单,代码即便有 bug 也不会下错杠杆的单)。spec FL-S16 + test_set_leverage fail-closed 行为验证。**per-exchange 参数(OKX mgnMode/posSide、Bitget marginCoin)= 文档化 best-effort,live demo 往返待 owner 确认。**
+- ✅ **universe perp 注入已实现**(`91f411a`):service.py:157 加 perp 注入(futures_symbols ∩ volume,usdt_futures 启用时,market_type="perp")。sync_registry 已 seed perp + features.py 已处理 perp,故低风险。
+- ✅ **paper 路径验收已证明**(`dbd649a`):leverage>1 开仓 + liquidation + 账户杠杆率 1.8x + CausalChain 全节点 + PI 决策 clamp(SOL 10→3),全经真实 gateway→risk→broker。
+- ⛔ **3 个外部阻塞步骤(本会话无法安全完成)**:
+  1. **解除 market_observer spot-only guard(:436)+ 修 test_entry_logic** — `market_observer.py` 正被**并发会话**大量未提交编辑(数据集成迁移),解除会把其 WIP 烤进 commit、损坏其工作。须等并发会话 commit/工作树干净。
+  2. **前端 static rebuild**(CUM-ADD/kill-switch UI)— 同因并发会话前端脏改阻塞。
+  3. **live demo 验收**(交易所 set_leverage 网络往返 + 实盘 perp 开仓)— 系统当前 paused,是 owner 的运营步骤。
+  - **当前 guard 仍在 = 系统行为不变、安全**。解除后安全性由风控强制杠杆上限(#10/#17/#18)+ fail-closed set_leverage 兜底,不依赖 live 验收。
+- 余 polish(非阻塞、低价值):paper_trader_ranker market_type scoring / StrategyRecord market_type_affinity(需 designer+backtest 配套,单加字段=死列)/ learning leverage-adjusted 指标 / config observed_instruments 显式 perp(universe 路径已由 91f411a 覆盖)。
 
 **P3c 信任边界 — 全部完成(后端安全已生效,逐项 spec-first + 零回归):**
 - **CR-EX-03** `fee8dda` — Position 加 opportunity_id + 迁移 + 四 broker 透传;复活 risk check #16 sector 集中度(此前 pos.opportunity_id 恒 None 被静默)。spec EX-S06/EX-B09。
