@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
+
+logger = logging.getLogger("aletheia.agent_shell.file_artifacts")
 
 
 def _safe_name(value: str, default: str) -> str:
@@ -83,6 +87,43 @@ def write_operator_report(
     )
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def prune_session_logs(days: int = 14, keep: tuple[str, ...] = ("operator-main",)) -> int:
+    """Delete stale per-session JSONL transcripts under data/agent_shell/sessions/.
+
+    Axis-1 junk (high file COUNT, low bytes, no causal-chain value): every
+    operator/strategy sub-session writes an inspectable transcript here, and
+    nothing ever removed them — 2.6k+ ephemeral files accumulated. They are pure
+    working-memory telemetry, never read by the learning/PI chain, so dropping
+    old ones cannot corrupt any judgement (contrast Axis-2 causal data).
+
+    Conservative by design:
+    - mtime-based: a live or long-running session keeps bumping its file's mtime,
+      so it is never pruned while active; only genuinely idle files age out.
+    - ``keep`` exempts persistent sessions by stem (default: the operator main
+      session, ``cfg.operator.main_session_id``). Its file is also fresh, but we
+      exempt it explicitly so a clock skew or a quiet window can never reap it.
+
+    Returns the number of files deleted.
+    """
+    sessions_dir = _root_dir() / "sessions"
+    if not sessions_dir.is_dir():
+        return 0
+    cutoff = time.time() - days * 86400
+    keep_set = {_safe_name(name, "session") for name in keep}
+    deleted = 0
+    for path in sessions_dir.glob("*.jsonl"):
+        if path.stem in keep_set:
+            continue
+        try:
+            if path.stat().st_mtime >= cutoff:
+                continue
+            path.unlink()
+            deleted += 1
+        except OSError as e:
+            logger.debug("session log prune skipped %s: %s", path.name, e)
+    return deleted
 
 
 def append_session_log(session_id: str, record: dict) -> Path:

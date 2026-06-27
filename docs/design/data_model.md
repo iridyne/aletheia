@@ -288,9 +288,11 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | `funding_rate_snapshots` / `open_interest_snapshots` / `universe_feature_snapshots` | 30d | hardcoded | `repositories.py:1559-1585` |
 | `macro_snapshots` | 90d | hardcoded | `repositories.py:1587` |
 | `coingecko_top_snapshots` (Round 2 Step 3) | 14d | hardcoded | `repositories.py:prune_coingecko_top_snapshots` |
+| `universe_forward_outcomes` | 30d | hardcoded | `repositories.py:prune_universe_forward_outcomes` |
+| `agent_shell_heartbeats` / `_events` / `_messages` / `_artifacts` (operator telemetry, DB-SIZE-1) | 2d / 14d / 30d / 30d | hardcoded | `repositories.py` `_PRUNABLE` + `scheduler.py:_run_cleanup` |
 | `opportunities` (open) | 48h → `expired` | yes | `repositories.py:1597-1612` |
 
-### 7.2 NEVER-pruned (trust-bearing) — enforced by `_PRUNABLE` allowlist (`repositories.py:1000-1006`)
+### 7.2 NEVER-pruned (trust-bearing) — enforced by `_PRUNABLE` allowlist (`repositories.py:_PRUNABLE`)
 
 `trade_proposals` · `risk_decisions` · `orders` · `fills` · `positions` · `audit_events` · `knowledge_items`
 
