@@ -4,19 +4,15 @@ import json
 
 import httpx
 
-from aletheia.net import httpx_client
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth,
 )
 
-
-def _raise_without_secrets(resp: httpx.Response) -> None:
-    """Like resp.raise_for_status() but strips auth headers from the exception."""
-    if resp.is_success:
-        return
-    msg = f"HTTP {resp.status_code} from {resp.url}"
-    raise httpx.HTTPStatusError(msg, request=resp.request, response=resp)
+# Backwards-compatible alias — the implementation now lives in aletheia.net so every
+# provider shares one credential-scrubbing path (error-leak 2.7).
+_raise_without_secrets = raise_for_status_without_secrets
 
 
 def _extract_text_content(raw) -> str:

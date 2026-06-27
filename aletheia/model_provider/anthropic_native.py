@@ -3,7 +3,7 @@
 import json
 from collections.abc import AsyncIterator
 
-from aletheia.net import httpx_client
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth, StreamChunk,
@@ -64,7 +64,7 @@ class AnthropicNativeProvider(ModelProvider):
             resp = await client.post(
                 f"{BASE_URL}/v1/messages", json=payload, headers=self._headers()
             )
-            resp.raise_for_status()
+            raise_for_status_without_secrets(resp)
             data = resp.json()
         content = ""
         for block in data.get("content", []):
@@ -92,7 +92,7 @@ class AnthropicNativeProvider(ModelProvider):
                 "POST", f"{BASE_URL}/v1/messages",
                 json=payload, headers=self._headers(),
             ) as resp:
-                resp.raise_for_status()
+                raise_for_status_without_secrets(resp)
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
                         continue

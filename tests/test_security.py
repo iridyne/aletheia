@@ -187,3 +187,52 @@ async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch
     assert result["connected"] is False
     assert SECRET not in str(result), f"secret leaked in response: {result}"
     assert result["error"] == "RuntimeError"
+
+
+# ---------------------------------------------------------------------------
+# error-leak 2.7: model providers must not leak credentials via raised exceptions.
+# raise_for_status_without_secrets scrubs auth headers + sanitises the message.
+# ---------------------------------------------------------------------------
+
+
+def test_raise_for_status_without_secrets_scrubs_credentials():
+    import httpx
+    from aletheia.net import raise_for_status_without_secrets
+
+    SECRET = "sk-LEAKME-DEADBEEF"
+    req = httpx.Request(
+        "POST", "https://api.example.com/v1/chat",
+        headers={"Authorization": f"Bearer {SECRET}", "x-api-key": SECRET,
+                 "Content-Type": "application/json"},
+    )
+    resp = httpx.Response(401, request=req, json={"error": "unauthorized"})
+
+    try:
+        raise_for_status_without_secrets(resp)
+        assert False, "should have raised on 401"
+    except httpx.HTTPStatusError as exc:
+        # status_code preserved for fallback routing
+        assert exc.response is not None and exc.response.status_code == 401
+        # secret absent from the message AND the (scrubbed) request headers
+        assert SECRET not in str(exc)
+        assert SECRET not in str(dict(exc.request.headers))
+        assert "authorization" not in {k.lower() for k in exc.request.headers}
+
+    # 2xx is a no-op (does not raise)
+    ok = httpx.Response(200, request=httpx.Request("GET", "https://x"), json={})
+    raise_for_status_without_secrets(ok)
+
+
+def test_all_model_providers_use_shared_credential_scrubber():
+    """No provider may call the bare resp.raise_for_status() (which keeps the
+    credential-bearing request on the exception). All route through net's shared
+    raise_for_status_without_secrets (error-leak 2.7 — unified)."""
+    import pathlib
+
+    provider_dir = pathlib.Path("aletheia/model_provider")
+    offenders = []
+    for f in provider_dir.glob("*.py"):
+        text = f.read_text(encoding="utf-8")
+        if "resp.raise_for_status()" in text:
+            offenders.append(f.name)
+    assert not offenders, f"providers still using bare raise_for_status(): {offenders}"

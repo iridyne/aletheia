@@ -33,6 +33,35 @@ from aiohttp.resolver import ThreadedResolver
 
 logger = logging.getLogger("aletheia.net")
 
+# Request headers that carry credentials. httpx's HTTPStatusError keeps a reference
+# to the originating Request (directly and via response.request), whose headers hold
+# the bearer token / api key. A full-traceback log or any access to
+# exc.request.headers would leak it. raise_for_status_without_secrets() scrubs these
+# in place before raising (the request is single-use) — error-leak 2.7.
+_SECRET_HEADERS = (
+    "authorization", "x-api-key", "api-key", "cookie",
+    "x-goog-api-key", "openai-organization", "openai-project",
+)
+
+
+def raise_for_status_without_secrets(resp: "httpx.Response") -> None:
+    """Like ``resp.raise_for_status()`` but strips credential headers from the
+    exception and uses a message naming only status + URL (no headers/body).
+
+    Shared by every model provider so a 401/403 from any LLM backend cannot leak
+    the api key through the raised exception. Keeps httpx.HTTPStatusError as the
+    type (callers/fallback read ``exc.response.status_code``).
+    """
+    if resp.is_success:
+        return
+    try:
+        for h in _SECRET_HEADERS:
+            resp.request.headers.pop(h, None)
+    except Exception:
+        pass
+    msg = f"HTTP {resp.status_code} from {resp.url}"
+    raise httpx.HTTPStatusError(msg, request=resp.request, response=resp)
+
 # Reachability probe result cache: avoids a TCP connect on every aiohttp_session()
 # call while still recovering within a minute if the proxy comes up later.
 _proxy_reachable_cache: dict[str, tuple[bool, float]] = {}

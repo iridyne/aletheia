@@ -19,7 +19,7 @@ from base64 import urlsafe_b64encode
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
-from aletheia.net import httpx_client
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aiohttp import web
 
 logger = logging.getLogger("aletheia.model_provider.oauth")
@@ -101,7 +101,7 @@ async def exchange_code(
             resp = await client.post(config.token_url, json=body, headers=headers)
         else:
             resp = await client.post(config.token_url, data=body, headers=headers)
-        resp.raise_for_status()
+        raise_for_status_without_secrets(resp)
         return resp.json()
 
 
@@ -124,7 +124,7 @@ async def refresh_tokens(config: OAuthConfig, refresh_token: str) -> dict:
             resp = await client.post(config.token_url, json=body, headers=headers)
         else:
             resp = await client.post(config.token_url, data=body, headers=headers)
-        resp.raise_for_status()
+        raise_for_status_without_secrets(resp)
         return resp.json()
 
 
@@ -144,7 +144,7 @@ async def token_exchange_rfc8693(
             token_url, data=body,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        resp.raise_for_status()
+        raise_for_status_without_secrets(resp)
         return resp.json()
 
 

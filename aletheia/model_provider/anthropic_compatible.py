@@ -2,7 +2,7 @@
 
 import json
 
-from aletheia.net import httpx_client
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
     ModelProvider, ModelRequest, StructuredModelRequest,
     ModelResponse, ModelHealth,
@@ -50,7 +50,7 @@ class AnthropicCompatibleProvider(ModelProvider):
             payload["system"] = request.system
         async with httpx_client(timeout=60) as client:
             resp = await client.post(f"{self.base_url}/v1/messages", json=payload, headers=self._headers())
-            resp.raise_for_status()
+            raise_for_status_without_secrets(resp)
             data = resp.json()
         content = ""
         for block in data.get("content", []):

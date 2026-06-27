@@ -9,7 +9,7 @@ The model field doubles as the endpoint_name for URL construction.
 
 from urllib.parse import urlparse
 
-from aletheia.net import httpx_client
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.base import ModelHealth
 
@@ -105,7 +105,7 @@ class DatabricksProvider(OpenAICompatibleProvider):
                 f"{self.workspace_url}/serving-endpoints/{self.model}/invocations",
                 json=payload, headers=self._headers(),
             )
-            resp.raise_for_status()
+            raise_for_status_without_secrets(resp)
             data = resp.json()
         choice = data["choices"][0]
         return ModelResponse(
