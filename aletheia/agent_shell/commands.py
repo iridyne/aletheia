@@ -1872,6 +1872,9 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "debate_ran": decision.debate_ran,
         "debate_bull": decision.debate_bull_confidence,
         "debate_bear": decision.debate_bear_confidence,
+        # R0/attribution: carry the source opportunity_id through to record_decision
+        # so the pi_decisions(action='trade') row links back to its opportunity.
+        "opportunity_id": decision.opportunity_id,
     }
 
     # trade / scale_in / flip all produce proposals
