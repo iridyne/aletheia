@@ -151,11 +151,26 @@ class UniverseService:
                 vol = get_latest_volume_ranking()
                 vol_symbols = vol.get("symbols") or [] if vol else []
                 existing_symbols = {a.get("symbol") for a in assets}
+                # Perp duplicates for volume-ranked symbols that are explicit futures
+                # symbols (futures_round2_deferred §5). sync_registry already seeds perp
+                # assets (registry.py:117) and collect_features handles them
+                # (features.py:336), so this only fills the volume-injection gap, which
+                # was spot-only. Gated on usdt_futures so spot-only configs are unchanged.
+                from aletheia.data.symbols import to_canonical
+                futures_set = {to_canonical(s) for s in (cfg.exchange.futures_symbols or [])}
+                inject_perp = cfg.exchange.enabled_markets.get("usdt_futures", False)
+                existing_perp = {a.get("symbol") for a in assets if a.get("market_type") == "perp"}
                 for sym in vol_symbols[:20]:
                     if sym and sym not in existing_symbols:
                         from aletheia.storage.models import UniverseAsset
                         asset = UniverseAsset(venue=cfg.market_data.ccxt_exchange, market_type="spot", symbol=sym)
                         repo.upsert_universe_asset(asset)
+                    if (inject_perp and sym and to_canonical(sym) in futures_set
+                            and sym not in existing_perp):
+                        from aletheia.storage.models import UniverseAsset
+                        repo.upsert_universe_asset(UniverseAsset(
+                            venue=cfg.market_data.ccxt_exchange, market_type="perp", symbol=sym,
+                        ))
                 if vol_symbols:
                     assets = repo.list_universe_assets(venue=cfg.market_data.ccxt_exchange, limit=1000)
             except Exception as e:
