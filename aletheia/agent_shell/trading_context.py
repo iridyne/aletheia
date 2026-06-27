@@ -47,8 +47,12 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "direction": p.get("direction"),
                 "quantity": p.get("quantity"),
                 "entry_price": p.get("entry_price"),
+                "current_price": p.get("current_price"),
                 "unrealized_pnl": p.get("unrealized_pnl"),
                 "hold_hours": _hours_since(p.get("opened_at")),
+                # Futures telemetry for the leverage/margin context + near-liquidation alerts.
+                "leverage": p.get("leverage"),
+                "liquidation_price": p.get("liquidation_price"),
             }
             for p in open_pos
         ]
@@ -204,7 +208,95 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     # Data health — lets PI Agent reason about its own environment quality
     layer["data_health"] = _get_data_health_summary()
 
+    # Futures: leverage ceilings + account leverage ratio + margin headroom so the
+    # PI Agent chooses spot/perp and a leverage level against real limits.
+    try:
+        from aletheia.config.loader import load_config
+        layer["futures"] = _build_futures_context(layer, load_config())
+    except Exception:
+        layer["futures"] = {}
+
     return layer
+
+
+def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
+    """Leverage limits + account leverage ratio + margin headroom for the PI Agent.
+
+    Best-effort: any failure yields a partial/empty dict so the decision path never
+    breaks on missing futures telemetry. Symbols come from the already-built feature +
+    position lists in ``layer`` (no extra query). ``available_margin_pct`` is the share
+    of equity NOT tied up as futures margin (used_margin = Σ notional/leverage).
+    """
+    fut: dict[str, Any] = {}
+    try:
+        from aletheia.trading.instruments import get_asset_tier, get_max_leverage
+        symbols: list[str] = []
+        for f in (layer.get("features") or []):
+            s = f.get("symbol")
+            if s and s not in symbols:
+                symbols.append(s)
+        for p in (layer.get("positions") or []):
+            s = p.get("symbol")
+            if s and s not in symbols:
+                symbols.append(s)
+        fut["leverage_limits"] = {
+            s: {
+                "tier": get_asset_tier(s),
+                "max_demo": get_max_leverage(s, False, cfg),
+                "max_live": get_max_leverage(s, True, cfg),
+            }
+            for s in symbols[:12]
+        }
+    except Exception:
+        fut["leverage_limits"] = {}
+
+    try:
+        from aletheia.risk.engine import check_account_leverage
+        acct = check_account_leverage(cfg)
+        ratio = acct.get("ratio")
+        fut["account_leverage_ratio"] = round(ratio, 2) if ratio is not None else None
+        fut["account_leverage_cap"] = acct.get("cap")
+    except Exception:
+        fut["account_leverage_ratio"] = None
+        fut["account_leverage_cap"] = None
+
+    # Available margin %: equity not consumed by futures margin (notional / leverage).
+    try:
+        balance = layer.get("balance") or {}
+        equity = balance.get("equity_usdt")
+        used_margin = 0.0
+        for p in (layer.get("positions") or []):
+            qty = float(p.get("quantity") or 0)
+            price = float(p.get("current_price") or p.get("entry_price") or 0)
+            lev = float(p.get("leverage") or 1) or 1.0
+            used_margin += abs(qty * price) / lev
+        if equity and equity > 0:
+            fut["available_margin_pct"] = round(max(0.0, 1.0 - used_margin / equity) * 100, 1)
+        else:
+            fut["available_margin_pct"] = None
+    except Exception:
+        fut["available_margin_pct"] = None
+
+    # Positions within 15% of their estimated liquidation price.
+    near: list[dict] = []
+    try:
+        for p in (layer.get("positions") or []):
+            liq = p.get("liquidation_price")
+            cur = p.get("current_price") or p.get("entry_price")
+            if not liq or not cur:
+                continue
+            gap_pct = abs(cur - liq) / cur * 100
+            if gap_pct <= 15.0:
+                near.append({
+                    "symbol": p.get("symbol"),
+                    "liquidation_price": liq,
+                    "gap_pct": round(gap_pct, 1),
+                })
+    except Exception:
+        pass
+    fut["positions_near_liquidation"] = near
+
+    return fut
 
 
 # ── Layer 2: Short-term Memory (7-day window) ────────────────────────────────

@@ -600,6 +600,35 @@ def _build_assessment_prompt(ctx: dict) -> str:
         f"max_daily_loss={risk.get('max_daily_loss_pct', '?')}%, "
         f"max_positions={risk.get('max_open_positions', '?')}",
         "",
+    ]
+
+    # Futures limits — leverage ceilings + account leverage headroom so the PI's
+    # market_type/leverage choice is bounded by reality, not guessed.
+    futures = layer1.get("futures") or {}
+    if futures:
+        f_parts = ["## Futures Limits (leverage ceilings + account headroom)"]
+        lim = futures.get("leverage_limits") or {}
+        if lim:
+            lim_lines = ", ".join(
+                f"{s}({v['tier']}≤{v['max_demo']}x)" for s, v in list(lim.items())[:8]
+            )
+            f_parts.append(f"  Per-symbol max leverage (demo): {lim_lines}")
+        alr = futures.get("account_leverage_ratio")
+        cap = futures.get("account_leverage_cap")
+        if alr is not None or cap is not None:
+            f_parts.append(
+                f"  Account leverage: {alr if alr is not None else '?'}x / cap {cap if cap is not None else '?'}x"
+            )
+        amp = futures.get("available_margin_pct")
+        if amp is not None:
+            f_parts.append(f"  Available margin: {amp}% of equity")
+        near = futures.get("positions_near_liquidation") or []
+        if near:
+            near_str = ", ".join(f"{n['symbol']} (liq {n['gap_pct']}% away)" for n in near)
+            f_parts.append(f"  ⚠ NEAR LIQUIDATION: {near_str}")
+        parts += f_parts + [""]
+
+    parts += [
         "---",
         "# Layer 2: Short-term Memory (past 7 days)",
         "",

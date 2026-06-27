@@ -291,3 +291,33 @@ async def test_submit_decision_clamps_leverage(monkeypatch):
     await td.submit_decision_as_proposal(decision, execution_mode="paper_internal")
     assert captured["market_type"] == "usdt_futures"
     assert captured["leverage"] == 5  # clamped to BTC demo tier cap
+
+
+@spec_claim(
+    SpecClaim("FL-S14", "futures_leverage", "§14 futures context", "L2a",
+              "trading_context._build_futures_context injects per-symbol leverage limits + "
+              "account leverage ratio + margin headroom; the assessment prompt renders it"),
+)
+def test_futures_context_injection():
+    import inspect
+    from aletheia.agent_shell.trading_context import _build_futures_context
+    import aletheia.agent_shell.trading_decision as td
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    layer = {
+        "features": [{"symbol": "BTC/USDT"}, {"symbol": "SOL/USDT"}],
+        "positions": [],
+        "balance": {"equity_usdt": 1000.0, "available_usdt": 800.0},
+    }
+    fut = _build_futures_context(layer, cfg)
+    limits = fut["leverage_limits"]
+    assert limits["BTC/USDT"]["tier"] == "major"
+    assert limits["BTC/USDT"]["max_demo"] == 5
+    assert limits["SOL/USDT"]["tier"] == "mid"
+    assert "account_leverage_ratio" in fut
+    assert "available_margin_pct" in fut
+
+    # The assessment prompt renders the futures section when the context is present.
+    prompt = td._build_assessment_prompt({"layer1": {"futures": fut}, "layer2": {}, "layer3": {}})
+    assert "Futures" in prompt or "Leverage limits" in prompt
