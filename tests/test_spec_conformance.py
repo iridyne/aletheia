@@ -50,6 +50,8 @@ def _import_all_specs():
         # data_layer_contract (reused — not a new trust boundary).
         spec_macro_signals,
         spec_coinglass,
+        # Adopted-position SL/TP pipeline contract (regression lock for NULL stop bug)
+        spec_pipeline_adopted_position,
     )
 
 
