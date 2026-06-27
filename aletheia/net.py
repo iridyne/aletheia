@@ -52,15 +52,25 @@ def raise_for_status_without_secrets(resp: "httpx.Response") -> None:
     the api key through the raised exception. Keeps httpx.HTTPStatusError as the
     type (callers/fallback read ``exc.response.status_code``).
     """
-    if resp.is_success:
+    status = getattr(resp, "status_code", None)
+    # Success: 2xx/3xx (matches raise_for_status, which only raises on 4xx/5xx).
+    # Fall back to is_success when status_code is unavailable.
+    if status is not None:
+        if status < 400:
+            return
+    elif getattr(resp, "is_success", True):
         return
     try:
         for h in _SECRET_HEADERS:
             resp.request.headers.pop(h, None)
     except Exception:
         pass
-    msg = f"HTTP {resp.status_code} from {resp.url}"
-    raise httpx.HTTPStatusError(msg, request=resp.request, response=resp)
+    try:
+        url = str(resp.url)
+    except Exception:
+        url = "?"
+    msg = f"HTTP {status} from {url}"
+    raise httpx.HTTPStatusError(msg, request=getattr(resp, "request", None), response=resp)
 
 # Reachability probe result cache: avoids a TCP connect on every aiohttp_session()
 # call while still recovering within a minute if the proxy comes up later.
