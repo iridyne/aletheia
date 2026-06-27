@@ -27,6 +27,10 @@ from aletheia.trading.serenity_scoring import (
     make_replay_snapshot_payload,
     score_serenity_opportunity,
 )
+from aletheia.trading.serenity_evidence import (
+    assess_evidence_tier,
+    normalize_tier,
+)
 
 router = APIRouter(prefix="/api", tags=["data"])
 
@@ -361,14 +365,18 @@ async def create_serenity_evidence(payload: SerenityEvidenceCreate):
         source_ref=payload.source_ref,
         title=payload.title,
         summary=payload.summary,
-        tier=payload.tier,
+        # `tier` stays the submitter's proposal; the deterministic evaluator assigns the
+        # authoritative `assessed_tier` that gates scoring (objective source/ref constraints
+        # apply to manual entries too, e.g. "disclosed" requires a checkable external ref).
+        tier=normalize_tier(payload.tier),
         supports=payload.supports,
         evidence_type=payload.evidence_type,
         event_at=payload.event_at or datetime.now(timezone.utc).isoformat(),
         actor=payload.actor,
-        confidence=payload.confidence,
+        confidence=normalize_tier(payload.confidence),
         tags=_dump_json(payload.tags),
     )
+    evidence.assessed_tier, evidence.assessed_by = assess_evidence_tier(evidence.model_dump())
     repo.insert_serenity_evidence(evidence)
     return {"id": evidence.id}
 
@@ -406,12 +414,18 @@ async def get_serenity_opportunities(
 @router.post("/serenity/opportunities")
 async def create_serenity_opportunity(payload: SerenityOpportunityCreate):
     _ensure_db()
+    # Manual operator-created opportunities: the human IS the independent evaluator,
+    # so the submitted tier is authoritative (assessed_by="operator"). Normalize into
+    # the canonical ladder so it gates scoring identically to agent-produced records (D2).
+    normalized_tier = normalize_tier(payload.evidence_tier)
     opp = SerenityOpportunity(
         theme_id=payload.theme_id,
         symbol=payload.symbol,
         direction=payload.direction,
         thesis=payload.thesis,
-        evidence_tier=payload.evidence_tier,
+        evidence_tier=normalized_tier,
+        assessed_tier=normalized_tier,
+        assessed_by="operator",
         stage=payload.stage,
         average_mode=payload.average_mode,
         action_intent=payload.action_intent,

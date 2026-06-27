@@ -50,6 +50,10 @@ def _import_all_specs():
         # data_layer_contract (reused — not a new trust boundary).
         spec_macro_signals,
         spec_coinglass,
+        # Serenity evidence quality (D2 — generator/evaluator separation). SE-* claims
+        # attach to the logical contract "serenity_evidence_quality" (not in
+        # REQUIRED_CONTRACTS — behavioral, mirroring the pipeline specs).
+        spec_serenity_evidence,
     )
 
 

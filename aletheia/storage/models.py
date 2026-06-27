@@ -339,7 +339,7 @@ class SerenityEvidence(BaseModel):
     source_ref: str | None = None
     title: str
     summary: str = ""
-    tier: str = "speculative"
+    tier: str = "speculative"  # generator's self-graded PROPOSAL (advisory only)
     supports: bool = True
     evidence_type: str = "thesis"
     event_at: str = Field(default_factory=_utcnow)
@@ -354,6 +354,11 @@ class SerenityEvidence(BaseModel):
     published_at: str | None = None
     fetched_at: str | None = None
     metadata: str = "{}"
+    # D2 (2026-06-27): authoritative tier assigned by the independent evaluator
+    # (aletheia/trading/serenity_evidence.py). This is what gates scoring/promotion —
+    # `tier` above is only the generator's proposal. NULL = legacy / unassessed.
+    assessed_tier: str | None = None
+    assessed_by: str | None = None
 
 
 class SerenityOpportunity(BaseModel):
@@ -362,7 +367,7 @@ class SerenityOpportunity(BaseModel):
     symbol: str
     direction: str
     thesis: str | None = None
-    evidence_tier: str = "speculative"
+    evidence_tier: str = "speculative"  # generator's self-graded PROPOSAL (advisory only)
     stage: str = "research"
     average_mode: str = "none"
     action_intent: str = "watch"
@@ -372,6 +377,11 @@ class SerenityOpportunity(BaseModel):
     confidence_score: int | None = None
     created_at: str = Field(default_factory=_utcnow)
     updated_at: str = Field(default_factory=_utcnow)
+    # D2 (2026-06-27): authoritative tier derived from supporting evidence by the
+    # independent evaluator — gates scoring (score_serenity_opportunity). `evidence_tier`
+    # is only the generator's self-grade. NULL = legacy / unassessed → scores as speculative.
+    assessed_tier: str | None = None
+    assessed_by: str | None = None
 
 
 class SerenityRiskGate(BaseModel):

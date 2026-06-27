@@ -513,8 +513,11 @@ def _build_assessment_prompt(ctx: dict) -> str:
     ) or ""
 
     serenity_opps = layer3.get("serenity_opportunities", [])
+    # D2: show the INDEPENDENTLY assessed tier (authoritative gate), not the self-grade.
     serenity_lines = "\n".join(
-        f"  {o['symbol']} {o.get('direction', '?')} [conf={o.get('confidence_score', '?')} tier={o.get('evidence_tier', '?')}]: {o.get('thesis', '')}"
+        f"  {o['symbol']} {o.get('direction', '?')} "
+        f"[conf={o.get('confidence_score', '?')} tier={o.get('assessed_tier') or o.get('evidence_tier', '?')}]: "
+        f"{o.get('thesis', '')}"
         for o in serenity_opps
     ) or ""
 
