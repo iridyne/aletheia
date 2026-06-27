@@ -147,6 +147,7 @@ async def test_anthropic_complete_mock():
 
     class FakeResponse:
         status_code = 200
+        is_success = True
         def raise_for_status(self): pass
         def json(self): return mock_response
 
@@ -191,6 +192,7 @@ async def test_databricks_complete_omits_temperature():
 
     class FakeResponse:
         status_code = 200
+        is_success = True
         def raise_for_status(self): pass
         def json(self):
             return {"choices": [{"message": {"content": "OK"}}], "model": "m", "usage": {}}
@@ -369,6 +371,7 @@ async def test_anthropic_native_complete_mock():
 
     class FakeResponse:
         status_code = 200
+        is_success = True
         def raise_for_status(self): pass
         def json(self): return mock_response
 
@@ -465,6 +468,7 @@ async def test_openai_native_complete_mock():
 
     class FakeResponse:
         status_code = 200
+        is_success = True
         def raise_for_status(self): pass
         def json(self): return mock_response
 
@@ -625,6 +629,7 @@ async def test_anthropic_native_stream():
 
     class FakeStreamResp:
         status_code = 200
+        is_success = True
         def raise_for_status(self): pass
         async def aiter_lines(self):
             for line in sse_lines:
@@ -663,6 +668,7 @@ async def test_openai_native_stream():
 
     class FakeStreamResp:
         status_code = 200
+        is_success = True
         def raise_for_status(self): pass
         async def aiter_lines(self):
             for line in sse_lines:
