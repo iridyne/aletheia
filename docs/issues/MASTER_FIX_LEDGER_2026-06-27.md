@@ -38,9 +38,13 @@
 **已完成 14 修复全部 import+spec 验证通过。全量回归:1700 passed / 4 failed / 1 skipped。**
 **本会话 14 修复零回归**(git stash 验证:stash 后 baseline 同样 4 failed → 这 4 个是 master pre-existing,非本会话引入)。
 
-### Pre-existing 测试失败 — 状态(2026-06-27 多轮全量回归后)
-**已修 3/4**(commit 0eb7191 market_observer spot-only):test_entry_logic 3 个 → 全 passed。
-**最新全量:1703 passed / 1 failed / 1 skipped。22 修复零回归。** 剩余:
+### Pre-existing 测试失败 — ✅ 全部解决(2026-06-27)
+**最新全量:1704 passed / 0 failed / 1 skipped — 全绿。24 修复零回归,4/4 pre-existing + flaky 全修。**
+- ✅ test_entry_logic ×3(0eb7191 market_observer spot-only)
+- ✅ test_update flaky(c9fcc68 D17-1 SelectorEventLoop + conftest scheduler teardown fixture)
+- ✅ test_universe_settings_ui(RiskControls 用新 Meter primitive 替代 inline style)
+
+历史根因记录(供参考):
 - `test_universe_settings_ui.py::test_p3_pages_use_shared_primitives` — **唯一稳定 failure**:
   RiskControls.tsx 动态 `style={{width}}`(进度条)。设计系统债——应封装为 components/ui 的
   shared Bar/Meter primitive(消除 page 内 inline style),需前端改 + npm build + commit static。
