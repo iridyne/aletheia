@@ -22,9 +22,10 @@ class TestSymbolMap:
         assert to_coingecko_id("ETH/USDT") == "ethereum"
         assert to_coingecko_id("SOL/USDT") == "solana"
 
-    def test_coingecko_unknown_raises(self):
-        with pytest.raises(KeyError):
-            to_coingecko_id("UNKNOWN/USDT")
+    def test_coingecko_unknown_returns_none(self):
+        # F6: unmapped symbols return None (graceful) instead of raising KeyError,
+        # so callers can fall back to another data source.
+        assert to_coingecko_id("UNKNOWN/USDT") is None
 
     def test_binance_symbol(self):
         assert to_binance_symbol("BTC/USDT") == "BTCUSDT"
@@ -116,7 +117,9 @@ class TestCoinGeckoProvider:
             "aletheia.data.sources.coingecko._MIN_INTERVAL_SEC", 0.0
         )
         provider = CoinGeckoProvider()
-        with pytest.raises(KeyError):
+        # F6: unmapped symbol raises a clear ValueError (not KeyError) so the provider
+        # fallback chain degrades to another source.
+        with pytest.raises(ValueError):
             await provider.get_ticker("FAKECOIN/USDT")
 
 

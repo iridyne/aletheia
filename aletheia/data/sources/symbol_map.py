@@ -36,17 +36,18 @@ _CG_SLUG: dict[str, str] = {
 }
 
 
-def to_coingecko_id(canonical: str) -> str:
-    """Map a canonical symbol to its CoinGecko coin ID.
+def to_coingecko_id(canonical: str) -> str | None:
+    """Map a canonical symbol to its CoinGecko coin ID, or None if unmapped (F6).
 
-    Raises KeyError if not in the map.
+    The prior KeyError forced a hard failure for any of the many coins not in the
+    static slug map. Returning None lets callers treat it as "CoinGecko can't serve
+    this symbol" and degrade gracefully (fall back to another data source) rather
+    than raising an unexpected KeyError up the stack.
     """
     from aletheia.data.symbols import to_canonical
 
     canon = to_canonical(canonical)
-    if canon not in _CG_SLUG:
-        raise KeyError(f"CoinGecko ID unknown for {canon!r}")
-    return _CG_SLUG[canon]
+    return _CG_SLUG.get(canon)
 
 
 def to_binance_symbol(canonical: str) -> str:

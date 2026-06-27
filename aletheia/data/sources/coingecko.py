@@ -50,6 +50,10 @@ class CoinGeckoProvider:
 
         canon = to_canonical(str(symbol))
         cg_id = to_coingecko_id(canon)
+        if cg_id is None:
+            # F6: unmapped symbol — fail clearly so the provider fallback chain tries
+            # another source instead of querying CoinGecko with ids=None.
+            raise ValueError(f"CoinGecko has no slug mapping for {canon}")
 
         await _throttle()
         async with httpx_client(timeout=10) as client:
@@ -91,6 +95,8 @@ class CoinGeckoProvider:
 
         canon = to_canonical(str(symbol))
         cg_id = to_coingecko_id(canon)
+        if cg_id is None:
+            raise ValueError(f"CoinGecko has no slug mapping for {canon}")
 
         if timeframe in ("1h", "4h"):
             days = 7
