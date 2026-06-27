@@ -258,11 +258,27 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
         title = f"Auto guard candidate: {symbol} {family} 4h loss"
         content = _build_guard_candidate_content(row, fwd, direction)
 
+        # Stable guard_id per (family, direction, symbol) loss pattern so the
+        # promoter (run_promotion_check) can match + promote/move it, and so the
+        # frontmatter carries status="candidate" (else load_trading_guards(
+        # status="candidate") filters it out). Without these the candidate was
+        # invisible to the promotion chain — L-Bug-D/B3.
+        guard_id = (
+            f"auto_{family}_{direction}_{symbol}"
+            .replace("/", "").replace(":", "").replace(" ", "_").lower()
+        )
         try:
             create_guard_candidate(
                 title=title,
                 content=content,
                 metadata={
+                    "guard_id": guard_id,
+                    "status": "candidate",
+                    # applies_to (built from scanner_family/direction in load_trading_guards)
+                    # filters which trades count; predicates must be non-empty for the
+                    # matcher to fire (_predicates_match returns False on []), so encode
+                    # the family as the predicate. Together they match this family+direction.
+                    "predicates": [{"field": "scanner_family", "op": "eq", "value": family}],
                     "outcome_id": row["id"],
                     "symbol": symbol,
                     "scanner_family": family,

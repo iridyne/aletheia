@@ -97,49 +97,77 @@ def _guards_dir() -> Path:
     return get_data_dir() / "knowledge" / "guards"
 
 
+def _guard_candidates_dir() -> Path:
+    return get_data_dir() / "knowledge" / "guard_candidates"
+
+
+def _applies_to_from_meta(meta: dict) -> dict:
+    """Build a GuardAppliesTo dict from a guard's metadata.
+
+    Active/promoted guards carry an explicit nested ``applies_to``. Auto-generated
+    candidates (outcome_recorder) instead carry FLAT scanner_family / direction
+    keys; bridge those into applies_to so the promoter can match the loss pattern
+    (without this the candidate matched no trades → never promoted — L-Bug-D/B3).
+    """
+    applies_to = dict(meta.get("applies_to") or {})
+    if not applies_to:
+        fam = meta.get("scanner_family")
+        direction = meta.get("direction")
+        if fam:
+            applies_to["scanner_family"] = [fam] if isinstance(fam, str) else fam
+        if direction:
+            applies_to["direction"] = [direction] if isinstance(direction, str) else direction
+    return applies_to
+
+
 def load_trading_guards(
     scope: str | None = None,
     status: str = "active",
 ) -> list[TradingGuard]:
-    """Load trading guards from markdown files in data/knowledge/guards/."""
-    guards_dir = _guards_dir()
-    if not guards_dir.exists():
-        return []
+    """Load trading guards from markdown files.
 
+    Scans BOTH knowledge/guards/ (active/promoted) and knowledge/guard_candidates/
+    (auto-generated candidates) so the promotion check — which calls this with
+    status="candidate" — can actually reach the堆积的 candidates. Reading only
+    guards/ was why 0 candidates were ever promoted (L-Bug-D/B2).
+    """
     guards: list[TradingGuard] = []
-    for path in sorted(guards_dir.glob("*.md")):
-        try:
-            meta, _ = parse_frontmatter(path)
-            if not meta:
-                continue
-            if meta.get("status") != status:
-                continue
-            if scope and meta.get("scope") != scope:
-                continue
-
-            applies_to = meta.get("applies_to") or {}
-            predicates_raw = meta.get("predicates") or []
-            predicates = [GuardPredicate(**p) for p in predicates_raw if isinstance(p, dict)]
-
-            guard = TradingGuard(
-                guard_id=meta.get("guard_id", path.stem),
-                title=meta.get("title", path.stem),
-                description=meta.get("description", ""),
-                status=meta.get("status", "candidate"),
-                scope=meta.get("scope", "paper_entry"),
-                enforcement=meta.get("enforcement", "advisory"),
-                severity=meta.get("severity", "info"),
-                score_penalty=float(meta.get("score_penalty", 0)),
-                block_candidate=bool(meta.get("block_candidate", False)),
-                applies_to=GuardAppliesTo(**applies_to) if isinstance(applies_to, dict) else GuardAppliesTo(),
-                predicates=predicates,
-                evidence_refs=meta.get("evidence_refs") or [],
-                tags=meta.get("tags") or [],
-            )
-            guards.append(guard)
-        except Exception as e:
-            logger.warning("Failed to load guard from %s: %s", path, e)
+    for guards_dir in (_guards_dir(), _guard_candidates_dir()):
+        if not guards_dir.exists():
             continue
+        for path in sorted(guards_dir.glob("*.md")):
+            try:
+                meta, _ = parse_frontmatter(path)
+                if not meta:
+                    continue
+                if meta.get("status") != status:
+                    continue
+                if scope and meta.get("scope") != scope:
+                    continue
+
+                applies_to = _applies_to_from_meta(meta)
+                predicates_raw = meta.get("predicates") or []
+                predicates = [GuardPredicate(**p) for p in predicates_raw if isinstance(p, dict)]
+
+                guard = TradingGuard(
+                    guard_id=meta.get("guard_id", path.stem),
+                    title=meta.get("title", path.stem),
+                    description=meta.get("description", ""),
+                    status=meta.get("status", "candidate"),
+                    scope=meta.get("scope", "paper_entry"),
+                    enforcement=meta.get("enforcement", "advisory"),
+                    severity=meta.get("severity", "info"),
+                    score_penalty=float(meta.get("score_penalty", 0)),
+                    block_candidate=bool(meta.get("block_candidate", False)),
+                    applies_to=GuardAppliesTo(**applies_to) if isinstance(applies_to, dict) else GuardAppliesTo(),
+                    predicates=predicates,
+                    evidence_refs=meta.get("evidence_refs") or [],
+                    tags=meta.get("tags") or [],
+                )
+                guards.append(guard)
+            except Exception as e:
+                logger.warning("Failed to load guard from %s: %s", path, e)
+                continue
 
     return guards
 

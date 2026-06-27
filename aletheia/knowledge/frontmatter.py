@@ -16,10 +16,23 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
 
 
 def parse_frontmatter_text(text: str) -> tuple[dict[str, Any], str]:
-    """Parse YAML frontmatter from raw text. Returns (meta, body)."""
-    if not text.startswith("---\n"):
+    """Parse YAML frontmatter from raw text. Returns (meta, body).
+
+    Accepts two layouts: a bare ``---\\n...---\\n`` block at the very start
+    (render_frontmatter output), OR a single leading ``# Title`` markdown header
+    followed by the block (the _write_knowledge_file layout used for guard
+    candidates / case studies). Without the second case, every guard_candidate
+    file parsed to {} and the promotion chain saw zero candidates (L-Bug-D).
+    """
+    scan = text
+    if not scan.startswith("---\n"):
+        import re
+        m = re.match(r"#[^\n]*\n+(?=---\n)", scan)
+        if m:
+            scan = scan[m.end():]
+    if not scan.startswith("---\n"):
         return {}, text
-    parts = text.split("---\n", 2)
+    parts = scan.split("---\n", 2)
     if len(parts) < 3:
         return {}, text
     meta_raw = parts[1]

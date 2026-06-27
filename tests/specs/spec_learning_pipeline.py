@@ -234,15 +234,9 @@ def test_proposal_carries_opportunity_id():
 
 @spec_claim(
     SpecClaim("LP-S06", "learning_pipeline", "§Guard promotion", "L2a",
-              "load_trading_guards must reach guard_candidate files so "
-              "run_promotion_check can promote them (today it reads a different dir)",
-              status="missing"),
+              "load_trading_guards reaches guard_candidate files (scans both guards/ and "
+              "guard_candidates/) so run_promotion_check can promote them — L-Bug-D fixed"),
 )
-@pytest.mark.xfail(reason="升级器 load_trading_guards(status='candidate') 读 data/knowledge/guards/ "
-                          "但候选写 data/knowledge/guard_candidates/ 且前者不存在 → 0 candidates → 0 升级. "
-                          "guards.py 不在冻结列表,但 load_trading_guards 被冻结的 paper_trader_ranker 调用, "
-                          "故归 Round 2 统一处理 (LEARNING_LOOP_AUDIT_2026-06-26.md 断点 B2/B3). "
-                          "Fix L-Bug-D in Round 2 解冻当天.", strict=True)
 def test_guard_candidates_reachable_by_promoter():
     """guards.py must reference the guard_candidates directory so the promoter
     can see the堆积 candidates instead of an empty, non-existent guards/ dir.
