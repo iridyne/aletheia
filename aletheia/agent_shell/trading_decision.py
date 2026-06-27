@@ -79,6 +79,10 @@ class TradingDecision:
     opportunity_id: str | None = None
     strategy_id: str | None = None
     scanner_family: str | None = None
+    # Phase 2 (Serenity Option A): which table opportunity_id resolves against.
+    # 'market_observer' → opportunities.id; 'serenity' → serenity_opportunities.id.
+    # Stamped by _attach_opportunity_context (market_observer takes precedence).
+    signal_source: str = "market_observer"
 
 
 @dataclass
@@ -514,10 +518,14 @@ def _build_assessment_prompt(ctx: dict) -> str:
 
     serenity_opps = layer3.get("serenity_opportunities", [])
     # D2: show the INDEPENDENTLY assessed tier (authoritative gate), not the self-grade.
+    # Phase 2: also surface the deterministic score/bucket/evidence_count so the PI
+    # weighs research picks on the same transparent scale the Serenity scorer uses.
     serenity_lines = "\n".join(
         f"  {o['symbol']} {o.get('direction', '?')} "
-        f"[conf={o.get('confidence_score', '?')} tier={o.get('assessed_tier') or o.get('evidence_tier', '?')}]: "
+        f"[conf={o.get('confidence_score', '?')} tier={o.get('assessed_tier') or o.get('evidence_tier', '?')} "
+        f"score={o.get('score', '?')} bucket={o.get('bucket', '?')} evidence={o.get('evidence_count', 0)}]: "
         f"{o.get('thesis', '')}"
+        + (f"\n      key evidence: {o['key_evidence']}" if o.get("key_evidence") else "")
         for o in serenity_opps
     ) or ""
 
@@ -709,6 +717,14 @@ def _build_assessment_prompt(ctx: dict) -> str:
     if serenity_lines:
         parts.append("")
         parts.append("## Research-sourced Opportunities (from Serenity agent)")
+        parts.append(
+            "  These are LONG-HORIZON, fundamentals/supply-chain theses — a different "
+            "school from the short-term price-action signals above, NOT same-day setups. "
+            "`tier` is an automatic evidence floor (a deterministic evaluator's grade, "
+            "not a conviction), `score`/`bucket` are computed, not human-vetted. Treat "
+            "each as analyst input to weigh independently — you are the sole decision "
+            "maker; do not rubber-stamp."
+        )
         parts.append(serenity_lines)
 
     # L-Bug-B: dreaming-agent post-trade lessons (advisory reflections, not risk
@@ -838,16 +854,25 @@ def _parse_decision(raw: dict) -> TradingDecision:
 
 
 def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
-    """Backfill opportunity_id + scanner_family from the source opportunity (R0).
+    """Backfill opportunity_id + signal_source from the source opportunity (R0 + Phase 2).
 
     The PI Agent freely picks a symbol+direction from the whole context; this
-    matches that pick back to the market_observer opportunity it came from so
-    the proposal records a real opportunity_id (not the hard-coded None that
-    severed the attribution chain). Best-effort and honest: if the pick maps to
-    no open opportunity (e.g. it came from raw features/signals), the fields
-    stay None rather than being fabricated. See LEARNING_LOOP_AUDIT_2026-06-26
-    §R0 — this one backfill un-starves trade_case_study has_full_chain, guard
-    predicates, and reasoning_feedback scanner_family downstream.
+    matches that pick back to the opportunity it came from so the decision
+    records a real opportunity_id (not the hard-coded None that severed the
+    attribution chain). Two signal sources are matched, in priority order:
+
+      1. market_observer (Layer 1 `opportunities`) — short-term scanner signals.
+         Wins on a tie because it also carries strategy_id/scanner_family that
+         the learning loop needs; signal_source stays 'market_observer'.
+      2. serenity (Layer 3 `serenity_opportunities`) — research long-hold picks.
+         Matched only if no market_observer opportunity claimed the pick; sets
+         signal_source='serenity' so opportunity_id is later resolved against
+         serenity_opportunities (NOT opportunities) — the two id spaces are
+         indistinguishable bare uuid4().hex[:12] strings.
+
+    Best-effort and honest: if the pick maps to neither (e.g. it came from raw
+    features/signals), the fields stay None rather than being fabricated. See
+    LEARNING_LOOP_AUDIT_2026-06-26 §R0 + docs/plans/serenity_execution_path.md §3.2.
     """
     if not decision.symbol:
         return
@@ -863,4 +888,22 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         decision.opportunity_id = o.get("id")
         decision.strategy_id = o.get("linked_strategy_id")
         decision.scanner_family = o.get("scanner_family")
+        decision.signal_source = "market_observer"
+        return
+
+    # Serenity fallback (Phase 2): the pick matched no market_observer opportunity.
+    # Try the research long-hold picks surfaced in Layer 3. Only anchor on an
+    # opportunity that actually carries an id (the attribution anchor).
+    serenity_opps = (ctx.get("layer3") or {}).get("serenity_opportunities") or []
+    for o in serenity_opps:
+        if o.get("symbol") != decision.symbol:
+            continue
+        sdir = o.get("direction")
+        if decision.direction and sdir and sdir != decision.direction:
+            continue
+        oid = o.get("id")
+        if not oid:
+            continue
+        decision.opportunity_id = oid
+        decision.signal_source = "serenity"
         return

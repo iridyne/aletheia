@@ -864,6 +864,11 @@ class PiDecision(BaseModel):
     # its source opportunity so the attribution chain is complete on the signal side
     # (mirrors the R0 opportunity_id fix on the proposal side).
     opportunity_id: str | None = None
+    # Phase 2 (Serenity Option A): which table opportunity_id points at. Both
+    # opportunities.id (market_observer) and serenity_opportunities.id are bare
+    # uuid4().hex[:12] with no type tag, so the id alone is cross-table ambiguous.
+    # 'market_observer' → opportunities.id; 'serenity' → serenity_opportunities.id.
+    signal_source: str = "market_observer"
     debate_ran: bool = False
 
 

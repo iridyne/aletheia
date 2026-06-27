@@ -35,6 +35,9 @@ def record_decision(decision_result: dict) -> None:
         "reasoning": decision_result.get("reasoning", "")[:200],
         "proposal_id": decision_result.get("proposal_id"),
         "opportunity_id": decision_result.get("opportunity_id"),
+        # Phase 2 (Serenity Option A): discriminator for which table opportunity_id
+        # points at. Default 'market_observer' keeps legacy rows resolving as before.
+        "signal_source": decision_result.get("signal_source") or "market_observer",
         "decided_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -57,6 +60,7 @@ def record_decision(decision_result: dict) -> None:
             reasoning=record.get("reasoning") or "",
             proposal_id=record.get("proposal_id"),
             opportunity_id=record.get("opportunity_id"),
+            signal_source=record.get("signal_source") or "market_observer",
             debate_ran=decision_result.get("debate_ran", False),
         )
         insert_pi_decision(pi_dec)

@@ -56,6 +56,10 @@ def _import_all_specs():
         # attach to the logical contract "serenity_evidence_quality" (not in
         # REQUIRED_CONTRACTS — behavioral, mirroring the pipeline specs).
         spec_serenity_evidence,
+        # Serenity decision attribution (Phase 2 — signal_source discriminator). SA-*
+        # claims attach to the logical contract "serenity_attribution" (not in
+        # REQUIRED_CONTRACTS — decision-level attribution, mirroring the pipeline specs).
+        spec_serenity_attribution,
     )
 
 

@@ -180,7 +180,9 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `pi_decisions` | Structured PI Agent decisions | decision_type, action, symbol, conviction, reasoning (JSON) |
+| `pi_decisions` | Structured PI Agent decisions | decision_type, action, symbol, conviction, reasoning (JSON), opportunity_id, **signal_source** |
+
+> `signal_source ∈ {'market_observer','serenity'}` (default `'market_observer'`) — discriminator for which table `opportunity_id` resolves against. Both `opportunities.id` (market_observer) and `serenity_opportunities.id` are bare `uuid4().hex[:12]` with no type tag, so the id alone is cross-table ambiguous. Stamped by `_attach_opportunity_context` (market_observer takes precedence). Phase 2 of Serenity Option A — see `docs/plans/serenity_execution_path.md` §3.2.
 
 ### L. Extensions (2 tables)
 
