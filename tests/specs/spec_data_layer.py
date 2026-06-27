@@ -345,3 +345,25 @@ def test_instrument_id_rejects_non_canonical():
     # Canonical form must succeed.
     iid = InstrumentId(exchange="bitget", symbol="BTC/USDT", market_type="spot")
     assert iid.symbol == "BTC/USDT"
+
+
+@spec_claim(
+    SpecClaim(
+        "DL-C03",
+        "data_layer_contract",
+        "§1 InstrumentId-aware canonicalisation",
+        "L2c",
+        "canonical_of(InstrumentId) returns the instrument's canonical symbol, "
+        "never str(iid) fed through to_canonical (which collapses to the exchange name)",
+    )
+)
+def test_canonical_of_instrument_id_does_not_collapse_to_exchange():
+    from aletheia.data.symbols import InstrumentId, canonical_of, to_canonical
+
+    iid = InstrumentId(exchange="okx", symbol="AAVE/USDT", market_type="spot")
+    # The trap the helper exists to avoid: stringify-then-canonicalise yields "OKX".
+    assert to_canonical(str(iid)) == "OKX"
+    # The contract: canonical_of returns the real canonical symbol.
+    assert canonical_of(iid) == "AAVE/USDT"
+    # Plain strings still pass through to_canonical unchanged.
+    assert canonical_of("BTCUSDT") == "BTC/USDT"

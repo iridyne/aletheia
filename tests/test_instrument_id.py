@@ -4,6 +4,7 @@ import pytest
 from aletheia.data.symbols import (
     InstrumentId,
     to_canonical, to_bitget, to_ccxt, to_ccxt_perp, to_yfinance,
+    canonical_of,
     MARKET_SPOT, MARKET_PERP, MARKET_FUTURES,
 )
 
@@ -224,3 +225,35 @@ class TestToYfinance:
 
     def test_btc_quote_preserved(self):
         assert to_yfinance("ETH/BTC") == "ETH-BTC"
+
+
+# ---------------------------------------------------------------------------
+# canonical_of() — InstrumentId-aware canonicaliser (D1 Bug 2 regression)
+# ---------------------------------------------------------------------------
+
+class TestCanonicalOf:
+    def test_instrument_id_returns_its_canonical_symbol(self):
+        # The exact D1 Bug 2 case: a fallback provider received an InstrumentId
+        # and used to call to_canonical(str(iid)). str(iid) is
+        # "okx:AAVE/USDT:spot"; to_canonical reads the leading "okx:" as a CCXT
+        # perp settle suffix and collapses the whole thing to "OKX".
+        iid = InstrumentId(exchange="okx", symbol="AAVE/USDT", market_type="spot")
+        assert canonical_of(iid) == "AAVE/USDT"
+
+    def test_documents_the_trap_it_avoids(self):
+        # Pin the buggy behaviour so the regression can never silently return:
+        # the old code path really does produce "OKX", canonical_of must not.
+        iid = InstrumentId(exchange="okx", symbol="AAVE/USDT", market_type="spot")
+        assert to_canonical(str(iid)) == "OKX"          # the trap
+        assert canonical_of(iid) != "OKX"               # the fix
+
+    def test_perp_instrument_id_keeps_canonical(self):
+        iid = InstrumentId(exchange="bybit", symbol="BTC/USDT", market_type="perp")
+        assert canonical_of(iid) == "BTC/USDT"
+
+    def test_plain_string_passthrough(self):
+        # Strings still flow through to_canonical unchanged (all venue forms).
+        assert canonical_of("BTCUSDT") == "BTC/USDT"
+        assert canonical_of("BTC-USDT") == "BTC/USDT"
+        assert canonical_of("BTC/USDT:USDT") == "BTC/USDT"  # real perp suffix
+        assert canonical_of("BTC/USDT") == "BTC/USDT"

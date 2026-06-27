@@ -212,3 +212,19 @@ class InstrumentId:
     def to_bitget_symbol(self) -> str:
         """Bitget execution symbol (concatenated, upper-case)."""
         return to_bitget(self.symbol)
+
+
+def canonical_of(symbol: object) -> str:
+    """Canonical ``BASE/QUOTE`` for any symbol-like input — ``InstrumentId``-aware.
+
+    ``InstrumentId.symbol`` is *already* canonical, so return it directly. Never
+    feed ``str(instrument_id)`` to :func:`to_canonical`: the stringified form is
+    ``exchange:symbol:market_type`` (e.g. ``okx:AAVE/USDT:spot``), and
+    ``to_canonical`` reads a leading ``:`` segment as a CCXT perp *settle* suffix —
+    it would split on the first ``:`` and collapse the whole thing to ``OKX``,
+    which then 400s every downstream provider. Plain strings (already a venue or
+    canonical form) go through :func:`to_canonical` unchanged.
+    """
+    if isinstance(symbol, InstrumentId):
+        return symbol.symbol
+    return to_canonical(str(symbol))

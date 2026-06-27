@@ -31,11 +31,11 @@ class BinancePublicProvider:
     """MarketDataProvider backed by Binance public REST (no auth)."""
 
     async def get_ticker(self, symbol) -> Ticker:
-        from aletheia.data.symbols import to_canonical
+        from aletheia.data.symbols import canonical_of
         from aletheia.data.sources.symbol_map import to_binance_symbol
         from aletheia.net import httpx_client
 
-        canon = to_canonical(str(symbol))
+        canon = canonical_of(symbol)
         bn_sym = to_binance_symbol(canon)
 
         async with httpx_client(timeout=10) as client:
@@ -63,11 +63,11 @@ class BinancePublicProvider:
         limit: int = 100,
         since: int | None = None,
     ) -> list[Candle]:
-        from aletheia.data.symbols import to_canonical
+        from aletheia.data.symbols import canonical_of
         from aletheia.data.sources.symbol_map import to_binance_symbol
         from aletheia.net import httpx_client
 
-        canon = to_canonical(str(symbol))
+        canon = canonical_of(symbol)
         bn_sym = to_binance_symbol(canon)
         interval = _TF_MAP.get(timeframe, timeframe)
 
