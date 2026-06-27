@@ -53,6 +53,7 @@ class OrderRequest:
     # set the mix order is built as a close; otherwise it is an open (tradeSide:"open").
     reduce_only: bool = False
     hold_side: str | None = None  # "long" | "short" — required for a hedge-mode close
+    leverage: int | None = None   # USDT-futures: set on the exchange before an open
 
 
 @dataclass
@@ -205,9 +206,41 @@ class BitgetClient:
             for b in data.get("data", [])
         ]
 
+    async def set_leverage(self, exchange_symbol: str, leverage: int) -> None:
+        """Set USDT-futures leverage (crossed margin) for a symbol on Bitget.
+
+        ``exchange_symbol`` is the Bitget order format (e.g. BTCUSDT), matching what
+        place_order sends. Fail-closed: any non-success response raises so the broker
+        aborts the order rather than opening at the account-default leverage. Params
+        per Bitget mix v2 /account/set-leverage — confirm against a live demo account.
+        """
+        import json
+
+        path = "/api/v2/mix/account/set-leverage"
+        body_data = {
+            "symbol": exchange_symbol,
+            "productType": "USDT-FUTURES",
+            "marginCoin": "USDT",
+            "leverage": str(int(leverage)),
+        }
+        body = json.dumps(body_data)
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget set-leverage failed: {data.get('msg')}")
+
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         """Place an order — gated by execution mode externally."""
         import json
+
+        # Futures open: set the intended leverage on the exchange first (skip on a
+        # hedge-mode close, which does not change leverage). Fail-closed — set_leverage
+        # raises on failure, aborting the order rather than opening at the wrong size.
+        if (order.market_type != "spot" and order.leverage and order.leverage > 1
+                and not order.hold_side):
+            await self.set_leverage(order.symbol, order.leverage)
 
         if order.market_type == "spot":
             path = "/api/v2/spot/trade/place-order"

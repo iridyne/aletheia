@@ -66,10 +66,9 @@ class TestFuturesLeverageAcceptance:
         assert acct["ratio"] is not None
         assert acct["ratio"] > 60.0 / acct["equity"], "ratio must be amplified by leverage"
 
-    def test_pi_decision_futures_proposal_persists_leverage(self, e2e_db):
+    async def test_pi_decision_futures_proposal_persists_leverage(self, e2e_db):
         """The PI-decision submit path (F2) carries market_type + clamped leverage all
         the way to a persisted Position (F1)."""
-        import asyncio
         from aletheia.agent_shell.trading_decision import TradingDecision, submit_decision_as_proposal
         from aletheia.trading import market_data
 
@@ -90,9 +89,7 @@ class TestFuturesLeverageAcceptance:
                 position_size_usdt=60.0, market_type="usdt_futures", leverage=10,
                 opportunity_id=opp.id,
             )
-            result = asyncio.get_event_loop().run_until_complete(
-                submit_decision_as_proposal(decision, execution_mode="paper_internal")
-            )
+            result = await submit_decision_as_proposal(decision, execution_mode="paper_internal")
         finally:
             market_data.latest_snapshot = orig
 

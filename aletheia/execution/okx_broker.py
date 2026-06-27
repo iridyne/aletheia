@@ -147,7 +147,7 @@ def execute_live_order(
             symbol=symbol, market_type=market_type, side=side,
             order_type=order_type, quantity=quantity,
             price=price if order_type == "limit" else None,
-            client_oid=proposal_id,
+            client_oid=proposal_id, leverage=leverage,
         )))
     except Exception as e:
         update_order(order.id, status="error", error_reason=str(e)[:500])

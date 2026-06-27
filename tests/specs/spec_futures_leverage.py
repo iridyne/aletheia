@@ -342,3 +342,36 @@ def test_opportunity_carries_derivatives_fields():
     src = inspect.getsource(mo._analyze_symbol)
     assert "funding_rate=" in src
     assert "oi_delta_1h=" in src
+
+
+@spec_claim(
+    SpecClaim("FL-S16", "futures_leverage", "§16 exchange set_leverage", "L2a",
+              "All three exchange clients expose set_leverage and call it from place_order "
+              "for a leveraged futures open; OrderRequest carries leverage; the three live "
+              "brokers forward leverage into OrderRequest (fail-closed clone rule)"),
+)
+def test_exchange_set_leverage_wiring():
+    import inspect
+    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest as BgOR
+    from aletheia.exchanges.okx.client import OKXClient, OrderRequest as OkxOR
+    from aletheia.exchanges.binance.client import BinanceClient, OrderRequest as BnOR
+
+    # set_leverage exists + place_order invokes it on every client. Read the module
+    # source (not client.place_order, which the autouse exchange-block fixture patches).
+    for client in (BitgetClient, OKXClient, BinanceClient):
+        assert hasattr(client, "set_leverage"), client.__name__
+        mod_src = inspect.getsource(inspect.getmodule(client))
+        assert "async def set_leverage" in mod_src, client.__name__
+        assert "self.set_leverage(" in mod_src, client.__name__
+
+    # OrderRequest carries leverage on every client
+    for OR in (BgOR, OkxOR, BnOR):
+        assert "leverage" in OR.__dataclass_fields__, OR.__module__
+
+    # The three live brokers forward leverage into OrderRequest
+    import aletheia.execution.bitget_broker as bgb
+    import aletheia.execution.okx_broker as okxb
+    import aletheia.execution.binance_broker as bnb
+    for mod in (bgb, okxb, bnb):
+        src = inspect.getsource(mod.execute_live_order)
+        assert "leverage=leverage" in src, mod.__name__

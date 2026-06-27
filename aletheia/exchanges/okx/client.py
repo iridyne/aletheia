@@ -32,6 +32,7 @@ class OrderRequest:
     price: float | None = None
     client_oid: str | None = None
     reduce_only: bool = False
+    leverage: int | None = None   # USDT-futures: set on the exchange before an open
 
 
 @dataclass
@@ -116,6 +117,17 @@ class OKXClient:
             logger.warning("OKX contractSize lookup failed for %s: %s — defaulting to 1.0", ccxt_symbol, e)
             return 1.0
 
+    async def set_leverage(self, ccxt_symbol: str, leverage: int) -> None:
+        """Set leverage for an OKX swap symbol before opening. Raises on failure.
+
+        Uses cross margin to match place_order's swap defaults. Fail-closed so the
+        broker aborts rather than opening at the account-default leverage. The exact
+        params (cross vs isolated, posSide in hedge mode) should be confirmed against
+        a live OKX demo account.
+        """
+        ex = self._ensure_exchange()
+        await ex.set_leverage(int(leverage), ccxt_symbol, params={"mgnMode": "cross"})
+
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         """Place a market or limit order on OKX.
 
@@ -128,6 +140,9 @@ class OKXClient:
         # non-USDT-quote instrument.
         ccxt_symbol = to_ccxt_perp(order.symbol)
         ex = self._ensure_exchange()
+        # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
+        if order.leverage and order.leverage > 1 and not order.reduce_only:
+            await self.set_leverage(ccxt_symbol, order.leverage)
         contract_size = await self._contract_size(ccxt_symbol)
         amount_contracts = order.quantity / contract_size if contract_size else order.quantity
 

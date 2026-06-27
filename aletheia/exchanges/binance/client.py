@@ -32,6 +32,7 @@ class OrderRequest:
     price: float | None = None
     client_oid: str | None = None
     reduce_only: bool = False
+    leverage: int | None = None   # USDT-futures: set on the exchange before an open
 
 
 @dataclass
@@ -81,12 +82,22 @@ class BinanceClient:
             self._exchange.set_sandbox_mode(True)
         return self._exchange
 
+    async def set_leverage(self, ccxt_symbol: str, leverage: int) -> None:
+        """Set leverage for a Binance Futures symbol before opening. Raises on failure
+        (fail-closed) so the broker aborts rather than opening at the account default.
+        Confirm against a live Binance testnet account."""
+        await self._ensure_exchange().set_leverage(int(leverage), ccxt_symbol)
+
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         """Place a market or limit order on Binance Futures."""
         # CCXT perp format with settle suffix derived from the quote currency
         # (BTC/USDT:USDT, BTC/USDC:USDC) — not a hardcoded :USDT, which breaks any
         # non-USDT-quote instrument.
         ccxt_symbol = to_ccxt_perp(order.symbol)
+
+        # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
+        if order.leverage and order.leverage > 1 and not order.reduce_only:
+            await self.set_leverage(ccxt_symbol, order.leverage)
 
         params = {}
         if order.reduce_only:
