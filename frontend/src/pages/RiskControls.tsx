@@ -58,7 +58,8 @@ export default function RiskControls() {
     onError: (e: any) => setKillErr(errMsg(e)),
   })
   const releaseKill = useMutation({
-    mutationFn: () => api.setKillSwitch(false),
+    // confirm_release=true — the onClick confirm() dialog is the second confirmation.
+    mutationFn: () => api.setKillSwitch(false, 'manual_release', true),
     onSuccess: () => { setKillErr(''); qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
     onError: (e: any) => setKillErr(errMsg(e)),
   })

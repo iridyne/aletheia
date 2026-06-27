@@ -315,8 +315,9 @@ export const api = {
     fills: number
   }>(`/analytics/pipeline-funnel?hours=${hours}`),
   getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
-  setKillSwitch: (active: boolean, reason = '') =>
-    post<{ active: boolean }>('/risk/kill-switch', { active, reason }),
+  // Releasing the brake requires confirm_release=true (backend returns 422 otherwise).
+  setKillSwitch: (active: boolean, reason = '', confirmRelease = false) =>
+    post<{ active: boolean }>('/risk/kill-switch', { active, reason, confirm_release: confirmRelease }),
   updateRiskConfig: (body: Partial<{
     max_daily_loss_pct: number; max_single_trade_risk_pct: number
     max_total_live_exposure_pct: number; max_live_position_notional_usdt: number

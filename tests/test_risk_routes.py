@@ -59,8 +59,15 @@ async def test_kill_switch_activate_and_release(client):
     resp = await client.get("/api/risk/kill-switch")
     assert resp.json()["active"] is True
 
-    # release
+    # release without confirmation → 422 (second confirmation required)
     resp = await client.post("/api/risk/kill-switch", json={"active": False})
+    assert resp.status_code == 422
+    # still engaged after the rejected release
+    resp = await client.get("/api/risk/kill-switch")
+    assert resp.json()["active"] is True
+
+    # release WITH confirmation → succeeds
+    resp = await client.post("/api/risk/kill-switch", json={"active": False, "confirm_release": True})
     assert resp.status_code == 200
     assert resp.json()["active"] is False
 

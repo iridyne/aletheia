@@ -55,7 +55,7 @@ export default function CommandPalette() {
     { id: 'sys-pause', label: 'Pause Gateway', group: 'System', keywords: 'stop halt', action: () => pauseMut.mutate() },
     { id: 'sys-resume', label: 'Resume Gateway', group: 'System', keywords: 'start continue', action: () => resumeMut.mutate() },
     { id: 'sys-kill', label: 'Engage Kill Switch', group: 'System', dangerous: true, action: () => { if (confirm('Engage kill switch? All trading will halt.')) api.setKillSwitch(true, 'cmd_palette') } },
-    { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: () => api.setKillSwitch(false) },
+    { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: () => { if (confirm('Release Kill Switch? Trading will resume immediately.')) api.setKillSwitch(false, 'cmd_palette', true) } },
 
     { id: 'agent-observer', label: 'Run Market Observer', group: 'Agents', keywords: 'trigger start market', action: () => api.startAgentRun('market_observer') },
     { id: 'agent-research', label: 'Run Research Agent', group: 'Agents', keywords: 'trigger start research', action: () => api.startAgentRun('research_agent') },

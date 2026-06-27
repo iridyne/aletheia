@@ -2,7 +2,7 @@
 
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aletheia.agent_shell.operator_recommendations import build_risk_summary
@@ -80,14 +80,27 @@ async def risk_summary():
 class KillSwitchRequest(BaseModel):
     active: bool
     reason: str = ""
+    # Releasing the brake (active=False) requires a second explicit confirmation so a
+    # stray/accidental POST cannot silently un-brake trading. Engaging never needs it.
+    confirm_release: bool = False
 
 
 @router.post("/kill-switch")
 async def set_kill_switch(req: KillSwitchRequest):
-    """Engage or release the global trading brake (human action)."""
+    """Engage or release the global trading brake (human action).
+
+    Release is guarded: active=False without confirm_release=True returns 422. The
+    brake is the last-resort stop; un-setting it must be a deliberate two-step action.
+    """
     if req.active:
         kill_switch.activate(reason=req.reason, actor="human")
     else:
+        if not req.confirm_release:
+            raise HTTPException(
+                status_code=422,
+                detail="Releasing the kill switch requires confirm_release=true "
+                       "(second confirmation).",
+            )
         kill_switch.deactivate(actor="human")
     return {"active": kill_switch.is_active()}
 
