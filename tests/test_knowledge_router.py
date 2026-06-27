@@ -33,6 +33,23 @@ class TestRetrieveForRole:
         result = retrieve_for_role("market_observer", "query")
         assert result == []
 
+    def test_no_role_retrieves_post_trade_review(self):
+        """Anti-hallucination lock (LEARNING_LOOP_AUDIT §B1 symmetry): post_trade_review
+        is the hallucination-prone source. B1 removed it from the ranker; it must also
+        never enter any role's advisory retrieval via build_advisory_context. Re-adding
+        it to any role mapping is a regression."""
+        for role, item_types in _ITEM_TYPES_BY_ROLE.items():
+            assert "post_trade_review" not in item_types, (
+                f"role {role!r} must not retrieve post_trade_review lessons — it floods "
+                f"the advisory pool with hallucination-prone reviews (audit B1/C1)"
+            )
+
+    @patch("aletheia.knowledge.router.retrieve_lessons")
+    def test_default_fallback_excludes_post_trade_review(self, mock_retrieve):
+        mock_retrieve.return_value = []
+        retrieve_for_role("unknown_agent", "q")
+        assert "post_trade_review" not in mock_retrieve.call_args.kwargs["item_types"]
+
 
 class TestBuildGuardAdvisory:
     @patch("aletheia.knowledge.router.evaluate_guards")

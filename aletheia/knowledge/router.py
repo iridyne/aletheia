@@ -19,13 +19,22 @@ logger = logging.getLogger("aletheia.knowledge.router")
 
 AgentRole = Literal["strategy_designer", "market_observer", "equity_observer", "paper_trader"]
 
+# post_trade_review is deliberately EXCLUDED from every role's advisory retrieval.
+# It is the hallucination-prone source identified in LEARNING_LOOP_AUDIT_2026-06-26
+# (reviews of paper fills graded "execution quality" with no real execution to grade);
+# B1 already removed it from the ranker's _lesson_penalty, and C1 downgraded new reviews
+# to medium_confidence. This list closes the symmetric gap on the *advisory* path:
+# build_advisory_context (live in market_observer + strategy_designer) must not inject
+# post_trade_review lessons into agent prompts. trade_case_study (full-chain, has the R0
+# attribution) is the trustworthy lesson source. Re-adding post_trade_review here is a
+# regression (locked by test_knowledge_router::test_no_role_retrieves_post_trade_review).
 _ITEM_TYPES_BY_ROLE: dict[str, list[str]] = {
-    "strategy_designer": ["trade_case_study", "research_note", "post_trade_review", "strategy_memory"],
-    "market_observer": ["trade_case_study", "research_note", "post_trade_review", "dreaming_log", "trading_guard"],
+    "strategy_designer": ["trade_case_study", "research_note", "strategy_memory"],
+    "market_observer": ["trade_case_study", "research_note", "dreaming_log", "trading_guard"],
     # equity_observer uses equity-context knowledge: sector rotation, earnings events,
     # relative strength patterns. Query terms should use equity vocabulary (not crypto).
-    "equity_observer": ["research_note", "trade_case_study", "post_trade_review"],
-    "paper_trader": ["trade_case_study", "post_trade_review", "trading_guard"],
+    "equity_observer": ["research_note", "trade_case_study"],
+    "paper_trader": ["trade_case_study", "trading_guard"],
 }
 
 
@@ -69,7 +78,7 @@ def build_advisory_context(
 
 def retrieve_for_role(role: str, query: str, k: int = 3) -> list[Lesson]:
     """Retrieve lessons relevant to a specific agent role."""
-    item_types = _ITEM_TYPES_BY_ROLE.get(role, ["trade_case_study", "post_trade_review"])
+    item_types = _ITEM_TYPES_BY_ROLE.get(role, ["trade_case_study"])
     try:
         return retrieve_lessons(query, k=k, item_types=item_types)
     except Exception as e:
