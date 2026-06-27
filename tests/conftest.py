@@ -16,6 +16,18 @@ import sqlite3
 import pytest
 
 # ---------------------------------------------------------------------------
+# Windows event-loop policy (D17-1)
+# ---------------------------------------------------------------------------
+# The test process otherwise uses the default ProactorEventLoop, on which broker
+# tests calling asyncio.run() (okx/binance/bitget) can hang ~255s on IOCP teardown,
+# and the smoke subprocess in test_update intermittently fails with "cannot schedule
+# new futures after shutdown". Apply the same process-level SelectorEventLoop policy
+# the production entry-points use (5bfa4a0) so the test process matches production.
+# Idempotent; no-op off Windows. MUST run before any asyncio use → at import time.
+from aletheia.async_utils import apply_windows_selector_policy as _apply_selector_policy
+_apply_selector_policy()
+
+# ---------------------------------------------------------------------------
 # Hypothesis global settings
 # ---------------------------------------------------------------------------
 try:

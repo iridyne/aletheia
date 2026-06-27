@@ -38,12 +38,25 @@
 **已完成 14 修复全部 import+spec 验证通过。全量回归:1700 passed / 4 failed / 1 skipped。**
 **本会话 14 修复零回归**(git stash 验证:stash 后 baseline 同样 4 failed → 这 4 个是 master pre-existing,非本会话引入)。
 
-### Pre-existing 测试失败(master 基线,P5 全绿前须修,新窗口处理)
-1. `test_entry_logic.py::test_observer_writes_structured_direction` — observer 写 2 条 opportunity 而非 1(`len(opps)==2`)
-2. `test_entry_logic.py::test_observer_stores_canonical_format_symbol` — 同源(2 条)
-3. `test_entry_logic.py::test_full_observer_to_paper_trader_loop` — 同源
-4. `test_universe_settings_ui.py::test_p3_pages_use_shared_primitives` — RiskControls.tsx 有动态 `style={{width}}`(FE 3.4 inline style,测试可能过严)
-→ 1-3 同源(疑 observer opportunity 重复写入/spot+perp 双写),需读 test_entry_logic + market_observer 写入路径定根因。
+### Pre-existing 测试失败 — 状态(2026-06-27 全量回归后)
+**已修 3/4**(commit 0eb7191 market_observer spot-only):test_entry_logic 3 个 → 全 passed。
+**全量回归实测:1702 passed / 2 failed / 1 skipped**,21 修复**零回归**。剩 2 failed 均非本批引入:
+- `test_update.py::test_apply_rolls_back_on_smoke_failure` — **flaky**(单独跑 passed;全量套件中 smoke 子进程 + event loop teardown 竞争 "cannot schedule new futures after shutdown")。测试基础设施问题,非代码 bug,需 conftest/子进程隔离修。
+- `test_universe_settings_ui.py::test_p3_pages_use_shared_primitives` — RiskControls.tsx 动态 inline style(见下,前端债)。
+
+### 原 Pre-existing 根因记录(供新窗口)
+1-3. `test_entry_logic.py` 3 失败(observer 1 symbol 写 2 条 opp) — **根因已定位(2026-06-27)**:
+   `config/schema.py:67` 默认 `enabled_markets={spot:True, usdt_futures:True}` →
+   `trading/instruments.py:100-104` observed_instruments_from_config 对每 symbol emit
+   **spot+perp 两个 instrument** → market_observer:426 对所有 instrument 写 opportunity → 2 条。
+   **⚠ 这不只是 test 问题——是真实设计不一致 + 潜在实盘风险**:`futures_round2_deferred.md`
+   明确"market_observer currently only emits spot,perp opportunity emit 应 Round 2 deferred",
+   但实际 usdt_futures 默认 True 使 observer 已 emit perp opportunity,PI 可能对 perp 下单而
+   futures 完整支持(leverage/funding/liquidation)仍 deferred。
+   **修复需 futures 策略判断(不擅自改)**:(A) 接受 perp emit + 推进 futures 完整支持 + 修 test;
+   或 (B) market_observer/observed_instruments 在 futures ready 前只 emit spot opportunity(perp
+   instrument 仅供数据采集) + defer perp opportunity + test 保持。**建议向 owner 确认 futures 启用策略**。
+4. `test_universe_settings_ui.py::test_p3_pages_use_shared_primitives` — RiskControls.tsx 有动态 `style={{width}}`(FE 3.4 inline style,测试可能过严;修 test 豁免动态 style 或改 CSS var)。
 **P3c 剩余**:CUM-ADD/broker opportunity_id/kill-switch confirm/risk_critic 类型/fee reconcile/PostSubmitDBError/fail-open guards/error-leak(2.4/2.7)。
 **P3d 剩余**:见 `_RAW_SWEEP_LEDGER.md` general_bug/dead_code/ui_honesty/test_debt/perf 段。
 **接续验证**:`uv run pytest tests/specs/spec_learning_pipeline.py tests/test_experience_loop.py -q`
