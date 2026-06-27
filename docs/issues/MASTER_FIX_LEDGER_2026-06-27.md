@@ -189,12 +189,12 @@
 | **L-Bug-A'** Layer3 guards 加 item_type | 待修 | trading_context.py:398 | LP-S02 |
 | **L-Bug-B** ps_lessons 接入决策链 | 待修 | trading_context.py + trading_decision.py + lessons.py:71 | LP-S03 |
 | **S-Bug-C** strategy KPI 暴露 | 待修 | trading_context.py:276 + trade_stats.py:227 build_strategy_kpis | SP-S03 |
-| **A10** calibration/memo/reasoning_feedback 注入 prompt | 待修 | trading_decision.py _build_assessment_prompt | 三者 layer2 已建但 prompt 未渲染 |
+| **A10** calibration/memo/reasoning_feedback 注入 prompt | ✅已完成 | trading_decision.py:653-669 — memo/calibration/reasoning_feedback 全部注入；代码已修，账本滞后 | |
 | **A6 / §13.1** ranker evidence 硬编码 paper_internal | 待修 | paper_trader_ranker.py:723 | |
 | **A7 / §13.2** today_pnl 跨模式语义 | 待修 | trading_context.py:75 + pnl.py:184 | rename today_realized_pnl |
 | **A9 / §18.2** operator win_rate 用 fills 恒 0 | 待修 | operator_loop.py:385-403,495-505 | 改读 closed positions realized_pnl |
-| **A11** regime 重启后 bias 未恢复+无 publish | partial | detector.py:257-273 | |
-| **A13 / PT-2** PiDecision 缺 opportunity_id | 待修 | models.py:823 + paper_trader.py:140 | 加字段+迁移 |
+| **A11** regime 重启后 bias 未恢复+无 publish | ✅已完成 | detector.py:257-279 — get_current_regime() 从 DB 恢复 bias 并写 _published_regime；ranker/trading_context 均消费；publish 机制完整 | |
+| **A13 / PT-2** PiDecision 缺 opportunity_id | ✅已完成 | commands.py:1875 + reflection.py:59 — result dict + PiDecision 构造器均已接线；spec DM-A13 GREEN | |
 | **L-Bug-D B2** guard 升级器读错目录 | 待修 | guards.py:96 vs files/markdown.py:57 | LP-S06 |
 | **L-Bug-D B3** guard 候选缺 frontmatter | 待修 | outcome_recorder.py:262-277 | LP-S06 |
 | **final_conviction** dead code(算了不读) | 待修 | trading_decision.py:300 | 删 or 用 |
