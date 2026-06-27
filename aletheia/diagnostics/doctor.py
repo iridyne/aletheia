@@ -250,9 +250,13 @@ def _probe_credentials(report: Report) -> None:
     cfg = load_config()
 
     # CoinGlass — Round 2 Step 5 second batch.
-    # Two-path read: keyring preferred, .env fallback. Show source + redacted suffix.
+    # Two-path read: keyring preferred, .env fallback (accepts both COINGLASS_API_KEY
+    # canonical name and the operator's shorter COINGLASS_API).
     cg_keyring = get_secret("coinglass.api_key")
-    cg_env = os.environ.get("COINGLASS_API_KEY") if not cg_keyring else None
+    cg_env = (
+        os.environ.get("COINGLASS_API_KEY") or os.environ.get("COINGLASS_API")
+        if not cg_keyring else None
+    )
     if cg_keyring:
         report.add("creds.coinglass", "ok",
                    f"coinglass API key set via keyring ({redact(cg_keyring)})")
@@ -351,6 +355,91 @@ def _probe_market_data(report: Report) -> None:
                    "check gateway is running and scheduler not paused")
     else:
         report.add("data.market", "ok", detail)
+
+
+def _probe_macro_signals(report: Report) -> None:
+    """Round 2 macro signal freshness probes — LSR / F&G / CoinGecko top.
+
+    Per plan §9.4: doctor must expose the age of the last LSR fill, the latest
+    F&G value + age, and the CoinGecko top table row count + newest observed_at.
+    All three signals enter the LLM enriched_context, so a stale signal silently
+    poisons the prompt — surfacing the age is the operator's only signal.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+
+        # --- LSR: most recent row where long_short_ratio IS NOT NULL ---
+        try:
+            row = db.execute(
+                "SELECT symbol, long_short_ratio, observed_at "
+                "FROM open_interest_snapshots "
+                "WHERE long_short_ratio IS NOT NULL "
+                "ORDER BY observed_at DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                age = _age_minutes(row["observed_at"])
+                detail = (
+                    f"newest LSR {row['symbol']}={row['long_short_ratio']:.2f} "
+                    f"({_fmt_age(age)})"
+                )
+                sev = "warn" if age is not None and age > 30 else "ok"
+                report.add("data.lsr", sev, detail,
+                           "check Binance fapi reachability if stale > 30m"
+                           if sev == "warn" else None)
+            else:
+                report.add("data.lsr", "info",
+                           "no LSR rows yet — enable in Settings → Market Data Sources")
+        except Exception as e:
+            report.add("data.lsr", "info", f"could not read LSR: {e}")
+
+        # --- F&G: latest macro snapshot's fng_value + age ---
+        try:
+            row = db.execute(
+                "SELECT fng_value, fng_classification, observed_at "
+                "FROM macro_snapshots "
+                "WHERE fng_value IS NOT NULL "
+                "ORDER BY observed_at DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                age = _age_minutes(row["observed_at"])
+                cls = f" ({row['fng_classification']})" if row["fng_classification"] else ""
+                # F&G updates ~daily, so 6h staleness is normal; warn at 30h.
+                sev = "warn" if age is not None and age > 30 * 60 else "ok"
+                report.add("data.fear_greed", sev,
+                           f"F&G {row['fng_value']}{cls} ({_fmt_age(age)})",
+                           "Alt.me may be down if stale > 30h"
+                           if sev == "warn" else None)
+            else:
+                report.add("data.fear_greed", "info",
+                           "no F&G rows yet — enable in Settings → Macro & Sentiment Signals")
+        except Exception as e:
+            report.add("data.fear_greed", "info", f"could not read F&G: {e}")
+
+        # --- CoinGecko top: count + newest observed_at ---
+        try:
+            cnt_row = db.execute(
+                "SELECT COUNT(*) AS n, MAX(observed_at) AS newest "
+                "FROM coingecko_top_snapshots"
+            ).fetchone()
+            n = cnt_row["n"] if cnt_row else 0
+            newest = cnt_row["newest"] if cnt_row else None
+            if n == 0:
+                report.add("data.coingecko_top", "info",
+                           "no CoinGecko top rows — enable in Settings → Macro & Sentiment Signals")
+            else:
+                age = _age_minutes(newest)
+                # Phase B is 10min cadence; >30m stale = collector probably failing.
+                sev = "warn" if age is not None and age > 30 else "ok"
+                report.add("data.coingecko_top", sev,
+                           f"{n:,} rows total; newest batch {_fmt_age(age)}",
+                           "check CoinGecko reachability (429? rate limit?)"
+                           if sev == "warn" else None)
+        except Exception as e:
+            report.add("data.coingecko_top", "info", f"could not read CoinGecko top: {e}")
+
+    except Exception as e:
+        report.add("data.macro_signals", "info", f"macro signals probe failed: {e}")
 
 
 def _probe_data_quality(report: Report) -> None:
@@ -1064,6 +1153,7 @@ def build_report() -> Report:
         _probe_config_consistency,
         _probe_credentials,
         _probe_market_data,
+        _probe_macro_signals,
         _probe_data_quality,
         _probe_ohlcv_coverage,
         _probe_signal_effectiveness,

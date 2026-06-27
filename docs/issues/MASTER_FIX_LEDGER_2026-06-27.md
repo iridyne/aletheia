@@ -12,6 +12,51 @@
 
 ## 实施进度(滚动更新)
 
+### 🟢 第三批(2026-06-27 数据集成会话)— Round 2 macro signals 5 Steps
+
+**分支** `feat/round2-macro-signals` / **commit** `ba03da1`(+ 后续 polish):零成本数据源
+扩展 market_observer 的 enriched_context,完整 plan 见
+[`docs/plans/round2_immediate_data_integration_plan.md`](../plans/round2_immediate_data_integration_plan.md)。
+
+- **Step 1** LSR(Binance globalLongShortAccountRatio)— `derivatives.py` 新增
+  `_BINANCE_LSR_URL` + `_fetch_lsr_binance_batch` + `_parse_oi(lsr=...)` 单 INSERT
+  写入 `open_interest_snapshots.long_short_ratio`(列存在但首次实际启用)。
+  `compute_leverage_state` (normalizer.py:73-77) 已消费 long_short_ratio,无需改。
+  `context_builder` derivatives table 加 `| LSR |` 列。spec MS-S01/S02/S03 + MS-C01。
+- **Step 2** Fear & Greed(Alternative.me 无 key)— `macro.py` 加 `_ALT_FNG_URL` +
+  `_fetch_fng()` 在独立 try/except(MS-C02 锁定降级不污染其他字段)。
+  `_ADDITIVE_COLUMNS` 加 fng_value + fng_classification(走 `_ensure_columns`
+  幂等迁移)。macro 块加 "Fear & Greed: N (Classification)" 渲染行。
+  spec MS-S04/S05/S06/S07 + MS-C02 + MS-C07。
+- **Step 3** CoinGecko Top-N(无 key,公开 endpoint)— 新 `coingecko_top.py` collector
+  + 新表 `coingecko_top_snapshots` + 3 repo helper(**canonical BEGIN/COMMIT bulk**
+  仿 `insert_serenity_claims_bulk:767`,而非 was_in_tx 守卫——autocommit 下无效)。
+  scheduler Phase B 先于 macro 跑,top movers summary 折入 `MacroSnapshot.top_movers_summary`
+  落同一行。`latest_coingecko_top` 两步读 MAX(observed_at) → filter 防跨 batch 混。
+  spec MS-S08~S12 + MS-C03/C04。
+- **Step 4** 历史回填 — `_maybe_backfill_funding_history` + `_maybe_backfill_oi_history`
+  idempotent(≥3 行 in 窗口跳过,MS-C05);Bitget OI history 在 CCXT NotSupported 时
+  swallow(MS-C06)。spec MS-S13 + MS-C05/C06。
+- **Step 5** CoinGlass 骨架 — `coinglass.py` 双路 key 加载(get_secret 优先 →
+  os.environ fallback,key 已在 `.env`)+ no-key 早返回(CG-C01 AST 锁定 httpx
+  调用顺序)+ doctor redact 显示 + 新 `/settings/coinglass-credentials` 路由 +
+  前端密码输入。实际 endpoint 拉取留 follow-up。spec CG-S01 + CG-C01/C02。
+
+**前端**:LSR toggle 加进 MarketDataCard;新建 MacroSignalsCard + 新 Section
+"Macro & Sentiment Signals"(SETTINGS_INDEX 加条目防内联搜索漏);api/client.ts
+`updateMarketDataConfig` 加 5 新字段 + `getCoinGlassStatus` / `setCoinGlassKey`。
+
+**反幻觉边界**:grep audit 确认 `long_short_ratio` / `fng_value` /
+`fng_classification` / `top_movers_summary` 零出现在
+`trading_decision.py` / `pi_agent_*.py` / `learning/` / `dreaming/` / `research/`。
+`_SYSTEM_PROMPT` 故意不改(plan §8.6.2 推荐 (a) 路径)。
+
+**SDD**:`spec_macro_signals.py`(19 claims)+ `spec_coinglass.py`(3 claims)
+全挂 `data_layer_contract`(复用,不开新信任边界文档);两文件均注册到
+`test_spec_conformance.py` `_import_all_specs()` 防 SDD 收集陷阱。
+**Conformance Matrix: 225 claims / 222 implemented / 99% coverage**
+(Round 2 净增 22 claims,coverage 不退)。
+
 ### 🟢 第二批(2026-06-27 续会话)— Futures 核心 + P3c 信任边界全清
 
 **Futures(Task 1,部分)— 决策链核心 4 commit,全单测过、guard 未解除(安全):**

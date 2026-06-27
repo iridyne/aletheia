@@ -52,6 +52,16 @@ class MarketRead(BaseModel):
     )
 
 
+# ROUND 2 SIGNAL-INTRODUCTION DECISION (per plan §8.6.2, spec MS-S15):
+# Round 2 introduced new enriched_context signals — LSR (long_short_ratio) via the
+# derivatives table's "| LSR |" column, F&G via the macro block's "Fear & Greed:" line,
+# and a "24h movers:" line from CoinGecko top movers. _SYSTEM_PROMPT BELOW IS DELIBERATELY
+# NOT UPDATED to brief the LLM on these field semantics. Injecting field-specific priors
+# (e.g. "LSR>1 means retail futures crowded long — typically a contra-signal") would be
+# the exact kind of intervention Round 1 was terminated for (hallucinated learning loop,
+# see [[aletheia-round1-terminated-fix-batch]]). The LLM reads the markdown table headers
+# and lines directly; the "Use this snapshot as your single source of truth" rule below
+# already constrains it. Re-evaluate this decision after one Round 2 experiment window.
 _SYSTEM_PROMPT = """\
 You are a crypto market observer for Aletheia paper-trading.
 

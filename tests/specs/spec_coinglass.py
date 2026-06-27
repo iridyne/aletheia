@@ -31,21 +31,26 @@ _CONTRACT = "data_layer_contract"
     SpecClaim(
         "CG-S01", _CONTRACT, "§4.1 key loader", "L2a",
         "_get_coinglass_key() function reads get_secret('coinglass.api_key') "
-        "FIRST, falls back to os.environ.get('COINGLASS_API_KEY')",
+        "FIRST, falls back to os.environ.get for COINGLASS_API_KEY (canonical) "
+        "or COINGLASS_API (operator's shorter form). Keyring always wins.",
     ),
 )
 def test_coinglass_dual_path_key_loader():
     src = _COINGLASS.read_text(encoding="utf-8")
     # Both references must appear, and keyring must come first by source order.
     keyring_idx = src.find('get_secret("coinglass.api_key")')
-    env_idx = src.find('os.environ.get("COINGLASS_API_KEY")')
+    env_canonical_idx = src.find('os.environ.get("COINGLASS_API_KEY")')
+    env_short_idx = src.find('os.environ.get("COINGLASS_API")')
     assert keyring_idx > 0, (
         "coinglass.py must call get_secret('coinglass.api_key')"
     )
-    assert env_idx > 0, (
-        "coinglass.py must call os.environ.get('COINGLASS_API_KEY') for env fallback"
+    assert env_canonical_idx > 0, (
+        "coinglass.py must call os.environ.get('COINGLASS_API_KEY') (canonical)"
     )
-    assert keyring_idx < env_idx, (
+    assert env_short_idx > 0, (
+        "coinglass.py must also accept os.environ.get('COINGLASS_API') (shorter form)"
+    )
+    assert keyring_idx < env_canonical_idx, (
         "key resolution order is wrong — get_secret must be checked BEFORE os.environ "
         "(keyring takes precedence per CG-S01)"
     )
@@ -109,6 +114,76 @@ def test_collect_returns_early_when_no_key():
             f"httpx_client call at line {httpx_line}; otherwise a missing key still "
             "constructs the HTTP request (CG-C01 violation)."
         )
+
+
+@spec_claim(
+    SpecClaim(
+        "CG-C03", _CONTRACT, "§4.1 tier-detect", "L2c",
+        "When CoinGlass responds with the 'Upgrade plan' paywall marker, "
+        "CoinGlassCollector.collect() caches tier_status='free_paywalled', "
+        "records the error, and short-circuits future calls in the same process "
+        "(per [[aletheia-coinglass-free-tier-paywalled]]).",
+    ),
+)
+def test_coinglass_tier_paywalled_short_circuit():
+    """Behavioral: first call probes + caches; second call short-circuits without httpx."""
+    import asyncio
+    from aletheia.data.collectors import coinglass as mod
+    from aletheia.data.collectors.coinglass import CoinGlassCollector
+
+    # Reset cache so the test is deterministic.
+    CoinGlassCollector._tier_status = None
+
+    async def run():
+        # Monkeypatch httpx_client to a fake whose .get() returns a "Upgrade plan" body.
+        class _FakeResp:
+            text = '{"code":"401","msg":"Upgrade plan"}'
+            status_code = 200
+
+        class _FakeClient:
+            calls = []
+            async def get(self, url, **kwargs):
+                _FakeClient.calls.append(url)
+                return _FakeResp()
+
+        class _FakeCtx:
+            async def __aenter__(self):
+                return _FakeClient()
+            async def __aexit__(self, *args):
+                return False
+
+        def _fake_httpx(*args, **kwargs):
+            return _FakeCtx()
+
+        # httpx_client is imported lazily inside collect() — patch the source module.
+        from aletheia import net as net_mod
+        original = net_mod.httpx_client
+        net_mod.httpx_client = _fake_httpx
+        # Also need to override the key resolver so the no-key gate doesn't trip.
+        original_key = mod._get_coinglass_key
+        mod._get_coinglass_key = lambda: "fake_key_xyz"
+        try:
+            # First call probes and caches paywall status.
+            r1 = await CoinGlassCollector().collect(["BTC/USDT"])
+            assert "coinglass_free_tier_paywalled" in r1["errors"], (
+                f"first call must record paywall; got: {r1}"
+            )
+            assert CoinGlassCollector._tier_status == "free_paywalled", (
+                f"tier_status must be cached after first probe; got: {CoinGlassCollector._tier_status}"
+            )
+            calls_after_first = len(_FakeClient.calls)
+            # Second call must short-circuit without ANY new httpx call.
+            r2 = await CoinGlassCollector().collect(["BTC/USDT"])
+            assert "coinglass_free_tier_paywalled" in r2["errors"]
+            assert len(_FakeClient.calls) == calls_after_first, (
+                "second call must NOT hit httpx — cached status should short-circuit"
+            )
+        finally:
+            net_mod.httpx_client = original
+            mod._get_coinglass_key = original_key
+            CoinGlassCollector._tier_status = None
+
+    asyncio.run(run())
 
 
 @spec_claim(

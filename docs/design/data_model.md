@@ -77,9 +77,10 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `market_snapshots` | Point-in-time price/volume | symbol, price, volume_24h, change_pct_24h |
 | `orderbook_snapshots` | Order book depth | symbol, bids (JSON), asks (JSON), spread |
 | `funding_rate_snapshots` | Perpetual funding rates | symbol, funding_rate, next_funding_time |
-| `open_interest_snapshots` | Open interest data | symbol, open_interest, oi_change_pct |
+| `open_interest_snapshots` | Open interest data | symbol, open_interest, oi_change_pct, **long_short_ratio** (Round 2 Step 1 — first actually populated, Binance globalLongShortAccountRatio) |
 | `liquidation_events` | Large liquidation events | symbol, side, quantity, price |
-| `macro_snapshots` | Macro economic indicators | indicator, value, source |
+| `macro_snapshots` | Macro economic indicators | indicator, value, source; **fng_value / fng_classification** (Round 2 Step 2 — Alt.me Fear & Greed) + **top_movers_summary** (Round 2 Step 3 — CoinGecko top movers, pre-formatted string folded into LLM macro block) |
+| `coingecko_top_snapshots` (Round 2 Step 3) | Top-N coins by market cap pulled every Phase B tick | coin_id, symbol, price_usd, market_cap_usd, market_cap_rank, volume_24h_usd, price_change_1h_pct, price_change_24h_pct, price_change_7d_pct, observed_at |
 
 ### E. Agent Runtime (10 tables)
 
@@ -284,6 +285,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | `orderbook_snapshots` / `liquidation_events` | 7d | hardcoded | `repositories.py:1539-1556` |
 | `funding_rate_snapshots` / `open_interest_snapshots` / `universe_feature_snapshots` | 30d | hardcoded | `repositories.py:1559-1585` |
 | `macro_snapshots` | 90d | hardcoded | `repositories.py:1587` |
+| `coingecko_top_snapshots` (Round 2 Step 3) | 14d | hardcoded | `repositories.py:prune_coingecko_top_snapshots` |
 | `opportunities` (open) | 48h → `expired` | yes | `repositories.py:1597-1612` |
 
 ### 7.2 NEVER-pruned (trust-bearing) — enforced by `_PRUNABLE` allowlist (`repositories.py:1000-1006`)

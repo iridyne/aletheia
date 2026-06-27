@@ -35,6 +35,7 @@ _MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
 _REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
 _SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
 _CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
+_MARKET_OBSERVER = _ROOT / "aletheia" / "agents" / "market_observer.py"
 _SETTINGS_TSX = _ROOT / "frontend" / "src" / "pages" / "Settings.tsx"
 
 _CONTRACT = "data_layer_contract"
@@ -654,4 +655,46 @@ def test_settings_tsx_has_history_hours_field():
     src = _SETTINGS_TSX.read_text(encoding="utf-8")
     assert "derivatives_history_hours" in src, (
         "Settings.tsx must reference 'derivatives_history_hours' (Config↔UI rule)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# §8.6.2 — _SYSTEM_PROMPT stability marker (Round 1 anti-hallucination)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "MS-S15", _CONTRACT, "§8.6.2 system prompt stability", "L2a",
+        "market_observer.py contains a source comment ABOVE the _SYSTEM_PROMPT "
+        "assignment explaining the Round 2 decision NOT to inject field-specific "
+        "priors for LSR/F&G into the prompt (Round 1 anti-hallucination contract). "
+        "Future maintainers must see the reasoning before editing the prompt.",
+    ),
+)
+def test_system_prompt_round2_decision_comment():
+    """AST-locate _SYSTEM_PROMPT module-level assignment; assert a comment block
+    immediately above it mentions Round 2 + LSR + F&G + the deliberate non-injection."""
+    src = _MARKET_OBSERVER.read_text(encoding="utf-8")
+    # Locate the assignment line for _SYSTEM_PROMPT.
+    lines = src.splitlines()
+    assign_line: int | None = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("_SYSTEM_PROMPT") and "=" in ln:
+            assign_line = i
+            break
+    assert assign_line is not None, (
+        "market_observer.py must contain a module-level _SYSTEM_PROMPT assignment"
+    )
+    # The previous up-to-15 lines must be a contiguous comment block referencing
+    # the Round 2 decision keywords. (Plan §8.6.2 + MS-S15 lock this in.)
+    window_start = max(0, assign_line - 15)
+    window = "\n".join(lines[window_start:assign_line])
+    required_tokens = ("ROUND 2", "LSR", "F&G", "_SYSTEM_PROMPT")
+    missing = [tok for tok in required_tokens if tok not in window]
+    assert not missing, (
+        f"market_observer.py is missing the Round 2 _SYSTEM_PROMPT decision comment "
+        f"above the assignment. Missing tokens: {missing}. "
+        f"Per plan §8.6.2 / MS-S15 the comment must record the deliberate decision "
+        f"NOT to inject LSR/F&G priors into the prompt — future readers must see why."
     )
