@@ -443,20 +443,18 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # Build a lookup for universe member metadata (symbol → member dict)
     _universe_lookup = {m["symbol"]: m for m in universe_members} if universe_members else {}
 
-    # futures_round2_deferred: market_observer emits ONLY spot opportunities for now.
-    # Perp opportunity emit (with full leverage/funding/liquidation handling) is
-    # deferred until futures support is complete. Perp instruments are still collected
-    # upstream for market data, but PI must NOT receive perp opportunities it cannot yet
-    # trade safely — emitting them was an unintended drift from enabled_markets.usdt_futures
-    # =True (schema default) feeding the per-instrument loop. To enable perp opportunity
-    # emit later, lift this guard together with the deferred futures changes.
-    # (Also fixes test_entry_logic 1-symbol→2-opp: spot+perp double-write.)
-    from aletheia.data.symbols import MARKET_SPOT as _MARKET_SPOT
+    # Round 2: the observer emits opportunities for BOTH spot and perp instruments.
+    # Full futures support is now in place, so the prior spot-only guard is lifted:
+    #   - leverage + liquidation persisted on the Position (F1);
+    #   - PI chooses market_type + leverage, clamped to the per-tier cap (F2), with a
+    #     futures context block (F3) and funding/OI on the Opportunity (F4);
+    #   - the exchange leverage is set fail-closed before a leveraged open (set_leverage);
+    #   - the risk engine enforces max-leverage / account-leverage-ratio / liquidation
+    #     buffer (#10/#17/#18) and per-symbol cumulative notional (#19).
+    # A perp instrument's Opportunity.market is "usdt_futures" (instrument_market_to_db_market).
     # Per-instrument loop: each instrument gets its own LLM call + Opportunity row.
     # instrument.market_type is the authoritative type; no more config-derived guessing.
     for instrument in instruments:
-        if instrument.market_type != _MARKET_SPOT:
-            continue
         try:
             u_member = _universe_lookup.get(instrument.symbol)
             _sym_canonical = to_canonical(instrument.symbol)

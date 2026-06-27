@@ -66,6 +66,9 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
     cfg.market_data.observed_xstocks = []
+    # Spot-only for this test so a single symbol yields exactly one opportunity
+    # (with usdt_futures enabled the observer also emits the perp — covered elsewhere).
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
@@ -100,6 +103,31 @@ async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
     opps = repo.list_opportunities()
     assert len(opps) == 0  # no neutral noise created
     assert any("llm_unavailable" in e for e in result.get("errors", []))
+
+
+async def test_observer_emits_spot_and_perp_when_futures_enabled(tmp_path, monkeypatch):
+    """Round 2: with usdt_futures enabled the spot-only guard is lifted — a single
+    symbol yields BOTH a spot and a perp opportunity (perp.market == 'usdt_futures')."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.market_data.observed_symbols = ["BTC/USDT"]
+    cfg.market_data.observed_xstocks = []
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
+    save_config(cfg)
+    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
+
+    async def fake_structured(system, user, *, schema, max_tokens=400):
+        return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
+
+    monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
+    await run_agent("market_observer", trigger_type="manual")
+
+    opps = repo.list_opportunities()
+    markets = {o["market"] for o in opps}
+    assert "spot" in markets, f"spot opportunity missing: {markets}"
+    assert "usdt_futures" in markets, f"perp opportunity not emitted (guard not lifted?): {markets}"
+    assert all(o["symbol"] == "BTC/USDT" for o in opps)
 
 
 # --- paper_trader honors direction + confidence; records non-traded signals ---
@@ -165,6 +193,7 @@ async def test_observer_stores_canonical_format_symbol(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
     cfg.market_data.observed_xstocks = []
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}  # one symbol → one opp
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
@@ -192,6 +221,7 @@ async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
     cfg.market_data.observed_xstocks = []
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}  # one symbol → one opp
     cfg.agent.permission_mode = "Paper"
     cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
