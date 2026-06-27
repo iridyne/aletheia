@@ -375,3 +375,35 @@ def test_exchange_set_leverage_wiring():
     for mod in (bgb, okxb, bnb):
         src = inspect.getsource(mod.execute_live_order)
         assert "leverage=leverage" in src, mod.__name__
+
+
+@spec_claim(
+    SpecClaim("FL-S17", "futures_leverage", "§17 strategy market affinity", "L2b",
+              "StrategyRecord carries market_type_affinity; the paper ranker skips a "
+              "strategy whose affinity contradicts the opportunity's market (a spot-only "
+              "strategy must not take a perp opportunity)"),
+)
+def test_strategy_market_type_affinity_filters_ranker():
+    import json as _json
+    from aletheia.storage.models import StrategyRecord, Opportunity, MarketSnapshot
+    from aletheia.storage import repositories as repo
+
+    assert "market_type_affinity" in StrategyRecord.model_fields
+
+    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="usdt_futures", price=60000))
+    strat = StrategyRecord(
+        name="spot-only", state="paper_running", market_type_affinity="spot",
+        parameters=_json.dumps({"symbol": "BTC/USDT"}),
+    )
+    repo.insert_strategy(strat)
+    opp = Opportunity(
+        symbol="BTC/USDT", market="usdt_futures", direction_bias="long",
+        confidence="high", confidence_score=80, source_agent="market_observer",
+        linked_strategy_id=strat.id,
+    )
+    repo.insert_opportunity(opp)
+
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+    cands = [c for c in build_paper_candidates(limit=50) if c["symbol"] == "BTC/USDT"]
+    assert cands, "a candidate row should be produced (recorded as skipped)"
+    assert any("market_type_mismatch" in (c.get("skip_reason") or "") for c in cands), cands

@@ -255,6 +255,10 @@ class StrategyRecord(BaseModel):
     paper_paused_at: str | None = None
     direction_affinity: str = "both"
     applicable_regimes: str = "all"
+    # Which market a strategy is designed for: "spot" | "usdt_futures" | "both".
+    # The paper ranker won't match a spot-only strategy to a perp opportunity (or
+    # vice versa) now that the observer emits both (Round 2 perp enablement).
+    market_type_affinity: str = "both"
     strategy_type: str = "scanner"
     execution_venue: str | None = None
     created_at: str = Field(default_factory=_utcnow)

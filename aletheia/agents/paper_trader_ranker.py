@@ -214,6 +214,18 @@ def _evaluate_candidate(
                 universe_member=universe_member,
             )
 
+        # Market-type affinity (Round 2 perp enablement): a spot-only strategy must
+        # not take a perp opportunity, nor a futures-only strategy a spot one. "both"
+        # (default) matches either. opp.market is "spot" | "usdt_futures".
+        mta = (strategy.get("market_type_affinity") or "both").lower()
+        opp_market = (opp.get("market") or "spot").lower()
+        if mta not in ("both", "") and mta != opp_market:
+            return _make_candidate(
+                opp, skip_reason=f"market_type_mismatch:{mta}!={opp_market}",
+                direction=direction, strategy_id=strategy_id,
+                universe_member=universe_member,
+            )
+
     # Strategy evidence gate (backtest + paper PnL)
     strategy_evidence = None
     if strategy:

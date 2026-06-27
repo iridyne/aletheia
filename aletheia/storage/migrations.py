@@ -1443,6 +1443,8 @@ _ADDITIVE_COLUMNS = [
     ("liquidation_price", "positions", "REAL"),
     # Causal chain: opportunity that opened this position (risk #16 sector check)
     ("opportunity_id", "positions", "TEXT"),
+    # Strategy market affinity: spot | usdt_futures | both (Round 2 perp enablement)
+    ("market_type_affinity", "strategy_records", "TEXT"),
     # Derivatives state stamped on perp opportunities (Round 2)
     ("funding_rate", "opportunities", "REAL"),
     ("open_interest", "opportunities", "REAL"),
