@@ -204,7 +204,10 @@ async def binance_test_connection(req: BinanceTestRequest = BinanceTestRequest()
             return {"connected": False, "error": "credentials_not_configured"}
         if "timeout" in err_msg.lower():
             return {"connected": False, "error": "connection_timeout"}
-        return {"connected": False, "error": err_msg[:200]}
+        # error-leak 2.4: never echo raw str(e) — a CCXT/exchange error can carry the
+        # request (incl. candidate api_key/secret) or internal URLs. The categorised
+        # cases above cover the actionable ones; fall back to the exception class name.
+        return {"connected": False, "error": type(e).__name__}
 
 
 # Legacy endpoint
@@ -241,7 +244,10 @@ async def binance_test_candidate(req: BinanceCandidateRequest):
         err_msg = str(e)
         if "timeout" in err_msg.lower():
             return {"connected": False, "error": "connection_timeout"}
-        return {"connected": False, "error": err_msg[:200]}
+        # error-leak 2.4: never echo raw str(e) — a CCXT/exchange error can carry the
+        # request (incl. candidate api_key/secret) or internal URLs. The categorised
+        # cases above cover the actionable ones; fall back to the exception class name.
+        return {"connected": False, "error": type(e).__name__}
 
 
 # ─── OKX credentials ───
@@ -320,7 +326,10 @@ async def okx_test_connection(req: OkxTestRequest = OkxTestRequest()):
             return {"connected": False, "error": "credentials_not_configured"}
         if "timeout" in err_msg.lower():
             return {"connected": False, "error": "connection_timeout"}
-        return {"connected": False, "error": err_msg[:200]}
+        # error-leak 2.4: never echo raw str(e) — a CCXT/exchange error can carry the
+        # request (incl. candidate api_key/secret) or internal URLs. The categorised
+        # cases above cover the actionable ones; fall back to the exception class name.
+        return {"connected": False, "error": type(e).__name__}
 
 
 class OkxCandidateRequest(BaseModel):
@@ -354,7 +363,10 @@ async def okx_test_candidate(req: OkxCandidateRequest):
         err_msg = str(e)
         if "timeout" in err_msg.lower():
             return {"connected": False, "error": "connection_timeout"}
-        return {"connected": False, "error": err_msg[:200]}
+        # error-leak 2.4: never echo raw str(e) — a CCXT/exchange error can carry the
+        # request (incl. candidate api_key/secret) or internal URLs. The categorised
+        # cases above cover the actionable ones; fall back to the exception class name.
+        return {"connected": False, "error": type(e).__name__}
 
 
 @router.get("/uta/state")

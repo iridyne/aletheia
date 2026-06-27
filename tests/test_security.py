@@ -138,3 +138,52 @@ async def test_live_unlock_requires_confirm(client):
     c, _ = client
     resp = await c.post("/api/settings/live-unlock", json={"confirm": False})
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# error-leak 2.4: exchange test endpoints must not echo raw str(e) (which can
+# carry the candidate api_key/secret or internal request detail).
+# ---------------------------------------------------------------------------
+
+
+async def test_okx_test_connection_does_not_leak_exception_string(monkeypatch):
+    """A failing OKX test-connection returns the exception CLASS name, never the
+    raw message (which CCXT can populate with the request body / credentials)."""
+    import aletheia.exchanges.okx.client as okx_mod
+    from aletheia.server.routes.bitget import okx_test_connection, OkxTestRequest
+
+    SECRET = "okx-secret-DEADBEEF-should-not-leak"
+
+    class _FakeOKX:
+        def __init__(self, mode):
+            pass
+        async def fetch_time(self):
+            raise RuntimeError(f"OKX auth failed apiKey=KEY123 secret={SECRET}")
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(okx_mod, "OKXClient", _FakeOKX)
+    result = await okx_test_connection(OkxTestRequest(mode="demo"))
+    assert result["connected"] is False
+    assert SECRET not in str(result), f"secret leaked in response: {result}"
+    assert result["error"] == "RuntimeError"  # class name only
+
+
+async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch):
+    """A failing Binance candidate test returns the class name, not the raw error
+    (which would echo the candidate api_key/secret submitted in the request)."""
+    import ccxt.async_support as ccxt
+    from aletheia.server.routes.bitget import binance_test_candidate, BinanceCandidateRequest
+
+    SECRET = "cand-secret-CAFEBABE-should-not-leak"
+
+    def _boom(*a, **k):
+        raise RuntimeError(f"binance error secret={SECRET}")
+
+    monkeypatch.setattr(ccxt, "binanceusdm", _boom)
+    result = await binance_test_candidate(
+        BinanceCandidateRequest(mode="testnet", api_key="KEY123", api_secret=SECRET)
+    )
+    assert result["connected"] is False
+    assert SECRET not in str(result), f"secret leaked in response: {result}"
+    assert result["error"] == "RuntimeError"
