@@ -78,6 +78,13 @@ class Opportunity(BaseModel):
     tp_hint: float | None = None
     regime_tag: str | None = None
     key_observations: str = ""
+    # Derivatives state at observation time (perp only; None for spot). Surfaced so a
+    # perp opportunity exposes the funding/OI that justified it and the PI can weigh
+    # funding drag when choosing spot vs perp. funding_rate is the per-interval rate
+    # (fraction), open_interest in USD, oi_delta_1h the 1h % change.
+    funding_rate: float | None = None
+    open_interest: float | None = None
+    oi_delta_1h: float | None = None
 
 
 class ShadowTrade(BaseModel):

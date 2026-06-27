@@ -321,3 +321,24 @@ def test_futures_context_injection():
     # The assessment prompt renders the futures section when the context is present.
     prompt = td._build_assessment_prompt({"layer1": {"futures": fut}, "layer2": {}, "layer3": {}})
     assert "Futures" in prompt or "Leverage limits" in prompt
+
+
+@spec_claim(
+    SpecClaim("FL-S15", "futures_leverage", "§15 opportunity carries derivatives", "L2a",
+              "Opportunity model carries funding_rate/open_interest/oi_delta_1h and "
+              "market_observer stamps them so perp opportunities expose their derivatives state"),
+)
+def test_opportunity_carries_derivatives_fields():
+    import inspect
+    from aletheia.storage.models import Opportunity
+
+    fields = Opportunity.model_fields
+    assert "funding_rate" in fields
+    assert "open_interest" in fields
+    assert "oi_delta_1h" in fields
+
+    # market_observer stamps the derivatives values it already reads onto the Opportunity.
+    import aletheia.agents.market_observer as mo
+    src = inspect.getsource(mo._analyze_symbol)
+    assert "funding_rate=" in src
+    assert "oi_delta_1h=" in src

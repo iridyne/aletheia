@@ -1421,6 +1421,10 @@ _ADDITIVE_COLUMNS = [
     # Futures: leverage + estimated liquidation price recorded at open (Round 2)
     ("leverage", "positions", "INTEGER"),
     ("liquidation_price", "positions", "REAL"),
+    # Derivatives state stamped on perp opportunities (Round 2)
+    ("funding_rate", "opportunities", "REAL"),
+    ("open_interest", "opportunities", "REAL"),
+    ("oi_delta_1h", "opportunities", "REAL"),
     # News collector dedup + full content + analysis
     ("dedup_key", "news_items", "TEXT"),
     ("content", "news_items", "TEXT"),

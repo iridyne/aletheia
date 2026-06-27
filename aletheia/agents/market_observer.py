@@ -109,6 +109,11 @@ async def _analyze_symbol(
     """
     from aletheia.trading.market_context import build_market_context
 
+    # Derivatives state for the Opportunity row (perp only; stays None for spot).
+    funding_rate_val: float | None = None
+    open_interest_val: float | None = None
+    oi_delta_val: float | None = None
+
     try:
         context, ctx_debug = await build_market_context(
             [symbol], market_type=market_type, provider=provider
@@ -128,6 +133,13 @@ async def _analyze_symbol(
             fr = repo.latest_funding_rate(symbol)
             oi = repo.latest_open_interest(symbol)
             macro_row = repo.latest_macro_snapshot()
+
+            # Capture derivatives state for the Opportunity row.
+            if fr:
+                funding_rate_val = fr.get("funding_rate")
+            if oi:
+                open_interest_val = oi.get("open_interest_usd")
+                oi_delta_val = oi.get("oi_change_1h_pct")
 
             tradability: dict = {}
             if ob:
@@ -287,6 +299,12 @@ async def _analyze_symbol(
         existing = find_open_opportunity_by_symbol_snapshot(symbol, universe_snapshot_id)
         if existing:
             updates: dict = {"thesis": thesis}
+            if funding_rate_val is not None:
+                updates["funding_rate"] = funding_rate_val
+            if open_interest_val is not None:
+                updates["open_interest"] = open_interest_val
+            if oi_delta_val is not None:
+                updates["oi_delta_1h"] = oi_delta_val
             if observations:
                 updates["key_observations"] = json.dumps(observations)
             if confidence_score is not None:
@@ -313,6 +331,9 @@ async def _analyze_symbol(
         universe_member_id=universe_member_id,
         scanner_family=scanner_family,
         key_observations=json.dumps(observations) if observations else "",
+        funding_rate=funding_rate_val,
+        open_interest=open_interest_val,
+        oi_delta_1h=oi_delta_val,
     )
     insert_opportunity(opp)
     try:
