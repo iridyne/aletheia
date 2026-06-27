@@ -74,7 +74,8 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Trading Mode',             tab: 'execution', alt: ['demo', 'live unlock', 'paper'] },
   { title: 'Paper Trading Parameters', tab: 'execution', alt: ['stop loss', 'take profit', 'hold time', 'confidence'] },
   { title: 'Capital Events',           tab: 'execution', alt: ['deposit', 'withdrawal', 'pnl baseline'] },
-  { title: 'Market Data Sources',      tab: 'execution', alt: ['ohlcv', 'data provider', 'override'] },
+  { title: 'Market Data Sources',      tab: 'execution', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
+  { title: 'Macro & Sentiment Signals',tab: 'execution', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro', 'coinglass'] },
   // Risk & Universe
   { title: 'Universe Board',           tab: 'risk', alt: ['scanner', 'tradable universe'] },
   { title: 'Strategy Factory',         tab: 'risk', alt: ['auto-strategy', 'designer'] },
@@ -858,6 +859,13 @@ function ExecutionTab({ status, settings, qc, onDirty }: any) {
           <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
         </Collapsible>
       </Section>
+
+      <Section
+        title="Macro & Sentiment Signals"
+        description="Whole-market context fed into the LLM enriched_context: Fear & Greed Index (Alternative.me) and CoinGecko top movers. All free, no API key required."
+      >
+        <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
+      </Section>
     </div>
   )
 }
@@ -934,6 +942,8 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
   const [fallback, setFallback] = useState(md.ccxt_fallback || 'bybit')
   const [cacheTtl, setCacheTtl] = useState(md.ohlcv_cache_ttl_min ?? 10)
   const [yfinance, setYfinance] = useState(!!md.enable_yfinance_macro)
+  const [longShortRatio, setLongShortRatio] = useState(md.enable_long_short_ratio ?? true)
+  const [historyHours, setHistoryHours] = useState(md.derivatives_history_hours ?? 24)
   const [stocks, setStocks] = useState(listToCsv(md.observed_stocks))
   const [xstocks, setXstocks] = useState(listToCsv(md.observed_xstocks))
   const [predMarkets, setPredMarkets] = useState(listToCsv(md.observed_prediction_markets))
@@ -944,6 +954,8 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
     setFallback(md.ccxt_fallback || 'bybit')
     setCacheTtl(md.ohlcv_cache_ttl_min ?? 10)
     setYfinance(!!md.enable_yfinance_macro)
+    setLongShortRatio(md.enable_long_short_ratio ?? true)
+    setHistoryHours(md.derivatives_history_hours ?? 24)
     setStocks(listToCsv(md.observed_stocks))
     setXstocks(listToCsv(md.observed_xstocks))
     setPredMarkets(listToCsv(md.observed_prediction_markets))
@@ -955,6 +967,8 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
       ccxt_fallback: fallback,
       ohlcv_cache_ttl_min: cacheTtl,
       enable_yfinance_macro: yfinance,
+      enable_long_short_ratio: longShortRatio,
+      derivatives_history_hours: historyHours,
       observed_stocks: parseCsvList(stocks),
       observed_xstocks: parseCsvList(xstocks),
       observed_prediction_markets: parseCsvList(predMarkets),
@@ -967,6 +981,8 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
     || fallback !== (md.ccxt_fallback || 'bybit')
     || cacheTtl !== (md.ohlcv_cache_ttl_min ?? 10)
     || yfinance !== !!md.enable_yfinance_macro
+    || longShortRatio !== (md.enable_long_short_ratio ?? true)
+    || historyHours !== (md.derivatives_history_hours ?? 24)
     || stocks !== listToCsv(md.observed_stocks)
     || xstocks !== listToCsv(md.observed_xstocks)
     || predMarkets !== listToCsv(md.observed_prediction_markets)
@@ -994,6 +1010,15 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
       <Row label="Yahoo Finance macro" hint="Enable macro indicator collection (DXY, VIX, S&P 500) via yfinance. Requires network access to Yahoo.">
         <Toggle checked={yfinance} label="" onChange={v => { setYfinance(v); setMsg(null) }} />
       </Row>
+      <Row label="Long/Short ratio" hint="Pull Binance Futures globalLongShortAccountRatio per observed symbol every 2 min. Filled into open_interest_snapshots.long_short_ratio and folded into crowding_score. USDT-margined linear perps only.">
+        <Toggle checked={longShortRatio} label="" onChange={v => { setLongShortRatio(v); setMsg(null) }} />
+      </Row>
+      <Row label="Derivatives backfill" hint="Backfill funding/OI history on startup if the local window is sparse (idempotent — re-running with ≥3 rows in window is a no-op). 0 disables. Bitget OI history is not supported by CCXT; the path silently skips that exchange.">
+        <input type="number" min={0} max={168} value={historyHours}
+          onChange={e => { setHistoryHours(Math.max(0, Math.min(168, parseInt(e.target.value) || 0))); setMsg(null) }}
+          style={{ width: '80px' }} />
+        <span className="hint">hours (0 = off)</span>
+      </Row>
       <Row label="Observed stocks" hint="Yahoo Finance tickers for macro correlation. Comma-separated (e.g. SPY, QQQ, NVDA).">
         <input value={stocks} placeholder="SPY, QQQ, NVDA, AAPL"
           onChange={e => { setStocks(e.target.value); setMsg(null) }}
@@ -1013,6 +1038,95 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
         <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
           <button onClick={() => mut.mutate()} disabled={mut.isPending}>
             {mut.isPending ? 'Saving…' : 'Save market data config'}
+          </button>
+        </div>
+      )}
+      <SaveMsg msg={msg} />
+    </>
+  )
+}
+
+function MacroSignalsCard({ settings, qc, onDirty }: any) {
+  const md = settings?.market_data || {}
+
+  const [fearGreed, setFearGreed] = useState(md.enable_fear_greed ?? true)
+  const [cgTop, setCgTop] = useState(md.enable_coingecko_top ?? true)
+  const [cgTopN, setCgTopN] = useState(md.coingecko_top_n ?? 100)
+  const [cgKeyInput, setCgKeyInput] = useState('')
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  // CoinGlass status (configured + source + last4) — never shows the key value.
+  const cgStatusQ = useQuery({
+    queryKey: ['coinglass-status'],
+    queryFn: () => api.getCoinGlassStatus(),
+  })
+
+  useEffect(() => {
+    setFearGreed(md.enable_fear_greed ?? true)
+    setCgTop(md.enable_coingecko_top ?? true)
+    setCgTopN(md.coingecko_top_n ?? 100)
+  }, [settings])
+
+  const mut = useMutation({
+    mutationFn: () => api.updateMarketDataConfig({
+      enable_fear_greed: fearGreed,
+      enable_coingecko_top: cgTop,
+      coingecko_top_n: cgTopN,
+    }),
+    onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const cgKeyMut = useMutation({
+    mutationFn: () => api.setCoinGlassKey(cgKeyInput.trim()),
+    onSuccess: () => {
+      setMsg({ ok: true, text: '✓ CoinGlass key saved to keyring' })
+      setCgKeyInput('')
+      qc.invalidateQueries({ queryKey: ['coinglass-status'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const dirty = fearGreed !== (md.enable_fear_greed ?? true)
+    || cgTop !== (md.enable_coingecko_top ?? true)
+    || cgTopN !== (md.coingecko_top_n ?? 100)
+
+  useEffect(() => { onDirty?.('macro-signals', dirty) }, [dirty])
+
+  return (
+    <>
+      <Row label="Fear & Greed Index" hint="Pull Alternative.me's crypto fear/greed index (single 0-100 value, updated daily). No API key. Surfaces in the macro block of enriched_context fed to the LLM.">
+        <Toggle checked={fearGreed} label="" onChange={v => { setFearGreed(v); setMsg(null) }} />
+      </Row>
+      <Row label="CoinGecko top markets" hint="Pull top-N coins by market cap every ~10 min. Builds a 'Top Gainers / Top Losers' string folded into the macro block. No API key.">
+        <Toggle checked={cgTop} label="" onChange={v => { setCgTop(v); setMsg(null) }} />
+      </Row>
+      <Row label="Top-N count" hint="How many coins to pull per tick (10-250). Higher = broader universe context; CoinGecko free tier caps at 30 req/min.">
+        <input type="number" min={10} max={250} value={cgTopN}
+          onChange={e => { setCgTopN(Math.max(10, Math.min(250, parseInt(e.target.value) || 10))); setMsg(null) }}
+          style={{ width: '80px' }} />
+        <span className="hint">coins</span>
+      </Row>
+      {dirty && (
+        <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
+          <button onClick={() => mut.mutate()} disabled={mut.isPending}>
+            {mut.isPending ? 'Saving…' : 'Save macro signals config'}
+          </button>
+        </div>
+      )}
+      <Row label="CoinGlass API key" hint="Optional — multi-exchange OI aggregation + liquidation map history. Stored encrypted via keyring (preferred) or .env fallback. Status below shows the active source and last 4 chars only; the full key is never displayed or returned.">
+        <input type="password" value={cgKeyInput} placeholder={
+          cgStatusQ.data?.configured
+            ? `Configured (${cgStatusQ.data.source}, …${cgStatusQ.data.last4 || '****'}) — paste to replace`
+            : 'paste CoinGlass API key'
+        }
+          onChange={e => { setCgKeyInput(e.target.value); setMsg(null) }}
+          className="mono w-full" />
+      </Row>
+      {cgKeyInput.trim().length > 0 && (
+        <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
+          <button onClick={() => cgKeyMut.mutate()} disabled={cgKeyMut.isPending}>
+            {cgKeyMut.isPending ? 'Saving…' : 'Save CoinGlass key'}
           </button>
         </div>
       )}

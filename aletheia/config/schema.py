@@ -100,6 +100,23 @@ class MarketDataConfig(BaseModel):
     ohlcv_cache_ttl_min: int = 10
     # Append macro (SPY/VIX/DXY/Gold) block to LLM market context prompt.
     enable_yfinance_macro: bool = False
+    # Round 2 macro signals (Step 1-4 zero-cost data integration).
+    # Binance Futures globalLongShortAccountRatio; populates
+    # OpenInterestSnapshot.long_short_ratio which compute_leverage_state already
+    # consumes into crowding_score (normalizer.py:73-77).
+    enable_long_short_ratio: bool = True
+    # Alternative.me Fear & Greed Index — single value 0-100 updated ~daily.
+    # Fills MacroSnapshot.fng_value + fng_classification; renders into the macro
+    # block of enriched_context. Failure is degraded (other macro fields preserved).
+    enable_fear_greed: bool = True
+    # CoinGecko top-N markets — universe-scale price/change snapshots every Phase B
+    # tick (~10 min). Builds a "Top Gainers / Top Losers" summary string folded
+    # into MacroSnapshot.top_movers_summary. No API key (public free tier).
+    enable_coingecko_top: bool = True
+    coingecko_top_n: int = 100  # CoinGecko hard ceiling is 250 per_page
+    # On startup / sparse-window detection, backfill derivatives history (funding +
+    # OI) up to this many hours so the LLM sees trend, not a single point. 0 = off.
+    derivatives_history_hours: int = 24
     # US equities to observe (Yahoo Finance tickers). stock_observer runs only
     # during US market hours (Mon–Fri 14:30–21:00 UTC). Empty = disabled.
     observed_stocks: list[str] = Field(default_factory=list)

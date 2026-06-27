@@ -22,6 +22,9 @@ logger = logging.getLogger("aletheia.data.collectors.macro")
 
 _COINGECKO_GLOBAL_URL = "https://api.coingecko.com/api/v3/global"
 _FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
+# Alternative.me Fear & Greed Index — single value 0-100, updated ~daily.
+# Public, no API key, no documented rate limit. Use limit=1 for the latest reading.
+_ALT_FNG_URL = "https://api.alternative.me/fng/"
 
 # FRED series IDs for our macro indicators
 _FRED_SERIES = {
@@ -80,6 +83,19 @@ class MacroCollector:
         # Risk regime heuristic
         risk_regime = _classify_risk_regime(vix, total_cap_change)
 
+        # Fear & Greed Index — Alt.me (Step 2). Failure here MUST NOT regress
+        # any other field per spec MS-C02.
+        fng_value: int | None = None
+        fng_classification: str | None = None
+        try:
+            from aletheia.config.loader import load_config
+            cfg = load_config()
+            if cfg.market_data.enable_fear_greed:
+                fng_value, fng_classification = await _fetch_fng()
+        except Exception as e:
+            errors.append(f"fng: {e}")
+            logger.debug("Alt.me F&G fetch failed (non-fatal): %s", e)
+
         snapshot = MacroSnapshot(
             btc_dominance=btc_dominance,
             total_market_cap_usd=total_cap,
@@ -89,10 +105,33 @@ class MacroCollector:
             dxy_close=dxy,
             nasdaq_close=nasdaq,
             risk_regime=risk_regime,
+            fng_value=fng_value,
+            fng_classification=fng_classification,
             observed_at=now,
         )
 
         return {"snapshot": snapshot, "errors": errors}
+
+
+# ---------------------------------------------------------------------------
+# Alternative.me Fear & Greed
+# ---------------------------------------------------------------------------
+
+async def _fetch_fng() -> tuple[int | None, str | None]:
+    """Return (value, classification). Returns (None, None) on failure."""
+    async with httpx_client(timeout=8) as client:
+        resp = await client.get(_ALT_FNG_URL, params={"limit": 1, "format": "json"})
+        resp.raise_for_status()
+        items = resp.json().get("data", [])
+        if not items:
+            return None, None
+        row = items[0]
+        try:
+            value = int(row.get("value"))
+        except (TypeError, ValueError):
+            value = None
+        classification = row.get("value_classification") or None
+        return value, classification
 
 
 # ---------------------------------------------------------------------------

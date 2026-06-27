@@ -88,6 +88,10 @@ class MacroSnapshot(BaseModel):
     dxy_close: float | None = None
     nasdaq_close: float | None = None
     risk_regime: str = "neutral"  # risk_on / neutral / risk_off
+    # Round 2 macro signals (Step 2 Fear & Greed + Step 3 CoinGecko top movers).
+    fng_value: int | None = None  # 0-100 Alt.me index
+    fng_classification: str | None = None  # "Extreme Fear" / "Fear" / "Neutral" / "Greed" / "Extreme Greed"
+    top_movers_summary: str | None = None  # short pre-formatted "Top Gainers: ... | Top Losers: ..."
     observed_at: str = ""
 
 

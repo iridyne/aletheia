@@ -45,6 +45,11 @@ def _import_all_specs():
         spec_pipeline_profit_loop,
         spec_pipeline_stop_propagation,
         spec_pipeline_entry_enrichment,
+        # Round 2 macro signals (zero-cost data integration; LSR/F&G/CoinGecko Top-N/
+        # history backfill/CoinGlass). All MS-* and CG-* claims attach to
+        # data_layer_contract (reused — not a new trust boundary).
+        spec_macro_signals,
+        spec_coinglass,
     )
 
 

@@ -1080,6 +1080,7 @@ def _run_cleanup():
             "funding_rate_snapshots": repo.prune_funding_rate_snapshots(30),
             "open_interest_snapshots": repo.prune_open_interest_snapshots(30),
             "macro_snapshots": repo.prune_macro_snapshots(90),
+            "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(14),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
@@ -1493,13 +1494,35 @@ async def _async_data_collectors(cfg, tick: int) -> None:
     if liq_count:
         logger.info("liquidations persisted: %d", liq_count)
 
-    # --- Phase B: macro + volume scanner (every 5th tick = ~10 min) ---
+    # --- Phase B: macro + volume scanner + CoinGecko top (every 5th tick = ~10 min) ---
     if tick % 5 == 1:
+        # CoinGecko top-N runs BEFORE macro persist so its movers_summary can be
+        # folded into the same MacroSnapshot row (single insert, no UPDATE chase).
+        cg_movers_summary: str | None = None
+        try:
+            from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+            cg_top_n = getattr(cfg.market_data, "coingecko_top_n", 100)
+            if getattr(cfg.market_data, "enable_coingecko_top", True):
+                cg = CoinGeckoTopCollector()
+                cg_result = await cg.collect(top_n=cg_top_n)
+                cg_rows = cg_result.get("rows", [])
+                if cg_rows:
+                    try:
+                        repo.insert_coingecko_top_rows(cg_rows)
+                    except Exception as e:
+                        logger.debug("coingecko_top persist failed: %s", e)
+                cg_movers_summary = cg_result.get("movers_summary")
+        except Exception as e:
+            logger.debug("coingecko_top collection failed: %s", e)
+
         macro_coll = MacroCollector()
         macro_result = await macro_coll.collect(symbols)
         snap = macro_result.get("snapshot")
         if snap:
             try:
+                # Fold CG top movers into the same MacroSnapshot row.
+                if cg_movers_summary:
+                    snap.top_movers_summary = cg_movers_summary
                 repo.insert_macro_snapshot(snap.model_dump())
             except Exception as e:
                 logger.debug("macro persist failed: %s", e)

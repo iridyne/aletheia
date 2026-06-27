@@ -91,8 +91,8 @@ def render_enriched_context_md(
 
     # --- Derivatives ---
     if leverage:
-        rows = ["| Symbol | Funding/8h | Funding Ann. | OI USD | OI Δ1h% | Crowding |",
-                "|--------|-----------|-------------|--------|---------|---------|"]
+        rows = ["| Symbol | Funding/8h | Funding Ann. | OI USD | OI Δ1h% | LSR | Crowding |",
+                "|--------|-----------|-------------|--------|---------|-----|---------|"]
         for sym in symbols:
             lv = leverage.get(sym)
             if lv is None:
@@ -101,8 +101,9 @@ def render_enriched_context_md(
             fr_ann = f"{lv.funding_annualized * 100:.1f}%" if lv.funding_annualized is not None else "n/a"
             oi = f"${lv.open_interest_usd:,.0f}" if lv.open_interest_usd else "n/a"
             oi_d = f"{lv.oi_delta_1h_pct:+.1f}%" if lv.oi_delta_1h_pct is not None else "n/a"
+            lsr = f"{lv.long_short_ratio:.2f}" if lv.long_short_ratio is not None else "n/a"
             rows.append(
-                f"| {sym} | {fr} | {fr_ann} | {oi} | {oi_d} | {lv.crowding_score:.0f}/100 |"
+                f"| {sym} | {fr} | {fr_ann} | {oi} | {oi_d} | {lsr} | {lv.crowding_score:.0f}/100 |"
             )
         sections.append("### Derivatives state\n" + "\n".join(rows))
 
@@ -127,6 +128,12 @@ def render_enriched_context_md(
             lines.append(f"Nasdaq: {macro.nasdaq_close:,.0f}")
         if macro.dxy_close is not None:
             lines.append(f"DXY: {macro.dxy_close:.2f}")
+        # Round 2 — Step 2 (F&G) and Step 3 (CoinGecko top movers).
+        if macro.fng_value is not None:
+            cls = f" ({macro.fng_classification})" if macro.fng_classification else ""
+            lines.append(f"Fear & Greed: {macro.fng_value}{cls}")
+        if macro.top_movers_summary:
+            lines.append(f"24h movers: {macro.top_movers_summary}")
         sections.append("### Macro context\n" + "  \n".join(lines))
 
     return "\n\n".join(sections)

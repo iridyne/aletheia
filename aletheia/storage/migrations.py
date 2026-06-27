@@ -1172,6 +1172,26 @@ CREATE TABLE IF NOT EXISTS macro_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_macro_ts
     ON macro_snapshots (observed_at DESC);
+
+-- Round 2 — Step 3: CoinGecko top-N markets (no API key, ~10 min cadence).
+-- Single-batch atomicity: callers must read via latest_coingecko_top() which
+-- pins observed_at to MAX() first, otherwise a 50-row read could mix batches.
+CREATE TABLE IF NOT EXISTS coingecko_top_snapshots (
+    id TEXT PRIMARY KEY,
+    coin_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    name TEXT,
+    price_usd REAL,
+    market_cap_usd REAL,
+    market_cap_rank INTEGER,
+    volume_24h_usd REAL,
+    price_change_1h_pct REAL,
+    price_change_24h_pct REAL,
+    price_change_7d_pct REAL,
+    observed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coingecko_top_obs
+    ON coingecko_top_snapshots (observed_at DESC, market_cap_rank ASC);
 """
 
 _PREDICTION_OBSERVER_RUNS_DDL = """
@@ -1432,6 +1452,11 @@ _ADDITIVE_COLUMNS = [
     ("content", "news_items", "TEXT"),
     ("impact_summary", "news_items", "TEXT"),
     ("analyzed_at", "news_items", "TEXT"),
+    # Round 2 macro signals (Step 2 + Step 3): Fear & Greed + CoinGecko top movers.
+    # All nullable — old rows untouched, new rows fill when their collectors fire.
+    ("fng_value", "macro_snapshots", "INTEGER"),
+    ("fng_classification", "macro_snapshots", "TEXT"),
+    ("top_movers_summary", "macro_snapshots", "TEXT"),
 ]
 
 

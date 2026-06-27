@@ -1610,6 +1610,75 @@ def latest_macro_snapshot() -> dict | None:
     return rows[0] if rows else None
 
 
+# ---------------------------------------------------------------------------
+# Round 2 — Step 3: CoinGecko Top-N
+# Bulk insert uses canonical BEGIN/COMMIT (mirrors insert_serenity_claims_bulk).
+# DO NOT replace with per-row _insert() — sqlite.py opens connections with
+# isolation_level=None (autocommit), so a per-row loop becomes an N-commit storm.
+# ---------------------------------------------------------------------------
+
+def insert_coingecko_top_rows(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    from aletheia.storage.models import new_id
+    db = get_db()
+    already_in_tx = db.in_transaction
+    if not already_in_tx:
+        db.execute("BEGIN")
+    try:
+        n = 0
+        for row in rows:
+            if "id" not in row:
+                row["id"] = new_id()
+            cols = ", ".join(row.keys())
+            placeholders = ", ".join(["?"] * len(row))
+            db.execute(
+                f"INSERT INTO coingecko_top_snapshots ({cols}) VALUES ({placeholders})",
+                list(row.values()),
+            )
+            n += 1
+        if not already_in_tx:
+            db.commit()
+        return n
+    except Exception:
+        if not already_in_tx:
+            db.rollback()
+        raise
+
+
+def latest_coingecko_top(top_n: int = 50) -> list[dict]:
+    """Return the most recent batch's top_n rows, all sharing one observed_at.
+
+    Two-step read pins to MAX(observed_at) first — otherwise a top_n=50 read
+    could mix two adjacent batches if 100 rows landed in one tick (per spec MS-C04).
+    """
+    db = get_db()
+    latest_row = db.execute(
+        "SELECT MAX(observed_at) AS m FROM coingecko_top_snapshots"
+    ).fetchone()
+    if not latest_row or not latest_row["m"]:
+        return []
+    return _select_all(
+        "coingecko_top_snapshots",
+        where="observed_at = ?",
+        params=(latest_row["m"],),
+        order="market_cap_rank ASC",
+        limit=top_n,
+    )
+
+
+def prune_coingecko_top_snapshots(days: int = 14) -> int:
+    """~14k rows/day * 14d default ≈ 200k row ceiling; canonical was_in_tx pattern."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM coingecko_top_snapshots WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
 def prune_orderbook_snapshots(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()

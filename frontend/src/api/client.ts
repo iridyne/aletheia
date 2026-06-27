@@ -682,7 +682,20 @@ export const api = {
     ohlcv_cache_ttl_min: number; enable_yfinance_macro: boolean;
     observed_stocks: string[]; observed_xstocks: string[];
     observed_prediction_markets: string[];
+    // Round 2 macro signals
+    enable_long_short_ratio: boolean;
+    enable_fear_greed: boolean;
+    enable_coingecko_top: boolean;
+    coingecko_top_n: number;
+    derivatives_history_hours: number;
   }>) => post<{ updated: Record<string, any>; market_data: Record<string, any> }>('/settings/market-data', body),
+
+  // CoinGlass API key (Step 5 second batch). Status returns source+last4 only —
+  // the key value is never round-tripped.
+  getCoinGlassStatus: () =>
+    fetchJson<{ configured: boolean; last4: string | null; source: 'keyring' | 'env' | 'none' }>('/coinglass/credentials-status'),
+  setCoinGlassKey: (api_key: string) =>
+    post<{ configured: boolean; last4: string | null; source: string }>('/settings/coinglass-credentials', { api_key }),
 
   // Historical data config
   updateHistoricalDataConfig: (body: Partial<{

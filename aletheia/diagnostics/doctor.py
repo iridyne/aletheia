@@ -27,6 +27,7 @@ never touches trading state — those stay human decisions per the safety rules.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
@@ -244,9 +245,25 @@ def _probe_config_gates(report: Report) -> None:
 
 
 def _probe_credentials(report: Report) -> None:
-    from aletheia.config.secrets import get_secret
+    from aletheia.config.secrets import get_secret, redact
     from aletheia.config.loader import load_config
     cfg = load_config()
+
+    # CoinGlass — Round 2 Step 5 second batch.
+    # Two-path read: keyring preferred, .env fallback. Show source + redacted suffix.
+    cg_keyring = get_secret("coinglass.api_key")
+    cg_env = os.environ.get("COINGLASS_API_KEY") if not cg_keyring else None
+    if cg_keyring:
+        report.add("creds.coinglass", "ok",
+                   f"coinglass API key set via keyring ({redact(cg_keyring)})")
+    elif cg_env:
+        report.add("creds.coinglass", "ok",
+                   f"coinglass API key set via .env ({redact(cg_env)}); "
+                   "consider migrating to keyring via Settings → Macro & Sentiment Signals")
+    else:
+        report.add("creds.coinglass", "info",
+                   "no coinglass API key — CoinGlassCollector will skip silently",
+                   "Settings → Macro & Sentiment Signals (or `aletheia secrets set coinglass.api_key`)")
 
     demo_keys = ["bitget.demo.api_key", "bitget.demo.api_secret", "bitget.demo.passphrase"]
     demo_set = [k for k in demo_keys if get_secret(k)]

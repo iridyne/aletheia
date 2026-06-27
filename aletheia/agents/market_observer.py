@@ -159,6 +159,7 @@ async def _analyze_symbol(
                     funding_annualized=fr["funding_rate_annualized"] if fr else None,
                     open_interest_usd=oi["open_interest_usd"] if oi else None,
                     oi_delta_1h_pct=oi["oi_change_1h_pct"] if oi else None,
+                    long_short_ratio=oi.get("long_short_ratio") if oi else None,
                 )
                 leverage[symbol] = lv
 
