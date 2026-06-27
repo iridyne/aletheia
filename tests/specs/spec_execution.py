@@ -513,3 +513,55 @@ def test_fill_model_defaults_fee_source_estimated():
 
     f = Fill(order_id="o1", fill_price=100.0, fill_quantity=1.0, fee=0.06)
     assert f.fee_source == "estimated"
+
+
+# ---------------------------------------------------------------------------
+# CR-EX-03 — opportunity_id threaded onto the Position (causal chain / §16 sector)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-S06", "execution_contract", "§16 causal chain", "L2a",
+        "Position carries opportunity_id; all four broker entry points accept it; "
+        "gateway threads proposal.opportunity_id into execution",
+    ),
+)
+def test_opportunity_id_threaded_through_execution():
+    import inspect
+    from aletheia.storage.models import Position
+
+    assert "opportunity_id" in Position.model_fields
+
+    from aletheia.execution.paper_broker import execute_paper_order
+    from aletheia.execution.bitget_broker import execute_live_order as bitget_exec
+    from aletheia.execution.okx_broker import execute_live_order as okx_exec
+    from aletheia.execution.binance_broker import execute_live_order as binance_exec
+    for fn in (execute_paper_order, bitget_exec, okx_exec, binance_exec):
+        assert "opportunity_id" in inspect.signature(fn).parameters, fn.__module__
+
+    import aletheia.execution.gateway as gw
+    src = inspect.getsource(gw._execute_proposal)
+    assert src.count("opportunity_id=proposal.opportunity_id") >= 1
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B09", "execution_contract", "§16 sector concentration", "L2b",
+        "execute_paper_order records opportunity_id on the opened Position so the "
+        "risk engine sector-concentration check (#16) can resolve scanner_family",
+    ),
+)
+def test_paper_open_records_opportunity_id(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.paper_broker import execute_paper_order
+    from aletheia.storage import repositories as repo
+
+    r = execute_paper_order(
+        proposal_id="po1", risk_decision_id="ro1",
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        order_type="market", quantity=0.001, price=60000.0,
+        execution_mode="paper_internal", opportunity_id="opp-123",
+    )
+    pos = repo._select_one("positions", r["position_id"])
+    assert pos["opportunity_id"] == "opp-123"

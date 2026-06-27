@@ -1421,6 +1421,8 @@ _ADDITIVE_COLUMNS = [
     # Futures: leverage + estimated liquidation price recorded at open (Round 2)
     ("leverage", "positions", "INTEGER"),
     ("liquidation_price", "positions", "REAL"),
+    # Causal chain: opportunity that opened this position (risk #16 sector check)
+    ("opportunity_id", "positions", "TEXT"),
     # Derivatives state stamped on perp opportunities (Round 2)
     ("funding_rate", "opportunities", "REAL"),
     ("open_interest", "opportunities", "REAL"),

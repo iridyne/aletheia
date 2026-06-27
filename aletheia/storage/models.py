@@ -203,6 +203,10 @@ class Position(BaseModel):
     # Nullable — older rows and positions opened before this field predate it.
     proposal_id: str | None = None
     order_id: str | None = None
+    # Which opportunity this position traces back to. Powers the risk engine's
+    # sector-concentration check (#16), which resolves scanner_family per open
+    # position via its opportunity_id — without it that check is silenced.
+    opportunity_id: str | None = None
     status: str = "open"
     stop_price: float | None = None
     take_profit_price: float | None = None

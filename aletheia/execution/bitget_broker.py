@@ -67,6 +67,7 @@ def execute_live_order(
     stop_price: float | None = None,
     take_profit_price: float | None = None,
     leverage: int | None = None,
+    opportunity_id: str | None = None,
 ) -> dict:
     """Place a real Bitget order (live or demo) and record order/fill/position locally.
 
@@ -160,8 +161,8 @@ def execute_live_order(
                     symbol=symbol, market_type=market_type, direction=direction,
                     quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
                     execution_mode=execution_mode, strategy_id=strategy_id,
-                    # Causal-chain back-link (trust §1.1): proposal/order that opened it.
-                    proposal_id=proposal_id, order_id=order.id,
+                    # Causal-chain back-link (trust §1.1): proposal/order/opportunity that opened it.
+                    proposal_id=proposal_id, order_id=order.id, opportunity_id=opportunity_id,
                     # Futures leverage + estimated liquidation (None for spot/1x).
                     leverage=leverage,
                     liquidation_price=liquidation_price_for(fill_price, direction, leverage, symbol),

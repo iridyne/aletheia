@@ -54,6 +54,7 @@ def execute_live_order(
     stop_price: float | None = None,
     take_profit_price: float | None = None,
     leverage: int | None = None,
+    opportunity_id: str | None = None,
 ) -> dict:
     """Place an order on Binance Futures (testnet or live) and record locally.
 
@@ -138,7 +139,7 @@ def execute_live_order(
                     symbol=symbol, market_type=market_type, direction=direction,
                     quantity=fill_qty, entry_price=fill_price, current_price=fill_price,
                     execution_mode=execution_mode, strategy_id=strategy_id,
-                    proposal_id=proposal_id, order_id=order.id,
+                    proposal_id=proposal_id, order_id=order.id, opportunity_id=opportunity_id,
                     # Futures leverage + estimated liquidation (None for spot/1x).
                     leverage=leverage,
                     liquidation_price=liquidation_price_for(fill_price, direction, leverage, symbol),

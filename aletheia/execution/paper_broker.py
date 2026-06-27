@@ -28,6 +28,7 @@ def execute_paper_order(
     strategy_id: str | None = None,
     stop_price: float | None = None,
     leverage: int | None = None,
+    opportunity_id: str | None = None,
 ) -> dict:
     """Execute a paper order: create order, fill, and position.
 
@@ -129,6 +130,7 @@ def execute_paper_order(
             strategy_id=strategy_id,
             proposal_id=proposal_id,
             order_id=order.id,
+            opportunity_id=opportunity_id,
             leverage=leverage,
             liquidation_price=_liq_price(fill_price, direction, leverage, symbol),
             stop_price=stop_price,
