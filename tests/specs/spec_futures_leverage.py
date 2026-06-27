@@ -407,3 +407,30 @@ def test_strategy_market_type_affinity_filters_ranker():
     cands = [c for c in build_paper_candidates(limit=50) if c["symbol"] == "BTC/USDT"]
     assert cands, "a candidate row should be produced (recorded as skipped)"
     assert any("market_type_mismatch" in (c.get("skip_reason") or "") for c in cands), cands
+
+
+@spec_claim(
+    SpecClaim("FL-S18", "futures_leverage", "§18 perp observed by default", "L2b",
+              "With usdt_futures enabled (default), observed_instruments_from_config emits "
+              "BOTH spot and perp instruments per observed symbol — perp observation needs "
+              "no explicit observed_instruments config (deferred §6 satisfied functionally)"),
+)
+def test_perp_observed_by_default_config():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading.instruments import observed_instruments_from_config
+
+    cfg = AletheiaConfig()
+    assert cfg.market_data.observed_instruments == []          # empty → legacy derivation
+    assert cfg.exchange.enabled_markets.get("usdt_futures") is True
+
+    insts = observed_instruments_from_config(cfg)
+    markets = {i.market_type for i in insts}
+    assert "spot" in markets
+    assert "perp" in markets, (
+        "usdt_futures enabled must yield perp instruments from observed_symbols — "
+        "no explicit observed_instruments perp entries needed (deferred §6 is moot; "
+        "hardcoding them would override observed_symbols/enabled_markets and reduce flexibility)"
+    )
+    # every observed symbol gets a perp counterpart
+    perp_syms = {i.symbol for i in insts if i.market_type == "perp"}
+    assert set(cfg.market_data.observed_symbols).issubset(perp_syms)
