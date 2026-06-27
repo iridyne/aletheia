@@ -4,6 +4,7 @@ from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     insert_order, update_order, insert_fill, insert_position, update_position, list_positions,
 )
+from aletheia.execution.position_enrichment import liquidation_price_for as _liq_price
 
 
 def _apply_slippage(price: float, direction: str, slippage_bps: float) -> float:
@@ -26,6 +27,7 @@ def execute_paper_order(
     execution_mode: str = "paper_internal",
     strategy_id: str | None = None,
     stop_price: float | None = None,
+    leverage: int | None = None,
 ) -> dict:
     """Execute a paper order: create order, fill, and position.
 
@@ -69,6 +71,11 @@ def execute_paper_order(
         new_qty = existing["quantity"] + quantity
         new_entry = (existing["entry_price"] * existing["quantity"] + fill_price * quantity) / new_qty
         update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": fill_price}
+        # Averaging in shifts the entry → the liquidation level moves too. Recompute
+        # it from the leverage already on the position (leverage itself is unchanged).
+        existing_lev = existing.get("leverage")
+        if existing_lev and existing_lev > 1:
+            update_kwargs["liquidation_price"] = _liq_price(new_entry, direction, existing_lev, symbol)
         if stop_price is not None:
             old_stop = existing.get("stop_price")
             if old_stop is not None:
@@ -122,6 +129,8 @@ def execute_paper_order(
             strategy_id=strategy_id,
             proposal_id=proposal_id,
             order_id=order.id,
+            leverage=leverage,
+            liquidation_price=_liq_price(fill_price, direction, leverage, symbol),
             stop_price=stop_price,
             take_profit_price=take_profit_price,
             btc_entry_price=btc_entry_price,

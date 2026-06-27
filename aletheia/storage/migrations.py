@@ -1418,6 +1418,9 @@ _ADDITIVE_COLUMNS = [
     ("last_market_signal_action", "positions", "TEXT"),
     ("last_market_signal_reason", "positions", "TEXT"),
     ("last_market_signal_at", "positions", "TEXT"),
+    # Futures: leverage + estimated liquidation price recorded at open (Round 2)
+    ("leverage", "positions", "INTEGER"),
+    ("liquidation_price", "positions", "REAL"),
     # News collector dedup + full content + analysis
     ("dedup_key", "news_items", "TEXT"),
     ("content", "news_items", "TEXT"),

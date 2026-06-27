@@ -186,6 +186,12 @@ class Position(BaseModel):
     realized_pnl: float = 0.0
     execution_mode: str
     strategy_id: str | None = None
+    # Futures: leverage used to open (None/1 = spot or 1x). liquidation_price is the
+    # estimated isolated-margin liquidation level computed at open (None for 1x/spot).
+    # Persisted so the account-leverage ratio check (#17), liquidation-buffer monitoring,
+    # and the dashboard read a real per-position leverage instead of assuming 1x.
+    leverage: int | None = None
+    liquidation_price: float | None = None
     # Causal-chain back-links (trust §1.1): which proposal/order opened this position.
     # Nullable — older rows and positions opened before this field predate it.
     proposal_id: str | None = None

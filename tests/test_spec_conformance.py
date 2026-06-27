@@ -31,6 +31,7 @@ def _import_all_specs():
         # (the SDD collection trap: spec_*.py do not match pytest python_files).
         spec_learning_pipeline,
         spec_strategy_pool,
+        spec_futures_leverage,
         # End-to-end pipeline specs (PL-* claims). Registered so the conformance
         # matrix reflects pipeline coverage; not added to REQUIRED_CONTRACTS since
         # they are behavioral/E2E (L2b) rather than structural (L2a) contracts.

@@ -155,3 +155,69 @@ def test_risk_engine_account_leverage_check():
 def test_risk_engine_liquidation_buffer():
     import aletheia.risk.engine as eng
     assert callable(eng._check_liquidation_buffer)
+
+
+# ---------------------------------------------------------------------------
+# L2a/L2b — Leverage persistence through execution (Round 2 futures enablement)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("FL-S10", "futures_leverage", "§10 leverage persisted on Position", "L2a",
+              "Position model carries leverage + liquidation_price; all four broker entry "
+              "points (paper/bitget/okx/binance) accept a leverage param; gateway threads "
+              "proposal.leverage into execution"),
+)
+def test_leverage_threaded_through_execution():
+    import inspect
+    from aletheia.storage.models import Position
+
+    # Position model carries the futures fields.
+    fields = Position.model_fields
+    assert "leverage" in fields
+    assert "liquidation_price" in fields
+
+    # All four broker entry points accept leverage (clone rule).
+    from aletheia.execution.paper_broker import execute_paper_order
+    from aletheia.execution.bitget_broker import execute_live_order as bitget_exec
+    from aletheia.execution.okx_broker import execute_live_order as okx_exec
+    from aletheia.execution.binance_broker import execute_live_order as binance_exec
+    for fn in (execute_paper_order, bitget_exec, okx_exec, binance_exec):
+        assert "leverage" in inspect.signature(fn).parameters, fn.__module__
+
+    # Gateway threads proposal.leverage into the paper + live execution calls.
+    import aletheia.execution.gateway as gw
+    src = inspect.getsource(gw._execute_proposal)
+    assert src.count("leverage=proposal.leverage") >= 1
+
+
+@spec_claim(
+    SpecClaim("FL-S11", "futures_leverage", "§11 paper open records leverage", "L2b",
+              "execute_paper_order with leverage>1 records leverage and a computed "
+              "liquidation_price on the opened Position; leverage=1 leaves liquidation_price None"),
+)
+def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
+    from aletheia.execution.paper_broker import execute_paper_order
+    from aletheia.storage import repositories as repo
+
+    # 5x long BTC @ 60000 → leverage persisted + liquidation_price ≈ entry*(1-1/5+0.004)
+    r5 = execute_paper_order(
+        proposal_id="pf1", risk_decision_id="rf1",
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        order_type="market", quantity=0.01, price=60000.0,
+        execution_mode="paper_internal", leverage=5,
+    )
+    pos5 = repo._select_one("positions", r5["position_id"])
+    assert pos5["leverage"] == 5
+    assert pos5["liquidation_price"] is not None
+    assert pos5["liquidation_price"] < 60000.0  # long liq below entry
+
+    # 1x spot → no liquidation price
+    r1 = execute_paper_order(
+        proposal_id="pf2", risk_decision_id="rf2",
+        symbol="ETH/USDT", market_type="spot", direction="long",
+        order_type="market", quantity=1.0, price=3000.0,
+        execution_mode="paper_internal", leverage=1,
+    )
+    pos1 = repo._select_one("positions", r1["position_id"])
+    assert pos1["liquidation_price"] is None

@@ -25,7 +25,7 @@ from datetime import datetime
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_bitget
 from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
-from aletheia.execution.position_enrichment import build_entry_enrichment
+from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
@@ -66,6 +66,7 @@ def execute_live_order(
     fee_rate: float = _LIVE_FEE_RATE,
     stop_price: float | None = None,
     take_profit_price: float | None = None,
+    leverage: int | None = None,
 ) -> dict:
     """Place a real Bitget order (live or demo) and record order/fill/position locally.
 
@@ -161,6 +162,9 @@ def execute_live_order(
                     execution_mode=execution_mode, strategy_id=strategy_id,
                     # Causal-chain back-link (trust §1.1): proposal/order that opened it.
                     proposal_id=proposal_id, order_id=order.id,
+                    # Futures leverage + estimated liquidation (None for spot/1x).
+                    leverage=leverage,
+                    liquidation_price=liquidation_price_for(fill_price, direction, leverage, symbol),
                     # Persist protective stop/TP so position_manager acts on the AI's
                     # intended levels, not just the default-% fallback (regression EC-stop).
                     stop_price=stop_price, take_profit_price=take_profit_price,

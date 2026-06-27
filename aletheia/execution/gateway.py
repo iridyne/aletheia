@@ -117,6 +117,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     execution_mode=allowed_mode,
                     strategy_id=proposal.strategy_id,
                     stop_price=proposal.stop_price,
+                    leverage=proposal.leverage,
                 )
                 update_trade_proposal(proposal.id, status="executed")
             write_audit({
@@ -165,6 +166,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     execution_mode=allowed_mode,
                     stop_price=proposal.stop_price,
                     take_profit_price=_tp,
+                    leverage=proposal.leverage,
                 )
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({
@@ -237,6 +239,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     execution_mode=allowed_mode,
                     stop_price=proposal.stop_price,
                     take_profit_price=_tp2,
+                    leverage=proposal.leverage,
                 )
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({
