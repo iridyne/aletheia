@@ -38,11 +38,18 @@
 **已完成 14 修复全部 import+spec 验证通过。全量回归:1700 passed / 4 failed / 1 skipped。**
 **本会话 14 修复零回归**(git stash 验证:stash 后 baseline 同样 4 failed → 这 4 个是 master pre-existing,非本会话引入)。
 
-### Pre-existing 测试失败 — 状态(2026-06-27 全量回归后)
+### Pre-existing 测试失败 — 状态(2026-06-27 多轮全量回归后)
 **已修 3/4**(commit 0eb7191 market_observer spot-only):test_entry_logic 3 个 → 全 passed。
-**全量回归实测:1702 passed / 2 failed / 1 skipped**,21 修复**零回归**。剩 2 failed 均非本批引入:
-- `test_update.py::test_apply_rolls_back_on_smoke_failure` — **flaky**(单独跑 passed;全量套件中 smoke 子进程 + event loop teardown 竞争 "cannot schedule new futures after shutdown")。测试基础设施问题,非代码 bug,需 conftest/子进程隔离修。
-- `test_universe_settings_ui.py::test_p3_pages_use_shared_primitives` — RiskControls.tsx 动态 inline style(见下,前端债)。
+**最新全量:1703 passed / 1 failed / 1 skipped。22 修复零回归。** 剩余:
+- `test_universe_settings_ui.py::test_p3_pages_use_shared_primitives` — **唯一稳定 failure**:
+  RiskControls.tsx 动态 `style={{width}}`(进度条)。设计系统债——应封装为 components/ui 的
+  shared Bar/Meter primitive(消除 page 内 inline style),需前端改 + npm build + commit static。
+  **留前端专注会话**(前端有并发会话改 StrategyLifecycle.tsx,避免冲突)。
+- `test_update.py::test_apply_rolls_back_on_smoke_failure` — **间歇 flaky**(多次全量中时 pass 时 fail;
+  D17-1 加 SelectorEventLoop policy 后这次 pass)。真根因 = apscheduler BackgroundScheduler 在测试进程
+  atexit 时线程池已 shutdown 仍 submit job("cannot schedule new futures after shutdown")——某 test
+  启动 scheduler 未 teardown(候选源 test_scheduler_timeouts/test_price_feed/test_paper_trader_ranker)。
+  需加 scheduler shutdown fixture。测试基础设施,非产品 bug。
 
 ### 原 Pre-existing 根因记录(供新窗口)
 1-3. `test_entry_logic.py` 3 失败(observer 1 symbol 写 2 条 opp) — **根因已定位(2026-06-27)**:
