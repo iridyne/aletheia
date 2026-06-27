@@ -641,11 +641,16 @@ def _probe_learning_retrieval(report: Report) -> None:
             if reviews > 0 and (ratio == float("inf") or ratio >= 20):
                 report.add(
                     "loop.retrieval_pool", "warn",
-                    f"retrieval pool flooded by reviews — {detail}",
-                    "ranker _lesson_penalty scores against hallucination-prone "
-                    "post_trade_review, not real cases. Root cause = R0 "
-                    "opportunity_id=None starving trade_case_study has_full_chain. "
-                    "Round 2 Fix L-Bug-C (LEARNING_LOOP_AUDIT_2026-06-26.md §R0/R1)")
+                    f"retrieval pool skewed to historical reviews — {detail}",
+                    "Stored-data debt only — this skew NO LONGER reaches AI decisions: "
+                    "ranker _lesson_penalty (B1) and the advisory path "
+                    "router._ITEM_TYPES_BY_ROLE (dbce73e) both now exclude "
+                    "post_trade_review; new reviews are medium_confidence (C1) so they "
+                    "never enter this high_confidence pool. Root cause R0 (opportunity_id "
+                    "starving trade_case_study has_full_chain) is fixed — the residual "
+                    "1.8k high-confidence reviews are Round-1 legacy that dilutes as "
+                    "Round 2 emits full-chain cases, or clear via one-time reclassification "
+                    "(LEARNING_LOOP_AUDIT_2026-06-26.md §R0/R1; L-Bug-C closed)")
             else:
                 report.add("loop.retrieval_pool", "ok", detail)
 
