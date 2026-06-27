@@ -57,7 +57,7 @@ async def test_status(client):
 async def test_pause_resume(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
 
-    async def fake_resume(*, actor: str, source: str, cause: str = "manual_resume"):
+    async def fake_resume(*, actor: str, source: str, cause: str = "manual_resume", max_retries=None):
         return {"allowed": True, "reason": None, "checked": 1, "results": []}
 
     monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
@@ -79,7 +79,7 @@ async def test_gateway_resume_blocks_when_llm_unavailable(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
     from aletheia.config.loader import load_config
 
-    async def fake_resume(*, actor: str, source: str, cause: str = "manual_resume"):
+    async def fake_resume(*, actor: str, source: str, cause: str = "manual_resume", max_retries=None):
         return {
             "allowed": False,
             "reason": "llm_unavailable",

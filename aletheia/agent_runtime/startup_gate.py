@@ -111,12 +111,16 @@ async def _probe_all_once(names: list[str]) -> dict:
     return {"any_usable": any_usable, "results": results, "checked": len(names)}
 
 
-async def probe_llm_providers_at_startup(cfg) -> dict:
+async def probe_llm_providers_at_startup(cfg, *, max_retries: int | None = None) -> dict:
     """Probe all enabled providers with a real inference call, retrying on failure.
 
     Retries up to `cfg.health.startup_gate_max_retries` times (default 3) with
     `cfg.health.startup_gate_retry_delay_sec` (default 15) between attempts.
     Returns as soon as any attempt finds a usable provider.
+
+    `max_retries` overrides the configured retry count for callers that must not
+    block for the full startup window — e.g. a MANUAL operator resume passes 1 so
+    the HTTP handler returns within a single probe (≤ timeout) instead of ~90 s.
 
     Returns:
         {
@@ -131,7 +135,8 @@ async def probe_llm_providers_at_startup(cfg) -> dict:
         logger.warning("LLM startup gate: no enabled providers configured")
         return {"any_usable": False, "results": [], "checked": 0, "attempts": 0}
 
-    max_retries = getattr(cfg.health, "startup_gate_max_retries", 3)
+    if max_retries is None:
+        max_retries = getattr(cfg.health, "startup_gate_max_retries", 3)
     retry_delay = getattr(cfg.health, "startup_gate_retry_delay_sec", 15)
 
     result: dict = {}
