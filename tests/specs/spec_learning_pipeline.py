@@ -249,3 +249,123 @@ def test_guard_candidates_reachable_by_promoter():
         "knowledge/guard_candidates/ → 0 promotions ever. "
         "See round2_week1_decision_chain_fixes.md Fix L-Bug-D"
     )
+
+
+# ---------------------------------------------------------------------------
+# LP-S07 — Attribution chain must hold at RUNTIME, not just in isolation
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S07", "learning_pipeline", "§Attribution runtime", "L2c",
+              "Decision-bearing pi_decisions rows written by the LIVE PI chain MUST "
+              "carry a real opportunity_id. The isolated specs LP-S05 (static) and "
+              "PL-PT-04 (single-cycle harness) are GREEN, yet production app.db is "
+              "~97% NULL on opportunity_id across every action — the attribution "
+              "chain is severed in the live path despite the passing unit specs",
+              status="missing"),
+)
+@pytest.mark.xfail(
+    reason="Runtime attribution chain still severed: production pi_decisions are "
+           "~97% NULL on opportunity_id across all actions (signal_pending 96.8%, "
+           "trade 99.7%, skip 99.9%, others 100%). LP-S05 + PL-PT-04 are GREEN, "
+           "which PROVES this is a test-vs-production divergence — the isolated "
+           "harness propagates the id but the live trading_decision.py path "
+           "(EXPERIMENT FREEZE clearance) does not. Flips GREEN only when the live "
+           "path is fixed AND the gateway is restarted. The owner-judgment item in "
+           "JUNK_DATA_FULL_SWEEP_2026-06-28.md / round2_week1_decision_chain_fixes.md.",
+    strict=False,
+)
+def test_runtime_pi_decisions_carry_opportunity_id():
+    """RED tripwire on the PRODUCTION DB (mirrors LP-S01's data/app.db assertion).
+
+    The unit specs verify the code path in isolation; this verifies the invariant
+    actually HOLDS in the live database — the only thing the learning loop cares
+    about when it tries to attribute trade outcomes back to the originating
+    opportunity. Skips on machines without a populated app.db (CI / fresh clone).
+    """
+    import pathlib
+
+    db = pathlib.Path(_project_root()) / "data" / "app.db"
+    if not db.exists():
+        pytest.skip("no production app.db on this machine")
+
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM pi_decisions "
+            "WHERE created_at > datetime('now','-2 days')"
+        ).fetchone()[0]
+        if total == 0:
+            pytest.skip("no recent pi_decisions to evaluate")
+        nulls = conn.execute(
+            "SELECT COUNT(*) FROM pi_decisions "
+            "WHERE created_at > datetime('now','-2 days') "
+            "AND (opportunity_id IS NULL OR opportunity_id = '')"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    null_pct = 100.0 * nulls / total
+    assert null_pct < 50.0, (
+        f"{null_pct:.1f}% of recent pi_decisions have NULL opportunity_id "
+        f"({nulls}/{total}) — attribution chain severed in the LIVE path. "
+        "LP-S05/PL-PT-04 are GREEN, so the bug is a test-vs-prod divergence in "
+        "trading_decision.py's live execution, not a missing field. "
+        "See round2_week1_decision_chain_fixes.md Fix L-Bug-C."
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-S08 — Synthetic/administrative closures must NOT enter the learning corpus
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S08", "learning_pipeline", "§Corpus integrity", "L2b",
+              "Administrative/synthetic closures (reconciled_gone, "
+              "demo_validation_cleanup) carry a fabricated exit price, not a genuine "
+              "strategy/risk outcome. The case-study builder MUST exclude them from "
+              "the learning corpus (trade_case_study + guard candidates), keying on "
+              "the close_reason VALUE so a reconciler close that recovered a REAL "
+              "exchange TPSL fill (stop_loss/take_profit) is still kept",
+              status="implemented"),
+)
+def test_synthetic_closures_excluded_from_corpus():
+    """GREEN: the fix lives in aletheia/analytics/trade_case_builder.py (NOT the
+    frozen decision chain — analytics is solo-editable). Verifies behaviourally that
+    a synthetic-closure row produces no case study while a genuine close still does,
+    and that the same filter guards auto-generated guard candidates.
+
+    Junk-data full sweep (Axis 2 — semantic toxicity), 2026-06-28:
+    docs/issues/JUNK_DATA_FULL_SWEEP_2026-06-28.md.
+    """
+    from unittest.mock import patch, MagicMock
+    from aletheia.analytics import trade_case_builder as tcb
+
+    def _row(position_id, close_reason, pnl_pct):
+        return {
+            "position_id": position_id, "symbol": "BTC/USDT", "direction": "long",
+            "market_type": "spot", "realized_pnl": pnl_pct, "realized_pnl_pct": pnl_pct,
+            "holding_hours": 5.0, "close_reason": close_reason, "scanner_family": "momentum",
+            "confidence": "high", "late_entry_penalty": 5, "crowding_risk": 1,
+            "risk_flags": [], "proposal_id": "p1", "opportunity_id": "o1",
+            "strategy_id": "s1", "entry_price": 100.0, "exit_price": 103.0,
+            "opened_at": "2026-06-27T10:00:00+00:00",
+        }
+
+    rows = [
+        _row("pos-gone", "reconciled_gone", -2.0),
+        _row("pos-demo", "demo_validation_cleanup", 1.5),
+        _row("pos-real", "take_profit", 3.0),
+    ]
+
+    with patch.object(tcb, "build_trade_attribution_rows", return_value=rows), \
+         patch.object(tcb, "_get_existing_case_position_ids", return_value=set()), \
+         patch.object(tcb, "create_trade_case_study", return_value=MagicMock(id="cs-real")) as mk:
+        result = tcb.build_case_studies(since_hours=9999)
+
+    # Only the genuine take_profit close becomes a case study.
+    assert len(result) == 1
+    assert result[0]["case_study_id"] == "cs-real"
+    assert mk.call_count == 1, "synthetic closures must not reach create_trade_case_study"

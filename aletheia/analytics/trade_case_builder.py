@@ -22,6 +22,23 @@ logger = logging.getLogger("aletheia.analytics.trade_case_builder")
 _MIN_LOSSES_FOR_GUARD = 3
 _MIN_LOSS_RATE_FOR_GUARD = 0.7  # 70% losing trades with same factor pattern
 
+# Close reasons that are administrative/synthetic — the position was NOT exited by a
+# genuine strategy/risk decision but wiped by reconciliation bookkeeping (local-open
+# orphan vanished from the exchange; historical demo-validation cleanup). Their
+# realized_pnl is a fabricated/approximate fallback (exit forced to last-known or
+# entry price), so feeding them as trade_case_study / guard evidence teaches the
+# learning loop a non-outcome. NOTE: a reconciler close that recovered a REAL exchange
+# TPSL fill keeps its genuine close_reason (stop_loss/take_profit) and is NOT synthetic
+# — we filter on the reason, not on whether the close went through the reconciler.
+# (junk-data sweep B3, 2026-06-28 — see LP-S08.)
+_SYNTHETIC_CLOSE_REASONS = frozenset({"reconciled_gone", "demo_validation_cleanup"})
+
+
+def _is_synthetic_closure(row: dict) -> bool:
+    """True if the row's close_reason is an administrative/synthetic closure that must
+    not enter the learning corpus (case studies / guard candidates)."""
+    return str(row.get("close_reason") or "").strip() in _SYNTHETIC_CLOSE_REASONS
+
 
 def build_case_studies(
     since_hours: int = 168,
@@ -42,10 +59,18 @@ def build_case_studies(
 
     existing_ids = _get_existing_case_position_ids() if skip_existing else set()
     created = []
+    skipped_synthetic = 0
 
     for row in recent_rows:
         pos_id = row.get("position_id")
         if not pos_id or pos_id in existing_ids:
+            continue
+
+        if _is_synthetic_closure(row):
+            # Administrative closure (orphan reconciliation / demo cleanup) — the exit
+            # price is a fabricated fallback, not a genuine trade outcome. Excluded from
+            # the learning corpus so case studies / lessons stay attributable (LP-S08).
+            skipped_synthetic += 1
             continue
 
         case = _build_case_from_row(row)
@@ -92,6 +117,13 @@ def build_case_studies(
         except Exception as e:
             logger.warning("Failed to create case study for position %s: %s", pos_id, e, exc_info=True)
 
+    if skipped_synthetic:
+        logger.info(
+            "build_case_studies: skipped %d synthetic-closure rows "
+            "(reconciled_gone/demo_validation_cleanup) — not genuine trade outcomes",
+            skipped_synthetic,
+        )
+
     return created
 
 
@@ -104,6 +136,13 @@ def detect_guard_candidates(min_losses: int | None = None) -> list[dict]:
     if min_losses is None:
         min_losses = _MIN_LOSSES_FOR_GUARD
     rows = build_trade_attribution_rows(limit=500)
+    if not rows:
+        return []
+
+    # Exclude administrative/synthetic closures: their realized_pnl is a fabricated
+    # fallback, so a guard built from them would penalise a factor pattern on the basis
+    # of a non-loss. Filter on close_reason VALUE (LP-S08).
+    rows = [r for r in rows if not _is_synthetic_closure(r)]
     if not rows:
         return []
 
