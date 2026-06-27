@@ -574,7 +574,10 @@ def _check_account_leverage_ratio(proposal: TradeProposal, cfg) -> list[str]:
     """Reject if adding this trade would push account leverage ratio above cap.
 
     account_leverage = sum(|pos_notional| * pos_leverage) / equity
-    Non-blocking when data is unavailable (returns []).
+    Deliberate skip (returns []) only when equity is genuinely unknown — that is
+    a documented can't-compute case, not an error. An actual exception fails CLOSED
+    (returns a violation) per §17.2/EH-1: never allow leveraged exposure on a broken
+    check.
     """
     risk = cfg.risk
     is_live = _is_live(proposal.execution_mode)
@@ -611,7 +614,10 @@ def _check_account_leverage_ratio(proposal: TradeProposal, cfg) -> list[str]:
         if ratio > max_ratio:
             return [f"account_leverage_ratio:{ratio:.2f}x>{max_ratio:.1f}x"]
     except Exception as e:
-        logger.debug("_check_account_leverage_ratio skipped: %s", e)
+        # Fail CLOSED (§17.2 / EH-1): a leverage check that errors must reject, not
+        # silently allow leveraged exposure. Mirrors the lesson/correlation checks.
+        logger.warning("_check_account_leverage_ratio failed (safe-reject): %s", e)
+        return ["account_leverage_check_error:internal_failure"]
     return []
 
 

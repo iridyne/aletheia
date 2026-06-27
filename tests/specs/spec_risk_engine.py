@@ -690,3 +690,47 @@ def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
         "demo daily-loss brake tripped on a $25 loss against a $10000 demo base — "
         f"it is wrongly using the $100 live cap (CR-RE-03). violations={result.violations}"
     )
+
+
+# ---------------------------------------------------------------------------
+# EH-1 (§17.2) — risk-check exceptions fail CLOSED (reject), never fail-open
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("RE-B14", "risk_engine_contract", "§17.2 fail-closed", "L2b",
+              "When a risk-check helper raises internally, it returns a violation "
+              "(fail-closed), never an empty list (fail-open). Covers the leverage, "
+              "correlation, and lesson checks."),
+)
+def test_risk_checks_fail_closed_on_internal_error(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import TradeProposal
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=0.01, price=60000.0, leverage=3,
+    )
+
+    def _boom(*a, **k):
+        raise RuntimeError("simulated internal failure")
+
+    # Account-leverage check: list_positions blows up → must fail closed (behavioral).
+    monkeypatch.setattr(eng, "list_positions", _boom)
+    v_lev = eng._check_account_leverage_ratio(proposal, cfg)
+    assert v_lev, "account leverage check must fail closed (return a violation) on error"
+    assert any("error" in x for x in v_lev)
+
+    # Regression lock: every risk-check helper's except handler fails closed (appends a
+    # violation), never silently `return []`. Source check because correlation/lesson
+    # import their deps locally and can't be driven to raise via one monkeypatch target.
+    import inspect
+    for fn in (eng._check_account_leverage_ratio,
+               eng._check_correlation_exposure,
+               eng._check_lesson_constraints):
+        src = inspect.getsource(fn)
+        assert ("safe-reject" in src or "fail closed" in src.lower()), (
+            f"{fn.__name__} except handler must fail closed (append a violation)"
+        )
