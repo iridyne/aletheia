@@ -56,14 +56,30 @@ class BinanceClient:
                 f"Set binance.{mode}.api_key and binance.{mode}.api_secret "
                 "via Settings → Credentials."
             )
+        # Do NOT build the ccxt exchange here. __init__ runs in a sync context (often a
+        # different event loop than the one awaiting our methods — binance_broker spins
+        # a fresh asyncio.run() in a worker thread). aiohttp binds its connector to the
+        # CREATING loop, so an exchange built here then used under another loop raises
+        # "Future attached to a different loop" and silently breaks load_markets()/
+        # contractSize. Defer to _ensure_exchange() (mirrors OKXClient; §17.4 BIN-XLOOP).
+        self._api_key = api_key
+        self._api_secret = api_secret
+        self._exchange = None
+
+    def _ensure_exchange(self):
+        """Lazily build the ccxt exchange in the CURRENT loop. Call only from inside an
+        async method (running loop that drives every subsequent await)."""
+        if self._exchange is not None:
+            return self._exchange
         self._exchange = ccxt.binanceusdm({
-            "apiKey": api_key,
-            "secret": api_secret,
+            "apiKey": self._api_key,
+            "secret": self._api_secret,
             "enableRateLimit": True,
             "options": {"defaultType": "future"},
         })
-        if mode == "testnet":
+        if self._mode == "testnet":
             self._exchange.set_sandbox_mode(True)
+        return self._exchange
 
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         """Place a market or limit order on Binance Futures."""
@@ -79,7 +95,7 @@ class BinanceClient:
             params["newClientOrderId"] = order.client_oid[:36]
 
         try:
-            resp = await self._exchange.create_order(
+            resp = await self._ensure_exchange().create_order(
                 symbol=ccxt_symbol,
                 type=order.order_type,
                 side=order.side,
@@ -101,7 +117,7 @@ class BinanceClient:
             import asyncio as _aio
             await _aio.sleep(0.3)
             try:
-                fetched = await self._exchange.fetch_order(order_id, ccxt_symbol)
+                fetched = await self._ensure_exchange().fetch_order(order_id, ccxt_symbol)
                 status = self._map_status(fetched.get("status", status))
                 resp = fetched
             except Exception as e:
@@ -128,7 +144,7 @@ class BinanceClient:
     async def get_positions(self) -> list[dict]:
         """Fetch open positions."""
         try:
-            positions = await self._exchange.fetch_positions()
+            positions = await self._ensure_exchange().fetch_positions()
             result = []
             for p in positions:
                 qty = abs(float(p.get("contracts", 0) or 0))
@@ -150,7 +166,7 @@ class BinanceClient:
     async def fetch_balance(self) -> dict:
         """Fetch account balance. Returns CCXT unified balance."""
         try:
-            return await self._exchange.fetch_balance()
+            return await self._ensure_exchange().fetch_balance()
         except ccxt.BaseError as e:
             logger.error("Binance %s fetch_balance failed: %s", self._mode, e)
             raise RuntimeError(f"Binance {self._mode} balance: {e}") from e
@@ -158,13 +174,14 @@ class BinanceClient:
     async def fetch_time(self) -> int:
         """Fetch server time (connectivity test). Returns Unix ms."""
         try:
-            return await self._exchange.fetch_time()
+            return await self._ensure_exchange().fetch_time()
         except ccxt.BaseError as e:
             raise RuntimeError(f"Binance {self._mode} time: {e}") from e
 
     async def close(self):
         """Close the underlying CCXT session."""
-        await self._exchange.close()
+        if self._exchange is not None:
+            await self._exchange.close()
 
     @staticmethod
     def _map_status(raw: str) -> str:
