@@ -12,7 +12,35 @@
 
 ## 实施进度(滚动更新)
 
-**✅ 已完成 + 验证(本会话):**
+### 🟢 第二批(2026-06-27 续会话)— Futures 核心 + P3c 信任边界全清
+
+**Futures(Task 1,部分)— 决策链核心 4 commit,全单测过、guard 未解除(安全):**
+- **F1** `1ec01f6` — Position 加 `leverage`+`liquidation_price` 字段+迁移;gateway 透传 leverage→execute_paper_order + 三 live broker;四 broker 写 Position(克隆规则);共享 `liquidation_price_for` helper。spec FL-S10/S11。**根基缺口**:此前 leverage 在执行边界被丢,check #17 读 positions 恒 1x。
+- **F2** `8d80ba5` — trading_decision PI 决定 `market_type`+`leverage`(schema/dataclass/parse/clamp 到 get_max_leverage/forward + prompt 指引)。默认 market_type=usdt_futures 保持原行为,纯增量。spec FL-S12/S13。
+- **F3** `79b3b5e` — trading_context `_build_futures_context`(leverage_limits/account_leverage_ratio/available_margin_pct/positions_near_liquidation)+ PI prompt 渲染。spec FL-S14。
+- **F4** `78eeddf` — Opportunity 加 funding_rate/open_interest/oi_delta_1h 字段+迁移;market_observer 填充。spec FL-S15。
+- **spec_futures_leverage 已加进 test_spec_conformance import**(原 SDD 收集陷阱,FL-S01~S15 现入矩阵)。
+
+**Futures 余项(未做,新会话续 — guard 解除前的硬门槛)**:
+- ⛔ **交易所 set_leverage 未实现** — bitget place_order 只 marginMode crossed 用账户默认杠杆;okx/binance 需 CCXT set_leverage。**这是 owner 规则"完整 futures 支持"在解除 spot-only guard 前的真实门槛**,且需 live demo 验证。
+- universe/service perp 注入(line 157 硬编码 spot)/ config observed_instruments 加 perp / paper_trader_ranker market_type scoring / StrategyRecord market_type_affinity / learning leverage-adjusted 指标。
+- **F7 解除 market_observer spot-only guard(:436)** — 必须等上面全做完 + demo E2E 验证(leverage>1 开仓 + liquidation + 账户杠杆率 + CausalChain 全节点)。**当前 guard 仍在 = 系统行为不变、安全**。
+
+**P3c 信任边界 — 全部完成(后端安全已生效,逐项 spec-first + 零回归):**
+- **CR-EX-03** `fee8dda` — Position 加 opportunity_id + 迁移 + 四 broker 透传;复活 risk check #16 sector 集中度(此前 pos.opportunity_id 恒 None 被静默)。spec EX-S06/EX-B09。
+- **EH-1 §17.2** `f75431b` — `_check_account_leverage_ratio` except 改 fail-closed(唯一残留 fail-open;lesson/correlation 早已 fail-closed)。spec RE-B14。
+- **error-leak 2.4** `d91b467` — bitget.py 内 binance/okx test endpoint fallback `str(e)`→`type(e).__name__`。test_security 行为验证 secret 不回显。
+- **error-leak 2.7** `2754e12` — `raise_for_status_without_secrets` 移 net.py(scrub auth headers + 脱敏消息)+ 全 6 provider 统一(原裸 raise_for_status 携带含 token 的 request)。test_security 行为 + 结构验证。
+- **CUM-ADD §19** `547d36c` — risk/engine per-symbol 累积 notional cap + config `max_per_symbol_notional_usdt`(默认 400)+ Settings RISK_SHARED 控件(**源码;static 未 rebuild**)。spec RE-B15。
+- **kill-switch confirm_release** `1737957` — routes/risk.py release 需 confirm_release=true 否则 422 + 前端 client/RiskControls/CommandPalette confirm(**源码;static 未 rebuild**)。test_risk_routes。
+
+**⚠ 前端 static 未 rebuild**(并发会话 StrategyLifecycle.tsx 脏改未清,build 会烤进其 WIP)。CUM-ADD/kill-switch 的**后端安全已生效**,UI 控件待工作树干净后 `npm run build` + commit static(见 ledger 末「待续」)。
+
+**全量回归**:运行中(本批 11 commit)。
+
+---
+
+**✅ 已完成 + 验证(第一批会话):**
 - **R0 / L-Bug-C 完整版**:`trading_decision.py` 透传 opportunity_id+strategy_id+scanner_family;`trading_context.py` opportunities dict 补 id/linked_strategy_id;新增 `_attach_opportunity_context` 按 symbol+direction 回填。→ LP-S05 GREEN。
 - **B1**:`paper_trader_ranker.py:412` retrieve_lessons 去 post_trade_review,只留 trade_case_study。
 - **C1**:`post_trade_reviewer.py` 提示改问"信号质量"(非 execution quality 幻觉源)+ confidence 恒 medium(反转检索池让 trade_case_study 主导)。test_experience_loop 12 passed(更新 1 过时测试 → medium 契约)。
