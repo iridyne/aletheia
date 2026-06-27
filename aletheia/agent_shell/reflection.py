@@ -34,6 +34,7 @@ def record_decision(decision_result: dict) -> None:
         "conviction": decision_result.get("conviction"),
         "reasoning": decision_result.get("reasoning", "")[:200],
         "proposal_id": decision_result.get("proposal_id"),
+        "opportunity_id": decision_result.get("opportunity_id"),
         "decided_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -55,6 +56,7 @@ def record_decision(decision_result: dict) -> None:
             conviction=record.get("conviction") or 0,
             reasoning=record.get("reasoning") or "",
             proposal_id=record.get("proposal_id"),
+            opportunity_id=record.get("opportunity_id"),
             debate_ran=decision_result.get("debate_ran", False),
         )
         insert_pi_decision(pi_dec)
