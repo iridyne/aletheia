@@ -66,6 +66,7 @@ def build_case_studies(
                 "factor_key": case["factor_key"],
                 "close_reason": row.get("close_reason"),
                 "scanner_family": row.get("scanner_family"),
+                "market_type": case.get("market_type"),
                 "tags": _build_tags(case),
             }
             confidence = "high_confidence" if case["has_full_chain"] else "medium_confidence"
@@ -163,6 +164,13 @@ def _build_case_from_row(row: dict) -> dict | None:
         "holding_hours": round(holding_hours, 1) if holding_hours else None,
         "factor_key": factor_key(row),
         "has_full_chain": has_full_chain,
+        # Spot vs perp tag so the learning loop can separate e.g. "momentum perp" from
+        # "momentum spot" now that the observer emits both (Round 2). NOTE: the case
+        # metric realized_pnl_pct is price-move% (realized_pnl = (exit-entry)*qty, NOT
+        # ×leverage) — already leverage-NEUTRAL, so no leverage_adjusted_return is added
+        # (pnl/margin would be leverage-AMPLIFIED and reintroduce the "more leverage =
+        # better" bias deferred #8 warned about).
+        "market_type": row.get("market_type"),
         "entry_price": row.get("entry_price"),
         "exit_price": row.get("exit_price"),
         "close_reason": row.get("close_reason"),

@@ -210,3 +210,17 @@ class TestBuildCaseStudies:
 
         result = build_case_studies(since_hours=9999)
         assert result == []
+
+
+def test_case_carries_market_type_for_perp_vs_spot():
+    """Round 2: the case dict tags spot vs perp so the learning loop can separate
+    'momentum perp' from 'momentum spot' patterns (deferred #8, the useful half).
+    The metric realized_pnl_pct stays price-move% (leverage-neutral) — no leveraged
+    return is introduced."""
+    row = _make_row()
+    row["market_type"] = "usdt_futures"
+    case = _build_case_from_row(row)
+    assert case["market_type"] == "usdt_futures"
+
+    row2 = _make_row()  # default market_type="spot"
+    assert _build_case_from_row(row2)["market_type"] == "spot"
