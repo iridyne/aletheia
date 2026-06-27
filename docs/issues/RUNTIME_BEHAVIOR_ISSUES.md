@@ -375,3 +375,169 @@ post_trade_reviews 提取结构化 lessons → `ps_lessons` 表。
 - **§23/§24 真根因**见 memory `aletheia-frontdoor-disconnect-真根因`（非 IOCP；frontdoor `aiter_raw` 未捕获 ReadError + supervisor 误杀 backend，5e8772d/1062f63/d14158f/abdbf51 已修）。
 - **残余跟进**（LLM provider 健壮性 / load_markets 体积 / readiness window）在 `frozen_optimization_backlog.md` D17/D19。
 - **开放的运行时行为问题**（agent 产出 / 学习闭环 / 知识质量）见上方 §0–§9 与 [`FIX_PLAN_2026-06-26.md`](FIX_PLAN_2026-06-26.md)。
+
+[2026-06-26 12:22 UTC] [HIGH] §23 第15轮刚启动 — features=102/h (全桶=17,crash发生在4min前尚未影响桶). Opportunities_1h=67. Knowledge=4741(+4). §17 timed_out=345(+0). Stale=346(-1).
+  §23第15轮: 12:18(PID 18392),距第14轮末次(10:06)静默132min. 静默窗口规律: 第13轮结束→第14轮开始约2.5h,第14轮结束→第15轮开始约2h12min,静默窗口逐步稳定在2-2.5h. §25: 稳定. §24 backend: 稳定. 178h+ 连续运行.
+
+[2026-06-26 13:22 UTC] §23 第15轮持续中 — features=102/h (全桶=17均等,crash在2min前发生尚未影响). Opportunities_1h=62. Knowledge=4746(+5). §17 timed_out=345(+0). Stale=346(+0).
+  §23第15轮崩溃序列: 12:18→12:28(10min)→12:38(10min)→12:48(10min)→13:19(31min). 共5次. 末次13:19,距今3min. 10min等间隔模式显著——与历史轮次一致. §25: 稳定. §24 backend: 稳定. 179h+ 连续运行.
+
+[2026-06-26 14:22 UTC] §23 第15轮持续中 — features=102/h (全桶=17均等). Opportunities_1h=69. Knowledge=4748(+2). §17 timed_out=345(+0). Stale=346(+0).
+  §23第15轮新增: 13:29(PID 26284)→13:39(10min)→13:49(10min). 第15轮累计8次崩溃(12:18→13:49),末次13:49,距今33min静默. 第15轮特征:10min固定间隔崩溃,异常稳定(12:18,12:28,12:38,12:48,13:19,13:29,13:39,13:49).
+  新异常: equity_observer completed_with_errors(1次,2h内),需关注是否持续. §25: 稳定. §24 backend: 稳定. 179h+ 连续运行.
+
+[2026-06-26 15:22 UTC] [HIGH] §23+equity_observer双告警 — features=95/h (全桶15-17,下滑趋势,末次feature=15:17距今5min). Opportunities_1h=64. Knowledge=4756(+8). §17 timed_out=345(+0). Stale=347(+1).
+  §23第15轮新增: 15:15(PID 44300),距13:49静默86min后复发. 第15轮累计9次崩溃(12:18→15:15). 末次15:15,距今7min.
+  [MEDIUM] equity_observer completed_with_errors: 3次(2h内,上轮1次→本轮3次),持续累积. 含义:权益数据采集失败率上升,可能导致drawdown_scale误判或PI幻觉. 建议查 data/logs/ 中equity_observer相关错误详情.
+  features桶梯度下滑(17→16→15)=crash后scanner未完全恢复,或universe缩减. §25: 稳定. §24 backend: 稳定. 180h+ 连续运行.
+
+[2026-06-26 16:22 UTC] [HIGH] §23持续+universe缩减+equity_observer告警 — features=90/h (全桶稳定=15,已非crash边界效应,universe真实从16→15缩减). Opportunities_1h=53. Knowledge=4764(+8). §17 timed_out=346(+1). Stale=347(+0).
+  §23第15轮新增5次: 15:25(PID 38584)→15:35(10min)→15:45(10min)→15:55(10min)→16:15(20min). 第15轮累计14次崩溃(12:18→16:15),呈10min固定间隔. 末次16:15,距今7min.
+  [MEDIUM] equity_observer completed_with_errors: 5次(2h内,上轮3次→本轮5次),持续上升,建议检查权益数据源是否异常.
+  [LOW] universe桶大小 17→16→15,逐步缩减,可能有资产被移除或scanner扫描失败. §25: 稳定. §24 backend: 稳定. 180h+ 连续运行.
+
+[2026-06-26 17:22 UTC] [HIGH] §23第15轮持续+equity_observer持续告警 — features=96/h (全桶=16,较上轮15小幅回升,波动中). Opportunities_1h=55. Knowledge=4770(+6). §17 timed_out=347(+1). Stale=346(-1).
+  §23第15轮新增5次: 16:26(PID 42036)→16:35(9min)→16:45(10min)→16:55(10min). 第15轮累计18次崩溃(12:18→16:55),10min固定间隔无变化. 末次16:55,距今27min.
+  [MEDIUM] equity_observer completed_with_errors: 7次(2h内,上轮5次→7次),每小时约+2,持续稳步累积,建议优先排查权益数据源错误. §25: 稳定. §24 backend: 稳定. 181h+ 连续运行.
+
+[2026-06-26 18:22 UTC] §23第15轮静默中,universe恢复 — features=102/h (全桶=17,已恢复正常). Opportunities_1h=63. Knowledge=4770(+0). §17 timed_out=347(+0). Stale=346(+0).
+  §23: 末次16:55(PID 41316),距今87min静默.第15轮累计18次崩溃(12:18→16:55,持续4h37min),按历史模式预测下一轮约18:30-20:00 UTC启动.
+  [MEDIUM] equity_observer completed_with_errors: 9次(2h内,上轮7次→9次,+2/h稳定积累). 建议排查:可能是 broker余额API超时或exchange_account查询失败. §25: 稳定. §24 backend: 稳定. 182h+ 连续运行.
+
+[2026-06-26 19:22 UTC] ✓ 系统正常(§23第15轮静默延长) — features=102/h (全桶=17均等). Opportunities_1h=64. Knowledge=4772(+2). §17 timed_out=347(+0). Stale=346(+0).
+  §23: 末次16:55,距今147min(2h27min)静默,已超第14轮轮间静默(132min).预测第16轮触发窗口延后至19:30-21:00 UTC.
+  [MEDIUM] equity_observer completed_with_errors: 11次(2h内,+2/h持续). §25: 稳定. §24 backend: 稳定. 182h+ 连续运行.
+
+[2026-06-26 20:22 UTC] ✓ 系统正常(§23第15轮静默持续延长) — features=102/h (全桶=17均等). Opportunities_1h=64. Knowledge=4773(+1). §17 timed_out=347(+0). Stale=346(+0).
+  §23: 末次16:55,距今207min(3h27min)静默——第15轮结束后静默时长已超第14轮结束后(132min)的1.5倍,疑似进入更长稳定窗口.
+  [MEDIUM] equity_observer completed_with_errors: 13次(2h内,+2/h持续,已观察>5h).建议优先排查:aletheia doctor输出+data/logs/中equity_observer日志. §25: 稳定. §24 backend: 稳定. 183h+ 连续运行.
+
+[2026-06-26 21:22 UTC] ✓ 系统正常(§23静默持续4h+) — features=102/h (全桶=17均等). Opportunities_1h=64. Knowledge=4778(+5). §17 timed_out=347(+0). Stale=346(+0).
+  §23: 末次16:55,距今267min(4h27min)——与第13→14轮间2.5h静默相比显著延长,疑似§23进入新的更长自然稳定期,或第15轮结束即为最后一轮.
+  [MEDIUM] equity_observer completed_with_errors: 15次(2h内,+2/h,已持续6h+,每次约30min发生一次). §25: 稳定. §24 backend: 稳定. 184h+ 连续运行.
+
+[2026-06-26 22:22 UTC] ✓ 系统正常(§23静默5h+) — features=102/h (全桶=17均等). Opportunities_1h=64. Knowledge=4778(+0). §17 timed_out=347(+0). Stale=346(+0).
+  §23: 末次16:55,距今327min(5h27min),**§23 Storm确认终止第二次**——超过历史任何静默窗口约8倍,与第13→14轮间隔(132min)相比已超2.5倍,第15轮应为Storm最后一轮.
+  [LOW→降级] equity_observer completed_with_errors: 16次(2h内,本轮仅+1,较前几轮+2/h有所减缓). §25: 稳定. §24 backend: 稳定. 185h+ 连续运行.
+
+[2026-06-26 23:24 UTC] ✓ 系统正常(§23静默6h28min) — features=102/h (全桶=17均等). Opportunities_1h=62.
+Knowledge=4780(+2). §17 timed_out=347(+0). Stale=347(+0). Ghost=0.
+§23: 末次16:55,距今389min(6h29min)——§23 Storm确认终止第三次——静默时长超历史窗口最大值约11倍.
+[INFO→好转] equity_observer completed_with_errors: 16次(本轮+0,首次零增量,较此前+2/h显著恢复). 可能自愈.
+§25: 稳定. §24 backend: 稳定. 186h+ 连续运行.
+
+[2026-06-27 00:11 UTC] ✓ 系统正常(§23静默7h15min) — features=102/h (全桶=17均等). Opportunities_1h=63.
+Knowledge=4780(+0). §17 timed_out=347(+0). Stale=347(+0). Ghost=0.
+§23: 末次16:55,距今435min(7h15min)——§23 Storm终止确认持续(连续第3轮零新增).
+[INFO→稳定] equity_observer completed_with_errors: 16次(+0,连续2轮零增量,自愈确认).
+§25: 稳定. §24 backend: 稳定. 187h+ 连续运行.
+
+[2026-06-27 00:22 UTC] ✓ 系统正常(§23静默7h26min) — features=102/h (全桶=17均等). Opportunities_1h=64.
+Knowledge=4781(+1). §17 timed_out=347(+0). Stale=346(-1). Ghost=0.
+market_observer running=0(上轮1→本轮0,正常完成). §23: 末次16:55,距今447min(7h27min).
+[INFO→稳定] equity_observer completed_with_errors: 16次(+0,连续3轮零增量). §24 backend: 稳定 187h+.
+
+[2026-06-27 01:08 UTC] ✓ 系统正常(§23静默8h12min) — features=102/h (全桶=17均等). Opportunities_1h=61.
+Knowledge=4782(+1). §17 timed_out=347(+0). Stale=347(+0). Ghost=0.
+§23: 末次16:55,距今492min(8h12min).
+[INFO→稳定] equity_observer completed_with_errors: 16次(+0,连续4轮零增量,自愈完全确认).
+§25: 稳定. §24 backend: 188h+ 连续运行.
+
+[2026-06-27 01:22 UTC] ✓ 系统正常(§23静默8h26min) — features=102/h (全桶=17均等). Opportunities_1h=61.
+Knowledge=4784(+2). §17 timed_out=347(+0). Stale=346(-1). Ghost=0.
+§23: 末次16:55,距今506min(8h26min).
+[INFO→稳定] equity_observer completed_with_errors: 16次(+0,连续5轮零增量). §24 backend: 188h+.
+
+[2026-06-27 02:08 UTC] ✓ 系统正常(§23静默9h12min) — features=102/h (全桶=17均等). Opportunities_1h=61.
+Knowledge=4784(+0). §17 timed_out=347(+0). Stale=347(+0). Ghost=0.
+§23: 末次16:55,距今552min(9h12min).
+[INFO] agent_2h_breakdown 本轮条目减少(dreaming/equity_observer/risk_critic消失)=2h滚动窗口正常滑动,非异常.
+[INFO→稳定] equity_observer: 窗口外(>2h无新运行,与前5轮+0一致). §24 backend: 189h+.
+
+[2026-06-27 02:22 UTC] ✓ 系统正常(§23静默9h26min) — features=101/h (最新桶16,其余17均等,时间窗口边界效应). Opportunities_1h=60.
+Knowledge=4784(+0). §17 timed_out=347(+0). Stale=346(-1). Ghost=0.
+§23: 末次16:55,距今566min(9h26min).
+[INFO] 2h窗口仅剩market_observer/paper_trader/position_reconciler/post_trade_reviewer/strategy_designer,其余均滑出窗口(正常).
+§24 backend: 189h+. 系统全面稳定.
+
+[2026-06-27 03:08 UTC] [LOW] features 单桶空洞(50min_ago=0) — features=79/h(正常102),少一个桶(~02:15-02:25UTC区间漏写).
+最新feature_ts=02:59(已恢复),无新§23崩溃. Opportunities_1h=62(正常). Knowledge=4787(+3).
+影响: 该时段特征未入库,paper_trader该窗口内机会可能漏扫; §17 timed_out=347(+0). Ghost=0.
+修复方向: 检查scheduler_jobs表~02:15-02:25的universe_scanner任务状态; 若DB busy_timeout触发则可提高timeout值.
+[NEW-LOW] market_observer completed_with_errors: 1次(首次出现于本2h窗口). 具体错误需查agent日志.
+§23: 末次16:55,距今612min(10h12min). §24 backend: 190h+.
+
+[2026-06-27 03:22 UTC] [LOW] features桶值持续偏低 — features=93/h(桶值15-16,正常17). Opportunities_1h=63(正常).
+Knowledge=4787(+0). §17 timed_out=347(+0). Stale=346(+0). Ghost=0.
+上轮空洞(50min_ago=0)已滑出1h窗口,不再计入;但新桶值15-16说明scanner仍略慢(非满17).
+影响: features总量偏低~8%,未达完全恢复;paper_trader扫描窗口覆盖率略降.
+[持续-LOW] market_observer completed_with_errors: 仍1次(+0,未新增,观察中).
+§23: 末次16:55,距今626min(10h26min). §24 backend: 190h+.
+
+[2026-06-27 04:08 UTC] [HIGH] §23 Round 16 开始 — features管道停止30min+,opportunities_1h减半.
+崩溃时间: 2026-06-27T03:55:33 UTC (PID 25436). 距r15末次(16:55)间隔11h——超历史最长静默窗口(约4.5h).
+features: latest_ts=03:29(最后一条),10/20/30min_ago均=0,1h总量=45(正常102).
+Opportunities_1h=28(正常63). 管道在崩溃后等待重启恢复中.
+影响: features停产38min+,paper_trader该窗口机会严重漏扫;需等frontdoor重启后管道自愈.
+根因: §23未修复(fix 2723ab0已合并但gateway未restart);LLM DNS触发aiter_raw ReadError→frontdoor崩溃.
+修复方向: 执行 uv run aletheia gateway restart --no-browser (需用户操作).
+[更新] §23 Storm: 以为r15是最后一轮的判断错误——r16已证实Storm仍在继续,静默窗口异常延长至11h.
+
+[2026-06-27 04:22 UTC] [HIGH] §23 R16 — features管道停产持续53min(03:29→04:22,无新写入). Opportunities_1h=14(↓78%).
+errors.jsonl末尾仍为03:55单次崩溃(R16目前仅1次,间隔27min无新崩溃).
+features_60min_ago=15(上轮r274末段写入),其余5桶全0. latest_feature_ts未变(03:29:45).
+knowledge=4787(+0,亦停滞). Opportunities_total=15236(+0,无新机会入库).
+影响: 超53min无特征产出,paper_trader几乎完全丧失新信号;当前周期内交易决策基于陈旧数据.
+等待: frontdoor重启后backend应自动恢复scanner;若R16为单次crash后管道未自愈,需用户检查backend进程.
+[2026-06-27 05:08 UTC] [CRITICAL] §23 R16密集崩溃 — features/opp完全停产98min,管道未自愈.
+R16崩溃记录: 03:55(PID25436), 04:51(PID48160), 04:56(PID10660), 05:01(PID25588) — 共4次,密集期间隔5-6min.
+features_1h=0, opp_1h=0, latest_feature_ts=03:29(98min前). opportunities_total=15236(全停).
+Knowledge=4787(+0). agent_2h_breakdown停滞(无新完成).
+影响: CRITICAL——paper_trader完全无新信号,交易决策基于1.5h+陈旧数据.
+修复方向(紧急): 用户需执行 uv run aletheia gateway restart --no-browser 彻底应用fix 2723ab0.
+当前workaround已失效(supervisor重启frontdoor但fix未加载,crash继续);必须gateway-level重启.
+
+
+[2026-06-27 05:22 UTC] [CRITICAL] §23 R16持续 — features/opp停产113min(03:29→05:22). R16累计6次崩溃.
+新增崩溃: 05:09(PID11404), 05:18(PID12172). R16全记录: 03:55/04:51/04:56/05:01/05:09/05:18.
+间隔模式: 56min(首次)->10min密集(4次)->8min->9min. 仍在活跃崩溃中.
+features_1h=0, opp_1h=0, latest_ts=03:29(113min前). opportunities_total=15236(+0).
+Knowledge=4787(+0). agent_2h_breakdown无变化.
+影响: CRITICAL——管道停产近2h,paper_trader无新信号,交易系统实质性丧失决策能力.
+等待用户执行: uv run aletheia gateway restart --no-browser
+
+
+[2026-06-27 06:10 UTC] r279 [CRITICAL] §23 R16第7次崩溃(05:39 PID47884). features/opp停产160min(03:29→06:10).
+R16全记录(7次): 03:55/04:51/04:56/05:01/05:09/05:18/05:39. 距最后崩溃31min.
+features全桶=0, opp_1h=0, latest_ts=03:29(160min前). opportunities_total=15236(+0,6次巡检不变).
+注意: 最后崩溃后31min内 features 仍全零——backend scanner crash后不自动恢复,须 gateway restart.
+Knowledge=4787(+0). agent_2h: market_observer 14c+1e, paper_trader 43c, position_reconciler 44c.
+影响: CRITICAL——近3h管道零产出,系统丧失决策输入,状态持续恶化.
+修复: uv run aletheia gateway restart --no-browser (加载2723ab0修复,重启scanner)
+
+
+[2026-06-27 06:22 UTC] r280 [CRITICAL] §23 R16加速恶化 — 新增3次崩溃(06:13/06:14/06:20), R16累计10次.
+最近3次: 06:13(PID27796)->06:14(PID45112,间隔51s)->06:20(PID11680,间隔81s). 崩溃进入亚分钟级!
+features全桶=0, opp_1h=0, latest_ts=03:29(172min前). opportunities_total=15236(+0,7次巡检不变).
+R16完整时间线: 03:55/04:51/04:56/05:01/05:09/05:18/05:39/06:13/06:14/06:20.
+模式演化: 首56min静止→密集5-10min→31min间隔→51s/81s崩溃(触底).
+Knowledge=4787(+0). agent_2h_breakdown无变化.
+影响: CRITICAL——管道停产近3h,frontdoor已进入崩溃死循环,2723ab0修复未加载.
+紧急: uv run aletheia gateway restart --no-browser — 必须立即执行
+
+
+[2026-06-27 07:09 UTC] r281 [CRITICAL] §23 R16持续 — 新增3次(06:22/06:33/07:04), R16累计13次.
+R16完整时间线: 03:55/04:51/04:56/05:01/05:09/05:18/05:39/06:13/06:14/06:20/06:22/06:33/07:04.
+间隔模式: 03:55→56min静→密集5-10min×4→21min→34min→34min→1min→5min→2min→11min→30min→31min.
+features全桶=0, opp_1h=0, latest_ts=03:29(220min前). opportunities_total=15236(+0,8次巡检不变).
+Knowledge=4787(+0). agent_2h_breakdown无变化. agent_timed_out_total=347(+0).
+影响: CRITICAL——管道停产近4h,系统完全丧失决策输入.
+修复(紧急): uv run aletheia gateway restart --no-browser
+
+
+[2026-06-27 07:22 UTC] r282 [CRITICAL] §23 R16第14次崩溃(07:13 PID46104). 管道停产233min.
+features全桶=0, opp_1h=0, latest_ts=03:29(233min前). opportunities_total=15236(+0,9次巡检不变).
+R16至今14次. 最后两次: 07:04(PID27892)->07:13(PID46104,间隔9min). 崩溃循环持续.
+Knowledge=4787(+0). agent_2h_breakdown/timed_out无变化.
+影响: CRITICAL——管道停产近4h,系统完全丧失决策输入. 修复: uv run aletheia gateway restart --no-browser
+

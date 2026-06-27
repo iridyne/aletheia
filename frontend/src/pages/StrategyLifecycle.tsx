@@ -12,6 +12,15 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 const STATES = ['draft', 'research_note', 'strategy_hypothesis', 'paper_candidate', 'paper_running', 'paper_passed', 'live_candidate', 'live_limited', 'retired']
 
+// State sort order for the lifecycle table: paper_running first (the live-paper
+// strategies that need watching), then the rest in lifecycle order. Unknown
+// states sort last.
+function stateRank(s: string): number {
+  if (s === 'paper_running') return -1
+  const i = STATES.indexOf(s)
+  return i === -1 ? STATES.length : i
+}
+
 const NEXT_STATE: Record<string, string> = {
   draft: 'research_note',
   research_note: 'strategy_hypothesis',
@@ -29,6 +38,7 @@ const columns = [
   col.accessor('state', {
     header: 'State',
     cell: info => <StatusBadge status={info.getValue()} />,
+    sortingFn: (a, b) => stateRank(a.original.state) - stateRank(b.original.state),
   }),
   col.display({
     id: 'trades',
@@ -101,7 +111,9 @@ export default function StrategyLifecycle() {
   })
 
   const kpiMap = kpis as Record<string, { trade_count: number; win_rate: number; total_pnl: number }>
-  const rows = (data as StrategyRecord[]).map(s => ({ ...s, _kpi: kpiMap[s.id] }))
+  const rows = (data as StrategyRecord[])
+    .map(s => ({ ...s, _kpi: kpiMap[s.id] }))
+    .sort((a, b) => stateRank(a.state) - stateRank(b.state))
 
   function handlePromote() {
     if (!selected) return
