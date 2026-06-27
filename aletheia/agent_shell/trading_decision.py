@@ -64,6 +64,11 @@ class TradingDecision:
     opposing_signals: list[str] = field(default_factory=list)
     position_size_usdt: float | None = None
     stop_price: float | None = None
+    # Futures: which venue + leverage the PI chose. market_type defaults to
+    # usdt_futures (the demo/perp venue) when the LLM omits it; leverage is the
+    # PI's requested level, clamped to the per-tier cap at submit time.
+    market_type: str | None = None
+    leverage: int | None = None
     debate_ran: bool = False
     debate_bull_confidence: int | None = None
     debate_bear_confidence: int | None = None
@@ -96,6 +101,12 @@ _DECISION_SCHEMA = {
         "direction": {"type": "string", "enum": ["long", "short"]},
         "conviction": {"type": "integer", "minimum": 0, "maximum": 100},
         "reasoning": {"type": "string"},
+        # market_type: which venue expresses the view. "usdt_futures" (perp) supports
+        # leverage and pays/earns funding; "spot" has no leverage and no funding cost.
+        "market_type": {"type": "string", "enum": ["spot", "usdt_futures"]},
+        # leverage: integer ≥1, only meaningful for usdt_futures. The risk engine
+        # clamps this to the per-asset-tier cap, so a high request is safely reduced.
+        "leverage": {"type": "integer", "minimum": 1, "maximum": 20},
         "risk_factors": {"type": "array", "items": {"type": "string"}},
         "supporting_signals": {"type": "array", "items": {"type": "string"}},
         "opposing_signals": {"type": "array", "items": {"type": "string"}},
@@ -252,12 +263,27 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         thesis = thesis[:_MAX_RATIONALE_TEXT].rstrip() + "…"
     rationale = f"{thesis}\n---\n{json.dumps(decision_meta)}"
 
+    # Market type: the PI's explicit choice, else the perp/demo venue default.
+    market_type = decision.market_type or "usdt_futures"
+
+    # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
+    # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
+    # the proposal inside the gate so a sane futures trade is not silently rejected for
+    # an over-eager leverage number). Spot carries no leverage.
+    leverage: int | None = None
+    if market_type == "usdt_futures" and decision.leverage and decision.leverage > 1:
+        from aletheia.trading.instruments import get_max_leverage
+        is_live = "live" in (execution_mode or "")
+        cap = get_max_leverage(decision.symbol, is_live, cfg)
+        leverage = max(1, min(decision.leverage, cap))
+
     return create_paper_proposal(
         symbol=decision.symbol,
-        market_type="usdt_futures",
+        market_type=market_type,
         direction=decision.direction,
         quantity=quantity,
         price=price,
+        leverage=leverage,
         stop_price=stop_price,
         execution_mode=execution_mode,
         strategy_id=decision.strategy_id,
@@ -681,6 +707,16 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "The guard chain handles risk limits independently — focus purely on:",
         "SHOULD this trade happen, in WHAT direction, with WHAT conviction?",
         "",
+        "## Market type & leverage",
+        "- market_type: 'usdt_futures' (perpetual — supports leverage, pays/earns funding) "
+        "or 'spot' (no leverage, no funding cost). Default to 'usdt_futures' for directional "
+        "crypto trades. Prefer 'spot' when funding is strongly against your direction (e.g. "
+        "FR>+0.03% and you are long) so funding drag does not eat the edge.",
+        "- leverage: integer ≥1, only for usdt_futures. Scale with conviction — 1 (none) when "
+        "uncertain, 2-3 for solid setups, higher only for the strongest confluence. The risk "
+        "engine clamps to a per-asset-tier cap (majors allow more than alts), so an over-eager "
+        "number is reduced, not rejected. Leave at 1 if unsure.",
+        "",
         "Actions available:",
         "- trade: open a new position",
         "- skip: no action now",
@@ -691,7 +727,8 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "- flip: reverse direction (close existing + open opposite)",
         "",
         "Return: action, symbol (BTC/USDT format), direction (long/short), "
-        "conviction (0-100), reasoning, risk_factors, supporting_signals, opposing_signals.",
+        "conviction (0-100), market_type (spot/usdt_futures), leverage (integer ≥1), "
+        "reasoning, risk_factors, supporting_signals, opposing_signals.",
     ]
 
     return "\n".join(parts)
@@ -744,12 +781,24 @@ Return confidence (0-100) where 100 = trade will definitely fail. Provide 3-5 co
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _parse_decision(raw: dict) -> TradingDecision:
+    mt = raw.get("market_type")
+    if mt not in ("spot", "usdt_futures"):
+        mt = None
+    lev_raw = raw.get("leverage")
+    try:
+        leverage = int(lev_raw) if lev_raw is not None else None
+    except (TypeError, ValueError):
+        leverage = None
+    if leverage is not None and leverage < 1:
+        leverage = 1
     return TradingDecision(
         action=raw.get("action", "skip"),
         symbol=raw.get("symbol"),
         direction=raw.get("direction"),
         conviction=int(raw.get("conviction", 0)),
         reasoning=raw.get("reasoning", ""),
+        market_type=mt,
+        leverage=leverage,
         risk_factors=raw.get("risk_factors", []),
         supporting_signals=raw.get("supporting_signals", []),
         opposing_signals=raw.get("opposing_signals", []),

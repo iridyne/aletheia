@@ -221,3 +221,73 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
     )
     pos1 = repo._select_one("positions", r1["position_id"])
     assert pos1["liquidation_price"] is None
+
+
+# ---------------------------------------------------------------------------
+# PI Agent decides market_type + leverage (Round 2 — "PI decides spot/perp")
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("FL-S12", "futures_leverage", "§12 PI decision schema", "L2a",
+              "PI decision schema + TradingDecision dataclass + parser carry market_type "
+              "and leverage so the PI Agent can choose spot vs perp and a leverage level"),
+)
+def test_pi_decision_schema_market_type_and_leverage():
+    from aletheia.agent_shell.trading_decision import (
+        _DECISION_SCHEMA, TradingDecision, _parse_decision,
+    )
+
+    props = _DECISION_SCHEMA["properties"]
+    assert "market_type" in props
+    assert set(props["market_type"]["enum"]) == {"spot", "usdt_futures"}
+    assert "leverage" in props
+
+    # dataclass carries the fields
+    d = TradingDecision(action="trade", symbol="BTC/USDT", direction="long",
+                        conviction=70, reasoning="x")
+    assert hasattr(d, "market_type")
+    assert hasattr(d, "leverage")
+
+    # parser reads them from raw LLM output
+    parsed = _parse_decision({
+        "action": "trade", "symbol": "BTC/USDT", "direction": "long",
+        "conviction": 70, "reasoning": "x",
+        "market_type": "usdt_futures", "leverage": 3,
+    })
+    assert parsed.market_type == "usdt_futures"
+    assert parsed.leverage == 3
+
+
+@spec_claim(
+    SpecClaim("FL-S13", "futures_leverage", "§13 leverage clamped on submit", "L2b",
+              "submit_decision_as_proposal forwards PI market_type + leverage to "
+              "create_paper_proposal, clamping leverage to the per-tier cap"),
+)
+async def test_submit_decision_clamps_leverage(monkeypatch):
+    import aletheia.agent_shell.trading_decision as td
+
+    captured = {}
+
+    def _fake_create(**kwargs):
+        captured.update(kwargs)
+        return {"status": "executed", "proposal_id": "x"}
+
+    # Stub the gateway-facing boundary + market data + guard chain so we test only
+    # the decision→proposal forwarding logic (not the execution pipeline).
+    monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", _fake_create)
+    monkeypatch.setattr("aletheia.trading.market_data.latest_snapshot",
+                        lambda s: {"price": 60000.0})
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
+    monkeypatch.setattr("aletheia.trust.guard_chain.summarize",
+                        lambda v: {"blocks": [], "details": ""})
+
+    # PI asks for 50x on BTC (major demo cap = 5) → must clamp to 5.
+    decision = td.TradingDecision(
+        action="trade", symbol="BTC/USDT", direction="long",
+        conviction=80, reasoning="strong", position_size_usdt=100.0,
+        market_type="usdt_futures", leverage=50,
+    )
+    await td.submit_decision_as_proposal(decision, execution_mode="paper_internal")
+    assert captured["market_type"] == "usdt_futures"
+    assert captured["leverage"] == 5  # clamped to BTC demo tier cap
