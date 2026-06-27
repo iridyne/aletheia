@@ -165,3 +165,35 @@ def test_a10_layer2_signals_injected_into_prompt():
     assert "MEMO: short bias" in prompt
     assert "CAL: conviction" in prompt
     assert "RF: momentum scanner" in prompt
+
+
+def test_b1_ranker_penalty_ignores_post_trade_review(tmp_path, monkeypatch):
+    """B1: the ranker's _lesson_penalty must NOT draw penalties from post_trade_review
+    (the hallucination source) — it only retrieves trade_case_study now. A high_confidence
+    review full of negative keywords for a symbol must produce NO penalty."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.manager import create_post_trade_review
+    # High-confidence review packed with the negative keywords _lesson_penalty matches.
+    create_post_trade_review(
+        title="Post-Trade Review",
+        content=(
+            "AVAX/USDT momentum trade: heavy loss, stopped out at drawdown, the entry "
+            "failed badly and the position lost value across the whole 4h window. "
+            "Execution quality was poor and the thesis failed to play out as expected."
+        ),
+        confidence="high_confidence",
+    )
+    from aletheia.knowledge.retrieval import retrieve_lessons
+    # Robustness: prove the review IS retrievable (FTS indexed + high_confidence gate
+    # passed) — so the 0 penalty below is SPECIFICALLY due to B1's item_type exclusion,
+    # not an empty index.
+    found = retrieve_lessons("AVAX/USDT long momentum", item_types=["post_trade_review"])
+    assert found, "precondition: the seeded post_trade_review must be retrievable via FTS"
+
+    from aletheia.agents.paper_trader_ranker import _lesson_penalty
+    # B1: post_trade_review is excluded from the ranker's retrieval, so no penalty leaks.
+    penalty = _lesson_penalty("AVAX/USDT", "long", "momentum")
+    assert penalty == 0.0, (
+        f"post_trade_review must not feed _lesson_penalty (got {penalty}) — B1 removed it "
+        f"from retrieve_lessons; only trade_case_study should score the ranker"
+    )
