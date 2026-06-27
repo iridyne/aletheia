@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
-import { Card, CardHeader, Button, StatusText } from '../components/ui'
+import { Card, CardHeader, Button, StatusText, Meter } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtSigned, fmtNum, useDecimals, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
@@ -281,7 +281,7 @@ export default function RiskControls() {
                     <div key={row.label} className="headroom-row">
                       <span className="headroom-label">{row.label}</span>
                       <span className="headroom-bar-track">
-                        <span className={`headroom-bar-fill ${tone}`} style={{ width: `${w}%` }} />
+                        <Meter pct={w} className={`headroom-bar-fill ${tone}`} />
                       </span>
                       <span className="headroom-val mono">{row.fmtUsed(row.used)} <span className="risk-faint">/ {row.fmtCap(row.cap)}</span></span>
                     </div>
@@ -318,9 +318,9 @@ export default function RiskControls() {
                   <li key={sym} className="exposure-row">
                     <span className="exposure-sym mono">{fmtSymbol(sym, marketTypeBySymbol[sym])}</span>
                     <span className="exposure-bar-track">
-                      <span
+                      <Meter
+                        pct={Math.max(2, (Math.abs(val) / exposureMax) * 100)}
                         className={`exposure-bar ${val >= 0 ? 'pos' : 'neg'}`}
-                        style={{ width: `${Math.max(2, (Math.abs(val) / exposureMax) * 100)}%` }}
                       />
                     </span>
                     <span className={`exposure-val mono ${val >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>{fmtSigned(val)}</span>
