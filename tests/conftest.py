@@ -70,6 +70,20 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _shutdown_scheduler_after_test():
+    """Stop any BackgroundScheduler a test started, so its thread pool doesn't try to
+    submit jobs after interpreter shutdown — the apscheduler atexit race ('cannot
+    schedule new futures after shutdown') that intermittently failed test_update in
+    the full suite. stop_scheduler() is None-safe (no-op if none was started)."""
+    yield
+    try:
+        from aletheia.agent_runtime.scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _block_real_exchange_orders(request, monkeypatch):
     # Tests that verify place_order's own body-building mock httpx instead, so they
     # opt out of this guard via @pytest.mark.real_place_order.
