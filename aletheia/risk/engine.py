@@ -269,6 +269,32 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         liq_violations = _check_liquidation_buffer(proposal, cfg)
         violations.extend(liq_violations)
 
+    # 19. Per-symbol cumulative notional cap (CUM-ADD). Same-symbol adds average-merge
+    #     into one position (paper_broker / live brokers), so the single-position cap
+    #     (#5) does not bound repeated accumulation. Sum existing open notional for this
+    #     symbol in the same live/demo class + the proposed notional; reject if over cap.
+    per_symbol_cap = getattr(risk, "max_per_symbol_notional_usdt", 0.0)
+    if per_symbol_cap and per_symbol_cap > 0 and proposal.price and proposal.quantity:
+        prop_is_live = _is_live(proposal.execution_mode)
+        existing_sym_notional = 0.0
+        for p in open_positions:
+            if p.get("symbol") != proposal.symbol:
+                continue
+            if _is_live(p.get("execution_mode", "")) != prop_is_live:
+                continue
+            try:
+                q = float(p.get("quantity") or 0)
+                px = float(p.get("current_price") or p.get("entry_price") or 0)
+                existing_sym_notional += abs(q * px)
+            except (TypeError, ValueError):
+                continue
+        projected = existing_sym_notional + abs(proposal.price * proposal.quantity)
+        if projected > per_symbol_cap:
+            violations.append(
+                f"exceeds_per_symbol_notional:{proposal.symbol}:"
+                f"{projected:.0f}>{per_symbol_cap:.0f}"
+            )
+
     # Determine execution mode
     if not violations:
         allowed_mode = proposal.execution_mode

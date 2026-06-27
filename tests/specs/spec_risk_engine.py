@@ -734,3 +734,49 @@ def test_risk_checks_fail_closed_on_internal_error(monkeypatch):
         assert ("safe-reject" in src or "fail closed" in src.lower()), (
             f"{fn.__name__} except handler must fail closed (append a violation)"
         )
+
+
+# ---------------------------------------------------------------------------
+# CUM-ADD (§19) — per-symbol cumulative notional cap
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("RE-B15", "risk_engine_contract", "§19 per-symbol cap", "L2b",
+              "Cumulative open-position notional for a symbol + the proposed notional "
+              "may not exceed risk.max_per_symbol_notional_usdt. Averaging-merge grows "
+              "ONE position past the single-trade cap, so repeated adds need a bound."),
+)
+def test_per_symbol_cumulative_notional_cap():
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import Position, TradeProposal
+    from aletheia.storage import repositories as repo
+    from aletheia.config.loader import load_config
+
+    cap = load_config().risk.max_per_symbol_notional_usdt
+    assert cap > 0, "per-symbol cap must be enabled by default"
+
+    # Existing demo position at 80% of the cap.
+    repo.insert_position(Position(
+        symbol="SOL/USDT", market_type="usdt_futures", direction="long",
+        quantity=(cap * 0.8) / 100.0, entry_price=100.0, current_price=100.0,
+        execution_mode="okx_demo", status="open",
+    ))
+
+    # Proposal pushing the symbol total to 130% of cap → must be rejected.
+    over = TradeProposal(
+        symbol="SOL/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=(cap * 0.5) / 100.0, price=100.0,
+    )
+    repo.insert_trade_proposal(over)
+    res_over = eng.evaluate_proposal(over)
+    assert any("exceeds_per_symbol_notional" in v for v in res_over.violations), res_over.violations
+
+    # A small add keeping the total at 85% of cap → no per-symbol violation.
+    under = TradeProposal(
+        symbol="SOL/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=(cap * 0.05) / 100.0, price=100.0,
+    )
+    repo.insert_trade_proposal(under)
+    res_under = eng.evaluate_proposal(under)
+    assert not any("exceeds_per_symbol_notional" in v for v in res_under.violations), res_under.violations

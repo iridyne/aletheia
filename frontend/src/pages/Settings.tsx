@@ -1947,6 +1947,11 @@ const RISK_DEMO: NumField[] = [
   { key: 'max_open_positions_demo',         label: 'Max open positions',    unit: '',     min: 1,    max: 200,    step: 1, isInt: true },
 ]
 
+// Cross-mode guards (apply to both demo and live). Always visible.
+const RISK_SHARED: NumField[] = [
+  { key: 'max_per_symbol_notional_usdt', label: 'Max per-symbol notional (cumulative)', unit: 'USDT', min: 0, max: 100000, step: 10 },
+]
+
 const RISK_BOOLS: BoolField[] = [
   { key: 'kill_switch_enabled_live', label: 'Kill switch auto-trigger (live)' },
   { key: 'kill_switch_enabled_demo', label: 'Kill switch auto-trigger (demo)' },
@@ -1988,7 +1993,7 @@ function RiskCard({ settings, qc }: any) {
   useEffect(() => {
     if (!risk) return
     const init: Record<string, any> = {}
-    ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_CORR, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN].forEach(f => { init[f.key] = risk[f.key] })
+    ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN].forEach(f => { init[f.key] = risk[f.key] })
     RISK_BOOLS.forEach(f => { init[f.key] = risk[f.key] })
     setVals(init)
   }, [settings])
@@ -1996,7 +2001,7 @@ function RiskCard({ settings, qc }: any) {
   const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null); setErrors({}) }
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  const allNumFields = [...RISK_LIVE, ...RISK_DEMO, ...RISK_CORR, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN]
+  const allNumFields = [...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN]
 
   const validateAndSave = () => {
     const errs: Record<string, string> = {}
@@ -2049,6 +2054,10 @@ function RiskCard({ settings, qc }: any) {
       {/* Demo limits */}
       <div className="section-label mt-4">Demo / paper limits</div>
       <NumGrid fields={RISK_DEMO} vals={vals} set={set} errors={errors} />
+
+      {/* Cross-mode guards (both demo and live) */}
+      <div className="section-label mt-4">Per-symbol exposure (demo + live)</div>
+      <NumGrid fields={RISK_SHARED} vals={vals} set={set} errors={errors} />
 
       <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
 
@@ -2288,6 +2297,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'risk.symbol_filter_mode', 'risk.symbol_list',
     ...RISK_LIVE.map(f => `risk.${f.key}`),
     ...RISK_DEMO.map(f => `risk.${f.key}`),
+    ...RISK_SHARED.map(f => `risk.${f.key}`),
     ...RISK_BOOLS.map(f => `risk.${f.key}`),
     ...RISK_CORR.map(f => `risk.${f.key}`),
     'trading.default_stop_loss_pct', 'trading.default_take_profit_pct', 'trading.max_position_hold_hours',

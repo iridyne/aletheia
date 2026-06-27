@@ -231,6 +231,12 @@ class RiskConfig(BaseModel):
     # size rejections out of the live-critical-violation count.
     starting_capital_usdt: float = 100.0
     max_demo_position_notional_usdt: float = 200.0
+    # Per-symbol cumulative notional cap (CUM-ADD). Same-symbol+direction adds
+    # average-merge into ONE position, so repeated adds can grow a position past the
+    # single-trade cap. This bounds TOTAL open notional per symbol (across positions,
+    # both demo and live). 0 disables. Set above the single-position caps so it only
+    # catches genuine runaway accumulation, not a normal first entry.
+    max_per_symbol_notional_usdt: float = 400.0
     max_demo_single_trade_risk_pct: float = 2.0
     max_futures_leverage_live: int = 2
     max_futures_leverage_demo: int = 5
