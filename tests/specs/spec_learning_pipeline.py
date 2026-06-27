@@ -1,10 +1,16 @@
-"""Spec: Learning Pipeline (RED, written 2026-06-24 during freeze).
+"""Spec: Learning Pipeline (RED, written 2026-06-24, extended 2026-06-27 during freeze).
 
 These claims describe how the Learning subsystem (knowledge_items / ps_lessons)
 MUST be consumed by the PI Agent decision chain after Round 2 解冻. They are
 recorded with status="missing" because the production code paths required to
 satisfy them are inside the EXPERIMENT FREEZE clearance (trading_context.py /
 trading_decision.py) and cannot be modified during Round 1.
+
+LP-S01..S04 (2026-06-24): consumption-side dead filters (Layer3 lessons/guards,
+ps_lessons no consumer). LP-S05..S06 (2026-06-27, from the full-lifecycle audit
+in docs/issues/LEARNING_LOOP_AUDIT_2026-06-26.md): the attribution-chain root
+cause (opportunity_id hard-coded None) and the guard-promotion dead-end (promoter
+reads a different dir than where candidates are written).
 
 Each test below intentionally fails today (xfail) and is expected to flip to
 GREEN as soon as Round 2 解冻当天 applies the fixes documented in
@@ -57,55 +63,50 @@ def _find_call_keywords(source: str, func_name: str) -> list[set[str]]:
 
 @spec_claim(
     SpecClaim("LP-S01", "learning_pipeline", "§Layer3 lessons", "L2a",
-              "_build_layer3_wisdom lessons filter must hit existing DB item_type rows",
-              status="missing"),
+              "_build_layer3_wisdom lessons must query a real-producer item_type "
+              "(trade_case_study) so PI's Layer3 lessons is non-empty"),
 )
-@pytest.mark.xfail(reason="冻结期不能改 trading_context.py:379 ('lesson'/'accepted_lesson'/'trading_guard') → 0 hits in DB. "
-                          "Fix L-Bug-A in Round 2 解冻当天 to align filter values with real item_type "
-                          "(post_trade_review / trade_case_study).", strict=True)
 def test_layer3_lessons_filter_aligned():
-    """The 3 hard-coded item_type tokens MUST match >= 1 row in knowledge_items.
+    """Layer3 lessons MUST query an item_type that has a real producer + DB rows.
 
-    Today the filter is ('lesson','accepted_lesson','trading_guard'), all 3 of
-    which have ZERO producers, so PI's Layer3 lessons is permanently empty.
-    Real lesson content lives in 'post_trade_review' (1679 rows) and
-    'trade_case_study' (496 rows) — Round 2 fix updates the filter set.
+    Fixed 2026-06-27 (L-Bug-A): the old filter ('lesson','accepted_lesson',
+    'trading_guard') matched ZERO rows — none had a producer, so Layer3 lessons
+    was permanently empty. The fix queries trade_case_study (attributed
+    closed-trade cases) directly via list_knowledge_items(item_type=...). This
+    test verifies that call exists AND that the item_type has live DB rows.
     """
     import pathlib
     src = (pathlib.Path(_project_root()) / _TRADING_CONTEXT).read_text(encoding="utf-8")
-
-    # Find the lessons filter set: extract the literal tuple in the line
-    # `if item.get("item_type") in (...)`
     tree = ast.parse(src)
-    filter_values: list[str] = []
+    queried_types: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Compare):
-            for op, comp in zip(node.ops, node.comparators):
-                if isinstance(op, ast.In) and isinstance(comp, ast.Tuple):
-                    for elt in comp.elts:
-                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                            # Only collect filter tuples that mention knowledge taxonomies
-                            v = elt.value
-                            if v in ("lesson", "accepted_lesson", "trading_guard",
-                                     "post_trade_review", "trade_case_study",
-                                     "research_note", "daily_review", "operator_assessment"):
-                                filter_values.append(v)
+        if isinstance(node, ast.Call):
+            tgt = node.func
+            name = tgt.id if isinstance(tgt, ast.Name) else (tgt.attr if isinstance(tgt, ast.Attribute) else None)
+            if name == "list_knowledge_items":
+                for kw in node.keywords:
+                    if kw.arg == "item_type" and isinstance(kw.value, ast.Constant) \
+                            and isinstance(kw.value.value, str):
+                        queried_types.add(kw.value.value)
 
-    assert filter_values, "could not find the in-filter tuple — refactor likely happened"
+    assert queried_types, (
+        "no list_knowledge_items(item_type=...) call in trading_context — Layer3 "
+        "would scan the whole table and be flooded by system_action"
+    )
+    assert "trade_case_study" in queried_types, (
+        f"Layer3 lessons must query trade_case_study; found item_types={queried_types}. "
+        f"See round2_week1_decision_chain_fixes.md Fix L-Bug-A"
+    )
 
-    # Verify against the live DB: at least one of those filter values must exist
     import sqlite3
     conn = sqlite3.connect(f"{_project_root()}/data/app.db")
-    placeholders = ",".join("?" * len(filter_values))
     n = conn.execute(
-        f"SELECT COUNT(*) FROM knowledge_items WHERE item_type IN ({placeholders})",
-        filter_values,
+        "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trade_case_study'"
     ).fetchone()[0]
     conn.close()
-
     assert n > 0, (
-        f"Layer3 lessons filter {filter_values} matches 0 DB rows — PI永远看不到 lessons. "
-        f"See round2_week1_decision_chain_fixes.md Fix L-Bug-A"
+        "trade_case_study has 0 DB rows — Layer3 lessons would still be empty. "
+        "See round2_week1_decision_chain_fixes.md Fix L-Bug-A"
     )
 
 
@@ -116,12 +117,8 @@ def test_layer3_lessons_filter_aligned():
 
 @spec_claim(
     SpecClaim("LP-S02", "learning_pipeline", "§Layer3 guards", "L2a",
-              "_build_layer3_wisdom guards must call list_knowledge_items(item_type='guard_candidate')",
-              status="missing"),
+              "_build_layer3_wisdom guards must call list_knowledge_items(item_type='guard_candidate')"),
 )
-@pytest.mark.xfail(reason="冻结期不能改 trading_context.py:398. list_knowledge_items(limit=30) "
-                          "无 item_type → 被高频 system_action 占满 → guard_candidate 永不入窗口. "
-                          "Fix L-Bug-A' in Round 2 解冻当天.", strict=True)
 def test_layer3_guards_filter_via_query():
     """Layer3 _build_layer3_wisdom must call list_knowledge_items with item_type='guard_candidate'."""
     import pathlib
@@ -154,11 +151,8 @@ def test_layer3_guards_filter_via_query():
 
 @spec_claim(
     SpecClaim("LP-S03", "learning_pipeline", "§ps_lessons consumption", "L2a",
-              "trading_decision.py must reference ps_lessons when building PI prompt",
-              status="missing"),
+              "trading_decision.py must reference ps_lessons when building PI prompt"),
 )
-@pytest.mark.xfail(reason="冻结期不能改 trading_decision.py. 当前整个 aletheia/ 零 SELECT FROM ps_lessons. "
-                          "184 条 ps_lessons 写入完全无消费. Fix L-Bug-B in Round 2 解冻当天.", strict=True)
 def test_ps_lessons_consumed_in_prompt():
     """trading_decision.py source must mention ps_lessons (either via key access or function call)."""
     import pathlib
@@ -187,3 +181,77 @@ def test_layer3_function_exists():
     """
     from aletheia.agent_shell.trading_context import _build_layer3_wisdom
     assert callable(_build_layer3_wisdom)
+
+
+# ---------------------------------------------------------------------------
+# LP-S05 — Attribution root: proposals MUST carry a real opportunity_id
+# ---------------------------------------------------------------------------
+
+
+_GUARDS_MODULE = "aletheia/knowledge/guards.py"
+
+
+@spec_claim(
+    SpecClaim("LP-S05", "learning_pipeline", "§Attribution root", "L2a",
+              "create_paper_proposal() in trading_decision.py must pass a real "
+              "opportunity_id (not the None literal) — the single root cause that "
+              "starves every downstream learning artifact of entry-context"),
+)
+def test_proposal_carries_opportunity_id():
+    """create_paper_proposal must NOT hard-code opportunity_id=None.
+
+    That one line severs the attribution chain at the source: market_observer
+    already writes scanner_family/universe/confidence into the opportunity, but
+    the PI Agent drops opportunity_id at order time and nothing backfills it.
+    """
+    import pathlib
+    src = (pathlib.Path(_project_root()) / _TRADING_DECISION).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    found = False
+    hardcoded_none = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            tgt = node.func
+            name = tgt.id if isinstance(tgt, ast.Name) else (tgt.attr if isinstance(tgt, ast.Attribute) else None)
+            if name == "create_paper_proposal":
+                found = True
+                for kw in node.keywords:
+                    if kw.arg == "opportunity_id" and isinstance(kw.value, ast.Constant) \
+                            and kw.value.value is None:
+                        hardcoded_none = True
+
+    assert found, "create_paper_proposal call not found — refactor likely happened"
+    assert not hardcoded_none, (
+        "create_paper_proposal(opportunity_id=None) hard-codes None — attribution "
+        "chain severed at the source. See round2_week1_decision_chain_fixes.md Fix L-Bug-C"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-S06 — Guard promotion: candidates MUST be reachable by the promoter
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S06", "learning_pipeline", "§Guard promotion", "L2a",
+              "load_trading_guards must reach guard_candidate files so "
+              "run_promotion_check can promote them (today it reads a different dir)",
+              status="missing"),
+)
+@pytest.mark.xfail(reason="升级器 load_trading_guards(status='candidate') 读 data/knowledge/guards/ "
+                          "但候选写 data/knowledge/guard_candidates/ 且前者不存在 → 0 candidates → 0 升级. "
+                          "guards.py 不在冻结列表,但 load_trading_guards 被冻结的 paper_trader_ranker 调用, "
+                          "故归 Round 2 统一处理 (LEARNING_LOOP_AUDIT_2026-06-26.md 断点 B2/B3). "
+                          "Fix L-Bug-D in Round 2 解冻当天.", strict=True)
+def test_guard_candidates_reachable_by_promoter():
+    """guards.py must reference the guard_candidates directory so the promoter
+    can see the堆积 candidates instead of an empty, non-existent guards/ dir.
+    """
+    import pathlib
+    src = (pathlib.Path(_project_root()) / _GUARDS_MODULE).read_text(encoding="utf-8")
+    assert "guard_candidates" in src, (
+        "aletheia/knowledge/guards.py never references 'guard_candidates' — the "
+        "promoter reads knowledge/guards/ while candidates are written to "
+        "knowledge/guard_candidates/ → 0 promotions ever. "
+        "See round2_week1_decision_chain_fixes.md Fix L-Bug-D"
+    )

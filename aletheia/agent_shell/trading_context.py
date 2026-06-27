@@ -147,6 +147,12 @@ def _build_layer1_snapshot() -> dict[str, Any]:
         )
         layer["opportunities"] = [
             {
+                # R0 fix: carry the opportunity id so the PI Agent's pick can be
+                # matched back to its source opportunity and the proposal records
+                # a real opportunity_id (not None). Without this the whole
+                # attribution chain is severed (LEARNING_LOOP_AUDIT_2026-06-26 §R0).
+                "id": o.get("id"),
+                "linked_strategy_id": o.get("linked_strategy_id"),
                 "symbol": o.get("symbol"),
                 "direction_bias": o.get("direction_bias"),
                 "confidence": o.get("confidence"),
@@ -281,13 +287,20 @@ def _build_layer2_short_term() -> dict[str, Any]:
         # always returned None so the filter matched nothing and the PI Agent saw
         # "(none active)" while 4 strategies were paper_running (2026-06-23 audit).
         active = [s for s in strategies if s.get("state") in ("paper_running", "active")]
+        # S-Bug-C (LEARNING_LOOP_AUDIT): strategy_records has NO win_rate/total_pnl/
+        # trade_count columns, so the PI Agent saw None/'?' for every strategy. Real
+        # KPIs come from build_strategy_kpis() (computed live from fills + positions).
+        from aletheia.analytics.trade_stats import build_strategy_kpis
+        kpis = build_strategy_kpis()  # {strategy_id: {trade_count, win_rate, total_pnl}}
         strat_perf: list[dict] = []
         for strat in active[:5]:
+            sid = strat.get("id")
+            k = kpis.get(sid, {}) if sid else {}
             strat_perf.append({
                 "name": strat.get("name", "unnamed"),
-                "win_rate": strat.get("win_rate"),
-                "total_pnl": strat.get("total_pnl"),
-                "trade_count": strat.get("trade_count"),
+                "win_rate": k.get("win_rate"),
+                "total_pnl": k.get("total_pnl"),
+                "trade_count": k.get("trade_count", 0),
             })
         layer["strategies"] = strat_perf
     except Exception:
@@ -376,18 +389,22 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     # Active lessons (full text, not truncated)
     try:
         from aletheia.storage.repositories import list_knowledge_items
-        items = list_knowledge_items(limit=20)
+        # L-Bug-A (LEARNING_LOOP_AUDIT): the old filter ('lesson','accepted_lesson',
+        # 'trading_guard') matched ZERO rows — none of those item_types have a
+        # producer, so Layer3 lessons was permanently empty. Real attributed lessons
+        # live in trade_case_study (closed-trade cases with full entry→exit chain,
+        # which the R0 opportunity_id fix now lets complete). Query by item_type
+        # directly so the limit window isn't swallowed by high-frequency rows.
+        case_items = list_knowledge_items(item_type="trade_case_study", limit=7)
         lessons: list[dict] = []
-        for item in items:
-            if item.get("item_type") in ("lesson", "accepted_lesson", "trading_guard"):
-                lessons.append({
-                    "type": item.get("item_type"),
-                    "symbol": item.get("metadata", {}).get("symbol"),
-                    "content": item.get("content", "")[:300],
-                    "source": item.get("metadata", {}).get("source_trade"),
-                })
-                if len(lessons) >= 7:
-                    break
+        for item in case_items:
+            meta = item.get("metadata") or {}
+            lessons.append({
+                "type": item.get("item_type"),
+                "symbol": meta.get("symbol"),
+                "content": (item.get("content") or item.get("summary") or item.get("title") or "")[:300],
+                "source": meta.get("source_trade"),
+            })
         layer["lessons"] = lessons
     except Exception:
         layer["lessons"] = []
@@ -395,16 +412,18 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     # Recent guard candidates (from self-evolution Tier 1)
     try:
         from aletheia.storage.repositories import list_knowledge_items
-        items = list_knowledge_items(limit=30)
+        # L-Bug-A' (LEARNING_LOOP_AUDIT): the old list_knowledge_items(limit=30)
+        # scanned the whole table newest-first, and that window was permanently
+        # occupied by high-frequency system_action rows, so guard_candidate never
+        # appeared. Query by item_type directly.
+        items = list_knowledge_items(item_type="guard_candidate", limit=3)
         guards: list[dict] = []
         for item in items:
-            if item.get("item_type") == "guard_candidate":
-                guards.append({
-                    "symbol": item.get("metadata", {}).get("symbol"),
-                    "content": item.get("content", "")[:200],
-                })
-                if len(guards) >= 3:
-                    break
+            meta = item.get("metadata") or {}
+            guards.append({
+                "symbol": meta.get("symbol"),
+                "content": (item.get("content") or item.get("summary") or item.get("title") or "")[:200],
+            })
         layer["guard_candidates"] = guards
     except Exception:
         layer["guard_candidates"] = []
@@ -425,6 +444,19 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         layer["serenity_opportunities"] = serenity_opps
     except Exception:
         layer["serenity_opportunities"] = []
+
+    # L-Bug-B (LEARNING_LOOP_AUDIT): dreaming-agent post-trade lessons (ps_lessons)
+    # had 184+ proposed rows but ZERO consumer path — written, never read by PI.
+    # Surface as advisory context (risk/engine handles accepted lessons separately).
+    try:
+        from aletheia.learning.lessons import LessonStore
+        ps = LessonStore().list_all(status="proposed", limit=5)
+        layer["ps_lessons"] = [
+            {"summary": l.summary, "severity": l.severity, "category": l.category}
+            for l in ps
+        ]
+    except Exception:
+        layer["ps_lessons"] = []
 
     return layer
 

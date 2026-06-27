@@ -86,12 +86,8 @@ def test_build_strategy_kpis_shape():
 
 @spec_claim(
     SpecClaim("SP-S03", "strategy_pool", "§KPI exposure to PI", "L2a",
-              "trading_context.py must call build_strategy_kpis() so PI sees real KPIs",
-              status="missing"),
+              "trading_context.py must call build_strategy_kpis() so PI sees real KPIs"),
 )
-@pytest.mark.xfail(reason="冻结期不能改 trading_context.py. 当前 PI 拿到 win_rate/total_pnl=None. "
-                          "Fix S-Bug-C in Round 2: JOIN build_strategy_kpis() into Layer2 strategies.",
-                  strict=True)
 def test_trading_context_uses_strategy_kpis():
     """trading_context.py 源码必须 reference build_strategy_kpis."""
     import pathlib

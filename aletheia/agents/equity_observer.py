@@ -125,7 +125,6 @@ def _fetch_equity_indicators(ticker: str, _retry: bool = True) -> dict | _FetchE
             interval="1d",
             auto_adjust=True,
             progress=False,
-            show_errors=False,
         )
         if hist is None or hist.empty:
             if _retry:

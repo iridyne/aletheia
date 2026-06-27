@@ -199,7 +199,18 @@ def test_post_trade_review_confidence_gates_retrieval(tmp_path, monkeypatch):
     reset_db()
 
 
-async def test_post_trade_reviewer_promotes_substantive_lessons(tmp_path, monkeypatch):
+async def test_post_trade_reviewer_writes_medium_confidence_reviews(tmp_path, monkeypatch):
+    """post_trade_review is a SOFT reflection → medium_confidence, never auto-high.
+
+    Changed 2026-06-27 (LEARNING_LOOP_AUDIT §R1 / fix C1): reviews used to
+    auto-upgrade to high_confidence and flooded the retrieval pool ~118:1 vs real
+    trade_case_study cases, so the experience loop scored decisions against
+    templated reflections. Reviews now stay medium so the high_confidence gate is
+    led by attributed trade_case_study cases (which earn high via has_full_chain
+    once the R0 opportunity_id fix lets the chain complete). This test locks the
+    new contract: a substantive review is written, stays medium, and therefore
+    does NOT enter the high_confidence retrieval gate.
+    """
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
@@ -214,9 +225,10 @@ async def test_post_trade_reviewer_promotes_substantive_lessons(tmp_path, monkey
     assert result["status"] in ("completed", "completed_with_errors")
 
     items = repo.list_knowledge_items(item_type="post_trade_review")
-    assert items and all(i["confidence"] == "high_confidence" for i in items)
-    # The promoted lesson is actually retrievable — the whole point of the loop.
-    assert len(retrieve_lessons("trailing stop downside exit", item_types=["post_trade_review"], k=5)) >= 1
+    assert items and all(i["confidence"] == "medium_confidence" for i in items)
+    # Medium reviews must NOT enter the high_confidence retrieval gate — that gate
+    # is reserved for attributed trade_case_study cases.
+    assert len(retrieve_lessons("trailing stop downside exit", item_types=["post_trade_review"], k=5)) == 0
     reset_db()
 
 

@@ -148,6 +148,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                     f"factor={candidate.get('factor_status')}"
                 ),
                 proposal_id=None,
+                opportunity_id=candidate.get("opportunity_id"),
                 debate_ran=False,
             )
             insert_pi_decision(pi_dec)

@@ -108,7 +108,6 @@ def _fetch_stock_indicators(ticker: str, _retry: bool = True) -> dict | _FetchEr
             interval="1d",
             auto_adjust=True,
             progress=False,
-            show_errors=False,
         )
         if hist is None or hist.empty:
             if _retry:

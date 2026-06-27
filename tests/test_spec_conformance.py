@@ -23,6 +23,14 @@ def _import_all_specs():
         spec_operator_loop,
         spec_subsystem_observers,
         spec_audit_chain,
+        # Freeze-era RED tripwires (written 2026-06-24 / extended 2026-06-27 during
+        # EXPERIMENT FREEZE). Their claims are status="missing" + xfail(strict): they
+        # describe the decision-chain learning fixes to apply on Round 2 解冻当天 (see
+        # docs/plans/round2_week1_decision_chain_fixes.md). They were NOT in this list
+        # before — i.e. the tripwires existed on disk but were never collected/armed
+        # (the SDD collection trap: spec_*.py do not match pytest python_files).
+        spec_learning_pipeline,
+        spec_strategy_pool,
         # End-to-end pipeline specs (PL-* claims). Registered so the conformance
         # matrix reflects pipeline coverage; not added to REQUIRED_CONTRACTS since
         # they are behavioral/E2E (L2b) rather than structural (L2a) contracts.

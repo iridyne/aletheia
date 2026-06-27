@@ -18,7 +18,7 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 
 - Smallest change principle — MVP, not greenfield
 - No uncontrolled expansion: no new exchanges, no Docker/Postgres/Redis, no vector search
-- **EXPERIMENT FREEZE (2026-06-22 → Round 结束)**: AI 决策链代码在观察期内**禁止修改**。详见 `docs/product/EXPERIMENT_PROTOCOL.md`。冻结路径: `agent_shell/trading_context.py`, `agent_shell/trading_decision.py`, `agents/market_observer.py`, `agents/paper_trader*.py`, `agents/pi_agent*`, `strategy/`, `learning/`。判断标准:"这个改动会不会让同一市场状况下 AI 做出不同决策?" → 是 = 禁止。
+- **EXPERIMENT FREEZE —— 已于 2026-06-27 由 owner 决定提前结束/解除**: Round 1 因实验有效性塌方(干净窗 PF≈0.06、方向集中 short 17/23、唯一活学习闭环喂幻觉)提前结束;**冻结约束已解除**,原 AI 决策链代码现可修改。当前处于「Round 1 后全量修复」阶段(见 `docs/plans/round2_week1_decision_chain_fixes.md` + `docs/issues/` master ledger)。原冻结路径(`agent_shell/trading_context.py`, `agent_shell/trading_decision.py`, `agents/market_observer.py`, `agents/paper_trader*.py`, `agents/pi_agent*`, `strategy/`, `learning/`)仍是高敏感决策链:修改时**必须**补/更新对应 `tests/specs/spec_*.py`、走 SDD 流程、改后 `aletheia doctor` 验证。详见 `docs/product/EXPERIMENT_PROTOCOL.md`。
 - Trust boundaries (change-controlled — touch only for tasks that explicitly require it):
   `aletheia/risk/`, `aletheia/execution/`, `exchanges/bitget/auth.py`, `exchanges/bitget/client.py`,
   `config/secrets.py`, `agent_runtime/permissions.py`, `server/routes/live.py`

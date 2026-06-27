@@ -409,7 +409,12 @@ def _lesson_penalty(symbol: str | None, direction: str | None, scanner_family: s
         if scanner_family:
             query_parts.append(scanner_family)
         query = " ".join(query_parts)
-        lessons = retrieve_lessons(query, k=3, item_types=["trade_case_study", "post_trade_review"])
+        # B1 (LEARNING_LOOP_AUDIT §R3/B1): only score against trade_case_study —
+        # real closed-trade cases with attributed outcome. post_trade_review was
+        # the hallucination source (auto-upgraded to high_confidence on any fill,
+        # 1900+ rows of templated text) that flooded this retrieval and produced
+        # uncontrolled false penalties via section-title keyword hits. Removed.
+        lessons = retrieve_lessons(query, k=3, item_types=["trade_case_study"])
         if not lessons:
             return 0.0
         penalty = 0.0
@@ -719,8 +724,12 @@ def _lookup_strategy_evidence(strategy: dict) -> dict:
                 "SELECT count(*) as cnt, "
                 "avg(realized_pnl_pct) as avg_pnl, "
                 "sum(CASE WHEN realized_pnl_pct > 0 THEN 1 ELSE 0 END) as wins "
+                # A6 (LEARNING_LOOP_AUDIT §13.1): paper-stage executions include
+                # bitget_demo/okx_demo/etc., not just paper_internal. Hard-coding
+                # 'paper_internal' dropped those closed positions from the strategy's
+                # paper evidence count. Match all non-live (paper/demo) modes.
                 "FROM positions WHERE strategy_id = ? AND status = 'closed' "
-                "AND execution_mode = 'paper_internal'",
+                "AND execution_mode NOT LIKE '%live%'",
                 (strategy["id"],),
             ).fetchone()
             if paper_row and paper_row[0] > 0:

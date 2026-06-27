@@ -829,6 +829,10 @@ class PiDecision(BaseModel):
     conviction: int = 0
     reasoning: str = ""
     proposal_id: str | None = None
+    # A13 (LEARNING_LOOP_AUDIT / PL-PT-04): link a signal_pending decision back to
+    # its source opportunity so the attribution chain is complete on the signal side
+    # (mirrors the R0 opportunity_id fix on the proposal side).
+    opportunity_id: str | None = None
     debate_ran: bool = False
 
 

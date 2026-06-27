@@ -28,6 +28,9 @@
 > 下方 §1–§3、§6、§13–§18 是结构性问题的**详细登记**（file:line + 修复建议），保留作细节参考；其"已修复"声明以 FIX_PLAN 为准，引用前 grep 核实（见 memory `aletheia-backend-issues-archive-unreliable`）。
 >
 > 已修复历史区（§4/§10/§12/§5-OAuth）已移至 [`archive/BACKEND_FIXED_HISTORY.md`](archive/BACKEND_FIXED_HISTORY.md)。
+>
+> **🔴 2026-06-26 learning/反思系统全生命周期审计见** [`LEARNING_LOOP_AUDIT_2026-06-26.md`](./LEARNING_LOOP_AUDIT_2026-06-26.md)：唯一活闭环喂幻觉（检索池 1890 幻觉 : 16 真实案例）；总根因 = `trading_decision.py:250` opportunity_id=None 切断归因链；guard 升级链三重死锁（B0 开关关 + B2 目录 bug + B3 schema 不符）；`trading_context.py:382` 死过滤器恒空。含 A（冻结期可做）/ B（需破冻）/ C（治本）三类修复计划。
+
 ## 0. 阅读顺序与使用方式
 
 按等级倒序读：先看 §1（🔴），再看 §2（🟠），最后 §3（🟡）。§4（2026-06-13→2026-06-14 已修复）。

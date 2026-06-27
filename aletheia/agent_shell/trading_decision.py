@@ -67,6 +67,13 @@ class TradingDecision:
     debate_ran: bool = False
     debate_bull_confidence: int | None = None
     debate_bear_confidence: int | None = None
+    # R0 attribution: backfilled from the source opportunity by
+    # _attach_opportunity_context so the proposal carries a real opportunity_id /
+    # strategy_id and the decision_meta records scanner_family (LEARNING_LOOP_AUDIT
+    # §R0 + BACKEND_ISSUES §1.1 causal-chain strategy_id).
+    opportunity_id: str | None = None
+    strategy_id: str | None = None
+    scanner_family: str | None = None
 
 
 @dataclass
@@ -77,7 +84,6 @@ class DebateResult:
     bear_confidence: int
     bear_thesis: str
     bear_evidence: list[str]
-    final_conviction: int    # synthesized from both sides
 
 
 # ── schemas for structured LLM output ────────────────────────────────────────
@@ -137,6 +143,9 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         )
 
     decision = _parse_decision(decision_raw)
+    # R0: match the pick back to its source opportunity (id + scanner_family)
+    # before any return path, so even watch/skip records carry attribution.
+    _attach_opportunity_context(decision, trading_context)
 
     # "watch" → record interest, no trade (treated as informational skip)
     if decision.action == "watch":
@@ -229,6 +238,10 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         "debate_bear": decision.debate_bear_confidence,
         "supporting": decision.supporting_signals[:5],
         "opposing": decision.opposing_signals[:5],
+        # R0: scanner_family is parsed back out of this JSON by
+        # analytics/reasoning_feedback.py and fed to the PI prompt. Hard-coded
+        # absence here is why reasoning_feedback scanner was permanently unknown.
+        "scanner_family": decision.scanner_family,
         "guards": guard_summary,
     }
     # Cap ONLY the human thesis; append the full JSON AFTER capping so the JSON
@@ -247,8 +260,8 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         price=price,
         stop_price=stop_price,
         execution_mode=execution_mode,
-        strategy_id=None,
-        opportunity_id=None,
+        strategy_id=decision.strategy_id,
+        opportunity_id=decision.opportunity_id,
         agent_rationale=rationale,
     )
 
@@ -299,9 +312,11 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 
     bull_conf = int(bull_result.get("confidence", 50))
     bear_conf = int(bear_result.get("confidence", 50))
-    advantage = bull_conf - bear_conf
-    final = max(0, min(100, 50 + advantage))
 
+    # NOTE: the bull/bear advantage is applied in evaluate_trading_opportunity
+    # (initial_conviction + advantage*0.3); DebateResult intentionally carries the
+    # raw confidences, not a pre-synthesized verdict. (Removed the dead
+    # final_conviction field that was computed here but never read.)
     return DebateResult(
         bull_confidence=bull_conf,
         bull_thesis=bull_result.get("thesis", ""),
@@ -309,7 +324,6 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
         bear_confidence=bear_conf,
         bear_thesis=bear_result.get("thesis", ""),
         bear_evidence=bear_result.get("evidence", []),
-        final_conviction=final,
     )
 
 
@@ -581,6 +595,24 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "",
     ]
 
+    # A10 (LEARNING_LOOP_AUDIT / PIPELINE_GAPS D1): these three analytics signals
+    # were COMPUTED in layer2 (trading_context._build_layer2_short_term) but never
+    # rendered into the prompt — so calibration, the trading memo, and reasoning
+    # feedback were silently dropped before reaching the PI Agent. They are real,
+    # data-derived signals; surface them.
+    memo = layer2.get("trading_memo")
+    if memo and memo.get("rendered"):
+        parts += ["## Trading Memo (insights from historical performance analysis)",
+                  memo["rendered"], ""]
+    calibration_fb = layer2.get("calibration_feedback")
+    if calibration_fb:
+        parts += ["## Conviction Calibration (your past conviction vs actual win-rate)",
+                  calibration_fb, ""]
+    reasoning_fb = layer2.get("reasoning_feedback")
+    if reasoning_fb:
+        parts += ["## Reasoning Feedback (which signal patterns have actually worked)",
+                  reasoning_fb, ""]
+
     # Ranker candidates (what paper_trader would do)
     ranker = layer2.get("ranker_candidates", [])
     if ranker:
@@ -620,6 +652,18 @@ def _build_assessment_prompt(ctx: dict) -> str:
         parts.append("")
         parts.append("## Research-sourced Opportunities (from Serenity agent)")
         parts.append(serenity_lines)
+
+    # L-Bug-B: dreaming-agent post-trade lessons (advisory reflections, not risk
+    # blocks). These ps_lessons previously had no path into the PI prompt at all.
+    ps_lessons = layer3.get("ps_lessons", [])
+    if ps_lessons:
+        parts.append("")
+        parts.append("## Recent Post-trade Lessons (dreaming agent reflections)")
+        for l in ps_lessons[:5]:
+            parts.append(
+                f"  [{l.get('severity') or 'info'}] {l.get('category') or 'general'}: "
+                f"{l.get('summary', '')}"
+            )
 
     parts += [
         "",
@@ -710,3 +754,32 @@ def _parse_decision(raw: dict) -> TradingDecision:
         supporting_signals=raw.get("supporting_signals", []),
         opposing_signals=raw.get("opposing_signals", []),
     )
+
+
+def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
+    """Backfill opportunity_id + scanner_family from the source opportunity (R0).
+
+    The PI Agent freely picks a symbol+direction from the whole context; this
+    matches that pick back to the market_observer opportunity it came from so
+    the proposal records a real opportunity_id (not the hard-coded None that
+    severed the attribution chain). Best-effort and honest: if the pick maps to
+    no open opportunity (e.g. it came from raw features/signals), the fields
+    stay None rather than being fabricated. See LEARNING_LOOP_AUDIT_2026-06-26
+    §R0 — this one backfill un-starves trade_case_study has_full_chain, guard
+    predicates, and reasoning_feedback scanner_family downstream.
+    """
+    if not decision.symbol:
+        return
+    opps = (ctx.get("layer1") or {}).get("opportunities") or []
+    for o in opps:
+        if o.get("symbol") != decision.symbol:
+            continue
+        bias = o.get("direction_bias")
+        # Require direction agreement only when both sides declare one; an
+        # opportunity with no bias still matches on symbol.
+        if decision.direction and bias and bias != decision.direction:
+            continue
+        decision.opportunity_id = o.get("id")
+        decision.strategy_id = o.get("linked_strategy_id")
+        decision.scanner_family = o.get("scanner_family")
+        return

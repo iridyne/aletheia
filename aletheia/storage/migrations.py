@@ -1264,6 +1264,8 @@ CREATE INDEX IF NOT EXISTS idx_pred_claims_market ON prediction_market_claims(ma
 # CREATE TABLE above covers fresh DBs; these keep older app.db files current.
 _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
+    # A13: link signal_pending pi_decisions back to their source opportunity
+    ("opportunity_id", "pi_decisions", "TEXT"),
     ("stop_price", "trade_proposals", "REAL"),
     # CR-RE-01: preserve the proposal's original execution_mode on the decision row
     # (allowed_execution_mode gets downgraded to paper_internal on rejection).

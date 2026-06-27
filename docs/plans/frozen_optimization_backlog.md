@@ -7,6 +7,11 @@
 > **创建时间**:2026-06-24
 > **关联文档**:`round2_week1_decision_chain_fixes.md`(Round 2 第一周必做)
 > **冻结约束**:见 `CLAUDE.md` "EXPERIMENT FREEZE" 段 + `docs/product/EXPERIMENT_PROTOCOL.md`
+>
+> ⚠️ **2026-06-27 状态更新:Round 1 已提前结束,冻结已解除。** 本文件不再是"不能做"的清单,
+> 而是"Round 1 后全量修复"的工作输入之一。A 段(触冻结路径)、B 段(信任边界)、C 段(indirect-risk)
+> 现均可施工;实际施工账本与去重后的统一编号见本批次产出的 master ledger。各条施工时仍按
+> "亲核 file:line + 补 SDD spec + 下游核实(C-1 教训)"纪律。**完成标记规则不变**:加 `[完成 hash]` 前缀,不删条目。
 
 ---
 

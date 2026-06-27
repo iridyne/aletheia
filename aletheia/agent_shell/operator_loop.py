@@ -391,12 +391,21 @@ def build_system_assessment() -> SystemAssessment:
             1 for f in fills_all if (f.get("filled_at") or "") > cutoff_48h
         )
         fills_7d = [f for f in fills_all if (f.get("filled_at") or "") > cutoff_7d]
-        if fills_7d:
-            wins = sum(1 for f in fills_7d if (f.get("realized_pnl") or 0) > 0)
-            assessment.win_rate_7d = wins / len(fills_7d) * 100 if fills_7d else None
-            assessment.total_pnl_7d = sum(f.get("realized_pnl") or 0 for f in fills_7d)
-            gross_wins = sum(f.get("realized_pnl") or 0 for f in fills_7d if (f.get("realized_pnl") or 0) > 0)
-            gross_losses = abs(sum(f.get("realized_pnl") or 0 for f in fills_7d if (f.get("realized_pnl") or 0) < 0))
+        # A9 (LEARNING_LOOP_AUDIT §18.2): realized_pnl lives on POSITIONS, not fills
+        # (the Fill model has no realized_pnl column), so the old fills-based math made
+        # win_rate/total_pnl/profit_factor permanently 0/None. Compute from closed
+        # positions, which carry realized_pnl.
+        closed_7d = [
+            p for p in repo.list_positions(status="closed", limit=500)
+            if (p.get("closed_at") or "") > cutoff_7d
+        ]
+        if closed_7d:
+            pnls = [(p.get("realized_pnl") or 0) for p in closed_7d]
+            wins = sum(1 for v in pnls if v > 0)
+            assessment.win_rate_7d = wins / len(closed_7d) * 100
+            assessment.total_pnl_7d = sum(pnls)
+            gross_wins = sum(v for v in pnls if v > 0)
+            gross_losses = abs(sum(v for v in pnls if v < 0))
             if gross_losses > 0:
                 assessment.profit_factor_7d = gross_wins / gross_losses
             elif gross_wins > 0:
@@ -486,21 +495,24 @@ def build_system_assessment() -> SystemAssessment:
 def _get_strategy_performance(strategy_id: str) -> dict | None:
     """Get recent performance metrics for a strategy."""
     try:
+        # A9 (LEARNING_LOOP_AUDIT §18.2): the fills table has neither strategy_id nor
+        # realized_pnl, so the old query raised (unknown column) and this helper always
+        # returned None. Closed positions carry both — use them.
         cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
-        fills = repo._select_all(
-            "fills",
-            where="strategy_id = ? AND filled_at > ?",
+        positions = repo._select_all(
+            "positions",
+            where="strategy_id = ? AND status = 'closed' AND closed_at > ?",
             params=(strategy_id, cutoff),
             limit=100,
         )
-        if not fills:
+        if not positions:
             return None
-        pnls = [f.get("realized_pnl") or 0 for f in fills]
+        pnls = [(p.get("realized_pnl") or 0) for p in positions]
         wins = sum(1 for p in pnls if p > 0)
         return {
-            "trade_count": len(fills),
-            "win_rate": wins / len(fills) * 100 if fills else 0,
-            "expectancy": sum(pnls) / len(fills) if fills else 0,
+            "trade_count": len(positions),
+            "win_rate": wins / len(positions) * 100,
+            "expectancy": sum(pnls) / len(positions),
             "total_pnl": sum(pnls),
         }
     except Exception:

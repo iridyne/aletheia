@@ -594,6 +594,86 @@ def _probe_knowledge_flood(report: Report) -> None:
         report.add("loop.knowledge_flood", "info", f"probe error: {e}")
 
 
+def _probe_learning_retrieval(report: Report) -> None:
+    """Learning retrieval-pool health — signal/noise + guard promotion stall.
+
+    Two read-only checks surfaced by the 2026-06-26 full-lifecycle audit
+    (docs/issues/LEARNING_LOOP_AUDIT_2026-06-26.md):
+
+    1. retrieval_pool: the eligible pool (high_confidence + active) that the
+       FROZEN ranker scores via _lesson_penalty is dominated by
+       post_trade_review rows. Those reviews auto-upgrade to high_confidence on
+       any fill, while trade_case_study needs has_full_chain — which is starved
+       by the opportunity_id=None root cause (R0). A lopsided review:case ratio
+       means the only live feedback loop is scoring against hallucination
+       templates, not real attributed cases.
+    2. guard_promotion: guard_candidate rows pile up while 0 trading_guard are
+       active — the promotion chain is dead (config switch off + dir mismatch +
+       missing frontmatter, audit 断点 B0/B2/B3).
+
+    Both are MONITORING ONLY — the fixes touch the frozen decision chain and are
+    deferred to Round 2 (round2_week1_decision_chain_fixes.md Fix L-Bug-C/-D).
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        from collections import Counter
+        db = get_db()
+
+        # --- 1. eligible retrieval pool composition --------------------------
+        pool: Counter = Counter()
+        for r in db.execute(
+            "SELECT item_type, COUNT(*) n FROM knowledge_items "
+            "WHERE confidence='high_confidence' AND (status='active' OR status IS NULL) "
+            "GROUP BY item_type"
+        ):
+            pool[r["item_type"]] = r["n"]
+        total = sum(pool.values())
+        if total == 0:
+            report.add("loop.retrieval_pool", "info", "eligible pool empty yet")
+        else:
+            reviews = pool.get("post_trade_review", 0)
+            cases = pool.get("trade_case_study", 0)
+            review_pct = round(reviews / total * 100, 1)
+            ratio = round(reviews / cases, 1) if cases else float("inf")
+            detail = (f"pool={total}: post_trade_review={reviews}({review_pct}%), "
+                      f"trade_case_study={cases}, review:case={ratio}")
+            # warn when reviews flood the pool AND real attributed cases are starved
+            if reviews > 0 and (ratio == float("inf") or ratio >= 20):
+                report.add(
+                    "loop.retrieval_pool", "warn",
+                    f"retrieval pool flooded by reviews — {detail}",
+                    "ranker _lesson_penalty scores against hallucination-prone "
+                    "post_trade_review, not real cases. Root cause = R0 "
+                    "opportunity_id=None starving trade_case_study has_full_chain. "
+                    "Round 2 Fix L-Bug-C (LEARNING_LOOP_AUDIT_2026-06-26.md §R0/R1)")
+            else:
+                report.add("loop.retrieval_pool", "ok", detail)
+
+        # --- 2. guard promotion stall ---------------------------------------
+        candidates = db.execute(
+            "SELECT COUNT(*) FROM knowledge_items WHERE item_type='guard_candidate'"
+        ).fetchone()[0]
+        active_guards = db.execute(
+            "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trading_guard' "
+            "AND (status='active' OR status IS NULL)"
+        ).fetchone()[0]
+        if candidates == 0:
+            report.add("loop.guard_promotion", "info", "no guard_candidates yet")
+        elif active_guards == 0:
+            report.add(
+                "loop.guard_promotion", "warn",
+                f"{candidates} guard_candidate piled up, 0 promoted to trading_guard",
+                "promotion chain dead — config auto_promote_enabled=false + "
+                "load_trading_guards reads knowledge/guards/ while candidates write "
+                "knowledge/guard_candidates/ + missing predicates frontmatter. "
+                "Round 2 Fix L-Bug-D (audit 断点 B0/B2/B3)")
+        else:
+            report.add("loop.guard_promotion", "ok",
+                       f"{active_guards} active guards, {candidates} candidates")
+    except Exception as e:
+        report.add("loop.retrieval_pool", "info", f"probe error: {e}")
+
+
 def _probe_reconciled_ratio(report: Report) -> None:
     """Fraction of recent closes that came from reconciler (positions vanished
     exchange-side) rather than AI-driven stop_loss / take_profit / pi_close.
@@ -969,6 +1049,7 @@ def build_report() -> Report:
         _probe_profit_loop,
         _probe_round1,
         _probe_knowledge_flood,
+        _probe_learning_retrieval,
         _probe_reconciled_ratio,
         _probe_concentration,
         _probe_health,

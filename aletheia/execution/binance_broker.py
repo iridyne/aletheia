@@ -159,9 +159,8 @@ def execute_live_order(
         else:
             position_id = None
     except Exception as e:
-        err = RuntimeError(f"Post-submit DB error: {e}")
-        err.exchange_order_id = exchange_order_id  # type: ignore[attr-defined]
-        raise err from e
+        from aletheia.execution.errors import PostSubmitDBError
+        raise PostSubmitDBError(f"Post-submit DB error: {e}", exchange_order_id) from e
 
     return {
         "order_id": order.id,

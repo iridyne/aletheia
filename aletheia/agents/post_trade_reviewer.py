@@ -68,8 +68,17 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
         ctx = f"Strategy: {strategy_id or 'global'}. Fills: {len(strat_fills)}; orders: {len(orders)}.\n\nPosition Details:\n{positions_block}"
 
         content, err = await llm_complete(
-            system="You are a post-trade reviewer. Given recent fills/orders, write a short review: "
-                   "execution quality, what worked, what to improve. Under 200 words.",
+            system=(
+                "You are a post-trade reviewer for an autonomous crypto paper-trading system. "
+                "You are given recent fills and their position outcomes (entry/exit price, realized "
+                "PnL, market regime, entry context). Write a short review focused on SIGNAL QUALITY "
+                "and DECISION-MAKING: was the direction correct, was the entry timing good, did the "
+                "thesis play out, which pattern should be repeated or avoided next time. "
+                "Judge the TRADE DECISION, not execution microstructure — this is a market-order "
+                "system with no VWAP/smart-routing/slippage desk, so do NOT invent execution-quality "
+                "commentary. If PnL is 'open', say the trade is unresolved rather than guessing. "
+                "Under 200 words."
+            ),
             user=f"{ctx}\n\nWrite a post-trade review.",
             max_tokens=600,
         )
@@ -79,10 +88,13 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
             logger.info("post_trade_reviewer: LLM unavailable for strategy=%s, skipping write", strategy_id)
             continue
 
-        # Promote to high_confidence (the retrieval quality gate) only when the LLM
-        # actually produced the review AND there were real fills behind it; empty or
-        # fallback reviews stay medium so noise can't enter the experience loop.
-        confidence = "high_confidence" if strat_fills else "medium_confidence"
+        # C1 (LEARNING_LOOP_AUDIT §R1): a post_trade_review is a SOFT LLM reflection,
+        # not an attributed hard case. Keep it medium_confidence so the retrieval
+        # quality gate (high_confidence) is led by trade_case_study — real closed-trade
+        # cases that earn high via has_full_chain (now reachable after the R0
+        # opportunity_id fix). Auto-upgrading every review to high flooded the pool
+        # ~118:1 with templated reflections and starved real cases.
+        confidence = "medium_confidence"
         item = create_post_trade_review(
             "Post-Trade Review",
             content,
