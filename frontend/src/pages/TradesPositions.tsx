@@ -10,8 +10,8 @@ import AccountSnapshot from '../components/AccountSnapshot'
 import CausalChain from '../components/CausalChain'
 import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
-import { Badge, Button, Card, CardHeader, TableWrap } from '../components/ui'
-import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
+import { Badge, Button, Card, TableWrap } from '../components/ui'
+import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp, fmtSymbol, exchangeOf, marketBadgeTone, isPerpMarket } from '../lib/format'
 import TradeAnalyticsPanel from '../charts/TradeAnalyticsPanel'
 const TradeInsightsPanel = lazy(() => import('../charts/TradeInsightsPanel'))
 
@@ -40,8 +40,12 @@ const pnlCell = (v: number | null | undefined) => {
   return <span className={`mono ${v >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>{fmtSigned(v)}</span>
 }
 
+const marketBadge = (v: string) => <Badge tone={marketBadgeTone(v)}>{isPerpMarket(v) ? 'Perp' : humanize(v)}</Badge>
+
 const openColumns = [
   posCol.accessor('symbol', { header: 'Symbol', cell: info => <span className="mono">{fmtSymbol(info.getValue(), info.row.original.market_type)}</span> }),
+  posCol.accessor('execution_mode', { id: 'exchange', header: 'Exchange', cell: info => exchangeOf(info.getValue()) }),
+  posCol.accessor('market_type', { id: 'market', header: 'Market', cell: info => marketBadge(info.getValue()) }),
   posCol.accessor('direction', { header: 'Dir', cell: info => humanize(info.getValue()) }),
   posCol.accessor('quantity', { header: 'Qty', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
   posCol.accessor('entry_price', { header: 'Entry (USDT)', cell: info => <span className="mono">{fmtNum(info.getValue())}</span> }),
@@ -97,12 +101,6 @@ export default function TradesPositions() {
   const closed = allPos.filter(p => p.status !== 'open')
   const orderRows = orders as Order[]
 
-  const openGroups: Record<string, Position[]> = {}
-  for (const p of open) {
-    const key = `${humanize(p.execution_mode)} · ${humanize(p.market_type)}`
-    ;(openGroups[key] ||= []).push(p)
-  }
-
   // Per-position notional (local book), same formula as the backend exposure_by_symbol
   // (pnl.py:248): quantity × (current_price ?? entry_price). Total over all open
   // positions is the denominator for each row's exposure %.
@@ -145,12 +143,16 @@ export default function TradesPositions() {
             {open.length === 0 ? (
               <Card><p className="text-muted text-sm">No open positions.</p></Card>
             ) : (
-              Object.entries(openGroups).map(([group, items]) => (
-                <Card key={group}>
-                  <CardHeader title={<h4 className="blotter-group-label">{group}</h4>} />
-                  <DataTable data={items} columns={openColumnsWithExposure} onRowClick={p => setSel({ kind: 'position', position: p })} />
-                </Card>
-              ))
+              <Card>
+                <DataTable
+                  data={open}
+                  columns={openColumnsWithExposure}
+                  onRowClick={p => setSel({ kind: 'position', position: p })}
+                  columnToggle
+                  tableId="open-positions"
+                  noWrap
+                />
+              </Card>
             )}
 
             <ReconciliationCard

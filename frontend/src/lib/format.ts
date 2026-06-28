@@ -172,6 +172,31 @@ export function humanizeBool(value: unknown): string {
   return value ? 'ON' : 'OFF'
 }
 
+// ---------- Exchange / venue from execution_mode ----------
+// execution_mode encodes venue + account flavor ("okx_demo", "bitget_live_limited").
+// The blotter surfaces the venue as its own column (UTA: positions across multiple
+// exchanges coexist), so we map mode → exchange here. demo/live stays visible in the
+// account snapshot + position detail drawer.
+const EXCHANGE_OF_MODE: Record<string, string> = {
+  paper_internal: 'Paper',
+  bitget_demo: 'Bitget',
+  bitget_live_limited: 'Bitget',
+  okx_demo: 'OKX',
+  okx_live: 'OKX',
+  okx_live_limited: 'OKX',
+  binance_testnet: 'Binance',
+  binance_live_limited: 'Binance',
+}
+
+/** Exchange/venue name derived from a position/order execution_mode. */
+export function exchangeOf(executionMode: string | null | undefined, dash = '—'): string {
+  if (!executionMode) return dash
+  const k = String(executionMode).trim()
+  if (EXCHANGE_OF_MODE[k]) return EXCHANGE_OF_MODE[k]
+  const head = k.split('_')[0]
+  return head ? head.charAt(0).toUpperCase() + head.slice(1) : dash
+}
+
 // ---------- Instrument symbol display ----------
 // Project-wide convention (owner rule, 2026-06-26): the symbol's slash IS the
 // spot-vs-derivative signal, so it must never contradict the instrument type.
@@ -207,6 +232,16 @@ export function fmtSymbol(
   const s = String(symbol).trim()
   if (!s) return dash
   return isPerpMarket(marketType) ? s.replace(/\//g, '') : s
+}
+
+/**
+ * Badge tone for a market_type chip. Categorical (not a status): spot = blue
+ * (calm — no leverage/funding), perp/futures = yellow (carries leverage + funding,
+ * a mild attention cue). Used by the Trades & Positions blotter Market column.
+ */
+export function marketBadgeTone(marketType: string | null | undefined): 'blue' | 'yellow' | 'muted' {
+  if (!marketType) return 'muted'
+  return isPerpMarket(marketType) ? 'yellow' : 'blue'
 }
 
 /**
