@@ -339,6 +339,21 @@ uv run python -c "from aletheia.storage.repositories import list_knowledge_items
 
 ---
 
+## Cross-Cutting Track: AI-Native Bug-Fix Path (Phase 1+2 已落地;3+4 待观察)
+
+> **状态(2026-06-28)**: Phase 1+2 已实现并合入 master(`doctor --json` + `GET /_infra/doctor` + 7 个 `content.*` 内容质量探针)。Phase 3+4 **暂不实施**——owner 决定先观察 Phase 1+2 在真实运行中的价值,据后续运行情况再评估是否继续(owner:「现在也给不出什么比较好的建议」)。完整设计=[`docs/plans/ai_native_bugfix_path.md`](../plans/ai_native_bugfix_path.md)。
+
+**目标**: 让 AI agent 原生能通过 CLI 自动**发现 + 诊断** bug(尤其 Evolve 模块的幻觉/杂乱数据),把 bug discovery 脱离人肉肉眼盯 Web UI。
+
+- **Phase 1(done)**: doctor 机器可读输出。AI 一次调用拿回稳定 JSON 诊断。
+- **Phase 2(done)**: 7 个内容质量探针(strategy_health / memo_quality / lesson_chain / attribution / shadow_trades / signal_settlement / proposal_bias)——区别于既有只查「运行/活性」的 `loop.*` 探针,这些查「AI 产出内容是否幻觉/垃圾」。
+- **Phase 3(deferred,待观察)**: `aletheia diagnose --json` 统一入口 + 给每条异常打 `fix_class`(data/code/config)标,为分级自动修路由。
+- **Phase 4(deferred,待观察)**: 把内容异常接进现有 `operator_loop.decide_actions()` 动作引擎——数据态可逆问题机器自动修+审计;代码态只自动诊断出根因+草拟计划等 owner 批(修复边界=plan §4 选项1)。选项3(非决策链白名单自动改码)列为研究方向。
+
+**评估触发**: 运行一段时间后,若 `content.*` 探针确实稳定捕获到 owner 原本要肉眼找的异常、且误报可控,则启动 Phase 3;否则按实际信噪比调整探针阈值或收敛范围。
+
+---
+
 ## Phase 0 — Stabilize & Observe
 
 **Goal**: All 15 scheduler jobs run autonomously. System proves basic stability — observed

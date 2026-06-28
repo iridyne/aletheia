@@ -117,8 +117,8 @@
 - [x] Phase 1.1 `doctor --json` — `Report.to_dict()` + CLI `--json`(`doctor_cmd.py`);契约 `{generated_at,healthy,checks[],summary{blockers,warns}}`
 - [x] Phase 1.2 `GET /_infra/doctor` — sync def 复用 `build_report().to_dict()`(`routes/health.py`),运行中 gateway 免子进程可查
 - [x] Phase 2 七个 `content.*` 探针 + 单测 — `content.strategy_health/memo_quality/lesson_chain/attribution/shadow_trades/signal_settlement/proposal_bias`;真实临时 DB 23 单测;时间戳比较走 Python isoformat cutoff(避开 SQLite `datetime('now')` 空格分隔同日比较反转陷阱)
-- [ ] Phase 3 设计细化(`aletheia diagnose` + `fix_class` 打标)
-- [ ] Phase 4 排期(数据态 action 先行)
-- [ ] 选项3「非决策链白名单」研究文档
+- [ ] Phase 3 设计细化(`aletheia diagnose` + `fix_class` 打标)— **deferred,移入 ROADMAP「待观察」**(owner 2026-06-28:先看 Phase1+2 真实运行价值再评估)
+- [ ] Phase 4 排期(数据态 action 先行)— **deferred,移入 ROADMAP「待观察」**
+- [ ] 选项3「非决策链白名单」研究文档 — 研究方向,未排期
 
 > **实施备注(2026-06-28,分支 `worktree-auto-restart-git-hooks`)**:Phase 1+2 已落地。`content.*` 探针对缺表/缺数据优雅降级为 `info`(不崩报告)。在 worktree 空 `data/` 下跑 `doctor --json` 会看到 7 条 `probe error: no such table`——这是空 data 目录,非 bug;主仓已迁移 DB 上返回真实 ok/warn(单测已证)。激活:FF merge master + restart + `aletheia doctor --json` 实测。
