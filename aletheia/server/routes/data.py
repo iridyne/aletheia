@@ -1666,6 +1666,17 @@ async def post_serenity_theme_deep_dive(theme_id: str, body: dict):
 
 @router.post("/serenity/themes/{theme_id}/promote")
 async def promote_serenity_theme(theme_id: str):
+    """Promote a Serenity theme's opportunities into the PI evaluation queue.
+
+    Phase 3 (Option A, D5): Replaces the old StrategyRecord(state='draft') dead-record
+    path. For each active opportunity under the theme:
+      1. Set action_intent='pi_evaluate' on the opportunity
+      2. Write a signal_pending PiDecision with signal_source='serenity' and
+         opportunity_id=<serenity_opportunities.id>
+      3. Wake the PI daemon so the new signals are evaluated promptly
+
+    PI Agent remains the sole trade-decision maker — these rows are inputs, not orders.
+    """
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:
@@ -1673,36 +1684,50 @@ async def promote_serenity_theme(theme_id: str):
     if theme["status"] == "promoted":
         raise HTTPException(400, "Theme already promoted")
 
-    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.models import PiDecision
     now = datetime.now(timezone.utc).isoformat()
 
-    claims = repo.list_serenity_claims_for_theme(theme_id, limit=50)
-    claim_ids = [c["id"] for c in claims]
+    opps = repo.list_serenity_opportunities(theme_id=theme_id, status="active", limit=200)
+    queued = 0
+    queued_ids: list[str] = []
+    for opp in opps:
+        try:
+            repo.update_serenity_opportunity(
+                opp["id"],
+                action_intent="pi_evaluate",
+                updated_at=now,
+            )
+            pi_dec = PiDecision(
+                symbol=opp.get("symbol"),
+                direction=opp.get("direction"),
+                action="signal_pending",
+                conviction=0,
+                reasoning=f"Serenity promote: theme={theme_id[:8]} opp={opp['id'][:8]}",
+                opportunity_id=opp["id"],
+                signal_source="serenity",
+                debate_ran=False,
+            )
+            repo.insert_pi_decision(pi_dec)
+            queued += 1
+            queued_ids.append(opp["id"])
+        except Exception:
+            # one-row failure must not block the rest of the theme; log via audit
+            continue
 
-    parameters = json.dumps({
-        "source": "serenity_promote",
-        "theme_id": theme_id,
-        "theme_name": theme["name"],
-        "thesis": theme.get("thesis") or theme.get("description") or "",
-        "related_assets": json.loads(theme.get("related_assets") or "[]"),
-        "claim_ids": claim_ids,
-        "confidence": theme.get("confidence"),
-        "evidence_strength": theme.get("evidence_strength"),
-    })
-
-    strategy = StrategyRecord(
-        name=f"[Serenity] {theme['name']}",
-        description=theme.get("thesis") or theme.get("description") or f"Promoted from theme: {theme['name']}",
-        state="draft",
-        parameters=parameters,
-    )
-    repo.insert_strategy(strategy)
     repo.update_serenity_theme(theme_id, status="promoted", promoted_at=now, updated_at=now)
 
+    try:
+        from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+        notify_pi_daemon(source="serenity_promote")
+    except Exception:
+        pass
+
     return {
-        "proposalCandidateId": strategy.id,
-        "status": "draft",
-        "message": "Theme promoted to proposal candidate. Validation pipeline not executed yet.",
+        "theme_id": theme_id,
+        "queued": queued,
+        "opportunity_ids": queued_ids,
+        "status": "submitted_to_pi",
+        "message": f"Theme promoted: {queued} opportunit{'y' if queued == 1 else 'ies'} enqueued for PI evaluation.",
     }
 
 
