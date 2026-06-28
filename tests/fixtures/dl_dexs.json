@@ -1,0 +1,496 @@
+{
+  "total24h": 4474521899,
+  "total7d": 48156739496,
+  "change_1d": -45.37,
+  "change_7d": -16.19,
+  "protocols": [
+    {
+      "total24h": 30727147,
+      "total48hto24h": 101631048,
+      "total7d": 595776318,
+      "total14dto7d": 652718403,
+      "total30d": 3560126041,
+      "total60dto30d": 4369620994,
+      "total1y": 93625204830,
+      "annualized1y": 93625204830,
+      "total7DaysAgo": 48843198,
+      "total30DaysAgo": 192915083,
+      "totalAllTime": 342860927594,
+      "average1y": 256507410.49315068,
+      "monthlyAverage1y": 7808085575.411507,
+      "change_1d": -69.77,
+      "change_7d": -37.09,
+      "change_1m": -84.07,
+      "change_7dover7d": -8.72,
+      "change_30dover30d": -18.53,
+      "breakdown24h": {
+        "ethereum": {
+          "Curve DEX": 24382204
+        },
+        "xdai": {
+          "Curve DEX": 402724
+        },
+        "sonic": {
+          "Curve DEX": 173
+        },
+        "fraxtal": {
+          "Curve DEX": 24109
+        },
+        "base": {
+          "Curve DEX": 1759244
+        },
+        "polygon": {
+          "Curve DEX": 1304730
+        },
+        "hyperliquid": {
+          "Curve DEX": 29858
+        },
+        "optimism": {
+          "Curve DEX": 26680
+        },
+        "ink": {
+          "Curve DEX": 198
+        },
+        "plasma": {
+          "Curve DEX": 560689
+        },
+        "celo": {
+          "Curve DEX": 7527
+        },
+        "stable": {
+          "Curve DEX": 0
+        },
+        "arbitrum": {
+          "Curve DEX": 1075070
+        },
+        "unichain": {
+          "Curve DEX": 0
+        },
+        "monad": {
+          "Curve DEX": 339343
+        },
+        "avax": {
+          "Curve DEX": 3399
+        },
+        "mantle": {
+          "Curve DEX": 0
+        }
+      },
+      "breakdown30d": {
+        "ethereum": {
+          "Curve DEX": 3318428969
+        },
+        "arbitrum": {
+          "Curve DEX": 56469711
+        },
+        "optimism": {
+          "Curve DEX": 4064100
+        },
+        "polygon": {
+          "Curve DEX": 30303617
+        },
+        "base": {
+          "Curve DEX": 88536983
+        },
+        "xdai": {
+          "Curve DEX": 18103958
+        },
+        "sonic": {
+          "Curve DEX": 96523
+        },
+        "hyperliquid": {
+          "Curve DEX": 1397138
+        },
+        "fraxtal": {
+          "Curve DEX": 1781894
+        },
+        "stable": {
+          "Curve DEX": 89
+        },
+        "unichain": {
+          "Curve DEX": 21721
+        },
+        "ink": {
+          "Curve DEX": 10119
+        },
+        "celo": {
+          "Curve DEX": 55644
+        },
+        "mantle": {
+          "Curve DEX": 0
+        },
+        "plasma": {
+          "Curve DEX": 14880100
+        },
+        "monad": {
+          "Curve DEX": 25018984
+        },
+        "avax": {
+          "Curve DEX": 956491
+        }
+      },
+      "defillamaId": "3",
+      "name": "Curve DEX",
+      "displayName": "Curve DEX",
+      "module": "curve",
+      "category": "Dexs",
+      "logo": "https://icons.llamao.fi/icons/protocols/curve",
+      "chains": [
+        "Ethereum",
+        "OP Mainnet",
+        "Gnosis",
+        "Avalanche",
+        "Polygon",
+        "Arbitrum",
+        "Fantom",
+        "Fraxtal",
+        "Celo",
+        "Base",
+        "Sonic",
+        "Hyperliquid L1",
+        "Plasma",
+        "Mantle",
+        "Ink",
+        "Unichain",
+        "Monad",
+        "Stable"
+      ],
+      "protocolType": "protocol",
+      "methodologyURL": "https://github.com/DefiLlama/dimension-adapters/blob/master/dexs/curve",
+      "methodology": {
+        "UserFees": "Swap fees paid by users",
+        "Fees": "Swap fees paid by users",
+        "Revenue": "Percentage of swap fees going to treasury and/or token holders",
+        "ProtocolRevenue": "Percentage of swap fees going to treasury",
+        "HoldersRevenue": "Money going to governance token holders",
+        "SupplySideRevenue": "Liquidity providers revenue"
+      },
+      "parentProtocol": "parent#curve-finance",
+      "slug": "curve-dex",
+      "linkedProtocols": [
+        "Curve Finance",
+        "Curve DEX",
+        "Curve LlamaLend"
+      ],
+      "id": "3"
+    },
+    {
+      "total24h": 94128,
+      "total48hto24h": 183496,
+      "total7d": 901290,
+      "total14dto7d": 722204,
+      "total30d": 7294784,
+      "total60dto30d": 1902562,
+      "total1y": 294265372,
+      "annualized1y": 294265372,
+      "total7DaysAgo": 56570,
+      "total30DaysAgo": 122734,
+      "totalAllTime": 7214740539,
+      "average1y": 806206.498630137,
+      "monthlyAverage1y": 24540925.81830137,
+      "change_1d": -48.7,
+      "change_7d": 66.39,
+      "change_1m": -23.31,
+      "change_7dover7d": 24.8,
+      "change_30dover30d": 283.42,
+      "breakdown24h": {
+        "ethereum": {
+          "Balancer V1": 109376
+        }
+      },
+      "breakdown30d": {
+        "ethereum": {
+          "Balancer V1": 7294784
+        }
+      },
+      "defillamaId": "116",
+      "name": "Balancer V1",
+      "displayName": "Balancer V1",
+      "module": "balancer-v1",
+      "category": "Dexs",
+      "logo": "https://icons.llamao.fi/icons/protocols/balancer-v1",
+      "chains": [
+        "Ethereum"
+      ],
+      "protocolType": "protocol",
+      "methodologyURL": "https://github.com/DefiLlama/dimension-adapters/blob/master/dexs/balancer-v1.ts",
+      "methodology": {
+        "UserFees": "Swap fees paid by users",
+        "Fees": "Swap fees paid by users",
+        "Revenue": "Percentage of swap fees going to treasury and/or token holders",
+        "ProtocolRevenue": "Percentage of swap fees going to treasury",
+        "HoldersRevenue": "Money going to governance token holders",
+        "SupplySideRevenue": "Liquidity providers revenue"
+      },
+      "parentProtocol": "parent#balancer",
+      "slug": "balancer-v1",
+      "linkedProtocols": [
+        "Balancer",
+        "Balancer V1",
+        "Balancer V2",
+        "Balancer V3"
+      ],
+      "id": "116"
+    },
+    {
+      "total24h": 558603,
+      "total48hto24h": 1163795,
+      "total7d": 7091973,
+      "total14dto7d": 4809957,
+      "total30d": 25124443,
+      "total60dto30d": 19717209,
+      "total1y": 976416486,
+      "annualized1y": 979098948.8736264,
+      "total7DaysAgo": 705853,
+      "total30DaysAgo": 780906,
+      "totalAllTime": 251569943981,
+      "average1y": 2682462.8736263737,
+      "monthlyAverage1y": 81654169.87318681,
+      "change_1d": -52,
+      "change_7d": -20.86,
+      "change_1m": -28.47,
+      "change_7dover7d": 47.44,
+      "change_30dover30d": 27.42,
+      "breakdown24h": {
+        "metis": {
+          "SushiSwap": 0
+        },
+        "blast": {
+          "SushiSwap": 0
+        },
+        "sonic": {
+          "SushiSwap": 0
+        },
+        "katana": {
+          "SushiSwap": 0
+        },
+        "linea": {
+          "SushiSwap": 2
+        },
+        "optimism": {
+          "SushiSwap": 24
+        },
+        "fuse": {
+          "SushiSwap": 0
+        },
+        "avax": {
+          "SushiSwap": 571
+        },
+        "core": {
+          "SushiSwap": 0
+        },
+        "celo": {
+          "SushiSwap": 2544
+        },
+        "xdai": {
+          "SushiSwap": 754
+        },
+        "bsc": {
+          "SushiSwap": 1682
+        },
+        "ethereum": {
+          "SushiSwap": 376799
+        },
+        "base": {
+          "SushiSwap": 2926
+        },
+        "polygon": {
+          "SushiSwap": 31194
+        },
+        "arbitrum": {
+          "SushiSwap": 190827
+        }
+      },
+      "breakdown30d": {
+        "metis": {
+          "SushiSwap": 0
+        },
+        "sonic": {
+          "SushiSwap": 0
+        },
+        "optimism": {
+          "SushiSwap": 1171
+        },
+        "blast": {
+          "SushiSwap": 0
+        },
+        "linea": {
+          "SushiSwap": 937
+        },
+        "fuse": {
+          "SushiSwap": 16
+        },
+        "katana": {
+          "SushiSwap": 479
+        },
+        "avax": {
+          "SushiSwap": 28348
+        },
+        "core": {
+          "SushiSwap": 9
+        },
+        "xdai": {
+          "SushiSwap": 498006
+        },
+        "bsc": {
+          "SushiSwap": 163481
+        },
+        "base": {
+          "SushiSwap": 297307
+        },
+        "polygon": {
+          "SushiSwap": 1771986
+        },
+        "ethereum": {
+          "SushiSwap": 15926154
+        },
+        "arbitrum": {
+          "SushiSwap": 6418127
+        },
+        "celo": {
+          "SushiSwap": 18425
+        }
+      },
+      "defillamaId": "119",
+      "name": "SushiSwap",
+      "displayName": "SushiSwap",
+      "module": "sushiswap-classic",
+      "category": "Dexs",
+      "logo": "https://icons.llamao.fi/icons/protocols/sushiswap",
+      "chains": [
+        "Ethereum",
+        "Fantom",
+        "BSC",
+        "Harmony",
+        "Polygon",
+        "Gnosis",
+        "Arbitrum",
+        "Avalanche",
+        "Moonriver",
+        "Celo",
+        "Fuse",
+        "Boba",
+        "Blast",
+        "CORE",
+        "Katana",
+        "Metis",
+        "Linea",
+        "Sonic",
+        "OP Mainnet",
+        "Base"
+      ],
+      "protocolType": "protocol",
+      "methodologyURL": "https://github.com/DefiLlama/dimension-adapters/blob/master/dexs/sushiswap-classic.ts",
+      "methodology": {
+        "UserFees": "Users pay a 0.3% fee on each trade.",
+        "Fees": "SushiSwap Classic charges a flat 0.3% fee.",
+        "Revenue": "A share of each trade fee goes to xSUSHI stakers.",
+        "ProtocolRevenue": "Treasury does not receive SushiSwap Classic swap fees.",
+        "HoldersRevenue": "A share of each trade fee goes to xSUSHI stakers.",
+        "SupplySideRevenue": "Liquidity providers receive 5/6 of swap fees from trades in their pools."
+      },
+      "parentProtocol": "parent#sushi",
+      "slug": "sushiswap",
+      "linkedProtocols": [
+        "Sushi",
+        "SushiSwap",
+        "Sushi Trident",
+        "SushiSwap V3",
+        "Sushi Aptos"
+      ],
+      "breakdownMethodology": {
+        "Fees": {
+          "Token Swap Fees": "Swap fees paid by users on SushiSwap Classic pools."
+        },
+        "UserFees": {
+          "Token Swap Fees": "Swap fees paid by users on SushiSwap Classic pools."
+        },
+        "Revenue": {
+          "Swap Fees To xSUSHI Stakers": "The 1/6 protocol fee share from SushiSwap Classic swaps."
+        },
+        "HoldersRevenue": {
+          "Swap Fees To xSUSHI Stakers": "The 1/6 protocol fee share from SushiSwap Classic swaps."
+        },
+        "SupplySideRevenue": {
+          "Swap Fees To Liquidity Providers": "The 5/6 fee share retained by liquidity providers."
+        }
+      },
+      "id": "119"
+    },
+    {
+      "total24h": null,
+      "total48hto24h": null,
+      "annualized1y": 1791259515.9786053,
+      "totalAllTime": 6193341121,
+      "breakdown24h": null,
+      "breakdown30d": null,
+      "defillamaId": "127",
+      "name": "KyberSwap Classic",
+      "displayName": "KyberSwap Classic",
+      "module": "kyberswap-classic",
+      "category": "Dexs",
+      "logo": "https://icons.llamao.fi/icons/protocols/kyberswap-classic",
+      "chains": [
+        "Ethereum",
+        "Polygon",
+        "BSC",
+        "Avalanche",
+        "Fantom",
+        "Cronos",
+        "Arbitrum",
+        "Aurora",
+        "OP Mainnet",
+        "ZKsync Era",
+        "Linea",
+        "Scroll"
+      ],
+      "protocolType": "protocol",
+      "methodologyURL": "https://github.com/DefiLlama/dimension-adapters/blob/1e8620166b5772c02e5e68e9dcd2cbb818724d69/dead/dexs/kyberswap-classic.ts",
+      "methodology": {
+        "UserFees": "Swap fees paid by users",
+        "Fees": "Swap fees paid by users",
+        "Revenue": "Percentage of swap fees going to treasury and/or token holders",
+        "ProtocolRevenue": "Percentage of swap fees going to treasury",
+        "HoldersRevenue": "Money going to governance token holders",
+        "SupplySideRevenue": "Liquidity providers revenue"
+      },
+      "parentProtocol": "parent#kyberswap",
+      "slug": "kyberswap-classic",
+      "linkedProtocols": [
+        "KyberSwap",
+        "KyberSwap Classic",
+        "KyberSwap Elastic"
+      ],
+      "id": "127"
+    },
+    {
+      "total24h": null,
+      "total48hto24h": null,
+      "annualized1y": 48782072.52293578,
+      "totalAllTime": 101974579,
+      "breakdown24h": null,
+      "breakdown30d": null,
+      "defillamaId": "133",
+      "name": "Shell Protocol",
+      "displayName": "Shell Protocol",
+      "module": "shell-protocol",
+      "category": "Dexs",
+      "logo": "https://icons.llamao.fi/icons/protocols/shell-protocol",
+      "chains": [
+        "Arbitrum"
+      ],
+      "protocolType": "protocol",
+      "methodologyURL": "https://github.com/DefiLlama/dimension-adapters/blob/907a33a21a905e24de53272e391f73b262898e8b/dexs/shell-protocol",
+      "methodology": {
+        "UserFees": "Swap fees paid by users",
+        "Fees": "Swap fees paid by users",
+        "Revenue": "Percentage of swap fees going to treasury and/or token holders",
+        "ProtocolRevenue": "Percentage of swap fees going to treasury",
+        "HoldersRevenue": "Money going to governance token holders",
+        "SupplySideRevenue": "Liquidity providers revenue"
+      },
+      "slug": "shell-protocol",
+      "id": "133"
+    }
+  ]
+}

@@ -1192,6 +1192,22 @@ CREATE TABLE IF NOT EXISTS coingecko_top_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_coingecko_top_obs
     ON coingecko_top_snapshots (observed_at DESC, market_cap_rank ASC);
+
+-- Round 2 — Step 5: DefiLlama on-chain aggregates (stablecoin mcap, chain TVL, DEX volume).
+-- Three metric rows per collection cycle (metric_type discriminator).
+-- source='defillama'; query via latest_onchain_snapshots(metric_type=...).
+CREATE TABLE IF NOT EXISTS onchain_snapshots (
+    id TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    metric_type TEXT NOT NULL,
+    total_usd REAL,
+    change_24h_pct REAL,
+    top_entries TEXT DEFAULT '[]',
+    raw_summary TEXT DEFAULT '{}',
+    observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_onchain_source_ts
+    ON onchain_snapshots (source, metric_type, observed_at DESC);
 """
 
 _PREDICTION_OBSERVER_RUNS_DDL = """

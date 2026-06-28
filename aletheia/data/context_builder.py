@@ -68,8 +68,13 @@ def render_enriched_context_md(
     tradability: dict[str, TradabilityScore],
     leverage: dict[str, LeverageState],
     macro: MacroSnapshot | None,
+    onchain: list[dict] | None = None,
 ) -> str:
     """Render a markdown block with microstructure + derivatives + macro sections.
+
+    onchain: latest onchain_snapshots rows (DefiLlama stablecoin/TVL/DEX). Rendered
+    as its own market-regime section — fills the on-chain hole left by the
+    never-built Glassnode. Omitted when empty.
 
     Returns "" if all domains are empty so callers can skip appending.
     """
@@ -135,6 +140,28 @@ def render_enriched_context_md(
         if macro.top_movers_summary:
             lines.append(f"24h movers: {macro.top_movers_summary}")
         sections.append("### Macro context\n" + "  \n".join(lines))
+
+    # --- On-chain (DefiLlama; zero-key, fills the Glassnode hole) ---
+    if onchain:
+        by_metric: dict[str, dict] = {}
+        for r in onchain:  # rows arrive newest-first; keep the newest per type
+            mt = r.get("metric_type")
+            if mt:
+                by_metric.setdefault(mt, r)
+        ol: list[str] = []
+        sc = by_metric.get("stablecoin_mcap")
+        if sc and sc.get("total_usd") is not None:
+            chg = f" ({sc['change_24h_pct']:+.2f}% 24h)" if sc.get("change_24h_pct") is not None else ""
+            ol.append(f"Stablecoin cap: ${sc['total_usd'] / 1e9:,.1f}B{chg}")
+        tvl = by_metric.get("chain_tvl")
+        if tvl and tvl.get("total_usd") is not None:
+            ol.append(f"DeFi TVL: ${tvl['total_usd'] / 1e9:,.1f}B")
+        dex = by_metric.get("dex_volume")
+        if dex and dex.get("total_usd") is not None:
+            chg = f" ({dex['change_24h_pct']:+.1f}% 1d)" if dex.get("change_24h_pct") is not None else ""
+            ol.append(f"DEX vol 24h: ${dex['total_usd'] / 1e9:,.2f}B{chg}")
+        if ol:
+            sections.append("### On-chain (DefiLlama)\n" + "  \n".join(ol))
 
     return "\n\n".join(sections)
 

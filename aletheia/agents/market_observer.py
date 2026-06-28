@@ -177,7 +177,12 @@ async def _analyze_symbol(
             if macro_row:
                 macro = MacroSnapshot(**macro_row)
 
-            enriched = render_enriched_context_md([symbol], tradability, leverage, macro)
+            # On-chain regime (DefiLlama stablecoin/TVL/DEX) — global, not per-symbol.
+            onchain_rows = repo.latest_onchain_snapshots(limit=2)
+
+            enriched = render_enriched_context_md(
+                [symbol], tradability, leverage, macro, onchain=onchain_rows
+            )
             if enriched:
                 context = context + "\n\n" + enriched
         except Exception:

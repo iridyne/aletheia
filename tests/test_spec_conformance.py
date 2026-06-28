@@ -47,10 +47,14 @@ def _import_all_specs():
         spec_pipeline_stop_propagation,
         spec_pipeline_entry_enrichment,
         # Round 2 macro signals (zero-cost data integration; LSR/F&G/CoinGecko Top-N/
-        # history backfill/CoinGlass). All MS-* and CG-* claims attach to
+        # history backfill). All MS-* claims attach to
         # data_layer_contract (reused — not a new trust boundary).
         spec_macro_signals,
-        spec_coinglass,
+        # Free zero-key data sources (datasrc overhaul): Hyperliquid cross-venue perp
+        # OI/funding (HL-*) + DefiLlama on-chain stablecoin/TVL/DEX (DL-*). Attach to
+        # data_layer_contract (reused). Behavioral E2E claims are online-gated.
+        spec_hyperliquid,
+        spec_defillama,
         # Adopted-position SL/TP pipeline contract (regression lock for NULL stop bug)
         spec_pipeline_adopted_position,
         # Serenity evidence quality (D2 — generator/evaluator separation). SE-* claims

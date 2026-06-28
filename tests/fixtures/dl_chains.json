@@ -1,0 +1,82 @@
+[
+  {
+    "gecko_id": "harmony",
+    "tvl": 200468.525213749,
+    "tokenSymbol": "ONE",
+    "cmcId": "3945",
+    "name": "Harmony",
+    "chainId": 1666600000
+  },
+  {
+    "gecko_id": null,
+    "tvl": 128448795.04706217,
+    "tokenSymbol": null,
+    "cmcId": null,
+    "name": "Ink",
+    "chainId": 57073
+  },
+  {
+    "gecko_id": "stable-2",
+    "tvl": 30012142.582007598,
+    "tokenSymbol": "STABLE",
+    "cmcId": null,
+    "name": "Stable",
+    "chainId": 988
+  },
+  {
+    "gecko_id": "mantle",
+    "tvl": 147478537.42415422,
+    "tokenSymbol": "MNT",
+    "cmcId": "27075",
+    "name": "Mantle",
+    "chainId": 5000
+  },
+  {
+    "gecko_id": null,
+    "tvl": 16691852.569017876,
+    "tokenSymbol": null,
+    "cmcId": null,
+    "name": "Etherlink",
+    "chainId": 42793
+  },
+  {
+    "gecko_id": "corn-3",
+    "tvl": 3798.762172228191,
+    "tokenSymbol": "CORN",
+    "cmcId": "36164",
+    "name": "Corn",
+    "chainId": 21000000
+  },
+  {
+    "gecko_id": "x-layer",
+    "tvl": 86729193.02825516,
+    "tokenSymbol": null,
+    "cmcId": null,
+    "name": "X Layer",
+    "chainId": null
+  },
+  {
+    "gecko_id": "taiko",
+    "tvl": 3943046.846558147,
+    "tokenSymbol": "TAIKO",
+    "cmcId": "31525",
+    "name": "Taiko",
+    "chainId": 167000
+  },
+  {
+    "gecko_id": "aurora-near",
+    "tvl": 3122849.0156382625,
+    "tokenSymbol": "AURORA",
+    "cmcId": "14803",
+    "name": "Aurora",
+    "chainId": 1313161554
+  },
+  {
+    "gecko_id": "moonbeam",
+    "tvl": 1360800.2363474134,
+    "tokenSymbol": "GLMR",
+    "cmcId": "6836",
+    "name": "Moonbeam",
+    "chainId": 1284
+  }
+]
