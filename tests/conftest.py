@@ -63,6 +63,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "L2a: structural spec (static, fast)")
     config.addinivalue_line("markers", "L2b: behavioral spec (needs fixtures)")
     config.addinivalue_line("markers", "L2c: invariant spec (cross-operation)")
+    config.addinivalue_line(
+        "markers",
+        "online: test hits a live external API (network-gated; skipped when offline).",
+    )
     config.addinivalue_line("markers", "spec: spec-driven development test")
     config.addinivalue_line("markers", "L2a: structural spec check (static, fast)")
     config.addinivalue_line("markers", "L2b: behavioral spec check (needs fixtures)")

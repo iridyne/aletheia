@@ -76,7 +76,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Paper Trading Parameters', tab: 'execution', alt: ['stop loss', 'take profit', 'hold time', 'confidence'] },
   { title: 'Capital Events',           tab: 'execution', alt: ['deposit', 'withdrawal', 'pnl baseline'] },
   { title: 'Market Data Sources',      tab: 'execution', alt: ['ohlcv', 'data provider', 'override', 'long short', 'lsr'] },
-  { title: 'Macro & Sentiment Signals',tab: 'execution', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro', 'coinglass'] },
+  { title: 'Macro & Sentiment Signals',tab: 'execution', alt: ['fear greed', 'sentiment', 'coingecko', 'top movers', 'macro'] },
   // Risk & Universe
   { title: 'Universe Board',           tab: 'risk', alt: ['scanner', 'tradable universe'] },
   { title: 'Strategy Factory',         tab: 'risk', alt: ['auto-strategy', 'designer'] },
@@ -1138,19 +1138,16 @@ function MacroSignalsCard({ settings, qc, onDirty }: any) {
   const [fearGreed, setFearGreed] = useState(md.enable_fear_greed ?? true)
   const [cgTop, setCgTop] = useState(md.enable_coingecko_top ?? true)
   const [cgTopN, setCgTopN] = useState(md.coingecko_top_n ?? 100)
-  const [cgKeyInput, setCgKeyInput] = useState('')
+  const [hyperliquid, setHyperliquid] = useState(md.enable_hyperliquid ?? true)
+  const [defillama, setDefillama] = useState(md.enable_defillama ?? true)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  // CoinGlass status (configured + source + last4) — never shows the key value.
-  const cgStatusQ = useQuery({
-    queryKey: ['coinglass-status'],
-    queryFn: () => api.getCoinGlassStatus(),
-  })
 
   useEffect(() => {
     setFearGreed(md.enable_fear_greed ?? true)
     setCgTop(md.enable_coingecko_top ?? true)
     setCgTopN(md.coingecko_top_n ?? 100)
+    setHyperliquid(md.enable_hyperliquid ?? true)
+    setDefillama(md.enable_defillama ?? true)
   }, [settings])
 
   const mut = useMutation({
@@ -1158,24 +1155,18 @@ function MacroSignalsCard({ settings, qc, onDirty }: any) {
       enable_fear_greed: fearGreed,
       enable_coingecko_top: cgTop,
       coingecko_top_n: cgTopN,
+      enable_hyperliquid: hyperliquid,
+      enable_defillama: defillama,
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
-  })
-
-  const cgKeyMut = useMutation({
-    mutationFn: () => api.setCoinGlassKey(cgKeyInput.trim()),
-    onSuccess: () => {
-      setMsg({ ok: true, text: '✓ CoinGlass key saved to keyring' })
-      setCgKeyInput('')
-      qc.invalidateQueries({ queryKey: ['coinglass-status'] })
-    },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
   const dirty = fearGreed !== (md.enable_fear_greed ?? true)
     || cgTop !== (md.enable_coingecko_top ?? true)
     || cgTopN !== (md.coingecko_top_n ?? 100)
+    || hyperliquid !== (md.enable_hyperliquid ?? true)
+    || defillama !== (md.enable_defillama ?? true)
 
   useEffect(() => { onDirty?.('macro-signals', dirty) }, [dirty])
 
@@ -1193,26 +1184,16 @@ function MacroSignalsCard({ settings, qc, onDirty }: any) {
           style={{ width: '80px' }} />
         <span className="hint">coins</span>
       </Row>
+      <Row label="Hyperliquid cross-venue" hint="Pull perp open-interest + funding from Hyperliquid's public API (no key) every ~10 min. Tagged as a cross-venue feed (kept separate from the primary exchange's per-symbol read), surfaced as cross-venue derivatives context.">
+        <Toggle checked={hyperliquid} label="" onChange={v => { setHyperliquid(v); setMsg(null) }} />
+      </Row>
+      <Row label="DefiLlama on-chain" hint="Pull total stablecoin market cap, DeFi TVL, and DEX volume from DefiLlama's public API (no key) every ~10 min. Folded into the macro block of the LLM context as on-chain regime signal.">
+        <Toggle checked={defillama} label="" onChange={v => { setDefillama(v); setMsg(null) }} />
+      </Row>
       {dirty && (
         <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
           <button onClick={() => mut.mutate()} disabled={mut.isPending}>
             {mut.isPending ? 'Saving…' : 'Save macro signals config'}
-          </button>
-        </div>
-      )}
-      <Row label="CoinGlass API key" hint="Optional — multi-exchange OI aggregation + liquidation map history. Stored encrypted via keyring (preferred) or .env fallback. Status below shows the active source and last 4 chars only; the full key is never displayed or returned.">
-        <input type="password" value={cgKeyInput} placeholder={
-          cgStatusQ.data?.configured
-            ? `Configured (${cgStatusQ.data.source}, …${cgStatusQ.data.last4 || '****'}) — paste to replace`
-            : 'paste CoinGlass API key'
-        }
-          onChange={e => { setCgKeyInput(e.target.value); setMsg(null) }}
-          className="mono w-full" />
-      </Row>
-      {cgKeyInput.trim().length > 0 && (
-        <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>
-          <button onClick={() => cgKeyMut.mutate()} disabled={cgKeyMut.isPending}>
-            {cgKeyMut.isPending ? 'Saving…' : 'Save CoinGlass key'}
           </button>
         </div>
       )}

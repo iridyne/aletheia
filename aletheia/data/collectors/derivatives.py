@@ -15,13 +15,6 @@ from aletheia.data.models import (
 
 logger = logging.getLogger("aletheia.data.collectors.derivatives")
 
-# Fallback liquidation source: Binance Futures REST.
-# Used ONLY when the primary configured exchange does not support fetch_liquidations
-# via CCXT unified API. When active, liquidation exchange metadata will read "binance"
-# regardless of the configured primary — callers should treat it as market-wide signal,
-# not as confirmation of events on the configured primary exchange.
-_BINANCE_LIQUIDATIONS_URL = "https://fapi.binance.com/fapi/v1/forceOrders"
-
 # Binance Futures globalLongShortAccountRatio — public, no API key.
 # Scope: USDT-margined linear perpetuals only (BTC/USDT → BTCUSDT). Inverse perps
 # would need a different symbol form; deliberately out of scope this batch.
@@ -289,7 +282,10 @@ async def _maybe_backfill_oi_history(
         # says swallow and log, not raise. Same for any other transient failure.
         if errors is not None:
             errors.append(f"oi_history {sym}: {type(e).__name__}: {e}")
-        logger.debug("OI history not available for %s on %s: %s", sym, exchange_name, e)
+        logger.warning(
+            "OI history not available for %s on %s (%s: %s) — skipping backfill",
+            sym, exchange_name, type(e).__name__, e,
+        )
         return 0
     n = 0
     for item in history:
@@ -389,63 +385,5 @@ async def _fetch_liquidations_ccxt(
                 ))
         except Exception as e:
             logger.warning("ccxt liquidations fetch failed for %s: %s", sym, e)
-
-    return results
-
-
-async def _fetch_liquidations_binance_rest(
-    symbols: list[str],
-) -> list[LiquidationEvent]:
-    """Fetch recent liquidations from Binance Futures REST API (fallback).
-
-    This endpoint is exchange-specific. When the configured primary exchange is not
-    Binance, returned events carry exchange='binance' and represent Binance market
-    conditions, not the configured primary.
-    """
-    logger.info("fetching liquidations from Binance fapi for %d symbols", len(symbols))
-    results: list[LiquidationEvent] = []
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=_LIQUIDATION_WINDOW_HOURS)
-
-    async with httpx_client(timeout=10) as client:
-        for sym in symbols[:10]:  # cap to avoid rate limits
-            binance_sym = sym.replace("/", "")
-            try:
-                resp = await client.get(
-                    _BINANCE_LIQUIDATIONS_URL,
-                    params={"symbol": binance_sym, "limit": 50},
-                )
-                if resp.status_code != 200:
-                    logger.warning("liq binance %s: HTTP %d", binance_sym, resp.status_code)
-                    continue
-                raw_items = resp.json()
-                in_window = 0
-                for item in raw_items:
-                    side = "long" if item.get("side", "").upper() == "SELL" else "short"
-                    price = float(item.get("price", 0))
-                    qty = float(item.get("origQty", 0))
-                    event_time = item.get("time", 0)
-                    if event_time:
-                        et = datetime.fromtimestamp(event_time / 1000, tz=timezone.utc)
-                        if et < cutoff:
-                            continue
-                        event_str = et.isoformat()
-                    else:
-                        event_str = now.isoformat()
-
-                    in_window += 1
-                    results.append(LiquidationEvent(
-                        symbol=sym,
-                        exchange="binance",
-                        side=side,
-                        quantity_usd=price * qty,
-                        price=price,
-                        event_time=event_str,
-                        observed_at=now.isoformat(),
-                    ))
-                if len(raw_items) > 0 and in_window == 0:
-                    logger.info("liq %s: %d raw events, 0 in %dh window", sym, len(raw_items), _LIQUIDATION_WINDOW_HOURS)
-            except Exception as e:
-                logger.warning("liq fetch for %s failed: %s", sym, e)
 
     return results

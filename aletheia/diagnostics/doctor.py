@@ -27,7 +27,6 @@ never touches trading state — those stay human decisions per the safety rules.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -263,29 +262,9 @@ def _probe_config_gates(report: Report) -> None:
 
 
 def _probe_credentials(report: Report) -> None:
-    from aletheia.config.secrets import get_secret, redact
+    from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
     cfg = load_config()
-
-    # CoinGlass — Round 2 Step 5 second batch.
-    # Two-path read: keyring preferred, .env fallback (accepts both COINGLASS_API_KEY
-    # canonical name and the operator's shorter COINGLASS_API).
-    cg_keyring = get_secret("coinglass.api_key")
-    cg_env = (
-        os.environ.get("COINGLASS_API_KEY") or os.environ.get("COINGLASS_API")
-        if not cg_keyring else None
-    )
-    if cg_keyring:
-        report.add("creds.coinglass", "ok",
-                   f"coinglass API key set via keyring ({redact(cg_keyring)})")
-    elif cg_env:
-        report.add("creds.coinglass", "ok",
-                   f"coinglass API key set via .env ({redact(cg_env)}); "
-                   "consider migrating to keyring via Settings → Macro & Sentiment Signals")
-    else:
-        report.add("creds.coinglass", "info",
-                   "no coinglass API key — CoinGlassCollector will skip silently",
-                   "Settings → Macro & Sentiment Signals (or `aletheia secrets set coinglass.api_key`)")
 
     demo_keys = ["bitget.demo.api_key", "bitget.demo.api_secret", "bitget.demo.passphrase"]
     demo_set = [k for k in demo_keys if get_secret(k)]
@@ -455,6 +434,47 @@ def _probe_macro_signals(report: Report) -> None:
                            if sev == "warn" else None)
         except Exception as e:
             report.add("data.coingecko_top", "info", f"could not read CoinGecko top: {e}")
+
+        # --- Hyperliquid: newest cross-venue OI row (exchange='hyperliquid') ---
+        try:
+            row = db.execute(
+                "SELECT symbol, observed_at FROM open_interest_snapshots "
+                "WHERE exchange = 'hyperliquid' "
+                "ORDER BY observed_at DESC LIMIT 1"
+            ).fetchone()
+            if row:
+                age = _age_minutes(row["observed_at"])
+                sev = "warn" if age is not None and age > 30 else "ok"
+                report.add("data.hyperliquid", sev,
+                           f"newest HL cross-venue OI {row['symbol']} ({_fmt_age(age)})",
+                           "check api.hyperliquid.xyz reachability if stale > 30m"
+                           if sev == "warn" else None)
+            else:
+                report.add("data.hyperliquid", "info",
+                           "no Hyperliquid rows yet — enable in Settings → Macro & Sentiment Signals")
+        except Exception as e:
+            report.add("data.hyperliquid", "info", f"could not read Hyperliquid: {e}")
+
+        # --- DefiLlama on-chain: row count + newest observed_at ---
+        try:
+            cnt_row = db.execute(
+                "SELECT COUNT(*) AS n, MAX(observed_at) AS newest FROM onchain_snapshots"
+            ).fetchone()
+            n = cnt_row["n"] if cnt_row else 0
+            newest = cnt_row["newest"] if cnt_row else None
+            if n == 0:
+                report.add("data.onchain", "info",
+                           "no on-chain rows yet — enable DefiLlama in Settings → Macro & Sentiment Signals")
+            else:
+                age = _age_minutes(newest)
+                # Phase B ~10min cadence; >45m stale = collector probably failing.
+                sev = "warn" if age is not None and age > 45 else "ok"
+                report.add("data.onchain", sev,
+                           f"{n:,} on-chain rows; newest {_fmt_age(age)}",
+                           "check DefiLlama (api.llama.fi) reachability if stale > 45m"
+                           if sev == "warn" else None)
+        except Exception as e:
+            report.add("data.onchain", "info", f"could not read on-chain: {e}")
 
     except Exception as e:
         report.add("data.macro_signals", "info", f"macro signals probe failed: {e}")

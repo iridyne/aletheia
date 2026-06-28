@@ -1551,11 +1551,35 @@ def insert_funding_rate_snapshot(data: dict) -> None:
     _insert("funding_rate_snapshots", data)
 
 
-def latest_funding_rate(symbol: str) -> dict | None:
+# Cross-venue / secondary feeds (Hyperliquid spot venue + its PREDICTED funding)
+# share the funding/OI tables via the `exchange` tag, but must NOT win the
+# per-symbol "latest" read that the LLM context, universe features and the
+# primary collector's own delta all consume as the PRIMARY trading venue's
+# view. Excluded by default; pass exchange=<name> to target one venue exactly.
+_CROSS_VENUE_TAGS = ("hyperliquid", "hyperliquid_predicted")
+
+
+def _latest_deriv_where(exchange: str | None) -> tuple[str, tuple]:
+    """Build (where, params) for a per-symbol latest derivatives read.
+
+    exchange=None  → primary view: any venue EXCEPT the cross-venue secondaries.
+    exchange="x"   → exactly that venue's rows.
+    """
+    if exchange is not None:
+        return "symbol = ? AND exchange = ?", (exchange,)
+    placeholders = ",".join("?" * len(_CROSS_VENUE_TAGS))
+    return (
+        f"symbol = ? AND (exchange IS NULL OR exchange NOT IN ({placeholders}))",
+        _CROSS_VENUE_TAGS,
+    )
+
+
+def latest_funding_rate(symbol: str, exchange: str | None = None) -> dict | None:
+    where_tail, extra = _latest_deriv_where(exchange)
     rows = _select_all(
         "funding_rate_snapshots",
-        where="symbol = ?",
-        params=(symbol,),
+        where=where_tail,
+        params=(symbol, *extra),
         order="observed_at DESC",
         limit=1,
     )
@@ -1569,11 +1593,12 @@ def insert_open_interest_snapshot(data: dict) -> None:
     _insert("open_interest_snapshots", data)
 
 
-def latest_open_interest(symbol: str) -> dict | None:
+def latest_open_interest(symbol: str, exchange: str | None = None) -> dict | None:
+    where_tail, extra = _latest_deriv_where(exchange)
     rows = _select_all(
         "open_interest_snapshots",
-        where="symbol = ?",
-        params=(symbol,),
+        where=where_tail,
+        params=(symbol, *extra),
         order="observed_at DESC",
         limit=1,
     )
@@ -1684,6 +1709,67 @@ def prune_orderbook_snapshots(days: int = 7) -> int:
     db = get_db()
     was_in_tx = db.in_transaction
     cur = db.execute("DELETE FROM orderbook_snapshots WHERE observed_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+# ---------------------------------------------------------------------------
+# Round 2 — Step 5: DefiLlama on-chain snapshots
+# ---------------------------------------------------------------------------
+
+def insert_onchain_snapshot(data: dict) -> None:
+    """Insert one onchain_snapshots row (stablecoin_mcap | chain_tvl | dex_volume).
+
+    Follows the was_in_tx pattern: sqlite.py opens connections with
+    isolation_level=None (autocommit), so we must explicitly BEGIN/COMMIT
+    only when NOT already inside a transaction started by the caller.
+    """
+    from aletheia.storage.models import new_id
+    if "id" not in data:
+        data["id"] = new_id()
+    _insert("onchain_snapshots", data)
+
+
+def latest_onchain_snapshots(
+    metric_type: str | None = None,
+    source: str = "defillama",
+    limit: int = 1,
+) -> list[dict]:
+    """Return the most recent onchain_snapshots rows.
+
+    metric_type: filter to a specific type (stablecoin_mcap / chain_tvl / dex_volume).
+                 None = return latest of all types (may be mixed).
+    source: defaults to 'defillama'.
+    limit: number of rows to return per (source, metric_type) pair.
+    """
+    if metric_type:
+        return _select_all(
+            "onchain_snapshots",
+            where="source = ? AND metric_type = ?",
+            params=(source, metric_type),
+            order="observed_at DESC",
+            limit=limit,
+        )
+    return _select_all(
+        "onchain_snapshots",
+        where="source = ?",
+        params=(source,),
+        order="observed_at DESC",
+        limit=limit * 3,  # up to 3 metric types × limit rows each
+    )
+
+
+def prune_onchain_snapshots(days: int = 30) -> int:
+    """Prune onchain_snapshots older than `days`. Three rows/cycle × 15min cadence
+    ≈ 8640 rows/day — capped at 30d default (≈ 259k rows max).
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute(
+        "DELETE FROM onchain_snapshots WHERE observed_at < ?", (cutoff,)
+    )
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0

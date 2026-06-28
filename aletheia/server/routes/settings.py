@@ -878,6 +878,9 @@ class MarketDataConfigUpdate(SettingsRequest):
     enable_coingecko_top: Optional[bool] = None
     coingecko_top_n: Optional[int] = None
     derivatives_history_hours: Optional[int] = None
+    # Free zero-key data sources (datasrc overhaul).
+    enable_hyperliquid: Optional[bool] = None
+    enable_defillama: Optional[bool] = None
 
 
 _MARKET_DATA_BOUNDS: dict[str, tuple[float, float]] = {
@@ -914,56 +917,6 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
                  "after": cfg.market_data.model_dump(mode="json"),
                  "message": f"Market data config updated: {list(updates.keys())}"})
     return {"updated": updates, "market_data": cfg.market_data.model_dump(mode="json")}
-
-
-# ---------------------------------------------------------------------------
-# CoinGlass API key (Round 2 — Step 5 second batch)
-# ---------------------------------------------------------------------------
-
-class CoinGlassKeyRequest(SettingsRequest):
-    api_key: str
-
-
-@router.get("/coinglass/credentials-status")
-async def coinglass_credentials_status():
-    """Returns whether a CoinGlass API key is set, and its source (keyring / env / none).
-
-    NEVER returns the key value — only configured/last4/source for the redacted UI display.
-    """
-    import os
-    from aletheia.config.secrets import get_secret
-    kr_val = get_secret("coinglass.api_key")
-    env_val = os.environ.get("COINGLASS_API_KEY") if not kr_val else None
-    val = kr_val or env_val
-    return {
-        "configured": bool(val),
-        "last4": (val[-4:] if val and len(val) >= 4 else None),
-        "source": "keyring" if kr_val else ("env" if env_val else "none"),
-    }
-
-
-@router.post("/settings/coinglass-credentials")
-async def set_coinglass_credentials(req: CoinGlassKeyRequest):
-    """Persist the CoinGlass API key into the canonical keyring/encrypted store.
-
-    Always writes via set_secret (keyring → encrypted fallback). If the user
-    previously had the key in .env, both paths now resolve to the same value;
-    after this is called the keyring takes precedence (per CG-S01 read order).
-    """
-    from aletheia.config.secrets import set_secret
-    from aletheia.files.jsonl import write_audit
-    value = (req.api_key or "").strip()
-    if not value:
-        raise HTTPException(400, "api_key must be a non-empty string")
-    set_secret("coinglass.api_key", value)
-    write_audit({
-        "actor": "human", "source": "dashboard",
-        "event_type": "coinglass_credentials_changed",
-        "entity_type": "coinglass_credentials",
-        "message": "CoinGlass API key updated",
-    })
-    return {"configured": True, "last4": value[-4:] if len(value) >= 4 else None,
-            "source": "keyring"}
 
 
 # ---------------------------------------------------------------------------

@@ -117,6 +117,15 @@ class MarketDataConfig(BaseModel):
     # On startup / sparse-window detection, backfill derivatives history (funding +
     # OI) up to this many hours so the LLM sees trend, not a single point. 0 = off.
     derivatives_history_hours: int = 24
+    # Hyperliquid public info API (zero key) — cross-venue perp OI + funding for
+    # observed symbols, tagged exchange="hyperliquid" in the funding/OI tables.
+    # Excluded from the PRIMARY per-symbol read (so it never pollutes the venue
+    # the LLM sees); kept as queryable cross-venue context. Phase B cadence (~10m).
+    enable_hyperliquid: bool = True
+    # DefiLlama public API (zero key) — total stablecoin mcap / chain TVL / DEX
+    # volume, stored in onchain_snapshots and folded into the macro context block.
+    # Fills the on-chain hole left by the never-built Glassnode. Phase B cadence.
+    enable_defillama: bool = True
     # US equities to observe (Yahoo Finance tickers). stock_observer runs only
     # during US market hours (Mon–Fri 14:30–21:00 UTC). Empty = disabled.
     observed_stocks: list[str] = Field(default_factory=list)

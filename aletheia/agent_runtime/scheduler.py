@@ -1565,6 +1565,29 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         except Exception as e:
             logger.debug("volume_scanner collection failed: %s", e)
 
+        # Hyperliquid cross-venue perp OI + funding (zero key). Self-persists to the
+        # funding/OI tables tagged exchange="hyperliquid" (excluded from the primary
+        # per-symbol read, so it never pollutes the venue the LLM sees).
+        try:
+            if getattr(cfg.market_data, "enable_hyperliquid", True):
+                from aletheia.data.collectors.hyperliquid import HyperliquidCollector
+                hl_result = await HyperliquidCollector().collect(symbols)
+                if hl_result.get("errors"):
+                    logger.debug("hyperliquid collection errors: %s", hl_result["errors"])
+        except Exception as e:
+            logger.debug("hyperliquid collection failed: %s", e)
+
+        # DefiLlama on-chain (stablecoin mcap / chain TVL / DEX volume, zero key).
+        # Self-persists to onchain_snapshots; folded into the macro context block.
+        try:
+            if getattr(cfg.market_data, "enable_defillama", True):
+                from aletheia.data.collectors.defillama import DefiLlamaCollector
+                dl_result = await DefiLlamaCollector().collect()
+                if dl_result.get("errors"):
+                    logger.debug("defillama collection errors: %s", dl_result["errors"])
+        except Exception as e:
+            logger.debug("defillama collection failed: %s", e)
+
     # Log summary
     micro_count = len(micro_result.get("snapshots", []))
     funding_count = len(deriv_result.get("funding", []))

@@ -906,3 +906,18 @@ class CapitalEvent(BaseModel):
     equity_at_event: float | None = None
     detected_at: str = Field(default_factory=_utcnow)
     note: str = ""
+
+
+class OnchainSnapshot(BaseModel):
+    """Aggregated on-chain / DeFi metric snapshot (DefiLlama).
+
+    metric_type: "stablecoin_mcap" | "chain_tvl" | "dex_volume"
+    """
+    id: str = Field(default_factory=new_id)
+    source: str                          # "defillama"
+    metric_type: str                     # metric category
+    total_usd: float | None = None       # aggregated USD value
+    change_24h_pct: float | None = None  # 24h % change (None when unavailable)
+    top_entries: str = "[]"              # JSON: list of top-N entries
+    raw_summary: str = "{}"             # JSON: key scalar metrics
+    observed_at: str = Field(default_factory=_utcnow)
