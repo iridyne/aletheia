@@ -56,6 +56,18 @@ trade_proposals.id
 
 `_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:35`)。
 
+### 3.1 Adapter market_type 能力(交易所无关核心 + 边界适配)
+
+核心逻辑(universe/opportunity/decision/risk)只认 canonical 类型 `spot` / `usdt_futures`,**不关心交易所**;能不能下某类型单是**各 adapter 的能力**,在 adapter 边界声明并路由(owner 原则 2)。
+
+| Adapter | 支持 market_type | 路由要点 | 来源 |
+|---------|-----------------|----------|------|
+| okx | `spot` + `usdt_futures` | `SUPPORTED_MARKET_TYPES`;`okx_ccxt_symbol()` 按类型选符号(spot=canonical 无后缀 / perp=`:USDT`);spot 无杠杆/无 contractSize 换算/无 reduceOnly,市价买用 `tgtCcy=base_ccy` | `okx/client.py` |
+| bitget | `usdt_futures`(demo 仅永续) | demo 模拟盘只提供 USDT 永续 | `bitget_broker.py:11` |
+
+> **OKX demo 现货已实测**(2026-06-28):demo 沙盒列 522 现货标的,真下单 buy+sell 全程通过。详见 `docs/research/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md`。spec:`tests/specs/spec_spot_parity.py`(SP-S01~S06)。
+> **AI 决定 market_type**:opportunity 带 `market` 字段透出给 PI;PI 显式选 → 否则继承 opportunity.market → 否则按"空头必永续/其余现货"兜底(非固定偏向)。`trading_decision.py`。
+
 ---
 
 ## 4. TPSL 交易所挂单

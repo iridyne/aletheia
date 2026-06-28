@@ -44,8 +44,34 @@ class OrderResponse:
     filled_quantity: float | None = None
 
 
+# ---------------------------------------------------------------------------
+# Adapter capability + market-type routing (owner principle 2: the core is
+# exchange-agnostic; spot-vs-perp differences live here at the adapter boundary).
+# ---------------------------------------------------------------------------
+
+# Market types this adapter can route to an OKX order. Both confirmed on demo
+# (docs/research/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md).
+SUPPORTED_MARKET_TYPES = frozenset({"spot", "usdt_futures"})
+
+
+def is_leveraged_market(market_type: str) -> bool:
+    """Spot carries no leverage / no contracts / no funding; usdt_futures (perp) does."""
+    return market_type != "spot"
+
+
+def okx_ccxt_symbol(market_type: str, symbol: str) -> str:
+    """Resolve the CCXT symbol for an OKX order by market type.
+
+    spot         → canonical pair, NO settle suffix   (BTC/USDT)
+    usdt_futures → CCXT perp with settle suffix        (BTC/USDT:USDT)
+    """
+    if market_type == "spot":
+        return to_canonical(symbol)
+    return to_ccxt_perp(symbol)
+
+
 class OKXClient:
-    """OKX USDT-M perpetual swaps via CCXT. Supports demo and live modes."""
+    """OKX via CCXT — USDT-M perpetual swaps AND spot. Supports demo and live modes."""
 
     def __init__(self, mode: str = "demo"):
         api_key = get_secret(f"okx.{mode}.api_key")
@@ -131,33 +157,49 @@ class OKXClient:
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         """Place a market or limit order on OKX.
 
-        `order.quantity` is in COIN units (our canonical internal unit). OKX/CCXT
-        expects CONTRACTS, so we convert coins→contracts via contractSize before
-        submitting, and convert the filled contracts back to coins on the way out.
+        `order.quantity` is in COIN units (our canonical internal unit). Routing
+        depends on order.market_type (owner principle 2 — adapter-boundary split):
+        - usdt_futures (perp): OKX/CCXT `amount` is in CONTRACTS, so convert
+          coins→contracts via contractSize, set leverage first (fail-closed), and
+          convert filled contracts back to coins on the way out. Symbol carries a
+          settle suffix (BTC/USDT:USDT) derived from the quote currency.
+        - spot: `amount` is the coin quantity directly (no contracts, no leverage,
+          no funding). A spot MARKET BUY uses tgtCcy=base_ccy so `amount` stays in
+          base coins; reduceOnly does not exist for spot — a spot close is a plain
+          market SELL of the held base amount.
         """
-        # CCXT perp format with settle suffix derived from the quote currency
-        # (BTC/USDT:USDT, BTC/USDC:USDC) — not a hardcoded :USDT, which breaks any
-        # non-USDT-quote instrument.
-        ccxt_symbol = to_ccxt_perp(order.symbol)
+        spot = not is_leveraged_market(order.market_type)
+        ccxt_symbol = okx_ccxt_symbol(order.market_type, order.symbol)
         ex = self._ensure_exchange()
-        # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
-        if order.leverage and order.leverage > 1 and not order.reduce_only:
-            await self.set_leverage(ccxt_symbol, order.leverage)
-        contract_size = await self._contract_size(ccxt_symbol)
-        amount_contracts = order.quantity / contract_size if contract_size else order.quantity
 
         params = {}
-        if order.reduce_only:
-            params["reduceOnly"] = True
         if order.client_oid:
             params["clOrdId"] = order.client_oid[:32]
+
+        if spot:
+            # No leverage, no contract conversion: amount == coin quantity.
+            contract_size = 1.0
+            amount = order.quantity
+            # OKX spot MARKET BUY otherwise sizes `amount` in quote (cost); force
+            # base-ccy sizing so it is interpreted as coins, matching our unit.
+            if order.order_type == "market" and order.side == "buy":
+                params["tgtCcy"] = "base_ccy"
+            # NOTE: reduceOnly intentionally omitted — derivatives-only concept.
+        else:
+            # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
+            if order.leverage and order.leverage > 1 and not order.reduce_only:
+                await self.set_leverage(ccxt_symbol, order.leverage)
+            contract_size = await self._contract_size(ccxt_symbol)
+            amount = order.quantity / contract_size if contract_size else order.quantity
+            if order.reduce_only:
+                params["reduceOnly"] = True
 
         try:
             resp = await ex.create_order(
                 symbol=ccxt_symbol,
                 type=order.order_type,
                 side=order.side,
-                amount=amount_contracts,
+                amount=amount,
                 price=order.price if order.order_type == "limit" else None,
                 params=params,
             )
@@ -280,10 +322,13 @@ class OKXClient:
         try:
             await exchange.load_markets()
             symbols = set()
+            # Accept BOTH spot and swap USDT markets — the whitelist is keyed on the
+            # canonical pair (spot/perp collapse to the same canonical), so including
+            # spot also recognises any spot-only USDT symbol the venue offers.
             for key, info in exchange.markets.items():
                 if not info.get("active", True):
                     continue
-                if info.get("type") != "swap":
+                if info.get("type") not in ("swap", "spot"):
                     continue
                 quote = (info.get("quote") or "").upper()
                 if quote != "USDT":
