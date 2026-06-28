@@ -18,7 +18,9 @@ from aletheia.storage.repositories import (
     list_strategies,
 )
 from aletheia.strategy.dsl import RuleSet
-from aletheia.strategy.evaluator import BarData, compute_stop_price, evaluate_at_bar
+from aletheia.strategy.evaluator import (
+    BarData, collect_referenced_timeframes, compute_stop_price, evaluate_at_bar,
+)
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy, is_paper_trading_paused
 
 logger = logging.getLogger("aletheia.trading.ruleset_scanner")
@@ -122,19 +124,26 @@ def _scan_strategy(
         logger.debug("insufficient bars for %s %s: %d", symbol, timeframe, len(candles))
         return []
 
-    bars = [
-        BarData(
-            ts=int(c["ts"]),
-            open=float(c["open"]),
-            high=float(c["high"]),
-            low=float(c["low"]),
-            close=float(c["close"]),
-            volume=float(c["volume"]),
-        )
-        for c in candles
-    ]
+    bars = _candles_to_bars(candles)
 
-    sig = evaluate_at_bar(ruleset, bars, len(bars) - 1)
+    # Build multi_tf_bars for any cross-timeframe conditions (e.g. a "4h" momentum
+    # check inside a 1h strategy). Without this, Condition.timeframe is ignored and
+    # the condition silently evaluates on the primary timeframe. See EV-S02.
+    multi_tf_bars: dict[str, list[BarData]] | None = None
+    extra_tfs = collect_referenced_timeframes(ruleset) - {timeframe}
+    if extra_tfs:
+        multi_tf_bars = {}
+        for tf in extra_tfs:
+            tf_candles = get_ohlcv_candles(symbol, tf, limit=_BAR_LIMIT)
+            if len(tf_candles) >= _MIN_BARS:
+                multi_tf_bars[tf] = _candles_to_bars(tf_candles)
+            else:
+                logger.debug(
+                    "MTF: insufficient %s bars for %s: %d (condition will return None)",
+                    tf, symbol, len(tf_candles),
+                )
+
+    sig = evaluate_at_bar(ruleset, bars, len(bars) - 1, multi_tf_bars=multi_tf_bars)
     entry_signal = sig.get("entry")
     exit_signal = sig.get("exit")
 
@@ -219,6 +228,21 @@ def _compute_take_profit(tp, entry_price: float, direction: str, highs, lows, cl
     else:
         delta = atr_val * tp.value
     return entry_price + delta if direction == "long" else entry_price - delta
+
+
+def _candles_to_bars(candles: list[dict]) -> list[BarData]:
+    """Convert raw OHLCV candle dicts into BarData for the evaluator."""
+    return [
+        BarData(
+            ts=int(c["ts"]),
+            open=float(c["open"]),
+            high=float(c["high"]),
+            low=float(c["low"]),
+            close=float(c["close"]),
+            volume=float(c["volume"]),
+        )
+        for c in candles
+    ]
 
 
 def _parse_params(params_str: str) -> dict:

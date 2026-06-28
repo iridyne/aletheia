@@ -66,7 +66,11 @@ def compute_indicator(
             return None
         return {"bollinger_lower": bands[0], "bollinger_mid": bands[1], "bollinger_upper": bands[2]}[n]
     if n == "momentum_pct":
-        return momentum_pct(closes, int(p.get("lookback", 10)))
+        # DSL/designer emit {"params": {"period": N}}; honour it. Fall back to the
+        # legacy "lookback" key for any old ruleset, then default 10. (Bug fix: this
+        # branch used to read only "lookback", so every momentum_pct condition
+        # silently ignored the strategy's period — see EV-S01.)
+        return momentum_pct(closes, int(p.get("period", p.get("lookback", 10))))
     if n == "zscore":
         return zscore_last(closes, int(p.get("period", 20)))
     if n == "donchian_high":
@@ -242,6 +246,30 @@ def evaluate_at_bar(
         opens, prev_opens, multi_tf_bars,
     )
     return {"entry": entry, "exit": exit_}
+
+
+def collect_referenced_timeframes(ruleset: RuleSet) -> set[str]:
+    """Collect every non-null Condition.timeframe referenced anywhere in a RuleSet.
+
+    Walks the entry and exit RuleExpr trees (including nested RuleExpr children).
+    The scanner uses this to know which extra timeframes' bars to fetch and pass
+    as multi_tf_bars, so cross-timeframe conditions (e.g. "4h" momentum) are
+    evaluated on their own bars instead of silently falling back to the primary
+    timeframe. See EV-S02.
+    """
+    found: set[str] = set()
+
+    def _walk(node: RuleExpr | Condition) -> None:
+        if isinstance(node, RuleExpr):
+            for child in node.conditions:
+                _walk(child)
+        elif isinstance(node, Condition):
+            if node.timeframe:
+                found.add(node.timeframe)
+
+    _walk(ruleset.entry)
+    _walk(ruleset.exit)
+    return found
 
 
 def compute_stop_price(

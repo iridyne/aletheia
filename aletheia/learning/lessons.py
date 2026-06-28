@@ -103,6 +103,24 @@ class LessonStore:
         if not was_in_tx:
             db.commit()
 
+    def mark_applied(self, lesson_id: str, policy_version_id: str) -> None:
+        """Stamp the policy version a lesson influenced and move it to 'applied'.
+
+        Closes the lesson→policy chain: an accepted lesson that has been folded
+        into a policy version records that version id here, so the
+        content.lesson_chain doctor probe (applied_policy_version IS NOT NULL)
+        reflects a real influence, not a stub.
+        """
+        db = get_db()
+        was_in_tx = db.in_transaction
+        db.execute(
+            "UPDATE ps_lessons SET applied_policy_version = ?, status = 'applied' "
+            "WHERE lesson_id = ?",
+            (policy_version_id, lesson_id),
+        )
+        if not was_in_tx:
+            db.commit()
+
     def archive(self, lesson_id: str) -> None:
         """Mark a lesson as archived (superseded)."""
         db = get_db()

@@ -49,6 +49,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "reasoning_feedback": 60.0,
     "connectivity_monitor": 15.0,
     "news_fetch": 120.0,
+    "lesson_reviewer": 300.0,
 }
 
 
@@ -339,6 +340,12 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
         misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
+    )
+    # Evidence-gated review of the lessons dreaming produced — runs after the 2am
+    # consolidation so it sees the night's fresh proposed lessons.
+    _scheduler.add_job(
+        _guarded("lesson_reviewer", _run_lesson_reviewer), "cron", hour=3, minute=0,
+        id="lesson_reviewer", misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
     )
     _scheduler.add_job(
         _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
@@ -708,6 +715,21 @@ def _run_dreaming_agent():
             )
         except Exception as e:
             logger.warning("dreaming_agent job failed: %s", e)
+
+
+def _run_lesson_reviewer():
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        _run_async_with_timeout("lesson_reviewer", _async_run("lesson_reviewer"))
+    except TimeoutError:
+        logger.warning(
+            "lesson_reviewer job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["lesson_reviewer"],
+        )
+    except Exception as e:
+        logger.warning("lesson_reviewer job failed: %s", e)
 
 
 def _run_strategy_designer():
