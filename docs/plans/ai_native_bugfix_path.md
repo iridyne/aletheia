@@ -56,7 +56,7 @@
 | `content.strategy_health` | 僵尸策略(`paper_running` 久但 ~0 成交)、被阻塞候选(`paper_candidate` 无 PI 批准) | `strategy_records` JOIN `positions` + `_has_pi_approval` | `build_strategy_kpis()`、`strategy_lifecycle._has_pi_approval()` |
 | `content.memo_quality` | trading_memo 缺失 / 过期(`valid_until` 已过)/(字段存在时)`accuracy_score<0.4` | `get_latest_memo()` | `insight_synthesizer.get_latest_memo()` |
 | `content.lesson_chain` | `ps_lessons` 全卡 `proposed`、`applied_policy_version` 全 NULL(lesson→policy 链死) | `SELECT status,COUNT(*) FROM ps_lessons` | 直接 `get_db()` |
-| `content.attribution` | 干净窗内 ranker 来源 `pi_decisions.opportunity_id` 空链率 >10% | 见下;A_ruleset 诚实 NULL 不计 | `learning_window.clean_window_cutoff` |
+| `content.attribution` | **最近 200 个** `signal_pending`(ranker 输出)的 `opportunity_id` 空链率 >10% | `LIMIT 200 ORDER BY created_at DESC` | 直接 `get_db()`(LP-S07 定义) |
 | `content.shadow_trades` | 过期未结算影子单(`resolved_at IS NULL` 且 >24h) | `SELECT COUNT(*) FROM shadow_trades WHERE resolved_at IS NULL AND created_at<...` | 直接 `get_db()` |
 | `content.signal_settlement` | `universe_forward_outcomes` pending 且 >48h(结算 job 坏/暂停) | `SELECT COUNT(*) ... WHERE status='pending' AND created_at<...` | 直接 `get_db()` |
 | `content.proposal_bias` | **提案层**(风控前)方向偏置(concentration 只看风控后成交) | `SELECT direction,COUNT(*) FROM trade_proposals WHERE created_at>=...-24h` | 直接 `get_db()` |

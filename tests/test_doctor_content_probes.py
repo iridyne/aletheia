@@ -123,33 +123,39 @@ def test_lesson_chain_with_applied_is_ok(db):
 
 # --- content.attribution -----------------------------------------------------
 
-def _ins_pi(conn, i, src, opp, action="trade", when=None):
+def _ins_sp(conn, i, opp, when=None):
+    """Insert a signal_pending decision (the ranker output the probe measures)."""
     _ins(conn, "pi_decisions", id=f"d{i}", created_at=when or _ago(hours=1),
-         symbol="BTC/USDT", direction="long", action=action,
-         signal_source=src, opportunity_id=opp)
+         symbol="BTC/USDT", direction="long", action="signal_pending",
+         opportunity_id=opp)
 
 
 def test_attribution_empty_is_info(db):
     assert _verdict(dx._probe_content_attribution).severity == "info"
 
 
-def test_attribution_broken_ranker_links_warn(db):
-    for i in range(12):
-        _ins_pi(db, i, "ranker", None)  # all NULL opportunity_id, ranker-sourced
+def test_attribution_too_few_is_info(db):
+    for i in range(10):  # < 20 → not enough to judge
+        _ins_sp(db, i, None)
+    assert _verdict(dx._probe_content_attribution).severity == "info"
+
+
+def test_attribution_broken_links_warn(db):
+    for i in range(30):  # all NULL opportunity_id → 100% > 10%
+        _ins_sp(db, i, None)
     v = _verdict(dx._probe_content_attribution)
     assert v.severity == "warn" and "attribution" in v.detail.lower()
 
 
-def test_attribution_ranker_with_links_is_ok(db):
-    for i in range(12):
-        _ins_pi(db, i, "ranker", f"opp{i}")
+def test_attribution_recent_clean_is_ok(db):
+    for i in range(30):
+        _ins_sp(db, i, f"opp{i}")
     assert _verdict(dx._probe_content_attribution).severity == "ok"
 
 
-def test_attribution_ruleset_nulls_do_not_warn(db):
-    # A_ruleset legitimately has no opportunity_id — must NOT count as broken.
-    for i in range(12):
-        _ins_pi(db, i, "A_ruleset", None)
+def test_attribution_under_threshold_is_ok(db):
+    for i in range(30):
+        _ins_sp(db, i, None if i < 2 else f"opp{i}")  # 2/30 ≈ 7% < 10%
     assert _verdict(dx._probe_content_attribution).severity == "ok"
 
 

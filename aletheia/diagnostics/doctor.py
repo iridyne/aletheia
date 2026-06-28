@@ -1122,44 +1122,36 @@ def _probe_content_lesson_chain(report: Report) -> None:
 
 
 def _probe_content_attribution(report: Report) -> None:
-    """pi_decisions.opportunity_id NULL rate on recent trade-action decisions — a
-    broken attribution chain (the ghost-link bug). Recent window only, so the old
-    pre-fix backlog doesn't false-alarm; A_ruleset honest-NULLs are split out."""
+    """opportunity_id NULL rate on the RECENT ranker output (last ~200 signal_pending
+    decisions) — the live attribution-health signal (LP-S07).
+
+    Deliberately NOT a 7d / all-time aggregate: those are dominated by pre-fix NULL
+    backlog that auto-prunes (observed 89% NULL over 7d while the most-recent 200 are
+    0% NULL), so a window-based aggregate would false-alarm forever. signal_pending is
+    the row where the ranker links the opportunity; a healthy ranker leaves it set.
+    """
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
-        # Compute the cutoff in Python as an aware isoformat so it matches the stored
-        # timestamp format ("...T...+00:00"). SQLite datetime('now') uses a space
-        # separator and no tz, which breaks same-day string comparison (the ISO 'T'
-        # sorts after a space). 7d window keeps the pre-fix backlog out of frame.
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         rows = list(db.execute(
-            "SELECT COALESCE(signal_source,'unknown') src, COUNT(*) total, "
-            "       SUM(CASE WHEN opportunity_id IS NULL THEN 1 ELSE 0 END) nulls "
-            "FROM pi_decisions "
-            "WHERE created_at >= ? "
-            "  AND action IN ('trade','scale_in','flip') "
-            "GROUP BY src",
-            (cutoff,),
+            "SELECT opportunity_id FROM pi_decisions WHERE action='signal_pending' "
+            "ORDER BY created_at DESC LIMIT 200"
         ))
     except Exception as e:
         report.add("content.attribution", "info", f"probe error: {e}")
         return
-    total = sum(r["total"] for r in rows)
-    if total == 0:
-        report.add("content.attribution", "info", "no trade-action decisions in last 7d")
+    total = len(rows)
+    if total < 20:
+        report.add("content.attribution", "info",
+                   f"only {total} recent signal_pending decisions — too few to judge attribution")
         return
-    # A_ruleset legitimately has no opportunity_id (rule-sourced, not ranker-sourced);
-    # ranker/serenity/market_observer NULLs are the actual broken-link signal.
-    ranker_total = sum(r["total"] for r in rows if r["src"] != "A_ruleset")
-    ranker_nulls = sum(r["nulls"] for r in rows if r["src"] != "A_ruleset")
-    rate = ranker_nulls / ranker_total if ranker_total else 0.0
-    by_src = ", ".join(f"{r['src']}:{r['nulls']}/{r['total']}" for r in rows)
-    detail = f"7d trade-action={total}; non-ruleset null-link={ranker_nulls}/{ranker_total} ({rate:.0%}); by_source[{by_src}]"
-    if ranker_total >= 10 and rate > 0.10:
+    nulls = sum(1 for r in rows if r["opportunity_id"] is None)
+    rate = nulls / total
+    detail = f"recent {total} signal_pending: {nulls} missing opportunity_id ({rate:.0%})"
+    if rate > 0.10:
         report.add("content.attribution", "warn",
                    f"broken attribution chain: {detail}",
-                   "ranker-sourced decisions missing opportunity_id — learning can't attribute "
+                   "recent ranker output is dropping opportunity_id — learning can't attribute "
                    "outcomes (regression of the b9ad957 fix; check trading_decision opportunity_id wiring)")
     else:
         report.add("content.attribution", "ok", detail)
