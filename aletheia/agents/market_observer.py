@@ -180,8 +180,22 @@ async def _analyze_symbol(
             # On-chain regime (DefiLlama stablecoin/TVL/DEX) — global, not per-symbol.
             onchain_rows = repo.latest_onchain_snapshots(limit=2)
 
+            # Cross-venue funding: route the Hyperliquid feed (otherwise orphan) into
+            # the decision context as a basis/sentiment-divergence signal vs the
+            # primary venue. Compared annualized (HL 1h vs primary 8h interval).
+            xvenue_funding: dict = {}
+            hl_fr = repo.latest_funding_rate(symbol, exchange="hyperliquid")
+            hl_pred = repo.latest_funding_rate(symbol, exchange="hyperliquid_predicted")
+            if hl_fr or hl_pred:
+                xvenue_funding[symbol] = {
+                    "hl_ann": hl_fr.get("funding_rate_annualized") if hl_fr else None,
+                    "hl_predicted_ann": hl_pred.get("funding_rate_annualized") if hl_pred else None,
+                    "primary_ann": fr.get("funding_rate_annualized") if fr else None,
+                }
+
             enriched = render_enriched_context_md(
-                [symbol], tradability, leverage, macro, onchain=onchain_rows
+                [symbol], tradability, leverage, macro,
+                onchain=onchain_rows, xvenue_funding=xvenue_funding,
             )
             if enriched:
                 context = context + "\n\n" + enriched

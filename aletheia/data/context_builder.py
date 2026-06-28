@@ -69,12 +69,19 @@ def render_enriched_context_md(
     leverage: dict[str, LeverageState],
     macro: MacroSnapshot | None,
     onchain: list[dict] | None = None,
+    xvenue_funding: dict[str, dict] | None = None,
 ) -> str:
     """Render a markdown block with microstructure + derivatives + macro sections.
 
     onchain: latest onchain_snapshots rows (DefiLlama stablecoin/TVL/DEX). Rendered
     as its own market-regime section — fills the on-chain hole left by the
     never-built Glassnode. Omitted when empty.
+
+    xvenue_funding: {symbol: {hl_ann, hl_predicted_ann, primary_ann}} — Hyperliquid
+    cross-venue funding (ANNUALIZED, since HL uses 1h vs the primary venue's 8h
+    interval — raw per-interval rates are not comparable). Routes the otherwise
+    orphan Hyperliquid feed into the decision context as a basis/sentiment-
+    divergence signal. Omitted when empty.
 
     Returns "" if all domains are empty so callers can skip appending.
     """
@@ -116,6 +123,27 @@ def render_enriched_context_md(
         opps = [sym for sym, lv in leverage.items() if lv.funding_opportunity]
         if opps:
             sections.append(f"**Funding opportunity signals**: {', '.join(opps)}")
+
+    # --- Cross-venue funding (Hyperliquid) — basis / sentiment divergence ---
+    # Compares ANNUALIZED funding: HL uses 1h intervals, the primary venue 8h,
+    # so only the annualized rates are apples-to-apples. A large HL-vs-primary
+    # gap flags venue-specific crowding (one side paying up to hold the trade).
+    if xvenue_funding:
+        xrows: list[str] = []
+        for sym in symbols:
+            xv = xvenue_funding.get(sym)
+            if not xv or xv.get("hl_ann") is None:
+                continue
+            hl = xv["hl_ann"]
+            line = f"{sym}: Hyperliquid {hl * 100:+.1f}%/yr"
+            prim = xv.get("primary_ann")
+            if prim is not None:
+                line += f" vs primary {prim * 100:+.1f}%/yr → Δ{(hl - prim) * 100:+.1f}pp"
+            if xv.get("hl_predicted_ann") is not None:
+                line += f"; HL predicted {xv['hl_predicted_ann'] * 100:+.1f}%/yr"
+            xrows.append(line)
+        if xrows:
+            sections.append("### Cross-venue funding (Hyperliquid, annualized)\n" + "  \n".join(xrows))
 
     # --- Macro ---
     if macro:

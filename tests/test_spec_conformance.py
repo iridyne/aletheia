@@ -55,6 +55,10 @@ def _import_all_specs():
         # data_layer_contract (reused). Behavioral E2E claims are online-gated.
         spec_hyperliquid,
         spec_defillama,
+        # Data Utilization Contract (DU-*): every acquired data domain routes to a
+        # consuming module (物尽其用). Locks the Hyperliquid + on-chain consumers
+        # against regression to collected-but-unused. data_utilization_contract.
+        spec_data_utilization,
         # Adopted-position SL/TP pipeline contract (regression lock for NULL stop bug)
         spec_pipeline_adopted_position,
         # Serenity evidence quality (D2 — generator/evaluator separation). SE-* claims
