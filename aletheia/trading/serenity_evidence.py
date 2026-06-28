@@ -113,6 +113,48 @@ def assess_evidence_tier(evidence: dict) -> tuple[str, str]:
     return assessed, ASSESSOR_ID
 
 
+def assess_researchability(evidence: list[dict]) -> tuple[str, str]:
+    """Deterministic A/B/C researchability grade for a set of evidence records.
+
+    Grades the information quality available for an opportunity — independent
+    of what the LLM claims about its own confidence:
+
+    - A: ≥2 supporting records with assessed_tier ≥ high_confidence AND at least
+         one carries a verifiable external URL. High-quality, fact-checkable research.
+    - B: ≥3 supporting records with assessed_tier ≥ likely. Reasonable evidence base.
+    - C: Everything else — speculative-only, thin, or no supporting evidence.
+
+    Grade C triggers a scoring ceiling (≤40) in score_serenity_opportunity to
+    prevent low-information opportunities from reaching research_priority bucket.
+
+    Returns (grade, reason).
+    """
+    supporting = [e for e in (evidence or []) if e and e.get("supports", True)]
+    if not supporting:
+        return "C", "no_supporting_evidence"
+
+    hc_with_url = [
+        e for e in supporting
+        if _TIER_RANK.get(
+            normalize_tier(e.get("assessed_tier") or e.get("tier")), 0
+        ) >= _TIER_RANK["high_confidence"]
+        and _has_external_ref(e)
+    ]
+    if len(hc_with_url) >= 2:
+        return "A", f"hc_with_url={len(hc_with_url)}"
+
+    likely_or_above = [
+        e for e in supporting
+        if _TIER_RANK.get(
+            normalize_tier(e.get("assessed_tier") or e.get("tier")), 0
+        ) >= _TIER_RANK["likely"]
+    ]
+    if len(likely_or_above) >= 3:
+        return "B", f"likely_or_above={len(likely_or_above)}"
+
+    return "C", f"insufficient_evidence (hc_url={len(hc_with_url)}, likely={len(likely_or_above)})"
+
+
 def assess_opportunity_tier(opportunity: dict, evidence: list[dict]) -> tuple[str, str]:
     """Authoritative gating tier for an OPPORTUNITY, derived from its evidence.
 

@@ -159,6 +159,13 @@ def _count_fail_warn_gates(risk_gates: list[dict]) -> tuple[int, int]:
     return fail, warn
 
 
+# S2 (2026-06-28, AI Berkshire researchability): score ceiling per grade.
+# Grade C = speculative / thin evidence — caps at 40 (below research_priority threshold 52).
+# Grade B = reasonable evidence base — caps at 70.
+# Grade A = high-quality, fact-checkable research — no ceiling.
+_RESEARCHABILITY_CEILING = {"A": 100, "B": 70, "C": 40}
+
+
 def score_serenity_opportunity(
     opportunity: dict,
     evidence: list[dict],
@@ -172,6 +179,8 @@ def score_serenity_opportunity(
       execution.
     - Risk gates and manual risk flags subtract points (fail > warn > flags).
     - Confidence score adds a bounded precision edge.
+    - Researchability grade (A/B/C) applies a ceiling to prevent low-information
+      opportunities from reaching research_priority bucket.
     """
     # D2 (2026-06-27): gate evidence weight on the INDEPENDENTLY assessed tier, not
     # the generator's self-grade. `assessed_tier` is set by the deterministic evaluator
@@ -250,6 +259,17 @@ def score_serenity_opportunity(
     )
 
     score = _clamp_score(raw)
+
+    # S2: apply researchability ceiling (A=100, B=70, C=40).
+    # Legacy / pre-S2 records default to "C" (conservative floor).
+    # Note: uppercase(.strip()) not _normalize_text() — ceiling keys are A/B/C, not lowercase.
+    r_grade = (opportunity.get("researchability_grade") or "C").strip().upper()
+    if r_grade not in _RESEARCHABILITY_CEILING:
+        r_grade = "C"
+    ceiling = _RESEARCHABILITY_CEILING[r_grade]
+    if score > ceiling:
+        score = ceiling
+
     average_engine = _build_average_engine_state(opportunity)
 
     bucket = "watch"
@@ -281,6 +301,8 @@ def score_serenity_opportunity(
             "risk_gate_warn": warn_gates,
             "risk_flag_count": risk_flag_count,
             "raw": round(raw, 2),
+            "researchability_grade": r_grade,
+            "researchability_ceiling": ceiling,
         },
     }
 

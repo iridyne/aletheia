@@ -393,6 +393,13 @@ class SerenityOpportunity(BaseModel):
     # is only the generator's self-grade. NULL = legacy / unassessed → scores as speculative.
     assessed_tier: str | None = None
     assessed_by: str | None = None
+    # S4 (2026-06-28, AI Berkshire forced-verdict integration): machine-readable verdict
+    # JSON blob — recommendation/bull_case/bear_case/key_assumption/invalidation.
+    # NULL = legacy / pre-S4 run. Never self-grades scoring.
+    verdict_json: str = "{}"
+    # S2 (2026-06-28, AI Berkshire researchability): deterministic A/B/C grade
+    # assigned by assess_researchability() at pipeline time. C caps score at ≤40.
+    researchability_grade: str = "C"
 
 
 class SerenityRiskGate(BaseModel):
@@ -881,6 +888,8 @@ class PiDecision(BaseModel):
     # 'market_observer' → opportunities.id; 'serenity' → serenity_opportunities.id.
     signal_source: str = "market_observer"
     debate_ran: bool = False
+    # P2 / S4 (2026-06-28, AI Berkshire forced-verdict): explicit counter-argument from PI.
+    bear_case: str = ""
 
 
 class CapitalEvent(BaseModel):

@@ -22,7 +22,7 @@ from aletheia.storage.models import (
     SerenityOpportunity,
 )
 from aletheia.trading.serenity_evidence import (
-    assess_evidence_tier, assess_opportunity_tier, normalize_tier,
+    assess_evidence_tier, assess_opportunity_tier, assess_researchability, normalize_tier,
 )
 
 logger = logging.getLogger("aletheia.research_worker")
@@ -105,7 +105,15 @@ _OPPORTUNITIES_SYSTEM = (
     '"thesis" (string: why this is an opportunity), '
     '"evidence_tier" (string, your PROPOSED grade: one of "disclosed", "high_confidence", "likely", "speculative" '
     '— an independent evaluator assigns the authoritative tier from the supporting evidence), '
-    '"confidence_score" (integer 0-100), "risk_flags" (array of strings). '
+    '"confidence_score" (integer 0-100), "risk_flags" (array of strings), '
+    '"verdict" (object, REQUIRED — MUST be non-null, no hedging allowed): '
+    '{ "recommendation": one of "long"|"short"|"watch"|"avoid" (REQUIRED, pick one — no "depends"), '
+    '"conviction": integer 0-100 (REQUIRED), '
+    '"bull_case": string — specific supporting argument (REQUIRED, ≥1 sentence), '
+    '"bear_case": string — specific counter-argument (REQUIRED, ≥1 sentence, do NOT leave empty even if bullish), '
+    '"key_assumption": string — the ONE most critical premise this opportunity depends on (REQUIRED), '
+    '"invalidation": string — exact condition that would invalidate the key_assumption (REQUIRED), '
+    '"price_target": number or null }. '
     "Return 0-5 opportunities. Return empty array if no clear opportunities. Return raw JSON array, no markdown."
 )
 
@@ -388,6 +396,20 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                     # LLM's self-graded `evidence_tier` (which is kept only as a proposal).
                     theme_evidence = repo.list_serenity_evidence(theme_id=theme_id, limit=200)
                     assessed_tier, assessed_by = assess_opportunity_tier({}, theme_evidence)
+                    r_grade, _ = assess_researchability(theme_evidence)
+                    # S4: extract and validate forced verdict from LLM output.
+                    raw_verdict = item.get("verdict") or {}
+                    if not isinstance(raw_verdict, dict):
+                        raw_verdict = {}
+                    verdict_obj = {
+                        "recommendation": raw_verdict.get("recommendation") or "watch",
+                        "conviction": int(raw_verdict.get("conviction") or 0),
+                        "bull_case": str(raw_verdict.get("bull_case") or ""),
+                        "bear_case": str(raw_verdict.get("bear_case") or ""),
+                        "key_assumption": str(raw_verdict.get("key_assumption") or ""),
+                        "invalidation": str(raw_verdict.get("invalidation") or ""),
+                        "price_target": raw_verdict.get("price_target"),
+                    }
                     opp = SerenityOpportunity(
                         theme_id=theme_id,
                         symbol=item.get("symbol", "BTC/USDT"),
@@ -398,6 +420,8 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                         assessed_by=assessed_by,
                         confidence_score=item.get("confidence_score"),
                         risk_flags=json.dumps(item.get("risk_flags", [])),
+                        verdict_json=json.dumps(verdict_obj),
+                        researchability_grade=r_grade,
                     )
                     try:
                         repo.insert_serenity_opportunity(opp)

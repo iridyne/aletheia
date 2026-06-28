@@ -83,6 +83,10 @@ class TradingDecision:
     # 'market_observer' → opportunities.id; 'serenity' → serenity_opportunities.id.
     # Stamped by _attach_opportunity_context (market_observer takes precedence).
     signal_source: str = "market_observer"
+    # S4 / P2 (2026-06-28, AI Berkshire forced-verdict): explicit counter-argument.
+    # PI Agent must fill bear_case even when recommending a trade — forces acknowledgment
+    # of what could go wrong. Empty string = not provided (legacy / pre-S4 decisions).
+    bear_case: str = ""
 
 
 @dataclass
