@@ -87,7 +87,11 @@ class TestDecideActions:
         actions = decide_actions(assessment)
         assert actions == []
 
-    def test_retire_strategy_action(self, tmp_path, monkeypatch):
+    def test_retire_demote_converged_to_ts(self, tmp_path, monkeypatch):
+        """Convergence (owner decision 2026-06-28): strategy retire/demote is owned by the
+        TS operator-shell (command registry). Python decide_actions no longer emits
+        retire_strategy/demote_strategy — the old handlers wrote recommend_retire/demote
+        PiDecisions that nothing consumed (dead writes). Locked by spec PI-S03."""
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
@@ -102,9 +106,8 @@ class TestDecideActions:
             ],
         )
         actions = decide_actions(assessment)
-        retire_actions = [a for a in actions if a.action_type == "retire_strategy"]
-        assert len(retire_actions) == 1
-        assert retire_actions[0].params["strategy_id"] == "strat-1"
+        # Python loop must NOT emit retire/demote anymore (converged to TS operator-shell).
+        assert [a for a in actions if a.action_type in ("retire_strategy", "demote_strategy")] == []
 
     def test_tighten_confidence_on_degraded_signal(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
@@ -167,7 +170,10 @@ class TestDecideActions:
         notify = [a for a in actions if a.action_type == "notify_operator"]
         assert len(notify) == 1
 
-    def test_request_backfill_when_ohlcv_not_ready(self, tmp_path, monkeypatch):
+    def test_request_backfill_converged_to_ts(self, tmp_path, monkeypatch):
+        """Convergence (owner decision 2026-06-28): data-gap backfill is owned by the TS
+        operator-shell Auto Repair engine. The Python _action_request_backfill was a no-op
+        stub, so decide_actions no longer emits request_backfill. Locked by spec PI-S03."""
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
@@ -178,8 +184,8 @@ class TestDecideActions:
             signal_status="healthy",
         )
         actions = decide_actions(assessment)
-        backfill = [a for a in actions if a.action_type == "request_backfill"]
-        assert len(backfill) == 1
+        # Python loop must NOT emit request_backfill anymore (converged to TS Auto Repair).
+        assert [a for a in actions if a.action_type == "request_backfill"] == []
 
 
 # ─── Stage 2: Action Execution ───────────────────────────────────────────────

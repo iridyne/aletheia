@@ -966,22 +966,15 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     """
     actions: list[OperatorAction] = []
 
-    # Stage 2: Strategy Lifecycle
-    for strat in assessment.underperforming_strategies:
-        if strat["trade_count"] >= 10 and strat["expectancy"] < -1.0:
-            actions.append(OperatorAction(
-                action_type="retire_strategy",
-                level=1,
-                params={"strategy_id": strat["id"]},
-                reason=f"expectancy={strat['expectancy']:.2f} over {strat['trade_count']} trades",
-            ))
-        elif strat["trade_count"] >= 5 and strat["expectancy"] < -0.5:
-            actions.append(OperatorAction(
-                action_type="demote_strategy",
-                level=1,
-                params={"strategy_id": strat["id"]},
-                reason=f"expectancy={strat['expectancy']:.2f} over {strat['trade_count']} trades",
-            ))
+    # Stage 2: Strategy Lifecycle — CONVERGED TO TS operator-shell (owner decision 2026-06-28).
+    # Strategy retire/demote is owned by the TS operator-shell, which evaluates strategy
+    # lifecycle and acts through the command registry. The Python loop used to emit
+    # retire_strategy/demote_strategy here, whose handlers wrote recommend_retire/demote
+    # PiDecisions — but NOTHING consumed them (trading_context's pending-signal queue reads
+    # only action='signal_pending'), so they were dead writes. Removed to eliminate the
+    # parallel operator mechanism: Python operator_loop keeps ONLY dynamic config tuning
+    # (which TS does not do). assessment.underperforming_strategies is still surfaced in the
+    # assessment for observability and for the TS shell's own evaluation.
 
     if assessment.uncovered_symbols and assessment.strategies_paper_running < 3:
         actions.append(OperatorAction(
@@ -1075,13 +1068,10 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
                 ))
                 break  # one param per cycle
 
-    # Stage 3: Data Health
-    if not assessment.ohlcv_ready:
-        actions.append(OperatorAction(
-            action_type="request_backfill",
-            level=1,
-            reason="OHLCV data insufficient for backtest",
-        ))
+    # Stage 3: Data Health — request_backfill CONVERGED TO TS Auto Repair (owner decision
+    # 2026-06-28). The Python _action_request_backfill handler was a no-op stub (it logged
+    # + recorded "executed" but triggered no backfill pipeline). Data-gap repair is owned by
+    # the TS operator-shell's Auto Repair engine, so the Python loop no longer emits it.
 
     # Stage 3b: Strategy Research — trigger ICT/SMC methodology research
     should_research = (

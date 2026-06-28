@@ -378,9 +378,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("paper_trader", _run_paper_trader), "interval", minutes=5, id="paper_trader",
         misfire_grace_time=60, executor="agents",
     )
-    _pi_heartbeat_min = max(1, int(cfg.pi_daemon.heartbeat_sec / 60)) if cfg.pi_daemon.enabled else 15
+    # pi_trading_decision is the ~15min safety-net fallback (agent_contracts.md row 6).
+    # When the daemon is enabled it is the primary path; this scheduled job is only a
+    # backstop, so it stays at ~15min. It must NOT be coupled to pi_daemon.heartbeat_sec
+    # (that is the daemon's internal fallback-poll timeout, default 60s) — doing so made
+    # this job fire every 1min, far more often than the contract's ~15min (A5 fix).
+    _pi_fallback_min = 15
     _scheduler.add_job(
-        _guarded("pi_trading_decision", _run_pi_trading_decision), "interval", minutes=_pi_heartbeat_min,
+        _guarded("pi_trading_decision", _run_pi_trading_decision), "interval", minutes=_pi_fallback_min,
         id="pi_trading_decision", misfire_grace_time=120,
         next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
     )

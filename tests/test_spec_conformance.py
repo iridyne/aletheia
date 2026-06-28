@@ -81,6 +81,10 @@ def _import_all_specs():
         # (②, implemented), Module J memo_effectiveness + bias-cap enforcement (③, xfail
         # tripwires), regime snapshot (①). Behavioral/structural — not in REQUIRED_CONTRACTS.
         spec_insight_feedback_loop,
+        # PI-agent decision-chain fixes (PI-* claims) — A5 cadence decoupling, E1 guard
+        # advisory, operator_loop→TS convergence lock, recommend_promote approval gate.
+        # From the 2026-06-28 PI-agent SDD audit (docs/issues/PI_AGENT_SDD_AUDIT).
+        spec_pi_decision_chain,
     )
 
 

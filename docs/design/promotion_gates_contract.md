@@ -83,7 +83,6 @@ post_trade_reviews_required = True
 | 路径 | 实现 | 位置 |
 |------|------|------|
 | 自动退役 | 连续 3 次无数据回测→`promote_strategy(sid,retired)` | `strategy/orchestrator.py:130` |
-| Operator 推荐退役 | 写 `PiDecision(action=recommend_retire)` 待 PI daemon 执行 | `operator_loop.py:564` |
-| Operator 推荐降级 | 写 `PiDecision(action=recommend_demote)` | `operator_loop.py:595` |
+| Operator 推荐退役/降级 | **已收敛到 TS operator-shell（owner 决定 2026-06-28）**：策略退役/降级由 TS operator-shell 评估并经 command registry 执行。Python `operator_loop.decide_actions` **不再产生** `retire_strategy`/`demote_strategy`（旧机制写 `PiDecision(recommend_retire/demote)` 但无消费者，是死写——见 `docs/issues/PI_AGENT_SDD_AUDIT_2026-06-28.md`）。`_action_retire/demote_strategy` 函数暂留供 PG-B05 + TS 收敛完成前引用，但不再被调度。收敛锁：`spec_pi_decision_chain.py::PI-S03`。 | TS `operator-shell/`；Python `operator_loop.py` 已停产生 |
 
 > ⚠️ 门阈值当前**硬编码**(`DEFAULT_PROMOTION_GATES`),未在 config.yaml 暴露。按 [CLAUDE.md Config↔UI 规则](../../CLAUDE.md),若要做成用户可调需同步加 schema 字段 + 前端控件。当前不可调=有意 MVP 简化。

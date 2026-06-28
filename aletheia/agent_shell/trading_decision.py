@@ -223,7 +223,15 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         logger.warning("no_price_for_decision_proposal: %s", decision.symbol)
         return None
 
-    # Run guard chain (advisory — does not block)
+    # Guard chain is a PRE-RISK OBSERVABILITY layer (see trust/guard_chain docstring):
+    # advisory only. It enriches the audit trail — guard_summary is attached to the
+    # proposal rationale below (decision_meta["guards"]) — but MUST NOT hard-block the
+    # PI's decision. The formal Risk Engine downstream (create_paper_proposal → risk
+    # evaluation) is the real safety gate. Previously a guard "block" verdict silently
+    # `return None`, which (a) contradicted guard_chain's own observability design and
+    # (b) dropped the PI's decision with no detail surfaced to the caller (E1 fix).
+    # Now: log the advisory, keep the verdict in the rationale, and let the proposal
+    # flow to the Risk Engine, which decides.
     guard_verdicts = run_guards({
         "symbol": decision.symbol,
         "direction": decision.direction,
@@ -232,8 +240,8 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     })
     guard_summary = summarize(guard_verdicts)
     if guard_summary["blocks"]:
-        logger.warning("guard_chain_block: %s — %s", decision.symbol, guard_summary["details"])
-        return None
+        logger.info("guard_chain advisory (not blocking — Risk Engine is the gate): %s — %s",
+                    decision.symbol, guard_summary["details"])
 
     notional = decision.position_size_usdt or 25.0
     quantity = round(notional / price, 6) or 0.000001
