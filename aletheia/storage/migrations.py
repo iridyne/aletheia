@@ -1376,6 +1376,12 @@ _ADDITIVE_COLUMNS = [
     ("assessed_by", "serenity_evidence", "TEXT"),
     ("assessed_tier", "serenity_opportunities", "TEXT"),
     ("assessed_by", "serenity_opportunities", "TEXT"),
+    # S4 (2026-06-28, AI Berkshire forced-verdict): machine-readable verdict blob.
+    ("verdict_json", "serenity_opportunities", "TEXT DEFAULT '{}'"),
+    # S2 (2026-06-28, AI Berkshire researchability): A/B/C deterministic grade.
+    ("researchability_grade", "serenity_opportunities", "TEXT DEFAULT 'C'"),
+    # S1 (2026-06-28, AI Berkshire 4-lens): which research lens produced this evidence.
+    ("agent_lens", "serenity_evidence", "TEXT"),
     ("error_reason", "orders", "TEXT"),
     # Prediction Market Lens: structured metadata for prediction/equity opportunities
     ("metadata", "opportunities", "TEXT DEFAULT '{}'"),
@@ -1474,6 +1480,11 @@ _ADDITIVE_COLUMNS = [
     # only Serenity-sourced rows are stamped 'serenity' by submit_decision_as_proposal.
     ("trade_school", "trade_proposals", "TEXT NOT NULL DEFAULT 'short_term'"),
     ("trade_school", "positions", "TEXT NOT NULL DEFAULT 'short_term'"),
+    # P2 / S4 (2026-06-28, AI Berkshire forced-verdict): PI must provide explicit
+    # counter-argument even when recommending a trade.
+    ("bear_case", "pi_decisions", "TEXT DEFAULT ''"),
+    # P1 (2026-06-28, AI Berkshire belief decomposition): structured assumption list.
+    ("key_assumptions", "pi_decisions", "TEXT DEFAULT '[]'"),
 ]
 
 

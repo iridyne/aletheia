@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
@@ -10,6 +10,26 @@ import { fmtTimestamp, fmtPct, humanize, fmtSymbol } from '../lib/format'
 import ThesisText from '../components/ThesisText'
 
 type Tab = 'overview' | 'runs' | 'themes' | 'evidence' | 'profile'
+
+// U1: verdict recommendation tone mapping (AI Berkshire forced-verdict)
+const VERDICT_TONE: Record<string, StatusTone> = {
+  long:  'green',
+  short: 'red',
+  watch: 'yellow',
+  avoid: 'muted',
+}
+
+// U1: researchability grade badge tone
+const GRADE_TONE: Record<string, StatusTone> = {
+  A: 'green',
+  B: 'yellow',
+  C: 'muted',
+}
+
+function parseVerdict(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {}
+  try { return JSON.parse(raw) ?? {} } catch { return {} }
+}
 
 const ENGINE_STATUS_TONE: Record<string, StatusTone> = {
   idle: 'muted',
@@ -505,6 +525,56 @@ function ThemesTab() {
   )
 }
 
+// U1: Opportunity row with expandable bear_case
+function OpportunityRow({
+  symbol, direction, rec, grade, evidenceTier, status, bearCase
+}: {
+  symbol: string
+  direction: string
+  rec?: string
+  grade: string
+  evidenceTier: string
+  status: string
+  bearCase?: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const hasBearCase = !!bearCase
+
+  return (
+    <>
+      <tr
+        style={hasBearCase ? { cursor: 'pointer' } : undefined}
+        onClick={hasBearCase ? () => setExpanded(v => !v) : undefined}
+        title={hasBearCase ? (expanded ? 'Hide bear case' : 'Show bear case') : undefined}
+      >
+        <td className="mono">{symbol}</td>
+        <td>{direction}</td>
+        <td>
+          {rec ? (
+            <Badge tone={VERDICT_TONE[rec] || 'muted'}>{rec.toUpperCase()}</Badge>
+          ) : <span className="text-muted">—</span>}
+        </td>
+        <td>
+          <Badge tone={GRADE_TONE[grade] || 'muted'}>{grade}</Badge>
+        </td>
+        <td>{evidenceTier}</td>
+        <td><StatusBadge status={status} /></td>
+      </tr>
+      {expanded && bearCase && (
+        <tr>
+          <td colSpan={6} style={{ paddingTop: '0.25rem', paddingBottom: '0.5rem' }}>
+            <div style={{ background: 'var(--color-surface-raised, #1e1e1e)', borderRadius: '4px', padding: '0.5rem 0.75rem' }}>
+              <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--color-red, #f87171)', marginRight: '0.5rem' }}>Bear Case:</span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted, #9ca3af)' }}>{bearCase}</span>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
+
 // --- Theme Detail Panel ---
 function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => void }) {
   const { data } = useQuery({
@@ -556,14 +626,28 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
       {evidence.length > 0 ? (
         <TableWrap>
           <table>
-            <thead><tr><th>Title</th><th>Source</th><th>Tier</th><th>Symbol</th></tr></thead>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Source</th>
+                <th>Tier</th>
+                <th>Symbol</th>
+                <th>Lens</th>
+              </tr>
+            </thead>
             <tbody>
               {evidence.map((e: any) => (
                 <tr key={e.id}>
                   <td>{e.title}</td>
                   <td>{humanize(e.source)}</td>
-                  <td>{humanize(e.tier)}</td>
+                  <td>{humanize(e.assessed_tier || e.tier)}</td>
                   <td className="mono">{e.symbol ? fmtSymbol(e.symbol, e.market_type) : '—'}</td>
+                  <td>
+                    {e.agent_lens
+                      ? <Badge tone="muted">{e.agent_lens}</Badge>
+                      : <span className="text-muted">—</span>
+                    }
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -576,16 +660,35 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
           <h4>Opportunities ({opportunities.length})</h4>
           <TableWrap>
             <table>
-              <thead><tr><th>Symbol</th><th>Direction</th><th>Tier</th><th>Status</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Direction</th>
+                  <th>Verdict</th>
+                  <th>Grade</th>
+                  <th>Tier</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
               <tbody>
-                {opportunities.map((o: any) => (
-                  <tr key={o.id}>
-                    <td className="mono">{fmtSymbol(o.symbol, o.market || o.market_type)}</td>
-                    <td>{humanize(o.direction)}</td>
-                    <td>{humanize(o.evidence_tier)}</td>
-                    <td><StatusBadge status={o.status} /></td>
-                  </tr>
-                ))}
+                {opportunities.map((o: any) => {
+                  const verdict = parseVerdict(o.verdict_json)
+                  const rec = verdict.recommendation as string | undefined
+                  const bearCase = verdict.bear_case as string | undefined
+                  const grade = (o.researchability_grade as string | undefined)?.toUpperCase() || 'C'
+                  return (
+                    <OpportunityRow
+                      key={o.id}
+                      symbol={fmtSymbol(o.symbol, o.market || o.market_type)}
+                      direction={humanize(o.direction)}
+                      rec={rec}
+                      grade={grade}
+                      evidenceTier={humanize(o.evidence_tier)}
+                      status={o.status}
+                      bearCase={bearCase}
+                    />
+                  )
+                })}
               </tbody>
             </table>
           </TableWrap>

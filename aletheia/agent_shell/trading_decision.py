@@ -83,6 +83,13 @@ class TradingDecision:
     # 'market_observer' → opportunities.id; 'serenity' → serenity_opportunities.id.
     # Stamped by _attach_opportunity_context (market_observer takes precedence).
     signal_source: str = "market_observer"
+    # S4 / P2 (2026-06-28, AI Berkshire forced-verdict): explicit counter-argument.
+    # PI Agent must fill bear_case even when recommending a trade — forces acknowledgment
+    # of what could go wrong. Empty string = not provided (legacy / pre-S4 decisions).
+    bear_case: str = ""
+    # P1 (2026-06-28, AI Berkshire belief decomposition): the critical assumptions
+    # this decision depends on. At most 3 items, kept concise. Empty = not provided.
+    key_assumptions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -114,6 +121,8 @@ _DECISION_SCHEMA = {
         "risk_factors": {"type": "array", "items": {"type": "string"}},
         "supporting_signals": {"type": "array", "items": {"type": "string"}},
         "opposing_signals": {"type": "array", "items": {"type": "string"}},
+        # P1: structured assumption list — at most 3, kept concise
+        "key_assumptions": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["action", "conviction", "reasoning"],
 }
@@ -787,7 +796,8 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "",
         "Return: action, symbol (BTC/USDT format), direction (long/short), "
         "conviction (0-100), market_type (spot/usdt_futures), leverage (integer ≥1), "
-        "reasoning, risk_factors, supporting_signals, opposing_signals.",
+        "reasoning, risk_factors, supporting_signals, opposing_signals, "
+        "key_assumptions (array of ≤3 short strings: critical premises this decision rests on).",
     ]
 
     return "\n".join(parts)
@@ -850,6 +860,8 @@ def _parse_decision(raw: dict) -> TradingDecision:
         leverage = None
     if leverage is not None and leverage < 1:
         leverage = 1
+    raw_assumptions = raw.get("key_assumptions")
+    key_assumptions = raw_assumptions if isinstance(raw_assumptions, list) else []
     return TradingDecision(
         action=raw.get("action", "skip"),
         symbol=raw.get("symbol"),
@@ -861,6 +873,7 @@ def _parse_decision(raw: dict) -> TradingDecision:
         risk_factors=raw.get("risk_factors", []),
         supporting_signals=raw.get("supporting_signals", []),
         opposing_signals=raw.get("opposing_signals", []),
+        key_assumptions=key_assumptions,
     )
 
 

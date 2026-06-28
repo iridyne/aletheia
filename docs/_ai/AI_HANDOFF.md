@@ -7,7 +7,47 @@
 
 ## Last Updated
 
-2026-06-24 (Equity Curve isError 修复 dbde229 + 诊断代理陷阱勘误)
+2026-06-28 (AI Berkshire 整合 — Serenity Lens 5 功能增强)
+
+---
+
+## Recent Change (AI Berkshire 整合 — 2026-06-28)
+
+**目标**：把 GitHub xbtlin/ai-berkshire 的价值投研框架模式吸收进 Serenity Lens。
+
+**5 个子功能（SDD first，全部 GREEN）**：
+
+- **S1 多透镜研究** (`087ec9d`)：4 个视角(technical/flow/sentiment/macro)顺序 LLM 调用
+  替换原单次 Stage 1 调用；每条 evidence 带 `agent_lens` 字段标记来源视角。
+  顺序设计因 Databricks rate limit（并发 → 429 全灭）。
+
+- **S2 可研究性评级** (`cdad0c3`)：`assess_researchability_grade()` 确定性算法产出 A/B/C
+  评级；A=≥2 high_confidence+URL，B=≥3 likely，C=其余；C 级上限封顶 score≤40，
+  防止低质证据撑出高分机会。
+
+- **S3 来源可靠性天花板** (`372fda3`)：`SOURCE_RELIABILITY_TIER` 软天花板；news/social→
+  likely，market_data→high_confidence，official→disclosed；阻止来源本身可信度不足
+  的证据被评为 disclosed（e.g. "看了新闻就说已公开披露"）。
+
+- **S4 Forced Verdict** (`cdad0c3`)：每个 opportunity 必须带 `verdict_json`（含
+  recommendation/bull_case/bear_case/key_assumption/invalidation）；防止 AI 空谈
+  不下判断。
+
+- **P1 key_assumptions** (`ddad0cb`)：`TradingDecision` 新增 `key_assumptions: list[str]`
+  字段；PI 被要求写出≤3 条核心前提假设；落库至 `pi_decisions.key_assumptions`（JSON
+  数组）；reflection.py 同步持久化。
+
+- **U1/U2 前端显示** (`c14469e`)：SerenityLens 机会表格新增 Verdict(彩色徽章)/Grade(A/B/C)
+  /可展开 bear_case；证据表格新增 Lens 列（agent_lens 标签）。
+
+**spec 覆盖**：303 claims GREEN（ML-S01~S03/B01~B02 + SE-S06/I06 + SV-S03/S04/B02 + 迁移修正）。
+
+**待合并主仓**：分支 `worktree-lazy-drifting-clarke`。合并后须在主仓 `gateway restart`
+才能生效（worktree data/ 为空，见记忆 [[aletheia-worktree-gateway-empty-data-trap]]）。
+
+**剩余 P3 项（数据积累后再推）**：
+- D1: xStock 可研究性数据质量管理（等 researchability_grade 数据积累后再做）
+- D2: evidence URL 提取增强（LLM prompt 改善，等运行数据后迭代）
 
 ---
 
