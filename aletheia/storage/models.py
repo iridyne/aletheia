@@ -370,6 +370,9 @@ class SerenityEvidence(BaseModel):
     # `tier` above is only the generator's proposal. NULL = legacy / unassessed.
     assessed_tier: str | None = None
     assessed_by: str | None = None
+    # S1 (2026-06-28, AI Berkshire 4-lens integration): which research perspective
+    # produced this evidence. Values: "technical" | "flow" | "sentiment" | "macro" | None.
+    agent_lens: str | None = None
 
 
 class SerenityOpportunity(BaseModel):

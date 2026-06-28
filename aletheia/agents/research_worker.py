@@ -77,6 +77,89 @@ _EVIDENCE_SYSTEM = (
     "Return 5-15 evidence items. Return raw JSON array, no markdown."
 )
 
+# S1 (2026-06-28, AI Berkshire 4-lens integration): four research perspectives
+# that reduce mono-directional bias. Each lens is a specialized researcher with
+# a distinct information diet and mandate.
+
+_LENS_TECHNICAL_SYSTEM = (
+    "You are a TECHNICAL ANALYSIS researcher for a crypto trading system. "
+    "Your mandate: analyze PRICE ACTION and CHART PATTERNS only. "
+    "Focus on: trend direction (MA alignment), support/resistance levels, "
+    "momentum indicators (RSI/MACD), volume profile, chart patterns (breakout/reversal), "
+    "and whether price is above/below key moving averages. "
+    "Return ONLY a JSON array of evidence objects. Each must have: "
+    '"title" (string), "source" (string: use "market_data" or "price_action"), '
+    '"source_ref" (string: e.g. "BTC/USDT 4h chart, MA50 crossover"), '
+    '"summary" (string: 1-2 sentences — SPECIFIC numbers or levels, not vague), '
+    '"symbol" (string or null), '
+    '"tier" (string: almost always "speculative" — TA heuristics are not disclosed facts), '
+    '"confidence" (string: "speculative"), "supports" (boolean). '
+    "Return 4-8 technical evidence items. Focus on actionable, specific observations. "
+    "Return raw JSON array, no markdown."
+)
+
+_LENS_FLOW_SYSTEM = (
+    "You are a MARKET FLOW researcher for a crypto trading system. "
+    "Your mandate: analyze DERIVATIVES and CAPITAL FLOW signals only. "
+    "Focus on: funding rates (positive = leveraged long crowding, negative = short crowding), "
+    "open interest changes (increasing OI = conviction, decreasing = deleverage), "
+    "liquidation clusters, long/short ratio, spot vs futures premium, "
+    "large wallet movements, exchange inflows/outflows. "
+    "Return ONLY a JSON array of evidence objects. Each must have: "
+    '"title" (string), "source" (string: use "derivatives_data" or "on_chain"), '
+    '"source_ref" (string: e.g. "BTC perpetual funding rate, Binance"), '
+    '"summary" (string: 1-2 sentences — SPECIFIC signals, not generic descriptions), '
+    '"symbol" (string or null), '
+    '"tier" (string: "likely" if the signal is observable, "speculative" if inferred), '
+    '"confidence" (string: same scale as tier), "supports" (boolean). '
+    "Return 4-8 flow evidence items. Return raw JSON array, no markdown."
+)
+
+_LENS_SENTIMENT_SYSTEM = (
+    "You are a MARKET SENTIMENT researcher for a crypto trading system. "
+    "Your mandate: analyze SENTIMENT, NEWS, and NARRATIVE signals only. "
+    "Focus on: recent news catalysts (regulatory, technical, macro), "
+    "social media sentiment trends, Fear & Greed Index, "
+    "narrative shifts (risk-on vs risk-off), "
+    "institutional announcements, and any events in the last 7-14 days. "
+    "Return ONLY a JSON array of evidence objects. Each must have: "
+    '"title" (string), "source" (string: use "news" or "social" or "macro"), '
+    '"source_ref" (string: e.g. "Reuters, 2026-06-25 — BTC ETF news"), '
+    '"summary" (string: 1-2 sentences — WHO did WHAT and WHEN, not vague sentiment), '
+    '"symbol" (string or null), '
+    '"tier" (string: "likely" for verifiable news events, "speculative" for sentiment inference), '
+    '"confidence" (string: same scale as tier), "supports" (boolean). '
+    "Return 4-8 sentiment evidence items. Return raw JSON array, no markdown."
+)
+
+_LENS_MACRO_SYSTEM = (
+    "You are a MACRO CONTEXT researcher for a crypto trading system. "
+    "Your mandate: analyze MACRO and CYCLE POSITION signals only. "
+    "Focus on: BTC halving cycle position and historical analogues, "
+    "US dollar strength (DXY trend), Fed policy and rate expectations, "
+    "global risk appetite (S&P 500 / VIX direction), "
+    "crypto market cycle stage (accumulation/markup/distribution/markdown), "
+    "and correlation of crypto-equity proxies (COIN, MSTR, HOOD) to BTC. "
+    "Return ONLY a JSON array of evidence objects. Each must have: "
+    '"title" (string), "source" (string: use "macro" or "research"), '
+    '"source_ref" (string: e.g. "BTC halving cycle analysis, 2024 analogue"), '
+    '"summary" (string: 1-2 sentences — SPECIFIC cycle position or macro signal), '
+    '"symbol" (string or null), '
+    '"tier" (string: "likely" for established historical patterns, "speculative" for projections), '
+    '"confidence" (string: same scale as tier), "supports" (boolean). '
+    "Return 4-8 macro evidence items. Return raw JSON array, no markdown."
+)
+
+# Registry of all standard research lenses. Order matters: technical first for
+# price anchoring, then flow (derivatives context), sentiment (narrative), macro (cycle).
+# Kept sequential to avoid Databricks rate-limit 429s (workspace token/min cap).
+RESEARCH_LENSES = [
+    ("technical", _LENS_TECHNICAL_SYSTEM),
+    ("flow", _LENS_FLOW_SYSTEM),
+    ("sentiment", _LENS_SENTIMENT_SYSTEM),
+    ("macro", _LENS_MACRO_SYSTEM),
+]
+
 _CLAIMS_SYSTEM = (
     "You are a structured claim extractor. Given evidence summaries, extract atomic claims. "
     "Return ONLY a JSON array of claim objects. Each claim must have: "
@@ -225,30 +308,58 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         f"{news_block}"
     )
 
-    # --- Stage 1: Collect Evidence ---
+    # --- Stage 1: Collect Evidence (S1: multi-lens parallel research) ---
     _check_cancellation(run_id)
     _update_stage(run_id, "collect_evidence")
     _emit_event(run_id, "stage.started", stage="collect_evidence", message="Collecting evidence")
 
-    evidence_system = (
-        _ICT_METHODOLOGY_SYSTEM if run.get("mode") == "methodology"
-        else _EVIDENCE_SYSTEM
-    )
-    evidence_text, err = await llm_complete(
-        system=evidence_system,
-        user=f"Research context:\n{research_context}\n\nCollect relevant evidence.",
-        max_tokens=16384,
-    )
-    if err:
-        if "429" in err or "rate" in err.lower():
-            raise _RateLimitError(err)
-        raise Exception(f"Evidence collection failed: {err}")
-
-    evidence_items = _parse_json_array(evidence_text, "evidence")
+    # ICT methodology mode: single specialized prompt, no multi-lens.
+    # Standard mode: iterate over 4 research lenses sequentially (rate-limit safe).
     persisted_evidence_ids: list[str] = []
-    for item in evidence_items:
+    all_evidence_items: list[dict] = []  # all items across all lenses (for Stage 2)
+    lens_summaries: dict[str, int] = {}  # lens → count (for synthesis event)
+
+    if run.get("mode") == "methodology":
+        evidence_text, err = await llm_complete(
+            system=_ICT_METHODOLOGY_SYSTEM,
+            user=f"Research context:\n{research_context}\n\nCollect relevant evidence.",
+            max_tokens=16384,
+        )
+        if err:
+            if "429" in err or "rate" in err.lower():
+                raise _RateLimitError(err)
+            raise Exception(f"Evidence collection failed: {err}")
+        evidence_items = _parse_json_array(evidence_text, "evidence")
+        all_evidence_items = evidence_items
+        lens_summaries["methodology"] = len(evidence_items)
+    else:
+        # S1: 4-lens sequential research — technical, flow, sentiment, macro.
+        # Sequential (not asyncio.gather) to stay within Databricks rate limits.
+        for lens_name, lens_system in RESEARCH_LENSES:
+            _check_cancellation(run_id)
+            lens_text, lens_err = await llm_complete(
+                system=lens_system,
+                user=f"Research context:\n{research_context}\n\nCollect relevant evidence from your {lens_name} perspective.",
+                max_tokens=8192,
+            )
+            if lens_err:
+                if "429" in lens_err or "rate" in lens_err.lower():
+                    raise _RateLimitError(lens_err)
+                logger.warning("Lens %s evidence collection failed: %s", lens_name, lens_err)
+                lens_summaries[lens_name] = 0
+                continue
+            lens_items = _parse_json_array(lens_text, f"evidence[{lens_name}]")
+            for item in lens_items:
+                item["_lens"] = lens_name  # tag for persistence
+            all_evidence_items.extend(lens_items)
+            lens_summaries[lens_name] = len(lens_items)
+            logger.debug("Lens %s: %d evidence items", lens_name, len(lens_items))
+        evidence_items = all_evidence_items  # unified list for Stage 2 compatibility
+
+    theme_id_default = run.get("focus_theme_id") or (existing_themes[0]["id"] if existing_themes else "")
+    for item in all_evidence_items:
         ev = SerenityEvidence(
-            theme_id=run.get("focus_theme_id") or (existing_themes[0]["id"] if existing_themes else ""),
+            theme_id=theme_id_default,
             run_id=run_id,
             symbol=item.get("symbol"),
             source=item.get("source", "research"),
@@ -260,6 +371,8 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             tier=normalize_tier(item.get("tier")),
             supports=item.get("supports", True),
             confidence=normalize_tier(item.get("confidence")),
+            # S1: which lens produced this evidence record.
+            agent_lens=item.get("_lens"),
         )
         ev.assessed_tier, ev.assessed_by = assess_evidence_tier(ev.model_dump())
         try:
@@ -267,6 +380,12 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             persisted_evidence_ids.append(ev.id)
         except Exception as e:
             logger.warning("Failed to persist evidence: %s", e)
+
+    # S1: emit lens synthesis event summarising cross-lens coverage.
+    _emit_event(
+        run_id, "lens_synthesis", stage="collect_evidence",
+        message=f"Multi-lens collection complete: {lens_summaries} total={len(persisted_evidence_ids)}",
+    )
 
     _emit_event(run_id, "stage.completed", stage="collect_evidence",
                 message=f"Collected {len(persisted_evidence_ids)} evidence items")

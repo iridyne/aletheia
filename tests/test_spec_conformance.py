@@ -85,6 +85,11 @@ def _import_all_specs():
         # scoring ceiling (≤40) to prevent speculative opportunities from reaching
         # research_priority bucket.
         spec_serenity_researchability,
+        # Serenity multi-lens parallel research (S1, AI Berkshire integration 2026-06-28). ML-*
+        # claims attach to "serenity_multi_lens" — 4 research perspectives (technical/flow/
+        # sentiment/macro) replace single-lens Stage 1 to reduce directional bias. Sequential
+        # execution to stay within rate limits; lens registry pattern for easy extension.
+        spec_serenity_multi_lens,
     )
 
 
