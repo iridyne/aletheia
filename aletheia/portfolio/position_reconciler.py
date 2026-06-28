@@ -309,6 +309,25 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         source="adopted",
         filled_at=now,
     )
+    # Compute default protective stop and take-profit at adoption time so the
+    # position row is never left with NULL stop/tp. The values are derived from
+    # the config defaults (same percentages position_manager uses at runtime) but
+    # are written once and locked — if the user later changes the defaults the
+    # adopted position keeps its original levels, preventing silent SL drift.
+    from aletheia.config.loader import load_config as _load_cfg
+    _cfg = _load_cfg()
+    _sl_pct = _cfg.trading.default_stop_loss_pct   # e.g. 2.0
+    _tp_pct = _cfg.trading.default_take_profit_pct  # e.g. 4.0
+    _is_long = direction in ("long", "buy")
+    _adopted_stop = (
+        round(entry_price * (1 - _sl_pct / 100.0), 8) if _is_long
+        else round(entry_price * (1 + _sl_pct / 100.0), 8)
+    ) if _sl_pct else None
+    _adopted_tp = (
+        round(entry_price * (1 + _tp_pct / 100.0), 8) if _is_long
+        else round(entry_price * (1 - _tp_pct / 100.0), 8)
+    ) if _tp_pct else None
+
     position = Position(
         symbol=symbol,
         market_type=market_type,
@@ -323,6 +342,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         status="open",
         source="adopted",
         opened_at=opened_at,
+        stop_price=_adopted_stop,
+        take_profit_price=_adopted_tp,
     )
 
     with transaction():
@@ -340,6 +361,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             "symbol": symbol, "direction": direction, "quantity": quantity,
             "entry_price": entry_price, "execution_mode": execution_mode,
             "source": "adopted", "proposal_id": proposal.id, "order_id": order.id,
+            "stop_price": _adopted_stop, "take_profit_price": _adopted_tp,
+            "stop_source": "adopted_default_pct",
         },
         "message": rationale,
     })
