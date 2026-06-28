@@ -82,11 +82,7 @@ def check_static_files() -> PreflightCheck:
             "static_files",
             "fail",
             f"Static directory missing: {static_dir}",
-            remedy=(
-                "Run: cd frontend && npm install && npm run build\n"
-                "This rebuilds aletheia/dashboard_static/. "
-                "Commit the built files to avoid this on other machines."
-            ),
+            remedy="Run: cd frontend && npm install && npm run build",
         )
 
     index_html = static_dir / "index.html"
