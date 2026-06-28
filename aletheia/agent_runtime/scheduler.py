@@ -50,6 +50,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "connectivity_monitor": 15.0,
     "news_fetch": 120.0,
     "lesson_reviewer": 300.0,
+    "shadow_resolver": 60.0,
 }
 
 
@@ -424,6 +425,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
         misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
+    # Forward catch-up for shadow trades that the event-driven resolver missed
+    # (parent positions with no opportunity_id). DB-only; cheap; bounded per run.
+    _scheduler.add_job(
+        _guarded("shadow_resolver", _run_shadow_resolver), "interval", hours=6,
+        id="shadow_resolver", misfire_grace_time=300, executor="io",
+    )
     _scheduler.add_job(
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
         misfire_grace_time=120, executor="io",
@@ -730,6 +737,25 @@ def _run_lesson_reviewer():
         )
     except Exception as e:
         logger.warning("lesson_reviewer job failed: %s", e)
+
+
+def _run_shadow_resolver():
+    """Forward catch-up for shadow trades whose parent never linked an opportunity_id.
+
+    The event-driven resolver only fires at parent-position close and only when the
+    position carries an opportunity_id; this periodic sweep resolves anything that
+    slipped through, using each shadow's own 24h forward horizon (historical OHLCV).
+    """
+    try:
+        from aletheia.analytics.shadow_trades import resolve_stale_shadows
+        counts = resolve_stale_shadows()
+        if counts.get("resolved"):
+            logger.info(
+                "shadow_resolver: resolved=%d skipped_no_ohlcv=%d skipped_bad_entry=%d",
+                counts["resolved"], counts["skipped_no_ohlcv"], counts["skipped_bad_entry"],
+            )
+    except Exception as e:
+        logger.warning("shadow_resolver job failed: %s", e)
 
 
 def _run_strategy_designer():

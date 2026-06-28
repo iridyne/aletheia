@@ -12,7 +12,7 @@ creation time using live market data and the latest macro snapshot.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 logger = logging.getLogger("aletheia.analytics.shadow_trades")
@@ -72,6 +72,97 @@ def persist_shadow_batch(
 
     logger.debug("shadow batch %s: %d rows, regime=%s", batch_id, len(inserted_ids), regime)
     return inserted_ids
+
+
+def _parse_entry_dt(created_at: str) -> datetime | None:
+    """Parse a shadow_trades.created_at into a tz-aware UTC datetime.
+
+    created_at is stored either as an ISO string with offset (model default,
+    e.g. '2026-06-14T10:00:00+00:00') or as the SQLite `datetime('now')` form
+    (naive, space-separated, e.g. '2026-06-14 10:00:00') for rows inserted via
+    the column default. Both are UTC; a naive value must be tagged UTC so the
+    epoch math below does not silently apply the local timezone.
+    """
+    try:
+        dt = datetime.fromisoformat(created_at)
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def resolve_stale_shadows(
+    min_age_hours: int = 25,
+    horizon_hours: int = 24,
+    limit: int = 2000,
+    dry_run: bool = False,
+) -> dict:
+    """Resolve unresolved shadow trades by their own historical forward horizon.
+
+    Complements the event-driven resolve_shadow_trades_for_position(): that path
+    only fires when the parent position carries an opportunity_id and uses the
+    *current* price at close time. The pre-b9ad957 backlog has neither (positions
+    with NULL opportunity_id), so those shadows never resolve. Here each shadow is
+    resolved INDEPENDENTLY as a fixed-horizon counterfactual: exit = the close of
+    the first 1h OHLCV bar at/after (entry_at + horizon_hours). This is the only
+    feasible definition for the orphaned backlog (the parent close time is lost)
+    and is consistent for the periodic forward catch-up too.
+
+    Returns a counts dict: {resolved, skipped_no_ohlcv, skipped_bad_entry, scanned}.
+    With dry_run=True, computes everything but writes nothing.
+    """
+    from aletheia.storage.repositories import _update
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(hours=min_age_hours)).isoformat()
+    rows = db.execute(
+        "SELECT id, symbol, direction, entry_price, created_at FROM shadow_trades "
+        "WHERE resolved_at IS NULL AND created_at < ? ORDER BY created_at ASC LIMIT ?",
+        (cutoff_iso, limit),
+    ).fetchall()
+
+    counts = {"resolved": 0, "skipped_no_ohlcv": 0, "skipped_bad_entry": 0, "scanned": len(rows)}
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for row in rows:
+        entry = row["entry_price"]
+        entry_dt = _parse_entry_dt(row["created_at"] or "")
+        if entry is None or float(entry) <= 0 or entry_dt is None:
+            counts["skipped_bad_entry"] += 1
+            continue
+
+        target_ts_ms = int((entry_dt.timestamp() + horizon_hours * 3600) * 1000)
+        bar = db.execute(
+            "SELECT close FROM market_ohlcv "
+            "WHERE symbol = ? AND timeframe = '1h' AND ts >= ? ORDER BY ts ASC LIMIT 1",
+            (row["symbol"], target_ts_ms),
+        ).fetchone()
+        if bar is None or bar["close"] is None:
+            counts["skipped_no_ohlcv"] += 1
+            continue
+
+        exit_price = float(bar["close"])
+        entry_f = float(entry)
+        if (row["direction"] or "long") == "long":
+            pnl_pct = round((exit_price - entry_f) / entry_f * 100, 3)
+        else:
+            pnl_pct = round((entry_f - exit_price) / entry_f * 100, 3)
+
+        if not dry_run:
+            try:
+                _update("shadow_trades", row["id"], {
+                    "exit_price": exit_price,
+                    "pnl_pct": pnl_pct,
+                    "resolved_at": now_iso,
+                })
+            except Exception as exc:
+                logger.warning("stale shadow resolve failed for %s: %s", row["id"], exc)
+                continue
+        counts["resolved"] += 1
+
+    return counts
 
 
 def _current_price(symbol: str) -> float | None:

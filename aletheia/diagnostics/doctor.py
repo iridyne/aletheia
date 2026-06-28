@@ -1114,6 +1114,7 @@ def _probe_content_lesson_chain(report: Report) -> None:
     """ps_lessons learning→policy chain: lessons that never get accepted or applied
     are a dead loop (post-trade conclusions reach nothing)."""
     try:
+        import importlib.util
         from aletheia.storage.sqlite import get_db
         from collections import Counter
         db = get_db()
@@ -1123,6 +1124,14 @@ def _probe_content_lesson_chain(report: Report) -> None:
         applied = db.execute(
             "SELECT COUNT(*) FROM ps_lessons WHERE applied_policy_version IS NOT NULL"
         ).fetchone()[0]
+        # Is the evidence-gated promotion machinery wired? (find_spec does not import.)
+        reviewer_wired = importlib.util.find_spec("aletheia.agents.lesson_reviewer") is not None
+        # Backlog that is old enough to have been reviewed (cron runs daily).
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        stale_proposed = db.execute(
+            "SELECT COUNT(*) FROM ps_lessons WHERE status='proposed' AND created_at < ?",
+            (cutoff,),
+        ).fetchone()[0]
     except Exception as e:
         report.add("content.lesson_chain", "info", f"probe error: {e}")
         return
@@ -1130,15 +1139,28 @@ def _probe_content_lesson_chain(report: Report) -> None:
     if total == 0:
         report.add("content.lesson_chain", "info", "no lessons yet")
         return
-    proposed = cnt.get("proposed", 0)
+    # The reviewer "acted" if any lesson left 'proposed' via accept/reject/apply.
+    progressed = cnt.get("accepted", 0) + cnt.get("applied", 0) + cnt.get("rejected", 0)
     detail = f"lessons={total} ({dict(cnt)}), applied_to_policy={applied}"
-    if applied == 0 and proposed == total:
-        report.add("content.lesson_chain", "warn",
-                   f"lesson→policy chain dead: {detail}",
-                   "all lessons stuck 'proposed', none applied — accepted lessons are not "
-                   "wired into PI context (Round 2 fix L-Bug-B)")
-    else:
+    if progressed > 0 or applied > 0:
         report.add("content.lesson_chain", "ok", detail)
+    elif not reviewer_wired:
+        report.add("content.lesson_chain", "warn",
+                   f"lesson→policy chain not built: {detail}",
+                   "no lesson_reviewer agent — lessons stuck 'proposed', none promoted "
+                   "(Round 2 fix L-Bug-B)")
+    elif stale_proposed > 0:
+        # Machinery exists but the backlog is not draining — a real failure.
+        report.add("content.lesson_chain", "warn",
+                   f"lesson reviewer wired but not draining backlog: {stale_proposed} proposed "
+                   f">48h still unreviewed: {detail}",
+                   "lesson_reviewer is registered but has promoted nothing — check the "
+                   "lesson_reviewer cron job / LLM availability")
+    else:
+        # Wired, and the only proposed lessons are recent — honestly awaiting review.
+        report.add("content.lesson_chain", "info",
+                   f"lesson reviewer wired; {cnt.get('proposed', 0)} proposed awaiting "
+                   f"evidence-gated review (cron 03:00 CST): {detail}")
 
 
 def _probe_content_attribution(report: Report) -> None:
@@ -1196,13 +1218,22 @@ def _probe_content_shadow_trades(report: Report) -> None:
     except Exception as e:
         report.add("content.shadow_trades", "info", f"probe error: {e}")
         return
-    if stale > 0:
-        report.add("content.shadow_trades", "warn",
-                   f"{stale} shadow trades unresolved >24h (of {total}) — counterfactual pnl never computed",
-                   "resolver runs only when the parent position has an opportunity_id; "
-                   "check shadow_trades.resolve_shadow_trades_for_position")
-    else:
+    stale_pct = stale / total if total else 0.0
+    if stale == 0:
         report.add("content.shadow_trades", "ok", f"{total} shadow trades, none stale")
+    elif stale_pct > 0.25:
+        report.add("content.shadow_trades", "warn",
+                   f"{stale} shadow trades unresolved >24h ({stale_pct:.0%} of {total}) — "
+                   "counterfactual pnl never computed",
+                   "run scripts/backfill_shadow_trades.py for the historical backlog; the "
+                   "shadow_resolver job catches up new ones (resolve_stale_shadows)")
+    else:
+        # Bounded residue: symbols that left the universe have no OHLCV to resolve
+        # against, so a small unresolved tail is honest, not a systemic failure.
+        report.add("content.shadow_trades", "info",
+                   f"{stale} shadow trades unresolved >24h ({stale_pct:.0%} of {total}) — "
+                   "bounded residue (delisted/out-of-universe symbols lack OHLCV to resolve)",
+                   "shadow_resolver job handles new ones; older un-backfillable rows are expected")
 
 
 def _probe_content_signal_settlement(report: Report) -> None:

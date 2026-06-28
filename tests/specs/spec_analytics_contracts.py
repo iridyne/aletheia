@@ -78,3 +78,70 @@ def test_shadow_trades_resolution_bounded():
         "resolver has systemically failed. Run scripts/backfill_shadow_trades.py and "
         "check the shadow_resolver scheduler job. See FIX 3 (AN-S01)."
     )
+
+
+# ---------------------------------------------------------------------------
+# AN-S02 — resolve_stale_shadows resolves by historical horizon (behavioral)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("AN-S02", "analytics_contract", "§historical shadow resolution", "L2b",
+              "resolve_stale_shadows resolves an unresolved shadow using the OHLCV "
+              "close at entry_at + horizon (NOT current price), computes the correct "
+              "directional pnl, tolerates naive UTC timestamps, and skips symbols "
+              "with no OHLCV. Fixed 2026-06-28 (content-probe fixes).",
+              status="implemented"),
+)
+def test_resolve_stale_shadows_uses_historical_bar():
+    """Behavioral proof on the autouse in-memory DB (no network, no mocks)."""
+    from datetime import datetime, timezone
+
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.models import new_id
+    from aletheia.analytics.shadow_trades import resolve_stale_shadows
+
+    db = get_db()
+    entry_dt = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+    target_ms = int((entry_dt.timestamp() + 24 * 3600) * 1000)
+
+    # OHLCV close at entry+24h: 110 vs entry 100 → long +10%, short -10%.
+    db.execute(
+        "INSERT INTO market_ohlcv (symbol, timeframe, ts, open, high, low, close, volume, provider) "
+        "VALUES ('BTC/USDT','1h',?,109,111,108,110,1,'test')",
+        (target_ms,),
+    )
+
+    def _mk_shadow(direction: str, created_at: str, symbol: str = "BTC/USDT", entry: float = 100.0) -> str:
+        sid = new_id()
+        db.execute(
+            "INSERT INTO shadow_trades (id, opportunity_id, symbol, direction, entry_price, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (sid, "", symbol, direction, entry, created_at),
+        )
+        return sid
+
+    long_id = _mk_shadow("long", "2026-06-01T00:00:00+00:00")
+    short_id = _mk_shadow("short", "2026-06-01T00:00:00+00:00")
+    naive_id = _mk_shadow("long", "2026-06-01 00:00:00")           # SQLite datetime('now') form
+    orphan_id = _mk_shadow("long", "2026-06-01T00:00:00+00:00", symbol="DELISTED/USDT")
+    db.commit()
+
+    counts = resolve_stale_shadows(min_age_hours=1, horizon_hours=24)
+
+    assert counts["resolved"] == 3, f"expected 3 resolved, got {counts}"
+    assert counts["skipped_no_ohlcv"] == 1, f"expected 1 no-ohlcv skip, got {counts}"
+
+    def _row(sid):
+        return db.execute(
+            "SELECT exit_price, pnl_pct, resolved_at FROM shadow_trades WHERE id=?", (sid,)
+        ).fetchone()
+
+    rl = _row(long_id)
+    assert rl["exit_price"] == 110 and rl["pnl_pct"] == 10.0 and rl["resolved_at"]
+    rs = _row(short_id)
+    assert rs["pnl_pct"] == -10.0, f"short pnl wrong: {rs['pnl_pct']}"
+    rn = _row(naive_id)
+    assert rn["pnl_pct"] == 10.0 and rn["resolved_at"], "naive UTC timestamp not handled"
+    ro = _row(orphan_id)
+    assert ro["resolved_at"] is None, "symbol with no OHLCV must stay unresolved"

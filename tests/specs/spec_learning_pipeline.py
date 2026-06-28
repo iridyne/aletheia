@@ -378,3 +378,152 @@ def test_synthetic_closures_excluded_from_corpus():
     assert len(result) == 1
     assert result[0]["case_study_id"] == "cs-real"
     assert mk.call_count == 1, "synthetic closures must not reach create_trade_case_study"
+
+
+# ---------------------------------------------------------------------------
+# LP-S09 — the proposed→accepted promotion step must exist and be overturnable
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S09", "learning_pipeline", "§lesson promotion job", "L2a",
+              "An evidence-gated lesson_reviewer agent must exist, be registered in "
+              "the scheduler, and re-judge accepted lessons (overturn path) — the "
+              "missing proposed→accepted step that left 246 lessons stuck forever. "
+              "Fixed 2026-06-28 (content-probe fixes).",
+              status="implemented"),
+)
+def test_lesson_reviewer_registered_and_overturnable():
+    """The lesson_reviewer agent exists, is scheduled, and can demote accepted lessons.
+
+    (a) the agent module is importable and registers run_lesson_reviewer,
+    (b) scheduler.py wires a 'lesson_reviewer' job + timeout,
+    (c) the reviewer re-evaluates already-accepted lessons (status='accepted'),
+        which is what makes an earlier acceptance overturnable by later evidence.
+    """
+    import pathlib
+
+    from aletheia.agents.lesson_reviewer import run_lesson_reviewer
+    assert callable(run_lesson_reviewer)
+
+    root = pathlib.Path(_project_root())
+    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    assert '"lesson_reviewer"' in sched_src, (
+        "scheduler.py does not register a lesson_reviewer job — the promotion step "
+        "never runs. See content-probe fixes FIX 2 (LP-S09)."
+    )
+
+    reviewer_src = (root / "aletheia/agents/lesson_reviewer.py").read_text(encoding="utf-8")
+    assert 'status="accepted"' in reviewer_src or "status='accepted'" in reviewer_src, (
+        "lesson_reviewer never re-reads accepted lessons — acceptances are not "
+        "overturnable by later evidence (owner requirement). See FIX 2 (LP-S09)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-S10 — accepted lessons must close the loop into a policy version
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S10", "learning_pipeline", "§applied_policy_version closure", "L2a",
+              "LessonStore.mark_applied() must exist and be called by lesson_reviewer "
+              "so an accepted lesson stamps the policy version it influenced "
+              "(applied_policy_version), closing the chain the doctor probe checks. "
+              "Fixed 2026-06-28 (content-probe fixes).",
+              status="implemented"),
+)
+def test_applied_policy_version_closure():
+    """mark_applied exists, is invoked by the reviewer, and the column is present."""
+    import pathlib
+
+    from aletheia.learning.lessons import LessonStore
+    assert hasattr(LessonStore, "mark_applied") and callable(LessonStore.mark_applied), (
+        "LessonStore.mark_applied missing — applied_policy_version can never be set. "
+        "See FIX 2 (LP-S10)."
+    )
+
+    root = pathlib.Path(_project_root())
+    reviewer_src = (root / "aletheia/agents/lesson_reviewer.py").read_text(encoding="utf-8")
+    assert "mark_applied" in reviewer_src, (
+        "lesson_reviewer never calls mark_applied — accepted lessons would never "
+        "stamp a policy version. See FIX 2 (LP-S10)."
+    )
+
+    db = pathlib.Path(_project_root()) / "data" / "app.db"
+    if not db.exists():
+        pytest.skip("no production app.db on this machine")
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(ps_lessons)")]
+    finally:
+        conn.close()
+    assert "applied_policy_version" in cols, "ps_lessons.applied_policy_version column missing"
+
+
+# ---------------------------------------------------------------------------
+# LP-S11 — the promotion chain works end-to-end (behavioral, in-memory DB)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S11", "learning_pipeline", "§lesson promotion behavior", "L2b",
+              "Given enough settled evidence and an LLM 'accept', the reviewer moves a "
+              "proposed lesson to 'applied' and stamps applied_policy_version via a real "
+              "lesson_policy version — the chain that was dead now closes end-to-end. "
+              "Fixed 2026-06-28 (content-probe fixes).",
+              status="implemented"),
+)
+async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
+    """Behavioral proof on the autouse in-memory DB. Mocks ONLY the LLM network
+    boundary (llm_complete); LessonStore / PolicyStore / evidence SQL all run for
+    real, and we assert the resulting DB state — not that a mock was called.
+    """
+    import json as _json
+    from unittest.mock import AsyncMock
+
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.models import new_id
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.policies.store import PolicyStore
+    import aletheia.agents.lesson_reviewer as lr
+
+    db = get_db()
+    # Seed >= _MIN_SETTLED_EVIDENCE settled outcomes so the deterministic floor passes.
+    for _ in range(25):
+        db.execute(
+            "INSERT INTO universe_forward_outcomes "
+            "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+            " entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
+            " forward_return_pct, status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (new_id(), "m", "s", "BTC/USDT", "momentum", "long", "24h",
+             100.0, "2026-06-20T00:00:00+00:00", "2026-06-21T00:00:00+00:00",
+             "2026-06-21T00:00:00+00:00", 102.0, 2.0, "settled"),
+        )
+    db.commit()
+
+    store = LessonStore()
+    lesson = store.create(
+        summary="Momentum longs on BTC/USDT carry edge in this regime",
+        source_type="trade_case_study", source_id="x",
+        category="entry_timing", severity="warning",
+    )
+
+    monkeypatch.setattr(
+        lr, "llm_complete",
+        AsyncMock(return_value=(_json.dumps({"decision": "accept", "reasoning": "supported"}), None)),
+    )
+
+    await lr.run_lesson_reviewer(run_id="test")
+
+    refreshed = store.get(lesson.lesson_id)
+    assert refreshed is not None
+    assert refreshed.status == "applied", f"expected 'applied', got {refreshed.status!r}"
+    assert refreshed.applied_policy_version, "applied_policy_version was not stamped"
+
+    versions = PolicyStore().list_versions("lesson_policy")
+    assert versions, "no lesson_policy version was created on acceptance"
+    assert refreshed.applied_policy_version == versions[0].policy_version_id, (
+        "lesson is not linked to the policy version it was folded into"
+    )

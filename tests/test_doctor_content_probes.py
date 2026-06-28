@@ -99,21 +99,35 @@ def test_memo_quality_valid_is_ok(db):
 
 # --- content.lesson_chain ----------------------------------------------------
 
-def _ins_lesson(conn, lesson_id, status, applied=None):
+def _ins_lesson(conn, lesson_id, status, applied=None, created_at=None):
     _ins(conn, "ps_lessons", lesson_id=lesson_id, source_type="trade", source_id="x",
          category="risk", severity="info", summary="s", evidence_json="{}",
-         status=status, created_at=_ago(hours=1), applied_policy_version=applied)
+         status=status, created_at=created_at or _ago(hours=1),
+         applied_policy_version=applied)
 
 
 def test_lesson_chain_empty_is_info(db):
     assert _verdict(dx._probe_content_lesson_chain).severity == "info"
 
 
-def test_lesson_chain_dead_warns(db):
+def test_lesson_chain_recent_proposed_is_info(db):
+    # lesson_reviewer machinery is now wired; recently-proposed lessons are honestly
+    # awaiting the daily evidence-gated review (cron 03:00 CST), NOT a dead chain.
+    # Reporting warn here would false-alarm forever the day after every new lesson.
     for i in range(3):
         _ins_lesson(db, f"l{i}", "proposed")
     v = _verdict(dx._probe_content_lesson_chain)
-    assert v.severity == "warn" and "dead" in v.detail.lower()
+    assert v.severity == "info" and "awaiting" in v.detail.lower()
+
+
+def test_lesson_chain_stale_backlog_warns(db):
+    # proposed lessons older than the 48h review window that never drained → the
+    # wired reviewer is failing (cron dead / LLM unavailable). The probe must still
+    # warn here: this is the genuine dead-chain failure, just detected by staleness.
+    for i in range(3):
+        _ins_lesson(db, f"l{i}", "proposed", created_at=_ago(hours=72))
+    v = _verdict(dx._probe_content_lesson_chain)
+    assert v.severity == "warn" and "draining" in v.detail.lower()
 
 
 def test_lesson_chain_with_applied_is_ok(db):
