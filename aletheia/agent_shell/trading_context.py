@@ -158,6 +158,10 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "id": o.get("id"),
                 "linked_strategy_id": o.get("linked_strategy_id"),
                 "symbol": o.get("symbol"),
+                # Instrument type (spot | usdt_futures) so the PI sees what the
+                # opportunity is for and can choose market_type informedly, and so
+                # _attach_opportunity_context can inherit it (no hardcoded perp).
+                "market": o.get("market"),
                 "direction_bias": o.get("direction_bias"),
                 "confidence": o.get("confidence"),
                 "confidence_score": o.get("confidence_score"),
@@ -552,6 +556,12 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 key_evidence = "; ".join(refs[:2])[:200]
             except Exception:
                 pass
+            # S4: parse verdict_json for PI consumption (forced verdict).
+            try:
+                import json as _json
+                verdict = _json.loads(o.get("verdict_json") or "{}")
+            except Exception:
+                verdict = {}
             serenity_opps.append({
                 # Phase 2: attribution anchor — without the id the PI's pick can never be
                 # linked back to serenity_opportunities (signal_source='serenity').
@@ -569,6 +579,11 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 "bucket": score.get("bucket"),
                 "evidence_count": score.get("evidence_count", 0),
                 "key_evidence": key_evidence,
+                # S4: forced verdict (AI Berkshire integration) — recommendation +
+                # explicit bull/bear cases + key_assumption + invalidation condition.
+                "verdict": verdict,
+                # S2: researchability grade (A/B/C) — informs PI of data quality.
+                "researchability_grade": o.get("researchability_grade") or "C",
             })
         layer["serenity_opportunities"] = serenity_opps
     except Exception:

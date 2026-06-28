@@ -147,15 +147,19 @@ def test_methodology_and_model_sources_capped():
 def test_high_tier_requires_external_ref():
     from aletheia.trading.serenity_evidence import assess_evidence_tier
 
+    # Use 'official' source (not capped by SOURCE_RELIABILITY_TIER) to isolate the
+    # external-ref requirement. A source that is reliability-capped to 'likely' would
+    # always end up 'likely' regardless of the external-ref rule — the two mechanisms
+    # are orthogonal, so test each in isolation.
     # No external ref → demoted
     tier_no_ref, _ = assess_evidence_tier(
-        {"source": "research", "tier": "disclosed", "source_ref": "analyst note"}
+        {"source": "official", "tier": "disclosed", "source_ref": "internal note"}
     )
     assert tier_no_ref == "likely", tier_no_ref
 
     # With a verifiable URL → survives
     tier_ref, _ = assess_evidence_tier(
-        {"source": "research", "tier": "disclosed", "url": "https://sec.gov/filing/123"}
+        {"source": "official", "tier": "disclosed", "url": "https://sec.gov/filing/123"}
     )
     assert tier_ref == "disclosed", tier_ref
 
@@ -227,6 +231,57 @@ def test_scorer_ignores_self_graded_tier():
     )
     assert self_graded["reasons"]["evidence_tier"] == "speculative"
     assert assessed["reasons"]["evidence_tier"] == "disclosed"
+
+
+@spec_claim(
+    SpecClaim(
+        "SE-S06", _CONTRACT, "§3 source reliability tier ceiling", "L2a",
+        "serenity_evidence.py defines SOURCE_RELIABILITY_TIER mapping "
+        "(e.g. 'news'→'likely', 'market_data'→'high_confidence') that "
+        "caps assess_evidence_tier on a per-source basis",
+        status="implemented",
+    ),
+)
+def test_source_reliability_tier_constant_exists():
+    from aletheia.trading import serenity_evidence as se
+    assert hasattr(se, "SOURCE_RELIABILITY_TIER"), (
+        "serenity_evidence.py missing SOURCE_RELIABILITY_TIER constant"
+    )
+    srt = se.SOURCE_RELIABILITY_TIER
+    assert isinstance(srt, dict), "SOURCE_RELIABILITY_TIER must be a dict"
+    assert "news" in srt, "SOURCE_RELIABILITY_TIER missing 'news' entry"
+    assert "market_data" in srt, "SOURCE_RELIABILITY_TIER missing 'market_data' entry"
+
+
+@spec_claim(
+    SpecClaim(
+        "SE-I06", _CONTRACT, "§3 source reliability cap applied in assess_evidence_tier", "L2b",
+        "A 'news' evidence self-graded 'disclosed' is capped at 'likely' "
+        "(news cannot verify supply-chain/regulatory facts); "
+        "'market_data' self-graded 'disclosed' is capped at 'high_confidence'",
+        status="implemented",
+    ),
+)
+def test_source_reliability_cap_applied():
+    from aletheia.trading.serenity_evidence import assess_evidence_tier
+
+    # news can at best be 'likely', not 'disclosed'
+    tier_news, _ = assess_evidence_tier(
+        {"source": "news", "tier": "disclosed", "url": "https://example.com/news"}
+    )
+    assert tier_news == "likely", f"news ceiling should be 'likely', got {tier_news!r}"
+
+    # market_data can reach 'high_confidence' but not 'disclosed'
+    tier_md, _ = assess_evidence_tier(
+        {"source": "market_data", "tier": "disclosed", "url": "https://exchange.com/data"}
+    )
+    assert tier_md == "high_confidence", f"market_data ceiling should be 'high_confidence', got {tier_md!r}"
+
+    # market_data self-graded 'high_confidence' with URL should survive
+    tier_md_hc, _ = assess_evidence_tier(
+        {"source": "market_data", "tier": "high_confidence", "url": "https://exchange.com/data"}
+    )
+    assert tier_md_hc == "high_confidence", f"market_data high_confidence with URL should survive, got {tier_md_hc!r}"
 
 
 @spec_claim(

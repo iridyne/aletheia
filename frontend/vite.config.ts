@@ -12,6 +12,11 @@ export default defineConfig({
     manifest: true,
     rollupOptions: {
       output: {
+        // Fixed filenames — avoid content-hash renames that cause git merge conflicts
+        // when two branches each build independently. Cache busting via ETag (304).
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name].[ext]',
         manualChunks: {
           recharts: ['recharts'],
         },

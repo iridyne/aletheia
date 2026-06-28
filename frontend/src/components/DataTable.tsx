@@ -7,8 +7,9 @@ import {
   flexRender,
   type ColumnDef,
   type SortingState,
+  type VisibilityState,
 } from '@tanstack/react-table'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { humanize } from '../lib/format'
 
 interface DataTableProps<T> {
@@ -17,18 +18,48 @@ interface DataTableProps<T> {
   onRowClick?: (row: T) => void
   pageSize?: number
   emptyMessage?: string
+  /** Show a top-right "Columns" button to toggle column visibility. */
+  columnToggle?: boolean
+  /** When set (with columnToggle), persist the chosen visibility to localStorage. */
+  tableId?: string
+  /** Force true horizontal scroll (cells never wrap) — for wide, many-column tables. */
+  noWrap?: boolean
 }
 
-export function DataTable<T>({ data, columns, onRowClick, pageSize = 25, emptyMessage = 'No data.' }: DataTableProps<T>) {
+function loadVisibility(tableId?: string): VisibilityState {
+  if (!tableId) return {}
+  try {
+    const raw = localStorage.getItem(`dt-cols:${tableId}`)
+    return raw ? (JSON.parse(raw) as VisibilityState) : {}
+  } catch {
+    return {}
+  }
+}
+
+export function DataTable<T>({
+  data, columns, onRowClick, pageSize = 25, emptyMessage = 'No data.',
+  columnToggle = false, tableId, noWrap = false,
+}: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState('')
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => loadVisibility(tableId))
+  const [colMenuOpen, setColMenuOpen] = useState(false)
+
+  // Persist column visibility per table so the user's choice survives reloads.
+  useEffect(() => {
+    if (!tableId) return
+    try {
+      localStorage.setItem(`dt-cols:${tableId}`, JSON.stringify(columnVisibility))
+    } catch { /* storage unavailable — visibility stays session-only */ }
+  }, [tableId, columnVisibility])
 
   const table = useReactTable({
     data,
     columns,
-    state: { sorting, globalFilter },
+    state: { sorting, globalFilter, columnVisibility },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
@@ -42,20 +73,57 @@ export function DataTable<T>({ data, columns, onRowClick, pageSize = 25, emptyMe
 
   const pageCount = table.getPageCount()
   const currentPage = table.getState().pagination.pageIndex
+  const showToolbar = data.length > pageSize || columnToggle
 
   return (
     <div>
-      {data.length > pageSize && (
+      {showToolbar && (
         <div className="dt-toolbar">
-          <input
-            placeholder="Filter..."
-            value={globalFilter}
-            onChange={e => setGlobalFilter(e.target.value)}
-            className="dt-filter"
-          />
+          {data.length > pageSize ? (
+            <input
+              placeholder="Filter..."
+              value={globalFilter}
+              onChange={e => setGlobalFilter(e.target.value)}
+              className="dt-filter"
+            />
+          ) : <span />}
+          {columnToggle && (
+            <div className="dt-colmenu-wrap">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                aria-expanded={colMenuOpen}
+                onClick={() => setColMenuOpen(o => !o)}
+              >
+                Columns ▾
+              </button>
+              {colMenuOpen && (
+                <>
+                  <div className="dt-colmenu-backdrop" onClick={() => setColMenuOpen(false)} />
+                  <div className="dt-colmenu" role="menu">
+                    {table.getAllLeafColumns().filter(c => c.getCanHide()).map(col => {
+                      const label = typeof col.columnDef.header === 'string'
+                        ? col.columnDef.header
+                        : humanize(col.id)
+                      return (
+                        <label key={col.id} className="dt-colmenu-item">
+                          <input
+                            type="checkbox"
+                            checked={col.getIsVisible()}
+                            onChange={col.getToggleVisibilityHandler()}
+                          />
+                          {label}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
-      <div className="table-wrap">
+      <div className={noWrap ? 'table-wrap table-wrap-nowrap' : 'table-wrap'}>
       <table>
         <thead>
           <tr>

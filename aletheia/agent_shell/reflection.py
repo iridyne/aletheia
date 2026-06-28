@@ -52,6 +52,10 @@ def record_decision(decision_result: dict) -> None:
     try:
         from aletheia.storage.models import PiDecision
         from aletheia.storage.repositories import insert_pi_decision
+        raw_assumptions = decision_result.get("key_assumptions")
+        assumptions_json = (
+            json.dumps(raw_assumptions) if isinstance(raw_assumptions, list) else "[]"
+        )
         pi_dec = PiDecision(
             symbol=record["symbol"],
             direction=record["direction"],
@@ -59,9 +63,11 @@ def record_decision(decision_result: dict) -> None:
             conviction=record.get("conviction") or 0,
             reasoning=record.get("reasoning") or "",
             proposal_id=record.get("proposal_id"),
-            opportunity_id=record.get("opportunity_id"),
+            opportunity_id=decision_result.get("opportunity_id"),
             signal_source=record.get("signal_source") or "market_observer",
             debate_ran=decision_result.get("debate_ran", False),
+            bear_case=decision_result.get("bear_case") or "",
+            key_assumptions=assumptions_json,
         )
         insert_pi_decision(pi_dec)
     except Exception as e:

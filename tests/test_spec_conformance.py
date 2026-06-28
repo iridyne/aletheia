@@ -39,6 +39,7 @@ def _import_all_specs():
         spec_pipeline_execution_chain,
         spec_pipeline_live_unlock,
         spec_pipeline_market_data,
+        spec_spot_parity,
         spec_pipeline_paper_trade,
         spec_pipeline_position_manager,
         spec_pipeline_operator_loop,
@@ -76,6 +77,20 @@ def _import_all_specs():
         # engine live guard remain school-agnostic (no autonomous live unlock). Pure L2a
         # structural — no behavior change, paper still the only enabled execution mode.
         spec_serenity_live_readiness,
+        # Serenity forced verdict (S4, AI Berkshire integration 2026-06-28). SV-* claims
+        # attach to "serenity_verdict" — every opportunity must carry a machine-readable
+        # verdict with explicit bear_case. TradingDecision.bear_case structural check included.
+        spec_serenity_verdict,
+        # Serenity researchability grade (S2, AI Berkshire integration 2026-06-28). SR-*
+        # claims attach to "serenity_researchability" — deterministic A/B/C grade + C-grade
+        # scoring ceiling (≤40) to prevent speculative opportunities from reaching
+        # research_priority bucket.
+        spec_serenity_researchability,
+        # Serenity multi-lens parallel research (S1, AI Berkshire integration 2026-06-28). ML-*
+        # claims attach to "serenity_multi_lens" — 4 research perspectives (technical/flow/
+        # sentiment/macro) replace single-lens Stage 1 to reduce directional bias. Sequential
+        # execution to stay within rate limits; lens registry pattern for easy extension.
+        spec_serenity_multi_lens,
         # Round 2 high-dimensional negative-feedback closure (IFL-* claims attach to
         # "insight_feedback_loop"). Guards the three audited defects: clean-window floor
         # (②, implemented), Module J memo_effectiveness + bias-cap enforcement (③, xfail

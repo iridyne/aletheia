@@ -83,6 +83,13 @@ class TradingDecision:
     # 'market_observer' → opportunities.id; 'serenity' → serenity_opportunities.id.
     # Stamped by _attach_opportunity_context (market_observer takes precedence).
     signal_source: str = "market_observer"
+    # S4 / P2 (2026-06-28, AI Berkshire forced-verdict): explicit counter-argument.
+    # PI Agent must fill bear_case even when recommending a trade — forces acknowledgment
+    # of what could go wrong. Empty string = not provided (legacy / pre-S4 decisions).
+    bear_case: str = ""
+    # P1 (2026-06-28, AI Berkshire belief decomposition): the critical assumptions
+    # this decision depends on. At most 3 items, kept concise. Empty = not provided.
+    key_assumptions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -114,6 +121,8 @@ _DECISION_SCHEMA = {
         "risk_factors": {"type": "array", "items": {"type": "string"}},
         "supporting_signals": {"type": "array", "items": {"type": "string"}},
         "opposing_signals": {"type": "array", "items": {"type": "string"}},
+        # P1: structured assumption list — at most 3, kept concise
+        "key_assumptions": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["action", "conviction", "reasoning"],
 }
@@ -285,8 +294,14 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         thesis = thesis[:_MAX_RATIONALE_TEXT].rstrip() + "…"
     rationale = f"{thesis}\n---\n{json.dumps(decision_meta)}"
 
-    # Market type: the PI's explicit choice, else the perp/demo venue default.
-    market_type = decision.market_type or "usdt_futures"
+    # Market type, in priority order: the PI's explicit choice → the source
+    # opportunity's instrument (backfilled by _attach_opportunity_context) → a
+    # last-resort fallback. The fallback is NOT a fixed perp bias (owner
+    # principle 3): spot cannot be shorted, so only a short forces perp; an
+    # otherwise-unknown long defaults to spot (no leverage / funding / liquidation).
+    market_type = decision.market_type
+    if not market_type:
+        market_type = "usdt_futures" if decision.direction == "short" else "spot"
 
     # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
     # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
@@ -607,7 +622,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
     opps = layer1.get("opportunities", [])
     if opps:
         opp_lines = "\n".join(
-            f"  {o['symbol']} {o.get('direction_bias', '?')} "
+            f"  {o['symbol']} [{o.get('market', '?')}] {o.get('direction_bias', '?')} "
             f"conf={o.get('confidence_score', '?')} "
             f"[{o.get('scanner_family', '')}]: {o.get('thesis', '')}"
             for o in opps[:8]
@@ -775,10 +790,12 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "SHOULD this trade happen, in WHAT direction, with WHAT conviction?",
         "",
         "## Market type & leverage",
-        "- market_type: 'usdt_futures' (perpetual — supports leverage, pays/earns funding) "
-        "or 'spot' (no leverage, no funding cost). Default to 'usdt_futures' for directional "
-        "crypto trades. Prefer 'spot' when funding is strongly against your direction (e.g. "
-        "FR>+0.03% and you are long) so funding drag does not eat the edge.",
+        "- market_type: choose per setup — neither is inherently better. Each open "
+        "opportunity is tagged [spot] or [usdt_futures] above; match the venue to the "
+        "thesis. Use 'usdt_futures' (perpetual) when you want leverage, want to short, "
+        "or funding pays you; use 'spot' when you want no funding cost / no liquidation "
+        "risk, or funding is against the perp direction (e.g. FR>+0.03% and you are long). "
+        "A short can only be expressed on 'usdt_futures' (spot cannot be sold short).",
         "- leverage: integer ≥1, only for usdt_futures. Scale with conviction — 1 (none) when "
         "uncertain, 2-3 for solid setups, higher only for the strongest confluence. The risk "
         "engine clamps to a per-asset-tier cap (majors allow more than alts), so an over-eager "
@@ -795,7 +812,8 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "",
         "Return: action, symbol (BTC/USDT format), direction (long/short), "
         "conviction (0-100), market_type (spot/usdt_futures), leverage (integer ≥1), "
-        "reasoning, risk_factors, supporting_signals, opposing_signals.",
+        "reasoning, risk_factors, supporting_signals, opposing_signals, "
+        "key_assumptions (array of ≤3 short strings: critical premises this decision rests on).",
     ]
 
     return "\n".join(parts)
@@ -858,6 +876,8 @@ def _parse_decision(raw: dict) -> TradingDecision:
         leverage = None
     if leverage is not None and leverage < 1:
         leverage = 1
+    raw_assumptions = raw.get("key_assumptions")
+    key_assumptions = raw_assumptions if isinstance(raw_assumptions, list) else []
     return TradingDecision(
         action=raw.get("action", "skip"),
         symbol=raw.get("symbol"),
@@ -869,6 +889,7 @@ def _parse_decision(raw: dict) -> TradingDecision:
         risk_factors=raw.get("risk_factors", []),
         supporting_signals=raw.get("supporting_signals", []),
         opposing_signals=raw.get("opposing_signals", []),
+        key_assumptions=key_assumptions,
     )
 
 
@@ -908,6 +929,11 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         decision.strategy_id = o.get("linked_strategy_id")
         decision.scanner_family = o.get("scanner_family")
         decision.signal_source = "market_observer"
+        # Inherit the instrument type from the source opportunity when the PI did
+        # not explicitly choose one — so a spot opportunity trades as spot rather
+        # than defaulting to perp (owner principle 3: no fixed instrument bias).
+        if not decision.market_type and o.get("market"):
+            decision.market_type = o.get("market")
         return
 
     # Serenity fallback (Phase 2): the pick matched no market_observer opportunity.
@@ -925,4 +951,6 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "serenity"
+        if not decision.market_type and o.get("market"):
+            decision.market_type = o.get("market")
         return
