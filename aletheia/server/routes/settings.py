@@ -308,6 +308,40 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
 
 
 # ---------------------------------------------------------------------------
+# Serenity Research config (Phase 3, Option A D5 switch)
+# ---------------------------------------------------------------------------
+
+class SerenityConfigUpdate(SettingsRequest):
+    auto_promote: Optional[bool] = None
+    min_score_for_pi: Optional[int] = None
+
+
+_SERENITY_BOUNDS: dict[str, tuple[int, int]] = {
+    "min_score_for_pi": (0, 100),
+}
+
+
+@router.post("/serenity")
+async def update_serenity_config(req: SerenityConfigUpdate):
+    cfg = load_config()
+    old = cfg.serenity.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        if field in _SERENITY_BOUNDS:
+            lo, hi = _SERENITY_BOUNDS[field]
+            if not (lo <= value <= hi):
+                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
+        setattr(cfg.serenity, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "serenity_config_changed",
+                 "entity_type": "serenity_config", "before": old,
+                 "after": cfg.serenity.model_dump(mode="json"),
+                 "message": f"Serenity config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
 # Operator config
 # ---------------------------------------------------------------------------
 

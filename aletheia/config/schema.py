@@ -558,6 +558,17 @@ class NewsConfig(BaseModel):
     feeds: list[NewsFeedEntry] = Field(default_factory=lambda: [NewsFeedEntry(**f) for f in _DEFAULT_NEWS_FEEDS])
 
 
+class SerenityConfig(BaseModel):
+    """Serenity Research school — long-horizon industrial-chain analyst lens.
+
+    Phase 3 (Option A, D5): promote theme → enqueue signal_pending PiDecisions
+    (PI remains sole trade-decision maker). auto_promote is default OFF;
+    manual-only promotion preserves the human-curator workflow.
+    """
+    auto_promote: bool = False
+    min_score_for_pi: int = 72
+
+
 class AletheiaConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -584,3 +595,4 @@ class AletheiaConfig(BaseModel):
     event_triggers: EventTriggerConfig = Field(default_factory=EventTriggerConfig)
     pi_daemon: PiDaemonConfig = Field(default_factory=PiDaemonConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
+    serenity: SerenityConfig = Field(default_factory=SerenityConfig)

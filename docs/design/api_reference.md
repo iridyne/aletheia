@@ -172,6 +172,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/settings/runtime` | Scheduler intervals, timeouts |
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
+| POST | `/settings/serenity` | Serenity research config (auto_promote, min_score_for_pi) |
 | POST | `/settings/operator` | Operator loop config |
 | POST | `/settings/health-config` | Health check thresholds |
 | POST | `/settings/retention` | Data retention policies |
@@ -288,7 +289,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | PATCH | `/serenity/themes/{id}/status` | Update theme status |
 | POST | `/serenity/themes/{id}/feedback` | Submit feedback |
 | POST | `/serenity/themes/{id}/deep-dive` | Trigger deep research |
-| POST | `/serenity/themes/{id}/promote` | Promote to opportunity |
+| POST | `/serenity/themes/{id}/promote` | Promote theme opportunities to PI evaluation queue (Phase 3, Option A — writes signal_pending PiDecisions with signal_source='serenity'; no more state='draft' StrategyRecords) |
 | GET | `/serenity/evidence` | List evidence |
 | POST | `/serenity/evidence` | Create evidence |
 | GET | `/serenity/opportunities` | Serenity opportunities |

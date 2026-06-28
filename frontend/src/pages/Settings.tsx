@@ -67,6 +67,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   // Agent & Models
   { title: 'Permission Mode',          tab: 'agent', alt: ['autonomy', 'observe', 'paper', 'full'] },
   { title: 'Learning',                 tab: 'agent', alt: ['dreaming', 'research', 'pi daemon'] },
+  { title: 'Serenity Research',        tab: 'agent', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
   { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
   { title: 'AI Model Providers',       tab: 'agent', alt: ['llm', 'openai', 'anthropic', 'claude', 'codex'] },
   // Execution
@@ -336,6 +337,10 @@ function AgentModelsTab({ status, settings, qc }: any) {
     mutationFn: (body: any) => api.updatePiDaemonConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
+  const serenityMut = useMutation({
+    mutationFn: (body: any) => api.updateSerenityConfig(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
   const autoLearn = !!agent.autonomous_learning
@@ -343,6 +348,9 @@ function AgentModelsTab({ status, settings, qc }: any) {
   const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
   const piDaemon = (settings?.pi_daemon ?? {}) as any
   const piDaemonEnabled = piDaemon.enabled !== false
+  const serenity = (settings?.serenity ?? {}) as any
+  const serenityAutoPromote = !!serenity.auto_promote
+  const serenityMinScore = Number(serenity.min_score_for_pi ?? 72)
 
   return (
     <div>
@@ -364,6 +372,44 @@ function AgentModelsTab({ status, settings, qc }: any) {
       <Section title="Learning" description="Controls whether agents autonomously generate research, knowledge, and strategy ideas.">
         <Row label="Autonomous learning" hint="When ON, agents run dreaming/research cycles unprompted. When OFF, only human-triggered runs execute.">
           <Toggle checked={autoLearn} onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
+        </Row>
+      </Section>
+
+      <Section
+        title="Serenity Research"
+        description="Long-horizon industrial-chain analyst lens. Promoting a theme enqueues its opportunities into the PI evaluation queue (PI remains sole trade-decision maker)."
+      >
+        <Row
+          label="Auto-promote candidate themes"
+          hint="When ON, research_worker auto-promotes themes that produce a 'candidate_position' bucket opportunity (score ≥ min below, 0 fail gates). When OFF, promotion is manual-only."
+        >
+          <Toggle
+            checked={serenityAutoPromote}
+            onChange={v => {
+              if (v && !confirm('Enable auto-promote? Themes that meet the threshold will be queued to PI without human review.')) return
+              serenityMut.mutate({ auto_promote: v })
+            }}
+            disabled={serenityMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Min score for PI"
+          hint="Minimum aggregate research score (0-100) required before an opportunity is forwarded to PI. Default 72."
+        >
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            defaultValue={serenityMinScore}
+            onBlur={e => {
+              const v = parseInt(e.currentTarget.value, 10)
+              if (!Number.isFinite(v) || v < 0 || v > 100 || v === serenityMinScore) return
+              serenityMut.mutate({ min_score_for_pi: v })
+            }}
+            className="w-24"
+            disabled={serenityMut.isPending}
+          />
         </Row>
       </Section>
 
