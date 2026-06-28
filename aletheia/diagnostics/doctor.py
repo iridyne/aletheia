@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 Severity = Literal["ok", "info", "warn", "blocker"]
@@ -59,6 +59,24 @@ class Report:
     @property
     def warns(self) -> list[Check]:
         return [c for c in self.checks if c.severity == "warn"]
+
+    def to_dict(self) -> dict:
+        """Machine-readable form for `doctor --json` and GET /_infra/doctor.
+
+        This is the AI agent's eyes: a stable JSON contract so an agent can read
+        severity/name/detail/fix_hint as fields instead of scraping printed text.
+        """
+        from dataclasses import asdict
+        return {
+            "generated_at": self.generated_at,
+            "healthy": not self.blockers and not self.warns,
+            "checks": [asdict(c) for c in self.checks],
+            "summary": {
+                "total": len(self.checks),
+                "blockers": [c.name for c in self.blockers],
+                "warns": [c.name for c in self.warns],
+            },
+        }
 
 
 def _age_minutes(iso_ts: str | None) -> float | None:
@@ -968,6 +986,272 @@ def _probe_git_hooks(report: Report) -> None:
                    fix_hint="Run: aletheia doctor --fix  (or just restart the gateway — it self-installs)")
 
 
+# --- content-quality probes (Phase 2: AI-native bug discovery) ---------------
+# These differ from the operational probes above: instead of "is the loop turning",
+# they ask "is the content the AI decision chain produced coherent / non-hallucinated
+# / non-garbage" — exactly what a human used to find by eye in the Web UI's Evolve
+# module. Each is read-only and follows the probe-honesty rule (owner-acknowledged /
+# config-gated states report info with the numbers, not a false warn). See
+# docs/plans/ai_native_bugfix_path.md §3. They are deliberately NON-overlapping with
+# loop.knowledge_flood / loop.retrieval_pool / loop.reconciled_ratio / loop.concentration.
+
+def _probe_content_strategy_health(report: Report) -> None:
+    """Zombie strategies (paper_running for days with ~0 trades) and PI-blocked
+    candidates — doctor otherwise has zero strategy awareness."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        from aletheia.trading.strategy_lifecycle import _has_pi_approval
+        db = get_db()
+        rows = list(db.execute(
+            "SELECT sr.id, sr.name, sr.state, sr.created_at, sr.paper_trading_paused, "
+            "       COUNT(p.id) AS closed "
+            "FROM strategy_records sr "
+            "LEFT JOIN positions p ON p.strategy_id = sr.id AND p.status='closed' "
+            "GROUP BY sr.id"
+        ))
+    except Exception as e:
+        report.add("content.strategy_health", "info", f"probe error: {e}")
+        return
+    if not rows:
+        report.add("content.strategy_health", "info", "no strategies yet")
+        return
+
+    zombies, blocked = [], []
+    for r in rows:
+        age = _age_minutes(r["created_at"])
+        age_days = (age or 0) / 1440
+        if r["state"] == "paper_running" and not r["paper_trading_paused"] \
+                and age_days > 3 and (r["closed"] or 0) < 5:
+            zombies.append(f"{(r['name'] or r['id'])[:24]}({r['closed']}tr/{age_days:.0f}d)")
+        if r["state"] == "paper_candidate":
+            try:
+                if not _has_pi_approval(r["id"]):
+                    blocked.append((r["name"] or r["id"])[:24])
+            except Exception:
+                pass
+
+    if zombies:
+        report.add("content.strategy_health", "warn",
+                   f"{len(zombies)} zombie strategy(ies) paper_running but barely trading: {', '.join(zombies)}",
+                   "stuck strategy producing no trades — inspect its ruleset/universe match "
+                   "or retire it (aletheia inspect strategies)")
+    elif blocked:
+        report.add("content.strategy_health", "info",
+                   f"{len(blocked)} paper_candidate awaiting PI approval: {', '.join(blocked)}")
+    else:
+        report.add("content.strategy_health", "ok",
+                   f"{len(rows)} strategies, none zombie/blocked")
+
+
+def _probe_content_memo_quality(report: Report) -> None:
+    """Trading memo (the regime playbook injected into PI context): absent vs
+    expired vs (when memo_effectiveness has scored it) empirically overturned."""
+    try:
+        from aletheia.analytics.insight_synthesizer import get_latest_memo
+        from aletheia.storage.repositories import list_knowledge_items
+    except Exception as e:
+        report.add("content.memo_quality", "info", f"probe error: {e}")
+        return
+    memo = None
+    try:
+        memo = get_latest_memo()  # None if absent OR all expired
+    except Exception:
+        pass
+    if memo:
+        # accuracy_score is written by memo_effectiveness (not yet on master); light
+        # up only when the tag exists, so this probe sharpens automatically once it lands.
+        try:
+            rows = list_knowledge_items(item_type="trading_memo", limit=1)
+            import json as _json
+            tags = _json.loads(rows[0].get("tags") or "{}") if rows else {}
+            acc = tags.get("accuracy_score")
+        except Exception:
+            acc = None
+        if isinstance(acc, (int, float)) and acc < 0.4:
+            report.add("content.memo_quality", "warn",
+                       f"latest trading_memo accuracy_score={acc:.2f} (<0.40) — its rules were "
+                       f"contradicted by outcomes (likely hallucinated playbook)",
+                       "invalidate + re-synthesize the memo (insight_synthesizer.synthesize_trading_memo)")
+        else:
+            n = len(memo.get("regime_playbook") or [])
+            report.add("content.memo_quality", "ok",
+                       f"valid memo present ({n} regime rules, valid_until={memo.get('valid_until','?')[:16]})")
+        return
+    # No valid memo — distinguish expired from never-created.
+    try:
+        any_memo = list_knowledge_items(item_type="trading_memo", limit=1)
+    except Exception:
+        any_memo = []
+    if any_memo:
+        report.add("content.memo_quality", "warn",
+                   "trading_memo exists but is expired — ranker _memo_scoring contributes 0 to every decision",
+                   "re-synthesize: insight_synthesizer.synthesize_trading_memo()")
+    else:
+        report.add("content.memo_quality", "info", "no trading_memo yet")
+
+
+def _probe_content_lesson_chain(report: Report) -> None:
+    """ps_lessons learning→policy chain: lessons that never get accepted or applied
+    are a dead loop (post-trade conclusions reach nothing)."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        from collections import Counter
+        db = get_db()
+        cnt: Counter = Counter()
+        for r in db.execute("SELECT status, COUNT(*) n FROM ps_lessons GROUP BY status"):
+            cnt[r["status"]] = r["n"]
+        applied = db.execute(
+            "SELECT COUNT(*) FROM ps_lessons WHERE applied_policy_version IS NOT NULL"
+        ).fetchone()[0]
+    except Exception as e:
+        report.add("content.lesson_chain", "info", f"probe error: {e}")
+        return
+    total = sum(cnt.values())
+    if total == 0:
+        report.add("content.lesson_chain", "info", "no lessons yet")
+        return
+    proposed = cnt.get("proposed", 0)
+    detail = f"lessons={total} ({dict(cnt)}), applied_to_policy={applied}"
+    if applied == 0 and proposed == total:
+        report.add("content.lesson_chain", "warn",
+                   f"lesson→policy chain dead: {detail}",
+                   "all lessons stuck 'proposed', none applied — accepted lessons are not "
+                   "wired into PI context (Round 2 fix L-Bug-B)")
+    else:
+        report.add("content.lesson_chain", "ok", detail)
+
+
+def _probe_content_attribution(report: Report) -> None:
+    """pi_decisions.opportunity_id NULL rate on recent trade-action decisions — a
+    broken attribution chain (the ghost-link bug). Recent window only, so the old
+    pre-fix backlog doesn't false-alarm; A_ruleset honest-NULLs are split out."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        # Compute the cutoff in Python as an aware isoformat so it matches the stored
+        # timestamp format ("...T...+00:00"). SQLite datetime('now') uses a space
+        # separator and no tz, which breaks same-day string comparison (the ISO 'T'
+        # sorts after a space). 7d window keeps the pre-fix backlog out of frame.
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        rows = list(db.execute(
+            "SELECT COALESCE(signal_source,'unknown') src, COUNT(*) total, "
+            "       SUM(CASE WHEN opportunity_id IS NULL THEN 1 ELSE 0 END) nulls "
+            "FROM pi_decisions "
+            "WHERE created_at >= ? "
+            "  AND action IN ('trade','scale_in','flip') "
+            "GROUP BY src",
+            (cutoff,),
+        ))
+    except Exception as e:
+        report.add("content.attribution", "info", f"probe error: {e}")
+        return
+    total = sum(r["total"] for r in rows)
+    if total == 0:
+        report.add("content.attribution", "info", "no trade-action decisions in last 7d")
+        return
+    # A_ruleset legitimately has no opportunity_id (rule-sourced, not ranker-sourced);
+    # ranker/serenity/market_observer NULLs are the actual broken-link signal.
+    ranker_total = sum(r["total"] for r in rows if r["src"] != "A_ruleset")
+    ranker_nulls = sum(r["nulls"] for r in rows if r["src"] != "A_ruleset")
+    rate = ranker_nulls / ranker_total if ranker_total else 0.0
+    by_src = ", ".join(f"{r['src']}:{r['nulls']}/{r['total']}" for r in rows)
+    detail = f"7d trade-action={total}; non-ruleset null-link={ranker_nulls}/{ranker_total} ({rate:.0%}); by_source[{by_src}]"
+    if ranker_total >= 10 and rate > 0.10:
+        report.add("content.attribution", "warn",
+                   f"broken attribution chain: {detail}",
+                   "ranker-sourced decisions missing opportunity_id — learning can't attribute "
+                   "outcomes (regression of the b9ad957 fix; check trading_decision opportunity_id wiring)")
+    else:
+        report.add("content.attribution", "ok", detail)
+
+
+def _probe_content_shadow_trades(report: Report) -> None:
+    """Orphan shadow trades never resolved — their counterfactual pnl stays NULL and
+    edge-lab analysis silently loses that sample."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        total = db.execute("SELECT COUNT(*) FROM shadow_trades").fetchone()[0]
+        if total == 0:
+            report.add("content.shadow_trades", "info", "no shadow trades yet")
+            return
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        stale = db.execute(
+            "SELECT COUNT(*) FROM shadow_trades "
+            "WHERE resolved_at IS NULL AND created_at < ?",
+            (cutoff,),
+        ).fetchone()[0]
+    except Exception as e:
+        report.add("content.shadow_trades", "info", f"probe error: {e}")
+        return
+    if stale > 0:
+        report.add("content.shadow_trades", "warn",
+                   f"{stale} shadow trades unresolved >24h (of {total}) — counterfactual pnl never computed",
+                   "resolver runs only when the parent position has an opportunity_id; "
+                   "check shadow_trades.resolve_shadow_trades_for_position")
+    else:
+        report.add("content.shadow_trades", "ok", f"{total} shadow trades, none stale")
+
+
+def _probe_content_signal_settlement(report: Report) -> None:
+    """universe_forward_outcomes that are past due_at but still pending — the outcome
+    settler job is stalled, so signal effectiveness silently stops updating."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        total = db.execute("SELECT COUNT(*) FROM universe_forward_outcomes").fetchone()[0]
+        if total == 0:
+            report.add("content.signal_settlement", "info", "no forward outcomes yet")
+            return
+        now_iso = datetime.now(timezone.utc).isoformat()
+        overdue = db.execute(
+            "SELECT COUNT(*) FROM universe_forward_outcomes "
+            "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
+            (now_iso,),
+        ).fetchone()[0]
+    except Exception as e:
+        report.add("content.signal_settlement", "info", f"probe error: {e}")
+        return
+    if overdue > 0:
+        report.add("content.signal_settlement", "warn",
+                   f"{overdue} forward outcomes past due_at but still pending — settler stalled",
+                   "the outcome settler job is not closing due outcomes; check its scheduler cadence")
+    else:
+        report.add("content.signal_settlement", "ok", f"{total} forward outcomes, settlement current")
+
+
+def _probe_content_proposal_bias(report: Report) -> None:
+    """Directional bias at the PROPOSAL layer (before risk). loop.concentration only
+    sees fills (after risk rejection); a model that proposes only 'short' is invisible
+    there if risk happens to reject a mixed subset."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        rows = list(db.execute(
+            "SELECT direction, COUNT(*) n FROM trade_proposals "
+            "WHERE created_at >= ? GROUP BY direction ORDER BY n DESC",
+            (cutoff,),
+        ))
+    except Exception as e:
+        report.add("content.proposal_bias", "info", f"probe error: {e}")
+        return
+    total = sum(r["n"] for r in rows)
+    if total < 5:
+        report.add("content.proposal_bias", "info", f"only {total} proposals in 24h — too few to judge bias")
+        return
+    top_dir, top_n = rows[0]["direction"], rows[0]["n"]
+    top_pct = top_n / total
+    detail = f"24h proposals={total}, top: {top_dir}={top_n} ({top_pct:.0%})"
+    if top_pct > 0.80:
+        report.add("content.proposal_bias", "warn",
+                   f"proposal-layer directional bias: {detail}",
+                   "PI proposes almost exclusively one direction (pre-risk) — check trading_decision "
+                   "for a stuck regime read or one-sided signal inputs")
+    else:
+        report.add("content.proposal_bias", "ok", detail)
+
+
 def _probe_network(report: Report) -> None:
     try:
         from aletheia.config.loader import load_config
@@ -1186,6 +1470,14 @@ def build_report() -> Report:
         _probe_learning_retrieval,
         _probe_reconciled_ratio,
         _probe_concentration,
+        # content-quality (Phase 2): "is the AI's output garbage", not "is the loop alive"
+        _probe_content_strategy_health,
+        _probe_content_memo_quality,
+        _probe_content_lesson_chain,
+        _probe_content_attribution,
+        _probe_content_shadow_trades,
+        _probe_content_signal_settlement,
+        _probe_content_proposal_bias,
         _probe_health,
         _probe_operator_loop,
         _probe_webui_static,

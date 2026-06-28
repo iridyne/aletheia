@@ -134,6 +134,19 @@ async def infra_status():
     )
 
 
+@infra_router.get("/doctor")
+def infra_doctor():
+    """Machine-readable doctor report for AI agents / scripts querying the LIVE
+    gateway (no CLI subprocess needed). Same JSON contract as `aletheia doctor --json`.
+
+    Pure read — build_report() changes nothing. Declared as a sync def so FastAPI
+    runs the blocking probes (SQLite, git, localhost HTTP) in a threadpool rather
+    than stalling the event loop.
+    """
+    from aletheia.diagnostics.doctor import build_report
+    return build_report().to_dict()
+
+
 @router.get("/version")
 async def version():
     from aletheia.agent_runtime.build_info import get_boot_commit
