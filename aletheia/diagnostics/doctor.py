@@ -1461,6 +1461,33 @@ def _probe_signal_effectiveness(report: Report) -> None:
         pass
 
 
+# The content-quality probe set (Phase 2). Named once so build_report() and the
+# Operator's System Health Monitor (build_content_report) cannot drift apart.
+_CONTENT_PROBES = (
+    _probe_content_strategy_health,
+    _probe_content_memo_quality,
+    _probe_content_lesson_chain,
+    _probe_content_attribution,
+    _probe_content_shadow_trades,
+    _probe_content_signal_settlement,
+    _probe_content_proposal_bias,
+)
+
+
+def build_content_report() -> Report:
+    """Run ONLY the content-quality probes — the cheap subset of build_report() that
+    asks "is the AI's output garbage", not "is the loop alive". Used by the PI
+    Operator to ingest content-health into its assessment without the full 20+ probe
+    sweep (which includes a localhost HTTP probe and other heavier checks). Pure read."""
+    report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    for probe in _CONTENT_PROBES:
+        try:
+            probe(report)
+        except Exception as e:
+            report.add(probe.__name__, "info", f"probe error: {e}")
+    return report
+
+
 def build_report() -> Report:
     """Probe every dimension of ground truth. Pure read — changes nothing."""
     report = Report(generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
@@ -1483,13 +1510,7 @@ def build_report() -> Report:
         _probe_reconciled_ratio,
         _probe_concentration,
         # content-quality (Phase 2): "is the AI's output garbage", not "is the loop alive"
-        _probe_content_strategy_health,
-        _probe_content_memo_quality,
-        _probe_content_lesson_chain,
-        _probe_content_attribution,
-        _probe_content_shadow_trades,
-        _probe_content_signal_settlement,
-        _probe_content_proposal_bias,
+        *_CONTENT_PROBES,
         _probe_health,
         _probe_operator_loop,
         _probe_webui_static,

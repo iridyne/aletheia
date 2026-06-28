@@ -275,3 +275,79 @@ def test_loosening_actions_in_level2_not_level1():
         f"{reachable_in_l1_exec}.  These branches must be removed to restore "
         f"Level 1 / Level 2 boundary integrity."
     )
+
+
+# ---------------------------------------------------------------------------
+# Content-health self-supervision (2026-06-28) — the manager ingests doctor's
+# content.* diagnostics and surfaces them as Level-1 notify only (no auto-fix).
+# Contract: operator_self_supervision.md + PI_OPERATOR_DESIGN_DECISIONS.md §problem4#1
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-S10", "operator_layer", "§health_monitor content ingestion", "L2a",
+        "SystemAssessment exposes a content_health field and doctor.build_content_report() "
+        "exists, so the Operator can ingest content-quality diagnostics into its assessment.",
+    ),
+)
+def test_content_health_ingestion_surface_exists():
+    import dataclasses
+    import aletheia.agent_shell.operator_loop as ol
+    from aletheia.diagnostics import doctor as dx
+
+    fields = {f.name for f in dataclasses.fields(ol.SystemAssessment)}
+    assert "content_health" in fields, "SystemAssessment missing content_health field"
+
+    assert hasattr(dx, "build_content_report"), "doctor.build_content_report missing"
+    report = dx.build_content_report()  # pure read; must run without raising
+    assert hasattr(report, "checks")
+    # build_content_report runs ONLY content probes — never the operational ones.
+    names = {c.name for c in report.checks}
+    assert all(n.startswith("content.") for n in names), \
+        f"build_content_report leaked non-content probes: {names - {n for n in names if n.startswith('content.')}}"
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-S11", "operator_layer", "§permission_model content response is Level 1", "L2a",
+        "decide_actions responds to content_health with a Level-1 notify_operator ONLY — "
+        "it never emits a Level 2/3 action from content anomalies (manager flags, never auto-fixes).",
+    ),
+)
+def test_content_health_response_is_level1_notify_only():
+    import ast
+    import aletheia.agent_shell.operator_loop as ol
+
+    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    decide = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, ast.FunctionDef) and n.name == "decide_actions"),
+        None,
+    )
+    assert decide is not None, "decide_actions not found"
+
+    # Find the `if assessment.content_health:` block and collect the OperatorAction
+    # action_type / level literals constructed inside it.
+    forbidden = ol._LEVEL_2_ACTIONS | ol._LEVEL_3_ACTIONS
+    found_notify_level1 = False
+    for node in ast.walk(decide):
+        if not (isinstance(node, ast.If) and isinstance(node.test, ast.Attribute)
+                and node.test.attr == "content_health"):
+            continue
+        for call in ast.walk(node):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "OperatorAction"):
+                continue
+            kw = {k.arg: k.value for k in call.keywords}
+            atype = kw.get("action_type")
+            level = kw.get("level")
+            if isinstance(atype, ast.Constant):
+                assert atype.value not in forbidden, \
+                    f"content_health branch emits a Level 2/3 action: {atype.value}"
+                if atype.value == "notify_operator" and isinstance(level, ast.Constant):
+                    assert level.value == 1, "content notify must be Level 1"
+                    found_notify_level1 = True
+    assert found_notify_level1, \
+        "content_health branch must emit a Level-1 notify_operator action"

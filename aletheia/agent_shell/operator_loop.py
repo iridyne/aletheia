@@ -311,6 +311,10 @@ class SystemAssessment:
     ohlcv_ready: bool = False
     signal_win_rate: float | None = None
     signal_status: str = "unknown"
+    # Content health — the manager's self-supervision input (doctor content.* probes:
+    # zombie strategies, hallucinated memo, dead lesson chain, broken attribution, …).
+    # Only warn/blocker checks are kept; each is {name, severity, detail}.
+    content_health: list[dict] = field(default_factory=list)
     # Risk state
     kill_switch_active: bool = False
     daily_loss_pct: float = 0.0
@@ -488,6 +492,19 @@ def build_system_assessment() -> SystemAssessment:
 
     # Param drift
     assessment.param_drift = {name: _get_param_drift(name) for name in PARAM_REGISTRY}
+
+    # Content health — the manager ingests its own content-quality diagnostics so it
+    # supervises "is the AI output garbage", not just "is the loop alive". Cheap subset
+    # of doctor (content probes only). Best-effort; never breaks the assessment.
+    try:
+        from aletheia.diagnostics.doctor import build_content_report
+        for c in build_content_report().checks:
+            if c.severity in ("warn", "blocker"):
+                assessment.content_health.append(
+                    {"name": c.name, "severity": c.severity, "detail": c.detail}
+                )
+    except Exception as e:
+        logger.debug("assessment: content health error: %s", e)
 
     return assessment
 
@@ -966,6 +983,21 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     """
     actions: list[OperatorAction] = []
 
+    # Stage 0: Content-health self-supervision — surface AI-output anomalies the manager
+    # now sees (doctor content.* probes). Level 1 notify only: the manager FLAGS, it does
+    # NOT auto-fix (data/code remediation stays gated per ai_native_bugfix_path.md §4).
+    if assessment.content_health:
+        names = ", ".join(c["name"].replace("content.", "") for c in assessment.content_health)
+        actions.append(OperatorAction(
+            action_type="notify_operator",
+            level=1,
+            params={
+                "message": f"Content-health anomalies ({len(assessment.content_health)}): {names}",
+                "content_health": assessment.content_health,
+            },
+            reason="doctor content.* probes flagged warn/blocker — manager self-supervision",
+        ))
+
     # Stage 2: Strategy Lifecycle — CONVERGED TO TS operator-shell (owner decision 2026-06-28).
     # Strategy retire/demote is owned by the TS operator-shell, which evaluates strategy
     # lifecycle and acts through the command registry. The Python loop used to emit
@@ -1170,6 +1202,7 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
             "kill_switch": assessment.kill_switch_active,
             "open_positions": assessment.open_positions,
             "param_drift": assessment.param_drift,
+            "content_health": assessment.content_health,
         },
         "actions_decided": len(actions),
         "actions_executed": sum(1 for r in results if r.get("status") == "executed"),

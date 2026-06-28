@@ -726,3 +726,66 @@ class TestLoosenHandlers:
         result = _action_widen_stop_loss(action)
         assert result["status"] == "executed"
         assert result["new"] == 2.0  # capped at neutral
+
+
+class TestContentHealthSelfSupervision:
+    """Operator self-supervision: the manager ingests doctor content.* diagnostics and
+    surfaces them as a Level-1 notify only (it flags, it never auto-fixes)."""
+
+    def test_content_health_emits_level1_notify_only(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import (
+            SystemAssessment, decide_actions, classify_action,
+        )
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            strategies_total=10, strategies_paper_running=3,
+            ohlcv_ready=True, signal_status="healthy",
+            signal_win_rate=55.0, win_rate_7d=50.0,
+            content_health=[
+                {"name": "content.lesson_chain", "severity": "warn", "detail": "chain dead"},
+                {"name": "content.shadow_trades", "severity": "warn", "detail": "7560 stale"},
+            ],
+        )
+        actions = decide_actions(assessment)
+        notifies = [a for a in actions if a.action_type == "notify_operator"]
+        assert len(notifies) == 1, f"expected one content notify, got {[a.action_type for a in actions]}"
+        n = notifies[0]
+        assert n.level == 1 and classify_action(n.action_type) == 1
+        assert "content" in n.params.get("message", "").lower()
+        assert n.params.get("content_health") == assessment.content_health
+        # the manager must NOT escalate content anomalies to any Level 2/3 action
+        assert all(classify_action(a.action_type) == 1 for a in actions)
+
+    def test_no_content_notify_when_clean(self, tmp_path, monkeypatch):
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
+        assessment = SystemAssessment(
+            timestamp="2026-01-01T00:00:00Z",
+            strategies_total=10, strategies_paper_running=3,
+            ohlcv_ready=True, signal_status="healthy",
+            signal_win_rate=55.0, win_rate_7d=50.0,
+            content_health=[],
+        )
+        assert decide_actions(assessment) == []
+
+    def test_build_system_assessment_populates_content_health(self, tmp_path, monkeypatch):
+        from datetime import datetime, timezone, timedelta
+        _init_test_db(tmp_path, monkeypatch)
+        _make_config(tmp_path)
+        import aletheia.storage.sqlite as sq
+        # A zombie strategy: paper_running for 10 days with 0 closed trades → content.strategy_health warn
+        old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        sq._db_conn.execute(
+            "INSERT INTO strategy_records (id, name, state, created_at, paper_trading_paused) "
+            "VALUES (?,?,?,?,0)", ("zomb1", "Zombie_Strat", "paper_running", old),
+        )
+        sq._db_conn.commit()
+        from aletheia.agent_shell.operator_loop import build_system_assessment
+        assessment = build_system_assessment()
+        names = {c["name"] for c in assessment.content_health}
+        assert "content.strategy_health" in names, \
+            f"content_health did not capture the zombie strategy: {assessment.content_health}"
+        assert all(c["severity"] in ("warn", "blocker") for c in assessment.content_health)
