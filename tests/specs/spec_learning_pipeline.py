@@ -258,31 +258,41 @@ def test_guard_candidates_reachable_by_promoter():
 
 @spec_claim(
     SpecClaim("LP-S07", "learning_pipeline", "§Attribution runtime", "L2c",
-              "Decision-bearing pi_decisions rows written by the LIVE PI chain MUST "
-              "carry a real opportunity_id. The isolated specs LP-S05 (static) and "
-              "PL-PT-04 (single-cycle harness) are GREEN, yet production app.db is "
-              "~97% NULL on opportunity_id across every action — the attribution "
-              "chain is severed in the live path despite the passing unit specs",
-              status="missing"),
-)
-@pytest.mark.xfail(
-    reason="Runtime attribution chain still severed: production pi_decisions are "
-           "~97% NULL on opportunity_id across all actions (signal_pending 96.8%, "
-           "trade 99.7%, skip 99.9%, others 100%). LP-S05 + PL-PT-04 are GREEN, "
-           "which PROVES this is a test-vs-production divergence — the isolated "
-           "harness propagates the id but the live trading_decision.py path "
-           "(EXPERIMENT FREEZE clearance) does not. Flips GREEN only when the live "
-           "path is fixed AND the gateway is restarted. The owner-judgment item in "
-           "JUNK_DATA_FULL_SWEEP_2026-06-28.md / round2_week1_decision_chain_fixes.md.",
-    strict=False,
+              "The opportunity→decision attribution chain MUST hold at RUNTIME for the "
+              "population that is structurally required to carry it: signal_pending rows "
+              "from the opportunity ranker (reasoning 'Ranker candidate...'). Checked on "
+              "the most-recent rows so the pre-fix historical backlog (and self-deleting "
+              "transient rows) cannot skew it. skip/watch (non-decisions) and "
+              "ruleset-fired signals (no source opportunity) are excluded — NULL "
+              "opportunity_id there is honest, not a severed chain. Fixed live by "
+              "b9ad957 (2026-06-27), deployed at the ~13:10 gateway restart.",
+              status="implemented"),
 )
 def test_runtime_pi_decisions_carry_opportunity_id():
-    """RED tripwire on the PRODUCTION DB (mirrors LP-S01's data/app.db assertion).
+    """GREEN tripwire on the PRODUCTION DB (mirrors LP-S01's data/app.db read).
 
-    The unit specs verify the code path in isolation; this verifies the invariant
-    actually HOLDS in the live database — the only thing the learning loop cares
-    about when it tries to attribute trade outcomes back to the originating
-    opportunity. Skips on machines without a populated app.db (CI / fresh clone).
+    The learning loop attributes trade outcomes back to the opportunity that
+    triggered them via pi_decisions.opportunity_id. The population that MUST carry
+    that id is the opportunity ranker's signals (reasoning starts with
+    'Ranker candidate'). We measure the most RECENT such rows so that:
+
+      * the pre-fix historical backlog — rows written before b9ad957 went live at
+        the 2026-06-27 ~13:10 gateway restart — does not skew the result. It
+        self-deletes via prune_pi_decisions(days=7) and falls out of "most recent"
+        as soon as fresh rows accumulate.
+      * skip/watch rows (rejected candidates / non-decisions) are excluded — they
+        have no source opportunity, so a NULL opportunity_id there is correct.
+      * ruleset-fired signals are excluded — they originate from a technical rule,
+        not a scanned opportunity, so they have no opportunity_id to carry, and
+        PiDecision has no strategy_id field to anchor them either.
+
+    This is the only thing the learning loop cares about. If the live ranker path
+    regresses and stops propagating the id, recent rows go NULL and this fails.
+    Earlier scoping (all actions over a 2-day window) was wrong: it counted the
+    self-deleting backlog plus the legitimately-NULL skip/ruleset rows, so it sat
+    at ~50% forever even though the causal chain was healthy. Trade-path
+    attribution is covered by the static LP-S05 + PL-PT record_decision_trade.
+    Skips on machines without a populated app.db (CI / fresh clone).
     """
     import pathlib
 
@@ -292,27 +302,26 @@ def test_runtime_pi_decisions_carry_opportunity_id():
 
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
     try:
-        total = conn.execute(
-            "SELECT COUNT(*) FROM pi_decisions "
-            "WHERE created_at > datetime('now','-2 days')"
-        ).fetchone()[0]
-        if total == 0:
-            pytest.skip("no recent pi_decisions to evaluate")
-        nulls = conn.execute(
-            "SELECT COUNT(*) FROM pi_decisions "
-            "WHERE created_at > datetime('now','-2 days') "
-            "AND (opportunity_id IS NULL OR opportunity_id = '')"
-        ).fetchone()[0]
+        rows = conn.execute(
+            "SELECT opportunity_id FROM pi_decisions "
+            "WHERE action = 'signal_pending' "
+            "AND reasoning LIKE 'Ranker candidate%' "
+            "ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
     finally:
         conn.close()
 
-    null_pct = 100.0 * nulls / total
-    assert null_pct < 50.0, (
-        f"{null_pct:.1f}% of recent pi_decisions have NULL opportunity_id "
-        f"({nulls}/{total}) — attribution chain severed in the LIVE path. "
-        "LP-S05/PL-PT-04 are GREEN, so the bug is a test-vs-prod divergence in "
-        "trading_decision.py's live execution, not a missing field. "
-        "See round2_week1_decision_chain_fixes.md Fix L-Bug-C."
+    if not rows:
+        pytest.skip("no recent opportunity-ranker signals to evaluate")
+
+    nulls = sum(1 for (opp,) in rows if opp is None or opp == "")
+    null_pct = 100.0 * nulls / len(rows)
+    assert null_pct < 10.0, (
+        f"{null_pct:.1f}% of the {len(rows)} most-recent opportunity-ranker "
+        f"signal_pending rows have NULL opportunity_id ({nulls}/{len(rows)}) — the "
+        "live attribution chain has regressed. Opportunity-sourced ranker signals "
+        "MUST carry the originating opportunity_id (set in paper_trader.py from "
+        "candidate['opportunity_id']). See JUNK_DATA_FULL_SWEEP_2026-06-28.md."
     )
 
 

@@ -89,10 +89,10 @@ pi_decisions(causal) / knowledge_items / strategy_records / serenity_*。
 
 ### 轴2 语义毒性（owner 真实担忧）
 - **合成平仓污染语料(本轮新发现) → 已修(solo,非冻结)**：`reconciled_gone`/`demo_validation_cleanup` 是行政性平仓(exit price 伪造回退值),冒充真实结局喂 trade_case_study/guard。`analytics/trade_case_builder.py` 加 `_is_synthetic_closure` 按 close_reason VALUE 过滤(对账器捞回真 TPSL fill 保留 stop_loss/take_profit 照常入库)。锁 **LP-S08**(GREEN)。doctor `loop.reconciled_ratio` 实测近 50 笔 32% 是这类。
-- **`pi_decisions.opp_id` 运行态全 NULL（§3 + §5 Q4）→ 代码侧已闭环(dedcadb),运行态待验收**：LP-S05/PL-PT-04/PL-PT-06 全 GREEN 但生产库 ~97% NULL = **test-vs-prod 分歧**,孤立 harness 传 id 而 live `trading_decision.py`(冻结链)不传。已加 **LP-S07** xfail 运行态 tripwire(直查 app.db,NULL<50% 才翻绿)。**这是 (C) 唯一需 owner 拍板项**(见下)。
+- **`pi_decisions.opp_id` 运行态 NULL（§3 + §5 Q4）→ 已查清并解决(2026-06-28)**：先前"test-vs-prod 分歧/live 链不传"的诊断**经实测全错**。真相:signal 侧透传由 **b9ad957(2026-06-27 12:31)** 加入,gateway 约 **13:10 restart** 后生效。以 13:10 为界看 app.db —— 之前 ranker 信号 100% NULL(旧代码),之后 **0/254 全带值**,链路通的。全表 ~95% NULL 是 13:10 前的陈旧 backlog(transient 行,`prune_pi_decisions(7d)` 自动删)。残留真 NULL 只有两类、且都诚实:**规则触发信号**(本无源 opportunity,且 PiDecision 无 strategy_id 锚) + **skip**(被拒候选,非决策)。**LP-S07 重定义(owner 批准 Option B)**:口径从"近 2 天全 action"收窄到"最近 200 条 ranker 来源 signal_pending,NULL<10% 才绿"——排除自删 backlog + 合法 NULL 的 skip/规则信号,实测 **0% NULL,GREEN**。从此它真正盯住"机会→决策"链是否健康,链断才报红。
 
 ### §5 仍属 owner 的项（(C) 终稿建议）
 - **Q5 VACUUM（#13）**：无害,纯磁盘回收(389M 中 85M freelist,页复用已让增长有界)。需 EXCLUSIVE 锁→停 gateway。**建议**:不动,owner 挑安静窗口跑一条 `db_maintenance.py --vacuum` 即可,不值得为它停 live。
-- **Q4 opp_id 运行态验收**：需**解冻 + 主仓 restart 产新单 + 查 DB 新行**才能验,而框架现被 owner 置 paused。**建议**:留到 Round 2 解冻当天随决策链修复一起验(round2_week1_decision_chain_fixes.md Fix L-Bug-C),LP-S07 会自动翻绿作验收门。不单独为它解冻。
+- **Q4 opp_id 运行态验收 → 已解决(2026-06-28,见上轴2)**：无需解冻——链路在 06-27 13:10 restart 后已自然修好,LP-S07 重定义后实测 GREEN。原"留到解冻当天验"的建议作废。
 
-*状态:轴1 三项 + 轴2 合成平仓项 = solo 全部落地验证完毕;轴2 剩两项(opp_id 运行态 / VACUUM)本质 owner-gated,终稿建议如上 §6。*
+*状态:轴1 三项 + 轴2 合成平仓项 + opp_id 运行态(LP-S07 重定义 GREEN) = 全部落地验证完毕;仅剩 VACUUM(#13,纯磁盘回收,owner 挑安静窗口跑 `db_maintenance.py --vacuum`)。*
