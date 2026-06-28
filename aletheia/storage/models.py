@@ -893,6 +893,9 @@ class PiDecision(BaseModel):
     debate_ran: bool = False
     # P2 / S4 (2026-06-28, AI Berkshire forced-verdict): explicit counter-argument from PI.
     bear_case: str = ""
+    # P1 (2026-06-28, AI Berkshire belief decomposition): JSON-encoded list of
+    # critical assumptions this decision rests on. Empty JSON array = not provided.
+    key_assumptions: str = "[]"
 
 
 class CapitalEvent(BaseModel):

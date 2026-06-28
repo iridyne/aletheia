@@ -203,3 +203,42 @@ def test_trading_context_exposes_verdict():
         "trading_context.py Layer 3 serenity block does not include 'verdict' field — "
         "PI Agent cannot see forced verdict output"
     )
+
+
+# ---------------------------------------------------------------------------
+# P1 (2026-06-28, AI Berkshire belief decomposition): key_assumptions
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "SV-S04", _CONTRACT, "§6 TradingDecision.key_assumptions field exists", "L2a",
+        "TradingDecision dataclass in trading_decision.py has key_assumptions field "
+        "(list[str]) so the PI decision carries the critical assumptions it depends on",
+        status="implemented",
+    ),
+)
+def test_trading_decision_key_assumptions_field():
+    import inspect
+    from aletheia.agent_shell.trading_decision import TradingDecision
+    fields = {f.name for f in TradingDecision.__dataclass_fields__.values()}
+    assert "key_assumptions" in fields, (
+        "TradingDecision missing key_assumptions field — PI decisions cannot carry "
+        "structured assumption list (P1 AI Berkshire belief decomposition)"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "SV-B02", _CONTRACT, "§6 PI decision schema includes key_assumptions", "L2b",
+        "trading_decision.py _DECISION_SCHEMA includes 'key_assumptions' array property "
+        "so the LLM is instructed to produce it, and _parse_decision reads it",
+        status="implemented",
+    ),
+)
+def test_pi_schema_includes_key_assumptions():
+    src = _TRADING_DECISION.read_text(encoding="utf-8")
+    assert "key_assumptions" in src, (
+        "trading_decision.py does not include key_assumptions in _DECISION_SCHEMA — "
+        "PI LLM will not produce structured assumptions"
+    )

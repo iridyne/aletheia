@@ -1483,6 +1483,8 @@ _ADDITIVE_COLUMNS = [
     # P2 / S4 (2026-06-28, AI Berkshire forced-verdict): PI must provide explicit
     # counter-argument even when recommending a trade.
     ("bear_case", "pi_decisions", "TEXT DEFAULT ''"),
+    # P1 (2026-06-28, AI Berkshire belief decomposition): structured assumption list.
+    ("key_assumptions", "pi_decisions", "TEXT DEFAULT '[]'"),
 ]
 
 
