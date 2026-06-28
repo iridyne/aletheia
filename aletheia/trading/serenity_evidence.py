@@ -52,6 +52,27 @@ _SOURCE_CEILING: dict[str, str] = {
     "model": "speculative",
 }
 
+# S3 (2026-06-28, AI Berkshire integration): source reliability tier — max tier a
+# source CAN support when evidence quality is otherwise adequate.
+#   news / social / research : secondary sources, can corroborate but not prove
+#   exchange_data / market_data : objective observables, can be high_confidence
+#   official / regulatory / sec / filing : primary disclosed sources
+# Sources not listed here are unconstrained (fall through with no cap).
+SOURCE_RELIABILITY_TIER: dict[str, str] = {
+    "news": "likely",
+    "social": "likely",
+    "sentiment": "likely",
+    "analyst": "likely",
+    "research": "likely",
+    "market_data": "high_confidence",
+    "exchange_data": "high_confidence",
+    "on_chain": "high_confidence",
+    "official": "disclosed",
+    "regulatory": "disclosed",
+    "sec": "disclosed",
+    "filing": "disclosed",
+}
+
 # Tiers that REQUIRE a verifiable external locator (filing / customer guide / URL).
 # A self-asserted "disclosed" with no external reference is over-claiming.
 _REQUIRES_EXTERNAL_REF: frozenset[str] = frozenset({"disclosed", "high_confidence"})
@@ -103,9 +124,15 @@ def assess_evidence_tier(evidence: dict) -> tuple[str, str]:
     source = str(evidence.get("source") or "").strip().lower()
 
     assessed = proposed
+    # Hard ceiling: sources that are always speculative (no matter what)
     ceiling = _SOURCE_CEILING.get(source)
     if ceiling is not None:
         assessed = _min_tier(assessed, ceiling)
+    else:
+        # S3: soft ceiling — source reliability upper-bound
+        reliability_ceiling = SOURCE_RELIABILITY_TIER.get(source)
+        if reliability_ceiling is not None:
+            assessed = _min_tier(assessed, reliability_ceiling)
 
     if assessed in _REQUIRES_EXTERNAL_REF and not _has_external_ref(evidence):
         assessed = _NO_REF_DEMOTION
