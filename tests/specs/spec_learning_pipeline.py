@@ -98,12 +98,20 @@ def test_layer3_lessons_filter_aligned():
         f"See round2_week1_decision_chain_fixes.md Fix L-Bug-A"
     )
 
+    import pathlib
     import sqlite3
-    conn = sqlite3.connect(f"{_project_root()}/data/app.db")
-    n = conn.execute(
-        "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trade_case_study'"
-    ).fetchone()[0]
-    conn.close()
+    # Production-DB tripwire: skip where there is no populated app.db (CI / fresh
+    # clone / worktree), exactly like the sibling reads LP-S07 / LP-S10. Read-only.
+    db = pathlib.Path(_project_root()) / "data" / "app.db"
+    if not db.exists():
+        pytest.skip("no production app.db on this machine")
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trade_case_study'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
     assert n > 0, (
         "trade_case_study has 0 DB rows — Layer3 lessons would still be empty. "
         "See round2_week1_decision_chain_fixes.md Fix L-Bug-A"
