@@ -1753,6 +1753,56 @@ def prune_macro_snapshots(days: int = 90) -> int:
     return cur.rowcount or 0
 
 
+# agent_shell_* telemetry pruning. These tables are liveness/working-memory
+# telemetry, NOT causal-chain tables (so they are intentionally NOT in the
+# _PRUNABLE causal whitelist — see test_causal_tables_not_in_prunable_whitelist).
+# Wired into scheduler._run_cleanup; the prune call-sites existed but the repo
+# functions were omitted (incomplete refactor ba80a62), which raised
+# AttributeError mid-cleanup and silently skipped the data_pruned audit write.
+def prune_agent_shell_heartbeats(days: int = 2) -> int:
+    """Prune old agent_shell_heartbeats rows (latest-row-only liveness telemetry)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM agent_shell_heartbeats WHERE created_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_agent_shell_events(days: int = 14) -> int:
+    """Prune old agent_shell_events rows (telemetry, no causal-chain value)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM agent_shell_events WHERE created_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_agent_shell_messages(days: int = 30) -> int:
+    """Prune old agent_shell_messages rows (working-memory conversation log)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM agent_shell_messages WHERE created_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
+def prune_agent_shell_artifacts(days: int = 30) -> int:
+    """Prune old agent_shell_artifacts rows (task output telemetry)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM agent_shell_artifacts WHERE created_at < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
 def expire_stale_opportunities(ttl_hours: int = 48) -> int:
     """Mark open opportunities older than ttl_hours as 'expired'.
 

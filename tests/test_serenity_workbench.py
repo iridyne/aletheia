@@ -782,8 +782,14 @@ async def test_promote_theme(client):
     resp = await client.post(f"/api/serenity/themes/{theme.id}/promote")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "draft"
-    assert "proposalCandidateId" in data
+    # Phase 3 / Option A (owner decision): promote submits opportunities to the PI
+    # evaluation queue (status 'submitted_to_pi') instead of creating a dead
+    # StrategyRecord(state='draft'). With no active opportunities seeded here,
+    # queued is 0 but the theme is still marked promoted. The full queue
+    # round-trip (signal_pending PiDecision per opportunity) is covered by
+    # tests/specs/spec_serenity_promote.py SP-B01.
+    assert data["status"] == "submitted_to_pi"
+    assert data["queued"] == 0
 
     # Theme should be marked promoted
     updated = repo.get_serenity_theme(theme.id)

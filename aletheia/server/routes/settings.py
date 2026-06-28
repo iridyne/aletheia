@@ -83,6 +83,7 @@ async def get_settings():
         "event_triggers": cfg.event_triggers.model_dump(mode="json"),
         "pi_daemon": cfg.pi_daemon.model_dump(mode="json"),
         "news": cfg.news.model_dump(mode="json"),
+        "serenity": cfg.serenity.model_dump(mode="json"),
     }
 
 
