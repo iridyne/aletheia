@@ -66,4 +66,4 @@ PI Operator 的**头号职责就是 System Health Monitor**(契约 问题4 #1),�
 - [x] SystemAssessment.content_health 字段 + build_system_assessment 填充 + decide_actions Level-1 notify + summary 摄入
 - [x] spec 2 claims(OL-S10 摄入面 / OL-S11 仅 Level-1 notify)+ 测试
 - [x] 单测(3 行为 test:notify-only/clean-no-notify/真实DB造zombie填充)+ 全 spec 回归(335 claims 99%,架构 fitness 绿)
-- [ ] 合并 master + restart + doctor 实测 operator_assessment 含 content_health
+- [x] 合并 master(4d49cdc）+ post-merge hook 自动重启 + LIVE 实测:build_system_assessment().content_health=4 条真实异常,decide_actions→1 个 Level-1 notify(零 Level2/3)
