@@ -29,6 +29,14 @@ def setup_env(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
 
+    # do_start exercises port/spawn hygiene, NOT the build-artifact preflight.
+    # dashboard_static is now a gitignored build artifact (d728aa4), so
+    # check_static_files() fails in a fresh test env (no `npm run build`). Bypass
+    # preflight with an empty (passing) result so these tests stay focused on
+    # process/port logic, not the presence of built front-end assets.
+    from aletheia.gateway import preflight
+    monkeypatch.setattr(preflight, "run_preflight_checks", lambda: preflight.PreflightResult())
+
 
 def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
