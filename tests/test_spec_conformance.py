@@ -59,6 +59,10 @@ def _import_all_specs():
         # consuming module (物尽其用). Locks the Hyperliquid + on-chain consumers
         # against regression to collected-but-unused. data_utilization_contract.
         spec_data_utilization,
+        # Gateway stability (GS-*): bound LLM-driven jobs (market_observer wall-clock
+        # budget) + bounded structured-output retry, so provider contention can't leak
+        # threads / starve the frontdoor. gateway_stability_contract.
+        spec_gateway_stability,
         # Adopted-position SL/TP pipeline contract (regression lock for NULL stop bug)
         spec_pipeline_adopted_position,
         # Serenity evidence quality (D2 — generator/evaluator separation). SE-* claims

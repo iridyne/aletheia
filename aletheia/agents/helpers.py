@@ -98,41 +98,64 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
     """
     try:
         provider = get_provider()
-        messages = [{"role": "user", "content": user}]
         schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, "model_json_schema") else {})
-        messages.append({"role": "user", "content": (
-            f"Respond with ONLY a raw JSON object matching this schema (no markdown fences, "
-            f"no explanation, no text before or after — just the JSON): {schema_json}"
-        )})
+        base_messages = [
+            {"role": "user", "content": user},
+            {"role": "user", "content": (
+                f"Respond with ONLY a raw JSON object matching this schema (no markdown fences, "
+                f"no explanation, no text before or after — just the JSON): {schema_json}"
+            )},
+        ]
         # Prepend /no_think for Qwen3-series reasoning models: without it the model
         # exhausts the token budget on internal reasoning and returns empty text output.
         # Other models ignore this prefix safely.
         structured_system = f"/no_think\n{system}" if system else "/no_think"
-        resp = await complete_with_fallback(
-            ModelRequest(messages=messages, system=structured_system, temperature=0.3, max_tokens=max_tokens),
-            provider=provider,
-        )
-        content = (resp.content or "").strip()
-        if not content:
-            # LLM connected and ran (usage tokens > 0) but returned empty text.
-            # This is a parse failure, NOT an LLM outage — do not trip the health
-            # monitor's failure counter (which would pause the scheduler).
-            usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
-            if usage.get("completion_tokens", 0) > 0:
-                logger.warning("LLM structured call: empty content with %d completion_tokens — "
-                               "reasoning model exhausted budget on reasoning phase",
-                               usage["completion_tokens"])
-                return None, "structured_empty_content"
-            logger.warning("LLM structured call: empty content, no completion tokens")
-            _record_llm(False)
-            return None, "llm_unavailable: empty_response"
-        data = _extract_json_object(content)
-        if data is None:
-            return None, f"structured_parse_error: no valid JSON object found in response"
-        if not isinstance(data, dict):
-            return None, "structured_non_dict"
-        _record_llm(True)
-        return data, None
+
+        # Bounded retry (gateway-stability fix): under LLM-provider contention a
+        # capable model intermittently prepends prose / returns non-JSON. One
+        # corrective retry at temperature 0 recovers most of these cheaply. We retry
+        # ONLY the parse-failure case (non-empty content, no JSON) — empty content
+        # (reasoning-budget exhaustion / outage) is not retried (retry can't help and
+        # only adds load). market_observer's wall-clock budget caps total time.
+        last_err = "structured_parse_error: no valid JSON object found in response"
+        for attempt in range(2):
+            messages = list(base_messages)
+            if attempt == 1:
+                messages.append({"role": "user", "content": (
+                    "Your previous reply was NOT valid JSON. Output ONLY the JSON object "
+                    "now: start with '{' and end with '}', no prose, no code fences."
+                )})
+            resp = await complete_with_fallback(
+                ModelRequest(
+                    messages=messages, system=structured_system,
+                    temperature=0.3 if attempt == 0 else 0.0, max_tokens=max_tokens,
+                ),
+                provider=provider,
+            )
+            content = (resp.content or "").strip()
+            if not content:
+                # LLM connected and ran (usage tokens > 0) but returned empty text.
+                # This is a parse failure, NOT an LLM outage — do not trip the health
+                # monitor's failure counter (which would pause the scheduler). Not
+                # retried: empty = reasoning-budget exhaustion, retry won't help.
+                usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
+                if usage.get("completion_tokens", 0) > 0:
+                    logger.warning("LLM structured call: empty content with %d completion_tokens — "
+                                   "reasoning model exhausted budget on reasoning phase",
+                                   usage["completion_tokens"])
+                    return None, "structured_empty_content"
+                logger.warning("LLM structured call: empty content, no completion tokens")
+                _record_llm(False)
+                return None, "llm_unavailable: empty_response"
+            data = _extract_json_object(content)
+            if isinstance(data, dict):
+                _record_llm(True)
+                return data, None
+            if data is not None:
+                return None, "structured_non_dict"
+            # parse failure → loop to retry once (attempt 1)
+        logger.warning("LLM structured call: no valid JSON after corrective retry")
+        return None, last_err
     except json.JSONDecodeError as e:
         # Bad JSON but the LLM did respond — not an outage, don't trip health counter
         logger.warning("LLM structured call: JSON parse failed: %s", e)

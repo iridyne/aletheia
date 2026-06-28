@@ -28,6 +28,14 @@ from aletheia.config.loader import load_config
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 
+# Wall-clock budget for the per-instrument loop. Must stay BELOW the scheduler's
+# market_observer job timeout (_ASYNC_JOB_TIMEOUT_SEC["market_observer"] = 240s in
+# agent_runtime/scheduler.py) with margin, so the coroutine returns normally before
+# asyncio.wait_for cancels it — preventing the abandoned-thread leak. Keep in sync if
+# the job timeout changes.
+_MARKET_OBSERVER_JOB_TIMEOUT_S = 240.0
+_MARKET_OBSERVER_LOOP_BUDGET_SEC = 200.0
+
 
 class MarketRead(BaseModel):
     """Structured market read for a single symbol.
@@ -483,7 +491,31 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # A perp instrument's Opportunity.market is "usdt_futures" (instrument_market_to_db_market).
     # Per-instrument loop: each instrument gets its own LLM call + Opportunity row.
     # instrument.market_type is the authoritative type; no more config-derived guessing.
-    for instrument in instruments:
+    #
+    # WALL-CLOCK BUDGET (gateway-stability fix): each instrument is one LLM call that can
+    # take up to the provider timeout (60s) under LLM-provider contention. With a large
+    # universe this can blow the 240s job timeout → _run_async_with_timeout cancels the
+    # coroutine mid-flight → SelectorEventLoop teardown stalls → the daemon thread is
+    # abandoned and LEAKS (the "abandoned threads 3→5" cascade that starves the frontdoor).
+    # Capping the loop wall-clock < the job timeout makes the coroutine ALWAYS return
+    # normally before cancellation → clean teardown, no leak. Skipped instruments are
+    # picked up next 15-min cycle (logged, not silent).
+    import time as _time
+    _loop_deadline = _time.monotonic() + _MARKET_OBSERVER_LOOP_BUDGET_SEC
+    for _idx, instrument in enumerate(instruments):
+        if _time.monotonic() > _loop_deadline:
+            _skipped = len(instruments) - _idx
+            errors.append(
+                f"loop_budget_exceeded: processed {_idx}/{len(instruments)}, skipped "
+                f"{_skipped} (wall-clock cap {_MARKET_OBSERVER_LOOP_BUDGET_SEC:.0f}s "
+                f"< {_MARKET_OBSERVER_JOB_TIMEOUT_S:.0f}s job timeout — avoids thread leak)"
+            )
+            logger.warning(
+                "market_observer loop budget hit after %d/%d instruments (%.0fs cap); "
+                "skipping %d this cycle to finish within the job budget",
+                _idx, len(instruments), _MARKET_OBSERVER_LOOP_BUDGET_SEC, _skipped,
+            )
+            break
         try:
             u_member = _universe_lookup.get(instrument.symbol)
             _sym_canonical = to_canonical(instrument.symbol)

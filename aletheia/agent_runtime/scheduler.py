@@ -274,8 +274,10 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
                 pass
         _abandoned_thread_count[0] += 1
         logger.error(
-            "job %s: asyncio.run() teardown hung after %.0fs — "
-            "executor thread abandoned (ProactorEventLoop IOCP drain). "
+            "job %s: coroutine exceeded thread budget (%.0fs) and teardown stalled — "
+            "executor thread abandoned. Loop is SelectorEventLoop (IOCP not in play); "
+            "root cause is the job running longer than its timeout (e.g. many sequential "
+            "LLM calls under provider contention — see per-job wall-clock budgets). "
             "Total abandoned threads: %d",
             job_id, thread_timeout, _abandoned_thread_count[0],
         )
