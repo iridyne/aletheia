@@ -349,6 +349,26 @@ xStocks 标识通过 `aletheia/data/symbols.py:111` 的 `_XSTOCK_MAP` 维护，�
 - 调用 `CCXTProvider(exchange="bitget", fallback_exchange="bitget")` — 不得路由到 `get_market_data_provider()`
 - `InstrumentId.from_parts("bitget", symbol, MARKET_SPOT)` 构造（`aletheia/trading/instruments.py:64`）
 
+### 3a.3 数据源审计收尾：删假源 + 接免费源（datasrc overhaul, 2026-06-28）
+
+审计(`docs/research/DATA_SOURCE_AUDIT_AND_GITHUB_SCAN_2026-06-28.md`)确认四处空转/死源，已清除并以零-key 免费源填补。
+
+**删除**：CoinGlass collector（三路径全空 + 从未注册，纯门面）+ 其 spec/doctor/settings/前端引用；
+derivatives 死清算 REST fallback；Glassnode 确认从不存在。
+
+**新增 collector（契约锁定）**：
+- `HyperliquidCollector`（`collectors/hyperliquid.py`，claims **HL-***）：公开 `api.hyperliquid.xyz/info`，
+  零 key，per-call、proxy-aware（`aletheia.net.httpx_client`）。写 `funding_rate_snapshots` /
+  `open_interest_snapshots`，tagged `exchange="hyperliquid"` / `"hyperliquid_predicted"`。
+  **跨-venue 不变量**：这些 tag 被 `latest_funding_rate` / `latest_open_interest` 的默认读取**排除**
+  （`_CROSS_VENUE_TAGS`），主交易所 per-symbol 视图不被污染；显式 `exchange=` 可查。
+- `DefiLlamaCollector`（`collectors/defillama.py`，claims **DFL-***）：公开 `*.llama.fi`，零 key，
+  三路独立（stablecoin_mcap / chain_tvl / dex_volume，一路失败不影响其他）。写新 `onchain_snapshots` 表，
+  折进 `render_enriched_context_md` 的 macro 块供 LLM 消费（填 Glassnode 链上缺口）。
+
+两源经 `_async_data_collectors` Phase B（~10min）调度，各 `enable_hyperliquid` / `enable_defillama` 门控。
+Coinalyze（跨所聚合）已在 `docs/plans/free_data_sources_implementation_plan.md` 设计，待免费 key，**不实现 stub**。
+
 ---
 
 ## 4. 不变更的范围
