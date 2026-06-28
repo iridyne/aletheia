@@ -60,6 +60,26 @@ def test_market_observer_loop_has_wallclock_budget():
 
 
 # ---------------------------------------------------------------------------
+# GS-S02 — market_observer has a module logger (the budget branch logs a warning)
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "GS-S02", _CONTRACT, "§wall-clock budget", "L2a",
+        "market_observer defines a module-level `logger`. The budget-exceeded branch "
+        "calls logger.warning(); without a module logger that branch NameErrors at "
+        "runtime (only when the budget is hit — invisible to non-executing tests).",
+    ),
+)
+def test_market_observer_has_module_logger():
+    import logging
+    from aletheia.agents import market_observer as mo
+    assert isinstance(getattr(mo, "logger", None), logging.Logger), (
+        "market_observer must define a module-level logging.Logger named 'logger'"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Fake LLM plumbing for behavioral tests (mock only the network boundary)
 # ---------------------------------------------------------------------------
 

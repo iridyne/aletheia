@@ -7,6 +7,7 @@ opportunity.
 """
 
 import json
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -24,6 +25,8 @@ from aletheia.trading.instruments import (
 )
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 from aletheia.config.loader import load_config
+
+logger = logging.getLogger("aletheia.agents.market_observer")
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
