@@ -60,6 +60,11 @@ def _import_all_specs():
         # claims attach to the logical contract "serenity_attribution" (not in
         # REQUIRED_CONTRACTS — decision-level attribution, mirroring the pipeline specs).
         spec_serenity_attribution,
+        # Serenity promote → PI evaluation queue (Phase 3, Option A, D5 switch). SP-*
+        # claims attach to "serenity_promote" — replaces the StrategyRecord(state='draft')
+        # dead-record path with signal_pending PiDecisions. Behavioral (L2a + L2b TestClient),
+        # not in REQUIRED_CONTRACTS.
+        spec_serenity_promote,
     )
 
 
