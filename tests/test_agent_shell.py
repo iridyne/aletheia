@@ -14,6 +14,26 @@ from aletheia.agent_shell.context import build_app_context, context_summary_text
 from aletheia.agent_shell.synthesis import _format_fallback
 
 
+def test_reflection_module_imports_cleanly():
+    """Regression guard for the negative-feedback reflection loop (Path 6).
+
+    `commands.py` and `trading_context.py` import reflection lazily inside
+    `try/except Exception`, so a SyntaxError/ImportError in reflection.py is
+    swallowed silently — record_decision()/get_last_reflection() just stop
+    working and no health check fires (commit 5be7826 shipped exactly this:
+    a duplicate `opportunity_id=` kwarg -> SyntaxError -> Path 6 dead).
+
+    Importing the module fresh and asserting its public surface trips here in
+    milliseconds instead of silently disabling the loop. No DB required.
+    """
+    import importlib
+
+    mod = importlib.import_module("aletheia.agent_shell.reflection")
+    importlib.reload(mod)  # force re-compile, not a cached module object
+    assert callable(getattr(mod, "record_decision", None))
+    assert callable(getattr(mod, "get_last_reflection", None))
+
+
 def _init_agent_shell_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq

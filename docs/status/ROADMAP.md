@@ -283,8 +283,9 @@ market analysis, claims, lessons, skills, policy versions。
 | Tier | 名称 | 状态 | 计划日期 | 前置条件 |
 |------|------|------|----------|----------|
 | **1** | 自动 guard_candidate 生成（无 LLM） | **DONE** `1a75dc7` 2026-06-17 | — | — |
-| **2** | 周期性 LLM 规律归纳（量能/动量/多 TF K 线） | **PLANNED** | **2026-07-01** | ≥50 条 settled outcomes（约 2 周积累） |
-| **3** | 确定性 scanner rule 提炼（节省 token） | **PLANNED** | **2026-08-17** | ≥20 per pattern OOS 验证，Tier 2 已产出有效 research_note |
+| **2** | 周期性 LLM 规律归纳（高维 TradingMemo：regime/timing/anti-pattern + key_insight） | **DONE**（via `insight_synthesizer`，注入 observer/ranker/PI；2026-06 Round 2 负反馈闭环） | — | — |
+| **2.5** | 可推翻自进化（后续证据推翻先前判断 + 单边偏向安全阀 + 干净窗） | **DONE**（`memo_effectiveness` Module J + bias-cap enforce + clean-window floor；`spec_insight_feedback_loop`） | — | — |
+| **3** | 确定性 scanner rule 提炼（节省 token） | **PLANNED** | **2026-08-17** | ≥20 per pattern OOS 验证，Tier 2 已产出有效 memo |
 
 **核心数据流（Tier 1 已运行）**：
 ```

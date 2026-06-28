@@ -54,7 +54,23 @@ def btc_price_now() -> float | None:
 
 
 def current_regime() -> str:
-    """Read current macro regime tag. Best-effort; 'unknown' on any failure."""
+    """Current MARKET regime (e.g. bull / bear / neutral) stamped on every new
+    Position for attribution + the high-dimensional learning loop.
+
+    A1 fix: reads the regime detector's ``market_regimes.state`` FIRST so
+    closed-trade attribution carries a real market-regime dimension. Previously
+    this read macro ``risk_regime``, which left positions.regime_tag at
+    'neutral'/'unknown' and collapsed insight_synthesizer's regime_playbook to a
+    single 'unknown' bucket — the "high-dim" memo was high-dim in name only.
+    Falls back to macro risk_regime, then 'unknown'. Best-effort; never raises.
+    """
+    try:
+        from aletheia.storage.repositories import get_latest_market_regime
+        mr = get_latest_market_regime()
+        if mr and mr.get("state"):
+            return mr["state"]
+    except Exception:
+        pass
     try:
         from aletheia.storage.repositories import latest_macro_snapshot
         macro = latest_macro_snapshot()

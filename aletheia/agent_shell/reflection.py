@@ -62,7 +62,6 @@ def record_decision(decision_result: dict) -> None:
             opportunity_id=record.get("opportunity_id"),
             signal_source=record.get("signal_source") or "market_observer",
             debate_ran=decision_result.get("debate_ran", False),
-            opportunity_id=decision_result.get("opportunity_id"),
         )
         insert_pi_decision(pi_dec)
     except Exception as e:

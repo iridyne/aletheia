@@ -7,7 +7,30 @@
 
 ## Last Updated
 
-2026-06-24 (Equity Curve isError 修复 dbde229 + 诊断代理陷阱勘误)
+2026-06-28 (负反馈闭环：高维 + 可推翻 self-evolve 修复 + 4 个 pre-existing 测试失败修复)
+
+---
+
+## Recent Change (负反馈闭环：高维 + 可推翻 self-evolve — 2026-06-28)
+
+分支 `worktree-neg-feedback-loop-fix`。审计发现"用交易结果调整未来交易"的 4 条通路 3 条坏；owner 定调（记忆 [[aletheia-negfeedback-high-dimensional-evolve]]）：**要高维模式归因 + 可被后续证据推翻的 self-evolve + 全自动，摒弃低维 symbol/direction/scanner 硬拦截**。设计见 `docs/plans/round2_negative_feedback_loop_closure.md`。
+
+**根因 + 修复（5 项核心）**：
+- **Path 6 反思**：`reflection.py:62/65` 重复 `opportunity_id=` kwarg → 整模块 `SyntaxError`，被调用方 `try/except` 静默吞 → record_decision/get_last_reflection 双失效、doctor 不报警。提交 5be7826（A13）引入。修=删重复行 + `test_agent_shell::test_reflection_module_imports_cleanly` import smoke 锁回归。
+- **缺陷②脏数据带偏**：三学习模块用滚动 30/90 天全量、含 Round1 脏数据 → 学出"全 contra"。修=新增 `analytics/learning_window.clean_window_cutoff`（floor=2026-06-25T15:22Z），insight_synthesizer/confidence_calibration/reasoning_feedback 三处取数接入。
+- **缺陷③不会自我纠错（owner 最在意）**：高维 memo 系统已全自动注入决策链，但 **Module J 缺失**——无回溯评估、memo 仅 72h 时间衰减、`MAX_DIRECTION_BIAS_STRENGTH` 死常量。修=新增 `analytics/memo_effectiveness.evaluate_prior_memo`（回溯评估上一 memo regime_playbook 预测 vs 实际→accuracy 写回 tags→overturned 注入新 memo `prior_corrections`→render 进 observer/PI prompt）+ enforce bias cap（单边占比>0.75 force balanced）。
+- **缺陷①高维退化**：`current_regime`/`_current_regime` 读 macro `risk_regime` 而非 `market_regimes.state` → positions.regime_tag 全 neutral/unknown，regime_playbook 名存实亡。修=两函数优先读 market_regimes.state（fallback macro→unknown），所有 broker 经 enrichment 受益；reconciler adopt 旁路（38 NULL）留后续。
+- **不做**：低维硬拦截（guard predicate / risk engine block_*），按 owner 定调。
+
+**SDD**：新增 `tests/specs/spec_insight_feedback_loop.py`（IFL-S01/B01/B03/S02/B04/B05/S03，7 claims 全绿）+ 接入 test_spec_conformance；ROADMAP Self-Evolution Tier2/2.5 标记 DONE（修文档-代码背离）。
+
+**附带修复（owner 追加，4 个 pre-existing 全量失败，与上面无关）**：
+- `settings.py` GET /settings 漏 `serenity` section（schema+POST+前端控件已就绪，仅 GET 漏）→ 加一行。
+- `repositories.py` 缺 `prune_agent_shell_{heartbeats,events,messages,artifacts}`（scheduler 调用但 ba80a62 不完整重构未实现 → cleanup AttributeError 被吞、连带 data_pruned audit 没写）→ 加 4 函数（was_in_tx 模式）。
+- `test_serenity_workbench::test_promote_theme` 过时（断言旧 `draft`/`proposalCandidateId`，代码已是 Phase3 `submitted_to_pi`）→ 改测试匹配契约（代码对、测试漂移）。
+
+**验证**：全量 1762 passed / 0 failed / 3 skipped（修复前 1758+4 failed）；architecture_fitness 11、spec_conformance 全绿；零回归。
+**待上线**：worktree 改动需 FF merge 回主仓 + `aletheia gateway restart` + `aletheia doctor` 验证（worktree data/ 为空，doctor 须在主仓跑）。未提交，等 owner。
 
 ---
 

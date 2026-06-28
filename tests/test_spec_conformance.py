@@ -76,6 +76,11 @@ def _import_all_specs():
         # engine live guard remain school-agnostic (no autonomous live unlock). Pure L2a
         # structural — no behavior change, paper still the only enabled execution mode.
         spec_serenity_live_readiness,
+        # Round 2 high-dimensional negative-feedback closure (IFL-* claims attach to
+        # "insight_feedback_loop"). Guards the three audited defects: clean-window floor
+        # (②, implemented), Module J memo_effectiveness + bias-cap enforcement (③, xfail
+        # tripwires), regime snapshot (①). Behavioral/structural — not in REQUIRED_CONTRACTS.
+        spec_insight_feedback_loop,
     )
 
 

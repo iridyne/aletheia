@@ -70,6 +70,7 @@ class TradingMemo(TypedDict):
     anti_patterns: list[AntiPattern]
     direction_summary: dict[str, Any]
     key_insight: str  # one-paragraph LLM synthesis
+    prior_corrections: list[dict]  # Module J: prior judgments overturned by subsequent results
 
 
 def get_latest_memo() -> TradingMemo | None:
@@ -125,6 +126,18 @@ async def synthesize_trading_memo(window_days: int = 30) -> TradingMemo | None:
         logger.info("Skipping synthesis — recent memo exists (< %dh)", MIN_SYNTHESIS_INTERVAL_HOURS)
         return None
 
+    # Module J (refutable self-evolution): score the PRIOR memo against what
+    # actually happened while it was active BEFORE we build the new one, so the
+    # new memo can carry forward "this earlier judgment was overturned".
+    prior_corrections: list[dict] = []
+    try:
+        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+        prior_eval = evaluate_prior_memo()
+        if prior_eval and prior_eval.get("overturned_rules"):
+            prior_corrections = prior_eval["overturned_rules"][:5]
+    except Exception as e:
+        logger.debug("prior memo evaluation skipped: %s", e)
+
     stats = _gather_statistics(window_days)
     if not stats or stats["total_trades"] < MIN_TRADES_FOR_MEMO:
         logger.info("Insufficient trades for synthesis: %d < %d",
@@ -132,6 +145,8 @@ async def synthesize_trading_memo(window_days: int = 30) -> TradingMemo | None:
         return None
 
     memo = _build_deterministic_memo(stats)
+    if prior_corrections:
+        memo["prior_corrections"] = prior_corrections
 
     # LLM synthesis for key_insight (optional enrichment)
     insight = await _llm_synthesize_insight(stats, memo)
@@ -150,9 +165,13 @@ def _gather_statistics(window_days: int) -> dict[str, Any] | None:
     try:
         from aletheia.storage.sqlite import get_db
         from aletheia.storage.repositories import get_latest_market_regime
+        from aletheia.analytics.learning_window import clean_window_cutoff
 
         db = get_db()
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+        # Clean-window floor: never ingest pre-2026-06-25T15:22 dirty Round 1 data.
+        cutoff = clean_window_cutoff(
+            (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+        )
 
         rows = db.execute(
             "SELECT id, symbol, direction, realized_pnl, entry_price, quantity, "
@@ -401,11 +420,21 @@ def _compute_direction_summary(rows) -> dict[str, Any]:
     long_stats = _stats(long_pnls)
     short_stats = _stats(short_pnls)
 
-    # Direction bias (capped at MAX_DIRECTION_BIAS_STRENGTH)
     total = long_stats["count"] + short_stats["count"]
+    # Positive-feedback-trap guard (Module I): if the sample is already extremely
+    # one-sided (one direction > MAX_DIRECTION_BIAS_STRENGTH of trades), do NOT let
+    # the memo reinforce that direction — the stats are unreliable AND reinforcing
+    # would deepen the very concentration that hurt us (Round 1: short 17/23 ≈ 74%).
+    # Force a neutral bias + flag it. Neutral never blocks an opportunity, it only
+    # stops the memo from boosting the over-concentrated side.
+    bias_capped = False
     if total > 0:
+        dominant_share = max(long_stats["count"], short_stats["count"]) / total
+        bias_capped = dominant_share > MAX_DIRECTION_BIAS_STRENGTH
         long_edge = long_stats["avg_pnl_pct"] - short_stats["avg_pnl_pct"]
-        if long_edge > 0.3:
+        if bias_capped:
+            bias = "balanced"  # one-sided sample → refuse to reinforce
+        elif long_edge > 0.3:
             bias = "long_preferred"
         elif long_edge < -0.3:
             bias = "short_preferred"
@@ -418,6 +447,7 @@ def _compute_direction_summary(rows) -> dict[str, Any]:
         "long": long_stats,
         "short": short_stats,
         "bias": bias,
+        "bias_capped": bias_capped,
     }
 
 
@@ -518,6 +548,18 @@ def render_memo_for_observer(memo: TradingMemo, symbol: str | None = None) -> st
         lines.append("Anti-patterns (avoid):")
         for ap in memo["anti_patterns"][:3]:
             lines.append(f"  - {ap['pattern']}: {ap['loss_rate']}% loss rate ({ap['sample_size']} trades)")
+
+    # Prior corrections (Module J): judgments the previous memo made that
+    # subsequent results overturned. Surfaces the revision so the agent sees the
+    # learning is self-correcting, not static.
+    if memo.get("prior_corrections"):
+        lines.append("Corrections (prior guidance overturned by later results — judgment revised):")
+        for c in memo["prior_corrections"][:3]:
+            lines.append(
+                f"  - Previously '{c.get('direction')} in {c.get('regime')}: "
+                f"{c.get('claimed_edge')}' → actual {c.get('actual_win_rate')}% win over "
+                f"{c.get('sample')} trades; {c.get('reason')}"
+            )
 
     # Key insight (LLM summary)
     if memo.get("key_insight"):

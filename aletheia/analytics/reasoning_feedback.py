@@ -25,8 +25,12 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
     """
     try:
         from aletheia.storage.sqlite import get_db
+        from aletheia.analytics.learning_window import clean_window_cutoff
         db = get_db()
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+        # Clean-window floor: never ingest pre-2026-06-25T15:22 dirty Round 1 data.
+        cutoff = clean_window_cutoff(
+            (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+        )
 
         rows = db.execute(
             """

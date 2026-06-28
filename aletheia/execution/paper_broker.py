@@ -177,7 +177,20 @@ def _btc_price_now() -> float | None:
 
 
 def _current_regime() -> str:
-    """Read current macro regime tag."""
+    """Current MARKET regime stamped on a new paper Position (attribution + learning).
+
+    A1 fix: reads market_regimes.state first (real market regime) so regime_tag
+    feeds insight_synthesizer's regime_playbook with a true dimension; falls back
+    to macro risk_regime, then 'unknown'. Mirrors position_enrichment.current_regime
+    so paper and demo/live brokers stamp the same regime source. Never raises.
+    """
+    try:
+        from aletheia.storage.repositories import get_latest_market_regime
+        mr = get_latest_market_regime()
+        if mr and mr.get("state"):
+            return mr["state"]
+    except Exception:
+        pass
     try:
         from aletheia.storage.repositories import latest_macro_snapshot
         macro = latest_macro_snapshot()
