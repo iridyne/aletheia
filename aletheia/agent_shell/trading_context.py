@@ -522,11 +522,40 @@ def _build_layer3_wisdom() -> dict[str, Any]:
 
     # Serenity research opportunities (most recent active, for PI Agent consumption)
     try:
-        from aletheia.storage.repositories import list_serenity_opportunities
+        from aletheia.storage.repositories import (
+            list_serenity_evidence,
+            list_serenity_opportunities,
+            list_serenity_risk_gates,
+        )
+        from aletheia.trading.serenity_scoring import score_serenity_opportunity
+
         opps = list_serenity_opportunities(status="active", limit=10)
         serenity_opps: list[dict] = []
         for o in opps[:5]:
+            # Phase 2: compute the deterministic score/bucket the same way the
+            # Serenity scorer does, so the PI weighs a research pick on a transparent
+            # scale rather than a bare thesis. Evidence/gates are best-effort: a scoring
+            # failure must not blank out the whole opportunity for the PI.
+            score: dict = {}
+            key_evidence = ""
+            try:
+                evidence = list_serenity_evidence(theme_id=o.get("theme_id"), limit=200)
+                gates = list_serenity_risk_gates(opportunity_id=o.get("id"), limit=200)
+                score = score_serenity_opportunity(o, evidence=evidence, risk_gates=gates)
+                # Summarise the strongest supporting evidence's external reference so the
+                # PI can see WHAT grounds the thesis, not just that evidence exists.
+                refs = [
+                    (e.get("source_ref") or e.get("url") or e.get("title") or "").strip()
+                    for e in evidence
+                    if e and (e.get("source_ref") or e.get("url") or e.get("title"))
+                ]
+                key_evidence = "; ".join(refs[:2])[:200]
+            except Exception:
+                pass
             serenity_opps.append({
+                # Phase 2: attribution anchor — without the id the PI's pick can never be
+                # linked back to serenity_opportunities (signal_source='serenity').
+                "id": o.get("id"),
                 "symbol": o.get("symbol"),
                 "direction": o.get("direction"),
                 "thesis": (o.get("thesis") or "")[:200],
@@ -536,6 +565,10 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 # treats it as ungraded rather than trusting an inflated proposal.
                 "assessed_tier": o.get("assessed_tier") or "unassessed",
                 "evidence_tier": o.get("evidence_tier"),  # generator's self-grade (advisory)
+                "score": score.get("score"),
+                "bucket": score.get("bucket"),
+                "evidence_count": score.get("evidence_count", 0),
+                "key_evidence": key_evidence,
             })
         layer["serenity_opportunities"] = serenity_opps
     except Exception:

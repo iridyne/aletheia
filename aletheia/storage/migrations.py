@@ -1286,6 +1286,9 @@ _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
     # A13: link signal_pending pi_decisions back to their source opportunity
     ("opportunity_id", "pi_decisions", "TEXT"),
+    # Phase 2 (Serenity Option A): discriminator for which table opportunity_id
+    # points at ('market_observer' → opportunities; 'serenity' → serenity_opportunities).
+    ("signal_source", "pi_decisions", "TEXT"),
     ("stop_price", "trade_proposals", "REAL"),
     # CR-RE-01: preserve the proposal's original execution_mode on the decision row
     # (allowed_execution_mode gets downgraded to paper_internal on rejection).
@@ -1665,10 +1668,12 @@ CREATE TABLE IF NOT EXISTS pi_decisions (
     conviction INTEGER NOT NULL DEFAULT 0,
     reasoning TEXT DEFAULT '',
     proposal_id TEXT,
-    debate_ran INTEGER NOT NULL DEFAULT 0
+    debate_ran INTEGER NOT NULL DEFAULT 0,
+    opportunity_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_symbol ON pi_decisions(symbol, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_created ON pi_decisions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pi_decisions_opportunity ON pi_decisions(opportunity_id);
 """
 
 _CAPITAL_EVENTS_DDL = """
