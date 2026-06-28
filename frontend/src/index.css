@@ -3314,3 +3314,25 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   }
 }
 
+/* Serenity Lens — bear case expandable row (P3 rule: no inline styles). Mirrors the
+   former inline style on SerenityLens.tsx; var() fallbacks match the originals. */
+.serenity-bearcase-cell {
+  padding-top: 0.25rem;
+  padding-bottom: 0.5rem;
+}
+.serenity-bearcase-box {
+  background: var(--color-surface-raised, #1e1e1e);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+}
+.serenity-bearcase-label {
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--color-red, #f87171);
+  margin-right: 0.5rem;
+}
+.serenity-bearcase-text {
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #9ca3af);
+}
+

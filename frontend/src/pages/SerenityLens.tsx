@@ -562,10 +562,10 @@ function OpportunityRow({
       </tr>
       {expanded && bearCase && (
         <tr>
-          <td colSpan={6} style={{ paddingTop: '0.25rem', paddingBottom: '0.5rem' }}>
-            <div style={{ background: 'var(--color-surface-raised, #1e1e1e)', borderRadius: '4px', padding: '0.5rem 0.75rem' }}>
-              <span style={{ fontWeight: 600, fontSize: '0.75rem', color: 'var(--color-red, #f87171)', marginRight: '0.5rem' }}>Bear Case:</span>
-              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted, #9ca3af)' }}>{bearCase}</span>
+          <td colSpan={6} className="serenity-bearcase-cell">
+            <div className="serenity-bearcase-box">
+              <span className="serenity-bearcase-label">Bear Case:</span>
+              <span className="serenity-bearcase-text">{bearCase}</span>
             </div>
           </td>
         </tr>

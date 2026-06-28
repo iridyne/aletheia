@@ -73,7 +73,14 @@ async def test_infra_readyz_reports_static_dashboard_gap(client, tmp_path, monke
 
 
 @pytest.mark.anyio
-async def test_infra_status_includes_runtime_routing_context(client):
+async def test_infra_status_includes_runtime_routing_context(client, monkeypatch):
+    # dashboard_static is a gitignored build artifact (d728aa4); a fresh test env has no
+    # built assets, so readiness would 503. This test checks the infra-status PAYLOAD
+    # (host/port/runtime_mode/state), not the presence of built front-end assets, so stub
+    # static-ready. The static-missing → 503 path is covered by
+    # test_infra_readyz_reports_static_dashboard_gap above.
+    import aletheia.server.routes.health as health_routes
+    monkeypatch.setattr(health_routes, "_static_dashboard_ready", lambda: (True, "/fake/dashboard_static"))
     resp = await client.get("/_infra/status")
     assert resp.status_code == 200
     data = resp.json()
