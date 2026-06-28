@@ -145,7 +145,13 @@ def _maybe_update_trailing_stop(position: dict, price: float, cfg) -> None:
 
     Called before _decide_exit() so the updated stop is evaluated this cycle.
     No-op when trail_enabled=False.
+
+    Serenity school skips trailing/breakeven entirely: long-horizon holdings rely
+    on the wider fixed stop_loss_pct and a multi-month max_hold, not on intra-day
+    ATR trails that would shake the position out of a research-grade entry.
     """
+    if position.get("trade_school") == "serenity":
+        return
     if not cfg.trading.trail_enabled:
         return
     direction = position["direction"]
@@ -224,7 +230,12 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
         if (is_long and price >= tp) or (not is_long and price <= tp):
             return "take_profit", tp
 
-    max_hold = cfg.trading.max_position_hold_hours
+    # School-aware max-hold: serenity holdings use cfg.serenity.max_hold_days (long
+    # horizon), short_term positions use cfg.trading.max_position_hold_hours.
+    if position.get("trade_school") == "serenity":
+        max_hold = (cfg.serenity.max_hold_days or 0) * 24
+    else:
+        max_hold = cfg.trading.max_position_hold_hours
     if max_hold and max_hold > 0:
         opened = _parse_dt(position.get("opened_at"))
         if opened is not None:

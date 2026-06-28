@@ -567,6 +567,11 @@ class SerenityConfig(BaseModel):
     """
     auto_promote: bool = False
     min_score_for_pi: int = 72
+    # Phase 4 — long-horizon holding parameters. Wider than the short-term defaults
+    # because Serenity holdings are industrial-chain bets measured in weeks/months,
+    # not intraday swings.
+    stop_loss_pct: float = 8.0
+    max_hold_days: int = 90
 
 
 class AletheiaConfig(BaseModel):

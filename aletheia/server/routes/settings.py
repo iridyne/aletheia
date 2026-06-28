@@ -314,10 +314,14 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
 class SerenityConfigUpdate(SettingsRequest):
     auto_promote: Optional[bool] = None
     min_score_for_pi: Optional[int] = None
+    stop_loss_pct: Optional[float] = None
+    max_hold_days: Optional[int] = None
 
 
-_SERENITY_BOUNDS: dict[str, tuple[int, int]] = {
+_SERENITY_BOUNDS: dict[str, tuple[float, float]] = {
     "min_score_for_pi": (0, 100),
+    "stop_loss_pct": (0.1, 50.0),
+    "max_hold_days": (1, 365),
 }
 
 

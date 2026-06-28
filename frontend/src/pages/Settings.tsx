@@ -351,6 +351,8 @@ function AgentModelsTab({ status, settings, qc }: any) {
   const serenity = (settings?.serenity ?? {}) as any
   const serenityAutoPromote = !!serenity.auto_promote
   const serenityMinScore = Number(serenity.min_score_for_pi ?? 72)
+  const serenityStopLossPct = Number(serenity.stop_loss_pct ?? 8.0)
+  const serenityMaxHoldDays = Number(serenity.max_hold_days ?? 90)
 
   return (
     <div>
@@ -406,6 +408,44 @@ function AgentModelsTab({ status, settings, qc }: any) {
               const v = parseInt(e.currentTarget.value, 10)
               if (!Number.isFinite(v) || v < 0 || v > 100 || v === serenityMinScore) return
               serenityMut.mutate({ min_score_for_pi: v })
+            }}
+            className="w-24"
+            disabled={serenityMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Stop-loss % (serenity school)"
+          hint="Wider stop applied to serenity-school positions (long-horizon thesis). Default 8.0%. Short-term positions use the global Trading default."
+        >
+          <input
+            type="number"
+            min={0.1}
+            max={50}
+            step={0.1}
+            defaultValue={serenityStopLossPct}
+            onBlur={e => {
+              const v = parseFloat(e.currentTarget.value)
+              if (!Number.isFinite(v) || v < 0.1 || v > 50 || v === serenityStopLossPct) return
+              serenityMut.mutate({ stop_loss_pct: v })
+            }}
+            className="w-24"
+            disabled={serenityMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Max hold days (serenity school)"
+          hint="Maximum holding period for serenity-school positions before time-based exit. Default 90 days."
+        >
+          <input
+            type="number"
+            min={1}
+            max={365}
+            step={1}
+            defaultValue={serenityMaxHoldDays}
+            onBlur={e => {
+              const v = parseInt(e.currentTarget.value, 10)
+              if (!Number.isFinite(v) || v < 1 || v > 365 || v === serenityMaxHoldDays) return
+              serenityMut.mutate({ max_hold_days: v })
             }}
             className="w-24"
             disabled={serenityMut.isPending}

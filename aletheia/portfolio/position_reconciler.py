@@ -344,6 +344,13 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         opened_at=opened_at,
         stop_price=_adopted_stop,
         take_profit_price=_adopted_tp,
+        # Adopted positions are price-action holdings by definition (the exchange
+        # already opened them outside of any Serenity research thesis), so stamp
+        # the short_term school explicitly. The Pydantic default would also pick
+        # this up, but the explicit assignment keeps intent visible at the call
+        # site and satisfies the SDD propagation rule (see spec_serenity_holding
+        # SH-S05: ALL FOUR brokers + reconciler must propagate trade_school).
+        trade_school="short_term",
     )
 
     with transaction():

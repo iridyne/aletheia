@@ -65,6 +65,11 @@ def _import_all_specs():
         # dead-record path with signal_pending PiDecisions. Behavioral (L2a + L2b TestClient),
         # not in REQUIRED_CONTRACTS.
         spec_serenity_promote,
+        # Serenity long-horizon holding (Phase 4 — execution-school discriminator). SH-*
+        # claims attach to "serenity_holding" — adds trade_school field on TradeProposal +
+        # Position and branches position_manager exits/trailing-stop by school. Behavioral
+        # (L2a structural + L2b pure-function), not in REQUIRED_CONTRACTS.
+        spec_serenity_holding,
     )
 
 
