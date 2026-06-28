@@ -370,3 +370,58 @@ def test_insert_trade_proposal_id_format(tmp_path, monkeypatch):
         assert _hex12.match(p.id), (
             f"id {p.id!r} does not match 12-char hex pattern"
         )
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-A13", "data_model", "§attribution opportunity_id", "L2b",
+        "PI decisions written via reflection path carry opportunity_id for scanner_family attribution",
+    ),
+)
+def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
+    """Verify that record_decision() propagates opportunity_id into the pi_decisions row.
+
+    Root cause fixed: commands.py omitted 'opportunity_id' from result dict;
+    reflection.py omitted opportunity_id kwarg in PiDecision() constructor.
+    """
+    import sqlite3
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage import repositories as repo
+    from aletheia.agent_shell.reflection import record_decision
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    sq._db_conn = conn
+    run_migrations()
+
+    test_opp_id = "test-opp-abc123"
+    decision_result = {
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "conviction": 7,
+        "reasoning": "test reasoning",
+        "proposal_id": None,
+        "debate_ran": False,
+        "opportunity_id": test_opp_id,
+    }
+
+    record_decision(decision_result)
+
+    rows = repo.list_pi_decisions(limit=5)
+    assert rows, "pi_decisions must have at least one row after record_decision()"
+    latest = rows[0]
+    assert latest.get("opportunity_id") == test_opp_id, (
+        f"opportunity_id mismatch: expected {test_opp_id!r}, got {latest.get('opportunity_id')!r}. "
+        "A13 fix: commands.py and reflection.py must wire opportunity_id through."
+    )

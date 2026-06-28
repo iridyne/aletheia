@@ -174,16 +174,19 @@ def _build_learning_ledger() -> str:
 
 
 async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[str]) -> None:
-    """Extract structured lessons from recent high-confidence post_trade_reviews into ps_lessons."""
+    """Extract structured lessons from recent trade_case_study items into ps_lessons.
+
+    C4: reads trade_case_study (real closed-trade PnL) not post_trade_review, which was
+    reclassified to medium_confidence and contained LLM-generated narrative, not signal.
+    """
     from datetime import datetime, timezone, timedelta
     from aletheia.storage.repositories import list_knowledge_items
     from aletheia.learning.lessons import LessonStore
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     reviews = [
-        r for r in list_knowledge_items(item_type="post_trade_review", limit=50)
-        if r.get("confidence") == "high_confidence"
-        and (r.get("created_at") or "") >= cutoff
+        r for r in list_knowledge_items(item_type="trade_case_study", limit=50)
+        if (r.get("created_at") or "") >= cutoff
     ]
     if not reviews:
         return
@@ -194,13 +197,13 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
     )
     content, err = await llm_complete(
         system=(
-            "You are a trading lesson extractor. Given recent post-trade reviews, "
+            "You are a trading lesson extractor. Given recent trade case studies, "
             "extract 1-3 actionable lessons. Return a JSON array where each object has: "
             '"summary" (one sentence), "category" (one of: risk_sizing, entry_timing, '
             'exit_timing, symbol_selection, general), "severity" (info|warning|critical). '
             "Return ONLY the JSON array, no other text."
         ),
-        user=f"Recent high-confidence post-trade reviews:\n{summaries}\n\nExtract lessons.",
+        user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons.",
         max_tokens=400,
     )
     log_tool(run_id, "llm_complete_lessons", "observe", True)
@@ -220,7 +223,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             continue
         created = store.create(
             summary=lesson["summary"],
-            source_type="post_trade_review",
+            source_type="trade_case_study",
             source_id=reviews[0].get("id", "unknown"),
             category=lesson.get("category", "general"),
             severity=lesson.get("severity", "info"),

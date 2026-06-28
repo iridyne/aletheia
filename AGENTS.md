@@ -87,6 +87,7 @@ Iterate against `http://127.0.0.1:8787/`; do not use `:5173` as the daily entryp
 - Do not run destructive git commands (`git reset --hard`, `git checkout --`) without explicit approval.
 - If the worktree is dirty, identify which changes are yours vs pre-existing before summarizing.
 - Do not amend commits unless explicitly asked.
+- **Branch isolation**: Every code change must land on its own dedicated branch, not the current open PR/branch. Before making any edit, check the current branch (`git branch --show-current`); if it already has an open PR or belongs to an unrelated task, create a new branch first. Never piggyback unrelated fixes onto an existing PR.
 
 ## Escalation Rules
 

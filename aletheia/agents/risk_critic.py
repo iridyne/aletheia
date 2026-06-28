@@ -20,8 +20,24 @@ async def run_risk_critic(permission_mode: str = "Observe", run_id: str | None =
     proposals = list_trade_proposals(limit=20)
     decisions = list_risk_decisions(limit=20)
     log_tool(run_id, "get_risk_boundaries", "observe", True)
-    ctx = (f"Recent proposals: {len(proposals)}; recent risk decisions: {len(decisions)}. "
-           f"Rejections: {sum(1 for d in decisions if not d.get('approved'))}.")
+
+    # C2: include per-rejection violation details so the LLM critique is actionable
+    rejected = [d for d in decisions if not d.get("approved")]
+    rejection_lines = []
+    for d in rejected[:10]:
+        try:
+            import json as _json
+            viols = _json.loads(d.get("violations") or "[]")
+        except Exception:
+            viols = [d.get("violations") or "unknown"]
+        rejection_lines.append(f"  - proposal={d.get('proposal_id', '?')}: {', '.join(str(v) for v in viols)}")
+    rejection_detail = "\n".join(rejection_lines) if rejection_lines else "  (none)"
+
+    ctx = (
+        f"Recent proposals: {len(proposals)}; recent risk decisions: {len(decisions)}. "
+        f"Rejections: {len(rejected)}.\n"
+        f"Rejection details:\n{rejection_detail}"
+    )
 
     content, err = await llm_complete(
         system="You are a risk critic. Given recent proposal/risk-decision stats, identify risk "
