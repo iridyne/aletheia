@@ -1082,9 +1082,21 @@ def _run_cleanup():
             "macro_snapshots": repo.prune_macro_snapshots(90),
             "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(14),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
+            "universe_forward_outcomes": repo.prune_universe_forward_outcomes(30),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
+            # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
+            # bloat — pure liveness, read latest-row-only, so a short window.
+            "agent_shell_heartbeats": repo.prune_agent_shell_heartbeats(2),
+            "agent_shell_events": repo.prune_agent_shell_events(14),
+            "agent_shell_messages": repo.prune_agent_shell_messages(30),
+            "agent_shell_artifacts": repo.prune_agent_shell_artifacts(30),
+            # Per-session JSONL transcripts on disk (not a DB table): high file
+            # COUNT, low bytes, pure working-memory telemetry never read by the
+            # learning/PI chain. Had no cleanup path — ~175 files/day, 2.6k in 15
+            # days. 14d matches agent_shell_events (the DB form of this stream).
+            "agent_shell_session_logs": _prune_session_logs(cfg),
             "opportunities_expired": repo.expire_stale_opportunities(r.opportunity_ttl_hours),
             "news_items": _prune_news(cfg),
         }
@@ -1101,6 +1113,15 @@ def _prune_news(cfg) -> int:
     try:
         from aletheia.data.news_collector import prune_old_news
         return prune_old_news(cfg.news.retention_days)
+    except Exception:
+        return 0
+
+
+def _prune_session_logs(cfg) -> int:
+    try:
+        from aletheia.agent_shell.file_artifacts import prune_session_logs
+        keep = (cfg.operator.main_session_id,)
+        return prune_session_logs(14, keep)
     except Exception:
         return 0
 

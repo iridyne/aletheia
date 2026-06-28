@@ -60,13 +60,18 @@ def test_autocommit_isolation_level():
 @spec_claim(
     SpecClaim(
         "DM-S04", "data_model", "§4 prunable whitelist", "L2a",
-        "_PRUNABLE whitelist only contains telemetry tables (5 items)",
+        "_PRUNABLE whitelist contains telemetry/analytics tables only — bounded, "
+        "no causal-chain tables (currently 11: 5 agent/snapshot + serenity/shadow + 4 agent_shell_*)",
     ),
 )
 def test_prunable_whitelist_bounded():
     from aletheia.storage.repositories import _PRUNABLE
 
-    assert len(_PRUNABLE) <= 10, f"_PRUNABLE has too many entries: {len(_PRUNABLE)}"
+    # Bound is a tripwire against the whitelist ballooning into causal tables —
+    # the real protection is the causal-set guard below. Telemetry families:
+    # agent_runs/steps/tool_calls, market/portfolio snapshots, serenity_claims,
+    # shadow_trades, and the 4 agent_shell_* operator-telemetry tables (DB-SIZE-1).
+    assert len(_PRUNABLE) <= 12, f"_PRUNABLE has too many entries: {len(_PRUNABLE)}"
     causal = {"trade_proposals", "risk_decisions", "orders", "fills",
               "positions", "audit_events", "knowledge_items"}
     violations = causal & set(_PRUNABLE.keys())

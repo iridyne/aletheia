@@ -60,6 +60,23 @@ def test_prune_market_snapshots(tmp_path, monkeypatch):
     assert repo.prune_market_snapshots(days=30) == 1
 
 
+def test_prune_universe_forward_outcomes(tmp_path, monkeypatch):
+    """Forward-return labels are analytics (not causal-chain) and reference
+    snapshots pruned at 30d, so old rows are orphaned. Guards DB-SIZE gap #1:
+    the table had no prune path and grew unbounded."""
+    conn = setup_env(tmp_path, monkeypatch)
+    cols = ("(id, member_id, snapshot_id, symbol, horizon, "
+            "entry_price_usd, entry_ts, due_at, status)")
+    conn.execute(f"INSERT INTO universe_forward_outcomes {cols} VALUES (?,?,?,?,?,?,?,?,?)",
+                 ("o", "m1", "s1", "BTC/USDT", "1d", 1.0, _old(60), _old(59), "settled"))
+    conn.execute(f"INSERT INTO universe_forward_outcomes {cols} VALUES (?,?,?,?,?,?,?,?,?)",
+                 ("n", "m1", "s2", "BTC/USDT", "1d", 1.0, _recent(), _recent(), "pending"))
+    conn.commit()
+    assert repo.prune_universe_forward_outcomes(days=30) == 1
+    remaining = {r["id"] for r in conn.execute("SELECT id FROM universe_forward_outcomes").fetchall()}
+    assert remaining == {"n"}, "prune must drop only outcomes older than the window"
+
+
 def test_cleanup_never_touches_causal_chain(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     # Insert old trust-bearing rows; they must survive any cleanup.
@@ -119,6 +136,57 @@ def test_prune_pi_decisions_keeps_decisions_deletes_transient(tmp_path, monkeypa
     )
     assert "sp_new" in remaining, "recent signal_pending wrongly deleted"
     assert not ({"sp_old", "skip_old", "watch_old"} & remaining), "old transient rows not deleted"
+
+
+def test_prune_agent_shell_heartbeats_keeps_recent_deletes_old(tmp_path, monkeypatch):
+    """agent_shell_heartbeats is pure liveness telemetry (read latest-row-only)
+    and was the dominant app.db bloat (~199k rows / ~85 MB by 2026-06-27). It
+    had no prune path; this guards the DB-SIZE-1 retention. Old rows go, the
+    latest row stays so get_latest_heartbeat still works."""
+    conn = setup_env(tmp_path, monkeypatch)
+    cols = "(id, agent_id, status, mode, permission_mode, last_seen_at, created_at)"
+    conn.execute(f"INSERT INTO agent_shell_heartbeats {cols} VALUES (?,?,?,?,?,?,?)",
+                 ("hb_old", "operator", "alive", "current", "Full", _old(10), _old(10)))
+    conn.execute(f"INSERT INTO agent_shell_heartbeats {cols} VALUES (?,?,?,?,?,?,?)",
+                 ("hb_new", "operator", "alive", "current", "Full", _recent(), _recent()))
+    conn.commit()
+
+    deleted = repo.prune_agent_shell_heartbeats(days=2)
+    assert deleted == 1
+    remaining = {r["id"] for r in conn.execute("SELECT id FROM agent_shell_heartbeats").fetchall()}
+    assert remaining == {"hb_new"}, "prune must keep the latest heartbeat and drop only old ones"
+
+
+def test_prune_session_logs_keeps_main_and_recent_deletes_old(tmp_path, monkeypatch):
+    """Per-session JSONL transcripts (data/agent_shell/sessions/*.jsonl) are
+    Axis-1 junk: high file COUNT, low bytes, never read by the learning/PI
+    chain. They had no cleanup path (2.6k+ files accumulated). Prune is
+    mtime-based and exempts the persistent operator-main session by stem, so it
+    can never reap a live or pinned transcript. Guards the DB-SIZE-2 retention."""
+    import os
+    import time
+    from aletheia.agent_shell.file_artifacts import prune_session_logs
+
+    setup_env(tmp_path, monkeypatch)
+    sessions = tmp_path / "agent_shell" / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+
+    main = sessions / "operator-main.jsonl"          # persistent → KEEP via exempt
+    recent = sessions / "task-abc.jsonl"             # fresh → KEEP via mtime
+    old = sessions / "ephemeral-xyz.jsonl"           # stale → DELETE
+    for p in (main, recent, old):
+        p.write_text('{"e":"x"}\n', encoding="utf-8")
+
+    stale_mtime = time.time() - 30 * 86400
+    os.utime(main, (stale_mtime, stale_mtime))       # old mtime, but exempt by name
+    os.utime(old, (stale_mtime, stale_mtime))        # genuinely stale → reaped
+
+    deleted = prune_session_logs(14, ("operator-main",))
+    assert deleted == 1, f"expected only the stale ephemeral file deleted, got {deleted}"
+    survivors = {p.name for p in sessions.glob("*.jsonl")}
+    assert survivors == {"operator-main.jsonl", "task-abc.jsonl"}, (
+        "prune must keep the exempt main session and recent transcripts"
+    )
 
 
 def test_jsonl_rotation(tmp_path, monkeypatch):

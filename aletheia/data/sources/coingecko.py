@@ -44,11 +44,11 @@ class CoinGeckoProvider:
     """MarketDataProvider backed by CoinGecko public API."""
 
     async def get_ticker(self, symbol) -> Ticker:
-        from aletheia.data.symbols import to_canonical
+        from aletheia.data.symbols import canonical_of
         from aletheia.data.sources.symbol_map import to_coingecko_id
         from aletheia.net import httpx_client
 
-        canon = to_canonical(str(symbol))
+        canon = canonical_of(symbol)
         cg_id = to_coingecko_id(canon)
         if cg_id is None:
             # F6: unmapped symbol — fail clearly so the provider fallback chain tries
@@ -84,7 +84,7 @@ class CoinGeckoProvider:
         limit: int = 100,
         since: int | None = None,
     ) -> list[Candle]:
-        from aletheia.data.symbols import to_canonical
+        from aletheia.data.symbols import canonical_of
         from aletheia.data.sources.symbol_map import to_coingecko_id
         from aletheia.net import httpx_client
 
@@ -93,7 +93,7 @@ class CoinGeckoProvider:
                 f"CoinGecko does not support {timeframe} candles"
             )
 
-        canon = to_canonical(str(symbol))
+        canon = canonical_of(symbol)
         cg_id = to_coingecko_id(canon)
         if cg_id is None:
             raise ValueError(f"CoinGecko has no slug mapping for {canon}")

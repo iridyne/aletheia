@@ -249,3 +249,132 @@ def test_guard_candidates_reachable_by_promoter():
         "knowledge/guard_candidates/ → 0 promotions ever. "
         "See round2_week1_decision_chain_fixes.md Fix L-Bug-D"
     )
+
+
+# ---------------------------------------------------------------------------
+# LP-S07 — Attribution chain must hold at RUNTIME, not just in isolation
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S07", "learning_pipeline", "§Attribution runtime", "L2c",
+              "The opportunity→decision attribution chain MUST hold at RUNTIME for the "
+              "population that is structurally required to carry it: signal_pending rows "
+              "from the opportunity ranker (reasoning 'Ranker candidate...'). Checked on "
+              "the most-recent rows so the pre-fix historical backlog (and self-deleting "
+              "transient rows) cannot skew it. skip/watch (non-decisions) and "
+              "ruleset-fired signals (no source opportunity) are excluded — NULL "
+              "opportunity_id there is honest, not a severed chain. Fixed live by "
+              "b9ad957 (2026-06-27), deployed at the ~13:10 gateway restart.",
+              status="implemented"),
+)
+def test_runtime_pi_decisions_carry_opportunity_id():
+    """GREEN tripwire on the PRODUCTION DB (mirrors LP-S01's data/app.db read).
+
+    The learning loop attributes trade outcomes back to the opportunity that
+    triggered them via pi_decisions.opportunity_id. The population that MUST carry
+    that id is the opportunity ranker's signals (reasoning starts with
+    'Ranker candidate'). We measure the most RECENT such rows so that:
+
+      * the pre-fix historical backlog — rows written before b9ad957 went live at
+        the 2026-06-27 ~13:10 gateway restart — does not skew the result. It
+        self-deletes via prune_pi_decisions(days=7) and falls out of "most recent"
+        as soon as fresh rows accumulate.
+      * skip/watch rows (rejected candidates / non-decisions) are excluded — they
+        have no source opportunity, so a NULL opportunity_id there is correct.
+      * ruleset-fired signals are excluded — they originate from a technical rule,
+        not a scanned opportunity, so they have no opportunity_id to carry, and
+        PiDecision has no strategy_id field to anchor them either.
+
+    This is the only thing the learning loop cares about. If the live ranker path
+    regresses and stops propagating the id, recent rows go NULL and this fails.
+    Earlier scoping (all actions over a 2-day window) was wrong: it counted the
+    self-deleting backlog plus the legitimately-NULL skip/ruleset rows, so it sat
+    at ~50% forever even though the causal chain was healthy. Trade-path
+    attribution is covered by the static LP-S05 + PL-PT record_decision_trade.
+    Skips on machines without a populated app.db (CI / fresh clone).
+    """
+    import pathlib
+
+    db = pathlib.Path(_project_root()) / "data" / "app.db"
+    if not db.exists():
+        pytest.skip("no production app.db on this machine")
+
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
+    try:
+        rows = conn.execute(
+            "SELECT opportunity_id FROM pi_decisions "
+            "WHERE action = 'signal_pending' "
+            "AND reasoning LIKE 'Ranker candidate%' "
+            "ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        pytest.skip("no recent opportunity-ranker signals to evaluate")
+
+    nulls = sum(1 for (opp,) in rows if opp is None or opp == "")
+    null_pct = 100.0 * nulls / len(rows)
+    assert null_pct < 10.0, (
+        f"{null_pct:.1f}% of the {len(rows)} most-recent opportunity-ranker "
+        f"signal_pending rows have NULL opportunity_id ({nulls}/{len(rows)}) — the "
+        "live attribution chain has regressed. Opportunity-sourced ranker signals "
+        "MUST carry the originating opportunity_id (set in paper_trader.py from "
+        "candidate['opportunity_id']). See JUNK_DATA_FULL_SWEEP_2026-06-28.md."
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-S08 — Synthetic/administrative closures must NOT enter the learning corpus
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S08", "learning_pipeline", "§Corpus integrity", "L2b",
+              "Administrative/synthetic closures (reconciled_gone, "
+              "demo_validation_cleanup) carry a fabricated exit price, not a genuine "
+              "strategy/risk outcome. The case-study builder MUST exclude them from "
+              "the learning corpus (trade_case_study + guard candidates), keying on "
+              "the close_reason VALUE so a reconciler close that recovered a REAL "
+              "exchange TPSL fill (stop_loss/take_profit) is still kept",
+              status="implemented"),
+)
+def test_synthetic_closures_excluded_from_corpus():
+    """GREEN: the fix lives in aletheia/analytics/trade_case_builder.py (NOT the
+    frozen decision chain — analytics is solo-editable). Verifies behaviourally that
+    a synthetic-closure row produces no case study while a genuine close still does,
+    and that the same filter guards auto-generated guard candidates.
+
+    Junk-data full sweep (Axis 2 — semantic toxicity), 2026-06-28:
+    docs/issues/JUNK_DATA_FULL_SWEEP_2026-06-28.md.
+    """
+    from unittest.mock import patch, MagicMock
+    from aletheia.analytics import trade_case_builder as tcb
+
+    def _row(position_id, close_reason, pnl_pct):
+        return {
+            "position_id": position_id, "symbol": "BTC/USDT", "direction": "long",
+            "market_type": "spot", "realized_pnl": pnl_pct, "realized_pnl_pct": pnl_pct,
+            "holding_hours": 5.0, "close_reason": close_reason, "scanner_family": "momentum",
+            "confidence": "high", "late_entry_penalty": 5, "crowding_risk": 1,
+            "risk_flags": [], "proposal_id": "p1", "opportunity_id": "o1",
+            "strategy_id": "s1", "entry_price": 100.0, "exit_price": 103.0,
+            "opened_at": "2026-06-27T10:00:00+00:00",
+        }
+
+    rows = [
+        _row("pos-gone", "reconciled_gone", -2.0),
+        _row("pos-demo", "demo_validation_cleanup", 1.5),
+        _row("pos-real", "take_profit", 3.0),
+    ]
+
+    with patch.object(tcb, "build_trade_attribution_rows", return_value=rows), \
+         patch.object(tcb, "_get_existing_case_position_ids", return_value=set()), \
+         patch.object(tcb, "create_trade_case_study", return_value=MagicMock(id="cs-real")) as mk:
+        result = tcb.build_case_studies(since_hours=9999)
+
+    # Only the genuine take_profit close becomes a case study.
+    assert len(result) == 1
+    assert result[0]["case_study_id"] == "cs-real"
+    assert mk.call_count == 1, "synthetic closures must not reach create_trade_case_study"

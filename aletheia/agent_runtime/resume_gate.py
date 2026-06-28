@@ -59,8 +59,13 @@ async def resume_if_llm_available(
     actor: str,
     source: str,
     cause: str = "manual_resume",
+    max_retries: int | None = None,
 ) -> dict[str, Any]:
-    """Resume only if the configured LLM gate is disabled or real inference works."""
+    """Resume only if the configured LLM gate is disabled or real inference works.
+
+    `max_retries` is forwarded to the probe; a manual operator resume passes 1 so
+    the request returns within a single probe instead of the full startup window.
+    """
     cfg = load_config()
     if not cfg.health.require_llm_at_startup:
         _persist_resumed()
@@ -71,7 +76,12 @@ async def resume_if_llm_available(
             "results": [],
         }
 
-    result = await probe_llm_providers_at_startup(cfg)
+    # Call positionally-only when no override so test doubles that patch the probe
+    # with a single-arg signature keep working (auto_resume integration tests).
+    if max_retries is None:
+        result = await probe_llm_providers_at_startup(cfg)
+    else:
+        result = await probe_llm_providers_at_startup(cfg, max_retries=max_retries)
     response = {
         "allowed": bool(result.get("any_usable")),
         "reason": None if result.get("any_usable") else "llm_unavailable",

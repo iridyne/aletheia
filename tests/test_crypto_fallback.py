@@ -159,6 +159,37 @@ class TestBinancePublicProvider:
         assert ticker.provider == "binance_public"
 
     @pytest.mark.anyio
+    async def test_instrument_id_input_resolves_canonical(self):
+        # D1 Bug 2 regression: when a fallback provider is handed an InstrumentId
+        # (as the data_collectors okx path does), it must resolve to the canonical
+        # symbol, NOT collapse to the exchange name. Before the fix this sent
+        # symbol="OKX" to Binance (HTTP 400) and returned ticker.symbol="OKX".
+        from aletheia.data.symbols import InstrumentId
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "lastPrice": "95.0", "quoteVolume": "1000.0", "priceChangePercent": "1.0",
+            "highPrice": "96.0", "lowPrice": "94.0",
+        }
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        iid = InstrumentId(exchange="okx", symbol="AAVE/USDT", market_type="spot")
+        with patch("aletheia.net.httpx_client", return_value=mock_client):
+            provider = BinancePublicProvider()
+            ticker = await provider.get_ticker(iid)
+
+        # Outbound request carries the real symbol, not "OKX".
+        call = mock_client.get.call_args
+        params = call.kwargs.get("params") or call[1].get("params")
+        assert params["symbol"] == "AAVEUSDT"
+        # Returned ticker is tagged canonical, not the exchange name.
+        assert ticker.symbol == "AAVE/USDT"
+
+    @pytest.mark.anyio
     async def test_get_ohlcv(self):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()

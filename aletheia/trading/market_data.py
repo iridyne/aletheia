@@ -11,7 +11,6 @@ from aletheia.data.symbols import InstrumentId, MARKET_SPOT, to_canonical, to_bi
 from aletheia.storage.models import MarketSnapshot
 from aletheia.storage.repositories import insert_market_snapshot
 from aletheia.trading.instruments import observed_instruments_from_config, xstocks_instruments_from_config
-from aletheia.files.jsonl import append_jsonl
 
 logger = logging.getLogger("aletheia.market_data")
 
@@ -107,7 +106,12 @@ async def collect_market_snapshots() -> dict:
             provider=ticker.provider or None,
         )
         insert_market_snapshot(snap)
-        append_jsonl("market_snapshots.jsonl", snap.model_dump())
+        # NOTE: the DB row (market_snapshots) is the canonical, queried record.
+        # The former append_jsonl("market_snapshots.jsonl", ...) write was
+        # write-only — no reader anywhere in the codebase — so it only grew
+        # data/logs/ unbounded (~11.6MB) with zero consumers. Removed 2026-06-28
+        # (junk-data sweep B2). Re-add a rotation-bounded sink here if a real
+        # offline consumer ever needs the raw stream.
         return str(instrument)
 
     try:

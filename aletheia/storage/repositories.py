@@ -1727,6 +1727,22 @@ def prune_universe_feature_snapshots(days: int = 30) -> int:
         db.commit()
     return cur.rowcount or 0
 
+
+def prune_universe_forward_outcomes(days: int = 30) -> int:
+    """Prune forward-return outcome labels older than `days` (by entry_ts).
+
+    Analytics/telemetry — NOT a causal-chain table. Rows reference universe
+    snapshots that are themselves pruned at 30d, so older outcomes are orphaned
+    anyway; 30d keeps the retention windows aligned. (DB-SIZE / B-sweep gap #1.)
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM universe_forward_outcomes WHERE entry_ts < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
 def prune_macro_snapshots(days: int = 90) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
