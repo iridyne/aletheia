@@ -70,6 +70,12 @@ def _import_all_specs():
         # Position and branches position_manager exits/trailing-stop by school. Behavioral
         # (L2a structural + L2b pure-function), not in REQUIRED_CONTRACTS.
         spec_serenity_holding,
+        # Serenity live-readiness (Phase 5 — D4 structural live-prep only). LR-* claims
+        # attach to "serenity_live_readiness" — codify that trade_school threads through
+        # all three live broker dispatch paths AND that the live unlock route + risk
+        # engine live guard remain school-agnostic (no autonomous live unlock). Pure L2a
+        # structural — no behavior change, paper still the only enabled execution mode.
+        spec_serenity_live_readiness,
     )
 
 
