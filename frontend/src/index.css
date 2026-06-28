@@ -783,7 +783,29 @@ code { background: var(--bg); padding: 0.12rem 0.35rem; border-radius: 3px; font
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--text); }
 .sort-indicator { color: var(--accent); font-size: 0.55rem; margin-left: 2px; vertical-align: middle; }
-.dt-toolbar { margin-bottom: 0.6rem; }
+.dt-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2); margin-bottom: 0.6rem;
+}
+/* Column-visibility menu (opt-in DataTable columnToggle) */
+.dt-colmenu-wrap { position: relative; }
+.dt-colmenu-backdrop { position: fixed; inset: 0; z-index: 40; }
+.dt-colmenu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 41;
+  min-width: 170px; max-height: 320px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 1px;
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: var(--r-sm); box-shadow: var(--shadow); padding: var(--space-2);
+}
+.dt-colmenu-item {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 3px 5px; border-radius: var(--r-sm); font-size: 0.8rem;
+  white-space: nowrap; cursor: pointer; color: var(--text);
+}
+.dt-colmenu-item:hover { background: var(--surface-2); }
+.dt-colmenu-item input { cursor: pointer; }
+/* Wide tables: never wrap cells so overflow-x produces real horizontal scroll */
+.table-wrap-nowrap th, .table-wrap-nowrap td { white-space: nowrap; }
 .dt-filter {
   width: 220px; max-width: 100%; background: var(--bg); border: 1px solid var(--border-2);
   padding: 0.35rem 0.55rem; border-radius: var(--r-sm); font-size: 0.8rem;
