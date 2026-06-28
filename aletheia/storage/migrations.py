@@ -1366,6 +1366,13 @@ _ADDITIVE_COLUMNS = [
     ("published_at", "serenity_evidence", "TEXT"),
     ("fetched_at", "serenity_evidence", "TEXT"),
     ("metadata", "serenity_evidence", "TEXT DEFAULT '{}'"),
+    # D2 (2026-06-27): independent-evaluator authoritative tier + provenance.
+    # `tier`/`evidence_tier` stay as the generator's self-graded proposal; these
+    # columns hold what actually gates scoring/promotion. See serenity_evidence.py.
+    ("assessed_tier", "serenity_evidence", "TEXT"),
+    ("assessed_by", "serenity_evidence", "TEXT"),
+    ("assessed_tier", "serenity_opportunities", "TEXT"),
+    ("assessed_by", "serenity_opportunities", "TEXT"),
     ("error_reason", "orders", "TEXT"),
     # Prediction Market Lens: structured metadata for prediction/equity opportunities
     ("metadata", "opportunities", "TEXT DEFAULT '{}'"),

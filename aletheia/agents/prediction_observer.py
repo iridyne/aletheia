@@ -408,6 +408,7 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
                 matched_theme = themes[0]
             if matched_theme:
                 from aletheia.storage.models import SerenityEvidence
+                from aletheia.trading.serenity_evidence import assess_evidence_tier
                 ext_id = market.market_id or market.slug or market.question[:40]
                 internal_id = market_id_map.get(ext_id, ext_id)
                 ev = SerenityEvidence(
@@ -421,12 +422,15 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
                         f"Δ24h={market.prob_change_24h*100:+.1f}pp "
                         f"vol=${market.volume_usd:,.0f}"
                     ),
-                    tier="medium" if abs(market.prob_change_24h) > 0.15 else "speculative",
+                    # Self-proposed grade on the canonical ladder; the independent evaluator
+                    # caps prediction_market evidence at "speculative" regardless (D2).
+                    tier="likely" if abs(market.prob_change_24h) > 0.15 else "speculative",
                     supports=market.prob_change_24h > 0,
                     evidence_type="catalyst",
                     actor="prediction_observer",
-                    confidence="medium" if market.volume_usd > 100000 else "speculative",
+                    confidence="likely" if market.volume_usd > 100000 else "speculative",
                 )
+                ev.assessed_tier, ev.assessed_by = assess_evidence_tier(ev.model_dump())
                 insert_serenity_evidence(ev)
                 outputs.append(f"serenity_evidence:{ev.id}")
     except Exception as e:

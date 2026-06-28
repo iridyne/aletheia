@@ -52,6 +52,10 @@ def _import_all_specs():
         spec_coinglass,
         # Adopted-position SL/TP pipeline contract (regression lock for NULL stop bug)
         spec_pipeline_adopted_position,
+        # Serenity evidence quality (D2 — generator/evaluator separation). SE-* claims
+        # attach to the logical contract "serenity_evidence_quality" (not in
+        # REQUIRED_CONTRACTS — behavioral, mirroring the pipeline specs).
+        spec_serenity_evidence,
     )
 
 
