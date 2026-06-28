@@ -29,6 +29,7 @@ def execute_paper_order(
     stop_price: float | None = None,
     leverage: int | None = None,
     opportunity_id: str | None = None,
+    trade_school: str = "short_term",
 ) -> dict:
     """Execute a paper order: create order, fill, and position.
 
@@ -141,6 +142,7 @@ def execute_paper_order(
             decision_reasoning=decision_reasoning,
             entry_fee=entry_fee_val,
             slippage_cost=slippage_cost_val,
+            trade_school=trade_school,
         )
         insert_position(position)
         position_id = position.id

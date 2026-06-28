@@ -68,6 +68,7 @@ def execute_live_order(
     take_profit_price: float | None = None,
     leverage: int | None = None,
     opportunity_id: str | None = None,
+    trade_school: str = "short_term",
 ) -> dict:
     """Place a real Bitget order (live or demo) and record order/fill/position locally.
 
@@ -169,6 +170,7 @@ def execute_live_order(
                     # Persist protective stop/TP so position_manager acts on the AI's
                     # intended levels, not just the default-% fallback (regression EC-stop).
                     stop_price=stop_price, take_profit_price=take_profit_price,
+                    trade_school=trade_school,
                     **enrichment,
                 )
                 insert_position(position)

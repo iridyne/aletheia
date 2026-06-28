@@ -1469,6 +1469,11 @@ _ADDITIVE_COLUMNS = [
     ("fng_value", "macro_snapshots", "INTEGER"),
     ("fng_classification", "macro_snapshots", "TEXT"),
     ("top_movers_summary", "macro_snapshots", "TEXT"),
+    # Serenity Phase 4: execution-school discriminator. NOT NULL DEFAULT 'short_term'
+    # so legacy proposals/positions migrate cleanly onto the existing short-term path;
+    # only Serenity-sourced rows are stamped 'serenity' by submit_decision_as_proposal.
+    ("trade_school", "trade_proposals", "TEXT NOT NULL DEFAULT 'short_term'"),
+    ("trade_school", "positions", "TEXT NOT NULL DEFAULT 'short_term'"),
 ]
 
 

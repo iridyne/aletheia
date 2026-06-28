@@ -238,9 +238,19 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     notional = decision.position_size_usdt or 25.0
     quantity = round(notional / price, 6) or 0.000001
 
+    # Phase 4 execution-school discriminator. Derived from the DECISION-level
+    # signal_source (Phase 2): a 'serenity'-sourced decision opens a 'serenity'
+    # position with the wider long-horizon stop. The risk engine stays school-
+    # agnostic — only position_manager branches on it.
+    trade_school = "serenity" if getattr(decision, "signal_source", None) == "serenity" else "short_term"
+
     stop_price = decision.stop_price
     if stop_price is None:
-        stop_pct = cfg.trading.default_stop_loss_pct
+        stop_pct = (
+            cfg.serenity.stop_loss_pct
+            if trade_school == "serenity"
+            else cfg.trading.default_stop_loss_pct
+        )
         if decision.direction == "long":
             stop_price = round(price * (1 - stop_pct / 100.0), 8)
         else:
@@ -293,6 +303,7 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         strategy_id=decision.strategy_id,
         opportunity_id=decision.opportunity_id,
         agent_rationale=rationale,
+        trade_school=trade_school,
     )
 
 

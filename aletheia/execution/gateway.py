@@ -26,6 +26,7 @@ def submit_proposal(
     strategy_id: str | None = None,
     opportunity_id: str | None = None,
     agent_rationale: str | None = None,
+    trade_school: str = "short_term",
 ) -> dict:
     """Submit a trade proposal through the full execution pipeline.
 
@@ -44,6 +45,7 @@ def submit_proposal(
         stop_price=stop_price,
         execution_mode=execution_mode,
         agent_rationale=agent_rationale,
+        trade_school=trade_school,
     )
     insert_trade_proposal(proposal)
     return _execute_proposal(proposal)
@@ -119,6 +121,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     stop_price=proposal.stop_price,
                     leverage=proposal.leverage,
                     opportunity_id=proposal.opportunity_id,
+                    trade_school=proposal.trade_school,
                 )
                 update_trade_proposal(proposal.id, status="executed")
             write_audit({
@@ -169,6 +172,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     take_profit_price=_tp,
                     leverage=proposal.leverage,
                     opportunity_id=proposal.opportunity_id,
+                    trade_school=proposal.trade_school,
                 )
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({
@@ -243,6 +247,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     take_profit_price=_tp2,
                     leverage=proposal.leverage,
                     opportunity_id=proposal.opportunity_id,
+                    trade_school=proposal.trade_school,
                 )
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({

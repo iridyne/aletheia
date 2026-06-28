@@ -126,6 +126,12 @@ class TradeProposal(BaseModel):
     # reconciler built to bring a pre-existing/external exchange position under
     # management). See docs/DECISIONS.md (2026-06-12) / position_reconciler.
     source: str = "native"
+    # Execution-level school discriminator (Phase 4): "short_term" (default) or
+    # "serenity". Threaded from TradingDecision.signal_source so position_manager
+    # can branch trailing-stop + max_hold behavior per school without touching the
+    # risk engine. Default 'short_term' keeps every legacy proposal on the existing
+    # path.
+    trade_school: str = "short_term"
     created_at: str = Field(default_factory=_utcnow)
 
 
@@ -225,6 +231,11 @@ class Position(BaseModel):
     entry_fee: float | None = None
     exit_fee: float | None = None
     slippage_cost: float | None = None
+    # Execution-level school discriminator (Phase 4). Mirrors TradeProposal.trade_school
+    # — defaults 'short_term' so legacy + adopted positions stay on the 72h cap + ATR
+    # trailing path. 'serenity' positions skip ATR trailing and use
+    # cfg.serenity.max_hold_days * 24 as their hold cap.
+    trade_school: str = "short_term"
 
 
 class MarketRegimeRecord(BaseModel):
