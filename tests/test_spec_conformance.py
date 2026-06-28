@@ -39,6 +39,7 @@ def _import_all_specs():
         spec_pipeline_execution_chain,
         spec_pipeline_live_unlock,
         spec_pipeline_market_data,
+        spec_spot_parity,
         spec_pipeline_paper_trade,
         spec_pipeline_position_manager,
         spec_pipeline_operator_loop,

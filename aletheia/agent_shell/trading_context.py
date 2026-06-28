@@ -158,6 +158,10 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "id": o.get("id"),
                 "linked_strategy_id": o.get("linked_strategy_id"),
                 "symbol": o.get("symbol"),
+                # Instrument type (spot | usdt_futures) so the PI sees what the
+                # opportunity is for and can choose market_type informedly, and so
+                # _attach_opportunity_context can inherit it (no hardcoded perp).
+                "market": o.get("market"),
                 "direction_bias": o.get("direction_bias"),
                 "confidence": o.get("confidence"),
                 "confidence_score": o.get("confidence_score"),
