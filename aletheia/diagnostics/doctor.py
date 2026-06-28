@@ -946,6 +946,28 @@ def _probe_webui_static(report: Report) -> None:
     report.add("webui.static", "ok", f"{size} bytes index, {js_count} JS bundles")
 
 
+def _probe_git_hooks(report: Report) -> None:
+    """Auto-restart git hooks — installed → a merge/pull/rebase respawns the gateway
+    on fresh code with no manual restart (closes the code_updated_pending_restart gap).
+    Pure read; `apply_fixes()` / gateway startup do the install."""
+    from aletheia.gateway.git_hooks import git_hooks_status
+    st = git_hooks_status()
+    if st["error"]:
+        report.add("git.hooks", "info", st["error"])  # tarball deploy / not a repo
+        return
+    missing, foreign = st["missing"], st["foreign"]
+    if not missing and not foreign:
+        report.add("git.hooks", "ok", f"auto-restart hooks installed ({', '.join(st['installed'])})")
+        return
+    if foreign:
+        report.add("git.hooks", "warn",
+                   f"foreign hook(s) present, not managed: {', '.join(foreign)}",
+                   fix_hint="Inspect .git/hooks; auto-restart will skip these to avoid clobbering")
+    if missing:
+        report.add("git.hooks", "warn", f"auto-restart hooks missing: {', '.join(missing)}",
+                   fix_hint="Run: aletheia doctor --fix  (or just restart the gateway — it self-installs)")
+
+
 def _probe_network(report: Report) -> None:
     try:
         from aletheia.config.loader import load_config
@@ -1167,6 +1189,7 @@ def build_report() -> Report:
         _probe_health,
         _probe_operator_loop,
         _probe_webui_static,
+        _probe_git_hooks,
         _probe_network,
         _probe_audit_chain,
         _probe_fts_coverage,
@@ -1191,6 +1214,11 @@ def apply_fixes() -> list[str]:
     actions: list[str] = []
     from aletheia.gateway.pidfile import is_running
     from aletheia.gateway.lifecycle import do_start
+
+    # Wire the auto-restart git hooks (idempotent; independent of gateway state, so
+    # do it before the running-check early return).
+    from aletheia.gateway.git_hooks import ensure_git_hooks
+    actions.extend(ensure_git_hooks())
 
     if is_running():
         actions.append("gateway already running — nothing to start")
