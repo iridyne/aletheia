@@ -690,16 +690,12 @@ def _probe_round1(report: Report) -> None:
     gap = max(0, target - closed)
     detail = (f"closed={closed}/{target} (gap={gap}), realized={realized:+.2f}, "
               f"WR={wr if wr is not None else '?'}%, PF={pf if pf is not None else '?'}")
+    # Round 1 terminated 2026-06-27 by owner decision. Report historical result as
+    # info-only so it doesn't pollute the WARN list with a closed experiment's scores.
     if closed == 0:
-        report.add("loop.round1", "info", "no closed trades since 2026-06-22")
-    elif gap > 0 and closed < 20:
-        report.add("loop.round1", "warn", f"BEHIND G6: {detail}",
-                   "review pipeline-funnel for stage where conversion drops")
-    elif pf is not None and pf < 1.0 and closed >= 5:
-        report.add("loop.round1", "warn", f"PF below break-even: {detail}",
-                   "check trading_decision skip bias + signal_accuracy_24h")
+        report.add("loop.round1", "info", "no closed trades since 2026-06-22 (Round 1 terminated)")
     else:
-        report.add("loop.round1", "ok", detail)
+        report.add("loop.round1", "info", f"Round 1 final (terminated 2026-06-27): {detail}")
 
 
 def _probe_knowledge_flood(report: Report) -> None:
@@ -1492,12 +1488,134 @@ def _probe_signal_effectiveness(report: Report) -> None:
         pass
 
 
+def _probe_serenity_pipeline(report: Report) -> None:
+    """Serenity research pipeline freshness — last run age + active opportunity count."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT MAX(created_at) newest FROM serenity_research_runs"
+        ).fetchone()
+        active = db.execute(
+            "SELECT COUNT(*) FROM serenity_opportunities WHERE status = 'active'"
+        ).fetchone()[0]
+    except Exception as e:
+        report.add("data.serenity_pipeline", "info", f"probe error: {e}")
+        return
+    if not row["newest"]:
+        report.add("data.serenity_pipeline", "warn",
+                   "no serenity research runs recorded",
+                   "check serenity_research_runner scheduler job is registered and running")
+        return
+    age = _age_minutes(row["newest"])
+    detail = f"last run {_fmt_age(age)} ago, {active} active opportunities"
+    if age is not None and age > 720:
+        report.add("data.serenity_pipeline", "warn",
+                   f"Serenity research stale: {detail}",
+                   "serenity_research_runner has not run in >12h — check scheduler health")
+    else:
+        report.add("data.serenity_pipeline", "ok", detail)
+
+
+def _probe_volume_ranking(report: Report) -> None:
+    """Volume ranking snapshot freshness — drives universe ordering for paper_trader."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT MAX(observed_at) newest FROM volume_ranking_snapshots"
+        ).fetchone()
+    except Exception as e:
+        report.add("data.volume_ranking", "info", f"probe error: {e}")
+        return
+    if not row["newest"]:
+        report.add("data.volume_ranking", "warn",
+                   "no volume ranking snapshots recorded",
+                   "universe ordering falls back to static list; check volume_scanner scheduler job")
+        return
+    age = _age_minutes(row["newest"])
+    detail = f"volume ranking snapshot {_fmt_age(age)} ago"
+    if age is not None and age > 60:
+        report.add("data.volume_ranking", "warn",
+                   f"volume ranking stale: {detail}",
+                   "volume_scanner job may have failed — universe ordering falls back to static list")
+    else:
+        report.add("data.volume_ranking", "ok", detail)
+
+
+def _probe_infra_db_size(report: Report) -> None:
+    """app.db file size and available disk space — a full disk silently kills SQLite writes."""
+    try:
+        import os
+        import shutil
+        from aletheia.storage.sqlite import db_path
+        path = db_path()
+        db_mb = path.stat().st_size / (1024 * 1024) if path.exists() else 0
+        du = shutil.disk_usage(str(path.parent))
+        free_mb = du.free / (1024 * 1024)
+    except Exception as e:
+        report.add("infra.db_size", "info", f"probe error: {e}")
+        return
+    detail = f"app.db {db_mb:.0f} MB, disk free {free_mb:.0f} MB"
+    if free_mb < 500:
+        report.add("infra.db_size", "warn",
+                   f"low disk space: {detail}",
+                   "disk nearly full — SQLite writes may fail; free space or run "
+                   "uv run python scripts/db_maintenance.py --vacuum")
+    elif db_mb > 500:
+        report.add("infra.db_size", "warn",
+                   f"app.db large: {detail}",
+                   "run uv run python scripts/db_maintenance.py --vacuum to reclaim space")
+    elif db_mb > 200:
+        report.add("infra.db_size", "info", f"app.db growing: {detail}")
+    else:
+        report.add("infra.db_size", "ok", detail)
+
+
+def _probe_content_lesson_guards(report: Report) -> None:
+    """Accepted ps_lessons: dry-run vs active-blocking vs expired guard status.
+
+    Lessons with block_* actions directly affect what trades the risk engine allows.
+    Showing guard activation state makes risk behavior changes observable in doctor.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        lessons = db.execute(
+            "SELECT lesson_id, dry_run_until, expires_at FROM ps_lessons WHERE status = 'accepted'"
+        ).fetchall()
+    except Exception as e:
+        report.add("content.lesson_guards", "info", f"probe error: {e}")
+        return
+    if not lessons:
+        report.add("content.lesson_guards", "ok", "no accepted lessons (no active risk guards)")
+        return
+    now_iso = datetime.now(timezone.utc).isoformat()
+    dry_run, blocking, expired = 0, 0, 0
+    for row in lessons:
+        if row["expires_at"] and now_iso > row["expires_at"]:
+            expired += 1
+        elif row["dry_run_until"] and now_iso < row["dry_run_until"]:
+            dry_run += 1
+        else:
+            blocking += 1
+    total = len(lessons)
+    detail = f"{total} accepted: {blocking} blocking, {dry_run} dry-run, {expired} expired"
+    if blocking > 0:
+        report.add("content.lesson_guards", "info",
+                   detail,
+                   f"{blocking} lesson(s) are actively blocking trades via the risk engine")
+    else:
+        report.add("content.lesson_guards", "ok", detail)
+
+
 # The content-quality probe set (Phase 2). Named once so build_report() and the
 # Operator's System Health Monitor (build_content_report) cannot drift apart.
 _CONTENT_PROBES = (
     _probe_content_strategy_health,
     _probe_content_memo_quality,
     _probe_content_lesson_chain,
+    _probe_content_lesson_guards,
     _probe_content_attribution,
     _probe_content_shadow_trades,
     _probe_content_signal_settlement,
@@ -1530,6 +1648,8 @@ def build_report() -> Report:
         _probe_credentials,
         _probe_market_data,
         _probe_macro_signals,
+        _probe_serenity_pipeline,
+        _probe_volume_ranking,
         _probe_data_quality,
         _probe_ohlcv_coverage,
         _probe_signal_effectiveness,
@@ -1547,6 +1667,7 @@ def build_report() -> Report:
         _probe_webui_static,
         _probe_git_hooks,
         _probe_network,
+        _probe_infra_db_size,
         _probe_audit_chain,
         _probe_fts_coverage,
     ):
