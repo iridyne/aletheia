@@ -565,3 +565,111 @@ def test_paper_open_records_opportunity_id(tmp_path, monkeypatch):
     )
     pos = repo._select_one("positions", r["position_id"])
     assert pos["opportunity_id"] == "opp-123"
+
+
+# ---------------------------------------------------------------------------
+# EX-S07 — symbol availability pre-check exists and covers all exchange modes
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-S07", "execution_contract", "§3.2 symbol filter", "L2a",
+        "_check_symbol_availability and _load_registry_symbols are callable in gateway; "
+        "_EXECUTION_MODE_TO_VENUE maps all real exchange modes (okx_live, bitget, binance)",
+    ),
+)
+def test_symbol_availability_check_structure():
+    from aletheia.execution import gateway
+
+    assert callable(gateway._check_symbol_availability)
+    assert callable(gateway._load_registry_symbols)
+
+    required_modes = {
+        "okx_live_limited",
+        "bitget_demo", "bitget_live_limited",
+        "binance_testnet", "binance_live_limited",
+    }
+    assert required_modes <= set(gateway._EXECUTION_MODE_TO_VENUE), (
+        f"Missing modes in _EXECUTION_MODE_TO_VENUE: "
+        f"{required_modes - set(gateway._EXECUTION_MODE_TO_VENUE)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# EX-B10 — paper_internal always passes (no exchange symbol lookup)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B10", "execution_contract", "§3.2 symbol filter", "L2b",
+        "paper_internal always returns None from _check_symbol_availability "
+        "(virtual fills — exchange symbol list irrelevant)",
+    ),
+)
+def test_symbol_check_paper_internal_always_passes():
+    from aletheia.execution.gateway import _check_symbol_availability
+
+    assert _check_symbol_availability("WLDUSDT", "paper_internal") is None
+    assert _check_symbol_availability("ANYTOKEN/USDT", "paper_internal") is None
+
+
+# ---------------------------------------------------------------------------
+# EX-B11 — OKX demo: absent symbol rejected, present symbol passes
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B11", "execution_contract", "§3.2 symbol filter", "L2b",
+        "When the OKX demo frozenset is loaded and a symbol is absent, "
+        "_check_symbol_availability returns a non-empty reason string; "
+        "a present symbol returns None",
+    ),
+)
+def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
+    import aletheia.execution.gateway as gw
+    import aletheia.execution.okx_broker as okx_broker
+
+    # Inject a known frozenset (WLD/USDT absent, BTC/USDT present)
+    monkeypatch.setattr(okx_broker, "_okx_demo_symbols", frozenset({"BTC/USDT", "ETH/USDT"}))
+    monkeypatch.setattr(okx_broker, "_okx_demo_symbols_loaded_at", float("inf"))
+
+    reason = gw._check_symbol_availability("WLDUSDT", "okx_demo")
+    assert reason is not None, "Absent symbol must produce a rejection reason"
+    assert "WLD" in reason or "not available" in reason.lower()
+
+    assert gw._check_symbol_availability("BTCUSDT", "okx_demo") is None
+
+
+# ---------------------------------------------------------------------------
+# EX-B12 — Registry-based modes: absent symbol rejected; empty registry fail-open
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B12", "execution_contract", "§3.2 symbol filter", "L2b",
+        "For registry-based modes (bitget, binance): absent symbol → rejection reason; "
+        "empty/unsynced registry → None (fail-open, never blocks legitimate orders)",
+    ),
+)
+def test_symbol_check_registry_modes(monkeypatch):
+    import aletheia.execution.gateway as gw
+    import aletheia.storage.repositories as repo
+
+    # ── case A: registry loaded with known symbols, WLD absent ──
+    gw._registry_symbol_cache.clear()
+    monkeypatch.setattr(
+        repo, "list_universe_assets",
+        lambda *a, **kw: [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}],
+    )
+    reason = gw._check_symbol_availability("WLDUSDT", "bitget_demo")
+    assert reason is not None, "Registry loaded but symbol absent — must reject"
+
+    # ── case B: registry empty (not yet synced) → fail-open ──
+    gw._registry_symbol_cache.clear()
+    monkeypatch.setattr(repo, "list_universe_assets", lambda *a, **kw: [])
+    reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_testnet")
+    assert reason_empty is None, "Empty registry must fail-open, not block orders"
