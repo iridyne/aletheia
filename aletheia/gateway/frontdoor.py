@@ -265,6 +265,24 @@ def create_app(
         payload["events"] = list_infra_events(limit=10, min_severity="warning")
         return JSONResponse(status_code=200 if payload["static_index"] else 503, content=payload)
 
+    @app.get("/_infra/doctor")
+    async def infra_doctor(request: Request):
+        backend = _backend_url()
+        query = request.url.query.encode("utf-8") if request.url.query else None
+        target = httpx.URL(f"{backend}/_infra/doctor", query=query)
+        client = _get_proxy_client()
+        try:
+            upstream = await client.send(client.build_request("GET", target), stream=True)
+        except Exception as exc:
+            return _proxy_unavailable("_infra/doctor", backend, _backend_route(), exc)
+        response_headers = _filtered_headers(upstream.headers.items())
+        return StreamingResponse(
+            _guarded_aiter_raw(upstream, "_infra/doctor", backend),
+            status_code=upstream.status_code,
+            headers=response_headers,
+            background=BackgroundTask(_close_proxy_response, upstream),
+        )
+
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     async def proxy_api(path: str, request: Request):
         backend = _backend_url()
