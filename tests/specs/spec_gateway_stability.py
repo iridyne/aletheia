@@ -180,3 +180,68 @@ def test_llm_structured_retry_is_bounded(monkeypatch):
     assert data is None
     assert err is not None and "structured_parse_error" in err
     assert calls["n"] == 2, "must attempt at most twice (one retry)"
+
+
+# ---------------------------------------------------------------------------
+# GS-S03 — data_collectors fans out under a wall-clock budget < its job timeout
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "GS-S03", _CONTRACT, "§data_collectors budget", "L2a",
+        "data_collectors bounds its collector fan-out: a wall-clock budget strictly "
+        "below the 45s job timeout, via _bounded() per-collector timeouts — so one "
+        "stalled collector can't blow the job and abandon a thread (every-2min job).",
+    ),
+)
+def test_data_collectors_has_bounded_fanout():
+    from aletheia.agent_runtime import scheduler as sch
+    assert hasattr(sch, "_DC_DEADLINE_S") and hasattr(sch, "_bounded"), (
+        "data_collectors must expose _DC_DEADLINE_S budget + _bounded() wrapper"
+    )
+    assert sch._DC_DEADLINE_S < sch._ASYNC_JOB_TIMEOUT_SEC["data_collectors"], (
+        "wall-clock budget must be below the job timeout to avoid mid-flight cancel"
+    )
+    src = Path(sch.__file__).read_text(encoding="utf-8")
+    assert "await micro.collect(symbols)" not in src, "microstructure collect must be _bounded"
+    assert "await deriv.collect(symbols)" not in src, "derivatives collect must be _bounded"
+
+
+# ---------------------------------------------------------------------------
+# GS-B04 — _bounded caps a hanging collector and never hangs the tick
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "GS-B04", _CONTRACT, "§data_collectors budget", "L2b",
+        "_bounded returns a fast collector's result, caps a hanging one at its timeout "
+        "(returns None, does NOT hang), and skips when the wall-clock deadline passed.",
+    ),
+)
+def test_bounded_caps_hanging_collector():
+    import time
+    from aletheia.agent_runtime.scheduler import _bounded
+
+    async def fast():
+        return {"ok": 1}
+
+    async def hang():
+        # Block on an un-set Event (not asyncio.sleep — conftest no-ops long sleeps);
+        # wait_for must cancel this at the cap.
+        await asyncio.Event().wait()
+        return {"never": 1}
+
+    async def scenario():
+        dl = time.monotonic() + 40
+        r_fast = await _bounded(fast(), "fast", 5.0, dl)
+        t0 = time.monotonic()
+        r_hang = await _bounded(hang(), "hang", 1.0, dl)
+        elapsed = time.monotonic() - t0
+        r_skip = await _bounded(fast(), "skip", 5.0, time.monotonic() - 1)  # deadline passed
+        return r_fast, r_hang, elapsed, r_skip
+
+    r_fast, r_hang, elapsed, r_skip = asyncio.run(scenario())
+    assert r_fast == {"ok": 1}, "fast collector result must pass through"
+    assert r_hang is None, "hanging collector must be capped to None"
+    assert elapsed < 3.0, f"hang must be cut at ~1s cap, took {elapsed:.1f}s"
+    assert r_skip is None, "past-deadline collector must be skipped"

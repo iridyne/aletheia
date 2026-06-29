@@ -1526,12 +1526,45 @@ def _run_data_collectors():
         _record_job_failure("data_collectors", str(e))
 
 
+# Wall-clock budget for the whole data_collectors coroutine. Must stay BELOW the
+# job timeout (_ASYNC_JOB_TIMEOUT_SEC["data_collectors"] = 45s) so the coroutine
+# returns before asyncio.wait_for cancels it — same anti-thread-leak rule as
+# market_observer. On a Phase B tick this job fans out to ~7 collectors; if ONE
+# stalls on a dead socket the whole job used to blow the timeout → daemon thread
+# abandoned + leaked. _bounded() caps each collector AND the cumulative wall-clock.
+_DC_DEADLINE_S = 40.0
+
+
+async def _bounded(coro, label: str, cap: float, deadline: float):
+    """Await `coro` under min(cap, time-left-to-deadline). On timeout/skip/error
+    return None and keep the job moving — never let one collector hang the tick."""
+    import time as _time
+    remaining = deadline - _time.monotonic()
+    if remaining <= 2.0:
+        logger.warning("data_collectors: skipped %s — job wall-clock budget (%.0fs) exhausted",
+                       label, _DC_DEADLINE_S)
+        coro.close()  # avoid 'coroutine was never awaited' warning
+        return None
+    try:
+        return await asyncio.wait_for(coro, timeout=min(cap, remaining))
+    except asyncio.TimeoutError:
+        logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
+                       label, min(cap, remaining))
+        return None
+    except Exception as e:
+        logger.debug("data_collectors: %s failed: %s", label, e)
+        return None
+
+
 async def _async_data_collectors(cfg, tick: int) -> None:
+    import time as _time
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
     from aletheia.data.collectors.macro import MacroCollector
     from aletheia.data.normalizer import compute_tradability, compute_leverage_state
     from aletheia.storage import repositories as repo
+
+    _deadline = _time.monotonic() + _DC_DEADLINE_S
 
     # Observed symbols: use universe if available, fall back to configured symbols.
     symbols = _get_observed_symbols(cfg)
@@ -1541,7 +1574,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
 
     # --- Phase A: microstructure + derivatives (every tick) ---
     micro = MicrostructureCollector()
-    micro_result = await micro.collect(symbols)
+    micro_result = await _bounded(micro.collect(symbols), "microstructure", 18.0, _deadline) or {}
     for snap in micro_result.get("snapshots", []):
         try:
             repo.insert_orderbook_snapshot(snap.model_dump())
@@ -1549,7 +1582,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
             logger.debug("orderbook persist failed: %s", e)
 
     deriv = DerivativesCollector()
-    deriv_result = await deriv.collect(symbols)
+    deriv_result = await _bounded(deriv.collect(symbols), "derivatives", 18.0, _deadline) or {}
     for snap in deriv_result.get("funding", []):
         try:
             repo.insert_funding_rate_snapshot(snap.model_dump())
@@ -1580,7 +1613,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
             cg_top_n = getattr(cfg.market_data, "coingecko_top_n", 100)
             if getattr(cfg.market_data, "enable_coingecko_top", True):
                 cg = CoinGeckoTopCollector()
-                cg_result = await cg.collect(top_n=cg_top_n)
+                cg_result = await _bounded(cg.collect(top_n=cg_top_n), "coingecko_top", 15.0, _deadline) or {}
                 cg_rows = cg_result.get("rows", [])
                 if cg_rows:
                     try:
@@ -1592,7 +1625,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
             logger.debug("coingecko_top collection failed: %s", e)
 
         macro_coll = MacroCollector()
-        macro_result = await macro_coll.collect(symbols)
+        macro_result = await _bounded(macro_coll.collect(symbols), "macro", 15.0, _deadline) or {}
         snap = macro_result.get("snapshot")
         if snap:
             try:
@@ -1606,7 +1639,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         try:
             from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
             vol_scanner = VolumeScannerCollector(top_n=30)
-            vol_result = await vol_scanner.collect(symbols[:200])
+            vol_result = await _bounded(vol_scanner.collect(symbols[:200]), "volume_scanner", 12.0, _deadline) or {}
             if vol_result.get("top_symbols"):
                 _latest_volume_ranking.update({
                     "symbols": vol_result["top_symbols"],
@@ -1621,7 +1654,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         try:
             if getattr(cfg.market_data, "enable_hyperliquid", True):
                 from aletheia.data.collectors.hyperliquid import HyperliquidCollector
-                hl_result = await HyperliquidCollector().collect(symbols)
+                hl_result = await _bounded(HyperliquidCollector().collect(symbols), "hyperliquid", 12.0, _deadline) or {}
                 if hl_result.get("errors"):
                     logger.debug("hyperliquid collection errors: %s", hl_result["errors"])
         except Exception as e:
@@ -1632,7 +1665,7 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         try:
             if getattr(cfg.market_data, "enable_defillama", True):
                 from aletheia.data.collectors.defillama import DefiLlamaCollector
-                dl_result = await DefiLlamaCollector().collect()
+                dl_result = await _bounded(DefiLlamaCollector().collect(), "defillama", 12.0, _deadline) or {}
                 if dl_result.get("errors"):
                     logger.debug("defillama collection errors: %s", dl_result["errors"])
         except Exception as e:
