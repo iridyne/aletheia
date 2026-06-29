@@ -113,13 +113,29 @@ Key behaviors:
 - **Custom value** — user can type any value, suggestions are optional.
 - **onBlur delay** — 150ms `setTimeout` so `onMouseDown` on suggestions registers before blur closes the dropdown.
 
-### Toggle (checkbox)
+### Toggle (Switch)
 
 The `Toggle` component renders `<label><input type="checkbox" />{text}</label>` as inline-flex.
 
-**Critical rule:** Never place a Toggle inside a `.form-grid label`. The form-grid label uses `flex-direction: column`, which stacks the Toggle's checkbox and text vertically across multiple lines.
+**Rule 1 — 必须放在 `<Row>` 里。** Settings 页面中的每个 Toggle 都必须用 `<Row label="..." hint="...">` 包裹，让标签在左、Toggle 在右对齐。**不能**裸放在 `flex items-center gap-3` div 里——这样没有标签说明含义，hint 也无处归位。
 
-Instead, render toggles as standalone elements outside/below the form-grid:
+```tsx
+// WRONG — 裸 Toggle，没有标签，hint 只在 disabled 时出现
+<div className="flex items-center gap-3 mb-3">
+  <Toggle checked={enabled} onChange={...} />
+  {!enabled && <span className="hint">Agents use static list.</span>}
+</div>
+
+// CORRECT — Row 提供标签 + hint 常驻，Toggle 右对齐到控件列
+<Row
+  label="Enable Universe Scanner"
+  hint="When on, dynamically scores USDT pairs each cycle. When off, agents use the static fallback list."
+>
+  <Toggle checked={enabled} onChange={...} />
+</Row>
+```
+
+**Rule 2 — 不能放在 `.form-grid label` 里。** The form-grid label uses `flex-direction: column`, which stacks the Toggle's checkbox and text vertically across multiple lines.
 
 ```tsx
 // WRONG — checkbox stacks vertically inside form-grid label
@@ -129,13 +145,47 @@ Instead, render toggles as standalone elements outside/below the form-grid:
     <Toggle ... />   {/* breaks onto multiple lines */}
   </label>
 </div>
-
-// CORRECT — toggle outside form-grid, inline-flex row
-<div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-  <Toggle ... />
-  <span className="badge ...">ON</span>
-</div>
 ```
+
+**Rule 3 — Switch 自身即状态，不加 badge 复述。** 见 §4 "Switch 控件自身即状态"节。
+
+### Selection Controls（互斥选项）
+
+当用户从一组互斥选项中选一个时，遵循下列优先级：
+
+| 场景 | 推荐控件 | 说明 |
+|------|---------|------|
+| 选项 ≤ 4 且标签短 | `<select>` in `<Row>` | 默认选择，不随选项数膨胀 |
+| 选项 2-3 个且需频繁切换 | `.seg-toggle` segmented button | 仅用于高频内联切换（timeframe、feed mode） |
+| 选项多 + 需模糊搜索 | Combobox（见上节） | 用户可自定义输入时 |
+
+**禁止使用 tile 卡片（button grid）做互斥选择。** tile 模式的问题：
+- 选项增加 → 卡片行数/列数增加 → 布局不可预测（`auto-fill` 宽度变化）
+- 已选中状态需要自定义 CSS，维护成本高
+- 与行业惯例不符（VS Code、macOS Settings、Figma 都用 select/radio/segmented）
+
+```tsx
+// WRONG — 每个交易所一个 tile 卡片，随数量膨胀
+<div className="exchange-tiles">
+  {EXCHANGES.map(ex => (
+    <button className={`exchange-tile${active === ex.id ? ' active' : ''}`} ...>
+      {ex.label}
+    </button>
+  ))}
+</div>
+
+// CORRECT — select + Row，不随选项数膨胀
+<Row
+  label="Primary exchange"
+  hint="Atomically updates data source, paper execution mode, and risk allowlist."
+>
+  <select value={active} onChange={e => handleSelect(e.target.value)} className="w-auto">
+    {EXCHANGES.map(ex => <option key={ex.id} value={ex.id}>{ex.label}</option>)}
+  </select>
+</Row>
+```
+
+**confirm() 对 select onChange 是有效的安全门。** React controlled `<select value={active}>` 在 `confirm()` 返回 false 时，因 `active` 未更新，下次 render 会自动回退到原值。无需额外的 reset 逻辑。
 
 ### Badges
 
@@ -270,6 +320,44 @@ Switch（滑块开关）的视觉设计天然表达 on/off 状态：track 颜色
 ### Inline grids vs. `.form-grid`
 
 If you're writing `display: grid; gridTemplateColumns: repeat(auto-fill, minmax(200px, 1fr))` inline, stop. Use `.form-grid` (always 2 columns). For special cases, override with `gridTemplateColumns` inline on the form-grid div — but the class gives you consistent label styling, gap, and input width for free.
+
+### 组件必须放在正确的网格列内（容器嵌套规则）
+
+**规则：跨列的交互组件必须放进它所属的网格子容器，不能悬浮在网格外部。**
+
+Settings 页面的 `.settings-shell` 是一个 2 列网格（左 nav 280px + 右 panel 1fr）。搜索框曾被放在 `.settings-shell` 的**外面**（作为 `<PageHeader>` 的下一个兄弟），而不是放在右侧 `.settings-panel` 内部。结果：
+
+- 搜索框以页面最左边缘（nav 列的左边缘）为起点
+- `max-width: 480px` 横跨 nav 列 + gap + panel 部分区域
+- 视觉上悬浮在两栏之间，哪里都不靠
+
+**修法：** 把 `<SettingsSearch>` 从 shell 外移入 `.settings-panel` 内部作为第一个子元素。左边缘自然对齐面板内容，宽度受面板约束。
+
+```tsx
+// WRONG — 搜索框悬浮在 2 列网格外部
+<div>
+  <PageHeader ... />
+  <SettingsSearch />          {/* ← 在 shell 外，宽 480px 从最左侧开始 */}
+  <div className="settings-shell">
+    <aside className="settings-nav">...</aside>
+    <div className="settings-panel">...</div>
+  </div>
+</div>
+
+// CORRECT — 搜索框作为面板第一个子元素
+<div>
+  <PageHeader ... />
+  <div className="settings-shell">
+    <aside className="settings-nav">...</aside>
+    <div className="settings-panel">
+      <SettingsSearch />       {/* ← 在面板内，左边缘与内容对齐 */}
+      ...
+    </div>
+  </div>
+</div>
+```
+
+**通用原则：** 任何 Settings 页面内的交互组件（搜索、筛选、操作按钮区），其视觉对齐目标是哪列，就放进那列的容器里——不要靠 `max-width` 或 `margin-left` 去"模拟"对齐。
 
 ---
 
@@ -447,6 +535,7 @@ tr.clickable:active { background: var(--bg); }
 | body grid texture `background-image` | 旧网格纹理 | 6d2f557 |
 | `.card-head-space{margin-bottom:0}` (重复定义) | 被 @2120 完整定义覆盖的死规则 | UI review |
 | `.signals-row-long/short` + `td` 修饰 | 旧 Signals tab 行着色，0 .tsx 引用 | UI review |
+| `.exchange-tiles`, `.exchange-tile`, `.exchange-tile:hover/disabled`, `.exchange-tile-active`, `.exchange-tile-label`, `.exchange-tile-desc` | 交易所 tile 卡片选择器（改为 `<select>` 下拉，7 行共删除） | 3b9ffff |
 
 **验证方法：** `grep -r "class-name" frontend/src/ --include="*.tsx"` — 0 结果即可安全删除。
 
@@ -469,6 +558,8 @@ tr.clickable:active { background: var(--bg); }
 | 2026-06-15 | 2ac849c | Bloomberg-density pass 1 |
 | 2026-06-15 | (pending) | Tick flash + sort indicator + watchlist sparkline |
 | 2026-06-17 | (pending) | UI code review: 定义缺失的 conviction/guard 颜色(→tokens)、button:active 对齐§9、10px→var(--r)、删 2 处死 CSS、sp-issue-hint faint→muted(§10)、修复 §7 重号→§17、PnL/TTL/confidence null 守卫 |
+| 2026-06-29 | bcdcebd | Settings 搜索框从 shell 外移入 settings-panel 内（§4 容器嵌套规则） |
+| 2026-06-29 | 3b9ffff | Universe Board Toggle 加 Row 标签；Exchange Connection tile→select；删除 7 行 exchange-tile* 死 CSS |
 
 ---
 
@@ -747,3 +838,6 @@ return { color: cs.color, bg: cs.backgroundColor, font: cs.fontFamily }
 - [ ] **onError**: 任何新 `useMutation` 必须有 onError(信任路径 inline / 辅助路径 toast),**不**只 `console.error`
 - [ ] **空态文案诚实**: 区分 loading / error / empty 三态,**不**用 empty 文案掩盖 error
 - [ ] **inline style**: 仅当值是动态计算结果(`width: ${pct}%`),静态值必须走 CSS class
+- [ ] **Toggle in Row**: Settings 页面任何新 Toggle/Switch 都用 `<Row label hint>` 包裹，不裸放 flex div
+- [ ] **Selection control**: 互斥选项用 `<select>` in `<Row>`，**不**新增 tile card 网格
+- [ ] **容器嵌套**: 任何新增的 Settings 交互组件（搜索、筛选、操作区），确认放进了正确的网格列容器内，不是悬浮在 shell 外部
