@@ -641,8 +641,10 @@ def _probe_profit_loop(report: Report) -> None:
             skips = mix.get("skip", 0)
             trades = mix.get("trade", 0) + mix.get("scale_in", 0) + mix.get("flip", 0)
             skip_count = skips
-            if skips > 0 and trades == 0:
-                # Check if PI Agent is deliberately self-protecting (distress pattern)
+            if skips > 0:
+                # Check if PI Agent is deliberately self-protecting (distress pattern).
+                # Don't require trades==0: stale trades (>PROPOSAL_STALL_MIN ago) count as
+                # pipeline stalled even if they appear in the 12h window.
                 reason_rows = db.execute(
                     "SELECT reasoning FROM pi_decisions WHERE action='skip' "
                     "AND created_at >= datetime('now','-12 hours') LIMIT 10"
@@ -653,7 +655,7 @@ def _probe_profit_loop(report: Report) -> None:
                         self_protecting = True
                         break
                 if not self_protecting:
-                    attribution = (f" — PI Agent returned skip×{skips}/trade×0 in 12h "
+                    attribution = (f" — PI Agent returned skip×{skips}/trade×{trades} in 12h "
                                    f"(check trading_context balance + regime inputs)")
         except Exception:
             pass
@@ -1282,13 +1284,26 @@ def _probe_content_signal_settlement(report: Report) -> None:
             "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
             (now_iso,),
         ).fetchone()[0]
+        oldest_due = None
+        if overdue > 0:
+            oldest_due = db.execute(
+                "SELECT MIN(due_at) FROM universe_forward_outcomes "
+                "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
+                (now_iso,),
+            ).fetchone()[0]
     except Exception as e:
         report.add("content.signal_settlement", "info", f"probe error: {e}")
         return
     if overdue > 0:
-        report.add("content.signal_settlement", "warn",
-                   f"{overdue} forward outcomes past due_at but still pending — settler stalled",
-                   "the outcome settler job is not closing due outcomes; check its scheduler cadence")
+        oldest_age = _age_minutes(oldest_due)
+        # settle_due() runs every 10 min — tolerate up to 15 min before alarming
+        if oldest_age is not None and oldest_age > 15:
+            report.add("content.signal_settlement", "warn",
+                       f"{overdue} forward outcomes past due_at, oldest {_fmt_age(oldest_age)} — settler stalled",
+                       "outcome settler job is not closing due outcomes; check its scheduler cadence")
+        else:
+            report.add("content.signal_settlement", "info",
+                       f"{overdue} outcomes past due_at, oldest {_fmt_age(oldest_age)} — within settler cadence")
     else:
         report.add("content.signal_settlement", "ok", f"{total} forward outcomes, settlement current")
 
@@ -1370,15 +1385,17 @@ def _probe_audit_chain(report: Report) -> None:
     else:
         errors = result.get("errors", [])
         error_timestamps = result.get("error_timestamps", [])
-        # Splits at the file-lock commit (2026-06-15); pre-lock breaks are historical
-        # concurrent-writer races that were fixed in commit 9ae782e.
-        FILE_LOCK_TS = "2026-06-15T22:00:00"
+        # Splits at effective restart after the file-lock fix. Lock committed 2026-06-15
+        # (9ae782e) but gateway only restarted with new code around 2026-06-25T12:34 UTC —
+        # the last observed concurrent-writer race. Zero breaks since.
+        FILE_LOCK_TS = "2026-06-25T13:00:00"
         ts_padded = list(error_timestamps) + [""] * len(errors)
         post_lock = [e for e, t in zip(errors, ts_padded) if t and t > FILE_LOCK_TS]
         if not post_lock:
             report.add("trust.audit_chain", "info",
-                       f"{len(errors)} historical chain break(s), all pre-lock (before 2026-06-15 "
-                       f"file-lock fix); zero post-lock breaks ({records} records{reanchor_extra})")
+                       f"{len(errors)} historical chain break(s), all pre-effective-lock "
+                       f"(before 2026-06-25T13:00 gateway restart); "
+                       f"zero post-lock breaks ({records} records{reanchor_extra})")
         else:
             detail = f"chain BROKEN — {len(post_lock)} post-lock error(s) in {records} records: {post_lock[:3]}"
             report.add("trust.audit_chain", "warn", detail,
