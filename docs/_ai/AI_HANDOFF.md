@@ -7,7 +7,31 @@
 
 ## Last Updated
 
-2026-06-28 (负反馈闭环 + 可推翻 self-evolve + PI 审计修复 + 4 个 pre-existing 测试修复；以及 AI Berkshire Serenity Lens 整合 — 两条并行工作合并)
+2026-06-29 (Evolve 模块审计 + Learning 5-bug 修复 + Guards 子标签接通)
+
+---
+
+## Recent Change (Evolve 模块 — Learning 修复 + Guards 子标签 — 2026-06-29)
+
+**背景**：全量 Debug 批次完成后，审计 Evolve 模块下所有子功能的健康状况。
+
+**d85f7b3 — fix(learning): 5-bug Learning module fix — settler/guard/spec/docs**：
+1. Signal Settler 挂起 — `settle_due()` 缺独立 scheduler job；新增 `outcome_settler` 15min 定时任务（unconditional）。
+2. Guard UI 缺失 — 新增 `POST /settings/guard` 端点 + Settings 页面 "Guard Promotion" 区域含 auto_promote_enabled 开关。
+3. `spec_lesson_guards.py` — master 已有完整 4 claims（LG-S01~S04）。
+4. LP spec 状态标注 — LP-S01~S06 加 explicit `status="implemented"`。
+5. `docs/design/knowledge_contract.md §6.A1` — 更新为 L-Bug-B 已修复后的真实状态。
+
+**7c21813 — fix(ui): post-trade lessons — click-to-expand drawer + trim ellipsis**：
+Lessons 列表行可点击展开 DetailDrawer，正文超 120 字符显示 "…"。
+
+**6df3999 — feat(evolve): Guards sub-tab + LessonRow TTL fields + stale comment cleanup**：
+1. `client.ts:199` 陈旧注释（称 L-Bug-B 未接通）已移除。
+2. `LessonRow` 类型补齐 `activated_at/dry_run_until/expires_at`；lesson 抽屉渲染 TTL 字段。
+3. Knowledge Base 新增 "Active Guards" 子标签 — 接通后端 `GET /api/knowledge/guards`（之前零前端消费者）。
+
+**Ledger 核实**（大量"待修"项实际早已修复，ledger 未同步）：
+- show_errors yfinance bug、B1 ranker post_trade_review、A9 operator win_rate、L-Bug-D B2/B3 — 均已修复（代码注释明确标注）
 
 ---
 
