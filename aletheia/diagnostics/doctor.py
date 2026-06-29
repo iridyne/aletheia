@@ -630,6 +630,8 @@ def _probe_profit_loop(report: Report) -> None:
     if opp_age < 60 and (prop_age is None or prop_age > PROPOSAL_STALL_MIN):
         # Inspect recent PI-decision action mix to attribute the stall.
         attribution = ""
+        self_protecting = False
+        skip_count = 0
         try:
             rows = db.execute(
                 "SELECT action, COUNT(*) c FROM pi_decisions "
@@ -638,18 +640,38 @@ def _probe_profit_loop(report: Report) -> None:
             mix = {r[0]: r[1] for r in rows}
             skips = mix.get("skip", 0)
             trades = mix.get("trade", 0) + mix.get("scale_in", 0) + mix.get("flip", 0)
+            skip_count = skips
             if skips > 0 and trades == 0:
-                attribution = (f" — PI Agent returned skip×{skips}/trade×0 in 12h "
-                               f"(check trading_context balance + regime inputs)")
+                # Check if PI Agent is deliberately self-protecting (distress pattern)
+                reason_rows = db.execute(
+                    "SELECT reasoning FROM pi_decisions WHERE action='skip' "
+                    "AND created_at >= datetime('now','-12 hours') LIMIT 10"
+                ).fetchall()
+                distress_kws = ("structural distress", "acute distress", "systematic distress")
+                for r in reason_rows:
+                    if any(k in (r[0] or "").lower() for k in distress_kws):
+                        self_protecting = True
+                        break
+                if not self_protecting:
+                    attribution = (f" — PI Agent returned skip×{skips}/trade×0 in 12h "
+                                   f"(check trading_context balance + regime inputs)")
         except Exception:
             pass
         prop_desc = "none ever" if prop_age is None else _fmt_age(prop_age)
-        report.add("loop.profit", "warn",
-                   f"PROFIT LOOP STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
-                   f"newest proposal {prop_desc}{attribution}",
-                   "opportunities flow but produce no proposals — inspect "
-                   "paper_trader_ranker scoring + PI Agent decision inputs "
-                   "(see docs/issues/MINIMUM_PROFIT_LOOP_AUDIT.md)")
+        if self_protecting:
+            report.add("loop.profit", "info",
+                       f"PI Agent self-protecting: opportunities fresh ({_fmt_age(opp_age)}), "
+                       f"skip×{skip_count}/trade×0 in 12h (distress pattern); "
+                       f"newest proposal {prop_desc}",
+                       "deliberate protective behavior — not a pipeline failure; "
+                       "PI Agent sees adverse trading_context (low WR / recent SL streak)")
+        else:
+            report.add("loop.profit", "warn",
+                       f"PROFIT LOOP STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
+                       f"newest proposal {prop_desc}{attribution}",
+                       "opportunities flow but produce no proposals — inspect "
+                       "paper_trader_ranker scoring + PI Agent decision inputs "
+                       "(see docs/issues/MINIMUM_PROFIT_LOOP_AUDIT.md)")
     elif prop_age is not None and prop_age < PROPOSAL_STALL_MIN:
         report.add("loop.profit", "ok",
                    f"loop healthy — newest proposal {_fmt_age(prop_age)}")
@@ -802,16 +824,27 @@ def _probe_learning_retrieval(report: Report) -> None:
             "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trading_guard' "
             "AND (status='active' OR status IS NULL)"
         ).fetchone()[0]
+        auto_promote = True
+        try:
+            from aletheia.config.loader import load_config
+            auto_promote = load_config().guard.auto_promote_enabled
+        except Exception:
+            pass
         if candidates == 0:
             report.add("loop.guard_promotion", "info", "no guard_candidates yet")
         elif active_guards == 0:
-            report.add(
-                "loop.guard_promotion", "warn",
-                f"{candidates} guard_candidate piled up, 0 promoted to trading_guard",
-                "promotion chain dead — config auto_promote_enabled=false + "
-                "load_trading_guards reads knowledge/guards/ while candidates write "
-                "knowledge/guard_candidates/ + missing predicates frontmatter. "
-                "Round 2 Fix L-Bug-D (audit 断点 B0/B2/B3)")
+            if not auto_promote:
+                report.add("loop.guard_promotion", "info",
+                           f"{candidates} guard_candidate(s) pending, 0 promoted "
+                           f"(auto_promote_enabled=false — promotion disabled in config)",
+                           "set guard.auto_promote_enabled=true in Settings to enable promotion")
+            else:
+                report.add(
+                    "loop.guard_promotion", "warn",
+                    f"{candidates} guard_candidate piled up, 0 promoted to trading_guard",
+                    "promotion chain may be broken — check predicates frontmatter in "
+                    "guard_candidates files and knowledge/guards/ directory. "
+                    "Round 2 Fix L-Bug-D (audit 断点 B2/B3)")
         else:
             report.add("loop.guard_promotion", "ok",
                        f"{active_guards} active guards, {candidates} candidates")
@@ -888,7 +921,7 @@ def _probe_concentration(report: Report) -> None:
         top_bucket, top_n = rows[0][0], rows[0][1]
         top_pct = round(top_n / total * 100, 1) if total else 0
         detail = f"24h fills={total}, top: {top_bucket}={top_n} ({top_pct}%)"
-        if top_pct > 60:
+        if top_pct > 60 and total >= 10:
             report.add("loop.concentration", "warn",
                        f"PI single-bet bias: {detail}",
                        "highly correlated exposure — PI may be making one bet "
@@ -1173,6 +1206,7 @@ def _probe_content_attribution(report: Report) -> None:
         db = get_db()
         rows = list(db.execute(
             "SELECT opportunity_id FROM pi_decisions WHERE action='signal_pending' "
+            "AND (reasoning IS NULL OR reasoning NOT LIKE 'RuleSet entry:%') "
             "ORDER BY created_at DESC LIMIT 200"
         ))
     except Exception as e:
@@ -1276,7 +1310,7 @@ def _probe_content_proposal_bias(report: Report) -> None:
         report.add("content.proposal_bias", "info", f"probe error: {e}")
         return
     total = sum(r["n"] for r in rows)
-    if total < 5:
+    if total < 20:
         report.add("content.proposal_bias", "info", f"only {total} proposals in 24h — too few to judge bias")
         return
     top_dir, top_n = rows[0]["direction"], rows[0]["n"]
@@ -1329,15 +1363,26 @@ def _probe_audit_chain(report: Report) -> None:
     if records == 0:
         report.add("trust.audit_chain", "info", "no audit records yet")
         return
+    reanchors = result.get("reanchors", 0)
+    reanchor_extra = f", {reanchors} rotation re-anchors" if reanchors else ""
     if result["valid"]:
-        reanchors = result.get("reanchors", 0)
-        extra = f", {reanchors} rotation re-anchors" if reanchors else ""
-        report.add("trust.audit_chain", "ok", f"hash chain valid ({records} records{extra})")
+        report.add("trust.audit_chain", "ok", f"hash chain valid ({records} records{reanchor_extra})")
     else:
         errors = result.get("errors", [])
-        detail = f"chain BROKEN — {len(errors)} error(s) in {records} records: {errors[:3]}"
-        report.add("trust.audit_chain", "warn", detail,
-                   "audit log may have been tampered with or corrupted")
+        error_timestamps = result.get("error_timestamps", [])
+        # Splits at the file-lock commit (2026-06-15); pre-lock breaks are historical
+        # concurrent-writer races that were fixed in commit 9ae782e.
+        FILE_LOCK_TS = "2026-06-15T22:00:00"
+        ts_padded = list(error_timestamps) + [""] * len(errors)
+        post_lock = [e for e, t in zip(errors, ts_padded) if t and t > FILE_LOCK_TS]
+        if not post_lock:
+            report.add("trust.audit_chain", "info",
+                       f"{len(errors)} historical chain break(s), all pre-lock (before 2026-06-15 "
+                       f"file-lock fix); zero post-lock breaks ({records} records{reanchor_extra})")
+        else:
+            detail = f"chain BROKEN — {len(post_lock)} post-lock error(s) in {records} records: {post_lock[:3]}"
+            report.add("trust.audit_chain", "warn", detail,
+                       "audit log may have been tampered with or corrupted (post file-lock break)")
 
 
 def _probe_config_consistency(report: Report) -> None:

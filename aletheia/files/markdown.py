@@ -2,6 +2,7 @@
 
 import os
 import re
+import yaml
 from pathlib import Path
 from datetime import datetime
 
@@ -70,8 +71,7 @@ def _write_knowledge_file(subdir: str, title: str, content: str, metadata: dict 
     header = f"# {title}\n\n"
     if metadata:
         header += "---\n"
-        for k, v in metadata.items():
-            header += f"{k}: {v}\n"
+        header += yaml.dump(metadata, default_flow_style=False, allow_unicode=True)
         header += "---\n\n"
 
     tmp = path.with_suffix(".tmp")
