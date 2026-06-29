@@ -1508,7 +1508,7 @@ def _probe_serenity_pipeline(report: Report) -> None:
                    "check serenity_research_runner scheduler job is registered and running")
         return
     age = _age_minutes(row["newest"])
-    detail = f"last run {_fmt_age(age)} ago, {active} active opportunities"
+    detail = f"last run {_fmt_age(age)}, {active} active opportunities"
     if age is not None and age > 720:
         report.add("data.serenity_pipeline", "warn",
                    f"Serenity research stale: {detail}",
@@ -1534,7 +1534,7 @@ def _probe_volume_ranking(report: Report) -> None:
                    "universe ordering falls back to static list; check volume_scanner scheduler job")
         return
     age = _age_minutes(row["newest"])
-    detail = f"volume ranking snapshot {_fmt_age(age)} ago"
+    detail = f"volume ranking snapshot {_fmt_age(age)}"
     if age is not None and age > 60:
         report.add("data.volume_ranking", "warn",
                    f"volume ranking stale: {detail}",
