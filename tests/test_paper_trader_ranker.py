@@ -271,3 +271,31 @@ def test_no_evidence_no_penalty():
         {"confidence_score": 80}, None, factor_signal, "high", {}
     )
     assert score_no_evidence == score_empty_evidence
+
+
+def test_regime_scoring_is_direction_aware():
+    """Bear regime should reward shorts and penalize longs; bull should do the opposite."""
+    from unittest.mock import patch
+    from aletheia.agents.paper_trader_ranker import _compute_trade_score
+    from aletheia.regime.detector import MarketRegime
+
+    bear = MarketRegime(state="bear", confidence=0.7, long_bias=0.25, short_bias=0.75)
+    bull = MarketRegime(state="bull", confidence=0.7, long_bias=0.75, short_bias=0.25)
+    factor_signal = {"status": "active"}
+    opp = {"confidence_score": 80}
+
+    with patch("aletheia.agents.paper_trader_ranker.get_current_regime", return_value=bear):
+        score_bear_short = _compute_trade_score(opp, None, factor_signal, "high", None, direction="short")
+        score_bear_long = _compute_trade_score(opp, None, factor_signal, "high", None, direction="long")
+
+    with patch("aletheia.agents.paper_trader_ranker.get_current_regime", return_value=bull):
+        score_bull_long = _compute_trade_score(opp, None, factor_signal, "high", None, direction="long")
+        score_bull_short = _compute_trade_score(opp, None, factor_signal, "high", None, direction="short")
+
+    # Bear: shorts score higher than longs (+15 vs -20 delta = 35 pt gap)
+    assert score_bear_short > score_bear_long
+    assert score_bear_short - score_bear_long == 35.0
+
+    # Bull: longs score higher than shorts (+15 vs -15 delta = 30 pt gap)
+    assert score_bull_long > score_bull_short
+    assert score_bull_long - score_bull_short == 30.0

@@ -367,12 +367,17 @@ def _compute_trade_score(
         elif drift_status == "paper_confirming":
             score += 10
 
-    # Regime-aware scoring: penalize mismatch, bonus for alignment
+    # Regime-aware scoring: reward direction-aligned candidates, penalize mismatches.
+    # "bear + short" and "bull + long" are aligned; the opposite is a mismatch.
+    # "volatile" suppresses both directions slightly; "sideways" is neutral.
     regime = get_current_regime()
-    if regime.state in ("bear", "volatile") and regime.confidence > 0.5:
-        score -= 20
-    elif regime.state == "bull" and regime.confidence > 0.5:
-        score += 10
+    if regime.confidence > 0.5:
+        if regime.state == "bear":
+            score += 15 if direction == "short" else -20
+        elif regime.state == "bull":
+            score += 15 if direction == "long" else -15
+        elif regime.state == "volatile":
+            score -= 10  # both directions carry elevated risk
 
     # P2: Executable RuleSet bonus — verified strategies get preference
     if strategy_has_ruleset:
