@@ -133,6 +133,14 @@ class TradeProposal(BaseModel):
     # path.
     trade_school: str = "short_term"
     created_at: str = Field(default_factory=_utcnow)
+    # TaG hash chain (P0-1, 2026-06-29) — borrow from OpenAlice TradingGit.
+    # commit_hash = SHA-256 of canonical JSON over immutable proposal fields
+    # (everything except status + commit_hash itself) + parent_hash, sliced to
+    # 16 hex chars (64-bit collision space). parent_hash links to the previous
+    # row's commit_hash forming a global single chain. Both NULL on legacy rows
+    # written before P0-1 landed. See docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md.
+    commit_hash: str | None = None
+    parent_hash: str | None = None
 
 
 class RiskDecision(BaseModel):

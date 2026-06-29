@@ -1501,6 +1501,10 @@ _ADDITIVE_COLUMNS = [
     ("bear_case", "pi_decisions", "TEXT DEFAULT ''"),
     # P1 (2026-06-28, AI Berkshire belief decomposition): structured assumption list.
     ("key_assumptions", "pi_decisions", "TEXT DEFAULT '[]'"),
+    # P0-1 (2026-06-29, OpenAlice TaG borrow): proposal-level hash chain.
+    # NULL on legacy rows; insert_trade_proposal() fills both for new writes.
+    ("commit_hash", "trade_proposals", "TEXT"),
+    ("parent_hash", "trade_proposals", "TEXT"),
 ]
 
 
@@ -1613,6 +1617,7 @@ def _ensure_runtime_baseline(db) -> None:
 
 _CORE_INDEXES_SQL = """
 CREATE INDEX IF NOT EXISTS idx_proposals_strategy_id ON trade_proposals(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_proposals_commit_hash ON trade_proposals(commit_hash);
 CREATE INDEX IF NOT EXISTS idx_orders_proposal_id ON orders(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_fills_order_id ON fills(order_id);
 CREATE INDEX IF NOT EXISTS idx_risk_decisions_proposal_id ON risk_decisions(proposal_id);

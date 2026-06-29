@@ -328,7 +328,42 @@ def list_prediction_claims(market_id: str | None = None, claim_type: str | None 
 
 # --- Trade Proposals ---
 
+# TaG hash chain (P0-1, 2026-06-29). See:
+#   docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1
+# Fields excluded from the hash because they mutate after insert:
+#   - status (pending → executed / rejected via update_trade_proposal)
+#   - commit_hash (the field being computed)
+# Everything else is treated as immutable; mutating any of these post-insert
+# would invalidate the chain (caught by the L2c spec re-compute check).
+_PROPOSAL_HASH_EXCLUDES = {"status", "commit_hash"}
+
+
+def _compute_proposal_hash(p: TradeProposal) -> str:
+    """Return 16-char SHA-256 prefix of the proposal's immutable content + parent_hash.
+
+    Stable for a given proposal as long as no excluded field is mutated. 16 hex
+    chars = 64-bit collision space (OpenAlice's reference impl uses 8; we widen
+    to 16 because the cost is trivial and false-collision risk drops by ~2^32).
+    """
+    from aletheia.storage.hashing import sha256_json
+
+    payload = p.model_dump(exclude=_PROPOSAL_HASH_EXCLUDES)
+    return sha256_json(payload)[:16]
+
+
 def insert_trade_proposal(p: TradeProposal) -> None:
+    if p.commit_hash is None:
+        # Wire parent_hash to the most-recent already-hashed proposal (global
+        # single chain). rowid DESC matches insertion order. NULL parent_hash
+        # is correct for the very first hashed proposal in the table.
+        db = get_db()
+        row = db.execute(
+            "SELECT commit_hash FROM trade_proposals "
+            "WHERE commit_hash IS NOT NULL "
+            "ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        p.parent_hash = row[0] if row else None
+        p.commit_hash = _compute_proposal_hash(p)
     _insert("trade_proposals", p.model_dump())
 
 

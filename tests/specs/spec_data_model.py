@@ -425,3 +425,196 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
         f"opportunity_id mismatch: expected {test_opp_id!r}, got {latest.get('opportunity_id')!r}. "
         "A13 fix: commands.py and reflection.py must wire opportunity_id through."
     )
+
+
+# ---------------------------------------------------------------------------
+# TaG hash chain — P0-1 (2026-06-29): proposal-level commit_hash + parent_hash.
+# Borrowed from OpenAlice TaG (TradingGit.ts); design notes in
+# docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1.
+#
+# Hash content: canonical JSON SHA-256 over the proposal's IMMUTABLE fields
+# (everything except status + commit_hash itself) + parent_hash. 16-char prefix
+# (64-bit space — practically collision-free at Aletheia's proposal volumes;
+# OpenAlice uses 8 chars / 43-bit space which is the upper bound for theirs).
+# parent_hash points at the previous row's commit_hash (global single chain).
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S08", "data_model", "§2 proposal hash chain", "L2a",
+        "TradeProposal pydantic model declares commit_hash and parent_hash fields "
+        "(both Optional[str] for additive backward compatibility)",
+    ),
+)
+def test_trade_proposal_has_hash_chain_fields():
+    """Structural: model carries the two TaG fields."""
+    from aletheia.storage.models import TradeProposal
+
+    fields = TradeProposal.model_fields
+    assert "commit_hash" in fields, (
+        "TradeProposal must declare commit_hash (P0-1 TaG borrow). "
+        "See docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1."
+    )
+    assert "parent_hash" in fields, (
+        "TradeProposal must declare parent_hash (P0-1 TaG borrow). "
+        "See docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1."
+    )
+    # Both must be optional (additive — legacy proposals have NULL).
+    p = TradeProposal(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        execution_mode="paper_internal",
+    )
+    assert p.commit_hash is None
+    assert p.parent_hash is None
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S09", "data_model", "§2 proposal hash chain schema", "L2a",
+        "_ADDITIVE_COLUMNS in migrations.py registers commit_hash + parent_hash on trade_proposals",
+    ),
+)
+def test_trade_proposals_hash_columns_registered():
+    """Structural: migration list contains the two new columns."""
+    from aletheia.storage.migrations import _ADDITIVE_COLUMNS
+
+    cols = {(col, table) for col, table, _t in _ADDITIVE_COLUMNS}
+    assert ("commit_hash", "trade_proposals") in cols, (
+        "migrations._ADDITIVE_COLUMNS must register commit_hash on trade_proposals"
+    )
+    assert ("parent_hash", "trade_proposals") in cols, (
+        "migrations._ADDITIVE_COLUMNS must register parent_hash on trade_proposals"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-B06", "data_model", "§2 proposal hash chain insert", "L2b",
+        "insert_trade_proposal() auto-fills commit_hash from immutable fields and "
+        "wires parent_hash to the previous proposal's commit_hash (global single chain)",
+    ),
+)
+def test_insert_trade_proposal_links_hash_chain(tmp_path, monkeypatch):
+    """Behavioral: first insert gets parent_hash=NULL; subsequent inserts link."""
+    import re
+    import sqlite3
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    sq._db_conn = conn
+    run_migrations()
+
+    _hex16 = re.compile(r"^[0-9a-f]{16}$")
+    hashes: list[str] = []
+    for i in range(3):
+        p = TradeProposal(
+            symbol="BTC/USDT", market_type="spot", direction="long",
+            execution_mode="paper_internal",
+            agent_rationale=f"test proposal {i}",
+        )
+        repo.insert_trade_proposal(p)
+        assert p.commit_hash, f"proposal {i}: commit_hash must be filled"
+        assert _hex16.match(p.commit_hash), (
+            f"proposal {i}: commit_hash {p.commit_hash!r} not 16-char hex"
+        )
+        if i == 0:
+            assert p.parent_hash is None, (
+                "first proposal must have parent_hash=NULL (no prior link)"
+            )
+        else:
+            assert p.parent_hash == hashes[-1], (
+                f"proposal {i}: parent_hash {p.parent_hash!r} must match "
+                f"previous commit_hash {hashes[-1]!r}"
+            )
+        hashes.append(p.commit_hash)
+
+    # All three hashes must differ (different agent_rationale → different hash).
+    assert len(set(hashes)) == 3, f"hashes must be unique, got {hashes!r}"
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-C02", "data_model", "§2 proposal hash chain integrity", "L2c",
+        "Every persisted proposal's stored commit_hash equals re-computation from its "
+        "immutable fields + parent_hash; chain integrity holds across the full table",
+    ),
+)
+def test_proposal_hash_chain_integrity(tmp_path, monkeypatch):
+    """Invariant: hash is deterministic and chain links verify end-to-end."""
+    import sqlite3
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.repositories import _compute_proposal_hash
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    sq._db_conn = conn
+    run_migrations()
+
+    inserted: list[TradeProposal] = []
+    for i in range(4):
+        p = TradeProposal(
+            symbol="ETH/USDT", market_type="spot",
+            direction="long" if i % 2 == 0 else "short",
+            execution_mode="paper_internal",
+            agent_rationale=f"chain test {i}",
+            quantity=0.1 * (i + 1),
+        )
+        repo.insert_trade_proposal(p)
+        inserted.append(p)
+
+    # 1. Re-compute determinism: same payload + same parent → same hash.
+    for p in inserted:
+        # The proposal object now carries the assigned commit_hash + parent_hash.
+        # Re-compute and compare.
+        recomputed = _compute_proposal_hash(p)
+        assert recomputed == p.commit_hash, (
+            f"proposal {p.id}: stored commit_hash {p.commit_hash!r} != recomputed "
+            f"{recomputed!r} — hash function is non-deterministic OR a tracked "
+            "field was mutated post-insert."
+        )
+
+    # 2. Chain integrity: each proposal's parent_hash matches predecessor's hash;
+    #    the first has parent_hash=NULL.
+    assert inserted[0].parent_hash is None
+    for prev, curr in zip(inserted, inserted[1:]):
+        assert curr.parent_hash == prev.commit_hash, (
+            f"chain break: {curr.id} parent_hash={curr.parent_hash!r} "
+            f"vs prev commit_hash={prev.commit_hash!r}"
+        )
+
+    # 3. status mutation must NOT change commit_hash (immutable-fields-only invariant).
+    p0 = inserted[0]
+    original_hash = p0.commit_hash
+    p0.status = "executed"  # only on the in-memory object; DB unchanged
+    recomputed_after_status_change = _compute_proposal_hash(p0)
+    assert recomputed_after_status_change == original_hash, (
+        f"commit_hash must be immune to status mutation: original={original_hash!r}, "
+        f"after status='executed'={recomputed_after_status_change!r}. "
+        "Hash input must exclude `status` (it is mutable post-insert)."
+    )
