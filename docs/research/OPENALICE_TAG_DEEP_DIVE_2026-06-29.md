@@ -152,6 +152,50 @@ AI stage 了 3 个止损意图，进程在 commit 前 OOM/重启——这 3 个�
 
 ---
 
+## 八点五、Vibe Trading 帖（#4）交叉核查（2026-06-29 同会话）
+
+owner 追问让我也参考 https://www.openalice.ai/blog/traderalice-cursor-for-vibe-trading（2025-12-01 帖、TaG 预告帖）。这是 OpenAlice 整体产品定位帖，比 TaG intro 帖更广。
+
+**披露的额外内容**：
+- **Vibe Trading 哲学**：用户自然语言表达意图，AI agent 处理结构性复杂度（数据源 / 撮合 / 风控 / 策略设计），类比 Cursor 的 Vibe Coding。
+- **Agentic Quant 定位**：保留量化能力，让 AI 决定何时与如何使用（区别于"预定义策略 + 信号触发"的传统量化）。
+- **三个具体能力声明**：
+  - AI-Native News Retrieval（"grep for financial news"）
+  - DataFrame + LLM 写 Pandas / Excel 公式直接算指标
+  - Trade Primitive Generator + "auto-learn its effect"（声称构造复合订单 + 自动学习效果）
+- **Sandbox 双模式**：live（连真实市场） + backtest（虚拟世界，历史数据回放）。
+- **ReAct framework** 作为底层 reasoning 范式（链接 arxiv.org/abs/2210.03629）。
+
+**源码交叉核查（grep `_refs/OpenAlice/src services`）**：
+
+| 博客声明 | 源码证据 | 结论 |
+|---|---|---|
+| Trade Primitive "auto-learn effect" | `learn.*effect` / `effect.*memo` grep 命中**零** | **营销话术，无实质代码**——`primitive` 命中的几个文件是 broker/CCXT 通用模板 |
+| chat-driven 自然语言指令 | `src/core/{agent-work,session,compaction}.ts` + `ui/src/components/workspace/Chat*` 一整套 | 真实——OpenAlice 是 chat-driven LLM agent |
+| Context compaction | `src/core/compaction.ts` 308 行，注释 `"modeled after Claude Code CLI's internal compact mechanism"` | 真实——200k token 满了召唤 LLM 总结 |
+| ReAct loop | 源码用 `agent-work-listener.ts` + `tool/*` 工具调用循环 | 真实 |
+| Backtest 虚拟世界 | 源码有完整 backtest 模块 | 真实 |
+| AI-Native News Retrieval | 源码无独立 news collector 模块（声称指 tool 抽象） | **能力存在但话术夸张** |
+
+**对 Aletheia 的借鉴评估**：
+
+| 候选 | Aletheia 现状 | 判定 |
+|---|---|---|
+| Vibe Trading 哲学 | 用户在 dashboard 设定 strategy 参数 + 自然语言备注，AI 决策；已经是 Vibe-Trading 的一种形态 | **概念已对齐**，无需引入新话术 |
+| Agentic Quant 定位 | risk engine（量化约束）+ PI agent（LLM 决策）+ Strategy Pool（量化筛选）= 教科书 Agentic Quant | **Aletheia 已经是**，只是没用这个词 |
+| AI-Native News Retrieval | `news_items` 表 + dedup_key + sentiment + impact_summary + analyzed_at | **已有等价物** |
+| LLM 写 Pandas 直接算指标 | 指标预算好（RSI/ATR/funding rate/OI 等）喂给 LLM | **拒绝借鉴**——让 LLM 写可执行 pandas 代码踩 INDEX.md §4 红线（agent 生成可执行代码） |
+| Trade Primitive + effect learning | broker SL/TP 已有（最近修过 `adopt_position` 缺失）；effect-learning 闭环不存在 | **拒绝借鉴**——博客是营销话术，无实质代码；且 Aletheia learning loop 现产噪音（memory `aletheia-learning-loop-noise-not-signal`），加新闭环雪上加霜 |
+| Sandbox 双模式 | paper / live + `backtest_runs` / `backtest_trades` + Strategy Pool 历史回测 | **已有等价物** |
+| ReAct 自由 tool loop | PI agent stateless → JSON 输出（不调工具） | **拒绝借鉴**——与 trust boundary 设计冲突（agent 不可自由 tool-use） |
+| chat-driven UI + compaction | dashboard-driven + scheduler；PI agent 无聊天会话 | **拒绝借鉴**——架构哲学不同；compaction 是 chat-LLM 的标配，stateless 决策不需要 |
+
+**结论**：**这篇博客的实质工程能力对 Aletheia 没有新可落地的借鉴项**。它的价值在哲学/定位层——"Vibe Trading"和"Agentic Quant"两个定位话术，恰好命中 Aletheia 已经在做的事。
+
+研究无新增实施工作。P0-1 已是这轮研究的唯一可落地产出。
+
+---
+
 ## 八、给 owner 的一句话总结
 
 **OpenAlice TaG 真正给 Aletheia 的，不是 git 比喻这层包装，而是两个工程纪律：**
