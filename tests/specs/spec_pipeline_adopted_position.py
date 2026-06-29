@@ -501,3 +501,95 @@ def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
     assert closed_row["close_reason"] == "stop_loss", (
         f"Expected close_reason='stop_loss', got {closed_row['close_reason']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# PL-ADOPT-09  L2b  reconcile audit event carries TaG commit_hash (P1-2)
+# Wires position_adopted audit events into the proposal hash chain established
+# by P0-1 (DM-S08/S09/B06/C02). See docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md
+# §五 P1-2.
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-09", "pipeline_adopted_position", "§9 audit_commit_hash", "L2b",
+        "adopt_position() writes a position_adopted audit_events row whose "
+        "after_state.commit_hash equals the synthesized proposal's commit_hash "
+        "(16-char hex) — chains the reconcile event into the TaG proposal hash chain.",
+    ),
+)
+def test_adopted_audit_carries_commit_hash(tmp_path, monkeypatch):
+    """audit event must reference the same commit_hash the proposal got at insert time.
+
+    P1-2 borrow from OpenAlice TaG: reconcile event becomes a first-class participant
+    in the proposal hash chain instead of needing a secondary `SELECT commit_hash
+    FROM trade_proposals WHERE id=?` to correlate. Hash is filled by
+    insert_trade_proposal() inside the transaction block at position_reconciler.py
+    ~line 357, so it is available when write_audit() fires at ~line 361.
+    """
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+
+    try:
+        import aletheia.files.jsonl as jsonl_mod
+        jsonl_mod._last_audit_hash = None
+    except Exception:
+        pass
+
+    from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage import repositories as repo
+    import json
+    import re
+
+    _hex16 = re.compile(r"^[0-9a-f]{16}$")
+
+    exchange_pos = _make_exchange_pos(
+        symbol="ETH/USDT", side="long", entry_price=3200.0,
+    )
+    ids = adopt_position(exchange_pos, account_mode="demo")
+
+    # Ground truth: the proposal's stored commit_hash.
+    prop = repo.get_trade_proposal(ids["proposal_id"])
+    assert prop is not None, "proposal row must exist after adopt_position()"
+    expected_hash = prop.get("commit_hash")
+    assert expected_hash and _hex16.match(expected_hash), (
+        f"proposal.commit_hash must be 16-char hex (P0-1), got {expected_hash!r}"
+    )
+
+    # The audit event's after_state must carry the same hash.
+    db = get_db()
+    row = db.execute(
+        "SELECT after_state FROM audit_events "
+        "WHERE event_type='position_adopted' AND entity_id=?",
+        (ids["position_id"],),
+    ).fetchone()
+    assert row is not None, (
+        "No audit_events row for position_adopted — write_audit() chain broken."
+    )
+    after_raw = row["after_state"]
+    assert after_raw, "after_state must be non-empty"
+    after = json.loads(after_raw) if isinstance(after_raw, str) else after_raw
+    audit_hash = after.get("commit_hash")
+    assert audit_hash == expected_hash, (
+        f"audit after_state.commit_hash {audit_hash!r} must equal "
+        f"proposal.commit_hash {expected_hash!r}. "
+        "Fix: pass proposal.commit_hash into the write_audit() after dict "
+        "inside adopt_position()."
+    )
+
+    # parent_hash must also be present and equal to the proposal's parent_hash
+    # (None when this is the first hashed proposal in the table — true in this
+    # fresh-DB test fixture). dict.get returning None ≠ key-absent, so check
+    # key presence explicitly to catch the "field missing" failure mode.
+    assert "parent_hash" in after, (
+        "audit after_state must include parent_hash (P1-2): "
+        "even when NULL, the key must be present so chain consumers can "
+        "distinguish 'genesis link' from 'forgotten to set'."
+    )
+    assert after.get("parent_hash") == prop.get("parent_hash"), (
+        f"audit after_state.parent_hash {after.get('parent_hash')!r} must equal "
+        f"proposal.parent_hash {prop.get('parent_hash')!r}."
+    )

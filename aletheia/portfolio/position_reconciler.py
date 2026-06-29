@@ -370,6 +370,13 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             "source": "adopted", "proposal_id": proposal.id, "order_id": order.id,
             "stop_price": _adopted_stop, "take_profit_price": _adopted_tp,
             "stop_source": "adopted_default_pct",
+            # P1-2 (2026-06-29, OpenAlice TaG borrow): chain the reconcile event
+            # into the proposal hash chain. proposal.commit_hash + parent_hash
+            # were filled in-place by insert_trade_proposal() inside the
+            # transaction block above, so they're available verbatim here. See
+            # PL-ADOPT-09 and docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md.
+            "commit_hash": proposal.commit_hash,
+            "parent_hash": proposal.parent_hash,
         },
         "message": rationale,
     })
