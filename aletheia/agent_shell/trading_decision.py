@@ -690,7 +690,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "# Layer 2: Short-term Memory (past 7 days)",
         "",
     ]
-    if reflection:
+    if reflection and not _bypass:
         parts.append("## Last Decision Reflection")
         parts.append(f"  {reflection}")
         parts.append("")
