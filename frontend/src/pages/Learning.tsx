@@ -236,7 +236,7 @@ type LessonRow = {
 }
 const lessonCol = createColumnHelper<LessonRow>()
 const lessonColumns = [
-  lessonCol.accessor('summary', { header: 'Summary', cell: info => <span>{(info.getValue() || '').slice(0, 140)}</span> }),
+  lessonCol.accessor('summary', { header: 'Summary', cell: info => <span>{(info.getValue() || '').slice(0, 120)}{(info.getValue() || '').length > 120 ? '…' : ''}</span> }),
   lessonCol.accessor('category', { header: 'Category', cell: info => <Badge tone="blue">{humanize(info.getValue() || '—')}</Badge> }),
   // severity enum is warning/critical/info (NOT high/medium/low) — map by meaning, not literal.
   lessonCol.accessor('severity', { header: 'Severity', cell: info => <Badge tone={severityTone(info.getValue())}>{humanize(info.getValue() || '—')}</Badge> }),
@@ -247,6 +247,7 @@ const lessonColumns = [
 function KnowledgeTab() {
   const [tab, setTab] = useState<typeof KB_TABS[number]['key']>('research')
   const [selected, setSelected] = useState<KnowledgeItem | null>(null)
+  const [selectedLesson, setSelectedLesson] = useState<LessonRow | null>(null)
   const active = KB_TABS.find(t => t.key === tab)!
   const { data = [] } = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
   const isLessons = tab === 'lessons'
@@ -276,11 +277,29 @@ function KnowledgeTab() {
       </div>
       <Card>
         {isLessons ? (
-          <DataTable data={rows as LessonRow[]} columns={lessonColumns} emptyMessage="No lessons yet." />
+          <DataTable data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
         ) : (
           <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
         )}
       </Card>
+
+      <DetailDrawer open={!!selectedLesson} onClose={() => setSelectedLesson(null)} title="Post-Trade Lesson">
+        {selectedLesson && (
+          <>
+            <DrawerSection label="Summary">
+              <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{selectedLesson.summary || '—'}</p>
+            </DrawerSection>
+            <DrawerSection label="Metadata">
+              <DrawerField label="Category" value={<Badge tone="blue">{humanize(selectedLesson.category || '—')}</Badge>} />
+              <DrawerField label="Severity" value={<Badge tone={severityTone(selectedLesson.severity)}>{humanize(selectedLesson.severity || '—')}</Badge>} />
+              <DrawerField label="Status" value={<StatusBadge status={selectedLesson.status || ''} />} />
+              <DrawerField label="Source Type" value={humanize(selectedLesson.source_type || '—')} />
+              <DrawerField label="Source ID" value={selectedLesson.source_id} mono />
+              <DrawerField label="Created" value={fmtTimestamp(selectedLesson.created_at)} mono />
+            </DrawerSection>
+          </>
+        )}
+      </DetailDrawer>
 
       <DetailDrawer open={!!selected && !isLessons} onClose={() => setSelected(null)} title={selected?.title || 'Knowledge Item'}>
         {selected && (
