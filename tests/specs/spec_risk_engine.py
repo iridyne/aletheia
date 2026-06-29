@@ -780,3 +780,49 @@ def test_per_symbol_cumulative_notional_cap():
     repo.insert_trade_proposal(under)
     res_under = eng.evaluate_proposal(under)
     assert not any("exceeds_per_symbol_notional" in v for v in res_under.violations), res_under.violations
+
+
+# ---------------------------------------------------------------------------
+# SAME-SYMBOL DEDUP (§6b) — cross-broker duplicate position guard
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("RE-B16", "risk_engine_contract", "§6b same-symbol dedup", "L2b",
+              "A demo proposal is rejected when an open demo position already exists "
+              "for the same symbol on any broker (prevents cross-broker duplicates). "
+              "A different-symbol proposal must not be affected."),
+)
+def test_same_symbol_duplicate_position_rejected():
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import Position, TradeProposal
+    from aletheia.storage import repositories as repo
+
+    # Existing demo position for ETHUSDT (paper_internal broker).
+    repo.insert_position(Position(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="short",
+        quantity=0.01, entry_price=1580.0, current_price=1567.0,
+        execution_mode="paper_internal", status="open",
+    ))
+
+    # New proposal for same symbol on a different demo broker → must be rejected.
+    dup = TradeProposal(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="short",
+        execution_mode="okx_demo", quantity=0.05, price=1570.0,
+    )
+    repo.insert_trade_proposal(dup)
+    res = eng.evaluate_proposal(dup)
+    assert any("symbol_already_open" in v for v in res.violations), (
+        f"Expected symbol_already_open violation, got: {res.violations}"
+    )
+
+    # Proposal for a different symbol on same broker → must NOT trigger this violation.
+    other = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="short",
+        execution_mode="okx_demo", quantity=0.001, price=60000.0,
+    )
+    repo.insert_trade_proposal(other)
+    res_other = eng.evaluate_proposal(other)
+    assert not any("symbol_already_open" in v for v in res_other.violations), (
+        f"Different symbol should not trigger same-symbol dedup: {res_other.violations}"
+    )

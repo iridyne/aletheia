@@ -29,7 +29,7 @@ from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_b
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.execution.paper_tools import create_paper_proposal
-from aletheia.storage.repositories import update_opportunity, get_strategy
+from aletheia.storage.repositories import update_opportunity, get_strategy, list_positions
 from aletheia.trading.market_data import latest_snapshot
 from aletheia.trading.ruleset_scanner import RuleSetSignal, scan_active_rulesets
 
@@ -83,6 +83,11 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
 
     execution_mode = cfg.exchange.paper_execution_mode
 
+    # Snapshot of currently open symbols — used to skip redundant signal writes.
+    open_symbols: set[str] = {p["symbol"] for p in list_positions(status="open")}
+    # Track symbols that received a signal_pending write in this cycle (cross-path dedup).
+    cycle_pending_symbols: set[str] = set()
+
     # ── Path A: RuleSet-driven signals (multi-strategy parallel) ──────────────
     try:
         ruleset_signals = scan_active_rulesets(execution_mode=execution_mode)
@@ -95,8 +100,13 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             if sig.signal_type == "exit" and sig.position_id:
                 out = _handle_ruleset_exit(sig, run_id)
             else:
+                if sig.symbol in open_symbols:
+                    outputs.append(f"skip_existing_position:{sig.symbol}")
+                    continue
                 sig_venue = _resolve_venue(sig.strategy_id, execution_mode)
                 out = _handle_ruleset_entry(sig, cfg, sig_venue, run_id)
+                if out:
+                    cycle_pending_symbols.add(sig.symbol)
             if out:
                 outputs.append(out)
         except Exception as e:
@@ -135,6 +145,10 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     signals_written = 0
     for candidate in eligible[:3]:
         try:
+            sym = candidate["symbol"]
+            if sym in open_symbols or sym in cycle_pending_symbols:
+                outputs.append(f"skip_existing_position:{sym}")
+                continue
             from aletheia.storage.models import PiDecision
             from aletheia.storage.repositories import insert_pi_decision
             pi_dec = PiDecision(
@@ -164,6 +178,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                     update_opportunity(candidate["opportunity_id"], status="reviewed")
                 except Exception as _e:
                     logger.debug("opportunity reviewed-mark failed: %s", _e)
+            cycle_pending_symbols.add(sym)
             signals_written += 1
             try:
                 from aletheia.agent_runtime.pi_daemon import notify_pi_daemon

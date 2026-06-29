@@ -138,6 +138,19 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
         if len(demo_positions) >= risk.max_open_positions_demo:
             violations.append(f"max_demo_positions_reached:{len(demo_positions)}")
 
+    # 6b. No duplicate open position for same symbol in the same pool (demo or live).
+    #     Prevents the system from opening a second position when one already exists
+    #     on a different broker in the same pool (e.g. paper_internal + okx_demo both
+    #     holding ETHUSDT short at the same time).
+    prop_is_live = _is_live(proposal.execution_mode)
+    same_symbol_open = [
+        p for p in open_positions
+        if p.get("symbol") == proposal.symbol
+        and _is_live(p.get("execution_mode", "")) == prop_is_live
+    ]
+    if same_symbol_open:
+        violations.append(f"symbol_already_open:{proposal.symbol}")
+
     # 7. Short allowed
     if proposal.direction == "short":
         if _is_live(proposal.execution_mode) and not risk.allow_short_live:
