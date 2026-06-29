@@ -1047,27 +1047,32 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 }
 .charts-source-label { font-size: 0.7rem; color: var(--muted); }
 .charts-updated { font-size: 0.65rem; color: var(--faint); margin-left: auto; }
-.charts-watchlist {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--space-2); margin-bottom: var(--space-3);
+/* symbol strip — compact horizontal scrollable selector */
+.symbol-strip {
+  display: flex; gap: var(--space-1); overflow-x: auto; padding-bottom: var(--space-2);
+  margin-bottom: var(--space-3); scrollbar-width: thin;
 }
-.charts-watchlist-card { cursor: pointer; padding: var(--space-2) var(--space-3); margin-bottom: 0; transition: border-color 0.1s, background 0.1s, transform 60ms; }
-.charts-watchlist-card:hover { background: var(--surface-2); }
-.charts-watchlist-card:active { transform: scale(0.98); }
-.charts-watchlist-card.active { border-color: var(--accent); background: rgba(34,211,238,0.05); }
-.charts-card-head {
-  display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-1);
+.symbol-strip::-webkit-scrollbar { height: 3px; }
+.symbol-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.symbol-chip {
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: 0.25rem 0.6rem; border-radius: 20px; border: 1px solid var(--border);
+  background: var(--surface); cursor: pointer; white-space: nowrap;
+  font-size: 0.72rem; transition: border-color 0.1s, background 0.1s;
+  flex-shrink: 0;
 }
-.charts-card-symbol { font-size: 0.72rem; color: var(--faint); }
-.charts-card-price { font-size: 1rem; font-weight: 600; }
+.symbol-chip:hover { background: var(--surface-2); border-color: var(--muted); }
+.symbol-chip.active { border-color: var(--accent); background: rgba(34,211,238,0.06); }
+.symbol-chip-name { font-weight: 600; color: var(--text); font-size: 0.72rem; }
+.symbol-chip-price { color: var(--text); font-size: 0.68rem; }
+.symbol-chip-change { font-size: 0.65rem; }
+.symbol-chip-bias {
+  width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
+}
+.bias-dot-long, .bias-dot-bullish { background: var(--green); }
+.bias-dot-short, .bias-dot-bearish { background: var(--red); }
+.bias-dot-neutral { background: var(--muted); }
 .sparkline { display: block; margin: 2px 0; opacity: 0.85; }
-.charts-card-meta { display: flex; justify-content: space-between; }
-.charts-card-change { display: flex; gap: var(--space-1); align-items: center; }
-.charts-card-change .mono { font-size: 0.72rem; }
-.charts-card-vol { font-size: 0.65rem; color: var(--muted); }
-.charts-card-hl { display: flex; gap: var(--space-2); margin-top: var(--space-1); }
-.charts-card-high { font-size: 0.64rem; color: var(--green); }
-.charts-card-low { font-size: 0.64rem; color: var(--red); }
 .charts-controls { display: flex; gap: var(--space-3); align-items: center; margin-bottom: var(--space-3); }
 .charts-controls select { min-width: 110px; }
 .provider-chip {
@@ -3227,14 +3232,6 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 }
 .sdm-row:last-child { border-bottom: none; }
 
-/* Exchange selector tiles */
-.exchange-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-2); }
-.exchange-tile { display: flex; flex-direction: column; gap: 4px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--card); text-align: left; cursor: pointer; transition: border-color 0.15s; }
-.exchange-tile:hover:not(:disabled) { border-color: var(--accent); }
-.exchange-tile:disabled { opacity: 0.6; cursor: not-allowed; }
-.exchange-tile-active { border-color: var(--accent); background: rgba(99,102,241,0.06); }
-.exchange-tile-label { font-weight: 600; font-size: 0.9rem; }
-.exchange-tile-desc { font-size: 0.75rem; color: var(--muted); }
 
 /* ---------- Toast notifications ---------- */
 .toast-container { position: fixed; top: 56px; right: 16px; z-index: 300; display: flex; flex-direction: column; gap: 8px; pointer-events: none; max-width: 380px; }

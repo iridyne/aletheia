@@ -266,7 +266,10 @@ def verify_audit_chain() -> dict:
     """Verify the integrity of the audit JSONL hash chain.
 
     Returns {"valid": bool, "records": int, "errors": list[str],
-             "reanchors": int}.
+             "error_timestamps": list[str], "reanchors": int}.
+
+    error_timestamps parallels errors: each entry is the ISO-8601 created_at
+    of the offending record, or "" if unavailable (e.g. invalid JSON).
 
     Known benign breaks:
     - File rotation boundaries: the first record in a new file may reference a
@@ -277,9 +280,10 @@ def verify_audit_chain() -> dict:
     path = _log_dir() / "audit.jsonl"
     paths = _jsonl_paths_chronological(path)
     if not paths:
-        return {"valid": True, "records": 0, "errors": [], "reanchors": 0}
+        return {"valid": True, "records": 0, "errors": [], "error_timestamps": [], "reanchors": 0}
 
     errors: list[str] = []
+    error_timestamps: list[str] = []
     prev_hash = _GENESIS_HASH
     prev_record_prev_hash: str | None = None  # the _prev_hash field of the prior record
     count = 0
@@ -302,6 +306,7 @@ def verify_audit_chain() -> dict:
                     record = json.loads(raw_line)
                 except json.JSONDecodeError:
                     errors.append(f"{label}: invalid JSON")
+                    error_timestamps.append("")
                     prev_hash = _GENESIS_HASH
                     prev_record_prev_hash = None
                     is_first_in_file = False
@@ -331,13 +336,15 @@ def verify_audit_chain() -> dict:
                             f"{label}: _prev_hash mismatch "
                             f"(expected {prev_hash[:16]}..., got {record_prev[:16]}...)"
                         )
+                        rec_ts = record.get("created_at") or record.get("timestamp") or ""
+                        error_timestamps.append(str(rec_ts))
 
                 prev_record_prev_hash = record_prev
                 prev_hash = _hash_record(raw_line)
                 is_first_in_file = False
 
     return {"valid": len(errors) == 0, "records": count, "errors": errors,
-            "reanchors": reanchors}
+            "error_timestamps": error_timestamps, "reanchors": reanchors}
 
 
 def write_error(record: dict) -> None:

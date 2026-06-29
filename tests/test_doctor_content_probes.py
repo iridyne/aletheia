@@ -228,17 +228,17 @@ def test_proposal_bias_too_few_is_info(db):
 
 
 def test_proposal_bias_one_sided_warns(db):
-    for i in range(6):
-        _ins_prop(db, i, "short")  # 100% short
+    for i in range(22):
+        _ins_prop(db, i, "short")  # 100% short, >= 20 samples
     v = _verdict(dx._probe_content_proposal_bias)
     assert v.severity == "warn" and "bias" in v.detail.lower()
 
 
 def test_proposal_bias_mixed_is_ok(db):
-    for i in range(3):
+    for i in range(11):
         _ins_prop(db, i, "short")
-    for i in range(3, 6):
-        _ins_prop(db, i, "long")  # 50/50
+    for i in range(11, 22):
+        _ins_prop(db, i, "long")  # 50/50, >= 20 samples
     assert _verdict(dx._probe_content_proposal_bias).severity == "ok"
 
 

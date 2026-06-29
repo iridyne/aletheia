@@ -7,13 +7,13 @@
 
 ## Last Updated
 
-2026-06-29 (OpenAlice TaG 深度研究 + P0-1 hash 基础设施 + P1-2 reconcile audit 链入 + 全量文档同步;接 2026-06-28 负反馈/AI Berkshire 工作)
+2026-06-29 (OpenAlice TaG 深度研究 + P0-1 hash 基础设施 + P1-2 reconcile audit 链入 + 全量文档同步;同日 master 已合 Evolve 模块审计 + Learning 5-bug 修复 + Guards 子标签 — 两条并行工作合并)
 
 ---
 
 ## Recent Change (OpenAlice TaG 借鉴 P0-1 + P1-2 + 文档全量同步 — 2026-06-29)
 
-分支 `worktree-openalice-tag-research`,5 commit 待 owner 审核 merge:`b8ed990`(P0-1)+ `2359971`(Vibe Trading 交叉核查)+ `31eb1a9`(P1-2)+ `67ed379`(L2 design 契约同步)+ 本条 L4 status 同步。
+分支 `worktree-openalice-tag-research`,5 commit:`b8ed990`(P0-1)+ `2359971`(Vibe Trading 交叉核查)+ `31eb1a9`(P1-2)+ `67ed379`(L2 design 契约同步)+ `cb4a303`(L4 status 同步)。
 
 **研究**(13-agent workflow,797k tokens):三层 ground truth(博客原文 / 本地 `_refs/OpenAlice` 真实 TS 源码 / Aletheia 自身对照)+ 5 镜头分析 + 5 轮对抗核查。报告 `docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md`(含 Vibe Trading 帖交叉核查 §八点五)。核心发现:**TaG 真正值得借鉴的是工程纪律(reject 一等审计 + 执行后 state_after 快照),不是 git 比喻包装本身**;博客 "1 月崩盘预判" 自标 backtest 逻辑自相矛盾零证据值;"Trade Primitive auto-learn effect" 经源码 grep 命中零是纯营销话术。
 
@@ -25,7 +25,7 @@
 
 **文档全量同步**(5-agent parallel workflow + 1 个 adversarial verifier):L2 design 契约(`data_model.md` 加 trade_proposals.commit_hash/parent_hash blockquote + `audit_chain_contract.md` §1 范围扩展 + §6.3 表加 position_adopted 行 + §6.4 两链对照表 + §7.3 doctor 探针 gap + `trust_and_change_control.md §1.1` 末尾加 hash chain 锁定 + `design/README.md` spec 表纠正 spec_data_model.py 8→18 + 补齐 spec_audit_chain.py / spec_pipeline_adopted_position.py 漏列);L4 status(本会话 4 文档 prepend);docs/references 同步(INDEX §3 加新研究报告 + openalice_prism_review.md 标 ✅);新建 `docs/issues/TAG_BORROW_BACKLOG.md` 列剩余借鉴清单状态。
 
-**验证**:DM-S08/S09/B06/C02 + PL-ADOPT-09 全 GREEN;邻近 57 specs passed;全量 1802 passed / 3 skipped / 0 failed(2:08,与 baseline 一致零回归);conformance 360→361 / 99% coverage 维持;doctor `trust.audit_chain` 通过。
+**验证**:DM-S08/S09/B06/C02 + PL-ADOPT-09 全 GREEN;邻近 57 specs passed;全量 1802 passed / 3 skipped / 0 failed(2:08,与 baseline 一致零回归);conformance 360→361 / 99% coverage 维持;doctor `trust.audit_chain` 通过。Merge 进 master 时与 master 同日的 lesson guard fields 加列 (`activated_at`/`dry_run_until`/`expires_at` 进 ps_lessons,见下一章) 在 `_ADDITIVE_COLUMNS` 列表末尾共存,无逻辑冲突。
 
 **剩余 TaG 借鉴清单**(`docs/issues/TAG_BORROW_BACKLOG.md`):
 - P0-2 执行后 state_after 账户全量快照(`gateway.py` 已有 audit 写入点加字段;触 trust boundary,需 owner 显式批准)
@@ -33,6 +33,30 @@
 - P1-1 reject 与 push 同结构(三路拒绝 audit 补 hash 字段;触 trust boundary)
 
 memory:`aletheia-tag-borrow-plan` 已同步落地状态。
+
+---
+
+## Recent Change (Evolve 模块 — Learning 修复 + Guards 子标签 — 2026-06-29)
+
+**背景**：全量 Debug 批次完成后，审计 Evolve 模块下所有子功能的健康状况。
+
+**d85f7b3 — fix(learning): 5-bug Learning module fix — settler/guard/spec/docs**：
+1. Signal Settler 挂起 — `settle_due()` 缺独立 scheduler job；新增 `outcome_settler` 15min 定时任务（unconditional）。
+2. Guard UI 缺失 — 新增 `POST /settings/guard` 端点 + Settings 页面 "Guard Promotion" 区域含 auto_promote_enabled 开关。
+3. `spec_lesson_guards.py` — master 已有完整 4 claims（LG-S01~S04）。
+4. LP spec 状态标注 — LP-S01~S06 加 explicit `status="implemented"`。
+5. `docs/design/knowledge_contract.md §6.A1` — 更新为 L-Bug-B 已修复后的真实状态。
+
+**7c21813 — fix(ui): post-trade lessons — click-to-expand drawer + trim ellipsis**：
+Lessons 列表行可点击展开 DetailDrawer，正文超 120 字符显示 "…"。
+
+**6df3999 — feat(evolve): Guards sub-tab + LessonRow TTL fields + stale comment cleanup**：
+1. `client.ts:199` 陈旧注释（称 L-Bug-B 未接通）已移除。
+2. `LessonRow` 类型补齐 `activated_at/dry_run_until/expires_at`；lesson 抽屉渲染 TTL 字段。
+3. Knowledge Base 新增 "Active Guards" 子标签 — 接通后端 `GET /api/knowledge/guards`（之前零前端消费者）。
+
+**Ledger 核实**（大量"待修"项实际早已修复，ledger 未同步）：
+- show_errors yfinance bug、B1 ranker post_trade_review、A9 operator win_rate、L-Bug-D B2/B3 — 均已修复（代码注释明确标注）
 
 ---
 

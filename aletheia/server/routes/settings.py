@@ -109,6 +109,24 @@ async def set_autonomous_learning(req: AutonomousLearningRequest):
     return {"old": old, "new": req.enabled}
 
 
+class BypassDistressGateRequest(SettingsRequest):
+    enabled: bool
+
+
+@router.post("/bypass-distress-gate")
+async def set_bypass_distress_gate(req: BypassDistressGateRequest):
+    cfg = load_config()
+    old = cfg.agent.bypass_distress_gate
+    cfg.agent.bypass_distress_gate = req.enabled
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "bypass_distress_gate_changed",
+                 "entity_type": "agent_config", "before": {"bypass_distress_gate": old},
+                 "after": {"bypass_distress_gate": req.enabled},
+                 "message": f"bypass_distress_gate {old} -> {req.enabled}"})
+    return {"old": old, "new": req.enabled}
+
+
 # ---------------------------------------------------------------------------
 # Exchange markets config
 # ---------------------------------------------------------------------------
@@ -367,6 +385,34 @@ async def update_operator_config(req: OperatorConfigUpdate):
                  "entity_type": "operator_config", "before": old,
                  "after": cfg.operator.model_dump(mode="json"),
                  "message": f"Operator config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
+# Guard / lesson-promotion config
+# ---------------------------------------------------------------------------
+
+class GuardConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
+    enforce_in_paper_ranker: Optional[bool] = None
+    auto_promote_enabled: Optional[bool] = None
+    min_matching_trades: Optional[int] = None
+    max_score_penalty: Optional[float] = None
+
+
+@router.post("/guard")
+async def update_guard_config(req: GuardConfigUpdate):
+    cfg = load_config()
+    old = cfg.guard.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.guard, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "guard_config_changed",
+                 "entity_type": "guard_config", "before": old,
+                 "after": cfg.guard.model_dump(mode="json"),
+                 "message": f"Guard config updated: {list(updates.keys())}"})
     return {"updated": updates}
 
 

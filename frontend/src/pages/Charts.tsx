@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import PriceChart from '../charts/PriceChart'
-import Sparkline from '../components/Sparkline'
+import PriceChart, { type TradeMarker } from '../charts/PriceChart'
 import MacroBar from '../components/MacroBar'
 import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
@@ -22,9 +21,10 @@ function ProviderChip({ provider }: { provider?: string | null }) {
   return <span className="provider-chip">{label}</span>
 }
 
-// ─── Watchlist Grid ─────────────────────────────────────────────────────────
+// ─── Symbol Strip ─────────────────────────────────────────────────────────────
+// Compact horizontal scrollable row of symbol chips — replaces the card grid.
 
-function WatchlistGrid({
+function SymbolStrip({
   symbols, snapshotMap, flashes, activeSymbol, onSelect, opportunityMap, marketType,
 }: {
   symbols: string[]
@@ -36,63 +36,47 @@ function WatchlistGrid({
   marketType?: string | null
 }) {
   return (
-    <div className="charts-watchlist">
+    <div className="symbol-strip">
       {symbols.map(sym => {
         const snap = snapshotMap[sym] ?? snapshotMap[sym.replace('/', '')]
         const isActive = sym === activeSymbol
         const change = snap?.change_pct_24h
         const opp = opportunityMap[sym]
+        const flashClass = flashes[sym] ? ` tick-flash-${flashes[sym]}` : ''
         return (
-          <Card
+          <button
             key={sym}
-            className={`charts-watchlist-card${isActive ? ' active' : ''}`}
+            className={`symbol-chip${isActive ? ' active' : ''}`}
             onClick={() => onSelect(sym)}
           >
-            <div className="charts-card-head">
-              <span className="charts-card-symbol">{fmtSymbol(sym, marketType ?? snap?.market_type)}</span>
-              {opp && (
-                <span className={`charts-bias-dot bias-${opp.direction_bias}`} title={`AI: ${opp.direction_bias} (${opp.confidence_score ?? opp.confidence})`} />
-              )}
-            </div>
-            <div className={`mono charts-card-price${flashes[sym] ? ` tick-flash-${flashes[sym]}` : ''}`}>
-              {snap ? fmtNum(snap.price) : '—'}
-            </div>
-            <Sparkline symbol={sym} width={100} height={20} />
-            <div className="charts-card-meta">
-              <div className="charts-card-change">
-                {change != null && (
-                  <span className={`mono ${change > 0 ? 'pnl-positive' : change < 0 ? 'pnl-negative' : 'text-muted'}`}>
-                    {fmtDelta(change)}%
-                  </span>
-                )}
-                {snap?.volume_24h != null && (
-                  <span className="charts-card-vol">Vol {fmtNum(snap.volume_24h / 1e6)}M</span>
-                )}
-              </div>
-            </div>
-            {(snap?.high_24h != null || snap?.low_24h != null) && (
-              <div className="charts-card-hl">
-                {snap.high_24h != null && <span className="charts-card-high">H {fmtNum(snap.high_24h)}</span>}
-                {snap.low_24h != null && <span className="charts-card-low">L {fmtNum(snap.low_24h)}</span>}
-              </div>
+            <span className="symbol-chip-name">{fmtSymbol(sym, marketType ?? snap?.market_type)}</span>
+            {opp && (
+              <span className={`symbol-chip-bias bias-dot-${opp.direction_bias}`} title={`AI: ${opp.direction_bias}`} />
             )}
-          </Card>
+            {snap && (
+              <span className={`symbol-chip-price mono${flashClass}`}>{fmtNum(snap.price)}</span>
+            )}
+            {change != null && (
+              <span className={`symbol-chip-change mono ${change > 0 ? 'pnl-positive' : change < 0 ? 'pnl-negative' : 'text-muted'}`}>
+                {fmtDelta(change)}%
+              </span>
+            )}
+          </button>
         )
       })}
     </div>
   )
 }
 
-// ─── Tab: Chart ──────────────────────────────────────────────────────────────
+// ─── Chart Panel (always visible at top) ────────────────────────────────────
 
-function ChartTab({
+function ChartPanel({
   symbol, symbols, onSymbolChange, snapshotMap, dataProvider, lastUpdatedLabel, marketType,
 }: {
   symbol: string; symbols: string[]; onSymbolChange: (s: string) => void
   snapshotMap: Record<string, any>; dataProvider: string | null; lastUpdatedLabel: string | null
   marketType?: string | null
 }) {
-  // Resolve a symbol's market type for display: board type first, snapshot fallback.
   const mtFor = (s: string) => marketType ?? (snapshotMap[s] ?? snapshotMap[s.replace('/', '')])?.market_type
   const [timeframe, setTimeframe] = useState('1h')
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null)
@@ -109,25 +93,35 @@ function ChartTab({
   )
 
   const bitgetSymbol = symbol.replace('/', '')
-  const tradeMarkers = (trades as any[])
+  const tradeMarkers: TradeMarker[] = (trades as any[])
     .filter(o => (o.symbol === symbol || o.symbol === bitgetSymbol) && o.filled_at)
-    .map(o => ({
-      time: Math.floor(new Date(
-        o.filled_at.endsWith('Z') || o.filled_at.includes('+') ? o.filled_at : o.filled_at + 'Z'
-      ).getTime() / 1000),
-      side: (o.direction === 'long' || o.direction === 'buy' ? 'buy' : 'sell') as 'buy' | 'sell',
-      price: o.price || 0,
-      id: o.id,
-    }))
+    .map(o => {
+      const dir = (o.direction || '').toLowerCase()
+      const isClose = !!o.reduce_only || o.order_type === 'stop' || o.order_type === 'take_profit'
+      let kind: TradeMarker['kind']
+      if (isClose) {
+        kind = (dir === 'sell' || dir === 'short') ? 'stop_long' : 'stop_short'
+      } else {
+        kind = (dir === 'long' || dir === 'buy') ? 'long' : 'short'
+      }
+      return {
+        time: Math.floor(new Date(
+          o.filled_at.endsWith('Z') || o.filled_at.includes('+') ? o.filled_at : o.filled_at + 'Z'
+        ).getTime() / 1000),
+        kind,
+        price: o.price || 0,
+        id: o.id,
+      }
+    })
     .filter(m => !Number.isNaN(m.time))
 
-  const signalMarkers = symbolOpportunities
+  const signalMarkers: TradeMarker[] = symbolOpportunities
     .filter((o: any) => o.created_at)
     .map((o: any) => {
       const ts = o.created_at.endsWith('Z') || o.created_at.includes('+') ? o.created_at : o.created_at + 'Z'
       return {
         time: Math.floor(new Date(ts).getTime() / 1000),
-        side: (o.direction_bias === 'long' || o.direction_bias === 'bullish' ? 'buy' : 'sell') as 'buy' | 'sell',
+        kind: (o.direction_bias === 'long' || o.direction_bias === 'bullish' ? 'long' : 'short') as TradeMarker['kind'],
         price: 0,
         id: `signal-${o.id}`,
       }
@@ -135,7 +129,6 @@ function ChartTab({
     .filter((m: any) => !Number.isNaN(m.time))
 
   const markers = [...tradeMarkers, ...signalMarkers]
-
   const selectedTrade = selectedOrder ? (trades as any[]).find(t => t.id === selectedOrder) : null
 
   return (
@@ -350,7 +343,7 @@ function PredictionsTab() {
 
 export default function Charts() {
   const [symbol, setSymbol] = useState('BTC/USDT')
-  const [activeTab, setActiveTab] = useState('chart')
+  const [activeTab, setActiveTab] = useState('signals')
   useDecimals()
 
   const { data: universe } = useQuery({
@@ -371,20 +364,16 @@ export default function Charts() {
     refetchInterval: 60_000,
   })
 
-  // The universe board's market type — authoritative for watchlist symbol display
-  // (perp → no slash, spot → slash). Undefined under the static fallback.
   const boardMarketType: string | null | undefined = (universe as any)?.snapshot?.market_type
 
-  // Dynamic watchlist: universe members (ranked) or fallback
   const watchlistSymbols = useMemo<string[]>(() => {
     const members = (universe as any)?.members
     if (Array.isArray(members) && members.length > 0) {
-      return members.slice(0, 12).map((m: any) => m.symbol)
+      return members.slice(0, 20).map((m: any) => m.symbol)
     }
     return FALLBACK_SYMBOLS
   }, [universe])
 
-  // Snapshot map keyed by canonical and legacy Bitget format
   const snapshotMap = useMemo(() => {
     const m: Record<string, any> = {}
     for (const s of snapshots as any[]) {
@@ -395,7 +384,6 @@ export default function Charts() {
     return m
   }, [snapshots])
 
-  // Best opportunity per symbol (highest confidence_score, open)
   const opportunityMap = useMemo(() => {
     const m: Record<string, any> = {}
     for (const o of opportunities as any[]) {
@@ -408,7 +396,6 @@ export default function Charts() {
     return m
   }, [opportunities])
 
-  // Tick flash tracking
   const prevPrices = useRef<Record<string, number>>({})
   const [flashes, setFlashes] = useState<Record<string, 'up' | 'down'>>({})
   useEffect(() => {
@@ -438,7 +425,7 @@ export default function Charts() {
 
   const handleSignalSymbolSelect = useCallback((sym: string) => {
     setSymbol(sym)
-    setActiveTab('chart')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
   const signalCount = (opportunities as any[]).filter(
@@ -455,38 +442,33 @@ export default function Charts() {
       {/* Macro indicators bar */}
       <MacroBar />
 
-      {/* Dynamic watchlist — universe-driven, falls back to BTC/ETH/SOL */}
-      <WatchlistGrid
+      {/* Compact symbol selector strip */}
+      <SymbolStrip
         symbols={watchlistSymbols}
         snapshotMap={snapshotMap}
         flashes={flashes}
         activeSymbol={symbol}
-        onSelect={s => { setSymbol(s); setActiveTab('chart') }}
+        onSelect={setSymbol}
         opportunityMap={opportunityMap}
         marketType={boardMarketType}
       />
 
-      {/* Lower panel — controlled Tabs because watchlist row clicks switch to Chart
-          from outside the tab bar (setActiveTab in onSelect / handleSignalSymbolSelect). */}
+      {/* Chart always at top */}
+      <ChartPanel
+        symbol={symbol}
+        symbols={watchlistSymbols}
+        onSymbolChange={setSymbol}
+        snapshotMap={snapshotMap}
+        dataProvider={dataProvider}
+        lastUpdatedLabel={lastUpdatedLabel}
+        marketType={boardMarketType}
+      />
+
+      {/* Intelligence panels below the chart */}
       <Tabs
         value={activeTab}
         onChange={(id) => setActiveTab(id as typeof activeTab)}
         tabs={([
-          {
-            id: 'chart',
-            label: 'Chart',
-            render: () => (
-              <ChartTab
-                symbol={symbol}
-                symbols={watchlistSymbols}
-                onSymbolChange={setSymbol}
-                snapshotMap={snapshotMap}
-                dataProvider={dataProvider}
-                lastUpdatedLabel={lastUpdatedLabel}
-                marketType={boardMarketType}
-              />
-            ),
-          },
           {
             id: 'signals',
             label: 'Signals',

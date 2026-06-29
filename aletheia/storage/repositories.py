@@ -1063,7 +1063,21 @@ def _delete_old_rows(table: str, days: int) -> int:
 
 
 def prune_agent_runs(days: int = 30) -> int:
-    return _delete_old_rows("agent_runs", days)
+    # agent_run_steps and agent_tool_calls have FK → agent_runs with no ON DELETE CASCADE.
+    # Delete children first in the same transaction to avoid IntegrityError.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    run_ids = [row[0] for row in db.execute(
+        "SELECT id FROM agent_runs WHERE started_at < ?", (cutoff,)
+    ).fetchall()]
+    if not run_ids:
+        return 0
+    placeholders = ",".join("?" * len(run_ids))
+    with transaction():
+        db.execute(f"DELETE FROM agent_run_steps WHERE run_id IN ({placeholders})", run_ids)
+        db.execute(f"DELETE FROM agent_tool_calls WHERE run_id IN ({placeholders})", run_ids)
+        db.execute("DELETE FROM agent_runs WHERE started_at < ?", (cutoff,))
+    return len(run_ids)
 
 
 def prune_run_steps(days: int = 30) -> int:
@@ -1083,7 +1097,19 @@ def prune_portfolio_snapshots(days: int = 90) -> int:
 
 
 def prune_serenity_claims(days: int = 90) -> int:
-    return _delete_old_rows("serenity_claims", days)
+    # serenity_theme_claims has FK → serenity_claims with no ON DELETE CASCADE.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    claim_ids = [row[0] for row in db.execute(
+        "SELECT id FROM serenity_claims WHERE created_at < ?", (cutoff,)
+    ).fetchall()]
+    if not claim_ids:
+        return 0
+    placeholders = ",".join("?" * len(claim_ids))
+    with transaction():
+        db.execute(f"DELETE FROM serenity_theme_claims WHERE claim_id IN ({placeholders})", claim_ids)
+        db.execute("DELETE FROM serenity_claims WHERE created_at < ?", (cutoff,))
+    return len(claim_ids)
 
 
 def prune_shadow_trades(days: int = 90) -> int:
@@ -1872,6 +1898,37 @@ def prune_macro_snapshots(days: int = 90) -> int:
     if not was_in_tx:
         db.commit()
     return cur.rowcount or 0
+
+
+def save_volume_ranking_snapshot(symbols: list, observed_at: str) -> None:
+    import json
+    db = get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "INSERT INTO volume_ranking_snapshots (symbols_json, observed_at) VALUES (?, ?)",
+        (json.dumps(symbols), observed_at),
+    )
+    if not was_in_tx:
+        db.commit()
+    db.execute(
+        "DELETE FROM volume_ranking_snapshots WHERE id NOT IN ("
+        "  SELECT id FROM volume_ranking_snapshots ORDER BY observed_at DESC LIMIT 5"
+        ")"
+    )
+    if not was_in_tx:
+        db.commit()
+
+
+def get_volume_ranking_snapshot() -> dict:
+    import json
+    db = get_db()
+    row = db.execute(
+        "SELECT symbols_json, observed_at FROM volume_ranking_snapshots"
+        " ORDER BY observed_at DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return {}
+    return {"symbols": json.loads(row[0]), "observed_at": row[1]}
 
 
 # agent_shell_* telemetry pruning. These tables are liveness/working-memory

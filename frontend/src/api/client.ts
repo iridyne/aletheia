@@ -196,10 +196,8 @@ export const api = {
   getRuntimeEvents: (limit = 100) => fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
 
-  // Post-trade lessons (LessonStore — see persistence.py:192).
-  // Surface them in the Learning page so the user can see what dreaming_agent
-  // produces, even while PI's decision chain doesn't yet consume them
-  // (Round 2 fix L-Bug-B will wire consumption — until then this is read-only viz).
+  // Post-trade lessons (LessonStore). PI agent consumes them via trading_context.py:592
+  // (wired in b9ad957). TTL fields: accepted lessons enter 24h dry-run then expire after 30d.
   getLessons: (limit = 50, status?: string) => fetchJson<Array<{
     lesson_id: string
     source_type?: string
@@ -209,7 +207,32 @@ export const api = {
     summary?: string
     status?: string
     created_at?: string
+    activated_at?: string
+    dry_run_until?: string
+    expires_at?: string
   }>>(`/persistence/lessons?limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ''}`),
+
+  // Trading guards: accepted lessons promoted to active blocking/advisory constraints.
+  getGuards: () => fetchJson<Array<{
+    guard_id: string
+    title: string
+    description?: string
+    status?: string
+    scope?: string
+    enforcement?: string
+    severity?: string
+    score_penalty?: number
+    block_candidate?: boolean
+    tags?: string[]
+  }>>('/knowledge/guards'),
+  getGuardStats: () => fetchJson<Array<{
+    guard_id: string
+    title: string
+    fire_count: number
+    loss_rate_when_fired: number
+    avg_loss_pct: number
+    estimated_savings: number
+  }>>('/knowledge/guards/stats'),
 
   pause: () => post('/gateway/pause'),
   resume: () => post('/gateway/resume'),
@@ -352,6 +375,8 @@ export const api = {
 
   setAutonomousLearning: (enabled: boolean) =>
     post<{ old: boolean; new: boolean }>('/settings/autonomous-learning', { enabled }),
+  setBypassDistressGate: (enabled: boolean) =>
+    post<{ old: boolean; new: boolean }>('/settings/bypass-distress-gate', { enabled }),
   setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean; paper_execution_mode?: string }) =>
     post<Record<string, any>>('/settings/exchange-markets', body),
   setPrimaryExchange: (exchange_id: string) =>
@@ -374,6 +399,8 @@ export const api = {
     post<{ updated: Record<string, any> }>('/settings/serenity', body),
   updateOperatorConfig: (body: Partial<{ loop_enabled: boolean }>) =>
     post<{ updated: Record<string, any> }>('/settings/operator', body),
+  updateGuardConfig: (body: Partial<{ enabled: boolean; enforce_in_paper_ranker: boolean; auto_promote_enabled: boolean; min_matching_trades: number; max_score_penalty: number }>) =>
+    post<{ updated: Record<string, any> }>('/settings/guard', body),
   updateHealthConfig: (body: Partial<{
     enabled: boolean; alert_via_telegram: boolean; alert_via_windows_toast: boolean; max_agent_failure_ratio: number
     llm_unavailable_alert_after: number; market_data_max_staleness_min: number
@@ -734,6 +761,10 @@ export const api = {
     fetchJson<any>(`/analytics/backtest/runs/${runId}`),
   getBacktestCompare: (strategyId: string) =>
     fetchJson<any>(`/analytics/backtest/compare/${strategyId}`),
+  getStrategyPerformance: () =>
+    fetchJson<any>('/analytics/strategy-performance'),
+  getSerenityPipeline: () =>
+    fetchJson<any>('/serenity/pipeline'),
 
   // Generic helpers for pages that need simple get/post
   get: <T = any>(path: string) => fetchJson<T>(path),

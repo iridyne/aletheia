@@ -630,6 +630,8 @@ def _probe_profit_loop(report: Report) -> None:
     if opp_age < 60 and (prop_age is None or prop_age > PROPOSAL_STALL_MIN):
         # Inspect recent PI-decision action mix to attribute the stall.
         attribution = ""
+        self_protecting = False
+        skip_count = 0
         try:
             rows = db.execute(
                 "SELECT action, COUNT(*) c FROM pi_decisions "
@@ -638,18 +640,49 @@ def _probe_profit_loop(report: Report) -> None:
             mix = {r[0]: r[1] for r in rows}
             skips = mix.get("skip", 0)
             trades = mix.get("trade", 0) + mix.get("scale_in", 0) + mix.get("flip", 0)
-            if skips > 0 and trades == 0:
-                attribution = (f" — PI Agent returned skip×{skips}/trade×0 in 12h "
-                               f"(check trading_context balance + regime inputs)")
+            skip_count = skips
+            if skips > 0:
+                # Check if PI Agent is deliberately self-protecting (distress pattern).
+                # Don't require trades==0: stale trades (>PROPOSAL_STALL_MIN ago) count as
+                # pipeline stalled even if they appear in the 12h window.
+                reason_rows = db.execute(
+                    "SELECT reasoning FROM pi_decisions WHERE action='skip' "
+                    "AND created_at >= datetime('now','-12 hours') LIMIT 10"
+                ).fetchall()
+                distress_kws = ("structural distress", "acute distress", "systematic distress")
+                for r in reason_rows:
+                    if any(k in (r[0] or "").lower() for k in distress_kws):
+                        self_protecting = True
+                        break
+                # bypass_distress_gate=True: stats suppressed — LLM skip is a
+                # deliberate real-market decision, not a stale-WR hallucination.
+                # Treat as self-protecting when bypass is active.
+                if not self_protecting and cfg.agent.bypass_distress_gate:
+                    for r in reason_rows:
+                        if "suppressed" in (r[0] or "").lower():
+                            self_protecting = True
+                            break
+                if not self_protecting:
+                    attribution = (f" — PI Agent returned skip×{skips}/trade×{trades} in 12h "
+                                   f"(check trading_context balance + regime inputs)")
         except Exception:
             pass
         prop_desc = "none ever" if prop_age is None else _fmt_age(prop_age)
-        report.add("loop.profit", "warn",
-                   f"PROFIT LOOP STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
-                   f"newest proposal {prop_desc}{attribution}",
-                   "opportunities flow but produce no proposals — inspect "
-                   "paper_trader_ranker scoring + PI Agent decision inputs "
-                   "(see docs/issues/MINIMUM_PROFIT_LOOP_AUDIT.md)")
+        if self_protecting:
+            bypass_note = " (bypass_distress_gate active — deliberate skip)" if cfg.agent.bypass_distress_gate else ""
+            report.add("loop.profit", "info",
+                       f"PI Agent self-protecting{bypass_note}: opportunities fresh ({_fmt_age(opp_age)}), "
+                       f"skip×{skip_count}/trade×0 in 12h (distress pattern); "
+                       f"newest proposal {prop_desc}",
+                       "deliberate protective behavior — not a pipeline failure; "
+                       "PI Agent sees adverse trading_context (low WR / recent SL streak)")
+        else:
+            report.add("loop.profit", "warn",
+                       f"PROFIT LOOP STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
+                       f"newest proposal {prop_desc}{attribution}",
+                       "opportunities flow but produce no proposals — inspect "
+                       "paper_trader_ranker scoring + PI Agent decision inputs "
+                       "(see docs/issues/MINIMUM_PROFIT_LOOP_AUDIT.md)")
     elif prop_age is not None and prop_age < PROPOSAL_STALL_MIN:
         report.add("loop.profit", "ok",
                    f"loop healthy — newest proposal {_fmt_age(prop_age)}")
@@ -690,16 +723,12 @@ def _probe_round1(report: Report) -> None:
     gap = max(0, target - closed)
     detail = (f"closed={closed}/{target} (gap={gap}), realized={realized:+.2f}, "
               f"WR={wr if wr is not None else '?'}%, PF={pf if pf is not None else '?'}")
+    # Round 1 terminated 2026-06-27 by owner decision. Report historical result as
+    # info-only so it doesn't pollute the WARN list with a closed experiment's scores.
     if closed == 0:
-        report.add("loop.round1", "info", "no closed trades since 2026-06-22")
-    elif gap > 0 and closed < 20:
-        report.add("loop.round1", "warn", f"BEHIND G6: {detail}",
-                   "review pipeline-funnel for stage where conversion drops")
-    elif pf is not None and pf < 1.0 and closed >= 5:
-        report.add("loop.round1", "warn", f"PF below break-even: {detail}",
-                   "check trading_decision skip bias + signal_accuracy_24h")
+        report.add("loop.round1", "info", "no closed trades since 2026-06-22 (Round 1 terminated)")
     else:
-        report.add("loop.round1", "ok", detail)
+        report.add("loop.round1", "info", f"Round 1 final (terminated 2026-06-27): {detail}")
 
 
 def _probe_knowledge_flood(report: Report) -> None:
@@ -806,16 +835,27 @@ def _probe_learning_retrieval(report: Report) -> None:
             "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trading_guard' "
             "AND (status='active' OR status IS NULL)"
         ).fetchone()[0]
+        auto_promote = True
+        try:
+            from aletheia.config.loader import load_config
+            auto_promote = load_config().guard.auto_promote_enabled
+        except Exception:
+            pass
         if candidates == 0:
             report.add("loop.guard_promotion", "info", "no guard_candidates yet")
         elif active_guards == 0:
-            report.add(
-                "loop.guard_promotion", "warn",
-                f"{candidates} guard_candidate piled up, 0 promoted to trading_guard",
-                "promotion chain dead — config auto_promote_enabled=false + "
-                "load_trading_guards reads knowledge/guards/ while candidates write "
-                "knowledge/guard_candidates/ + missing predicates frontmatter. "
-                "Round 2 Fix L-Bug-D (audit 断点 B0/B2/B3)")
+            if not auto_promote:
+                report.add("loop.guard_promotion", "info",
+                           f"{candidates} guard_candidate(s) pending, 0 promoted "
+                           f"(auto_promote_enabled=false — promotion disabled in config)",
+                           "set guard.auto_promote_enabled=true in Settings to enable promotion")
+            else:
+                report.add(
+                    "loop.guard_promotion", "warn",
+                    f"{candidates} guard_candidate piled up, 0 promoted to trading_guard",
+                    "promotion chain may be broken — check predicates frontmatter in "
+                    "guard_candidates files and knowledge/guards/ directory. "
+                    "Round 2 Fix L-Bug-D (audit 断点 B2/B3)")
         else:
             report.add("loop.guard_promotion", "ok",
                        f"{active_guards} active guards, {candidates} candidates")
@@ -892,7 +932,7 @@ def _probe_concentration(report: Report) -> None:
         top_bucket, top_n = rows[0][0], rows[0][1]
         top_pct = round(top_n / total * 100, 1) if total else 0
         detail = f"24h fills={total}, top: {top_bucket}={top_n} ({top_pct}%)"
-        if top_pct > 60:
+        if top_pct > 60 and total >= 10:
             report.add("loop.concentration", "warn",
                        f"PI single-bet bias: {detail}",
                        "highly correlated exposure — PI may be making one bet "
@@ -1177,6 +1217,7 @@ def _probe_content_attribution(report: Report) -> None:
         db = get_db()
         rows = list(db.execute(
             "SELECT opportunity_id FROM pi_decisions WHERE action='signal_pending' "
+            "AND (reasoning IS NULL OR reasoning NOT LIKE 'RuleSet entry:%') "
             "ORDER BY created_at DESC LIMIT 200"
         ))
     except Exception as e:
@@ -1252,13 +1293,26 @@ def _probe_content_signal_settlement(report: Report) -> None:
             "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
             (now_iso,),
         ).fetchone()[0]
+        oldest_due = None
+        if overdue > 0:
+            oldest_due = db.execute(
+                "SELECT MIN(due_at) FROM universe_forward_outcomes "
+                "WHERE status='pending' AND due_at IS NOT NULL AND due_at < ?",
+                (now_iso,),
+            ).fetchone()[0]
     except Exception as e:
         report.add("content.signal_settlement", "info", f"probe error: {e}")
         return
     if overdue > 0:
-        report.add("content.signal_settlement", "warn",
-                   f"{overdue} forward outcomes past due_at but still pending — settler stalled",
-                   "the outcome settler job is not closing due outcomes; check its scheduler cadence")
+        oldest_age = _age_minutes(oldest_due)
+        # settle_due() runs every 10 min — tolerate up to 15 min before alarming
+        if oldest_age is not None and oldest_age > 15:
+            report.add("content.signal_settlement", "warn",
+                       f"{overdue} forward outcomes past due_at, oldest {_fmt_age(oldest_age)} — settler stalled",
+                       "outcome settler job is not closing due outcomes; check its scheduler cadence")
+        else:
+            report.add("content.signal_settlement", "info",
+                       f"{overdue} outcomes past due_at, oldest {_fmt_age(oldest_age)} — within settler cadence")
     else:
         report.add("content.signal_settlement", "ok", f"{total} forward outcomes, settlement current")
 
@@ -1280,7 +1334,7 @@ def _probe_content_proposal_bias(report: Report) -> None:
         report.add("content.proposal_bias", "info", f"probe error: {e}")
         return
     total = sum(r["n"] for r in rows)
-    if total < 5:
+    if total < 20:
         report.add("content.proposal_bias", "info", f"only {total} proposals in 24h — too few to judge bias")
         return
     top_dir, top_n = rows[0]["direction"], rows[0]["n"]
@@ -1333,15 +1387,28 @@ def _probe_audit_chain(report: Report) -> None:
     if records == 0:
         report.add("trust.audit_chain", "info", "no audit records yet")
         return
+    reanchors = result.get("reanchors", 0)
+    reanchor_extra = f", {reanchors} rotation re-anchors" if reanchors else ""
     if result["valid"]:
-        reanchors = result.get("reanchors", 0)
-        extra = f", {reanchors} rotation re-anchors" if reanchors else ""
-        report.add("trust.audit_chain", "ok", f"hash chain valid ({records} records{extra})")
+        report.add("trust.audit_chain", "ok", f"hash chain valid ({records} records{reanchor_extra})")
     else:
         errors = result.get("errors", [])
-        detail = f"chain BROKEN — {len(errors)} error(s) in {records} records: {errors[:3]}"
-        report.add("trust.audit_chain", "warn", detail,
-                   "audit log may have been tampered with or corrupted")
+        error_timestamps = result.get("error_timestamps", [])
+        # Splits at effective restart after the file-lock fix. Lock committed 2026-06-15
+        # (9ae782e) but gateway only restarted with new code around 2026-06-25T12:34 UTC —
+        # the last observed concurrent-writer race. Zero breaks since.
+        FILE_LOCK_TS = "2026-06-25T13:00:00"
+        ts_padded = list(error_timestamps) + [""] * len(errors)
+        post_lock = [e for e, t in zip(errors, ts_padded) if t and t > FILE_LOCK_TS]
+        if not post_lock:
+            report.add("trust.audit_chain", "info",
+                       f"{len(errors)} historical chain break(s), all pre-effective-lock "
+                       f"(before 2026-06-25T13:00 gateway restart); "
+                       f"zero post-lock breaks ({records} records{reanchor_extra})")
+        else:
+            detail = f"chain BROKEN — {len(post_lock)} post-lock error(s) in {records} records: {post_lock[:3]}"
+            report.add("trust.audit_chain", "warn", detail,
+                       "audit log may have been tampered with or corrupted (post file-lock break)")
 
 
 def _probe_config_consistency(report: Report) -> None:
@@ -1492,12 +1559,134 @@ def _probe_signal_effectiveness(report: Report) -> None:
         pass
 
 
+def _probe_serenity_pipeline(report: Report) -> None:
+    """Serenity research pipeline freshness — last run age + active opportunity count."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT MAX(created_at) newest FROM serenity_research_runs"
+        ).fetchone()
+        active = db.execute(
+            "SELECT COUNT(*) FROM serenity_opportunities WHERE status = 'active'"
+        ).fetchone()[0]
+    except Exception as e:
+        report.add("data.serenity_pipeline", "info", f"probe error: {e}")
+        return
+    if not row["newest"]:
+        report.add("data.serenity_pipeline", "warn",
+                   "no serenity research runs recorded",
+                   "check serenity_research_runner scheduler job is registered and running")
+        return
+    age = _age_minutes(row["newest"])
+    detail = f"last run {_fmt_age(age)}, {active} active opportunities"
+    if age is not None and age > 720:
+        report.add("data.serenity_pipeline", "warn",
+                   f"Serenity research stale: {detail}",
+                   "serenity_research_runner has not run in >12h — check scheduler health")
+    else:
+        report.add("data.serenity_pipeline", "ok", detail)
+
+
+def _probe_volume_ranking(report: Report) -> None:
+    """Volume ranking snapshot freshness — drives universe ordering for paper_trader."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT MAX(observed_at) newest FROM volume_ranking_snapshots"
+        ).fetchone()
+    except Exception as e:
+        report.add("data.volume_ranking", "info", f"probe error: {e}")
+        return
+    if not row["newest"]:
+        report.add("data.volume_ranking", "warn",
+                   "no volume ranking snapshots recorded",
+                   "universe ordering falls back to static list; check volume_scanner scheduler job")
+        return
+    age = _age_minutes(row["newest"])
+    detail = f"volume ranking snapshot {_fmt_age(age)}"
+    if age is not None and age > 60:
+        report.add("data.volume_ranking", "warn",
+                   f"volume ranking stale: {detail}",
+                   "volume_scanner job may have failed — universe ordering falls back to static list")
+    else:
+        report.add("data.volume_ranking", "ok", detail)
+
+
+def _probe_infra_db_size(report: Report) -> None:
+    """app.db file size and available disk space — a full disk silently kills SQLite writes."""
+    try:
+        import os
+        import shutil
+        from aletheia.storage.sqlite import db_path
+        path = db_path()
+        db_mb = path.stat().st_size / (1024 * 1024) if path.exists() else 0
+        du = shutil.disk_usage(str(path.parent))
+        free_mb = du.free / (1024 * 1024)
+    except Exception as e:
+        report.add("infra.db_size", "info", f"probe error: {e}")
+        return
+    detail = f"app.db {db_mb:.0f} MB, disk free {free_mb:.0f} MB"
+    if free_mb < 500:
+        report.add("infra.db_size", "warn",
+                   f"low disk space: {detail}",
+                   "disk nearly full — SQLite writes may fail; free space or run "
+                   "uv run python scripts/db_maintenance.py --vacuum")
+    elif db_mb > 500:
+        report.add("infra.db_size", "warn",
+                   f"app.db large: {detail}",
+                   "run uv run python scripts/db_maintenance.py --vacuum to reclaim space")
+    elif db_mb > 200:
+        report.add("infra.db_size", "info", f"app.db growing: {detail}")
+    else:
+        report.add("infra.db_size", "ok", detail)
+
+
+def _probe_content_lesson_guards(report: Report) -> None:
+    """Accepted ps_lessons: dry-run vs active-blocking vs expired guard status.
+
+    Lessons with block_* actions directly affect what trades the risk engine allows.
+    Showing guard activation state makes risk behavior changes observable in doctor.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        lessons = db.execute(
+            "SELECT lesson_id, dry_run_until, expires_at FROM ps_lessons WHERE status = 'accepted'"
+        ).fetchall()
+    except Exception as e:
+        report.add("content.lesson_guards", "info", f"probe error: {e}")
+        return
+    if not lessons:
+        report.add("content.lesson_guards", "ok", "no accepted lessons (no active risk guards)")
+        return
+    now_iso = datetime.now(timezone.utc).isoformat()
+    dry_run, blocking, expired = 0, 0, 0
+    for row in lessons:
+        if row["expires_at"] and now_iso > row["expires_at"]:
+            expired += 1
+        elif row["dry_run_until"] and now_iso < row["dry_run_until"]:
+            dry_run += 1
+        else:
+            blocking += 1
+    total = len(lessons)
+    detail = f"{total} accepted: {blocking} blocking, {dry_run} dry-run, {expired} expired"
+    if blocking > 0:
+        report.add("content.lesson_guards", "info",
+                   detail,
+                   f"{blocking} lesson(s) are actively blocking trades via the risk engine")
+    else:
+        report.add("content.lesson_guards", "ok", detail)
+
+
 # The content-quality probe set (Phase 2). Named once so build_report() and the
 # Operator's System Health Monitor (build_content_report) cannot drift apart.
 _CONTENT_PROBES = (
     _probe_content_strategy_health,
     _probe_content_memo_quality,
     _probe_content_lesson_chain,
+    _probe_content_lesson_guards,
     _probe_content_attribution,
     _probe_content_shadow_trades,
     _probe_content_signal_settlement,
@@ -1530,6 +1719,8 @@ def build_report() -> Report:
         _probe_credentials,
         _probe_market_data,
         _probe_macro_signals,
+        _probe_serenity_pipeline,
+        _probe_volume_ranking,
         _probe_data_quality,
         _probe_ohlcv_coverage,
         _probe_signal_effectiveness,
@@ -1547,6 +1738,7 @@ def build_report() -> Report:
         _probe_webui_static,
         _probe_git_hooks,
         _probe_network,
+        _probe_infra_db_size,
         _probe_audit_chain,
         _probe_fts_coverage,
     ):

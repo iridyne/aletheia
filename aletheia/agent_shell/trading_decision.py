@@ -511,7 +511,15 @@ def _build_assessment_prompt(ctx: dict) -> str:
     reflection = layer2.get("reflection")
 
     stats = layer2.get("outcome_stats")
-    if stats:
+    _bypass = False
+    try:
+        from aletheia.config.loader import load_config
+        _bypass = load_config().agent.bypass_distress_gate
+    except Exception:
+        pass
+    if _bypass:
+        stats_block = "  (performance stats suppressed — demo/test mode)"
+    elif stats:
         # Render win_rate as "NW/ML (X% win rate)" — a bare "46.6% win rate" next
         # to a negative PnL was misread by the LLM as "-45.8% drawdown" and drove
         # a phantom-crisis all-skip. Explicit W/L counts make the metric
@@ -526,16 +534,20 @@ def _build_assessment_prompt(ctx: dict) -> str:
         stats_block = "  (no recent trades)"
 
     per_sym = layer2.get("per_symbol", [])
-    sym_lines = "\n".join(
-        f"  {s['symbol']}: {s['trades']}T {s['wins']}W PnL=${s['pnl']:+.2f}"
-        for s in per_sym[:5]
-    ) or ""
+    sym_lines = "" if _bypass else (
+        "\n".join(
+            f"  {s['symbol']}: {s['trades']}T {s['wins']}W PnL=${s['pnl']:+.2f}"
+            for s in per_sym[:5]
+        ) or ""
+    )
 
     strat_perf = layer2.get("strategies", [])
-    strat_lines = "\n".join(
-        f"  {s['name']}: WR={s.get('win_rate', '?')}% PnL={s.get('total_pnl', '?')} trades={s.get('trade_count', 0)}"
-        for s in strat_perf[:5]
-    ) or "  (none active)"
+    strat_lines = "  (strategy performance suppressed — demo/test mode)" if _bypass else (
+        "\n".join(
+            f"  {s['name']}: WR={s.get('win_rate', '?')}% PnL={s.get('total_pnl', '?')} trades={s.get('trade_count', 0)}"
+            for s in strat_perf[:5]
+        ) or "  (none active)"
+    )
 
     # ── Layer 3: Long-term Wisdom ──
     lessons = layer3.get("lessons", [])
@@ -678,7 +690,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "# Layer 2: Short-term Memory (past 7 days)",
         "",
     ]
-    if reflection:
+    if reflection and not _bypass:
         parts.append("## Last Decision Reflection")
         parts.append(f"  {reflection}")
         parts.append("")
@@ -700,18 +712,19 @@ def _build_assessment_prompt(ctx: dict) -> str:
     # rendered into the prompt — so calibration, the trading memo, and reasoning
     # feedback were silently dropped before reaching the PI Agent. They are real,
     # data-derived signals; surface them.
-    memo = layer2.get("trading_memo")
-    if memo and memo.get("rendered"):
-        parts += ["## Trading Memo (insights from historical performance analysis)",
-                  memo["rendered"], ""]
-    calibration_fb = layer2.get("calibration_feedback")
-    if calibration_fb:
-        parts += ["## Conviction Calibration (your past conviction vs actual win-rate)",
-                  calibration_fb, ""]
-    reasoning_fb = layer2.get("reasoning_feedback")
-    if reasoning_fb:
-        parts += ["## Reasoning Feedback (which signal patterns have actually worked)",
-                  reasoning_fb, ""]
+    if not _bypass:
+        memo = layer2.get("trading_memo")
+        if memo and memo.get("rendered"):
+            parts += ["## Trading Memo (insights from historical performance analysis)",
+                      memo["rendered"], ""]
+        calibration_fb = layer2.get("calibration_feedback")
+        if calibration_fb:
+            parts += ["## Conviction Calibration (your past conviction vs actual win-rate)",
+                      calibration_fb, ""]
+        reasoning_fb = layer2.get("reasoning_feedback")
+        if reasoning_fb:
+            parts += ["## Reasoning Feedback (which signal patterns have actually worked)",
+                      reasoning_fb, ""]
 
     # Ranker candidates (what paper_trader would do)
     ranker = layer2.get("ranker_candidates", [])

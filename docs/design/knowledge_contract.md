@@ -4,7 +4,7 @@
 > 改动信任不变量前必须 change control (§5)。
 > Source files: `aletheia/knowledge/manager.py` · `retrieval.py` · `guards.py` · `router.py`
 > Cross-references: `docs/governance/trust_and_change_control.md §4` · `docs/design/agent_contracts.md` · `docs/design/data_model.md §3.C`
-> Last updated: 2026-06-23
+> Last updated: 2026-06-29
 
 ---
 
@@ -224,11 +224,15 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 ## §6 已知管道断裂
 
-### A1. ps_lessons ↔ knowledge_fts 双轨脱钩
+### A1. ps_lessons ↔ PI Agent prompt（L-Bug-B — 已修复 2026-06-27）
 
-**现状**: `dreaming_agent.py:177-205` 从 `post_trade_review` 条目提炼结构化 lesson 并写入 `ps_lessons` 表（LessonStore）。而 `retrieve_lessons()` 只读 `knowledge_fts`（`retrieval.py:185`）。ps_lessons 数据永远不会进入任何 agent 的 prompt context。
+**现状（修复后）**: `trading_context.py:592-603` 读取 `LessonStore().list_all(status="proposed", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py:764-774` 将其渲染为 `## Recent Post-trade Lessons` 进入 PI Agent prompt。
 
-**影响**: Dreaming Agent 的结构化提炼工作完全进入死路，不影响任何后续决策。
+ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_context Layer3 → PI prompt → risk engine `_check_lesson_constraints()`（status="accepted" 的 lesson）。
+
+**原始缺陷（Round 1）**: ps_lessons 写入但无消费者，dreaming 工作进死路。修复 commit: b9ad957（2026-06-27）。
+
+**残余 gap**: `retrieve_lessons()`（`retrieval.py:185`）仍只读 `knowledge_fts`，不读 `ps_lessons`。两条通路并行，无冲突——knowledge_fts 是自由文本检索，ps_lessons 是结构化 LessonStore。`retrieve_lessons()` 的调用方若期望看到 ps_lessons 内容需改用 LessonStore 直接查询。
 
 **前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §A1`
 

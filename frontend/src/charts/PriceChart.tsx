@@ -5,7 +5,8 @@ import {
 import { api } from '../api/client'
 import { chartTheme } from './theme'
 
-export interface TradeMarker { time: number; side: 'buy' | 'sell'; price: number; id?: string }
+export type MarkerKind = 'long' | 'short' | 'stop_long' | 'stop_short'
+export interface TradeMarker { time: number; kind: MarkerKind; price: number; id?: string }
 
 interface Bar { time: number; open: number; high: number; low: number; close: number }
 
@@ -21,16 +22,20 @@ function toBar(c: any): Bar {
   return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }
 }
 
+const MARKER_CFG: Record<MarkerKind, { position: 'belowBar' | 'aboveBar'; shape: 'arrowUp' | 'arrowDown'; color: string; label: string }> = {
+  long:       { position: 'belowBar', shape: 'arrowUp',   color: chartTheme.markerBuy,       label: 'Long' },
+  short:      { position: 'aboveBar', shape: 'arrowDown', color: chartTheme.markerSell,      label: 'Short' },
+  stop_long:  { position: 'aboveBar', shape: 'arrowDown', color: chartTheme.markerStopLong,  label: 'Stop Long' },
+  stop_short: { position: 'belowBar', shape: 'arrowUp',   color: chartTheme.markerStopShort, label: 'Stop Short' },
+}
+
 function seriesMarkers(markers: TradeMarker[]) {
   return [...markers]
     .sort((a, b) => a.time - b.time)
-    .map(m => ({
-      time: m.time as Time,
-      position: (m.side === 'buy' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
-      color: m.side === 'buy' ? chartTheme.markerBuy : chartTheme.markerSell,
-      shape: (m.side === 'buy' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
-      text: m.side.toUpperCase(),
-    }))
+    .map(m => {
+      const cfg = MARKER_CFG[m.kind]
+      return { time: m.time as Time, position: cfg.position, color: cfg.color, shape: cfg.shape, text: cfg.label }
+    })
 }
 
 /**
@@ -210,8 +215,10 @@ export default function PriceChart({ symbol, timeframe = '1h', markers = [], onM
       <div ref={containerRef} style={{ width: '100%' }} />
       {markers.length > 0 && (
         <div className="chart-legend">
-          <span style={{ color: chartTheme.markerBuy }}>▲ Buy</span>
-          <span style={{ color: chartTheme.markerSell }}>▼ Sell</span>
+          <span style={{ color: chartTheme.markerBuy }}>▲ Long</span>
+          <span style={{ color: chartTheme.markerSell }}>▼ Short</span>
+          <span style={{ color: chartTheme.markerStopLong }}>▼ Stop Long</span>
+          <span style={{ color: chartTheme.markerStopShort }}>▲ Stop Short</span>
         </div>
       )}
     </div>

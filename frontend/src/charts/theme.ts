@@ -11,4 +11,6 @@ export const chartTheme = {
   areaBottomColor: 'rgba(34, 211, 238, 0.02)', // --accent fade (bottom)
   markerBuy: '#2ee6a8',
   markerSell: '#ff5d6c',
+  markerStopLong: '#f59e0b',
+  markerStopShort: '#22d3ee',
 } as const

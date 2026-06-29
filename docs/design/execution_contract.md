@@ -68,6 +68,25 @@ trade_proposals.id
 > **OKX demo 现货已实测**(2026-06-28):demo 沙盒列 522 现货标的,真下单 buy+sell 全程通过。详见 `docs/research/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md`。spec:`tests/specs/spec_spot_parity.py`(SP-S01~S06)。
 > **AI 决定 market_type**:opportunity 带 `market` 字段透出给 PI;PI 显式选 → 否则继承 opportunity.market → 否则按"空头必永续/其余现货"兜底(非固定偏向)。`trading_decision.py`。
 
+### 3.2 Symbol Availability Pre-check（标的可用性预检）
+
+风控批准后、Broker 下单前，gateway 对**所有真实交易所模式**做一次 symbol 可用性验证（`gateway.py:_check_symbol_availability`）。不可用时直接返回 `rejected`，写 `event_type=proposal_skipped` 审计记录，**不产生** `error` 状态。`paper_internal` 免检（虚拟撮合，与交易所标的无关）。
+
+| 模式 | 标的来源 | 缓存 TTL |
+|------|---------|---------|
+| `okx_demo` | `okx_broker._get_demo_symbols()`（sandbox CCXT，OKX demo 专属列表） | 4h |
+| `okx_live_limited` | `universe_registry`（venue=`"okx"`） | 4h |
+| `bitget_demo` / `bitget_live_limited` | `universe_registry`（venue=`"bitget"`） | 4h |
+| `binance_testnet` / `binance_live_limited` | `universe_registry`（venue=`"binance"`） | 4h |
+
+**Fail-open**：缓存未就绪或 registry 为空时返回 `None`，不阻塞下单（避免首次启动 / registry 未同步时误伤）。
+
+**新交易所接入方式**（e.g. Hyperliquid）：
+1. 往 `_EXECUTION_MODE_TO_VENUE` 加 `"hyperliquid_demo": "hyperliquid"`
+2. 确保 `sync_universe_registry()` 已写入 `venue="hyperliquid"` 行
+
+**Spec claims**：`EX-S07`（结构）/ `EX-B10`（paper_internal 免检）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。
+
 ---
 
 ## 4. TPSL 交易所挂单

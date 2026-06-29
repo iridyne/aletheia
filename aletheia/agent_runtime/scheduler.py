@@ -51,6 +51,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "news_fetch": 120.0,
     "lesson_reviewer": 300.0,
     "shadow_resolver": 60.0,
+    "outcome_settler": 120.0,
 }
 
 
@@ -88,8 +89,14 @@ _latest_volume_ranking: dict = {}
 
 
 def get_latest_volume_ranking() -> dict:
-    """Return latest volume scanner results (empty dict if never collected)."""
-    return _latest_volume_ranking.copy()
+    """Return latest volume scanner results; falls back to DB snapshot after restart."""
+    if _latest_volume_ranking:
+        return _latest_volume_ranking.copy()
+    try:
+        from aletheia.storage import repositories as _repo
+        return _repo.get_volume_ranking_snapshot()
+    except Exception:
+        return {}
 
 
 # Isolate latency-sensitive infrastructure jobs from long LLM/agent jobs. A
@@ -478,6 +485,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="universe_refresh", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
+    # Independent outcome settler — settles overdue forward-outcome rows that feed
+    # the learning pipeline.  Runs unconditionally (not gated on universe.enabled)
+    # so the attribution chain keeps ticking even when the universe scan is off.
+    _scheduler.add_job(
+        _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=15,
+        id="outcome_settler", misfire_grace_time=120, max_instances=1, executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=120),
+    )
     # 9-domain market data collectors (microstructure/derivatives/macro).
     # Single job, runs every 2 min, uses internal phase counter to control
     # per-domain frequency (orderbook+funding every 2min; macro every 10min).
@@ -517,7 +532,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("pi_operator_loop", _run_operator_loop), "cron",
         hour="0,4,8,12,16,20", minute=15,
-        id="pi_operator_loop", misfire_grace_time=600, executor="agents",
+        id="pi_operator_loop", misfire_grace_time=3600, executor="agents",
         timezone="Asia/Shanghai",
     )
 
@@ -1369,6 +1384,38 @@ def _run_universe_refresh():
         _record_job_failure("universe_refresh", str(e))
 
 
+async def _async_settle_outcomes():
+    from aletheia.universe.outcome_recorder import settle_due
+    settled = await settle_due()
+    if settled:
+        logger.info("outcome_settler: settled %d forward outcomes", settled)
+
+
+def _run_outcome_settler():
+    """Settle overdue forward-outcome rows independently of UniverseService.refresh().
+
+    Previously settle_due() was only called inside universe_refresh, which means
+    it was silently skipped when universe.enabled=False or runtime.paused=True,
+    causing the learning pipeline to starve for settled outcomes. This job
+    runs unconditionally (modulo runtime.paused) every 15 minutes.
+    """
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        _run_async_with_timeout("outcome_settler", _async_settle_outcomes())
+        _record_job_success("outcome_settler")
+    except TimeoutError:
+        logger.warning(
+            "outcome_settler timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["outcome_settler"],
+        )
+        _record_job_failure("outcome_settler", "timed out")
+    except Exception as e:
+        logger.warning("outcome_settler failed: %s", e)
+        _record_job_failure("outcome_settler", str(e))
+
+
 def _run_backtest_orchestrator():
     cfg = load_config()
     if cfg.runtime.paused:
@@ -1645,6 +1692,13 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                     "symbols": vol_result["top_symbols"],
                     "observed_at": vol_result["observed_at"],
                 })
+                try:
+                    from aletheia.storage import repositories as _repo
+                    _repo.save_volume_ranking_snapshot(
+                        vol_result["top_symbols"], vol_result["observed_at"]
+                    )
+                except Exception as _e:
+                    logger.debug("volume_ranking persist failed: %s", _e)
         except Exception as e:
             logger.debug("volume_scanner collection failed: %s", e)
 

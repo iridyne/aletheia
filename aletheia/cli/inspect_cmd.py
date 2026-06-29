@@ -357,6 +357,8 @@ def config(
         },
         "agent": {
             "permission_mode": cfg.operator.permission_mode,
+            "autonomous_learning": cfg.agent.autonomous_learning,
+            "bypass_distress_gate": cfg.agent.bypass_distress_gate,
         },
         "exchange": {
             "mode": cfg.exchange.mode,

@@ -1,10 +1,8 @@
-"""Spec: Learning Pipeline (RED, written 2026-06-24, extended 2026-06-27 during freeze).
+"""Spec: Learning Pipeline (GREEN post-Round-1-fixes, updated 2026-06-29).
 
-These claims describe how the Learning subsystem (knowledge_items / ps_lessons)
-MUST be consumed by the PI Agent decision chain after Round 2 解冻. They are
-recorded with status="missing" because the production code paths required to
-satisfy them are inside the EXPERIMENT FREEZE clearance (trading_context.py /
-trading_decision.py) and cannot be modified during Round 1.
+Originally written as RED tripwires during Round 1 freeze (2026-06-24 / 2026-06-27).
+All six L-Bug fixes (A/A'/B/C/D) were applied in fix/round1-learning-fixes
+(b9ad957, merged 873d464) and LP-S01..S06 now pass. LP-S07..S11 were always GREEN.
 
 LP-S01..S04 (2026-06-24): consumption-side dead filters (Layer3 lessons/guards,
 ps_lessons no consumer). LP-S05..S06 (2026-06-27, from the full-lifecycle audit
@@ -12,12 +10,8 @@ in docs/issues/LEARNING_LOOP_AUDIT_2026-06-26.md): the attribution-chain root
 cause (opportunity_id hard-coded None) and the guard-promotion dead-end (promoter
 reads a different dir than where candidates are written).
 
-Each test below intentionally fails today (xfail) and is expected to flip to
-GREEN as soon as Round 2 解冻当天 applies the fixes documented in
-docs/plans/round2_week1_decision_chain_fixes.md.
-
-DO NOT modify these tests to make them pass during the freeze — the whole
-point is that they are a tripwire for solving the right root cause once.
+These claims are now status="implemented". If any of the L-Bug fixes regress,
+the corresponding test will FAIL — that is the intended tripwire behaviour.
 """
 
 from __future__ import annotations
@@ -64,7 +58,8 @@ def _find_call_keywords(source: str, func_name: str) -> list[set[str]]:
 @spec_claim(
     SpecClaim("LP-S01", "learning_pipeline", "§Layer3 lessons", "L2a",
               "_build_layer3_wisdom lessons must query a real-producer item_type "
-              "(trade_case_study) so PI's Layer3 lessons is non-empty"),
+              "(trade_case_study) so PI's Layer3 lessons is non-empty",
+              status="implemented"),
 )
 def test_layer3_lessons_filter_aligned():
     """Layer3 lessons MUST query an item_type that has a real producer + DB rows.
@@ -125,7 +120,8 @@ def test_layer3_lessons_filter_aligned():
 
 @spec_claim(
     SpecClaim("LP-S02", "learning_pipeline", "§Layer3 guards", "L2a",
-              "_build_layer3_wisdom guards must call list_knowledge_items(item_type='guard_candidate')"),
+              "_build_layer3_wisdom guards must call list_knowledge_items(item_type='guard_candidate')",
+              status="implemented"),
 )
 def test_layer3_guards_filter_via_query():
     """Layer3 _build_layer3_wisdom must call list_knowledge_items with item_type='guard_candidate'."""
@@ -159,7 +155,8 @@ def test_layer3_guards_filter_via_query():
 
 @spec_claim(
     SpecClaim("LP-S03", "learning_pipeline", "§ps_lessons consumption", "L2a",
-              "trading_decision.py must reference ps_lessons when building PI prompt"),
+              "trading_decision.py must reference ps_lessons when building PI prompt",
+              status="implemented"),
 )
 def test_ps_lessons_consumed_in_prompt():
     """trading_decision.py source must mention ps_lessons (either via key access or function call)."""
@@ -178,7 +175,8 @@ def test_ps_lessons_consumed_in_prompt():
 
 @spec_claim(
     SpecClaim("LP-S04", "learning_pipeline", "§Layer3 entry", "L2a",
-              "_build_layer3_wisdom() callable exists in trading_context.py"),
+              "_build_layer3_wisdom() callable exists in trading_context.py",
+              status="implemented"),
 )
 def test_layer3_function_exists():
     """The Layer 3 wisdom builder MUST exist as an importable callable.
@@ -203,7 +201,8 @@ _GUARDS_MODULE = "aletheia/knowledge/guards.py"
     SpecClaim("LP-S05", "learning_pipeline", "§Attribution root", "L2a",
               "create_paper_proposal() in trading_decision.py must pass a real "
               "opportunity_id (not the None literal) — the single root cause that "
-              "starves every downstream learning artifact of entry-context"),
+              "starves every downstream learning artifact of entry-context",
+              status="implemented"),
 )
 def test_proposal_carries_opportunity_id():
     """create_paper_proposal must NOT hard-code opportunity_id=None.
@@ -243,7 +242,8 @@ def test_proposal_carries_opportunity_id():
 @spec_claim(
     SpecClaim("LP-S06", "learning_pipeline", "§Guard promotion", "L2a",
               "load_trading_guards reaches guard_candidate files (scans both guards/ and "
-              "guard_candidates/) so run_promotion_check can promote them — L-Bug-D fixed"),
+              "guard_candidates/) so run_promotion_check can promote them — L-Bug-D fixed",
+              status="implemented"),
 )
 def test_guard_candidates_reachable_by_promoter():
     """guards.py must reference the guard_candidates directory so the promoter

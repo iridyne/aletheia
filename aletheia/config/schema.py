@@ -164,6 +164,11 @@ class LiveConfig(BaseModel):
 class AgentConfig(BaseModel):
     permission_mode: str = "Paper"
     autonomous_learning: bool = True
+    # When true, suppress historical performance stats from the PI Agent prompt
+    # so the LLM cannot trigger self-protection based on past WR/PnL.
+    # Intended for demo/test phases where pipeline throughput matters more than
+    # performance-based gating. Re-disable before evaluating real results.
+    bypass_distress_gate: bool = False
 
 
 class OperatorConfig(BaseModel):
