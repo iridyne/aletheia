@@ -3,12 +3,12 @@
 TS schemas.ts interfaces and Python Pydantic models are hand-maintained (no codegen).
 CONTRACT (request direction): every field a TS request payload declares MUST exist on
 the Python model, else silently dropped on the wire. Asserts TS subset-of Python. L2a.
-String-scanning parser (no regex) to stay robust across tooling.
 """
 from __future__ import annotations
 
 import ast
 import pathlib
+import re
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -29,32 +29,21 @@ _PAIRS = [
 ]
 
 
-def _ident(s):
-    return bool(s) and all(c.isalnum() or c == "_" for c in s)
-
-
 def _ts(src, name):
-    marker = "export interface " + name
-    i = src.find(marker)
-    if i < 0:
-        return None
-    after = src[i + len(marker):i + len(marker) + 1]
-    if after and (after.isalnum() or after == "_"):
-        return None
-    brace = src.find("{", i)
-    end = src.find("
-}", brace)
-    if brace < 0 or end < 0:
+    m = re.search(
+        r"export\s+interface\s+" + re.escape(name) + r"\s*(?:extends\s+\w+\s*)?\{(.*?)\n\}",
+        src, re.DOTALL,
+    )
+    if not m:
         return None
     fields = set()
-    for ln in src[brace + 1:end].splitlines():
+    for ln in m.group(1).splitlines():
         ln = ln.strip()
         if not ln or ln.startswith(("//", "*", "/*")):
             continue
-        if ":" in ln:
-            key = ln.split(":")[0].strip().rstrip("?")
-            if _ident(key):
-                fields.add(key)
+        fm = re.match(r"([A-Za-z_]\w*)\??\s*:", ln)
+        if fm:
+            fields.add(fm.group(1))
     return fields
 
 
