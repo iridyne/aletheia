@@ -349,6 +349,9 @@ def _check_lesson_constraints(proposal) -> list[str]:
         active_lessons = store.list_all(status="accepted", limit=50)
         sym_canonical = to_canonical(proposal.symbol)
 
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+
         for lesson in active_lessons:
             if not lesson.recommendation_json:
                 continue
@@ -357,21 +360,46 @@ def _check_lesson_constraints(proposal) -> list[str]:
             except (ValueError, TypeError):
                 continue
 
+            # Guard: skip expired lessons (TTL exceeded).
+            if lesson.expires_at and now_iso > lesson.expires_at:
+                logger.debug("lesson %s expired at %s, skipping", lesson.lesson_id, lesson.expires_at)
+                continue
+
+            # Guard: dry-run window — log advisory only, do not block.
+            in_dry_run = lesson.dry_run_until and now_iso < lesson.dry_run_until
+            if in_dry_run:
+                logger.info(
+                    "lesson %s in dry-run window (until %s), advisory only",
+                    lesson.lesson_id, lesson.dry_run_until,
+                )
+
             action = rec.get("action")
             if action == "block_symbol":
                 blocked_sym = to_canonical(rec.get("symbol", ""))
                 if blocked_sym and blocked_sym == sym_canonical:
-                    violations.append(f"lesson_block_symbol:{lesson.lesson_id}:{blocked_sym}")
+                    token = f"lesson_block_symbol:{lesson.lesson_id}:{blocked_sym}"
+                    if in_dry_run:
+                        logger.info("dry-run advisory (would block): %s", token)
+                    else:
+                        violations.append(token)
 
             elif action == "block_direction":
                 blocked_dir = rec.get("direction", "")
                 if blocked_dir and proposal.direction == blocked_dir:
-                    violations.append(f"lesson_block_direction:{lesson.lesson_id}:{blocked_dir}")
+                    token = f"lesson_block_direction:{lesson.lesson_id}:{blocked_dir}"
+                    if in_dry_run:
+                        logger.info("dry-run advisory (would block): %s", token)
+                    else:
+                        violations.append(token)
 
             elif action == "block_scanner":
                 blocked_scanner = rec.get("scanner", "")
                 if blocked_scanner and getattr(proposal, "scanner_family", None) == blocked_scanner:
-                    violations.append(f"lesson_block_scanner:{lesson.lesson_id}:{blocked_scanner}")
+                    token = f"lesson_block_scanner:{lesson.lesson_id}:{blocked_scanner}"
+                    if in_dry_run:
+                        logger.info("dry-run advisory (would block): %s", token)
+                    else:
+                        violations.append(token)
 
     except Exception as e:
         logger.warning("_check_lesson_constraints failed (safe-reject): %s", e)

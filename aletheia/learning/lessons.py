@@ -82,12 +82,19 @@ class LessonStore:
         return [PSLesson(**dict(r)) for r in rows]
 
     def accept(self, lesson_id: str) -> None:
-        """Move a lesson from proposed to accepted."""
+        """Move a lesson from proposed to accepted; stamps guard timestamps."""
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        activated_at = now.isoformat()
+        dry_run_until = (now + timedelta(hours=24)).isoformat()
+        expires_at = (now + timedelta(days=30)).isoformat()
         db = get_db()
         was_in_tx = db.in_transaction
         db.execute(
-            "UPDATE ps_lessons SET status = 'accepted' WHERE lesson_id = ?",
-            (lesson_id,),
+            "UPDATE ps_lessons SET status = 'accepted',"
+            " activated_at = ?, dry_run_until = ?, expires_at = ?"
+            " WHERE lesson_id = ?",
+            (activated_at, dry_run_until, expires_at, lesson_id),
         )
         if not was_in_tx:
             db.commit()

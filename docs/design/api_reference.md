@@ -119,6 +119,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/analytics/backtest/runs` | List backtest runs |
 | GET | `/analytics/backtest/runs/{id}` | Backtest run detail with trades |
 | GET | `/analytics/backtest/compare/{strategy_id}` | Compare backtest vs paper |
+| GET | `/analytics/strategy-performance` | Per-strategy KPIs + latest backtest summary (D6) |
 
 ---
 
@@ -313,6 +314,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | PATCH | `/serenity/profile` | Update profile |
 | POST | `/serenity/profile/parse` | Parse profile from text |
 | GET | `/serenity/claims` | All claims |
+| GET | `/serenity/pipeline` | Pipeline summary: recent research runs + active opportunity count (D7) |
 
 ---
 

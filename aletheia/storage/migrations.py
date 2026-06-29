@@ -1501,6 +1501,12 @@ _ADDITIVE_COLUMNS = [
     ("bear_case", "pi_decisions", "TEXT DEFAULT ''"),
     # P1 (2026-06-28, AI Berkshire belief decomposition): structured assumption list.
     ("key_assumptions", "pi_decisions", "TEXT DEFAULT '[]'"),
+    # 2026-06-29: lesson block guard fields (dry-run window + TTL expiry).
+    # Prevent immediately-accepted lessons from blocking all trades without
+    # cooldown (sleeping bomb fix; see spec_lesson_guards.py LG-S01..S04).
+    ("activated_at", "ps_lessons", "TEXT"),
+    ("dry_run_until", "ps_lessons", "TEXT"),
+    ("expires_at", "ps_lessons", "TEXT"),
 ]
 
 
@@ -1721,6 +1727,15 @@ CREATE TABLE IF NOT EXISTS capital_events (
 CREATE INDEX IF NOT EXISTS idx_capital_events_detected ON capital_events(detected_at);
 """
 
+_VOLUME_RANKING_DDL = """
+CREATE TABLE IF NOT EXISTS volume_ranking_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbols_json TEXT NOT NULL,
+    observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_volume_ranking_ts ON volume_ranking_snapshots(observed_at DESC);
+"""
+
 
 def _run_all_ddl(db) -> None:
     """Execute every DDL statement against db (used for both real and blueprint DBs)."""
@@ -1732,6 +1747,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_MARKET_REGIME_DDL)
     db.executescript(_PI_DECISIONS_DDL)
     db.executescript(_CAPITAL_EVENTS_DDL)
+    db.executescript(_VOLUME_RANKING_DDL)
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
     _ensure_knowledge_fts(db)
