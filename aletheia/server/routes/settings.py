@@ -109,6 +109,24 @@ async def set_autonomous_learning(req: AutonomousLearningRequest):
     return {"old": old, "new": req.enabled}
 
 
+class BypassDistressGateRequest(SettingsRequest):
+    enabled: bool
+
+
+@router.post("/bypass-distress-gate")
+async def set_bypass_distress_gate(req: BypassDistressGateRequest):
+    cfg = load_config()
+    old = cfg.agent.bypass_distress_gate
+    cfg.agent.bypass_distress_gate = req.enabled
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "bypass_distress_gate_changed",
+                 "entity_type": "agent_config", "before": {"bypass_distress_gate": old},
+                 "after": {"bypass_distress_gate": req.enabled},
+                 "message": f"bypass_distress_gate {old} -> {req.enabled}"})
+    return {"old": old, "new": req.enabled}
+
+
 # ---------------------------------------------------------------------------
 # Exchange markets config
 # ---------------------------------------------------------------------------

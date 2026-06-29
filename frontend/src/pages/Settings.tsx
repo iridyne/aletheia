@@ -326,6 +326,10 @@ function AgentModelsTab({ status, settings, qc }: any) {
     mutationFn: (enabled: boolean) => api.setAutonomousLearning(enabled),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
+  const bypassDistressMut = useMutation({
+    mutationFn: (enabled: boolean) => api.setBypassDistressGate(enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
@@ -345,6 +349,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
   const autoLearn = !!agent.autonomous_learning
+  const bypassDistressGate = !!agent.bypass_distress_gate
   const schedulerEnabled = runtime.scheduler_enabled !== false
   const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
   const piDaemon = (settings?.pi_daemon ?? {}) as any
@@ -382,6 +387,9 @@ function AgentModelsTab({ status, settings, qc }: any) {
       <Section title="Learning" description="Controls whether agents autonomously generate research, knowledge, and strategy ideas.">
         <Row label="Autonomous learning" hint="When ON, agents run dreaming/research cycles unprompted. When OFF, only human-triggered runs execute.">
           <Toggle checked={autoLearn} onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
+        </Row>
+        <Row label="Bypass PI distress gate" hint="When ON, historical win-rate/PnL stats are hidden from the PI Agent prompt so poor past performance cannot trigger self-protection. Use during demo/test phases only — disable before evaluating real results.">
+          <Toggle checked={bypassDistressGate} onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
         </Row>
       </Section>
 
@@ -2496,7 +2504,7 @@ function AppRows({ settings, qc }: any) {
 
 function ConfigCoverageCard({ settings }: { settings: any }) {
   const controlled = new Set([
-    'agent.permission_mode', 'agent.autonomous_learning',
+    'agent.permission_mode', 'agent.autonomous_learning', 'agent.bypass_distress_gate',
     'runtime.scheduler_enabled', 'runtime.git_enabled', 'runtime.auto_reload', 'runtime.autostart_on_start',
     'runtime.runtime_continuity_enabled', 'runtime.runtime_continuity_lock_ttl_sec', 'runtime.runtime_continuity_shadow_port_offset',
     'app.auto_open_browser',

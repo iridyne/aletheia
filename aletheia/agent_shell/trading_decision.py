@@ -511,7 +511,15 @@ def _build_assessment_prompt(ctx: dict) -> str:
     reflection = layer2.get("reflection")
 
     stats = layer2.get("outcome_stats")
-    if stats:
+    _bypass = False
+    try:
+        from aletheia.config.loader import load_config
+        _bypass = load_config().agent.bypass_distress_gate
+    except Exception:
+        pass
+    if _bypass:
+        stats_block = "  (performance stats suppressed — demo/test mode)"
+    elif stats:
         # Render win_rate as "NW/ML (X% win rate)" — a bare "46.6% win rate" next
         # to a negative PnL was misread by the LLM as "-45.8% drawdown" and drove
         # a phantom-crisis all-skip. Explicit W/L counts make the metric

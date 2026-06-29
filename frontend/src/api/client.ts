@@ -375,6 +375,8 @@ export const api = {
 
   setAutonomousLearning: (enabled: boolean) =>
     post<{ old: boolean; new: boolean }>('/settings/autonomous-learning', { enabled }),
+  setBypassDistressGate: (enabled: boolean) =>
+    post<{ old: boolean; new: boolean }>('/settings/bypass-distress-gate', { enabled }),
   setExchangeMarkets: (body: { spot: boolean; usdt_futures: boolean; paper_execution_mode?: string }) =>
     post<Record<string, any>>('/settings/exchange-markets', body),
   setPrimaryExchange: (exchange_id: string) =>
