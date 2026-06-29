@@ -218,6 +218,7 @@ const KB_TABS = [
   { key: 'reviews', label: 'Daily Reviews', fn: () => api.getKnowledge('daily_review') },
   { key: 'dreaming', label: 'Dreaming Logs', fn: () => api.getDreamingLogs() },
   { key: 'lessons', label: 'Post-Trade Lessons', fn: () => api.getLessons(100) },
+  { key: 'guards', label: 'Active Guards', fn: () => api.getGuards() },
 ] as const
 
 const kbCol = createColumnHelper<KnowledgeItem>()
@@ -233,6 +234,14 @@ type LessonRow = {
   lesson_id: string; source_type?: string; source_id?: string
   category?: string; severity?: string; summary?: string
   status?: string; created_at?: string
+  activated_at?: string; dry_run_until?: string; expires_at?: string
+}
+
+// Guard row shape (matches /api/knowledge/guards output).
+type GuardRow = {
+  guard_id: string; title: string; description?: string
+  scope?: string; enforcement?: string; severity?: string
+  score_penalty?: number; block_candidate?: boolean; tags?: string[]
 }
 const lessonCol = createColumnHelper<LessonRow>()
 const lessonColumns = [
@@ -244,26 +253,39 @@ const lessonColumns = [
   lessonCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
+const guardCol = createColumnHelper<GuardRow>()
+const guardColumns = [
+  guardCol.accessor('title', { header: 'Guard', cell: info => <span>{info.getValue()}</span> }),
+  guardCol.accessor('severity', { header: 'Severity', cell: info => <Badge tone={severityTone(info.getValue())}>{humanize(info.getValue() || '—')}</Badge> }),
+  guardCol.accessor('enforcement', { header: 'Mode', cell: info => <Badge tone={info.getValue() === 'blocking' ? 'red' : 'yellow'}>{humanize(info.getValue() || '—')}</Badge> }),
+  guardCol.accessor('scope', { header: 'Scope', cell: info => <Badge tone="blue">{humanize(info.getValue() || '—')}</Badge> }),
+  guardCol.accessor('score_penalty', { header: 'Penalty', cell: info => { const v = info.getValue(); return <span className="mono">{v ? `-${v}` : '—'}</span> } }),
+]
+
 function KnowledgeTab() {
   const [tab, setTab] = useState<typeof KB_TABS[number]['key']>('research')
   const [selected, setSelected] = useState<KnowledgeItem | null>(null)
   const [selectedLesson, setSelectedLesson] = useState<LessonRow | null>(null)
+  const [selectedGuard, setSelectedGuard] = useState<GuardRow | null>(null)
   const active = KB_TABS.find(t => t.key === tab)!
   const { data = [] } = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
   const isLessons = tab === 'lessons'
-  const rows = isLessons ? (data as unknown as LessonRow[]) : (data as KnowledgeItem[])
+  const isGuards = tab === 'guards'
+  const rows = isLessons ? (data as unknown as LessonRow[]) : isGuards ? (data as unknown as GuardRow[]) : (data as KnowledgeItem[])
 
   const { data: d0 } = useQuery({ queryKey: ['knowledge', KB_TABS[0].key], queryFn: KB_TABS[0].fn, staleTime: 60_000 })
   const { data: d1 } = useQuery({ queryKey: ['knowledge', KB_TABS[1].key], queryFn: KB_TABS[1].fn, staleTime: 60_000 })
   const { data: d2 } = useQuery({ queryKey: ['knowledge', KB_TABS[2].key], queryFn: KB_TABS[2].fn, staleTime: 60_000 })
   const { data: d3 } = useQuery({ queryKey: ['knowledge', KB_TABS[3].key], queryFn: KB_TABS[3].fn, staleTime: 60_000 })
   const { data: d4 } = useQuery({ queryKey: ['knowledge', KB_TABS[4].key], queryFn: KB_TABS[4].fn, staleTime: 60_000 })
+  const { data: d5 } = useQuery({ queryKey: ['knowledge', KB_TABS[5].key], queryFn: KB_TABS[5].fn, staleTime: 60_000 })
   const counts: Record<string, number | undefined> = {
     [KB_TABS[0].key]: Array.isArray(d0) ? d0.length : undefined,
     [KB_TABS[1].key]: Array.isArray(d1) ? d1.length : undefined,
     [KB_TABS[2].key]: Array.isArray(d2) ? d2.length : undefined,
     [KB_TABS[3].key]: Array.isArray(d3) ? d3.length : undefined,
     [KB_TABS[4].key]: Array.isArray(d4) ? d4.length : undefined,
+    [KB_TABS[5].key]: Array.isArray(d5) ? d5.length : undefined,
   }
 
   return (
@@ -278,6 +300,8 @@ function KnowledgeTab() {
       <Card>
         {isLessons ? (
           <DataTable data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
+        ) : isGuards ? (
+          <DataTable data={rows as GuardRow[]} columns={guardColumns} onRowClick={setSelectedGuard} emptyMessage="No active guards — accept a lesson to promote it." />
         ) : (
           <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
         )}
@@ -296,12 +320,38 @@ function KnowledgeTab() {
               <DrawerField label="Source Type" value={humanize(selectedLesson.source_type || '—')} />
               <DrawerField label="Source ID" value={selectedLesson.source_id} mono />
               <DrawerField label="Created" value={fmtTimestamp(selectedLesson.created_at)} mono />
+              {selectedLesson.activated_at && <DrawerField label="Activated" value={fmtTimestamp(selectedLesson.activated_at)} mono />}
+              {selectedLesson.dry_run_until && <DrawerField label="Dry-run Until" value={fmtTimestamp(selectedLesson.dry_run_until)} mono />}
+              {selectedLesson.expires_at && <DrawerField label="Expires" value={fmtTimestamp(selectedLesson.expires_at)} mono />}
             </DrawerSection>
           </>
         )}
       </DetailDrawer>
 
-      <DetailDrawer open={!!selected && !isLessons} onClose={() => setSelected(null)} title={selected?.title || 'Knowledge Item'}>
+      <DetailDrawer open={!!selectedGuard} onClose={() => setSelectedGuard(null)} title={selectedGuard?.title || 'Guard'}>
+        {selectedGuard && (
+          <>
+            <DrawerSection label="Description">
+              <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{selectedGuard.description || '—'}</p>
+            </DrawerSection>
+            <DrawerSection label="Properties">
+              <DrawerField label="Guard ID" value={selectedGuard.guard_id} mono />
+              <DrawerField label="Severity" value={<Badge tone={severityTone(selectedGuard.severity)}>{humanize(selectedGuard.severity || '—')}</Badge>} />
+              <DrawerField label="Enforcement" value={<Badge tone={selectedGuard.enforcement === 'blocking' ? 'red' : 'yellow'}>{humanize(selectedGuard.enforcement || '—')}</Badge>} />
+              <DrawerField label="Scope" value={<Badge tone="blue">{humanize(selectedGuard.scope || '—')}</Badge>} />
+              <DrawerField label="Score Penalty" value={selectedGuard.score_penalty ? `-${selectedGuard.score_penalty}` : '—'} />
+              <DrawerField label="Blocks Candidates" value={selectedGuard.block_candidate ? 'Yes' : 'No'} />
+            </DrawerSection>
+            {selectedGuard.tags && selectedGuard.tags.length > 0 && (
+              <DrawerSection label="Tags">
+                <div className="flex flex-wrap gap-1">{selectedGuard.tags.map(t => <Badge key={t} tone="blue">{t}</Badge>)}</div>
+              </DrawerSection>
+            )}
+          </>
+        )}
+      </DetailDrawer>
+
+      <DetailDrawer open={!!selected && !isLessons && !isGuards} onClose={() => setSelected(null)} title={selected?.title || 'Knowledge Item'}>
         {selected && (
           <>
             <DrawerSection label="Metadata">

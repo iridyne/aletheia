@@ -196,10 +196,8 @@ export const api = {
   getRuntimeEvents: (limit = 100) => fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
 
-  // Post-trade lessons (LessonStore — see persistence.py:192).
-  // Surface them in the Learning page so the user can see what dreaming_agent
-  // produces, even while PI's decision chain doesn't yet consume them
-  // (Round 2 fix L-Bug-B will wire consumption — until then this is read-only viz).
+  // Post-trade lessons (LessonStore). PI agent consumes them via trading_context.py:592
+  // (wired in b9ad957). TTL fields: accepted lessons enter 24h dry-run then expire after 30d.
   getLessons: (limit = 50, status?: string) => fetchJson<Array<{
     lesson_id: string
     source_type?: string
@@ -209,7 +207,32 @@ export const api = {
     summary?: string
     status?: string
     created_at?: string
+    activated_at?: string
+    dry_run_until?: string
+    expires_at?: string
   }>>(`/persistence/lessons?limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ''}`),
+
+  // Trading guards: accepted lessons promoted to active blocking/advisory constraints.
+  getGuards: () => fetchJson<Array<{
+    guard_id: string
+    title: string
+    description?: string
+    status?: string
+    scope?: string
+    enforcement?: string
+    severity?: string
+    score_penalty?: number
+    block_candidate?: boolean
+    tags?: string[]
+  }>>('/knowledge/guards'),
+  getGuardStats: () => fetchJson<Array<{
+    guard_id: string
+    title: string
+    fire_count: number
+    loss_rate_when_fired: number
+    avg_loss_pct: number
+    estimated_savings: number
+  }>>('/knowledge/guards/stats'),
 
   pause: () => post('/gateway/pause'),
   resume: () => post('/gateway/resume'),
