@@ -534,16 +534,20 @@ def _build_assessment_prompt(ctx: dict) -> str:
         stats_block = "  (no recent trades)"
 
     per_sym = layer2.get("per_symbol", [])
-    sym_lines = "\n".join(
-        f"  {s['symbol']}: {s['trades']}T {s['wins']}W PnL=${s['pnl']:+.2f}"
-        for s in per_sym[:5]
-    ) or ""
+    sym_lines = "" if _bypass else (
+        "\n".join(
+            f"  {s['symbol']}: {s['trades']}T {s['wins']}W PnL=${s['pnl']:+.2f}"
+            for s in per_sym[:5]
+        ) or ""
+    )
 
     strat_perf = layer2.get("strategies", [])
-    strat_lines = "\n".join(
-        f"  {s['name']}: WR={s.get('win_rate', '?')}% PnL={s.get('total_pnl', '?')} trades={s.get('trade_count', 0)}"
-        for s in strat_perf[:5]
-    ) or "  (none active)"
+    strat_lines = "  (strategy performance suppressed — demo/test mode)" if _bypass else (
+        "\n".join(
+            f"  {s['name']}: WR={s.get('win_rate', '?')}% PnL={s.get('total_pnl', '?')} trades={s.get('trade_count', 0)}"
+            for s in strat_perf[:5]
+        ) or "  (none active)"
+    )
 
     # ── Layer 3: Long-term Wisdom ──
     lessons = layer3.get("lessons", [])
@@ -708,18 +712,19 @@ def _build_assessment_prompt(ctx: dict) -> str:
     # rendered into the prompt — so calibration, the trading memo, and reasoning
     # feedback were silently dropped before reaching the PI Agent. They are real,
     # data-derived signals; surface them.
-    memo = layer2.get("trading_memo")
-    if memo and memo.get("rendered"):
-        parts += ["## Trading Memo (insights from historical performance analysis)",
-                  memo["rendered"], ""]
-    calibration_fb = layer2.get("calibration_feedback")
-    if calibration_fb:
-        parts += ["## Conviction Calibration (your past conviction vs actual win-rate)",
-                  calibration_fb, ""]
-    reasoning_fb = layer2.get("reasoning_feedback")
-    if reasoning_fb:
-        parts += ["## Reasoning Feedback (which signal patterns have actually worked)",
-                  reasoning_fb, ""]
+    if not _bypass:
+        memo = layer2.get("trading_memo")
+        if memo and memo.get("rendered"):
+            parts += ["## Trading Memo (insights from historical performance analysis)",
+                      memo["rendered"], ""]
+        calibration_fb = layer2.get("calibration_feedback")
+        if calibration_fb:
+            parts += ["## Conviction Calibration (your past conviction vs actual win-rate)",
+                      calibration_fb, ""]
+        reasoning_fb = layer2.get("reasoning_feedback")
+        if reasoning_fb:
+            parts += ["## Reasoning Feedback (which signal patterns have actually worked)",
+                      reasoning_fb, ""]
 
     # Ranker candidates (what paper_trader would do)
     ranker = layer2.get("ranker_candidates", [])

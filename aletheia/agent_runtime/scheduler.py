@@ -532,7 +532,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("pi_operator_loop", _run_operator_loop), "cron",
         hour="0,4,8,12,16,20", minute=15,
-        id="pi_operator_loop", misfire_grace_time=600, executor="agents",
+        id="pi_operator_loop", misfire_grace_time=3600, executor="agents",
         timezone="Asia/Shanghai",
     )
 
