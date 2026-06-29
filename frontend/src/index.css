@@ -3227,14 +3227,6 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 }
 .sdm-row:last-child { border-bottom: none; }
 
-/* Exchange selector tiles */
-.exchange-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-2); }
-.exchange-tile { display: flex; flex-direction: column; gap: 4px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--card); text-align: left; cursor: pointer; transition: border-color 0.15s; }
-.exchange-tile:hover:not(:disabled) { border-color: var(--accent); }
-.exchange-tile:disabled { opacity: 0.6; cursor: not-allowed; }
-.exchange-tile-active { border-color: var(--accent); background: rgba(99,102,241,0.06); }
-.exchange-tile-label { font-weight: 600; font-size: 0.9rem; }
-.exchange-tile-desc { font-size: 0.75rem; color: var(--muted); }
 
 /* ---------- Toast notifications ---------- */
 .toast-container { position: fixed; top: 56px; right: 16px; z-index: 300; display: flex; flex-direction: column; gap: 8px; pointer-events: none; max-width: 380px; }

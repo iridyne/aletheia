@@ -786,10 +786,12 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
 
   return (
     <div className="card mb-0">
-      <div className="flex items-center gap-3 mb-3">
+      <Row
+        label="Enable Universe Scanner"
+        hint="When on, dynamically discovers and scores USDT pairs each refresh cycle. When off, agents fall back to the static symbol list (BTC/ETH/SOL)."
+      >
         <Toggle checked={enabled} onChange={v => { setEnabled(v); setChanged(true); setMsg(null) }} />
-        {!enabled && <span className="hint m-0">Agents use static symbol list (BTC/ETH/SOL) when disabled.</span>}
-      </div>
+      </Row>
       <div className="settings-field-grid">
         <label className="settings-field">
           <span>Refresh interval (min)</span>
@@ -1220,29 +1222,29 @@ function PrimaryExchangeCard({ settings, qc }: any) {
     onError: (e: any) => setErr(e.message || 'Failed to switch exchange'),
   })
 
-  function select(id: string) {
-    if (id === effective) return
-    const label = PRIMARY_EXCHANGES.find(e => e.id === id)?.label ?? id
-    if (!confirm(`Switch primary exchange to ${label}?\n\nThis atomically updates data source, paper execution mode, and risk allowlist.`)) return
-    mut.mutate(id)
-  }
-
   return (
-    <div className="mb-4">
-      <p className="text-muted text-sm mb-3">One click unifies market data source, paper order execution, and risk allowlist.</p>
-      <div className="exchange-tiles">
-        {PRIMARY_EXCHANGES.map(ex => (
-          <button
-            key={ex.id}
-            className={`exchange-tile${effective === ex.id ? ' exchange-tile-active' : ''}`}
-            onClick={() => select(ex.id)}
-            disabled={mut.isPending}
-          >
-            <span className="exchange-tile-label">{ex.label}</span>
-            <span className="exchange-tile-desc">{ex.desc}</span>
-          </button>
-        ))}
-      </div>
+    <div>
+      <Row
+        label="Primary exchange"
+        hint="Atomically updates market data source, paper execution mode, and risk allowlist. Paper (internal) skips exchange connectivity entirely."
+      >
+        <select
+          value={effective}
+          onChange={e => {
+            const id = e.target.value
+            if (id === effective) return
+            const label = PRIMARY_EXCHANGES.find(ex => ex.id === id)?.label ?? id
+            if (!confirm(`Switch primary exchange to ${label}?\n\nThis atomically updates data source, paper execution mode, and risk allowlist.`)) return
+            mut.mutate(id)
+          }}
+          disabled={mut.isPending}
+          className="w-auto"
+        >
+          {PRIMARY_EXCHANGES.map(ex => (
+            <option key={ex.id} value={ex.id}>{ex.label}</option>
+          ))}
+        </select>
+      </Row>
       {err && <div className="settings-save-msg err mt-2">{err}</div>}
     </div>
   )
