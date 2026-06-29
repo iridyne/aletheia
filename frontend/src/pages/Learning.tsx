@@ -217,9 +217,6 @@ const KB_TABS = [
   { key: 'strategy', label: 'Strategy Memory', fn: () => api.getStrategyMemory() },
   { key: 'reviews', label: 'Daily Reviews', fn: () => api.getKnowledge('daily_review') },
   { key: 'dreaming', label: 'Dreaming Logs', fn: () => api.getDreamingLogs() },
-  // ps_lessons surfaces dreaming_agent output (LessonStore). PI currently does NOT
-  // consume these (Round 2 fix L-Bug-B); the tab exposes them so the user can verify
-  // the producer is alive even before consumption is wired.
   { key: 'lessons', label: 'Post-Trade Lessons', fn: () => api.getLessons(100) },
 ] as const
 
@@ -279,12 +276,7 @@ function KnowledgeTab() {
       </div>
       <Card>
         {isLessons ? (
-          <>
-            <p className="text-muted text-sm mb-2">
-              Producer-only view. The PI agent does not consume these yet (Round 2 fix L-Bug-B).
-            </p>
-            <DataTable data={rows as LessonRow[]} columns={lessonColumns} emptyMessage="No lessons yet." />
-          </>
+          <DataTable data={rows as LessonRow[]} columns={lessonColumns} emptyMessage="No lessons yet." />
         ) : (
           <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
         )}
