@@ -323,3 +323,34 @@ def test_no_get_handler_returns_raw_credential_value():
                         f"returns dict with forbidden key '{key.value}' — "
                         "credentials GET must never expose raw secret values"
                     )
+
+
+# ---------------------------------------------------------------------------
+# D6 / D7 — Missing endpoint existence claims (structural, L2a)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "API-D6", "api_reference", "§strategy-performance endpoint", "L2a",
+        "GET /analytics/strategy-performance route exists in routes/analytics.py",
+    ),
+)
+def test_strategy_performance_route_exists():
+    src = (_ROUTES / "analytics.py").read_text(encoding="utf-8")
+    assert "/strategy-performance" in src, (
+        "analytics.py must expose GET /strategy-performance endpoint (D6)"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "API-D7", "api_reference", "§serenity-pipeline endpoint", "L2a",
+        "GET /serenity/pipeline route exists in routes/data.py",
+    ),
+)
+def test_serenity_pipeline_route_exists():
+    src = (_ROUTES / "data.py").read_text(encoding="utf-8")
+    assert "/serenity/pipeline" in src, (
+        "data.py must expose GET /serenity/pipeline endpoint (D7)"
+    )

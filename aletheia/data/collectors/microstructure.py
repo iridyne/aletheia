@@ -26,7 +26,12 @@ class MicrostructureCollector:
             from aletheia.data.symbols import to_ccxt_perp, InstrumentId
 
             exchange = provider._ensure_primary()
-            await exchange.load_markets()
+            try:
+                await exchange.load_markets()
+            except Exception as e:
+                errors.append(f"load_markets failed: {e}")
+                logger.warning("microstructure: load_markets failed, skipping tick: %s", e)
+                return {"snapshots": snapshots, "errors": errors}
 
             for sym in symbols:
                 try:

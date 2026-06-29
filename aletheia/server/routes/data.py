@@ -579,6 +579,19 @@ def _ensure_serenity_opportunity_exists(opportunity_id: str) -> dict:
     return row
 
 
+@router.get("/serenity/pipeline")
+async def get_serenity_pipeline():
+    """Serenity research pipeline summary: recent runs + active opportunity count (D7)."""
+    _ensure_db()
+    from aletheia.storage.sqlite import get_db as _get_db
+    runs = repo.list_serenity_research_runs(limit=20)
+    db = _get_db()
+    active_count = db.execute(
+        "SELECT COUNT(*) FROM serenity_opportunities WHERE status = 'active'"
+    ).fetchone()[0]
+    return {"runs": runs, "active_opportunity_count": active_count}
+
+
 @router.get("/proposals")
 async def get_proposals():
     _ensure_db()

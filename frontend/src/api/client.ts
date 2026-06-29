@@ -734,6 +734,10 @@ export const api = {
     fetchJson<any>(`/analytics/backtest/runs/${runId}`),
   getBacktestCompare: (strategyId: string) =>
     fetchJson<any>(`/analytics/backtest/compare/${strategyId}`),
+  getStrategyPerformance: () =>
+    fetchJson<any>('/analytics/strategy-performance'),
+  getSerenityPipeline: () =>
+    fetchJson<any>('/serenity/pipeline'),
 
   // Generic helpers for pages that need simple get/post
   get: <T = any>(path: string) => fetchJson<T>(path),

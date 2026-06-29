@@ -710,6 +710,12 @@ class PSLesson(BaseModel):
     artifact_path: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     applied_policy_version: str | None = None
+    # Guard fields: set by accept(); protect against immediate full-force activation.
+    # activated_at: when accepted; dry_run_until: advisory-only window (+24h);
+    # expires_at: block silently ignored after this point (+30d).
+    activated_at: str | None = None
+    dry_run_until: str | None = None
+    expires_at: str | None = None
 
 
 class PSSkill(BaseModel):

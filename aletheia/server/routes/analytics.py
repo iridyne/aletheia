@@ -212,6 +212,27 @@ def get_backtest_compare(strategy_id: str):
     return {"strategy_id": strategy_id, "backtest": backtest_curve, "paper": paper_curve}
 
 
+@router.get("/strategy-performance")
+def get_strategy_performance():
+    """Per-strategy detailed performance: KPIs + latest backtest run summary (D6)."""
+    from aletheia.analytics.trade_stats import build_strategy_kpis
+    from aletheia.strategy.repositories import list_backtest_runs
+
+    kpis = build_strategy_kpis()
+    backtest_latest: dict = {}
+    for sid in list(kpis.keys()):
+        runs = list_backtest_runs(strategy_id=sid, limit=1)
+        if runs:
+            r = runs[0]
+            backtest_latest[sid] = {
+                "run_id": r.get("id"),
+                "sharpe": r.get("sharpe"),
+                "max_drawdown": r.get("max_drawdown"),
+                "created_at": r.get("created_at"),
+            }
+    return {"strategies": kpis, "latest_backtest": backtest_latest}
+
+
 @router.get("/go-live-scorecard")
 def get_go_live_scorecard():
     """Quantitative go-live readiness scorecard."""

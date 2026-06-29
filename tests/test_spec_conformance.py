@@ -126,6 +126,9 @@ def _import_all_specs():
         spec_pi_decision_chain,
         spec_operator_contract_parity,
         spec_operator_single_source,
+        # Lesson block guards (LG-*): dry-run window + TTL expiry before block takes effect.
+        # Attaches to risk_engine_contract (trust boundary, already REQUIRED). 2026-06-29.
+        spec_lesson_guards,
     )
 
 

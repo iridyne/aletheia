@@ -88,8 +88,14 @@ _latest_volume_ranking: dict = {}
 
 
 def get_latest_volume_ranking() -> dict:
-    """Return latest volume scanner results (empty dict if never collected)."""
-    return _latest_volume_ranking.copy()
+    """Return latest volume scanner results; falls back to DB snapshot after restart."""
+    if _latest_volume_ranking:
+        return _latest_volume_ranking.copy()
+    try:
+        from aletheia.storage import repositories as _repo
+        return _repo.get_volume_ranking_snapshot()
+    except Exception:
+        return {}
 
 
 # Isolate latency-sensitive infrastructure jobs from long LLM/agent jobs. A
@@ -1645,6 +1651,13 @@ async def _async_data_collectors(cfg, tick: int) -> None:
                     "symbols": vol_result["top_symbols"],
                     "observed_at": vol_result["observed_at"],
                 })
+                try:
+                    from aletheia.storage import repositories as _repo
+                    _repo.save_volume_ranking_snapshot(
+                        vol_result["top_symbols"], vol_result["observed_at"]
+                    )
+                except Exception as _e:
+                    logger.debug("volume_ranking persist failed: %s", _e)
         except Exception as e:
             logger.debug("volume_scanner collection failed: %s", e)
 
