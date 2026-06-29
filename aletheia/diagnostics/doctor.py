@@ -654,6 +654,14 @@ def _probe_profit_loop(report: Report) -> None:
                     if any(k in (r[0] or "").lower() for k in distress_kws):
                         self_protecting = True
                         break
+                # bypass_distress_gate=True: stats suppressed — LLM skip is a
+                # deliberate real-market decision, not a stale-WR hallucination.
+                # Treat as self-protecting when bypass is active.
+                if not self_protecting and cfg.agent.bypass_distress_gate:
+                    for r in reason_rows:
+                        if "suppressed" in (r[0] or "").lower():
+                            self_protecting = True
+                            break
                 if not self_protecting:
                     attribution = (f" — PI Agent returned skip×{skips}/trade×{trades} in 12h "
                                    f"(check trading_context balance + regime inputs)")
@@ -661,8 +669,9 @@ def _probe_profit_loop(report: Report) -> None:
             pass
         prop_desc = "none ever" if prop_age is None else _fmt_age(prop_age)
         if self_protecting:
+            bypass_note = " (bypass_distress_gate active — deliberate skip)" if cfg.agent.bypass_distress_gate else ""
             report.add("loop.profit", "info",
-                       f"PI Agent self-protecting: opportunities fresh ({_fmt_age(opp_age)}), "
+                       f"PI Agent self-protecting{bypass_note}: opportunities fresh ({_fmt_age(opp_age)}), "
                        f"skip×{skip_count}/trade×0 in 12h (distress pattern); "
                        f"newest proposal {prop_desc}",
                        "deliberate protective behavior — not a pipeline failure; "
