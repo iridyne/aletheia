@@ -1,5 +1,50 @@
 # Decisions
 
+## 2026-06-29 — OpenAlice TaG 借鉴策略的 5 个决策
+
+### Context
+研究 OpenAlice Trading-as-Git（TaG）的工程实现后，识别出可借鉴清单 5 项（P0-1 commit_hash + P0-2 state_after 快照 + P0-3 Guard 责任链拆分 + P1-1 reject 同构 + P1-2 reconcile hash）。落地前需要拍板若干设计取舍。
+
+### Decisions
+
+1. **从 P0-1（TradeProposal 加 `commit_hash` + `parent_hash`）起手，而非更大重构**
+   - 候选：先做 P0-3 Guard 责任链拆分（结构最大改动，但风险最高）；先做 P0-2 state_after 快照（价值最直接，但触 `execution/gateway.py` trust boundary）。
+   - **决定**：从 P0-1 起手。它**不触任何 trust boundary**（纯 `storage/` 改动 + 加 spec），且为后续 P0-2 / P1-1 / P1-2 提供 hash 基础设施——没有 commit_hash 就无法链入 audit event。
+   - 否决"一次做完所有 P0"备选：本会话已实施 P0-1 + P1-2 两项，剩余 P0-2 / P0-3 / P1-1 仍需 owner 显式批准（trust boundary）。
+
+2. **commit_hash 长度选 16 字符（64-bit 空间），而非照搬 OpenAlice 的 8 字符**
+   - OpenAlice 用 8 字符 SHA-256 截断（43 亿空间），对单账户单进程足够。
+   - **决定**：Aletheia 多 broker / 多 strategy / 多 execution_mode 共享一条全局单链，节点密度远超 OpenAlice 设计假设；加宽到 16 字符（64-bit ≈ 1.8e19 空间），把误碰撞概率压到实际不可能；存储成本无差异。
+   - 否决"全 64 字符"备选：与 git short-hash 习惯偏离过远，且非数据库主键，64-bit 已远超实用强度。
+
+3. **哈希输入排除 `status` 与 `commit_hash` 自身（而非全字段哈希）**
+   - 全字段哈希简单但有致命问题：`pending → executed/rejected` 是正常状态流转，会破链。
+   - **决定**：`p.model_dump(exclude={"status", "commit_hash"})` 输入 canonical JSON SHA-256。
+   - L2c spec（DM-C02）显式断言"status 变化不影响 hash 重算"，防止未来误改哈希函数引入回归。
+
+4. **全局单链（按 `rowid DESC` 选 parent），而非按 broker / strategy 分链**
+   - 候选：按 broker 分链（4 条链，bitget / okx / binance / paper）；按 strategy 分链（数十条链）；按 execution_mode 分链。
+   - **决定**：全局单链。多 broker 间提案串成一条决策时间线，任何篡改都破链；查询简单（`SELECT commit_hash FROM trade_proposals WHERE commit_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1`）；与 OpenAlice 设计一致。
+   - 否决分链备选：分链增加复杂度，对审计价值无实质提升。
+
+5. **拒绝若干 OpenAlice / Vibe Trading 借鉴项**
+   - **拒绝 LLM 写 Pandas 直接算指标**（Vibe Trading 帖宣传）：踩 INDEX.md §4 红线（agent 生成可执行代码）；Aletheia 预算好指标喂 LLM 是更稳健设计。
+   - **拒绝 Trade Primitive auto-learn effect**：源码 grep 命中零，纯营销话术；且 Aletheia learning loop 现产噪音（memory `aletheia-learning-loop-noise-not-signal`），加新闭环雪上加霜。
+   - **拒绝 ReAct 自由 tool 循环 + chat-driven UI + context compaction**：与 Aletheia trust boundary 设计哲学冲突（agent 不可自由 tool-use；dashboard + scheduler 模式不需要长会话压缩）。
+   - **拒绝 JSON 文件取代 SQLite**：OpenAlice 持久化是 `commit.json` 全量覆盖写，无文件锁；Aletheia 三进程并发会立即翻车（`database is locked` 根因刚修好）。
+   - **拒绝 "AI 不能 push" 信任边界搬过来**：Aletheia 是全自动 paper trading（人工在 dashboard 审核），已用 `bypass_distress_gate` + `kill_switch` + risk engine 作等价机制；不需要 OpenAlice 那种 stage/push 人工放行模式。
+
+### Reasoning
+共同原则：**借鉴工程纪律不抄设计哲学**（reject-as-first-class + state_after 快照是纪律，stage/push/chat 是哲学差异）；**给基础设施铺路再做下游**（P0-1 先于 P0-2/P1-1/P1-2）；**spec 先行锁定不变量**（每条 P0 借鉴必有对应 DM-* / PL-ADOPT-* spec claim 锁住，未来误改会被立即捕获）；**营销话术经源码 grep 才采信**（"auto-learn effect" / "1 月崩盘预判" 经核查全部祛魅）。
+
+### References
+- 研究报告：`docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md`
+- 借鉴清单 + 状态：`docs/issues/TAG_BORROW_BACKLOG.md`
+- L2 契约同步：`docs/design/data_model.md` + `docs/design/audit_chain_contract.md §6.4` + `docs/governance/trust_and_change_control.md §1.1`
+- Memory：`aletheia-tag-borrow-plan`、`aletheia-refs-openalice-prism`
+
+---
+
 ## 2026-06-24 - 最小赚钱循环修复期的 4 个架构决策
 
 ### Context

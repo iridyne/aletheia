@@ -7,7 +7,32 @@
 
 ## Last Updated
 
-2026-06-28 (负反馈闭环 + 可推翻 self-evolve + PI 审计修复 + 4 个 pre-existing 测试修复；以及 AI Berkshire Serenity Lens 整合 — 两条并行工作合并)
+2026-06-29 (OpenAlice TaG 深度研究 + P0-1 hash 基础设施 + P1-2 reconcile audit 链入 + 全量文档同步;接 2026-06-28 负反馈/AI Berkshire 工作)
+
+---
+
+## Recent Change (OpenAlice TaG 借鉴 P0-1 + P1-2 + 文档全量同步 — 2026-06-29)
+
+分支 `worktree-openalice-tag-research`,5 commit 待 owner 审核 merge:`b8ed990`(P0-1)+ `2359971`(Vibe Trading 交叉核查)+ `31eb1a9`(P1-2)+ `67ed379`(L2 design 契约同步)+ 本条 L4 status 同步。
+
+**研究**(13-agent workflow,797k tokens):三层 ground truth(博客原文 / 本地 `_refs/OpenAlice` 真实 TS 源码 / Aletheia 自身对照)+ 5 镜头分析 + 5 轮对抗核查。报告 `docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md`(含 Vibe Trading 帖交叉核查 §八点五)。核心发现:**TaG 真正值得借鉴的是工程纪律(reject 一等审计 + 执行后 state_after 快照),不是 git 比喻包装本身**;博客 "1 月崩盘预判" 自标 backtest 逻辑自相矛盾零证据值;"Trade Primitive auto-learn effect" 经源码 grep 命中零是纯营销话术。
+
+**P0-1**(`b8ed990`):TradeProposal 加 `commit_hash` + `parent_hash`(16-char SHA-256 prefix,排除 `status` 与 `commit_hash` 自身后哈希所有不可变字段)+ migrations 加列 + 索引 + `insert_trade_proposal()` 事务内自动填且全局单链(按 `rowid DESC` 选 parent)。SDD:DM-S08/S09 L2a + DM-B06 L2b + DM-C02 L2c(re-compute 确定性 + 链完整性 + **status 免疫**)。不触 trust boundary,改 4 文件 +241 行。
+
+**P1-2**(`31eb1a9`):`position_reconciler.adopt_position()` 写 `position_adopted` audit event 时,在 `after_state` 加 `commit_hash` + `parent_hash` 两字段(直接读 insert_trade_proposal 事务内填充的 proposal 对象,无需重算)。SDD:PL-ADOPT-09 L2b。改 2 文件 +99 行。**价值闭合**:P0-1 给提案打了内容指纹,P1-2 让 reconcile audit 第一个用上这个指纹——审计消费者从此单看 `audit.jsonl` 行就能还原 hash 链关联。
+
+**A FORBIDDEN_INTENTS hardening 核查发现是 no-op**:4-agent explore workflow 发现 `deactivate_kill_switch` + `modify_permissions` **早在 2026-06-23 就加进** `agent_shell/registry.py:415-426` 并配 "Defense-in-depth double-lock" 注释,OL-C03 spec status=implemented 无 xfail,BACKEND_ISSUES §15.1 已标 ✅。`MASTER_FIX_LEDGER_2026-06-27.md` 本就没列(verifier 误指控);典型 memory `aletheia-backend-issues-archive-unreliable` 应用场景——文档标"未修"≠代码真未修,grep 优先。
+
+**文档全量同步**(5-agent parallel workflow + 1 个 adversarial verifier):L2 design 契约(`data_model.md` 加 trade_proposals.commit_hash/parent_hash blockquote + `audit_chain_contract.md` §1 范围扩展 + §6.3 表加 position_adopted 行 + §6.4 两链对照表 + §7.3 doctor 探针 gap + `trust_and_change_control.md §1.1` 末尾加 hash chain 锁定 + `design/README.md` spec 表纠正 spec_data_model.py 8→18 + 补齐 spec_audit_chain.py / spec_pipeline_adopted_position.py 漏列);L4 status(本会话 4 文档 prepend);docs/references 同步(INDEX §3 加新研究报告 + openalice_prism_review.md 标 ✅);新建 `docs/issues/TAG_BORROW_BACKLOG.md` 列剩余借鉴清单状态。
+
+**验证**:DM-S08/S09/B06/C02 + PL-ADOPT-09 全 GREEN;邻近 57 specs passed;全量 1802 passed / 3 skipped / 0 failed(2:08,与 baseline 一致零回归);conformance 360→361 / 99% coverage 维持;doctor `trust.audit_chain` 通过。
+
+**剩余 TaG 借鉴清单**(`docs/issues/TAG_BORROW_BACKLOG.md`):
+- P0-2 执行后 state_after 账户全量快照(`gateway.py` 已有 audit 写入点加字段;触 trust boundary,需 owner 显式批准)
+- P0-3 Guard 责任链拆分(`risk/engine.py:77-332` 20 个 check 拆 `risk/guards/`;trust boundary 红线最严,需 SDD 全套行为零变化)
+- P1-1 reject 与 push 同结构(三路拒绝 audit 补 hash 字段;触 trust boundary)
+
+memory:`aletheia-tag-borrow-plan` 已同步落地状态。
 
 ---
 

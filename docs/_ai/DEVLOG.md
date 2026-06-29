@@ -1,5 +1,46 @@
 # Development Log
 
+## 2026-06-29 — OpenAlice TaG 深度研究 + P0-1 hash 基础设施 + P1-2 reconcile audit 链入
+
+### 触发
+owner 让研究 https://www.openalice.ai/blog/trading-as-git-intro，并把"能做、有必要做的"全部生成 plan 并实施。会话末追问 https://www.openalice.ai/blog/traderalice-cursor-for-vibe-trading 是否值得借鉴；最后让把文档全量同步。worktree 分支 `worktree-openalice-tag-research`。
+
+### 研究（13-agent workflow，797k tokens / 8.5min）
+三层 ground truth：博客全文 / 本地 `_refs/OpenAlice` 真实 TS 源码（`services/uta/src/domain/trading/git/TradingGit.ts`）/ Aletheia 自身对照。5 镜头分析（概念映射 / 架构机制 / 价值主张可信度 / 批判与边界 / Aletheia 对比借鉴）+ 5 轮对抗核查。
+
+**核心发现**：TaG = "工程上扎实的 AI 交易日志系统 + 版本控制比喻的过度包装"。Git 比喻在 revert / branch / merge / Merkle 链上全面失效（成交无 revert、代码只有线性单链、hash 是 SHA-256 截断非 Merkle 树）。博客"1 月崩盘预判"自标注是 backtest，逻辑自相矛盾，零证据值。**真正值得借鉴的两个工程纪律**：① reject 是一等审计记录、② 执行后账户全量快照绑到决策记录。
+
+对抗核查抓到 6 处脑补（含我自己的几条），全部并入正文。报告落 `docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md`。
+
+### P0-1（commit `b8ed990`）— TradeProposal hash chain（最小可行起手项）
+不触 trust boundary 的 hash 基础设施。`models.py` TradeProposal 加 `commit_hash` + `parent_hash`（均 `Optional[str]`，default `None` 向后兼容）+ `migrations.py` `_ADDITIVE_COLUMNS` 注册两列 + `idx_proposals_commit_hash` 索引 + `repositories.py` 新增 `_compute_proposal_hash()`（SHA-256 of canonical JSON of immutable fields 截断 16-char hex）+ `insert_trade_proposal()` 在事务内自动填且链入（全局单链，按 rowid DESC 选 parent）。SDD：DM-S08/S09（L2a）+ DM-B06（L2b）+ DM-C02（L2c：re-compute 确定性 + 链完整性 + **status 免疫断言**——pending → executed 后 commit_hash 必须不变）。
+
+**关键设计**：hash 输入排除 `status` + `commit_hash` 自身；16 字符（OpenAlice 用 8 / 43 亿空间，Aletheia 多 broker 多 strategy 全局单链加宽到 64-bit）；全局单链非按 broker 分链（简单 + 与 OpenAlice 一致）。
+
+验证：4 个新 spec RED→GREEN；全量 1802 passed / 3 skipped / 0 failed 零回归；conformance 359→360 / 99% 覆盖维持；doctor `trust.audit_chain` 通过。
+
+### Vibe Trading 帖（#4）交叉核查（commit `2359971`）
+源码 grep 验证 "auto-learn effect" 命中**零**——纯营销话术。三个具体能力中 News Retrieval 已有等价物（`news_items` 表）、LLM 写 Pandas 踩 §4 红线（agent 生成可执行代码）、ReAct + chat-driven 与 trust boundary 冲突。**结论无新增可落地借鉴项**。研究报告加 §八点五交叉核查节避免未来会话重复研究。
+
+### P1-2（commit `31eb1a9`）— Reconcile audit 链入
+4-agent explore workflow 先核查 A=FORBIDDEN_INTENTS hardening（owner 让先做）—— 意外发现 `deactivate_kill_switch + modify_permissions` **早在 2026-06-23 就加进** `registry.py:415-426` 并配 Defense-in-depth 注释，OL-C03 spec 已 `status="implemented"` 无 xfail，BACKEND_ISSUES §15.1 也已标 ✅。**A 是 no-op**，无新代码。MASTER_FIX_LEDGER 没列、所以没"过时标签"要修（typical of memory `aletheia-backend-issues-archive-unreliable`）。
+
+B 走 SDD：在 `spec_pipeline_adopted_position.py` 加 PL-ADOPT-09（L2b）；RED 信号清晰（`audit after_state.commit_hash None must equal proposal.commit_hash '4fe0133763e952bd'`）；在 `position_reconciler.py:372-379` 的 `write_audit` after dict 加 `commit_hash` + `parent_hash` 两键（直接读 insert_trade_proposal 事务内填充的 proposal 对象，无需重算）；强化测试也覆盖 `parent_hash` key 存在性（即使值为 None，区分"genesis 链首"和"忘了写"）。GREEN。
+
+**价值闭合**：P0-1 给提案打了内容指纹，P1-2 让 reconcile audit 第一个用上这个指纹。审计消费者从此单看 `audit.jsonl` 行就能还原 hash 链关联，不用回 DB 查 `trade_proposals`。
+
+验证：9/9 PL-ADOPT passed；邻近 57 spec passed；全量 1802 passed 零回归；conformance 360→361。
+
+### 文档全量同步（本 commit + commit 67ed379）
+5-agent parallel workflow 扫 5 层金字塔（L1 VISION / L2 design 契约 / L2.5 SDD / L4 _ai status / L4 issues ledger）+ 1 个 adversarial verifier。verifier 抓到 5 处问题（claim 计数误用 stale baseline、scanner 输出被 schema 截断、L2-data-model + L2-SDD 重复提议、PL-ADOPT-09 anchor 不清、漏掉 spec_pipeline_adopted_position / spec_audit_chain 没进 README spec 表）。亲自核 grep 验证 spec_data_model.py 实际 18 claims（scanner 误用 8），重写截断内容，并去重整合。
+
+L2 同步（commit 67ed379）：data_model.md + audit_chain_contract.md（新增 §6.4 提案级 hash chain + §7.3 doctor 探针 gap + §6.3 表加 position_adopted 行 + 顺便修 stale 行号 :415-419 → :415-426）+ trust_and_change_control.md §1.1 末尾 + design/README.md spec 表纠正与补全。
+
+L4 同步（本 commit）：DEVLOG + AI_HANDOFF + CURRENT_TASK + DECISIONS prepend；docs/references/INDEX.md §3 加新研究报告；docs/references/openalice_prism_review.md 标 P0-1 / P1-2 ✅；新建 docs/issues/TAG_BORROW_BACKLOG.md（4 项剩余借鉴 P0-2/P0-3/P1-1 + Decimal/risk_critic stats/state-driven orchestration 状态卡）。
+
+### 当前状态
+worktree `worktree-openalice-tag-research` 待 owner 审核 merge：5 commit（b8ed990 P0-1 + 2359971 Vibe 核查 + 31eb1a9 P1-2 + 67ed379 L2 docs + 本条 L4 docs）。memory `aletheia-tag-borrow-plan` 已同步落地状态。后续 P0-2（state_after 快照）/ P1-1（reject 同构）触 trust boundary，需 owner 显式批准；P0-3（Guard 责任链拆分）触 risk/engine.py，红线最严。
+
 ## 2026-06-25 — proposal rationale 双重截断刈断 meta JSON(没搞全 + 弱代码外泄)
 
 ### 现象

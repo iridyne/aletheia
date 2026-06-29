@@ -3,6 +3,8 @@
 > 状态：一次性分析报告（2026-06-10）。机器无关、长期有效的*意图/参考*，非运行态事实。
 > 源码克隆位置：`C:\Users\ollama\Projects\_refs\{OpenAlice, prism}`（在项目仓库之外，不污染 git）。
 > 结论先行：**OpenAlice 是理念同源、实现成熟的"成年版"，值得对照升级；Prism 架构同构但犯了和 Aletheia 同样的病（LLM agent 是死代码），是反面教材而非优点来源。**
+>
+> **2026-06-29 进展更新**：第四节 P0 借鉴清单的 **commit_hash 链**部分已实施落地（`b8ed990` P0-1 + `31eb1a9` P1-2，分支 `worktree-openalice-tag-research`）。本文蓝图 B 的 `state_after` 快照 + `reject 一等记录` 仍未实施（触 `execution/` trust boundary，待 owner 显式批准）。蓝图 A（Guard 责任链）也未实施（触 `risk/engine.py` 红线最严）。**深度版研究报告 + 状态卡见 `docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md` + `docs/issues/TAG_BORROW_BACKLOG.md`**。
 
 ---
 
@@ -126,7 +128,7 @@ Prism 表面有一整套 LLM 多 agent 协作，实际后台任务跑的是**纯
 | 优先级 | 借鉴点 | 来源 | 工作量 | 为何契合当前阶段 |
 |---|---|---|---|---|
 | **P0** | risk/engine.py 巨函数 → 可插拔 Guard 责任链 + 注册表 | OpenAlice guards/ | 中（重构，行为不变） | change-controlled 模块审查成本骤降，每条规则可独立单测 |
-| **P0** | proposal 引入 commit_hash + commit 级 state_after 快照 + reject 一等记录 | OpenAlice TradingGit | 中 | 直接强化 Auditability，兑现 "Trading-as-Git" 名实相符 |
+| **P0** | proposal 引入 commit_hash + commit 级 state_after 快照 + reject 一等记录 | OpenAlice TradingGit | 中 | ✅ commit_hash 部分已实施（`b8ed990` P0-1，2026-06-29）；reconcile audit 已链入（`31eb1a9` P1-2）；state_after 快照 + reject 同构待 owner 批准（触 `execution/`） |
 | **P1** | 金额不落 float（统一 Decimal） | OpenAlice 全线 | 小-中 | State consistency；现在用 float 算 notional（engine.py:108）有隐患 |
 | **P2** | 长任务进度回调 + WebSocket 推送（落 SQLite 版） | Prism ProgressHub/TaskStore | 小 | 体验提升，非信任项，有空再做 |
 | **方向** | 策略升级让 LLM 真进决策回路（StateGraph 骨架），**勿重蹈 Prism 死代码覆辙** | Prism 反面 + LangGraph | 大 | 三大差距之一，但不是当前阶段重点 |

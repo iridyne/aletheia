@@ -45,6 +45,18 @@
 > `aletheia doctor` 的 `loop.profit` 探针为准,本文不断言**。实验判决记账见
 > `EXPERIMENT_PROTOCOL.md`:修复生效前(污染期)的 skip/proposal 数据不计入策略评估。
 
+## 当前活动工作线:OpenAlice TaG 借鉴系列(2026-06-29 起)
+
+研究报告 `docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md` + 借鉴清单状态卡 `docs/issues/TAG_BORROW_BACKLOG.md`。分支 `worktree-openalice-tag-research` 待 owner 审核 merge(5 commit:P0-1 + Vibe Trading 核查 + P1-2 + L2 docs + L4 docs)。
+
+- **P0-1**(已实施 `b8ed990`)— TradeProposal commit_hash + parent_hash 全局单链 hash 基础设施(不触 trust boundary)。SDD:DM-S08/S09/B06/C02。
+- **P1-2**(已实施 `31eb1a9`)— position_adopted audit event 链入 hash chain。SDD:PL-ADOPT-09。
+- **P0-2 待 owner 批准** — 执行后 state_after 账户全量快照(`gateway.py` audit 写入点加字段;触 `execution/` trust boundary;预计 ROI 最高的剩余项)。
+- **P0-3 待 owner 批准** — Guard 责任链拆分(`risk/engine.py:77-332` 20 个 check 拆 `risk/guards/`;trust boundary 红线最严;**严禁趁机塞 market-state 检查**,见 north_star.md §10.3)。
+- **P1-1 待 owner 批准** — reject 与 push 同结构(三路拒绝 audit 补 hash 字段)。
+
+明确拒绝的借鉴项见 `docs/_ai/DECISIONS.md` 2026-06-29 条目。
+
 ## 并行开发线:账户级仓位发现 + 纳管("接管即纳管")
 
 > 所有者立场决策:Aletheia 接管账户后全账户仓位(含系统外仓位)统一交由 AI 管理。
