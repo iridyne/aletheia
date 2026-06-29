@@ -19,6 +19,20 @@
 
 ---
 
+## §18 Operator 单一真相源 — TS 内存态重启重建缺陷（2026-06-28）
+
+**来源**: PI agent 三组件梳理。配套: operator_layer.md 三组件别混架构图 + 单一真相源铁律; spec_operator_single_source.py(PI-S06) + spec_operator_contract_parity.py(PI-S05)。
+
+**现状合规**: TS operator-shell 零落盘、11 写端点全回 Python 表。下列为进程内存态重启重建不完整的瑕疵, 非偷偷落盘; 危害均低(Auto Repair 仅白名单子系统重启 + notify, 幂等):
+
+| # | 违例 | 位置 | 危害 | 修复方向 |
+|---|------|------|------|----------|
+| V1 | attemptedRepairDecisionIds 重启丢失->已尝试 repair 被重跑一次 | operator-shell/src/operator_loop.ts:69 | 低 | startup 从 operator_events 重建 Set |
+| V2 | compactedDates 重启依赖 artifacts 写回有竞态 | operator-shell/src/operator_loop.ts:68 | 低 | 已有 seedCompactedDates 兜底 |
+| V3 | SessionRuntime.branches in-flight summary 纯内存态 | operator-shell/src/session_runtime.ts:92 | 低 | summary 随 message/event 落 Python |
+
+> 状态: V1-V3 已落档, 危害低, 暂未真修。
+
 ## 0a. 当前状态与开放 backlog → 见 FIX_PLAN
 
 > 本文件早期多轮"全部已修复"自评（含 2026-06-26 的 67 条 workflow 审计 overlay）**已被取代**。2026-06-26 用 6-finder workflow 对 HEAD 逐条重核：该 overlay 约 62% 为误报（声称未修实已修，line 号对应修复前旧代码，如 §1.1 critical-substring、§1.2 update-apply 实已修）。

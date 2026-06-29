@@ -4,6 +4,12 @@
 
 ---
 
+## [必看] 三组件别混(2026-06-28)
+
+本文的 Operator = TS operator-shell/(Node 子进程, 真正顶层操作员)。它与 Python
+agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交易决策 daemon)
+是三个不同组件, 反复被审计混淆。完整区分图见 operator_layer.md。
+
 ## 问题 1：Operator 与底层 Scheduled Jobs 的关系
 
 ### 现状

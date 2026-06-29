@@ -123,6 +123,9 @@ def _import_all_specs():
         # trades must not pile up unbounded. Behavioral/data (L2b), not in
         # REQUIRED_CONTRACTS.
         spec_analytics_contracts,
+        spec_pi_decision_chain,
+        spec_operator_contract_parity,
+        spec_operator_single_source,
     )
 
 

@@ -101,3 +101,10 @@ Stop and ask before proceeding if:
 ## Preferred Direction
 
 → See `CLAUDE.md` Development Rules: State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy.
+
+
+## Git Workspace / Worktree 操作细则（2026-06-28 经验沉淀）
+
+本项目 git 工作区易处于高强度竞争:多并发会话/后台 job + 自动 git hook(post-merge 重启) + Task Scheduler 看门狗会同时抢 master, 导致 HEAD 频繁移动、commit 被冲成悬空、甚至 worktree 分支被 reset。
+
+铁律:任何会写文件的非平凡改动,一律在独立 worktree 中进行(EnterWorktree 或 git worktree add);纯只读/查询可在原地。让 master 长期处于无人争抢的静态条件,只在确认并发已停、master 稳定的窗口内,用原子化、可复核的方式触碰 master。详见 docs/_ai/GIT_WORKTREE_PLAYBOOK.md。

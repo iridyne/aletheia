@@ -5,6 +5,33 @@
 
 ---
 
+> ## [必看] PI Agent = 三个不同的组件,别混(2026-06-28)
+>
+> 历次审计反复把三者当成同一个(7 路审计 A2/A4 误报根因)。三个独立组件,语言/进程/职责不同:
+>
+> ```text
+> +----------------------------------------------------------------------+
+> | (1) operator-shell/  (TypeScript/Node 子进程, gateway spawn)          |
+> |     = 真正顶层操作员 = 本文档描述的 Operator Layer 本体               |
+> |     长驻/心跳/多会话/走 command registry; 管观察/AutoRepair/退役降级   |
+> |     [!] 自己不跑 LLM, 经 HTTP 调 Python /api/operator/internal/llm     |
+> |     [!] agent_shell_heartbeats 里 agent_id=operator 心跳是它写的       |
+> +----------------------------------------------------------------------+
+> | (2) aletheia/agent_shell/operator_loop.py (Python, 每 4h cron)        |
+> |     = 旧治理脚本, 已收敛为只做动态 config 调参                        |
+> |     [!] 不再产生 retire/demote/backfill, 收敛归 (1) command registry  |
+> +----------------------------------------------------------------------+
+> | (3) aletheia/agent_runtime/pi_daemon.py (Python daemon)              |
+> |     = 交易决策 daemon, 与治理无关, 不写 operator 心跳(A2 误报源)      |
+> +----------------------------------------------------------------------+
+> ```
+>
+> **单一真相源铁律**: operator 行为权威记录统一落 Python SQLite 表; (1) 只编排+执行,
+> 不许留独立真相: 内存态须有 Python 回写路径且重启可重建
+> (spec spec_operator_single_source.py + spec_operator_contract_parity.py 守)。
+
+---
+
 > ## 落锚说明（2026-06-10 — 治理对接）
 >
 > 本文是 **Operator Layer（顶层 LLM 操作员）** 的设计参考，**不是自动授权**。它已在
