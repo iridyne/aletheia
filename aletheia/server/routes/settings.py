@@ -371,6 +371,34 @@ async def update_operator_config(req: OperatorConfigUpdate):
 
 
 # ---------------------------------------------------------------------------
+# Guard / lesson-promotion config
+# ---------------------------------------------------------------------------
+
+class GuardConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
+    enforce_in_paper_ranker: Optional[bool] = None
+    auto_promote_enabled: Optional[bool] = None
+    min_matching_trades: Optional[int] = None
+    max_score_penalty: Optional[float] = None
+
+
+@router.post("/guard")
+async def update_guard_config(req: GuardConfigUpdate):
+    cfg = load_config()
+    old = cfg.guard.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.guard, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "guard_config_changed",
+                 "entity_type": "guard_config", "before": old,
+                 "after": cfg.guard.model_dump(mode="json"),
+                 "message": f"Guard config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
+# ---------------------------------------------------------------------------
 # Health monitoring config
 # ---------------------------------------------------------------------------
 

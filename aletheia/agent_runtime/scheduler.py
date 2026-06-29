@@ -51,6 +51,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "news_fetch": 120.0,
     "lesson_reviewer": 300.0,
     "shadow_resolver": 60.0,
+    "outcome_settler": 120.0,
 }
 
 
@@ -483,6 +484,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
         id="universe_refresh", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=90),
+    )
+    # Independent outcome settler — settles overdue forward-outcome rows that feed
+    # the learning pipeline.  Runs unconditionally (not gated on universe.enabled)
+    # so the attribution chain keeps ticking even when the universe scan is off.
+    _scheduler.add_job(
+        _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=15,
+        id="outcome_settler", misfire_grace_time=120, max_instances=1, executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=120),
     )
     # 9-domain market data collectors (microstructure/derivatives/macro).
     # Single job, runs every 2 min, uses internal phase counter to control
@@ -1373,6 +1382,38 @@ def _run_universe_refresh():
         logger.warning("universe_refresh job failed: %s", e)
         _cleanup_stale_scanner_runs()
         _record_job_failure("universe_refresh", str(e))
+
+
+async def _async_settle_outcomes():
+    from aletheia.universe.outcome_recorder import settle_due
+    settled = await settle_due()
+    if settled:
+        logger.info("outcome_settler: settled %d forward outcomes", settled)
+
+
+def _run_outcome_settler():
+    """Settle overdue forward-outcome rows independently of UniverseService.refresh().
+
+    Previously settle_due() was only called inside universe_refresh, which means
+    it was silently skipped when universe.enabled=False or runtime.paused=True,
+    causing the learning pipeline to starve for settled outcomes. This job
+    runs unconditionally (modulo runtime.paused) every 15 minutes.
+    """
+    cfg = load_config()
+    if cfg.runtime.paused:
+        return
+    try:
+        _run_async_with_timeout("outcome_settler", _async_settle_outcomes())
+        _record_job_success("outcome_settler")
+    except TimeoutError:
+        logger.warning(
+            "outcome_settler timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["outcome_settler"],
+        )
+        _record_job_failure("outcome_settler", "timed out")
+    except Exception as e:
+        logger.warning("outcome_settler failed: %s", e)
+        _record_job_failure("outcome_settler", str(e))
 
 
 def _run_backtest_orchestrator():

@@ -67,6 +67,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   // Agent & Models
   { title: 'Permission Mode',          tab: 'agent', alt: ['autonomy', 'observe', 'paper', 'full'] },
   { title: 'Learning',                 tab: 'agent', alt: ['dreaming', 'research', 'pi daemon'] },
+  { title: 'Guard Promotion',          tab: 'agent', alt: ['guard', 'lesson guard', 'auto promote', 'guard candidate'] },
   { title: 'Serenity Research',        tab: 'agent', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
   { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
   { title: 'AI Model Providers',       tab: 'agent', alt: ['llm', 'openai', 'anthropic', 'claude', 'codex'] },
@@ -353,6 +354,13 @@ function AgentModelsTab({ status, settings, qc }: any) {
   const serenityMinScore = Number(serenity.min_score_for_pi ?? 72)
   const serenityStopLossPct = Number(serenity.stop_loss_pct ?? 8.0)
   const serenityMaxHoldDays = Number(serenity.max_hold_days ?? 90)
+  const guardCfg = (settings?.guard ?? {}) as any
+  const guardAutoPromote = guardCfg.auto_promote_enabled !== false
+
+  const guardMut = useMutation({
+    mutationFn: (body: any) => api.updateGuardConfig(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
 
   return (
     <div>
@@ -374,6 +382,25 @@ function AgentModelsTab({ status, settings, qc }: any) {
       <Section title="Learning" description="Controls whether agents autonomously generate research, knowledge, and strategy ideas.">
         <Row label="Autonomous learning" hint="When ON, agents run dreaming/research cycles unprompted. When OFF, only human-triggered runs execute.">
           <Toggle checked={autoLearn} onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
+        </Row>
+      </Section>
+
+      <Section
+        title="Guard Promotion"
+        description="Post-trade lesson guards learned by the dreaming agent. When auto-promote is ON, guard candidates that accumulate enough matching trades are automatically promoted to active guards that block future trades. When OFF, promotions are manual-only."
+      >
+        <Row
+          label="Auto-promote guard candidates"
+          hint="When ON, the lesson_reviewer promotes guard_candidate entries to active trading guards automatically. When OFF, guards are promoted manually only."
+        >
+          <Toggle
+            checked={guardAutoPromote}
+            onChange={v => {
+              if (v && !confirm('Enable auto-promote for lesson guards? Candidates that accumulate enough matching trades will block future trades without human review.')) return
+              guardMut.mutate({ auto_promote_enabled: v })
+            }}
+            disabled={guardMut.isPending}
+          />
         </Row>
       </Section>
 
@@ -2516,10 +2543,11 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'health.exchange_auto_resume_interval_sec', 'health.exchange_auto_resume_success_threshold',
     'network.proxy_url', 'network.no_proxy',
     'operator.loop_enabled',
+    'guard.auto_promote_enabled',
   ])
   const readOnlyPrefixes = [
     'app.', 'runtime.paused', 'runtime.kill_switch_active',
-    'guard.', 'update.last_', 'update.current_commit',
+    'update.last_', 'update.current_commit',
     'live.first_live_confirmation_done', 'tunnel.credentials_path', 'tunnel.cloudflared_path', 'tunnel.metrics_port',
   ]
 
