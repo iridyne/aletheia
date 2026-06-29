@@ -1,5 +1,7 @@
 """Execution Gateway — all orders flow through here. No direct exchange access."""
 
+import logging
+
 from aletheia.config.loader import load_config
 from aletheia.risk.engine import evaluate_proposal
 from aletheia.execution.paper_broker import execute_paper_order
@@ -11,6 +13,8 @@ from aletheia.storage.repositories import (
     update_trade_proposal,
 )
 from aletheia.files.jsonl import write_audit
+
+logger = logging.getLogger("aletheia.execution_gateway")
 
 
 def submit_proposal(
@@ -76,6 +80,22 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
     return _execute_proposal(proposal)
 
 
+def _check_symbol_availability(symbol: str, execution_mode: str) -> str | None:
+    """Return a reason string if the symbol is known to be unavailable on the target exchange.
+
+    Returns None when the symbol is available, or when availability cannot be
+    determined (cache miss → fail-open). Currently enforces OKX demo's curated
+    limited symbol set; all other modes are treated as unrestricted.
+    """
+    if execution_mode == "okx_demo":
+        from aletheia.execution.okx_broker import _get_demo_symbols
+        from aletheia.data.symbols import to_canonical
+        supported = _get_demo_symbols()
+        if supported is not None and to_canonical(symbol) not in supported:
+            return f"{symbol} not available on OKX demo"
+    return None
+
+
 def _execute_proposal(proposal: TradeProposal) -> dict:
     """Run risk and execution for an already-created proposal."""
     cfg = load_config()
@@ -104,6 +124,23 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
 
     # Execute based on allowed mode
     allowed_mode = risk_result.allowed_execution_mode
+
+    # Symbol availability pre-check: if the exchange doesn't list this symbol,
+    # reject gracefully here instead of letting CCXT throw an opaque error.
+    _unavail = _check_symbol_availability(proposal.symbol, allowed_mode)
+    if _unavail:
+        update_trade_proposal(proposal.id, status="rejected")
+        logger.info("Proposal %s skipped — symbol not on exchange: %s", proposal.id, _unavail)
+        write_audit({
+            "actor": "system", "source": "execution_gateway",
+            "event_type": "proposal_skipped", "entity_type": "trade_proposal",
+            "entity_id": proposal.id,
+            "before": {"status": proposal.status},
+            "after": {"status": "rejected"},
+            "message": _unavail,
+        })
+        return {"status": "rejected", "proposal_id": proposal.id, "message": _unavail}
+
     try:
         if allowed_mode == "paper_internal":
             with transaction():
