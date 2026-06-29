@@ -89,12 +89,14 @@ docs/design/*_contract.md  →  tests/specs/spec_*.py  →  Conformance Matrix
 | `spec_execution.py` | execution_contract | 7 |
 | `spec_live_unlock.py` | live_unlock_contract | 5 |
 | `spec_promotion_gates.py` | promotion_gates_contract | 7 |
-| `spec_data_model.py` | data_model | 8 |
+| `spec_data_model.py` | data_model | 18 (含 P0-1 TaG hash chain 新增 4: DM-S08/S09/B06/C02) |
 | `spec_agent_contracts.py` | agent_contracts | 8 |
 | `spec_api_reference.py` | api_reference | 7 |
 | `spec_data_layer.py` | data_layer | 10 |
 | `spec_operator_loop.py` | operator_layer + PI_OPERATOR_DESIGN_DECISIONS | 7 |
 | `spec_subsystem_observers.py` | EQUITY_INTEGRATION_DESIGN + PREDICTION_MARKET_DESIGN | 8 |
+| `spec_audit_chain.py` | audit_chain_contract | 5 |
+| `spec_pipeline_adopted_position.py` | pipeline_adopted_position | 9 (含 P1-2 PL-ADOPT-09 audit hash chain-in) |
 
 另有 `test_architecture_fitness.py`（依赖方向 fitness functions）独立于 claim 体系。
 

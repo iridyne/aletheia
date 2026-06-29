@@ -39,6 +39,19 @@ Rules:
   current schema does not directly link a position to proposal/order/fill. Do not
   fake this link in text, UI, or audit logs. If direct traceability is required,
   add an explicit schema migration and tests.
+- The `trade_proposals` table additionally carries a `commit_hash` / `parent_hash`
+  hash chain (TaG P0-1, 2026-06-29). This is a **tamper-evidence layer on top of
+  the ID-foreign-key causal chain** — not a replacement. `commit_hash` is the
+  16-char SHA-256 prefix over the proposal's immutable fields (model_dump excludes
+  `status` and `commit_hash` itself); `parent_hash` links to the preceding row's
+  `commit_hash`, forming a global single chain. Do not modify
+  `_compute_proposal_hash()` in `repositories.py`, the `_ADDITIVE_COLUMNS` entries
+  for `commit_hash` / `parent_hash`, or the hash-injection branch of
+  `insert_trade_proposal()` without simultaneously updating
+  `docs/design/audit_chain_contract.md §6.4` and the four SDD claims
+  DM-S08 / DM-S09 / DM-B06 / DM-C02. Downstream `position_adopted` audit events
+  copy both fields into `after_state` (PL-ADOPT-09); changes to that propagation
+  must update `audit_chain_contract.md §6.3` table row as well.
 
 ### 1.2 Proposal State Transitions
 

@@ -1,9 +1,9 @@
 # Audit Chain Contract
 
-> **范围**: `data/logs/audit.jsonl` 及其轮转存档——系统的防篡改事件记忆。  
+> **范围**: 两条独立防篡改链——(1) `data/logs/audit.jsonl` 及其轮转存档的**文件级哈希链**（系统事件记忆），(2) `trade_proposals` 表的**行级哈希链**（提案不可伪造链，TaG P0-1，见 §6.4）。  
 > **层级**: L2 信任边界契约（Trust Boundary — change control required）  
-> **权威实现**: `aletheia/files/jsonl.py`  
-> **最后更新**: 2026-06-23
+> **权威实现**: `aletheia/files/jsonl.py`（文件链）、`aletheia/storage/repositories.py:_compute_proposal_hash`（行链）  
+> **最后更新**: 2026-06-29
 
 ---
 
@@ -200,8 +200,48 @@ detail 中包含: 总记录数、错误数、前 3 条错误的 `{文件名}:{�
 | kill switch 解除 | `kill_switch_deactivated` | `risk/kill_switch.py:45-54` |
 | 凭证变更 | `secret_rotated` | `cli/secrets_cmd.py:46-50`；前端 Settings 路由另有审计 |
 | Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py:37-44` |
+| 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py:361-382`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
 
-`FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-419`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
+`FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-426`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
+
+### §6.4 提案级 hash chain（TaG P0-1，2026-06-29）
+
+`trade_proposals` 表自 P0-1 起携带行级 hash chain，与 §6.1–6.3 的 `audit.jsonl` 文件链**并存且独立**——前者保护 SQLite 提案记录不可伪造，后者保护审计日志事件流不可篡改。
+
+**两链对照表**
+
+| 维度 | `audit.jsonl` 文件链（§6.1–6.3） | `trade_proposals` 行链（§6.4） |
+|------|---------------------------------|-------------------------------|
+| 保护对象 | 审计事件日志（系统级事件流） | 交易提案记录（决策级实体） |
+| 存储 | `data/logs/audit.jsonl` 及轮转 | SQLite `trade_proposals` 表 |
+| 链节点 | 每条 JSONL 行 | 每行 `trade_proposals` |
+| 前向引用字段 | `_prev_hash` | `parent_hash` |
+| 当前节点哈希字段 | 由下一行的 `_prev_hash` 间接反推 | 显式 `commit_hash` 列 |
+| 哈希算法 | SHA-256(整行 UTF-8 字节) 完整 64-char hex | SHA-256(canonical JSON of immutable fields) 截断 16-char hex（64-bit 空间） |
+| 写入路径 | `files/jsonl.py:write_audit()`，跨进程文件锁 | `storage/repositories.py:insert_trade_proposal()`，事务内自动填 |
+| 校验工具 | `verify_audit_chain()` + doctor `trust.audit_chain` 探针 | 无专用 doctor 探针（gap，见 §7.3） |
+
+**§6.4 不变量**
+
+1. **自动填充**：`insert_trade_proposal()` 在 `p.commit_hash is None` 时强制计算并原地回写；调用方不传也不会破链。
+2. **哈希输入排除可变字段**：`status` 与 `commit_hash` 自身被显式 `model_dump(exclude=...)` 排除。`pending → executed/rejected` 是正常状态流转，**不得**因之失效。
+3. **全局单链**：跨 broker / strategy / execution_mode 共享一条链，按 `rowid DESC` + `commit_hash NOT NULL` 选 parent。`parent_hash = NULL` 仅合法出现在 ① 链首（表内首条已 hash 行）或 ② P0-1 上线前写入的 legacy 行。
+4. **审计事件链入**：所有 `position_adopted` 事件（§6.3 表新增行）必须在 `after_state` 携带 `commit_hash` + `parent_hash`，与 §6.4 同一节点同步；P1-2 在 `position_reconciler.py:372-379` 实施。
+5. **架构等价**：未来其他合成提交路径（execution gateway / reject path）若需链入，沿用相同字段约定（不要发明新键名）。
+
+**SDD 锚点**
+
+- `tests/specs/spec_data_model.py` 的 DM-S08（pydantic 模型字段）/ DM-S09（migration 注册）/ DM-B06（insert 自动填 + 链入）/ DM-C02（re-compute 确定性 + 链完整性 + status 免疫）
+- `tests/specs/spec_pipeline_adopted_position.py` 的 PL-ADOPT-09（audit event payload 携带 commit_hash + parent_hash）
+
+**手动校验命令**
+
+```
+uv run pytest tests/specs/spec_data_model.py -k "hash" -q
+uv run pytest tests/specs/spec_pipeline_adopted_position.py -k "commit_hash" -q
+```
+
+**设计参考**: `docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md §五 P0-1 / P1-2`。
 
 ---
 
@@ -222,6 +262,12 @@ detail 中包含: 总记录数、错误数、前 3 条错误的 `{文件名}:{�
 ### §7.2 warn 级别不阻塞启动
 
 `trust.audit_chain` 中断时 doctor 报告 `warn`（非 `blocker`），网关启动不受阻断。若需要强制要求链完整性，需要将 severity 升级为 `blocker`。
+
+### §7.3 提案级 hash chain 无 doctor 探针（TaG P0-1 范围外）
+
+`trade_proposals.commit_hash` / `parent_hash` 链当前**仅由 SDD spec 测试**（DM-C02 单事务内重计算 + 链完整性）保证，**没有运行时 doctor 探针**——链中断不会触发 `aletheia doctor` 告警。
+
+如需补齐，需新增独立扫描函数（类比 `verify_audit_chain()`），按 `rowid` 顺序遍历 `trade_proposals`，重算每行 `_compute_proposal_hash(p)` 对比存储值 + 验证 `parent_hash` 连续性，并接入 `diagnostics/doctor.py` 作为 `trust.proposal_chain` 探针。该工作不在 P0-1 范围内，列为后续 hardening 候选。
 
 ---
 
