@@ -1,6 +1,8 @@
 """Execution Gateway — all orders flow through here. No direct exchange access."""
 
 import logging
+import threading
+import time
 
 from aletheia.config.loader import load_config
 from aletheia.risk.engine import evaluate_proposal
@@ -80,19 +82,86 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
     return _execute_proposal(proposal)
 
 
-def _check_symbol_availability(symbol: str, execution_mode: str) -> str | None:
-    """Return a reason string if the symbol is known to be unavailable on the target exchange.
+# ---------------------------------------------------------------------------
+# Symbol availability pre-check — covers all real exchange execution modes.
+# paper_internal is excluded (virtual fills, exchange symbol list irrelevant).
+#
+# OKX demo:  uses OKX broker's sandbox-CCXT frozenset (curated limited set).
+# All others: query universe_registry DB (loaded once per venue, TTL 4h).
+#             Fail-open when the registry is empty/unsynced.
+#
+# To add a new exchange (e.g. Hyperliquid):
+#   1. Add  "hyperliquid_demo": "hyperliquid"  to _EXECUTION_MODE_TO_VENUE.
+#   2. Ensure sync_universe_registry() populates venue="hyperliquid".
+# ---------------------------------------------------------------------------
 
-    Returns None when the symbol is available, or when availability cannot be
-    determined (cache miss → fail-open). Currently enforces OKX demo's curated
-    limited symbol set; all other modes are treated as unrestricted.
+_EXECUTION_MODE_TO_VENUE: dict[str, str] = {
+    "okx_live_limited": "okx",
+    "bitget_demo": "bitget",
+    "bitget_live_limited": "bitget",
+    "binance_testnet": "binance",
+    "binance_live_limited": "binance",
+}
+
+_registry_symbol_cache: dict[str, tuple[frozenset, float]] = {}
+_registry_cache_ttl = 14400  # 4h — same cadence as OKX broker cache
+_registry_cache_lock = threading.Lock()
+
+
+def _load_registry_symbols(venue: str) -> frozenset | None:
+    """Return cached frozenset of canonical symbols for a venue from universe_registry.
+
+    Returns None on cache miss + DB failure (fail-open).
     """
+    with _registry_cache_lock:
+        cached = _registry_symbol_cache.get(venue)
+        if cached is not None and (time.time() - cached[1]) < _registry_cache_ttl:
+            return cached[0]
+
+    try:
+        from aletheia.storage.repositories import list_universe_assets
+        assets = list_universe_assets(venue=venue, active_only=True, limit=3000)
+        if not assets:
+            return None  # registry not yet synced — fail-open
+        symbols = frozenset(row["symbol"] for row in assets)
+        with _registry_cache_lock:
+            _registry_symbol_cache[venue] = (symbols, time.time())
+        logger.debug("Symbol cache loaded: %d symbols for venue=%s", len(symbols), venue)
+        return symbols
+    except Exception as exc:
+        logger.warning("Failed to load registry symbols for venue=%s: %s", venue, exc)
+        return None
+
+
+def _check_symbol_availability(symbol: str, execution_mode: str) -> str | None:
+    """Return a rejection reason if the symbol is not available on the target exchange.
+
+    Returns None when available, or when availability is unknown (fail-open).
+    paper_internal is always None — it does not route to a real exchange.
+    """
+    if execution_mode == "paper_internal":
+        return None
+
+    from aletheia.data.symbols import to_canonical
+    canonical = to_canonical(symbol)
+
+    # OKX demo has a curated sandbox symbol set — use the dedicated broker cache
+    # which loads via ccxt.okx sandbox mode (subset of live OKX symbols).
     if execution_mode == "okx_demo":
         from aletheia.execution.okx_broker import _get_demo_symbols
-        from aletheia.data.symbols import to_canonical
         supported = _get_demo_symbols()
-        if supported is not None and to_canonical(symbol) not in supported:
+        if supported is not None and canonical not in supported:
             return f"{symbol} not available on OKX demo"
+        return None
+
+    # All other real-exchange modes: check universe_registry (venue = CCXT exchange name).
+    venue = _EXECUTION_MODE_TO_VENUE.get(execution_mode)
+    if venue is None:
+        return None  # unknown/future mode — fail-open
+
+    supported = _load_registry_symbols(venue)
+    if supported is not None and canonical not in supported:
+        return f"{symbol} not available on {execution_mode}"
     return None
 
 
