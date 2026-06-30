@@ -282,3 +282,109 @@ def test_direction_bias_cap_is_enforced():
     bsum = _compute_direction_summary(balanced)
     assert bsum.get("bias_capped") is False
     assert bsum["bias"] == "long_preferred"
+
+
+# ---------------------------------------------------------------------------
+# PCI-G02 — Learning write-path DB-only invariant (2026-06-30)
+# Contract: PI_OPERATOR_DESIGN_DECISIONS §宪法专有 / knowledge_contract §8
+# The learning mechanism may ONLY write to the database (trading_memo / lesson
+# knowledge items). It must never open() a prompt file on the filesystem.
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PCI-G02", "insight_feedback_loop",
+        "§pi_constitution learning_db_only_writes",
+        "L2a",
+        "Learning modules (aletheia/learning/, aletheia/analytics/) do not call "
+        "open(..., 'w') or pathlib.Path.write_text/write_bytes on any path under "
+        "agent_shell/prompts/ or containing SYSTEM_PROMPT — learning can only "
+        "append trading_memo/lesson records to the database, never overwrite "
+        "prompt files. Contract: knowledge_contract §8 (2026-06-30).",
+        status="implemented",
+    ),
+)
+def test_learning_path_does_not_write_prompt_files():
+    """AST-scan every learning/analytics module for file-write calls targeting
+    prompt paths. The invariant: knowledge-write path = DB only.
+
+    We look for:
+      - open(path, 'w' / 'wb' / 'a') where path contains 'prompt' or 'SYSTEM_PROMPT'
+      - Path(...).write_text / .write_bytes on prompt-ish arguments
+
+    Because call-argument values are partially dynamic, we scan for the *existence*
+    of write-open with any literal containing 'prompt' as a conservative check.
+    """
+    import ast as _ast
+
+    _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+    _SCAN_DIRS = [
+        _PROJECT_ROOT / "aletheia" / "learning",
+        _PROJECT_ROOT / "aletheia" / "analytics",
+    ]
+
+    violations: list[str] = []
+
+    for scan_dir in _SCAN_DIRS:
+        if not scan_dir.exists():
+            continue
+        for py_file in scan_dir.glob("*.py"):
+            src = py_file.read_text(encoding="utf-8")
+            tree = _ast.parse(src, filename=str(py_file))
+
+            for node in _ast.walk(tree):
+                # Pattern 1: open("...prompt...", "w") or open(..., mode="w")
+                if isinstance(node, _ast.Call):
+                    func = node.func
+                    is_open_call = (
+                        (isinstance(func, _ast.Name) and func.id == "open")
+                        or (isinstance(func, _ast.Attribute) and func.attr == "open")
+                    )
+                    if is_open_call:
+                        # Check positional args for write mode
+                        args = node.args
+                        kws = {k.arg: k.value for k in node.keywords}
+                        mode_node = args[1] if len(args) > 1 else kws.get("mode")
+                        is_write_mode = (
+                            isinstance(mode_node, _ast.Constant)
+                            and isinstance(mode_node.value, str)
+                            and any(m in mode_node.value for m in ("w", "a"))
+                        )
+                        if is_write_mode:
+                            # Check if any string arg mentions 'prompt'
+                            path_node = args[0] if args else kws.get("file")
+                            if (isinstance(path_node, _ast.Constant)
+                                    and isinstance(path_node.value, str)
+                                    and "prompt" in path_node.value.lower()):
+                                violations.append(
+                                    f"{py_file.name}:line {node.lineno}: "
+                                    f"open({path_node.value!r}, write) — "
+                                    "writing prompt file from learning module"
+                                )
+
+                # Pattern 2: .write_text / .write_bytes method calls on Path
+                if isinstance(node, _ast.Call):
+                    func = node.func
+                    if (isinstance(func, _ast.Attribute)
+                            and func.attr in ("write_text", "write_bytes")):
+                        # Inspect the object being written to for 'prompt'
+                        obj = func.value
+                        if (isinstance(obj, _ast.Call)
+                                and isinstance(obj.func, _ast.Name)
+                                and obj.func.id == "Path"):
+                            path_args = obj.args
+                            if path_args and isinstance(path_args[0], _ast.Constant):
+                                val = str(path_args[0].value)
+                                if "prompt" in val.lower():
+                                    violations.append(
+                                        f"{py_file.name}:line {node.lineno}: "
+                                        f"Path({val!r}).{func.attr}() — "
+                                        "writing prompt file from learning module"
+                                    )
+
+    assert not violations, (
+        "PCI-G02 VIOLATED: learning module(s) write to prompt file paths. "
+        "Learning must only write to the database (insert_knowledge_item), "
+        f"never to filesystem prompt files: {violations}"
+    )

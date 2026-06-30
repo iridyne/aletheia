@@ -73,6 +73,7 @@ Spec as Code：L2 契约文档的关键断言已编码为 `tests/specs/spec_*.py
 7. 新增/删除数据表 → 同步更新 `data_model.md`
 8. 新增/删除 config 字段 → 同步更新前端 Settings 页面（CLAUDE.md "Config ↔ UI rule"）
 9. 新增/删除信任边界子系统 → 同步 docs/governance/trust_and_change_control.md §6.1 受控模块清单
+10. **新增/删除数据源** → 先在 `docs/design/data_utilization.md` §3 登记表补行（来源/消费者/状态），同步加 `spec_data_utilization.py` DU-* claim，再写采集代码（R5 前置条件，无登记不接入）
 
 **运行命令**：
 - `uv run pytest tests/test_architecture_fitness.py -q` — L2a 依赖方向检查（< 1s）

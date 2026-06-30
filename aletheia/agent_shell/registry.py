@@ -423,6 +423,13 @@ FORBIDDEN_INTENTS = frozenset([
     # forbidden intents so no permission_mode can ever reach them. (CR-RE/OL-C03,
     # BACKEND_ISSUES §15.1, 2026-06-23.)
     "deactivate_kill_switch", "modify_permissions",
+    # PI Constitution invariant (PCI-G01, 2026-06-30): PI must NEVER modify its
+    # own system prompt base layer. propose_prompt_change exists as a
+    # proposal_only command (human reviews it), but any lower-risk command
+    # (create_research_note, create_dreaming_log, etc.) that attempts to
+    # overwrite prompt files must be hard-blocked here. The command gate alone is
+    # insufficient because low-risk commands bypass command-level validation.
+    "modify_own_prompt",
 ])
 
 

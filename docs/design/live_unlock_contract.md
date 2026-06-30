@@ -63,6 +63,22 @@ append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust
 
 ---
 
+## 4b. 开启 Live 后的 PI 全权模型
+
+**产品定义（2026-06-30）**：Live 模式一旦由人类开启，PI Operator 在 `Auto(4)` 权限下对主赛道（perp + spot）享有全权操作能力——开仓、平仓、调仓，无需逐笔人工确认。
+
+**UI 警示墙（强制）**：Dashboard 的 Live 解锁入口必须在人类确认前展示醒目警示，包含以下全部要素：
+- "PI Agent 将完全自主执行交易，操作不可预测"
+- "真实资金损失可能发生"
+- "开启后所有操作由人类承担后果"
+
+**不变式**：
+- PI 全权限于**主赛道**（perp/spot），第二赛道（xStocks/Serenity）由 serenity_executor 独立管辖
+- 全权 ≠ 宪法豁免：风控关卡（risk_engine 16→20 关）、FORBIDDEN_INTENTS、宪法文件（本契约 + risk_engine_contract）在 Live 全权下仍全部生效，PI 不能修改自身约束
+- Live 解锁仍须遵守 §2 的人工确认门，自动化流程不得绕过
+
+---
+
 ## 5. Permission Mode(双面)
 
 **Worker 面(Agent Shell)** `agent_shell/permissions.py:6`:

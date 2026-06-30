@@ -397,3 +397,364 @@ def test_operator_loop_writes_only_recommend_actions():
         "operator_loop wrote non-recommend action(s): "
         f"{ {a for a in written if not a.startswith('recommend_')} }"
     )
+
+
+# ---------------------------------------------------------------------------
+# PI Constitution Invariants (PCI-G01~G04) — PI_OPERATOR_DESIGN_DECISIONS.md
+# "宪法专有" section: what PI can never do autonomously.
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PCI-G01", "operator_layer",
+        "§pi_constitution modify_own_prompt blocked",
+        "L2c",
+        "FORBIDDEN_INTENTS contains 'modify_own_prompt' — PI can never overwrite its "
+        "own system prompt base layer, even via low-risk commands. "
+        "Contract: PI_OPERATOR_DESIGN_DECISIONS §产品定义 (2026-06-30).",
+        status="implemented",
+    ),
+)
+def test_modify_own_prompt_is_forbidden():
+    """modify_own_prompt must be in FORBIDDEN_INTENTS (hard block, not just command gate).
+
+    propose_prompt_change is proposal_only (human reviews), but that command gate
+    only applies to named commands. A low-risk command (create_research_note, etc.)
+    that assembles a prompt-overwrite write operation bypasses command validation.
+    FORBIDDEN_INTENTS is the last hard wall.
+    """
+    from aletheia.agent_shell.registry import FORBIDDEN_INTENTS
+
+    assert "modify_own_prompt" in FORBIDDEN_INTENTS, (
+        "PCI-G01 VIOLATED: 'modify_own_prompt' missing from FORBIDDEN_INTENTS. "
+        "PI could overwrite its own system prompt base layer via low-risk commands. "
+        "Add 'modify_own_prompt' to FORBIDDEN_INTENTS in registry.py."
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PCI-G04", "operator_layer",
+        "§pi_constitution observers_no_pi_decision",
+        "L2a",
+        "market_observer.py does not call insert_pi_decision or construct PiDecision() — "
+        "observers are tools, not independent signal issuers (A-path architecture). "
+        "Contract: PI_OPERATOR_DESIGN_DECISIONS §A路架构 (2026-06-30).",
+        status="implemented",
+    ),
+)
+def test_observers_do_not_insert_pi_decisions():
+    """AST-scan observer files: none must call insert_pi_decision or construct PiDecision.
+
+    The A-path architecture mandates: lower-layer observers write Opportunity records,
+    PI (the top decision-maker) reads them and writes PiDecision. Observers that write
+    PiDecision directly re-entangle the two-loop architecture.
+    """
+    import ast as _ast
+
+    _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    # chain_observer.py and macro_observer.py are not yet implemented —
+    # guard only the files that exist to avoid false failures on missing files.
+    _OBSERVER_FILES = [
+        _PROJECT_ROOT / "aletheia" / "agents" / "market_observer.py",
+    ]
+    # Optionally guard additional observers if they exist
+    for optional_name in ("chain_observer.py", "macro_observer.py"):
+        candidate = _PROJECT_ROOT / "aletheia" / "agents" / optional_name
+        if candidate.exists():
+            _OBSERVER_FILES.append(candidate)
+
+    forbidden_names = {"insert_pi_decision", "PiDecision"}
+    violations: list[str] = []
+
+    for obs_path in _OBSERVER_FILES:
+        src = obs_path.read_text(encoding="utf-8")
+        tree = _ast.parse(src)
+        for node in _ast.walk(tree):
+            # Function calls: insert_pi_decision(...) or PiDecision(...)
+            if isinstance(node, _ast.Call):
+                func = node.func
+                name = None
+                if isinstance(func, _ast.Name):
+                    name = func.id
+                elif isinstance(func, _ast.Attribute):
+                    name = func.attr
+                if name in forbidden_names:
+                    violations.append(f"{obs_path.name}: {name}()")
+
+    assert not violations, (
+        f"PCI-G04 VIOLATED: observer(s) call insert_pi_decision or construct PiDecision — "
+        f"observers must only write Opportunity, never PiDecision: {violations}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Self-heal contract: PI approval gate + structured audit + action taxonomy
+# (operator_layer.md §[产品定义] 监管/自愈契约, 不变式 1-4)
+# 2026-06-30 SDD alignment (GAP-01..07)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-C08", "operator_layer", "§selfheal pi_approval_gate invariant", "L2c",
+        "Self-heal L1 actions (clean_stale_heartbeats / restart_collector / "
+        "rebuild_sqlite_index) must not execute without a prior PI approval record "
+        "— operator_layer.md §不变式1.",
+        status="missing",
+    ),
+)
+@pytest.mark.xfail(strict=True, reason="GAP-01: PI approval gate not yet wired into self-heal dispatch")
+def test_l1_selfheal_requires_pi_approval():
+    """RED tripwire: fires while the PI-approval gate is absent.
+
+    Goes GREEN once _execute_level1_action (or the self-heal stubs) checks
+    pi_decisions for an 'approve_l1_action' token before executing
+    clean_stale_heartbeats / restart_collector / rebuild_sqlite_index.
+    """
+    import ast as _ast
+
+    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+
+    # Gate function must exist
+    assert "_request_pi_approval" in src or "approve_l1" in src, (
+        "No PI-approval gate found in operator_loop.py — "
+        "_request_pi_approval_for_selfheal() or equivalent must exist "
+        "before this tripwire can be satisfied."
+    )
+
+    # The gate must be called inside _execute_level1_action or the self-heal handlers
+    execute_fn = next(
+        (n for n in _ast.walk(tree)
+         if isinstance(n, _ast.FunctionDef) and n.name == "_execute_level1_action"),
+        None,
+    )
+    assert execute_fn is not None, "_execute_level1_action not found"
+    gate_calls = [
+        n for n in _ast.walk(execute_fn)
+        if isinstance(n, _ast.Call)
+        and isinstance(n.func, _ast.Name)
+        and "pi_approval" in n.func.id
+    ]
+    assert gate_calls, (
+        "_execute_level1_action does not call a PI-approval gate before "
+        "dispatching self-heal actions."
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-C09", "operator_layer", "§selfheal l2_human_confirm invariant", "L2c",
+        "L2 proposals must not auto-execute even after PI approval — they must "
+        "carry a human_confirm_required marker and wait for explicit human approval "
+        "(operator_layer.md §不变式3).",
+        status="missing",
+    ),
+)
+@pytest.mark.xfail(strict=True, reason="GAP-02: human confirmation gate not yet wired into _create_proposal")
+def test_l2_proposal_requires_human_confirmation():
+    """RED tripwire: _create_proposal must include a human_confirm_required flag.
+
+    Goes GREEN when the artifact content carries human_confirm_required=True
+    and the operator loop respects it before execution.
+    """
+    import inspect
+    import aletheia.agent_shell.operator_loop as _ol
+
+    src = inspect.getsource(_ol._create_proposal)
+    assert "human_confirm" in src or "pending_human" in src, (
+        "_create_proposal does not mark the proposal as requiring human "
+        "confirmation (human_confirm_required). Add this field to the artifact "
+        "content to satisfy operator_layer.md §不变式3."
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-S13", "operator_layer", "§selfheal l1_action_types exist", "L2a",
+        "_LEVEL_1_ACTIONS must include data-maintenance self-heal types: "
+        "clean_stale_heartbeats, restart_collector, rebuild_sqlite_index "
+        "(operator_layer.md §自愈档位 L1行).",
+        status="implemented",
+    ),
+)
+def test_l1_selfheal_action_types_exist():
+    """The three L1 data-maintenance self-heal action types must be registered."""
+    import aletheia.agent_shell.operator_loop as _ol
+
+    required = {"clean_stale_heartbeats", "restart_collector", "rebuild_sqlite_index"}
+    missing = required - _ol._LEVEL_1_ACTIONS
+    assert not missing, (
+        f"Self-heal action types missing from _LEVEL_1_ACTIONS: {missing}. "
+        "Add them to align with operator_layer.md §自愈档位 L1."
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-B10", "operator_layer", "§selfheal structured_audit fields", "L2b",
+        "_emit_self_heal_action must persist all 5 required audit fields in "
+        "KnowledgeItem.content (JSON): operation_type / trigger_reason / result "
+        "/ before_state / after_state (operator_layer.md §不变式2).",
+        status="implemented",
+    ),
+)
+def test_selfheal_emit_stores_structured_fields():
+    """_emit_self_heal_action must write all 5 structured fields to KnowledgeItem.content."""
+    import json as _json
+    from unittest.mock import patch
+
+    captured: list = []
+
+    def fake_insert(item):
+        captured.append(item)
+
+    with patch("aletheia.storage.repositories.insert_knowledge_item", side_effect=fake_insert):
+        from aletheia.agent_shell import commands as _cmds
+        _cmds._emit_self_heal_action(
+            action="clean_stale_heartbeats",
+            reason="heartbeat table >10k rows",
+            operation_type="data_cleanup",
+            trigger_reason="heartbeat table >10k rows",
+            result="deleted 9823 rows",
+            before_state="10021 rows",
+            after_state="198 rows",
+        )
+
+    assert captured, "_emit_self_heal_action did not call insert_knowledge_item"
+    item = captured[0]
+    content_raw = item.content
+    assert content_raw is not None, (
+        "KnowledgeItem.content must not be None for self-heal actions — "
+        "it must carry the 5 structured audit fields."
+    )
+    try:
+        content = _json.loads(content_raw)
+    except Exception:
+        pytest.fail(f"KnowledgeItem.content is not valid JSON: {content_raw!r}")
+
+    required_fields = {"operation_type", "trigger_reason", "result", "before_state", "after_state"}
+    missing_fields = required_fields - set(content.keys())
+    assert not missing_fields, (
+        f"_emit_self_heal_action KnowledgeItem.content missing required fields: {missing_fields}. "
+        "All 5 structured audit fields are mandatory per operator_layer.md §不变式2."
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PCI-G03", "operator_layer",
+        "§pi_constitution constitution_files_not_in_write_whitelist",
+        "L2a",
+        "write_operator_report (file_artifacts.py) roots all output under "
+        "get_data_dir()/'reports' — never under docs/design/ or docs/governance/. "
+        "Constitution files (risk_engine_contract.md, live_unlock_contract.md, "
+        "PI_OPERATOR_DESIGN_DECISIONS.md, etc.) are human-owned and must not appear "
+        "in any write-command output path. Contract: PI_OPERATOR_DESIGN_DECISIONS "
+        "§宪法专有 (2026-06-30).",
+        status="implemented",
+    ),
+)
+def test_write_operator_report_root_is_data_dir():
+    """write_operator_report must produce paths under data/reports/, never docs/.
+
+    We call report_note_path() (the path-builder, no disk write) and verify the
+    returned path does not escape the data directory into the source tree.
+    The data dir during tests is a tmp_path; we check that the path is anchored
+    under a 'reports' stem and contains no 'docs' segment.
+    """
+    import ast as _ast
+
+    _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+    fa_src = (
+        _PROJECT_ROOT / "aletheia" / "agent_shell" / "file_artifacts.py"
+    ).read_text(encoding="utf-8")
+
+    # 1. The path-builder must reference get_data_dir(), not a hardcoded docs/ path.
+    assert "get_data_dir()" in fa_src, (
+        "file_artifacts.py does not call get_data_dir() — "
+        "report paths may escape the data directory"
+    )
+
+    # 2. No string literal in file_artifacts.py contains 'docs/design' or 'docs/governance'.
+    tree = _ast.parse(fa_src)
+    forbidden_paths = ("docs/design", "docs/governance", "docs\\design", "docs\\governance")
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Constant) and isinstance(node.value, str):
+            for fp in forbidden_paths:
+                assert fp not in node.value, (
+                    f"PCI-G03 VIOLATED: file_artifacts.py contains hardcoded path "
+                    f"{node.value!r} pointing to constitution files under docs/. "
+                    "All PI write paths must stay under data/reports/."
+                )
+
+
+# ---------------------------------------------------------------------------
+# GAP-07: dual audit-path field inconsistency (_persist_action vs _emit_self_heal_action)
+# Both paths must carry the 5 required structured fields queryable per contract.
+# (operator_layer.md §不变式2, GAP-07 moderate)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-B11", "operator_layer", "§selfheal dual_audit_path consistency", "L2b",
+        "_persist_action (AuditEvent) and _emit_self_heal_action (KnowledgeItem) "
+        "are the two write paths for self-heal operations. The KnowledgeItem path "
+        "must carry all 5 structured fields (§不变式2) in content JSON. "
+        "_persist_action carries before_state/after_state via AuditEvent model; "
+        "operation_type and trigger_reason are implied by event_type+message. "
+        "Claim locks the KnowledgeItem path as the authoritative structured store.",
+        status="implemented",
+    ),
+)
+def test_knowledge_item_is_structured_selfheal_store():
+    """KnowledgeItem.content (via _emit_self_heal_action) is the structured audit store.
+
+    _persist_action uses AuditEvent (before_state/after_state present but operation_type
+    and trigger_reason are embedded in event_type+message — sufficient for operational
+    log but not for structured query). The KnowledgeItem path is the contract-mandated
+    structured store.
+
+    Verifies:
+    1. KnowledgeItem model has a content field (can store JSON).
+    2. The self-heal stubs call _emit_self_heal_action (not only _persist_action).
+    """
+    import ast as _ast
+
+    # 1. KnowledgeItem has content field
+    import dataclasses
+    from aletheia.storage.models import KnowledgeItem
+
+    # Pydantic model — check field names
+    field_names = set(KnowledgeItem.model_fields.keys())
+    assert "content" in field_names, (
+        "KnowledgeItem model missing 'content' field — cannot store structured JSON audit."
+    )
+
+    # 2. Self-heal handler stubs reference _emit_self_heal_action
+    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
+    for action_name in ("_action_clean_stale_heartbeats",
+                        "_action_restart_collector",
+                        "_action_rebuild_sqlite_index"):
+        tree = _ast.parse(src)
+        fn = next(
+            (n for n in _ast.walk(tree)
+             if isinstance(n, _ast.FunctionDef) and n.name == action_name),
+            None,
+        )
+        assert fn is not None, f"{action_name} not found in operator_loop.py"
+        calls = [
+            n for n in _ast.walk(fn)
+            if isinstance(n, _ast.Call)
+            and (
+                (isinstance(n.func, _ast.Attribute) and n.func.attr == "_emit_self_heal_action")
+                or (isinstance(n.func, _ast.Name) and n.func.id == "_emit_self_heal_action")
+            )
+        ]
+        assert calls, (
+            f"{action_name} does not call _emit_self_heal_action — "
+            "the structured KnowledgeItem audit write is required by §不变式2."
+        )

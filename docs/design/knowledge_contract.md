@@ -294,3 +294,47 @@ ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_c
 | trading_context.py 消费类型 | 过滤 `lesson` / `accepted_lesson`（无生产者写入） | §4.1 枚举未包含这两个类型 |
 
 以上两处为文档与代码之间的表述不一致；代码行为符合 `trust_and_change_control.md §4.1` 的枚举定义，需更新 `agent_contracts.md` 和 `trading_context.py` 的过滤条件（或补充说明为遗留兼容）。
+
+---
+
+## §8 学习产出的可修改范围（产品定义 2026-06-30）
+
+知识子系统的学习产出在早期可以影响以下两个范围（由浅入深，风控阈值不在其中）：
+
+### 8.1 Ranker 权重调整（低风险）
+
+`paper_trader_ranker.py` 在检索 lessons 后对机会打分排序。学习产出（`trade_case_study` / `post_trade_review`）可以通过以下机制影响 Ranker 行为：
+- 高质量历史模式 → 提升同类机会的 memo_effectiveness 权重
+- 负反馈归因（regime + 方向 + scanner 组合）→ 降权对应组合
+- **边界**：Ranker 调整只影响机会排序，不影响 risk_engine 关卡，不影响 sizing
+
+### 8.2 PI system prompt 片段（中风险）
+
+PI Agent 的 system prompt 分为两层：
+- **基础层**（宪法约束，人类专有）：角色定义、FORBIDDEN_INTENTS 提示、风格约定
+- **追加片段层**（学习可写入）：以下三条路径
+
+**学习内容注入 PI prompt 的三条合法路径**（完整枚举，由 LP-S14 spec claim 锁定）：
+
+| 路径 | 数据来源 | 代码锚点 |
+|------|---------|---------|
+| 1. 近期战术总结 | `trading_memo` item_type（Insight Synthesizer 写入） | `trading_context.py:406-422` → `trading_decision.py:716-719` |
+| 2. 推理质量反馈 | `reasoning_feedback` item_type（Reasoning feedback tracker 写入） | `trading_context.py:425-430` → `trading_decision.py:724-727` |
+| 3. 建议性事后教训 | `LessonStore` 的 proposed 行（dreaming agent 写入） | `trading_context.py:596-603` → `trading_decision.py:779-787` |
+
+学习不能直接修改 prompt 基础层文件。上述三条是当前完整的学习→推理注入路径；新增路径须同步更新 LP-S14 spec claim 和本表。
+
+> **历史修正**：本节原文写"这是'学习影响 PI 推理'的唯一合法路径"（指 `trading_memo`），
+> 实际代码同时存在 `reasoning_feedback` 和 `ps_lessons` 两条并行路径
+>（`trading_context.py:427` 的 `layer['reasoning_feedback']` 和 `:597` 的 `layer['ps_lessons']`），
+> 均通过 `trading_decision.py` 渲染进 PI system prompt。
+> 已于 2026-06-30 修正为三路完整枚举，并补 LP-S14 spec claim 锁住该枚举不变量。
+
+### 8.3 风控阈值（暂不开放）
+
+`risk_engine_contract.md` 中的 20 关数值属于宪法，学习机制不得修改。待 Round 2 数据验证后评估是否部分开放。
+
+### 8.4 推翻机制（待研究）
+
+三路融合方案（置信度衰减 × 时间 half-life × PI 决策时主动过滤）需深度研究后设计。
+研究计划：`docs/plans/learning_mechanism_research_plan.md`。

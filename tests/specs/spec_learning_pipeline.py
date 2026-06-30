@@ -535,3 +535,204 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     assert refreshed.applied_policy_version == versions[0].policy_version_id, (
         "lesson is not linked to the policy version it was folded into"
     )
+
+
+# ---------------------------------------------------------------------------
+# LP-S12 — Ranker must consume _memo_scoring + _lesson_penalty; adjustments
+#           must NOT reach risk_engine or sizing (§8.1 invariant)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S12", "learning_pipeline", "§8.1 Ranker consumption", "L2a",
+              "paper_trader_ranker._score_opportunity() calls both _memo_scoring() "
+              "(reads trading_memo knowledge item) and _lesson_penalty() (reads "
+              "trade_case_study items); and those helpers are NOT imported by or "
+              "called from aletheia/risk/engine.py or any sizing path — Ranker "
+              "adjustments only affect opportunity sort order, never risk gates or "
+              "position sizing (knowledge_contract.md §8.1 boundary)",
+              status="implemented"),
+)
+def test_ranker_consumes_memo_and_lesson_penalty_not_risk():
+    """LP-S12: §8.1 Ranker-side learning consumption invariant.
+
+    (a) _score_opportunity() in paper_trader_ranker calls both _memo_scoring
+        and _lesson_penalty — the two §8.1 learning paths.
+    (b) risk/engine.py does NOT import or reference _memo_scoring or
+        _lesson_penalty — so Ranker score adjustments never propagate into
+        risk checks or sizing.
+    """
+    import pathlib
+    import ast
+
+    root = pathlib.Path(_project_root())
+
+    # (a) Ranker calls both learning helpers inside _score_opportunity
+    ranker_src = (root / "aletheia/agents/paper_trader_ranker.py").read_text(encoding="utf-8")
+    assert "_memo_scoring" in ranker_src, (
+        "_memo_scoring not found in paper_trader_ranker.py — §8.1 trading_memo "
+        "consumption path is broken"
+    )
+    assert "_lesson_penalty" in ranker_src, (
+        "_lesson_penalty not found in paper_trader_ranker.py — §8.1 trade_case_study "
+        "consumption path is broken"
+    )
+
+    # Verify both helpers are called inside _compute_trade_score (the scoring function)
+    tree = ast.parse(ranker_src)
+    score_fn_body_src = ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_compute_trade_score":
+            # Collect all call-target names inside the function
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    fn = child.func
+                    name = fn.id if isinstance(fn, ast.Name) else (
+                        fn.attr if isinstance(fn, ast.Attribute) else ""
+                    )
+                    score_fn_body_src += name + " "
+    assert "_memo_scoring" in score_fn_body_src, (
+        "_memo_scoring is not called inside _compute_trade_score — "
+        "trading_memo adjustments never reach Ranker scoring"
+    )
+    assert "_lesson_penalty" in score_fn_body_src, (
+        "_lesson_penalty is not called inside _compute_trade_score — "
+        "trade_case_study penalty never reaches Ranker scoring"
+    )
+
+    # (b) risk/engine.py must not reference these Ranker-internal helpers
+    engine_src = (root / "aletheia/risk/engine.py").read_text(encoding="utf-8")
+    assert "_memo_scoring" not in engine_src, (
+        "_memo_scoring imported/referenced in risk/engine.py — §8.1 boundary "
+        "violated: Ranker learning adjustments must not reach risk gates"
+    )
+    assert "_lesson_penalty" not in engine_src, (
+        "_lesson_penalty imported/referenced in risk/engine.py — §8.1 boundary "
+        "violated: Ranker learning adjustments must not reach risk gates"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-S13 — knowledge/manager.py create functions and learning pipeline MUST NOT
+#           call update_config or directly write risk_engine threshold fields
+#           (§8.3 invariant)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S13", "learning_pipeline", "§8.3 risk threshold immutability", "L2a",
+              "No create_* function in knowledge/manager.py and no module under "
+              "aletheia/learning/ imports or calls update_config() / "
+              "update_risk_config() — the structural guarantee that learning output "
+              "cannot modify risk_engine thresholds (knowledge_contract.md §8.3)",
+              status="implemented"),
+)
+def test_learning_pipeline_cannot_modify_risk_thresholds():
+    """LP-S13: §8.3 — learning pipeline has no write path to risk thresholds.
+
+    Checks source text only (static analysis). Verifies that:
+    (a) aletheia/knowledge/manager.py create_* functions never call update_config
+        or update_risk_config.
+    (b) every .py file under aletheia/learning/ (LessonStore, PolicyStore, etc.)
+        does not import from aletheia.risk.engine or call update_config directly.
+
+    This is an L2a structural claim — not a behavioural test — because the
+    boundary is architectural: if any of these paths existed the enforcement
+    would require change-control review, not a runtime guard.
+    """
+    import pathlib
+
+    root = pathlib.Path(_project_root())
+
+    forbidden_calls = ("update_config", "update_risk_config")
+
+    # (a) knowledge/manager.py must not contain any forbidden call
+    mgr_src = (root / "aletheia/knowledge/manager.py").read_text(encoding="utf-8")
+    for fn in forbidden_calls:
+        assert fn not in mgr_src, (
+            f"knowledge/manager.py calls {fn}() — learning write path can "
+            "reach risk threshold configuration (§8.3 violation)"
+        )
+
+    # (b) all .py files under aletheia/learning/ must not import risk.engine
+    #     or call the forbidden config writers
+    learning_dir = root / "aletheia" / "learning"
+    assert learning_dir.exists(), "aletheia/learning/ directory missing"
+    violations: list[str] = []
+    for py_file in learning_dir.rglob("*.py"):
+        src = py_file.read_text(encoding="utf-8")
+        for fn in forbidden_calls:
+            if fn in src:
+                violations.append(f"{py_file.relative_to(root)}: calls {fn}()")
+        if "from aletheia.risk.engine" in src or "import aletheia.risk.engine" in src:
+            violations.append(f"{py_file.relative_to(root)}: imports risk.engine")
+        if "from aletheia.risk import engine" in src:
+            violations.append(f"{py_file.relative_to(root)}: imports risk.engine")
+    assert not violations, (
+        "learning/ module(s) have a write path to risk thresholds (§8.3 violation):\n"
+        + "\n".join(violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-S14 — §8.2: enumerate ALL three paths that inject learning content into
+#           PI prompt; verify none bypasses the documented channels
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S14", "learning_pipeline", "§8.2 PI prompt learning paths", "L2a",
+              "Exactly three learning-content paths reach the PI system prompt via "
+              "trading_decision.py: (1) trading_memo (layer2.trading_memo), "
+              "(2) reasoning_feedback (layer2.reasoning_feedback), "
+              "(3) ps_lessons (layer3.ps_lessons, proposed lessons from LessonStore). "
+              "knowledge_contract.md §8.2 previously said trading_memo was the "
+              "'only' path — that was incorrect; the corrected §8.2 enumerates "
+              "all three. This claim locks the complete set so future additions "
+              "require an explicit spec update.",
+              status="implemented"),
+)
+def test_pi_prompt_learning_paths_complete_enumeration():
+    """LP-S14: The three documented learning-content paths into the PI prompt.
+
+    (a) trading_decision.py renders 'trading_memo' (layer2 key) into the prompt.
+    (b) trading_decision.py renders 'reasoning_feedback' (layer2 key) into the prompt.
+    (c) trading_decision.py renders 'ps_lessons' (layer3 key) into the prompt.
+    (d) trading_context.py populates all three source keys from their respective
+        knowledge item types.
+
+    This is a static-source claim: it verifies the documented paths exist in code.
+    If a fourth learning path is added to the prompt it must also update this spec.
+    """
+    import pathlib
+
+    root = pathlib.Path(_project_root())
+    td_src = (root / _TRADING_DECISION).read_text(encoding="utf-8")
+    tc_src = (root / _TRADING_CONTEXT).read_text(encoding="utf-8")
+
+    # (a) trading_memo rendered in trading_decision
+    assert "trading_memo" in td_src, (
+        "trading_decision.py does not reference 'trading_memo' — §8.2 path 1 missing"
+    )
+    # (b) reasoning_feedback rendered in trading_decision
+    assert "reasoning_feedback" in td_src, (
+        "trading_decision.py does not reference 'reasoning_feedback' — §8.2 path 2 missing"
+    )
+    # (c) ps_lessons rendered in trading_decision
+    assert "ps_lessons" in td_src, (
+        "trading_decision.py does not reference 'ps_lessons' — §8.2 path 3 missing"
+    )
+
+    # (d) trading_context populates the three keys from the right item_types
+    # path 1: trading_memo comes from insight_synthesizer (get_latest_memo)
+    assert "trading_memo" in tc_src, (
+        "trading_context.py does not populate layer['trading_memo'] — §8.2 source broken"
+    )
+    # path 2: reasoning_feedback comes from reasoning_feedback module
+    assert "reasoning_feedback" in tc_src, (
+        "trading_context.py does not populate layer['reasoning_feedback'] — §8.2 source broken"
+    )
+    # path 3: ps_lessons comes from LessonStore (status='proposed')
+    assert "ps_lessons" in tc_src, (
+        "trading_context.py does not populate layer['ps_lessons'] — §8.2 source broken"
+    )

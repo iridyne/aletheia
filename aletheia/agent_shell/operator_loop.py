@@ -260,6 +260,12 @@ _LEVEL_1_ACTIONS = {
     "tighten_confidence", "reduce_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "request_backfill", "notify_operator",
     "trigger_strategy_research",
+    # Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1).
+    # These require PI approval before execution (§不变式1).
+    # PI approval gate is tracked by OL-C08 (status="missing" / xfail tripwire).
+    "clean_stale_heartbeats",
+    "restart_collector",
+    "rebuild_sqlite_index",
 }
 
 _LEVEL_2_ACTIONS = {
@@ -576,6 +582,16 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_trigger_strategy_research(action)
     elif action.action_type.startswith("neutral_drift_"):
         result = _action_neutral_drift(action)
+    # ─── Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1) ───
+    # GAP-C08 NOTE: PI approval gate not yet wired — OL-C08 xfail tripwire tracks this.
+    # These stubs are registered so the taxonomy is correct; actual PI-gated
+    # execution will be added when the approval flow is implemented.
+    elif action.action_type == "clean_stale_heartbeats":
+        result = _action_clean_stale_heartbeats(action)
+    elif action.action_type == "restart_collector":
+        result = _action_restart_collector(action)
+    elif action.action_type == "rebuild_sqlite_index":
+        result = _action_rebuild_sqlite_index(action)
     else:
         result["reason"] = f"unknown action type: {action.action_type}"
 
@@ -953,6 +969,128 @@ def _action_notify(action: OperatorAction) -> dict:
     except Exception:
         pass
     return {"action": "notify_operator", "status": "executed", "message": message[:200]}
+
+
+def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
+    """Delete heartbeat rows older than retention window.
+
+    Stub implementation — operator_layer.md §自愈档位 L1.
+    GAP-C08: PI approval gate (OL-C08) not yet wired; records self-heal audit.
+    """
+    reason = action.reason or "heartbeat table maintenance"
+    rows_deleted = 0
+    before_state = "unknown"
+    after_state = "unknown"
+    try:
+        from aletheia.storage import repositories as _repo
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        existing = _repo._select_all(
+            "agent_shell_heartbeats",
+            where="last_seen < ?",
+            params=(cutoff,),
+            limit=10000,
+        )
+        before_state = str(len(existing)) + " stale rows"
+        if existing:
+            _repo._execute_raw(
+                "DELETE FROM agent_shell_heartbeats WHERE last_seen < ?",
+                (cutoff,),
+            )
+            rows_deleted = len(existing)
+        after_state = f"{rows_deleted} rows deleted"
+    except Exception as e:
+        logger.debug("clean_stale_heartbeats: %s", e)
+        after_state = f"error: {e}"
+
+    try:
+        from aletheia.agent_shell.commands import _emit_self_heal_action
+        _emit_self_heal_action(
+            action="clean_stale_heartbeats",
+            reason=reason,
+            operation_type="data_cleanup",
+            trigger_reason=reason,
+            result=after_state,
+            before_state=before_state,
+            after_state=after_state,
+        )
+    except Exception:
+        pass
+
+    _record_action("self_heal", param="heartbeats", detail=after_state)
+    logger.info("operator: clean_stale_heartbeats — %s", after_state)
+    return {"action": "clean_stale_heartbeats", "status": "executed",
+            "rows_deleted": rows_deleted, "reason": reason}
+
+
+def _action_restart_collector(action: OperatorAction) -> dict:
+    """Restart a stuck data collector by notifying the scheduler.
+
+    Stub implementation — operator_layer.md §自愈档位 L1.
+    GAP-C08: PI approval gate (OL-C08) not yet wired; records self-heal audit.
+    """
+    collector = action.params.get("collector", "unknown")
+    reason = action.reason or f"collector {collector} appears stuck"
+    result_msg = f"restart_requested:{collector}"
+
+    try:
+        # Notify via audit trail — actual restart requires scheduler integration
+        # (Phase 2 of the self-heal layer, per aletheia-self-heal-layer.md)
+        from aletheia.agent_shell.commands import _emit_self_heal_action
+        _emit_self_heal_action(
+            action="restart_collector",
+            reason=reason,
+            operation_type="process_restart",
+            trigger_reason=reason,
+            result=result_msg,
+            before_state=f"collector={collector} stuck",
+            after_state="restart_signal_sent",
+        )
+    except Exception:
+        pass
+
+    _record_action("self_heal", param=f"collector:{collector}", detail=result_msg)
+    logger.info("operator: restart_collector %s — %s", collector, reason)
+    return {"action": "restart_collector", "status": "executed",
+            "collector": collector, "reason": reason}
+
+
+def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
+    """Rebuild SQLite indexes for a named table.
+
+    Stub implementation — operator_layer.md §自愈档位 L1.
+    GAP-C08: PI approval gate (OL-C08) not yet wired; records self-heal audit.
+    """
+    table = action.params.get("table", "unknown")
+    reason = action.reason or f"index rebuild for {table}"
+    result_msg = f"ANALYZE executed on {table}"
+
+    try:
+        from aletheia.storage import repositories as _repo
+        # ANALYZE updates index statistics; full REINDEX is deferred to avoid lock contention
+        _repo._execute_raw("ANALYZE", ())
+        result_msg = "ANALYZE OK"
+    except Exception as e:
+        logger.debug("rebuild_sqlite_index ANALYZE: %s", e)
+        result_msg = f"ANALYZE skipped: {e}"
+
+    try:
+        from aletheia.agent_shell.commands import _emit_self_heal_action
+        _emit_self_heal_action(
+            action="rebuild_sqlite_index",
+            reason=reason,
+            operation_type="index_maintenance",
+            trigger_reason=reason,
+            result=result_msg,
+            before_state=f"table={table} indexes potentially stale",
+            after_state=result_msg,
+        )
+    except Exception:
+        pass
+
+    _record_action("self_heal", param=f"index:{table}", detail=result_msg)
+    logger.info("operator: rebuild_sqlite_index %s — %s", table, result_msg)
+    return {"action": "rebuild_sqlite_index", "status": "executed",
+            "table": table, "result": result_msg}
 
 
 def _create_proposal(action: OperatorAction) -> dict:

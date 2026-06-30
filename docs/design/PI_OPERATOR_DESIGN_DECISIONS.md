@@ -10,6 +10,24 @@
 agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交易决策 daemon)
 是三个不同组件, 反复被审计混淆。完整区分图见 operator_layer.md。
 
+---
+
+## [产品定义] PI 架构基线（2026-06-30 owner 确认）
+
+**A 路：单 LLM 主循环**。下层 observer（market_observer / chain_observer / macro_observer）是 PI 的工具（tool calls），PI 自主决定调用顺序和深度，不存在独立发言的"专家小组"。
+- 对标：OpenAlice（owner 点名标杆）、hermes-agent、AlphaQuanter 均采用 A 路
+- B 路（多专家辩论 + 总编仲裁）保留为 Phase 2 升级路径，条件触发：方向信号互相打架或 risk_critic 拒绝率突然飙升时，才召开临时 bull/bear 两视角比对
+
+**宪法人类专有**。PI 在宪法内享有全权，但以下内容 PI 不得修改：
+- 风控阈值（risk_engine 关卡数值）
+- 执行边界（FORBIDDEN_INTENTS、RESTRICTED_TOOLS）
+- 本设计决策书及 live_unlock_contract、risk_engine_contract 等核心契约文档
+- PI 自身的 system prompt 基础层（学习机制只能追加/调整 prompt 片段，不能改基础层）
+
+**全权范围**：Live 模式开启后，PI 对主赛道（perp + spot）开仓/平仓/调仓全权，无需逐笔人工确认。第二赛道（xStocks/Serenity）由 serenity_executor 独立管辖。
+
+---
+
 ## 问题 1：Operator 与底层 Scheduled Jobs 的关系
 
 ### 现状

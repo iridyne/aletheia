@@ -1814,15 +1814,36 @@ async def propose_extension_enablement(params: dict) -> dict:
     }
 
 
-def _emit_self_heal_action(action: str, reason: str) -> None:
-    """Record a system_action knowledge item for audit trail and self-heal."""
+def _emit_self_heal_action(
+    action: str,
+    reason: str,
+    operation_type: str = "",
+    trigger_reason: str = "",
+    result: str = "",
+    before_state: str = "",
+    after_state: str = "",
+) -> None:
+    """Record a system_action knowledge item for audit trail and self-heal.
+
+    The 5 structured fields (operation_type / trigger_reason / result /
+    before_state / after_state) are required by operator_layer.md §不变式2.
+    They are stored as JSON in KnowledgeItem.content for structured querying.
+    """
     try:
         from aletheia.storage.models import KnowledgeItem
         from aletheia.storage.repositories import insert_knowledge_item
+        structured_content = json.dumps({
+            "operation_type": operation_type or action,
+            "trigger_reason": trigger_reason or reason,
+            "result": result,
+            "before_state": before_state,
+            "after_state": after_state,
+        })
         item = KnowledgeItem(
             item_type="system_action",
             title=f"self_heal:{action}",
             tags=json.dumps(["self_heal", action]),
+            content=structured_content,
         )
         insert_knowledge_item(item)
         logger.info("self_heal_action: %s — %s", action, reason)

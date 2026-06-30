@@ -59,6 +59,25 @@
 
 ---
 
+## [产品定义] 监管/自愈契约（2026-06-30 owner 确认）
+
+### 自愈档位
+
+| 档位 | 行为 | 触发方式 |
+|------|------|----------|
+| L0 通知 | 发现异常，通知人类 | 已实现（Level-1 notify_operator） |
+| L1 自动修数据 | 清理过期 heartbeat/日志、重启卡死 collector、重建 SQLite 索引 | PI 批准后执行 |
+| L2 人工确认 | 清除 signal_pending 队列、修改 prompt 片段/配置 | PI 评估 → 推送通知 → 等人确认 |
+
+### 不变式
+
+1. **PI 批准前置**：任何 L1/L2 自愈操作执行前，必须经 PI 读取诊断报告并输出"批准/拒绝 + 理由"。PI 不批准则不执行。
+2. **结构化日志强制**：每次自愈操作必须写结构化日志，字段包含：`operation_type` / `trigger_reason` / `result` / `before_state` / `after_state`。
+3. **交易时隔离例外**：自愈操作可在系统正在交易时执行，但 L2 操作（涉及 signal_pending 或 prompt/配置）即使 PI 批准也必须等人类确认。
+4. **system_action 审计**：L1/L2 操作完成后在 `knowledge_items (item_type=system_action)` 写入审计记录（已有 self-heal 路径，继续复用）。
+
+---
+
 ## 1. Executive Summary
 
 Aletheia currently has a strong local-first trading product shell and a mostly working backend/frontend foundation, but the system still lacks a true **top-level agentic control layer**.

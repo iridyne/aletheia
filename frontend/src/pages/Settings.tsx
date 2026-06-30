@@ -1393,29 +1393,66 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
   )
 }
 
+// Live unlock warning wall — §4b of live_unlock_contract.md.
+// All three elements MUST be present (spec LU-S03):
+//   (1) "PI Agent 将完全自主执行交易，操作不可预测"
+//   (2) "真实资金损失可能发生"
+//   (3) "开启后所有操作由人类承担后果"
+function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
+  credError?: string
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div style={{ border: '2px solid var(--color-danger, #d9534f)', borderRadius: 6, padding: '16px', marginTop: 8, background: 'var(--color-danger-bg, #fff5f5)' }}>
+      <p style={{ fontWeight: 700, marginBottom: 8 }}>实盘解锁警示 — 请仔细阅读</p>
+      <ul style={{ margin: '0 0 12px 18px', lineHeight: 1.7 }}>
+        <li>PI Agent 将完全自主执行交易，操作不可预测</li>
+        <li>真实资金损失可能发生</li>
+        <li>开启后所有操作由人类承担后果</li>
+      </ul>
+      {credError && (
+        <p style={{ color: 'var(--color-danger, #d9534f)', marginBottom: 10 }}>
+          ⚠ 凭证预检失败：{credError}。建议先修复凭证再解锁。
+        </p>
+      )}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={onConfirm}>确认解锁实盘</button>
+        <button className="secondary" onClick={onCancel}>取消</button>
+      </div>
+    </div>
+  )
+}
+
 function LiveStateRow({ status, qc }: any) {
   const unlock = useMutation({ mutationFn: api.liveUnlock, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const lock = useMutation({ mutationFn: api.liveLock, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
   const isDisabled = status.live_state === 'live_disabled'
   const [warning, setWarning] = useState('')
+  const [showWall, setShowWall] = useState(false)
+  const [credError, setCredError] = useState<string | undefined>(undefined)
 
   const preflightUnlock = async () => {
     setWarning('')
-    let msg = 'Unlock live-limited trading? This enables real orders within hard risk limits.'
+    setCredError(undefined)
     try {
       const r = await api.testBitget('live')
       if (!r.connected) {
-        setWarning(`Live credentials not reachable: ${r.error || 'unknown'}. Fix credentials first.`)
-        msg = `⚠ Live creds did not connect (${r.error || 'unknown'}). Unlock anyway?`
+        setCredError(r.error || 'unknown')
       }
     } catch {
       // Intentional: credential pre-flight is advisory only. The backend enforces its
       // own gate (state must be live_disabled + confirm=true). A network error here
-      // means we cannot verify credentials, but the user still gets the confirm dialog
-      // — they see the default warning text and can decide. The backend will catch any
-      // real credential issue when the first live order is attempted.
+      // means we cannot verify credentials, but the user still sees the warning wall
+      // and can decide. The backend will catch any real credential issue when the
+      // first live order is attempted.
     }
-    if (confirm(msg)) unlock.mutate()
+    setShowWall(true)
+  }
+
+  const handleConfirmUnlock = () => {
+    setShowWall(false)
+    unlock.mutate()
   }
 
   return (
@@ -1425,6 +1462,13 @@ function LiveStateRow({ status, qc }: any) {
         <button onClick={preflightUnlock} disabled={!isDisabled}>Unlock Live-Limited</button>
         <button className="secondary" onClick={() => lock.mutate()} disabled={isDisabled}>Lock</button>
       </Row>
+      {showWall && (
+        <LiveUnlockWarningWall
+          credError={credError}
+          onConfirm={handleConfirmUnlock}
+          onCancel={() => setShowWall(false)}
+        />
+      )}
       {warning && <div className="settings-save-msg err">⚠ {warning}</div>}
     </div>
   )

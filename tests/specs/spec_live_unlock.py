@@ -301,3 +301,232 @@ def test_restricted_tool_class_is_empty_set():
         f"INVARIANT VIOLATION: TOOL_CLASSES['restricted'] = {restricted_modes!r}, "
         "expected empty set — no permission_mode should satisfy restricted access"
     )
+
+
+# ---------------------------------------------------------------------------
+# GAP-LU-02: §4b — unlock must elevate operator.permission_mode to Auto
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LU-B07", "live_unlock_contract", "§4b pi full authority on unlock", "L2b",
+        "POST /api/settings/live-unlock transitions operator.permission_mode to Auto",
+    ),
+)
+def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
+    import yaml
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    from aletheia.config.schema import AletheiaConfig
+    from fastapi.testclient import TestClient
+
+    cfg = AletheiaConfig()
+    cfg.live.state = "live_disabled"
+    cfg.live.first_live_confirmation_done = False
+    cfg.operator.permission_mode = "ReadOnly"
+    (tmp_path / "config.yaml").write_text(
+        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
+    )
+
+    client = TestClient(_make_live_app(), raise_server_exceptions=False)
+    resp = client.post(
+        "/api/settings/live-unlock",
+        json={"confirm": True, "acknowledge_first_unlock": True},
+    )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
+
+    # Re-read persisted config to verify operator.permission_mode was set
+    from aletheia.config.loader import load_config
+    saved = load_config()
+    assert saved.operator.permission_mode == "Auto", (
+        f"§4b INVARIANT VIOLATION: operator.permission_mode after unlock = "
+        f"'{saved.operator.permission_mode}', expected 'Auto'"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "LU-C04", "live_unlock_contract", "§4b pi authority invariant", "L2c",
+        "After live_unlock: live.state=live_limited AND operator.permission_mode=Auto (both must hold)",
+    ),
+)
+def test_unlock_invariant_state_and_permission(tmp_path, monkeypatch):
+    import yaml
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    from aletheia.config.schema import AletheiaConfig
+    from fastapi.testclient import TestClient
+
+    cfg = AletheiaConfig()
+    cfg.live.state = "live_disabled"
+    cfg.live.first_live_confirmation_done = True  # already confirmed once
+    (tmp_path / "config.yaml").write_text(
+        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
+    )
+
+    client = TestClient(_make_live_app(), raise_server_exceptions=False)
+    resp = client.post(
+        "/api/settings/live-unlock",
+        json={"confirm": True, "acknowledge_first_unlock": True},
+    )
+    assert resp.status_code == 200
+
+    from aletheia.config.loader import load_config
+    saved = load_config()
+    assert saved.live.state == "live_limited", (
+        f"Expected live.state=live_limited, got '{saved.live.state}'"
+    )
+    assert saved.operator.permission_mode == "Auto", (
+        f"Expected operator.permission_mode=Auto, got '{saved.operator.permission_mode}'"
+    )
+
+
+# ---------------------------------------------------------------------------
+# GAP-LU-05: §4b — FORBIDDEN_INTENTS are blocked even under operator Auto mode
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LU-C01b", "live_unlock_contract", "§4b+§6 constitution survives Auto", "L2c",
+        "FORBIDDEN_INTENTS are blocked by check_permission() across ALL operator modes including Auto",
+    ),
+)
+def test_forbidden_intents_blocked_in_all_operator_modes():
+    from aletheia.agent_shell.permissions import check_permission
+    from aletheia.agent_shell.registry import FORBIDDEN_INTENTS
+
+    # Cover worker modes (existing LU-C01) + operator modes including Auto (GAP-LU-05)
+    worker_modes = ("Observe", "Paper", "Full")
+    operator_modes = ("ReadOnly", "Research", "PaperAuto", "AllowEditing", "Auto")
+
+    for mode in worker_modes:
+        for intent in FORBIDDEN_INTENTS:
+            allowed, _ = check_permission(intent, mode)
+            assert allowed is False, (
+                f"INVARIANT VIOLATION: {intent} permitted in worker mode {mode}"
+            )
+
+    for mode in operator_modes:
+        for intent in FORBIDDEN_INTENTS:
+            allowed, _ = check_permission(intent, mode, permission_scope="operator")
+            assert allowed is False, (
+                f"INVARIANT VIOLATION: {intent} permitted in operator mode {mode} — "
+                "constitution (§4b) must hold even under Auto(4)"
+            )
+
+
+# ---------------------------------------------------------------------------
+# GAP-LU-04: §4b — PI full authority scoped to main track (spec claim only,
+# code note: no runtime filter yet — this claim is status="missing" until the
+# market_type scope check is added to permissions.py)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LU-C05", "live_unlock_contract", "§4b main-track scope", "L2c",
+        "Auto mode is scoped to main track (perp/spot); serenity track is governed "
+        "by serenity_executor independently — no shared permission elevation",
+        status="missing",  # Tripwire: serenity_executor market_type isolation not yet enforced in code
+    ),
+)
+def test_auto_mode_scope_main_track_only():
+    # This is a structural RED tripwire — passes xfail until the market_type
+    # scope check is added to permissions.py / serenity_executor boundary.
+    # When implemented, this test should verify that Auto permission is only
+    # propagated to the main-track executor, not to serenity_executor paths.
+    pytest.xfail(
+        "LU-C05 tripwire: serenity_executor market_type isolation not enforced in "
+        "permissions.py — deferred to serenity Phase 5 hardening"
+    )
+
+
+# ---------------------------------------------------------------------------
+# GAP-LU-06: §4b — lock must reset operator.permission_mode symmetrically
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LU-C06", "live_unlock_contract", "§4b lock symmetry", "L2c",
+        "POST /api/settings/live-lock resets operator.permission_mode to ReadOnly "
+        "(symmetric with unlock which elevates to Auto — no one-way ratchet)",
+    ),
+)
+def test_live_lock_resets_operator_permission(tmp_path, monkeypatch):
+    import yaml
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    from aletheia.config.schema import AletheiaConfig
+    from fastapi.testclient import TestClient
+
+    # Pre-seed with live_limited + Auto (as if unlock already ran)
+    cfg = AletheiaConfig()
+    cfg.live.state = "live_limited"
+    cfg.live.first_live_confirmation_done = True
+    cfg.operator.permission_mode = "Auto"
+    (tmp_path / "config.yaml").write_text(
+        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
+    )
+
+    client = TestClient(_make_live_app(), raise_server_exceptions=False)
+    resp = client.post("/api/settings/live-lock")
+    assert resp.status_code == 200
+
+    from aletheia.config.loader import load_config
+    saved = load_config()
+    assert saved.live.state == "live_disabled", (
+        f"Expected live.state=live_disabled after lock, got '{saved.live.state}'"
+    )
+    assert saved.operator.permission_mode == "ReadOnly", (
+        f"INVARIANT VIOLATION: operator.permission_mode after lock = "
+        f"'{saved.operator.permission_mode}', expected 'ReadOnly' — "
+        "lock must not leave PI with Auto authority"
+    )
+
+
+# ---------------------------------------------------------------------------
+# GAP-LU-07: §4b — UI warning wall text elements (static source check)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LU-S03", "live_unlock_contract", "§4b ui warning wall", "L2a",
+        "Settings.tsx LiveUnlockWarningWall contains all three required elements: "
+        "(1) PI Agent 将完全自主执行交易，操作不可预测 "
+        "(2) 真实资金损失可能发生 "
+        "(3) 开启后所有操作由人类承担后果",
+    ),
+)
+def test_ui_warning_wall_three_elements():
+    import pathlib
+
+    settings_tsx = pathlib.Path(__file__).parents[2] / "frontend" / "src" / "pages" / "Settings.tsx"
+    assert settings_tsx.exists(), f"Settings.tsx not found at {settings_tsx}"
+    source = settings_tsx.read_text(encoding="utf-8")
+
+    required_phrases = [
+        "PI Agent 将完全自主执行交易，操作不可预测",
+        "真实资金损失可能发生",
+        "开启后所有操作由人类承担后果",
+    ]
+    for phrase in required_phrases:
+        assert phrase in source, (
+            f"§4b UI warning wall MISSING required element: '{phrase}' "
+            f"not found in Settings.tsx — all three consent elements must be present"
+        )

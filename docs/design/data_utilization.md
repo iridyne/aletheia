@@ -43,7 +43,8 @@
 | 资金费率(主交易所) | DerivativesCollector | `funding_rate_snapshots` (exchange=okx) | market_observer→leverage→LLM；context_builder；universe/features | ✅ |
 | 持仓量 OI(主交易所) | DerivativesCollector | `open_interest_snapshots` | 同上→crowding_score | ✅ |
 | 多空比 LSR | DerivativesCollector (Binance fapi) | `open_interest_snapshots.long_short_ratio` | normalizer→crowding_score→leverage→LLM | ✅ |
-| 宏观(BTC.D/总市值/VIX/DXY/Nasdaq) | MacroCollector (FRED/CoinGecko/yf) | `macro_snapshots` | market_observer / context_builder / regime / shadow_trades / position_enrichment | ✅ |
+| 宏观(BTC.D/总市值/VIX/DXY/Nasdaq) | MacroCollector (FRED/CoinGecko/yf fallback) | `macro_snapshots` | market_observer / context_builder / regime / shadow_trades / position_enrichment | ✅ |
+| 美股宏观代理(S&P500/VIX/DXY/Gold) | yfinance_provider (enable_yfinance_macro 门控) | 不落库，直接生成 markdown | market_context.build_market_context → "Macro context (daily)" 块 → LLM | ✅ |
 | 恐惧贪婪指数 | MacroCollector (alternative.me) | `macro_snapshots.fng_*` | macro 块→LLM | ✅ |
 | 涨跌幅榜 | CoinGeckoTopCollector | `coingecko_top_snapshots` + 折叠 summary | macro 块(top_movers_summary)→LLM | ✅ |
 | 成交量排名 | VolumeScannerCollector | 内存 `_latest_volume_ranking` | universe/service→选币注入 | ✅ (进程内) |
@@ -52,9 +53,10 @@
 | **DefiLlama 链上(稳定币/TVL/DEX)** | DefiLlamaCollector | `onchain_snapshots` | market_observer→macro 链上块→LLM | ✅ |
 | 预测市场 | PolymarketProvider | prediction 表 | market_observer 预测块→LLM (启用时) | ✅ |
 | 美股/xStocks | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
-| 市场状态 regime | RegimeCollector | (派生, 读 macro/funding) | regime 消费者 | ✅ |
+| 市场状态 regime | MacroCollector._classify_risk_regime()（内联派生，无独立 RegimeCollector 类） | `macro_snapshots.risk_regime` | market_observer / context_builder → regime 评分 → LLM | ✅ |
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
-| 清算 liquidations | DerivativesCollector (CCXT 条件) | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM（**消费者在**） | 🟠 数据=0 |
+| 清算 liquidations | CoinalyzeCollector（已建，待 scheduler 接入） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |
+| OI 历史（跨所） | CoinalyzeCollector（已建，替代 Bitget 死代码） | `open_interest_snapshots` | market_observer→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |
 
 ---
 
@@ -62,7 +64,7 @@
 
 - **Hyperliquid（曾 ❌ orphan）→ 已闭合 ✅**：本次新增 `market_observer` 读 `latest_funding_rate(sym, exchange="hyperliquid"/"hyperliquid_predicted")` → `render_enriched_context_md(xvenue_funding=...)` 渲染"跨venue资金费率对比"（**annualized 比较**，因 HL 1h vs 主所 8h 间隔，原始费率不可比）。揭示基差/情绪背离。锁定于 DU-S01/S02/B01/B02。
   - OI 暂作为 funding 信号的伴随数据存储（cross-venue OI 聚合可作后续宏观杠杆景气信号，未纳入本次以免 prompt 膨胀，遵 R3）。
-- **清算（🟠 消费者在、数据断）**：属**上游采集** gap 非路由 gap——CCXT 多数所不支持 `fetchLiquidations`、Binance REST 2025 起需 auth（死代码已删）。"已获取资料"里不含清算，故不在本契约"物尽其用"范围。处置遵 R4：`liquidation_1h_usd` 缺省为 None（已是现状，诚实）。**后续可选**：Hyperliquid API 暴露清算流，可让 HyperliquidCollector 兼采清算喂已存在的消费者——单独立项。
+- **清算 + OI 历史（🟠 collector 已建）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建（`aletheia/data/collectors/coinalyze.py`，锁定于 DU-C01），支持聚合 OI + 清算历史，key-guard 模式（无 key 时 skip+errors=["no_key"]）。**剩余待做**：scheduler 接入（仿 HyperliquidCollector 模式，在 `_async_data_collectors` 中加 `CoinalyzeCollector().collect(symbols)` 调用 + 持久化）；config 加 `enable_coinalyze` + `coinalyze_api_key` 字段。
 - **美股/xStocks（🟡）**：owner 明确 observation-only（不交易），符合 R1 的"显式标注"分支，非违反。
 
 ---
@@ -76,5 +78,9 @@
 | DU-S03 | L2c | market_observer 读 `latest_onchain_snapshots` 且传 `onchain=`（DefiLlama 被消费） |
 | DU-B01 | L2b | 给定 HL+主所 annualized funding，render 产出"Cross-venue funding"段、divergence 以 pp 计、含 predicted |
 | DU-B02 | L2b | 某 symbol 无 HL 数据时，跨venue段整体省略（不漏空行噪音，遵 R3） |
+| DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |
+| DU-C02 | L2a | `derivatives.py` 不含 `_fetch_liquidations_ccxt` 及 `_CCXTLiquidationsUnsupported`（死代码已删，R4 诚实降级） |
+| DU-S04 | L2a | `yfinance_provider.py` 存在 + `market_context` 通过 `enable_yfinance_macro` 门控调用 + `data_utilization.md` §3 已登记（R5 合规） |
+| DU-S05 | L2a | 不存在 `class RegimeCollector`；`MacroCollector._classify_risk_regime()` 是 regime 的唯一实现（防虚构采集器类） |
 
 **维护规则**：新增数据源 → 同步在 §3 登记表加行 + 声明消费者 + 加 DU-* claim（R5）。

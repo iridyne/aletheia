@@ -1,4 +1,13 @@
-"""Derivatives collector — funding rate, open interest, liquidations."""
+"""Derivatives collector — funding rate and open interest.
+
+Liquidations are now collected by CoinalyzeCollector
+(aletheia/data/collectors/coinalyze.py). The previous CCXT-based liquidation
+path was removed because:
+  - Most exchanges don't implement CCXT fetchLiquidations.
+  - Binance forceOrders REST requires API key authentication since 2025.
+  - The collected data had no downstream consumer (confirmed by inline comment).
+See GAP-DU-C02 / data_utilization.md §4 for the full rationale.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +18,6 @@ from typing import Any
 from aletheia.net import httpx_client
 from aletheia.data.models import (
     FundingRateSnapshot,
-    LiquidationEvent,
     OpenInterestSnapshot,
 )
 
@@ -22,14 +30,6 @@ logger = logging.getLogger("aletheia.data.collectors.derivatives")
 # compute_leverage_state already consumes long_short_ratio into crowding_score.
 _BINANCE_LSR_URL = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
 
-# Window for liquidation event collection. 4h gives enough events even during low-activity
-# periods; events are deduplicated by id (event_time+symbol+side+price hash) on insert.
-_LIQUIDATION_WINDOW_HOURS = 4
-
-
-class _CCXTLiquidationsUnsupported(Exception):
-    """Raised when the exchange's CCXT driver lacks fetch_liquidations support."""
-
 
 class DerivativesCollector:
     domain = "derivatives"
@@ -41,7 +41,6 @@ class DerivativesCollector:
         provider = get_market_data_provider()
         funding: list[FundingRateSnapshot] = []
         oi: list[OpenInterestSnapshot] = []
-        liquidations: list[LiquidationEvent] = []
         errors: list[str] = []
         primary_name = provider._primary_name
 
@@ -111,32 +110,12 @@ class DerivativesCollector:
                     except Exception as e:
                         errors.append(f"oi_history {sym}: {e}")
 
-            # Liquidations: try primary exchange via CCXT first; fall back to Binance REST.
-            try:
-                ccxt_liqs = await _fetch_liquidations_ccxt(exchange, primary_name, symbols)
-                liquidations.extend(ccxt_liqs)
-                logger.info(
-                    "liquidations via ccxt/%s: %d events", primary_name, len(ccxt_liqs)
-                )
-            except _CCXTLiquidationsUnsupported:
-                # Binance forceOrders REST endpoint requires API key since 2025.
-                # Skip fallback silently — liquidation data has no downstream consumer.
-                logger.debug(
-                    "liquidations: %s lacks CCXT fetchLiquidations; "
-                    "Binance REST fallback disabled (requires auth)",
-                    primary_name,
-                )
-            except Exception as e:
-                errors.append(f"liquidations: {e}")
-                logger.warning("liquidation fetch failed: %s", e)
-
         finally:
             await provider.close()
 
         return {
             "funding": funding,
             "open_interest": oi,
-            "liquidations": liquidations,
             "errors": errors,
         }
 
@@ -341,49 +320,3 @@ async def _fetch_lsr_binance_batch(symbols: list[str]) -> dict[str, float]:
     return results
 
 
-async def _fetch_liquidations_ccxt(
-    exchange, exchange_name: str, symbols: list[str]
-) -> list[LiquidationEvent]:
-    """Fetch recent liquidations from the primary exchange via CCXT unified API.
-
-    Raises _CCXTLiquidationsUnsupported if the exchange driver does not implement
-    fetch_liquidations, allowing the caller to fall back to Binance REST.
-    """
-    if not exchange.has.get("fetchLiquidations"):
-        raise _CCXTLiquidationsUnsupported(exchange_name)
-
-    results: list[LiquidationEvent] = []
-    now = datetime.now(timezone.utc)
-    since_ms = int((now - timedelta(hours=_LIQUIDATION_WINDOW_HOURS)).timestamp() * 1000)
-
-    for sym in symbols[:10]:  # cap to avoid rate limits
-        perp_sym = _to_perp_symbol(sym, exchange)
-        if not perp_sym:
-            continue
-        try:
-            raw_list = await exchange.fetch_liquidations(perp_sym, since=since_ms, limit=50)
-            for item in raw_list:
-                price = float(item.get("price") or 0)
-                qty = float(item.get("amount") or item.get("quantity") or 0)
-                side_raw = (item.get("side") or "").lower()
-                # CCXT unified: side is the position side being liquidated
-                side = side_raw if side_raw in ("long", "short") else "short"
-                ts = item.get("timestamp")
-                event_str = (
-                    datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
-                    if ts
-                    else now.isoformat()
-                )
-                results.append(LiquidationEvent(
-                    symbol=sym,
-                    exchange=exchange_name,
-                    side=side,
-                    quantity_usd=price * qty,
-                    price=price,
-                    event_time=event_str,
-                    observed_at=now.isoformat(),
-                ))
-        except Exception as e:
-            logger.warning("ccxt liquidations fetch failed for %s: %s", sym, e)
-
-    return results
