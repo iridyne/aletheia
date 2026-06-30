@@ -235,6 +235,11 @@ class Position(BaseModel):
     regime_tag: str | None = None
     entry_market_summary: str | None = None
     exchange_tpsl_order_id: str | None = None
+    # Exchange close order that has been accepted but not confirmed filled yet.
+    # Position remains status="open" so risk/exposure accounting stays honest.
+    pending_close_order_id: str | None = None
+    pending_close_status: str | None = None
+    pending_close_requested_at: str | None = None
     decision_reasoning: str | None = None
     entry_fee: float | None = None
     exit_fee: float | None = None
