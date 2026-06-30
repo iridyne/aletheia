@@ -228,7 +228,7 @@
 - **一般 bug**:F2 universe POST /policy 缺失 · E3 volume_scanner 内存态丢失 · E5 operator retire 无超时 · F6 symbol_map KeyError · F5 score_event 空壳 · BinanceClient eager-init · symbol_map · prune FK CASCADE · dreaming_log 16 孤儿指针 · CR-PI-01 scanner weight 不持久化 · E2 UTA connected_brokers · I1 price_feed docstring 谎言 · CR-SCH-01 job failure(partial)
 - **端点缺失**:D6 strategy-performance · D7 serenity-pipeline(+ api_reference 同步)
 - **dead code**:D5 strategy_experiments 空表 DROP · D12 detect_contradictions stub · F5 score_event · BrokerBreakdown(PnLZone.tsx:67) · BITGET_GRANULARITY
-- **UI honesty**:chart 硬编码色(3.7) · text slice 截断(Learning.tsx:242) · P3.11 timer · P3.12 price line · P3.14 WebSocket · P3.15 stop viz · D14 Regime/Guard config UI(Config↔UI rule) · inline styles/as any(typing 债)
+- **UI honesty**:chart 硬编码色(3.7) · text slice 截断(Learning.tsx:242) · P3.11 timer · P3.12 price line · P3.14 WebSocket · P3.15 stop viz · ~~D14 Regime/Guard config UI(Config↔UI rule)~~ **✅ 已修 72abaf4 (2026-06-30)** · inline styles/as any(typing 债)
 - **测试债**:Tier1/2/3 mock-only 清理 · conftest selector policy(D17-1) · architecture-fitness guard(D8)
 - **perf/运维**:prune_system_actions TTL(D2/C1) · Serenity 三表 TTL(D1) · net.py httpx connect timeout(D21)
 
