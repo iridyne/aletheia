@@ -29,6 +29,7 @@ from aletheia.storage.repositories import (
 logger = logging.getLogger("aletheia.okx_broker")
 
 _OKX_FEE_RATE = 0.0005  # OKX futures taker fee
+_OPEN_CLOSE_STATES = {"pending", "submitted", "partial"}
 
 # ---------------------------------------------------------------------------
 # O(1) Symbol filter cache for OKX demo
@@ -277,6 +278,17 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
         raise ValueError(f"close_okx_position only handles OKX modes, got {row.get('execution_mode')!r}")
     if row.get("status") != "open":
         raise ValueError(f"position {position_id} is not open (status={row.get('status')})")
+    if row.get("pending_close_order_id") and row.get("pending_close_status") in _OPEN_CLOSE_STATES:
+        existing_order = repo.get_order(row["pending_close_order_id"])
+        return {
+            "order_id": row["pending_close_order_id"],
+            "exchange_order_id": (existing_order or {}).get("exchange_order_id"),
+            "status": row.get("pending_close_status"),
+            "closed": False,
+            "fill_price": None,
+            "fill_quantity": 0,
+            "already_pending": True,
+        }
 
     mode = "demo" if row["execution_mode"] == "okx_demo" else "live"
     client = OKXClient(mode=mode)
@@ -285,6 +297,7 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
     side = "sell" if is_long else "buy"
     quantity = float(row["quantity"])
 
+    close_requested_at = datetime.utcnow().isoformat()
     close_order = Order(
         proposal_id=row.get("proposal_id"),
         symbol=row["symbol"],
@@ -297,6 +310,12 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
         status="pending",
     )
     insert_order(close_order)
+    update_position(
+        position_id,
+        pending_close_order_id=close_order.id,
+        pending_close_status="pending",
+        pending_close_requested_at=close_requested_at,
+    )
 
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
@@ -310,6 +329,7 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
         )))
     except Exception as e:
         update_order(close_order.id, status="error", error_reason=str(e)[:500])
+        update_position(position_id, pending_close_status="error")
         raise
     finally:
         try:
@@ -329,6 +349,12 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
         filled_at=datetime.utcnow().isoformat() if confirmed_close else None,
     )
     if not confirmed_close:
+        update_position(
+            position_id,
+            pending_close_order_id=close_order.id,
+            pending_close_status=close_status,
+            pending_close_requested_at=close_requested_at,
+        )
         return {
             "order_id": close_order.id,
             "exchange_order_id": exchange_order_id,
@@ -346,6 +372,12 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
     insert_fill(fill)
 
     close_position(position_id, exit_price=fill_price, reason=reason)
+    update_position(
+        position_id,
+        pending_close_order_id=None,
+        pending_close_status=None,
+        pending_close_requested_at=None,
+    )
 
     return {
         "order_id": close_order.id,

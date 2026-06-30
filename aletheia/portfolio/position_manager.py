@@ -23,6 +23,7 @@ from aletheia.storage.repositories import list_positions
 logger = logging.getLogger("aletheia.position_manager")
 
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
+_OPEN_CLOSE_STATES = {"pending", "submitted", "partial"}
 
 
 def close_position_routed(
@@ -338,6 +339,14 @@ def evaluate_open_positions() -> dict:
         if p.get("execution_mode") not in _PAPER_MODES:
             continue
         checked += 1
+        if p.get("pending_close_status") in _OPEN_CLOSE_STATES:
+            logger.info(
+                "skip close for %s: pending close order %s status=%s",
+                p["id"],
+                p.get("pending_close_order_id"),
+                p.get("pending_close_status"),
+            )
+            continue
         price = _latest_price(p["symbol"])
         if price is None:
             continue

@@ -38,6 +38,7 @@ logger = logging.getLogger("aletheia.bitget_broker")
 # Round-trip taker fee rates (one side). Demo mirrors live mix taker fee.
 _LIVE_FEE_RATE = 0.0006
 _DEMO_FEE_RATE = 0.0006
+_OPEN_CLOSE_STATES = {"pending", "submitted", "partial"}
 
 
 def _run_coro(coro):
@@ -256,6 +257,19 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         raise ValueError(f"close_demo_position only handles Bitget modes, got {row.get('execution_mode')!r}")
     if row.get("status") != "open":
         raise ValueError(f"position {position_id} is not open (status={row.get('status')})")
+    if row.get("pending_close_order_id") and row.get("pending_close_status") in _OPEN_CLOSE_STATES:
+        existing_order = repo.get_order(row["pending_close_order_id"])
+        return {
+            "order_id": row["pending_close_order_id"],
+            "exchange_order_id": (existing_order or {}).get("exchange_order_id"),
+            "close_order_id": row["pending_close_order_id"],
+            "status": row.get("pending_close_status"),
+            "closed": False,
+            "position_id": position_id,
+            "fill_price": None,
+            "fill_quantity": 0,
+            "already_pending": True,
+        }
 
     cfg = load_config()
     # Derive the client mode from the POSITION's execution_mode, not cfg.exchange.mode:
@@ -270,16 +284,8 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
     quantity = float(row["quantity"])
     exchange_symbol = to_bitget(row["symbol"])
 
-    # Cancel any pending TPSL bracket before the close order fires — otherwise the
-    # exchange bracket may re-trigger on an already-closed position.
-    if cfg.trading.exchange_tpsl_enabled:
-        _try_cancel_tpsl(client, exchange_symbol, row.get("exchange_tpsl_order_id"))
-
-    # Cancel any pending TPSL brackets before closing (prevents ghost triggers).
-    if cfg.trading.exchange_tpsl_enabled and row.get("exchange_tpsl_order_id"):
-        _try_cancel_tpsl(client, exchange_symbol, row["exchange_tpsl_order_id"])
-
     # Write a pending close order BEFORE the exchange call (same §1.3 hazard logic).
+    close_requested_at = datetime.utcnow().isoformat()
     close_order = Order(
         proposal_id=row.get("proposal_id"),
         symbol=row["symbol"],
@@ -294,6 +300,12 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         status="pending",
     )
     insert_order(close_order)
+    update_position(
+        position_id,
+        pending_close_order_id=close_order.id,
+        pending_close_status="pending",
+        pending_close_requested_at=close_requested_at,
+    )
 
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
@@ -304,6 +316,7 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         )))
     except Exception as e:
         update_order(close_order.id, status="error", error_reason=str(e)[:500])
+        update_position(position_id, pending_close_status="error")
         raise
 
     exchange_order_id = order_resp.order_id or ""
@@ -320,6 +333,12 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         filled_at=datetime.utcnow().isoformat() if confirmed_close else None,
     )
     if not confirmed_close:
+        update_position(
+            position_id,
+            pending_close_order_id=close_order.id,
+            pending_close_status=close_status,
+            pending_close_requested_at=close_requested_at,
+        )
         return {
             "order_id": close_order.id,
             "exchange_order_id": exchange_order_id,
@@ -330,6 +349,10 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
             "fill_price": None,
             "fill_quantity": 0,
         }
+
+    # Only remove exchange protection after the market close is confirmed.
+    if cfg.trading.exchange_tpsl_enabled and row.get("exchange_tpsl_order_id"):
+        _try_cancel_tpsl(client, exchange_symbol, row["exchange_tpsl_order_id"])
 
     exit_price = order_resp.fill_price if order_resp.fill_price else (
         row.get("current_price") or row["entry_price"]
@@ -350,6 +373,13 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
     result["closed"] = True
     result["fill_price"] = exit_price
     result["fill_quantity"] = fill_qty
+    update_position(
+        position_id,
+        pending_close_order_id=None,
+        pending_close_status=None,
+        pending_close_requested_at=None,
+        exchange_tpsl_order_id=None,
+    )
     return result
 
 

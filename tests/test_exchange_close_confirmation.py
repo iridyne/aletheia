@@ -7,6 +7,7 @@ later human/operator action.
 """
 
 import importlib
+import json
 import sqlite3
 
 import pytest
@@ -142,6 +143,8 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
 
     still_open = repo._select_one("positions", pos.id)
     assert still_open["status"] == "open"
+    assert still_open["pending_close_order_id"]
+    assert still_open["pending_close_status"] == expected_status
 
     orders = repo.list_orders()
     assert len(orders) == 1
@@ -150,6 +153,13 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
     assert repo.list_fills() == []
     assert len(captured) == 1
     assert captured[0].client_oid == f"close-{pos.id}"
+
+    second_result = getattr(importlib.import_module(broker_module), close_func)(pos.id, reason="stop_loss")
+
+    assert second_result["closed"] is False
+    assert second_result["already_pending"] is True
+    assert len(captured) == 1
+    assert len(repo.list_orders()) == 1
 
 
 def test_position_manager_counts_only_confirmed_exchange_closes(tmp_path, monkeypatch):
@@ -183,3 +193,85 @@ def test_position_manager_counts_only_confirmed_exchange_closes(tmp_path, monkey
     assert result["checked"] == 1
     assert result["closed"] == 0
     assert repo._select_one("positions", pos.id)["status"] == "open"
+
+
+def test_position_manager_skips_positions_with_pending_exchange_close(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    pos = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=90.0,
+        execution_mode="bitget_demo",
+        stop_price=95.0,
+        pending_close_order_id="close-order-1",
+        pending_close_status="submitted",
+    )
+    repo.insert_position(pos)
+    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="usdt_futures", price=90.0))
+
+    import aletheia.portfolio.position_manager as pm
+
+    calls = []
+
+    def fake_close(position_id, reason, fallback_exit_price=None, *, allow_live=False):
+        calls.append((position_id, reason, fallback_exit_price, allow_live))
+        raise AssertionError("pending close should suppress repeat close routing")
+
+    monkeypatch.setattr(pm, "close_position_routed", fake_close)
+
+    result = pm.evaluate_open_positions()
+
+    assert calls == []
+    assert result["checked"] == 1
+    assert result["closed"] == 0
+    assert repo._select_one("positions", pos.id)["status"] == "open"
+
+
+def test_bitget_unconfirmed_close_keeps_existing_tpsl_bracket(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.trading.exchange_tpsl_enabled = True
+    save_config(cfg)
+
+    pos = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode="bitget_demo",
+        exchange_tpsl_order_id=json.dumps({"sl": "sl-1", "tp": "tp-1"}),
+    )
+    repo.insert_position(pos)
+    captured = []
+    _patch_unconfirmed_close(
+        monkeypatch,
+        "aletheia.execution.bitget_broker",
+        "BitgetClient",
+        "aletheia.exchanges.bitget.client",
+        "submitted",
+        captured,
+    )
+
+    import aletheia.execution.bitget_broker as bitget_broker
+
+    cancel_calls = []
+
+    def fake_cancel(client, exchange_symbol, tpsl_json):
+        cancel_calls.append((exchange_symbol, tpsl_json))
+
+    monkeypatch.setattr(bitget_broker, "_try_cancel_tpsl", fake_cancel)
+
+    result = bitget_broker.close_demo_position(pos.id, reason="stop_loss")
+
+    assert result["closed"] is False
+    assert cancel_calls == []
+    still_open = repo._select_one("positions", pos.id)
+    assert still_open["status"] == "open"
+    assert json.loads(still_open["exchange_tpsl_order_id"]) == {"sl": "sl-1", "tp": "tp-1"}
