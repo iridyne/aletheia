@@ -72,6 +72,105 @@ def _check_trade_volume() -> dict:
         return _criterion("trade_volume", "Trade Volume (≥50 closed)", 0, 0.135, "unavailable")
 
 
+def count_consecutive_zero_fill_days() -> int:
+    """Count consecutive calendar days with zero new position opens (D8-S04 / product §8 K2).
+
+    Walks backwards from today counting days with no new opens. Returns the integer
+    day count. Three or more → trading loop is stalled (K2 kill condition).
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        rows = db.execute(
+            "SELECT DATE(opened_at) as open_date FROM positions "
+            "WHERE status IN ('open','closed') ORDER BY opened_at DESC LIMIT 500"
+        ).fetchall()
+        open_dates = {r[0] for r in rows if r[0]}
+        from datetime import date, timedelta
+        day = date.today()
+        consecutive = 0
+        for _ in range(30):  # check at most 30 days back
+            if day.isoformat() in open_dates:
+                break
+            consecutive += 1
+            day -= timedelta(days=1)
+        return consecutive
+    except Exception:
+        return 0
+
+
+def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
+    """Detect consecutive experiment rounds where PF < 0.5 (D8-S02 / product §8 K1).
+
+    Splits closed positions into 14-day windows (one per experiment round) and
+    counts how many consecutive trailing windows have PF below the kill floor.
+    Returns {"consecutive_kill_rounds": int, "kill_threshold": 0.5, "window_days": int}.
+    Two consecutive kill rounds → recommend terminating the experiment.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        rows = db.execute(
+            "SELECT realized_pnl, closed_at FROM positions "
+            "WHERE status='closed' ORDER BY closed_at DESC"
+        ).fetchall()
+        if not rows:
+            return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
+
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        kill_floor = 0.5
+        consecutive = 0
+
+        for i in range(8):  # check up to 8 trailing windows
+            start = now - timedelta(days=window_days * (i + 1))
+            end = now - timedelta(days=window_days * i)
+            window_rows = [r for r in rows if start.isoformat()[:10] <= str(r[1])[:10] < end.isoformat()[:10]]
+            if not window_rows:
+                break  # no data → stop counting
+            gp = sum(r[0] for r in window_rows if r[0] > 0)
+            gl = sum(abs(r[0]) for r in window_rows if r[0] < 0)
+            pf = gp / gl if gl > 0 else 99.0
+            if pf < kill_floor:
+                consecutive += 1
+            else:
+                break  # streak broken
+
+        return {"consecutive_kill_rounds": consecutive, "kill_threshold": kill_floor, "window_days": window_days}
+    except Exception:
+        return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
+
+
+def compute_pnl_by_trade_school() -> dict:
+    """Return profit_factor and win_rate grouped by trade_school (D2-S03).
+
+    Enables serenity vs main-track PnL isolation without mixing the two pools.
+    Returns {trade_school: {"profit_factor": float, "win_rate": float, "count": int}}.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        rows = db.execute(
+            "SELECT COALESCE(trade_school, 'short_term') AS trade_school, realized_pnl "
+            "FROM positions WHERE status='closed'"
+        ).fetchall()
+        result: dict = {}
+        from collections import defaultdict
+        buckets: dict = defaultdict(list)
+        for r in rows:
+            buckets[r[0]].append(r[1] or 0.0)
+        for school, pnls in buckets.items():
+            gross_profit = sum(p for p in pnls if p > 0)
+            gross_loss = sum(abs(p) for p in pnls if p < 0)
+            wins = sum(1 for p in pnls if p > 0)
+            pf = gross_profit / gross_loss if gross_loss > 0 else 99.0
+            wr = wins / len(pnls) if pnls else 0.0
+            result[school] = {"profit_factor": round(pf, 3), "win_rate": round(wr, 3), "count": len(pnls)}
+        return result
+    except Exception:
+        return {}
+
+
 def _check_profit_factor() -> dict:
     try:
         from aletheia.storage.sqlite import get_db

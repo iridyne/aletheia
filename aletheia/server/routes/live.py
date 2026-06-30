@@ -27,6 +27,23 @@ async def live_unlock(req: LiveUnlockRequest):
     if not cfg.live.first_live_confirmation_done and not req.acknowledge_first_unlock:
         raise HTTPException(400, "First-time live unlock requires acknowledge_first_unlock=true")
 
+    # D8-B02/C01: scorecard gate — composite_score must reach ≥70 before live unlock.
+    # Ensures demo performance meets the minimum readiness threshold (product §8 K3).
+    from aletheia.analytics.go_live_scorecard import compute_scorecard
+    scorecard = compute_scorecard()
+    if scorecard["composite_score"] < 70:
+        raise HTTPException(
+            403,
+            detail={
+                "error": "scorecard_gate_failed",
+                "message": f"Go-live scorecard composite_score={scorecard['composite_score']:.1f} < 70. "
+                           "Reach ≥70 in demo before unlocking live trading.",
+                "composite_score": scorecard["composite_score"],
+                "traffic_light": scorecard["traffic_light"],
+                "blockers": scorecard["blockers"],
+            },
+        )
+
     old_state = cfg.live.state
     old_permission_mode = cfg.operator.permission_mode
     cfg.live.state = "live_limited"

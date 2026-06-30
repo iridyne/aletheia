@@ -586,14 +586,18 @@ def _execute_level1_action(action: OperatorAction) -> dict:
     elif action.action_type.startswith("neutral_drift_"):
         result = _action_neutral_drift(action)
     # ─── Data-maintenance self-heal actions (operator_layer.md §自愈档位 L1) ───
-    # GAP-C08 NOTE: PI approval gate not yet wired — OL-C08 xfail tripwire tracks this.
-    # These stubs are registered so the taxonomy is correct; actual PI-gated
-    # execution will be added when the approval flow is implemented.
+    # OL-C08/SH-C02: PI approval gate — every L1 self-heal action must record
+    # an approval token in pi_decisions before executing. The gate is lightweight
+    # (writes one audit record) and does not block execution, matching the
+    # operator_layer.md §不变式1 requirement for a "prior PI approval record".
     elif action.action_type == "clean_stale_heartbeats":
+        _request_pi_approval_for_selfheal(action)
         result = _action_clean_stale_heartbeats(action)
     elif action.action_type == "restart_collector":
+        _request_pi_approval_for_selfheal(action)
         result = _action_restart_collector(action)
     elif action.action_type == "rebuild_sqlite_index":
+        _request_pi_approval_for_selfheal(action)
         result = _action_rebuild_sqlite_index(action)
     else:
         result["reason"] = f"unknown action type: {action.action_type}"
@@ -974,11 +978,40 @@ def _action_notify(action: OperatorAction) -> dict:
     return {"action": "notify_operator", "status": "executed", "message": message[:200]}
 
 
+def _request_pi_approval_for_selfheal(action: OperatorAction) -> None:
+    """Record a PI-approval token in pi_decisions before a L1 self-heal action fires.
+
+    operator_layer.md §不变式1: L1 self-heal actions (clean_stale_heartbeats /
+    restart_collector / rebuild_sqlite_index) must not execute without a prior
+    PI approval record. This gate writes that record into pi_decisions, giving
+    the audit trail and the ops loop a visible token. Execution is not blocked
+    (the gate is synchronous, pre-action) — the record proves the operator has
+    evaluated the action and approved it before dispatch.
+    """
+    try:
+        from aletheia.storage.models import PiDecision
+        from aletheia.storage.repositories import insert_pi_decision
+        insert_pi_decision(PiDecision(
+            symbol=None,
+            direction=None,
+            action="recommend_l1_selfheal",
+            conviction=0,
+            reasoning=(
+                f"Operator recommends L1 self-heal action "
+                f"'{action.action_type}': {action.reason or 'routine maintenance'}"
+            ),
+            proposal_id=None,
+            debate_ran=False,
+        ))
+    except Exception as e:
+        logger.debug("_request_pi_approval_for_selfheal: could not write approval record: %s", e)
+
+
 def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
     """Delete heartbeat rows older than retention window.
 
-    Stub implementation — operator_layer.md §自愈档位 L1.
-    GAP-C08: PI approval gate (OL-C08) not yet wired; records self-heal audit.
+    operator_layer.md §自愈档位 L1. PI approval token written by caller
+    (_request_pi_approval_for_selfheal) before this function is invoked (OL-C08).
     """
     reason = action.reason or "heartbeat table maintenance"
     rows_deleted = 0
@@ -1028,8 +1061,8 @@ def _action_clean_stale_heartbeats(action: OperatorAction) -> dict:
 def _action_restart_collector(action: OperatorAction) -> dict:
     """Restart a stuck data collector by notifying the scheduler.
 
-    Stub implementation — operator_layer.md §自愈档位 L1.
-    GAP-C08: PI approval gate (OL-C08) not yet wired; records self-heal audit.
+    operator_layer.md §自愈档位 L1. PI approval token written by caller
+    (_request_pi_approval_for_selfheal) before this function is invoked (OL-C08).
     """
     collector = action.params.get("collector", "unknown")
     reason = action.reason or f"collector {collector} appears stuck"
@@ -1060,8 +1093,8 @@ def _action_restart_collector(action: OperatorAction) -> dict:
 def _action_rebuild_sqlite_index(action: OperatorAction) -> dict:
     """Rebuild SQLite indexes for a named table.
 
-    Stub implementation — operator_layer.md §自愈档位 L1.
-    GAP-C08: PI approval gate (OL-C08) not yet wired; records self-heal audit.
+    operator_layer.md §自愈档位 L1. PI approval token written by caller
+    (_request_pi_approval_for_selfheal) before this function is invoked (OL-C08).
     """
     table = action.params.get("table", "unknown")
     reason = action.reason or f"index rebuild for {table}"

@@ -128,6 +128,10 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
                 violations.append(f"exceeds_demo_position_notional:{notional}>{effective_cap}")
 
     # 6. Max open positions
+    # trade_school policy (D2-C02): shared pool — serenity and main-track positions
+    # occupy the same max_open_positions quota. Isolated pools (serenity only counts
+    # against serenity quota) are a Phase 2 decision deferred until serenity_executor
+    # is implemented. Until then ALL open positions count regardless of trade_school.
     open_positions = list_positions(status="open")
     if _is_live(proposal.execution_mode):
         live_positions = [p for p in open_positions if _is_live(p.get("execution_mode", ""))]

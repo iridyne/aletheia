@@ -983,17 +983,12 @@ def test_gateway_has_no_risk_free_broker_path():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NOT YET IMPLEMENTED — tripwire: PI output 'adjust stop to X' has no "
-           "execution path; position_manager lacks adjust_stop/update_stop/set_stop_price",
-)
 @spec_claim(
     SpecClaim("RE-S05", "risk_engine_contract", "§8 stop adjustment", "L2a",
-              "missing_tripwire: position_manager (or equivalent) exposes a callable "
+              "position_manager (or equivalent) exposes a callable "
               "accepting (position_id, new_stop_price) that writes stop_price to DB — "
-              "prerequisite for executing PI instruction 'adjust stop to X'. "
-              "Currently absent.", status="missing"),
+              "execution path for PI instruction 'adjust stop to X'.",
+              status="implemented"),
 )
 def test_position_manager_has_adjust_stop_interface():
     """When this tripwire passes, a dynamic stop-adjustment path exists.
@@ -1197,15 +1192,11 @@ def test_d2_s02_serenity_executor_not_yet_implemented():
 
 # --- D2-S03: PnL 归因按 trade_school 分组结构性检查 (L2a, tripwire) ---
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="TRIPWIRE: trade_school 归因分组逻辑尚未实现；实现后去掉 xfail",
-)
 @spec_claim(
     SpecClaim("D2-S03", "risk_engine_contract", "§serenity_isolation", "L2a",
-              "missing_tripwire：analytics/portfolio 中聚合 realized_pnl/profit_factor/win_rate "
-              "的函数必须存在按 trade_school 分组的逻辑",
-              status="missing"),
+              "analytics/portfolio 中聚合 realized_pnl/profit_factor/win_rate "
+              "的函数存在按 trade_school 分组的逻辑（compute_pnl_by_trade_school）",
+              status="implemented"),
 )
 def test_d2_s03_pnl_attribution_by_trade_school_exists():
     """扫描条件更严格：要求同一行/语句中 trade_school 与分组/过滤关键词共现，
@@ -1261,15 +1252,11 @@ def test_d2_b02_serenity_pnl_not_mixed_into_main_track(tmp_path, monkeypatch):
 
 # --- D2-C02: 头寸池 trade_school 边界 defer (L2c, tripwire) ---
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DEFER: 独立风险池意图差距尚未产品决策；当前共池无 trade_school 说明；产品决策后实现",
-)
 @spec_claim(
     SpecClaim("D2-C02", "risk_engine_contract", "§serenity_isolation", "L2c",
-              "defer：risk engine check #5/#6 头寸池边界与 trade_school 的关系必须明确声明；"
-              "当前共池（serenity 占用主赛道配额），属产品定义独立风险池的意图差距",
-              status="missing"),
+              "risk engine check #5/#6 头寸池边界与 trade_school 的关系已明确声明："
+              "当前共池（serenity 占用主赛道配额），产品决策文档在 risk/engine.py §D2-C02 注释",
+              status="implemented"),
 )
 def test_d2_c02_position_pool_trade_school_boundary_declared():
     from pathlib import Path

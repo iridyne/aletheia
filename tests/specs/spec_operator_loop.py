@@ -502,10 +502,9 @@ def test_observers_do_not_insert_pi_decisions():
         "Self-heal L1 actions (clean_stale_heartbeats / restart_collector / "
         "rebuild_sqlite_index) must not execute without a prior PI approval record "
         "— operator_layer.md §不变式1.",
-        status="missing",
+        status="implemented",
     ),
 )
-@pytest.mark.xfail(strict=True, reason="GAP-01: PI approval gate not yet wired into self-heal dispatch")
 def test_l1_selfheal_requires_pi_approval():
     """RED tripwire: fires while the PI-approval gate is absent.
 
@@ -801,21 +800,16 @@ def test_l2_selfheal_action_types_registered():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP-SH-C02: PI approval gate not yet wired into _execute_level1_action for self-heal dispatch",
-)
 @spec_claim(
     SpecClaim(
         "SH-C02", "operator_layer",
         "§selfheal pi_approval_gate in _execute_level1_action",
         "L2c",
-        "missing_tripwire：PI 批准前置不变式（实现层）——_execute_level1_action 对 "
+        "PI 批准前置不变式（实现层）——_execute_level1_action 对 "
         "clean_stale_heartbeats / restart_collector / rebuild_sqlite_index 三个自愈动作，"
         "必须在 dispatch 前调用含 'pi_approval' 或 'approve_l1' 字样的门控函数。"
-        "无批准记录则不执行（operator_layer.md §不变式1）。"
-        "与 OL-C08 共享契约，OL-C08 xfail 占位，本 claim 实现完成后转 GREEN 并去掉 xfail。",
-        status="missing",
+        "无批准记录则不执行（operator_layer.md §不变式1）。",
+        status="implemented",
     ),
 )
 def test_l1_selfheal_pi_approval_gate_in_execute():

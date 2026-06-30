@@ -45,20 +45,15 @@ def test_scorecard_profit_factor_criterion_exists():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NOT YET IMPLEMENTED — D8 tripwire: consecutive kill round detection not in scorecard",
-)
 @spec_claim(
     SpecClaim(
         "D8-S02",
         "kill_conditions_contract",
         "§K1 consecutive kill detection",
         "L2a",
-        "missing_tripwire: go_live_scorecard.py 或同目录模块中存在检测连续两轮 PF 低于 kill "
-        "阈值（<0.5）的函数或字段（consecutive_kill_rounds / check_consecutive_kill 等）。"
-        "当前代码不存在此逻辑，需实现后才能移除 missing_tripwire 状态。",
-        status="missing",
+        "go_live_scorecard.py 中存在检测连续两轮 PF 低于 kill 阈值（<0.5）的函数 "
+        "check_kill_condition_consecutive_rounds()，返回 consecutive_kill_rounds 整数。",
+        status="implemented",
     )
 )
 def test_consecutive_kill_round_detection_exists():
@@ -78,9 +73,8 @@ def test_consecutive_kill_round_detection_exists():
     assert has_impl, (
         "go_live_scorecard.py contains no consecutive kill-round detection logic "
         "(expected 'consecutive_kill', 'kill_rounds', or 'check_kill_condition'). "
-        "Implement K1 consecutive PF<0.5 detection, then remove the xfail."
+        "Implement K1 consecutive PF<0.5 detection."
     )
-    pytest.fail("NOT IMPLEMENTED: consecutive two-round PF<0.5 kill detection")
 
 
 @spec_claim(
@@ -123,19 +117,15 @@ def test_loop_profit_stall_probe_exists():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NOT YET IMPLEMENTED — D8 tripwire: consecutive zero-fill days detection not in codebase",
-)
 @spec_claim(
     SpecClaim(
         "D8-S04",
         "kill_conditions_contract",
         "§K2 zero fill days detection",
         "L2a",
-        "missing_tripwire: doctor 输出或 analytics 模块中存在能检测连续 N 天无新 fills 的函数，"
-        "返回天数整数——是 3-day 零开仓 Kill 条件的结构占位，当前代码不存在此逻辑。",
-        status="missing",
+        "analytics 模块中存在能检测连续 N 天无新 fills 的函数 "
+        "count_consecutive_zero_fill_days()，返回天数整数。",
+        status="implemented",
     )
 )
 def test_zero_fill_days_detection_exists():
@@ -145,7 +135,10 @@ def test_zero_fill_days_detection_exists():
         pathlib.Path(__file__).resolve().parents[2] / "aletheia" / "diagnostics",
         pathlib.Path(__file__).resolve().parents[2] / "aletheia" / "analytics",
     ]
-    keywords = ("days_without_fill", "consecutive_empty_days", "zero_fill_days")
+    keywords = (
+        "days_without_fill", "consecutive_empty_days", "zero_fill_days",
+        "count_consecutive_zero_fill_days",  # go_live_scorecard.py implementation
+    )
     found = False
     for d in search_dirs:
         for py_file in d.glob("*.py"):
@@ -157,9 +150,8 @@ def test_zero_fill_days_detection_exists():
             break
     assert found, (
         f"No function matching {keywords!r} found in diagnostics/ or analytics/ — "
-        "implement 3-day zero-fill Kill condition detection, then remove xfail."
+        "implement 3-day zero-fill Kill condition detection."
     )
-    pytest.fail("NOT IMPLEMENTED: consecutive zero-fill days detector")
 
 
 # ---------------------------------------------------------------------------
@@ -207,20 +199,15 @@ def test_profit_factor_below_kill_threshold_returns_fail():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NOT YET IMPLEMENTED — D8 tripwire: live_unlock route does not call compute_scorecard",
-)
 @spec_claim(
     SpecClaim(
         "D8-B02",
         "kill_conditions_contract",
         "§K3 live unlock scorecard gate",
         "L2b",
-        "missing_tripwire: live_unlock 端点（POST /api/settings/live-unlock）在 scorecard "
-        "composite_score < 70 时必须返回 4xx 或响应体包含明确阻断标志——实现 demo 是 live "
-        "唯一入场券的代码约束。当前 live.py 不调用 scorecard。",
-        status="missing",
+        "live_unlock 端点（POST /api/settings/live-unlock）在 scorecard "
+        "composite_score < 70 时返回 403——demo 是 live 唯一入场券的代码约束已实现。",
+        status="implemented",
     )
 )
 def test_live_unlock_blocked_when_scorecard_fails(tmp_path, monkeypatch):
@@ -269,7 +256,6 @@ def test_live_unlock_blocked_when_scorecard_fails(tmp_path, monkeypatch):
         f"D8-B02: live_unlock with scorecard=50 should be blocked (4xx) or contain "
         f"scorecard rejection. Got {resp.status_code}: {resp.text[:200]}"
     )
-    pytest.fail("NOT IMPLEMENTED: live_unlock route does not call compute_scorecard")
 
 
 @pytest.mark.xfail(
@@ -316,20 +302,15 @@ def test_personal_stop_loss_not_yet_in_risk_config():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NOT YET IMPLEMENTED — D8 tripwire: live_unlock route does not call compute_scorecard",
-)
 @spec_claim(
     SpecClaim(
         "D8-C01",
         "kill_conditions_contract",
         "§K3 scorecard invariant on live unlock",
         "L2c",
-        "missing_tripwire: 系统级不变式——live_unlock 路由在状态迁移至 live_limited 前必须调用 "
-        "compute_scorecard() 且 composite_score >= 70。任何绕过 scorecard 检查的路径都被此 "
-        "claim 捕获。当前 server/routes/live.py 不存在该检查。",
-        status="missing",
+        "系统级不变式——live_unlock 路由在状态迁移至 live_limited 前调用 "
+        "compute_scorecard() 且在 composite_score < 70 时返回 403。已实现。",
+        status="implemented",
     )
 )
 def test_live_unlock_route_calls_compute_scorecard():
@@ -348,9 +329,5 @@ def test_live_unlock_route_calls_compute_scorecard():
     assert "compute_scorecard" in source, (
         "D8-C01 INVARIANT VIOLATION: server/routes/live.py does not call "
         "compute_scorecard() — the scorecard gate (composite_score >= 70) for "
-        "live unlock has not been wired. Implement, then remove xfail."
-    )
-    pytest.fail(
-        "NOT IMPLEMENTED: live.py does not call compute_scorecard — "
-        "K3 scorecard invariant not enforced"
+        "live unlock has not been wired."
     )

@@ -386,3 +386,31 @@ def evaluate_open_positions() -> dict:
         except Exception as e:
             logger.warning("close failed for %s: %s", p["id"], e)
     return {"checked": checked, "closed": closed, "market_exits": market_exits}
+
+
+def adjust_stop(position_id: str, new_stop_price: float) -> dict:
+    """Update the stop-loss price for an open position.
+
+    PI instruction 'adjust stop to X' lands here (RE-S05). Writes stop_price to
+    DB via update_position and syncs the exchange TPSL bracket when applicable.
+    Returns {"updated": True} on success, {"error": str} on failure.
+    """
+    from aletheia.storage.repositories import update_position, list_positions
+
+    rows = list_positions(status="open", limit=500)
+    pos = next((p for p in rows if p["id"] == position_id), None)
+    if pos is None:
+        return {"error": f"position {position_id} not found or not open"}
+
+    update_position(position_id, stop_price=round(float(new_stop_price), 8))
+    logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
+
+    cfg = load_config()
+    if cfg.trading.exchange_tpsl_enabled and pos.get("execution_mode") in ("bitget_demo", "bitget_live_limited"):
+        try:
+            from aletheia.execution.bitget_broker import replace_exchange_stop
+            replace_exchange_stop(position_id, float(new_stop_price))
+        except Exception as e:
+            logger.warning("exchange stop sync failed pos=%s: %s", position_id, e)
+
+    return {"updated": True, "position_id": position_id, "new_stop_price": new_stop_price}
