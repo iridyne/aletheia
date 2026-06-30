@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, useToast } from '../components/ui'
-import { humanize, fmtTimestamp } from '../lib/format'
+import { humanize, fmtTimestamp, stripHtml } from '../lib/format'
 
 type NewsItem = {
   id: string
@@ -157,7 +157,7 @@ export default function NewsIntel() {
                 </div>
               </div>
               {item.summary && (
-                <p className="text-muted text-sm mt-2 news-summary">{item.summary}</p>
+                <p className="text-muted text-sm mt-2 news-summary">{stripHtml(item.summary)}</p>
               )}
             </Card>
           ))}
@@ -189,7 +189,7 @@ export default function NewsIntel() {
 
             {selected.summary && (
               <DrawerSection label="Content">
-                <p className="text-sm news-prose">{selected.summary}</p>
+                <p className="text-sm news-prose">{stripHtml(selected.summary)}</p>
               </DrawerSection>
             )}
 

@@ -6,8 +6,10 @@ to Aletheia's Python/SQLite stack. Scheduled by APScheduler every N minutes.
 
 import asyncio
 import hashlib
+import html
 import json
 import logging
+import re
 import secrets
 from datetime import datetime, timezone
 from time import struct_time
@@ -18,6 +20,16 @@ from aletheia.config.loader import load_config
 from aletheia.storage.sqlite import get_db
 
 logger = logging.getLogger("aletheia.data.news_collector")
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and decode entities from feed text fields."""
+    stripped = _HTML_TAG_RE.sub(" ", text)
+    decoded = html.unescape(stripped)
+    return re.sub(r"\s{2,}", " ", decoded).strip()
 
 
 def _compute_dedup_key(entry: dict) -> str:
@@ -102,8 +114,10 @@ async def fetch_news_feeds() -> dict:
             if not title:
                 continue
 
-            summary = entry.get("summary", "") or entry.get("description", "") or ""
-            content = entry.get("content", [{}])[0].get("value", "") if entry.get("content") else ""
+            raw_summary = entry.get("summary", "") or entry.get("description", "") or ""
+            raw_content = entry.get("content", [{}])[0].get("value", "") if entry.get("content") else ""
+            summary = _strip_html(raw_summary) if raw_summary else ""
+            content = _strip_html(raw_content) if raw_content else ""
             link = entry.get("link", "")
             published_at = _parse_time(entry)
             symbols = _extract_symbols(title, summary)

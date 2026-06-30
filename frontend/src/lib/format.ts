@@ -11,6 +11,24 @@ import { useSyncExternalStore } from 'react'
  * the raw value for those; this module is for monetary / continuous values.
  */
 
+/**
+ * Strip HTML tags and decode entities from text fields that may come from RSS feeds.
+ * Used as a display-layer fallback for data already in the DB before the collector was fixed.
+ */
+export function stripHtml(text: string | null | undefined): string {
+  if (!text) return ''
+  return text
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 const DECIMALS_KEY = 'aletheia.display.decimals'
 const DEFAULT_DECIMALS = 2
 const MIN_DECIMALS = 0
