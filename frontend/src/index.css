@@ -1146,6 +1146,79 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .pred-card-change { font-size: 0.72rem; }
 .pred-card-vol { font-size: 0.68rem; margin-left: auto; }
 
+/* ---------- Command Center Heartbeat Zone ---------- */
+.cc-heartbeat-zone {
+  display: flex;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+@media (max-width: 1000px) {
+  .cc-heartbeat-zone { flex-direction: column; }
+}
+.cc-heartbeat-card {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+.cc-heartbeat-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+.cc-heartbeat-hero {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin-left: auto;
+}
+.cc-heartbeat-footer {
+  margin-top: auto;
+  text-align: right;
+}
+.cc-intent-text {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+}
+.cc-pnl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.cc-pnl-table td {
+  padding: 2px 0;
+}
+.cc-thesis-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.cc-thesis-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cc-thesis-sym {
+  color: var(--color-muted);
+}
+.cc-thesis-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
+}
+
 /* ---------- Command Center ---------- */
 .command-center-layout {
   display: grid;

@@ -1,8 +1,8 @@
-import { startTransition, useDeferredValue, useEffect, useState } from 'react'
+import { startTransition, useDeferredValue, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import { humanize } from '../lib/format'
+import { humanize, fmtDelta, fmtPct, fmtSymbol } from '../lib/format'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast } from '../components/ui'
 import type {
@@ -417,6 +417,153 @@ function RuntimeContinuityPanel({
     </div>
   )
 }
+
+// ─── Heartbeat 三宫格 ─────────────────────────────────────────────────────────
+
+function usePrevNumber(val: number | null) {
+  const ref = useRef<number | null>(null)
+  const prev = ref.current
+  ref.current = val
+  return prev
+}
+
+function PnlFlash({ value }: { value: number | null }) {
+  const prev = usePrevNumber(value)
+  const [cls, setCls] = useState('')
+  useEffect(() => {
+    if (prev == null || value == null || value === prev) return
+    const next = value > prev ? 'tick-flash-up' : 'tick-flash-down'
+    setCls(next)
+    const t = setTimeout(() => setCls(''), 650)
+    return () => clearTimeout(t)
+  }, [value, prev])
+  if (value == null) return <span className="text-muted">—</span>
+  return (
+    <span className={`${value >= 0 ? 'pnl-positive' : 'pnl-negative'}${cls ? ` ${cls}` : ''}`}>
+      {fmtDelta(value)}
+    </span>
+  )
+}
+
+function HeartbeatZone({
+  operatorStatus,
+}: {
+  operatorStatus: import('../types').OperatorStatus | undefined
+}) {
+  const { data: portfolio } = useQuery({
+    queryKey: ['portfolio'],
+    queryFn: api.getPortfolio,
+    refetchInterval: 10000,
+  })
+  const { data: positions = [] } = useQuery<any[]>({
+    queryKey: ['positions'],
+    queryFn: api.getPositions,
+    refetchInterval: 10000,
+  })
+
+  const p = portfolio as any
+  const unrealNum: number | null = p?.unrealized_pnl == null ? null : Number(p.unrealized_pnl)
+  const unrealBySymbol = (p?.unrealized_by_symbol || {}) as Record<string, number>
+  const topSymbols = Object.entries(unrealBySymbol)
+    .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
+    .slice(0, 5)
+
+  const isWorking = operatorStatus?.mode === 'Working'
+  const intent = operatorStatus?.current_intent || null
+  const lastSeen = operatorStatus?.last_seen_at || null
+
+  // gather thesis from positions (up to 3)
+  const thesisItems = positions
+    .filter((pos: any) => pos.thesis)
+    .slice(0, 3)
+    .map((pos: any) => ({
+      symbol: pos.symbol,
+      market_type: pos.market_type,
+      thesis: pos.thesis as string,
+    }))
+
+  return (
+    <div className="cc-heartbeat-zone">
+      {/* ── 左格：PI 正在思考 ── */}
+      <Card className="cc-heartbeat-card">
+        <div className="cc-heartbeat-title">
+          <span
+            className={`status-light ${isWorking ? 'light-green heartbeat' : 'light-muted'}`}
+          />
+          <Badge tone={isWorking ? 'green' : 'neutral'}>
+            {isWorking ? 'Thinking' : 'Idle'}
+          </Badge>
+        </div>
+        {intent ? (
+          <p className="cc-intent-text mono">{intent}</p>
+        ) : (
+          <p className="cc-intent-text text-muted text-sm">暂无进行中思考</p>
+        )}
+        {lastSeen && (
+          <div className="cc-heartbeat-footer text-muted text-xs">
+            {formatTimestamp(lastSeen)}
+          </div>
+        )}
+      </Card>
+
+      {/* ── 中格：当前持仓 PnL ── */}
+      <Card className="cc-heartbeat-card">
+        <div className="cc-heartbeat-title">
+          <span className="text-sm text-muted">Unrealized PnL</span>
+          <span className="cc-heartbeat-hero">
+            <PnlFlash value={unrealNum} />
+          </span>
+        </div>
+        {topSymbols.length > 0 ? (
+          <table className="cc-pnl-table">
+            <tbody>
+              {topSymbols.map(([sym, pnl]) => {
+                const pos = positions.find((p: any) => p.symbol === sym)
+                const mt = pos?.market_type
+                return (
+                  <tr key={sym}>
+                    <td className="mono text-sm">{fmtSymbol(sym, mt)}</td>
+                    <td className="text-right">
+                      <PnlFlash value={Number(pnl)} />
+                    </td>
+                    <td className="text-right text-xs text-muted">
+                      {p?.total_value_usdt
+                        ? fmtPct((Math.abs(Number(pnl)) / Number(p.total_value_usdt)) * 100)
+                        : ''}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-muted text-sm">无持仓</p>
+        )}
+      </Card>
+
+      {/* ── 右格：持仓理由 ── */}
+      <Card className="cc-heartbeat-card">
+        <div className="cc-heartbeat-title">
+          <span className="text-sm text-muted">持仓理由</span>
+        </div>
+        {thesisItems.length > 0 ? (
+          <ul className="cc-thesis-list">
+            {thesisItems.map(({ symbol, market_type, thesis }) => (
+              <li key={symbol} className="cc-thesis-item">
+                <span className="mono text-xs cc-thesis-sym">{fmtSymbol(symbol, market_type)}</span>
+                <span className="text-sm cc-thesis-body">{thesis}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-muted text-sm">无持仓理由</p>
+        )}
+      </Card>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function CommandCenter() {
   const qc = useQueryClient()
@@ -876,6 +1023,8 @@ export default function CommandCenter() {
           </div>
         }
       />
+
+      <HeartbeatZone operatorStatus={operatorStatus} />
 
       <div className="command-center-layout">
         <div className="command-center-main">
