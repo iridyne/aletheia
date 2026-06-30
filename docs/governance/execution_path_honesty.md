@@ -1,5 +1,13 @@
 # 执行路径语义诚实 — LLM 究竟在决策回路的哪个位置
 
+## 2026-06-30 Phase 2A status amendment — DSL implemented
+
+- The "悬空的死字符串策略层" conclusion (2026-06-13) is **no longer accurate** for strategy_designer.
+- `strategy_designer.py` now has a complete `entry_conditions` → `_compile_ruleset` path (lines 248-289, 391-423): LLM is prompted for structured JSON conditions, compiled to a `RuleSet` DSL object, stored in `parameters.ruleset`, and executed at runtime by `scan_active_rulesets` (trading/ruleset_scanner.py).
+- `paper_trader.py` Path A (lines 91-113) consumes RuleSet signals from `scan_active_rulesets` directly; Path B (opportunity-driven) is the fallback for strategies without a compiled RuleSet.
+- The updated "one-sentence conclusion" would be: **LLM decides direction AND entry/exit conditions via structured RuleSet (when compilation succeeds); deterministic risk/execution pipeline is unchanged.**
+- What remains unresolved: promotion gates do not verify "RuleSet was actually evaluated before promotion" vs. pure direction-bias performance. The `entry_rule`/`exit_rule` text fields (:68-69) still exist as advisory fallback strings. Backtest integration is not wired.
+
 ## 2026-06-15 P0/P1 status amendment
 
 - The 2026-06-13 analysis below is a historical snapshot; quote it together with this amendment.

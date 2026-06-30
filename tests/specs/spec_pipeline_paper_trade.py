@@ -273,21 +273,19 @@ def test_paper_trader_symbol_stays_canonical(tmp_path, monkeypatch):
     SpecClaim(
         "PL-PT-04", "pipeline_paper_trade", "§2 opportunity_id_propagation", "L2b",
         "signal_pending pi_decision rows include the originating opportunity_id "
-        "(linked via proposal_id or a dedicated field)",
-        status="drift",
-    ),
-)
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "PT-2 — opportunity_id dropped by paper_trader frozen path. "
-        "paper_trader v3 creates PiDecision(proposal_id=None) — the opportunity_id "
-        "from the ranked candidate is NOT propagated into the pi_decisions row. "
-        "This means PI Agent cannot trace which opportunity triggered each signal."
+        "in the dedicated pi_decisions.opportunity_id column "
+        "(paper_trader.py:165 passes candidate['opportunity_id'] → PiDecision.opportunity_id)",
+        status="implemented",
     ),
 )
 def test_paper_trader_signal_has_opportunity_id(tmp_path, monkeypatch):
-    """Assert signal_pending rows have proposal_id linking back to the opportunity."""
+    """Assert signal_pending rows carry opportunity_id linking back to the source opportunity.
+
+    Fixed PT-2 (A13, LEARNING_LOOP_AUDIT): paper_trader now passes
+    opportunity_id=candidate.get('opportunity_id') into PiDecision (paper_trader.py:165).
+    The dedicated pi_decisions.opportunity_id column (models.py:901, migration:1304)
+    enables the PI Agent to trace which opportunity triggered each signal.
+    """
     conn = _setup_db(tmp_path, monkeypatch)
 
     monkeypatch.setattr(
@@ -296,7 +294,8 @@ def test_paper_trader_signal_has_opportunity_id(tmp_path, monkeypatch):
         raising=False,
     )
 
-    import aletheia.agent_runtime.tool_registry  # noqa: F401
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    init_tool_registry()
 
     opp_id = _insert_opportunity(conn, symbol="BTC/USDT", confidence_score=0.9)
     _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
@@ -307,19 +306,23 @@ def test_paper_trader_signal_has_opportunity_id(tmp_path, monkeypatch):
     asyncio.run(run_paper_trader(permission_mode="Paper"))
 
     signal_rows = conn.execute(
-        "SELECT proposal_id FROM pi_decisions WHERE action='signal_pending' AND symbol='BTC/USDT'"
+        "SELECT opportunity_id FROM pi_decisions WHERE action='signal_pending' AND symbol='BTC/USDT'"
     ).fetchall()
 
     assert len(signal_rows) >= 1, (
         "No signal_pending rows found — cannot verify opportunity_id propagation"
     )
 
-    # proposal_id should carry the originating opportunity_id
+    # opportunity_id must be the dedicated column, not null
     for row in signal_rows:
-        assert row["proposal_id"] is not None, (
-            f"signal_pending pi_decision has proposal_id=None — "
-            f"opportunity_id {opp_id!r} was not propagated. "
-            "PT-2: opportunity tracking broken in paper_trader frozen path."
+        assert row["opportunity_id"] is not None, (
+            f"signal_pending pi_decision has opportunity_id=None — "
+            f"expected {opp_id!r} to be propagated via paper_trader.py:165. "
+            "PT-2 regression: opportunity tracking broken in paper_trader path."
+        )
+        assert row["opportunity_id"] == opp_id, (
+            f"signal_pending pi_decision.opportunity_id={row['opportunity_id']!r} "
+            f"does not match source opportunity {opp_id!r}."
         )
 
 

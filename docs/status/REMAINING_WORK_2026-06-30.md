@@ -17,12 +17,11 @@
 
 ## 1. 真正还没做的（可信源核出）
 
-### 1.1 〔头号 / 结构性〕Phase 2A：可执行策略 — 唯一确认的大缺口
-- **现状（可信）**：`execution_path_honesty.md §1.3` + ROADMAP §Phase 2A（PENDING）一致确认：`strategy_designer` 产出的 `entry_rule/exit_rule` 是**从不被解析的死字符串**（`strategy_designer.py:68-69`），`paper_trader` 实际只按 opportunity 的 `direction_bias` + confidence 交易。
-- **后果**：晋级门衡量的是"方向运气 + 固定仓位"，不是"策略规则被验证过"——**架空了 VISION『先证学习』的赌注**。
-- **SDD 信号**：`spec_strategy_pool.py` docstring 已把 Phase 2A+ 任务记为 `status="missing"` tripwire。
-- **最小可行版**（ROADMAP 已给约束，不触红线）：声明式 `entry_conditions`（固定指标词表 JSON，无可执行代码、无 schema 迁移）→ `paper_trader` 求值 → 晋级门校验"规则真被跑过"。
-- 工作量 **L**。
+### 1.1 〔头号 / 结构性〕Phase 2A：可执行策略 — 状态已更新（2026-06-30 核实）
+- **最新核实**：`strategy_designer.py` 已实现完整的 `entry_conditions` → `compile_ruleset` 路径（:391-423），LLM prompt 要求 JSON 结构化条件，`_compile_ruleset` 编译为 `RuleSet` DSL，`scan_active_rulesets` 运行时求值产生信号，`paper_trader` Path A 已消费这些信号。**不再是"死字符串"状态。**
+- **仍然有效的缺口**：`entry_rule/exit_rule`（:68-69）文字字符串是旧 advisory 字段，在 `compile_ruleset` 失败时的 fallback 路径仍会产出（:451-488）；晋级门是否验证了"RuleSet 真被求值过"（而非仅 direction_bias）尚未确认。
+- **SDD 信号**：`spec_strategy_pool.py` docstring 把 Phase 2A+ 任务记为 `status="missing"` tripwire（针对 strategy_pool direction_affinity/applicable_regimes 整合，不是 DSL 本身）。
+- 工作量评估更新：DSL 本体已 **DONE**；剩余的是晋级门"规则被跑过"校验 + short scanner + regime 引导，属 2A+ (**M**)。
 
 ### 1.2 〔决策链续〕建立在 2A 之上的 Phase
 - **2A+ 方向性**：`direction_affinity`/`applicable_regimes` schema 已加（`2A+.1` DONE），但 scanner 原生 `direction` 输出、专用 short scanner、regime 主动引导未做。**M**。
@@ -30,10 +29,10 @@
 - **3B Walk-Forward 进化**：`strategy_reviewer` + `StrategyEdit` 结构化改动 + 留出数据统计门（post-edit ≥ pre-edit − ε）。这是学习从"软"（改 prompt）到"硬"（改参数且被统计验证）的关键一跳。**L**。
 
 ### 1.3 〔SDD 机器信号〕xfail tripwire = 明确声明的未完成
-4 个 spec 带 `@pytest.mark.xfail(strict=True)`（仍在合法 xfail = 真没做，做完会自动变绿，把 conformance 从 99%→100%）：
-- `spec_insight_feedback_loop.py`、`spec_pipeline_operator_loop.py`（另含 1 个 `status="partial"` claim, line 342）、`spec_pipeline_paper_trade.py`、`spec_pipeline_position_manager.py`。
-- 典型：guard 升级链（guard 候选 frontmatter / 目录读取 bug 修通后才能 GREEN）。
-- 工作量 **S–M**，且自带验收信号（spec 转绿）。**这是最可信的"待办"——直接照 xfail 清单做即可。**
+**✅ 更新（2026-06-30 核实）**：原 4 个 xfail，现存 **1 个**（conformance 已达 100%）：
+- **已修**：`PL-PT-04`（`spec_pipeline_paper_trade.py`）—— 代码早已修好（`paper_trader.py:165` 传 `opportunity_id`），是 spec 自己检查错误列（`proposal_id` 而非 `opportunity_id`），本次已修正 spec + 移除 xfail。
+- **仍在 xfail**：`PL-OL-05`（`spec_pipeline_operator_loop.py`）—— `trigger_optuna_sweep` 只记日志无工作行（真未实现），需 durable optuna_jobs 队列，工作量 **M**。
+- **已 GREEN**：`spec_insight_feedback_loop.py`、`spec_pipeline_position_manager.py` 原 xfail 均已转绿（上游代码已修）。
 
 ### 1.4 〔代码在、没接通〕Persistence/Sync/Recovery 上层协调
 - 18 模块代码完整（ROADMAP 已列），运行时底层（SQLite / JSONL event log / reconciliation）**实际在跑**；但上层协调未接进 gateway：`RECOVERY_MODE` 状态机、`SAFE_FREEZE`（状态不一致时禁开仓）、Checkpoint 跨机迁移、Policy versioning。

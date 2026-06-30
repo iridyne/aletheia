@@ -793,8 +793,8 @@
 | ID | 位置 | 问题摘要 | 状态 |
 |----|------|---------|------|
 | **KL-3** (Rank 9) | `aletheia/agent_shell/trading_context.py:367` | `_build_layer3_wisdom` 过滤 `item_type in ('lesson','accepted_lesson')`，但无任何 producer 写这两种类型；PI Agent Layer 3 wisdom 永远空列表 | 待 Round 2 处理：将类型过滤扩展到 `('post_trade_review','trade_case_study')`，并补 E2E spec |
-| **PT-2** (Rank 12) | `aletheia/agents/paper_trader.py:138` | `PiDecision` 不携带 `opportunity_id`，opportunity 表 open 行持续堆积；PL-PT-04 xfail 严格捕获此 drift | 待 Round 2 处理：paper_trader.py 内修复，不接触冻结区；但 xfail 维持 strict 直至 Round 2 |
-| **PT-1** (Rank 13) | `aletheia/agents/paper_trader.py:137` | `signal_pending` 写入后 source opportunity 状态不更新为 `"reviewed"`，下轮重复评分；PL-PT-05 xfail 严格捕获 | 待 Round 2 处理（注：paper_trader.py 本身不在冻结区，但修改会影响 AI 决策流程，属冻结判断范围） |
+| **PT-2** (Rank 12) | `aletheia/agents/paper_trader.py:165` | `PiDecision` 不携带 `opportunity_id` | ✅ **已修复 (2026-06-30)** — `paper_trader.py:165` 传 `opportunity_id=candidate.get("opportunity_id")`；`pi_decisions.opportunity_id` 列（models.py:901，migration:1304）已存在；PL-PT-04 spec 已更新检查正确列并移除 xfail；conformance 100% |
+| **PT-1** (Rank 13) | `aletheia/agents/paper_trader.py:176` | `signal_pending` 写入后 source opportunity 状态不更新为 `"reviewed"`，下轮重复评分；PL-PT-05 xfail 严格捕获 | ✅ **已修复 (earlier)** — `paper_trader.py:176` 调用 `update_opportunity(opp_id, status='reviewed')`；PL-PT-05 status="implemented"，GREEN |
 
 ---
 
