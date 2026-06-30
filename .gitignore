@@ -25,7 +25,12 @@ url-to-markdown/
 # === AI Workspace Safety Rules ===
 # Claude Code local/private state
 .claude/settings.local.json
+.claude/plans/
+.claude/worktrees/
 CLAUDE.local.md
+
+# External skill toolkits (not part of this repo)
+.baoyu-skills/
 
 # Codex local/private state
 .codex/auth*
