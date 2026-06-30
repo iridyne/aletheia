@@ -426,13 +426,14 @@ def build_system_assessment() -> SystemAssessment:
                 except (ValueError, TypeError):
                     pass
 
-        # Recent streak (consecutive W/L from most recent)
-        if fills_7d:
-            sorted_recent = sorted(fills_7d, key=lambda f: f.get("filled_at") or "", reverse=True)
+        # Recent streak (consecutive W/L from most recent closed position).
+        # Must use closed_7d (positions carry realized_pnl); fills have no such field.
+        if closed_7d:
+            sorted_recent = sorted(closed_7d, key=lambda p: p.get("closed_at") or "", reverse=True)
             streak = 0
             first_dir = None
-            for f in sorted_recent:
-                pnl = f.get("realized_pnl") or 0
+            for p in sorted_recent:
+                pnl = p.get("realized_pnl") or 0
                 if pnl == 0:
                     continue
                 direction = 1 if pnl > 0 else -1

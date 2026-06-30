@@ -1580,10 +1580,10 @@ def _probe_serenity_pipeline(report: Report) -> None:
         return
     age = _age_minutes(row["newest"])
     detail = f"last run {_fmt_age(age)}, {active} active opportunities"
-    if age is not None and age > 720:
+    if age is not None and age > 1560:  # 26h — serenity runs once per 24h; 12h fired daily false-positives
         report.add("data.serenity_pipeline", "warn",
                    f"Serenity research stale: {detail}",
-                   "serenity_research_runner has not run in >12h — check scheduler health")
+                   "serenity_research_runner has not run in >26h — check scheduler health")
     else:
         report.add("data.serenity_pipeline", "ok", detail)
 
