@@ -401,6 +401,8 @@ export const api = {
     post<{ updated: Record<string, any> }>('/settings/operator', body),
   updateGuardConfig: (body: Partial<{ enabled: boolean; enforce_in_paper_ranker: boolean; auto_promote_enabled: boolean; min_matching_trades: number; max_score_penalty: number }>) =>
     post<{ updated: Record<string, any> }>('/settings/guard', body),
+  updateRegimeConfig: (body: Partial<{ enabled: boolean; short_enabled: boolean; bias_threshold: number; min_hold_periods: number }>) =>
+    post<{ updated: Record<string, any> }>('/settings/regime', body),
   updateHealthConfig: (body: Partial<{
     enabled: boolean; alert_via_telegram: boolean; alert_via_windows_toast: boolean; max_agent_failure_ratio: number
     llm_unavailable_alert_after: number; market_data_max_staleness_min: number

@@ -68,6 +68,7 @@ const SETTINGS_INDEX: { title: string; tab: Tab; alt?: string[] }[] = [
   { title: 'Permission Mode',          tab: 'agent', alt: ['autonomy', 'observe', 'paper', 'full'] },
   { title: 'Learning',                 tab: 'agent', alt: ['dreaming', 'research', 'pi daemon'] },
   { title: 'Guard Promotion',          tab: 'agent', alt: ['guard', 'lesson guard', 'auto promote', 'guard candidate'] },
+  { title: 'Regime Detection',         tab: 'agent', alt: ['regime', 'bias', 'short enabled', 'bear', 'trend', 'direction'] },
   { title: 'Serenity Research',        tab: 'agent', alt: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'] },
   { title: 'Scheduler',                tab: 'agent', alt: ['jobs', 'cron', 'autostart agents'] },
   { title: 'AI Model Providers',       tab: 'agent', alt: ['llm', 'openai', 'anthropic', 'claude', 'codex'] },
@@ -366,6 +367,12 @@ function AgentModelsTab({ status, settings, qc }: any) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
 
+  const regimeCfg = (settings?.regime ?? {}) as any
+  const regimeMut = useMutation({
+    mutationFn: (body: any) => api.updateRegimeConfig(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
+
   return (
     <div>
       <Section
@@ -407,6 +414,34 @@ function AgentModelsTab({ status, settings, qc }: any) {
               guardMut.mutate({ auto_promote_enabled: v })
             }}
             disabled={guardMut.isPending}
+          />
+        </Row>
+      </Section>
+
+      <Section
+        title="Regime Detection"
+        description="Market regime classifier that adjusts trade direction bias. Identifies trending/ranging/bear conditions to guide the PI Agent's direction preference."
+      >
+        <Row label="Regime detection enabled" hint="When ON, regime detector classifies market conditions and injects bias into PI Agent context.">
+          <Toggle checked={regimeCfg.enabled !== false} onChange={v => regimeMut.mutate({ enabled: v })} disabled={regimeMut.isPending} />
+        </Row>
+        <Row label="Short trades enabled" hint="Allow short direction trades when regime is bearish. Disable to restrict to long-only.">
+          <Toggle checked={regimeCfg.short_enabled !== false} onChange={v => regimeMut.mutate({ short_enabled: v })} disabled={regimeMut.isPending} />
+        </Row>
+        <Row label="Bias threshold" hint="Minimum score change required to flip regime bias (0.0–1.0). Higher = more stable, slower to react.">
+          <input
+            type="number" step="0.05" min="0" max="1"
+            value={Number(regimeCfg.bias_threshold ?? 0.30)}
+            onChange={e => regimeMut.mutate({ bias_threshold: Number(e.target.value) })}
+            className="input-sm"
+          />
+        </Row>
+        <Row label="Min hold periods" hint="Minimum bars the regime must hold before a bias flip is accepted. Prevents whipsawing (1–20).">
+          <input
+            type="number" step="1" min="1" max="20"
+            value={Number(regimeCfg.min_hold_periods ?? 3)}
+            onChange={e => regimeMut.mutate({ min_hold_periods: Number(e.target.value) })}
+            className="input-sm"
           />
         </Row>
       </Section>

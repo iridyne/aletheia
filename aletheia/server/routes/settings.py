@@ -392,6 +392,29 @@ async def update_operator_config(req: OperatorConfigUpdate):
 # Guard / lesson-promotion config
 # ---------------------------------------------------------------------------
 
+class RegimeConfigUpdate(SettingsRequest):
+    enabled: Optional[bool] = None
+    min_hold_periods: Optional[int] = None
+    bias_threshold: Optional[float] = None
+    short_enabled: Optional[bool] = None
+
+
+@router.post("/regime")
+async def update_regime_config(req: RegimeConfigUpdate):
+    cfg = load_config()
+    old = cfg.regime.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    for field, value in updates.items():
+        setattr(cfg.regime, field, value)
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+    write_audit({"actor": "human", "source": "dashboard", "event_type": "regime_config_changed",
+                 "entity_type": "regime_config", "before": old,
+                 "after": cfg.regime.model_dump(mode="json"),
+                 "message": f"Regime config updated: {list(updates.keys())}"})
+    return {"updated": updates}
+
+
 class GuardConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     enforce_in_paper_ranker: Optional[bool] = None
