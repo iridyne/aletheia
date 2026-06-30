@@ -1464,13 +1464,33 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
 def _persist_assessment(summary: dict) -> None:
     """Write operator assessment to knowledge_items for audit trail."""
     try:
-        from aletheia.storage.models import KnowledgeItem
-        from aletheia.storage.repositories import insert_knowledge_item
-
         ts = summary.get("timestamp", "")[:19]
         actions_n = summary.get("actions_decided", 0)
         executed_n = summary.get("actions_executed", 0)
         title = f"Operator assessment ({ts}) — {actions_n} actions, {executed_n} executed"
+
+        # Build a readable content body so _index() can put it in FTS retrieval.
+        health = summary.get("system_health", {})
+        results = summary.get("results", [])
+        lines = [
+            f"## Operator Assessment — {ts}",
+            f"Actions decided: {actions_n}, executed: {executed_n}, "
+            f"proposed: {summary.get('actions_proposed',0)}, "
+            f"skipped: {summary.get('actions_skipped',0)}",
+        ]
+        if health:
+            lines.append(f"\n### System Health")
+            for k, v in health.items():
+                lines.append(f"- {k}: {v}")
+        if results:
+            lines.append(f"\n### Actions")
+            for r in results[:10]:
+                lines.append(f"- [{r.get('status','?')}] {r.get('action',r.get('kind','?'))}")
+        content = "\n".join(lines)
+
+        from aletheia.storage.models import KnowledgeItem
+        from aletheia.storage.repositories import insert_knowledge_item
+        from aletheia.knowledge.manager import _index
 
         item = KnowledgeItem(
             item_type="operator_assessment",
@@ -1479,5 +1499,6 @@ def _persist_assessment(summary: dict) -> None:
             tags=json.dumps(summary, ensure_ascii=False, default=str),
         )
         insert_knowledge_item(item)
+        _index(item, content)
     except Exception as e:
         logger.warning("operator_loop: failed to persist assessment: %s", e)
