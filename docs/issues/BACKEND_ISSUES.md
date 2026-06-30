@@ -122,10 +122,8 @@
   - 影响：违反 trust §4 "item_type 与来源/用途匹配"；UI Daily Reviews 一日多条且与 dreaming log 同文；学习账本对 daily_review 计数失真
   - 最小修复：`daily_review` 的写入条件改为 cron-triggered 且每日仅一条；CLI 触发的 dreaming 只写 dreaming_log
 
-- **Supervisor 重启时间窗用计数器代替时钟，配置失效**
-  - 佐证：`_gateway_runner.py:81-86` `now = len(restart_times)`；`recent = [t for t in restart_times if now - t <= window]`——`now` 与 `t` 都是整数计数，差值永远 ≤ len，永远 ≤ window
-  - 影响：`supervisor_restart_window_sec=600` 实际等同 ∞，"10 分钟内崩溃 5 次"退化为"任意时间总共崩溃 5 次"——长期运行的 gateway 累计 5 次崩溃后永久放弃
-  - 最小修复：改用 `time.monotonic()` 写入时间戳，按真实秒差过滤窗口
+- ~~**Supervisor 重启时间窗用计数器代替时钟，配置失效**~~ ✅ **已核实 ALREADY FIXED (2026-06-30)**
+  - 核实：`_gateway_runner.py:383` 已用 `time.monotonic()` 写入时间戳并按秒差过滤。§1.3 原佐证 line 号指向旧代码，为过期误报。
 
 - **`collect_market_snapshots` 只抓 spot，futures 永远 stale**
   - 佐证：`trading/market_data.py:32` `client.get_ticker(symbol, market_type="spot")` 硬编码；但 `instruments.py` 定义 `MARKET_USDT_FUTURES`，`risk/engine.py:131` 用 `_market_data_age_seconds(proposal.symbol)`——futures snapshot 永远缺失
@@ -887,10 +885,7 @@
   **修复**：OKXClient lazy-init(`_ensure_exchange()` 在首次 async 调用所在 loop 建)。
   回归测试 `tests/test_okx_broker.py::TestLazyExchangeInit`。日志实测仅 2 次失败
   (DOGE/ETH)，均在 PI skip 期，无错误规格订单成交。
-- ⏳ **BIN-XLOOP 🟡 (隐患,未启用)** — `BinanceClient.__init__`
-  (`aletheia/exchanges/binance/client.py:58`) 同样 eager-建 exchange，binance_broker
-  也用 `_run_coro`。当前 binance 未启用(paper_execution_mode=okx_demo)且不调
-  load_markets，未观测到错误。**若启用 binance 须同样改 lazy-init**。下一 sprint。
+- ✅ **BIN-XLOOP 🟡 ALREADY FIXED (2026-06-30 核实)** — `BinanceClient` 已改 lazy-init：`_ensure_exchange()` 在首次 async 方法调用时在运行 loop 内建实例，无 eager `__init__`。
 
 ---
 
@@ -954,5 +949,5 @@
 | I1 | price_feed docstring 称 batch 实为串行 | `data/price_feed.py:129` `for sym in symbols:` 逐个 get_ticker |
 | E3 | volume_scanner 排名内存态，重启丢失 | `universe/service.py:162` 内存 global 未持久化 |
 | E5 | operator retire_strategy 无超时降级，PI 不在跑则卡住 | `operator_loop.py:555` 写 pi_decisions 无 24h 兜底 |
-| F6 | symbol_map ~30 个硬编码 CoinGecko slug，未知币 KeyError | `data/sources/symbol_map.py:48` raise KeyError |
+| ~~F6~~ ✅ | ~~symbol_map ~30 个硬编码 CoinGecko slug，未知币 KeyError~~ **ALREADY FIXED (2026-06-30 核实)** — `to_coingecko_id()` 已改用 `.get()` 返回 None | `data/sources/symbol_map.py` |
 | G10 | 无 Prometheus `/metrics`，可观测性靠 10min 采样 | grep prometheus_client / /metrics = 0 |

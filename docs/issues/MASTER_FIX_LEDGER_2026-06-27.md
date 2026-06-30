@@ -225,7 +225,7 @@
 ## 批次 4 — 一般 bug + dead code + UI honesty + 测试债(P3d)· 可 Workflow 并行(独立低风险)
 
 详见 `_RAW_SWEEP_LEDGER.md` general_bug / dead_code / ui_honesty / test_debt / perf 段。要点:
-- **一般 bug**:F2 universe POST /policy 缺失 · E3 volume_scanner 内存态丢失 · E5 operator retire 无超时 · F6 symbol_map KeyError · ~~F5 score_event 空壳~~ **✅ 已修 (commit `3136133`)** · BinanceClient eager-init · symbol_map · prune FK CASCADE · dreaming_log 16 孤儿指针 · CR-PI-01 scanner weight 不持久化 · E2 UTA connected_brokers · I1 price_feed docstring 谎言 · CR-SCH-01 job failure(partial)
+- **一般 bug**:F2 universe POST /policy 缺失(前端不调用,dead repo fn) · E3 volume_scanner 内存态丢失 · E5 operator retire 无超时(设计态,PI确认流) · ~~F6 symbol_map KeyError~~ **✅ ALREADY FIXED (2026-06-30 核实)** · ~~F5 score_event 空壳~~ **✅ 已修 (commit `3136133`)** · ~~BinanceClient eager-init~~ **✅ ALREADY FIXED (2026-06-30 核实)** · prune FK CASCADE · dreaming_log 孤儿=0 · CR-PI-01 scanner weight 不持久化 · E2 UTA connected_brokers · I1 price_feed docstring 谎言 · CR-SCH-01 job failure(partial) · ~~§1.3 supervisor restart window~~ **✅ ALREADY FIXED (2026-06-30 核实 line 383 monotonic)**
 - **端点缺失**:D6 strategy-performance · D7 serenity-pipeline(+ api_reference 同步)
 - **dead code**:D5 strategy_experiments 空表 DROP · D12 detect_contradictions stub · ~~F5 score_event~~ ✅ 已实现 · BrokerBreakdown(PnLZone.tsx:67) · BITGET_GRANULARITY
 - **UI honesty**:chart 硬编码色(3.7) · text slice 截断(Learning.tsx:242) · P3.11 timer · P3.12 price line · P3.14 WebSocket · P3.15 stop viz · ~~D14 Regime/Guard config UI(Config↔UI rule)~~ **✅ 已修 72abaf4 (2026-06-30)** · inline styles/as any(typing 债)

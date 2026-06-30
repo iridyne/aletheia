@@ -268,10 +268,9 @@ groups: ['test-debt', 'human-ui', 'runtime', 'anti-halluc', 'fix-plan-0626', 'fr
     - fix: In each chart's init, read getComputedStyle(document.documentElement).getPropertyValue('--surface'/'--green'/'--red'/'--accent'/'--border') and pass into createChart/recharts instead of literal hex; centralize in theme.ts as a getter so StrategyLifecycle:329, PnLChart:55-58 and TradeInsightsPanel:31-46 all consume one source. Cosmetic / only matters if themes change.
     - refs: frontend/src/charts/theme.ts:4, frontend/src/charts/PnLChart.tsx:55, frontend/src/pages/StrategyLifecycle.tsx:329
     - evidence: charts/theme.ts uses literal hex (#141a21 bg, #232c36 grid/border, #2ee6a8 up, #ff5d6c down, #22d3ee line — theme.ts:4-13); PnLChart.tsx:55,58 hardcode #2ee6a8/#ff5d6c; TradeInsightsPanel.tsx:31-46 ha
-- [not_fixed][frz:-][trust:-] **backend-B/§17.4 BIN-XLOOP**: BinanceClient eager-建 exchange (跨 loop 隐患, 未启用)
-    - fix: Mirror the OKX lazy-init fix: defer ccxt.binanceusdm construction to a _ensure_exchange() called inside the first async method (in the running loop). Do before enabling binance live/testnet.
-    - refs: aletheia/exchanges/binance/client.py:49-66
-    - evidence: aletheia/exchanges/binance/client.py:49-66 BinanceClient.__init__ still eager-builds self._exchange = ccxt.binanceusdm({...}) in the constructor (sync context). binance_broker uses _run_coro (new thre
+- [fixed:2026-06-30-verified][frz:-][trust:-] **backend-B/§17.4 BIN-XLOOP**: BinanceClient eager-建 exchange (跨 loop 隐患, 未启用)
+    - fix: ALREADY FIXED — BinanceClient 已用 _ensure_exchange() lazy-init 模式，无 eager constructor exchange 建。grep 核实 2026-06-30。
+    - refs: aletheia/exchanges/binance/client.py
 - [not_fixed][frz:-][trust:-] **backend-B/§19 F2**: Universe POST /policy 路由缺失 (repo fn 存在不可达)
     - fix: Add POST /universe/policy in routes/universe.py calling repo.insert_universe_policy, plus a frontend control (Config-UI rule). Or document the repo fn as internal-only.
     - refs: aletheia/server/routes/universe.py:81, aletheia/storage/repositories.py:1368
@@ -284,10 +283,9 @@ groups: ['test-debt', 'human-ui', 'runtime', 'anti-halluc', 'fix-plan-0626', 'fr
     - fix: Add a 24h staleness check: if a recommend_retire pi_decision is unconfirmed after 24h, escalate (notify operator) or apply a safe default. Same pattern needed for _action_demote_strategy at :586.
     - refs: aletheia/agent_shell/operator_loop.py:555-583
     - evidence: aletheia/agent_shell/operator_loop.py:555-583 _action_retire_strategy writes a recommend_retire pi_decision and notifies pi_daemon, returning status='recommended'. There is NO 24h timeout/fallback: if
-- [not_fixed][frz:-][trust:-] **backend-B/§19 F6**: symbol_map ~30 个硬编码 CoinGecko slug，未知币 KeyError
-    - fix: Return None (and let callers skip CoinGecko enrichment) instead of raising KeyError, or fetch the slug dynamically from the CoinGecko coins list API with caching.
-    - refs: aletheia/data/sources/symbol_map.py:40-49
-    - evidence: aletheia/data/sources/symbol_map.py:47-48 if canon not in _CG_SLUG: raise KeyError(f'CoinGecko ID unknown for {canon!r}') — unknown symbols raise rather than degrade gracefully.
+- [fixed:2026-06-30-verified][frz:-][trust:-] **backend-B/§19 F6**: symbol_map ~30 个硬编码 CoinGecko slug，未知币 KeyError
+    - fix: ALREADY FIXED — to_coingecko_id() 已改用 _CG_SLUG.get(canon) 返回 None，无 KeyError。grep 核实 2026-06-30。
+    - refs: aletheia/data/sources/symbol_map.py
 - [partial][frz:-][trust:-] **fix-plan-0626/D-P2-prune-FK**: Cleanup prune lacks ON DELETE CASCADE; retention windows independent
     - fix: Add ON DELETE CASCADE on run_steps/tool_calls FK to agent_runs in migrations.py, OR clamp retention so child windows >= parent window in config validation. Current ordering is safe for default config; only extreme misconfig is affected. Low priority.
     - refs: aletheia/agent_runtime/scheduler.py:1064, aletheia/storage/migrations.py

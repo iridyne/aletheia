@@ -7,11 +7,40 @@
 
 ## Last Updated
 
-2026-06-30 (Evolve 模块清理 + 修复：post_trade_reviewer 幂等 + dreaming_agent evidence chain)
+2026-06-30 (P3d debt 核实 + BACKEND_ISSUES/LEDGER 文档同步)
 
 ---
 
-## Recent Change (Evolve 模块数据清理 + 根因修复 — 2026-06-30)
+## Recent Change (P3d 债务核实 — 2026-06-30)
+
+### 核实结果
+
+grep 逐条核实 P3d MASTER_FIX_LEDGER 中标记为"未核实"的条目：
+
+| 条目 | 结论 |
+|------|------|
+| §1.3 supervisor restart window | ✅ **ALREADY FIXED** — `_gateway_runner.py:383` 已用 `time.monotonic()`，原 ledger 指向旧代码 |
+| BIN-XLOOP BinanceClient eager-init | ✅ **ALREADY FIXED** — `_ensure_exchange()` lazy-init 已在 `binance/client.py` |
+| F6 symbol_map KeyError | ✅ **ALREADY FIXED** — `to_coingecko_id()` 已改 `.get()` 返回 None |
+| dreaming_log 孤儿 | ✅ **MYTH** — 实际 0 孤儿（top 20 active check） |
+| F2 POST /policy 缺失 | 低优先 — 前端不调用，走 `POST /settings/universe`；dead repo fn，无影响 |
+| E5 retire 无超时 | **设计态** — recommend_retire → pi_decisions 等 PI 确认，是有意流程 |
+| E3 volume_scanner 内存态 | 仍 OPEN — 重启重建，低危 |
+| CR-PI-01 scanner weight 不持久化 | 仍 OPEN — 需 schema + 前端 + 调用改动，中优先 |
+
+### 文档更新
+
+- `docs/issues/BACKEND_ISSUES.md`: §1.3/BIN-XLOOP/F6 改为 ALREADY FIXED
+- `docs/issues/_RAW_SWEEP_LEDGER.md`: BIN-XLOOP/F6 状态 → `fixed:2026-06-30-verified`
+- `docs/issues/MASTER_FIX_LEDGER_2026-06-27.md`: P3d 一般 bug 列表标注三项 ALREADY FIXED
+
+### SDD spec 状态
+
+`spec_learning_pipeline.py` 20 claims 全 GREEN（19 passed，1 xfailed OL-2 optuna）
+
+---
+
+## Previous Change (Evolve 模块数据清理 + 根因修复 — 2026-06-30)
 
 ### 背景
 
