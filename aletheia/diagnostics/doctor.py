@@ -732,39 +732,33 @@ def _probe_round1(report: Report) -> None:
 
 
 def _probe_knowledge_flood(report: Report) -> None:
-    """PI's Layer3-wisdom limit=30 window is dominated by system_action noise.
+    """Guard-candidate pipeline health.
 
-    When the window is occupied by high-frequency events the actual lesson and
-    guard_candidate rows never make it into PI prompt. Mirrors the
-    /api/analytics/learning-funnel observability surface.
+    L-Bug-A' (trading_context.py) was fixed: Layer3 now queries guard_candidates
+    directly by item_type, so table-level flooding no longer affects PI prompts.
+    This probe now checks whether the pipeline is *producing* guard_candidates at all.
     """
     try:
         from aletheia.storage.sqlite import get_db
-        from collections import Counter
         db = get_db()
-        cnt: Counter = Counter()
-        for r in db.execute(
-            "SELECT item_type FROM knowledge_items ORDER BY rowid DESC LIMIT 30"
-        ):
-            cnt[r["item_type"]] += 1
-        if not cnt:
-            report.add("loop.knowledge_flood", "info", "no knowledge_items yet")
-            return
-        guards = cnt.get("guard_candidate", 0)
-        top_type, top_n = cnt.most_common(1)[0]
-        if guards == 0 and top_n >= 25:
-            report.add("loop.knowledge_flood", "warn",
-                       f"PI guards window 0/30 — flooded by {top_type}×{top_n}",
-                       "see Round 2 Fix L-Bug-A' (trading_context.py:398): "
-                       "list_knowledge_items(item_type='guard_candidate', limit=30)")
-        elif guards == 0:
-            report.add("loop.knowledge_flood", "warn",
-                       f"PI guards window 0/30 — top types: {dict(cnt.most_common(3))}")
-        else:
-            report.add("loop.knowledge_flood", "ok",
-                       f"guards in window: {guards}/30; top: {top_type}×{top_n}")
+        total_guards = db.execute(
+            "SELECT COUNT(*) FROM knowledge_items WHERE item_type='guard_candidate'"
+        ).fetchone()[0]
+        recent_guards = db.execute(
+            "SELECT COUNT(*) FROM knowledge_items "
+            "WHERE item_type='guard_candidate' AND created_at >= datetime('now','-7 days')"
+        ).fetchone()[0]
     except Exception as e:
         report.add("loop.knowledge_flood", "info", f"probe error: {e}")
+        return
+
+    if total_guards == 0:
+        report.add("loop.knowledge_flood", "warn",
+                   "no guard_candidates produced — self-evolution pipeline not generating guards",
+                   "check outcome_recorder and guard candidate generation")
+    else:
+        report.add("loop.knowledge_flood", "ok",
+                   f"guard_candidates: {total_guards} total, {recent_guards} in last 7d")
 
 
 def _probe_learning_retrieval(report: Report) -> None:
