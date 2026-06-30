@@ -966,9 +966,12 @@ def _run_operator_loop():
 
 
 def _run_position_manager():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
+    # NO paused gate (intentional): position_manager only MANAGES/CLOSES existing
+    # positions (stop-loss / take-profit / trailing / max-hold) — it never opens new
+    # risk. `paused` stops OPENING new risk; it must never freeze protective exits,
+    # exactly like kill_switch (which also never blocks closes). Re-introducing
+    # `if cfg.runtime.paused: return` here is a safety regression.
+    # Invariant: execution_contract §10 + spec PL-PM-07.
     try:
         from aletheia.portfolio.position_manager import evaluate_open_positions
         evaluate_open_positions()
@@ -979,8 +982,10 @@ def _run_position_manager():
 def _run_position_reconcile():
     """Periodic position reconciliation: adopt externals + close orphans (demo)."""
     cfg = load_config()
-    if cfg.runtime.paused:
-        return
+    # NO paused gate (intentional): reconciliation closes demo orphan positions
+    # (protective) and records externally-opened positions (bookkeeping — opens no
+    # new risk). Like position_manager it manages existing state and must run even
+    # when paused. Invariant: execution_contract §10 (aligned with kill_switch).
     try:
         from aletheia.agent_runtime.run_logger import start_run, end_run
         from aletheia.portfolio.position_reconciler import run_reconcile

@@ -151,3 +151,56 @@ trade_proposals.id
 ## 9. 目标态差距 — 当前活跃
 
 - ⚠️ [execution_path_honesty §1.3](../governance/execution_path_honesty.md):strategy 的 `entry_rule/exit_rule` 是**从不被解析执行的死字符串**(`models.py:216-219`,`strategy_designer.py:68-69,488-489`)。交易方向实际来自 opportunity 的 LLM `direction_bias`,strategy 仅提供 `strategy_id` 供晋级门挂靠统计。`strategy/dsl.py` 的 `RuleSet` 是预期替代路径,但尚未接入执行链。**契约诚实声明**:当前"策略规则驱动交易"不成立;策略层是 advisory。诚实化三路径(命名/确定性 gate/真 DSL)见该文档 §7,均需显式授权。
+
+---
+
+## 10. 平仓/退出通路 (Exit Path)
+
+> §1–§6 定义**开仓**通路;本节定义**平仓/退出**通路,达到与开仓对等的严谨度。
+> 入口:`evaluate_open_positions()`(`portfolio/position_manager.py:299`),由 `position_manager` job 每 5min 触发。
+
+### 10.1 退出触发器优先级
+
+`_decide_exit(p, price, cfg)`(`position_manager.py:347`)按**固定顺序**判定,先命中先平:
+
+| 优先级 | 触发器 | 判定 | 位置 |
+|--------|--------|------|------|
+| 1 | stop-loss | `price` 越过 `stop_price`(多头跌破/空头升破) | `_decide_exit` |
+| 2 | take-profit | `price` 越过 `take_profit_price` | `_decide_exit` |
+| 3 | max-hold | 持仓时长 > `max_position_hold_hours`(serenity school 用 `max_hold_days`) | `_decide_exit` |
+| 4 | ruleset_exit | `_decide_exit` 返回 None 且 `position_id ∈ ruleset_exit_position_ids` | `position_manager.py:348-349` |
+| 5 | market_aware_exit | **仅当 1–4 都未触发**且 `market_aware_exits.enabled`;`urgent_exit` 才平,`tighten_stop` 只收紧不平 | `exit_rules.py:27`,调用点 `position_manager.py:352` |
+
+**PI Agent 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)经**同一** `close_position_routed()` 入口平仓,**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于路由中枢,不在触发器优先级链内。
+
+### 10.2 close_position_routed 路由契约(唯一平仓中枢)
+
+`close_position_routed(pos_id, reason, fallback_exit_price)`(`position_manager.py:28-79`)是**唯一**平仓出口,自动循环与 PI 路径都经此:
+
+- 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→close_testnet_position` / `paper_internal→本地 close`。
+- **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
+- 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
+
+### 10.3 paused / kill_switch 对平仓的语义(核心不变量)
+
+> **`paused` 与 `kill_switch` 对持仓生命周期语义一致:都只挡"开新仓",都不挡"管理/平掉已有仓"。**
+> 理由:平仓是**管理已有风险**(止损/止盈/对账),冻结它等于在最需要保护时撤掉保护;开仓才是**承担新风险**,应被暂停/熔断挡住。
+
+| 控制 | 挡开仓 | 挡平仓 | 实现 |
+|------|--------|--------|------|
+| `kill_switch` | 是(风控 check#0,只拦 proposal=开仓) | **否** | `position_manager` 绕过;`test_position_manager.py:147` + `RUNBOOK.md:181` 锁定 |
+| `paused` | 是(`_run_paper_trader` 早退 + 下游风控) | **否** | `_run_position_manager`/`_run_position_reconcile` **无 paused 门**;`spec PL-PM-07` 锁定 |
+
+历史缺陷(已修 2026-06-30):`scheduler.py:_run_position_manager` 曾 `if cfg.runtime.paused: return`,导致暂停时止损循环停摆(仅 paper/demo;`paper_internal` 无交易所原生 TPSL 兜底,真失保护)。修复=移除 paused 门 + `PL-PM-07` 回归锁。
+
+### 10.4 stop/take-profit 兜底
+
+`_effective_stop` / `_effective_take_profit`(`position_manager.py:92-115`):优先用 position 行记录的 `stop_price`/`take_profit_price`;无记录时回退 config 默认百分比。**无 stop 的仓位仍有兜底保护**,不裸奔。
+`_sync_exchange_closed`(`position_manager.py:311`,`248-296`):每轮先收敛交易所原生 TPSL(bitget demo bracket)已触发的平仓,避免本地-交易所长期 desync。
+
+### 10.5 已知状态与边界
+
+- ⚠️ **live 人工平仓路径未实现**:`allow_live=True` 全库无调用点(`position_manager.py:53` 仅文档注释);前端无 force-close 按钮,无 `/api/positions/{id}/close` 端点。**当前 `live_limited` 仓位须在交易所界面手动平仓。** 未来加 close 端点**触信任边界**,须走 [trust §6](../governance/trust_and_change_control.md) change-control + 人工确认(`allow_live=True`)。
+- ⚠️ **live 对账仍受 paused**:`_run_reconciliation`(live-only,`scheduler.py:822`)仍有 paused 门,本次未改(live 默认禁用,且仅做收敛检测,优先级低)。若未来 live 常开,应一并对齐本节语义。
+
+**Spec claims**:`PL-PM-01~06`(mark/stop/TP/max_hold/ATR/audit) + `PL-PM-07`(paused 不挡保护性平仓)。`spec_pipeline_position_manager.py`。

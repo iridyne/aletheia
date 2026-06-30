@@ -419,3 +419,67 @@ def test_close_position_writes_audit_event_row(tmp_path, monkeypatch):
         "found none. PM-2 drift: close_position writes JSONL but audit_events SQLite row missing. "
         "Check that _write_audit_row() in jsonl.py is called and DB connection is available."
     )
+
+
+# ---------------------------------------------------------------------------
+# PL-PM-07  L2c  paused_vs_protective_close  (pause blocks opening, not managing)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-07", "pipeline_position_manager", "§6 paused_vs_protective_close", "L2c",
+        "runtime.paused must NOT block protective exits: the scheduler's "
+        "_run_position_manager still closes a stop-loss-breaching position when paused. "
+        "Pause stops opening new risk, it never blocks managing/closing existing risk "
+        "(aligned with kill_switch, which also never blocks closes — execution_contract §10).",
+        status="implemented",
+    ),
+)
+def test_paused_does_not_block_stop_loss(tmp_path, monkeypatch):
+    """A paused system must still fire stop-losses. Mirrors PL-PM-02 but drives the
+    scheduler entry point _run_position_manager() with runtime.paused=True.
+
+    Before the fix (scheduler paused early-return) the position stays open (RED);
+    after aligning paused to kill_switch semantics it closes (GREEN). This locks the
+    invariant against re-introducing the 'pause freezes stop-losses' landmine.
+    """
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(
+        "aletheia.notifications.notify_operator",
+        lambda *a, **kw: None,
+        raising=False,
+    )
+
+    pos_id = _insert_open_position(
+        conn, symbol="ETH/USDT", direction="long",
+        entry_price=3000.0, quantity=0.01,
+        stop_price=2900.0,
+    )
+    # Market price drops below the stop → a protective close MUST fire even when paused.
+    _insert_snapshot(conn, "ETH/USDT", price=2850.0)
+
+    # System is PAUSED.
+    import aletheia.agent_runtime.scheduler as sched
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.runtime.paused = True
+    monkeypatch.setattr(sched, "load_config", lambda: cfg)
+
+    # Drive the scheduler's protective-loop entry point (not evaluate_open_positions
+    # directly) — the paused gate lived here (scheduler.py:_run_position_manager).
+    sched._run_position_manager()
+
+    pos_row = conn.execute(
+        "SELECT status, close_reason FROM positions WHERE id = ?", (pos_id,)
+    ).fetchone()
+    assert pos_row is not None
+    assert pos_row["status"] == "closed", (
+        "paused must NOT block a protective stop-loss close — pause stops opening "
+        f"new risk, never managing existing risk. status={pos_row['status']!r}"
+    )
+    assert pos_row["close_reason"] == "stop_loss", (
+        f"Expected close_reason='stop_loss', got {pos_row['close_reason']!r}"
+    )
