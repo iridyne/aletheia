@@ -468,6 +468,9 @@ class UniverseConfig(BaseModel):
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
     snapshot_ttl_enabled: bool = True
     snapshot_ttl_hours: float = 24.0
+    # Per-family scoring weight multipliers (operator-adjustable via adjust_scanner_weight).
+    # Default 1.0 means no bias; values >1 boost that family's candidates, <1 suppresses.
+    scanner_weights: dict[str, float] = Field(default_factory=dict)
 
 
 class RegimeConfig(BaseModel):

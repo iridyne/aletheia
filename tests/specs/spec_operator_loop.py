@@ -1005,3 +1005,85 @@ def test_regime_scoring_no_cliff():
         f"confidence 0.49→0.51 分差 {abs(s_above-s_below):.1f} 超出 5 分，"
         "regime 评分仍有断崖效应"
     )
+
+
+# ---------------------------------------------------------------------------
+# CR-PI-01: scanner weight persistence
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-C11", "operator_layer", "§scanner_weight_persistence", "L2a",
+        "_action_adjust_scanner_weight MUST persist weight to config via save_config so "
+        "adjustments survive restarts. UniverseConfig MUST have scanner_weights field.",
+        status="implemented",
+    ),
+)
+def test_scanner_weight_persistence():
+    """Verify scanner_weight adjustments persist to config (CR-PI-01 fix)."""
+    from aletheia.config.schema import UniverseConfig, AletheiaConfig
+
+    # Schema: UniverseConfig must have scanner_weights field
+    u = UniverseConfig()
+    assert hasattr(u, "scanner_weights"), "UniverseConfig missing scanner_weights field"
+    assert isinstance(u.scanner_weights, dict), "scanner_weights must be a dict"
+
+    # operator_loop source: _action_adjust_scanner_weight must call save_config
+    import ast
+    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    # Find the _action_adjust_scanner_weight function body
+    fn_body_src = ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_action_adjust_scanner_weight":
+            fn_body_src = ast.unparse(node)
+            break
+    assert fn_body_src, "_action_adjust_scanner_weight not found in operator_loop.py"
+    assert "save_config" in fn_body_src, (
+        "_action_adjust_scanner_weight does not call save_config — "
+        "scanner weight adjustments are in-memory only and will be lost on restart (CR-PI-01)"
+    )
+    assert "scanner_weights" in fn_body_src, (
+        "_action_adjust_scanner_weight does not write scanner_weights field"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-C12", "operator_layer", "§stale_recommendation_escalation", "L2a",
+        "_check_stale_recommendations must exist and escalate recommend_retire/demote "
+        "pi_decisions pending >24h into notify_operator calls (E5 fix).",
+        status="implemented",
+    ),
+)
+def test_stale_recommendation_escalation_exists():
+    """Verify _check_stale_recommendations function exists and has correct behavior."""
+    import ast
+    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    fn_found = False
+    fn_src = ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_check_stale_recommendations":
+            fn_found = True
+            fn_src = ast.unparse(node)
+            break
+    assert fn_found, "_check_stale_recommendations not found in operator_loop.py (E5 fix missing)"
+    assert "recommend_retire" in fn_src or "recommend_demote" in fn_src, (
+        "_check_stale_recommendations does not handle recommend_retire/recommend_demote"
+    )
+    assert "notify_operator" in fn_src or "_action_notify" in fn_src, (
+        "_check_stale_recommendations does not escalate to notify_operator"
+    )
+    # Must be called from run_operator_loop
+    loop_fn_src = ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "run_operator_loop":
+            loop_fn_src = ast.unparse(node)
+            break
+    assert "_check_stale_recommendations" in loop_fn_src, (
+        "_check_stale_recommendations is defined but never called from run_operator_loop"
+    )

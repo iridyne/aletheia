@@ -275,14 +275,12 @@ groups: ['test-debt', 'human-ui', 'runtime', 'anti-halluc', 'fix-plan-0626', 'fr
     - fix: Add POST /universe/policy in routes/universe.py calling repo.insert_universe_policy, plus a frontend control (Config-UI rule). Or document the repo fn as internal-only.
     - refs: aletheia/server/routes/universe.py:81, aletheia/storage/repositories.py:1368
     - evidence: aletheia/server/routes/universe.py has only GET routes incl GET /policy (line 81); no @router.post for policy. insert_universe_policy exists in repositories.py:1368 but is unreachable via HTTP API.
-- [not_fixed][frz:-][trust:-] **backend-B/§19 E3**: volume_scanner 排名内存态，重启丢失
-    - fix: Persist volume ranking to a DB table (or reuse universe scanner run rows) so it survives restart, or accept ephemerality and document it.
-    - refs: aletheia/agent_runtime/scheduler.py:85-90,1512, aletheia/universe/service.py:150-152
-    - evidence: aletheia/agent_runtime/scheduler.py:85 _latest_volume_ranking: dict = {} is a module-level in-memory global, populated at :1512 _latest_volume_ranking.update(...) and read via get_latest_volume_rankin
-- [not_fixed][frz:-][trust:-] **backend-B/§19 E5**: operator retire_strategy 无超时降级，PI 不在跑则卡住
-    - fix: Add a 24h staleness check: if a recommend_retire pi_decision is unconfirmed after 24h, escalate (notify operator) or apply a safe default. Same pattern needed for _action_demote_strategy at :586.
-    - refs: aletheia/agent_shell/operator_loop.py:555-583
-    - evidence: aletheia/agent_shell/operator_loop.py:555-583 _action_retire_strategy writes a recommend_retire pi_decision and notifies pi_daemon, returning status='recommended'. There is NO 24h timeout/fallback: if
+- [fixed:2026-06-30-verified][frz:-][trust:-] **backend-B/§19 E3**: volume_scanner 排名内存态，重启丢失
+    - fix: ALREADY FIXED — scheduler.py:1702 每次扫描后调 save_volume_ranking_snapshot() 写 DB；get_latest_volume_ranking() 重启后从 volume_ranking_snapshots 表恢复。grep 核实 2026-06-30。
+    - refs: aletheia/agent_runtime/scheduler.py:1702, aletheia/storage/repositories.py:1922
+- [fixed:2026-06-30][frz:-][trust:-] **backend-B/§19 E5**: operator retire_strategy 无超时降级，PI 不在跑则卡住
+    - fix: 新增 _check_stale_recommendations()：每次 operator loop 运行时查 recommend_retire/recommend_demote 超 24h 未确认的 pi_decisions，升级为 notify_operator。OL-C10 spec 锁定。
+    - refs: aletheia/agent_shell/operator_loop.py (_check_stale_recommendations)
 - [fixed:2026-06-30-verified][frz:-][trust:-] **backend-B/§19 F6**: symbol_map ~30 个硬编码 CoinGecko slug，未知币 KeyError
     - fix: ALREADY FIXED — to_coingecko_id() 已改用 _CG_SLUG.get(canon) 返回 None，无 KeyError。grep 核实 2026-06-30。
     - refs: aletheia/data/sources/symbol_map.py
@@ -447,10 +445,9 @@ groups: ['test-debt', 'human-ui', 'runtime', 'anti-halluc', 'fix-plan-0626', 'fr
     - fix: 在前端 Settings 页加 Regime/Guard 配置控件覆盖这些字段(冻结期不能改的字段做只读展示)。违反 CLAUDE.md Config↔UI rule。
     - refs: aletheia/config/schema.py:431-435, aletheia/config/schema.py:477-482, frontend/src/
     - evidence: schema.py:431-435 RegimeConfig(enabled/min_hold_periods/bias_threshold/short_enabled) + :477-482 GuardConfig(enabled/enforce_in_paper_ranker/auto_promote_enabled/min_matching_trades/max_score_penalty)
-- [not_fixed][frz:-][trust:-] **backend-B/§16.4 CR-PI-01**: scanner family 权重调整不持久化 (不调 save_config)
-    - fix: Add a scanner family-weight config field to schema.py + frontend Settings, then persist via save_config() in _action_adjust_scanner_weight. Changes autonomous tuning behavior — was freeze-sensitive; freeze now lifted.
-    - refs: aletheia/agent_shell/operator_loop.py:894-903
-    - evidence: aletheia/agent_shell/operator_loop.py:894-903 _action_adjust_scanner_weight only calls _record_action + logger.info and returns status='executed' — NO save_config() call, no schema field written. The 
+- [fixed:2026-06-30][frz:-][trust:-] **backend-B/§16.4 CR-PI-01**: scanner family 权重调整不持久化 (不调 save_config)
+    - fix: schema.py UniverseConfig 加 scanner_weights 字段；_action_adjust_scanner_weight 调 load_config()/save_config() 持久化；Settings.tsx 加只读展示区(Config↔UI rule)；OL-C09 spec 锁定。
+    - refs: aletheia/config/schema.py (scanner_weights), aletheia/agent_shell/operator_loop.py (_action_adjust_scanner_weight), frontend/src/pages/Settings.tsx 
 - [not_fixed][frz:-][trust:-] **backend-B/§19 E2**: UTA 无法区分 0 余额 vs 缺凭据 (无 connected_brokers 字段)
     - fix: Add connected_brokers: list[str] (broker_ids that returned an account) to UnifiedState so consumers/UI distinguish 0-balance from missing-creds. The accounts/errors lists already carry the raw data.
     - refs: aletheia/portfolio/uta/manager.py:13-21

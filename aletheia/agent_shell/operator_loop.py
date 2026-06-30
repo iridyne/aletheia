@@ -951,6 +951,17 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
     if not family or delta == 0:
         return {"action": "adjust_scanner_weight", "status": "skipped", "reason": "no family or zero delta"}
     _record_action("adjust_scanner_weight", param=family, detail=f"delta={delta}")
+    # Persist the new weight to config so it survives restarts (CR-PI-01).
+    try:
+        from aletheia.config.loader import load_config, save_config
+        cfg = load_config()
+        weights = dict(cfg.universe.scanner_weights)
+        current = weights.get(family, 1.0)
+        weights[family] = round(max(0.1, min(3.0, current + delta)), 3)
+        cfg.universe.scanner_weights = weights
+        save_config(cfg)
+    except Exception as e:
+        logger.warning("operator: scanner_weight persist failed: %s", e)
     logger.info("operator: adjusted scanner weight %s by %.2f — %s", family, delta, action.reason)
     return {"action": "adjust_scanner_weight", "status": "executed",
             "family": family, "delta": delta}
@@ -1312,6 +1323,54 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     return actions
 
 
+# ─── Stale recommendation escalation ─────────────────────────────────────────
+
+def _check_stale_recommendations() -> list[dict]:
+    """Escalate recommend_retire/recommend_demote pi_decisions that have been
+    pending for >24h without PI confirmation, notifying the operator.
+
+    Does NOT auto-execute the retirement — that would bypass the PI Agent review
+    flow. It only notifies so the operator/owner can manually trigger PI or act.
+    One notification per stale decision, rate-limited by the standard daily cap.
+    """
+    from datetime import datetime, timezone, timedelta
+    from aletheia.storage.sqlite import get_db
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, action, proposal_id, reasoning, created_at FROM pi_decisions"
+        " WHERE action IN ('recommend_retire', 'recommend_demote')"
+        " AND created_at < ?"
+        " ORDER BY created_at ASC",
+        (cutoff,),
+    ).fetchall()
+    if not rows:
+        return []
+
+    notifications = []
+    for row in rows:
+        strat_id = (row["proposal_id"] or "?")[:8]
+        action_label = "retire" if row["action"] == "recommend_retire" else "demote"
+        hours_pending = max(0, round(
+            (datetime.now(timezone.utc) -
+             datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))).total_seconds() / 3600
+        ))
+        msg = (f"Strategy {strat_id}: {action_label} recommendation unconfirmed for "
+               f"{hours_pending}h — PI Agent may not be running. Review and confirm manually.")
+        notify_action = OperatorAction(
+            action_type="notify_operator",
+            level=1,
+            params={"message": msg},
+            reason=f"stale_{action_label}_recommendation:{strat_id}",
+        )
+        result = _action_notify(notify_action)
+        result["stale_pi_decision_id"] = row["id"]
+        notifications.append(result)
+
+    return notifications
+
+
 # ─── Main Loop Entry Point ───────────────────────────────────────────────────
 
 def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
@@ -1354,6 +1413,10 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
         else:
             result = _execute_level1_action(action)
             results.append(result)
+
+    # Phase 3b: Escalate stale retire/demote recommendations (E5 fix)
+    stale_results = _check_stale_recommendations()
+    results.extend(stale_results)
 
     # Phase 4: Persist assessment as knowledge_item
     summary = {

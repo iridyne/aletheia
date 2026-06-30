@@ -961,6 +961,20 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
         }} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
       </div>
       <SaveMsg msg={msg} />
+      {universe?.scanner_weights && Object.keys(universe.scanner_weights).length > 0 && (
+        <div className="mb-3">
+          <span className="settings-field-label">Scanner weights (operator-adjusted, read-only)</span>
+          <div className="settings-field-grid">
+            {Object.entries(universe.scanner_weights as Record<string, number>).map(([family, w]) => (
+              <label className="settings-field" key={family}>
+                <span>{humanize(family)}</span>
+                <input type="number" value={w} readOnly className="mono" />
+              </label>
+            ))}
+          </div>
+          <p className="hint m-0">Adjusted autonomously by the PI Operator. Reset via <code>aletheia config set universe.scanner_weights &#123;&#125;</code>.</p>
+        </div>
+      )}
       <p className="hint">
         When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
         and feeds the top {maxCandidates} to agents. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.
