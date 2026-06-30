@@ -200,6 +200,19 @@
   - 影响：trust §5.4 positive expectancy gate 用 `positions.realized_pnl`——pre-fee；break-even 策略被误判正期望；分阶段加仓时前次手续费不入 PnL
   - 最小修复：`close_position` 时累加该 position 关联 fills 的 fee 后再写 realized_pnl
 
+- **✅ FIXED 2026-06-30 — `post_trade_reviewer` 每 4h 重复评估相同 fill 池，生成 2012+ 冗余 review**
+  - 佐证（修复前）：`agents/post_trade_reviewer.py` 无幂等保护；每次运行 `list_fills(limit=200)` 取相同静态 fill 池并逐策略调 LLM，无 skip 逻辑；`knowledge_hash_exists` 因 LLM 输出文本每次略变而无法拦截
+  - 影响：post_trade_review 知识库写入 2012 条（有效 ~8 条），检索池被冗余反思稀释；`post_trade_review gate` 的 strategy-specific 查询命中被幻觉文本淹没
+  - 修复（commit #见 Task #10）：新增 `_fills_window_key(strategy_id, fills)` 用 SHA-256 对排序后 fill-id 集合做指纹；新增 `_review_already_written(strategy_id, window_key)` 查 `knowledge_items.tags LIKE '%window:KEY%'`；写入时加 `tags=["window:{key}"]`；相同 fill 集合跳过 LLM 调用
+  - SDD: LP-IDEM `tests/specs/spec_learning_pipeline.py` GREEN
+
+- **✅ FIXED 2026-06-30 — `dreaming_agent._extract_lessons` evidence_json 恒空，246 条 ps_lessons 永卡 proposed**
+  - 佐证（修复前）：`dreaming_agent._extract_lessons` 用 `store.create(evidence={})` 写 ps_lessons，`evidence_json` 为空；`lesson_reviewer` 拿不到数值证据 → 每次 `defer` → 246 条 lessons 永远 proposed，无一晋升 accepted
+  - 影响：负反馈闭环完全失效（lesson 池 proposed 无法被 PI agent 通过 `retrieve_lessons` 检索到）；learning loop audit 的 "zero promotion" 根因之一
+  - 修复：`_extract_lessons` 从 trade_case_study frontmatter 构建确定性聚合证据（`outcome_counts`, `avg_pnl_pct`, `factor_keys`, `scanner_families`, `case_count`）并 merge 进 LLM 输出 evidence；确定性证据优先（LLM 可能 skip 该字段）
+  - 数据清理：246 条旧 empty-evidence proposed lessons 已归档；保留 85 条新窗口 lessons 待 lesson_reviewer 评估
+  - SDD: LP-EVIDENCE `tests/specs/spec_learning_pipeline.py` GREEN
+
 ### 2.3 Risk 引擎与执行
 
 - **§21.3 单笔风险检查只在 live 启用，paper/demo 无界**

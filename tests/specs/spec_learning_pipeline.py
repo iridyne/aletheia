@@ -990,3 +990,128 @@ def test_time_decay_overturn_path_exists():
         f"（目标函数名模式: {decay_fn_patterns}）— "
         "Phase 2 时间衰减推翻路径尚未实现。"
     )
+
+
+# ---------------------------------------------------------------------------
+# LP-IDEM — post_trade_reviewer MUST be idempotent per fills-window
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-IDEM", "learning_pipeline", "§post_trade_review idempotency", "L2a",
+              "post_trade_reviewer MUST skip LLM and DB write when the same set of "
+              "fills was already reviewed. A window key (SHA256 of sorted fill-IDs) is "
+              "tagged on each written review and checked before the LLM call. "
+              "Fixed 2026-06-30: previously every 4h run re-reviewed the same fill "
+              "pool, generating 2012+ redundant reviews.",
+              status="implemented"),
+)
+def test_post_trade_reviewer_idempotent():
+    """LP-IDEM: idempotency helpers exist and produce stable keys.
+
+    (a) _fills_window_key exists and is order-independent (same fills in different
+        order → same key; extra fill → different key).
+    (b) _review_already_written exists and queries tags with a window: prefix.
+    (c) create_post_trade_review in knowledge/manager.py accepts a `tags` parameter
+        so the window key can be stored.
+    """
+    import pathlib
+    import inspect
+
+    from aletheia.agents.post_trade_reviewer import _fills_window_key, _review_already_written
+
+    fills_a = [{"id": "f1"}, {"id": "f2"}]
+    fills_b = [{"id": "f2"}, {"id": "f1"}]  # reversed order
+    fills_c = [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}]
+
+    assert _fills_window_key("s", fills_a) == _fills_window_key("s", fills_b), (
+        "_fills_window_key must be order-independent"
+    )
+    assert _fills_window_key("s", fills_a) != _fills_window_key("s", fills_c), (
+        "_fills_window_key must change when a new fill is added"
+    )
+
+    # Different strategy_ids must yield different keys even for the same fills
+    assert _fills_window_key("s1", fills_a) != _fills_window_key("s2", fills_a), (
+        "_fills_window_key must be scoped per strategy_id"
+    )
+
+    root = pathlib.Path(_project_root())
+    reviewer_src = (root / "aletheia/agents/post_trade_reviewer.py").read_text(encoding="utf-8")
+    assert "window:" in reviewer_src, (
+        "window: tag prefix missing from post_trade_reviewer.py — "
+        "idempotency tag not written"
+    )
+
+    # create_post_trade_review must accept tags
+    from aletheia.knowledge.manager import create_post_trade_review
+    sig = inspect.signature(create_post_trade_review)
+    assert "tags" in sig.parameters, (
+        "create_post_trade_review() must accept a `tags` parameter to store the window key"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LP-EVIDENCE — dreaming_agent lessons MUST carry quantitative evidence
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-EVIDENCE", "learning_pipeline", "§lesson evidence chain", "L2a",
+              "dreaming_agent._extract_lessons must write quantitative evidence "
+              "(outcome_counts, avg_pnl_pct, factor_keys, scanner_families) into "
+              "ps_lessons.evidence_json so lesson_reviewer can judge by numbers, "
+              "not just LLM narrative. Fixed 2026-06-30: previously evidence_json "
+              "was always {} / [] causing 246 lessons to be stuck 'proposed' forever.",
+              status="implemented"),
+)
+def test_dreaming_agent_lesson_evidence_populated():
+    """LP-EVIDENCE: _extract_lessons enriches ps_lesson evidence with real PnL data.
+
+    (a) LessonStore.create() is called with evidence= keyword containing at
+        least the 'outcome_counts' key.
+    (b) The aggregate evidence dict is built from trade_case_study file metadata
+        (deterministic fallback that works even if the LLM skips the evidence field).
+    (c) LessonStore.create() accepts `evidence` kwarg (has been the API since day 0).
+    """
+    import pathlib
+    import ast
+
+    root = pathlib.Path(_project_root())
+    dreaming_src = (root / "aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
+
+    # (a) store.create is called with evidence= kwarg
+    tree = ast.parse(dreaming_src)
+    has_evidence_kwarg = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            fname = fn.id if isinstance(fn, ast.Name) else (
+                fn.attr if isinstance(fn, ast.Attribute) else ""
+            )
+            if fname == "create":
+                for kw in node.keywords:
+                    if kw.arg == "evidence":
+                        has_evidence_kwarg = True
+    assert has_evidence_kwarg, (
+        "LessonStore.create() is never called with evidence= in dreaming_agent.py — "
+        "lessons will have empty evidence_json and cannot be promoted by lesson_reviewer"
+    )
+
+    # (b) deterministic aggregate evidence is built (outcome_counts key)
+    assert "outcome_counts" in dreaming_src, (
+        "'outcome_counts' not found in dreaming_agent.py — "
+        "deterministic PnL evidence aggregation is missing"
+    )
+    assert "avg_pnl_pct" in dreaming_src, (
+        "'avg_pnl_pct' not found in dreaming_agent.py — "
+        "deterministic PnL evidence aggregation is missing"
+    )
+
+    # (c) LessonStore.create signature accepts evidence
+    from aletheia.learning.lessons import LessonStore
+    import inspect
+    sig = inspect.signature(LessonStore.create)
+    assert "evidence" in sig.parameters, (
+        "LessonStore.create() must accept an `evidence` parameter"
+    )

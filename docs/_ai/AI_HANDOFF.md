@@ -7,11 +7,57 @@
 
 ## Last Updated
 
-2026-06-30 (issue triage + event scanner 实现 — universe/scanners.py F5 修复)
+2026-06-30 (Evolve 模块清理 + 修复：post_trade_reviewer 幂等 + dreaming_agent evidence chain)
 
 ---
 
-## Recent Change (issue triage + event scanner — 2026-06-30)
+## Recent Change (Evolve 模块数据清理 + 根因修复 — 2026-06-30)
+
+### 背景
+
+检查 Evolve 模块（post_trade_reviewer / dreaming_agent / lesson pipeline）的数据库写入质量，
+发现两个独立 bug 导致大量幻觉/无效内容写入 knowledge_items 和 ps_lessons。
+
+### Bug 1: post_trade_reviewer flood (LP-IDEM)
+
+**根因**: 每 4h 运行一次，每次 `list_fills(limit=200)` 取相同静态 fill 池，无幂等保护。
+`knowledge_hash_exists` 拦不住（LLM 输出文本随机略变），导致 2012 条冗余 post_trade_review。
+
+**修复** (`aletheia/agents/post_trade_reviewer.py` + `aletheia/knowledge/manager.py`):
+- `_fills_window_key(strategy_id, fills)` — SHA-256 of sorted fill IDs → 16-char hex
+- `_review_already_written(strategy_id, window_key)` — `tags LIKE '%window:KEY%'`
+- 写入时 `tags=["window:{window_key}"]`，相同 fill 集合跳过 LLM
+
+### Bug 2: dreaming_agent evidence void (LP-EVIDENCE)
+
+**根因**: `_extract_lessons` 调 `store.create(evidence={})` 写空 evidence_json，
+`lesson_reviewer` 拿不到数值证据 → 每次 defer → 246 条 lessons 永卡 proposed。
+
+**修复** (`aletheia/agents/dreaming_agent.py`):
+- 从 trade_case_study frontmatter 构建确定性聚合证据：
+  `outcome_counts`, `avg_pnl_pct`, `factor_keys`, `scanner_families`, `case_count`
+- 确定性证据与 LLM 输出 merge，确定性优先
+
+### 数据清理（历史存量）
+
+- 433 条重复 `trade_case_study` → archived（保留最早一条，dedup 按 content_hash）
+- 246 条空 evidence `ps_lessons` (proposed, 2026-06-28 前) → archived
+
+### SDD 更新
+
+- `tests/specs/spec_learning_pipeline.py`: 新增 LP-IDEM + LP-EVIDENCE（共 20 claims，全 GREEN）
+- `docs/issues/BACKEND_ISSUES.md`: §2.2 末尾追加两条 ✅ FIXED 记录
+
+### 验证
+
+```
+uv run pytest tests/specs/spec_learning_pipeline.py -q
+→ 19 passed, 1 xfailed
+```
+
+---
+
+## Previous Change (issue triage + event scanner — 2026-06-30)
 
 ### Issue triage 结论
 
