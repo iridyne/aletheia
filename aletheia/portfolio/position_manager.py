@@ -381,8 +381,9 @@ def evaluate_open_positions() -> dict:
             # Route through the shared helper so the exchange leg is never skipped
             # (live positions are already filtered out above; demo modes still need
             # their real exchange close, paper closes locally).
-            close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
-            closed += 1
+            close_result = close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
+            if close_result.get("closed", True):
+                closed += 1
         except Exception as e:
             logger.warning("close failed for %s: %s", p["id"], e)
     return {"checked": checked, "closed": closed, "market_exits": market_exits}

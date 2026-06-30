@@ -306,7 +306,7 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
             order_type="market",
             quantity=quantity,
             reduce_only=True,
-            client_oid=close_order.id,
+            client_oid=f"close-{position_id}",
         )))
     except Exception as e:
         update_order(close_order.id, status="error", error_reason=str(e)[:500])
@@ -318,8 +318,25 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
             pass
 
     exchange_order_id = order_resp.order_id or ""
-    update_order(close_order.id, exchange_order_id=exchange_order_id, status="filled",
-                 filled_at=datetime.utcnow().isoformat())
+    confirmed_close = order_resp.status == "filled"
+    close_status = "filled" if confirmed_close else (
+        "partial" if order_resp.status == "partially_filled" else "submitted"
+    )
+    update_order(
+        close_order.id,
+        exchange_order_id=exchange_order_id,
+        status=close_status,
+        filled_at=datetime.utcnow().isoformat() if confirmed_close else None,
+    )
+    if not confirmed_close:
+        return {
+            "order_id": close_order.id,
+            "exchange_order_id": exchange_order_id,
+            "status": close_status,
+            "closed": False,
+            "fill_price": None,
+            "fill_quantity": 0,
+        }
 
     fill_price = order_resp.fill_price if order_resp.fill_price else float(row.get("current_price") or row["entry_price"])
     fill_qty = order_resp.filled_quantity if order_resp.filled_quantity else quantity
@@ -333,6 +350,8 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
     return {
         "order_id": close_order.id,
         "exchange_order_id": exchange_order_id,
+        "status": "filled",
+        "closed": True,
         "fill_price": fill_price,
         "fill_quantity": fill_qty,
     }

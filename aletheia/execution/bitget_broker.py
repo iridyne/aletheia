@@ -307,31 +307,49 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         raise
 
     exchange_order_id = order_resp.order_id or ""
-    filled = order_resp.status in ("filled", "partially_filled")
-    exit_price = order_resp.fill_price if (filled and order_resp.fill_price) else (
-        row.get("current_price") or row["entry_price"]
+    confirmed_close = order_resp.status == "filled"
+    close_status = "filled" if confirmed_close else (
+        "partial" if order_resp.status == "partially_filled" else "submitted"
     )
-    fill_qty = order_resp.filled_quantity if (filled and order_resp.filled_quantity) else quantity
     fee_rate = _DEMO_FEE_RATE
 
     update_order(
         close_order.id,
         exchange_order_id=exchange_order_id,
-        status="filled" if filled else "submitted",
-        filled_at=datetime.utcnow().isoformat() if filled else None,
+        status=close_status,
+        filled_at=datetime.utcnow().isoformat() if confirmed_close else None,
     )
-    if filled:
-        insert_fill(Fill(
-            order_id=close_order.id,
-            fill_price=exit_price,
-            fill_quantity=fill_qty,
-            fee=fill_qty * exit_price * fee_rate,
-        ))
+    if not confirmed_close:
+        return {
+            "order_id": close_order.id,
+            "exchange_order_id": exchange_order_id,
+            "close_order_id": close_order.id,
+            "status": close_status,
+            "closed": False,
+            "position_id": position_id,
+            "fill_price": None,
+            "fill_quantity": 0,
+        }
+
+    exit_price = order_resp.fill_price if order_resp.fill_price else (
+        row.get("current_price") or row["entry_price"]
+    )
+    fill_qty = order_resp.filled_quantity if order_resp.filled_quantity else quantity
+    insert_fill(Fill(
+        order_id=close_order.id,
+        fill_price=exit_price,
+        fill_quantity=fill_qty,
+        fee=fill_qty * exit_price * fee_rate,
+    ))
 
     # Realize PnL + write the position_closed audit (pnl.close_position handles both).
     result = close_position(position_id, exit_price=float(exit_price), reason=reason)
     result["exchange_order_id"] = exchange_order_id
     result["close_order_id"] = close_order.id
+    result["status"] = "filled"
+    result["closed"] = True
+    result["fill_price"] = exit_price
+    result["fill_quantity"] = fill_qty
     return result
 
 
