@@ -673,3 +673,45 @@ def test_symbol_check_registry_modes(monkeypatch):
     monkeypatch.setattr(repo, "list_universe_assets", lambda *a, **kw: [])
     reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_testnet")
     assert reason_empty is None, "Empty registry must fail-open, not block orders"
+
+
+# ---------------------------------------------------------------------------
+# EX-C03 — gateway is the sole hard gate: trust/guard_chain is NOT wired in
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-C03", "execution_contract", "§1 sole hard gate", "L2c",
+        "gateway.py does not import guard_chain nor call run_guards() — the trust guard "
+        "chain is advisory observability, never an execution verdict. The sole hard gate "
+        "on the order path is risk/engine.py:evaluate_proposal (risk_engine_contract §2). "
+        "Wiring a guard into execution requires updating both contracts + this claim.",
+    ),
+)
+def test_gateway_does_not_wire_guard_chain():
+    """AST-scan gateway.py imports + text-scan for run_guards(). The disconnection of
+    trust/guard_chain from the execution path is INTENTIONAL (advisory-only); locking it
+    prevents silent wiring (a hidden hard block) AND mistaking the disconnection for a bug."""
+    from pathlib import Path
+
+    src = Path(__file__).parents[2] / "aletheia" / "execution" / "gateway.py"
+    text = src.read_text(encoding="utf-8")
+    tree = ast.parse(text)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            mod = (getattr(node, "module", "") or "")
+            assert "guard_chain" not in mod, (
+                f"gateway.py imports from guard_chain ({mod!r}) — trust guard chain must "
+                "NOT be wired into execution (advisory only; sole hard gate = risk engine)"
+            )
+            for alias in node.names:
+                assert "guard_chain" not in alias.name and "run_guards" not in alias.name, (
+                    f"gateway.py imports {alias.name!r} from the guard chain — execution must "
+                    "not consume guard verdicts (EX-C03)"
+                )
+    assert "run_guards(" not in text, (
+        "gateway.py calls run_guards() — guard chain must not gate execution (EX-C03; "
+        "the sole hard gate is risk/engine.py:evaluate_proposal)"
+    )

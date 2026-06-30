@@ -10,6 +10,11 @@
 >
 > **核实覆盖**:8 组完成(251 项),backend-A(BACKEND_ISSUES §1/§2/§3)单独补跑中,完成后并入。
 
+> **✅ 部分 RECONCILED 2026-06-30**（见 [REMAINING_WORK_2026-06-30](../status/REMAINING_WORK_2026-06-30.md)）— 对 P3c 残余 + §批次3 表逐条 grep 核实:
+> - **实际已做**(下方 §115/§150/批次3 表仍标"未开始/待修"为**过期**)：CUM-ADD per-symbol cap = 风控 check #19(`engine.py:289`)｜broker opportunity_id = 4 broker 全有(`EX-S06/EX-B09` spec)｜B4 PostSubmitDBError = `binance_broker.py:169`+`okx_broker.py:231` 已 raise｜EH-1 §17.2 fail-closed = check #15/16/17 异常返 violation(`engine.py:687`)。
+> - **确认仍 OPEN**：CR-EX-01 OKX/Binance live 不对账(`reconciliation.py:24-25` `_UNRECONCILED_LIVE_MODES`，partial 准确)。
+> - **P3d 一般/UI/test 债**：本次**仅抽验上述项**,其余(volume_scanner 内存态/operator retire 超时/BinanceClient eager-init/FK CASCADE/dreaming_log 孤儿/scanner weight 持久化/UI honesty 6 项)**未逐条核实,保守仍视为 OPEN**,收口前须 grep。
+
 ## 实施进度(滚动更新)
 
 ### 🟢 第三批(2026-06-27 数据集成会话)— Round 2 macro signals 5 Steps
@@ -213,8 +218,8 @@
 | **B1** kill-switch confirm_release 二次确认 | 待修 | routes/risk.py:80-92 | 防误解锁 |
 | **B-P1-2** risk_critic 类型洗白(research_note) | 待修 | risk_critic.py:42 | 新 item_type 或文档化 |
 | **B-P1-5** broker fee reconcile 真实回填 | partial(estimated marker 已修) | reconciliation.py | 仅 live 有意义 |
-| **B4** PostSubmitDBError 替代 type:ignore | 待修 | binance_broker.py:163 + okx_broker.py:225 | |
-| **EH-1 §17.2** risk engine fail-open guards | needs spec-first | risk/engine.py | 异常应 fail-closed(拒) |
+| **B4** PostSubmitDBError 替代 type:ignore | ✅ 已修(2026-06-30 核实) | binance_broker.py:169 + okx_broker.py:231 | raise PostSubmitDBError |
+| **EH-1 §17.2** risk engine fail-open guards | ✅ 已修(2026-06-30 核实) | engine.py:687 等 | check #15/16/17 异常返 violation(fail-closed) |
 | **CR-EX-01** _LIVE_MODE 硬编码 bitget | partial(告警在) | reconciliation.py:21-68 | OKX/Binance live reconcile |
 
 ## 批次 4 — 一般 bug + dead code + UI honesty + 测试债(P3d)· 可 Workflow 并行(独立低风险)

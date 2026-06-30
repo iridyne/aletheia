@@ -351,3 +351,49 @@ def test_content_health_response_is_level1_notify_only():
                     found_notify_level1 = True
     assert found_notify_level1, \
         "content_health branch must emit a Level-1 notify_operator action"
+
+
+# ---------------------------------------------------------------------------
+# OL-S12 — two-loop separation: supervision loop owns the recommend_* namespace
+# in the shared pi_decisions bus (PI_OPERATOR_DESIGN_DECISIONS §问题2, INV-OPS-1)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-S12", "operator_layer", "§问题2 pi_decisions action namespace", "L2c",
+        "Supervision loop (operator_loop) writes ONLY recommend_* actions into the shared "
+        "pi_decisions bus — never trading-env actions (signal_pending/trade/close/reduce). "
+        "The two control loops are disambiguated by the action namespace, NOT signal_source "
+        "(INV-OPS-1). Structural root-fix for the 'three components, don't conflate' problem.",
+        status="implemented",
+    ),
+)
+def test_operator_loop_writes_only_recommend_actions():
+    """AST-scan operator_loop.py for PiDecision(action="...") literals. The supervision
+    loop must only emit recommend_* (e.g. recommend_retire/recommend_demote); writing a
+    trading-env action here would re-entangle the two control loops."""
+    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    trading_actions = {"signal_pending", "trade", "close", "reduce", "scale_in", "flip", "skip"}
+    written: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "PiDecision"):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "action" and isinstance(kw.value, ast.Constant):
+                written.add(kw.value.value)
+
+    assert written, "No PiDecision(action=...) literal found in operator_loop.py"
+    leaked = written & trading_actions
+    assert not leaked, (
+        f"operator_loop (supervision loop) writes trading-env action(s) {leaked} into "
+        "pi_decisions — it must only write recommend_* (INV-OPS-1). Trading actions belong "
+        "to the trading loop (paper_trader / PI), never the supervision loop."
+    )
+    assert all(a.startswith("recommend_") for a in written), (
+        "operator_loop wrote non-recommend action(s): "
+        f"{ {a for a in written if not a.startswith('recommend_')} }"
+    )

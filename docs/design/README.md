@@ -45,6 +45,8 @@ L4 状态/参考   status/* · references/* · _ai/* ── 现在是什么样/�
 | [knowledge_contract](knowledge_contract.md) | Knowledge 检索子系统 / LessonStore / GuardStore / 双轨断裂清单 | ✅ 金标准(批次6 新建) |
 | [scheduler_contract](scheduler_contract.md) | 调度器 job 清单 / 频率 / 执行器分组 / 故障隔离 | ✅ 金标准(批次6 新建) |
 | [audit_chain_contract](audit_chain_contract.md) | 审计链完整性 / risk_decisions / 操作日志 / 不可变性要求 | ✅ 金标准(批次6 新建) |
+| [decision_lifecycle_contract](decision_lifecycle_contract.md) | **横切脊柱**:opportunity→PiDecision→TradeProposal 各 seam + 中间载体(Opportunity/TradingDecision/signal_pending)字段语义 + conviction 门 | ✅ 金标准(新建 2026-06-30) |
+| [persistence_recovery_contract](persistence_recovery_contract.md) | 重启不丢单/仓/经验 + 恢复 FSM(STARTING→RECOVERY_MODE→SAFE_FREEZE) + client_oid 幂等;逐项标 AS-BUILT | 🟡 契约(构件已实现,恢复 FSM 未接 runtime — 新建 2026-06-30) |
 
 ### 子系统设计
 
@@ -70,6 +72,7 @@ L4 状态/参考   status/* · references/* · _ai/* ── 现在是什么样/�
 | 文档 | 性质 |
 |------|------|
 | [SYSTEM_MAP](SYSTEM_MAP.md) | 全模块概念地图 — 数据采集/Agent决策/风控执行/知识学习/配置 全景 + 管道状态 |
+| [DOC_ATLAS_BY_DOMAIN](DOC_ATLAS_BY_DOMAIN.md) | **按功能域**索引全部文档(12 域 × 契约/spec/计划/issue/状态) — 第四种导航视角 |
 | [SDD_METHODOLOGY](SDD_METHODOLOGY.md) | Spec-Driven Development 六阶段工作流 + 11原则 + Clarify 检查清单 |
 
 ---
@@ -97,6 +100,8 @@ docs/design/*_contract.md  →  tests/specs/spec_*.py  →  Conformance Matrix
 | `spec_subsystem_observers.py` | EQUITY_INTEGRATION_DESIGN + PREDICTION_MARKET_DESIGN | 8 |
 | `spec_audit_chain.py` | audit_chain_contract | 5 |
 | `spec_pipeline_adopted_position.py` | pipeline_adopted_position | 9 (含 P1-2 PL-ADOPT-09 audit hash chain-in) |
+| `spec_decision_lifecycle.py` | decision_lifecycle_contract | 5 (DL-S01/S02/S03/S04/C01 — 横切 seam 契约) |
+| `spec_persistence.py` | persistence_recovery_contract | 5 (PR-S01~S04 + PR-C01 恢复未接 runtime tripwire；非 REQUIRED,🟡 部分实现) |
 
 另有 `test_architecture_fitness.py`（依赖方向 fitness functions）独立于 claim 体系。
 
@@ -108,10 +113,12 @@ docs/design/*_contract.md  →  tests/specs/spec_*.py  →  Conformance Matrix
 
 批次6 已补全知识、调度器、审计链三份契约，新增四份 spec_*.py（32 新增 claims）。
 
-当前已知缺口：
+当前已知缺口（2026-06-30 复核，与 [REMAINING_WORK](../status/REMAINING_WORK_2026-06-30.md) 对齐）：
+- P0（功能,非文档）：**Phase 2A 可执行策略** — strategy `entry_rule/exit_rule` 死字符串，paper_trader 只按 direction+confidence 交易，晋级门衡量"方向运气"非"规则验证"（REMAINING_WORK §1.1 + execution_path_honesty §1.3）。
+- P1: `persistence_recovery_contract` 恢复 FSM（RECOVERY_MODE/SAFE_FREEZE）**未接 gateway 启动** — 招牌安全保证当前未生效（spec `PR-C01` tripwire 守），接 live 前必接通。
 - P2: `PREDICTION_MARKET_DESIGN` 契约仅观察阶段，spec_subsystem_observers.py 中对应 claims 标记 `status="missing"`，待 Polymarket/Kalshi 集成实现后升至 L2b。
 - P3: `ui_design_system` 无对应 spec_*.py — 前端设计规范可执行性低，暂不强制。
-- P3: `RegimeConfig` / `GuardConfig` / `MarketAwareExitsConfig` 三个 config 类无前端控制（见 SYSTEM_MAP §五）。
+- P3: `RegimeConfig` / `GuardConfig` 两个 config 类无前端控制（`MarketAwareExitsConfig` 已 5/9 接入，见 SYSTEM_MAP §五）。
 
 ---
 
@@ -121,3 +128,6 @@ docs/design/*_contract.md  →  tests/specs/spec_*.py  →  Conformance Matrix
 - **发现代码与契约不符**:文档为准——记 [issue](../issues/BACKEND_ISSUES.md),不擅自改契约迁就代码。
 - **契约确需改**:触及信任边界的(risk/execution/live)按 [trust §6](../governance/trust_and_change_control.md) change control 流程。
 - **新功能开发**:走 [SDD 六阶段](SDD_METHODOLOGY.md) → Constitution → Specify → Clarify → Plan → Tasks → Implement。
+- **契约内"⚠️ 漂移/免责"标注**:必须在 [BACKEND_ISSUES](../issues/BACKEND_ISSUES.md) 有对应条目(带 file:line),让漂移标注有统一落点而非孤立堆积。
+- **状态 ≠ 意图**:本层契约是"该是什么样"(意图);**当前真相看 `aletheia doctor` + conformance matrix**;issues/plans ledger 是历史/意图,**不可当当前状态读**(ledger 易只进不出而失真,见 [REMAINING_WORK §0](../status/REMAINING_WORK_2026-06-30.md))。
+- **完工即收口**:PR 落地某 plan/ledger 项时,同改动内把该项标 done 或归档;plan 的 spec 全绿时文件头标 `STATUS: IMPLEMENTED`,移出 active 区。

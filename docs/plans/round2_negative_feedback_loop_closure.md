@@ -1,5 +1,7 @@
 # Round 2 — 负反馈闭环修复计划（高维自进化版）
 
+> **✅ RECONCILED 2026-06-30 — 已合并 master**（见 [REMAINING_WORK_2026-06-30 §3](../status/REMAINING_WORK_2026-06-30.md)）：commit `dd559a7`「close the negative-feedback loop」已在 master（`git branch --no-merged` 已无 neg-feedback 分支）；`spec_insight_feedback_loop` 全绿。下方"待上线：FF merge"为历史状态。剩余仅"后续可选"项（reconciler regime_tag / 历史 case study 回溯）。
+
 > 目标：让"用交易结果调整未来交易行为"**真正闭合**，且符合 owner 定调——**高维模式归因 + 可被后续证据推翻的 self-evolve + 全自动**，摒弃低维 symbol/direction/scanner 硬拦截。
 > 状态：**✅ 已实施（分支 worktree-neg-feedback-loop-fix，2026-06-28）**。全量 1758 passed，本次改动零回归（4 个失败为 master 上 pre-existing：config_routes/retention/serenity_workbench，与本次无关）。spec_insight_feedback_loop 7 claims 全绿。**待上线：FF merge 回主仓 + gateway restart + aletheia doctor 验证（worktree data/ 为空，doctor 须在主仓跑）。**
 >

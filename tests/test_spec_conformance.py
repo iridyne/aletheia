@@ -129,6 +129,15 @@ def _import_all_specs():
         # Lesson block guards (LG-*): dry-run window + TTL expiry before block takes effect.
         # Attaches to risk_engine_contract (trust boundary, already REQUIRED). 2026-06-29.
         spec_lesson_guards,
+        # Decision lifecycle contract (DL-*): the cross-cutting opportunity → PiDecision
+        # → TradingDecision → TradeProposal spine. Governs the SEAMS between subsystems
+        # (carrier field semantics) that per-subsystem contracts don't cover. 2026-06-30.
+        spec_decision_lifecycle,
+        # Persistence/Recovery contract (PR-*): event/artifact stores + deterministic
+        # client_order_id + recovery FSM class. Code-ahead-of-wiring domain — PR-C01 is a
+        # self-correcting tripwire marking the FSM-not-wired-into-startup gap. Not REQUIRED
+        # (🟡 partial implementation). 2026-06-30.
+        spec_persistence,
     )
 
 
@@ -145,6 +154,7 @@ REQUIRED_CONTRACTS = [
     "data_layer_contract",
     "operator_layer",
     "audit_chain_contract",
+    "decision_lifecycle_contract",
     # subsystem observer claims register under "agent_contracts" by design —
     # equity_observer / prediction_observer are agents, not a separate contract.
 ]

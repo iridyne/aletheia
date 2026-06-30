@@ -61,8 +61,8 @@
 |------|---------|---------|------|
 | knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/strategy_designer) | ✅ |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | paper_trader_ranker(evaluate_guards), risk_engine(check#15) | ✅ |
-| **ps_lessons (LessonStore)** | dreaming_agent | **仅 persistence API** | ❌ 与 knowledge_fts 完全脱钩 |
-| **ps_skills (SkillStore)** | **无生产者** | 仅 persistence API | ❌ 空壳 |
+| ps_lessons (LessonStore) | dreaming_agent | trading_context Layer3 → PI prompt → risk engine #15(accepted) | ⚠️ 双轨:**影响决策**但不进 knowledge_fts(有意设计,见 knowledge_contract §6.A1) |
+| ps_skills (SkillStore) | **无生产者** | 仅 persistence API | ⚠️ aspirational:Tier2/3 预留架构,当前惰性(见 knowledge_contract §6.A2) |
 
 ---
 
@@ -79,7 +79,7 @@
 | OperatorConfig | 9 | 11% | 8字段无UI(多为内部参数) |
 | **RegimeConfig** | 4 | **0%** | 完全无控制 |
 | **GuardConfig** | 5 | **0%** | 完全无控制 |
-| **MarketAwareExitsConfig** | 9 | **0%** | 后端schema有但未接入 |
+| MarketAwareExitsConfig | 9 | ~56% (5/9) | enabled/urgent/tighten/collapse/atr 已接入(Settings.tsx:1648);max_signal_age 等 4 字段无 UI |
 
 ---
 
@@ -87,12 +87,12 @@
 
 | 级别 | 问题 | 影响 |
 |------|------|------|
-| A1 | ps_lessons ↔ knowledge_fts 双轨脱钩 | 经验学习无法影响决策 |
-| A2 | ps_skills 无生产者 | 技能系统完全惰性 |
+| A1 | ~~ps_lessons↔FTS 脱钩~~ → **已澄清为有意双轨** | 经验经 LessonStore→PI prompt→risk 影响决策;不入 FTS 是设计选择(knowledge_contract §6.A1) |
+| A2 | ps_skills 无生产者 | **aspirational**:Tier2/3 预留,当前惰性(非缺陷,§6.A2) |
 | A3 | liquidation_events 不进风控 | 清算数据采集浪费 |
-| B1 | detect_contradictions() 是 stub | 矛盾检测静默失效 |
-| B2 | serenity 4表只写不消费 | dreaming 产出无决策价值 |
+| B1 | detect_contradictions() 是 stub | 未实现;**UI 禁呈现"无矛盾"为正面**(已诚实文档化 §6.B1) |
+| B2 | serenity 4表 → promote→PiDecision **已闭环** | 原始4表仍不进 FTS,但 promote 路径已建(spec_serenity_promote) |
 | C1 | 6个analytics端点无前端UI | 已有能力不可达 |
-| C2 | 3个Config类无前端控制 | regime/guard/exits 只能手编yaml |
+| C2 | Regime/Guard Config 无前端控制(MarketAwareExits 已部分接入) | regime/guard 只能手编 yaml |
 
-> A1/A2/B1 的根因分析及修复路径详见 [knowledge_contract.md §6](knowledge_contract.md)。C1/B2/A3 记录于 [BACKEND_ISSUES.md](../issues/BACKEND_ISSUES.md)。
+> A1/A2/B1 现状(已澄清 / aspirational / honestly-stubbed)详见 [knowledge_contract.md §6](knowledge_contract.md)。C1/A3 记录于 [BACKEND_ISSUES.md](../issues/BACKEND_ISSUES.md)。**Last reviewed 2026-06-30**(本表 §四/§五/§六 已对齐当前代码与契约)。

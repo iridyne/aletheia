@@ -5,6 +5,8 @@
 > 金标准冲突裁决:**文档为准,代码追文档**(已实现部分的偏差记为"待修 issue")。
 > Created: 2026-06-21 · 基于一次全量审计(~100 份文件 / >1MB)
 
+> **✅ 进展更新 2026-06-30**：§3「明显缺失需新建」的 P1/P2 契约（Risk/Execution/Live/Promotion/Knowledge/Scheduler/Audit）**均已建为金标准**（批次 1/2/6）。此后再增两份本计划未预见的契约：**`design/decision_lifecycle_contract`**（横切脊柱 seam —— 新契约类别，补"按域竖切、子系统接缝无人管"的结构空白）+ **`design/persistence_recovery_contract`**（D8，🟡 构件已实现/恢复 FSM 未接 runtime）。新增第四种导航 **`design/DOC_ATLAS_BY_DOMAIN`**（按功能域）。**收口纪律**（契约漂移标注须落 BACKEND_ISSUES / 状态≠意图只看 doctor+conformance / 完工即收口）已落入 [design/README §用法](../design/README.md)——直接修 §1 诊断里"ledger 只进不出"的病根。全景见 [status/REMAINING_WORK_2026-06-30](../status/REMAINING_WORK_2026-06-30.md)。
+
 ---
 
 ## 1. 核心诊断:问题不是"不够细",是"层次混淆"

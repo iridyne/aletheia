@@ -4,6 +4,8 @@
 **来源**: docs/issues/AI_BERKSHIRE_INTEGRATION_ANALYSIS_2026-06-28.md  
 **当前分支**: worktree-lazy-drifting-clarke → merge 后入 master
 
+> **✅ RECONCILED 2026-06-30**（见 [REMAINING_WORK_2026-06-30 §3](../../status/REMAINING_WORK_2026-06-30.md)）：**P0(S4 强制裁决 / S2 可研究性) + P1 之 S1(4 视角并行) 已实现**——`spec_serenity_verdict` / `spec_serenity_researchability` / `spec_serenity_multi_lens` 均注册且 conformance 绿；P2 的 `TradingDecision.bear_case` 字段已落地（`trading_decision.py:89`）。**待核实**：S3 信息质量门控、P3(D1/D2/U1/U2 数据质量/日志) 的实现度，下次收口逐条确认。
+
 ---
 
 ## 总览：整合的核心思路

@@ -19,10 +19,11 @@
 
 ---
 
-## 2. 检查关卡(代码实际 16 关)
+## 2. 检查关卡(代码实际 20 关,含 6b 子关)
 
-> ⚠️ **偏差**:[SYSTEM_ARCHITECTURE_GUIDE](../SYSTEM_ARCHITECTURE_GUIDE.md) 第五章称"五关审批",代码实际是 16 关。
-> 以下 16 关为金标准;ARCH_GUIDE 的"五关"是简化叙事,待该文档批次3标注。
+> ⚠️ **偏差**:[SYSTEM_ARCHITECTURE_GUIDE](../SYSTEM_ARCHITECTURE_GUIDE.md) 第五章称"五关审批",代码实际是 20 关(0–16 + 6b/17/18/19)。
+> 以下 20 关为金标准;ARCH_GUIDE 的"五关"是简化叙事,待该文档批次3标注。
+> 历史:本表曾止于 16 关;6b(跨 broker/池同标的去重)、17(账户杠杆比)、18(爆仓缓冲)、19(单标的累计名义)为后续追加,**2026-06-30 补齐契约**(代码↔spec 早已存在,FL-S08/S09 守 17/18;契约滞后已修)。
 
 | # | 关卡 | 判断 | config 字段 | 失败标签 | 位置 |
 |---|------|------|------------|---------|------|
@@ -33,6 +34,7 @@
 | 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
 | 5 | Max Position Notional | live/demo 上限 + 回撤缩放 | `risk.max_{live/demo}_position_notional_usdt` | `exceeds_max_position_notional:{n}>{cap}` (live path); `exceeds_demo_position_notional:{n}>{cap}` (demo path, engine.py:128) | :109 |
 | 6 | Max Open Positions | live/demo 持仓数 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
+| 6b | Cross-pool Symbol Dedup | 同 live/demo 池内同标的禁止重复开仓(防跨 broker 重复) | —(始终启用) | `symbol_already_open:{sym}` | :141 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
 | 8 | Max Daily Loss | 日损突破→**自动触发 kill switch** | `risk.max_daily_loss_pct`, `kill_switch_enabled_{live/demo}` | `max_daily_loss_exceeded:{r}<=-{lim}` | :145 |
 | 9a | Exchange Allowlist | 交易所匹配(self-contained 豁免) | `risk.allowed_exchange` | `exchange_not_allowed:{a}!={e}` | :162 |
@@ -44,10 +46,18 @@
 | 14 | Strategy Lifecycle | live 仅 `live_candidate/live_limited` | `_LIVE_ELIGIBLE_STATES` | `strategy_not_live_eligible:{state}` | :211 |
 | 15 | Lesson Constraints | 已接受教训的 block_{symbol/direction/scanner} | `LessonStore.recommendation_json` | `lesson_block_{symbol/...}:{id}:{v}` | :240 |
 | 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta` | `sector_concentration/portfolio_beta:...` | :245,387 |
+| 17 | Account Leverage Ratio | 期货:Σ(notional×lev)/equity ≤ 上限;**fail-closed**(异常即拒) | `risk.max_account_leverage_{live(1.5)/demo(3.0)}` | `account_leverage_ratio:{r}x>{cap}x` / `account_leverage_check_error:internal_failure` | :640 (FL-S08) |
+| 18 | Liquidation Buffer | 期货(lev>1):估算爆仓价距入场 ≥ buffer% | `risk.min_liquidation_buffer_pct`(5.0) | `liquidation_too_close:{g}%<{b}%` | :695 (FL-S09) |
+| 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限) | `risk.max_per_symbol_notional_usdt` | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
 
 > ⚠️ 关卡 #11 的 `_MAX_DATA_AGE_SECONDS` 是模块常量,非 config 字段。若要 config 化需迁移 + 测试。
 >
 > ⚠️ 关卡 #5 的回撤缩放(`_portfolio_drawdown_scale`, engine.py:356):缩放系数(0-5% DD→1.0, 5-10%→1.0→0.5, 10-20%→0.5→0.0, >20%→0)由组合回撤驱动。**回撤的数据源**:交易所模式(okx_demo/*_demo/live)读 `portfolio_snapshots` 的 `exchange_account` 行(真实账户 equity),**不读**每个 mode 自己的行——后者的 `total_value_usdt` 是持仓 notional(Σqty×price)而非 equity,平掉盈利持仓会让 notional 暴跌被误判成回撤、把 cap 缩到 $0 锁死开仓(2026-06-25 实证:okx_demo notional 272→16 平盈利单,真实账户全程 ~$88k,却拒了一整批 Short)。`paper_internal` 无交易所账户,其 mark-to-market `total_value_usdt` 即 equity,保持原路径。spec: RE-B05(分段)+ RE-B05a(数据源)。
+
+> **唯一硬门 & guard 澄清(2026-06-30)**:订单通路(`submit_proposal`→执行)上,**`evaluate_proposal()` 是唯一硬门**。另有两套也叫 "guard" 的东西**不在执行通路上裁决**:
+> (1) `trading_decision` 守卫链 → 仅写 `decision_meta['guards']`,advisory(spec PI-S02 守);
+> (2) `trust/guard_chain.py:run_guards()` → **gateway 从不 import/调用**(spec `EX-C03` 锁),其 `block` 裁决无执行力,属观测性基础设施。
+> 区分:knowledge `trading_guards` 的 `blocking` 模式在**排序阶段**剔除候选(`paper_trader_ranker.py:412`,见 [knowledge_contract §4.5](knowledge_contract.md))——那是开仓前的 advisory-to-ranking,**不是**执行硬门。若未来要把某条 guard 升为硬拦,必须改本契约 + 接线 gateway + 改 EX-C03,不可静默接线。
 
 ---
 

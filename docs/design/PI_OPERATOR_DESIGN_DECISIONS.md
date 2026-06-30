@@ -75,6 +75,21 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 | **Trading Decision** (现有) | 每 15min tick | 秒级不重要 | pass/open/scale_in |
 | **Operator Assessment** (新增) | 每 4h + 事件触发 | 分钟级 | config patch / delegation / alert |
 
+### pi_decisions 共享总线:action 命名空间(不变式)
+
+两个环都把记录写进同一张 `pi_decisions` 表 —— **它是多生产者共享总线**,环的区分键是 `action` 命名空间(**不是** `signal_source`;`signal_source` 只在交易环内区分机会来源 market_observer/serenity,见 `decision_lifecycle_contract §2.2`)。
+
+| 写入方 | file:line | action 取值 | 归属 |
+|--------|-----------|------------|------|
+| `paper_trader` | `paper_trader.py:143/235` | `signal_pending` | 交易环(信号收集) |
+| PI Agent(经 reflection) | `agent_shell/reflection.py:59` | `trade`/`skip`/`close`/`reduce`(= `TradingDecision.action`) | 交易环(决策记录) |
+| `operator_loop` | `operator_loop.py:597/628` | `recommend_retire` / `recommend_demote` | **监管环** |
+| `strategy_designer` | `strategy_designer.py:615/679` | `recommend_promote` | **策略生成**(非监管环 —— owner 定调 2026-06-30) |
+
+**不变式(INV-OPS-1)**:监管环写入方(`operator_loop`)**绝不**写交易动作(`signal_pending`/`trade`/`close`/...),只写 `recommend_*`;反之交易环写入方不写 `recommend_*`。下游(`trading_context` 读 `signal_pending`、PI 消费 `recommend_*`)**必须**按 `action` 命名空间区分,不得跨环误读。spec `OL-S12` 锁定。
+
+> 这条不变式是"PI Agent 三组件混称"问题(见本文顶部警告框)的**结构化根治**:把"哪个环写哪些 action"显式化后,审计不再需要靠语义猜测两环边界。
+
 ### Operator 的触发时机
 
 **定时唤醒（4h cadence）**：

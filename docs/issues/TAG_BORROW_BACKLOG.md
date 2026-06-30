@@ -6,6 +6,10 @@
 > **决策记录**: [`../_ai/DECISIONS.md`](../_ai/DECISIONS.md) 2026-06-29 条目（5 个设计取舍 + 拒绝清单）
 > **历史 review**: [`../references/openalice_prism_review.md`](../references/openalice_prism_review.md)（2026-06-10 一次性分析）+ [`../references/INDEX.md §4`](../references/INDEX.md) 借鉴清单
 
+> **✅ RECONCILED 2026-06-30**（见 [REMAINING_WORK_2026-06-30 §3](../status/REMAINING_WORK_2026-06-30.md)）：
+> **P0-1 + P1-2 已合并入 master**（`b8ed990` / `31eb1a9`，merge `b9a4ac5`；`git branch --no-merged master` 已无此分支）——下表"待 owner 审核 merge"为历史状态。
+> **仍 OPEN（状态不变）**：P0-2 / P1-1 / P0-3 均触 trust boundary，待 owner 显式批准。
+
 ---
 
 ## 一句话核心

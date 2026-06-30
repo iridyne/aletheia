@@ -15,6 +15,11 @@
 > audit 跑完后亲核发现 **A4、A2 两条均为误报**，根因相同：audit agent **系统性混淆了三套组件** —— ① **TS operator-shell**（`operator-shell/` node 子进程，gateway spawn，正在跑、写 "operator" 心跳）② Python `operator_loop.py`（4h job）③ Python `pi_daemon.py`（交易决策 daemon）。
 > **重大后果**：C 类"概念愿景未实现"很可能**大半是"TS operator-shell 已实现、Python 没有"**（8 modes/多级 cadence/stuck-task/Auto Repair 的实现载体疑似是 `operator_loop.ts`，非 Python）。即"未实现"清单严重高估。**正派 agent 正在厘清 TS 实现度，清单待修正后才能定 P2 真实工作量** —— 在此之前不在 Python 重复造 TS 已有的东西。
 
+> **✅ RECONCILED 2026-06-30**（见 [REMAINING_WORK_2026-06-30 §3](../status/REMAINING_WORK_2026-06-30.md)）：
+> - **§A5 cadence drift 已修**：`pi_trading_decision` 实为 `~15min fallback`（`scheduler.py:398`，interval=`_pi_fallback_min`；`300.0` 是 timeout 非 interval），不再算成 1min。
+> - **§C 两套 operator 边界已形式化**：本次会话补 `PI_OPERATOR_DESIGN_DECISIONS §问题2` 的 `pi_decisions.action` 命名空间不变式 + spec `OL-S12`（AST 锁 operator_loop 只写 `recommend_*`）。两环判别键 = `action` 命名空间（非 signal_source）已成可执行契约。
+> - **仍 OPEN**：§B PI 三层 context 注入的行为 spec（需 LLM mock fixture）、recommend_* consume 端 spec、operator paused/Level-2 artifact spec。
+
 ---
 
 ## A. 确凿真缺陷（代码与已落地契约不符，方向明确，建议修）

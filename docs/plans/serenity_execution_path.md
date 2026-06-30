@@ -2,7 +2,7 @@
 
 > 2026-06-27 | 上游报告：`docs/research/SERENITY_PHILOSOPHY_AND_INTEGRATION_ANALYSIS_2026-06-27.md`
 > Owner 拍板记录：memory `aletheia-serenity-integration-decisions`
-> 状态：**待 owner 审批**。审批前不写代码。
+> 状态：**✅ RECONCILED 2026-06-30 — 已实现**（见 [REMAINING_WORK_2026-06-30 §3](../status/REMAINING_WORK_2026-06-30.md)）。原"待 owner 审批，审批前不写代码"为历史；owner 已拍板 Option A 并落地：Phase 1–5 各有 spec 守且 conformance 全绿 —— `spec_serenity_evidence`(D2 生成≠评测 + tier 词表统一) / `spec_serenity_attribution`(Phase 2) / `spec_serenity_promote`(Phase 3) / `spec_serenity_holding`(Phase 4 trade_school) / `spec_serenity_live_readiness`(Phase 5 结构预埋)。个别长期持有退出行为细节如有残留，单列核实，不影响"已实现"判定。
 
 ---
 

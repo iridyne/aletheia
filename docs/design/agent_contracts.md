@@ -15,7 +15,7 @@
 | 2 | market_observer | 15min | observer | Scan for trading opportunities |
 | 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
-| 5 | paper_trader | 5min | agents | Execute paper trades from pending signals |
+| 5 | paper_trader | 5min | agents | Collect signals → signal_pending PiDecisions (PI Agent submits proposals — Phase 4a) |
 | 6 | pi_trading_decision | ~15min (configurable) | agents | PI Agent heartbeat (daemon fallback) |
 | 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
@@ -118,9 +118,9 @@
 - **Trigger**: scheduler every 5min
 - **Inputs**: Active strategies (paper_running), opportunities, universe features, PI decisions
 - **LLM**: No (pure rule evaluation)
-- **Outputs**: trade_proposals, signal_pending PiDecisions
-- **Side effects**: Creates proposals; writes signal_pending decisions for PI Agent consumption
-- **Key invariant**: Never calls LLM; never executes orders directly
+- **Outputs**: signal_pending PiDecisions (Phase 4a: PI Agent is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
+- **Side effects**: Writes signal_pending decisions for PI Agent consumption; RuleSet exit signals may close positions directly
+- **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)
 
 #### PI Agent (pi_trading_decision / pi_daemon)
 
@@ -144,11 +144,12 @@
 #### position_manager
 
 - **Trigger**: scheduler every 5min
-- **Inputs**: Open positions, current prices, strategy exit rules, PI exit decisions
+- **Inputs**: Open positions, current prices, ruleset exit signals, market-aware exit signals
 - **LLM**: No
 - **Outputs**: Position closes (status=closed, realized_pnl computed)
 - **Side effects**: Calls close_position(); updates exchange TP/SL orders; writes audit events
-- **Exit triggers**: stop_loss, take_profit, max_hold_time, trailing_stop, PI exit decision
+- **Exit triggers**: stop_loss, take_profit, max_hold_time, trailing_stop, ruleset_exit, market_aware_exit. (PI Agent exits run **independently** via `review_portfolio_state`, NOT inside this loop — see `execution_contract.md §10`.)
+- **Pause semantics**: runs even when `runtime.paused` (manages existing risk; never blocks protective close — aligned with kill_switch, see `execution_contract.md §10.3`)
 
 ---
 
@@ -188,7 +189,7 @@
 - **Trigger**: scheduler every 6h
 - **Inputs**: Open positions, risk config, recent violations, portfolio exposure
 - **LLM**: Yes (risk assessment)
-- **Outputs**: knowledge_items (item_type=risk_lesson), risk flag annotations on opportunities
+- **Outputs**: knowledge_items (item_type=**research_note**, metadata.subtype=risk_lesson — `risk_critic.py:42` calls `create_research_note()`; `risk_lesson` is not a top-level item_type, see `knowledge_contract.md §2.1`), risk flag annotations on opportunities
 - **Side effects**: May flag opportunities as risk_blocked; writes risk_decisions
 
 #### dreaming_daily

@@ -44,7 +44,8 @@ def test_risk_check_result_schema():
 
 @spec_claim(
     SpecClaim("RE-S04", "risk_engine_contract", "§2 check count", "L2a",
-              "At least 16 distinct violation tokens exist in engine source"),
+              "At least 16 distinct violation tokens exist in engine source (coarse floor; "
+              "the authoritative enumeration is 20 checks 0-16 + 6b/17/18/19 in contract §2)"),
 )
 def test_risk_engine_has_minimum_check_count():
     """Count unique violation string literals in _evaluate_proposal_locked."""
