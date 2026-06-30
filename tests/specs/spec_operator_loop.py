@@ -775,7 +775,7 @@ def test_knowledge_item_is_structured_selfheal_store():
         "modify_prompt_fragment、modify_config_fragment——对应产品定义 D6 §L2人工确认行。"
         "三个动作须在集合中注册，operator layer dispatcher 才能路由到正确 handler，"
         "人工确认门控才能接管。",
-        status="missing",
+        status="implemented",
     ),
 )
 def test_l2_selfheal_action_types_registered():

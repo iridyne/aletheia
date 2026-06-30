@@ -1707,6 +1707,17 @@ async def _async_data_collectors(cfg, tick: int) -> None:
         except Exception as e:
             logger.debug("volume_scanner collection failed: %s", e)
 
+        # Coinalyze cross-exchange aggregated OI + liquidations (requires API key).
+        # Replaces dead CoinGlass/CCXT/Bitget-OI paths. Skips gracefully when no key.
+        try:
+            if getattr(cfg.market_data, "enable_coinalyze", True):
+                from aletheia.data.collectors.coinalyze import CoinalyzeCollector
+                cz_result = await _bounded(CoinalyzeCollector().collect(symbols), "coinalyze", 12.0, _deadline) or {}
+                if cz_result.get("errors"):
+                    logger.debug("coinalyze collection errors: %s", cz_result["errors"])
+        except Exception as e:
+            logger.debug("coinalyze collection failed: %s", e)
+
         # Hyperliquid cross-venue perp OI + funding (zero key). Self-persists to the
         # funding/OI tables tagged exchange="hyperliquid" (excluded from the primary
         # per-symbol read, so it never pollutes the venue the LLM sees).

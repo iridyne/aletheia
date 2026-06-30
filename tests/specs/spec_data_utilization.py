@@ -261,15 +261,6 @@ def test_regime_is_inline_not_separate_collector():
 # DU-S06 — CoinalyzeCollector is registered in scheduler + config fields exist
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "NOT YET IMPLEMENTED — scheduler 接入 tripwire: "
-        "CoinalyzeCollector 尚未注册到 scheduler._async_data_collectors，"
-        "且 config/schema.py 尚未定义 enable_coinalyze / coinalyze_api_key。"
-        "接入完成后去掉 xfail。"
-    ),
-)
 @spec_claim(
     SpecClaim(
         "DU-S06", _CONTRACT, "§coinalyze scheduler + config", "L2a",
@@ -277,7 +268,7 @@ def test_regime_is_inline_not_separate_collector():
         "（仿 HyperliquidCollector 模式），且 config/schema.py 定义了 "
         "enable_coinalyze（bool）和 coinalyze_api_key（str|None）字段。"
         "两个结构断言共同保证：采集器不仅存在，还被实际调度，且可通过配置启停。",
-        status="missing",
+        status="implemented",
     ),
 )
 def test_coinalyze_registered_in_scheduler_and_config():

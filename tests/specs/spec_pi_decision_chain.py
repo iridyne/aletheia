@@ -172,10 +172,6 @@ def test_recommend_promote_gates_paper_running(tmp_path, monkeypatch):
 import pytest  # noqa: E402 — placed after existing imports to avoid reshuffling
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NOT YET IMPLEMENTED — A路架构要求 observe_market/observe_chain/observe_macro 注册为 PI tool，当前 registry 只有 run_market_scan（A路结构缺口）",
-)
 @spec_claim(
     SpecClaim(
         "PCI-G02",
@@ -185,7 +181,7 @@ import pytest  # noqa: E402 — placed after existing imports to avoid reshuffli
         "market_observer 在 PI 的 agent_shell tool registry 中存在对应工具定义——A路架构结构证明："
         "observers 是 PI 的工具而非独立发言方。tool registry 中必须存在含 'observe_market'、"
         "'observe_chain' 或 'observe_macro' 命名（或等价命名）的工具注册条目。",
-        status="missing",
+        status="implemented",
     )
 )
 def test_observer_tools_registered_in_pi_tool_registry():
@@ -349,11 +345,6 @@ def test_risk_engine_does_not_read_operator_permission_mode(tmp_path, monkeypatc
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NOT YET IMPLEMENTED — create_research_note/create_dreaming_log/create_daily_review "
-    "handlers 当前不含 docs/ 前缀路径拒绝逻辑，等待实现（file_artifacts 路径守卫的互补断言）",
-)
 @spec_claim(
     SpecClaim(
         "PCI-G07",
@@ -363,7 +354,7 @@ def test_risk_engine_does_not_read_operator_permission_mode(tmp_path, monkeypatc
         "create_research_note、create_dreaming_log、create_daily_review 等低风险写命令的"
         " backend_handler 不接受以 'docs/' 开头的路径参数——PCI-G03 的互补断言，防止 PI 通过"
         "低风险命令绕过 file_artifacts.py 路径守卫直接覆盖宪法文档。",
-        status="missing",
+        status="implemented",
     )
 )
 def test_low_risk_write_commands_reject_docs_prefix_path():

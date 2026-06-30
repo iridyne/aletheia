@@ -834,6 +834,9 @@ async def resume_agents(params: dict) -> dict:
 async def create_research_note(params: dict) -> dict:
     title = params.get("title", "Untitled Research Note")
     content = params.get("content", "")
+    # PCI-G07: reject docs/ prefix path — PI must not overwrite constitution docs via low-risk commands
+    if str(params.get("path") or "").startswith("docs/") or str(title).startswith("docs/"):
+        return {"error": "Path rejected: docs/ prefix is reserved for human-authored documents (PCI-G07)."}
     if not content:
         return {"error": "Cannot create a research note without content."}
 
@@ -866,6 +869,9 @@ async def create_strategy_draft(params: dict) -> dict:
 async def create_dreaming_log(params: dict) -> dict:
     title = params.get("title", "Dreaming Log")
     content = params.get("content", "")
+    # PCI-G07: reject docs/ prefix path — PI must not overwrite constitution docs via low-risk commands
+    if str(params.get("path") or "").startswith("docs/") or str(title).startswith("docs/"):
+        return {"error": "Path rejected: docs/ prefix is reserved for human-authored documents (PCI-G07)."}
     if not content:
         return {"error": "Cannot create a dreaming log without content."}
 
@@ -1104,6 +1110,9 @@ async def test_extension_sandbox(params: dict) -> dict:
 async def create_daily_review(params: dict) -> dict:
     title = params.get("title", "Daily Review")
     content = params.get("content", "")
+    # PCI-G07: reject docs/ prefix path — PI must not overwrite constitution docs via low-risk commands
+    if str(params.get("path") or "").startswith("docs/") or str(title).startswith("docs/"):
+        return {"error": "Path rejected: docs/ prefix is reserved for human-authored documents (PCI-G07)."}
     if not content:
         return {"error": "Cannot create a daily review without content."}
 

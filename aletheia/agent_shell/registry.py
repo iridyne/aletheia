@@ -260,6 +260,35 @@ COMMANDS: dict[str, CommandDef] = {
         audit_event_type="operator_mark_strategy_under_review",
         backend_handler="mark_strategy_under_review",
     ),
+    # A路架构 observer-as-tool 命令：PI 把 observer 作为工具调用而非独立发言方。
+    # 这三条注册条目是 PCI-G02 (A路结构证明) 的代码锚点，handler 由 commands.py 实现。
+    "observe_market": CommandDef(
+        name="observe_market",
+        risk_class="read",
+        worker_permission_required="Observe",
+        operator_permission_required="ReadOnly",
+        description="Run market observer for given symbols and return structured market snapshot",
+        audit_event_type="operator_observe_market",
+        backend_handler="observe_market",
+    ),
+    "observe_chain": CommandDef(
+        name="observe_chain",
+        risk_class="read",
+        worker_permission_required="Observe",
+        operator_permission_required="ReadOnly",
+        description="Run on-chain / macro observer and return structured macro context",
+        audit_event_type="operator_observe_chain",
+        backend_handler="observe_chain",
+    ),
+    "observe_macro": CommandDef(
+        name="observe_macro",
+        risk_class="read",
+        worker_permission_required="Observe",
+        operator_permission_required="ReadOnly",
+        description="Return latest macro context (F&G, LSR, funding, dominance) as structured data",
+        audit_event_type="operator_observe_macro",
+        backend_handler="observe_macro",
+    ),
     "run_market_scan": CommandDef(
         name="run_market_scan",
         risk_class="controlled_operational",

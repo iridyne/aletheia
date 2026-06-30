@@ -150,6 +150,11 @@ class MarketDataConfig(BaseModel):
     )
     # Third-tier fallback: CoinGecko + Binance public API when CCXT primary+fallback both fail.
     enable_crypto_fallback: bool = True
+    # Coinalyze cross-exchange OI + liquidation aggregator (requires API key).
+    # Replaces the dead CoinGlass/CCXT/Bitget-OI paths. Free tier: 100 req/day.
+    # Set coinalyze_api_key in secrets to enable; gracefully skips if absent.
+    enable_coinalyze: bool = True
+    coinalyze_api_key: str | None = None
     # Cross-source price divergence detection.
     price_divergence_threshold_pct: float = 2.0
     price_divergence_alert_enabled: bool = True

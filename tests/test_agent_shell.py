@@ -56,12 +56,12 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
 # --- Registry tests ---
 
 def test_registry_has_32_commands():
-    assert len(COMMANDS) == 40
+    assert len(COMMANDS) == 43
 
 
 def test_registry_all_read_commands_require_observe():
     read_cmds = [c for c in COMMANDS.values() if c.risk_level == "read"]
-    assert len(read_cmds) == 10
+    assert len(read_cmds) == 13
     for cmd in read_cmds:
         assert cmd.required_permission == "Observe"
 
@@ -142,12 +142,12 @@ def test_allowed_commands_observe():
     assert "pause_agents" not in cmds
     assert "create_review_report" in cmds
     assert "create_diagnostic_report" in cmds
-    assert len(cmds) == 16
+    assert len(cmds) == 19
 
 
 def test_allowed_commands_paper():
     cmds = allowed_commands("Paper")
-    assert len(cmds) == 40
+    assert len(cmds) == 43
 
 
 # --- Intent keyword fallback tests ---
