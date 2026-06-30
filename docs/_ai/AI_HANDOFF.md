@@ -7,7 +7,59 @@
 
 ## Last Updated
 
-2026-06-29 (OpenAlice TaG 深度研究 + P0-1 hash 基础设施 + P1-2 reconcile audit 链入 + 全量文档同步;同日 master 已合 Evolve 模块审计 + Learning 5-bug 修复 + Guards 子标签 — 两条并行工作合并)
+2026-06-30 (八域产品定义对话 + SDD 契约文档第一性原理重写 + ultracode workflow 29-gap 代码校准 — master 9c9862a)
+
+---
+
+## Recent Change (产品定义对齐 + SDD 代码校准 — 2026-06-30)
+
+### 八域产品定义对话
+与 owner 完成 8 个功能域深度确认（结果落 `docs/plans/product_definition_2026-06-30.md`）：
+
+- **PI Operator**：A路单 LLM 主环路（ReAct 风格），B路 council 模式 Phase 2 延后；六参考实现均确认 A路为生产标准
+- **交易品种**：perp + spot 同一 PI；Serenity Lens 为独立第二赛道（xStocks + dreaming_agent）
+- **数据层**：免费替代 CoinGlass/Glassnode → Coinalyze；技术指标尽量多采集；新源须在 data_utilization.md 预登记
+- **学习/进化**：Ranker 权重调整 + trading_memo 两路低/中风险学习；三阶段研究计划（`docs/plans/learning_mechanism_research_plan.md`）
+- **风控执行**：risk engine 保持独立最终审核；动态调整 defer Phase 2
+- **自愈层**：L0/L1/L2 三档；L1 可并行交易但 PI 批准前置；L2 须人工确认
+- **人机界面**：Command Center 心跳三宫格设计（`docs/plans/command_center_heartbeat_design.md`）
+- **失败退出**：当前 MVP 全 demo 阶段，kill 机制等 demo 达标再讨论
+
+### SDD 契约文档更新（5 份）
+- `live_unlock_contract.md §4b`：PI 全权 + UI 警示墙三要素不变式
+- `PI_OPERATOR_DESIGN_DECISIONS.md`：产品基线基准段
+- `knowledge_contract.md §8`：学习安全边界（Ranker / trading_memo / 风控不可修改）
+- `operator_layer.md`：自愈合同（L0/L1/L2 + PI 批准前置）
+- `data_utilization.md`：Coinalyze 规划 + DU-C01/C02 登记
+
+### GAP 修复（代码，commit 9c9862a）
+- `live.py`：live_unlock → operator.permission_mode=Auto；live_lock → ReadOnly（对称；GAP-LU-01）
+- `derivatives.py`：删除 `_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported` 死代码 87 行（GAP-DU-C02）
+- `coinalyze.py`（新建）：CoinalyzeCollector，清算+OI，key-guard 模式（GAP-DU-C01）
+- `operator_loop.py`：L1 自愈三动作 stub + OL-C08 xfail 守卫 PI 批准门（GAP-C08）
+- `Settings.tsx`：LiveUnlockWarningWall 三要素警示墙替换单行 confirm()（GAP-LU-03）
+- `registry.py`：Auto 权限模式补全
+
+### 新增 spec claims（5 个 spec 文件，~150+ claims）
+- `spec_live_unlock.py`：LU-B07/C04/C05/C06/C01b（§4b 全权 + 对称）
+- `spec_operator_loop.py`：OL-S11/S12/C07/C08
+- `spec_data_utilization.py`：DU-C01/C02/S04/S05
+- `spec_learning_pipeline.py`：LP-S12/S13 + KLS-G02 修正
+- `spec_insight_feedback_loop.py`：IFL-* 三处审计缺口
+
+### 验证
+408 claims / 99% 通过；1700 业务测试通过（Charts.tsx UI 规范违规为预先存在，非本次引入）
+
+### 剩余（defer）
+- CoinalyzeCollector scheduler 接入（config + `_async_data_collectors`）
+- OL-C08 PI 批准门接通（L1 自愈动作当前为 stub）
+- Command Center 心跳三宫格实现
+- 学习机制三阶段研究（Phase 1 学术论文）
+- B路 council 模式（Phase 2）
+
+---
+
+## Last Updated (prev)
 
 ---
 
