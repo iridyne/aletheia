@@ -1452,6 +1452,10 @@ _ADDITIVE_COLUMNS = [
     ("btc_beta", "universe_feature_snapshots", "REAL"),
     # Exchange-native TPSL bracket order IDs (JSON {"sl": id, "tp": id})
     ("exchange_tpsl_order_id", "positions", "TEXT"),
+    # Exchange close accepted but not confirmed filled; position stays open for exposure.
+    ("pending_close_order_id", "positions", "TEXT"),
+    ("pending_close_status", "positions", "TEXT"),
+    ("pending_close_requested_at", "positions", "TEXT"),
     # Derivatives signal dimensions for PI Agent direction guidance
     ("taker_buy_ratio", "universe_feature_snapshots", "REAL"),
     ("vol_ratio", "universe_feature_snapshots", "REAL"),
