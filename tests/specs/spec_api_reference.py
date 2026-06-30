@@ -14,6 +14,7 @@ Claim hierarchy
   API-S05  L2b  POST /api/risk/kill-switch without active param returns 422
   API-S06  L2c  No GET handler under /api/.*/credentials returns plaintext value
   API-S07  L2a  _PROTECTED_PATHS in app.py includes live-unlock and kill-switch
+  API-S08  L2b  Tunnel enabled + no token → protected paths return 401 (fail-closed)
 """
 
 import ast
@@ -354,3 +355,46 @@ def test_serenity_pipeline_route_exists():
     assert "/serenity/pipeline" in src, (
         "data.py must expose GET /serenity/pipeline endpoint (D7)"
     )
+
+
+@spec_claim(
+    SpecClaim(
+        "API-S08", "api_reference", "§tunnel-auth fail-closed", "L2b",
+        "When tunnel is enabled but tunnel_api_token is not set, "
+        "protected paths return 401 (fail-closed, not pass-through)",
+    ),
+)
+def test_tunnel_enabled_no_token_returns_401(tmp_path, monkeypatch):
+    """Regression guard: tunnel ON + missing token must be rejected, not allowed.
+
+    Before the fix (commit after 2026-06-30), the middleware only checked the
+    token when ``get_secret('tunnel_api_token')`` returned a truthy value — so a
+    missing token silently bypassed auth.  Now it must fail-closed with 401.
+    """
+    import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    # Build a config with tunnel enabled but no token in secrets.
+    # Modify the existing TunnelConfig in-place (AletheiaConfig is the root model).
+    cfg = AletheiaConfig()
+    cfg.tunnel.enabled = True
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    # Ensure get_secret returns None for tunnel_api_token.
+    import aletheia.config.secrets as secrets_mod
+    monkeypatch.setattr(secrets_mod, "get_secret", lambda key: None)
+
+    client = _make_test_client()
+
+    for path in ("/api/settings/live-unlock", "/api/risk/kill-switch"):
+        resp = client.post(path, json={"confirm": True, "active": True})
+        assert resp.status_code == 401, (
+            f"Expected 401 for {path} when tunnel is enabled with no token, "
+            f"got {resp.status_code}. "
+            "Tunnel enabled + no token must be fail-closed to prevent unauthenticated "
+            "public access to trust-boundary endpoints."
+        )

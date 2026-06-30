@@ -1408,7 +1408,13 @@ function LiveStateRow({ status, qc }: any) {
         setWarning(`Live credentials not reachable: ${r.error || 'unknown'}. Fix credentials first.`)
         msg = `⚠ Live creds did not connect (${r.error || 'unknown'}). Unlock anyway?`
       }
-    } catch { /* preflight failure shouldn't block user decision */ }
+    } catch {
+      // Intentional: credential pre-flight is advisory only. The backend enforces its
+      // own gate (state must be live_disabled + confirm=true). A network error here
+      // means we cannot verify credentials, but the user still gets the confirm dialog
+      // — they see the default warning text and can decide. The backend will catch any
+      // real credential issue when the first live order is attempted.
+    }
     if (confirm(msg)) unlock.mutate()
   }
 

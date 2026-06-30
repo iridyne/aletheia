@@ -442,21 +442,36 @@ _PROTECTED_PATHS = {
 
 @app.middleware("http")
 async def _tunnel_auth_guard(request, call_next):
-    """Block unauthenticated access to trust-boundary endpoints when tunnel is active."""
+    """Block unauthenticated access to trust-boundary endpoints when tunnel is active.
+
+    When tunnel.enabled=True, ALL protected paths require a valid X-Aletheia-Token
+    header — even if tunnel_api_token secret is not configured.  A missing token is
+    treated as a misconfiguration and the request is rejected (fail-closed), because
+    an enabled tunnel with no secret would expose live-unlock and kill-switch to the
+    public internet without any authentication.
+    """
     if request.url.path in _PROTECTED_PATHS:
         cfg = load_config()
         if getattr(cfg, "tunnel", None) and getattr(cfg.tunnel, "enabled", False):
             from aletheia.config.secrets import get_secret
+            from fastapi.responses import JSONResponse
             expected = get_secret("tunnel_api_token")
-            if expected:
-                import hmac as _hmac
-                token = request.headers.get("x-aletheia-token", "")
-                if not _hmac.compare_digest(token, expected):
-                    from fastapi.responses import JSONResponse
-                    return JSONResponse(
-                        {"detail": "Unauthorized: X-Aletheia-Token required when tunnel is active"},
-                        status_code=401,
-                    )
+            if not expected:
+                # Tunnel is on but no token configured — fail-closed to prevent
+                # unauthenticated public access to trust-boundary endpoints.
+                return JSONResponse(
+                    {"detail": "Tunnel is enabled but tunnel_api_token secret is not configured. "
+                               "Set tunnel_api_token via 'aletheia secrets set tunnel_api_token <value>' "
+                               "or disable the tunnel to access this endpoint locally."},
+                    status_code=401,
+                )
+            import hmac as _hmac
+            token = request.headers.get("x-aletheia-token", "")
+            if not _hmac.compare_digest(token, expected):
+                return JSONResponse(
+                    {"detail": "Unauthorized: X-Aletheia-Token required when tunnel is active"},
+                    status_code=401,
+                )
     return await call_next(request)
 
 app.include_router(health_router)
