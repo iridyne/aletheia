@@ -63,6 +63,23 @@ append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust
 
 ---
 
+## 4a. Core Philosophy：Demo 表现是 Live 的唯一入场券
+
+**不变式（D8-C01）**：`POST /api/settings/live-unlock` 在将状态迁移至 `live_limited` 之前，
+**必须**调用 `compute_scorecard()`，且 `composite_score >= 70` 方可放行。
+任何绕过此 scorecard 检查的路径均违反本约。
+
+**依据**：产品定义 §8（失败与撤退）。demo 阶段是 live 的前置证明期；
+没有量化证据支撑的 live 解锁等同于盲目冒险。
+
+**当前实现状态**：`server/routes/live.py` 尚未调用 `compute_scorecard()`——
+D8-B02 / D8-C01（`tests/specs/spec_kill_conditions.py`）是 xfail tripwire，
+实现后去掉 xfail。
+
+> 关联契约：[kill_conditions_contract.md § K3](kill_conditions_contract.md)
+
+---
+
 ## 4b. 开启 Live 后的 PI 全权模型
 
 **产品定义（2026-06-30）**：Live 模式一旦由人类开启，PI Operator 在 `Auto(4)` 权限下对主赛道（perp + spot）享有全权操作能力——开仓、平仓、调仓，无需逐笔人工确认。
@@ -76,6 +93,20 @@ append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust
 - PI 全权限于**主赛道**（perp/spot），第二赛道（xStocks/Serenity）由 serenity_executor 独立管辖
 - 全权 ≠ 宪法豁免：风控关卡（risk_engine 16→20 关）、FORBIDDEN_INTENTS、宪法文件（本契约 + risk_engine_contract）在 Live 全权下仍全部生效，PI 不能修改自身约束
 - Live 解锁仍须遵守 §2 的人工确认门，自动化流程不得绕过
+- **risk_engine.evaluate_proposal() 不读取 operator.permission_mode，Auto 模式不豁免任何风控关卡**（见 §4b-1）
+
+### §4b-1 risk_engine 不依赖 operator.permission_mode（L2c 不变式）
+
+`aletheia/risk/engine.py` 中的 `evaluate_proposal()` **不得**读取 `cfg.operator.permission_mode` 并做 skip/bypass 分支判断。
+
+**原因**：Operator 面的 `permission_mode`（ReadOnly/Research/PaperAuto/AllowEditing/Auto）控制 PI Agent 可以调用哪些命令，不影响 risk_engine 的判断逻辑。若 Auto 模式能豁免任何关卡，PI 可借助权限提升绕过资金安全约束。
+
+**当前实现（代码为准）**：`engine.py` 读取的是 Worker 面 `cfg.agent.permission_mode`，仅对 `Observe` 权限添加 `permission_mode_insufficient` violation，不存在 skip/bypass 分支。`operator.permission_mode` 不在 engine.py 中出现。
+
+**不变式（PCI-G06 锁定）**：
+- 任意 `operator.permission_mode` 值下，违规 proposal 均返回 `approved=False`
+- engine.py 不得新增形如 `if cfg.operator.permission_mode == "Auto": skip_check()` 的绕过逻辑
+- spec `PCI-G06` 通过源码扫描 + 行为断言双重验证此不变式
 
 ---
 

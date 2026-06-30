@@ -17,6 +17,8 @@
 
 **契约**:所有 proposal 必须且仅能通过 `evaluate_proposal` 取得放行;同一时刻只有一个 proposal 在评估(序列化)。
 
+**唯一入口不变式(RE-B17)**:执行网关 `_execute_proposal` 中每一条调用 broker 下单函数(`execute_paper_order` / `execute_live_order`)的代码路径,必须在 `risk_result.approved` 检查通过后才能到达——即 risk evaluation 必须前置且其结果被显式消费。不存在绕过 `evaluate_proposal` 直接触达 broker 的路径。可执行测试:spec `RE-B17`。
+
 ---
 
 ## 2. 检查关卡(代码实际 20 关,含 6b 子关)
@@ -24,12 +26,17 @@
 > ⚠️ **偏差**:[SYSTEM_ARCHITECTURE_GUIDE](../SYSTEM_ARCHITECTURE_GUIDE.md) 第五章称"五关审批",代码实际是 20 关(0–16 + 6b/17/18/19)。
 > 以下 20 关为金标准;ARCH_GUIDE 的"五关"是简化叙事,待该文档批次3标注。
 > 历史:本表曾止于 16 关;6b(跨 broker/池同标的去重)、17(账户杠杆比)、18(爆仓缓冲)、19(单标的累计名义)为后续追加,**2026-06-30 补齐契约**(代码↔spec 早已存在,FL-S08/S09 守 17/18;契约滞后已修)。
+> **四个新增关卡的失败 token(spec RE-S04b 锁定,floor ≥ 20)**:
+> - 6b → `symbol_already_open:{sym}`
+> - 17 → `account_leverage_ratio:{r}x>{cap}x` / `account_leverage_check_error:internal_failure`
+> - 18 → `liquidation_too_close:{g}%<{b}%`
+> - 19 → `exceeds_per_symbol_notional:{sym}:{proj}>{cap}`
 
 | # | 关卡 | 判断 | config 字段 | 失败标签 | 位置 |
 |---|------|------|------------|---------|------|
 | 0 | Kill Switch | `runtime.kill_switch_active` | `runtime.kill_switch_active` | `kill_switch_active` | engine.py:80 |
 | 1 | Symbol Filter | white/blacklist | `risk.symbol_filter_mode/symbol_list` | `symbol_blocked/not_allowed:{sym}` | :83 |
-| 2 | Market Allowed | spot/futures 开关 | `exchange.enabled_markets` | `{spot/futures}_market_disabled` | :93 |
+| 2 | Market Allowed | spot/futures 开关 | `exchange.enabled_markets` | `spot_market_disabled`（market_type=='spot' 且 enabled_markets['spot']==False）/ `futures_market_disabled`（market_type=='usdt_futures' 且 enabled_markets['usdt_futures']==False） | :93 |
 | 3 | Live State | 非 `live_disabled` | `live.state` | `live_disabled` | :99 |
 | 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
 | 5 | Max Position Notional | live/demo 上限 + 回撤缩放 | `risk.max_{live/demo}_position_notional_usdt` | `exceeds_max_position_notional:{n}>{cap}` (live path); `exceeds_demo_position_notional:{n}>{cap}` (demo path, engine.py:128) | :109 |
@@ -128,3 +135,37 @@ config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_s
 
 - [execution_path_honesty §1.2](../governance/execution_path_honesty.md):LLM 的 `direction_bias` 直接驱动下单方向,Risk Engine **不验证方向是否合理**——它只管账户/订单安全,不管"这个方向对不对"。这是有意的职责边界(risk 不依赖市场状态判断),但意味着"方向正确性"无硬约束。
 - ⚠️ 不要把 market-state guard(如资金费率熔断)塞进 Risk Engine——见 [north_star §10.6](../references/north_star.md),那属策略层。
+
+---
+
+## serenity_isolation — Serenity 双赛道隔离现状与计划
+
+> 产品定义(2026-06-30):采用 Option A PI-central,serenity 不建独立 executor;促进赛道隔离是 Phase defer 工作项。
+
+### 当前现状
+
+| 维度 | 当前实现 | 意图目标 | 差距 |
+|------|---------|---------|------|
+| 执行模块 | `serenity_executor.py` **不存在**；所有提案均通过主赛道 PI/gateway | serenity 有独立评估入口 | tripwire D2-S02 守护 |
+| 头寸池 | check #5/#6 共用同一个池（serenity 占用主赛道配额） | 独立风险池 | ⚠️ 意图差距，defer；D2-C02 守护 |
+| PnL 归因 | `analytics/` 和 `portfolio/` 中无 `trade_school` GROUP BY；serenity/主赛道 PnL 混合计算 | PnL 按 trade_school 分组隔离 | ⚠️ D2-S03/D2-B02 tripwire |
+
+### Serenity 尚未实现声明（defer）
+
+`serenity_executor.py` 尚未创建。**在创建该文件之前**，必须：
+
+1. 补充完整的 L2b/L2c spec（D2-B01/C01 升级版）覆盖新执行路径
+2. 更新本节 §serenity_isolation 的现状表
+3. 决策 check #5/#6 是共用池还是独立池，并在 engine.py check #5/#6 附近用注释声明
+
+Tripwire：`D2-S02`（spec_risk_engine.py）——文件出现时自动变红提示 review。
+
+### evaluate_proposal 唯一入口不变式
+
+**所有 TradeProposal**（无论来源是主赛道 PI 还是未来 serenity_executor）到达 `gateway.submit_proposal` 之前，**必须经过 `evaluate_proposal()`**。
+
+- `gateway._execute_proposal` 是唯一通向 broker 下单的函数
+- `evaluate_proposal` 在 `_execute_proposal` 内调用，`risk_result.approved` 守卫在所有 broker 调用之前
+- 不存在绕过 risk engine 直接下单的代码路径
+
+spec：`D2-C01`（L2c，spec_risk_engine.py）持续锁住此不变式。

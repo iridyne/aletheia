@@ -20,6 +20,8 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
@@ -253,3 +255,107 @@ def test_regime_is_inline_not_separate_collector():
             f"{py_file}: RegimeCollector must not exist as a class "
             "(ghost code -- regime is inline in MacroCollector)"
         )
+
+
+# ---------------------------------------------------------------------------
+# DU-S06 — CoinalyzeCollector is registered in scheduler + config fields exist
+# ---------------------------------------------------------------------------
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "NOT YET IMPLEMENTED — scheduler 接入 tripwire: "
+        "CoinalyzeCollector 尚未注册到 scheduler._async_data_collectors，"
+        "且 config/schema.py 尚未定义 enable_coinalyze / coinalyze_api_key。"
+        "接入完成后去掉 xfail。"
+    ),
+)
+@spec_claim(
+    SpecClaim(
+        "DU-S06", _CONTRACT, "§coinalyze scheduler + config", "L2a",
+        "CoinalyzeCollector 已被 scheduler.py 注册到 _async_data_collectors job "
+        "（仿 HyperliquidCollector 模式），且 config/schema.py 定义了 "
+        "enable_coinalyze（bool）和 coinalyze_api_key（str|None）字段。"
+        "两个结构断言共同保证：采集器不仅存在，还被实际调度，且可通过配置启停。",
+        status="missing",
+    ),
+)
+def test_coinalyze_registered_in_scheduler_and_config():
+    import inspect
+    from aletheia.config import schema as schema_mod
+
+    # 1) scheduler.py 含 CoinalyzeCollector 字符串（已注册到 _async_data_collectors）
+    scheduler_py = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
+    scheduler_src = scheduler_py.read_text(encoding="utf-8")
+    assert "CoinalyzeCollector" in scheduler_src, (
+        "scheduler.py must reference CoinalyzeCollector "
+        "(it should be registered in _async_data_collectors, see DU-S06)"
+    )
+
+    # 2) config schema 定义 enable_coinalyze + coinalyze_api_key
+    schema_src = inspect.getsource(schema_mod)
+    assert "enable_coinalyze" in schema_src, (
+        "config/schema.py must define enable_coinalyze field (DU-S06)"
+    )
+    assert "coinalyze_api_key" in schema_src, (
+        "config/schema.py must define coinalyze_api_key field (DU-S06)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# DU-S07 — market_context._TIMEFRAMES covers ['1h', '4h', '1d']
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "DU-S07", _CONTRACT, "§ohlcv multi-timeframe", "L2a",
+        "market_context.py 的 _TIMEFRAMES 常量覆盖 ['1h', '4h', '1d'] 三个周期"
+        "（产品决策：OHLCV 多周期全量采集）。防止有人在不知情的情况下缩减周期数，"
+        "导致 LLM 上下文丢失中期或日线视角。",
+    ),
+)
+def test_market_context_timeframes_cover_all_three_periods():
+    market_ctx_py = _ROOT / "aletheia" / "trading" / "market_context.py"
+    src = market_ctx_py.read_text(encoding="utf-8")
+    assert "_TIMEFRAMES" in src, (
+        "market_context.py must define _TIMEFRAMES constant (DU-S07)"
+    )
+    assert "'1h'" in src or '"1h"' in src, (
+        "_TIMEFRAMES must include '1h' (DU-S07)"
+    )
+    assert "'4h'" in src or '"4h"' in src, (
+        "_TIMEFRAMES must include '4h' (DU-S07)"
+    )
+    assert "'1d'" in src or '"1d"' in src, (
+        "_TIMEFRAMES must include '1d' (DU-S07)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# DU-T01 — tripwire: CoinalyzeCollector actually writes to open_interest_snapshots
+# ---------------------------------------------------------------------------
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "NOT YET IMPLEMENTED — scheduler 待接入 tripwire: "
+        "CoinalyzeCollector 尚未被 scheduler 调度，DB 里不存在 exchange='coinalyze' 行。"
+        "scheduler 接入完成后去掉 xfail，升级为可执行 L2b 测试。"
+    ),
+)
+@spec_claim(
+    SpecClaim(
+        "DU-T01", _CONTRACT, "§coinalyze db write tripwire", "L2a",
+        "missing_tripwire 占位：CoinalyzeCollector 实际写入 open_interest_snapshots "
+        "（exchange='coinalyze' 行存在），即 Coinalyze OI 数据真正流入 DB，"
+        "crowding_score 有实际数据可读而非永远 None。"
+        "当前状态 '🟠 scheduler 待接入' 使本 claim status=missing，"
+        "一旦 scheduler 接入完成须升级为可执行 L2b 测试。",
+        status="missing",
+    ),
+)
+def test_coinalyze_data_written_to_db():
+    pytest.fail(
+        "NOT IMPLEMENTED: CoinalyzeCollector 尚未被 scheduler 调度，"
+        "open_interest_snapshots 中无 exchange='coinalyze' 行 (DU-T01 tripwire)"
+    )

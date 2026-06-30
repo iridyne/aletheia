@@ -69,11 +69,27 @@
 | L1 自动修数据 | 清理过期 heartbeat/日志、重启卡死 collector、重建 SQLite 索引 | PI 批准后执行 |
 | L2 人工确认 | 清除 signal_pending 队列、修改 prompt 片段/配置 | PI 评估 → 推送通知 → 等人确认 |
 
+#### L2 动作类型说明（`_LEVEL_2_ACTIONS` 注册要求）
+
+L2 自愈档位包含三个专属动作类型，必须注册到 `operator_loop._LEVEL_2_ACTIONS`，dispatcher 才能将其路由到 `_create_proposal`，人工确认门控才能接管：
+
+| 动作类型 | 含义 | 影响范围 |
+|----------|------|----------|
+| `clear_signal_pending` | 清除 signal_pending 队列中的悬挂信号 | trading loop 状态 |
+| `modify_prompt_fragment` | 修改 PI 系统 prompt 中的某个片段 | LLM 决策行为 |
+| `modify_config_fragment` | 修改运行配置中的某个字段 | 系统参数 |
+
+**可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l2_selfheal_action_types_registered` (SH-S01, L2a, status=missing — 未注册则 RED)
+
 ### 不变式
 
 1. **PI 批准前置**：任何 L1/L2 自愈操作执行前，必须经 PI 读取诊断报告并输出"批准/拒绝 + 理由"。PI 不批准则不执行。
+   - 实现要求：`_execute_level1_action` 对 `clean_stale_heartbeats` / `restart_collector` / `rebuild_sqlite_index` 三个自愈动作，必须在 dispatch 前调用含 `pi_approval` 或 `approve_l1` 字样的门控函数。
+   - **可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l1_selfheal_pi_approval_gate_in_execute` (SH-C02, L2c, xfail — 门控未实现时持续 RED；与 OL-C08 共享契约)
 2. **结构化日志强制**：每次自愈操作必须写结构化日志，字段包含：`operation_type` / `trigger_reason` / `result` / `before_state` / `after_state`。
 3. **交易时隔离例外**：自愈操作可在系统正在交易时执行，但 L2 操作（涉及 signal_pending 或 prompt/配置）即使 PI 批准也必须等人类确认。
+   - 实现要求：`_create_proposal` 写入 `create_artifact` 的 content dict 必须含 `human_confirm_required` 键且值为 `True`，作为前端/通知路径的识别依据。
+   - **可执行 spec 引用**：`tests/specs/spec_operator_loop.py::test_l2_proposal_artifact_carries_human_confirm_required` (SH-B03, L2b, xfail — 字段未实现时持续 RED)
 4. **system_action 审计**：L1/L2 操作完成后在 `knowledge_items (item_type=system_action)` 写入审计记录（已有 self-heal 路径，继续复用）。
 
 ---

@@ -138,6 +138,12 @@ def _import_all_specs():
         # self-correcting tripwire marking the FSM-not-wired-into-startup gap. Not REQUIRED
         # (🟡 partial implementation). 2026-06-30.
         spec_persistence,
+        # Kill Conditions contract (D8-*): three system-level Kill judgements —
+        # K1 consecutive PF<0.5 / K2 consecutive 3-day zero fills /
+        # K3 live_unlock requires scorecard composite_score >= 70.
+        # D8-S01/B01/S03 are implemented; D8-S02/S04/B02/B03/C01 are
+        # missing_tripwire xfails awaiting implementation. 2026-06-30.
+        spec_kill_conditions,
     )
 
 

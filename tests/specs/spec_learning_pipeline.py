@@ -736,3 +736,257 @@ def test_pi_prompt_learning_paths_complete_enumeration():
     assert "ps_lessons" in tc_src, (
         "trading_context.py does not populate layer['ps_lessons'] — §8.2 source broken"
     )
+
+
+# ---------------------------------------------------------------------------
+# KL-S01 — 两路并行学习触发器：个例 reflection (post_trade_reviewer) +
+#           批次归纳 (insight_synthesizer / dreaming_daily) 相互独立
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("KL-S01", "learning_pipeline", "§two-track triggers", "L2a",
+              "两路并行学习触发器结构：个例 reflection 由 post_trade_reviewer job "
+              "（内部调用 trade_case_builder）在平仓后触发（interval 型）；"
+              "批次归纳由独立的 insight_synthesizer / dreaming_daily job 触发（cron 型）；"
+              "两路均已注册在 scheduler 且触发源类型互相独立，不存在单点合并。",
+              status="implemented"),
+)
+def test_two_track_learning_triggers_independent():
+    """KL-S01: 两路学习触发器独立注册在 scheduler.
+
+    (a) 个例路径: post_trade_reviewer job 已注册（interval 型），其实现内部
+        调用 trade_case_builder.build_case_studies。
+    (b) 批次归纳路径: insight_synthesizer + dreaming_daily 已注册（cron 型）。
+    (c) 两路触发类型不同（interval vs cron），验证独立性。
+    """
+    import pathlib
+
+    root = pathlib.Path(_project_root())
+    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+
+    # (a) 个例 review job 已注册
+    assert '"post_trade_reviewer"' in sched_src, (
+        "scheduler.py 未注册 post_trade_reviewer job — 个例 reflection 路径不存在"
+    )
+
+    # (b) 批次归纳 jobs 均已注册
+    assert '"insight_synthesizer"' in sched_src, (
+        "scheduler.py 未注册 insight_synthesizer job — 批次归纳路径断开"
+    )
+    assert '"dreaming_daily"' in sched_src, (
+        "scheduler.py 未注册 dreaming_daily job — 批次 dreaming 路径断开"
+    )
+
+    # (c) 触发类型独立: post_trade_reviewer 是 interval，dreaming_daily 是 cron
+    # 验证方法：在 scheduler 源码中 post_trade_reviewer 的 add_job 调用使用 "interval"
+    #           而 dreaming_daily 和 insight_synthesizer 使用 "cron"
+    import ast
+    tree = ast.parse(sched_src)
+    trigger_types: dict[str, str] = {}  # job_id -> trigger type
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            fn_name = fn.id if isinstance(fn, ast.Name) else (
+                fn.attr if isinstance(fn, ast.Attribute) else ""
+            )
+            if fn_name == "add_job":
+                # Extract id= kwarg and positional trigger arg
+                job_id = None
+                trigger = None
+                for kw in node.keywords:
+                    if kw.arg == "id" and isinstance(kw.value, ast.Constant):
+                        job_id = kw.value.value
+                if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                    trigger = node.args[1].value
+                if job_id and trigger:
+                    trigger_types[job_id] = trigger
+
+    assert trigger_types.get("post_trade_reviewer") == "interval", (
+        f"post_trade_reviewer trigger 期望 'interval'，实际={trigger_types.get('post_trade_reviewer')!r}"
+    )
+    assert trigger_types.get("dreaming_daily") == "cron", (
+        f"dreaming_daily trigger 期望 'cron'，实际={trigger_types.get('dreaming_daily')!r}"
+    )
+    assert trigger_types.get("insight_synthesizer") == "cron", (
+        f"insight_synthesizer trigger 期望 'cron'，实际={trigger_types.get('insight_synthesizer')!r}"
+    )
+
+    # (d) post_trade_reviewer 的实现内部调用 trade_case_builder
+    reviewer_src = (root / "aletheia/agents/post_trade_reviewer.py").read_text(encoding="utf-8")
+    assert "trade_case_builder" in reviewer_src, (
+        "post_trade_reviewer.py 未引用 trade_case_builder — 个例 reflection "
+        "与 case_builder 的链接断开"
+    )
+
+
+# ---------------------------------------------------------------------------
+# KL-S02 — missing_tripwire: risk/engine.py 不得出现 learning override 接口
+#           (Phase 2 风控开放 defer 的防护 tripwire)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("KL-S02", "learning_pipeline", "§risk threshold immutability tripwire", "L2a",
+              "missing_tripwire：risk/engine.py 中不存在任何名为 "
+              "accept_learning_override、apply_learning_update、set_risk_threshold "
+              "或类似语义的公开函数/方法 — Phase 2 风控开放 defer 承诺未被意外打穿。"
+              "接口一旦出现则此测试失败，强制触发 change-control 审查。",
+              status="implemented"),
+)
+def test_risk_engine_no_learning_override_interface():
+    """KL-S02: risk/engine.py 不得出现 Phase 2 learning override 接口.
+
+    这是一个防穿透 tripwire（永远 GREEN 为正常状态）：
+    - 当前 Phase 1：接口不存在 → assert 全部通过 → 测试 GREEN
+    - Phase 2 实施时：接口出现 → assert 失败 → 强制触发 change-control 审查
+
+    使用 AST 扫描确保检测精度（不被注释/字符串字面量误报）。
+    """
+    import pathlib
+    import ast
+
+    root = pathlib.Path(_project_root())
+    engine_src = (root / "aletheia/risk/engine.py").read_text(encoding="utf-8")
+    tree = ast.parse(engine_src)
+
+    forbidden_patterns = (
+        "learning_override",
+        "learning_update",
+        "set_risk_threshold",
+        "accept_learning",
+    )
+
+    violating: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for pattern in forbidden_patterns:
+                if pattern in node.name:
+                    violating.append(node.name)
+
+    assert not violating, (
+        f"risk/engine.py 出现了 Phase 2 learning override 接口: {violating} — "
+        "这是 KL-S02 tripwire 触发的 change-control 审查信号。"
+        "在实施前必须更新 knowledge_contract.md §8.3 并通过 spec review。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# KL-S03 — 批次模式归纳三核心 job 均已注册在 scheduler
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("KL-S03", "learning_pipeline", "§batch synthesis jobs", "L2a",
+              "批次模式归纳三个核心 job 均已注册在 scheduler: "
+              "insight_synthesizer（trading_memo 合成）、"
+              "confidence_calibration（置信度校准）、"
+              "dreaming_daily（批次 dreaming）— 保证'定期批次归纳'不是空话。",
+              status="implemented"),
+)
+def test_batch_synthesis_jobs_all_registered():
+    """KL-S03: 三个批次归纳 job 均已在 scheduler 注册.
+
+    检查 scheduler.py 中同时存在三个 job id 字符串，对应三条独立的
+    add_job 调用（三路批次学习的基础设施保证）。
+    """
+    import pathlib
+
+    root = pathlib.Path(_project_root())
+    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+
+    missing: list[str] = []
+    for job_id in ("insight_synthesizer", "confidence_calibration", "dreaming_daily"):
+        if f'"{job_id}"' not in sched_src:
+            missing.append(job_id)
+
+    assert not missing, (
+        f"以下批次归纳 job 未在 scheduler.py 中注册: {missing} — "
+        "批次学习基础设施不完整。"
+    )
+
+    # 额外验证：三个 job id 均出现在 add_job 调用的 id= 参数中
+    # （用 AST 扫描，防止只匹配注释/字符串字面量）
+    import ast
+    tree = ast.parse(sched_src)
+    registered_ids: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            fn_name = fn.id if isinstance(fn, ast.Name) else (
+                fn.attr if isinstance(fn, ast.Attribute) else ""
+            )
+            if fn_name == "add_job":
+                for kw in node.keywords:
+                    if kw.arg == "id" and isinstance(kw.value, ast.Constant):
+                        registered_ids.add(kw.value.value)
+    for job_id in ("insight_synthesizer", "confidence_calibration", "dreaming_daily"):
+        assert job_id in registered_ids, (
+            f"{job_id} 未出现在任何 scheduler.add_job(id=...) 调用中 — "
+            "job 可能只是字符串字面量引用，并未真正注册为定时任务。"
+            f"已注册的 job ids: {sorted(registered_ids)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# KL-B01 (L2b defer) — 时间衰减推翻路径（three-path fusion §方案2）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="DEFER Phase 2: 时间衰减推翻路径尚未实现 — 研究计划完成后实现并去掉 xfail",
+)
+@spec_claim(
+    SpecClaim("KL-B01", "learning_pipeline", "§time decay overturn path", "L2b",
+              "defer（Phase 2 / 研究后实现）：时间衰减推翻路径（三路融合之一）— "
+              "trading_memo knowledge item 在生成超过 N 天后，其 regime_playbook 条目的"
+              "有效边缘权重应随时间衰减（half-life 模型），使旧 memo 影响力自动降低，"
+              "即使没有显式 overturn 信号。"
+              "来源: learning_mechanism_research_plan.md §已定案 方案2。",
+              status="missing"),
+)
+def test_time_decay_overturn_path_exists():
+    """KL-B01 DEFER: 时间衰减推翻路径（Phase 2）.
+
+    当此测试从 xfail 转为 GREEN 时，需同步:
+    1. 去掉 @pytest.mark.xfail 装饰器
+    2. 更新 learning_mechanism_research_plan.md Phase 2 状态为已完成
+    3. 更新 spec status 为 "implemented"
+    """
+    import pathlib
+    import ast
+
+    root = pathlib.Path(_project_root())
+
+    # 精准关键字：必须是 trading_memo / regime_playbook 的 half-life 权重衰减函数名
+    # 不匹配 trade_path.py 的 time_exit_decay（trade 分类标签）
+    # 不匹配 exit_policy_advisor 的 time_decay_frac（统计变量）
+    # 不匹配 retrieval.py 的 _recency_weight（检索层通用衰减，非 memo half-life）
+    decay_fn_patterns = ("memo_decay", "memo_half_life", "regime_decay", "playbook_decay",
+                         "half_life_weight", "memo_time_weight")
+
+    # 通过 AST 扫描函数名（FunctionDef/AsyncFunctionDef），不扫字符串字面量
+    found_fns: list[str] = []
+    for search_dir in ("aletheia/analytics", "aletheia/learning", "aletheia/knowledge"):
+        d = root / search_dir
+        if not d.exists():
+            continue
+        for py_file in d.rglob("*.py"):
+            try:
+                src = py_file.read_text(encoding="utf-8")
+                tree = ast.parse(src)
+            except Exception:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for pattern in decay_fn_patterns:
+                        if pattern in node.name:
+                            found_fns.append(f"{py_file.relative_to(root)}::{node.name}")
+
+    assert found_fns, (
+        "未在 aletheia/analytics/、aletheia/learning/ 或 aletheia/knowledge/ 中找到 "
+        "trading_memo/regime_playbook 专属的 half-life 时间衰减函数 "
+        f"（目标函数名模式: {decay_fn_patterns}）— "
+        "Phase 2 时间衰减推翻路径尚未实现。"
+    )

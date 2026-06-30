@@ -55,8 +55,9 @@
 | 美股/xStocks | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
 | 市场状态 regime | MacroCollector._classify_risk_regime()（内联派生，无独立 RegimeCollector 类） | `macro_snapshots.risk_regime` | market_observer / context_builder → regime 评分 → LLM | ✅ |
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
-| 清算 liquidations | CoinalyzeCollector（已建，待 scheduler 接入） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |
-| OI 历史（跨所） | CoinalyzeCollector（已建，替代 Bitget 死代码） | `open_interest_snapshots` | market_observer→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |
+| 清算 liquidations | CoinalyzeCollector（已建，待 scheduler 接入；DU-S06/DU-T01 追踪） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |
+| OI 历史（跨所） | CoinalyzeCollector（已建，替代 Bitget 死代码；DU-S06/DU-T01 追踪） | `open_interest_snapshots` | market_observer→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |
+| OHLCV 多周期（1h/4h/1d） | CCXTProvider（market_context._TIMEFRAMES 锁定三周期；DU-S07） | `market_snapshots` | market_context.build_market_context → 多周期技术块 → LLM | ✅ |
 
 ---
 
@@ -82,5 +83,8 @@
 | DU-C02 | L2a | `derivatives.py` 不含 `_fetch_liquidations_ccxt` 及 `_CCXTLiquidationsUnsupported`（死代码已删，R4 诚实降级） |
 | DU-S04 | L2a | `yfinance_provider.py` 存在 + `market_context` 通过 `enable_yfinance_macro` 门控调用 + `data_utilization.md` §3 已登记（R5 合规） |
 | DU-S05 | L2a | 不存在 `class RegimeCollector`；`MacroCollector._classify_risk_regime()` 是 regime 的唯一实现（防虚构采集器类） |
+| DU-S06 | L2a | `scheduler.py` 含 `CoinalyzeCollector` 引用（已注册 `_async_data_collectors`）且 `config/schema.py` 定义 `enable_coinalyze` + `coinalyze_api_key`（调度+配置结构双锁） |
+| DU-S07 | L2a | `market_context._TIMEFRAMES` 包含 `'1h'`、`'4h'`、`'1d'` 三值（OHLCV 多周期全量采集，防缩减） |
+| DU-T01 | L2a | xfail tripwire：`open_interest_snapshots` 存在 `exchange='coinalyze'` 行（scheduler 接入后去掉 xfail） |
 
 **维护规则**：新增数据源 → 同步在 §3 登记表加行 + 声明消费者 + 加 DU-* claim（R5）。

@@ -827,3 +827,456 @@ def test_same_symbol_duplicate_position_rejected():
     assert not any("symbol_already_open" in v for v in res_other.violations), (
         f"Different symbol should not trigger same-symbol dedup: {res_other.violations}"
     )
+
+
+# ---------------------------------------------------------------------------
+# RE-S04b (L2a) — 20-check floor + four new token mandatory presence
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("RE-S04b", "risk_engine_contract", "§2 check count", "L2a",
+              "Engine source contains >=20 distinct violation token prefixes (floor upgraded "
+              "from >=16) and the four new-gate tokens — symbol_already_open, "
+              "account_leverage, liquidation, exceeds_per_symbol_notional — must all exist"),
+)
+def test_risk_engine_has_20_check_floor_with_new_tokens():
+    """Precise upgrade of RE-S04: floor 16→20, plus mandatory presence of the four
+    tokens added for checks 6b/17/18/19."""
+    import ast
+    from pathlib import Path
+
+    src_path = (
+        Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py"
+    )
+    source_text = src_path.read_text(encoding="utf-8")
+    tree = ast.parse(source_text)
+
+    violations: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value.startswith((
+                "kill_switch", "symbol_", "market_", "spot_", "futures_",
+                "live_", "permission_", "max_", "daily_loss",
+                "exchange_", "account_", "leverage_", "data_",
+                "total_", "single_trade_", "lifecycle_", "lesson_",
+                "correlation_", "stale_", "exceeds_", "sector_",
+                "portfolio_", "strategy_", "liquidation_",
+            )):
+                violations.add(node.value)
+
+    # Four mandatory tokens from the four new checks (6b/17/18/19).
+    required_tokens = [
+        "symbol_already_open",
+        "account_leverage",
+        "liquidation",
+        "exceeds_per_symbol_notional",
+    ]
+    missing = [tok for tok in required_tokens if not any(tok in v for v in violations)]
+    assert not missing, (
+        f"Required violation tokens missing from engine.py: {missing}. "
+        f"Found tokens: {sorted(violations)}"
+    )
+
+    assert len(violations) >= 20, (
+        f"Expected >= 20 distinct check violation tokens (floor upgraded from 16), "
+        f"found {len(violations)}: {sorted(violations)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# RE-B17 (L2b) — evaluate_proposal() is the ONLY gateway to broker execution
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("RE-B17", "risk_engine_contract", "§1 entry", "L2b",
+              "evaluate_proposal() is the sole hard gate on the order path: every "
+              "broker call site in _execute_proposal is guarded by an approved "
+              "RiskCheckResult before execution proceeds"),
+)
+def test_gateway_has_no_risk_free_broker_path():
+    """AST-scan gateway.py: every execute_live_order / execute_paper_order call
+    must be structurally downstream of `if not risk_result.approved: return`.
+    We verify by source inspection:
+    1. evaluate_proposal is imported and called early in _execute_proposal.
+    2. The conditional `if not risk_result.approved:` appears before any broker
+       call.
+    3. No import or call to execute_live_order / execute_paper_order exists
+       outside _execute_proposal (which would bypass the gate).
+    """
+    import ast
+    from pathlib import Path
+
+    src_path = (
+        Path(__file__).parent.parent.parent / "aletheia" / "execution" / "gateway.py"
+    )
+    source_text = src_path.read_text(encoding="utf-8")
+
+    # 1. evaluate_proposal must be imported.
+    assert "from aletheia.risk.engine import evaluate_proposal" in source_text, (
+        "gateway.py must import evaluate_proposal from risk engine"
+    )
+
+    # 2. Source-order check inside _execute_proposal: the `if not risk_result.approved:`
+    #    guard must appear before the first broker call *within the function body*.
+    #    We find the byte offset of _execute_proposal's definition and search from there.
+    func_def_pos = source_text.find("def _execute_proposal(")
+    assert func_def_pos != -1, "_execute_proposal not found in gateway.py"
+    func_body = source_text[func_def_pos:]
+
+    approved_pos = func_body.find("risk_result.approved")
+    # Broker calls inside _execute_proposal are either direct (execute_paper_order)
+    # or via a local import + call (execute_live_order); find the call() site not import.
+    # We search for the call pattern: identifier followed by '(' on the same line.
+    import re
+    broker_call_match = re.search(
+        r"(?:execute_paper_order|execute_live_order)\s*\(", func_body
+    )
+    broker_call_pos = broker_call_match.start() if broker_call_match else -1
+
+    assert approved_pos != -1, "risk_result.approved check not found inside _execute_proposal"
+    assert broker_call_pos != -1, "no broker call found inside _execute_proposal"
+    assert approved_pos < broker_call_pos, (
+        "risk_result.approved guard must appear in source BEFORE broker calls inside "
+        f"_execute_proposal; approved_pos={approved_pos}, first_broker_call={broker_call_pos}"
+    )
+
+    # 3. AST check: every Call to execute_paper_order or execute_live_order is
+    #    inside _execute_proposal (no top-level or other-function bypass).
+    tree = ast.parse(source_text)
+    execute_proposal_func = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_execute_proposal":
+            execute_proposal_func = node
+            break
+
+    assert execute_proposal_func is not None, (
+        "_execute_proposal function not found in gateway.py"
+    )
+
+    broker_call_names = {"execute_paper_order", "execute_live_order"}
+    calls_outside_execute = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name == "_execute_proposal":
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Call):
+                func = inner.func
+                name = (
+                    func.id if isinstance(func, ast.Name) else
+                    func.attr if isinstance(func, ast.Attribute) else None
+                )
+                if name in broker_call_names:
+                    calls_outside_execute.append((node.name, name))
+
+    assert not calls_outside_execute, (
+        f"Broker calls found outside _execute_proposal (risk-gate bypass): "
+        f"{calls_outside_execute}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# RE-S05 (L2a, missing_tripwire) — dynamic stop-price adjustment path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="NOT YET IMPLEMENTED — tripwire: PI output 'adjust stop to X' has no "
+           "execution path; position_manager lacks adjust_stop/update_stop/set_stop_price",
+)
+@spec_claim(
+    SpecClaim("RE-S05", "risk_engine_contract", "§8 stop adjustment", "L2a",
+              "missing_tripwire: position_manager (or equivalent) exposes a callable "
+              "accepting (position_id, new_stop_price) that writes stop_price to DB — "
+              "prerequisite for executing PI instruction 'adjust stop to X'. "
+              "Currently absent.", status="missing"),
+)
+def test_position_manager_has_adjust_stop_interface():
+    """When this tripwire passes, a dynamic stop-adjustment path exists.
+    Remove the xfail decorator and add a real L2b behavioral test at that point.
+    """
+    import inspect
+
+    # Try canonical module path first, fall back to any positions submodule.
+    try:
+        import aletheia.positions.position_manager as pm
+    except ImportError:
+        import aletheia.portfolio.position_manager as pm  # type: ignore[no-redef]
+
+    candidates = [
+        name for name in dir(pm)
+        if any(kw in name for kw in ("adjust_stop", "update_stop", "set_stop_price"))
+        and callable(getattr(pm, name))
+    ]
+    assert candidates, (
+        "No adjust_stop / update_stop / set_stop_price callable found in position_manager. "
+        "Implement the interface then remove the xfail decorator."
+    )
+
+    # Verify the found function accepts position_id and a stop price parameter.
+    fn = getattr(pm, candidates[0])
+    sig = inspect.signature(fn)
+    params = list(sig.parameters.keys())
+    assert "position_id" in params, f"{candidates[0]} must accept position_id param"
+    assert any(p in params for p in ("new_stop_price", "stop_price")), (
+        f"{candidates[0]} must accept new_stop_price or stop_price param"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D2 — Serenity 双赛道隔离 claims
+# ---------------------------------------------------------------------------
+
+
+# --- D2-S01: check #2 violation tokens 源码存在 (L2a) ---
+
+@spec_claim(
+    SpecClaim("D2-S01", "risk_engine_contract", "§2 check #2", "L2a",
+              "risk/engine.py check #2 对 spot 和 usdt_futures 分别存在独立的 violation token："
+              "spot_market_disabled 和 futures_market_disabled 必须出现在 engine.py 源码中"),
+)
+def test_d2_s01_market_disabled_tokens_exist():
+    from pathlib import Path
+    src_path = Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py"
+    src = src_path.read_text(encoding="utf-8")
+    assert "spot_market_disabled" in src, (
+        "engine.py missing spot_market_disabled violation token for check #2"
+    )
+    assert "futures_market_disabled" in src, (
+        "engine.py missing futures_market_disabled violation token for check #2"
+    )
+
+
+# --- D2-B01: check #2 行为验证 (L2b) ---
+
+@spec_claim(
+    SpecClaim("D2-B01", "risk_engine_contract", "§2 check #2", "L2b",
+              "check #2 行为：spot/usdt_futures proposal 在对应 enabled_markets=False 时被拒绝，"
+              "在 enabled_markets=True 时不产生该 violation；两者对称成立"),
+)
+def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+    from aletheia.risk.engine import evaluate_proposal
+    import aletheia.risk.engine as eng
+
+    _setup_db(tmp_path, monkeypatch)
+
+    # spot disabled -> violation
+    cfg = AletheiaConfig()
+    cfg.exchange.enabled_markets = {"spot": False, "usdt_futures": True}
+    monkeypatch.setattr(eng, "load_config", lambda: cfg)
+    p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
+                      execution_mode="paper_internal", quantity=0.001, price=60000)
+    repo.insert_trade_proposal(p)
+    r = evaluate_proposal(p)
+    assert any("spot_market_disabled" in v for v in r.violations), (
+        f"Expected spot_market_disabled when spot=False, got: {r.violations}"
+    )
+
+    # spot enabled -> no violation
+    cfg2 = AletheiaConfig()
+    cfg2.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
+    monkeypatch.setattr(eng, "load_config", lambda: cfg2)
+    p2 = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
+                       execution_mode="paper_internal", quantity=0.001, price=60000)
+    repo.insert_trade_proposal(p2)
+    r2 = evaluate_proposal(p2)
+    assert not any("spot_market_disabled" in v for v in r2.violations), (
+        f"Unexpected spot_market_disabled when spot=True: {r2.violations}"
+    )
+
+    # usdt_futures disabled -> violation
+    cfg3 = AletheiaConfig()
+    cfg3.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
+    monkeypatch.setattr(eng, "load_config", lambda: cfg3)
+    p3 = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+                       execution_mode="paper_internal", quantity=0.001, price=60000)
+    repo.insert_trade_proposal(p3)
+    r3 = evaluate_proposal(p3)
+    assert any("futures_market_disabled" in v for v in r3.violations), (
+        f"Expected futures_market_disabled when usdt_futures=False, got: {r3.violations}"
+    )
+
+    # usdt_futures enabled -> no violation
+    cfg4 = AletheiaConfig()
+    cfg4.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
+    monkeypatch.setattr(eng, "load_config", lambda: cfg4)
+    p4 = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+                       execution_mode="paper_internal", quantity=0.001, price=60000)
+    repo.insert_trade_proposal(p4)
+    r4 = evaluate_proposal(p4)
+    assert not any("futures_market_disabled" in v for v in r4.violations), (
+        f"Unexpected futures_market_disabled when usdt_futures=True: {r4.violations}"
+    )
+
+
+# --- D2-C01: evaluate_proposal 唯一入口不变式 (L2c) ---
+
+@spec_claim(
+    SpecClaim("D2-C01", "risk_engine_contract", "§6 bypass", "L2c",
+              "系统不变式：gateway.py 中所有调用 broker 下单入口的代码路径均经过 evaluate_proposal，"
+              "不存在绕过 risk engine 的直接下单路径"),
+)
+def test_d2_c01_gateway_always_calls_evaluate_proposal():
+    import ast
+    from pathlib import Path
+    src_path = Path(__file__).parent.parent.parent / "aletheia" / "execution" / "gateway.py"
+    source_text = src_path.read_text(encoding="utf-8")
+
+    assert "evaluate_proposal" in source_text, (
+        "gateway.py does not import/use evaluate_proposal"
+    )
+
+    tree = ast.parse(source_text)
+    execute_fn = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_execute_proposal":
+            execute_fn = node
+            break
+    assert execute_fn is not None, "gateway.py missing _execute_proposal function"
+
+    call_names = []
+    for node in ast.walk(execute_fn):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                call_names.append(node.func.id)
+            elif isinstance(node.func, ast.Attribute):
+                call_names.append(node.func.attr)
+    assert "evaluate_proposal" in call_names, (
+        f"_execute_proposal does not call evaluate_proposal; calls: {call_names}"
+    )
+
+    # 3. Inside _execute_proposal: risk check must appear before broker calls.
+    #    Use AST line numbers (avoids import-declaration false positives).
+    BROKER_CALLS = {"execute_paper_order", "execute_live_order"}
+    risk_call_lines = []
+    broker_call_lines = []
+    for node in ast.walk(execute_fn):
+        if isinstance(node, ast.Call) and hasattr(node, "lineno"):
+            name = None
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            if name == "evaluate_proposal":
+                risk_call_lines.append(node.lineno)
+            elif name in BROKER_CALLS:
+                broker_call_lines.append(node.lineno)
+    assert risk_call_lines, "evaluate_proposal not called inside _execute_proposal"
+    assert broker_call_lines, "no broker call (execute_paper_order/execute_live_order) inside _execute_proposal"
+    assert min(risk_call_lines) < min(broker_call_lines), (
+        f"evaluate_proposal (line {min(risk_call_lines)}) must appear BEFORE broker calls "
+        f"(first broker call at line {min(broker_call_lines)}) in _execute_proposal"
+    )
+
+
+# --- D2-S02: serenity_executor 尚未实现 tripwire (L2a) ---
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="TRIPWIRE: serenity_executor.py 不存在时此 xfail passes；"
+           "文件出现时自动变红，提醒补充完整 spec 再上线",
+)
+@spec_claim(
+    SpecClaim("D2-S02", "risk_engine_contract", "§serenity_isolation", "L2a",
+              "missing_tripwire：serenity_executor 模块尚未实现；此 tripwire 在文件出现时自动变红",
+              status="missing"),
+)
+def test_d2_s02_serenity_executor_not_yet_implemented():
+    from pathlib import Path
+    aletheia_root = Path(__file__).parent.parent.parent / "aletheia"
+    matches = list(aletheia_root.rglob("serenity_executor.py"))
+    assert len(matches) > 0, "serenity_executor.py not yet created — tripwire is active"
+
+
+# --- D2-S03: PnL 归因按 trade_school 分组结构性检查 (L2a, tripwire) ---
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="TRIPWIRE: trade_school 归因分组逻辑尚未实现；实现后去掉 xfail",
+)
+@spec_claim(
+    SpecClaim("D2-S03", "risk_engine_contract", "§serenity_isolation", "L2a",
+              "missing_tripwire：analytics/portfolio 中聚合 realized_pnl/profit_factor/win_rate "
+              "的函数必须存在按 trade_school 分组的逻辑",
+              status="missing"),
+)
+def test_d2_s03_pnl_attribution_by_trade_school_exists():
+    """扫描条件更严格：要求同一行/语句中 trade_school 与分组/过滤关键词共现，
+    或 SQL 中存在 'GROUP BY trade_school'。
+    单独出现 trade_school 赋值 + realized_pnl 引用不算。"""
+    import re
+    from pathlib import Path
+    base = Path(__file__).parent.parent.parent / "aletheia"
+    dirs = [base / "analytics", base / "portfolio"]
+    # 匹配模式：GROUP BY trade_school，或 filter/where 含 trade_school + PnL 聚合
+    GROUP_BY_PATTERN = re.compile(r"GROUP BY trade_school", re.IGNORECASE)
+    FILTER_PATTERN = re.compile(
+        r"trade_school.*(?:profit_factor|realized_pnl|win_rate)|"
+        r"(?:profit_factor|realized_pnl|win_rate).*trade_school",
+        re.IGNORECASE,
+    )
+    found = False
+    for d in dirs:
+        for py_file in d.glob("*.py"):
+            content = py_file.read_text(encoding="utf-8")
+            if GROUP_BY_PATTERN.search(content) or FILTER_PATTERN.search(content):
+                found = True
+                break
+        if found:
+            break
+    assert found, (
+        "No analytics/portfolio module found with trade_school-grouped PnL aggregation "
+        "(GROUP BY trade_school or filter-by-trade_school in same expression). "
+        "Required for serenity/main-track PnL isolation."
+    )
+
+
+# --- D2-B02: PnL 不混入行为断言 (L2b, tripwire) ---
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="TRIPWIRE: PnL 归因隔离尚未实现；实现后去掉 xfail",
+)
+@spec_claim(
+    SpecClaim("D2-B02", "risk_engine_contract", "§serenity_isolation", "L2b",
+              "missing_tripwire：serenity school 已平仓仓位不应出现在主赛道 PnL 聚合结果中；"
+              "给定 short_term+100 和 serenity-50，主赛道 PF 仅基于 short_term 那笔",
+              status="missing"),
+)
+def test_d2_b02_serenity_pnl_not_mixed_into_main_track(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    pytest.fail(
+        "NOT IMPLEMENTED: main-track PnL aggregation with trade_school filter. "
+        "Implement a function accepting trade_school=short_term, compute profit_factor "
+        "excluding serenity records, then remove xfail and assert PF > 1."
+    )
+
+
+# --- D2-C02: 头寸池 trade_school 边界 defer (L2c, tripwire) ---
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="DEFER: 独立风险池意图差距尚未产品决策；当前共池无 trade_school 说明；产品决策后实现",
+)
+@spec_claim(
+    SpecClaim("D2-C02", "risk_engine_contract", "§serenity_isolation", "L2c",
+              "defer：risk engine check #5/#6 头寸池边界与 trade_school 的关系必须明确声明；"
+              "当前共池（serenity 占用主赛道配额），属产品定义独立风险池的意图差距",
+              status="missing"),
+)
+def test_d2_c02_position_pool_trade_school_boundary_declared():
+    from pathlib import Path
+    src_path = Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py"
+    src = src_path.read_text(encoding="utf-8")
+    assert "trade_school" in src, (
+        "INVARIANT DRIFT: engine.py check #5/#6 position counting has no trade_school "
+        "declaration. Product decision required: shared pool (current) or isolated pool "
+        "per trade_school. Document the decision as a comment near check #5/#6."
+    )

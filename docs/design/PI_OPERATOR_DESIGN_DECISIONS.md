@@ -18,6 +18,16 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 - 对标：OpenAlice（owner 点名标杆）、hermes-agent、AlphaQuanter 均采用 A 路
 - B 路（多专家辩论 + 总编仲裁）保留为 Phase 2 升级路径，条件触发：方向信号互相打架或 risk_critic 拒绝率突然飙升时，才召开临时 bull/bear 两视角比对
 
+**A路结构约束（observer tool registry）**：
+- observers 必须以 `observe_market` / `observe_chain` / `observe_macro`（或等价命名）注册于 `aletheia/agent_shell/registry.py` 的 `COMMANDS` 字典，作为 PI 的 CommandDef 工具条目
+- 当前实现状态：registry 只有 `run_market_scan`（触发 market_observer 扫描），尚未以 A路要求的 observe_* 命名注册独立工具条目（PCI-G02 缺口，待 Phase 1 补齐）
+- spec `PCI-G02` 锁定此结构约束；违规引入会被 CI 检测
+
+**B路实现边界（Phase 2 触发条件）**：
+- B路 council 机制（`CouncilSession` / `BullBearCouncil` / `multi_expert` 等）**当前不得实现**
+- 允许引入 B路代码的唯一前提：方向信号持续互相打架（bull/bear 分歧 > 60%）或 risk_critic 拒绝率连续 3 天 > 40%，且 owner 明确授权
+- spec `PCI-G05` 作为 tripwire 锁定：未授权引入 council 机制会被 CI 的 xfail→XPASS 报错捕获
+
 **宪法人类专有**。PI 在宪法内享有全权，但以下内容 PI 不得修改：
 - 风控阈值（risk_engine 关卡数值）
 - 执行边界（FORBIDDEN_INTENTS、RESTRICTED_TOOLS）

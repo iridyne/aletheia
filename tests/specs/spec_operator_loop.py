@@ -758,3 +758,134 @@ def test_knowledge_item_is_structured_selfheal_store():
             f"{action_name} does not call _emit_self_heal_action — "
             "the structured KnowledgeItem audit write is required by §不变式2."
         )
+
+
+# ---------------------------------------------------------------------------
+# Self-heal L2 action taxonomy + PI approval gate + human-confirm marker
+# (operator_layer.md [产品定义] §L2人工确认行 + §不变式1/§不变式3)
+# SH-S01 / SH-C02 / SH-B03  2026-06-30 SDD alignment
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "SH-S01", "operator_layer",
+        "§selfheal l2_action_types exist",
+        "L2a",
+        "_LEVEL_2_ACTIONS 必须包含自愈专属类型 clear_signal_pending、"
+        "modify_prompt_fragment、modify_config_fragment——对应产品定义 D6 §L2人工确认行。"
+        "三个动作须在集合中注册，operator layer dispatcher 才能路由到正确 handler，"
+        "人工确认门控才能接管。",
+        status="missing",
+    ),
+)
+def test_l2_selfheal_action_types_registered():
+    """_LEVEL_2_ACTIONS must include the three L2 self-heal action types.
+
+    The product definition (operator_layer.md §自愈档位) mandates that
+    clear_signal_pending / modify_prompt_fragment / modify_config_fragment
+    are L2 (human-confirm required). Without registration in _LEVEL_2_ACTIONS
+    the dispatcher cannot route them to _create_proposal, and the human
+    confirmation gate is bypassed.
+    """
+    import aletheia.agent_shell.operator_loop as ol
+
+    required_l2_selfheal = {
+        "clear_signal_pending",
+        "modify_prompt_fragment",
+        "modify_config_fragment",
+    }
+    missing = required_l2_selfheal - ol._LEVEL_2_ACTIONS
+    assert not missing, (
+        f"SH-S01 VIOLATED: _LEVEL_2_ACTIONS is missing L2 self-heal action types: {missing}. "
+        "Add them to align with operator_layer.md §自愈档位 L2人工确认行."
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="GAP-SH-C02: PI approval gate not yet wired into _execute_level1_action for self-heal dispatch",
+)
+@spec_claim(
+    SpecClaim(
+        "SH-C02", "operator_layer",
+        "§selfheal pi_approval_gate in _execute_level1_action",
+        "L2c",
+        "missing_tripwire：PI 批准前置不变式（实现层）——_execute_level1_action 对 "
+        "clean_stale_heartbeats / restart_collector / rebuild_sqlite_index 三个自愈动作，"
+        "必须在 dispatch 前调用含 'pi_approval' 或 'approve_l1' 字样的门控函数。"
+        "无批准记录则不执行（operator_layer.md §不变式1）。"
+        "与 OL-C08 共享契约，OL-C08 xfail 占位，本 claim 实现完成后转 GREEN 并去掉 xfail。",
+        status="missing",
+    ),
+)
+def test_l1_selfheal_pi_approval_gate_in_execute():
+    """RED tripwire: _execute_level1_action must call a PI-approval gate before
+    dispatching clean_stale_heartbeats / restart_collector / rebuild_sqlite_index.
+
+    Goes GREEN once _execute_level1_action (or the self-heal handler stubs)
+    contains a call to a function whose name contains 'pi_approval' or 'approve_l1'.
+    """
+    import ast as _ast
+
+    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+
+    execute_fn = next(
+        (n for n in _ast.walk(tree)
+         if isinstance(n, _ast.FunctionDef) and n.name == "_execute_level1_action"),
+        None,
+    )
+    assert execute_fn is not None, "_execute_level1_action not found"
+
+    # Gate: any call whose function name contains 'pi_approval' or 'approve_l1'
+    gate_calls = [
+        n for n in _ast.walk(execute_fn)
+        if isinstance(n, _ast.Call)
+        and (
+            (isinstance(n.func, _ast.Name)
+             and ("pi_approval" in n.func.id or "approve_l1" in n.func.id))
+            or (isinstance(n.func, _ast.Attribute)
+                and ("pi_approval" in n.func.attr or "approve_l1" in n.func.attr))
+        )
+    ]
+    assert gate_calls, (
+        "SH-C02 NOT IMPLEMENTED: _execute_level1_action does not call a PI-approval gate "
+        "('pi_approval' or 'approve_l1') before dispatching self-heal actions. "
+        "Implement the gate per operator_layer.md §不变式1."
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="GAP-SH-B03: human_confirm_required field not yet written by _create_proposal",
+)
+@spec_claim(
+    SpecClaim(
+        "SH-B03", "operator_layer",
+        "§selfheal l2_proposal_human_confirm_required field",
+        "L2b",
+        "L2 proposal artifact 必须携带 human_confirm_required=True 字段：_create_proposal "
+        "写入 create_artifact 的 content dict 必须含 human_confirm_required 键且值为 True。"
+        "operator_layer.md §不变式3 要求 L2 操作即使 PI 批准也必须等人确认；"
+        "该字段是前端/通知路径的识别依据。",
+        status="missing",
+    ),
+)
+def test_l2_proposal_artifact_carries_human_confirm_required():
+    """RED tripwire: _create_proposal must embed human_confirm_required=True
+    in the artifact content dict.
+
+    Goes GREEN when the content dict passed to create_artifact contains
+    the key 'human_confirm_required' set to True.
+    """
+    import inspect
+    import aletheia.agent_shell.operator_loop as _ol
+
+    src = inspect.getsource(_ol._create_proposal)
+    assert "human_confirm_required" in src, (
+        "SH-B03 NOT IMPLEMENTED: _create_proposal does not write 'human_confirm_required' "
+        "into the artifact content dict. Add human_confirm_required=True to satisfy "
+        "operator_layer.md §不变式3 (L2 operations require human confirmation even after "
+        "PI approval)."
+    )
