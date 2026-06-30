@@ -326,11 +326,99 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
 
 
 def score_event(feat: dict) -> tuple[float, list[str], str | None]:
-    """Score event/catalyst opportunity — placeholder.
+    """Score event/catalyst opportunity: sharp price jump + volume spike + taker confirmation.
+
+    Detects short-horizon shock events (liquidation cascades, news catalysts, large-order
+    impact) using available feat fields. A qualifying event requires both price displacement
+    AND volume confirmation; a pure vol spike without displacement is not an event signal.
 
     Returns (score, reasons, direction).
     """
-    return 0.0, [], None
+    score = 0.0
+    reasons = []
+    direction = None
+
+    ret_1h = feat.get("return_1h")
+    ret_4h = feat.get("return_4h")
+    vol_ratio = feat.get("vol_ratio")
+    taker_ratio = feat.get("taker_buy_ratio")
+    oi_delta = feat.get("oi_delta_1h")
+    rsi_val = feat.get("rsi_14")
+
+    # === Price jump (core event signal) ===
+    # A large 1h return is the primary indicator of a catalyst event.
+    if ret_1h is not None:
+        if ret_1h > 8.0:
+            score += 45.0
+            direction = "long"
+            reasons.append(f"sharp +{ret_1h:.1f}% 1h jump")
+        elif ret_1h < -8.0:
+            score += 45.0
+            direction = "short"
+            reasons.append(f"sharp {ret_1h:.1f}% 1h dump")
+        elif ret_1h > 4.0:
+            score += 25.0
+            direction = "long"
+            reasons.append(f"+{ret_1h:.1f}% 1h move")
+        elif ret_1h < -4.0:
+            score += 25.0
+            direction = "short"
+            reasons.append(f"{ret_1h:.1f}% 1h move")
+
+    # No directional displacement → not an event
+    if direction is None:
+        return 0.0, [], None
+
+    # === Volume confirmation (required co-signal) ===
+    # Without volume the price move may be low-liquidity noise.
+    if vol_ratio is not None:
+        if vol_ratio >= 4.0:
+            score += 30.0
+            reasons.append(f"vol x{vol_ratio:.1f} vs 72h avg")
+        elif vol_ratio >= 2.0:
+            score += 20.0
+            reasons.append(f"vol x{vol_ratio:.1f} vs 72h avg")
+        elif vol_ratio >= 1.5:
+            score += 10.0
+            reasons.append(f"vol x{vol_ratio:.1f} slightly elevated")
+        else:
+            # Volume below 1.5× baseline → price move lacks participation, halve score
+            score *= 0.5
+
+    # === Taker directional confirmation ===
+    if taker_ratio is not None:
+        if direction == "long" and taker_ratio > 1.5:
+            score += 15.0
+            reasons.append(f"taker buy dominated ({taker_ratio:.2f})")
+        elif direction == "short" and taker_ratio < 0.65:
+            score += 15.0
+            reasons.append(f"taker sell dominated ({taker_ratio:.2f})")
+
+    # === OI surge co-signals event impact (not direction-reversing) ===
+    if oi_delta is not None and abs(oi_delta) > 15:
+        score += 10.0
+        reasons.append(f"OI delta {oi_delta:+.0f}%")
+
+    # === RSI extension cap: extreme RSI reduces late-entry score ===
+    # An already-extended RSI at event time means worse risk/reward for chasing.
+    if rsi_val is not None:
+        if direction == "long" and rsi_val > 80:
+            score *= 0.7
+            reasons.append(f"rsi {rsi_val:.0f} extended (late)")
+        elif direction == "short" and rsi_val < 20:
+            score *= 0.7
+            reasons.append(f"rsi {rsi_val:.0f} extended (late)")
+
+    # === 4h context: event in trend direction is stronger ===
+    if ret_4h is not None:
+        if direction == "long" and ret_4h > 3.0:
+            score += 5.0
+            reasons.append("4h trend aligned")
+        elif direction == "short" and ret_4h < -3.0:
+            score += 5.0
+            reasons.append("4h trend aligned")
+
+    return max(0.0, min(100.0, score)), reasons, direction
 
 
 def run_all_scanners(feat: dict) -> dict:

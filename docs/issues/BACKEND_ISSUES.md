@@ -940,7 +940,7 @@
 
 | ID | 标题 | 证据 (file:line) |
 |---|---|---|
-| F5 | event scanner `score_event()` 是空壳，事件家族静默打 0 分 | `universe/scanners.py:333` `return 0.0,[],None`；:347 wired live |
+| ~~F5~~ ✅ | event scanner `score_event()` 已实现：价格跳空+成交量确认+taker方向 | 修复 `universe/scanners.py:328`，强冲击事件可得 ~90 分并成为 best family (2026-06-30) |
 | F2 | Universe `POST /policy` 路由缺失（repo fn 存在不可达） | `repositories.py:1368` insert_universe_policy；`routes/universe.py` 只有 GET |
 | E2 | UTA 无法区分 0 余额 vs 缺凭据（无 connected_brokers 字段） | `portfolio/uta/manager.py:14-21` UnifiedState 无 broker 连接列表 |
 | G7 | Fernet key 与密文同目录 | `config/secrets.py:47` `.secret.key` 同 data/，仅 gitignore 保护 |

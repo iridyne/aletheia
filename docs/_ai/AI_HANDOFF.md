@@ -7,11 +7,55 @@
 
 ## Last Updated
 
-2026-06-30 (八域产品定义对话 + SDD 契约文档第一性原理重写 + ultracode workflow 29-gap 代码校准 — master 9c9862a)
+2026-06-30 (issue triage + event scanner 实现 — universe/scanners.py F5 修复)
 
 ---
 
-## Recent Change (产品定义对齐 + SDD 代码校准 — 2026-06-30)
+## Recent Change (issue triage + event scanner — 2026-06-30)
+
+### Issue triage 结论
+
+三文件全量审计结论：
+- **RUNTIME_BEHAVIOR_ISSUES.md**: 基本干净，22 条全闭，残余仅 1 条 aiohttp unclosed session（监测即可）
+- **BACKEND_ISSUES.md**: APP-HMAC（hmac.compare_digest）、kill-switch confirm_release、OP-WINRATE（fills→positions）均已在较早 commit 实现；CUM-ADD 被 risk engine check #6b `symbol_already_open` 覆盖，无需额外修复
+- **F5 event scanner**: 唯一本会话修复（见下）
+
+### F5 `score_event()` 实现
+
+**位置**: `aletheia/universe/scanners.py:328`
+
+**根因**: `score_event()` 是永远返回 `(0.0, [], None)` 的空壳，整个 event 家族的机会评分静默为 0。
+
+**修复**: 实现基于可用 feat 字段的冲击事件检测：
+- 核心信号：1h 价格跳空（+4% / +8% 两档，direction-intrinsic）
+- 量能确认：`vol_ratio >= 4x/2x/1.5x` 三档加分，低于 1.5x 折半
+- Taker 方向确认：`taker_buy_ratio` > 1.5 或 < 0.65
+- OI 爆升协助（> 15% delta）
+- 延伸 RSI 折价（> 80 / < 20 打 0.7）
+- 4h 趋同小幅加分
+
+**验证**: 强冲击（ret_1h=12%，vol×6，taker=2.0）→ event 家族 90 分成为 best_family
+
+---
+
+## Previous Change (xfail 全量闭合 — 2026-06-30, adc5fd7)
+
+### 10 个 xfail claims 升级为 implemented
+
+**代码实现（6 处）**:
+- `operator_loop.py`: `_request_pi_approval_for_selfheal()` — L1 自愈前写 recommend_l1_selfheal 审批记录 (OL-C08/SH-C02)
+- `go_live_scorecard.py`: `count_consecutive_zero_fill_days()` (D8-S04)、`check_kill_condition_consecutive_rounds()` (D8-S02)、`compute_pnl_by_trade_school()` (D2-S03)、`_check_profit_factor()` kill-floor guard PF<0.5→fail (D8-B01)
+- `server/routes/live.py`: live_unlock 加 scorecard gate，composite_score<70 返回 HTTP 403 (D8-B02/D8-C01)
+- `portfolio/position_manager.py`: `adjust_stop(position_id, new_stop_price)` — PI stop 调整路径 (RE-S05)
+- `risk/engine.py`: check #6 加 trade_school 共池决策注释 (D2-C02)
+
+**Spec 层**: 三个文件 xfail 全移除，status missing→implemented
+**验证**: 63 PASS / 3 XFAIL（正确 defer: D8-B03/D2-S02/D2-B02）/ 0 FAIL
+**Conformance**: 440 claims | 432 implemented | 98%
+
+---
+
+## Previous Change (产品定义对齐 + SDD 代码校准 — 2026-06-30)
 
 ### 八域产品定义对话
 与 owner 完成 8 个功能域深度确认（结果落 `docs/plans/product_definition_2026-06-30.md`）：
