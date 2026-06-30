@@ -272,6 +272,9 @@ _LEVEL_2_ACTIONS = {
     "promote_strategy", "loosen_confidence", "increase_sizing",
     "widen_stop_loss", "neutral_drift",
     "add_universe_symbol",
+    # L2 self-heal actions (operator_layer.md §自愈档位 L2) — require human confirmation.
+    # Routed to _create_proposal automatically by classify_action → dispatch path.
+    "clear_signal_pending", "modify_prompt_fragment", "modify_config_fragment",
 }
 
 _LEVEL_3_ACTIONS = {
@@ -1106,6 +1109,7 @@ def _create_proposal(action: OperatorAction) -> dict:
             "params": action.params,
             "reason": action.reason,
             "level": 2,
+            "human_confirm_required": True,
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
     )

@@ -550,10 +550,9 @@ def test_l1_selfheal_requires_pi_approval():
         "L2 proposals must not auto-execute even after PI approval — they must "
         "carry a human_confirm_required marker and wait for explicit human approval "
         "(operator_layer.md §不变式3).",
-        status="missing",
+        status="implemented",
     ),
 )
-@pytest.mark.xfail(strict=True, reason="GAP-02: human confirmation gate not yet wired into _create_proposal")
 def test_l2_proposal_requires_human_confirmation():
     """RED tripwire: _create_proposal must include a human_confirm_required flag.
 
@@ -856,10 +855,6 @@ def test_l1_selfheal_pi_approval_gate_in_execute():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="GAP-SH-B03: human_confirm_required field not yet written by _create_proposal",
-)
 @spec_claim(
     SpecClaim(
         "SH-B03", "operator_layer",
@@ -869,7 +864,7 @@ def test_l1_selfheal_pi_approval_gate_in_execute():
         "写入 create_artifact 的 content dict 必须含 human_confirm_required 键且值为 True。"
         "operator_layer.md §不变式3 要求 L2 操作即使 PI 批准也必须等人确认；"
         "该字段是前端/通知路径的识别依据。",
-        status="missing",
+        status="implemented",
     ),
 )
 def test_l2_proposal_artifact_carries_human_confirm_required():

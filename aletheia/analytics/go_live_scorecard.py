@@ -84,6 +84,10 @@ def _check_profit_factor() -> dict:
         gross_profit = sum(r[0] for r in rows if r[0] > 0)
         gross_loss = sum(abs(r[0]) for r in rows if r[0] < 0)
         pf = gross_profit / gross_loss if gross_loss > 0 else 99.0
+        # Kill-floor: PF < 0.5 is a hard stop regardless of go-live target (product §8 K1)
+        if pf < 0.5:
+            return _criterion("profit_factor", "Profit Factor (≥1.2)", 0, 0.18,
+                              f"PF {pf:.2f} — below kill threshold 0.5")
         target = 1.2
         score = min(pf / target, 1.0) * 100 if pf < target else 100.0
         return _criterion("profit_factor", "Profit Factor (≥1.2)", score, 0.18,

@@ -167,20 +167,15 @@ def test_zero_fill_days_detection_exists():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="NOT YET IMPLEMENTED — D8 tripwire: _check_profit_factor does not hard-fail at PF<0.5 kill threshold",
-)
 @spec_claim(
     SpecClaim(
         "D8-B01",
         "kill_conditions_contract",
         "§K1 pf fail grade",
         "L2b",
-        "missing_tripwire: go_live_scorecard._check_profit_factor(): 当 gross_profit/gross_loss < 0.5 时"
+        "_check_profit_factor(): 当 gross_profit/gross_loss < 0.5 时"
         "返回 criterion status='fail' 且 score=0，确保极低 PF 不被软化为 warning 黄灯。"
-        "当前代码 PF=0.4 → score=33.3 → status='warning'，kill 阈值未编码。",
-        status="missing",
+        "Kill floor 已在 go_live_scorecard.py 编码（product §8 K1）。",
     )
 )
 def test_profit_factor_below_kill_threshold_returns_fail():
