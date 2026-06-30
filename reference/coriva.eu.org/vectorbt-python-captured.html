@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="zh" dir="auto" data-theme="dark"><head><meta charset="utf-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><meta name="robots" content="index, follow"><title>vectorbt 入门教程：向量化思路做 Python 量化回测 | Coriva</title>
+<meta name="keywords" content="Quant,Python,Backtesting"><meta name="description" content="vectorbt 入门教程：从安装到双均线策略再到 10000 组参数网格搜索，讲清楚向量化回测的思路、Portfolio 三种入口的差别和常见踩坑。"><meta name="author" content="Coriva"><link rel="canonical" href="https://coriva.eu.org/vectorbt-tutorial/"><meta name="msvalidate.01" content="F8E2F274161B653649F8818FD127CE87"><link crossorigin="anonymous" href="/assets/css/stylesheet.8fe2fa5580263673749c0854ddc4fdff83d8cd245ff94138be9f54fc4bc84fca.css" integrity="sha256-j+L6VYAmNnN0nAhU3cT9/4PYzSRf+UE4vp9U/EvIT8o=" rel="preload stylesheet" as="style"><link rel="icon" href="https://coriva.eu.org/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="https://coriva.eu.org/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="https://coriva.eu.org/favicon-32x32.png"><link rel="apple-touch-icon" href="https://coriva.eu.org/apple-touch-icon.png"><link rel="mask-icon" href="https://coriva.eu.org/safari-pinned-tab.svg"><meta name="theme-color" content="#2e2e33"><meta name="msapplication-TileColor" content="#2e2e33"><link rel="alternate" hreflang="zh" href="https://coriva.eu.org/vectorbt-tutorial/"><link rel="alternate" hreflang="en" href="https://coriva.eu.org/en/vectorbt-tutorial/"><noscript><style>#theme-toggle,.top-link{display:none}</style><style>@media(prefers-color-scheme:dark){:root{--theme:rgb(29, 30, 32);--entry:rgb(46, 46, 51);--primary:rgb(218, 218, 219);--secondary:rgb(155, 156, 157);--tertiary:rgb(65, 66, 68);--content:rgb(196, 196, 197);--code-block-bg:rgb(46, 46, 51);--code-bg:rgb(55, 56, 62);--border:rgb(51, 51, 51);color-scheme:dark}.list{background:var(--theme)}.toc{background:var(--entry)}}@media(prefers-color-scheme:light){.list::-webkit-scrollbar-thumb{border-color:var(--code-bg)}}</style></noscript><script>localStorage.getItem("pref-theme")==="dark"?document.querySelector("html").dataset.theme="dark":localStorage.getItem("pref-theme")==="light"?document.querySelector("html").dataset.theme="light":window.matchMedia("(prefers-color-scheme: dark)").matches?document.querySelector("html").dataset.theme="dark":document.querySelector("html").dataset.theme="light"</script><meta name="google-adsense-account" content="ca-pub-2660281922577700"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/400.css" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/500.css" rel="stylesheet"><style>code,kbd,samp,pre{font-family:fira code,cascadia code,source code pro,sf mono,Menlo,Consolas,monospace}.entry-footer .pageview-meta{display:none}.post-single .post-description{display:none}.post-single-wrapper{display:flex;gap:4rem;align-items:flex-start}.post-single-wrapper .post-single{flex:1;min-width:0}.toc-sidebar{display:none}@media(min-width:1280px){body:not(.list) .main{max-width:calc(var(--main-width) + var(--gap) * 2 + 272px)}.post-single-wrapper .post-single{max-width:var(--main-width)}.toc-sidebar{display:block;width:220px;flex-shrink:0;position:sticky;top:calc(var(--header-height) + 1rem);max-height:calc(100vh - var(--header-height) - 3rem);overflow-y:auto;scrollbar-width:none;padding-left:1rem;border-left:1px solid var(--border)}.toc-sidebar::-webkit-scrollbar{display:none}.toc-sidebar-nav{font-size:.8rem;line-height:1.65}.toc-sidebar-title{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.toc-sidebar-inner ul{list-style:none;padding-left:0;margin:0}.toc-sidebar-inner ul ul{padding-left:.9em}.toc-sidebar-inner li{margin:.2em 0}.toc-sidebar-inner a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;transition:color .2s;opacity:.8}.toc-sidebar-inner a:hover{color:var(--primary);opacity:1}.toc-sidebar-inner a.active{color:var(--primary);font-weight:500;opacity:1}}.related-posts{margin-top:1.5rem;padding-top:1.2rem;border-top:1px solid var(--border)}.related-posts h2{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.related-posts ul{list-style:none;padding:0;margin:0}.related-posts li{margin:.2em 0}.related-posts a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;font-size:.8rem;line-height:1.65;transition:color .2s;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.related-posts a:hover{color:var(--primary);opacity:1}.related-date{display:none}</style><script>MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]}}</script><script async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script><script async="" src="https://www.googletagmanager.com/gtag/js?id=G-C74ZBKDR6V"></script><script>var dnt,doNotTrack=!1;if(!1&&(dnt=navigator.doNotTrack||window.doNotTrack||navigator.msDoNotTrack,doNotTrack=dnt=="1"||dnt=="yes"),!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-C74ZBKDR6V")}</script><meta property="og:url" content="https://coriva.eu.org/vectorbt-tutorial/"><meta property="og:site_name" content="Coriva"><meta property="og:title" content="vectorbt 入门教程：向量化思路做 Python 量化回测"><meta property="og:description" content="vectorbt 入门教程：从安装到双均线策略再到 10000 组参数网格搜索，讲清楚向量化回测的思路、Portfolio 三种入口的差别和常见踩坑。"><meta property="og:locale" content="zh"><meta property="og:type" content="article"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-05-08T14:29:55+08:00"><meta property="article:modified_time" content="2026-05-08T14:29:55+08:00"><meta property="article:tag" content="Quant"><meta property="article:tag" content="Python"><meta property="article:tag" content="Backtesting"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="vectorbt 入门教程：向量化思路做 Python 量化回测"><meta name="twitter:description" content="vectorbt 入门教程：从安装到双均线策略再到 10000 组参数网格搜索，讲清楚向量化回测的思路、Portfolio 三种入口的差别和常见踩坑。"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Posts","item":"https://coriva.eu.org/posts/"},{"@type":"ListItem","position":2,"name":"vectorbt 入门教程：向量化思路做 Python 量化回测","item":"https://coriva.eu.org/vectorbt-tutorial/"}]}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","headline":"vectorbt 入门教程：向量化思路做 Python 量化回测","name":"vectorbt 入门教程：向量化思路做 Python 量化回测","description":"vectorbt 入门教程：从安装到双均线策略再到 10000 组参数网格搜索，讲清楚向量化回测的思路、Portfolio 三种入口的差别和常见踩坑。","keywords":["Quant","Python","Backtesting"],"articleBody":"这篇 vectorbt 教程从向量化回测和传统循环回测的根本差别讲起，把 Portfolio.from_holding / from_signals / from_orders 三种入口讲透，跑一个 10000 组参数的网格搜索，最后说清楚 freq、信号 shift、内存这些真正会让回测结果出错的踩坑点。\nvectorbt 是什么，为什么不直接用 backtrader vectorbt 是一个 Python 量化回测库，作者 Oleg Polakow。它和 backtrader、zipline 这类传统框架最大的区别在编程模型：传统框架按时间循环逐根 K 线推进，每次只跑一个策略实例；vectorbt 把整个价格序列、整个信号序列当作 NumPy 矩阵一次性算完，多组参数沿着列方向铺开，一次回测就能跑完上万组配置。\n底层用 Numba JIT 把热路径编译成机器码，新版还支持可选的 Rust 引擎（pip install -U \"vectorbt[rust]\"）。结果是单机不开并行，10000 组双均线参数十几秒就跑完了，同样的事情在 backtrader 里要循环跑一两个小时。\n维度 vectorbt backtrader zipline 编程模型 向量化矩阵运算 事件驱动逐 bar 事件驱动逐 bar 多参数扫描 原生一次跑完 需要外层循环 需要外层循环 速度 极快（Numba/Rust） 中等（纯 Python） 中等 学习曲线 需要理解 pandas 多级索引 OOP 思路友好 类似 backtrader 复杂订单逻辑 需要绕一下 原生支持 原生支持 适合做的事 因子研究、参数扫描 策略原型、实盘对接 与 Quantopian 兼容 什么时候不该用 vectorbt：策略本身有强路径依赖（例如基于上一笔订单状态决定下一笔下单方向、复杂的金字塔加仓规则、多腿期权对冲），用向量化表达会很别扭，这时 backtrader 的事件驱动模型更顺手。vectorbt 的甜蜜点是因子研究和参数搜索阶段：当你需要把\"如果换个窗口呢\"“换个标的呢\"“换个止损阈值呢\"这类问题一次性扫完。\n安装与第一个回测：5 行代码买入并持有 BTC 最小安装：\npip install -U vectorbt 如果想要 Rust 引擎或者 TA-Lib 集成：\npip install -U \"vectorbt[rust]\" # Rust 加速 pip install -U \"vectorbt[full]\" # TA-Lib / Pandas TA 等 pip install -U \"vectorbt[full,rust]\" # 全套 第一个例子，五行代码买入并持有比特币：\nimport vectorbt as vbt data = vbt.YFData.download(\"BTC-USD\") price = data.get(\"Close\") pf = vbt.Portfolio.from_holding(price, init_cash=100) print(pf.total_profit()) vbt.YFData 是 yfinance 的薄封装，返回一个 Data 对象，.get(\"Close\") 拿到一列收盘价 Series。Portfolio.from_holding 是最简单的入口：在第一根 bar 全仓买入，最后一根 bar 卖出，中间什么都不做。\n注意这里的 price 是一维 Series（单标的、单参数）。vectorbt 真正的力量在于这个对象可以是二维 DataFrame：列代表不同标的或不同参数组合，所有运算自动 broadcast 到所有列。这一点是后面理解参数扫描的基础。\n双均线策略：从信号到组合 经典的快慢均线交叉策略：快线上穿慢线买入，下穿卖出。\nfast_ma = vbt.MA.run(price, 10) slow_ma = vbt.MA.run(price, 50) entries = fast_ma.ma_crossed_above(slow_ma) exits = fast_ma.ma_crossed_below(slow_ma) pf = vbt.Portfolio.from_signals( price, entries, exits, init_cash=100, fees=0.001, # 0.1% 单边手续费 slippage=0.001, # 0.1% 滑点 freq=\"1D\", # 日频，年化指标必须设置 ) print(pf.stats()) vbt.MA.run 返回的不是简单 Series，而是一个 Indicator 实例，包含原始 MA 值和一系列方法（ma_crossed_above / ma_crossed_below / ma_above 等）。entries 和 exits 都是布尔 Series，True 表示当根 bar 触发买入或卖出。\nPortfolio.from_signals 把信号翻译成组合：在 entries=True 的 bar 用所有可用现金满仓买入，在 exits=True 的 bar 平仓。stats() 输出一张性能表：\nStart 2017-11-09 End 2026-01-03 Total Return [%] 1504.09 Benchmark Return [%] 866.09 Max Drawdown [%] 70.73 Total Trades 81 Win Rate [%] 41.25 Sharpe Ratio 0.86 Sortino Ratio 1.30 Calmar Ratio 0.57 胜率 41% 但总收益跑赢 buy \u0026 hold 接近一倍，典型的趋势跟踪策略画像：信号不准，但赚的时候赚得多。\nstats 表里几个容易被忽略的关键字段：Calmar Ratio（年化收益除以最大回撤）比 Sharpe 更适合趋势策略；Profit Factor（总盈利除以总亏损）大于 1.5 才算有边际；Avg Winning Trade Duration 和 Avg Losing Trade Duration 的差距越大，越说明策略能 let profit run。这些指标的细节可以参考 量化常用指标指南。\n三种 Portfolio 入口怎么选：from_holding / from_signals / from_orders vectorbt 的 Portfolio 有三个常用工厂方法，新手最常踩坑的就是不知道该用哪个。\n入口 输入 语义 典型场景 from_holding 价格 第一根 bar 全仓买入并一直持有 基准对照、长期定投 from_signals 价格 + entries/exits 布尔信号 信号 True 时买/卖，size 默认满仓 趋势跟踪、技术指标策略 from_orders 价格 + 每根 bar 的订单大小 直接指定每根 bar 买/卖多少股 组合再平衡、动量加权 三者覆盖了量化回测里 95% 的场景。from_signals 是入门最常用的，但有一个让无数人栽跟头的默认行为：连续多根 bar 都是 entries=True 时，第二根开始的信号会被忽略，因为已经持仓了。如果你的策略要在已有仓位的基础上继续加仓（金字塔加码），必须显式设置 accumulate=True。同理，exits=True 也只在有仓位时才生效。\nfrom_orders 给你最大的控制力：\nimport numpy as np import pandas as pd orders = pd.Series(0.0, index=price.index) orders.iloc[0] = 1.0 # 第一根 bar 买 1 个单位 orders.iloc[100] = -1.0 # 第 101 根 bar 卖 1 个单位 pf = vbt.Portfolio.from_orders(price, orders, init_cash=100, freq=\"1D\") size 正数买入、负数卖出、0 不动。需要做 monthly rebalance、波动率加权、风险平价时基本只能用这个入口。\n向量化的精髓：一次回测 10000 组参数 现在到了 vectorbt 真正放光彩的地方。把上面的双均线策略扩展成\"对所有 fast×slow 窗口组合做网格搜索”，传统框架要写两层循环跑几个小时，vectorbt 几行代码十几秒搞定。\nimport numpy as np symbols = [\"BTC-USD\", \"ETH-USD\", \"XRP-USD\"] data = vbt.YFData.download(symbols, missing_index=\"drop\") price = data.get(\"Close\") windows = np.arange(2, 101) fast_ma, slow_ma = vbt.MA.run_combs( price, window=windows, r=2, short_names=[\"fast\", \"slow\"] ) entries = fast_ma.ma_crossed_above(slow_ma) exits = fast_ma.ma_crossed_below(slow_ma) pf = vbt.Portfolio.from_signals( price, entries, exits, size=np.inf, fees=0.001, freq=\"1D\", ) vbt.MA.run_combs(window=windows, r=2) 是关键：从 windows 里选 2 个组合（C(99, 2) ≈ 4851 组），每组生成一对 fast/slow MA。乘以 3 个标的，最终 entries 是一个超过 14000 列的 DataFrame。Portfolio 一次性吞下，每列独立回测。\n可视化用 vectorbt 内建的 heatmap accessor：\nfig = pf.total_return().vbt.heatmap( x_level=\"fast_window\", y_level=\"slow_window\", slider_level=\"symbol\", symmetric=True, trace_kwargs=dict(colorbar=dict(title=\"Total return\", tickformat=\"%\")), ) fig.show() 热力图里能直观看到哪些参数区域稳定盈利、哪些是局部尖峰（典型过拟合信号）。一片连续的\"高地\"比一个孤立的山尖可信得多。这种参数稳定性分析是因子研究的标配，没有 vectorbt 这种速度根本做不动。\n挑出一组具体参数复盘：\nprint(pf[(10, 20, \"ETH-USD\")].stats()) pf[(10, 20, \"ETH-USD\")].plot().show() pf[(fast, slow, symbol)] 是 pandas 多级索引，定位到那一列，所有 stats / plot 方法都跟单策略一样用。\nvectorbt 为什么这么快：Numba + 结构化 NumPy 朴素 Python 循环跑 10000 个回测大约要 8 分钟，vectorbt 跑同样的工作量大约 15 秒。差距来自三件事。\n第一，所有策略实例在内存里就是一个二维 NumPy 数组。pandas DataFrame 列方向天然对齐，broadcast 把 fast_ma \u003e slow_ma 这种比较一次算完所有列，不需要 Python 层循环。\n第二，热路径用 Numba 的 @njit 装饰，Python 字节码在第一次调用时被编译成机器码。后续调用没有解释器开销，跑起来接近 C 的速度。最关键的几个内核（订单撮合、组合状态更新）还有可选的 Rust 实现，装好 vectorbt[rust] 就会自动启用，又能再快一截。\n第三，避免对象开销。backtrader 里每根 bar 是一个对象，每个订单是一个对象，对象创建和 GC 占了大头时间。vectorbt 全程在结构化 NumPy 数组上操作，零对象分配。\n性能数字仅供参考，具体差距取决于策略复杂度、数据规模和硬件。但数量级是真的。\n常见踩坑与最佳实践 这一节是 vectorbt 文档里最容易被新手忽略的部分，但每一条都直接决定回测结果对不对。\nfreq 必须显式设置。Portfolio.from_signals(..., freq=\"1D\") 这个 freq 参数不传的话，年化收益、Sharpe、Sortino 全都是错的——vectorbt 会按 bar 数除以 252 或 365 估算，但你的 bar 实际间隔可能是 5 分钟、1 小时、1 周。所有时间相关的指标都依赖 freq 才能换算到年化基准。\n信号要不要 shift(1)。这是新手最容易犯的前视偏差。fast_ma.ma_crossed_above(slow_ma) 在 bar t 用 bar t 的收盘价计算 MA，所以信号本身已经包含了当根 bar 收盘后的信息。Portfolio.from_signals 默认在同一根 bar 用 price（默认是 close）成交，相当于\"知道收盘价后再以收盘价下单”——回测里能做到，实盘做不到。严谨做法有两种：要么把 entries/exits 显式 shift(1)，要么把 price 参数显式传成下一根 bar 的开盘价（Portfolio.from_signals(open_price, entries.shift(1), ...)）。前视偏差还有更多隐蔽形式，可以参考 回测陷阱大全。\n多标的对齐。vbt.YFData.download(symbols) 默认在不同标的的时间戳上取并集，缺失值填 NaN。这会让某些标的在另一标的还没上市的时间段也参与计算，结果不对。规范做法是 missing_index=\"drop\"，只保留所有标的都有数据的交集时段。\n内存爆炸。10000 列的回测每列存一份 trades / drawdowns 信息，如果再 × 多个标的 × 长历史，几十 GB 内存很容易吃满。最稳妥的办法是手动按列分块，跑完一块取到自己关心的指标再进下一块：\nchunk = 500 results = [] for i in range(0, entries.shape[1], chunk): sub_pf = vbt.Portfolio.from_signals( price, entries.iloc[:, i:i+chunk], exits.iloc[:, i:i+chunk], size=np.inf, fees=0.001, freq=\"1D\", ) # 只保留 total_return 这种轻量指标，丢掉重的 trades/drawdowns results.append(sub_pf.total_return()) total_return = pd.concat(results) 这种手动分块虽然不优雅，但每跑完一块原 Portfolio 对象就被 GC 回收，峰值内存从全量 × N 降到 chunk 大小。需要更自动化的方案可以看 vectorbt 的 chunked 模块，PRO 版还提供了对 Portfolio 友好的 merge 函数。\nYFData 在中国大陆的访问问题。yfinance 直连 Yahoo，国内无代理基本拉不动。本地 CSV 是最省心的替代：\nimport pandas as pd df = pd.read_csv(\"btc.csv\", index_col=\"date\", parse_dates=True) price = df[\"close\"] # 直接喂给 from_signals 即可 或者用 akshare、tushare 这类国内数据源拉数据后转成同样的 Series 格式。\n进阶方向：从社区版到 PRO vectorbt 有社区版（开源、本文用的就是）和 PRO 版（商业授权）。免费版已经能覆盖单标的策略原型、参数扫描、因子研究这些场景，足够个人研究使用。PRO 版主要解锁四类能力：限价单 / 止盈止损的精细订单类型、内置组合优化和风险平价、并行化引擎、模式识别和事件投影等更研究导向的工具。\n学习路径建议是：先把官方文档的 Usage 章节通读一遍，再去看 GitHub 上的 example notebooks，重点看双均线扫描、Bollinger Bands、组合层面的 trades 分析这三个例子，覆盖了 80% 的常用模式。卡住的时候直接读源码，作者注释写得很细，比 Stack Overflow 找答案快得多。\n把第一个网格搜索跑通的那一刻，会突然明白为什么\"向量化\"这三个字在量化圈被翻来覆去地讲——回测速度从分钟级降到秒级，研究节奏完全不一样了。\n","wordCount":"3912","inLanguage":"zh","datePublished":"2026-05-08T14:29:55+08:00","dateModified":"2026-05-08T14:29:55+08:00","author":{"@type":"Person","name":"Coriva"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://coriva.eu.org/vectorbt-tutorial/"},"publisher":{"@type":"Organization","name":"Coriva","logo":{"@type":"ImageObject","url":"https://coriva.eu.org/favicon.ico"}}}</script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
+.CtxtMenu_InfoContent {  overflow:auto; text-align:left; font-size:80%;  padding:.4em .6em; border:1px inset; margin:1em 0px;  max-height:20em; max-width:30em; background-color:#EEEEEE;  white-space:normal;}
+.CtxtMenu_Info.CtxtMenu_MousePost {outline:none;}
+.CtxtMenu_Info {  position:fixed; left:50%; width:auto; text-align:center;  border:3px outset; padding:1em 2em; background-color:#DDDDDD;  color:black;  cursor:default; font-family:message-box; font-size:120%;  font-style:normal; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 15px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius:15px;               /* Safari and Chrome */  -moz-border-radius:15px;                  /* Firefox */  -khtml-border-radius:15px;                /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */  filter:progid:DXImageTransform.Microsoft.dropshadow(OffX=2, OffY=2, Color="gray", Positive="true"); /* IE */}
+</style><style type="text/css">.CtxtMenu_MenuClose {  position:absolute;  cursor:pointer;  display:inline-block;  border:2px solid #AAA;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  font-family: "Courier New", Courier;  font-size:24px;  color:#F0F0F0}
+.CtxtMenu_MenuClose span {  display:block; background-color:#AAA; border:1.5px solid;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  line-height:0;  padding:8px 0 6px     /* may need to be browser-specific */}
+.CtxtMenu_MenuClose:hover {  color:white!important;  border:2px solid #CCC!important}
+.CtxtMenu_MenuClose:hover span {  background-color:#CCC!important}
+.CtxtMenu_MenuClose:hover:focus {  outline:none}
+</style><style type="text/css">.CtxtMenu_Menu {  position:absolute;  background-color:white;  color:black;  width:auto; padding:5px 0px;  border:1px solid #CCCCCC; margin:0; cursor:default;  font: menu; text-align:left; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 5px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius: 5px;             /* Safari and Chrome */  -moz-border-radius: 5px;                /* Firefox */  -khtml-border-radius: 5px;              /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */}
+.CtxtMenu_MenuItem {  padding: 1px 2em;  background:transparent;}
+.CtxtMenu_MenuArrow {  position:absolute; right:.5em; padding-top:.25em; color:#666666;  font-family: null; font-size: .75em}
+.CtxtMenu_MenuActive .CtxtMenu_MenuArrow {color:white}
+.CtxtMenu_MenuArrow.CtxtMenu_RTL {left:.5em; right:auto}
+.CtxtMenu_MenuCheck {  position:absolute; left:.7em;  font-family: null}
+.CtxtMenu_MenuCheck.CtxtMenu_RTL { right:.7em; left:auto }
+.CtxtMenu_MenuRadioCheck {  position:absolute; left: .7em;}
+.CtxtMenu_MenuRadioCheck.CtxtMenu_RTL {  right: .7em; left:auto}
+.CtxtMenu_MenuInputBox {  padding-left: 1em; right:.5em; color:#666666;  font-family: null;}
+.CtxtMenu_MenuInputBox.CtxtMenu_RTL {  left: .1em;}
+.CtxtMenu_MenuComboBox {  left:.1em; padding-bottom:.5em;}
+.CtxtMenu_MenuSlider {  left: .1em;}
+.CtxtMenu_SliderValue {  position:absolute; right:.1em; padding-top:.25em; color:#333333;  font-size: .75em}
+.CtxtMenu_SliderBar {  outline: none; background: #d3d3d3}
+.CtxtMenu_MenuLabel {  padding: 1px 2em 3px 1.33em;  font-style:italic}
+.CtxtMenu_MenuRule {  border-top: 1px solid #DDDDDD;  margin: 4px 3px;}
+.CtxtMenu_MenuDisabled {  color:GrayText}
+.CtxtMenu_MenuActive {  background-color: #606872;  color: white;}
+.CtxtMenu_MenuDisabled:focus {  background-color: #E8E8E8}
+.CtxtMenu_MenuLabel:focus {  background-color: #E8E8E8}
+.CtxtMenu_ContextMenu:focus {  outline:none}
+.CtxtMenu_ContextMenu .CtxtMenu_MenuItem:focus {  outline:none}
+.CtxtMenu_SelectionMenu {  position:relative; float:left;  border-bottom: none; -webkit-box-shadow:none; -webkit-border-radius:0px; }
+.CtxtMenu_SelectionItem {  padding-right: 1em;}
+.CtxtMenu_Selection {  right: 40%; width:50%; }
+.CtxtMenu_SelectionBox {  padding: 0em; max-height:20em; max-width: none;  background-color:#FFFFFF;}
+.CtxtMenu_SelectionDivider {  clear: both; border-top: 2px solid #000000;}
+.CtxtMenu_Menu .CtxtMenu_MenuClose {  top:-10px; left:-10px}
+</style><style id="MJX-CHTML-styles">
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row > * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-assistive-mml {
+  position: absolute !important;
+  top: 0px;
+  left: 0px;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 1px 0px 0px 0px !important;
+  border: 0px !important;
+  display: block !important;
+  width: auto !important;
+  overflow: hidden !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+mjx-assistive-mml[display="block"] {
+  width: 100% !important;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+</style><style id="waline-darkmode"></style></head><body id="top"><header class="header"><nav class="nav"><div class="logo"><a href="https://coriva.eu.org/" accesskey="h" title="Coriva (Alt + H)"><img src="https://coriva.eu.org/logo.png" alt="" aria-label="logo" height="35">Coriva</a><div class="logo-switches"><button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme"><svg id="moon" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg><svg id="sun" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></button><ul class="lang-switch"><li>|</li><li><a href="https://coriva.eu.org/en/" title="English" aria-label="English">English</a></li></ul></div></div><ul id="menu"><li><a href="https://coriva.eu.org/archives/" title="归档"><span>归档</span></a></li><li><a href="https://coriva.eu.org/categories/" title="分类"><span>分类</span></a></li><li><a href="https://coriva.eu.org/tags/" title="标签"><span>标签</span></a></li><li><a href="https://coriva.eu.org/search/" title="搜索 (Alt + /)" accesskey="/"><span>搜索</span></a></li></ul></nav></header><main class="main"><div class="post-single-wrapper"><article class="post-single"><header class="post-header"><div class="breadcrumbs"><a href="https://coriva.eu.org/">主页</a>&nbsp;»&nbsp;<a href="https://coriva.eu.org/posts/">Posts</a></div><h1 class="post-title entry-hint-parent">vectorbt 入门教程：向量化思路做 Python 量化回测</h1><div class="post-description">vectorbt 入门教程：从安装到双均线策略再到 10000 组参数网格搜索，讲清楚向量化回测的思路、Portfolio 三种入口的差别和常见踩坑。</div><div class="post-meta"><span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> Posted on 2026-05-08</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path></svg> In Quant</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> 8 min read</span><span class="pageview-meta">&nbsp;·&nbsp;<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> <span class="waline-pageview-count" data-path="/vectorbt-tutorial/">101</span></span>&nbsp;|&nbsp;<span>语言:</span><ul class="i18n_list"><li><a href="https://coriva.eu.org/en/vectorbt-tutorial/">English</a></li></ul></div></header><div class="post-content"><p>这篇 vectorbt 教程从向量化回测和传统循环回测的根本差别讲起，把 <code>Portfolio.from_holding</code> / <code>from_signals</code> / <code>from_orders</code> 三种入口讲透，跑一个 10000 组参数的网格搜索，最后说清楚 freq、信号 shift、内存这些真正会让回测结果出错的踩坑点。</p><h2 id="vectorbt-是什么为什么不直接用-backtrader">vectorbt 是什么，为什么不直接用 backtrader<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/vectorbt-tutorial/#vectorbt-%E6%98%AF%E4%BB%80%E4%B9%88%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%8D%E7%9B%B4%E6%8E%A5%E7%94%A8-backtrader">#</a></h2><p>vectorbt 是一个 Python 量化回测库，作者 Oleg Polakow。它和 backtrader、zipline 这类传统框架最大的区别在编程模型：传统框架按时间循环逐根 K 线推进，每次只跑一个策略实例；vectorbt 把整个价格序列、整个信号序列当作 NumPy 矩阵一次性算完，多组参数沿着列方向铺开，一次回测就能跑完上万组配置。</p><p>底层用 Numba JIT 把热路径编译成机器码，新版还支持可选的 Rust 引擎（<code>pip install -U "vectorbt[rust]"</code>）。结果是单机不开并行，10000 组双均线参数十几秒就跑完了，同样的事情在 backtrader 里要循环跑一两个小时。</p><table><thead><tr><th>维度</th><th>vectorbt</th><th>backtrader</th><th>zipline</th></tr></thead><tbody><tr><td>编程模型</td><td>向量化矩阵运算</td><td>事件驱动逐 bar</td><td>事件驱动逐 bar</td></tr><tr><td>多参数扫描</td><td>原生一次跑完</td><td>需要外层循环</td><td>需要外层循环</td></tr><tr><td>速度</td><td>极快（Numba/Rust）</td><td>中等（纯 Python）</td><td>中等</td></tr><tr><td>学习曲线</td><td>需要理解 pandas 多级索引</td><td>OOP 思路友好</td><td>类似 backtrader</td></tr><tr><td>复杂订单逻辑</td><td>需要绕一下</td><td>原生支持</td><td>原生支持</td></tr><tr><td>适合做的事</td><td>因子研究、参数扫描</td><td>策略原型、实盘对接</td><td>与 Quantopian 兼容</td></tr></tbody></table><p>什么时候不该用 vectorbt：策略本身有强路径依赖（例如基于上一笔订单状态决定下一笔下单方向、复杂的金字塔加仓规则、多腿期权对冲），用向量化表达会很别扭，这时 backtrader 的事件驱动模型更顺手。<strong>vectorbt 的甜蜜点是因子研究和参数搜索阶段</strong>：当你需要把"如果换个窗口呢"“换个标的呢"“换个止损阈值呢"这类问题一次性扫完。</p><h2 id="安装与第一个回测5-行代码买入并持有-btc">安装与第一个回测：5 行代码买入并持有 BTC<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/vectorbt-tutorial/#%E5%AE%89%E8%A3%85%E4%B8%8E%E7%AC%AC%E4%B8%80%E4%B8%AA%E5%9B%9E%E6%B5%8B5-%E8%A1%8C%E4%BB%A3%E7%A0%81%E4%B9%B0%E5%85%A5%E5%B9%B6%E6%8C%81%E6%9C%89-btc">#</a></h2><p>最小安装：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pip install -U vectorbt
+</span></span></code></pre><button class="copy-code">复制</button></div><p>如果想要 Rust 引擎或者 TA-Lib 集成：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pip install -U <span class="s2">"vectorbt[rust]"</span>        <span class="c1"># Rust 加速</span>
+</span></span><span class="line"><span class="cl">pip install -U <span class="s2">"vectorbt[full]"</span>        <span class="c1"># TA-Lib / Pandas TA 等</span>
+</span></span><span class="line"><span class="cl">pip install -U <span class="s2">"vectorbt[full,rust]"</span>   <span class="c1"># 全套</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p>第一个例子，五行代码买入并持有比特币：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">vectorbt</span> <span class="k">as</span> <span class="nn">vbt</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">data</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">YFData</span><span class="o">.</span><span class="n">download</span><span class="p">(</span><span class="s2">"BTC-USD"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">price</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"Close"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">pf</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">Portfolio</span><span class="o">.</span><span class="n">from_holding</span><span class="p">(</span><span class="n">price</span><span class="p">,</span> <span class="n">init_cash</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">pf</span><span class="o">.</span><span class="n">total_profit</span><span class="p">())</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p><code>vbt.YFData</code> 是 yfinance 的薄封装，返回一个 Data 对象，<code>.get("Close")</code> 拿到一列收盘价 Series。<code>Portfolio.from_holding</code> 是最简单的入口：在第一根 bar 全仓买入，最后一根 bar 卖出，中间什么都不做。</p><p>注意这里的 <code>price</code> 是一维 Series（单标的、单参数）。vectorbt 真正的力量在于这个对象可以是二维 DataFrame：列代表不同标的或不同参数组合，所有运算自动 broadcast 到所有列。这一点是后面理解参数扫描的基础。</p><h2 id="双均线策略从信号到组合">双均线策略：从信号到组合<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/vectorbt-tutorial/#%E5%8F%8C%E5%9D%87%E7%BA%BF%E7%AD%96%E7%95%A5%E4%BB%8E%E4%BF%A1%E5%8F%B7%E5%88%B0%E7%BB%84%E5%90%88">#</a></h2><p>经典的快慢均线交叉策略：快线上穿慢线买入，下穿卖出。</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">fast_ma</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">MA</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">price</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">slow_ma</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">MA</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">price</span><span class="p">,</span> <span class="mi">50</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">entries</span> <span class="o">=</span> <span class="n">fast_ma</span><span class="o">.</span><span class="n">ma_crossed_above</span><span class="p">(</span><span class="n">slow_ma</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">exits</span> <span class="o">=</span> <span class="n">fast_ma</span><span class="o">.</span><span class="n">ma_crossed_below</span><span class="p">(</span><span class="n">slow_ma</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">pf</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">Portfolio</span><span class="o">.</span><span class="n">from_signals</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">price</span><span class="p">,</span> <span class="n">entries</span><span class="p">,</span> <span class="n">exits</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">init_cash</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fees</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span>        <span class="c1"># 0.1% 单边手续费</span>
+</span></span><span class="line"><span class="cl">    <span class="n">slippage</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span>    <span class="c1"># 0.1% 滑点</span>
+</span></span><span class="line"><span class="cl">    <span class="n">freq</span><span class="o">=</span><span class="s2">"1D"</span><span class="p">,</span>         <span class="c1"># 日频，年化指标必须设置</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">pf</span><span class="o">.</span><span class="n">stats</span><span class="p">())</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p><code>vbt.MA.run</code> 返回的不是简单 Series，而是一个 Indicator 实例，包含原始 MA 值和一系列方法（<code>ma_crossed_above</code> / <code>ma_crossed_below</code> / <code>ma_above</code> 等）。<code>entries</code> 和 <code>exits</code> 都是布尔 Series，True 表示当根 bar 触发买入或卖出。</p><p><code>Portfolio.from_signals</code> 把信号翻译成组合：在 entries=True 的 bar 用所有可用现金满仓买入，在 exits=True 的 bar 平仓。<code>stats()</code> 输出一张性能表：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">Start                          2017-11-09
+</span></span><span class="line"><span class="cl">End                            2026-01-03
+</span></span><span class="line"><span class="cl">Total Return [%]               1504.09
+</span></span><span class="line"><span class="cl">Benchmark Return [%]            866.09
+</span></span><span class="line"><span class="cl">Max Drawdown [%]                 70.73
+</span></span><span class="line"><span class="cl">Total Trades                       81
+</span></span><span class="line"><span class="cl">Win Rate [%]                    41.25
+</span></span><span class="line"><span class="cl">Sharpe Ratio                     0.86
+</span></span><span class="line"><span class="cl">Sortino Ratio                    1.30
+</span></span><span class="line"><span class="cl">Calmar Ratio                     0.57
+</span></span></code></pre><button class="copy-code">复制</button></div><p>胜率 41% 但总收益跑赢 buy &amp; hold 接近一倍，典型的趋势跟踪策略画像：信号不准，但赚的时候赚得多。</p><p><img alt="Equity curve of dual-SMA crossover strategy vs buy and hold benchmark" loading="lazy" src="https://coriva.eu.org/vectorbt-tutorial/equity-curve.webp"></p><p>stats 表里几个容易被忽略的关键字段：<strong>Calmar Ratio</strong>（年化收益除以最大回撤）比 Sharpe 更适合趋势策略；<strong>Profit Factor</strong>（总盈利除以总亏损）大于 1.5 才算有边际；<strong>Avg Winning Trade Duration</strong> 和 <strong>Avg Losing Trade Duration</strong> 的差距越大，越说明策略能 let profit run。这些指标的细节可以参考 <a href="https://coriva.eu.org/quant-metrics-guide/">量化常用指标指南</a>。</p><h2 id="三种-portfolio-入口怎么选from_holding--from_signals--from_orders">三种 Portfolio 入口怎么选：from_holding / from_signals / from_orders<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/vectorbt-tutorial/#%E4%B8%89%E7%A7%8D-portfolio-%E5%85%A5%E5%8F%A3%E6%80%8E%E4%B9%88%E9%80%89from_holding--from_signals--from_orders">#</a></h2><p>vectorbt 的 Portfolio 有三个常用工厂方法，新手最常踩坑的就是不知道该用哪个。</p><table><thead><tr><th>入口</th><th>输入</th><th>语义</th><th>典型场景</th></tr></thead><tbody><tr><td><code>from_holding</code></td><td>价格</td><td>第一根 bar 全仓买入并一直持有</td><td>基准对照、长期定投</td></tr><tr><td><code>from_signals</code></td><td>价格 + entries/exits 布尔信号</td><td>信号 True 时买/卖，size 默认满仓</td><td>趋势跟踪、技术指标策略</td></tr><tr><td><code>from_orders</code></td><td>价格 + 每根 bar 的订单大小</td><td>直接指定每根 bar 买/卖多少股</td><td>组合再平衡、动量加权</td></tr></tbody></table><p>三者覆盖了量化回测里 95% 的场景。<strong><code>from_signals</code> 是入门最常用的，但有一个让无数人栽跟头的默认行为</strong>：连续多根 bar 都是 entries=True 时，第二根开始的信号会被忽略，因为已经持仓了。如果你的策略要在已有仓位的基础上继续加仓（金字塔加码），必须显式设置 <code>accumulate=True</code>。同理，<code>exits=True</code> 也只在有仓位时才生效。</p><p><code>from_orders</code> 给你最大的控制力：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">orders</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">index</span><span class="o">=</span><span class="n">price</span><span class="o">.</span><span class="n">index</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">orders</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>     <span class="c1"># 第一根 bar 买 1 个单位</span>
+</span></span><span class="line"><span class="cl"><span class="n">orders</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="mi">100</span><span class="p">]</span> <span class="o">=</span> <span class="o">-</span><span class="mf">1.0</span>  <span class="c1"># 第 101 根 bar 卖 1 个单位</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">pf</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">Portfolio</span><span class="o">.</span><span class="n">from_orders</span><span class="p">(</span><span class="n">price</span><span class="p">,</span> <span class="n">orders</span><span class="p">,</span> <span class="n">init_cash</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="s2">"1D"</span><span class="p">)</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p><code>size</code> 正数买入、负数卖出、0 不动。需要做 monthly rebalance、波动率加权、风险平价时基本只能用这个入口。</p><h2 id="向量化的精髓一次回测-10000-组参数">向量化的精髓：一次回测 10000 组参数<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/vectorbt-tutorial/#%E5%90%91%E9%87%8F%E5%8C%96%E7%9A%84%E7%B2%BE%E9%AB%93%E4%B8%80%E6%AC%A1%E5%9B%9E%E6%B5%8B-10000-%E7%BB%84%E5%8F%82%E6%95%B0">#</a></h2><p>现在到了 vectorbt 真正放光彩的地方。把上面的双均线策略扩展成"对所有 fast×slow 窗口组合做网格搜索”，传统框架要写两层循环跑几个小时，vectorbt 几行代码十几秒搞定。</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">symbols</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"BTC-USD"</span><span class="p">,</span> <span class="s2">"ETH-USD"</span><span class="p">,</span> <span class="s2">"XRP-USD"</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="n">data</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">YFData</span><span class="o">.</span><span class="n">download</span><span class="p">(</span><span class="n">symbols</span><span class="p">,</span> <span class="n">missing_index</span><span class="o">=</span><span class="s2">"drop"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">price</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"Close"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">windows</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">101</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">fast_ma</span><span class="p">,</span> <span class="n">slow_ma</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">MA</span><span class="o">.</span><span class="n">run_combs</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">price</span><span class="p">,</span> <span class="n">window</span><span class="o">=</span><span class="n">windows</span><span class="p">,</span> <span class="n">r</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">short_names</span><span class="o">=</span><span class="p">[</span><span class="s2">"fast"</span><span class="p">,</span> <span class="s2">"slow"</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">entries</span> <span class="o">=</span> <span class="n">fast_ma</span><span class="o">.</span><span class="n">ma_crossed_above</span><span class="p">(</span><span class="n">slow_ma</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">exits</span> <span class="o">=</span> <span class="n">fast_ma</span><span class="o">.</span><span class="n">ma_crossed_below</span><span class="p">(</span><span class="n">slow_ma</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">pf</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">Portfolio</span><span class="o">.</span><span class="n">from_signals</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">price</span><span class="p">,</span> <span class="n">entries</span><span class="p">,</span> <span class="n">exits</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">size</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">,</span> <span class="n">fees</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="s2">"1D"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p><code>vbt.MA.run_combs(window=windows, r=2)</code> 是关键：从 windows 里选 2 个组合（C(99, 2) ≈ 4851 组），每组生成一对 fast/slow MA。乘以 3 个标的，最终 <code>entries</code> 是一个超过 14000 列的 DataFrame。Portfolio 一次性吞下，每列独立回测。</p><p>可视化用 vectorbt 内建的 heatmap accessor：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">fig</span> <span class="o">=</span> <span class="n">pf</span><span class="o">.</span><span class="n">total_return</span><span class="p">()</span><span class="o">.</span><span class="n">vbt</span><span class="o">.</span><span class="n">heatmap</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">x_level</span><span class="o">=</span><span class="s2">"fast_window"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">y_level</span><span class="o">=</span><span class="s2">"slow_window"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">slider_level</span><span class="o">=</span><span class="s2">"symbol"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">symmetric</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">trace_kwargs</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">colorbar</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">"Total return"</span><span class="p">,</span> <span class="n">tickformat</span><span class="o">=</span><span class="s2">"%"</span><span class="p">)),</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">fig</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p><img alt="Parameter heatmap of dual-SMA window grid search showing total return for all fast/slow combinations" loading="lazy" src="https://coriva.eu.org/vectorbt-tutorial/param-heatmap.webp"></p><p>热力图里能直观看到哪些参数区域稳定盈利、哪些是局部尖峰（典型过拟合信号）。一片连续的"高地"比一个孤立的山尖可信得多。这种参数稳定性分析是因子研究的标配，没有 vectorbt 这种速度根本做不动。</p><p>挑出一组具体参数复盘：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">pf</span><span class="p">[(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="s2">"ETH-USD"</span><span class="p">)]</span><span class="o">.</span><span class="n">stats</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl"><span class="n">pf</span><span class="p">[(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="s2">"ETH-USD"</span><span class="p">)]</span><span class="o">.</span><span class="n">plot</span><span class="p">()</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p><code>pf[(fast, slow, symbol)]</code> 是 pandas 多级索引，定位到那一列，所有 stats / plot 方法都跟单策略一样用。</p><h2 id="vectorbt-为什么这么快numba--结构化-numpy">vectorbt 为什么这么快：Numba + 结构化 NumPy<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/vectorbt-tutorial/#vectorbt-%E4%B8%BA%E4%BB%80%E4%B9%88%E8%BF%99%E4%B9%88%E5%BF%ABnumba--%E7%BB%93%E6%9E%84%E5%8C%96-numpy">#</a></h2><p>朴素 Python 循环跑 10000 个回测大约要 8 分钟，vectorbt 跑同样的工作量大约 15 秒。差距来自三件事。</p><p>第一，所有策略实例在内存里就是一个二维 NumPy 数组。pandas DataFrame 列方向天然对齐，broadcast 把 <code>fast_ma &gt; slow_ma</code> 这种比较一次算完所有列，不需要 Python 层循环。</p><p>第二，热路径用 Numba 的 <code>@njit</code> 装饰，Python 字节码在第一次调用时被编译成机器码。后续调用没有解释器开销，跑起来接近 C 的速度。最关键的几个内核（订单撮合、组合状态更新）还有可选的 Rust 实现，装好 <code>vectorbt[rust]</code> 就会自动启用，又能再快一截。</p><p>第三，避免对象开销。backtrader 里每根 bar 是一个对象，每个订单是一个对象，对象创建和 GC 占了大头时间。vectorbt 全程在结构化 NumPy 数组上操作，零对象分配。</p><p><img alt="Bar chart comparing backtest throughput between vectorbt and naive Python loops across different problem sizes" loading="lazy" src="https://coriva.eu.org/vectorbt-tutorial/perf-benchmark.webp"></p><p>性能数字仅供参考，具体差距取决于策略复杂度、数据规模和硬件。但数量级是真的。</p><h2 id="常见踩坑与最佳实践">常见踩坑与最佳实践<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/vectorbt-tutorial/#%E5%B8%B8%E8%A7%81%E8%B8%A9%E5%9D%91%E4%B8%8E%E6%9C%80%E4%BD%B3%E5%AE%9E%E8%B7%B5">#</a></h2><p>这一节是 vectorbt 文档里最容易被新手忽略的部分，但每一条都直接决定回测结果对不对。</p><p><strong>freq 必须显式设置</strong>。<code>Portfolio.from_signals(..., freq="1D")</code> 这个 freq 参数不传的话，年化收益、Sharpe、Sortino 全都是错的——vectorbt 会按 bar 数除以 252 或 365 估算，但你的 bar 实际间隔可能是 5 分钟、1 小时、1 周。所有时间相关的指标都依赖 freq 才能换算到年化基准。</p><p><strong>信号要不要 shift(1)</strong>。这是新手最容易犯的前视偏差。<code>fast_ma.ma_crossed_above(slow_ma)</code> 在 bar t 用 bar t 的收盘价计算 MA，所以信号本身已经包含了当根 bar 收盘后的信息。<code>Portfolio.from_signals</code> 默认在<strong>同一根 bar 用 <code>price</code>（默认是 close）成交</strong>，相当于"知道收盘价后再以收盘价下单”——回测里能做到，实盘做不到。严谨做法有两种：要么把 entries/exits 显式 <code>shift(1)</code>，要么把 <code>price</code> 参数显式传成下一根 bar 的开盘价（<code>Portfolio.from_signals(open_price, entries.shift(1), ...)</code>）。前视偏差还有更多隐蔽形式，可以参考 <a href="https://coriva.eu.org/backtesting-pitfalls/">回测陷阱大全</a>。</p><p><strong>多标的对齐</strong>。<code>vbt.YFData.download(symbols)</code> 默认在不同标的的时间戳上取并集，缺失值填 NaN。这会让某些标的在另一标的还没上市的时间段也参与计算，结果不对。规范做法是 <code>missing_index="drop"</code>，只保留所有标的都有数据的交集时段。</p><p><strong>内存爆炸</strong>。10000 列的回测每列存一份 trades / drawdowns 信息，如果再 × 多个标的 × 长历史，几十 GB 内存很容易吃满。最稳妥的办法是手动按列分块，跑完一块取到自己关心的指标再进下一块：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="n">chunk</span> <span class="o">=</span> <span class="mi">500</span>
+</span></span><span class="line"><span class="cl"><span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">entries</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">chunk</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="n">sub_pf</span> <span class="o">=</span> <span class="n">vbt</span><span class="o">.</span><span class="n">Portfolio</span><span class="o">.</span><span class="n">from_signals</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="n">price</span><span class="p">,</span> <span class="n">entries</span><span class="o">.</span><span class="n">iloc</span><span class="p">[:,</span> <span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="n">chunk</span><span class="p">],</span> <span class="n">exits</span><span class="o">.</span><span class="n">iloc</span><span class="p">[:,</span> <span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="n">chunk</span><span class="p">],</span>
+</span></span><span class="line"><span class="cl">        <span class="n">size</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">,</span> <span class="n">fees</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="s2">"1D"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># 只保留 total_return 这种轻量指标，丢掉重的 trades/drawdowns</span>
+</span></span><span class="line"><span class="cl">    <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sub_pf</span><span class="o">.</span><span class="n">total_return</span><span class="p">())</span>
+</span></span><span class="line"><span class="cl"><span class="n">total_return</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p>这种手动分块虽然不优雅，但每跑完一块原 Portfolio 对象就被 GC 回收，峰值内存从全量 × N 降到 chunk 大小。需要更自动化的方案可以看 vectorbt 的 <code>chunked</code> 模块，PRO 版还提供了对 Portfolio 友好的 merge 函数。</p><p><strong>YFData 在中国大陆的访问问题</strong>。yfinance 直连 Yahoo，国内无代理基本拉不动。本地 CSV 是最省心的替代：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+</span></span><span class="line"><span class="cl"><span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="s2">"btc.csv"</span><span class="p">,</span> <span class="n">index_col</span><span class="o">=</span><span class="s2">"date"</span><span class="p">,</span> <span class="n">parse_dates</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">price</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s2">"close"</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 直接喂给 from_signals 即可</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p>或者用 akshare、tushare 这类国内数据源拉数据后转成同样的 Series 格式。</p><h2 id="进阶方向从社区版到-pro">进阶方向：从社区版到 PRO<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/vectorbt-tutorial/#%E8%BF%9B%E9%98%B6%E6%96%B9%E5%90%91%E4%BB%8E%E7%A4%BE%E5%8C%BA%E7%89%88%E5%88%B0-pro">#</a></h2><p>vectorbt 有社区版（开源、本文用的就是）和 PRO 版（商业授权）。免费版已经能覆盖单标的策略原型、参数扫描、因子研究这些场景，足够个人研究使用。PRO 版主要解锁四类能力：限价单 / 止盈止损的精细订单类型、内置组合优化和风险平价、并行化引擎、模式识别和事件投影等更研究导向的工具。</p><p>学习路径建议是：先把官方文档的 <a href="https://vectorbt.dev/getting-started/usage/">Usage</a> 章节通读一遍，再去看 GitHub 上的 <a href="https://github.com/polakowo/vectorbt/tree/master/examples">example notebooks</a>，重点看双均线扫描、Bollinger Bands、组合层面的 trades 分析这三个例子，覆盖了 80% 的常用模式。卡住的时候直接读源码，作者注释写得很细，比 Stack Overflow 找答案快得多。</p><p>把第一个网格搜索跑通的那一刻，会突然明白为什么"向量化"这三个字在量化圈被翻来覆去地讲——回测速度从分钟级降到秒级，研究节奏完全不一样了。</p></div><footer class="post-footer"><ul class="post-tags"><li><a href="https://coriva.eu.org/tags/quant/">Quant</a></li><li><a href="https://coriva.eu.org/tags/python/">Python</a></li><li><a href="https://coriva.eu.org/tags/backtesting/">Backtesting</a></li></ul><nav class="paginav"><a class="prev" href="https://coriva.eu.org/qlib-tutorial/"><span class="title">« 上一页</span><br><span>Qlib 教程：从安装到第一个量化策略</span>
+</a><a class="next" href="https://coriva.eu.org/alphaagent-paper-review/"><span class="title">下一页 »</span><br><span>AlphaAgent：用正则化探索对抗因子衰减</span></a></nav></footer><div id="waline" data-v-app=""><div data-waline=""><!--v-if--><div class="wl-comment"><!--v-if--><div class="wl-panel"><div class="wl-header item3"><div class="wl-header-item"><label for="wl-nick">NickName</label><input id="wl-nick" class="wl-input wl-nick" name="nick" type="text"></div><div class="wl-header-item"><label for="wl-mail">E-Mail</label><input id="wl-mail" class="wl-input wl-mail" name="mail" type="email"></div><div class="wl-header-item"><label for="wl-link">Website</label><input id="wl-link" class="wl-input wl-link" name="link" type="text"></div></div><textarea id="wl-edit" class="wl-editor" placeholder="Comment here..."></textarea><div class="wl-preview" style="display: none;"><hr><h4>Preview:</h4><div class="wl-content"></div></div><div class="wl-footer"><div class="wl-actions"><a href="https://guides.github.com/features/mastering-markdown/" title="Markdown Guide" aria-label="Markdown is supported" class="wl-action" target="_blank" rel="noopener noreferrer"><svg width="16" height="16" ariaHidden="true"><path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.69C0 12.48.52 13 1.15 13h13.69c.64 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3zM9 11H7V8L5.5 9.92 4 8v3H2V5h2l1.5 2L7 5h2v6zm2.99.5L9.5 8H11V5h2v3h1.5l-2.51 3.5z" fill="currentColor"></path></svg></a><button type="button" class="wl-action" title="Emoji" style=""><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M563.2 463.3 677 540c1.7 1.2 3.7 1.8 5.8 1.8.7 0 1.4-.1 2-.2 2.7-.5 5.1-2.1 6.6-4.4l25.3-37.8c1.5-2.3 2.1-5.1 1.6-7.8s-2.1-5.1-4.4-6.6l-73.6-49.1 73.6-49.1c2.3-1.5 3.9-3.9 4.4-6.6.5-2.7 0-5.5-1.6-7.8l-25.3-37.8a10.1 10.1 0 0 0-6.6-4.4c-.7-.1-1.3-.2-2-.2-2.1 0-4.1.6-5.8 1.8l-113.8 76.6c-9.2 6.2-14.7 16.4-14.7 27.5.1 11 5.5 21.3 14.7 27.4zM387 348.8h-45.5c-5.7 0-10.4 4.7-10.4 10.4v153.3c0 5.7 4.7 10.4 10.4 10.4H387c5.7 0 10.4-4.7 10.4-10.4V359.2c0-5.7-4.7-10.4-10.4-10.4zm333.8 241.3-41-20a10.3 10.3 0 0 0-8.1-.5c-2.6.9-4.8 2.9-5.9 5.4-30.1 64.9-93.1 109.1-164.4 115.2-5.7.5-9.9 5.5-9.5 11.2l3.9 45.5c.5 5.3 5 9.5 10.3 9.5h.9c94.8-8 178.5-66.5 218.6-152.7 2.4-5 .3-11.2-4.8-13.6zm186-186.1c-11.9-42-30.5-81.4-55.2-117.1-24.1-34.9-53.5-65.6-87.5-91.2-33.9-25.6-71.5-45.5-111.6-59.2-41.2-14-84.1-21.1-127.8-21.1h-1.2c-75.4 0-148.8 21.4-212.5 61.7-63.7 40.3-114.3 97.6-146.5 165.8-32.2 68.1-44.3 143.6-35.1 218.4 9.3 74.8 39.4 145 87.3 203.3.1.2.3.3.4.5l36.2 38.4c1.1 1.2 2.5 2.1 3.9 2.6 73.3 66.7 168.2 103.5 267.5 103.5 73.3 0 145.2-20.3 207.7-58.7 37.3-22.9 70.3-51.5 98.1-85 27.1-32.7 48.7-69.5 64.2-109.1 15.5-39.7 24.4-81.3 26.6-123.8 2.4-43.6-2.5-87-14.5-129zm-60.5 181.1c-8.3 37-22.8 72-43 104-19.7 31.1-44.3 58.6-73.1 81.7-28.8 23.1-61 41-95.7 53.4-35.6 12.7-72.9 19.1-110.9 19.1-82.6 0-161.7-30.6-222.8-86.2l-34.1-35.8c-23.9-29.3-42.4-62.2-55.1-97.7-12.4-34.7-18.8-71-19.2-107.9-.4-36.9 5.4-73.3 17.1-108.2 12-35.8 30-69.2 53.4-99.1 31.7-40.4 71.1-72 117.2-94.1 44.5-21.3 94-32.6 143.4-32.6 49.3 0 97 10.8 141.8 32 34.3 16.3 65.3 38.1 92 64.8 26.1 26 47.5 56 63.6 89.2 16.2 33.2 26.6 68.5 31 105.1 4.6 37.5 2.7 75.3-5.6 112.3z" fill="currentColor"></path></svg></button><!--v-if--><input id="wl-image-upload" class="upload" aria-hidden="true" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif"><label for="wl-image-upload" class="wl-action" title="Upload Image" aria-label="Upload Image"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M784 112H240c-88 0-160 72-160 160v480c0 88 72 160 160 160h544c88 0 160-72 160-160V272c0-88-72-160-160-160zm96 640c0 52.8-43.2 96-96 96H240c-52.8 0-96-43.2-96-96V272c0-52.8 43.2-96 96-96h544c52.8 0 96 43.2 96 96v480z" fill="currentColor"></path><path d="M352 480c52.8 0 96-43.2 96-96s-43.2-96-96-96-96 43.2-96 96 43.2 96 96 96zm0-128c17.6 0 32 14.4 32 32s-14.4 32-32 32-32-14.4-32-32 14.4-32 32-32zm462.4 379.2-3.2-3.2-177.6-177.6c-25.6-25.6-65.6-25.6-91.2 0l-80 80-36.8-36.8c-25.6-25.6-65.6-25.6-91.2 0L200 728c-4.8 6.4-8 14.4-8 24 0 17.6 14.4 32 32 32 9.6 0 16-3.2 22.4-9.6L380.8 640l134.4 134.4c6.4 6.4 14.4 9.6 24 9.6 17.6 0 32-14.4 32-32 0-9.6-4.8-17.6-9.6-24l-52.8-52.8 80-80L769.6 776c6.4 4.8 12.8 8 20.8 8 17.6 0 32-14.4 32-32 0-8-3.2-16-8-20.8z" fill="currentColor"></path></svg></label><button type="button" class="wl-action" title="Preview"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M710.816 654.301c70.323-96.639 61.084-230.578-23.705-314.843-46.098-46.098-107.183-71.109-172.28-71.109-65.008 0-126.092 25.444-172.28 71.109-45.227 46.098-70.756 107.183-70.756 172.106 0 64.923 25.444 126.007 71.194 172.106 46.099 46.098 107.184 71.109 172.28 71.109 51.414 0 100.648-16.212 142.824-47.404l126.53 126.006c7.058 7.06 16.297 10.979 26.406 10.979 10.105 0 19.343-3.919 26.402-10.979 14.467-14.467 14.467-38.172 0-52.723L710.816 654.301zm-315.107-23.265c-65.88-65.88-65.88-172.54 0-238.42 32.069-32.07 74.245-49.149 119.471-49.149 45.227 0 87.407 17.603 119.472 49.149 65.88 65.879 65.88 172.539 0 238.42-63.612 63.178-175.242 63.178-238.943 0zm0 0" fill="currentColor"></path><path d="M703.319 121.603H321.03c-109.8 0-199.469 89.146-199.469 199.38v382.034c0 109.796 89.236 199.38 199.469 199.38h207.397c20.653 0 37.384-16.645 37.384-37.299 0-20.649-16.731-37.296-37.384-37.296H321.03c-68.582 0-124.352-55.77-124.352-124.267V321.421c0-68.496 55.77-124.267 124.352-124.267h382.289c68.582 0 124.352 55.771 124.352 124.267V524.72c0 20.654 16.736 37.299 37.385 37.299 20.654 0 37.384-16.645 37.384-37.299V320.549c-.085-109.8-89.321-198.946-199.121-198.946zm0 0" fill="currentColor"></path></svg></button></div><div class="wl-info"><div class="wl-captcha-container"></div><div class="wl-text-number">0 <!--v-if--> &nbsp;Words</div><button type="button" class="wl-btn">Login</button><button type="submit" class="primary wl-btn" title="Cmd|Ctrl + Enter">Submit</button></div><div class="wl-gif-popup"><input type="text" placeholder="Search GIF"><!--v-if--><div class="wl-loading"><svg width="30" height="30" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid"><circle cx="50" cy="50" fill="none" stroke="currentColor" strokeWidth="4" r="40" stroke-dasharray="85 30"><animateTransform attributeName="transform" type="rotate" repeatCount="indefinite" dur="1s" values="0 50 50;360 50 50" keyTimes="0;1"></animateTransform></circle></svg></div></div><div class="wl-emoji-popup"><div class="wl-tab-wrapper"><button type="button" title="weibo_smile"><!--v-if--></button><button type="button" title="weibo_lovely"><!--v-if--></button><button type="button" title="weibo_blush"><!--v-if--></button><button type="button" title="weibo_grin"><!--v-if--></button><button type="button" title="weibo_laugh"><!--v-if--></button><button type="button" title="weibo_joy"><!--v-if--></button><button type="button" title="weibo_angry"><!--v-if--></button><button type="button" title="weibo_bye"><!--v-if--></button><button type="button" title="weibo_hammer"><!--v-if--></button><button type="button" title="weibo_kiss"><!--v-if--></button><button type="button" title="weibo_love"><!--v-if--></button><button type="button" title="weibo_mask"><!--v-if--></button><button type="button" title="weibo_money"><!--v-if--></button><button type="button" title="weibo_quiet"><!--v-if--></button><button type="button" title="weibo_rage"><!--v-if--></button><button type="button" title="weibo_sad"><!--v-if--></button><button type="button" title="weibo_shy"><!--v-if--></button><button type="button" title="weibo_sick"><!--v-if--></button><button type="button" title="weibo_slient"><!--v-if--></button><button type="button" title="weibo_smirk"><!--v-if--></button><button type="button" title="weibo_slap"><!--v-if--></button><button type="button" title="weibo_antic"><!--v-if--></button><button type="button" title="weibo_desire"><!--v-if--></button><button type="button" title="weibo_longing"><!--v-if--></button><button type="button" title="weibo_no_idea"><!--v-if--></button><button type="button" title="weibo_look_down"><!--v-if--></button><button type="button" title="weibo_clap"><!--v-if--></button><button type="button" title="weibo_yum"><!--v-if--></button><button type="button" title="weibo_sleep"><!--v-if--></button><button type="button" title="weibo_dizzy_face"><!--v-if--></button><button type="button" title="weibo_chuckle"><!--v-if--></button><button type="button" title="weibo_disappointed"><!--v-if--></button><button type="button" title="weibo_flushed"><!--v-if--></button><button type="button" title="weibo_heart_eyes"><!--v-if--></button><button type="button" title="weibo_no"><!--v-if--></button><button type="button" title="weibo_shuai"><!--v-if--></button><button type="button" title="weibo_suprised"><!--v-if--></button><button type="button" title="weibo_think"><!--v-if--></button><button type="button" title="weibo_vomit"><!--v-if--></button><button type="button" title="weibo_scream"><!--v-if--></button><button type="button" title="weibo_sleepy"><!--v-if--></button><button type="button" title="weibo_sob"><!--v-if--></button><button type="button" title="weibo_sunglasses"><!--v-if--></button><button type="button" title="weibo_greddy"><!--v-if--></button><button type="button" title="weibo_pick_nose"><!--v-if--></button><button type="button" title="weibo_annoyed"><!--v-if--></button><button type="button" title="weibo_awkward"><!--v-if--></button><button type="button" title="weibo_confused"><!--v-if--></button><button type="button" title="weibo_grievance"><!--v-if--></button><button type="button" title="weibo_poor"><!--v-if--></button><button type="button" title="weibo_wink"><!--v-if--></button><button type="button" title="weibo_rolling_eyes"><!--v-if--></button><button type="button" title="weibo_watermalon"><!--v-if--></button><button type="button" title="weibo_annoyed_left"><!--v-if--></button><button type="button" title="weibo_annoyed_right"><!--v-if--></button><button type="button" title="weibo_yawn"><!--v-if--></button><button type="button" title="weibo_hufen"><!--v-if--></button><button type="button" title="weibo_doge"><!--v-if--></button><button type="button" title="weibo_husky"><!--v-if--></button><button type="button" title="weibo_dog_annoyed"><!--v-if--></button><button type="button" title="weibo_dog_bye"><!--v-if--></button><button type="button" title="weibo_dog_consider"><!--v-if--></button><button type="button" title="weibo_dog_cry"><!--v-if--></button><button type="button" title="weibo_dog_joy"><!--v-if--></button><button type="button" title="weibo_dog_laugh"><!--v-if--></button><button type="button" title="weibo_dog_sweat"><!--v-if--></button><button type="button" title="weibo_dog_think"><!--v-if--></button><button type="button" title="weibo_dog_yum"><!--v-if--></button><button type="button" title="weibo_cat"><!--v-if--></button><button type="button" title="weibo_cat_annoyed"><!--v-if--></button><button type="button" title="weibo_cat_bye"><!--v-if--></button><button type="button" title="weibo_cat_cry"><!--v-if--></button><button type="button" title="weibo_cat_think"><!--v-if--></button><button type="button" title="weibo_girl_annoyed"><!--v-if--></button><button type="button" title="weibo_boy"><!--v-if--></button><button type="button" title="weibo_girl"><!--v-if--></button><button type="button" title="weibo_panda"><!--v-if--></button><button type="button" title="weibo_pig"><!--v-if--></button><button type="button" title="weibo_rabbit"><!--v-if--></button><button type="button" title="weibo_ultraman"><!--v-if--></button><button type="button" title="weibo_wool_group"><!--v-if--></button><button type="button" title="weibo_yan"><!--v-if--></button><button type="button" title="weibo_xi"><!--v-if--></button><button type="button" title="weibo_soap"><!--v-if--></button><button type="button" title="weibo_meng"><!--v-if--></button><button type="button" title="weibo_jiong"><!--v-if--></button><button type="button" title="weibo_geili"><!--v-if--></button><button type="button" title="weibo_shenma"><!--v-if--></button><button type="button" title="weibo_alpaca"><!--v-if--></button></div><div><!--v-if--></div><!--v-if--></div></div></div><!--v-if--></div><div class="wl-meta-head"><div class="wl-count"><!--v-if--> Comments</div><ul class="wl-sort"><li class="active">Latest</li><li class="">Oldest</li><li class="">Hottest</li></ul></div><div class="wl-cards"></div><div class="wl-empty">No comment yet.</div><div class="wl-meta-foot"><div class="wl-rss"><a href="https://comments.coriva.eu.org/api/comment/rss?path=%2Fvectorbt-tutorial%2F" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this post"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this post</span></a><a href="https://comments.coriva.eu.org/api/comment/rss" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this site"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this site</span></a></div><div class="wl-power"> Powered by <a href="https://github.com/walinejs/waline" target="_blank" rel="noopener noreferrer"> Waline </a> v3.15.2</div></div></div></div><link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css"><script type="module">
+  import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
+  import { pageviewCount } from 'https://unpkg.com/@waline/client@v3/dist/pageview.js';
+  init({
+    el: '#waline',
+    serverURL: 'https://comments.coriva.eu.org',
+    lang: 'en',
+    pageview: false,
+  });
+  pageviewCount({
+    serverURL: 'https://comments.coriva.eu.org',
+  });
+</script></article><aside class="toc-sidebar" id="toc-sidebar"><nav class="toc-sidebar-nav"><span class="toc-sidebar-title">目录</span><div class="toc-sidebar-inner"><nav id="TableOfContents"><ul><li><a href="https://coriva.eu.org/vectorbt-tutorial/#vectorbt-%E6%98%AF%E4%BB%80%E4%B9%88%E4%B8%BA%E4%BB%80%E4%B9%88%E4%B8%8D%E7%9B%B4%E6%8E%A5%E7%94%A8-backtrader">vectorbt 是什么，为什么不直接用 backtrader</a></li><li><a href="https://coriva.eu.org/vectorbt-tutorial/#%E5%AE%89%E8%A3%85%E4%B8%8E%E7%AC%AC%E4%B8%80%E4%B8%AA%E5%9B%9E%E6%B5%8B5-%E8%A1%8C%E4%BB%A3%E7%A0%81%E4%B9%B0%E5%85%A5%E5%B9%B6%E6%8C%81%E6%9C%89-btc">安装与第一个回测：5 行代码买入并持有 BTC</a></li><li><a href="https://coriva.eu.org/vectorbt-tutorial/#%E5%8F%8C%E5%9D%87%E7%BA%BF%E7%AD%96%E7%95%A5%E4%BB%8E%E4%BF%A1%E5%8F%B7%E5%88%B0%E7%BB%84%E5%90%88">双均线策略：从信号到组合</a></li><li><a href="https://coriva.eu.org/vectorbt-tutorial/#%E4%B8%89%E7%A7%8D-portfolio-%E5%85%A5%E5%8F%A3%E6%80%8E%E4%B9%88%E9%80%89from_holding--from_signals--from_orders">三种 Portfolio 入口怎么选：from_holding / from_signals / from_orders</a></li><li><a href="https://coriva.eu.org/vectorbt-tutorial/#%E5%90%91%E9%87%8F%E5%8C%96%E7%9A%84%E7%B2%BE%E9%AB%93%E4%B8%80%E6%AC%A1%E5%9B%9E%E6%B5%8B-10000-%E7%BB%84%E5%8F%82%E6%95%B0">向量化的精髓：一次回测 10000 组参数</a></li><li><a href="https://coriva.eu.org/vectorbt-tutorial/#vectorbt-%E4%B8%BA%E4%BB%80%E4%B9%88%E8%BF%99%E4%B9%88%E5%BF%ABnumba--%E7%BB%93%E6%9E%84%E5%8C%96-numpy">vectorbt 为什么这么快：Numba + 结构化 NumPy</a></li><li><a href="https://coriva.eu.org/vectorbt-tutorial/#%E5%B8%B8%E8%A7%81%E8%B8%A9%E5%9D%91%E4%B8%8E%E6%9C%80%E4%BD%B3%E5%AE%9E%E8%B7%B5">常见踩坑与最佳实践</a></li><li><a href="https://coriva.eu.org/vectorbt-tutorial/#%E8%BF%9B%E9%98%B6%E6%96%B9%E5%90%91%E4%BB%8E%E7%A4%BE%E5%8C%BA%E7%89%88%E5%88%B0-pro" class="">进阶方向：从社区版到 PRO</a></li></ul></nav></div></nav><nav class="related-posts"><h2>相关文章</h2><ul><li><a href="https://coriva.eu.org/ta-lib-python-tutorial/"><span class="related-title">TA-Lib Python 完整教程</span>
+<span class="related-date">2026-04-12</span></a></li><li><a href="https://coriva.eu.org/factorminer-paper-review/"><span class="related-title">FactorMiner 论文简读</span>
+<span class="related-date">2026-06-14</span></a></li><li><a href="https://coriva.eu.org/quantaalpha-paper-review/"><span class="related-title">QuantaAlpha：把因子挖掘当成轨迹来进化</span>
+<span class="related-date">2026-05-20</span></a></li><li><a href="https://coriva.eu.org/0dte-options-guide/"><span class="related-title">末日期权（0DTE）完全指南：机制、Greeks 与盈亏真相</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/qlib-tutorial/"><span class="related-title">Qlib 教程：从安装到第一个量化策略</span>
+<span class="related-date">2026-05-11</span></a></li></ul></nav></aside></div></main><footer class="footer"><span>© 2026 <a href="https://coriva.eu.org/">Coriva</a></span> ·
+<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+<a href="https://finicounter.eu.org/" target="_blank">Total Views</a>:
+<span id="finicount_views">7,285</span></span></footer><a href="https://coriva.eu.org/vectorbt-tutorial/#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g" style="visibility: hidden; opacity: 0;"><svg viewBox="0 0 12 6" fill="currentcolor"><path d="M12 6H0l6-6z"></path></svg>
+</a><script async="" src="//finicounter.eu.org/finicounter.js"></script><script>(function(){var e,t,n,s=document.getElementById("toc-sidebar");if(!s)return;if(t=s.querySelectorAll('a[href^="#"]'),!t.length)return;e=[],t.forEach(function(t){var s=decodeURIComponent(t.getAttribute("href").slice(1)),n=document.getElementById(s);n&&e.push({el:n,link:t})});function o(){for(var o=window.scrollY||document.documentElement.scrollTop,i=100,s=null,n=0;n<e.length;n++)e[n].el.getBoundingClientRect().top+window.scrollY-i<=o&&(s=e[n]);t.forEach(function(e){e.classList.remove("active")}),s&&s.link.classList.add("active")}n=!1,window.addEventListener("scroll",function(){n||(requestAnimationFrame(function(){o(),n=!1}),n=!0)}),o()})()</script><script>let menu=document.getElementById("menu");if(menu){const e=localStorage.getItem("menu-scroll-position");e&&(menu.scrollLeft=parseInt(e,10)),menu.onscroll=function(){localStorage.setItem("menu-scroll-position",menu.scrollLeft)}}document.querySelectorAll('a[href^="#"]').forEach(e=>{e.addEventListener("click",function(e){e.preventDefault();var t=this.getAttribute("href").substr(1);window.matchMedia("(prefers-reduced-motion: reduce)").matches?document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView():document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView({behavior:"smooth"}),t==="top"?history.replaceState(null,null," "):history.pushState(null,null,`#${t}`)})})</script><script>var mybutton=document.getElementById("top-link");window.onscroll=function(){document.body.scrollTop>800||document.documentElement.scrollTop>800?(mybutton.style.visibility="visible",mybutton.style.opacity="1"):(mybutton.style.visibility="hidden",mybutton.style.opacity="0")}</script><script>document.getElementById("theme-toggle").addEventListener("click",()=>{const e=document.querySelector("html");e.dataset.theme==="dark"?(e.dataset.theme="light",localStorage.setItem("pref-theme","light")):(e.dataset.theme="dark",localStorage.setItem("pref-theme","dark"))})</script><script>document.querySelectorAll("pre > code").forEach(e=>{const n=e.parentNode.parentNode,t=document.createElement("button");t.classList.add("copy-code"),t.innerHTML="复制";function s(){t.innerHTML="已复制！",setTimeout(()=>{t.innerHTML="复制"},2e3)}t.addEventListener("click",t=>{if("clipboard"in navigator){navigator.clipboard.writeText(e.textContent),s();return}const n=document.createRange();n.selectNodeContents(e);const o=window.getSelection();o.removeAllRanges(),o.addRange(n);try{document.execCommand("copy"),s()}catch{}o.removeRange(n)}),n.classList.contains("highlight")?n.appendChild(t):n.parentNode.firstChild==n||(e.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName=="TABLE"?e.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(t):e.parentNode.appendChild(t))})</script></body></html>

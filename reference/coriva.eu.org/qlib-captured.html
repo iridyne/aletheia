@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="zh" dir="auto" data-theme="dark"><head><meta charset="utf-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><meta name="robots" content="index, follow"><title>Qlib 教程：从安装到第一个量化策略 | Coriva</title>
+<meta name="keywords" content="Quant,Qlib,Trading"><meta name="description" content="Qlib 教程：从 pip 安装、Alpha158 因子集、LightGBM 训练到回测分析的完整入门指南，含架构图、可运行代码和 Windows 常见报错避坑清单。"><meta name="author" content="Coriva"><link rel="canonical" href="https://coriva.eu.org/qlib-tutorial/"><meta name="msvalidate.01" content="F8E2F274161B653649F8818FD127CE87"><link crossorigin="anonymous" href="/assets/css/stylesheet.8fe2fa5580263673749c0854ddc4fdff83d8cd245ff94138be9f54fc4bc84fca.css" integrity="sha256-j+L6VYAmNnN0nAhU3cT9/4PYzSRf+UE4vp9U/EvIT8o=" rel="preload stylesheet" as="style"><link rel="icon" href="https://coriva.eu.org/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="https://coriva.eu.org/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="https://coriva.eu.org/favicon-32x32.png"><link rel="apple-touch-icon" href="https://coriva.eu.org/apple-touch-icon.png"><link rel="mask-icon" href="https://coriva.eu.org/safari-pinned-tab.svg"><meta name="theme-color" content="#2e2e33"><meta name="msapplication-TileColor" content="#2e2e33"><link rel="alternate" hreflang="zh" href="https://coriva.eu.org/qlib-tutorial/"><link rel="alternate" hreflang="en" href="https://coriva.eu.org/en/qlib-tutorial/"><noscript><style>#theme-toggle,.top-link{display:none}</style><style>@media(prefers-color-scheme:dark){:root{--theme:rgb(29, 30, 32);--entry:rgb(46, 46, 51);--primary:rgb(218, 218, 219);--secondary:rgb(155, 156, 157);--tertiary:rgb(65, 66, 68);--content:rgb(196, 196, 197);--code-block-bg:rgb(46, 46, 51);--code-bg:rgb(55, 56, 62);--border:rgb(51, 51, 51);color-scheme:dark}.list{background:var(--theme)}.toc{background:var(--entry)}}@media(prefers-color-scheme:light){.list::-webkit-scrollbar-thumb{border-color:var(--code-bg)}}</style></noscript><script>localStorage.getItem("pref-theme")==="dark"?document.querySelector("html").dataset.theme="dark":localStorage.getItem("pref-theme")==="light"?document.querySelector("html").dataset.theme="light":window.matchMedia("(prefers-color-scheme: dark)").matches?document.querySelector("html").dataset.theme="dark":document.querySelector("html").dataset.theme="light"</script><meta name="google-adsense-account" content="ca-pub-2660281922577700"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/400.css" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/500.css" rel="stylesheet"><style>code,kbd,samp,pre{font-family:fira code,cascadia code,source code pro,sf mono,Menlo,Consolas,monospace}.entry-footer .pageview-meta{display:none}.post-single .post-description{display:none}.post-single-wrapper{display:flex;gap:4rem;align-items:flex-start}.post-single-wrapper .post-single{flex:1;min-width:0}.toc-sidebar{display:none}@media(min-width:1280px){body:not(.list) .main{max-width:calc(var(--main-width) + var(--gap) * 2 + 272px)}.post-single-wrapper .post-single{max-width:var(--main-width)}.toc-sidebar{display:block;width:220px;flex-shrink:0;position:sticky;top:calc(var(--header-height) + 1rem);max-height:calc(100vh - var(--header-height) - 3rem);overflow-y:auto;scrollbar-width:none;padding-left:1rem;border-left:1px solid var(--border)}.toc-sidebar::-webkit-scrollbar{display:none}.toc-sidebar-nav{font-size:.8rem;line-height:1.65}.toc-sidebar-title{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.toc-sidebar-inner ul{list-style:none;padding-left:0;margin:0}.toc-sidebar-inner ul ul{padding-left:.9em}.toc-sidebar-inner li{margin:.2em 0}.toc-sidebar-inner a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;transition:color .2s;opacity:.8}.toc-sidebar-inner a:hover{color:var(--primary);opacity:1}.toc-sidebar-inner a.active{color:var(--primary);font-weight:500;opacity:1}}.related-posts{margin-top:1.5rem;padding-top:1.2rem;border-top:1px solid var(--border)}.related-posts h2{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.related-posts ul{list-style:none;padding:0;margin:0}.related-posts li{margin:.2em 0}.related-posts a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;font-size:.8rem;line-height:1.65;transition:color .2s;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.related-posts a:hover{color:var(--primary);opacity:1}.related-date{display:none}</style><script>MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]}}</script><script async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script><script async="" src="https://www.googletagmanager.com/gtag/js?id=G-C74ZBKDR6V"></script><script>var dnt,doNotTrack=!1;if(!1&&(dnt=navigator.doNotTrack||window.doNotTrack||navigator.msDoNotTrack,doNotTrack=dnt=="1"||dnt=="yes"),!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-C74ZBKDR6V")}</script><meta property="og:url" content="https://coriva.eu.org/qlib-tutorial/"><meta property="og:site_name" content="Coriva"><meta property="og:title" content="Qlib 教程：从安装到第一个量化策略"><meta property="og:description" content="Qlib 教程：从 pip 安装、Alpha158 因子集、LightGBM 训练到回测分析的完整入门指南，含架构图、可运行代码和 Windows 常见报错避坑清单。"><meta property="og:locale" content="zh"><meta property="og:type" content="article"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-05-11T13:18:56+08:00"><meta property="article:modified_time" content="2026-05-11T13:18:56+08:00"><meta property="article:tag" content="Quant"><meta property="article:tag" content="Qlib"><meta property="article:tag" content="Trading"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="Qlib 教程：从安装到第一个量化策略"><meta name="twitter:description" content="Qlib 教程：从 pip 安装、Alpha158 因子集、LightGBM 训练到回测分析的完整入门指南，含架构图、可运行代码和 Windows 常见报错避坑清单。"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Posts","item":"https://coriva.eu.org/posts/"},{"@type":"ListItem","position":2,"name":"Qlib 教程：从安装到第一个量化策略","item":"https://coriva.eu.org/qlib-tutorial/"}]}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","headline":"Qlib 教程：从安装到第一个量化策略","name":"Qlib 教程：从安装到第一个量化策略","description":"Qlib 教程：从 pip 安装、Alpha158 因子集、LightGBM 训练到回测分析的完整入门指南，含架构图、可运行代码和 Windows 常见报错避坑清单。","keywords":["Quant","Qlib","Trading"],"articleBody":"Qlib 是微软开源的 AI 量化投资平台，2020 年发布，到现在 GitHub 上 16k+ star。它把数据、因子、模型、回测、报告打成一条流水线，标配了 Alpha158/Alpha360 两个常用因子集，自带 LightGBM、Transformer、TCN 等 20 多个模型。这篇 Qlib 教程从安装讲到跑通第一个 LightGBM + Alpha158 策略，再到看懂回测报告，最后给一份踩坑清单。\n读完你能做到：本机装好 Qlib，下载 A 股日线数据，用 30 行代码训出一个模型，用 qrun 跑一遍标准化工作流，看懂输出的 IC、年化、最大回撤这些数字。\nQlib 是什么，什么时候该用它 Qlib 的定位是 “AI-oriented quantitative investment platform”，关键词是 AI 和 quant。它不是一个交易引擎（不像 vnpy 那样直连券商接口下单），也不是单纯的回测库（不像 backtrader 那样只关心策略逻辑）。Qlib 假设你的工作流是：拿历史数据 → 算因子 → 训模型 → 用模型打分排序 → 按排序构建组合 → 回测 → 看报告。这条流水线里每一环它都给了开箱即用的实现。\n下面这张表是几个常见框架的横向对比，按我的实际使用经验整理：\n框架 强项 弱项 典型用户 Qlib 因子工程 + ML 训练 + 回测一体化，A 股数据好下 学习曲线陡，框架抽象层多 量化研究员、做因子挖掘 Backtrader 灵活，事件驱动回测干净 没有数据、没有因子库，要自己造 策略开发者、CTA 做手 vnpy 实盘对接好，UI 全 偏交易系统，研究功能弱 国内私募实盘 Zipline 经典，文档全 已停止维护，pandas 老版本绑定 历史项目维护 QuantConnect/LEAN 云端一站式，多市场 闭源云服务，本地折腾难 海外散户、小团队 什么场景不适合用 Qlib：你只想跑一个简单的双均线策略、不需要 ML，那 Qlib 太重；你做高频或日内 tick 级，Qlib 的 1min 数据支持有但不是它的主战场；你要做实盘自动化下单，Qlib 没这个功能，得自己接。\n安装 Qlib 与下载数据 最快的方式是 pip：\npip install pyqlib Python 版本建议 3.8 到 3.11 之间。3.12 我实测在 Windows 上装 lightgbm 会偶尔翻车，3.8 下 pytorch 又找不到新版 wheel。3.10 是最稳的。\n源码安装适合需要改 Qlib 内部代码的人：\ngit clone https://github.com/microsoft/qlib.git cd qlib pip install numpy cython pip install -e . 注意官方 README 还在用 python setup.py install，setuptools 58+ 已经废弃了这个命令，会报 error: invalid command 'install'。改用 pip install -e . 是稳的，顺带支持后续改源码热更新。\n装完用一行验证：\nimport qlib print(qlib.__version__) # 0.9.x 接下来下载数据。Qlib 把 OHLCV 存成自己的 .bin 列式格式（速度比 csv/parquet 都快），需要先用脚本拉下来：\n# A 股日线 python -m qlib.run.get_data qlib_data \\ --target_dir ~/.qlib/qlib_data/cn_data \\ --region cn # 美股日线 python -m qlib.run.get_data qlib_data \\ --target_dir ~/.qlib/qlib_data/us_data \\ --region us A 股全量大概 2GB 左右，国内网络偶尔断，加个 --interval 1d 显式指定频率，断了重跑会续传。下载完目录长这样：\n~/.qlib/qlib_data/cn_data/ ├── calendars/ # 交易日历 ├── instruments/ # 股票池定义（all.txt, csi300.txt, csi500.txt） ├── features/ # 每只股票一个文件夹，里面是 .bin 列文件 └── dataset_cache/ Windows 用户注意一个坑：~ 在某些 shell 下不会展开，建议直接写绝对路径 D:/qlib_data/cn_data，并在后续代码里用同样的路径，免得 Qlib 找不到数据报 FileNotFoundError。\n30 行代码跑通第一个 LightGBM 模型 下面这段是最小可运行的 Qlib 教程示例，从初始化到训练到打分一气呵成：\nimport qlib from qlib.constant import REG_CN from qlib.contrib.data.handler import Alpha158 from qlib.contrib.model.gbdt import LGBModel from qlib.data.dataset import DatasetH qlib.init(provider_uri=\"~/.qlib/qlib_data/cn_data\", region=REG_CN) handler = Alpha158( instruments=\"csi300\", start_time=\"2017-01-01\", end_time=\"2023-12-31\", fit_start_time=\"2017-01-01\", fit_end_time=\"2020-12-31\", ) dataset = DatasetH( handler=handler, segments={ \"train\": (\"2017-01-01\", \"2020-12-31\"), \"valid\": (\"2021-01-01\", \"2021-12-31\"), \"test\": (\"2022-01-01\", \"2023-12-31\"), }, ) model = LGBModel( loss=\"mse\", learning_rate=0.05, num_leaves=210, feature_fraction=0.8879, early_stopping_rounds=50, num_boost_round=1000, ) model.fit(dataset) pred = model.predict(dataset) print(pred.head()) 跑通了你会看到一个 MultiIndex 的 Series，(datetime, instrument) 作为索引，值是模型对每只股票第二天收益的预测分数。CSI300 + Alpha158 + 默认 LGBModel 在 2022-2023 测试段上 IC 大概 0.04-0.06，Rank IC 0.05-0.07，这是个合理的 baseline，比随机（IC≈0）好，但远谈不上能直接赚钱。\n第一次跑会花几分钟，因为 Alpha158 要把 158 个因子算一遍并缓存到 ~/.qlib/dataset_cache/。后面再跑同样的 handler 配置，直接走缓存秒开。\n理解 Qlib 的核心架构：DataServer 与表达式引擎 跑通了示例，回过头看架构会清晰很多。Qlib 分四层，每层职责单一：\nDataServer：底层数据服务。负责从 .bin 列文件里把原始 OHLCV 读出来，并实现一套表达式引擎。Mean($close, 5) 这种字符串它能解析成对 close 列做 5 天均值的算子。 DataHandler：把原始数据加工成 (features, labels) 这对 ML 训练能直接用的张量。Alpha158 就是一个内置的 DataHandler，它把 158 个表达式写死在源码里。 Model：纯 ML 部分。Qlib 内置了 LightGBM、XGBoost、MLP、LSTM、GRU、Transformer、Localformer、TCN、TabNet、ADD、ADARNN、HIST 等等，统一接口 fit(dataset) / predict(dataset)。 Strategy + Executor：把模型的预测分数转成实际持仓和订单，再用历史价格回放回测。最常用的 TopkDropoutStrategy 后面单独讲。 Recorder/Analyser：MLflow 风格的实验记录，每次 qrun 自动存一份预测、持仓、报告 HTML。 DataHandler 里面发生了什么值得单独看一眼：\n原始 .bin 数据进来，表达式引擎根据配置算出 158 个特征列，同时根据 label 表达式算出标签列，然后切分成 train/valid/test 三段交给模型。\n默认 label 是 Ref($close, -2)/Ref($close, -1) - 1。负数偏移在 Qlib 里表示未来：Ref($close,-1) 是 T+1 的收盘，Ref($close,-2) 是 T+2 的收盘，所以这个标签是 T+1 收盘到 T+2 收盘的收益。配合 TopkDropoutStrategy 在 T 日决策、deal_price=close，相当于用模型在 T 日预测 T+1 到 T+2 这一天的持仓收益。换句话说，T 日盘后才能拿到所有特征（包含 T 日 close），决策也只能在盘后做，最早的成交是 T+1 的 close。任何把 T 日特征拿去 T 日内成交的实现都会引入 lookahead。\nAlpha158 因子集详解 Alpha158 是 Qlib 默认的因子集，源码在 qlib/contrib/data/handler.py 和 qlib/contrib/data/loader.py。158 个因子按构造方式分几类：\n类别 典型表达式 含义 KBAR（K 线形态，9 个） ($close-$open)/$open 当日涨跌幅、上下影线相对长度 ROC / MA（动量与均价偏离） Mean($close, 5)/$close, Ref($close,5)/$close 5/10/20/30/60 日窗口 STD / BETA / RSQR / RESI（波动与拟合残差） Std($close/Ref($close,1)-1, 20) 收益率波动、对市场的回归残差 MAX / MIN / QTLU / QTLD（极值与分位） Max($high, 20)/$close 距离 N 日高低点、上下四分位 RANK / RSV（时序排名与位置） Rank($close, 5) N 日内当前收盘的位次 IMAX / IMIN / IMXD（极值出现位置） IdxMax($high, 20)/20 高点离今天有多远 CORR / CORD（量价相关） Corr($close, Log($volume+1), 5) 价与对数成交量的相关 CNTP / CNTN / CNTD / SUMP / SUMN / SUMD（涨跌天数与累计） Mean($close\u003eRef($close,1), 20) 20 日内涨天占比 VMA / VSTD / WVMA / VSUMP 等成交量族 Std($volume, 20)/$volume 量能波动 每个因子的命名规则是 \u003c算子\u003e+\u003c窗口\u003e，比如 MA5 是 5 日均价比、STD20 是 20 日波动率比、ROC10 是 10 日变化率。看完整列表：\nfrom qlib.contrib.data.loader import Alpha158DL fields, names = Alpha158DL.get_feature_config() for f, n in zip(fields, names): print(f\"{n:12s} = {f}\") 会打印出所有 158 个表达式。这比翻文档快。\n实际跑过几轮就会发现，158 个因子的贡献度极不均匀。在我自己的 CSI300 实验里，动量类（ROC、MA 偏离族）大约贡献了 IC 的一半以上，KBAR 那 9 个长期 IC 接近 0，量价相关（CORR、CORD）信噪比最差，单独训练时几乎是噪声。这和 LightGBM 的 feature importance 排名也对得上。所以拿 Alpha158 当 baseline 没问题，但别幻想 158 个因子真都在工作，大概率你的模型只在用其中 30-50 个。\n另外 Alpha158 全是 OHLCV 衍生量，没有任何基本面、舆情、宏观数据。要做基本面因子，得自己写 DataHandler。\n用 qrun + YAML 跑标准化工作流 写脚本调函数适合探索，但论文复现、批量实验更适合 YAML 配置 + qrun 命令行。Qlib 仓库里 examples/benchmarks/LightGBM/workflow_config_lightgbm_Alpha158.yaml 就是一个完整模板：\nqlib_init: provider_uri: \"~/.qlib/qlib_data/cn_data\" region: cn market: \u0026market csi300 benchmark: \u0026benchmark SH000300 data_handler_config: \u0026data_handler_config start_time: 2008-01-01 end_time: 2020-08-01 fit_start_time: 2008-01-01 fit_end_time: 2014-12-31 instruments: *market task: model: class: LGBModel module_path: qlib.contrib.model.gbdt kwargs: loss: mse colsample_bytree: 0.8879 learning_rate: 0.0421 subsample: 0.8789 lambda_l1: 205.6999 lambda_l2: 580.9768 max_depth: 8 num_leaves: 210 num_threads: 20 dataset: class: DatasetH module_path: qlib.data.dataset kwargs: handler: class: Alpha158 module_path: qlib.contrib.data.handler kwargs: *data_handler_config segments: train: [2008-01-01, 2014-12-31] valid: [2015-01-01, 2016-12-31] test: [2017-01-01, 2020-08-01] record: - class: SignalRecord module_path: qlib.workflow.record_temp - class: SigAnaRecord module_path: qlib.workflow.record_temp - class: PortAnaRecord module_path: qlib.workflow.record_temp kwargs: config: strategy: class: TopkDropoutStrategy module_path: qlib.contrib.strategy kwargs: topk: 50 n_drop: 5 backtest: start_time: 2017-01-01 end_time: 2020-08-01 account: 100000000 benchmark: *benchmark exchange_kwargs: freq: day limit_threshold: 0.095 deal_price: close open_cost: 0.0005 close_cost: 0.0015 min_cost: 5 跑：\nqrun workflow_config_lightgbm_Alpha158.yaml 跑完会在 mlruns/ 下面生成一次实验记录，里面包含 pred.pkl（模型预测）、port_analysis_1day.pkl（组合分析）和一个 report.html。这个 HTML 用 plotly 画了净值曲线、超额收益、滚动夏普、最大回撤等图，直接用浏览器打开看。\nYAML 里 YAML anchor（\u0026market / *market）是 Qlib 配置的常用技巧，避免 train/test/backtest 三处重复写股票池和时间段。改一处全局生效。\n写自己的 Alpha 表达式 Qlib 的表达式语法是它的灵魂。任何 OHLCV 字段加 $ 前缀（$close、$volume、$high 等），算子用类似 talib 的命名（Mean、Std、Ref、Rank、Corr、Cov、Sum、Min、Max、Abs、Log、Sign、Greater、Less、If）。\n举几个例子：\n表达式 含义 Mean($close, 5) 5 日收盘均价 Ref($close, 1) 昨日收盘价（lag 1） ($close - Ref($close, 5)) / Ref($close, 5) 5 日收益率 Std($close/Ref($close,1)-1, 20) 20 日日收益率波动 Rank(Mean($volume, 5)/Mean($volume, 60)) 短期/长期成交量比的横截面排名 Corr($close, $volume, 10) 10 日量价相关 注意 Rank 是横截面排名，在某一天对所有股票排，其它算子默认是时序滚动。这是和 WorldQuant Alpha 表达式最大的差别（参见 WorldQuant Alpha 101 全解读）。\n写一个自定义因子集，最简单的方式是继承 DataHandlerLP：\nfrom qlib.data.dataset.handler import DataHandlerLP from qlib.data.dataset.loader import QlibDataLoader class MyHandler(DataHandlerLP): def __init__(self, instruments=\"csi300\", start_time=None, end_time=None, fit_start_time=None, fit_end_time=None, **kwargs): feature_fields = [ \"Mean($close, 5)/$close - 1\", \"Mean($close, 20)/$close - 1\", \"Std($close/Ref($close,1)-1, 20)\", \"Corr($close, Log($volume+1), 10)\", ] feature_names = [\"ma5_dev\", \"ma20_dev\", \"vol20\", \"pv_corr10\"] label_fields = [\"Ref($close, -2)/Ref($close, -1) - 1\"] label_names = [\"LABEL0\"] data_loader = { \"class\": \"QlibDataLoader\", \"kwargs\": { \"config\": { \"feature\": (feature_fields, feature_names), \"label\": (label_fields, label_names), }, }, } super().__init__( instruments=instruments, start_time=start_time, end_time=end_time, data_loader=data_loader, fit_start_time=fit_start_time, fit_end_time=fit_end_time, **kwargs, ) 四个因子就能跑出一个简易模型，用来验证想法很快。\n回测与绩效分析：TopkDropout 与 IC/ICIR 怎么读 Qlib 默认的 TopkDropoutStrategy 是个简单但有效的多头策略。逻辑是：每天根据模型预测分数排序，持有前 K 名（topk），下一个交易日把分数掉到一定位次之外的 N 名扔掉（n_drop），然后从新的 top 区间补 N 只进来。\n为什么不每天全量换仓？换手太高，交易成本会把 alpha 全吃掉。n_drop 控制换手率，K=50, n_drop=5 大约对应每日 10% 换手，比较常见的工业界设置。\n回测产出的关键指标怎么看：\n指标 含义 参考范围 IC 预测值与下期实际收益的 Pearson 相关 A 股日频 0.02-0.08 算正常 Rank IC 改用秩相关，更鲁棒 通常比 IC 略高 ICIR IC 均值 / IC 标准差，衡量稳定性 \u003e 0.3 算不错 年化收益 组合年化总收益 10%-25% 区间常见 超额年化 减去基准（CSI300） 正向才有意义 最大回撤 最差的累计跌幅 A 股策略 -20% 到 -40% 都算正常 夏普比 收益 / 波动 \u003e 1 可上手，\u003e 2 罕见 这里有个新手常踩的雷：看到 IC 0.05、年化 30%、夏普 2.5 就很激动，急着下结论。先检查几件事：测试段是不是在 train 范围之外（lookahead bias）？Alpha158 的 label 是 Ref($close,-2)/Ref($close,-1)-1（T+1 收盘到 T+2 收盘的收益），决策点是 T 日盘后，最早能成交是 T+1 收盘，如果你不小心把决策推到 T 日的盘中，就实际包含了未来信息（参见 回测中的常见陷阱）。Qlib 的默认配置是干净的，但自定义 label 时一定要数清楚 Ref 的偏移量。\n常见报错与避坑清单 按出现频率排序，这些是 Qlib 教程里少见但实战必踩的坑：\n1. FileNotFoundError: ... cn_data/calendars/day.txt 找不到\nqlib.init 里的 provider_uri 路径写错了，或者用了 ~ 但当前 shell 不展开。改绝对路径解决。Windows 下 ~ 经常不展开。\n2. ValueError: instruments csi300 not found\n数据下载不全，或者 region 和 provider_uri 对不上。检查 ~/.qlib/qlib_data/cn_data/instruments/ 下有没有 csi300.txt，没有就重新跑一次 get_data。\n3. LightGBM 训练时 Cannot allocate memory\nAlpha158 在 csi300 全集上特征矩阵大概 (1.5M, 158)，内存峰值 6-8GB。台式机够，云上小实例不够。要么换更大内存，要么把 instruments 缩到 csi100 或 start_time 推后几年。\n4. MLP/GRU 模型训练 loss 不降\nQlib 内置的神经网络模型（如 qlib.contrib.model.pytorch_general_nn.GeneralPTNN）默认不对 Alpha158 做特征标准化，而 158 个因子量级差几个数量级。需要在 DataHandler 里加 processors 配置 RobustZScoreNorm 或 CSZScoreNorm。LightGBM 不需要这一步，所以教程多用 LightGBM 入门。\n5. 数据更新到最近\n官方 get_data 拉的数据通常滞后几个月。要更新到昨天，参考下面这套：\n# 用 akshare 采集器拉 A 股增量到 csv python scripts/data_collector/akshare/collector.py download_data \\ --source_dir ~/qlib_raw/cn --region cn --delay 1 # 再 dump 成 .bin 列文件 python scripts/dump_bin.py dump_all \\ --csv_path ~/qlib_raw/cn \\ --qlib_dir ~/.qlib/qlib_data/cn_data \\ --include_fields open,close,high,low,volume,factor --factor 是复权因子列，缺这个 LightGBM 训出来的预测会被分红除权污染。第一次跑全量大概 1-2 小时，之后只补增量分钟级完成。\n6. qrun 提示 mlflow.exceptions.MlflowException: Run ... not found\nmlruns/ 目录被手动删过或权限问题。删掉残留的 mlruns/0/ 重新跑。\n7. Windows 下中文路径\n把数据放在 D:/qlib_data/，别放 D:/我的数据/。Qlib 的某些 C 扩展对非 ASCII 路径有 bug。\n进阶方向：RL、滚动训练、RD-Agent 走完上面的入门流程后，Qlib 还有几个值得继续学的方向：\nRolling Training（滚动训练）：现实里模型不能训一次用三年，市场风格会漂。Qlib 的 qlib.workflow.task.collect 和 RollingGen 提供了按月/季滚动重训的工具。\n强化学习订单执行：qlib.rl 模块支持把订单切分成小单的 RL 策略，对接了 OPDS、PPO 等算法，论文复现代码在 examples/rl_order_execution/。\nRD-Agent：微软 2024 年 7 月发布的 LLM 自动化因子挖掘工具，github.com/microsoft/RD-Agent，把 Qlib 当成执行环境，让 LLM 自动写新因子、跑实验、看结果、迭代。这是 Qlib 最近一年最受关注的方向，相关论文笔记可以看 AlphaAgent 解读 和 AlphaGPT 解读。\nPoint-in-Time 数据：财务数据有公告滞后，Qlib 的 PIT 数据库支持按公告日时间戳取数据，避免基本面回测的未来函数问题。\n入门到这里基本够用了。如果按这条路径跑下来，Qlib 教程类博客里 90% 的内容你都已经覆盖，下一步真正能拉开差距的是两件事：在自己关心的股票池和时间段上写出第一批自定义因子并跑滚动训练验证稳定性，以及把 RD-Agent 接进来让 LLM 帮你穷举因子组合。这两块我会另开两篇细讲：[滚动训练 + akshare 增量更新流程]、[RD-Agent 用 Qlib 做因子挖掘实操]，关注这个博客等更新。\n","wordCount":"5278","inLanguage":"zh","datePublished":"2026-05-11T13:18:56+08:00","dateModified":"2026-05-11T13:18:56+08:00","author":{"@type":"Person","name":"Coriva"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://coriva.eu.org/qlib-tutorial/"},"publisher":{"@type":"Organization","name":"Coriva","logo":{"@type":"ImageObject","url":"https://coriva.eu.org/favicon.ico"}}}</script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
+.CtxtMenu_InfoContent {  overflow:auto; text-align:left; font-size:80%;  padding:.4em .6em; border:1px inset; margin:1em 0px;  max-height:20em; max-width:30em; background-color:#EEEEEE;  white-space:normal;}
+.CtxtMenu_Info.CtxtMenu_MousePost {outline:none;}
+.CtxtMenu_Info {  position:fixed; left:50%; width:auto; text-align:center;  border:3px outset; padding:1em 2em; background-color:#DDDDDD;  color:black;  cursor:default; font-family:message-box; font-size:120%;  font-style:normal; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 15px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius:15px;               /* Safari and Chrome */  -moz-border-radius:15px;                  /* Firefox */  -khtml-border-radius:15px;                /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */  filter:progid:DXImageTransform.Microsoft.dropshadow(OffX=2, OffY=2, Color="gray", Positive="true"); /* IE */}
+</style><style type="text/css">.CtxtMenu_MenuClose {  position:absolute;  cursor:pointer;  display:inline-block;  border:2px solid #AAA;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  font-family: "Courier New", Courier;  font-size:24px;  color:#F0F0F0}
+.CtxtMenu_MenuClose span {  display:block; background-color:#AAA; border:1.5px solid;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  line-height:0;  padding:8px 0 6px     /* may need to be browser-specific */}
+.CtxtMenu_MenuClose:hover {  color:white!important;  border:2px solid #CCC!important}
+.CtxtMenu_MenuClose:hover span {  background-color:#CCC!important}
+.CtxtMenu_MenuClose:hover:focus {  outline:none}
+</style><style type="text/css">.CtxtMenu_Menu {  position:absolute;  background-color:white;  color:black;  width:auto; padding:5px 0px;  border:1px solid #CCCCCC; margin:0; cursor:default;  font: menu; text-align:left; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 5px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius: 5px;             /* Safari and Chrome */  -moz-border-radius: 5px;                /* Firefox */  -khtml-border-radius: 5px;              /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */}
+.CtxtMenu_MenuItem {  padding: 1px 2em;  background:transparent;}
+.CtxtMenu_MenuArrow {  position:absolute; right:.5em; padding-top:.25em; color:#666666;  font-family: null; font-size: .75em}
+.CtxtMenu_MenuActive .CtxtMenu_MenuArrow {color:white}
+.CtxtMenu_MenuArrow.CtxtMenu_RTL {left:.5em; right:auto}
+.CtxtMenu_MenuCheck {  position:absolute; left:.7em;  font-family: null}
+.CtxtMenu_MenuCheck.CtxtMenu_RTL { right:.7em; left:auto }
+.CtxtMenu_MenuRadioCheck {  position:absolute; left: .7em;}
+.CtxtMenu_MenuRadioCheck.CtxtMenu_RTL {  right: .7em; left:auto}
+.CtxtMenu_MenuInputBox {  padding-left: 1em; right:.5em; color:#666666;  font-family: null;}
+.CtxtMenu_MenuInputBox.CtxtMenu_RTL {  left: .1em;}
+.CtxtMenu_MenuComboBox {  left:.1em; padding-bottom:.5em;}
+.CtxtMenu_MenuSlider {  left: .1em;}
+.CtxtMenu_SliderValue {  position:absolute; right:.1em; padding-top:.25em; color:#333333;  font-size: .75em}
+.CtxtMenu_SliderBar {  outline: none; background: #d3d3d3}
+.CtxtMenu_MenuLabel {  padding: 1px 2em 3px 1.33em;  font-style:italic}
+.CtxtMenu_MenuRule {  border-top: 1px solid #DDDDDD;  margin: 4px 3px;}
+.CtxtMenu_MenuDisabled {  color:GrayText}
+.CtxtMenu_MenuActive {  background-color: #606872;  color: white;}
+.CtxtMenu_MenuDisabled:focus {  background-color: #E8E8E8}
+.CtxtMenu_MenuLabel:focus {  background-color: #E8E8E8}
+.CtxtMenu_ContextMenu:focus {  outline:none}
+.CtxtMenu_ContextMenu .CtxtMenu_MenuItem:focus {  outline:none}
+.CtxtMenu_SelectionMenu {  position:relative; float:left;  border-bottom: none; -webkit-box-shadow:none; -webkit-border-radius:0px; }
+.CtxtMenu_SelectionItem {  padding-right: 1em;}
+.CtxtMenu_Selection {  right: 40%; width:50%; }
+.CtxtMenu_SelectionBox {  padding: 0em; max-height:20em; max-width: none;  background-color:#FFFFFF;}
+.CtxtMenu_SelectionDivider {  clear: both; border-top: 2px solid #000000;}
+.CtxtMenu_Menu .CtxtMenu_MenuClose {  top:-10px; left:-10px}
+</style><style id="waline-darkmode"></style><style id="MJX-CHTML-styles">
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row > * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-assistive-mml {
+  position: absolute !important;
+  top: 0px;
+  left: 0px;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 1px 0px 0px 0px !important;
+  border: 0px !important;
+  display: block !important;
+  width: auto !important;
+  overflow: hidden !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+mjx-assistive-mml[display="block"] {
+  width: 100% !important;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+</style></head><body id="top"><header class="header"><nav class="nav"><div class="logo"><a href="https://coriva.eu.org/" accesskey="h" title="Coriva (Alt + H)"><img src="https://coriva.eu.org/logo.png" alt="" aria-label="logo" height="35">Coriva</a><div class="logo-switches"><button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme"><svg id="moon" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg><svg id="sun" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></button><ul class="lang-switch"><li>|</li><li><a href="https://coriva.eu.org/en/" title="English" aria-label="English">English</a></li></ul></div></div><ul id="menu"><li><a href="https://coriva.eu.org/archives/" title="归档"><span>归档</span></a></li><li><a href="https://coriva.eu.org/categories/" title="分类"><span>分类</span></a></li><li><a href="https://coriva.eu.org/tags/" title="标签"><span>标签</span></a></li><li><a href="https://coriva.eu.org/search/" title="搜索 (Alt + /)" accesskey="/"><span>搜索</span></a></li></ul></nav></header><main class="main"><div class="post-single-wrapper"><article class="post-single"><header class="post-header"><div class="breadcrumbs"><a href="https://coriva.eu.org/">主页</a>&nbsp;»&nbsp;<a href="https://coriva.eu.org/posts/">Posts</a></div><h1 class="post-title entry-hint-parent">Qlib 教程：从安装到第一个量化策略</h1><div class="post-description">Qlib 教程：从 pip 安装、Alpha158 因子集、LightGBM 训练到回测分析的完整入门指南，含架构图、可运行代码和 Windows 常见报错避坑清单。</div><div class="post-meta"><span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> Posted on 2026-05-11</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path></svg> In Quant</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> 11 min read</span><span class="pageview-meta">&nbsp;·&nbsp;<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> <span class="waline-pageview-count" data-path="/qlib-tutorial/">245</span></span>&nbsp;|&nbsp;<span>语言:</span><ul class="i18n_list"><li><a href="https://coriva.eu.org/en/qlib-tutorial/">English</a></li></ul></div></header><div class="post-content"><p>Qlib 是微软开源的 AI 量化投资平台，2020 年发布，到现在 GitHub 上 16k+ star。它把数据、因子、模型、回测、报告打成一条流水线，标配了 Alpha158/Alpha360 两个常用因子集，自带 LightGBM、Transformer、TCN 等 20 多个模型。这篇 Qlib 教程从安装讲到跑通第一个 LightGBM + Alpha158 策略，再到看懂回测报告，最后给一份踩坑清单。</p><p>读完你能做到：本机装好 Qlib，下载 A 股日线数据，用 30 行代码训出一个模型，用 <code>qrun</code> 跑一遍标准化工作流，看懂输出的 IC、年化、最大回撤这些数字。</p><h2 id="qlib-是什么什么时候该用它">Qlib 是什么，什么时候该用它<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#qlib-%E6%98%AF%E4%BB%80%E4%B9%88%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E7%94%A8%E5%AE%83">#</a></h2><p>Qlib 的定位是 “AI-oriented quantitative investment platform”，关键词是 AI 和 quant。它不是一个交易引擎（不像 vnpy 那样直连券商接口下单），也不是单纯的回测库（不像 backtrader 那样只关心策略逻辑）。Qlib 假设你的工作流是：拿历史数据 → 算因子 → 训模型 → 用模型打分排序 → 按排序构建组合 → 回测 → 看报告。这条流水线里每一环它都给了开箱即用的实现。</p><p>下面这张表是几个常见框架的横向对比，按我的实际使用经验整理：</p><table><thead><tr><th>框架</th><th>强项</th><th>弱项</th><th>典型用户</th></tr></thead><tbody><tr><td>Qlib</td><td>因子工程 + ML 训练 + 回测一体化，A 股数据好下</td><td>学习曲线陡，框架抽象层多</td><td>量化研究员、做因子挖掘</td></tr><tr><td>Backtrader</td><td>灵活，事件驱动回测干净</td><td>没有数据、没有因子库，要自己造</td><td>策略开发者、CTA 做手</td></tr><tr><td>vnpy</td><td>实盘对接好，UI 全</td><td>偏交易系统，研究功能弱</td><td>国内私募实盘</td></tr><tr><td>Zipline</td><td>经典，文档全</td><td>已停止维护，pandas 老版本绑定</td><td>历史项目维护</td></tr><tr><td>QuantConnect/LEAN</td><td>云端一站式，多市场</td><td>闭源云服务，本地折腾难</td><td>海外散户、小团队</td></tr></tbody></table><p>什么场景<strong>不</strong>适合用 Qlib：你只想跑一个简单的双均线策略、不需要 ML，那 Qlib 太重；你做高频或日内 tick 级，Qlib 的 1min 数据支持有但不是它的主战场；你要做实盘自动化下单，Qlib 没这个功能，得自己接。</p><h2 id="安装-qlib-与下载数据">安装 Qlib 与下载数据<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#%E5%AE%89%E8%A3%85-qlib-%E4%B8%8E%E4%B8%8B%E8%BD%BD%E6%95%B0%E6%8D%AE">#</a></h2><p>最快的方式是 pip：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">pip install pyqlib
+</span></span></code></pre><button class="copy-code">复制</button></div><p>Python 版本建议 3.8 到 3.11 之间。3.12 我实测在 Windows 上装 <code>lightgbm</code> 会偶尔翻车，3.8 下 <code>pytorch</code> 又找不到新版 wheel。3.10 是最稳的。</p><p>源码安装适合需要改 Qlib 内部代码的人：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">git clone https://github.com/microsoft/qlib.git
+</span></span><span class="line"><span class="cl"><span class="nb">cd</span> qlib
+</span></span><span class="line"><span class="cl">pip install numpy cython
+</span></span><span class="line"><span class="cl">pip install -e .
+</span></span></code></pre><button class="copy-code">复制</button></div><p>注意官方 README 还在用 <code>python setup.py install</code>，setuptools 58+ 已经废弃了这个命令，会报 <code>error: invalid command 'install'</code>。改用 <code>pip install -e .</code> 是稳的，顺带支持后续改源码热更新。</p><p>装完用一行验证：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">qlib</span>
+</span></span><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">qlib</span><span class="o">.</span><span class="n">__version__</span><span class="p">)</span>  <span class="c1"># 0.9.x</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p>接下来下载数据。Qlib 把 OHLCV 存成自己的 <code>.bin</code> 列式格式（速度比 csv/parquet 都快），需要先用脚本拉下来：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># A 股日线</span>
+</span></span><span class="line"><span class="cl">python -m qlib.run.get_data qlib_data <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    --target_dir ~/.qlib/qlib_data/cn_data <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    --region cn
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 美股日线</span>
+</span></span><span class="line"><span class="cl">python -m qlib.run.get_data qlib_data <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    --target_dir ~/.qlib/qlib_data/us_data <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    --region us
+</span></span></code></pre><button class="copy-code">复制</button></div><p>A 股全量大概 2GB 左右，国内网络偶尔断，加个 <code>--interval 1d</code> 显式指定频率，断了重跑会续传。下载完目录长这样：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">~/.qlib/qlib_data/cn_data/
+</span></span><span class="line"><span class="cl">├── calendars/        # 交易日历
+</span></span><span class="line"><span class="cl">├── instruments/      # 股票池定义（all.txt, csi300.txt, csi500.txt）
+</span></span><span class="line"><span class="cl">├── features/         # 每只股票一个文件夹，里面是 .bin 列文件
+</span></span><span class="line"><span class="cl">└── dataset_cache/
+</span></span></code></pre><button class="copy-code">复制</button></div><p>Windows 用户注意一个坑：<code>~</code> 在某些 shell 下不会展开，建议直接写绝对路径 <code>D:/qlib_data/cn_data</code>，并在后续代码里用同样的路径，免得 Qlib 找不到数据报 <code>FileNotFoundError</code>。</p><h2 id="30-行代码跑通第一个-lightgbm-模型">30 行代码跑通第一个 LightGBM 模型<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#30-%E8%A1%8C%E4%BB%A3%E7%A0%81%E8%B7%91%E9%80%9A%E7%AC%AC%E4%B8%80%E4%B8%AA-lightgbm-%E6%A8%A1%E5%9E%8B">#</a></h2><p>下面这段是最小可运行的 Qlib 教程示例，从初始化到训练到打分一气呵成：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">qlib</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">qlib.constant</span> <span class="kn">import</span> <span class="n">REG_CN</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">qlib.contrib.data.handler</span> <span class="kn">import</span> <span class="n">Alpha158</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">qlib.contrib.model.gbdt</span> <span class="kn">import</span> <span class="n">LGBModel</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">qlib.data.dataset</span> <span class="kn">import</span> <span class="n">DatasetH</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">qlib</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">provider_uri</span><span class="o">=</span><span class="s2">"~/.qlib/qlib_data/cn_data"</span><span class="p">,</span> <span class="n">region</span><span class="o">=</span><span class="n">REG_CN</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">handler</span> <span class="o">=</span> <span class="n">Alpha158</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">instruments</span><span class="o">=</span><span class="s2">"csi300"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">start_time</span><span class="o">=</span><span class="s2">"2017-01-01"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">end_time</span><span class="o">=</span><span class="s2">"2023-12-31"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fit_start_time</span><span class="o">=</span><span class="s2">"2017-01-01"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fit_end_time</span><span class="o">=</span><span class="s2">"2020-12-31"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">dataset</span> <span class="o">=</span> <span class="n">DatasetH</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">handler</span><span class="o">=</span><span class="n">handler</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">segments</span><span class="o">=</span><span class="p">{</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">"train"</span><span class="p">:</span> <span class="p">(</span><span class="s2">"2017-01-01"</span><span class="p">,</span> <span class="s2">"2020-12-31"</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">"valid"</span><span class="p">:</span> <span class="p">(</span><span class="s2">"2021-01-01"</span><span class="p">,</span> <span class="s2">"2021-12-31"</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">        <span class="s2">"test"</span><span class="p">:</span>  <span class="p">(</span><span class="s2">"2022-01-01"</span><span class="p">,</span> <span class="s2">"2023-12-31"</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">    <span class="p">},</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">model</span> <span class="o">=</span> <span class="n">LGBModel</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">    <span class="n">loss</span><span class="o">=</span><span class="s2">"mse"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">learning_rate</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">num_leaves</span><span class="o">=</span><span class="mi">210</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">feature_fraction</span><span class="o">=</span><span class="mf">0.8879</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">early_stopping_rounds</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">    <span class="n">num_boost_round</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl"><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">dataset</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">pred</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">dataset</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl"><span class="nb">print</span><span class="p">(</span><span class="n">pred</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p>跑通了你会看到一个 MultiIndex 的 Series，<code>(datetime, instrument)</code> 作为索引，值是模型对每只股票第二天收益的预测分数。CSI300 + Alpha158 + 默认 LGBModel 在 2022-2023 测试段上 IC 大概 0.04-0.06，Rank IC 0.05-0.07，这是个合理的 baseline，比随机（IC≈0）好，但远谈不上能直接赚钱。</p><p>第一次跑会花几分钟，因为 Alpha158 要把 158 个因子算一遍并缓存到 <code>~/.qlib/dataset_cache/</code>。后面再跑同样的 handler 配置，直接走缓存秒开。</p><h2 id="理解-qlib-的核心架构dataserver-与表达式引擎">理解 Qlib 的核心架构：DataServer 与表达式引擎<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#%E7%90%86%E8%A7%A3-qlib-%E7%9A%84%E6%A0%B8%E5%BF%83%E6%9E%B6%E6%9E%84dataserver-%E4%B8%8E%E8%A1%A8%E8%BE%BE%E5%BC%8F%E5%BC%95%E6%93%8E">#</a></h2><p>跑通了示例，回过头看架构会清晰很多。Qlib 分四层，每层职责单一：</p><p><img alt="Qlib 架构图：四层模块化设计" loading="lazy" src="https://coriva.eu.org/qlib-tutorial/qlib-architecture.webp"></p><ul><li><strong>DataServer</strong>：底层数据服务。负责从 <code>.bin</code> 列文件里把原始 OHLCV 读出来，并实现一套表达式引擎。<code>Mean($close, 5)</code> 这种字符串它能解析成对 close 列做 5 天均值的算子。</li><li><strong>DataHandler</strong>：把原始数据加工成 (features, labels) 这对 ML 训练能直接用的张量。Alpha158 就是一个内置的 DataHandler，它把 158 个表达式写死在源码里。</li><li><strong>Model</strong>：纯 ML 部分。Qlib 内置了 LightGBM、XGBoost、MLP、LSTM、GRU、Transformer、Localformer、TCN、TabNet、ADD、ADARNN、HIST 等等，统一接口 <code>fit(dataset)</code> / <code>predict(dataset)</code>。</li><li><strong>Strategy + Executor</strong>：把模型的预测分数转成实际持仓和订单，再用历史价格回放回测。最常用的 <code>TopkDropoutStrategy</code> 后面单独讲。</li><li><strong>Recorder/Analyser</strong>：MLflow 风格的实验记录，每次 <code>qrun</code> 自动存一份预测、持仓、报告 HTML。</li></ul><p>DataHandler 里面发生了什么值得单独看一眼：</p><p><img alt="Qlib DataHandler 数据流水线示意" loading="lazy" src="https://coriva.eu.org/qlib-tutorial/qlib-data-pipeline.webp"></p><p>原始 <code>.bin</code> 数据进来，表达式引擎根据配置算出 158 个特征列，同时根据 label 表达式算出标签列，然后切分成 train/valid/test 三段交给模型。</p><p>默认 label 是 <code>Ref($close, -2)/Ref($close, -1) - 1</code>。负数偏移在 Qlib 里表示未来：<code>Ref($close,-1)</code> 是 T+1 的收盘，<code>Ref($close,-2)</code> 是 T+2 的收盘，所以这个标签是 T+1 收盘到 T+2 收盘的收益。配合 <code>TopkDropoutStrategy</code> 在 T 日决策、<code>deal_price=close</code>，相当于用模型在 T 日预测 T+1 到 T+2 这一天的持仓收益。换句话说，T 日盘后才能拿到所有特征（包含 T 日 close），决策也只能在盘后做，最早的成交是 T+1 的 close。任何把 T 日特征拿去 T 日内成交的实现都会引入 lookahead。</p><h2 id="alpha158-因子集详解">Alpha158 因子集详解<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#alpha158-%E5%9B%A0%E5%AD%90%E9%9B%86%E8%AF%A6%E8%A7%A3">#</a></h2><p>Alpha158 是 Qlib 默认的因子集，源码在 <code>qlib/contrib/data/handler.py</code> 和 <code>qlib/contrib/data/loader.py</code>。158 个因子按构造方式分几类：</p><table><thead><tr><th>类别</th><th>典型表达式</th><th>含义</th></tr></thead><tbody><tr><td>KBAR（K 线形态，9 个）</td><td><code>($close-$open)/$open</code></td><td>当日涨跌幅、上下影线相对长度</td></tr><tr><td>ROC / MA（动量与均价偏离）</td><td><code>Mean($close, 5)/$close</code>, <code>Ref($close,5)/$close</code></td><td>5/10/20/30/60 日窗口</td></tr><tr><td>STD / BETA / RSQR / RESI（波动与拟合残差）</td><td><code>Std($close/Ref($close,1)-1, 20)</code></td><td>收益率波动、对市场的回归残差</td></tr><tr><td>MAX / MIN / QTLU / QTLD（极值与分位）</td><td><code>Max($high, 20)/$close</code></td><td>距离 N 日高低点、上下四分位</td></tr><tr><td>RANK / RSV（时序排名与位置）</td><td><code>Rank($close, 5)</code></td><td>N 日内当前收盘的位次</td></tr><tr><td>IMAX / IMIN / IMXD（极值出现位置）</td><td><code>IdxMax($high, 20)/20</code></td><td>高点离今天有多远</td></tr><tr><td>CORR / CORD（量价相关）</td><td><code>Corr($close, Log($volume+1), 5)</code></td><td>价与对数成交量的相关</td></tr><tr><td>CNTP / CNTN / CNTD / SUMP / SUMN / SUMD（涨跌天数与累计）</td><td><code>Mean($close&gt;Ref($close,1), 20)</code></td><td>20 日内涨天占比</td></tr><tr><td>VMA / VSTD / WVMA / VSUMP 等成交量族</td><td><code>Std($volume, 20)/$volume</code></td><td>量能波动</td></tr></tbody></table><p>每个因子的命名规则是 <code>&lt;算子&gt;+&lt;窗口&gt;</code>，比如 <code>MA5</code> 是 5 日均价比、<code>STD20</code> 是 20 日波动率比、<code>ROC10</code> 是 10 日变化率。看完整列表：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">qlib.contrib.data.loader</span> <span class="kn">import</span> <span class="n">Alpha158DL</span>
+</span></span><span class="line"><span class="cl"><span class="n">fields</span><span class="p">,</span> <span class="n">names</span> <span class="o">=</span> <span class="n">Alpha158DL</span><span class="o">.</span><span class="n">get_feature_config</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl"><span class="k">for</span> <span class="n">f</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">fields</span><span class="p">,</span> <span class="n">names</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">n</span><span class="si">:</span><span class="s2">12s</span><span class="si">}</span><span class="s2"> = </span><span class="si">{</span><span class="n">f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p>会打印出所有 158 个表达式。这比翻文档快。</p><p>实际跑过几轮就会发现，158 个因子的贡献度极不均匀。在我自己的 CSI300 实验里，动量类（ROC、MA 偏离族）大约贡献了 IC 的一半以上，KBAR 那 9 个长期 IC 接近 0，量价相关（CORR、CORD）信噪比最差，单独训练时几乎是噪声。这和 LightGBM 的 feature importance 排名也对得上。所以拿 Alpha158 当 baseline 没问题，但别幻想 158 个因子真都在工作，大概率你的模型只在用其中 30-50 个。</p><p>另外 Alpha158 全是 OHLCV 衍生量，没有任何基本面、舆情、宏观数据。要做基本面因子，得自己写 DataHandler。</p><h2 id="用-qrun--yaml-跑标准化工作流">用 qrun + YAML 跑标准化工作流<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#%E7%94%A8-qrun--yaml-%E8%B7%91%E6%A0%87%E5%87%86%E5%8C%96%E5%B7%A5%E4%BD%9C%E6%B5%81">#</a></h2><p>写脚本调函数适合探索，但论文复现、批量实验更适合 YAML 配置 + <code>qrun</code> 命令行。Qlib 仓库里 <code>examples/benchmarks/LightGBM/workflow_config_lightgbm_Alpha158.yaml</code> 就是一个完整模板：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-yaml" data-lang="yaml"><span class="line"><span class="cl"><span class="nt">qlib_init</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">provider_uri</span><span class="p">:</span><span class="w"> </span><span class="s2">"~/.qlib/qlib_data/cn_data"</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="l">cn</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">market</span><span class="p">:</span><span class="w"> </span><span class="cp">&amp;market</span><span class="w"> </span><span class="l">csi300</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">benchmark</span><span class="p">:</span><span class="w"> </span><span class="cp">&amp;benchmark</span><span class="w"> </span><span class="l">SH000300</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">data_handler_config</span><span class="p">:</span><span class="w"> </span><span class="cp">&amp;data_handler_config</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">start_time</span><span class="p">:</span><span class="w"> </span><span class="ld">2008-01-01</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">end_time</span><span class="p">:</span><span class="w"> </span><span class="ld">2020-08-01</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">fit_start_time</span><span class="p">:</span><span class="w"> </span><span class="ld">2008-01-01</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">fit_end_time</span><span class="p">:</span><span class="w"> </span><span class="ld">2014-12-31</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">instruments</span><span class="p">:</span><span class="w"> </span><span class="cp">*market</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w"></span><span class="nt">task</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">class</span><span class="p">:</span><span class="w"> </span><span class="l">LGBModel</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">module_path</span><span class="p">:</span><span class="w"> </span><span class="l">qlib.contrib.model.gbdt</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">kwargs</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">loss</span><span class="p">:</span><span class="w"> </span><span class="l">mse</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">colsample_bytree</span><span class="p">:</span><span class="w"> </span><span class="m">0.8879</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">learning_rate</span><span class="p">:</span><span class="w"> </span><span class="m">0.0421</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">subsample</span><span class="p">:</span><span class="w"> </span><span class="m">0.8789</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">lambda_l1</span><span class="p">:</span><span class="w"> </span><span class="m">205.6999</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">lambda_l2</span><span class="p">:</span><span class="w"> </span><span class="m">580.9768</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">max_depth</span><span class="p">:</span><span class="w"> </span><span class="m">8</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">num_leaves</span><span class="p">:</span><span class="w"> </span><span class="m">210</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">num_threads</span><span class="p">:</span><span class="w"> </span><span class="m">20</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">dataset</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">class</span><span class="p">:</span><span class="w"> </span><span class="l">DatasetH</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">module_path</span><span class="p">:</span><span class="w"> </span><span class="l">qlib.data.dataset</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span><span class="nt">kwargs</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">handler</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                </span><span class="nt">class</span><span class="p">:</span><span class="w"> </span><span class="l">Alpha158</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                </span><span class="nt">module_path</span><span class="p">:</span><span class="w"> </span><span class="l">qlib.contrib.data.handler</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                </span><span class="nt">kwargs</span><span class="p">:</span><span class="w"> </span><span class="cp">*data_handler_config</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">            </span><span class="nt">segments</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                </span><span class="nt">train</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="ld">2008-01-01</span><span class="p">,</span><span class="w"> </span><span class="ld">2014-12-31</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                </span><span class="nt">valid</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="ld">2015-01-01</span><span class="p">,</span><span class="w"> </span><span class="ld">2016-12-31</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                </span><span class="nt">test</span><span class="p">:</span><span class="w">  </span><span class="p">[</span><span class="ld">2017-01-01</span><span class="p">,</span><span class="w"> </span><span class="ld">2020-08-01</span><span class="p">]</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">    </span><span class="nt">record</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span>- <span class="nt">class</span><span class="p">:</span><span class="w"> </span><span class="l">SignalRecord</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">          </span><span class="nt">module_path</span><span class="p">:</span><span class="w"> </span><span class="l">qlib.workflow.record_temp</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span>- <span class="nt">class</span><span class="p">:</span><span class="w"> </span><span class="l">SigAnaRecord</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">          </span><span class="nt">module_path</span><span class="p">:</span><span class="w"> </span><span class="l">qlib.workflow.record_temp</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">        </span>- <span class="nt">class</span><span class="p">:</span><span class="w"> </span><span class="l">PortAnaRecord</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">          </span><span class="nt">module_path</span><span class="p">:</span><span class="w"> </span><span class="l">qlib.workflow.record_temp</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">          </span><span class="nt">kwargs</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">              </span><span class="nt">config</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                  </span><span class="nt">strategy</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                      </span><span class="nt">class</span><span class="p">:</span><span class="w"> </span><span class="l">TopkDropoutStrategy</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                      </span><span class="nt">module_path</span><span class="p">:</span><span class="w"> </span><span class="l">qlib.contrib.strategy</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                      </span><span class="nt">kwargs</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                          </span><span class="nt">topk</span><span class="p">:</span><span class="w"> </span><span class="m">50</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                          </span><span class="nt">n_drop</span><span class="p">:</span><span class="w"> </span><span class="m">5</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                  </span><span class="nt">backtest</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                      </span><span class="nt">start_time</span><span class="p">:</span><span class="w"> </span><span class="ld">2017-01-01</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                      </span><span class="nt">end_time</span><span class="p">:</span><span class="w"> </span><span class="ld">2020-08-01</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                      </span><span class="nt">account</span><span class="p">:</span><span class="w"> </span><span class="m">100000000</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                      </span><span class="nt">benchmark</span><span class="p">:</span><span class="w"> </span><span class="cp">*benchmark</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                      </span><span class="nt">exchange_kwargs</span><span class="p">:</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                          </span><span class="nt">freq</span><span class="p">:</span><span class="w"> </span><span class="l">day</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                          </span><span class="nt">limit_threshold</span><span class="p">:</span><span class="w"> </span><span class="m">0.095</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                          </span><span class="nt">deal_price</span><span class="p">:</span><span class="w"> </span><span class="l">close</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                          </span><span class="nt">open_cost</span><span class="p">:</span><span class="w"> </span><span class="m">0.0005</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                          </span><span class="nt">close_cost</span><span class="p">:</span><span class="w"> </span><span class="m">0.0015</span><span class="w">
+</span></span></span><span class="line"><span class="cl"><span class="w">                          </span><span class="nt">min_cost</span><span class="p">:</span><span class="w"> </span><span class="m">5</span><span class="w">
+</span></span></span></code></pre><button class="copy-code">复制</button></div><p>跑：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl">qrun workflow_config_lightgbm_Alpha158.yaml
+</span></span></code></pre><button class="copy-code">复制</button></div><p>跑完会在 <code>mlruns/</code> 下面生成一次实验记录，里面包含 <code>pred.pkl</code>（模型预测）、<code>port_analysis_1day.pkl</code>（组合分析）和一个 <code>report.html</code>。这个 HTML 用 plotly 画了净值曲线、超额收益、滚动夏普、最大回撤等图，直接用浏览器打开看。</p><p>YAML 里 YAML anchor（<code>&amp;market</code> / <code>*market</code>）是 Qlib 配置的常用技巧，避免 train/test/backtest 三处重复写股票池和时间段。改一处全局生效。</p><h2 id="写自己的-alpha-表达式">写自己的 Alpha 表达式<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#%E5%86%99%E8%87%AA%E5%B7%B1%E7%9A%84-alpha-%E8%A1%A8%E8%BE%BE%E5%BC%8F">#</a></h2><p>Qlib 的表达式语法是它的灵魂。任何 OHLCV 字段加 <code>$</code> 前缀（<code>$close</code>、<code>$volume</code>、<code>$high</code> 等），算子用类似 talib 的命名（<code>Mean</code>、<code>Std</code>、<code>Ref</code>、<code>Rank</code>、<code>Corr</code>、<code>Cov</code>、<code>Sum</code>、<code>Min</code>、<code>Max</code>、<code>Abs</code>、<code>Log</code>、<code>Sign</code>、<code>Greater</code>、<code>Less</code>、<code>If</code>）。</p><p>举几个例子：</p><table><thead><tr><th>表达式</th><th>含义</th></tr></thead><tbody><tr><td><code>Mean($close, 5)</code></td><td>5 日收盘均价</td></tr><tr><td><code>Ref($close, 1)</code></td><td>昨日收盘价（lag 1）</td></tr><tr><td><code>($close - Ref($close, 5)) / Ref($close, 5)</code></td><td>5 日收益率</td></tr><tr><td><code>Std($close/Ref($close,1)-1, 20)</code></td><td>20 日日收益率波动</td></tr><tr><td><code>Rank(Mean($volume, 5)/Mean($volume, 60))</code></td><td>短期/长期成交量比的横截面排名</td></tr><tr><td><code>Corr($close, $volume, 10)</code></td><td>10 日量价相关</td></tr></tbody></table><p>注意 <code>Rank</code> 是横截面排名，在某一天对所有股票排，其它算子默认是时序滚动。这是和 WorldQuant Alpha 表达式最大的差别（参见 <a href="https://coriva.eu.org/alpha101-overview/">WorldQuant Alpha 101 全解读</a>）。</p><p>写一个自定义因子集，最简单的方式是继承 <code>DataHandlerLP</code>：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">qlib.data.dataset.handler</span> <span class="kn">import</span> <span class="n">DataHandlerLP</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">qlib.data.dataset.loader</span> <span class="kn">import</span> <span class="n">QlibDataLoader</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">class</span> <span class="nc">MyHandler</span><span class="p">(</span><span class="n">DataHandlerLP</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">instruments</span><span class="o">=</span><span class="s2">"csi300"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                 <span class="n">start_time</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">end_time</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">                 <span class="n">fit_start_time</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fit_end_time</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">        <span class="n">feature_fields</span> <span class="o">=</span> <span class="p">[</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">"Mean($close, 5)/$close - 1"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">"Mean($close, 20)/$close - 1"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">"Std($close/Ref($close,1)-1, 20)"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">"Corr($close, Log($volume+1), 10)"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="p">]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">feature_names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"ma5_dev"</span><span class="p">,</span> <span class="s2">"ma20_dev"</span><span class="p">,</span> <span class="s2">"vol20"</span><span class="p">,</span> <span class="s2">"pv_corr10"</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">label_fields</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Ref($close, -2)/Ref($close, -1) - 1"</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">        <span class="n">label_names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"LABEL0"</span><span class="p">]</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">        <span class="n">data_loader</span> <span class="o">=</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">"class"</span><span class="p">:</span> <span class="s2">"QlibDataLoader"</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="s2">"kwargs"</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                <span class="s2">"config"</span><span class="p">:</span> <span class="p">{</span>
+</span></span><span class="line"><span class="cl">                    <span class="s2">"feature"</span><span class="p">:</span> <span class="p">(</span><span class="n">feature_fields</span><span class="p">,</span> <span class="n">feature_names</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">                    <span class="s2">"label"</span><span class="p">:</span>   <span class="p">(</span><span class="n">label_fields</span><span class="p">,</span> <span class="n">label_names</span><span class="p">),</span>
+</span></span><span class="line"><span class="cl">                <span class="p">},</span>
+</span></span><span class="line"><span class="cl">            <span class="p">},</span>
+</span></span><span class="line"><span class="cl">        <span class="p">}</span>
+</span></span><span class="line"><span class="cl">        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">            <span class="n">instruments</span><span class="o">=</span><span class="n">instruments</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="n">start_time</span><span class="o">=</span><span class="n">start_time</span><span class="p">,</span> <span class="n">end_time</span><span class="o">=</span><span class="n">end_time</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="n">data_loader</span><span class="o">=</span><span class="n">data_loader</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="n">fit_start_time</span><span class="o">=</span><span class="n">fit_start_time</span><span class="p">,</span> <span class="n">fit_end_time</span><span class="o">=</span><span class="n">fit_end_time</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">            <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+</span></span><span class="line"><span class="cl">        <span class="p">)</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p>四个因子就能跑出一个简易模型，用来验证想法很快。</p><h2 id="回测与绩效分析topkdropout-与-icicir-怎么读">回测与绩效分析：TopkDropout 与 IC/ICIR 怎么读<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#%E5%9B%9E%E6%B5%8B%E4%B8%8E%E7%BB%A9%E6%95%88%E5%88%86%E6%9E%90topkdropout-%E4%B8%8E-icicir-%E6%80%8E%E4%B9%88%E8%AF%BB">#</a></h2><p>Qlib 默认的 <code>TopkDropoutStrategy</code> 是个简单但有效的多头策略。逻辑是：每天根据模型预测分数排序，持有前 K 名（topk），下一个交易日把分数掉到一定位次之外的 N 名扔掉（n_drop），然后从新的 top 区间补 N 只进来。</p><p><img alt="TopkDropout 策略示意：每天换仓 N 只，维持 K 只持仓" loading="lazy" src="https://coriva.eu.org/qlib-tutorial/qlib-topk-dropout.webp"></p><p>为什么不每天全量换仓？换手太高，交易成本会把 alpha 全吃掉。<code>n_drop</code> 控制换手率，K=50, n_drop=5 大约对应每日 10% 换手，比较常见的工业界设置。</p><p>回测产出的关键指标怎么看：</p><table><thead><tr><th>指标</th><th>含义</th><th>参考范围</th></tr></thead><tbody><tr><td>IC</td><td>预测值与下期实际收益的 Pearson 相关</td><td>A 股日频 0.02-0.08 算正常</td></tr><tr><td>Rank IC</td><td>改用秩相关，更鲁棒</td><td>通常比 IC 略高</td></tr><tr><td>ICIR</td><td>IC 均值 / IC 标准差，衡量稳定性</td><td>&gt; 0.3 算不错</td></tr><tr><td>年化收益</td><td>组合年化总收益</td><td>10%-25% 区间常见</td></tr><tr><td>超额年化</td><td>减去基准（CSI300）</td><td>正向才有意义</td></tr><tr><td>最大回撤</td><td>最差的累计跌幅</td><td>A 股策略 -20% 到 -40% 都算正常</td></tr><tr><td>夏普比</td><td>收益 / 波动</td><td>&gt; 1 可上手，&gt; 2 罕见</td></tr></tbody></table><p>这里有个新手常踩的雷：看到 IC 0.05、年化 30%、夏普 2.5 就很激动，急着下结论。先检查几件事：测试段是不是在 train 范围之外（lookahead bias）？Alpha158 的 label 是 <code>Ref($close,-2)/Ref($close,-1)-1</code>（T+1 收盘到 T+2 收盘的收益），决策点是 T 日盘后，最早能成交是 T+1 收盘，如果你不小心把决策推到 T 日的盘中，就实际包含了未来信息（参见 <a href="https://coriva.eu.org/backtesting-pitfalls/">回测中的常见陷阱</a>）。Qlib 的默认配置是干净的，但自定义 label 时一定要数清楚 <code>Ref</code> 的偏移量。</p><h2 id="常见报错与避坑清单">常见报错与避坑清单<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#%E5%B8%B8%E8%A7%81%E6%8A%A5%E9%94%99%E4%B8%8E%E9%81%BF%E5%9D%91%E6%B8%85%E5%8D%95">#</a></h2><p>按出现频率排序，这些是 Qlib 教程里少见但实战必踩的坑：</p><p><strong>1. <code>FileNotFoundError: ... cn_data/calendars/day.txt</code> 找不到</strong></p><p><code>qlib.init</code> 里的 <code>provider_uri</code> 路径写错了，或者用了 <code>~</code> 但当前 shell 不展开。改绝对路径解决。Windows 下 <code>~</code> 经常不展开。</p><p><strong>2. <code>ValueError: instruments csi300 not found</code></strong></p><p>数据下载不全，或者 region 和 provider_uri 对不上。检查 <code>~/.qlib/qlib_data/cn_data/instruments/</code> 下有没有 <code>csi300.txt</code>，没有就重新跑一次 <code>get_data</code>。</p><p><strong>3. LightGBM 训练时 <code>Cannot allocate memory</code></strong></p><p>Alpha158 在 csi300 全集上特征矩阵大概 (1.5M, 158)，内存峰值 6-8GB。台式机够，云上小实例不够。要么换更大内存，要么把 <code>instruments</code> 缩到 csi100 或 <code>start_time</code> 推后几年。</p><p><strong>4. MLP/GRU 模型训练 loss 不降</strong></p><p>Qlib 内置的神经网络模型（如 <code>qlib.contrib.model.pytorch_general_nn.GeneralPTNN</code>）默认不对 Alpha158 做特征标准化，而 158 个因子量级差几个数量级。需要在 DataHandler 里加 <code>processors</code> 配置 <code>RobustZScoreNorm</code> 或 <code>CSZScoreNorm</code>。LightGBM 不需要这一步，所以教程多用 LightGBM 入门。</p><p><strong>5. 数据更新到最近</strong></p><p>官方 <code>get_data</code> 拉的数据通常滞后几个月。要更新到昨天，参考下面这套：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-bash" data-lang="bash"><span class="line"><span class="cl"><span class="c1"># 用 akshare 采集器拉 A 股增量到 csv</span>
+</span></span><span class="line"><span class="cl">python scripts/data_collector/akshare/collector.py download_data <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    --source_dir ~/qlib_raw/cn --region cn --delay <span class="m">1</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="c1"># 再 dump 成 .bin 列文件</span>
+</span></span><span class="line"><span class="cl">python scripts/dump_bin.py dump_all <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    --csv_path ~/qlib_raw/cn <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    --qlib_dir ~/.qlib/qlib_data/cn_data <span class="se">\
+</span></span></span><span class="line"><span class="cl"><span class="se"></span>    --include_fields open,close,high,low,volume,factor
+</span></span></code></pre><button class="copy-code">复制</button></div><p><code>--factor</code> 是复权因子列，缺这个 LightGBM 训出来的预测会被分红除权污染。第一次跑全量大概 1-2 小时，之后只补增量分钟级完成。</p><p><strong>6. <code>qrun</code> 提示 <code>mlflow.exceptions.MlflowException: Run ... not found</code></strong></p><p><code>mlruns/</code> 目录被手动删过或权限问题。删掉残留的 <code>mlruns/0/</code> 重新跑。</p><p><strong>7. Windows 下中文路径</strong></p><p>把数据放在 <code>D:/qlib_data/</code>，别放 <code>D:/我的数据/</code>。Qlib 的某些 C 扩展对非 ASCII 路径有 bug。</p><h2 id="进阶方向rl滚动训练rd-agent">进阶方向：RL、滚动训练、RD-Agent<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/qlib-tutorial/#%E8%BF%9B%E9%98%B6%E6%96%B9%E5%90%91rl%E6%BB%9A%E5%8A%A8%E8%AE%AD%E7%BB%83rd-agent">#</a></h2><p>走完上面的入门流程后，Qlib 还有几个值得继续学的方向：</p><p><strong>Rolling Training（滚动训练）</strong>：现实里模型不能训一次用三年，市场风格会漂。Qlib 的 <code>qlib.workflow.task.collect</code> 和 <code>RollingGen</code> 提供了按月/季滚动重训的工具。</p><p><strong>强化学习订单执行</strong>：<code>qlib.rl</code> 模块支持把订单切分成小单的 RL 策略，对接了 OPDS、PPO 等算法，论文复现代码在 <code>examples/rl_order_execution/</code>。</p><p><strong>RD-Agent</strong>：微软 2024 年 7 月发布的 LLM 自动化因子挖掘工具，<a href="https://github.com/microsoft/RD-Agent">github.com/microsoft/RD-Agent</a>，把 Qlib 当成执行环境，让 LLM 自动写新因子、跑实验、看结果、迭代。这是 Qlib 最近一年最受关注的方向，相关论文笔记可以看 <a href="https://coriva.eu.org/alphaagent-paper-review/">AlphaAgent 解读</a> 和 <a href="https://coriva.eu.org/alphagpt-paper-review/">AlphaGPT 解读</a>。</p><p><strong>Point-in-Time 数据</strong>：财务数据有公告滞后，Qlib 的 PIT 数据库支持按公告日时间戳取数据，避免基本面回测的未来函数问题。</p><p>入门到这里基本够用了。如果按这条路径跑下来，Qlib 教程类博客里 90% 的内容你都已经覆盖，下一步真正能拉开差距的是两件事：在自己关心的股票池和时间段上写出第一批自定义因子并跑滚动训练验证稳定性，以及把 RD-Agent 接进来让 LLM 帮你穷举因子组合。这两块我会另开两篇细讲：[滚动训练 + akshare 增量更新流程]、[RD-Agent 用 Qlib 做因子挖掘实操]，关注这个博客等更新。</p></div><footer class="post-footer"><ul class="post-tags"><li><a href="https://coriva.eu.org/tags/quant/">Quant</a></li><li><a href="https://coriva.eu.org/tags/qlib/">Qlib</a></li><li><a href="https://coriva.eu.org/tags/trading/">Trading</a></li></ul><nav class="paginav"><a class="prev" href="https://coriva.eu.org/0dte-options-guide/"><span class="title">« 上一页</span><br><span>末日期权（0DTE）完全指南：机制、Greeks 与盈亏真相</span>
+</a><a class="next" href="https://coriva.eu.org/vectorbt-tutorial/"><span class="title">下一页 »</span><br><span>vectorbt 入门教程：向量化思路做 Python 量化回测</span></a></nav></footer><div id="waline" data-v-app=""><div data-waline=""><!--v-if--><div class="wl-comment"><!--v-if--><div class="wl-panel"><div class="wl-header item3"><div class="wl-header-item"><label for="wl-nick">NickName</label><input id="wl-nick" class="wl-input wl-nick" name="nick" type="text"></div><div class="wl-header-item"><label for="wl-mail">E-Mail</label><input id="wl-mail" class="wl-input wl-mail" name="mail" type="email"></div><div class="wl-header-item"><label for="wl-link">Website</label><input id="wl-link" class="wl-input wl-link" name="link" type="text"></div></div><textarea id="wl-edit" class="wl-editor" placeholder="Comment here..."></textarea><div class="wl-preview" style="display: none;"><hr><h4>Preview:</h4><div class="wl-content"></div></div><div class="wl-footer"><div class="wl-actions"><a href="https://guides.github.com/features/mastering-markdown/" title="Markdown Guide" aria-label="Markdown is supported" class="wl-action" target="_blank" rel="noopener noreferrer"><svg width="16" height="16" ariaHidden="true"><path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.69C0 12.48.52 13 1.15 13h13.69c.64 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3zM9 11H7V8L5.5 9.92 4 8v3H2V5h2l1.5 2L7 5h2v6zm2.99.5L9.5 8H11V5h2v3h1.5l-2.51 3.5z" fill="currentColor"></path></svg></a><button type="button" class="wl-action" title="Emoji" style=""><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M563.2 463.3 677 540c1.7 1.2 3.7 1.8 5.8 1.8.7 0 1.4-.1 2-.2 2.7-.5 5.1-2.1 6.6-4.4l25.3-37.8c1.5-2.3 2.1-5.1 1.6-7.8s-2.1-5.1-4.4-6.6l-73.6-49.1 73.6-49.1c2.3-1.5 3.9-3.9 4.4-6.6.5-2.7 0-5.5-1.6-7.8l-25.3-37.8a10.1 10.1 0 0 0-6.6-4.4c-.7-.1-1.3-.2-2-.2-2.1 0-4.1.6-5.8 1.8l-113.8 76.6c-9.2 6.2-14.7 16.4-14.7 27.5.1 11 5.5 21.3 14.7 27.4zM387 348.8h-45.5c-5.7 0-10.4 4.7-10.4 10.4v153.3c0 5.7 4.7 10.4 10.4 10.4H387c5.7 0 10.4-4.7 10.4-10.4V359.2c0-5.7-4.7-10.4-10.4-10.4zm333.8 241.3-41-20a10.3 10.3 0 0 0-8.1-.5c-2.6.9-4.8 2.9-5.9 5.4-30.1 64.9-93.1 109.1-164.4 115.2-5.7.5-9.9 5.5-9.5 11.2l3.9 45.5c.5 5.3 5 9.5 10.3 9.5h.9c94.8-8 178.5-66.5 218.6-152.7 2.4-5 .3-11.2-4.8-13.6zm186-186.1c-11.9-42-30.5-81.4-55.2-117.1-24.1-34.9-53.5-65.6-87.5-91.2-33.9-25.6-71.5-45.5-111.6-59.2-41.2-14-84.1-21.1-127.8-21.1h-1.2c-75.4 0-148.8 21.4-212.5 61.7-63.7 40.3-114.3 97.6-146.5 165.8-32.2 68.1-44.3 143.6-35.1 218.4 9.3 74.8 39.4 145 87.3 203.3.1.2.3.3.4.5l36.2 38.4c1.1 1.2 2.5 2.1 3.9 2.6 73.3 66.7 168.2 103.5 267.5 103.5 73.3 0 145.2-20.3 207.7-58.7 37.3-22.9 70.3-51.5 98.1-85 27.1-32.7 48.7-69.5 64.2-109.1 15.5-39.7 24.4-81.3 26.6-123.8 2.4-43.6-2.5-87-14.5-129zm-60.5 181.1c-8.3 37-22.8 72-43 104-19.7 31.1-44.3 58.6-73.1 81.7-28.8 23.1-61 41-95.7 53.4-35.6 12.7-72.9 19.1-110.9 19.1-82.6 0-161.7-30.6-222.8-86.2l-34.1-35.8c-23.9-29.3-42.4-62.2-55.1-97.7-12.4-34.7-18.8-71-19.2-107.9-.4-36.9 5.4-73.3 17.1-108.2 12-35.8 30-69.2 53.4-99.1 31.7-40.4 71.1-72 117.2-94.1 44.5-21.3 94-32.6 143.4-32.6 49.3 0 97 10.8 141.8 32 34.3 16.3 65.3 38.1 92 64.8 26.1 26 47.5 56 63.6 89.2 16.2 33.2 26.6 68.5 31 105.1 4.6 37.5 2.7 75.3-5.6 112.3z" fill="currentColor"></path></svg></button><!--v-if--><input id="wl-image-upload" class="upload" aria-hidden="true" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif"><label for="wl-image-upload" class="wl-action" title="Upload Image" aria-label="Upload Image"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M784 112H240c-88 0-160 72-160 160v480c0 88 72 160 160 160h544c88 0 160-72 160-160V272c0-88-72-160-160-160zm96 640c0 52.8-43.2 96-96 96H240c-52.8 0-96-43.2-96-96V272c0-52.8 43.2-96 96-96h544c52.8 0 96 43.2 96 96v480z" fill="currentColor"></path><path d="M352 480c52.8 0 96-43.2 96-96s-43.2-96-96-96-96 43.2-96 96 43.2 96 96 96zm0-128c17.6 0 32 14.4 32 32s-14.4 32-32 32-32-14.4-32-32 14.4-32 32-32zm462.4 379.2-3.2-3.2-177.6-177.6c-25.6-25.6-65.6-25.6-91.2 0l-80 80-36.8-36.8c-25.6-25.6-65.6-25.6-91.2 0L200 728c-4.8 6.4-8 14.4-8 24 0 17.6 14.4 32 32 32 9.6 0 16-3.2 22.4-9.6L380.8 640l134.4 134.4c6.4 6.4 14.4 9.6 24 9.6 17.6 0 32-14.4 32-32 0-9.6-4.8-17.6-9.6-24l-52.8-52.8 80-80L769.6 776c6.4 4.8 12.8 8 20.8 8 17.6 0 32-14.4 32-32 0-8-3.2-16-8-20.8z" fill="currentColor"></path></svg></label><button type="button" class="wl-action" title="Preview"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M710.816 654.301c70.323-96.639 61.084-230.578-23.705-314.843-46.098-46.098-107.183-71.109-172.28-71.109-65.008 0-126.092 25.444-172.28 71.109-45.227 46.098-70.756 107.183-70.756 172.106 0 64.923 25.444 126.007 71.194 172.106 46.099 46.098 107.184 71.109 172.28 71.109 51.414 0 100.648-16.212 142.824-47.404l126.53 126.006c7.058 7.06 16.297 10.979 26.406 10.979 10.105 0 19.343-3.919 26.402-10.979 14.467-14.467 14.467-38.172 0-52.723L710.816 654.301zm-315.107-23.265c-65.88-65.88-65.88-172.54 0-238.42 32.069-32.07 74.245-49.149 119.471-49.149 45.227 0 87.407 17.603 119.472 49.149 65.88 65.879 65.88 172.539 0 238.42-63.612 63.178-175.242 63.178-238.943 0zm0 0" fill="currentColor"></path><path d="M703.319 121.603H321.03c-109.8 0-199.469 89.146-199.469 199.38v382.034c0 109.796 89.236 199.38 199.469 199.38h207.397c20.653 0 37.384-16.645 37.384-37.299 0-20.649-16.731-37.296-37.384-37.296H321.03c-68.582 0-124.352-55.77-124.352-124.267V321.421c0-68.496 55.77-124.267 124.352-124.267h382.289c68.582 0 124.352 55.771 124.352 124.267V524.72c0 20.654 16.736 37.299 37.385 37.299 20.654 0 37.384-16.645 37.384-37.299V320.549c-.085-109.8-89.321-198.946-199.121-198.946zm0 0" fill="currentColor"></path></svg></button></div><div class="wl-info"><div class="wl-captcha-container"></div><div class="wl-text-number">0 <!--v-if--> &nbsp;Words</div><button type="button" class="wl-btn">Login</button><button type="submit" class="primary wl-btn" title="Cmd|Ctrl + Enter">Submit</button></div><div class="wl-gif-popup"><input type="text" placeholder="Search GIF"><!--v-if--><div class="wl-loading"><svg width="30" height="30" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid"><circle cx="50" cy="50" fill="none" stroke="currentColor" strokeWidth="4" r="40" stroke-dasharray="85 30"><animateTransform attributeName="transform" type="rotate" repeatCount="indefinite" dur="1s" values="0 50 50;360 50 50" keyTimes="0;1"></animateTransform></circle></svg></div></div><div class="wl-emoji-popup"><div class="wl-tab-wrapper"><button type="button" title="weibo_smile"><!--v-if--></button><button type="button" title="weibo_lovely"><!--v-if--></button><button type="button" title="weibo_blush"><!--v-if--></button><button type="button" title="weibo_grin"><!--v-if--></button><button type="button" title="weibo_laugh"><!--v-if--></button><button type="button" title="weibo_joy"><!--v-if--></button><button type="button" title="weibo_angry"><!--v-if--></button><button type="button" title="weibo_bye"><!--v-if--></button><button type="button" title="weibo_hammer"><!--v-if--></button><button type="button" title="weibo_kiss"><!--v-if--></button><button type="button" title="weibo_love"><!--v-if--></button><button type="button" title="weibo_mask"><!--v-if--></button><button type="button" title="weibo_money"><!--v-if--></button><button type="button" title="weibo_quiet"><!--v-if--></button><button type="button" title="weibo_rage"><!--v-if--></button><button type="button" title="weibo_sad"><!--v-if--></button><button type="button" title="weibo_shy"><!--v-if--></button><button type="button" title="weibo_sick"><!--v-if--></button><button type="button" title="weibo_slient"><!--v-if--></button><button type="button" title="weibo_smirk"><!--v-if--></button><button type="button" title="weibo_slap"><!--v-if--></button><button type="button" title="weibo_antic"><!--v-if--></button><button type="button" title="weibo_desire"><!--v-if--></button><button type="button" title="weibo_longing"><!--v-if--></button><button type="button" title="weibo_no_idea"><!--v-if--></button><button type="button" title="weibo_look_down"><!--v-if--></button><button type="button" title="weibo_clap"><!--v-if--></button><button type="button" title="weibo_yum"><!--v-if--></button><button type="button" title="weibo_sleep"><!--v-if--></button><button type="button" title="weibo_dizzy_face"><!--v-if--></button><button type="button" title="weibo_chuckle"><!--v-if--></button><button type="button" title="weibo_disappointed"><!--v-if--></button><button type="button" title="weibo_flushed"><!--v-if--></button><button type="button" title="weibo_heart_eyes"><!--v-if--></button><button type="button" title="weibo_no"><!--v-if--></button><button type="button" title="weibo_shuai"><!--v-if--></button><button type="button" title="weibo_suprised"><!--v-if--></button><button type="button" title="weibo_think"><!--v-if--></button><button type="button" title="weibo_vomit"><!--v-if--></button><button type="button" title="weibo_scream"><!--v-if--></button><button type="button" title="weibo_sleepy"><!--v-if--></button><button type="button" title="weibo_sob"><!--v-if--></button><button type="button" title="weibo_sunglasses"><!--v-if--></button><button type="button" title="weibo_greddy"><!--v-if--></button><button type="button" title="weibo_pick_nose"><!--v-if--></button><button type="button" title="weibo_annoyed"><!--v-if--></button><button type="button" title="weibo_awkward"><!--v-if--></button><button type="button" title="weibo_confused"><!--v-if--></button><button type="button" title="weibo_grievance"><!--v-if--></button><button type="button" title="weibo_poor"><!--v-if--></button><button type="button" title="weibo_wink"><!--v-if--></button><button type="button" title="weibo_rolling_eyes"><!--v-if--></button><button type="button" title="weibo_watermalon"><!--v-if--></button><button type="button" title="weibo_annoyed_left"><!--v-if--></button><button type="button" title="weibo_annoyed_right"><!--v-if--></button><button type="button" title="weibo_yawn"><!--v-if--></button><button type="button" title="weibo_hufen"><!--v-if--></button><button type="button" title="weibo_doge"><!--v-if--></button><button type="button" title="weibo_husky"><!--v-if--></button><button type="button" title="weibo_dog_annoyed"><!--v-if--></button><button type="button" title="weibo_dog_bye"><!--v-if--></button><button type="button" title="weibo_dog_consider"><!--v-if--></button><button type="button" title="weibo_dog_cry"><!--v-if--></button><button type="button" title="weibo_dog_joy"><!--v-if--></button><button type="button" title="weibo_dog_laugh"><!--v-if--></button><button type="button" title="weibo_dog_sweat"><!--v-if--></button><button type="button" title="weibo_dog_think"><!--v-if--></button><button type="button" title="weibo_dog_yum"><!--v-if--></button><button type="button" title="weibo_cat"><!--v-if--></button><button type="button" title="weibo_cat_annoyed"><!--v-if--></button><button type="button" title="weibo_cat_bye"><!--v-if--></button><button type="button" title="weibo_cat_cry"><!--v-if--></button><button type="button" title="weibo_cat_think"><!--v-if--></button><button type="button" title="weibo_girl_annoyed"><!--v-if--></button><button type="button" title="weibo_boy"><!--v-if--></button><button type="button" title="weibo_girl"><!--v-if--></button><button type="button" title="weibo_panda"><!--v-if--></button><button type="button" title="weibo_pig"><!--v-if--></button><button type="button" title="weibo_rabbit"><!--v-if--></button><button type="button" title="weibo_ultraman"><!--v-if--></button><button type="button" title="weibo_wool_group"><!--v-if--></button><button type="button" title="weibo_yan"><!--v-if--></button><button type="button" title="weibo_xi"><!--v-if--></button><button type="button" title="weibo_soap"><!--v-if--></button><button type="button" title="weibo_meng"><!--v-if--></button><button type="button" title="weibo_jiong"><!--v-if--></button><button type="button" title="weibo_geili"><!--v-if--></button><button type="button" title="weibo_shenma"><!--v-if--></button><button type="button" title="weibo_alpaca"><!--v-if--></button></div><div><!--v-if--></div><!--v-if--></div></div></div><!--v-if--></div><div class="wl-meta-head"><div class="wl-count"><!--v-if--> Comments</div><ul class="wl-sort"><li class="active">Latest</li><li class="">Oldest</li><li class="">Hottest</li></ul></div><div class="wl-cards"></div><div class="wl-empty">No comment yet.</div><div class="wl-meta-foot"><div class="wl-rss"><a href="https://comments.coriva.eu.org/api/comment/rss?path=%2Fqlib-tutorial%2F" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this post"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this post</span></a><a href="https://comments.coriva.eu.org/api/comment/rss" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this site"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this site</span></a></div><div class="wl-power"> Powered by <a href="https://github.com/walinejs/waline" target="_blank" rel="noopener noreferrer"> Waline </a> v3.15.2</div></div></div></div><link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css"><script type="module">
+  import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
+  import { pageviewCount } from 'https://unpkg.com/@waline/client@v3/dist/pageview.js';
+  init({
+    el: '#waline',
+    serverURL: 'https://comments.coriva.eu.org',
+    lang: 'en',
+    pageview: false,
+  });
+  pageviewCount({
+    serverURL: 'https://comments.coriva.eu.org',
+  });
+</script></article><aside class="toc-sidebar" id="toc-sidebar"><nav class="toc-sidebar-nav"><span class="toc-sidebar-title">目录</span><div class="toc-sidebar-inner"><nav id="TableOfContents"><ul><li><a href="https://coriva.eu.org/qlib-tutorial/#qlib-%E6%98%AF%E4%BB%80%E4%B9%88%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E8%AF%A5%E7%94%A8%E5%AE%83">Qlib 是什么，什么时候该用它</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#%E5%AE%89%E8%A3%85-qlib-%E4%B8%8E%E4%B8%8B%E8%BD%BD%E6%95%B0%E6%8D%AE">安装 Qlib 与下载数据</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#30-%E8%A1%8C%E4%BB%A3%E7%A0%81%E8%B7%91%E9%80%9A%E7%AC%AC%E4%B8%80%E4%B8%AA-lightgbm-%E6%A8%A1%E5%9E%8B">30 行代码跑通第一个 LightGBM 模型</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#%E7%90%86%E8%A7%A3-qlib-%E7%9A%84%E6%A0%B8%E5%BF%83%E6%9E%B6%E6%9E%84dataserver-%E4%B8%8E%E8%A1%A8%E8%BE%BE%E5%BC%8F%E5%BC%95%E6%93%8E">理解 Qlib 的核心架构：DataServer 与表达式引擎</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#alpha158-%E5%9B%A0%E5%AD%90%E9%9B%86%E8%AF%A6%E8%A7%A3">Alpha158 因子集详解</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#%E7%94%A8-qrun--yaml-%E8%B7%91%E6%A0%87%E5%87%86%E5%8C%96%E5%B7%A5%E4%BD%9C%E6%B5%81">用 qrun + YAML 跑标准化工作流</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#%E5%86%99%E8%87%AA%E5%B7%B1%E7%9A%84-alpha-%E8%A1%A8%E8%BE%BE%E5%BC%8F">写自己的 Alpha 表达式</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#%E5%9B%9E%E6%B5%8B%E4%B8%8E%E7%BB%A9%E6%95%88%E5%88%86%E6%9E%90topkdropout-%E4%B8%8E-icicir-%E6%80%8E%E4%B9%88%E8%AF%BB">回测与绩效分析：TopkDropout 与 IC/ICIR 怎么读</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#%E5%B8%B8%E8%A7%81%E6%8A%A5%E9%94%99%E4%B8%8E%E9%81%BF%E5%9D%91%E6%B8%85%E5%8D%95">常见报错与避坑清单</a></li><li><a href="https://coriva.eu.org/qlib-tutorial/#%E8%BF%9B%E9%98%B6%E6%96%B9%E5%90%91rl%E6%BB%9A%E5%8A%A8%E8%AE%AD%E7%BB%83rd-agent" class="">进阶方向：RL、滚动训练、RD-Agent</a></li></ul></nav></div></nav><nav class="related-posts"><h2>相关文章</h2><ul><li><a href="https://coriva.eu.org/0dte-options-guide/"><span class="related-title">末日期权（0DTE）完全指南：机制、Greeks 与盈亏真相</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/quant-math-basics/"><span class="related-title">量化交易的数学基础：从对数收益率到线性回归</span>
+<span class="related-date">2026-04-20</span></a></li><li><a href="https://coriva.eu.org/fama-french-factor-model/"><span class="related-title">Fama-French 因子模型：从三因子到五因子的量化选股基础</span>
+<span class="related-date">2026-04-16</span></a></li><li><a href="https://coriva.eu.org/quant-trading-markets/"><span class="related-title">量化交易市场全景：股票、期货、期权、外汇、加密货币怎么选</span>
+<span class="related-date">2026-04-16</span></a></li><li><a href="https://coriva.eu.org/cta-strategy-guide/"><span class="related-title">CTA 策略入门：趋势跟踪、期货套利与 Python 实战</span>
+<span class="related-date">2026-04-16</span></a></li></ul></nav></aside></div></main><footer class="footer"><span>© 2026 <a href="https://coriva.eu.org/">Coriva</a></span> ·
+<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+<a href="https://finicounter.eu.org/" target="_blank">Total Views</a>:
+<span id="finicount_views">7,284</span></span></footer><a href="https://coriva.eu.org/qlib-tutorial/#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g" style="visibility: hidden; opacity: 0;"><svg viewBox="0 0 12 6" fill="currentcolor"><path d="M12 6H0l6-6z"></path></svg>
+</a><script async="" src="//finicounter.eu.org/finicounter.js"></script><script>(function(){var e,t,n,s=document.getElementById("toc-sidebar");if(!s)return;if(t=s.querySelectorAll('a[href^="#"]'),!t.length)return;e=[],t.forEach(function(t){var s=decodeURIComponent(t.getAttribute("href").slice(1)),n=document.getElementById(s);n&&e.push({el:n,link:t})});function o(){for(var o=window.scrollY||document.documentElement.scrollTop,i=100,s=null,n=0;n<e.length;n++)e[n].el.getBoundingClientRect().top+window.scrollY-i<=o&&(s=e[n]);t.forEach(function(e){e.classList.remove("active")}),s&&s.link.classList.add("active")}n=!1,window.addEventListener("scroll",function(){n||(requestAnimationFrame(function(){o(),n=!1}),n=!0)}),o()})()</script><script>let menu=document.getElementById("menu");if(menu){const e=localStorage.getItem("menu-scroll-position");e&&(menu.scrollLeft=parseInt(e,10)),menu.onscroll=function(){localStorage.setItem("menu-scroll-position",menu.scrollLeft)}}document.querySelectorAll('a[href^="#"]').forEach(e=>{e.addEventListener("click",function(e){e.preventDefault();var t=this.getAttribute("href").substr(1);window.matchMedia("(prefers-reduced-motion: reduce)").matches?document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView():document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView({behavior:"smooth"}),t==="top"?history.replaceState(null,null," "):history.pushState(null,null,`#${t}`)})})</script><script>var mybutton=document.getElementById("top-link");window.onscroll=function(){document.body.scrollTop>800||document.documentElement.scrollTop>800?(mybutton.style.visibility="visible",mybutton.style.opacity="1"):(mybutton.style.visibility="hidden",mybutton.style.opacity="0")}</script><script>document.getElementById("theme-toggle").addEventListener("click",()=>{const e=document.querySelector("html");e.dataset.theme==="dark"?(e.dataset.theme="light",localStorage.setItem("pref-theme","light")):(e.dataset.theme="dark",localStorage.setItem("pref-theme","dark"))})</script><script>document.querySelectorAll("pre > code").forEach(e=>{const n=e.parentNode.parentNode,t=document.createElement("button");t.classList.add("copy-code"),t.innerHTML="复制";function s(){t.innerHTML="已复制！",setTimeout(()=>{t.innerHTML="复制"},2e3)}t.addEventListener("click",t=>{if("clipboard"in navigator){navigator.clipboard.writeText(e.textContent),s();return}const n=document.createRange();n.selectNodeContents(e);const o=window.getSelection();o.removeAllRanges(),o.addRange(n);try{document.execCommand("copy"),s()}catch{}o.removeRange(n)}),n.classList.contains("highlight")?n.appendChild(t):n.parentNode.firstChild==n||(e.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName=="TABLE"?e.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(t):e.parentNode.appendChild(t))})</script></body></html>

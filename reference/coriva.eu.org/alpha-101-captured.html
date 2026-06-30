@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="zh" dir="auto" data-theme="dark"><head><meta charset="utf-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><meta name="robots" content="index, follow"><title>Alpha 101 流动性与复合因子详解 + 因子组合实战 | Coriva</title>
+<meta name="keywords" content="Quant,Trading"><meta name="description" content="Alpha 101 流动性与复合因子拆解：条件流动性、多层嵌套衰减信号、布尔型因子，以及从 101 个单因子到多因子组合的实操建议。"><meta name="author" content="Coriva"><link rel="canonical" href="https://coriva.eu.org/alpha101-liquidity/"><meta name="msvalidate.01" content="F8E2F274161B653649F8818FD127CE87"><link crossorigin="anonymous" href="/assets/css/stylesheet.8fe2fa5580263673749c0854ddc4fdff83d8cd245ff94138be9f54fc4bc84fca.css" integrity="sha256-j+L6VYAmNnN0nAhU3cT9/4PYzSRf+UE4vp9U/EvIT8o=" rel="preload stylesheet" as="style"><link rel="icon" href="https://coriva.eu.org/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="https://coriva.eu.org/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="https://coriva.eu.org/favicon-32x32.png"><link rel="apple-touch-icon" href="https://coriva.eu.org/apple-touch-icon.png"><link rel="mask-icon" href="https://coriva.eu.org/safari-pinned-tab.svg"><meta name="theme-color" content="#2e2e33"><meta name="msapplication-TileColor" content="#2e2e33"><link rel="alternate" hreflang="zh" href="https://coriva.eu.org/alpha101-liquidity/"><link rel="alternate" hreflang="en" href="https://coriva.eu.org/en/alpha101-liquidity/"><noscript><style>#theme-toggle,.top-link{display:none}</style><style>@media(prefers-color-scheme:dark){:root{--theme:rgb(29, 30, 32);--entry:rgb(46, 46, 51);--primary:rgb(218, 218, 219);--secondary:rgb(155, 156, 157);--tertiary:rgb(65, 66, 68);--content:rgb(196, 196, 197);--code-block-bg:rgb(46, 46, 51);--code-bg:rgb(55, 56, 62);--border:rgb(51, 51, 51);color-scheme:dark}.list{background:var(--theme)}.toc{background:var(--entry)}}@media(prefers-color-scheme:light){.list::-webkit-scrollbar-thumb{border-color:var(--code-bg)}}</style></noscript><script>localStorage.getItem("pref-theme")==="dark"?document.querySelector("html").dataset.theme="dark":localStorage.getItem("pref-theme")==="light"?document.querySelector("html").dataset.theme="light":window.matchMedia("(prefers-color-scheme: dark)").matches?document.querySelector("html").dataset.theme="dark":document.querySelector("html").dataset.theme="light"</script><meta name="google-adsense-account" content="ca-pub-2660281922577700"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/400.css" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/500.css" rel="stylesheet"><style>code,kbd,samp,pre{font-family:fira code,cascadia code,source code pro,sf mono,Menlo,Consolas,monospace}.entry-footer .pageview-meta{display:none}.post-single .post-description{display:none}.post-single-wrapper{display:flex;gap:4rem;align-items:flex-start}.post-single-wrapper .post-single{flex:1;min-width:0}.toc-sidebar{display:none}@media(min-width:1280px){body:not(.list) .main{max-width:calc(var(--main-width) + var(--gap) * 2 + 272px)}.post-single-wrapper .post-single{max-width:var(--main-width)}.toc-sidebar{display:block;width:220px;flex-shrink:0;position:sticky;top:calc(var(--header-height) + 1rem);max-height:calc(100vh - var(--header-height) - 3rem);overflow-y:auto;scrollbar-width:none;padding-left:1rem;border-left:1px solid var(--border)}.toc-sidebar::-webkit-scrollbar{display:none}.toc-sidebar-nav{font-size:.8rem;line-height:1.65}.toc-sidebar-title{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.toc-sidebar-inner ul{list-style:none;padding-left:0;margin:0}.toc-sidebar-inner ul ul{padding-left:.9em}.toc-sidebar-inner li{margin:.2em 0}.toc-sidebar-inner a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;transition:color .2s;opacity:.8}.toc-sidebar-inner a:hover{color:var(--primary);opacity:1}.toc-sidebar-inner a.active{color:var(--primary);font-weight:500;opacity:1}}.related-posts{margin-top:1.5rem;padding-top:1.2rem;border-top:1px solid var(--border)}.related-posts h2{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.related-posts ul{list-style:none;padding:0;margin:0}.related-posts li{margin:.2em 0}.related-posts a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;font-size:.8rem;line-height:1.65;transition:color .2s;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.related-posts a:hover{color:var(--primary);opacity:1}.related-date{display:none}</style><script>MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]}}</script><script async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script><script async="" src="https://www.googletagmanager.com/gtag/js?id=G-C74ZBKDR6V"></script><script>var dnt,doNotTrack=!1;if(!1&&(dnt=navigator.doNotTrack||window.doNotTrack||navigator.msDoNotTrack,doNotTrack=dnt=="1"||dnt=="yes"),!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-C74ZBKDR6V")}</script><meta property="og:url" content="https://coriva.eu.org/alpha101-liquidity/"><meta property="og:site_name" content="Coriva"><meta property="og:title" content="Alpha 101 流动性与复合因子详解 + 因子组合实战"><meta property="og:description" content="Alpha 101 流动性与复合因子拆解：条件流动性、多层嵌套衰减信号、布尔型因子，以及从 101 个单因子到多因子组合的实操建议。"><meta property="og:locale" content="zh"><meta property="og:type" content="article"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-04-14T14:58:18+08:00"><meta property="article:modified_time" content="2026-04-14T14:58:18+08:00"><meta property="article:tag" content="Quant"><meta property="article:tag" content="Trading"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="Alpha 101 流动性与复合因子详解 + 因子组合实战"><meta name="twitter:description" content="Alpha 101 流动性与复合因子拆解：条件流动性、多层嵌套衰减信号、布尔型因子，以及从 101 个单因子到多因子组合的实操建议。"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Posts","item":"https://coriva.eu.org/posts/"},{"@type":"ListItem","position":2,"name":"Alpha 101 流动性与复合因子详解 + 因子组合实战","item":"https://coriva.eu.org/alpha101-liquidity/"}]}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","headline":"Alpha 101 流动性与复合因子详解 + 因子组合实战","name":"Alpha 101 流动性与复合因子详解 \u002b 因子组合实战","description":"Alpha 101 流动性与复合因子拆解：条件流动性、多层嵌套衰减信号、布尔型因子，以及从 101 个单因子到多因子组合的实操建议。","keywords":["Quant","Trading"],"articleBody":"这是 Alpha 101 系列的最后一篇。流动性与复合因子有 23 个，是五类里公式最复杂的一组：嵌套层数多、用到 decay_linear 和 IndNeutralize 的频率最高、条件判断也更复杂。\n但复杂不等于难理解。拆到底层，它们讲的还是同一个故事：跟着聪明钱走。\n第一篇建立了分类框架，前三篇分别讲了量价背离、动量反转和波动率与日内结构。这篇在拆解 4 个经典因子之后，还会讨论怎么把 101 个因子从\"单因子研究\"推进到\"因子组合\"。\nAlpha#7：条件流动性信号 $$\\text{Alpha#7} = \\begin{cases} -1 \\times \\text{ts_rank}(\\text{abs}(\\text{delta}(\\text{close}, 7)),\\ 60) \\times \\text{sign}(\\text{delta}(\\text{close}, 7)) \u0026 \\text{if } \\text{adv20} \u003c \\text{volume} \\\\ -1 \u0026 \\text{otherwise} \\end{cases}$$第一篇给了这个因子的概述，这里深入讲条件判断的设计思路。\n条件 adv20 \u003c volume：今天的成交量是否超过了 20 日均量。这是最简单的\"放量\"定义。\n缩量分支给 -1（做空）。逻辑很直白：成交量低于均值，参与度不够，短期缺乏上涨动能。不管价格怎么走，缩量就是负面信号。这个\"一刀切\"的判断在实测中表现如何？对于美股大盘股，缩量确实和短期负收益弱相关。但对于本身成交清淡的小盘股，天天都\"缩量\"，这个信号就失效了。论文的测试标的是约 1000 只美股大盘股，这类股票的日均成交量足够大，“低于均值\"确实意味着市场兴趣下降。\n放量分支的核心是 ts_rank(abs(delta(close, 7)), 60)：过去 7 天价格绝对变化在过去 60 天里排第几。再乘以 sign(delta(close, 7))（涨跌方向），取反。\n如果过去 7 天涨了很多（delta 为正，sign = +1），且绝对涨幅在 60 天里排名靠前（ts_rank 高），乘积为正，取反后为负（做空）。赌的是：放量暴涨，涨幅在两个月里排前列，过热了。\n如果过去 7 天跌了很多（delta 为负，sign = -1），绝对跌幅 60 天排名靠前，乘积为负，取反后为正（做多）。赌的是：放量暴跌，跌幅创两个月之最，超卖了。\n60 天的长窗口让这个因子不容易被短期噪音触发。一只股票连涨 7 天才涨 2%，ts_rank 可能只有 0.3，信号很弱。但如果 7 天涨了 15%（在 60 天里排名前 5%），ts_rank 高达 0.95，信号就很强了。\nAlpha#31：多层嵌套的衰减流动性信号 $$\\text{Alpha#31} = \\text{rank}(\\text{rank}(\\text{rank}(\\text{decay_linear}(\\text{rank}(\\text{rank}(\\text{delta}(\\text{close}, 10)))), 10)))) + \\text{rank}(-1 \\times \\text{delta}(\\text{close}, 3)) + \\text{sign}(\\text{scale}(\\text{correlation}(\\text{adv20}, \\text{low}, 12)))$$这个公式嵌套了 5 层 rank，看起来吓人。但多层 rank 的效果其实会递减：第一次 rank 把值压到 [0, 1]，第二次 rank 在已经是 [0, 1] 的值上再排名，分布会更加\"均匀”，但信息不会增加太多。三层以上的 rank 基本是在做\"超级均匀化\"，消除任何残留的非线性分布。\n拆成三个加法项：\n第一项：核心是 delta(close, 10) 的 decay_linear 衰减。10 天价格变化做线性衰减平均，然后多层 rank。含义是：近 10 天的价格趋势方向，用衰减加权让近期权重更大，多层 rank 确保分布极度均匀。\n第二项 rank(-1 * delta(close, 3))：3 天价格变化取反做排名。跌了 3 天的股票排名高。短期反转信号。\n第三项 sign(scale(correlation(adv20, low, 12)))：过去 12 天均量和最低价的相关性，做 scale 再取 sign。如果均量和最低价正相关（量大的时候价格低点也高），sign = +1。负相关则 sign = -1。\n三项相加，大致逻辑是：中期趋势的衰减信号 + 短期反转 + 量价相关性方向。这是一个典型的\"复合因子\"，把不同时间尺度和不同维度的信号线性叠加。\n实话说，多层 rank 的设计更像是过拟合的产物，而不是有清晰经济逻辑的刻意选择。如果你在实现这个因子时把 5 层 rank 简化成 2 层，效果大概率差不多。\nAlpha#61：布尔型因子 $$\\text{Alpha#61} = \\text{rank}(\\text{vwap} - \\text{ts_min}(\\text{vwap}, 16)) \u003c \\text{rank}(\\text{correlation}(\\text{vwap},\\ \\text{adv180},\\ 18))$$这个因子的输出不是连续值，而是布尔值（0 或 1）。\n左边 rank(vwap - ts_min(vwap, 16))：当前 vwap 距离 16 天最低 vwap 的距离排名。值大 = 这只股票的 vwap 远离近期低点，处于偏高位置。\n右边 rank(correlation(vwap, adv180, 18))：vwap 和 180 天均量的 18 天相关性排名。值大 = vwap 走势和长期流动性高度同步。\n因子值 = 1（做多信号）当且仅当：左边 \u003c 右边，即 vwap 离近期低点的距离排名低于 vwap 与长期流动性的同步排名。\n翻译：一只股票的 vwap 还在 16 天低位附近（没怎么涨），但它的 vwap 走势和长期均量高度正相关（流动性稳定同步）。这种组合意味着\"流动性好但价格还在底部\"，是价值被低估的信号。\n布尔因子在因子组合中的角色比较特殊。连续值因子可以精细排序（rank 0.95 的股票信号强于 0.85 的），布尔因子只分\"有信号\"和\"没信号\"两档。它更适合做过滤器而不是排序器：先用 Alpha#61 筛掉信号为 0 的股票，再用连续因子在剩下的股票里排序。\nAlpha#75：双条件比较 $$\\text{Alpha#75} = \\text{rank}(\\text{correlation}(\\text{vwap},\\ \\text{volume},\\ 4)) \u003c \\text{rank}(\\text{correlation}(\\text{rank}(\\text{low}),\\ \\text{rank}(\\text{adv50}),\\ 12))$$和 Alpha#61 一样是布尔型，但比较的两个维度不同。\n左边 rank(correlation(vwap, volume, 4))：4 天内 vwap 和成交量的相关性排名。vwap 和 volume 正相关 = 量大的时候价格（加权均价）也高，是正常的\"量价齐升\"。\n右边 rank(correlation(rank(low), rank(adv50), 12))：12 天内最低价排名和 50 天均量排名的相关性排名。这个更 subtle：最低价排名高（日内底部支撑强）和均量排名高（流动性好）如果正相关，说明\"流动性越好的时候，下方支撑越强\"。\n因子 = 1 当且仅当：短期量价同步程度的排名 \u003c 中期流动性-支撑同步程度的排名。\n经济含义：短期量价关系一般（没有明显的量价齐升），但中期流动性和价格支撑的关系很好。这种股票在短期可能被忽视（量价平淡），但中期基本面支撑扎实。\nAlpha#75 和 #61 组合使用时，可以构建一个\"双重流动性过滤\"：先用 #61 筛出\"流动性好但价格在底部\"的股票，再用 #75 确认\"中期支撑强于短期热度\"。两个布尔条件都满足的股票数量会很少，但信号质量更高。\n从单因子到因子组合 拆完 101 个因子，下一步是组合。单因子研究是入门，因子组合才是实战。\n因子正交性：为什么能组合 论文给了一个数字：101 个因子之间的平均相关性是 15.9%。这意味着大多数因子对捕捉的是不同维度的市场信息。相关性 15.9% 接近于\"弱相关\"，组合后的分散化效果很好。\n但\"平均\"15.9% 掩盖了分布：同类因子内部的相关性往往在 40~70%（比如 #3 和 #6 之间），跨类因子的相关性可能只有 5~10%。所以组合的时候不应该 101 个全放进去，而是每类挑 2~3 个代表性因子，总共 10~15 个就够了。\nIC 衰减与再平衡 单因子的 IC（Information Coefficient，因子值和未来收益的截面相关性）在论文发表后一定会衰减。2016 年公开的因子，到 2026 年，单独使用的 IC 可能只剩论文时期的 30~50%。\n但 IC 衰减的速度和因子类型有关。量价背离类因子衰减最快，因为它们的信号最直接、最容易被套利。波动率类因子衰减较慢，因为波动率均值回归是一个更底层的市场机制，不会因为几篇论文就消失。条件反转类因子（如 #9）衰减速度居中，条件判断增加了套利难度。\n再平衡频率方面，论文里的因子持仓周期在 0.6~6.4 天。组合后建议用 3~5 天的再平衡频率：太短会被交易成本吃掉 alpha，太长则错过短期因子的时效性。\n实操建议 推荐的因子组合起步配置（10 个因子，覆盖五类）：\n类别 因子 选择理由 量价背离 #3, #55 #3 最干净，#55 加入了价格位置维度 动量反转 #9, #35 #9 有条件判断，#35 多时间尺度 波动率 #1, #34 #1 条件波动率，#34 波动比 + 反转 日内结构 #101, #42 #101 最简 CLV，#42 看 VWAP 流动性 #7, #61 #7 条件流动性，#61 布尔过滤 组合方式可以从最简单的等权开始：每个因子值做截面 rank，10 个 rank 值取平均作为综合得分，做多得分最高的 10% 股票，做空得分最低的 10%。\n更进阶的做法是用 IC 加权：回测每个因子在过去 60 天的滚动 IC，IC 高的因子给更大权重。这比等权稍好，但也更容易过拟合。\n不建议做的事：\n把 101 个因子全算一遍然后用机器学习选最优子集。维度太高，样本太少，选出来的子集大概率是噪音 在 A 股上直接使用论文的原始参数。论文的参数是在美股大盘股上优化的，窗口长度和阈值需要本地化调整 忽视交易成本。持仓周期 0.6~6.4 天意味着高换手率，如果你的交易成本（佣金 + 滑点）超过单边 10bps，很多因子的 alpha 会被吃掉 策略评估请参考量化投资常用指标大全，用夏普比率、最大回撤、Calmar 比率等指标综合衡量。\n系列导航 Alpha 101 全解读：因子分类与算子速查 量价背离类因子详解（32 个因子） 动量与反转类因子详解（23 个因子） 波动率与日内结构类因子详解（23 个因子） 本篇：流动性与复合因子 + 因子组合实战（23 个因子） ","wordCount":"3339","inLanguage":"zh","datePublished":"2026-04-14T14:58:18+08:00","dateModified":"2026-04-14T14:58:18+08:00","author":{"@type":"Person","name":"Coriva"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://coriva.eu.org/alpha101-liquidity/"},"publisher":{"@type":"Organization","name":"Coriva","logo":{"@type":"ImageObject","url":"https://coriva.eu.org/favicon.ico"}}}</script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
+.CtxtMenu_InfoContent {  overflow:auto; text-align:left; font-size:80%;  padding:.4em .6em; border:1px inset; margin:1em 0px;  max-height:20em; max-width:30em; background-color:#EEEEEE;  white-space:normal;}
+.CtxtMenu_Info.CtxtMenu_MousePost {outline:none;}
+.CtxtMenu_Info {  position:fixed; left:50%; width:auto; text-align:center;  border:3px outset; padding:1em 2em; background-color:#DDDDDD;  color:black;  cursor:default; font-family:message-box; font-size:120%;  font-style:normal; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 15px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius:15px;               /* Safari and Chrome */  -moz-border-radius:15px;                  /* Firefox */  -khtml-border-radius:15px;                /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */  filter:progid:DXImageTransform.Microsoft.dropshadow(OffX=2, OffY=2, Color="gray", Positive="true"); /* IE */}
+</style><style type="text/css">.CtxtMenu_MenuClose {  position:absolute;  cursor:pointer;  display:inline-block;  border:2px solid #AAA;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  font-family: "Courier New", Courier;  font-size:24px;  color:#F0F0F0}
+.CtxtMenu_MenuClose span {  display:block; background-color:#AAA; border:1.5px solid;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  line-height:0;  padding:8px 0 6px     /* may need to be browser-specific */}
+.CtxtMenu_MenuClose:hover {  color:white!important;  border:2px solid #CCC!important}
+.CtxtMenu_MenuClose:hover span {  background-color:#CCC!important}
+.CtxtMenu_MenuClose:hover:focus {  outline:none}
+</style><style type="text/css">.CtxtMenu_Menu {  position:absolute;  background-color:white;  color:black;  width:auto; padding:5px 0px;  border:1px solid #CCCCCC; margin:0; cursor:default;  font: menu; text-align:left; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 5px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius: 5px;             /* Safari and Chrome */  -moz-border-radius: 5px;                /* Firefox */  -khtml-border-radius: 5px;              /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */}
+.CtxtMenu_MenuItem {  padding: 1px 2em;  background:transparent;}
+.CtxtMenu_MenuArrow {  position:absolute; right:.5em; padding-top:.25em; color:#666666;  font-family: null; font-size: .75em}
+.CtxtMenu_MenuActive .CtxtMenu_MenuArrow {color:white}
+.CtxtMenu_MenuArrow.CtxtMenu_RTL {left:.5em; right:auto}
+.CtxtMenu_MenuCheck {  position:absolute; left:.7em;  font-family: null}
+.CtxtMenu_MenuCheck.CtxtMenu_RTL { right:.7em; left:auto }
+.CtxtMenu_MenuRadioCheck {  position:absolute; left: .7em;}
+.CtxtMenu_MenuRadioCheck.CtxtMenu_RTL {  right: .7em; left:auto}
+.CtxtMenu_MenuInputBox {  padding-left: 1em; right:.5em; color:#666666;  font-family: null;}
+.CtxtMenu_MenuInputBox.CtxtMenu_RTL {  left: .1em;}
+.CtxtMenu_MenuComboBox {  left:.1em; padding-bottom:.5em;}
+.CtxtMenu_MenuSlider {  left: .1em;}
+.CtxtMenu_SliderValue {  position:absolute; right:.1em; padding-top:.25em; color:#333333;  font-size: .75em}
+.CtxtMenu_SliderBar {  outline: none; background: #d3d3d3}
+.CtxtMenu_MenuLabel {  padding: 1px 2em 3px 1.33em;  font-style:italic}
+.CtxtMenu_MenuRule {  border-top: 1px solid #DDDDDD;  margin: 4px 3px;}
+.CtxtMenu_MenuDisabled {  color:GrayText}
+.CtxtMenu_MenuActive {  background-color: #606872;  color: white;}
+.CtxtMenu_MenuDisabled:focus {  background-color: #E8E8E8}
+.CtxtMenu_MenuLabel:focus {  background-color: #E8E8E8}
+.CtxtMenu_ContextMenu:focus {  outline:none}
+.CtxtMenu_ContextMenu .CtxtMenu_MenuItem:focus {  outline:none}
+.CtxtMenu_SelectionMenu {  position:relative; float:left;  border-bottom: none; -webkit-box-shadow:none; -webkit-border-radius:0px; }
+.CtxtMenu_SelectionItem {  padding-right: 1em;}
+.CtxtMenu_Selection {  right: 40%; width:50%; }
+.CtxtMenu_SelectionBox {  padding: 0em; max-height:20em; max-width: none;  background-color:#FFFFFF;}
+.CtxtMenu_SelectionDivider {  clear: both; border-top: 2px solid #000000;}
+.CtxtMenu_Menu .CtxtMenu_MenuClose {  top:-10px; left:-10px}
+</style><style id="MJX-CHTML-styles">
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row > * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-assistive-mml {
+  position: absolute !important;
+  top: 0px;
+  left: 0px;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 1px 0px 0px 0px !important;
+  border: 0px !important;
+  display: block !important;
+  width: auto !important;
+  overflow: hidden !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+mjx-assistive-mml[display="block"] {
+  width: 100% !important;
+}
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h > * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h > * > mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h > * > mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h > mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h > mjx-beg > mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h > mjx-end > mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v > * {
+  display: block;
+}
+
+mjx-stretchy-v > mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v > mjx-end > mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v > * > mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v > mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-mrow {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mtable {
+  display: inline-block;
+  text-align: center;
+  vertical-align: .25em;
+  position: relative;
+  box-sizing: border-box;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+
+mjx-mstyle[size="s"] mjx-mtable {
+  vertical-align: .354em;
+}
+
+mjx-labels {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+mjx-table {
+  display: inline-block;
+  vertical-align: -.5ex;
+  box-sizing: border-box;
+}
+
+mjx-table > mjx-itable {
+  vertical-align: middle;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+mjx-labels > mjx-itable {
+  position: absolute;
+  top: 0;
+}
+
+mjx-mtable[justify="left"] {
+  text-align: left;
+}
+
+mjx-mtable[justify="right"] {
+  text-align: right;
+}
+
+mjx-mtable[justify="left"][side="left"] {
+  padding-right: 0 ! important;
+}
+
+mjx-mtable[justify="left"][side="right"] {
+  padding-left: 0 ! important;
+}
+
+mjx-mtable[justify="right"][side="left"] {
+  padding-right: 0 ! important;
+}
+
+mjx-mtable[justify="right"][side="right"] {
+  padding-left: 0 ! important;
+}
+
+mjx-mtable[align] {
+  vertical-align: baseline;
+}
+
+mjx-mtable[align="top"] > mjx-table {
+  vertical-align: top;
+}
+
+mjx-mtable[align="bottom"] > mjx-table {
+  vertical-align: bottom;
+}
+
+mjx-mtable[side="right"] mjx-labels {
+  min-width: 100%;
+}
+
+mjx-mtr {
+  display: table-row;
+  text-align: left;
+}
+
+mjx-mtr[rowalign="top"] > mjx-mtd {
+  vertical-align: top;
+}
+
+mjx-mtr[rowalign="center"] > mjx-mtd {
+  vertical-align: middle;
+}
+
+mjx-mtr[rowalign="bottom"] > mjx-mtd {
+  vertical-align: bottom;
+}
+
+mjx-mtr[rowalign="baseline"] > mjx-mtd {
+  vertical-align: baseline;
+}
+
+mjx-mtr[rowalign="axis"] > mjx-mtd {
+  vertical-align: .25em;
+}
+
+mjx-mtd {
+  display: table-cell;
+  text-align: center;
+  padding: .215em .4em;
+}
+
+mjx-mtd:first-child {
+  padding-left: 0;
+}
+
+mjx-mtd:last-child {
+  padding-right: 0;
+}
+
+mjx-mtable > * > mjx-itable > *:first-child > mjx-mtd {
+  padding-top: 0;
+}
+
+mjx-mtable > * > mjx-itable > *:last-child > mjx-mtd {
+  padding-bottom: 0;
+}
+
+mjx-tstrut {
+  display: inline-block;
+  height: 1em;
+  vertical-align: -.25em;
+}
+
+mjx-labels[align="left"] > mjx-mtr > mjx-mtd {
+  text-align: left;
+}
+
+mjx-labels[align="right"] > mjx-mtr > mjx-mtd {
+  text-align: right;
+}
+
+mjx-mtd[extra] {
+  padding: 0;
+}
+
+mjx-mtd[rowalign="top"] {
+  vertical-align: top;
+}
+
+mjx-mtd[rowalign="center"] {
+  vertical-align: middle;
+}
+
+mjx-mtd[rowalign="bottom"] {
+  vertical-align: bottom;
+}
+
+mjx-mtd[rowalign="baseline"] {
+  vertical-align: baseline;
+}
+
+mjx-mtd[rowalign="axis"] {
+  vertical-align: .25em;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-c.mjx-c41::before {
+  padding: 0.716em 0.75em 0 0;
+  content: "A";
+}
+
+mjx-c.mjx-c6C::before {
+  padding: 0.694em 0.278em 0 0;
+  content: "l";
+}
+
+mjx-c.mjx-c70::before {
+  padding: 0.442em 0.556em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c68::before {
+  padding: 0.694em 0.556em 0 0;
+  content: "h";
+}
+
+mjx-c.mjx-c61::before {
+  padding: 0.448em 0.5em 0.011em 0;
+  content: "a";
+}
+
+mjx-c.mjx-c23::before {
+  padding: 0.694em 0.833em 0.194em 0;
+  content: "#";
+}
+
+mjx-c.mjx-c37::before {
+  padding: 0.676em 0.5em 0.022em 0;
+  content: "7";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c7B.TEX-S3::before {
+  padding: 1.45em 0.75em 0.949em 0;
+  content: "{";
+}
+
+mjx-c.mjx-c2212::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "\2212";
+}
+
+mjx-c.mjx-c31::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "1";
+}
+
+mjx-c.mjx-cD7::before {
+  padding: 0.491em 0.778em 0 0;
+  content: "\D7";
+}
+
+mjx-c.mjx-c74::before {
+  padding: 0.615em 0.389em 0.01em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c73::before {
+  padding: 0.448em 0.394em 0.011em 0;
+  content: "s";
+}
+
+mjx-c.mjx-c5F::before {
+  padding: 0 0.5em 0.062em 0;
+  content: "_";
+}
+
+mjx-c.mjx-c72::before {
+  padding: 0.442em 0.392em 0 0;
+  content: "r";
+}
+
+mjx-c.mjx-c6E::before {
+  padding: 0.442em 0.556em 0 0;
+  content: "n";
+}
+
+mjx-c.mjx-c6B::before {
+  padding: 0.694em 0.528em 0 0;
+  content: "k";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c62::before {
+  padding: 0.694em 0.556em 0.011em 0;
+  content: "b";
+}
+
+mjx-c.mjx-c64::before {
+  padding: 0.694em 0.556em 0.011em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c65::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "e";
+}
+
+mjx-c.mjx-c63::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "c";
+}
+
+mjx-c.mjx-c6F::before {
+  padding: 0.448em 0.5em 0.01em 0;
+  content: "o";
+}
+
+mjx-c.mjx-c2C::before {
+  padding: 0.121em 0.278em 0.194em 0;
+  content: ",";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-cA0::before {
+  padding: 0 0.25em 0 0;
+  content: "\A0";
+}
+
+mjx-c.mjx-c36::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "6";
+}
+
+mjx-c.mjx-c30::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "0";
+}
+
+mjx-c.mjx-c69::before {
+  padding: 0.669em 0.278em 0 0;
+  content: "i";
+}
+
+mjx-c.mjx-c67::before {
+  padding: 0.453em 0.5em 0.206em 0;
+  content: "g";
+}
+
+mjx-c.mjx-c66::before {
+  padding: 0.705em 0.372em 0 0;
+  content: "f";
+}
+
+mjx-c.mjx-c76::before {
+  padding: 0.431em 0.528em 0.011em 0;
+  content: "v";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c3C::before {
+  padding: 0.54em 0.778em 0.04em 0;
+  content: "<";
+}
+
+mjx-c.mjx-c75::before {
+  padding: 0.442em 0.556em 0.011em 0;
+  content: "u";
+}
+
+mjx-c.mjx-c6D::before {
+  padding: 0.442em 0.833em 0 0;
+  content: "m";
+}
+
+mjx-c.mjx-c77::before {
+  padding: 0.431em 0.722em 0.011em 0;
+  content: "w";
+}
+
+mjx-c.mjx-c33::before {
+  padding: 0.665em 0.5em 0.022em 0;
+  content: "3";
+}
+
+mjx-c.mjx-c79::before {
+  padding: 0.431em 0.528em 0.204em 0;
+  content: "y";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c38::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "8";
+}
+
+mjx-c.mjx-c35::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "5";
+}
+
+mjx-c.mjx-c34::before {
+  padding: 0.677em 0.5em 0 0;
+  content: "4";
+}
+</style><style id="waline-darkmode"></style></head><body id="top"><header class="header"><nav class="nav"><div class="logo"><a href="https://coriva.eu.org/" accesskey="h" title="Coriva (Alt + H)"><img src="https://coriva.eu.org/logo.png" alt="" aria-label="logo" height="35">Coriva</a><div class="logo-switches"><button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme"><svg id="moon" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg><svg id="sun" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></button><ul class="lang-switch"><li>|</li><li><a href="https://coriva.eu.org/en/" title="English" aria-label="English">English</a></li></ul></div></div><ul id="menu"><li><a href="https://coriva.eu.org/archives/" title="归档"><span>归档</span></a></li><li><a href="https://coriva.eu.org/categories/" title="分类"><span>分类</span></a></li><li><a href="https://coriva.eu.org/tags/" title="标签"><span>标签</span></a></li><li><a href="https://coriva.eu.org/search/" title="搜索 (Alt + /)" accesskey="/"><span>搜索</span></a></li></ul></nav></header><main class="main"><div class="post-single-wrapper"><article class="post-single"><header class="post-header"><div class="breadcrumbs"><a href="https://coriva.eu.org/">主页</a>&nbsp;»&nbsp;<a href="https://coriva.eu.org/posts/">Posts</a></div><h1 class="post-title entry-hint-parent">Alpha 101 流动性与复合因子详解 + 因子组合实战</h1><div class="post-description">Alpha 101 流动性与复合因子拆解：条件流动性、多层嵌套衰减信号、布尔型因子，以及从 101 个单因子到多因子组合的实操建议。</div><div class="post-meta"><span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> Posted on 2026-04-14</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path></svg> In Quant</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> 7 min read</span><span class="pageview-meta">&nbsp;·&nbsp;<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> <span class="waline-pageview-count" data-path="/alpha101-liquidity/">64</span></span>&nbsp;|&nbsp;<span>语言:</span><ul class="i18n_list"><li><a href="https://coriva.eu.org/en/alpha101-liquidity/">English</a></li></ul></div></header><div class="post-content"><p>这是 Alpha 101 系列的最后一篇。流动性与复合因子有 23 个，是五类里公式最复杂的一组：嵌套层数多、用到 <code>decay_linear</code> 和 <code>IndNeutralize</code> 的频率最高、条件判断也更复杂。</p><p>但复杂不等于难理解。拆到底层，它们讲的还是同一个故事：跟着聪明钱走。</p><p><a href="https://coriva.eu.org/alpha101-overview/">第一篇</a>建立了分类框架，前三篇分别讲了<a href="https://coriva.eu.org/alpha101-price-volume/">量价背离</a>、<a href="https://coriva.eu.org/alpha101-momentum/">动量反转</a>和<a href="https://coriva.eu.org/alpha101-volatility/">波动率与日内结构</a>。这篇在拆解 4 个经典因子之后，还会讨论怎么把 101 个因子从"单因子研究"推进到"因子组合"。</p><h2 id="alpha7条件流动性信号">Alpha#7：条件流动性信号<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#alpha7%E6%9D%A1%E4%BB%B6%E6%B5%81%E5%8A%A8%E6%80%A7%E4%BF%A1%E5%8F%B7">#</a></h2><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="0" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c37"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mrow space="4"><mjx-mo class="mjx-s3"><mjx-c class="mjx-c7B TEX-S3"></mjx-c></mjx-mo><mjx-mtable style="min-width: 34.978em;"><mjx-table><mjx-itable><mjx-mtr><mjx-mtd style="text-align: left; padding-right: 0.5em; padding-bottom: 0.1em;"><mjx-mo class="mjx-n"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c62"></mjx-c><mjx-c class="mjx-c73"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c37"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c36"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c37"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-tstrut></mjx-tstrut></mjx-mtd><mjx-mtd style="text-align: left; padding-left: 0.5em; padding-bottom: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c66"></mjx-c><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c32"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c75"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-tstrut></mjx-tstrut></mjx-mtd></mjx-mtr><mjx-mtr><mjx-mtd style="text-align: left; padding-right: 0.5em; padding-top: 0.1em;"><mjx-mo class="mjx-n"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-tstrut></mjx-tstrut></mjx-mtd><mjx-mtd style="text-align: left; padding-left: 0.5em; padding-top: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-tstrut></mjx-tstrut></mjx-mtd></mjx-mtr></mjx-itable></mjx-table></mjx-mtable><mjx-mo class="mjx-n" style="vertical-align: 0.25em;"></mjx-mo></mjx-mrow></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#7</mtext><mo>=</mo><mrow data-mjx-texclass="INNER"><mo data-mjx-texclass="OPEN">{</mo><mtable columnalign="left left" columnspacing="1em" rowspacing=".2em"><mtr><mtd><mo>−</mo><mn>1</mn><mo>×</mo><mtext>ts_rank</mtext><mo stretchy="false">(</mo><mtext>abs</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>7</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>60</mn><mo stretchy="false">)</mo><mo>×</mo><mtext>sign</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>7</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo></mtd><mtd><mtext>if&nbsp;</mtext><mtext>adv20</mtext><mo>&lt;</mo><mtext>volume</mtext></mtd></mtr><mtr><mtd><mo>−</mo><mn>1</mn></mtd><mtd><mtext>otherwise</mtext></mtd></mtr></mtable><mo data-mjx-texclass="CLOSE" fence="true" stretchy="true" symmetric="true"></mo></mrow></math></mjx-assistive-mml></mjx-container><p><a href="https://coriva.eu.org/alpha101-overview/">第一篇</a>给了这个因子的概述，这里深入讲条件判断的设计思路。</p><p>条件 <code>adv20 &lt; volume</code>：今天的成交量是否超过了 20 日均量。这是最简单的"放量"定义。</p><p><strong>缩量分支</strong>给 -1（做空）。逻辑很直白：成交量低于均值，参与度不够，短期缺乏上涨动能。不管价格怎么走，缩量就是负面信号。这个"一刀切"的判断在实测中表现如何？对于美股大盘股，缩量确实和短期负收益弱相关。但对于本身成交清淡的小盘股，天天都"缩量"，这个信号就失效了。论文的测试标的是约 1000 只美股大盘股，这类股票的日均成交量足够大，“低于均值"确实意味着市场兴趣下降。</p><p><strong>放量分支</strong>的核心是 <code>ts_rank(abs(delta(close, 7)), 60)</code>：过去 7 天价格绝对变化在过去 60 天里排第几。再乘以 <code>sign(delta(close, 7))</code>（涨跌方向），取反。</p><p>如果过去 7 天涨了很多（delta 为正，sign = +1），且绝对涨幅在 60 天里排名靠前（ts_rank 高），乘积为正，取反后为负（做空）。赌的是：放量暴涨，涨幅在两个月里排前列，过热了。</p><p>如果过去 7 天跌了很多（delta 为负，sign = -1），绝对跌幅 60 天排名靠前，乘积为负，取反后为正（做多）。赌的是：放量暴跌，跌幅创两个月之最，超卖了。</p><p>60 天的长窗口让这个因子不容易被短期噪音触发。一只股票连涨 7 天才涨 2%，ts_rank 可能只有 0.3，信号很弱。但如果 7 天涨了 15%（在 60 天里排名前 5%），ts_rank 高达 0.95，信号就很强了。</p><h2 id="alpha31多层嵌套的衰减流动性信号">Alpha#31：多层嵌套的衰减流动性信号<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#alpha31%E5%A4%9A%E5%B1%82%E5%B5%8C%E5%A5%97%E7%9A%84%E8%A1%B0%E5%87%8F%E6%B5%81%E5%8A%A8%E6%80%A7%E4%BF%A1%E5%8F%B7">#</a></h2><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="1" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c33"></mjx-c><mjx-c class="mjx-c31"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c79"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c72"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c33"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c32"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c77"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c32"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#31</mtext><mo>=</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>decay_linear</mtext><mo stretchy="false">(</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>10</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>,</mo><mn>10</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>+</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mo>−</mo><mn>1</mn><mo>×</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>3</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>+</mo><mtext>sign</mtext><mo stretchy="false">(</mo><mtext>scale</mtext><mo stretchy="false">(</mo><mtext>correlation</mtext><mo stretchy="false">(</mo><mtext>adv20</mtext><mo>,</mo><mtext>low</mtext><mo>,</mo><mn>12</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p>这个公式嵌套了 5 层 rank，看起来吓人。但多层 rank 的效果其实会递减：第一次 rank 把值压到 [0, 1]，第二次 rank 在已经是 [0, 1] 的值上再排名，分布会更加"均匀”，但信息不会增加太多。三层以上的 rank 基本是在做"超级均匀化"，消除任何残留的非线性分布。</p><p>拆成三个加法项：</p><p><strong>第一项</strong>：核心是 <code>delta(close, 10)</code> 的 decay_linear 衰减。10 天价格变化做线性衰减平均，然后多层 rank。含义是：近 10 天的价格趋势方向，用衰减加权让近期权重更大，多层 rank 确保分布极度均匀。</p><p><strong>第二项</strong> <code>rank(-1 * delta(close, 3))</code>：3 天价格变化取反做排名。跌了 3 天的股票排名高。短期反转信号。</p><p><strong>第三项</strong> <code>sign(scale(correlation(adv20, low, 12)))</code>：过去 12 天均量和最低价的相关性，做 scale 再取 sign。如果均量和最低价正相关（量大的时候价格低点也高），sign = +1。负相关则 sign = -1。</p><p>三项相加，大致逻辑是：中期趋势的衰减信号 + 短期反转 + 量价相关性方向。这是一个典型的"复合因子"，把不同时间尺度和不同维度的信号线性叠加。</p><p>实话说，多层 rank 的设计更像是过拟合的产物，而不是有清晰经济逻辑的刻意选择。如果你在实现这个因子时把 5 层 rank 简化成 2 层，效果大概率差不多。</p><h2 id="alpha61布尔型因子">Alpha#61：布尔型因子<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#alpha61%E5%B8%83%E5%B0%94%E5%9E%8B%E5%9B%A0%E5%AD%90">#</a></h2><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="2" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c36"></mjx-c><mjx-c class="mjx-c31"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c70"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c70"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c36"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c70"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c38"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c38"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#61</mtext><mo>=</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>vwap</mtext><mo>−</mo><mtext>ts_min</mtext><mo stretchy="false">(</mo><mtext>vwap</mtext><mo>,</mo><mn>16</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>&lt;</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>correlation</mtext><mo stretchy="false">(</mo><mtext>vwap</mtext><mo>,</mo><mtext>&nbsp;</mtext><mtext>adv180</mtext><mo>,</mo><mtext>&nbsp;</mtext><mn>18</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p>这个因子的输出不是连续值，而是布尔值（0 或 1）。</p><p>左边 <code>rank(vwap - ts_min(vwap, 16))</code>：当前 vwap 距离 16 天最低 vwap 的距离排名。值大 = 这只股票的 vwap 远离近期低点，处于偏高位置。</p><p>右边 <code>rank(correlation(vwap, adv180, 18))</code>：vwap 和 180 天均量的 18 天相关性排名。值大 = vwap 走势和长期流动性高度同步。</p><p>因子值 = 1（做多信号）当且仅当：左边 &lt; 右边，即 vwap 离近期低点的距离排名低于 vwap 与长期流动性的同步排名。</p><p>翻译：一只股票的 vwap 还在 16 天低位附近（没怎么涨），但它的 vwap 走势和长期均量高度正相关（流动性稳定同步）。这种组合意味着"流动性好但价格还在底部"，是价值被低估的信号。</p><p>布尔因子在因子组合中的角色比较特殊。连续值因子可以精细排序（rank 0.95 的股票信号强于 0.85 的），布尔因子只分"有信号"和"没信号"两档。它更适合做过滤器而不是排序器：先用 Alpha#61 筛掉信号为 0 的股票，再用连续因子在剩下的股票里排序。</p><h2 id="alpha75双条件比较">Alpha#75：双条件比较<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#alpha75%E5%8F%8C%E6%9D%A1%E4%BB%B6%E6%AF%94%E8%BE%83">#</a></h2><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="3" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c37"></mjx-c><mjx-c class="mjx-c35"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c70"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c75"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c34"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c77"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c35"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c32"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#75</mtext><mo>=</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>correlation</mtext><mo stretchy="false">(</mo><mtext>vwap</mtext><mo>,</mo><mtext>&nbsp;</mtext><mtext>volume</mtext><mo>,</mo><mtext>&nbsp;</mtext><mn>4</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>&lt;</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>correlation</mtext><mo stretchy="false">(</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>low</mtext><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>adv50</mtext><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>12</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p>和 Alpha#61 一样是布尔型，但比较的两个维度不同。</p><p>左边 <code>rank(correlation(vwap, volume, 4))</code>：4 天内 vwap 和成交量的相关性排名。vwap 和 volume 正相关 = 量大的时候价格（加权均价）也高，是正常的"量价齐升"。</p><p>右边 <code>rank(correlation(rank(low), rank(adv50), 12))</code>：12 天内最低价排名和 50 天均量排名的相关性排名。这个更 subtle：最低价排名高（日内底部支撑强）和均量排名高（流动性好）如果正相关，说明"流动性越好的时候，下方支撑越强"。</p><p>因子 = 1 当且仅当：短期量价同步程度的排名 &lt; 中期流动性-支撑同步程度的排名。</p><p>经济含义：短期量价关系一般（没有明显的量价齐升），但中期流动性和价格支撑的关系很好。这种股票在短期可能被忽视（量价平淡），但中期基本面支撑扎实。</p><p>Alpha#75 和 #61 组合使用时，可以构建一个"双重流动性过滤"：先用 #61 筛出"流动性好但价格在底部"的股票，再用 #75 确认"中期支撑强于短期热度"。两个布尔条件都满足的股票数量会很少，但信号质量更高。</p><h2 id="从单因子到因子组合">从单因子到因子组合<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#%E4%BB%8E%E5%8D%95%E5%9B%A0%E5%AD%90%E5%88%B0%E5%9B%A0%E5%AD%90%E7%BB%84%E5%90%88">#</a></h2><p>拆完 101 个因子，下一步是组合。单因子研究是入门，因子组合才是实战。</p><h3 id="因子正交性为什么能组合">因子正交性：为什么能组合<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#%E5%9B%A0%E5%AD%90%E6%AD%A3%E4%BA%A4%E6%80%A7%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E7%BB%84%E5%90%88">#</a></h3><p>论文给了一个数字：101 个因子之间的平均相关性是 15.9%。这意味着大多数因子对捕捉的是不同维度的市场信息。相关性 15.9% 接近于"弱相关"，组合后的分散化效果很好。</p><p>但"平均"15.9% 掩盖了分布：同类因子内部的相关性往往在 40~70%（比如 #3 和 #6 之间），跨类因子的相关性可能只有 5~10%。所以组合的时候不应该 101 个全放进去，而是每类挑 2~3 个代表性因子，总共 10~15 个就够了。</p><h3 id="ic-衰减与再平衡">IC 衰减与再平衡<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#ic-%E8%A1%B0%E5%87%8F%E4%B8%8E%E5%86%8D%E5%B9%B3%E8%A1%A1">#</a></h3><p>单因子的 IC（Information Coefficient，因子值和未来收益的截面相关性）在论文发表后一定会衰减。2016 年公开的因子，到 2026 年，单独使用的 IC 可能只剩论文时期的 30~50%。</p><p>但 IC 衰减的速度和因子类型有关。量价背离类因子衰减最快，因为它们的信号最直接、最容易被套利。<a href="https://coriva.eu.org/alpha101-volatility/">波动率类因子</a>衰减较慢，因为波动率均值回归是一个更底层的市场机制，不会因为几篇论文就消失。<a href="https://coriva.eu.org/alpha101-momentum/">条件反转类因子</a>（如 #9）衰减速度居中，条件判断增加了套利难度。</p><p>再平衡频率方面，论文里的因子持仓周期在 0.6~6.4 天。组合后建议用 3~5 天的再平衡频率：太短会被交易成本吃掉 alpha，太长则错过短期因子的时效性。</p><h3 id="实操建议">实操建议<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#%E5%AE%9E%E6%93%8D%E5%BB%BA%E8%AE%AE">#</a></h3><p><strong>推荐的因子组合起步配置</strong>（10 个因子，覆盖五类）：</p><table><thead><tr><th>类别</th><th>因子</th><th>选择理由</th></tr></thead><tbody><tr><td>量价背离</td><td>#3, #55</td><td>#3 最干净，#55 加入了价格位置维度</td></tr><tr><td>动量反转</td><td>#9, #35</td><td>#9 有条件判断，#35 多时间尺度</td></tr><tr><td>波动率</td><td>#1, #34</td><td>#1 条件波动率，#34 波动比 + 反转</td></tr><tr><td>日内结构</td><td>#101, #42</td><td>#101 最简 CLV，#42 看 VWAP</td></tr><tr><td>流动性</td><td>#7, #61</td><td>#7 条件流动性，#61 布尔过滤</td></tr></tbody></table><p>组合方式可以从最简单的等权开始：每个因子值做截面 rank，10 个 rank 值取平均作为综合得分，做多得分最高的 10% 股票，做空得分最低的 10%。</p><p>更进阶的做法是用 IC 加权：回测每个因子在过去 60 天的滚动 IC，IC 高的因子给更大权重。这比等权稍好，但也更容易过拟合。</p><p><strong>不建议做的事</strong>：</p><ol><li>把 101 个因子全算一遍然后用机器学习选最优子集。维度太高，样本太少，选出来的子集大概率是噪音</li><li>在 A 股上直接使用论文的原始参数。论文的参数是在美股大盘股上优化的，窗口长度和阈值需要本地化调整</li><li>忽视交易成本。持仓周期 0.6~6.4 天意味着高换手率，如果你的交易成本（佣金 + 滑点）超过单边 10bps，很多因子的 alpha 会被吃掉</li></ol><p>策略评估请参考<a href="https://coriva.eu.org/quant-metrics-guide/">量化投资常用指标大全</a>，用夏普比率、最大回撤、Calmar 比率等指标综合衡量。</p><h2 id="系列导航">系列导航<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-liquidity/#%E7%B3%BB%E5%88%97%E5%AF%BC%E8%88%AA">#</a></h2><ol><li><a href="https://coriva.eu.org/alpha101-overview/">Alpha 101 全解读：因子分类与算子速查</a></li><li><a href="https://coriva.eu.org/alpha101-price-volume/">量价背离类因子详解</a>（32 个因子）</li><li><a href="https://coriva.eu.org/alpha101-momentum/">动量与反转类因子详解</a>（23 个因子）</li><li><a href="https://coriva.eu.org/alpha101-volatility/">波动率与日内结构类因子详解</a>（23 个因子）</li><li><strong>本篇：流动性与复合因子 + 因子组合实战</strong>（23 个因子）</li></ol></div><footer class="post-footer"><ul class="post-tags"><li><a href="https://coriva.eu.org/tags/quant/">Quant</a></li><li><a href="https://coriva.eu.org/tags/trading/">Trading</a></li></ul><nav class="paginav"><a class="prev" href="https://coriva.eu.org/option-greeks-calculator/"><span class="title">« 上一页</span><br><span>期权Greeks计算器：在线计算 Delta、Gamma、Theta、Vega</span>
+</a><a class="next" href="https://coriva.eu.org/alpha101-volatility/"><span class="title">下一页 »</span><br><span>Alpha 101 波动率与日内结构类因子详解</span></a></nav></footer><div id="waline" data-v-app=""><div data-waline=""><!--v-if--><div class="wl-comment"><!--v-if--><div class="wl-panel"><div class="wl-header item3"><div class="wl-header-item"><label for="wl-nick">NickName</label><input id="wl-nick" class="wl-input wl-nick" name="nick" type="text"></div><div class="wl-header-item"><label for="wl-mail">E-Mail</label><input id="wl-mail" class="wl-input wl-mail" name="mail" type="email"></div><div class="wl-header-item"><label for="wl-link">Website</label><input id="wl-link" class="wl-input wl-link" name="link" type="text"></div></div><textarea id="wl-edit" class="wl-editor" placeholder="Comment here..."></textarea><div class="wl-preview" style="display: none;"><hr><h4>Preview:</h4><div class="wl-content"></div></div><div class="wl-footer"><div class="wl-actions"><a href="https://guides.github.com/features/mastering-markdown/" title="Markdown Guide" aria-label="Markdown is supported" class="wl-action" target="_blank" rel="noopener noreferrer"><svg width="16" height="16" ariaHidden="true"><path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.69C0 12.48.52 13 1.15 13h13.69c.64 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3zM9 11H7V8L5.5 9.92 4 8v3H2V5h2l1.5 2L7 5h2v6zm2.99.5L9.5 8H11V5h2v3h1.5l-2.51 3.5z" fill="currentColor"></path></svg></a><button type="button" class="wl-action" title="Emoji" style=""><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M563.2 463.3 677 540c1.7 1.2 3.7 1.8 5.8 1.8.7 0 1.4-.1 2-.2 2.7-.5 5.1-2.1 6.6-4.4l25.3-37.8c1.5-2.3 2.1-5.1 1.6-7.8s-2.1-5.1-4.4-6.6l-73.6-49.1 73.6-49.1c2.3-1.5 3.9-3.9 4.4-6.6.5-2.7 0-5.5-1.6-7.8l-25.3-37.8a10.1 10.1 0 0 0-6.6-4.4c-.7-.1-1.3-.2-2-.2-2.1 0-4.1.6-5.8 1.8l-113.8 76.6c-9.2 6.2-14.7 16.4-14.7 27.5.1 11 5.5 21.3 14.7 27.4zM387 348.8h-45.5c-5.7 0-10.4 4.7-10.4 10.4v153.3c0 5.7 4.7 10.4 10.4 10.4H387c5.7 0 10.4-4.7 10.4-10.4V359.2c0-5.7-4.7-10.4-10.4-10.4zm333.8 241.3-41-20a10.3 10.3 0 0 0-8.1-.5c-2.6.9-4.8 2.9-5.9 5.4-30.1 64.9-93.1 109.1-164.4 115.2-5.7.5-9.9 5.5-9.5 11.2l3.9 45.5c.5 5.3 5 9.5 10.3 9.5h.9c94.8-8 178.5-66.5 218.6-152.7 2.4-5 .3-11.2-4.8-13.6zm186-186.1c-11.9-42-30.5-81.4-55.2-117.1-24.1-34.9-53.5-65.6-87.5-91.2-33.9-25.6-71.5-45.5-111.6-59.2-41.2-14-84.1-21.1-127.8-21.1h-1.2c-75.4 0-148.8 21.4-212.5 61.7-63.7 40.3-114.3 97.6-146.5 165.8-32.2 68.1-44.3 143.6-35.1 218.4 9.3 74.8 39.4 145 87.3 203.3.1.2.3.3.4.5l36.2 38.4c1.1 1.2 2.5 2.1 3.9 2.6 73.3 66.7 168.2 103.5 267.5 103.5 73.3 0 145.2-20.3 207.7-58.7 37.3-22.9 70.3-51.5 98.1-85 27.1-32.7 48.7-69.5 64.2-109.1 15.5-39.7 24.4-81.3 26.6-123.8 2.4-43.6-2.5-87-14.5-129zm-60.5 181.1c-8.3 37-22.8 72-43 104-19.7 31.1-44.3 58.6-73.1 81.7-28.8 23.1-61 41-95.7 53.4-35.6 12.7-72.9 19.1-110.9 19.1-82.6 0-161.7-30.6-222.8-86.2l-34.1-35.8c-23.9-29.3-42.4-62.2-55.1-97.7-12.4-34.7-18.8-71-19.2-107.9-.4-36.9 5.4-73.3 17.1-108.2 12-35.8 30-69.2 53.4-99.1 31.7-40.4 71.1-72 117.2-94.1 44.5-21.3 94-32.6 143.4-32.6 49.3 0 97 10.8 141.8 32 34.3 16.3 65.3 38.1 92 64.8 26.1 26 47.5 56 63.6 89.2 16.2 33.2 26.6 68.5 31 105.1 4.6 37.5 2.7 75.3-5.6 112.3z" fill="currentColor"></path></svg></button><!--v-if--><input id="wl-image-upload" class="upload" aria-hidden="true" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif"><label for="wl-image-upload" class="wl-action" title="Upload Image" aria-label="Upload Image"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M784 112H240c-88 0-160 72-160 160v480c0 88 72 160 160 160h544c88 0 160-72 160-160V272c0-88-72-160-160-160zm96 640c0 52.8-43.2 96-96 96H240c-52.8 0-96-43.2-96-96V272c0-52.8 43.2-96 96-96h544c52.8 0 96 43.2 96 96v480z" fill="currentColor"></path><path d="M352 480c52.8 0 96-43.2 96-96s-43.2-96-96-96-96 43.2-96 96 43.2 96 96 96zm0-128c17.6 0 32 14.4 32 32s-14.4 32-32 32-32-14.4-32-32 14.4-32 32-32zm462.4 379.2-3.2-3.2-177.6-177.6c-25.6-25.6-65.6-25.6-91.2 0l-80 80-36.8-36.8c-25.6-25.6-65.6-25.6-91.2 0L200 728c-4.8 6.4-8 14.4-8 24 0 17.6 14.4 32 32 32 9.6 0 16-3.2 22.4-9.6L380.8 640l134.4 134.4c6.4 6.4 14.4 9.6 24 9.6 17.6 0 32-14.4 32-32 0-9.6-4.8-17.6-9.6-24l-52.8-52.8 80-80L769.6 776c6.4 4.8 12.8 8 20.8 8 17.6 0 32-14.4 32-32 0-8-3.2-16-8-20.8z" fill="currentColor"></path></svg></label><button type="button" class="wl-action" title="Preview"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M710.816 654.301c70.323-96.639 61.084-230.578-23.705-314.843-46.098-46.098-107.183-71.109-172.28-71.109-65.008 0-126.092 25.444-172.28 71.109-45.227 46.098-70.756 107.183-70.756 172.106 0 64.923 25.444 126.007 71.194 172.106 46.099 46.098 107.184 71.109 172.28 71.109 51.414 0 100.648-16.212 142.824-47.404l126.53 126.006c7.058 7.06 16.297 10.979 26.406 10.979 10.105 0 19.343-3.919 26.402-10.979 14.467-14.467 14.467-38.172 0-52.723L710.816 654.301zm-315.107-23.265c-65.88-65.88-65.88-172.54 0-238.42 32.069-32.07 74.245-49.149 119.471-49.149 45.227 0 87.407 17.603 119.472 49.149 65.88 65.879 65.88 172.539 0 238.42-63.612 63.178-175.242 63.178-238.943 0zm0 0" fill="currentColor"></path><path d="M703.319 121.603H321.03c-109.8 0-199.469 89.146-199.469 199.38v382.034c0 109.796 89.236 199.38 199.469 199.38h207.397c20.653 0 37.384-16.645 37.384-37.299 0-20.649-16.731-37.296-37.384-37.296H321.03c-68.582 0-124.352-55.77-124.352-124.267V321.421c0-68.496 55.77-124.267 124.352-124.267h382.289c68.582 0 124.352 55.771 124.352 124.267V524.72c0 20.654 16.736 37.299 37.385 37.299 20.654 0 37.384-16.645 37.384-37.299V320.549c-.085-109.8-89.321-198.946-199.121-198.946zm0 0" fill="currentColor"></path></svg></button></div><div class="wl-info"><div class="wl-captcha-container"></div><div class="wl-text-number">0 <!--v-if--> &nbsp;Words</div><button type="button" class="wl-btn">Login</button><button type="submit" class="primary wl-btn" title="Cmd|Ctrl + Enter">Submit</button></div><div class="wl-gif-popup"><input type="text" placeholder="Search GIF"><!--v-if--><div class="wl-loading"><svg width="30" height="30" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid"><circle cx="50" cy="50" fill="none" stroke="currentColor" strokeWidth="4" r="40" stroke-dasharray="85 30"><animateTransform attributeName="transform" type="rotate" repeatCount="indefinite" dur="1s" values="0 50 50;360 50 50" keyTimes="0;1"></animateTransform></circle></svg></div></div><div class="wl-emoji-popup"><div class="wl-tab-wrapper"><button type="button" title="weibo_smile"><!--v-if--></button><button type="button" title="weibo_lovely"><!--v-if--></button><button type="button" title="weibo_blush"><!--v-if--></button><button type="button" title="weibo_grin"><!--v-if--></button><button type="button" title="weibo_laugh"><!--v-if--></button><button type="button" title="weibo_joy"><!--v-if--></button><button type="button" title="weibo_angry"><!--v-if--></button><button type="button" title="weibo_bye"><!--v-if--></button><button type="button" title="weibo_hammer"><!--v-if--></button><button type="button" title="weibo_kiss"><!--v-if--></button><button type="button" title="weibo_love"><!--v-if--></button><button type="button" title="weibo_mask"><!--v-if--></button><button type="button" title="weibo_money"><!--v-if--></button><button type="button" title="weibo_quiet"><!--v-if--></button><button type="button" title="weibo_rage"><!--v-if--></button><button type="button" title="weibo_sad"><!--v-if--></button><button type="button" title="weibo_shy"><!--v-if--></button><button type="button" title="weibo_sick"><!--v-if--></button><button type="button" title="weibo_slient"><!--v-if--></button><button type="button" title="weibo_smirk"><!--v-if--></button><button type="button" title="weibo_slap"><!--v-if--></button><button type="button" title="weibo_antic"><!--v-if--></button><button type="button" title="weibo_desire"><!--v-if--></button><button type="button" title="weibo_longing"><!--v-if--></button><button type="button" title="weibo_no_idea"><!--v-if--></button><button type="button" title="weibo_look_down"><!--v-if--></button><button type="button" title="weibo_clap"><!--v-if--></button><button type="button" title="weibo_yum"><!--v-if--></button><button type="button" title="weibo_sleep"><!--v-if--></button><button type="button" title="weibo_dizzy_face"><!--v-if--></button><button type="button" title="weibo_chuckle"><!--v-if--></button><button type="button" title="weibo_disappointed"><!--v-if--></button><button type="button" title="weibo_flushed"><!--v-if--></button><button type="button" title="weibo_heart_eyes"><!--v-if--></button><button type="button" title="weibo_no"><!--v-if--></button><button type="button" title="weibo_shuai"><!--v-if--></button><button type="button" title="weibo_suprised"><!--v-if--></button><button type="button" title="weibo_think"><!--v-if--></button><button type="button" title="weibo_vomit"><!--v-if--></button><button type="button" title="weibo_scream"><!--v-if--></button><button type="button" title="weibo_sleepy"><!--v-if--></button><button type="button" title="weibo_sob"><!--v-if--></button><button type="button" title="weibo_sunglasses"><!--v-if--></button><button type="button" title="weibo_greddy"><!--v-if--></button><button type="button" title="weibo_pick_nose"><!--v-if--></button><button type="button" title="weibo_annoyed"><!--v-if--></button><button type="button" title="weibo_awkward"><!--v-if--></button><button type="button" title="weibo_confused"><!--v-if--></button><button type="button" title="weibo_grievance"><!--v-if--></button><button type="button" title="weibo_poor"><!--v-if--></button><button type="button" title="weibo_wink"><!--v-if--></button><button type="button" title="weibo_rolling_eyes"><!--v-if--></button><button type="button" title="weibo_watermalon"><!--v-if--></button><button type="button" title="weibo_annoyed_left"><!--v-if--></button><button type="button" title="weibo_annoyed_right"><!--v-if--></button><button type="button" title="weibo_yawn"><!--v-if--></button><button type="button" title="weibo_hufen"><!--v-if--></button><button type="button" title="weibo_doge"><!--v-if--></button><button type="button" title="weibo_husky"><!--v-if--></button><button type="button" title="weibo_dog_annoyed"><!--v-if--></button><button type="button" title="weibo_dog_bye"><!--v-if--></button><button type="button" title="weibo_dog_consider"><!--v-if--></button><button type="button" title="weibo_dog_cry"><!--v-if--></button><button type="button" title="weibo_dog_joy"><!--v-if--></button><button type="button" title="weibo_dog_laugh"><!--v-if--></button><button type="button" title="weibo_dog_sweat"><!--v-if--></button><button type="button" title="weibo_dog_think"><!--v-if--></button><button type="button" title="weibo_dog_yum"><!--v-if--></button><button type="button" title="weibo_cat"><!--v-if--></button><button type="button" title="weibo_cat_annoyed"><!--v-if--></button><button type="button" title="weibo_cat_bye"><!--v-if--></button><button type="button" title="weibo_cat_cry"><!--v-if--></button><button type="button" title="weibo_cat_think"><!--v-if--></button><button type="button" title="weibo_girl_annoyed"><!--v-if--></button><button type="button" title="weibo_boy"><!--v-if--></button><button type="button" title="weibo_girl"><!--v-if--></button><button type="button" title="weibo_panda"><!--v-if--></button><button type="button" title="weibo_pig"><!--v-if--></button><button type="button" title="weibo_rabbit"><!--v-if--></button><button type="button" title="weibo_ultraman"><!--v-if--></button><button type="button" title="weibo_wool_group"><!--v-if--></button><button type="button" title="weibo_yan"><!--v-if--></button><button type="button" title="weibo_xi"><!--v-if--></button><button type="button" title="weibo_soap"><!--v-if--></button><button type="button" title="weibo_meng"><!--v-if--></button><button type="button" title="weibo_jiong"><!--v-if--></button><button type="button" title="weibo_geili"><!--v-if--></button><button type="button" title="weibo_shenma"><!--v-if--></button><button type="button" title="weibo_alpaca"><!--v-if--></button></div><div><!--v-if--></div><!--v-if--></div></div></div><!--v-if--></div><div class="wl-meta-head"><div class="wl-count"><!--v-if--> Comments</div><ul class="wl-sort"><li class="active">Latest</li><li class="">Oldest</li><li class="">Hottest</li></ul></div><div class="wl-cards"></div><div class="wl-empty">No comment yet.</div><div class="wl-meta-foot"><div class="wl-rss"><a href="https://comments.coriva.eu.org/api/comment/rss?path=%2Falpha101-liquidity%2F" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this post"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this post</span></a><a href="https://comments.coriva.eu.org/api/comment/rss" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this site"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this site</span></a></div><div class="wl-power"> Powered by <a href="https://github.com/walinejs/waline" target="_blank" rel="noopener noreferrer"> Waline </a> v3.15.2</div></div></div></div><link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css"><script type="module">
+  import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
+  import { pageviewCount } from 'https://unpkg.com/@waline/client@v3/dist/pageview.js';
+  init({
+    el: '#waline',
+    serverURL: 'https://comments.coriva.eu.org',
+    lang: 'en',
+    pageview: false,
+  });
+  pageviewCount({
+    serverURL: 'https://comments.coriva.eu.org',
+  });
+</script></article><aside class="toc-sidebar" id="toc-sidebar"><nav class="toc-sidebar-nav"><span class="toc-sidebar-title">目录</span><div class="toc-sidebar-inner"><nav id="TableOfContents"><ul><li><a href="https://coriva.eu.org/alpha101-liquidity/#alpha7%E6%9D%A1%E4%BB%B6%E6%B5%81%E5%8A%A8%E6%80%A7%E4%BF%A1%E5%8F%B7">Alpha#7：条件流动性信号</a></li><li><a href="https://coriva.eu.org/alpha101-liquidity/#alpha31%E5%A4%9A%E5%B1%82%E5%B5%8C%E5%A5%97%E7%9A%84%E8%A1%B0%E5%87%8F%E6%B5%81%E5%8A%A8%E6%80%A7%E4%BF%A1%E5%8F%B7">Alpha#31：多层嵌套的衰减流动性信号</a></li><li><a href="https://coriva.eu.org/alpha101-liquidity/#alpha61%E5%B8%83%E5%B0%94%E5%9E%8B%E5%9B%A0%E5%AD%90">Alpha#61：布尔型因子</a></li><li><a href="https://coriva.eu.org/alpha101-liquidity/#alpha75%E5%8F%8C%E6%9D%A1%E4%BB%B6%E6%AF%94%E8%BE%83">Alpha#75：双条件比较</a></li><li><a href="https://coriva.eu.org/alpha101-liquidity/#%E4%BB%8E%E5%8D%95%E5%9B%A0%E5%AD%90%E5%88%B0%E5%9B%A0%E5%AD%90%E7%BB%84%E5%90%88">从单因子到因子组合</a><ul><li><a href="https://coriva.eu.org/alpha101-liquidity/#%E5%9B%A0%E5%AD%90%E6%AD%A3%E4%BA%A4%E6%80%A7%E4%B8%BA%E4%BB%80%E4%B9%88%E8%83%BD%E7%BB%84%E5%90%88">因子正交性：为什么能组合</a></li><li><a href="https://coriva.eu.org/alpha101-liquidity/#ic-%E8%A1%B0%E5%87%8F%E4%B8%8E%E5%86%8D%E5%B9%B3%E8%A1%A1">IC 衰减与再平衡</a></li><li><a href="https://coriva.eu.org/alpha101-liquidity/#%E5%AE%9E%E6%93%8D%E5%BB%BA%E8%AE%AE">实操建议</a></li></ul></li><li><a href="https://coriva.eu.org/alpha101-liquidity/#%E7%B3%BB%E5%88%97%E5%AF%BC%E8%88%AA" class="">系列导航</a></li></ul></nav></div></nav><nav class="related-posts"><h2>相关文章</h2><ul><li><a href="https://coriva.eu.org/0dte-options-guide/"><span class="related-title">末日期权（0DTE）完全指南：机制、Greeks 与盈亏真相</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/qlib-tutorial/"><span class="related-title">Qlib 教程：从安装到第一个量化策略</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/quant-math-basics/"><span class="related-title">量化交易的数学基础：从对数收益率到线性回归</span>
+<span class="related-date">2026-04-20</span></a></li><li><a href="https://coriva.eu.org/fama-french-factor-model/"><span class="related-title">Fama-French 因子模型：从三因子到五因子的量化选股基础</span>
+<span class="related-date">2026-04-16</span></a></li><li><a href="https://coriva.eu.org/quant-trading-markets/"><span class="related-title">量化交易市场全景：股票、期货、期权、外汇、加密货币怎么选</span>
+<span class="related-date">2026-04-16</span></a></li></ul></nav></aside></div></main><footer class="footer"><span>© 2026 <a href="https://coriva.eu.org/">Coriva</a></span> ·
+<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+<a href="https://finicounter.eu.org/" target="_blank">Total Views</a>:
+<span id="finicount_views">7,294</span></span></footer><a href="https://coriva.eu.org/alpha101-liquidity/#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g" style="visibility: hidden; opacity: 0;"><svg viewBox="0 0 12 6" fill="currentcolor"><path d="M12 6H0l6-6z"></path></svg>
+</a><script async="" src="//finicounter.eu.org/finicounter.js"></script><script>(function(){var e,t,n,s=document.getElementById("toc-sidebar");if(!s)return;if(t=s.querySelectorAll('a[href^="#"]'),!t.length)return;e=[],t.forEach(function(t){var s=decodeURIComponent(t.getAttribute("href").slice(1)),n=document.getElementById(s);n&&e.push({el:n,link:t})});function o(){for(var o=window.scrollY||document.documentElement.scrollTop,i=100,s=null,n=0;n<e.length;n++)e[n].el.getBoundingClientRect().top+window.scrollY-i<=o&&(s=e[n]);t.forEach(function(e){e.classList.remove("active")}),s&&s.link.classList.add("active")}n=!1,window.addEventListener("scroll",function(){n||(requestAnimationFrame(function(){o(),n=!1}),n=!0)}),o()})()</script><script>let menu=document.getElementById("menu");if(menu){const e=localStorage.getItem("menu-scroll-position");e&&(menu.scrollLeft=parseInt(e,10)),menu.onscroll=function(){localStorage.setItem("menu-scroll-position",menu.scrollLeft)}}document.querySelectorAll('a[href^="#"]').forEach(e=>{e.addEventListener("click",function(e){e.preventDefault();var t=this.getAttribute("href").substr(1);window.matchMedia("(prefers-reduced-motion: reduce)").matches?document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView():document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView({behavior:"smooth"}),t==="top"?history.replaceState(null,null," "):history.pushState(null,null,`#${t}`)})})</script><script>var mybutton=document.getElementById("top-link");window.onscroll=function(){document.body.scrollTop>800||document.documentElement.scrollTop>800?(mybutton.style.visibility="visible",mybutton.style.opacity="1"):(mybutton.style.visibility="hidden",mybutton.style.opacity="0")}</script><script>document.getElementById("theme-toggle").addEventListener("click",()=>{const e=document.querySelector("html");e.dataset.theme==="dark"?(e.dataset.theme="light",localStorage.setItem("pref-theme","light")):(e.dataset.theme="dark",localStorage.setItem("pref-theme","dark"))})</script><script>document.querySelectorAll("pre > code").forEach(e=>{const n=e.parentNode.parentNode,t=document.createElement("button");t.classList.add("copy-code"),t.innerHTML="复制";function s(){t.innerHTML="已复制！",setTimeout(()=>{t.innerHTML="复制"},2e3)}t.addEventListener("click",t=>{if("clipboard"in navigator){navigator.clipboard.writeText(e.textContent),s();return}const n=document.createRange();n.selectNodeContents(e);const o=window.getSelection();o.removeAllRanges(),o.addRange(n);try{document.execCommand("copy"),s()}catch{}o.removeRange(n)}),n.classList.contains("highlight")?n.appendChild(t):n.parentNode.firstChild==n||(e.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName=="TABLE"?e.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(t):e.parentNode.appendChild(t))})</script></body></html>

@@ -1,0 +1,1228 @@
+<!doctype html>
+<html lang="zh" dir="auto" data-theme="dark"><head><meta charset="utf-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><meta name="robots" content="index, follow"><title>WorldQuant Alpha 101 全解读：因子分类与算子速查 | Coriva</title>
+<meta name="keywords" content="Quant,Trading"><meta name="description" content="WorldQuant Alpha 101 论文深度解读：101 个量化因子按经济逻辑分为五大类，附算子直觉讲解、pandas 代码与完整分类对照表。"><meta name="author" content="Coriva"><link rel="canonical" href="https://coriva.eu.org/alpha101-overview/"><meta name="msvalidate.01" content="F8E2F274161B653649F8818FD127CE87"><link crossorigin="anonymous" href="/assets/css/stylesheet.8fe2fa5580263673749c0854ddc4fdff83d8cd245ff94138be9f54fc4bc84fca.css" integrity="sha256-j+L6VYAmNnN0nAhU3cT9/4PYzSRf+UE4vp9U/EvIT8o=" rel="preload stylesheet" as="style"><link rel="icon" href="https://coriva.eu.org/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="https://coriva.eu.org/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="https://coriva.eu.org/favicon-32x32.png"><link rel="apple-touch-icon" href="https://coriva.eu.org/apple-touch-icon.png"><link rel="mask-icon" href="https://coriva.eu.org/safari-pinned-tab.svg"><meta name="theme-color" content="#2e2e33"><meta name="msapplication-TileColor" content="#2e2e33"><link rel="alternate" hreflang="zh" href="https://coriva.eu.org/alpha101-overview/"><link rel="alternate" hreflang="en" href="https://coriva.eu.org/en/alpha101-overview/"><noscript><style>#theme-toggle,.top-link{display:none}</style><style>@media(prefers-color-scheme:dark){:root{--theme:rgb(29, 30, 32);--entry:rgb(46, 46, 51);--primary:rgb(218, 218, 219);--secondary:rgb(155, 156, 157);--tertiary:rgb(65, 66, 68);--content:rgb(196, 196, 197);--code-block-bg:rgb(46, 46, 51);--code-bg:rgb(55, 56, 62);--border:rgb(51, 51, 51);color-scheme:dark}.list{background:var(--theme)}.toc{background:var(--entry)}}@media(prefers-color-scheme:light){.list::-webkit-scrollbar-thumb{border-color:var(--code-bg)}}</style></noscript><script>localStorage.getItem("pref-theme")==="dark"?document.querySelector("html").dataset.theme="dark":localStorage.getItem("pref-theme")==="light"?document.querySelector("html").dataset.theme="light":window.matchMedia("(prefers-color-scheme: dark)").matches?document.querySelector("html").dataset.theme="dark":document.querySelector("html").dataset.theme="light"</script><meta name="google-adsense-account" content="ca-pub-2660281922577700"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/400.css" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/500.css" rel="stylesheet"><style>code,kbd,samp,pre{font-family:fira code,cascadia code,source code pro,sf mono,Menlo,Consolas,monospace}.entry-footer .pageview-meta{display:none}.post-single .post-description{display:none}.post-single-wrapper{display:flex;gap:4rem;align-items:flex-start}.post-single-wrapper .post-single{flex:1;min-width:0}.toc-sidebar{display:none}@media(min-width:1280px){body:not(.list) .main{max-width:calc(var(--main-width) + var(--gap) * 2 + 272px)}.post-single-wrapper .post-single{max-width:var(--main-width)}.toc-sidebar{display:block;width:220px;flex-shrink:0;position:sticky;top:calc(var(--header-height) + 1rem);max-height:calc(100vh - var(--header-height) - 3rem);overflow-y:auto;scrollbar-width:none;padding-left:1rem;border-left:1px solid var(--border)}.toc-sidebar::-webkit-scrollbar{display:none}.toc-sidebar-nav{font-size:.8rem;line-height:1.65}.toc-sidebar-title{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.toc-sidebar-inner ul{list-style:none;padding-left:0;margin:0}.toc-sidebar-inner ul ul{padding-left:.9em}.toc-sidebar-inner li{margin:.2em 0}.toc-sidebar-inner a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;transition:color .2s;opacity:.8}.toc-sidebar-inner a:hover{color:var(--primary);opacity:1}.toc-sidebar-inner a.active{color:var(--primary);font-weight:500;opacity:1}}.related-posts{margin-top:1.5rem;padding-top:1.2rem;border-top:1px solid var(--border)}.related-posts h2{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.related-posts ul{list-style:none;padding:0;margin:0}.related-posts li{margin:.2em 0}.related-posts a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;font-size:.8rem;line-height:1.65;transition:color .2s;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.related-posts a:hover{color:var(--primary);opacity:1}.related-date{display:none}</style><script>MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]}}</script><script async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script><script async="" src="https://www.googletagmanager.com/gtag/js?id=G-C74ZBKDR6V"></script><script>var dnt,doNotTrack=!1;if(!1&&(dnt=navigator.doNotTrack||window.doNotTrack||navigator.msDoNotTrack,doNotTrack=dnt=="1"||dnt=="yes"),!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-C74ZBKDR6V")}</script><meta property="og:url" content="https://coriva.eu.org/alpha101-overview/"><meta property="og:site_name" content="Coriva"><meta property="og:title" content="WorldQuant Alpha 101 全解读：因子分类与算子速查"><meta property="og:description" content="WorldQuant Alpha 101 论文深度解读：101 个量化因子按经济逻辑分为五大类，附算子直觉讲解、pandas 代码与完整分类对照表。"><meta property="og:locale" content="zh"><meta property="og:type" content="article"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-04-14T11:33:08+08:00"><meta property="article:modified_time" content="2026-04-14T11:33:08+08:00"><meta property="article:tag" content="Quant"><meta property="article:tag" content="Trading"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="WorldQuant Alpha 101 全解读：因子分类与算子速查"><meta name="twitter:description" content="WorldQuant Alpha 101 论文深度解读：101 个量化因子按经济逻辑分为五大类，附算子直觉讲解、pandas 代码与完整分类对照表。"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Posts","item":"https://coriva.eu.org/posts/"},{"@type":"ListItem","position":2,"name":"WorldQuant Alpha 101 全解读：因子分类与算子速查","item":"https://coriva.eu.org/alpha101-overview/"}]}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","headline":"WorldQuant Alpha 101 全解读：因子分类与算子速查","name":"WorldQuant Alpha 101 全解读：因子分类与算子速查","description":"WorldQuant Alpha 101 论文深度解读：101 个量化因子按经济逻辑分为五大类，附算子直觉讲解、pandas 代码与完整分类对照表。","keywords":["Quant","Trading"],"articleBody":"WorldQuant 在 2016 年发表了一篇只有 6 页的论文，标题叫 “101 Formulaic Alphas”，作者 Zura Kakushadze。论文做了一件很简单的事：把 101 个量化因子的计算公式直接公开了。这些因子在 WorldQuant 的生产环境中有 80 个在实际使用，持仓周期 0.6 到 6.4 天，因子之间的平均相关性只有 15.9%。\n但论文只给了公式，没有任何解释。Alpha#3 为什么是那个样子，背后在捕捉什么市场现象，一句话都没有。这就是本系列文章要做的事：把 101 个 Alpha 101 因子按经济逻辑分类，拆解公式背后的动机，搞清楚每个因子到底在赌什么。\n这个系列分五篇：\n本篇：全局概览，建立分类框架，讲清楚算子是什么意思，给出完整分类对照表 量价背离类因子详解（32 个因子） 动量与反转类因子详解（23 个因子） 波动率与日内结构类因子详解（23 个因子） 流动性、复合因子与因子组合实战（23 个因子） Alpha 101 的数据输入 101 个公式用到的原始数据就那么几个字段，全是股票日频行情数据：\n字段 含义 备注 open 开盘价 close 收盘价 high 最高价 low 最低价 volume 成交量 vwap 成交量加权平均价 yfinance 不直接提供，需要自算 returns 日收益率 close / delay(close,1) - 1 cap 总市值 用于 rank 加权 adv{d} 过去 d 天日均成交额 adv20 = 过去 20 天日均成交额（price × volume） IndClass 行业分类 用于行业中性化 vwap 在论文里出现了十几次，但大多数免费数据源不提供这个字段。近似计算方法：用日内 (high + low + close) / 3 作为粗略替代，或者用分钟线数据计算真实 vwap。对于日频因子研究来说，粗略替代够用了。\nadv{d} 有多种变体：adv5、adv10、adv15、adv20、adv30、adv40、adv50、adv60、adv81、adv120、adv150、adv180。论文中 adv{d} 严格来说是日均成交额（价格 × 成交量）的滚动均值。不过很多开源实现直接用 volume 的均值代替，因为对于 rank 之后的因子来说，成交额和成交量的排名高度相关。\n数据源方面，美股用 yfinance 就能拿到 OHLCV，A 股用 Tushare 或 AKShare。\n算子详解：读懂公式的钥匙 Alpha 101 的公式看起来吓人，但用到的算子翻来覆去就那么十几个。搞懂这些算子，101 个公式大部分都能直接读懂。\n截面算子：在同一天的所有股票之间比较 rank(x)：把当天所有股票的 \\(x\\) 值排名，然后归一化到 0~1 之间。排名最低的股票得 0，最高的得 1。\n为什么要 rank？因为不同指标的量纲天差地别。成交量可能是几百万股，收益率是百分之零点几。直接算相关性或做加减法，量纲大的指标会完全压过量纲小的。rank 之后全部变成 0~1 的分位数，苹果和苹果才能比。\nrank 还有一个好处：天然抗极端值。某只股票今天成交量暴增 10 倍，raw 值可能把所有统计量搞崩，但 rank 之后它最多也就是排第一（值为 1.0），不会影响其他股票的相对排名。\n这就是为什么 101 个因子里 rank 出现了 90 多次。它是整个公式体系的\"通用适配器\"。\n时序算子：在同一只股票的历史上计算 delay(x, d)：\\(d\\) 天前的值。delay(close, 1) = 昨天的收盘价。\ndelta(x, d)：今天的值减去 \\(d\\) 天前的值。delta(close, 5) = 最近 5 天收盘价变了多少。比 returns 更直接，不做除法归一化，保留了绝对变化幅度的信息。\nts_rank(x, d)：当前值在过去 \\(d\\) 天里排第几。如果今天的收盘价是最近 10 天里最高的，ts_rank(close, 10) 接近 1.0。这个算子把绝对值翻译成\"相对于近期历史的位置\"。一只股票今天涨了 2%，这算多还是少？如果过去 10 天都在涨 3%+，那 2% 其实偏弱。ts_rank 捕捉的就是这种相对强弱。\nts_argmax(x, d) / ts_argmin(x, d)：过去 \\(d\\) 天内，最大值（或最小值）出现在窗口的第几个位置。返回值是 0-based 索引：0 = 窗口最早的一天，\\(d-1\\) = 今天。如果 ts_argmax(close, 10) = 9，说明最高价就在今天，价格可能还在上升趋势中。如果 = 0，说明最高价出现在 10 天前的第一天，之后一路下滑。这个算子衡量的是\"极值出现在窗口的什么位置\"，值越大说明极值越近。\ncorrelation(x, y, d)：过去 \\(d\\) 天内 \\(x\\) 和 \\(y\\) 的 Pearson 相关系数。量价背离类因子大量使用这个算子，比如计算价格排名和成交量排名的相关性。相关性高说明量价同步，相关性低或为负说明量价背离。\ncovariance(x, y, d)：过去 \\(d\\) 天内 \\(x\\) 和 \\(y\\) 的协方差。和 correlation 类似但不归一化，保留了量纲信息。\ndecay_linear(x, d)：过去 \\(d\\) 天的加权平均，权重线性递减（最近一天权重最大，\\(d\\) 天前权重最小）。普通移动平均对每一天一视同仁，但在量化因子里，近期信息通常比远期更有预测力。decay_linear 是一种简单的\"越近越重要\"加权方案。权重分配：第 1 天（最近）权重 \\(d\\)，第 2 天权重 \\(d-1\\)，以此类推，最后归一化。\nstddev(x, d)：过去 \\(d\\) 天 \\(x\\) 的标准差，就是波动率。\nsum(x, d) / product(x, d)：过去 \\(d\\) 天的求和 / 连乘。\nmin(x, d) / max(x, d)：过去 \\(d\\) 天的最小值 / 最大值。\n变换算子 scale(x, a=1)：把截面上所有股票的 \\(x\\) 值缩放，使绝对值之和等于 \\(a\\)。用处是把因子值转换成\"仓位权重\"。如果 \\(a=1\\)，scale 之后的因子值直接就是每只股票该分配多少仓位（正值做多，负值做空），全部仓位加起来正好满仓。\nsignedpower(x, a)：保留符号的幂运算，\\(\\text{sign}(x) \\times |x|^a\\)。当 \\(a \u003e 1\\) 时，大的值被放大得更多，小的值被压缩。效果是拉大因子值的差距，让头部和尾部股票的信号更强。\n行业中性化 IndNeutralize(x, IndClass)：在每个行业内部做截面去均值。\n为什么需要这个？假设你的因子是\"成交量变化率\"。银行股整体成交量就是比医药股大几个数量级。如果不做行业中性化，因子排名会天然偏向成交量大的行业，你选出来的\"成交量异常放大\"的股票可能全是银行股，根本不是因为它们有 alpha，只是行业特征。\nIndNeutralize 之后，银行股和银行股比，医药股和医药股比，去掉了行业层面的系统性差异，剩下的才是个股层面的 alpha 信号。\n101 个因子里有 26 个用到了 IndNeutralize。如果你没有行业分类数据，这 26 个因子可以先跳过，剩下 75 个照样能做。\npandas 实现核心算子 import numpy as np import pandas as pd def rank(df): \"\"\"截面排名归一化到 [0, 1]\"\"\" return df.rank(axis=1, pct=True) def delay(df, d): \"\"\"时移 d 天\"\"\" return df.shift(d) def delta(df, d): \"\"\"d 天差分\"\"\" return df - delay(df, d) def ts_rank(df, d): \"\"\"当前值在过去 d 天中的排名分位数\"\"\" return df.rolling(d).apply( lambda x: x.rank().iloc[-1] / len(x), raw=False ) def ts_argmax(df, d): \"\"\"过去 d 天最大值的位置（0 = 最早，d-1 = 今天）\"\"\" return df.rolling(d).apply(lambda x: x.argmax(), raw=True) def ts_argmin(df, d): \"\"\"过去 d 天最小值的位置（0 = 最早，d-1 = 今天）\"\"\" return df.rolling(d).apply(lambda x: x.argmin(), raw=True) def decay_linear(df, d): \"\"\"线性衰减加权平均，近期权重大\"\"\" weights = np.arange(1, d + 1, dtype=float) weights /= weights.sum() return df.rolling(d).apply( lambda x: np.dot(x, weights), raw=True ) def scale(df, a=1): \"\"\"截面缩放，使绝对值之和等于 a\"\"\" return df.mul(a).div(df.abs().sum(axis=1), axis=0) def signedpower(df, a): \"\"\"保留符号的幂运算\"\"\" return np.sign(df) * df.abs().pow(a) def ts_corr(x, y, d): \"\"\"滚动相关系数\"\"\" return x.rolling(d).corr(y) def ts_cov(x, y, d): \"\"\"滚动协方差\"\"\" return x.rolling(d).cov(y) 算子速查表 算子 类型 直觉 类比 rank 截面 排名归一化，消除量纲 考试排名 vs 原始分数 delay 时序 回看 d 天前 “昨天的收盘价” delta 时序 d 天变化量 “这周涨了多少” ts_rank 时序 当前值在近期的位置 “今天是近期最高还是最低” ts_argmax 时序 极值在窗口的位置 “最高价出现在窗口第几天” correlation 时序 两序列同步程度 “量涨价也涨？” decay_linear 时序 近期加权均值 “越近的数据越重要” stddev 时序 波动率 “最近波动大不大” scale 截面 归一化为仓位权重 “总仓位加起来 = 1” signedpower 变换 放大头尾信号 “强的更强，弱的更弱” IndNeutralize 截面 去行业偏差 “银行和银行比，医药和医药比” 五大分类：每个因子到底在赌什么 读完算子，可以开始看因子了。101 个因子看上去五花八门，但按背后的经济逻辑归类，其实就五种思路。\n量价背离类（32 个因子） 核心逻辑：价格和成交量应该同步。如果价格在涨但成交量在缩，这个上涨可能缺乏支撑。如果成交量突然放大但价格没怎么动，说明买卖双方有分歧，可能在酝酿方向选择。\n量价背离是技术分析里最古老的观点之一，Alpha 101 把它公式化了。\nAlpha#3 是这类因子里最干净的一个：\n$$\\text{Alpha#3} = -1 \\times \\text{correlation}(\\text{rank}(\\text{open}),\\ \\text{rank}(\\text{volume}),\\ 10)$$一层一层拆：\nrank(open)：今天所有股票按开盘价排名，归一化到 0~1 rank(volume)：今天所有股票按成交量排名，归一化到 0~1 correlation(..., 10)：过去 10 天，这两组排名的相关系数 -1 *：取反 过去 10 天里，如果一只股票开盘价排名高的时候成交量排名也高，相关系数为正，乘以 -1 后因子值为负（做空信号）。反过来，如果开盘价排名和成交量排名是反的（量价背离），因子值为正（做多信号）。\n为什么量价背离反而是买入信号？一种解释是：开盘价上涨但成交量没跟上来，说明不是散户追涨推动的，可能是基本面在缓慢定价。而开盘价涨、成交量也暴涨的情况，往往是短期过热，容易回调。\nAlpha#12 更直接：\n$$\\text{Alpha#12} = \\text{sign}(\\text{delta}(\\text{volume}, 1)) \\times (-1 \\times \\text{delta}(\\text{close}, 1))$$翻译成白话：如果今天成交量比昨天大（sign(delta(volume, 1)) = +1），就做空今天的价格变动方向（乘以 -1 * delta(close, 1)）。如果今天成交量缩了，就做多今天的价格变动方向。\n逻辑是：放量上涨后看跌，缩量下跌后看涨。量价配合\"异常\"的方向更可能反转。\n这类因子在 Alpha 101 里数量最多（32 个）。从 WorldQuant 的角度看，量价关系在短期因子里提供了最多的独立信号源。\n# Alpha#3 计算示例 # 假设 df_open 和 df_volume 是 DataFrame，行=日期，列=股票 alpha3 = -1 * ts_corr(rank(df_open), rank(df_volume), 10) 动量与反转类（23 个因子） 核心逻辑：股票短期（1~5 天）倾向于反转，中期（10~20 天）倾向于延续。\n短期反转的经济直觉很直白：今天涨多了的股票，明天有人获利了结，价格回落。今天跌多了的股票，超卖后有人抄底，价格反弹。这在流动性好的市场里是个稳定现象，背后是做市商和短线交易者的行为模式。\n中期动量的来源不同：信息扩散需要时间，好消息出来后不是所有人同时反应，先知先觉的资金先买，后知后觉的资金跟进，形成趋势。\nAlpha#9 是一个带条件判断的反转因子：\n$$\\text{Alpha#9} = \\begin{cases} \\text{ts_rank}(\\text{delta}(\\text{close},1),\\ 5) \u0026 \\text{if } 0 \u003c \\text{ts_min}(\\text{delta}(\\text{close},1),\\ 5) \\\\ \\text{ts_rank}(\\text{delta}(\\text{close},1),\\ 5) \u0026 \\text{if } \\text{ts_max}(\\text{delta}(\\text{close},1),\\ 5) \u003c 0 \\\\ -1 \\times \\text{delta}(\\text{close},1) \u0026 \\text{otherwise} \\end{cases}$$前两个条件在判断趋势是否一致：如果过去 5 天每天都在涨（最小变化 \u003e 0），或者每天都在跌（最大变化 \u003c 0），就用 ts_rank 来衡量当前涨/跌幅在近期的位置。否则（涨跌交替），直接用反转信号。两个趋势分支的公式相同，这不是写错了：论文原文就是对\"连续上涨\"和\"连续下跌\"两种趋势给出相同的动量度量，区别体现在 delta(close,1) 的符号上。\n这个设计有意思：在单边行情里用动量逻辑（ts_rank），在震荡行情里用反转逻辑。比无脑反转多了一层市场状态判断。\nAlpha#20 抓的是跳空缺口的回补：\n$$\\text{Alpha#20} = -1 \\times \\text{rank}(\\text{open} - \\text{delay}(\\text{high}, 1)) \\times \\text{rank}(\\text{open} - \\text{delay}(\\text{close}, 1)) \\times \\text{rank}(\\text{open} - \\text{delay}(\\text{low}, 1))$$三项都在衡量今天开盘价相对于昨天 K 线的位置。如果今天高开（跳空高于昨天的 high、close、low），三项都为正，乘积为正，再乘 -1 变成负值（做空信号）。逻辑是：大幅跳空高开往往过度反应，日内倾向于回落。\n波动率类（11 个因子） 核心逻辑：波动率有均值回归的特性。高波动之后往往回落，低波动之后往往放大。\n更细致地说，波动率类因子捕捉的是\"波动率状态切换\"的时机。一只股票如果最近 5 天非常平静，突然有一天大幅波动，这往往意味着新信息到来，后续可能有趋势性行情。反过来，持续高波动之后，市场逐渐消化信息，波动率趋于收敛。\nAlpha#1 是一个条件波动率信号：\n$$\\text{Alpha#1} = \\text{rank}\\Big(\\text{ts_argmax}\\big(\\text{signedpower}(\\text{returns} \u003c 0\\ ?\\ \\text{stddev}(\\text{returns}, 20)\\ :\\ \\text{close},\\ 2),\\ 5\\big)\\Big) - 0.5$$拆开看：先按条件选信号源（下跌用波动率，上涨用收盘价），用 signedpower 放大差异，ts_argmax 看过去 5 天最大值出现在窗口的哪个位置，最后做截面 rank 再减 0.5（使因子值中心化到 0 附近，正值做多负值做空）。\n核心思路：下跌阶段关注波动率，上涨阶段关注价格。下跌时波动率越高说明恐慌越严重，恐慌到极致（ts_argmax 最近发生）反而是反转信号。\n波动率类因子数量不多（11 个），但底层思路和波动率交易策略相通：波动率本身就是可以交易的标的。\n日内结构类（12 个因子） 核心逻辑：开盘价、收盘价、最高价、最低价的相对关系，反映了日内交易者的行为模式。\n比如收盘价比开盘价高多少（日内涨幅），收盘价在日内振幅中的位置（靠近最高价还是最低价），vwap 和收盘价的关系（机构是在均价之上还是之下交易）。\nAlpha#101 是结构最简单的一个：\n$$\\text{Alpha#101} = \\frac{\\text{close} - \\text{open}}{(\\text{high} - \\text{low}) + 0.001}$$分子是日内涨跌，分母是日内振幅（加 0.001 防止除零）。这个比值衡量的是\"日内收益占振幅的比例\"。值接近 +1 说明开盘就是最低价、收盘就是最高价（全天单边上涨）。值接近 0 说明收盘价和开盘价差不多，日内波动都是噪音。\n这个因子本身就是一个经典的技术分析指标，叫做 “close location value”。它的预测含义是：全天单边上涨的股票，次日倾向于（微弱地）延续；全天来回震荡最终平收的股票，缺乏方向性动能。\nAlpha#42 关注 vwap 和收盘价的关系：\n$$\\text{Alpha#42} = \\frac{\\text{rank}(\\text{vwap} - \\text{close})}{\\text{rank}(\\text{vwap} + \\text{close})}$$vwap - close \u003e 0 说明加权平均成交价高于收盘价，意味着\"大部分成交发生在价格较高的时候\"，收盘时价格回落了。这往往是机构在日内高位出货的信号。因子对这种行为给出做空信号。\n注意 Alpha#42 没有用 delay，它用的全是当天数据。论文里标注这个因子的持仓周期是 0 天，意味着它是一个日内信号。在 T+1 的 A 股市场，这类因子不适用。\n流动性与复合类（23 个因子） 核心逻辑：流动性（成交量、换手率）的变化反映了机构资金的进出。\n机构交易和散户交易的一个本质区别是：机构的单子太大，不可能一次性买完。一只股票如果连续几天成交量放大但价格没怎么动，很可能是有大资金在分批建仓。成交量突然萎缩，可能是大资金建仓完毕或者市场进入观望状态。\nAlpha#7 是一个带条件的流动性信号：\n$$\\text{Alpha#7} = \\begin{cases} -1 \\times \\text{ts_rank}(\\text{abs}(\\text{delta}(\\text{close},7)),\\ 60) \\times \\text{sign}(\\text{delta}(\\text{close},7)) \u0026 \\text{if } \\text{adv20} \u003c \\text{volume} \\\\ -1 \u0026 \\text{otherwise} \\end{cases}$$条件判断：今天的成交量是否超过 20 日均量。如果超过（放量），因子用过去 7 天价格变化的绝对值在 60 天里的排名，乘以变化方向，再取反。如果没放量（缩量），直接给 -1（做空信号）。\n逻辑是：缩量的时候一律看空，因为缩量意味着参与度下降，支撑力弱。放量的时候就看价格变化的\"力度\"在近期历史中处于什么位置，力度越大说明这笔放量越有意义。\n这类因子比较复杂，经常嵌套多个算子和条件判断。它们属于\"复合因子\"，融合了量、价、波动率等多维信息。单独理解时比较绕，但赚钱逻辑大多可以归结为\"跟着聪明钱走\"。\nAlpha 101 因子完整分类对照表 下表把 101 个因子全部归入五个类别。“核心算子\"列标出该因子最核心的计算逻辑，“IndNeut” 标记是否需要行业中性化。\n编号 类别 核心算子 一句话逻辑 IndNeut 详解篇 #1 波动率 stddev, ts_argmax 下跌时看波动率极值位置 否 第4篇 #2 量价背离 correlation, rank 量价排名走势相关性 + 日内涨跌 否 第2篇 #3 量价背离 correlation, rank 开盘价-成交量排名相关性 否 第2篇 #4 动量反转 ts_rank 低位做空信号 否 第3篇 #5 日内结构 rank, ts_rank, vwap vwap 偏离的排名变化 否 第4篇 #6 量价背离 correlation 开盘价与成交量的直接相关性 否 第2篇 #7 流动性 adv, ts_rank, delta 放量/缩量条件下的价格动量 否 第5篇 #8 动量反转 rank, delta, sum 开盘价变化与收益排名的交互 否 第3篇 #9 动量反转 delta, ts_min/max 条件反转：趋势 vs 震荡 否 第3篇 #10 动量反转 delta, ts_min/max 与#9 类似的条件动量 否 第3篇 #11 量价背离 rank, correlation, vwap vwap/close/volume 三者互动 否 第2篇 #12 量价背离 sign, delta 量变方向 × 价变方向 否 第2篇 #13 量价背离 rank, covariance 收盘价与成交量的协方差排名 否 第2篇 #14 量价背离 correlation, returns 开盘价与收益率的相关性 否 第2篇 #15 量价背离 correlation, rank 最高价与成交量排名的相关性 否 第2篇 #16 量价背离 covariance, rank 最高价与成交量的协方差排名 否 第2篇 #17 量价背离 rank, ts_rank, delta, volume 收盘价排名与 volume 动量排名 否 第2篇 #18 波动率 correlation, stddev 收盘价与开盘价的相关性 否 第4篇 #19 动量反转 returns, delay 条件收益率反转 否 第3篇 #20 动量反转 rank, open, delay 跳空缺口回补 否 第3篇 #21 波动率 mean, stddev, close 均值偏离 + 成交量条件 否 第4篇 #22 量价背离 correlation, delta, stddev 最高价与成交量相关性 + 价格变化 否 第2篇 #23 动量反转 sma, delta, high 最高价均值条件反转 否 第3篇 #24 动量反转 sma, delta, close 收盘价均值条件反转 否 第3篇 #25 量价背离 rank, returns, adv, vwap 收益率 × 成交量偏离 × vwap 排名 否 第2篇 #26 量价背离 correlation, ts_rank, volume 时序排名相关性 + 成交量 否 第2篇 #27 量价背离 rank, correlation, volume 量价相关性的排名分位 否 第2篇 #28 量价背离 correlation, adv, rank 成交量与均量的相关性 否 第2篇 #29 动量反转 delta, ts_rank, returns 收盘价变化的排名趋势 否 第3篇 #30 动量反转 delta, close, volume 价量变化的符号交互 否 第3篇 #31 流动性 rank, adv, correlation, decay_linear 流动性 + 量价衰减相关 否 第5篇 #32 量价背离 scale, correlation 均值偏离 × 量价相关性衰减 否 第2篇 #33 动量反转 rank, open/close 开收盘价排名反转 否 第3篇 #34 波动率 rank, stddev, delta, close 波动率排名与价格反转 否 第4篇 #35 动量反转 rank, returns, volume, ts_rank 多因子复合反转 否 第3篇 #36 波动率 correlation, rank, adv 多维相关性排名 否 第4篇 #37 动量反转 correlation, rank, delay 开盘价排名的自相关 否 第3篇 #38 动量反转 rank, close, open 收盘价排名与日内涨幅 否 第3篇 #39 动量反转 rank, delta, decay_linear, returns 衰减动量信号 否 第3篇 #40 量价背离 rank, stddev, correlation 高价波动率 × 成交量排名 否 第2篇 #41 日内结构 high, low, vwap 日内振幅与 vwap 的关系 否 第4篇 #42 日内结构 rank, vwap, close vwap 与收盘价偏离 否 第4篇 #43 量价背离 rank, adv, delta, close 流动性排名 × 价格变化 否 第2篇 #44 量价背离 correlation, rank 最低价与成交量排名相关性 否 第2篇 #45 量价背离 rank, delta, correlation, decay_linear 收盘价变化排名 × 量价衰减相关 否 第2篇 #46 动量反转 delay, delta, close 条件价格动量 否 第3篇 #47 日内结构 rank, adv, high, close, vwap 流动性加权的 vwap-close 偏离 否 第4篇 #48 流动性 correlation, rank, delta 行业中性量价相关 是 第5篇 #49 动量反转 delta, delay, close 条件价格反转 否 第3篇 #50 量价背离 correlation, rank, ts_rank, volume 量价排名的时序相关 否 第2篇 #51 动量反转 delta, delay, close 条件延迟反转 否 第3篇 #52 动量反转 delta, ts_min, ts_rank, volume 价格低点 + 成交量排名 否 第3篇 #53 动量反转 delta, close, high, low 日内位置变化 否 第3篇 #54 日内结构 open, close, low 日内偏离结构 否 第4篇 #55 量价背离 correlation, rank, high, low, volume 日内振幅与成交量相关 否 第2篇 #56 动量反转 rank, returns, cap 市值与收益排名的交互 否 第3篇 #57 波动率 decay_linear, rank, ts_argmin, close 衰减最低点位置排名 否 第4篇 #58 流动性 correlation, rank, volume 行业中性量价相关 是 第5篇 #59 流动性 correlation, rank, volume 行业中性量价相关变体 是 第5篇 #60 量价背离 scale, correlation, rank 量价相关性 × 日内涨跌缩放 否 第2篇 #61 流动性 rank, vwap, adv vwap 排名与均量排名较量 否 第5篇 #62 日内结构 rank, vwap, correlation, adv vwap 排名 × 量价相关 否 第4篇 #63 流动性 rank, vwap, delta, decay_linear, adv 流动性衰减信号 是 第5篇 #64 日内结构 rank, correlation, vwap, adv vwap 流动性相关排名 是 第4篇 #65 日内结构 rank, correlation, vwap, adv vwap 排名相关性衰减 是 第4篇 #66 日内结构 rank, decay_linear, vwap, delta vwap 偏离的衰减动量 是 第4篇 #67 流动性 rank, correlation, high, adv 最高价与均量的相关排名 是 第5篇 #68 日内结构 rank, correlation, high, adv, close 最高价-均量相关 × 收盘排名 是 第4篇 #69 流动性 rank, ts_rank, delta, close, adv 行业中性价格动量排名 是 第5篇 #70 流动性 rank, delta, close, vwap 行业中性价格-vwap 变化 是 第5篇 #71 流动性 decay_linear, correlation, rank, close, adv 多层衰减流动性信号 是 第5篇 #72 流动性 rank, correlation, vwap, adv, decay_linear 衰减量价排名相关 是 第5篇 #73 日内结构 rank, decay_linear, vwap, delta, open vwap 衰减 × 开盘变化 是 第4篇 #74 量价背离 rank, correlation, close, adv 收盘价与均量相关排名 是 第2篇 #75 流动性 rank, correlation, vwap, volume vwap 与成交量排名的相关性 否 第5篇 #76 流动性 rank, decay_linear, correlation, vwap 衰减 vwap 排名相关 是 第5篇 #77 量价背离 rank, decay_linear, delta, correlation 价格变化衰减 × 量价相关 否 第2篇 #78 量价背离 rank, correlation, low, adv 最低价与均量相关排名 否 第2篇 #79 流动性 rank, delta, vwap, correlation, close 行业中性 vwap 变化排名 是 第5篇 #80 流动性 rank, delta, close, correlation, adv 行业中性变化与量价相关 是 第5篇 #81 量价背离 rank, correlation, vwap, adv vwap 与均量的排名相关 否 第2篇 #82 流动性 rank, delta, open, correlation, adv 行业中性开盘变化排名 是 第5篇 #83 波动率 rank, delay, high, low 日内振幅的滞后排名 否 第4篇 #84 动量反转 rank, vwap, close, signedpower vwap-close 偏离的幂放大 否 第3篇 #85 量价背离 rank, correlation, high, adv 最高价排名与均量相关 否 第2篇 #86 波动率 rank, correlation, close, adv, delay 滞后量价相关条件信号 是 第4篇 #87 流动性 rank, decay_linear, delta, vwap, adv 衰减 vwap 动量 是 第5篇 #88 量价背离 rank, decay_linear, correlation, open 开盘价排名衰减相关 否 第2篇 #89 流动性 decay_linear, correlation, rank 衰减相关性信号 否 第5篇 #90 动量反转 rank, correlation, close, adv 收盘与均量排名相关反转 否 第3篇 #91 流动性 rank, correlation, close, adv, decay_linear 收盘-均量衰减相关 是 第5篇 #92 量价背离 rank, decay_linear, delta, correlation 多维衰减量价信号 否 第2篇 #93 流动性 rank, correlation, vwap, adv, decay_linear 行业中性衰减 vwap 相关 是 第5篇 #94 波动率 rank, correlation, adv 成交量排名与低位信号 否 第4篇 #95 量价背离 rank, correlation, high, adv 最高价排名与均量相关 否 第2篇 #96 波动率 decay_linear, rank, ts_argmax, correlation 衰减极值位置 × 量价相关 否 第4篇 #97 流动性 rank, decay_linear, delta, correlation, adv 行业中性衰减流动性 是 第5篇 #98 波动率 rank, decay_linear, correlation, vwap, adv 衰减 vwap 相关排名 否 第4篇 #99 量价背离 rank, correlation, high, volume 最高价与成交量排名相关 否 第2篇 #100 流动性 rank, stddev, correlation, adv 波动率与流动性的相关排名 是 第5篇 #101 日内结构 close, open, high, low 日内收益占振幅比 否 第4篇 实操提示 公式里的小数参数不要过度解读。 Alpha#4 里出现了 ts_rank(...) 的窗口期 9.99922，Alpha#35 里有 2.21 这种看起来很精确的数字。这些参数是机器优化出来的，不是人拍脑袋定的。它们在样本内 overfit 的概率很高，换成整数（10、2）效果可能差不多。\n26 个因子需要行业分类数据。 表里标了 “IndNeut” 的因子用到了 IndNeutralize，需要每只股票的行业归属。美股用 GICS 或 SIC 分类，A 股用申万行业分类。如果你手头没有行业数据，先做剩下的 75 个因子，这些足够搭建一个像样的因子库了。\n少数因子是纯日内信号。 Alpha#42、#54 这类因子没有用 delay，完全基于当天 OHLCV 数据。论文里它们的持仓周期接近 0 天，是日内交易信号。在 T+1 的 A 股市场直接做不了，但可以把信号延迟一天作为次日的选股因子，效果会打折。\n单因子 ≠ 策略。 论文发表于 2016 年，距今已经 10 年。任何单个因子在被公开之后都会经历 alpha 衰减，因为太多人用同样的信号交易，超额收益被套利掉。但分类逻辑不会过时：量价背离、动量反转、波动率均值回归这些经济规律不会因为一篇论文的发表而消失。\n论文的设计背景是美股大盘股。 这 101 个因子是在约 1000 只美股大盘股上开发的，假设了美元中性、市值加权等约束条件。直接搬到 A 股小盘股或其他市场，某些因子的表现可能差异很大。比如 A 股的 T+1 限制、涨跌停板、散户比例偏高，都会影响反转类因子的有效性。跨市场使用时需要做本地化回测验证。\n把单因子当作积木，通过因子组合（多因子模型）来构建策略，才是 Alpha 101 的正确用法。因子之间的平均相关性只有 15.9%，说明它们捕捉的是不同维度的信息，组合后的分散化效果很好。策略评估可以参考量化投资常用指标大全，用夏普比率、最大回撤等指标衡量组合表现。\n系列导航 这是 Alpha 101 系列的第一篇，后续四篇会按类别深入拆解具体因子：\n第 2 篇：量价背离类因子（32 个），拆解价量关系的多种度量方式 第 3 篇：动量与反转类因子（23 个），搞清楚什么时候该跟趋势、什么时候该做反转 第 4 篇：波动率与日内结构类因子（23 个），波动率均值回归 + OHLCV 的日内信息 第 5 篇：流动性与复合因子 + 因子组合实战（23 个），从单因子到多因子模型 如果你对量化交易的基础评估指标还不太熟悉，建议先看量化投资常用指标大全，搞清楚夏普比率、最大回撤这些概念。波动率类因子和波动率交易策略的思路相通，感兴趣可以交叉阅读。\n","wordCount":"9235","inLanguage":"zh","datePublished":"2026-04-14T11:33:08+08:00","dateModified":"2026-04-14T11:33:08+08:00","author":{"@type":"Person","name":"Coriva"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://coriva.eu.org/alpha101-overview/"},"publisher":{"@type":"Organization","name":"Coriva","logo":{"@type":"ImageObject","url":"https://coriva.eu.org/favicon.ico"}}}</script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
+.CtxtMenu_InfoContent {  overflow:auto; text-align:left; font-size:80%;  padding:.4em .6em; border:1px inset; margin:1em 0px;  max-height:20em; max-width:30em; background-color:#EEEEEE;  white-space:normal;}
+.CtxtMenu_Info.CtxtMenu_MousePost {outline:none;}
+.CtxtMenu_Info {  position:fixed; left:50%; width:auto; text-align:center;  border:3px outset; padding:1em 2em; background-color:#DDDDDD;  color:black;  cursor:default; font-family:message-box; font-size:120%;  font-style:normal; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 15px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius:15px;               /* Safari and Chrome */  -moz-border-radius:15px;                  /* Firefox */  -khtml-border-radius:15px;                /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */  filter:progid:DXImageTransform.Microsoft.dropshadow(OffX=2, OffY=2, Color="gray", Positive="true"); /* IE */}
+</style><style type="text/css">.CtxtMenu_MenuClose {  position:absolute;  cursor:pointer;  display:inline-block;  border:2px solid #AAA;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  font-family: "Courier New", Courier;  font-size:24px;  color:#F0F0F0}
+.CtxtMenu_MenuClose span {  display:block; background-color:#AAA; border:1.5px solid;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  line-height:0;  padding:8px 0 6px     /* may need to be browser-specific */}
+.CtxtMenu_MenuClose:hover {  color:white!important;  border:2px solid #CCC!important}
+.CtxtMenu_MenuClose:hover span {  background-color:#CCC!important}
+.CtxtMenu_MenuClose:hover:focus {  outline:none}
+</style><style type="text/css">.CtxtMenu_Menu {  position:absolute;  background-color:white;  color:black;  width:auto; padding:5px 0px;  border:1px solid #CCCCCC; margin:0; cursor:default;  font: menu; text-align:left; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 5px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius: 5px;             /* Safari and Chrome */  -moz-border-radius: 5px;                /* Firefox */  -khtml-border-radius: 5px;              /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */}
+.CtxtMenu_MenuItem {  padding: 1px 2em;  background:transparent;}
+.CtxtMenu_MenuArrow {  position:absolute; right:.5em; padding-top:.25em; color:#666666;  font-family: null; font-size: .75em}
+.CtxtMenu_MenuActive .CtxtMenu_MenuArrow {color:white}
+.CtxtMenu_MenuArrow.CtxtMenu_RTL {left:.5em; right:auto}
+.CtxtMenu_MenuCheck {  position:absolute; left:.7em;  font-family: null}
+.CtxtMenu_MenuCheck.CtxtMenu_RTL { right:.7em; left:auto }
+.CtxtMenu_MenuRadioCheck {  position:absolute; left: .7em;}
+.CtxtMenu_MenuRadioCheck.CtxtMenu_RTL {  right: .7em; left:auto}
+.CtxtMenu_MenuInputBox {  padding-left: 1em; right:.5em; color:#666666;  font-family: null;}
+.CtxtMenu_MenuInputBox.CtxtMenu_RTL {  left: .1em;}
+.CtxtMenu_MenuComboBox {  left:.1em; padding-bottom:.5em;}
+.CtxtMenu_MenuSlider {  left: .1em;}
+.CtxtMenu_SliderValue {  position:absolute; right:.1em; padding-top:.25em; color:#333333;  font-size: .75em}
+.CtxtMenu_SliderBar {  outline: none; background: #d3d3d3}
+.CtxtMenu_MenuLabel {  padding: 1px 2em 3px 1.33em;  font-style:italic}
+.CtxtMenu_MenuRule {  border-top: 1px solid #DDDDDD;  margin: 4px 3px;}
+.CtxtMenu_MenuDisabled {  color:GrayText}
+.CtxtMenu_MenuActive {  background-color: #606872;  color: white;}
+.CtxtMenu_MenuDisabled:focus {  background-color: #E8E8E8}
+.CtxtMenu_MenuLabel:focus {  background-color: #E8E8E8}
+.CtxtMenu_ContextMenu:focus {  outline:none}
+.CtxtMenu_ContextMenu .CtxtMenu_MenuItem:focus {  outline:none}
+.CtxtMenu_SelectionMenu {  position:relative; float:left;  border-bottom: none; -webkit-box-shadow:none; -webkit-border-radius:0px; }
+.CtxtMenu_SelectionItem {  padding-right: 1em;}
+.CtxtMenu_Selection {  right: 40%; width:50%; }
+.CtxtMenu_SelectionBox {  padding: 0em; max-height:20em; max-width: none;  background-color:#FFFFFF;}
+.CtxtMenu_SelectionDivider {  clear: both; border-top: 2px solid #000000;}
+.CtxtMenu_Menu .CtxtMenu_MenuClose {  top:-10px; left:-10px}
+</style><style id="MJX-CHTML-styles">
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row > * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-assistive-mml {
+  position: absolute !important;
+  top: 0px;
+  left: 0px;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 1px 0px 0px 0px !important;
+  border: 0px !important;
+  display: block !important;
+  width: auto !important;
+  overflow: hidden !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+mjx-assistive-mml[display="block"] {
+  width: 100% !important;
+}
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h > * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h > * > mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h > * > mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h > mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h > mjx-beg > mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h > mjx-end > mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v > * {
+  display: block;
+}
+
+mjx-stretchy-v > mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v > mjx-end > mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v > * > mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v > mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-TeXAtom {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-msup {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mrow {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mtable {
+  display: inline-block;
+  text-align: center;
+  vertical-align: .25em;
+  position: relative;
+  box-sizing: border-box;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+
+mjx-mstyle[size="s"] mjx-mtable {
+  vertical-align: .354em;
+}
+
+mjx-labels {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+mjx-table {
+  display: inline-block;
+  vertical-align: -.5ex;
+  box-sizing: border-box;
+}
+
+mjx-table > mjx-itable {
+  vertical-align: middle;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+mjx-labels > mjx-itable {
+  position: absolute;
+  top: 0;
+}
+
+mjx-mtable[justify="left"] {
+  text-align: left;
+}
+
+mjx-mtable[justify="right"] {
+  text-align: right;
+}
+
+mjx-mtable[justify="left"][side="left"] {
+  padding-right: 0 ! important;
+}
+
+mjx-mtable[justify="left"][side="right"] {
+  padding-left: 0 ! important;
+}
+
+mjx-mtable[justify="right"][side="left"] {
+  padding-right: 0 ! important;
+}
+
+mjx-mtable[justify="right"][side="right"] {
+  padding-left: 0 ! important;
+}
+
+mjx-mtable[align] {
+  vertical-align: baseline;
+}
+
+mjx-mtable[align="top"] > mjx-table {
+  vertical-align: top;
+}
+
+mjx-mtable[align="bottom"] > mjx-table {
+  vertical-align: bottom;
+}
+
+mjx-mtable[side="right"] mjx-labels {
+  min-width: 100%;
+}
+
+mjx-mtr {
+  display: table-row;
+  text-align: left;
+}
+
+mjx-mtr[rowalign="top"] > mjx-mtd {
+  vertical-align: top;
+}
+
+mjx-mtr[rowalign="center"] > mjx-mtd {
+  vertical-align: middle;
+}
+
+mjx-mtr[rowalign="bottom"] > mjx-mtd {
+  vertical-align: bottom;
+}
+
+mjx-mtr[rowalign="baseline"] > mjx-mtd {
+  vertical-align: baseline;
+}
+
+mjx-mtr[rowalign="axis"] > mjx-mtd {
+  vertical-align: .25em;
+}
+
+mjx-mtd {
+  display: table-cell;
+  text-align: center;
+  padding: .215em .4em;
+}
+
+mjx-mtd:first-child {
+  padding-left: 0;
+}
+
+mjx-mtd:last-child {
+  padding-right: 0;
+}
+
+mjx-mtable > * > mjx-itable > *:first-child > mjx-mtd {
+  padding-top: 0;
+}
+
+mjx-mtable > * > mjx-itable > *:last-child > mjx-mtd {
+  padding-bottom: 0;
+}
+
+mjx-tstrut {
+  display: inline-block;
+  height: 1em;
+  vertical-align: -.25em;
+}
+
+mjx-labels[align="left"] > mjx-mtr > mjx-mtd {
+  text-align: left;
+}
+
+mjx-labels[align="right"] > mjx-mtr > mjx-mtd {
+  text-align: right;
+}
+
+mjx-mtd[extra] {
+  padding: 0;
+}
+
+mjx-mtd[rowalign="top"] {
+  vertical-align: top;
+}
+
+mjx-mtd[rowalign="center"] {
+  vertical-align: middle;
+}
+
+mjx-mtd[rowalign="bottom"] {
+  vertical-align: bottom;
+}
+
+mjx-mtd[rowalign="baseline"] {
+  vertical-align: baseline;
+}
+
+mjx-mtd[rowalign="axis"] {
+  vertical-align: .25em;
+}
+
+mjx-mfrac {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-frac {
+  display: inline-block;
+  vertical-align: 0.17em;
+  padding: 0 .22em;
+}
+
+mjx-frac[type="d"] {
+  vertical-align: .04em;
+}
+
+mjx-frac[delims] {
+  padding: 0 .1em;
+}
+
+mjx-frac[atop] {
+  padding: 0 .12em;
+}
+
+mjx-frac[atop][delims] {
+  padding: 0;
+}
+
+mjx-dtable {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-dtable > * {
+  font-size: 2000%;
+}
+
+mjx-dbox {
+  display: block;
+  font-size: 5%;
+}
+
+mjx-num {
+  display: block;
+  text-align: center;
+}
+
+mjx-den {
+  display: block;
+  text-align: center;
+}
+
+mjx-mfrac[bevelled] > mjx-num {
+  display: inline-block;
+}
+
+mjx-mfrac[bevelled] > mjx-den {
+  display: inline-block;
+}
+
+mjx-den[align="right"], mjx-num[align="right"] {
+  text-align: right;
+}
+
+mjx-den[align="left"], mjx-num[align="left"] {
+  text-align: left;
+}
+
+mjx-nstrut {
+  display: inline-block;
+  height: .054em;
+  width: 0;
+  vertical-align: -.054em;
+}
+
+mjx-nstrut[type="d"] {
+  height: .217em;
+  vertical-align: -.217em;
+}
+
+mjx-dstrut {
+  display: inline-block;
+  height: .505em;
+  width: 0;
+}
+
+mjx-dstrut[type="d"] {
+  height: .726em;
+}
+
+mjx-line {
+  display: block;
+  box-sizing: border-box;
+  min-height: 1px;
+  height: .06em;
+  border-top: .06em solid;
+  margin: .06em -.1em;
+  overflow: hidden;
+}
+
+mjx-line[type="d"] {
+  margin: .18em -.1em;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-stretchy-v.mjx-c7B mjx-beg mjx-c::before {
+  content: "\23A7";
+  padding: 0.899em 0.889em 0.01em 0;
+}
+
+mjx-stretchy-v.mjx-c7B mjx-ext mjx-c::before {
+  content: "\23AA";
+  width: 0.889em;
+}
+
+mjx-stretchy-v.mjx-c7B mjx-end mjx-c::before {
+  content: "\23A9";
+  padding: 0.01em 0.889em 0.899em 0;
+}
+
+mjx-stretchy-v.mjx-c7B mjx-mid mjx-c::before {
+  content: "\23A8";
+  padding: 1.16em 0.889em 0.66em 0;
+}
+
+mjx-stretchy-v.mjx-c7B > mjx-mid {
+  margin-top: -0.91em;
+  margin-bottom: -0.91em;
+}
+
+mjx-stretchy-v.mjx-c7B > mjx-end {
+  margin-top: -0.909em;
+}
+
+mjx-stretchy-v.mjx-c7B > mjx-ext {
+  height: 50%;
+  border-top-width: 0.879em;
+  border-bottom-width: 0.879em;
+}
+
+mjx-c.mjx-c1D465.TEX-I::before {
+  padding: 0.442em 0.572em 0.011em 0;
+  content: "x";
+}
+
+mjx-c.mjx-c1D451.TEX-I::before {
+  padding: 0.694em 0.52em 0.01em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c2212::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "\2212";
+}
+
+mjx-c.mjx-c31::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "1";
+}
+
+mjx-c.mjx-c1D466.TEX-I::before {
+  padding: 0.442em 0.49em 0.205em 0;
+  content: "y";
+}
+
+mjx-c.mjx-c1D44E.TEX-I::before {
+  padding: 0.441em 0.529em 0.01em 0;
+  content: "a";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c73::before {
+  padding: 0.448em 0.394em 0.011em 0;
+  content: "s";
+}
+
+mjx-c.mjx-c69::before {
+  padding: 0.669em 0.278em 0 0;
+  content: "i";
+}
+
+mjx-c.mjx-c67::before {
+  padding: 0.453em 0.5em 0.206em 0;
+  content: "g";
+}
+
+mjx-c.mjx-c6E::before {
+  padding: 0.442em 0.556em 0 0;
+  content: "n";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-cD7::before {
+  padding: 0.491em 0.778em 0 0;
+  content: "\D7";
+}
+
+mjx-c.mjx-c7C::before {
+  padding: 0.75em 0.278em 0.249em 0;
+  content: "|";
+}
+
+mjx-c.mjx-c3E::before {
+  padding: 0.54em 0.778em 0.04em 0;
+  content: ">";
+}
+
+mjx-c.mjx-c41::before {
+  padding: 0.716em 0.75em 0 0;
+  content: "A";
+}
+
+mjx-c.mjx-c6C::before {
+  padding: 0.694em 0.278em 0 0;
+  content: "l";
+}
+
+mjx-c.mjx-c70::before {
+  padding: 0.442em 0.556em 0.194em 0;
+  content: "p";
+}
+
+mjx-c.mjx-c68::before {
+  padding: 0.694em 0.556em 0 0;
+  content: "h";
+}
+
+mjx-c.mjx-c61::before {
+  padding: 0.448em 0.5em 0.011em 0;
+  content: "a";
+}
+
+mjx-c.mjx-c23::before {
+  padding: 0.694em 0.833em 0.194em 0;
+  content: "#";
+}
+
+mjx-c.mjx-c33::before {
+  padding: 0.665em 0.5em 0.022em 0;
+  content: "3";
+}
+
+mjx-c.mjx-c63::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "c";
+}
+
+mjx-c.mjx-c6F::before {
+  padding: 0.448em 0.5em 0.01em 0;
+  content: "o";
+}
+
+mjx-c.mjx-c72::before {
+  padding: 0.442em 0.392em 0 0;
+  content: "r";
+}
+
+mjx-c.mjx-c65::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "e";
+}
+
+mjx-c.mjx-c74::before {
+  padding: 0.615em 0.389em 0.01em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c6B::before {
+  padding: 0.694em 0.528em 0 0;
+  content: "k";
+}
+
+mjx-c.mjx-c2C::before {
+  padding: 0.121em 0.278em 0.194em 0;
+  content: ",";
+}
+
+mjx-c.mjx-cA0::before {
+  padding: 0 0.25em 0 0;
+  content: "\A0";
+}
+
+mjx-c.mjx-c76::before {
+  padding: 0.431em 0.528em 0.011em 0;
+  content: "v";
+}
+
+mjx-c.mjx-c75::before {
+  padding: 0.442em 0.556em 0.011em 0;
+  content: "u";
+}
+
+mjx-c.mjx-c6D::before {
+  padding: 0.442em 0.833em 0 0;
+  content: "m";
+}
+
+mjx-c.mjx-c30::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "0";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c64::before {
+  padding: 0.694em 0.556em 0.011em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c39::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "9";
+}
+
+mjx-c.mjx-c5F::before {
+  padding: 0 0.5em 0.062em 0;
+  content: "_";
+}
+
+mjx-c.mjx-c35::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "5";
+}
+
+mjx-c.mjx-c66::before {
+  padding: 0.705em 0.372em 0 0;
+  content: "f";
+}
+
+mjx-c.mjx-c3C::before {
+  padding: 0.54em 0.778em 0.04em 0;
+  content: "<";
+}
+
+mjx-c.mjx-c78::before {
+  padding: 0.431em 0.528em 0 0;
+  content: "x";
+}
+
+mjx-c.mjx-c77::before {
+  padding: 0.431em 0.722em 0.011em 0;
+  content: "w";
+}
+
+mjx-c.mjx-c79::before {
+  padding: 0.431em 0.528em 0.204em 0;
+  content: "y";
+}
+
+mjx-c.mjx-c28.TEX-S2::before {
+  padding: 1.15em 0.597em 0.649em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c28.TEX-S1::before {
+  padding: 0.85em 0.458em 0.349em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c3F::before {
+  padding: 0.705em 0.472em 0 0;
+  content: "?";
+}
+
+mjx-c.mjx-c3A::before {
+  padding: 0.43em 0.278em 0 0;
+  content: ":";
+}
+
+mjx-c.mjx-c29.TEX-S1::before {
+  padding: 0.85em 0.458em 0.349em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c29.TEX-S2::before {
+  padding: 1.15em 0.597em 0.649em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c2E::before {
+  padding: 0.12em 0.278em 0 0;
+  content: ".";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c34::before {
+  padding: 0.677em 0.5em 0 0;
+  content: "4";
+}
+
+mjx-c.mjx-c37::before {
+  padding: 0.676em 0.5em 0.022em 0;
+  content: "7";
+}
+
+mjx-c.mjx-c7B.TEX-S3::before {
+  padding: 1.45em 0.75em 0.949em 0;
+  content: "{";
+}
+
+mjx-c.mjx-c62::before {
+  padding: 0.694em 0.556em 0.011em 0;
+  content: "b";
+}
+
+mjx-c.mjx-c36::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "6";
+}
+</style><style id="waline-darkmode"></style></head><body id="top"><header class="header"><nav class="nav"><div class="logo"><a href="https://coriva.eu.org/" accesskey="h" title="Coriva (Alt + H)"><img src="https://coriva.eu.org/logo.png" alt="" aria-label="logo" height="35">Coriva</a><div class="logo-switches"><button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme"><svg id="moon" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg><svg id="sun" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></button><ul class="lang-switch"><li>|</li><li><a href="https://coriva.eu.org/en/" title="English" aria-label="English">English</a></li></ul></div></div><ul id="menu"><li><a href="https://coriva.eu.org/archives/" title="归档"><span>归档</span></a></li><li><a href="https://coriva.eu.org/categories/" title="分类"><span>分类</span></a></li><li><a href="https://coriva.eu.org/tags/" title="标签"><span>标签</span></a></li><li><a href="https://coriva.eu.org/search/" title="搜索 (Alt + /)" accesskey="/"><span>搜索</span></a></li></ul></nav></header><main class="main"><div class="post-single-wrapper"><article class="post-single"><header class="post-header"><div class="breadcrumbs"><a href="https://coriva.eu.org/">主页</a>&nbsp;»&nbsp;<a href="https://coriva.eu.org/posts/">Posts</a></div><h1 class="post-title entry-hint-parent">WorldQuant Alpha 101 全解读：因子分类与算子速查</h1><div class="post-description">WorldQuant Alpha 101 论文深度解读：101 个量化因子按经济逻辑分为五大类，附算子直觉讲解、pandas 代码与完整分类对照表。</div><div class="post-meta"><span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> Posted on 2026-04-14</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path></svg> In Quant</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> 19 min read</span><span class="pageview-meta">&nbsp;·&nbsp;<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> <span class="waline-pageview-count" data-path="/alpha101-overview/">477</span></span>&nbsp;|&nbsp;<span>语言:</span><ul class="i18n_list"><li><a href="https://coriva.eu.org/en/alpha101-overview/">English</a></li></ul></div></header><div class="post-content"><p>WorldQuant 在 2016 年发表了一篇只有 6 页的论文，标题叫 “101 Formulaic Alphas”，作者 Zura Kakushadze。论文做了一件很简单的事：把 101 个量化因子的计算公式直接公开了。这些因子在 WorldQuant 的生产环境中有 80 个在实际使用，持仓周期 0.6 到 6.4 天，因子之间的平均相关性只有 15.9%。</p><p>但论文只给了公式，没有任何解释。Alpha#3 为什么是那个样子，背后在捕捉什么市场现象，一句话都没有。这就是本系列文章要做的事：把 101 个 Alpha 101 因子按经济逻辑分类，拆解公式背后的动机，搞清楚每个因子到底在赌什么。</p><p>这个系列分五篇：</p><ol><li><strong>本篇：全局概览</strong>，建立分类框架，讲清楚算子是什么意思，给出完整分类对照表</li><li>量价背离类因子详解（32 个因子）</li><li>动量与反转类因子详解（23 个因子）</li><li>波动率与日内结构类因子详解（23 个因子）</li><li>流动性、复合因子与因子组合实战（23 个因子）</li></ol><h2 id="alpha-101-的数据输入">Alpha 101 的数据输入<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#alpha-101-%E7%9A%84%E6%95%B0%E6%8D%AE%E8%BE%93%E5%85%A5">#</a></h2><p>101 个公式用到的原始数据就那么几个字段，全是股票日频行情数据：</p><table><thead><tr><th>字段</th><th>含义</th><th>备注</th></tr></thead><tbody><tr><td><code>open</code></td><td>开盘价</td><td></td></tr><tr><td><code>close</code></td><td>收盘价</td><td></td></tr><tr><td><code>high</code></td><td>最高价</td><td></td></tr><tr><td><code>low</code></td><td>最低价</td><td></td></tr><tr><td><code>volume</code></td><td>成交量</td><td></td></tr><tr><td><code>vwap</code></td><td>成交量加权平均价</td><td>yfinance 不直接提供，需要自算</td></tr><tr><td><code>returns</code></td><td>日收益率</td><td><code>close / delay(close,1) - 1</code></td></tr><tr><td><code>cap</code></td><td>总市值</td><td>用于 <code>rank</code> 加权</td></tr><tr><td><code>adv{d}</code></td><td>过去 d 天日均成交额</td><td><code>adv20</code> = 过去 20 天日均成交额（price × volume）</td></tr><tr><td><code>IndClass</code></td><td>行业分类</td><td>用于行业中性化</td></tr></tbody></table><p><code>vwap</code> 在论文里出现了十几次，但大多数免费数据源不提供这个字段。近似计算方法：用日内 <code>(high + low + close) / 3</code> 作为粗略替代，或者用分钟线数据计算真实 vwap。对于日频因子研究来说，粗略替代够用了。</p><p><code>adv{d}</code> 有多种变体：<code>adv5</code>、<code>adv10</code>、<code>adv15</code>、<code>adv20</code>、<code>adv30</code>、<code>adv40</code>、<code>adv50</code>、<code>adv60</code>、<code>adv81</code>、<code>adv120</code>、<code>adv150</code>、<code>adv180</code>。论文中 <code>adv{d}</code> 严格来说是日均成交额（价格 × 成交量）的滚动均值。不过很多开源实现直接用 volume 的均值代替，因为对于 rank 之后的因子来说，成交额和成交量的排名高度相关。</p><p>数据源方面，美股用 <a href="https://coriva.eu.org/a-tutorial-to-use-yfinance/">yfinance</a> 就能拿到 OHLCV，A 股用 Tushare 或 AKShare。</p><h2 id="算子详解读懂公式的钥匙">算子详解：读懂公式的钥匙<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E7%AE%97%E5%AD%90%E8%AF%A6%E8%A7%A3%E8%AF%BB%E6%87%82%E5%85%AC%E5%BC%8F%E7%9A%84%E9%92%A5%E5%8C%99">#</a></h2><p>Alpha 101 的公式看起来吓人，但用到的算子翻来覆去就那么十几个。搞懂这些算子，101 个公式大部分都能直接读懂。</p><h3 id="截面算子在同一天的所有股票之间比较">截面算子：在同一天的所有股票之间比较<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E6%88%AA%E9%9D%A2%E7%AE%97%E5%AD%90%E5%9C%A8%E5%90%8C%E4%B8%80%E5%A4%A9%E7%9A%84%E6%89%80%E6%9C%89%E8%82%A1%E7%A5%A8%E4%B9%8B%E9%97%B4%E6%AF%94%E8%BE%83">#</a></h3><p><strong><code>rank(x)</code></strong>：把当天所有股票的 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="0" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D465 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math></mjx-assistive-mml></mjx-container> 值排名，然后归一化到 0~1 之间。排名最低的股票得 0，最高的得 1。</p><p>为什么要 rank？因为不同指标的量纲天差地别。成交量可能是几百万股，收益率是百分之零点几。直接算相关性或做加减法，量纲大的指标会完全压过量纲小的。rank 之后全部变成 0~1 的分位数，苹果和苹果才能比。</p><p>rank 还有一个好处：天然抗极端值。某只股票今天成交量暴增 10 倍，raw 值可能把所有统计量搞崩，但 rank 之后它最多也就是排第一（值为 1.0），不会影响其他股票的相对排名。</p><p>这就是为什么 101 个因子里 rank 出现了 90 多次。它是整个公式体系的"通用适配器"。</p><h3 id="时序算子在同一只股票的历史上计算">时序算子：在同一只股票的历史上计算<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E6%97%B6%E5%BA%8F%E7%AE%97%E5%AD%90%E5%9C%A8%E5%90%8C%E4%B8%80%E5%8F%AA%E8%82%A1%E7%A5%A8%E7%9A%84%E5%8E%86%E5%8F%B2%E4%B8%8A%E8%AE%A1%E7%AE%97">#</a></h3><p><strong><code>delay(x, d)</code></strong>：<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="1" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天前的值。<code>delay(close, 1)</code> = 昨天的收盘价。</p><p><strong><code>delta(x, d)</code></strong>：今天的值减去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="2" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天前的值。<code>delta(close, 5)</code> = 最近 5 天收盘价变了多少。比 returns 更直接，不做除法归一化，保留了绝对变化幅度的信息。</p><p><strong><code>ts_rank(x, d)</code></strong>：当前值在过去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="3" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天里排第几。如果今天的收盘价是最近 10 天里最高的，<code>ts_rank(close, 10)</code> 接近 1.0。这个算子把绝对值翻译成"相对于近期历史的位置"。一只股票今天涨了 2%，这算多还是少？如果过去 10 天都在涨 3%+，那 2% 其实偏弱。ts_rank 捕捉的就是这种相对强弱。</p><p><strong><code>ts_argmax(x, d)</code> / <code>ts_argmin(x, d)</code></strong>：过去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="4" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天内，最大值（或最小值）出现在窗口的第几个位置。返回值是 0-based 索引：0 = 窗口最早的一天，<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="5" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="3"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi><mo>−</mo><mn>1</mn></math></mjx-assistive-mml></mjx-container> = 今天。如果 <code>ts_argmax(close, 10)</code> = 9，说明最高价就在今天，价格可能还在上升趋势中。如果 = 0，说明最高价出现在 10 天前的第一天，之后一路下滑。这个算子衡量的是"极值出现在窗口的什么位置"，值越大说明极值越近。</p><p><strong><code>correlation(x, y, d)</code></strong>：过去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="6" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天内 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="7" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D465 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math></mjx-assistive-mml></mjx-container> 和 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="8" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D466 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>y</mi></math></mjx-assistive-mml></mjx-container> 的 Pearson 相关系数。量价背离类因子大量使用这个算子，比如计算价格排名和成交量排名的相关性。相关性高说明量价同步，相关性低或为负说明量价背离。</p><p><strong><code>covariance(x, y, d)</code></strong>：过去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="9" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天内 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="10" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D465 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math></mjx-assistive-mml></mjx-container> 和 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="11" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D466 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>y</mi></math></mjx-assistive-mml></mjx-container> 的协方差。和 correlation 类似但不归一化，保留了量纲信息。</p><p><strong><code>decay_linear(x, d)</code></strong>：过去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="12" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天的加权平均，权重线性递减（最近一天权重最大，<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="13" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天前权重最小）。普通移动平均对每一天一视同仁，但在量化因子里，近期信息通常比远期更有预测力。<code>decay_linear</code> 是一种简单的"越近越重要"加权方案。权重分配：第 1 天（最近）权重 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="14" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container>，第 2 天权重 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="15" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="3"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi><mo>−</mo><mn>1</mn></math></mjx-assistive-mml></mjx-container>，以此类推，最后归一化。</p><p><strong><code>stddev(x, d)</code></strong>：过去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="16" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="17" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D465 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math></mjx-assistive-mml></mjx-container> 的标准差，就是波动率。</p><p><strong><code>sum(x, d)</code> / <code>product(x, d)</code></strong>：过去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="18" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天的求和 / 连乘。</p><p><strong><code>min(x, d)</code> / <code>max(x, d)</code></strong>：过去 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="19" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>d</mi></math></mjx-assistive-mml></mjx-container> 天的最小值 / 最大值。</p><h3 id="变换算子">变换算子<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E5%8F%98%E6%8D%A2%E7%AE%97%E5%AD%90">#</a></h3><p><strong><code>scale(x, a=1)</code></strong>：把截面上所有股票的 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="20" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D465 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math></mjx-assistive-mml></mjx-container> 值缩放，使绝对值之和等于 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="21" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D44E TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>a</mi></math></mjx-assistive-mml></mjx-container>。用处是把因子值转换成"仓位权重"。如果 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="22" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D44E TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="4"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>a</mi><mo>=</mo><mn>1</mn></math></mjx-assistive-mml></mjx-container>，scale 之后的因子值直接就是每只股票该分配多少仓位（正值做多，负值做空），全部仓位加起来正好满仓。</p><p><strong><code>signedpower(x, a)</code></strong>：保留符号的幂运算，<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="23" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D465 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-texatom space="3" texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D465 TEX-I"></mjx-c></mjx-mi><mjx-msup><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo><mjx-script style="vertical-align: 0.363em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D44E TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msup></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mtext>sign</mtext><mo stretchy="false">(</mo><mi>x</mi><mo stretchy="false">)</mo><mo>×</mo><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mi>x</mi><msup><mo stretchy="false">|</mo><mi>a</mi></msup></math></mjx-assistive-mml></mjx-container>。当 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="24" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D44E TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3E"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="4"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>a</mi><mo>&gt;</mo><mn>1</mn></math></mjx-assistive-mml></mjx-container> 时，大的值被放大得更多，小的值被压缩。效果是拉大因子值的差距，让头部和尾部股票的信号更强。</p><h3 id="行业中性化">行业中性化<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E8%A1%8C%E4%B8%9A%E4%B8%AD%E6%80%A7%E5%8C%96">#</a></h3><p><strong><code>IndNeutralize(x, IndClass)</code></strong>：在每个行业内部做截面去均值。</p><p>为什么需要这个？假设你的因子是"成交量变化率"。银行股整体成交量就是比医药股大几个数量级。如果不做行业中性化，因子排名会天然偏向成交量大的行业，你选出来的"成交量异常放大"的股票可能全是银行股，根本不是因为它们有 alpha，只是行业特征。</p><p>IndNeutralize 之后，银行股和银行股比，医药股和医药股比，去掉了行业层面的系统性差异，剩下的才是个股层面的 alpha 信号。</p><p>101 个因子里有 26 个用到了 IndNeutralize。如果你没有行业分类数据，这 26 个因子可以先跳过，剩下 75 个照样能做。</p><h3 id="pandas-实现核心算子">pandas 实现核心算子<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#pandas-%E5%AE%9E%E7%8E%B0%E6%A0%B8%E5%BF%83%E7%AE%97%E5%AD%90">#</a></h3><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+</span></span><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">rank</span><span class="p">(</span><span class="n">df</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""截面排名归一化到 [0, 1]"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">df</span><span class="o">.</span><span class="n">rank</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">pct</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">delay</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""时移 d 天"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">df</span><span class="o">.</span><span class="n">shift</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">delta</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""d 天差分"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">df</span> <span class="o">-</span> <span class="n">delay</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">ts_rank</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""当前值在过去 d 天中的排名分位数"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">df</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">rank</span><span class="p">()</span><span class="o">.</span><span class="n">iloc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">x</span><span class="p">),</span> <span class="n">raw</span><span class="o">=</span><span class="kc">False</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">ts_argmax</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""过去 d 天最大值的位置（0 = 最早，d-1 = 今天）"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">df</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">argmax</span><span class="p">(),</span> <span class="n">raw</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">ts_argmin</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""过去 d 天最小值的位置（0 = 最早，d-1 = 今天）"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">df</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">argmin</span><span class="p">(),</span> <span class="n">raw</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">decay_linear</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""线性衰减加权平均，近期权重大"""</span>
+</span></span><span class="line"><span class="cl">    <span class="n">weights</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">d</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">weights</span> <span class="o">/=</span> <span class="n">weights</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">df</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+</span></span><span class="line"><span class="cl">        <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">weights</span><span class="p">),</span> <span class="n">raw</span><span class="o">=</span><span class="kc">True</span>
+</span></span><span class="line"><span class="cl">    <span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">scale</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""截面缩放，使绝对值之和等于 a"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">df</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">a</span><span class="p">)</span><span class="o">.</span><span class="n">div</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">signedpower</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">a</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""保留符号的幂运算"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">df</span><span class="p">)</span> <span class="o">*</span> <span class="n">df</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">ts_corr</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""滚动相关系数"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="o">.</span><span class="n">corr</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">ts_cov</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">d</span><span class="p">):</span>
+</span></span><span class="line"><span class="cl">    <span class="s2">"""滚动协方差"""</span>
+</span></span><span class="line"><span class="cl">    <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="n">d</span><span class="p">)</span><span class="o">.</span><span class="n">cov</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><h3 id="算子速查表">算子速查表<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E7%AE%97%E5%AD%90%E9%80%9F%E6%9F%A5%E8%A1%A8">#</a></h3><table><thead><tr><th>算子</th><th>类型</th><th>直觉</th><th>类比</th></tr></thead><tbody><tr><td><code>rank</code></td><td>截面</td><td>排名归一化，消除量纲</td><td>考试排名 vs 原始分数</td></tr><tr><td><code>delay</code></td><td>时序</td><td>回看 d 天前</td><td>“昨天的收盘价”</td></tr><tr><td><code>delta</code></td><td>时序</td><td>d 天变化量</td><td>“这周涨了多少”</td></tr><tr><td><code>ts_rank</code></td><td>时序</td><td>当前值在近期的位置</td><td>“今天是近期最高还是最低”</td></tr><tr><td><code>ts_argmax</code></td><td>时序</td><td>极值在窗口的位置</td><td>“最高价出现在窗口第几天”</td></tr><tr><td><code>correlation</code></td><td>时序</td><td>两序列同步程度</td><td>“量涨价也涨？”</td></tr><tr><td><code>decay_linear</code></td><td>时序</td><td>近期加权均值</td><td>“越近的数据越重要”</td></tr><tr><td><code>stddev</code></td><td>时序</td><td>波动率</td><td>“最近波动大不大”</td></tr><tr><td><code>scale</code></td><td>截面</td><td>归一化为仓位权重</td><td>“总仓位加起来 = 1”</td></tr><tr><td><code>signedpower</code></td><td>变换</td><td>放大头尾信号</td><td>“强的更强，弱的更弱”</td></tr><tr><td><code>IndNeutralize</code></td><td>截面</td><td>去行业偏差</td><td>“银行和银行比，医药和医药比”</td></tr></tbody></table><h2 id="五大分类每个因子到底在赌什么">五大分类：每个因子到底在赌什么<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E4%BA%94%E5%A4%A7%E5%88%86%E7%B1%BB%E6%AF%8F%E4%B8%AA%E5%9B%A0%E5%AD%90%E5%88%B0%E5%BA%95%E5%9C%A8%E8%B5%8C%E4%BB%80%E4%B9%88">#</a></h2><p>读完算子，可以开始看因子了。101 个因子看上去五花八门，但按背后的经济逻辑归类，其实就五种思路。</p><h3 id="量价背离类32-个因子">量价背离类（32 个因子）<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E9%87%8F%E4%BB%B7%E8%83%8C%E7%A6%BB%E7%B1%BB32-%E4%B8%AA%E5%9B%A0%E5%AD%90">#</a></h3><p>核心逻辑：价格和成交量应该同步。如果价格在涨但成交量在缩，这个上涨可能缺乏支撑。如果成交量突然放大但价格没怎么动，说明买卖双方有分歧，可能在酝酿方向选择。</p><p>量价背离是技术分析里最古老的观点之一，Alpha 101 把它公式化了。</p><p><strong>Alpha#3</strong> 是这类因子里最干净的一个：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="25" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c33"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c75"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#3</mtext><mo>=</mo><mo>−</mo><mn>1</mn><mo>×</mo><mtext>correlation</mtext><mo stretchy="false">(</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>open</mtext><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>volume</mtext><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>10</mn><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p>一层一层拆：</p><ol><li><code>rank(open)</code>：今天所有股票按开盘价排名，归一化到 0~1</li><li><code>rank(volume)</code>：今天所有股票按成交量排名，归一化到 0~1</li><li><code>correlation(..., 10)</code>：过去 10 天，这两组排名的相关系数</li><li><code>-1 *</code>：取反</li></ol><p>过去 10 天里，如果一只股票开盘价排名高的时候成交量排名也高，相关系数为正，乘以 -1 后因子值为负（做空信号）。反过来，如果开盘价排名和成交量排名是反的（量价背离），因子值为正（做多信号）。</p><p>为什么量价背离反而是买入信号？一种解释是：开盘价上涨但成交量没跟上来，说明不是散户追涨推动的，可能是基本面在缓慢定价。而开盘价涨、成交量也暴涨的情况，往往是短期过热，容易回调。</p><p><strong>Alpha#12</strong> 更直接：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="26" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c32"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c75"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#12</mtext><mo>=</mo><mtext>sign</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>volume</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>×</mo><mo stretchy="false">(</mo><mo>−</mo><mn>1</mn><mo>×</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p>翻译成白话：如果今天成交量比昨天大（<code>sign(delta(volume, 1))</code> = +1），就做空今天的价格变动方向（乘以 <code>-1 * delta(close, 1)</code>）。如果今天成交量缩了，就做多今天的价格变动方向。</p><p>逻辑是：放量上涨后看跌，缩量下跌后看涨。量价配合"异常"的方向更可能反转。</p><p>这类因子在 Alpha 101 里数量最多（32 个）。从 WorldQuant 的角度看，量价关系在短期因子里提供了最多的独立信号源。</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="c1"># Alpha#3 计算示例</span>
+</span></span><span class="line"><span class="cl"><span class="c1"># 假设 df_open 和 df_volume 是 DataFrame，行=日期，列=股票</span>
+</span></span><span class="line"><span class="cl"><span class="n">alpha3</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span> <span class="o">*</span> <span class="n">ts_corr</span><span class="p">(</span><span class="n">rank</span><span class="p">(</span><span class="n">df_open</span><span class="p">),</span> <span class="n">rank</span><span class="p">(</span><span class="n">df_volume</span><span class="p">),</span> <span class="mi">10</span><span class="p">)</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><h3 id="动量与反转类23-个因子">动量与反转类（23 个因子）<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E5%8A%A8%E9%87%8F%E4%B8%8E%E5%8F%8D%E8%BD%AC%E7%B1%BB23-%E4%B8%AA%E5%9B%A0%E5%AD%90">#</a></h3><p>核心逻辑：股票短期（1~5 天）倾向于反转，中期（10~20 天）倾向于延续。</p><p>短期反转的经济直觉很直白：今天涨多了的股票，明天有人获利了结，价格回落。今天跌多了的股票，超卖后有人抄底，价格反弹。这在流动性好的市场里是个稳定现象，背后是做市商和短线交易者的行为模式。</p><p>中期动量的来源不同：信息扩散需要时间，好消息出来后不是所有人同时反应，先知先觉的资金先买，后知后觉的资金跟进，形成趋势。</p><p><strong>Alpha#9</strong> 是一个带条件判断的反转因子：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="27" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c39"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mrow space="4"><mjx-mo class="mjx-n"><mjx-stretchy-v class="mjx-c7B" style="height: 3.4em; vertical-align: -1.45em;"><mjx-beg><mjx-c></mjx-c></mjx-beg><mjx-ext><mjx-c></mjx-c></mjx-ext><mjx-mid><mjx-c></mjx-c></mjx-mid><mjx-ext><mjx-c></mjx-c></mjx-ext><mjx-end><mjx-c></mjx-c></mjx-end><mjx-mark></mjx-mark></mjx-stretchy-v></mjx-mo><mjx-mtable style="min-width: 25.915em;"><mjx-table><mjx-itable><mjx-mtr><mjx-mtd style="text-align: left; padding-right: 0.5em; padding-bottom: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c35"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-tstrut></mjx-tstrut></mjx-mtd><mjx-mtd style="text-align: left; padding-left: 0.5em; padding-bottom: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c66"></mjx-c><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c35"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-tstrut></mjx-tstrut></mjx-mtd></mjx-mtr><mjx-mtr><mjx-mtd style="text-align: left; padding-right: 0.5em; padding-top: 0.1em; padding-bottom: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c35"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-tstrut></mjx-tstrut></mjx-mtd><mjx-mtd style="text-align: left; padding-left: 0.5em; padding-top: 0.1em; padding-bottom: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c66"></mjx-c><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c78"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c35"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="4"><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-tstrut></mjx-tstrut></mjx-mtd></mjx-mtr><mjx-mtr><mjx-mtd style="text-align: left; padding-right: 0.5em; padding-top: 0.1em;"><mjx-mo class="mjx-n"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-tstrut></mjx-tstrut></mjx-mtd><mjx-mtd style="text-align: left; padding-left: 0.5em; padding-top: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-tstrut></mjx-tstrut></mjx-mtd></mjx-mtr></mjx-itable></mjx-table></mjx-mtable><mjx-mo class="mjx-n" style="vertical-align: 0.25em;"></mjx-mo></mjx-mrow></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#9</mtext><mo>=</mo><mrow data-mjx-texclass="INNER"><mo data-mjx-texclass="OPEN">{</mo><mtable columnalign="left left" columnspacing="1em" rowspacing=".2em"><mtr><mtd><mtext>ts_rank</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>5</mn><mo stretchy="false">)</mo></mtd><mtd><mtext>if&nbsp;</mtext><mn>0</mn><mo>&lt;</mo><mtext>ts_min</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>5</mn><mo stretchy="false">)</mo></mtd></mtr><mtr><mtd><mtext>ts_rank</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>5</mn><mo stretchy="false">)</mo></mtd><mtd><mtext>if&nbsp;</mtext><mtext>ts_max</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>5</mn><mo stretchy="false">)</mo><mo>&lt;</mo><mn>0</mn></mtd></mtr><mtr><mtd><mo>−</mo><mn>1</mn><mo>×</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo></mtd><mtd><mtext>otherwise</mtext></mtd></mtr></mtable><mo data-mjx-texclass="CLOSE" fence="true" stretchy="true" symmetric="true"></mo></mrow></math></mjx-assistive-mml></mjx-container><p>前两个条件在判断趋势是否一致：如果过去 5 天每天都在涨（最小变化 &gt; 0），或者每天都在跌（最大变化 &lt; 0），就用 <code>ts_rank</code> 来衡量当前涨/跌幅在近期的位置。否则（涨跌交替），直接用反转信号。两个趋势分支的公式相同，这不是写错了：论文原文就是对"连续上涨"和"连续下跌"两种趋势给出相同的动量度量，区别体现在 delta(close,1) 的符号上。</p><p>这个设计有意思：在单边行情里用动量逻辑（ts_rank），在震荡行情里用反转逻辑。比无脑反转多了一层市场状态判断。</p><p><strong>Alpha#20</strong> 抓的是跳空缺口的回补：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="28" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c32"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c79"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c68"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c79"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c79"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c77"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#20</mtext><mo>=</mo><mo>−</mo><mn>1</mn><mo>×</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>open</mtext><mo>−</mo><mtext>delay</mtext><mo stretchy="false">(</mo><mtext>high</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>×</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>open</mtext><mo>−</mo><mtext>delay</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>×</mo><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>open</mtext><mo>−</mo><mtext>delay</mtext><mo stretchy="false">(</mo><mtext>low</mtext><mo>,</mo><mn>1</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p>三项都在衡量今天开盘价相对于昨天 K 线的位置。如果今天高开（跳空高于昨天的 high、close、low），三项都为正，乘积为正，再乘 -1 变成负值（做空信号）。逻辑是：大幅跳空高开往往过度反应，日内倾向于回落。</p><h3 id="波动率类11-个因子">波动率类（11 个因子）<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E6%B3%A2%E5%8A%A8%E7%8E%87%E7%B1%BB11-%E4%B8%AA%E5%9B%A0%E5%AD%90">#</a></h3><p>核心逻辑：波动率有均值回归的特性。高波动之后往往回落，低波动之后往往放大。</p><p>更细致地说，波动率类因子捕捉的是"波动率状态切换"的时机。一只股票如果最近 5 天非常平静，突然有一天大幅波动，这往往意味着新信息到来，后续可能有趋势性行情。反过来，持续高波动之后，市场逐渐消化信息，波动率趋于收敛。</p><p><strong>Alpha#1</strong> 是一个条件波动率信号：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="29" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c31"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-texatom texclass="ORD"><mjx-mo class="mjx-lop"><mjx-c class="mjx-c28 TEX-S2"></mjx-c></mjx-mo></mjx-texatom><mjx-mtext class="mjx-n"><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c78"></mjx-c></mjx-mtext><mjx-texatom texclass="ORD"><mjx-mo class="mjx-sop"><mjx-c class="mjx-c28 TEX-S1"></mjx-c></mjx-mo></mjx-texatom><mjx-mtext class="mjx-n"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c72"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c75"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c73"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="4"><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-mtext class="mjx-n"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c3F"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c76"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c75"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c73"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c32"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3A"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c32"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c35"></mjx-c></mjx-mn><mjx-texatom texclass="ORD"><mjx-mo class="mjx-sop"><mjx-c class="mjx-c29 TEX-S1"></mjx-c></mjx-mo></mjx-texatom><mjx-texatom texclass="ORD"><mjx-mo class="mjx-lop"><mjx-c class="mjx-c29 TEX-S2"></mjx-c></mjx-mo></mjx-texatom><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="3"><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c2E"></mjx-c><mjx-c class="mjx-c35"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#1</mtext><mo>=</mo><mtext>rank</mtext><mrow data-mjx-texclass="ORD"><mo minsize="1.623em" maxsize="1.623em">(</mo></mrow><mtext>ts_argmax</mtext><mrow data-mjx-texclass="ORD"><mo minsize="1.2em" maxsize="1.2em">(</mo></mrow><mtext>signedpower</mtext><mo stretchy="false">(</mo><mtext>returns</mtext><mo>&lt;</mo><mn>0</mn><mtext>&nbsp;</mtext><mo>?</mo><mtext>&nbsp;</mtext><mtext>stddev</mtext><mo stretchy="false">(</mo><mtext>returns</mtext><mo>,</mo><mn>20</mn><mo stretchy="false">)</mo><mtext>&nbsp;</mtext><mo>:</mo><mtext>&nbsp;</mtext><mtext>close</mtext><mo>,</mo><mtext>&nbsp;</mtext><mn>2</mn><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>5</mn><mrow data-mjx-texclass="ORD"><mo minsize="1.2em" maxsize="1.2em">)</mo></mrow><mrow data-mjx-texclass="ORD"><mo minsize="1.623em" maxsize="1.623em">)</mo></mrow><mo>−</mo><mn>0.5</mn></math></mjx-assistive-mml></mjx-container><p>拆开看：先按条件选信号源（下跌用波动率，上涨用收盘价），用 signedpower 放大差异，ts_argmax 看过去 5 天最大值出现在窗口的哪个位置，最后做截面 rank 再减 0.5（使因子值中心化到 0 附近，正值做多负值做空）。</p><p>核心思路：下跌阶段关注波动率，上涨阶段关注价格。下跌时波动率越高说明恐慌越严重，恐慌到极致（<code>ts_argmax</code> 最近发生）反而是反转信号。</p><p>波动率类因子数量不多（11 个），但底层思路和<a href="https://coriva.eu.org/volatility-trading-strategies/">波动率交易策略</a>相通：波动率本身就是可以交易的标的。</p><h3 id="日内结构类12-个因子">日内结构类（12 个因子）<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E6%97%A5%E5%86%85%E7%BB%93%E6%9E%84%E7%B1%BB12-%E4%B8%AA%E5%9B%A0%E5%AD%90">#</a></h3><p>核心逻辑：开盘价、收盘价、最高价、最低价的相对关系，反映了日内交易者的行为模式。</p><p>比如收盘价比开盘价高多少（日内涨幅），收盘价在日内振幅中的位置（靠近最高价还是最低价），vwap 和收盘价的关系（机构是在均价之上还是之下交易）。</p><p><strong>Alpha#101</strong> 是结构最简单的一个：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="30" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c31"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mfrac space="4"><mjx-frac type="d"><mjx-num><mjx-nstrut type="d"></mjx-nstrut><mjx-mrow><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext></mjx-mrow></mjx-num><mjx-dbox><mjx-dtable><mjx-line type="d"></mjx-line><mjx-row><mjx-den><mjx-dstrut type="d"></mjx-dstrut><mjx-mrow><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c68"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c77"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="3"><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c2E"></mjx-c><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-mrow></mjx-den></mjx-row></mjx-dtable></mjx-dbox></mjx-frac></mjx-mfrac></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#101</mtext><mo>=</mo><mfrac><mrow><mtext>close</mtext><mo>−</mo><mtext>open</mtext></mrow><mrow><mo stretchy="false">(</mo><mtext>high</mtext><mo>−</mo><mtext>low</mtext><mo stretchy="false">)</mo><mo>+</mo><mn>0.001</mn></mrow></mfrac></math></mjx-assistive-mml></mjx-container><p>分子是日内涨跌，分母是日内振幅（加 0.001 防止除零）。这个比值衡量的是"日内收益占振幅的比例"。值接近 +1 说明开盘就是最低价、收盘就是最高价（全天单边上涨）。值接近 0 说明收盘价和开盘价差不多，日内波动都是噪音。</p><p>这个因子本身就是一个经典的技术分析指标，叫做 “close location value”。它的预测含义是：全天单边上涨的股票，次日倾向于（微弱地）延续；全天来回震荡最终平收的股票，缺乏方向性动能。</p><p><strong>Alpha#42</strong> 关注 vwap 和收盘价的关系：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="31" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c34"></mjx-c><mjx-c class="mjx-c32"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mfrac space="4"><mjx-frac type="d"><mjx-num><mjx-nstrut type="d"></mjx-nstrut><mjx-mrow><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c70"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-mrow></mjx-num><mjx-dbox><mjx-dtable><mjx-line type="d"></mjx-line><mjx-row><mjx-den><mjx-dstrut type="d"></mjx-dstrut><mjx-mrow><mjx-mtext class="mjx-n"><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c70"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-mrow></mjx-den></mjx-row></mjx-dtable></mjx-dbox></mjx-frac></mjx-mfrac></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#42</mtext><mo>=</mo><mfrac><mrow><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>vwap</mtext><mo>−</mo><mtext>close</mtext><mo stretchy="false">)</mo></mrow><mrow><mtext>rank</mtext><mo stretchy="false">(</mo><mtext>vwap</mtext><mo>+</mo><mtext>close</mtext><mo stretchy="false">)</mo></mrow></mfrac></math></mjx-assistive-mml></mjx-container><p><code>vwap - close</code> &gt; 0 说明加权平均成交价高于收盘价，意味着"大部分成交发生在价格较高的时候"，收盘时价格回落了。这往往是机构在日内高位出货的信号。因子对这种行为给出做空信号。</p><p>注意 Alpha#42 没有用 delay，它用的全是当天数据。论文里标注这个因子的持仓周期是 0 天，意味着它是一个日内信号。在 T+1 的 A 股市场，这类因子不适用。</p><h3 id="流动性与复合类23-个因子">流动性与复合类（23 个因子）<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E6%B5%81%E5%8A%A8%E6%80%A7%E4%B8%8E%E5%A4%8D%E5%90%88%E7%B1%BB23-%E4%B8%AA%E5%9B%A0%E5%AD%90">#</a></h3><p>核心逻辑：流动性（成交量、换手率）的变化反映了机构资金的进出。</p><p>机构交易和散户交易的一个本质区别是：机构的单子太大，不可能一次性买完。一只股票如果连续几天成交量放大但价格没怎么动，很可能是有大资金在分批建仓。成交量突然萎缩，可能是大资金建仓完毕或者市场进入观望状态。</p><p><strong>Alpha#7</strong> 是一个带条件的流动性信号：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="32" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c41"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c70"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c23"></mjx-c><mjx-c class="mjx-c37"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mrow space="4"><mjx-mo class="mjx-s3"><mjx-c class="mjx-c7B TEX-S3"></mjx-c></mjx-mo><mjx-mtable style="min-width: 34.978em;"><mjx-table><mjx-itable><mjx-mtr><mjx-mtd style="text-align: left; padding-right: 0.5em; padding-bottom: 0.1em;"><mjx-mo class="mjx-n"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c5F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c6E"></mjx-c><mjx-c class="mjx-c6B"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c62"></mjx-c><mjx-c class="mjx-c73"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c37"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="2"><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mn class="mjx-n"><mjx-c class="mjx-c36"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-cD7"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c67"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c61"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mtext class="mjx-n"><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="2"><mjx-c class="mjx-c37"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-tstrut></mjx-tstrut></mjx-mtd><mjx-mtd style="text-align: left; padding-left: 0.5em; padding-bottom: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c66"></mjx-c><mjx-c class="mjx-cA0"></mjx-c></mjx-mtext><mjx-mtext class="mjx-n"><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c64"></mjx-c><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c32"></mjx-c><mjx-c class="mjx-c30"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="4"><mjx-c class="mjx-c76"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c75"></mjx-c><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-tstrut></mjx-tstrut></mjx-mtd></mjx-mtr><mjx-mtr><mjx-mtd style="text-align: left; padding-right: 0.5em; padding-top: 0.1em;"><mjx-mo class="mjx-n"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn><mjx-tstrut></mjx-tstrut></mjx-mtd><mjx-mtd style="text-align: left; padding-left: 0.5em; padding-top: 0.1em;"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c68"></mjx-c><mjx-c class="mjx-c65"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c77"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c65"></mjx-c></mjx-mtext><mjx-tstrut></mjx-tstrut></mjx-mtd></mjx-mtr></mjx-itable></mjx-table></mjx-mtable><mjx-mo class="mjx-n" style="vertical-align: 0.25em;"></mjx-mo></mjx-mrow></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mtext>Alpha#7</mtext><mo>=</mo><mrow data-mjx-texclass="INNER"><mo data-mjx-texclass="OPEN">{</mo><mtable columnalign="left left" columnspacing="1em" rowspacing=".2em"><mtr><mtd><mo>−</mo><mn>1</mn><mo>×</mo><mtext>ts_rank</mtext><mo stretchy="false">(</mo><mtext>abs</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>7</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo><mo>,</mo><mtext>&nbsp;</mtext><mn>60</mn><mo stretchy="false">)</mo><mo>×</mo><mtext>sign</mtext><mo stretchy="false">(</mo><mtext>delta</mtext><mo stretchy="false">(</mo><mtext>close</mtext><mo>,</mo><mn>7</mn><mo stretchy="false">)</mo><mo stretchy="false">)</mo></mtd><mtd><mtext>if&nbsp;</mtext><mtext>adv20</mtext><mo>&lt;</mo><mtext>volume</mtext></mtd></mtr><mtr><mtd><mo>−</mo><mn>1</mn></mtd><mtd><mtext>otherwise</mtext></mtd></mtr></mtable><mo data-mjx-texclass="CLOSE" fence="true" stretchy="true" symmetric="true"></mo></mrow></math></mjx-assistive-mml></mjx-container><p>条件判断：今天的成交量是否超过 20 日均量。如果超过（放量），因子用过去 7 天价格变化的绝对值在 60 天里的排名，乘以变化方向，再取反。如果没放量（缩量），直接给 -1（做空信号）。</p><p>逻辑是：缩量的时候一律看空，因为缩量意味着参与度下降，支撑力弱。放量的时候就看价格变化的"力度"在近期历史中处于什么位置，力度越大说明这笔放量越有意义。</p><p>这类因子比较复杂，经常嵌套多个算子和条件判断。它们属于"复合因子"，融合了量、价、波动率等多维信息。单独理解时比较绕，但赚钱逻辑大多可以归结为"跟着聪明钱走"。</p><h2 id="alpha-101-因子完整分类对照表">Alpha 101 因子完整分类对照表<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#alpha-101-%E5%9B%A0%E5%AD%90%E5%AE%8C%E6%95%B4%E5%88%86%E7%B1%BB%E5%AF%B9%E7%85%A7%E8%A1%A8">#</a></h2><p>下表把 101 个因子全部归入五个类别。“核心算子"列标出该因子最核心的计算逻辑，“IndNeut” 标记是否需要行业中性化。</p><p><img alt="Alpha 101 factor classification distribution" loading="lazy" src="https://coriva.eu.org/alpha101-overview/alpha101-classification.webp"></p><table><thead><tr><th>编号</th><th>类别</th><th>核心算子</th><th>一句话逻辑</th><th>IndNeut</th><th>详解篇</th></tr></thead><tbody><tr><td>#1</td><td>波动率</td><td>stddev, ts_argmax</td><td>下跌时看波动率极值位置</td><td>否</td><td>第4篇</td></tr><tr><td>#2</td><td>量价背离</td><td>correlation, rank</td><td>量价排名走势相关性 + 日内涨跌</td><td>否</td><td>第2篇</td></tr><tr><td>#3</td><td>量价背离</td><td>correlation, rank</td><td>开盘价-成交量排名相关性</td><td>否</td><td>第2篇</td></tr><tr><td>#4</td><td>动量反转</td><td>ts_rank</td><td>低位做空信号</td><td>否</td><td>第3篇</td></tr><tr><td>#5</td><td>日内结构</td><td>rank, ts_rank, vwap</td><td>vwap 偏离的排名变化</td><td>否</td><td>第4篇</td></tr><tr><td>#6</td><td>量价背离</td><td>correlation</td><td>开盘价与成交量的直接相关性</td><td>否</td><td>第2篇</td></tr><tr><td>#7</td><td>流动性</td><td>adv, ts_rank, delta</td><td>放量/缩量条件下的价格动量</td><td>否</td><td>第5篇</td></tr><tr><td>#8</td><td>动量反转</td><td>rank, delta, sum</td><td>开盘价变化与收益排名的交互</td><td>否</td><td>第3篇</td></tr><tr><td>#9</td><td>动量反转</td><td>delta, ts_min/max</td><td>条件反转：趋势 vs 震荡</td><td>否</td><td>第3篇</td></tr><tr><td>#10</td><td>动量反转</td><td>delta, ts_min/max</td><td>与#9 类似的条件动量</td><td>否</td><td>第3篇</td></tr><tr><td>#11</td><td>量价背离</td><td>rank, correlation, vwap</td><td>vwap/close/volume 三者互动</td><td>否</td><td>第2篇</td></tr><tr><td>#12</td><td>量价背离</td><td>sign, delta</td><td>量变方向 × 价变方向</td><td>否</td><td>第2篇</td></tr><tr><td>#13</td><td>量价背离</td><td>rank, covariance</td><td>收盘价与成交量的协方差排名</td><td>否</td><td>第2篇</td></tr><tr><td>#14</td><td>量价背离</td><td>correlation, returns</td><td>开盘价与收益率的相关性</td><td>否</td><td>第2篇</td></tr><tr><td>#15</td><td>量价背离</td><td>correlation, rank</td><td>最高价与成交量排名的相关性</td><td>否</td><td>第2篇</td></tr><tr><td>#16</td><td>量价背离</td><td>covariance, rank</td><td>最高价与成交量的协方差排名</td><td>否</td><td>第2篇</td></tr><tr><td>#17</td><td>量价背离</td><td>rank, ts_rank, delta, volume</td><td>收盘价排名与 volume 动量排名</td><td>否</td><td>第2篇</td></tr><tr><td>#18</td><td>波动率</td><td>correlation, stddev</td><td>收盘价与开盘价的相关性</td><td>否</td><td>第4篇</td></tr><tr><td>#19</td><td>动量反转</td><td>returns, delay</td><td>条件收益率反转</td><td>否</td><td>第3篇</td></tr><tr><td>#20</td><td>动量反转</td><td>rank, open, delay</td><td>跳空缺口回补</td><td>否</td><td>第3篇</td></tr><tr><td>#21</td><td>波动率</td><td>mean, stddev, close</td><td>均值偏离 + 成交量条件</td><td>否</td><td>第4篇</td></tr><tr><td>#22</td><td>量价背离</td><td>correlation, delta, stddev</td><td>最高价与成交量相关性 + 价格变化</td><td>否</td><td>第2篇</td></tr><tr><td>#23</td><td>动量反转</td><td>sma, delta, high</td><td>最高价均值条件反转</td><td>否</td><td>第3篇</td></tr><tr><td>#24</td><td>动量反转</td><td>sma, delta, close</td><td>收盘价均值条件反转</td><td>否</td><td>第3篇</td></tr><tr><td>#25</td><td>量价背离</td><td>rank, returns, adv, vwap</td><td>收益率 × 成交量偏离 × vwap 排名</td><td>否</td><td>第2篇</td></tr><tr><td>#26</td><td>量价背离</td><td>correlation, ts_rank, volume</td><td>时序排名相关性 + 成交量</td><td>否</td><td>第2篇</td></tr><tr><td>#27</td><td>量价背离</td><td>rank, correlation, volume</td><td>量价相关性的排名分位</td><td>否</td><td>第2篇</td></tr><tr><td>#28</td><td>量价背离</td><td>correlation, adv, rank</td><td>成交量与均量的相关性</td><td>否</td><td>第2篇</td></tr><tr><td>#29</td><td>动量反转</td><td>delta, ts_rank, returns</td><td>收盘价变化的排名趋势</td><td>否</td><td>第3篇</td></tr><tr><td>#30</td><td>动量反转</td><td>delta, close, volume</td><td>价量变化的符号交互</td><td>否</td><td>第3篇</td></tr><tr><td>#31</td><td>流动性</td><td>rank, adv, correlation, decay_linear</td><td>流动性 + 量价衰减相关</td><td>否</td><td>第5篇</td></tr><tr><td>#32</td><td>量价背离</td><td>scale, correlation</td><td>均值偏离 × 量价相关性衰减</td><td>否</td><td>第2篇</td></tr><tr><td>#33</td><td>动量反转</td><td>rank, open/close</td><td>开收盘价排名反转</td><td>否</td><td>第3篇</td></tr><tr><td>#34</td><td>波动率</td><td>rank, stddev, delta, close</td><td>波动率排名与价格反转</td><td>否</td><td>第4篇</td></tr><tr><td>#35</td><td>动量反转</td><td>rank, returns, volume, ts_rank</td><td>多因子复合反转</td><td>否</td><td>第3篇</td></tr><tr><td>#36</td><td>波动率</td><td>correlation, rank, adv</td><td>多维相关性排名</td><td>否</td><td>第4篇</td></tr><tr><td>#37</td><td>动量反转</td><td>correlation, rank, delay</td><td>开盘价排名的自相关</td><td>否</td><td>第3篇</td></tr><tr><td>#38</td><td>动量反转</td><td>rank, close, open</td><td>收盘价排名与日内涨幅</td><td>否</td><td>第3篇</td></tr><tr><td>#39</td><td>动量反转</td><td>rank, delta, decay_linear, returns</td><td>衰减动量信号</td><td>否</td><td>第3篇</td></tr><tr><td>#40</td><td>量价背离</td><td>rank, stddev, correlation</td><td>高价波动率 × 成交量排名</td><td>否</td><td>第2篇</td></tr><tr><td>#41</td><td>日内结构</td><td>high, low, vwap</td><td>日内振幅与 vwap 的关系</td><td>否</td><td>第4篇</td></tr><tr><td>#42</td><td>日内结构</td><td>rank, vwap, close</td><td>vwap 与收盘价偏离</td><td>否</td><td>第4篇</td></tr><tr><td>#43</td><td>量价背离</td><td>rank, adv, delta, close</td><td>流动性排名 × 价格变化</td><td>否</td><td>第2篇</td></tr><tr><td>#44</td><td>量价背离</td><td>correlation, rank</td><td>最低价与成交量排名相关性</td><td>否</td><td>第2篇</td></tr><tr><td>#45</td><td>量价背离</td><td>rank, delta, correlation, decay_linear</td><td>收盘价变化排名 × 量价衰减相关</td><td>否</td><td>第2篇</td></tr><tr><td>#46</td><td>动量反转</td><td>delay, delta, close</td><td>条件价格动量</td><td>否</td><td>第3篇</td></tr><tr><td>#47</td><td>日内结构</td><td>rank, adv, high, close, vwap</td><td>流动性加权的 vwap-close 偏离</td><td>否</td><td>第4篇</td></tr><tr><td>#48</td><td>流动性</td><td>correlation, rank, delta</td><td>行业中性量价相关</td><td>是</td><td>第5篇</td></tr><tr><td>#49</td><td>动量反转</td><td>delta, delay, close</td><td>条件价格反转</td><td>否</td><td>第3篇</td></tr><tr><td>#50</td><td>量价背离</td><td>correlation, rank, ts_rank, volume</td><td>量价排名的时序相关</td><td>否</td><td>第2篇</td></tr><tr><td>#51</td><td>动量反转</td><td>delta, delay, close</td><td>条件延迟反转</td><td>否</td><td>第3篇</td></tr><tr><td>#52</td><td>动量反转</td><td>delta, ts_min, ts_rank, volume</td><td>价格低点 + 成交量排名</td><td>否</td><td>第3篇</td></tr><tr><td>#53</td><td>动量反转</td><td>delta, close, high, low</td><td>日内位置变化</td><td>否</td><td>第3篇</td></tr><tr><td>#54</td><td>日内结构</td><td>open, close, low</td><td>日内偏离结构</td><td>否</td><td>第4篇</td></tr><tr><td>#55</td><td>量价背离</td><td>correlation, rank, high, low, volume</td><td>日内振幅与成交量相关</td><td>否</td><td>第2篇</td></tr><tr><td>#56</td><td>动量反转</td><td>rank, returns, cap</td><td>市值与收益排名的交互</td><td>否</td><td>第3篇</td></tr><tr><td>#57</td><td>波动率</td><td>decay_linear, rank, ts_argmin, close</td><td>衰减最低点位置排名</td><td>否</td><td>第4篇</td></tr><tr><td>#58</td><td>流动性</td><td>correlation, rank, volume</td><td>行业中性量价相关</td><td>是</td><td>第5篇</td></tr><tr><td>#59</td><td>流动性</td><td>correlation, rank, volume</td><td>行业中性量价相关变体</td><td>是</td><td>第5篇</td></tr><tr><td>#60</td><td>量价背离</td><td>scale, correlation, rank</td><td>量价相关性 × 日内涨跌缩放</td><td>否</td><td>第2篇</td></tr><tr><td>#61</td><td>流动性</td><td>rank, vwap, adv</td><td>vwap 排名与均量排名较量</td><td>否</td><td>第5篇</td></tr><tr><td>#62</td><td>日内结构</td><td>rank, vwap, correlation, adv</td><td>vwap 排名 × 量价相关</td><td>否</td><td>第4篇</td></tr><tr><td>#63</td><td>流动性</td><td>rank, vwap, delta, decay_linear, adv</td><td>流动性衰减信号</td><td>是</td><td>第5篇</td></tr><tr><td>#64</td><td>日内结构</td><td>rank, correlation, vwap, adv</td><td>vwap 流动性相关排名</td><td>是</td><td>第4篇</td></tr><tr><td>#65</td><td>日内结构</td><td>rank, correlation, vwap, adv</td><td>vwap 排名相关性衰减</td><td>是</td><td>第4篇</td></tr><tr><td>#66</td><td>日内结构</td><td>rank, decay_linear, vwap, delta</td><td>vwap 偏离的衰减动量</td><td>是</td><td>第4篇</td></tr><tr><td>#67</td><td>流动性</td><td>rank, correlation, high, adv</td><td>最高价与均量的相关排名</td><td>是</td><td>第5篇</td></tr><tr><td>#68</td><td>日内结构</td><td>rank, correlation, high, adv, close</td><td>最高价-均量相关 × 收盘排名</td><td>是</td><td>第4篇</td></tr><tr><td>#69</td><td>流动性</td><td>rank, ts_rank, delta, close, adv</td><td>行业中性价格动量排名</td><td>是</td><td>第5篇</td></tr><tr><td>#70</td><td>流动性</td><td>rank, delta, close, vwap</td><td>行业中性价格-vwap 变化</td><td>是</td><td>第5篇</td></tr><tr><td>#71</td><td>流动性</td><td>decay_linear, correlation, rank, close, adv</td><td>多层衰减流动性信号</td><td>是</td><td>第5篇</td></tr><tr><td>#72</td><td>流动性</td><td>rank, correlation, vwap, adv, decay_linear</td><td>衰减量价排名相关</td><td>是</td><td>第5篇</td></tr><tr><td>#73</td><td>日内结构</td><td>rank, decay_linear, vwap, delta, open</td><td>vwap 衰减 × 开盘变化</td><td>是</td><td>第4篇</td></tr><tr><td>#74</td><td>量价背离</td><td>rank, correlation, close, adv</td><td>收盘价与均量相关排名</td><td>是</td><td>第2篇</td></tr><tr><td>#75</td><td>流动性</td><td>rank, correlation, vwap, volume</td><td>vwap 与成交量排名的相关性</td><td>否</td><td>第5篇</td></tr><tr><td>#76</td><td>流动性</td><td>rank, decay_linear, correlation, vwap</td><td>衰减 vwap 排名相关</td><td>是</td><td>第5篇</td></tr><tr><td>#77</td><td>量价背离</td><td>rank, decay_linear, delta, correlation</td><td>价格变化衰减 × 量价相关</td><td>否</td><td>第2篇</td></tr><tr><td>#78</td><td>量价背离</td><td>rank, correlation, low, adv</td><td>最低价与均量相关排名</td><td>否</td><td>第2篇</td></tr><tr><td>#79</td><td>流动性</td><td>rank, delta, vwap, correlation, close</td><td>行业中性 vwap 变化排名</td><td>是</td><td>第5篇</td></tr><tr><td>#80</td><td>流动性</td><td>rank, delta, close, correlation, adv</td><td>行业中性变化与量价相关</td><td>是</td><td>第5篇</td></tr><tr><td>#81</td><td>量价背离</td><td>rank, correlation, vwap, adv</td><td>vwap 与均量的排名相关</td><td>否</td><td>第2篇</td></tr><tr><td>#82</td><td>流动性</td><td>rank, delta, open, correlation, adv</td><td>行业中性开盘变化排名</td><td>是</td><td>第5篇</td></tr><tr><td>#83</td><td>波动率</td><td>rank, delay, high, low</td><td>日内振幅的滞后排名</td><td>否</td><td>第4篇</td></tr><tr><td>#84</td><td>动量反转</td><td>rank, vwap, close, signedpower</td><td>vwap-close 偏离的幂放大</td><td>否</td><td>第3篇</td></tr><tr><td>#85</td><td>量价背离</td><td>rank, correlation, high, adv</td><td>最高价排名与均量相关</td><td>否</td><td>第2篇</td></tr><tr><td>#86</td><td>波动率</td><td>rank, correlation, close, adv, delay</td><td>滞后量价相关条件信号</td><td>是</td><td>第4篇</td></tr><tr><td>#87</td><td>流动性</td><td>rank, decay_linear, delta, vwap, adv</td><td>衰减 vwap 动量</td><td>是</td><td>第5篇</td></tr><tr><td>#88</td><td>量价背离</td><td>rank, decay_linear, correlation, open</td><td>开盘价排名衰减相关</td><td>否</td><td>第2篇</td></tr><tr><td>#89</td><td>流动性</td><td>decay_linear, correlation, rank</td><td>衰减相关性信号</td><td>否</td><td>第5篇</td></tr><tr><td>#90</td><td>动量反转</td><td>rank, correlation, close, adv</td><td>收盘与均量排名相关反转</td><td>否</td><td>第3篇</td></tr><tr><td>#91</td><td>流动性</td><td>rank, correlation, close, adv, decay_linear</td><td>收盘-均量衰减相关</td><td>是</td><td>第5篇</td></tr><tr><td>#92</td><td>量价背离</td><td>rank, decay_linear, delta, correlation</td><td>多维衰减量价信号</td><td>否</td><td>第2篇</td></tr><tr><td>#93</td><td>流动性</td><td>rank, correlation, vwap, adv, decay_linear</td><td>行业中性衰减 vwap 相关</td><td>是</td><td>第5篇</td></tr><tr><td>#94</td><td>波动率</td><td>rank, correlation, adv</td><td>成交量排名与低位信号</td><td>否</td><td>第4篇</td></tr><tr><td>#95</td><td>量价背离</td><td>rank, correlation, high, adv</td><td>最高价排名与均量相关</td><td>否</td><td>第2篇</td></tr><tr><td>#96</td><td>波动率</td><td>decay_linear, rank, ts_argmax, correlation</td><td>衰减极值位置 × 量价相关</td><td>否</td><td>第4篇</td></tr><tr><td>#97</td><td>流动性</td><td>rank, decay_linear, delta, correlation, adv</td><td>行业中性衰减流动性</td><td>是</td><td>第5篇</td></tr><tr><td>#98</td><td>波动率</td><td>rank, decay_linear, correlation, vwap, adv</td><td>衰减 vwap 相关排名</td><td>否</td><td>第4篇</td></tr><tr><td>#99</td><td>量价背离</td><td>rank, correlation, high, volume</td><td>最高价与成交量排名相关</td><td>否</td><td>第2篇</td></tr><tr><td>#100</td><td>流动性</td><td>rank, stddev, correlation, adv</td><td>波动率与流动性的相关排名</td><td>是</td><td>第5篇</td></tr><tr><td>#101</td><td>日内结构</td><td>close, open, high, low</td><td>日内收益占振幅比</td><td>否</td><td>第4篇</td></tr></tbody></table><h2 id="实操提示">实操提示<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E5%AE%9E%E6%93%8D%E6%8F%90%E7%A4%BA">#</a></h2><p><strong>公式里的小数参数不要过度解读。</strong> Alpha#4 里出现了 <code>ts_rank(...)</code> 的窗口期 9.99922，Alpha#35 里有 <code>2.21</code> 这种看起来很精确的数字。这些参数是机器优化出来的，不是人拍脑袋定的。它们在样本内 overfit 的概率很高，换成整数（10、2）效果可能差不多。</p><p><strong>26 个因子需要行业分类数据。</strong> 表里标了 “IndNeut” 的因子用到了 IndNeutralize，需要每只股票的行业归属。美股用 GICS 或 SIC 分类，A 股用申万行业分类。如果你手头没有行业数据，先做剩下的 75 个因子，这些足够搭建一个像样的因子库了。</p><p><strong>少数因子是纯日内信号。</strong> Alpha#42、#54 这类因子没有用 delay，完全基于当天 OHLCV 数据。论文里它们的持仓周期接近 0 天，是日内交易信号。在 T+1 的 A 股市场直接做不了，但可以把信号延迟一天作为次日的选股因子，效果会打折。</p><p><strong>单因子 ≠ 策略。</strong> 论文发表于 2016 年，距今已经 10 年。任何单个因子在被公开之后都会经历 alpha 衰减，因为太多人用同样的信号交易，超额收益被套利掉。但分类逻辑不会过时：量价背离、动量反转、波动率均值回归这些经济规律不会因为一篇论文的发表而消失。</p><p><strong>论文的设计背景是美股大盘股。</strong> 这 101 个因子是在约 1000 只美股大盘股上开发的，假设了美元中性、市值加权等约束条件。直接搬到 A 股小盘股或其他市场，某些因子的表现可能差异很大。比如 A 股的 T+1 限制、涨跌停板、散户比例偏高，都会影响反转类因子的有效性。跨市场使用时需要做本地化回测验证。</p><p>把单因子当作积木，通过因子组合（多因子模型）来构建策略，才是 Alpha 101 的正确用法。因子之间的平均相关性只有 15.9%，说明它们捕捉的是不同维度的信息，组合后的分散化效果很好。策略评估可以参考<a href="https://coriva.eu.org/quant-metrics-guide/">量化投资常用指标大全</a>，用夏普比率、最大回撤等指标衡量组合表现。</p><h2 id="系列导航">系列导航<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/alpha101-overview/#%E7%B3%BB%E5%88%97%E5%AF%BC%E8%88%AA">#</a></h2><p>这是 Alpha 101 系列的第一篇，后续四篇会按类别深入拆解具体因子：</p><ul><li><strong><a href="https://coriva.eu.org/alpha101-price-volume/">第 2 篇：量价背离类因子</a></strong>（32 个），拆解价量关系的多种度量方式</li><li><strong><a href="https://coriva.eu.org/alpha101-momentum/">第 3 篇：动量与反转类因子</a></strong>（23 个），搞清楚什么时候该跟趋势、什么时候该做反转</li><li><strong><a href="https://coriva.eu.org/alpha101-volatility/">第 4 篇：波动率与日内结构类因子</a></strong>（23 个），波动率均值回归 + OHLCV 的日内信息</li><li><strong><a href="https://coriva.eu.org/alpha101-liquidity/">第 5 篇：流动性与复合因子 + 因子组合实战</a></strong>（23 个），从单因子到多因子模型</li></ul><p>如果你对量化交易的基础评估指标还不太熟悉，建议先看<a href="https://coriva.eu.org/quant-metrics-guide/">量化投资常用指标大全</a>，搞清楚夏普比率、最大回撤这些概念。波动率类因子和<a href="https://coriva.eu.org/volatility-trading-strategies/">波动率交易策略</a>的思路相通，感兴趣可以交叉阅读。</p></div><footer class="post-footer"><ul class="post-tags"><li><a href="https://coriva.eu.org/tags/quant/">Quant</a></li><li><a href="https://coriva.eu.org/tags/trading/">Trading</a></li></ul><nav class="paginav"><a class="prev" href="https://coriva.eu.org/alpha101-price-volume/"><span class="title">« 上一页</span><br><span>Alpha 101 量价背离类因子详解</span>
+</a><a class="next" href="https://coriva.eu.org/volatility-trading-strategies/"><span class="title">下一页 »</span><br><span>波动率交易策略入门：做多与做空波动率的六种方法</span></a></nav></footer><div id="waline" data-v-app=""><div data-waline=""><!--v-if--><div class="wl-comment"><!--v-if--><div class="wl-panel"><div class="wl-header item3"><div class="wl-header-item"><label for="wl-nick">NickName</label><input id="wl-nick" class="wl-input wl-nick" name="nick" type="text"></div><div class="wl-header-item"><label for="wl-mail">E-Mail</label><input id="wl-mail" class="wl-input wl-mail" name="mail" type="email"></div><div class="wl-header-item"><label for="wl-link">Website</label><input id="wl-link" class="wl-input wl-link" name="link" type="text"></div></div><textarea id="wl-edit" class="wl-editor" placeholder="Comment here..."></textarea><div class="wl-preview" style="display: none;"><hr><h4>Preview:</h4><div class="wl-content"></div></div><div class="wl-footer"><div class="wl-actions"><a href="https://guides.github.com/features/mastering-markdown/" title="Markdown Guide" aria-label="Markdown is supported" class="wl-action" target="_blank" rel="noopener noreferrer"><svg width="16" height="16" ariaHidden="true"><path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.69C0 12.48.52 13 1.15 13h13.69c.64 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3zM9 11H7V8L5.5 9.92 4 8v3H2V5h2l1.5 2L7 5h2v6zm2.99.5L9.5 8H11V5h2v3h1.5l-2.51 3.5z" fill="currentColor"></path></svg></a><button type="button" class="wl-action" title="Emoji" style=""><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M563.2 463.3 677 540c1.7 1.2 3.7 1.8 5.8 1.8.7 0 1.4-.1 2-.2 2.7-.5 5.1-2.1 6.6-4.4l25.3-37.8c1.5-2.3 2.1-5.1 1.6-7.8s-2.1-5.1-4.4-6.6l-73.6-49.1 73.6-49.1c2.3-1.5 3.9-3.9 4.4-6.6.5-2.7 0-5.5-1.6-7.8l-25.3-37.8a10.1 10.1 0 0 0-6.6-4.4c-.7-.1-1.3-.2-2-.2-2.1 0-4.1.6-5.8 1.8l-113.8 76.6c-9.2 6.2-14.7 16.4-14.7 27.5.1 11 5.5 21.3 14.7 27.4zM387 348.8h-45.5c-5.7 0-10.4 4.7-10.4 10.4v153.3c0 5.7 4.7 10.4 10.4 10.4H387c5.7 0 10.4-4.7 10.4-10.4V359.2c0-5.7-4.7-10.4-10.4-10.4zm333.8 241.3-41-20a10.3 10.3 0 0 0-8.1-.5c-2.6.9-4.8 2.9-5.9 5.4-30.1 64.9-93.1 109.1-164.4 115.2-5.7.5-9.9 5.5-9.5 11.2l3.9 45.5c.5 5.3 5 9.5 10.3 9.5h.9c94.8-8 178.5-66.5 218.6-152.7 2.4-5 .3-11.2-4.8-13.6zm186-186.1c-11.9-42-30.5-81.4-55.2-117.1-24.1-34.9-53.5-65.6-87.5-91.2-33.9-25.6-71.5-45.5-111.6-59.2-41.2-14-84.1-21.1-127.8-21.1h-1.2c-75.4 0-148.8 21.4-212.5 61.7-63.7 40.3-114.3 97.6-146.5 165.8-32.2 68.1-44.3 143.6-35.1 218.4 9.3 74.8 39.4 145 87.3 203.3.1.2.3.3.4.5l36.2 38.4c1.1 1.2 2.5 2.1 3.9 2.6 73.3 66.7 168.2 103.5 267.5 103.5 73.3 0 145.2-20.3 207.7-58.7 37.3-22.9 70.3-51.5 98.1-85 27.1-32.7 48.7-69.5 64.2-109.1 15.5-39.7 24.4-81.3 26.6-123.8 2.4-43.6-2.5-87-14.5-129zm-60.5 181.1c-8.3 37-22.8 72-43 104-19.7 31.1-44.3 58.6-73.1 81.7-28.8 23.1-61 41-95.7 53.4-35.6 12.7-72.9 19.1-110.9 19.1-82.6 0-161.7-30.6-222.8-86.2l-34.1-35.8c-23.9-29.3-42.4-62.2-55.1-97.7-12.4-34.7-18.8-71-19.2-107.9-.4-36.9 5.4-73.3 17.1-108.2 12-35.8 30-69.2 53.4-99.1 31.7-40.4 71.1-72 117.2-94.1 44.5-21.3 94-32.6 143.4-32.6 49.3 0 97 10.8 141.8 32 34.3 16.3 65.3 38.1 92 64.8 26.1 26 47.5 56 63.6 89.2 16.2 33.2 26.6 68.5 31 105.1 4.6 37.5 2.7 75.3-5.6 112.3z" fill="currentColor"></path></svg></button><!--v-if--><input id="wl-image-upload" class="upload" aria-hidden="true" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif"><label for="wl-image-upload" class="wl-action" title="Upload Image" aria-label="Upload Image"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M784 112H240c-88 0-160 72-160 160v480c0 88 72 160 160 160h544c88 0 160-72 160-160V272c0-88-72-160-160-160zm96 640c0 52.8-43.2 96-96 96H240c-52.8 0-96-43.2-96-96V272c0-52.8 43.2-96 96-96h544c52.8 0 96 43.2 96 96v480z" fill="currentColor"></path><path d="M352 480c52.8 0 96-43.2 96-96s-43.2-96-96-96-96 43.2-96 96 43.2 96 96 96zm0-128c17.6 0 32 14.4 32 32s-14.4 32-32 32-32-14.4-32-32 14.4-32 32-32zm462.4 379.2-3.2-3.2-177.6-177.6c-25.6-25.6-65.6-25.6-91.2 0l-80 80-36.8-36.8c-25.6-25.6-65.6-25.6-91.2 0L200 728c-4.8 6.4-8 14.4-8 24 0 17.6 14.4 32 32 32 9.6 0 16-3.2 22.4-9.6L380.8 640l134.4 134.4c6.4 6.4 14.4 9.6 24 9.6 17.6 0 32-14.4 32-32 0-9.6-4.8-17.6-9.6-24l-52.8-52.8 80-80L769.6 776c6.4 4.8 12.8 8 20.8 8 17.6 0 32-14.4 32-32 0-8-3.2-16-8-20.8z" fill="currentColor"></path></svg></label><button type="button" class="wl-action" title="Preview"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M710.816 654.301c70.323-96.639 61.084-230.578-23.705-314.843-46.098-46.098-107.183-71.109-172.28-71.109-65.008 0-126.092 25.444-172.28 71.109-45.227 46.098-70.756 107.183-70.756 172.106 0 64.923 25.444 126.007 71.194 172.106 46.099 46.098 107.184 71.109 172.28 71.109 51.414 0 100.648-16.212 142.824-47.404l126.53 126.006c7.058 7.06 16.297 10.979 26.406 10.979 10.105 0 19.343-3.919 26.402-10.979 14.467-14.467 14.467-38.172 0-52.723L710.816 654.301zm-315.107-23.265c-65.88-65.88-65.88-172.54 0-238.42 32.069-32.07 74.245-49.149 119.471-49.149 45.227 0 87.407 17.603 119.472 49.149 65.88 65.879 65.88 172.539 0 238.42-63.612 63.178-175.242 63.178-238.943 0zm0 0" fill="currentColor"></path><path d="M703.319 121.603H321.03c-109.8 0-199.469 89.146-199.469 199.38v382.034c0 109.796 89.236 199.38 199.469 199.38h207.397c20.653 0 37.384-16.645 37.384-37.299 0-20.649-16.731-37.296-37.384-37.296H321.03c-68.582 0-124.352-55.77-124.352-124.267V321.421c0-68.496 55.77-124.267 124.352-124.267h382.289c68.582 0 124.352 55.771 124.352 124.267V524.72c0 20.654 16.736 37.299 37.385 37.299 20.654 0 37.384-16.645 37.384-37.299V320.549c-.085-109.8-89.321-198.946-199.121-198.946zm0 0" fill="currentColor"></path></svg></button></div><div class="wl-info"><div class="wl-captcha-container"></div><div class="wl-text-number">0 <!--v-if--> &nbsp;Words</div><button type="button" class="wl-btn">Login</button><button type="submit" class="primary wl-btn" title="Cmd|Ctrl + Enter">Submit</button></div><div class="wl-gif-popup"><input type="text" placeholder="Search GIF"><!--v-if--><div class="wl-loading"><svg width="30" height="30" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid"><circle cx="50" cy="50" fill="none" stroke="currentColor" strokeWidth="4" r="40" stroke-dasharray="85 30"><animateTransform attributeName="transform" type="rotate" repeatCount="indefinite" dur="1s" values="0 50 50;360 50 50" keyTimes="0;1"></animateTransform></circle></svg></div></div><div class="wl-emoji-popup"><div class="wl-tab-wrapper"><button type="button" title="weibo_smile"><!--v-if--></button><button type="button" title="weibo_lovely"><!--v-if--></button><button type="button" title="weibo_blush"><!--v-if--></button><button type="button" title="weibo_grin"><!--v-if--></button><button type="button" title="weibo_laugh"><!--v-if--></button><button type="button" title="weibo_joy"><!--v-if--></button><button type="button" title="weibo_angry"><!--v-if--></button><button type="button" title="weibo_bye"><!--v-if--></button><button type="button" title="weibo_hammer"><!--v-if--></button><button type="button" title="weibo_kiss"><!--v-if--></button><button type="button" title="weibo_love"><!--v-if--></button><button type="button" title="weibo_mask"><!--v-if--></button><button type="button" title="weibo_money"><!--v-if--></button><button type="button" title="weibo_quiet"><!--v-if--></button><button type="button" title="weibo_rage"><!--v-if--></button><button type="button" title="weibo_sad"><!--v-if--></button><button type="button" title="weibo_shy"><!--v-if--></button><button type="button" title="weibo_sick"><!--v-if--></button><button type="button" title="weibo_slient"><!--v-if--></button><button type="button" title="weibo_smirk"><!--v-if--></button><button type="button" title="weibo_slap"><!--v-if--></button><button type="button" title="weibo_antic"><!--v-if--></button><button type="button" title="weibo_desire"><!--v-if--></button><button type="button" title="weibo_longing"><!--v-if--></button><button type="button" title="weibo_no_idea"><!--v-if--></button><button type="button" title="weibo_look_down"><!--v-if--></button><button type="button" title="weibo_clap"><!--v-if--></button><button type="button" title="weibo_yum"><!--v-if--></button><button type="button" title="weibo_sleep"><!--v-if--></button><button type="button" title="weibo_dizzy_face"><!--v-if--></button><button type="button" title="weibo_chuckle"><!--v-if--></button><button type="button" title="weibo_disappointed"><!--v-if--></button><button type="button" title="weibo_flushed"><!--v-if--></button><button type="button" title="weibo_heart_eyes"><!--v-if--></button><button type="button" title="weibo_no"><!--v-if--></button><button type="button" title="weibo_shuai"><!--v-if--></button><button type="button" title="weibo_suprised"><!--v-if--></button><button type="button" title="weibo_think"><!--v-if--></button><button type="button" title="weibo_vomit"><!--v-if--></button><button type="button" title="weibo_scream"><!--v-if--></button><button type="button" title="weibo_sleepy"><!--v-if--></button><button type="button" title="weibo_sob"><!--v-if--></button><button type="button" title="weibo_sunglasses"><!--v-if--></button><button type="button" title="weibo_greddy"><!--v-if--></button><button type="button" title="weibo_pick_nose"><!--v-if--></button><button type="button" title="weibo_annoyed"><!--v-if--></button><button type="button" title="weibo_awkward"><!--v-if--></button><button type="button" title="weibo_confused"><!--v-if--></button><button type="button" title="weibo_grievance"><!--v-if--></button><button type="button" title="weibo_poor"><!--v-if--></button><button type="button" title="weibo_wink"><!--v-if--></button><button type="button" title="weibo_rolling_eyes"><!--v-if--></button><button type="button" title="weibo_watermalon"><!--v-if--></button><button type="button" title="weibo_annoyed_left"><!--v-if--></button><button type="button" title="weibo_annoyed_right"><!--v-if--></button><button type="button" title="weibo_yawn"><!--v-if--></button><button type="button" title="weibo_hufen"><!--v-if--></button><button type="button" title="weibo_doge"><!--v-if--></button><button type="button" title="weibo_husky"><!--v-if--></button><button type="button" title="weibo_dog_annoyed"><!--v-if--></button><button type="button" title="weibo_dog_bye"><!--v-if--></button><button type="button" title="weibo_dog_consider"><!--v-if--></button><button type="button" title="weibo_dog_cry"><!--v-if--></button><button type="button" title="weibo_dog_joy"><!--v-if--></button><button type="button" title="weibo_dog_laugh"><!--v-if--></button><button type="button" title="weibo_dog_sweat"><!--v-if--></button><button type="button" title="weibo_dog_think"><!--v-if--></button><button type="button" title="weibo_dog_yum"><!--v-if--></button><button type="button" title="weibo_cat"><!--v-if--></button><button type="button" title="weibo_cat_annoyed"><!--v-if--></button><button type="button" title="weibo_cat_bye"><!--v-if--></button><button type="button" title="weibo_cat_cry"><!--v-if--></button><button type="button" title="weibo_cat_think"><!--v-if--></button><button type="button" title="weibo_girl_annoyed"><!--v-if--></button><button type="button" title="weibo_boy"><!--v-if--></button><button type="button" title="weibo_girl"><!--v-if--></button><button type="button" title="weibo_panda"><!--v-if--></button><button type="button" title="weibo_pig"><!--v-if--></button><button type="button" title="weibo_rabbit"><!--v-if--></button><button type="button" title="weibo_ultraman"><!--v-if--></button><button type="button" title="weibo_wool_group"><!--v-if--></button><button type="button" title="weibo_yan"><!--v-if--></button><button type="button" title="weibo_xi"><!--v-if--></button><button type="button" title="weibo_soap"><!--v-if--></button><button type="button" title="weibo_meng"><!--v-if--></button><button type="button" title="weibo_jiong"><!--v-if--></button><button type="button" title="weibo_geili"><!--v-if--></button><button type="button" title="weibo_shenma"><!--v-if--></button><button type="button" title="weibo_alpaca"><!--v-if--></button></div><div><!--v-if--></div><!--v-if--></div></div></div><!--v-if--></div><div class="wl-meta-head"><div class="wl-count"><span class="wl-num">1</span> Comments</div><ul class="wl-sort"><li class="active">Latest</li><li class="">Oldest</li><li class="">Hottest</li></ul></div><div class="wl-cards"><div id="69ddd5550d8c900a171c1250" class="wl-card-item"><div class="wl-user" aria-hidden="true"><img class="wl-user-avatar" src="https://seccdn.libravatar.org/avatar/d41d8cd98f00b204e9800998ecf8427e" alt=""><!--v-if--><!--v-if--></div><div class="wl-card"><div class="wl-head"><span class="wl-nick">Anonymous</span><!--v-if--><!--v-if--><!--v-if--><span class="wl-time">2026-04-14</span><div class="wl-comment-actions"><!--v-if--><!--v-if--><button type="button" class="wl-like" title="Like"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M850.654 323.804c-11.042-25.625-26.862-48.532-46.885-68.225-20.022-19.61-43.258-34.936-69.213-45.73-26.78-11.124-55.124-16.727-84.375-16.727-40.622 0-80.256 11.123-114.698 32.135A214.79 214.79 0 0 0 512 241.819a214.79 214.79 0 0 0-23.483-16.562c-34.442-21.012-74.076-32.135-114.698-32.135-29.25 0-57.595 5.603-84.375 16.727-25.872 10.711-49.19 26.12-69.213 45.73-20.105 19.693-35.843 42.6-46.885 68.225-11.453 26.615-17.303 54.877-17.303 83.963 0 27.439 5.603 56.03 16.727 85.117 9.31 24.307 22.659 49.52 39.715 74.981 27.027 40.293 64.188 82.316 110.33 124.915 76.465 70.615 152.189 119.394 155.402 121.371l19.528 12.525c8.652 5.52 19.776 5.52 28.427 0l19.529-12.525c3.213-2.06 78.854-50.756 155.401-121.371 46.143-42.6 83.304-84.622 110.33-124.915 17.057-25.46 30.487-50.674 39.716-74.981 11.124-29.087 16.727-57.678 16.727-85.117.082-29.086-5.768-57.348-17.221-83.963zM512 761.5S218.665 573.55 218.665 407.767c0-83.963 69.461-152.023 155.154-152.023 60.233 0 112.473 33.618 138.181 82.727 25.708-49.109 77.948-82.727 138.18-82.727 85.694 0 155.155 68.06 155.155 152.023C805.335 573.551 512 761.5 512 761.5z" fill="currentColor"></path></svg> 0</button><button type="button" class="wl-reply" title="Reply"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M810.667 213.333a64 64 0 0 1 64 64V704a64 64 0 0 1-64 64H478.336l-146.645 96.107a21.333 21.333 0 0 1-33.024-17.856V768h-85.334a64 64 0 0 1-64-64V277.333a64 64 0 0 1 64-64h597.334zm0 64H213.333V704h149.334v63.296L459.243 704h351.424V277.333zm-271.36 213.334v64h-176.64v-64h176.64zm122.026-128v64H362.667v-64h298.666z" fill="currentColor"></path></svg></button></div></div><div class="wl-meta" aria-hidden="true"><span class="wl-addr" data-value="埼玉县">埼玉县</span><span class="wl-browser" data-value="Chrome146.0">Chrome146.0</span><span class="wl-os" data-value="Windows 11.0">Windows 11.0</span></div><!--v-if--><div class="wl-content"><!--v-if--><div><p>test</p>
+</div></div><!--v-if--><!--v-if--><div class="wl-quote"></div></div></div></div><!--v-if--><div class="wl-meta-foot"><div class="wl-rss"><a href="https://comments.coriva.eu.org/api/comment/rss?path=%2Falpha101-overview%2F" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this post"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this post</span></a><a href="https://comments.coriva.eu.org/api/comment/rss" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this site"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this site</span></a></div><div class="wl-power"> Powered by <a href="https://github.com/walinejs/waline" target="_blank" rel="noopener noreferrer"> Waline </a> v3.15.2</div></div></div></div><link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css"><script type="module">
+  import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
+  import { pageviewCount } from 'https://unpkg.com/@waline/client@v3/dist/pageview.js';
+  init({
+    el: '#waline',
+    serverURL: 'https://comments.coriva.eu.org',
+    lang: 'en',
+    pageview: false,
+  });
+  pageviewCount({
+    serverURL: 'https://comments.coriva.eu.org',
+  });
+</script></article><aside class="toc-sidebar" id="toc-sidebar"><nav class="toc-sidebar-nav"><span class="toc-sidebar-title">目录</span><div class="toc-sidebar-inner"><nav id="TableOfContents"><ul><li><a href="https://coriva.eu.org/alpha101-overview/#alpha-101-%E7%9A%84%E6%95%B0%E6%8D%AE%E8%BE%93%E5%85%A5">Alpha 101 的数据输入</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E7%AE%97%E5%AD%90%E8%AF%A6%E8%A7%A3%E8%AF%BB%E6%87%82%E5%85%AC%E5%BC%8F%E7%9A%84%E9%92%A5%E5%8C%99">算子详解：读懂公式的钥匙</a><ul><li><a href="https://coriva.eu.org/alpha101-overview/#%E6%88%AA%E9%9D%A2%E7%AE%97%E5%AD%90%E5%9C%A8%E5%90%8C%E4%B8%80%E5%A4%A9%E7%9A%84%E6%89%80%E6%9C%89%E8%82%A1%E7%A5%A8%E4%B9%8B%E9%97%B4%E6%AF%94%E8%BE%83">截面算子：在同一天的所有股票之间比较</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E6%97%B6%E5%BA%8F%E7%AE%97%E5%AD%90%E5%9C%A8%E5%90%8C%E4%B8%80%E5%8F%AA%E8%82%A1%E7%A5%A8%E7%9A%84%E5%8E%86%E5%8F%B2%E4%B8%8A%E8%AE%A1%E7%AE%97">时序算子：在同一只股票的历史上计算</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E5%8F%98%E6%8D%A2%E7%AE%97%E5%AD%90">变换算子</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E8%A1%8C%E4%B8%9A%E4%B8%AD%E6%80%A7%E5%8C%96">行业中性化</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#pandas-%E5%AE%9E%E7%8E%B0%E6%A0%B8%E5%BF%83%E7%AE%97%E5%AD%90">pandas 实现核心算子</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E7%AE%97%E5%AD%90%E9%80%9F%E6%9F%A5%E8%A1%A8">算子速查表</a></li></ul></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E4%BA%94%E5%A4%A7%E5%88%86%E7%B1%BB%E6%AF%8F%E4%B8%AA%E5%9B%A0%E5%AD%90%E5%88%B0%E5%BA%95%E5%9C%A8%E8%B5%8C%E4%BB%80%E4%B9%88">五大分类：每个因子到底在赌什么</a><ul><li><a href="https://coriva.eu.org/alpha101-overview/#%E9%87%8F%E4%BB%B7%E8%83%8C%E7%A6%BB%E7%B1%BB32-%E4%B8%AA%E5%9B%A0%E5%AD%90">量价背离类（32 个因子）</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E5%8A%A8%E9%87%8F%E4%B8%8E%E5%8F%8D%E8%BD%AC%E7%B1%BB23-%E4%B8%AA%E5%9B%A0%E5%AD%90">动量与反转类（23 个因子）</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E6%B3%A2%E5%8A%A8%E7%8E%87%E7%B1%BB11-%E4%B8%AA%E5%9B%A0%E5%AD%90">波动率类（11 个因子）</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E6%97%A5%E5%86%85%E7%BB%93%E6%9E%84%E7%B1%BB12-%E4%B8%AA%E5%9B%A0%E5%AD%90">日内结构类（12 个因子）</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E6%B5%81%E5%8A%A8%E6%80%A7%E4%B8%8E%E5%A4%8D%E5%90%88%E7%B1%BB23-%E4%B8%AA%E5%9B%A0%E5%AD%90">流动性与复合类（23 个因子）</a></li></ul></li><li><a href="https://coriva.eu.org/alpha101-overview/#alpha-101-%E5%9B%A0%E5%AD%90%E5%AE%8C%E6%95%B4%E5%88%86%E7%B1%BB%E5%AF%B9%E7%85%A7%E8%A1%A8">Alpha 101 因子完整分类对照表</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E5%AE%9E%E6%93%8D%E6%8F%90%E7%A4%BA">实操提示</a></li><li><a href="https://coriva.eu.org/alpha101-overview/#%E7%B3%BB%E5%88%97%E5%AF%BC%E8%88%AA" class="">系列导航</a></li></ul></nav></div></nav><nav class="related-posts"><h2>相关文章</h2><ul><li><a href="https://coriva.eu.org/0dte-options-guide/"><span class="related-title">末日期权（0DTE）完全指南：机制、Greeks 与盈亏真相</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/qlib-tutorial/"><span class="related-title">Qlib 教程：从安装到第一个量化策略</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/quant-math-basics/"><span class="related-title">量化交易的数学基础：从对数收益率到线性回归</span>
+<span class="related-date">2026-04-20</span></a></li><li><a href="https://coriva.eu.org/fama-french-factor-model/"><span class="related-title">Fama-French 因子模型：从三因子到五因子的量化选股基础</span>
+<span class="related-date">2026-04-16</span></a></li><li><a href="https://coriva.eu.org/quant-trading-markets/"><span class="related-title">量化交易市场全景：股票、期货、期权、外汇、加密货币怎么选</span>
+<span class="related-date">2026-04-16</span></a></li></ul></nav></aside></div></main><footer class="footer"><span>© 2026 <a href="https://coriva.eu.org/">Coriva</a></span> ·
+<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+<a href="https://finicounter.eu.org/" target="_blank">Total Views</a>:
+<span id="finicount_views">7,298</span></span></footer><a href="https://coriva.eu.org/alpha101-overview/#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g" style="visibility: hidden; opacity: 0;"><svg viewBox="0 0 12 6" fill="currentcolor"><path d="M12 6H0l6-6z"></path></svg>
+</a><script async="" src="//finicounter.eu.org/finicounter.js"></script><script>(function(){var e,t,n,s=document.getElementById("toc-sidebar");if(!s)return;if(t=s.querySelectorAll('a[href^="#"]'),!t.length)return;e=[],t.forEach(function(t){var s=decodeURIComponent(t.getAttribute("href").slice(1)),n=document.getElementById(s);n&&e.push({el:n,link:t})});function o(){for(var o=window.scrollY||document.documentElement.scrollTop,i=100,s=null,n=0;n<e.length;n++)e[n].el.getBoundingClientRect().top+window.scrollY-i<=o&&(s=e[n]);t.forEach(function(e){e.classList.remove("active")}),s&&s.link.classList.add("active")}n=!1,window.addEventListener("scroll",function(){n||(requestAnimationFrame(function(){o(),n=!1}),n=!0)}),o()})()</script><script>let menu=document.getElementById("menu");if(menu){const e=localStorage.getItem("menu-scroll-position");e&&(menu.scrollLeft=parseInt(e,10)),menu.onscroll=function(){localStorage.setItem("menu-scroll-position",menu.scrollLeft)}}document.querySelectorAll('a[href^="#"]').forEach(e=>{e.addEventListener("click",function(e){e.preventDefault();var t=this.getAttribute("href").substr(1);window.matchMedia("(prefers-reduced-motion: reduce)").matches?document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView():document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView({behavior:"smooth"}),t==="top"?history.replaceState(null,null," "):history.pushState(null,null,`#${t}`)})})</script><script>var mybutton=document.getElementById("top-link");window.onscroll=function(){document.body.scrollTop>800||document.documentElement.scrollTop>800?(mybutton.style.visibility="visible",mybutton.style.opacity="1"):(mybutton.style.visibility="hidden",mybutton.style.opacity="0")}</script><script>document.getElementById("theme-toggle").addEventListener("click",()=>{const e=document.querySelector("html");e.dataset.theme==="dark"?(e.dataset.theme="light",localStorage.setItem("pref-theme","light")):(e.dataset.theme="dark",localStorage.setItem("pref-theme","dark"))})</script><script>document.querySelectorAll("pre > code").forEach(e=>{const n=e.parentNode.parentNode,t=document.createElement("button");t.classList.add("copy-code"),t.innerHTML="复制";function s(){t.innerHTML="已复制！",setTimeout(()=>{t.innerHTML="复制"},2e3)}t.addEventListener("click",t=>{if("clipboard"in navigator){navigator.clipboard.writeText(e.textContent),s();return}const n=document.createRange();n.selectNodeContents(e);const o=window.getSelection();o.removeAllRanges(),o.addRange(n);try{document.execCommand("copy"),s()}catch{}o.removeRange(n)}),n.classList.contains("highlight")?n.appendChild(t):n.parentNode.firstChild==n||(e.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName=="TABLE"?e.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(t):e.parentNode.appendChild(t))})</script></body></html>

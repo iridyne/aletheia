@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="zh" dir="auto" data-theme="dark"><head><meta charset="utf-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><meta name="robots" content="index, follow"><title>期权Greeks计算器：在线计算 Delta、Gamma、Theta、Vega | Coriva</title>
+<meta name="keywords" content="Quant,Trading,Options"><meta name="description" content="在线期权Greeks计算器：输入参数即时计算 Delta、Gamma、Theta、Vega 等一阶和二阶Greeks，附可视化曲线图。基于 Black-Scholes 模型。"><meta name="author" content="Coriva"><link rel="canonical" href="https://coriva.eu.org/option-greeks-calculator/"><meta name="msvalidate.01" content="F8E2F274161B653649F8818FD127CE87"><link crossorigin="anonymous" href="/assets/css/stylesheet.8fe2fa5580263673749c0854ddc4fdff83d8cd245ff94138be9f54fc4bc84fca.css" integrity="sha256-j+L6VYAmNnN0nAhU3cT9/4PYzSRf+UE4vp9U/EvIT8o=" rel="preload stylesheet" as="style"><link rel="icon" href="https://coriva.eu.org/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="https://coriva.eu.org/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="https://coriva.eu.org/favicon-32x32.png"><link rel="apple-touch-icon" href="https://coriva.eu.org/apple-touch-icon.png"><link rel="mask-icon" href="https://coriva.eu.org/safari-pinned-tab.svg"><meta name="theme-color" content="#2e2e33"><meta name="msapplication-TileColor" content="#2e2e33"><link rel="alternate" hreflang="zh" href="https://coriva.eu.org/option-greeks-calculator/"><link rel="alternate" hreflang="en" href="https://coriva.eu.org/en/option-greeks-calculator/"><noscript><style>#theme-toggle,.top-link{display:none}</style><style>@media(prefers-color-scheme:dark){:root{--theme:rgb(29, 30, 32);--entry:rgb(46, 46, 51);--primary:rgb(218, 218, 219);--secondary:rgb(155, 156, 157);--tertiary:rgb(65, 66, 68);--content:rgb(196, 196, 197);--code-block-bg:rgb(46, 46, 51);--code-bg:rgb(55, 56, 62);--border:rgb(51, 51, 51);color-scheme:dark}.list{background:var(--theme)}.toc{background:var(--entry)}}@media(prefers-color-scheme:light){.list::-webkit-scrollbar-thumb{border-color:var(--code-bg)}}</style></noscript><script>localStorage.getItem("pref-theme")==="dark"?document.querySelector("html").dataset.theme="dark":localStorage.getItem("pref-theme")==="light"?document.querySelector("html").dataset.theme="light":window.matchMedia("(prefers-color-scheme: dark)").matches?document.querySelector("html").dataset.theme="dark":document.querySelector("html").dataset.theme="light"</script><meta name="google-adsense-account" content="ca-pub-2660281922577700"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/400.css" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/500.css" rel="stylesheet"><style>code,kbd,samp,pre{font-family:fira code,cascadia code,source code pro,sf mono,Menlo,Consolas,monospace}.entry-footer .pageview-meta{display:none}.post-single .post-description{display:none}.post-single-wrapper{display:flex;gap:4rem;align-items:flex-start}.post-single-wrapper .post-single{flex:1;min-width:0}.toc-sidebar{display:none}@media(min-width:1280px){body:not(.list) .main{max-width:calc(var(--main-width) + var(--gap) * 2 + 272px)}.post-single-wrapper .post-single{max-width:var(--main-width)}.toc-sidebar{display:block;width:220px;flex-shrink:0;position:sticky;top:calc(var(--header-height) + 1rem);max-height:calc(100vh - var(--header-height) - 3rem);overflow-y:auto;scrollbar-width:none;padding-left:1rem;border-left:1px solid var(--border)}.toc-sidebar::-webkit-scrollbar{display:none}.toc-sidebar-nav{font-size:.8rem;line-height:1.65}.toc-sidebar-title{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.toc-sidebar-inner ul{list-style:none;padding-left:0;margin:0}.toc-sidebar-inner ul ul{padding-left:.9em}.toc-sidebar-inner li{margin:.2em 0}.toc-sidebar-inner a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;transition:color .2s;opacity:.8}.toc-sidebar-inner a:hover{color:var(--primary);opacity:1}.toc-sidebar-inner a.active{color:var(--primary);font-weight:500;opacity:1}}.related-posts{margin-top:1.5rem;padding-top:1.2rem;border-top:1px solid var(--border)}.related-posts h2{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.related-posts ul{list-style:none;padding:0;margin:0}.related-posts li{margin:.2em 0}.related-posts a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;font-size:.8rem;line-height:1.65;transition:color .2s;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.related-posts a:hover{color:var(--primary);opacity:1}.related-date{display:none}</style><script>MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]}}</script><script async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script><script async="" src="https://www.googletagmanager.com/gtag/js?id=G-C74ZBKDR6V"></script><script>var dnt,doNotTrack=!1;if(!1&&(dnt=navigator.doNotTrack||window.doNotTrack||navigator.msDoNotTrack,doNotTrack=dnt=="1"||dnt=="yes"),!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-C74ZBKDR6V")}</script><meta property="og:url" content="https://coriva.eu.org/option-greeks-calculator/"><meta property="og:site_name" content="Coriva"><meta property="og:title" content="期权Greeks计算器：在线计算 Delta、Gamma、Theta、Vega"><meta property="og:description" content="在线期权Greeks计算器：输入参数即时计算 Delta、Gamma、Theta、Vega 等一阶和二阶Greeks，附可视化曲线图。基于 Black-Scholes 模型。"><meta property="og:locale" content="zh"><meta property="og:type" content="article"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-04-14T16:55:20+08:00"><meta property="article:modified_time" content="2026-04-14T16:55:20+08:00"><meta property="article:tag" content="Quant"><meta property="article:tag" content="Trading"><meta property="article:tag" content="Options"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="期权Greeks计算器：在线计算 Delta、Gamma、Theta、Vega"><meta name="twitter:description" content="在线期权Greeks计算器：输入参数即时计算 Delta、Gamma、Theta、Vega 等一阶和二阶Greeks，附可视化曲线图。基于 Black-Scholes 模型。"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Posts","item":"https://coriva.eu.org/posts/"},{"@type":"ListItem","position":2,"name":"期权Greeks计算器：在线计算 Delta、Gamma、Theta、Vega","item":"https://coriva.eu.org/option-greeks-calculator/"}]}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","headline":"期权Greeks计算器：在线计算 Delta、Gamma、Theta、Vega","name":"期权Greeks计算器：在线计算 Delta、Gamma、Theta、Vega","description":"在线期权Greeks计算器：输入参数即时计算 Delta、Gamma、Theta、Vega 等一阶和二阶Greeks，附可视化曲线图。基于 Black-Scholes 模型。","keywords":["Quant","Trading","Options"],"articleBody":"调参数，看 Greeks 怎么变。基于 Black-Scholes 模型，支持一阶Greeks（Delta、Gamma、Theta、Vega、Rho）和二阶Greeks（Vanna、Charm、Volga）。拖动滑块，曲线和数值实时更新。\n公式和直觉解读见期权Greeks完全指南，二阶Greeks见Vanna、Charm、Volga 详解，实战应用见Greeks实战。\nCall Put S（标的价格） K（行权价） T（到期天数） σ（IV %） r（无风险利率 %） 二阶Greeks 公式基础 计算器基于 Black-Scholes 模型。核心是两个中间变量 \\(d_1\\) 和 \\(d_2\\)：\n$$d_1 = \\frac{\\ln(S/K) + (r + \\sigma^2/2) \\cdot T}{\\sigma\\sqrt{T}}, \\quad d_2 = d_1 - \\sigma\\sqrt{T}$$所有一阶和二阶Greeks都是 \\(d_1\\)、\\(d_2\\) 和标准正态分布函数 \\(N(\\cdot)\\)、\\(n(\\cdot)\\) 的组合。具体公式推导见期权Greeks完全指南。\n二阶Greeks的含义：Vanna 衡量 Delta 对波动率的敏感度，Charm 衡量 Delta 随时间的衰减速度，Volga 衡量 Vega 对波动率自身的凸性。详细解读见二阶Greeks详解。\n使用建议 拖动标的价格 \\(S\\) 的滑块，观察 Delta 从 0 到 1（Call）的 S 型变化。然后切换到 Gamma 视图，注意 Gamma 在 ATM 处达到峰值，随到期日缩短峰值急剧升高。这就是做市商在到期日前最紧张的原因：短期 ATM 期权的 Gamma 风险最大。\n调低 T（到期天数）到 5 天以内，再看 Theta：时间衰减在最后几天加速，这就是Greeks实战中讨论的 Theta 非线性衰减。\n系列导航 期权Greeks完全指南：Delta、Gamma、Theta、Vega 的公式与代码实现 二阶Greeks详解：Vanna、Charm、Volga 的公式与波动率曲面建模 期权Greeks实战：策略分析、动态对冲与Gamma Scalping 本篇：期权Greeks计算器 ","wordCount":"718","inLanguage":"zh","datePublished":"2026-04-14T16:55:20+08:00","dateModified":"2026-04-14T16:55:20+08:00","author":{"@type":"Person","name":"Coriva"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://coriva.eu.org/option-greeks-calculator/"},"publisher":{"@type":"Organization","name":"Coriva","logo":{"@type":"ImageObject","url":"https://coriva.eu.org/favicon.ico"}}}</script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
+.CtxtMenu_InfoContent {  overflow:auto; text-align:left; font-size:80%;  padding:.4em .6em; border:1px inset; margin:1em 0px;  max-height:20em; max-width:30em; background-color:#EEEEEE;  white-space:normal;}
+.CtxtMenu_Info.CtxtMenu_MousePost {outline:none;}
+.CtxtMenu_Info {  position:fixed; left:50%; width:auto; text-align:center;  border:3px outset; padding:1em 2em; background-color:#DDDDDD;  color:black;  cursor:default; font-family:message-box; font-size:120%;  font-style:normal; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 15px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius:15px;               /* Safari and Chrome */  -moz-border-radius:15px;                  /* Firefox */  -khtml-border-radius:15px;                /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */  filter:progid:DXImageTransform.Microsoft.dropshadow(OffX=2, OffY=2, Color="gray", Positive="true"); /* IE */}
+</style><style type="text/css">.CtxtMenu_MenuClose {  position:absolute;  cursor:pointer;  display:inline-block;  border:2px solid #AAA;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  font-family: "Courier New", Courier;  font-size:24px;  color:#F0F0F0}
+.CtxtMenu_MenuClose span {  display:block; background-color:#AAA; border:1.5px solid;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  line-height:0;  padding:8px 0 6px     /* may need to be browser-specific */}
+.CtxtMenu_MenuClose:hover {  color:white!important;  border:2px solid #CCC!important}
+.CtxtMenu_MenuClose:hover span {  background-color:#CCC!important}
+.CtxtMenu_MenuClose:hover:focus {  outline:none}
+</style><style type="text/css">.CtxtMenu_Menu {  position:absolute;  background-color:white;  color:black;  width:auto; padding:5px 0px;  border:1px solid #CCCCCC; margin:0; cursor:default;  font: menu; text-align:left; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 5px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius: 5px;             /* Safari and Chrome */  -moz-border-radius: 5px;                /* Firefox */  -khtml-border-radius: 5px;              /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */}
+.CtxtMenu_MenuItem {  padding: 1px 2em;  background:transparent;}
+.CtxtMenu_MenuArrow {  position:absolute; right:.5em; padding-top:.25em; color:#666666;  font-family: null; font-size: .75em}
+.CtxtMenu_MenuActive .CtxtMenu_MenuArrow {color:white}
+.CtxtMenu_MenuArrow.CtxtMenu_RTL {left:.5em; right:auto}
+.CtxtMenu_MenuCheck {  position:absolute; left:.7em;  font-family: null}
+.CtxtMenu_MenuCheck.CtxtMenu_RTL { right:.7em; left:auto }
+.CtxtMenu_MenuRadioCheck {  position:absolute; left: .7em;}
+.CtxtMenu_MenuRadioCheck.CtxtMenu_RTL {  right: .7em; left:auto}
+.CtxtMenu_MenuInputBox {  padding-left: 1em; right:.5em; color:#666666;  font-family: null;}
+.CtxtMenu_MenuInputBox.CtxtMenu_RTL {  left: .1em;}
+.CtxtMenu_MenuComboBox {  left:.1em; padding-bottom:.5em;}
+.CtxtMenu_MenuSlider {  left: .1em;}
+.CtxtMenu_SliderValue {  position:absolute; right:.1em; padding-top:.25em; color:#333333;  font-size: .75em}
+.CtxtMenu_SliderBar {  outline: none; background: #d3d3d3}
+.CtxtMenu_MenuLabel {  padding: 1px 2em 3px 1.33em;  font-style:italic}
+.CtxtMenu_MenuRule {  border-top: 1px solid #DDDDDD;  margin: 4px 3px;}
+.CtxtMenu_MenuDisabled {  color:GrayText}
+.CtxtMenu_MenuActive {  background-color: #606872;  color: white;}
+.CtxtMenu_MenuDisabled:focus {  background-color: #E8E8E8}
+.CtxtMenu_MenuLabel:focus {  background-color: #E8E8E8}
+.CtxtMenu_ContextMenu:focus {  outline:none}
+.CtxtMenu_ContextMenu .CtxtMenu_MenuItem:focus {  outline:none}
+.CtxtMenu_SelectionMenu {  position:relative; float:left;  border-bottom: none; -webkit-box-shadow:none; -webkit-border-radius:0px; }
+.CtxtMenu_SelectionItem {  padding-right: 1em;}
+.CtxtMenu_Selection {  right: 40%; width:50%; }
+.CtxtMenu_SelectionBox {  padding: 0em; max-height:20em; max-width: none;  background-color:#FFFFFF;}
+.CtxtMenu_SelectionDivider {  clear: both; border-top: 2px solid #000000;}
+.CtxtMenu_Menu .CtxtMenu_MenuClose {  top:-10px; left:-10px}
+</style><style id="waline-darkmode"></style><style id="MJX-CHTML-styles">
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row > * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-assistive-mml {
+  position: absolute !important;
+  top: 0px;
+  left: 0px;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 1px 0px 0px 0px !important;
+  border: 0px !important;
+  display: block !important;
+  width: auto !important;
+  overflow: hidden !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+mjx-assistive-mml[display="block"] {
+  width: 100% !important;
+}
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-msub {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h > * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h > * > mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h > * > mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h > mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h > mjx-beg > mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h > mjx-end > mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v > * {
+  display: block;
+}
+
+mjx-stretchy-v > mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v > mjx-end > mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v > * > mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v > mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-mfrac {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-frac {
+  display: inline-block;
+  vertical-align: 0.17em;
+  padding: 0 .22em;
+}
+
+mjx-frac[type="d"] {
+  vertical-align: .04em;
+}
+
+mjx-frac[delims] {
+  padding: 0 .1em;
+}
+
+mjx-frac[atop] {
+  padding: 0 .12em;
+}
+
+mjx-frac[atop][delims] {
+  padding: 0;
+}
+
+mjx-dtable {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-dtable > * {
+  font-size: 2000%;
+}
+
+mjx-dbox {
+  display: block;
+  font-size: 5%;
+}
+
+mjx-num {
+  display: block;
+  text-align: center;
+}
+
+mjx-den {
+  display: block;
+  text-align: center;
+}
+
+mjx-mfrac[bevelled] > mjx-num {
+  display: inline-block;
+}
+
+mjx-mfrac[bevelled] > mjx-den {
+  display: inline-block;
+}
+
+mjx-den[align="right"], mjx-num[align="right"] {
+  text-align: right;
+}
+
+mjx-den[align="left"], mjx-num[align="left"] {
+  text-align: left;
+}
+
+mjx-nstrut {
+  display: inline-block;
+  height: .054em;
+  width: 0;
+  vertical-align: -.054em;
+}
+
+mjx-nstrut[type="d"] {
+  height: .217em;
+  vertical-align: -.217em;
+}
+
+mjx-dstrut {
+  display: inline-block;
+  height: .505em;
+  width: 0;
+}
+
+mjx-dstrut[type="d"] {
+  height: .726em;
+}
+
+mjx-line {
+  display: block;
+  box-sizing: border-box;
+  min-height: 1px;
+  height: .06em;
+  border-top: .06em solid;
+  margin: .06em -.1em;
+  overflow: hidden;
+}
+
+mjx-line[type="d"] {
+  margin: .18em -.1em;
+}
+
+mjx-mrow {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-TeXAtom {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-msup {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-msqrt {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-root {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+mjx-surd {
+  display: inline-block;
+  vertical-align: top;
+}
+
+mjx-sqrt {
+  display: inline-block;
+  padding-top: .07em;
+}
+
+mjx-sqrt > mjx-box {
+  border-top: .07em solid;
+}
+
+mjx-sqrt.mjx-tall > mjx-box {
+  padding-left: .3em;
+  margin-left: -.3em;
+}
+
+mjx-mspace {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-c.mjx-c1D451.TEX-I::before {
+  padding: 0.694em 0.52em 0.01em 0;
+  content: "d";
+}
+
+mjx-c.mjx-c31::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "1";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c6C::before {
+  padding: 0.694em 0.278em 0 0;
+  content: "l";
+}
+
+mjx-c.mjx-c6E::before {
+  padding: 0.442em 0.556em 0 0;
+  content: "n";
+}
+
+mjx-c.mjx-c2061::before {
+  padding: 0 0 0 0;
+  content: "";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c1D446.TEX-I::before {
+  padding: 0.705em 0.645em 0.022em 0;
+  content: "S";
+}
+
+mjx-c.mjx-c2F::before {
+  padding: 0.75em 0.5em 0.25em 0;
+  content: "/";
+}
+
+mjx-c.mjx-c1D43E.TEX-I::before {
+  padding: 0.683em 0.889em 0 0;
+  content: "K";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c1D45F.TEX-I::before {
+  padding: 0.442em 0.451em 0.011em 0;
+  content: "r";
+}
+
+mjx-c.mjx-c1D70E.TEX-I::before {
+  padding: 0.431em 0.571em 0.011em 0;
+  content: "\3C3";
+}
+
+mjx-c.mjx-c22C5::before {
+  padding: 0.31em 0.278em 0 0;
+  content: "\22C5";
+}
+
+mjx-c.mjx-c1D447.TEX-I::before {
+  padding: 0.677em 0.704em 0 0;
+  content: "T";
+}
+
+mjx-c.mjx-c221A::before {
+  padding: 0.8em 0.853em 0.2em 0;
+  content: "\221A";
+}
+
+mjx-c.mjx-c2C::before {
+  padding: 0.121em 0.278em 0.194em 0;
+  content: ",";
+}
+
+mjx-c.mjx-c2212::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "\2212";
+}
+
+mjx-c.mjx-c1D441.TEX-I::before {
+  padding: 0.683em 0.888em 0 0;
+  content: "N";
+}
+
+mjx-c.mjx-c1D45B.TEX-I::before {
+  padding: 0.442em 0.6em 0.011em 0;
+  content: "n";
+}
+</style></head><body id="top"><header class="header"><nav class="nav"><div class="logo"><a href="https://coriva.eu.org/" accesskey="h" title="Coriva (Alt + H)"><img src="https://coriva.eu.org/logo.png" alt="" aria-label="logo" height="35">Coriva</a><div class="logo-switches"><button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme"><svg id="moon" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg><svg id="sun" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></button><ul class="lang-switch"><li>|</li><li><a href="https://coriva.eu.org/en/" title="English" aria-label="English">English</a></li></ul></div></div><ul id="menu"><li><a href="https://coriva.eu.org/archives/" title="归档"><span>归档</span></a></li><li><a href="https://coriva.eu.org/categories/" title="分类"><span>分类</span></a></li><li><a href="https://coriva.eu.org/tags/" title="标签"><span>标签</span></a></li><li><a href="https://coriva.eu.org/search/" title="搜索 (Alt + /)" accesskey="/"><span>搜索</span></a></li></ul></nav></header><main class="main"><div class="post-single-wrapper"><article class="post-single"><header class="post-header"><div class="breadcrumbs"><a href="https://coriva.eu.org/">主页</a>&nbsp;»&nbsp;<a href="https://coriva.eu.org/posts/">Posts</a></div><h1 class="post-title entry-hint-parent">期权Greeks计算器：在线计算 Delta、Gamma、Theta、Vega</h1><div class="post-description">在线期权Greeks计算器：输入参数即时计算 Delta、Gamma、Theta、Vega 等一阶和二阶Greeks，附可视化曲线图。基于 Black-Scholes 模型。</div><div class="post-meta"><span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> Posted on 2026-04-14</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path></svg> In Quant</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> 2 min read</span><span class="pageview-meta">&nbsp;·&nbsp;<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> <span class="waline-pageview-count" data-path="/option-greeks-calculator/">63</span></span>&nbsp;|&nbsp;<span>语言:</span><ul class="i18n_list"><li><a href="https://coriva.eu.org/en/option-greeks-calculator/">English</a></li></ul></div></header><div class="post-content"><p>调参数，看 Greeks 怎么变。基于 Black-Scholes 模型，支持一阶Greeks（Delta、Gamma、Theta、Vega、Rho）和二阶Greeks（Vanna、Charm、Volga）。拖动滑块，曲线和数值实时更新。</p><p>公式和直觉解读见<a href="https://coriva.eu.org/option-greeks-guide/">期权Greeks完全指南</a>，二阶Greeks见<a href="https://coriva.eu.org/option-greeks-second-order/">Vanna、Charm、Volga 详解</a>，实战应用见<a href="https://coriva.eu.org/option-greeks-trading/">Greeks实战</a>。</p><style>.greeks-app{font-family:system-ui,-apple-system,sans-serif;max-width:100%;margin:0 auto}.greeks-controls{display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;margin-bottom:18px}.greeks-controls label{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--secondary,#666)}.greeks-controls label span{font-weight:600;color:var(--primary,#222)}.greeks-controls input[type=range]{width:100%;margin:2px 0;accent-color:#4C72B0}.greeks-controls .ctrl-row{display:flex;align-items:center;gap:8px}.greeks-controls .ctrl-row input[type=number]{width:80px;padding:4px 6px;border:1px solid var(--border,#ddd);border-radius:4px;font-size:.85rem;background:var(--theme,#fff);color:var(--primary,#222)}.greeks-type-toggle{display:flex;gap:0;margin-bottom:18px}.greeks-type-toggle button{padding:6px 18px;border:1px solid var(--border,#ddd);background:var(--theme,#fff);color:var(--secondary,#666);cursor:pointer;font-size:.85rem;transition:all .15s}.greeks-type-toggle button:first-child{border-radius:4px 0 0 4px}.greeks-type-toggle button:last-child{border-radius:0 4px 4px 0}.greeks-type-toggle button.active{background:#4c72b0;color:#fff;border-color:#4c72b0}.greeks-results{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px}.greeks-results .gr-card{padding:10px;border:1px solid var(--border,#ddd);border-radius:6px;text-align:center;background:var(--entry,#fff)}.greeks-results .gr-card .gr-label{font-size:.75rem;color:var(--secondary,#888);margin-bottom:2px}.greeks-results .gr-card .gr-value{font-size:1.05rem;font-weight:700;color:var(--primary,#222);font-family:fira code,monospace}.greeks-chart-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}.greeks-chart-tabs button{padding:4px 12px;border:1px solid var(--border,#ddd);border-radius:4px;background:var(--theme,#fff);color:var(--secondary,#666);cursor:pointer;font-size:.78rem;transition:all .15s}.greeks-chart-tabs button.active{background:#4c72b0;color:#fff;border-color:#4c72b0}.greeks-canvas-wrap{position:relative;width:100%;margin-bottom:10px}.greeks-canvas-wrap canvas{width:100%;height:auto;display:block;border:1px solid var(--border,#ddd);border-radius:6px}.greeks-second-title{font-size:.8rem;color:var(--secondary,#888);margin:14px 0 6px;font-weight:600}@media(max-width:640px){.greeks-controls{grid-template-columns:1fr}.greeks-results{grid-template-columns:repeat(2,1fr)}}</style><div class="greeks-app" id="greeksApp"><div class="greeks-type-toggle" id="optTypeToggle"><button class="active" data-type="call">Call</button>
+<button data-type="put">Put</button></div><div class="greeks-controls" id="greeksControls"><label><span>S（标的价格）</span><div class="ctrl-row"><input type="range" id="slS" min="50" max="200" step="0.5" value="100"><input type="number" id="numS" value="100" step="0.5"></div></label><label><span>K（行权价）</span><div class="ctrl-row"><input type="range" id="slK" min="50" max="200" step="0.5" value="100"><input type="number" id="numK" value="100" step="0.5"></div></label><label><span>T（到期天数）</span><div class="ctrl-row"><input type="range" id="slT" min="1" max="365" step="1" value="30"><input type="number" id="numT" value="30" step="1"></div></label><label><span>σ（IV %）</span><div class="ctrl-row"><input type="range" id="slSigma" min="1" max="150" step="0.5" value="25"><input type="number" id="numSigma" value="25" step="0.5"></div></label><label><span>r（无风险利率 %）</span><div class="ctrl-row"><input type="range" id="slR" min="0" max="15" step="0.1" value="5"><input type="number" id="numR" value="5" step="0.1"></div></label></div><div class="greeks-results" id="greeksResults"><div class="gr-card" id="card-delta"><div class="gr-label">Delta</div><div class="gr-value" id="val-delta">0.5371</div></div><div class="gr-card" id="card-gamma"><div class="gr-label">Gamma</div><div class="gr-value" id="val-gamma">0.0554</div></div><div class="gr-card" id="card-theta"><div class="gr-label">Theta/day</div><div class="gr-value" id="val-theta">-0.0544</div></div><div class="gr-card" id="card-vega"><div class="gr-label">Vega/1%</div><div class="gr-value" id="val-vega">0.1139</div></div><div class="gr-card" id="card-rho"><div class="gr-label">Rho/1%</div><div class="gr-value" id="val-rho">0.0416</div></div><div class="gr-card" id="card-price"><div class="gr-label">Price</div><div class="gr-value" id="val-price">3.06</div></div></div><div class="greeks-second-title">二阶Greeks</div><div class="greeks-results" id="greeksResults2"><div class="gr-card" id="card-vanna"><div class="gr-label">Vanna/1%</div><div class="gr-value" id="val-vanna">-0.0003</div></div><div class="gr-card" id="card-charm"><div class="gr-label">Charm/day</div><div class="gr-value" id="val-charm">-0.00062</div></div><div class="gr-card" id="card-volga"><div class="gr-label">Volga/1%²</div><div class="gr-value" id="val-volga">0.0009</div></div></div><div class="greeks-chart-tabs" id="chartTabs"><button data-greek="delta" class="active">Delta</button><button data-greek="gamma">Gamma</button><button data-greek="theta">Theta</button><button data-greek="vega">Vega</button><button data-greek="price">Price</button><button data-greek="vanna">Vanna</button><button data-greek="charm">Charm</button><button data-greek="volga">Volga</button></div><div class="greeks-canvas-wrap"><canvas id="greeksCanvas" width="900" height="432" style="width: 720px; height: 346px;"></canvas></div></div><script>(function(){"use strict";function s(e){var t,s,o=.254829592,i=-.284496736,a=1.421413741,r=-1.453152027,c=1.061405429,l=.3275911,n=1;return e<0&&(n=-1),e=Math.abs(e)/Math.SQRT2,t=1/(1+l*e),s=1-((((c*t+r)*t+a)*t+i)*t+o)*t*Math.exp(-e*e),.5*(1+n*s)}function v(e){return Math.exp(-.5*e*e)/Math.sqrt(2*Math.PI)}function a(e,t,n,o,i,a){n<=0&&(n=1e-6),o<=0&&(o=1e-6);var m,g,b,y,_,r=Math.sqrt(n),d=(Math.log(e/t)+(i+.5*o*o)*n)/(o*r),c=d-o*r,f=s(d),p=s(c),l=v(d),u=Math.exp(-i*n),h=a==="call",x=h?e*f-t*u*p:t*u*s(-c)-e*s(-d),O=h?f:f-1,w=l/(e*o*r),j=h?-e*l*o/(2*r)-i*t*u*p:-e*l*o/(2*r)+i*t*u*s(-c);return j/=365,b=e*l*r/100,y=h?t*n*u*p/100:-t*n*u*s(-c)/100,m=-l*c/o,m=m/100,g=h?-l*(2*i*n-c*o*r)/(2*n*o*r):-l*(2*i*n-c*o*r)/(2*n*o*r),g/=365,_=e*l*r*d*c/o/100,{price:x,delta:O,gamma:w,theta:j,vega:b,rho:y,vanna:m,charm:g,volga:_,d1:d,d2:c}}var d,h,t={S:100,K:100,Tdays:30,sigma:25,r:5,type:"call",chartGreek:"delta"},r=[{key:"delta",label:"Delta",fmt:4},{key:"gamma",label:"Gamma",fmt:4},{key:"theta",label:"Theta",fmt:4,suffix:"/day"},{key:"vega",label:"Vega",fmt:4,suffix:"/1%"},{key:"rho",label:"Rho",fmt:4,suffix:"/1%"},{key:"price",label:"Price",fmt:2,suffix:""}],u=[{key:"vanna",label:"Vanna",fmt:4,suffix:"/1%"},{key:"charm",label:"Charm",fmt:5,suffix:"/day"},{key:"volga",label:"Volga",fmt:4,suffix:"/1%²"}],p=["delta","gamma","theta","vega","price","vanna","charm","volga"],b=document.getElementById("greeksApp"),m=document.getElementById("greeksResults"),f=document.getElementById("greeksResults2"),c=document.getElementById("chartTabs"),n=document.getElementById("greeksCanvas"),e=n.getContext("2d");function l(e,t){e.innerHTML="",t.forEach(function(t){var n=document.createElement("div");n.className="gr-card",n.id="card-"+t.key,n.innerHTML='<div class="gr-label">'+t.label+(t.suffix||"")+'</div><div class="gr-value" id="val-'+t.key+'">-</div>',e.appendChild(n)})}l(m,r),l(f,u),p.forEach(function(e){var n=document.createElement("button");n.textContent=e.charAt(0).toUpperCase()+e.slice(1),n.dataset.greek=e,e===t.chartGreek&&(n.className="active"),n.onclick=function(){t.chartGreek=e,c.querySelectorAll("button").forEach(function(t){t.className=t.dataset.greek===e?"active":""}),o()},c.appendChild(n)}),d=[{sl:"slS",num:"numS",key:"S"},{sl:"slK",num:"numK",key:"K"},{sl:"slT",num:"numT",key:"Tdays"},{sl:"slSigma",num:"numSigma",key:"sigma"},{sl:"slR",num:"numR",key:"r"}],d.forEach(function(e){var n=document.getElementById(e.sl),s=document.getElementById(e.num);n.oninput=function(){s.value=n.value,t[e.key]=parseFloat(n.value),i()},s.oninput=function(){n.value=s.value,t[e.key]=parseFloat(s.value),i()}}),document.getElementById("optTypeToggle").onclick=function(e){if(e.target.tagName!=="BUTTON")return;t.type=e.target.dataset.type,this.querySelectorAll("button").forEach(function(e){e.className=e.dataset.type===t.type?"active":""}),i()};function i(){var n=t.Tdays/365,s=t.sigma/100,i=t.r/100,e=a(t.S,t.K,n,s,i,t.type);r.forEach(function(t){document.getElementById("val-"+t.key).textContent=e[t.key].toFixed(t.fmt)}),u.forEach(function(t){document.getElementById("val-"+t.key).textContent=e[t.key].toFixed(t.fmt)}),o()}function g(){var e=getComputedStyle(document.documentElement),t=e.getPropertyValue("--theme").trim()||"#fff",n=e.getPropertyValue("--primary").trim()||"#222",s=e.getPropertyValue("--border").trim()||"#e0e0e0",o=e.getPropertyValue("--secondary").trim()||"#888";return{bg:t,fg:n,grid:s,sec:o,line:"#4C72B0",mark:"#C44E52"}}function o(){j=window.devicePixelRatio||1,z=n.parentElement.getBoundingClientRect(),u=Math.round(z.width),c=Math.round(u*.48),n.width=u*j,n.height=c*j,n.style.width=u+"px",n.style.height=c+"px",e.setTransform(j,0,0,j,0,0),i=g(),s={l:58,r:18,t:28,b:38},F=u-s.l-s.r,A=c-s.t-s.b,e.fillStyle=i.bg,e.fillRect(0,0,u,c);for(var s,i,r,c,u,h,m,p,j,y,x,C,E,k,A,S,M,F,z,D,N,_=t.K,T=t.Tdays/365,L=t.sigma/100,R=t.r/100,d=Math.max(_*.5,1),b=_*1.5,P=200,w=[],l=1/0,f=-(1/0),o=0;o<=P;o++)p=d+(b-d)*o/P,D=a(p,_,T,L,R,t.type),r=D[t.chartGreek],w.push({x:p,y:r}),r<l&&(l=r),r>f&&(f=r);y=f-l,y<1e-8&&(y=1),l-=y*.08,f+=y*.08;function O(e){return s.l+(e-d)/(b-d)*F}function v(e){return s.t+(1-(e-l)/(f-l))*A}e.strokeStyle=i.grid,e.lineWidth=.5,e.setLineDash([3,3]),M=5,e.font="11px system-ui",e.fillStyle=i.sec,e.textAlign="right",e.textBaseline="middle";for(o=0;o<=M;o++)r=l+(f-l)*o/M,m=v(r),e.beginPath(),e.moveTo(s.l,m),e.lineTo(u-s.r,m),e.stroke(),e.fillText(r.toFixed(Math.abs(r)<.01?4:Math.abs(r)<1?3:2),s.l-6,m);E=6,e.textAlign="center",e.textBaseline="top";for(o=0;o<=E;o++)p=d+(b-d)*o/E,h=O(p),e.beginPath(),e.moveTo(h,s.t),e.lineTo(h,c-s.b),e.stroke(),e.fillText(p.toFixed(0),h,c-s.b+5);e.setLineDash([]),l<0&&f>0&&(e.strokeStyle=i.sec,e.lineWidth=.8,e.beginPath(),e.moveTo(s.l,v(0)),e.lineTo(u-s.r,v(0)),e.stroke()),t.S>=d&&t.S<=b&&(e.strokeStyle=i.mark,e.lineWidth=1,e.setLineDash([4,4]),k=O(t.S),e.beginPath(),e.moveTo(k,s.t),e.lineTo(k,c-s.b),e.stroke(),e.setLineDash([])),e.strokeStyle=i.line,e.lineWidth=2.5,e.beginPath();for(o=0;o<w.length;o++)h=O(w[o].x),m=v(w[o].y),o===0?e.moveTo(h,m):e.lineTo(h,m);e.stroke(),N=a(t.S,_,T,L,R,t.type),x=N[t.chartGreek],t.S>=d&&t.S<=b&&(C=O(t.S),S=v(x),e.fillStyle=i.mark,e.beginPath(),e.arc(C,S,5,0,2*Math.PI),e.fill(),e.fillStyle=i.fg,e.font="bold 12px system-ui",e.textAlign="left",e.textBaseline="bottom",e.fillText(x.toFixed(4),C+8,S-4)),e.fillStyle=i.sec,e.font="12px system-ui",e.textAlign="center",e.textBaseline="top",e.fillText("Spot Price (S)",s.l+F/2,c-4),e.save(),e.translate(13,s.t+A/2),e.rotate(-Math.PI/2),e.textAlign="center",e.textBaseline="bottom",e.fillText(t.chartGreek.charAt(0).toUpperCase()+t.chartGreek.slice(1),0,0),e.restore(),e.fillStyle=i.fg,e.font="bold 13px system-ui",e.textAlign="left",e.textBaseline="top",e.fillText(t.chartGreek.charAt(0).toUpperCase()+t.chartGreek.slice(1)+" vs Spot Price ("+t.type.toUpperCase()+")",s.l,4)}h=new MutationObserver(function(){o()}),h.observe(document.documentElement,{attributes:!0,attributeFilter:["class","data-theme"]}),window.addEventListener("resize",o),i()})()</script><h2 id="公式基础">公式基础<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/option-greeks-calculator/#%E5%85%AC%E5%BC%8F%E5%9F%BA%E7%A1%80">#</a></h2><p>计算器基于 Black-Scholes 模型。核心是两个中间变量 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="0" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>d</mi><mn>1</mn></msub></math></mjx-assistive-mml></mjx-container> 和 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="1" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>d</mi><mn>2</mn></msub></math></mjx-assistive-mml></mjx-container>：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="2" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mfrac space="4"><mjx-frac type="d"><mjx-num><mjx-nstrut type="d"></mjx-nstrut><mjx-mrow><mjx-mi class="mjx-n"><mjx-c class="mjx-c6C"></mjx-c><mjx-c class="mjx-c6E"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2061"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D446 TEX-I"></mjx-c></mjx-mi><mjx-texatom texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c2F"></mjx-c></mjx-mo></mjx-texatom><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D43E TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D45F TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msup space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D70E TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: 0.363em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-script></mjx-msup><mjx-texatom texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c2F"></mjx-c></mjx-mo></mjx-texatom><mjx-mn class="mjx-n"><mjx-c class="mjx-c32"></mjx-c></mjx-mn><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mi class="mjx-i" space="3"><mjx-c class="mjx-c1D447 TEX-I"></mjx-c></mjx-mi></mjx-mrow></mjx-num><mjx-dbox><mjx-dtable><mjx-line type="d"></mjx-line><mjx-row><mjx-den><mjx-dstrut type="d"></mjx-dstrut><mjx-mrow><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D70E TEX-I"></mjx-c></mjx-mi><mjx-msqrt><mjx-sqrt><mjx-surd><mjx-mo class="mjx-n"><mjx-c class="mjx-c221A"></mjx-c></mjx-mo></mjx-surd><mjx-box style="padding-top: 0.169em;"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D447 TEX-I"></mjx-c></mjx-mi></mjx-box></mjx-sqrt></mjx-msqrt></mjx-mrow></mjx-den></mjx-row></mjx-dtable></mjx-dbox></mjx-frac></mjx-mfrac><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mstyle><mjx-mspace style="width: 1em;"></mjx-mspace></mjx-mstyle><mjx-msub space="2"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-msub space="4"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-mi class="mjx-i" space="3"><mjx-c class="mjx-c1D70E TEX-I"></mjx-c></mjx-mi><mjx-msqrt><mjx-sqrt><mjx-surd><mjx-mo class="mjx-n"><mjx-c class="mjx-c221A"></mjx-c></mjx-mo></mjx-surd><mjx-box style="padding-top: 0.217em;"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D447 TEX-I"></mjx-c></mjx-mi></mjx-box></mjx-sqrt></mjx-msqrt></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><msub><mi>d</mi><mn>1</mn></msub><mo>=</mo><mfrac><mrow><mi>ln</mi><mo data-mjx-texclass="NONE">⁡</mo><mo stretchy="false">(</mo><mi>S</mi><mrow data-mjx-texclass="ORD"><mo>/</mo></mrow><mi>K</mi><mo stretchy="false">)</mo><mo>+</mo><mo stretchy="false">(</mo><mi>r</mi><mo>+</mo><msup><mi>σ</mi><mn>2</mn></msup><mrow data-mjx-texclass="ORD"><mo>/</mo></mrow><mn>2</mn><mo stretchy="false">)</mo><mo>⋅</mo><mi>T</mi></mrow><mrow><mi>σ</mi><msqrt><mi>T</mi></msqrt></mrow></mfrac><mo>,</mo><mstyle scriptlevel="0"><mspace width="1em"></mspace></mstyle><msub><mi>d</mi><mn>2</mn></msub><mo>=</mo><msub><mi>d</mi><mn>1</mn></msub><mo>−</mo><mi>σ</mi><msqrt><mi>T</mi></msqrt></math></mjx-assistive-mml></mjx-container><p>所有一阶和二阶Greeks都是 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="3" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>d</mi><mn>1</mn></msub></math></mjx-assistive-mml></mjx-container>、<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="4" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D451 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>d</mi><mn>2</mn></msub></math></mjx-assistive-mml></mjx-container> 和标准正态分布函数 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="5" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D441 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>N</mi><mo stretchy="false">(</mo><mo>⋅</mo><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container>、<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="6" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D45B TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>n</mi><mo stretchy="false">(</mo><mo>⋅</mo><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container> 的组合。具体公式推导见<a href="https://coriva.eu.org/option-greeks-guide/">期权Greeks完全指南</a>。</p><p>二阶Greeks的含义：Vanna 衡量 Delta 对波动率的敏感度，Charm 衡量 Delta 随时间的衰减速度，Volga 衡量 Vega 对波动率自身的凸性。详细解读见<a href="https://coriva.eu.org/option-greeks-second-order/">二阶Greeks详解</a>。</p><h2 id="使用建议">使用建议<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/option-greeks-calculator/#%E4%BD%BF%E7%94%A8%E5%BB%BA%E8%AE%AE">#</a></h2><p>拖动标的价格 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="7" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D446 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>S</mi></math></mjx-assistive-mml></mjx-container> 的滑块，观察 Delta 从 0 到 1（Call）的 S 型变化。然后切换到 Gamma 视图，注意 Gamma 在 ATM 处达到峰值，随到期日缩短峰值急剧升高。这就是做市商在到期日前最紧张的原因：短期 ATM 期权的 Gamma 风险最大。</p><p>调低 T（到期天数）到 5 天以内，再看 Theta：时间衰减在最后几天加速，这就是<a href="https://coriva.eu.org/option-greeks-trading/">Greeks实战</a>中讨论的 Theta 非线性衰减。</p><h2 id="系列导航">系列导航<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/option-greeks-calculator/#%E7%B3%BB%E5%88%97%E5%AF%BC%E8%88%AA">#</a></h2><ul><li><a href="https://coriva.eu.org/option-greeks-guide/">期权Greeks完全指南：Delta、Gamma、Theta、Vega 的公式与代码实现</a></li><li><a href="https://coriva.eu.org/option-greeks-second-order/">二阶Greeks详解：Vanna、Charm、Volga 的公式与波动率曲面建模</a></li><li><a href="https://coriva.eu.org/option-greeks-trading/">期权Greeks实战：策略分析、动态对冲与Gamma Scalping</a></li><li><strong>本篇：期权Greeks计算器</strong></li></ul></div><footer class="post-footer"><ul class="post-tags"><li><a href="https://coriva.eu.org/tags/quant/">Quant</a></li><li><a href="https://coriva.eu.org/tags/trading/">Trading</a></li><li><a href="https://coriva.eu.org/tags/options/">Options</a></li></ul><nav class="paginav"><a class="prev" href="https://coriva.eu.org/kelly-criterion-position-sizing/"><span class="title">« 上一页</span><br><span>凯利公式与仓位管理：从数学公式到量化实战</span>
+</a><a class="next" href="https://coriva.eu.org/alpha101-liquidity/"><span class="title">下一页 »</span><br><span>Alpha 101 流动性与复合因子详解 + 因子组合实战</span></a></nav></footer><div id="waline" data-v-app=""><div data-waline=""><!--v-if--><div class="wl-comment"><!--v-if--><div class="wl-panel"><div class="wl-header item3"><div class="wl-header-item"><label for="wl-nick">NickName</label><input id="wl-nick" class="wl-input wl-nick" name="nick" type="text"></div><div class="wl-header-item"><label for="wl-mail">E-Mail</label><input id="wl-mail" class="wl-input wl-mail" name="mail" type="email"></div><div class="wl-header-item"><label for="wl-link">Website</label><input id="wl-link" class="wl-input wl-link" name="link" type="text"></div></div><textarea id="wl-edit" class="wl-editor" placeholder="Comment here..."></textarea><div class="wl-preview" style="display: none;"><hr><h4>Preview:</h4><div class="wl-content"></div></div><div class="wl-footer"><div class="wl-actions"><a href="https://guides.github.com/features/mastering-markdown/" title="Markdown Guide" aria-label="Markdown is supported" class="wl-action" target="_blank" rel="noopener noreferrer"><svg width="16" height="16" ariaHidden="true"><path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.69C0 12.48.52 13 1.15 13h13.69c.64 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3zM9 11H7V8L5.5 9.92 4 8v3H2V5h2l1.5 2L7 5h2v6zm2.99.5L9.5 8H11V5h2v3h1.5l-2.51 3.5z" fill="currentColor"></path></svg></a><button type="button" class="wl-action" title="Emoji" style=""><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M563.2 463.3 677 540c1.7 1.2 3.7 1.8 5.8 1.8.7 0 1.4-.1 2-.2 2.7-.5 5.1-2.1 6.6-4.4l25.3-37.8c1.5-2.3 2.1-5.1 1.6-7.8s-2.1-5.1-4.4-6.6l-73.6-49.1 73.6-49.1c2.3-1.5 3.9-3.9 4.4-6.6.5-2.7 0-5.5-1.6-7.8l-25.3-37.8a10.1 10.1 0 0 0-6.6-4.4c-.7-.1-1.3-.2-2-.2-2.1 0-4.1.6-5.8 1.8l-113.8 76.6c-9.2 6.2-14.7 16.4-14.7 27.5.1 11 5.5 21.3 14.7 27.4zM387 348.8h-45.5c-5.7 0-10.4 4.7-10.4 10.4v153.3c0 5.7 4.7 10.4 10.4 10.4H387c5.7 0 10.4-4.7 10.4-10.4V359.2c0-5.7-4.7-10.4-10.4-10.4zm333.8 241.3-41-20a10.3 10.3 0 0 0-8.1-.5c-2.6.9-4.8 2.9-5.9 5.4-30.1 64.9-93.1 109.1-164.4 115.2-5.7.5-9.9 5.5-9.5 11.2l3.9 45.5c.5 5.3 5 9.5 10.3 9.5h.9c94.8-8 178.5-66.5 218.6-152.7 2.4-5 .3-11.2-4.8-13.6zm186-186.1c-11.9-42-30.5-81.4-55.2-117.1-24.1-34.9-53.5-65.6-87.5-91.2-33.9-25.6-71.5-45.5-111.6-59.2-41.2-14-84.1-21.1-127.8-21.1h-1.2c-75.4 0-148.8 21.4-212.5 61.7-63.7 40.3-114.3 97.6-146.5 165.8-32.2 68.1-44.3 143.6-35.1 218.4 9.3 74.8 39.4 145 87.3 203.3.1.2.3.3.4.5l36.2 38.4c1.1 1.2 2.5 2.1 3.9 2.6 73.3 66.7 168.2 103.5 267.5 103.5 73.3 0 145.2-20.3 207.7-58.7 37.3-22.9 70.3-51.5 98.1-85 27.1-32.7 48.7-69.5 64.2-109.1 15.5-39.7 24.4-81.3 26.6-123.8 2.4-43.6-2.5-87-14.5-129zm-60.5 181.1c-8.3 37-22.8 72-43 104-19.7 31.1-44.3 58.6-73.1 81.7-28.8 23.1-61 41-95.7 53.4-35.6 12.7-72.9 19.1-110.9 19.1-82.6 0-161.7-30.6-222.8-86.2l-34.1-35.8c-23.9-29.3-42.4-62.2-55.1-97.7-12.4-34.7-18.8-71-19.2-107.9-.4-36.9 5.4-73.3 17.1-108.2 12-35.8 30-69.2 53.4-99.1 31.7-40.4 71.1-72 117.2-94.1 44.5-21.3 94-32.6 143.4-32.6 49.3 0 97 10.8 141.8 32 34.3 16.3 65.3 38.1 92 64.8 26.1 26 47.5 56 63.6 89.2 16.2 33.2 26.6 68.5 31 105.1 4.6 37.5 2.7 75.3-5.6 112.3z" fill="currentColor"></path></svg></button><!--v-if--><input id="wl-image-upload" class="upload" aria-hidden="true" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif"><label for="wl-image-upload" class="wl-action" title="Upload Image" aria-label="Upload Image"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M784 112H240c-88 0-160 72-160 160v480c0 88 72 160 160 160h544c88 0 160-72 160-160V272c0-88-72-160-160-160zm96 640c0 52.8-43.2 96-96 96H240c-52.8 0-96-43.2-96-96V272c0-52.8 43.2-96 96-96h544c52.8 0 96 43.2 96 96v480z" fill="currentColor"></path><path d="M352 480c52.8 0 96-43.2 96-96s-43.2-96-96-96-96 43.2-96 96 43.2 96 96 96zm0-128c17.6 0 32 14.4 32 32s-14.4 32-32 32-32-14.4-32-32 14.4-32 32-32zm462.4 379.2-3.2-3.2-177.6-177.6c-25.6-25.6-65.6-25.6-91.2 0l-80 80-36.8-36.8c-25.6-25.6-65.6-25.6-91.2 0L200 728c-4.8 6.4-8 14.4-8 24 0 17.6 14.4 32 32 32 9.6 0 16-3.2 22.4-9.6L380.8 640l134.4 134.4c6.4 6.4 14.4 9.6 24 9.6 17.6 0 32-14.4 32-32 0-9.6-4.8-17.6-9.6-24l-52.8-52.8 80-80L769.6 776c6.4 4.8 12.8 8 20.8 8 17.6 0 32-14.4 32-32 0-8-3.2-16-8-20.8z" fill="currentColor"></path></svg></label><button type="button" class="wl-action" title="Preview"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M710.816 654.301c70.323-96.639 61.084-230.578-23.705-314.843-46.098-46.098-107.183-71.109-172.28-71.109-65.008 0-126.092 25.444-172.28 71.109-45.227 46.098-70.756 107.183-70.756 172.106 0 64.923 25.444 126.007 71.194 172.106 46.099 46.098 107.184 71.109 172.28 71.109 51.414 0 100.648-16.212 142.824-47.404l126.53 126.006c7.058 7.06 16.297 10.979 26.406 10.979 10.105 0 19.343-3.919 26.402-10.979 14.467-14.467 14.467-38.172 0-52.723L710.816 654.301zm-315.107-23.265c-65.88-65.88-65.88-172.54 0-238.42 32.069-32.07 74.245-49.149 119.471-49.149 45.227 0 87.407 17.603 119.472 49.149 65.88 65.879 65.88 172.539 0 238.42-63.612 63.178-175.242 63.178-238.943 0zm0 0" fill="currentColor"></path><path d="M703.319 121.603H321.03c-109.8 0-199.469 89.146-199.469 199.38v382.034c0 109.796 89.236 199.38 199.469 199.38h207.397c20.653 0 37.384-16.645 37.384-37.299 0-20.649-16.731-37.296-37.384-37.296H321.03c-68.582 0-124.352-55.77-124.352-124.267V321.421c0-68.496 55.77-124.267 124.352-124.267h382.289c68.582 0 124.352 55.771 124.352 124.267V524.72c0 20.654 16.736 37.299 37.385 37.299 20.654 0 37.384-16.645 37.384-37.299V320.549c-.085-109.8-89.321-198.946-199.121-198.946zm0 0" fill="currentColor"></path></svg></button></div><div class="wl-info"><div class="wl-captcha-container"></div><div class="wl-text-number">0 <!--v-if--> &nbsp;Words</div><button type="button" class="wl-btn">Login</button><button type="submit" class="primary wl-btn" title="Cmd|Ctrl + Enter">Submit</button></div><div class="wl-gif-popup"><input type="text" placeholder="Search GIF"><!--v-if--><div class="wl-loading"><svg width="30" height="30" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid"><circle cx="50" cy="50" fill="none" stroke="currentColor" strokeWidth="4" r="40" stroke-dasharray="85 30"><animateTransform attributeName="transform" type="rotate" repeatCount="indefinite" dur="1s" values="0 50 50;360 50 50" keyTimes="0;1"></animateTransform></circle></svg></div></div><div class="wl-emoji-popup"><div class="wl-tab-wrapper"><button type="button" title="weibo_smile"><!--v-if--></button><button type="button" title="weibo_lovely"><!--v-if--></button><button type="button" title="weibo_blush"><!--v-if--></button><button type="button" title="weibo_grin"><!--v-if--></button><button type="button" title="weibo_laugh"><!--v-if--></button><button type="button" title="weibo_joy"><!--v-if--></button><button type="button" title="weibo_angry"><!--v-if--></button><button type="button" title="weibo_bye"><!--v-if--></button><button type="button" title="weibo_hammer"><!--v-if--></button><button type="button" title="weibo_kiss"><!--v-if--></button><button type="button" title="weibo_love"><!--v-if--></button><button type="button" title="weibo_mask"><!--v-if--></button><button type="button" title="weibo_money"><!--v-if--></button><button type="button" title="weibo_quiet"><!--v-if--></button><button type="button" title="weibo_rage"><!--v-if--></button><button type="button" title="weibo_sad"><!--v-if--></button><button type="button" title="weibo_shy"><!--v-if--></button><button type="button" title="weibo_sick"><!--v-if--></button><button type="button" title="weibo_slient"><!--v-if--></button><button type="button" title="weibo_smirk"><!--v-if--></button><button type="button" title="weibo_slap"><!--v-if--></button><button type="button" title="weibo_antic"><!--v-if--></button><button type="button" title="weibo_desire"><!--v-if--></button><button type="button" title="weibo_longing"><!--v-if--></button><button type="button" title="weibo_no_idea"><!--v-if--></button><button type="button" title="weibo_look_down"><!--v-if--></button><button type="button" title="weibo_clap"><!--v-if--></button><button type="button" title="weibo_yum"><!--v-if--></button><button type="button" title="weibo_sleep"><!--v-if--></button><button type="button" title="weibo_dizzy_face"><!--v-if--></button><button type="button" title="weibo_chuckle"><!--v-if--></button><button type="button" title="weibo_disappointed"><!--v-if--></button><button type="button" title="weibo_flushed"><!--v-if--></button><button type="button" title="weibo_heart_eyes"><!--v-if--></button><button type="button" title="weibo_no"><!--v-if--></button><button type="button" title="weibo_shuai"><!--v-if--></button><button type="button" title="weibo_suprised"><!--v-if--></button><button type="button" title="weibo_think"><!--v-if--></button><button type="button" title="weibo_vomit"><!--v-if--></button><button type="button" title="weibo_scream"><!--v-if--></button><button type="button" title="weibo_sleepy"><!--v-if--></button><button type="button" title="weibo_sob"><!--v-if--></button><button type="button" title="weibo_sunglasses"><!--v-if--></button><button type="button" title="weibo_greddy"><!--v-if--></button><button type="button" title="weibo_pick_nose"><!--v-if--></button><button type="button" title="weibo_annoyed"><!--v-if--></button><button type="button" title="weibo_awkward"><!--v-if--></button><button type="button" title="weibo_confused"><!--v-if--></button><button type="button" title="weibo_grievance"><!--v-if--></button><button type="button" title="weibo_poor"><!--v-if--></button><button type="button" title="weibo_wink"><!--v-if--></button><button type="button" title="weibo_rolling_eyes"><!--v-if--></button><button type="button" title="weibo_watermalon"><!--v-if--></button><button type="button" title="weibo_annoyed_left"><!--v-if--></button><button type="button" title="weibo_annoyed_right"><!--v-if--></button><button type="button" title="weibo_yawn"><!--v-if--></button><button type="button" title="weibo_hufen"><!--v-if--></button><button type="button" title="weibo_doge"><!--v-if--></button><button type="button" title="weibo_husky"><!--v-if--></button><button type="button" title="weibo_dog_annoyed"><!--v-if--></button><button type="button" title="weibo_dog_bye"><!--v-if--></button><button type="button" title="weibo_dog_consider"><!--v-if--></button><button type="button" title="weibo_dog_cry"><!--v-if--></button><button type="button" title="weibo_dog_joy"><!--v-if--></button><button type="button" title="weibo_dog_laugh"><!--v-if--></button><button type="button" title="weibo_dog_sweat"><!--v-if--></button><button type="button" title="weibo_dog_think"><!--v-if--></button><button type="button" title="weibo_dog_yum"><!--v-if--></button><button type="button" title="weibo_cat"><!--v-if--></button><button type="button" title="weibo_cat_annoyed"><!--v-if--></button><button type="button" title="weibo_cat_bye"><!--v-if--></button><button type="button" title="weibo_cat_cry"><!--v-if--></button><button type="button" title="weibo_cat_think"><!--v-if--></button><button type="button" title="weibo_girl_annoyed"><!--v-if--></button><button type="button" title="weibo_boy"><!--v-if--></button><button type="button" title="weibo_girl"><!--v-if--></button><button type="button" title="weibo_panda"><!--v-if--></button><button type="button" title="weibo_pig"><!--v-if--></button><button type="button" title="weibo_rabbit"><!--v-if--></button><button type="button" title="weibo_ultraman"><!--v-if--></button><button type="button" title="weibo_wool_group"><!--v-if--></button><button type="button" title="weibo_yan"><!--v-if--></button><button type="button" title="weibo_xi"><!--v-if--></button><button type="button" title="weibo_soap"><!--v-if--></button><button type="button" title="weibo_meng"><!--v-if--></button><button type="button" title="weibo_jiong"><!--v-if--></button><button type="button" title="weibo_geili"><!--v-if--></button><button type="button" title="weibo_shenma"><!--v-if--></button><button type="button" title="weibo_alpaca"><!--v-if--></button></div><div><!--v-if--></div><!--v-if--></div></div></div><!--v-if--></div><div class="wl-meta-head"><div class="wl-count"><!--v-if--> Comments</div><ul class="wl-sort"><li class="active">Latest</li><li class="">Oldest</li><li class="">Hottest</li></ul></div><div class="wl-cards"></div><div class="wl-empty">No comment yet.</div><div class="wl-meta-foot"><div class="wl-rss"><a href="https://comments.coriva.eu.org/api/comment/rss?path=%2Foption-greeks-calculator%2F" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this post"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this post</span></a><a href="https://comments.coriva.eu.org/api/comment/rss" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this site"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this site</span></a></div><div class="wl-power"> Powered by <a href="https://github.com/walinejs/waline" target="_blank" rel="noopener noreferrer"> Waline </a> v3.15.2</div></div></div></div><link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css"><script type="module">
+  import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
+  import { pageviewCount } from 'https://unpkg.com/@waline/client@v3/dist/pageview.js';
+  init({
+    el: '#waline',
+    serverURL: 'https://comments.coriva.eu.org',
+    lang: 'en',
+    pageview: false,
+  });
+  pageviewCount({
+    serverURL: 'https://comments.coriva.eu.org',
+  });
+</script></article><aside class="toc-sidebar" id="toc-sidebar"><nav class="toc-sidebar-nav"><span class="toc-sidebar-title">目录</span><div class="toc-sidebar-inner"><nav id="TableOfContents"><ul><li><a href="https://coriva.eu.org/option-greeks-calculator/#%E5%85%AC%E5%BC%8F%E5%9F%BA%E7%A1%80">公式基础</a></li><li><a href="https://coriva.eu.org/option-greeks-calculator/#%E4%BD%BF%E7%94%A8%E5%BB%BA%E8%AE%AE">使用建议</a></li><li><a href="https://coriva.eu.org/option-greeks-calculator/#%E7%B3%BB%E5%88%97%E5%AF%BC%E8%88%AA" class="">系列导航</a></li></ul></nav></div></nav><nav class="related-posts"><h2>相关文章</h2><ul><li><a href="https://coriva.eu.org/0dte-options-guide/"><span class="related-title">末日期权（0DTE）完全指南：机制、Greeks 与盈亏真相</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/volatility-trading-strategies/"><span class="related-title">波动率交易策略入门：做多与做空波动率的六种方法</span>
+<span class="related-date">2026-04-13</span></a></li><li><a href="https://coriva.eu.org/option-greeks-trading/"><span class="related-title">期权Greeks实战：策略分析、动态对冲与Gamma Scalping</span>
+<span class="related-date">2026-04-12</span></a></li><li><a href="https://coriva.eu.org/option-greeks-second-order/"><span class="related-title">二阶Greeks详解：Vanna、Charm、Volga 的公式与波动率曲面建模</span>
+<span class="related-date">2026-04-12</span></a></li><li><a href="https://coriva.eu.org/option-greeks-guide/"><span class="related-title">期权Greeks完全指南：Delta、Gamma、Theta、Vega 的公式与代码实现</span>
+<span class="related-date">2026-04-12</span></a></li></ul></nav></aside></div></main><footer class="footer"><span>© 2026 <a href="https://coriva.eu.org/">Coriva</a></span> ·
+<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+<a href="https://finicounter.eu.org/" target="_blank">Total Views</a>:
+<span id="finicount_views">7,293</span></span></footer><a href="https://coriva.eu.org/option-greeks-calculator/#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g" style="visibility: hidden; opacity: 0;"><svg viewBox="0 0 12 6" fill="currentcolor"><path d="M12 6H0l6-6z"></path></svg>
+</a><script async="" src="//finicounter.eu.org/finicounter.js"></script><script>(function(){var e,t,n,s=document.getElementById("toc-sidebar");if(!s)return;if(t=s.querySelectorAll('a[href^="#"]'),!t.length)return;e=[],t.forEach(function(t){var s=decodeURIComponent(t.getAttribute("href").slice(1)),n=document.getElementById(s);n&&e.push({el:n,link:t})});function o(){for(var o=window.scrollY||document.documentElement.scrollTop,i=100,s=null,n=0;n<e.length;n++)e[n].el.getBoundingClientRect().top+window.scrollY-i<=o&&(s=e[n]);t.forEach(function(e){e.classList.remove("active")}),s&&s.link.classList.add("active")}n=!1,window.addEventListener("scroll",function(){n||(requestAnimationFrame(function(){o(),n=!1}),n=!0)}),o()})()</script><script>let menu=document.getElementById("menu");if(menu){const e=localStorage.getItem("menu-scroll-position");e&&(menu.scrollLeft=parseInt(e,10)),menu.onscroll=function(){localStorage.setItem("menu-scroll-position",menu.scrollLeft)}}document.querySelectorAll('a[href^="#"]').forEach(e=>{e.addEventListener("click",function(e){e.preventDefault();var t=this.getAttribute("href").substr(1);window.matchMedia("(prefers-reduced-motion: reduce)").matches?document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView():document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView({behavior:"smooth"}),t==="top"?history.replaceState(null,null," "):history.pushState(null,null,`#${t}`)})})</script><script>var mybutton=document.getElementById("top-link");window.onscroll=function(){document.body.scrollTop>800||document.documentElement.scrollTop>800?(mybutton.style.visibility="visible",mybutton.style.opacity="1"):(mybutton.style.visibility="hidden",mybutton.style.opacity="0")}</script><script>document.getElementById("theme-toggle").addEventListener("click",()=>{const e=document.querySelector("html");e.dataset.theme==="dark"?(e.dataset.theme="light",localStorage.setItem("pref-theme","light")):(e.dataset.theme="dark",localStorage.setItem("pref-theme","dark"))})</script><script>document.querySelectorAll("pre > code").forEach(e=>{const n=e.parentNode.parentNode,t=document.createElement("button");t.classList.add("copy-code"),t.innerHTML="复制";function s(){t.innerHTML="已复制！",setTimeout(()=>{t.innerHTML="复制"},2e3)}t.addEventListener("click",t=>{if("clipboard"in navigator){navigator.clipboard.writeText(e.textContent),s();return}const n=document.createRange();n.selectNodeContents(e);const o=window.getSelection();o.removeAllRanges(),o.addRange(n);try{document.execCommand("copy"),s()}catch{}o.removeRange(n)}),n.classList.contains("highlight")?n.appendChild(t):n.parentNode.firstChild==n||(e.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName=="TABLE"?e.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(t):e.parentNode.appendChild(t))})</script></body></html>

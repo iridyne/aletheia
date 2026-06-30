@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="zh" dir="auto" data-theme="dark"><head><meta charset="utf-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><meta name="robots" content="index, follow"><title>FactorMiner 论文简读 | Coriva</title>
+<meta name="keywords" content="Quant,LLM,Paper"><meta name="description" content="FactorMiner 论文简读：自进化 agent 用 skill 加 experience memory 挖掘公式化 alpha 因子，CSI500 上 top-40 IC 8.25%，ICIR 0.77，优于 AlphaAgent 与 GPLearn。"><meta name="author" content="Coriva"><link rel="canonical" href="https://coriva.eu.org/factorminer-paper-review/"><meta name="msvalidate.01" content="F8E2F274161B653649F8818FD127CE87"><link crossorigin="anonymous" href="/assets/css/stylesheet.8fe2fa5580263673749c0854ddc4fdff83d8cd245ff94138be9f54fc4bc84fca.css" integrity="sha256-j+L6VYAmNnN0nAhU3cT9/4PYzSRf+UE4vp9U/EvIT8o=" rel="preload stylesheet" as="style"><link rel="icon" href="https://coriva.eu.org/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="https://coriva.eu.org/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="https://coriva.eu.org/favicon-32x32.png"><link rel="apple-touch-icon" href="https://coriva.eu.org/apple-touch-icon.png"><link rel="mask-icon" href="https://coriva.eu.org/safari-pinned-tab.svg"><meta name="theme-color" content="#2e2e33"><meta name="msapplication-TileColor" content="#2e2e33"><link rel="alternate" hreflang="zh" href="https://coriva.eu.org/factorminer-paper-review/"><link rel="alternate" hreflang="en" href="https://coriva.eu.org/en/factorminer-paper-review/"><noscript><style>#theme-toggle,.top-link{display:none}</style><style>@media(prefers-color-scheme:dark){:root{--theme:rgb(29, 30, 32);--entry:rgb(46, 46, 51);--primary:rgb(218, 218, 219);--secondary:rgb(155, 156, 157);--tertiary:rgb(65, 66, 68);--content:rgb(196, 196, 197);--code-block-bg:rgb(46, 46, 51);--code-bg:rgb(55, 56, 62);--border:rgb(51, 51, 51);color-scheme:dark}.list{background:var(--theme)}.toc{background:var(--entry)}}@media(prefers-color-scheme:light){.list::-webkit-scrollbar-thumb{border-color:var(--code-bg)}}</style></noscript><script>localStorage.getItem("pref-theme")==="dark"?document.querySelector("html").dataset.theme="dark":localStorage.getItem("pref-theme")==="light"?document.querySelector("html").dataset.theme="light":window.matchMedia("(prefers-color-scheme: dark)").matches?document.querySelector("html").dataset.theme="dark":document.querySelector("html").dataset.theme="light"</script><meta name="google-adsense-account" content="ca-pub-2660281922577700"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/400.css" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/500.css" rel="stylesheet"><style>code,kbd,samp,pre{font-family:fira code,cascadia code,source code pro,sf mono,Menlo,Consolas,monospace}.entry-footer .pageview-meta{display:none}.post-single .post-description{display:none}.post-single-wrapper{display:flex;gap:4rem;align-items:flex-start}.post-single-wrapper .post-single{flex:1;min-width:0}.toc-sidebar{display:none}@media(min-width:1280px){body:not(.list) .main{max-width:calc(var(--main-width) + var(--gap) * 2 + 272px)}.post-single-wrapper .post-single{max-width:var(--main-width)}.toc-sidebar{display:block;width:220px;flex-shrink:0;position:sticky;top:calc(var(--header-height) + 1rem);max-height:calc(100vh - var(--header-height) - 3rem);overflow-y:auto;scrollbar-width:none;padding-left:1rem;border-left:1px solid var(--border)}.toc-sidebar::-webkit-scrollbar{display:none}.toc-sidebar-nav{font-size:.8rem;line-height:1.65}.toc-sidebar-title{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.toc-sidebar-inner ul{list-style:none;padding-left:0;margin:0}.toc-sidebar-inner ul ul{padding-left:.9em}.toc-sidebar-inner li{margin:.2em 0}.toc-sidebar-inner a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;transition:color .2s;opacity:.8}.toc-sidebar-inner a:hover{color:var(--primary);opacity:1}.toc-sidebar-inner a.active{color:var(--primary);font-weight:500;opacity:1}}.related-posts{margin-top:1.5rem;padding-top:1.2rem;border-top:1px solid var(--border)}.related-posts h2{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.related-posts ul{list-style:none;padding:0;margin:0}.related-posts li{margin:.2em 0}.related-posts a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;font-size:.8rem;line-height:1.65;transition:color .2s;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.related-posts a:hover{color:var(--primary);opacity:1}.related-date{display:none}</style><script>MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]}}</script><script async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script><script async="" src="https://www.googletagmanager.com/gtag/js?id=G-C74ZBKDR6V"></script><script>var dnt,doNotTrack=!1;if(!1&&(dnt=navigator.doNotTrack||window.doNotTrack||navigator.msDoNotTrack,doNotTrack=dnt=="1"||dnt=="yes"),!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-C74ZBKDR6V")}</script><meta property="og:url" content="https://coriva.eu.org/factorminer-paper-review/"><meta property="og:site_name" content="Coriva"><meta property="og:title" content="FactorMiner 论文简读"><meta property="og:description" content="FactorMiner 论文简读：自进化 agent 用 skill 加 experience memory 挖掘公式化 alpha 因子，CSI500 上 top-40 IC 8.25%，ICIR 0.77，优于 AlphaAgent 与 GPLearn。"><meta property="og:locale" content="zh"><meta property="og:type" content="article"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-06-14T00:14:39+08:00"><meta property="article:modified_time" content="2026-06-14T00:14:39+08:00"><meta property="article:tag" content="Quant"><meta property="article:tag" content="LLM"><meta property="article:tag" content="Paper"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="FactorMiner 论文简读"><meta name="twitter:description" content="FactorMiner 论文简读：自进化 agent 用 skill 加 experience memory 挖掘公式化 alpha 因子，CSI500 上 top-40 IC 8.25%，ICIR 0.77，优于 AlphaAgent 与 GPLearn。"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Posts","item":"https://coriva.eu.org/posts/"},{"@type":"ListItem","position":2,"name":"FactorMiner 论文简读","item":"https://coriva.eu.org/factorminer-paper-review/"}]}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","headline":"FactorMiner 论文简读","name":"FactorMiner 论文简读","description":"FactorMiner 论文简读：自进化 agent 用 skill 加 experience memory 挖掘公式化 alpha 因子，CSI500 上 top-40 IC 8.25%，ICIR 0.77，优于 AlphaAgent 与 GPLearn。","keywords":["Quant","LLM","Paper"],"articleBody":"公式化因子挖掘做到一定规模会撞上一堵墙：库里已经有几十个因子，新挖的候选 IC 不算差，但跟现有因子相关性总是超过阈值，admit 不进去。AlphaGPT、AlphaForge、AlphaAgent、QuantFactor REINFORCE 都在解决\"怎么生成更多候选\"，对\"库越大越难加新货\"的处理仍有限。\nFactorMiner（A Self-Evolving Agent with Skills and Experience Memory for Financial Alpha Discovery，2026/02，arXiv 2602.14670）的核心思路：把因子挖掘流程封装成一个 agent skill，并维护一个 experience memory 记录\"哪些方向已经撞墙、哪些模板还能复用\"，让 agent 每轮挖掘都从过去的成功和失败里取先验。CSI500 上 top-40 因子的 IC 达到 8.25%，ICIR 0.77，对比 AlphaAgent 的 5.90%/0.46 是约 40% 的相对提升。\n问题背景 论文把因子挖掘的核心痛点叫 “Correlation Red Sea”。形式化定义：每挖出一个新因子 \\(\\alpha\\)，要求它和库 \\(\\mathcal{L}\\) 里所有已有因子的最大相关性低于阈值 \\(\\theta\\)：\n$$ \\mathcal{P}_{\\text{orth}} = \\\\{ \\alpha \\in \\mathcal{P} : \\max_{\\beta \\in \\mathcal{L}} |\\rho(\\alpha, \\beta)| \u003c \\theta \\\\} $$随着 \\(\\mathcal{L}\\) 变大，\\(\\mathcal{P}_{\\text{orth}}\\) 这个可行区域缩得极快。GP 和 RL 这类标准搜索方法对此没有应对机制：它们不记得哪些区域已经探过、哪些方向反复撞墙，越往后越在原地打转。\n更头疼的是这类方法把每个因子当独立优化问题处理，只看 IC/ICIR 这种个体指标，不考虑新因子和已有库的协同。即使个体指标很好，加进库里冗余。\n方法 FactorMiner 的解法有两层：把领域知识封装成 agent 可复用的 skill，把过去的探索经验沉淀成 memory，再用一个 retrieve/generate/evaluate/distill 的循环把两者串起来。\nSkill 架构 Skill 包含一个 60+ 算子的 operator library（如 TsRank、Rsquare 等），以及一条标准化的多阶段验证流程：\nStage 1: Fast IC screening，在小资产子集上快筛 \\(|IC| \\geq \\tau\\) Stage 2: Correlation check，对全库做 \\(\\max_{\\beta \\in \\mathcal{L}} |\\rho(\\alpha, \\beta)| \u003c \\theta\\) Stage 2.5: Replacement check，候选和现有因子高相关但自身更好时触发替换 Stage 3: Batch deduplication，本批候选之间也去重 Stage 4: Full validation，全资产 OOS 测试 Skill 设计把 “agent reasoning” 和 “工具执行” 完全解耦：LLM 只负责提出候选公式，IC 计算、相关性检验、admit 判定全部由确定性 Python 代码完成。论文称之为避免 calculation hallucination：LLM 没机会编造一个不存在的 IC 数字。\nExperience Memory Memory 记录两类内容：\nSuccessful Patterns \\(\\mathcal{P}_{\\text{succ}}\\)：反复入库的因子模板，比如\"用 Skew/Kurt 做高阶矩 regime\"、“用 Rsquare 做趋势回归自适应” Forbidden Regions \\(\\mathcal{P}_{\\text{fail}}\\)：和现有库相关性总是超标的方向，比如简单的 VWAP 偏离变体、标准化收益率 Memory 的更新通过三个抽象算子完成：\n$$ \\mathcal{M}_{t+1}^{\\text{form}} = \\Phi(\\mathcal{M}_t, \\tau_t), \\quad \\mathcal{M}_{t+1} = \\Psi(\\mathcal{M}_t, \\mathcal{M}_{t+1}^{\\text{form}}), \\quad \\mathfrak{m} = \\Xi(\\mathcal{M}_t, \\mathcal{L}_t) $$其中 \\(\\tau_t\\) 是本轮的挖掘轨迹（每个候选的公式、IC、相关性、是否 admit），\\(\\Phi\\) 把轨迹蒸馏成模板，\\(\\Psi\\) 整合到现有 memory，\\(\\Xi\\) 在生成阶段把 memory 检索成 prompt 中的\"推荐方向\"和\"禁区方向\"。\n实现上 memory 不是稠密表征也不是 replay buffer，就是若干自然语言模板加 canonical example，配合当前库状态做检索。\nRalph Loop 整个流程论文叫 Ralph Loop：retrieve → generate → evaluate → distill 循环。每轮 agent 先从 memory 取先验，按先验生成一批候选公式，过 multi-stage 流程，把结果（入库的、因相关性被拒的、因 IC 不够被拒的）蒸馏回 memory，再开始下一轮。\nLLM backbone 是 Gemini 3.0 Flash。整套循环跑在自研的 GPU 加速算子库上。\nmemory 与 skill 的作用机制 memory 起到的作用是改变 prompt 给 LLM 的采样分布。论文写成：\n$$ \\pi(\\alpha | \\mathfrak{m}), \\quad \\mathfrak{m} = \\Xi(\\mathcal{M}_t, \\mathcal{L}_t) $$\\(\\mathfrak{m}\\) 把检索到的\"成功模板\"和\"禁区\"塞进 prompt，让 LLM 生成时偏向 \\(\\mathcal{P}_{\\text{orth}}\\) 这块区域。这不是严格的搜索空间裁剪，是采样分布的偏置：没有 memory 时 LLM 也有自己的预训练先验，但缺少对当前库状态的感知，越到后期重复撞 forbidden region 的概率越高。\nskill 的解耦设计另外解决了 LLM agent 在数值计算上的不可靠问题。让 LLM 自己算 IC 会出现编造数字的情况；把这些计算外包给 deterministic skill，agent 只在符号层面操作，可靠性才能立住。\n实验结果 数据集是 A 股 CSI500、CSI1000、HS300 加 Binance 上 64 个加密资产，全部用 10 分钟 bar，2024 训练，2025 测试，预测目标是下一根 10 分钟的开收价格变化。\nBaseline 六个：Random Formula (RF)、Alpha101 Classic、Alpha101 Adapted 高频版、GPLearn、AlphaForge、AlphaAgent。所有方法用同样的 operator library、admission 规则、评估引擎，对比的是搜索算法本身。\nTop-40 因子库样本外表现（IC % / ICIR）：\n方法 CSI500 CSI1000 HS300 Crypto Random Formula 2.68 / 0.25 2.88 / 0.30 1.45 / 0.09 n/a Alpha101 Classic 4.49 / 0.42 4.86 / 0.50 2.11 / 0.14 n/a Alpha101 Adapted 5.06 / 0.43 5.32 / 0.49 2.40 / 0.15 n/a GPLearn 6.04 / 0.43 5.86 / 0.48 4.12 / 0.16 2.50 / 0.15 AlphaForge 4.48 / 0.38 4.64 / 0.42 3.53 / 0.25 2.52 / 0.16 AlphaAgent 5.90 / 0.46 6.21 / 0.51 4.69 / 0.30 2.86 / 0.17 FactorMiner 8.25 / 0.77 7.78 / 0.76 7.46 / 0.38 3.82 / 0.28 四个市场 IC 和 ICIR 都是最优。CSI500 上对最强 baseline AlphaAgent 的相对提升约 40% (IC)、67% (ICIR)，HS300 上对 AlphaAgent 提升约 59%（vs 老 Alpha101 Classic 则超过 3 倍）。HS300 整体 IC 水平低于 CSI500，原因是大盘股 microstructure 信号比中小盘更弱。\nCrypto 上 FactorMiner 对 AlphaAgent 的提升约 34%，幅度小于 A 股。论文给出的解释是 skill 编码的是跨市场的微观结构通性而不是单市场的特异规则，所以从 A 股训得的配置能直接迁移过去。但 Random Formula 和 Alpha101 在 Crypto 上没跑（论文表里没填），所以\"完整 baseline 横扫\"只到 LLM 类方法这层。\n学习集成与 IC 加权的边际收益 论文还把库丢给 Lasso 和 XGBoost 做选股。多数 baseline 上学习模型比等权和 IC 加权有明显提升；FactorMiner 上的提升非常有限，CSI500 上 EW 和 ICW 的 ICIR 是 1.29/1.31，Lasso 和 XGBoost 是 1.21/1.29，甚至略有下降。原因是 FactorMiner 的库构造时已经做了正交化（Stage 2 + Stage 3），简单等权就吃掉了大部分可利用的预测信号，learned selection 没多少残留空间。\nMemory 的消融 论文把 \\(\\Phi, \\Psi, \\Xi\\) 三个 memory 算子关掉，跑 No Memory 版本对比。\n读数：\nHigh-quality 候选（\\(|IC| \u003e 0.02\\)）：96 vs 32，3.0× Admit：43 vs 18，2.4× Yield rate（高质量候选占比）：60.0% vs 20.0% Rejection rate（高质量候选中因冗余被拒的比例）：55.2% vs 43.8% Yield rate 提升说明 memory 把搜索拉到了更可能命中的区域。Rejection rate 反而升高这个点更有意思：memory 引导生成的候选 IC 更高，但更容易和已有库相关，所以需要更激进的去重才能维持正交性。这正是 \\(\\Psi\\) 算子在工作，把单纯追求 IC 的搜索转成 IC 和正交性的联合优化，直接对应 \\(\\mathcal{P}_{\\text{orth}}\\) 那条约束。\n阈值方面这组消融用了较松的 \\(|IC| \u003e 0.02\\) 和 \\(\\theta = 0.85\\)，论文说是为了保证样本足够做对比，主实验用了更严的阈值。\nGPU 算子库与评估开销 论文实现了一套 GPU 加速算子库，对比 Pandas、C 编译版（Bottleneck）、GPU 三个 backend 在 CSI500 (12,610 × 500) 数据上的算子计算时间：\nTsRank：1843ms (Pandas) → 393ms (C) → 31ms (GPU)，GPU 加速 59× TsCorr / TsStd 等：8–59× 加速区间 C 版平均也比 GPU 慢 5.4× (1092ms vs 202ms) 整体效果是评估 1000 个候选因子从 70 分钟（Pandas）压到 6 分钟。论文称之为 “qualitative enabler”：没有这套加速，整个 retrieve-generate-evaluate-distill 循环根本不可能在合理时间内迭代。很多 LLM agent 论文跳过底层计算效率，但因子挖掘是 evaluation-bound 任务，eval 太慢循环就转不起来。\nLLM 一律用 Gemini 3.0 Flash，没有针对挖因子做 fine-tuning。论文未报告调用次数和 token 成本。\n局限 论文最后两节列了几条 limitation：\n没有和端到端的神经预测模型做直接对比，比如把 110 个因子作为特征丢进 LightGBM，对比直接用 raw OHLCV 训神经网络 没有 transaction cost-aware 的回测，只评估 IC/ICIR 这类信号质量指标 Memory 更新是 offline 的，展望是做 online memory updates 以适应非平稳市场 A 股训练得到的 memory 直接迁移到 Crypto，但有效性是经验性的，没给理论保证 实际更关心的两个问题论文没回答：一是 LLM 提示词的工程量有多大、对结果的鲁棒性如何；二是 110 个因子在 2025 年继续推到 2026 年还能保持多少 IC。第一点是工程复现门槛，第二点是因子衰减问题。\n小结 FactorMiner 解决的问题是\"因子库越大越难加新因子\"，路径是把搜索过程从无记忆的随机/进化采样改成有 memory 引导的 agent 循环。两个核心组件 skill 和 memory 各司其职：skill 保证数值计算可靠，memory 把过去的探索经验沉淀成下一轮的先验。\n实验上对比 GPLearn、AlphaForge、AlphaAgent 等近期工作，四个市场 IC 和 ICIR 都最优，A 股训得的 memory 还能零样本迁移到加密市场。消融实验直接证明了 memory 的作用：yield rate 从 20% 提到 60%，admit 数从 18 涨到 43。论文一并放出了 110 个 A 股高频因子库，对想做后续研究的人是一个直接可用的工件。\n延伸阅读：\nAlphaGPT 论文简读：LLM 参与因子挖掘的早期工作 AlphaAgent 论文简读：多 agent 框架与抗衰减 QuantaAlpha 论文简读：trajectory 视角下的自进化挖掘 ","wordCount":"3619","inLanguage":"zh","datePublished":"2026-06-14T00:14:39+08:00","dateModified":"2026-06-14T00:14:39+08:00","author":{"@type":"Person","name":"Coriva"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://coriva.eu.org/factorminer-paper-review/"},"publisher":{"@type":"Organization","name":"Coriva","logo":{"@type":"ImageObject","url":"https://coriva.eu.org/favicon.ico"}}}</script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
+.CtxtMenu_InfoContent {  overflow:auto; text-align:left; font-size:80%;  padding:.4em .6em; border:1px inset; margin:1em 0px;  max-height:20em; max-width:30em; background-color:#EEEEEE;  white-space:normal;}
+.CtxtMenu_Info.CtxtMenu_MousePost {outline:none;}
+.CtxtMenu_Info {  position:fixed; left:50%; width:auto; text-align:center;  border:3px outset; padding:1em 2em; background-color:#DDDDDD;  color:black;  cursor:default; font-family:message-box; font-size:120%;  font-style:normal; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 15px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius:15px;               /* Safari and Chrome */  -moz-border-radius:15px;                  /* Firefox */  -khtml-border-radius:15px;                /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */  filter:progid:DXImageTransform.Microsoft.dropshadow(OffX=2, OffY=2, Color="gray", Positive="true"); /* IE */}
+</style><style type="text/css">.CtxtMenu_MenuClose {  position:absolute;  cursor:pointer;  display:inline-block;  border:2px solid #AAA;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  font-family: "Courier New", Courier;  font-size:24px;  color:#F0F0F0}
+.CtxtMenu_MenuClose span {  display:block; background-color:#AAA; border:1.5px solid;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  line-height:0;  padding:8px 0 6px     /* may need to be browser-specific */}
+.CtxtMenu_MenuClose:hover {  color:white!important;  border:2px solid #CCC!important}
+.CtxtMenu_MenuClose:hover span {  background-color:#CCC!important}
+.CtxtMenu_MenuClose:hover:focus {  outline:none}
+</style><style type="text/css">.CtxtMenu_Menu {  position:absolute;  background-color:white;  color:black;  width:auto; padding:5px 0px;  border:1px solid #CCCCCC; margin:0; cursor:default;  font: menu; text-align:left; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 5px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius: 5px;             /* Safari and Chrome */  -moz-border-radius: 5px;                /* Firefox */  -khtml-border-radius: 5px;              /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */}
+.CtxtMenu_MenuItem {  padding: 1px 2em;  background:transparent;}
+.CtxtMenu_MenuArrow {  position:absolute; right:.5em; padding-top:.25em; color:#666666;  font-family: null; font-size: .75em}
+.CtxtMenu_MenuActive .CtxtMenu_MenuArrow {color:white}
+.CtxtMenu_MenuArrow.CtxtMenu_RTL {left:.5em; right:auto}
+.CtxtMenu_MenuCheck {  position:absolute; left:.7em;  font-family: null}
+.CtxtMenu_MenuCheck.CtxtMenu_RTL { right:.7em; left:auto }
+.CtxtMenu_MenuRadioCheck {  position:absolute; left: .7em;}
+.CtxtMenu_MenuRadioCheck.CtxtMenu_RTL {  right: .7em; left:auto}
+.CtxtMenu_MenuInputBox {  padding-left: 1em; right:.5em; color:#666666;  font-family: null;}
+.CtxtMenu_MenuInputBox.CtxtMenu_RTL {  left: .1em;}
+.CtxtMenu_MenuComboBox {  left:.1em; padding-bottom:.5em;}
+.CtxtMenu_MenuSlider {  left: .1em;}
+.CtxtMenu_SliderValue {  position:absolute; right:.1em; padding-top:.25em; color:#333333;  font-size: .75em}
+.CtxtMenu_SliderBar {  outline: none; background: #d3d3d3}
+.CtxtMenu_MenuLabel {  padding: 1px 2em 3px 1.33em;  font-style:italic}
+.CtxtMenu_MenuRule {  border-top: 1px solid #DDDDDD;  margin: 4px 3px;}
+.CtxtMenu_MenuDisabled {  color:GrayText}
+.CtxtMenu_MenuActive {  background-color: #606872;  color: white;}
+.CtxtMenu_MenuDisabled:focus {  background-color: #E8E8E8}
+.CtxtMenu_MenuLabel:focus {  background-color: #E8E8E8}
+.CtxtMenu_ContextMenu:focus {  outline:none}
+.CtxtMenu_ContextMenu .CtxtMenu_MenuItem:focus {  outline:none}
+.CtxtMenu_SelectionMenu {  position:relative; float:left;  border-bottom: none; -webkit-box-shadow:none; -webkit-border-radius:0px; }
+.CtxtMenu_SelectionItem {  padding-right: 1em;}
+.CtxtMenu_Selection {  right: 40%; width:50%; }
+.CtxtMenu_SelectionBox {  padding: 0em; max-height:20em; max-width: none;  background-color:#FFFFFF;}
+.CtxtMenu_SelectionDivider {  clear: both; border-top: 2px solid #000000;}
+.CtxtMenu_Menu .CtxtMenu_MenuClose {  top:-10px; left:-10px}
+</style><style id="waline-darkmode"></style><style id="MJX-CHTML-styles">
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row > * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-assistive-mml {
+  position: absolute !important;
+  top: 0px;
+  left: 0px;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 1px 0px 0px 0px !important;
+  border: 0px !important;
+  display: block !important;
+  width: auto !important;
+  overflow: hidden !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+mjx-assistive-mml[display="block"] {
+  width: 100% !important;
+}
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-TeXAtom {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-msub {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h > * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h > * > mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h > * > mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h > mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h > mjx-beg > mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h > mjx-end > mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v > * {
+  display: block;
+}
+
+mjx-stretchy-v > mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v > mjx-end > mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v > * > mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v > mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-mspace {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-munder {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-over {
+  text-align: left;
+}
+
+mjx-munder:not([limits="false"]) {
+  display: inline-table;
+}
+
+mjx-munder > mjx-row {
+  text-align: left;
+}
+
+mjx-under {
+  padding-bottom: .1em;
+}
+
+mjx-msubsup {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-script {
+  display: inline-block;
+  padding-right: .05em;
+  padding-left: .033em;
+}
+
+mjx-script > mjx-spacer {
+  display: block;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-c.mjx-c1D6FC.TEX-I::before {
+  padding: 0.442em 0.64em 0.011em 0;
+  content: "\3B1";
+}
+
+mjx-c.mjx-c4C.TEX-C::before {
+  padding: 0.705em 0.69em 0.022em 0;
+  content: "L";
+}
+
+mjx-c.mjx-c1D703.TEX-I::before {
+  padding: 0.705em 0.469em 0.01em 0;
+  content: "\3B8";
+}
+
+mjx-c.mjx-c50.TEX-C::before {
+  padding: 0.683em 0.733em 0.057em 0;
+  content: "P";
+}
+
+mjx-c.mjx-c6F::before {
+  padding: 0.448em 0.5em 0.01em 0;
+  content: "o";
+}
+
+mjx-c.mjx-c72::before {
+  padding: 0.442em 0.392em 0 0;
+  content: "r";
+}
+
+mjx-c.mjx-c74::before {
+  padding: 0.615em 0.389em 0.01em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c68::before {
+  padding: 0.694em 0.556em 0 0;
+  content: "h";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c2208::before {
+  padding: 0.54em 0.667em 0.04em 0;
+  content: "\2208";
+}
+
+mjx-c.mjx-c3A::before {
+  padding: 0.43em 0.278em 0 0;
+  content: ":";
+}
+
+mjx-c.mjx-c6D::before {
+  padding: 0.442em 0.833em 0 0;
+  content: "m";
+}
+
+mjx-c.mjx-c61::before {
+  padding: 0.448em 0.5em 0.011em 0;
+  content: "a";
+}
+
+mjx-c.mjx-c78::before {
+  padding: 0.431em 0.528em 0 0;
+  content: "x";
+}
+
+mjx-c.mjx-c1D6FD.TEX-I::before {
+  padding: 0.705em 0.566em 0.194em 0;
+  content: "\3B2";
+}
+
+mjx-c.mjx-c7C::before {
+  padding: 0.75em 0.278em 0.249em 0;
+  content: "|";
+}
+
+mjx-c.mjx-c1D70C.TEX-I::before {
+  padding: 0.442em 0.517em 0.216em 0;
+  content: "\3C1";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c2C::before {
+  padding: 0.121em 0.278em 0.194em 0;
+  content: ",";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c3C::before {
+  padding: 0.54em 0.778em 0.04em 0;
+  content: "<";
+}
+
+mjx-c.mjx-c1D43C.TEX-I::before {
+  padding: 0.683em 0.504em 0 0;
+  content: "I";
+}
+
+mjx-c.mjx-c1D436.TEX-I::before {
+  padding: 0.705em 0.76em 0.022em 0;
+  content: "C";
+}
+
+mjx-c.mjx-c2265::before {
+  padding: 0.636em 0.778em 0.138em 0;
+  content: "\2265";
+}
+
+mjx-c.mjx-c1D70F.TEX-I::before {
+  padding: 0.431em 0.517em 0.013em 0;
+  content: "\3C4";
+}
+
+mjx-c.mjx-c73::before {
+  padding: 0.448em 0.394em 0.011em 0;
+  content: "s";
+}
+
+mjx-c.mjx-c75::before {
+  padding: 0.442em 0.556em 0.011em 0;
+  content: "u";
+}
+
+mjx-c.mjx-c63::before {
+  padding: 0.448em 0.444em 0.011em 0;
+  content: "c";
+}
+
+mjx-c.mjx-c66::before {
+  padding: 0.705em 0.372em 0 0;
+  content: "f";
+}
+
+mjx-c.mjx-c69::before {
+  padding: 0.669em 0.278em 0 0;
+  content: "i";
+}
+
+mjx-c.mjx-c6C::before {
+  padding: 0.694em 0.278em 0 0;
+  content: "l";
+}
+
+mjx-c.mjx-c4D.TEX-C::before {
+  padding: 0.705em 1.201em 0.05em 0;
+  content: "M";
+}
+
+mjx-c.mjx-c1D461.TEX-I::before {
+  padding: 0.626em 0.361em 0.011em 0;
+  content: "t";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c31::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "1";
+}
+
+mjx-c.mjx-c3A6::before {
+  padding: 0.683em 0.722em 0 0;
+  content: "\3A6";
+}
+
+mjx-c.mjx-c3A8::before {
+  padding: 0.683em 0.778em 0 0;
+  content: "\3A8";
+}
+
+mjx-c.mjx-c1D52A.TEX-FR::before {
+  padding: 0.475em 0.767em 0.026em 0;
+  content: "m";
+}
+
+mjx-c.mjx-c39E::before {
+  padding: 0.677em 0.667em 0 0;
+  content: "\39E";
+}
+
+mjx-c.mjx-c1D70B.TEX-I::before {
+  padding: 0.431em 0.57em 0.011em 0;
+  content: "\3C0";
+}
+
+mjx-c.mjx-c3E::before {
+  padding: 0.54em 0.778em 0.04em 0;
+  content: ">";
+}
+
+mjx-c.mjx-c30::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "0";
+}
+
+mjx-c.mjx-c2E::before {
+  padding: 0.12em 0.278em 0 0;
+  content: ".";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c38::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "8";
+}
+
+mjx-c.mjx-c35::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "5";
+}
+</style></head><body id="top"><header class="header"><nav class="nav"><div class="logo"><a href="https://coriva.eu.org/" accesskey="h" title="Coriva (Alt + H)"><img src="https://coriva.eu.org/logo.png" alt="" aria-label="logo" height="35">Coriva</a><div class="logo-switches"><button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme"><svg id="moon" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg><svg id="sun" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></button><ul class="lang-switch"><li>|</li><li><a href="https://coriva.eu.org/en/" title="English" aria-label="English">English</a></li></ul></div></div><ul id="menu"><li><a href="https://coriva.eu.org/archives/" title="归档"><span>归档</span></a></li><li><a href="https://coriva.eu.org/categories/" title="分类"><span>分类</span></a></li><li><a href="https://coriva.eu.org/tags/" title="标签"><span>标签</span></a></li><li><a href="https://coriva.eu.org/search/" title="搜索 (Alt + /)" accesskey="/"><span>搜索</span></a></li></ul></nav></header><main class="main"><div class="post-single-wrapper"><article class="post-single"><header class="post-header"><div class="breadcrumbs"><a href="https://coriva.eu.org/">主页</a>&nbsp;»&nbsp;<a href="https://coriva.eu.org/posts/">Posts</a></div><h1 class="post-title entry-hint-parent">FactorMiner 论文简读</h1><div class="post-description">FactorMiner 论文简读：自进化 agent 用 skill 加 experience memory 挖掘公式化 alpha 因子，CSI500 上 top-40 IC 8.25%，ICIR 0.77，优于 AlphaAgent 与 GPLearn。</div><div class="post-meta"><span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> Posted on 2026-06-14</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path></svg> In Quant</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> 8 min read</span><span class="pageview-meta">&nbsp;·&nbsp;<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> <span class="waline-pageview-count" data-path="/factorminer-paper-review/">9</span></span>&nbsp;|&nbsp;<span>语言:</span><ul class="i18n_list"><li><a href="https://coriva.eu.org/en/factorminer-paper-review/">English</a></li></ul></div></header><div class="post-content"><p>公式化因子挖掘做到一定规模会撞上一堵墙：库里已经有几十个因子，新挖的候选 IC 不算差，但跟现有因子相关性总是超过阈值，admit 不进去。AlphaGPT、AlphaForge、AlphaAgent、QuantFactor REINFORCE 都在解决"怎么生成更多候选"，对"库越大越难加新货"的处理仍有限。</p><p>FactorMiner（<em>A Self-Evolving Agent with Skills and Experience Memory for Financial Alpha Discovery</em>，2026/02，arXiv 2602.14670）的核心思路：把因子挖掘流程封装成一个 agent skill，并维护一个 experience memory 记录"哪些方向已经撞墙、哪些模板还能复用"，让 agent 每轮挖掘都从过去的成功和失败里取先验。CSI500 上 top-40 因子的 IC 达到 8.25%，ICIR 0.77，对比 AlphaAgent 的 5.90%/0.46 是约 40% 的相对提升。</p><h2 id="问题背景">问题背景<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#%E9%97%AE%E9%A2%98%E8%83%8C%E6%99%AF">#</a></h2><p>论文把因子挖掘的核心痛点叫 “Correlation Red Sea”。形式化定义：每挖出一个新因子 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="0" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FC TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>α</mi></math></mjx-assistive-mml></mjx-container>，要求它和库 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="1" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4C TEX-C"></mjx-c></mjx-mi></mjx-texatom></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">L</mi></mrow></math></mjx-assistive-mml></mjx-container> 里所有已有因子的最大相关性低于阈值 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="2" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D703 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>θ</mi></math></mjx-assistive-mml></mjx-container>：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="3" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c50 TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em; margin-left: -0.037em;"><mjx-texatom size="s" texclass="ORD"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c68"></mjx-c></mjx-mtext></mjx-texatom></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mspace></mjx-mspace><mjx-texatom space="4" texclass="ORD"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FC TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c2208"></mjx-c></mjx-mo><mjx-texatom space="4" texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c50 TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3A"></mjx-c></mjx-mo><mjx-munder space="4"><mjx-row><mjx-base><mjx-mo class="mjx-n"><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c78"></mjx-c></mjx-mo></mjx-base></mjx-row><mjx-row><mjx-under style="padding-top: 0.167em; padding-left: 0.251em;"><mjx-texatom size="s" texclass="ORD"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2208"></mjx-c></mjx-mo><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4C TEX-C"></mjx-c></mjx-mi></mjx-texatom></mjx-texatom></mjx-under></mjx-row></mjx-munder><mjx-texatom space="2" texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D70C TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FC TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mi class="mjx-i" space="2"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-texatom texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mi class="mjx-i" space="4"><mjx-c class="mjx-c1D703 TEX-I"></mjx-c></mjx-mi><mjx-mspace></mjx-mspace></mjx-texatom></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">P</mi></mrow><mrow data-mjx-texclass="ORD"><mtext>orth</mtext></mrow></msub><mo>=</mo><mspace linebreak="newline"></mspace><mrow data-mjx-texclass="ORD"><mi>α</mi><mo>∈</mo><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">P</mi></mrow><mo>:</mo><munder><mo data-mjx-texclass="OP" movablelimits="true">max</mo><mrow data-mjx-texclass="ORD"><mi>β</mi><mo>∈</mo><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">L</mi></mrow></mrow></munder><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mi>ρ</mi><mo stretchy="false">(</mo><mi>α</mi><mo>,</mo><mi>β</mi><mo stretchy="false">)</mo><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mo>&lt;</mo><mi>θ</mi><mspace linebreak="newline"></mspace></mrow></math></mjx-assistive-mml></mjx-container><p>随着 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="4" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4C TEX-C"></mjx-c></mjx-mi></mjx-texatom></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">L</mi></mrow></math></mjx-assistive-mml></mjx-container> 变大，<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="5" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c50 TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em; margin-left: -0.037em;"><mjx-texatom size="s" texclass="ORD"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c68"></mjx-c></mjx-mtext></mjx-texatom></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">P</mi></mrow><mrow data-mjx-texclass="ORD"><mtext>orth</mtext></mrow></msub></math></mjx-assistive-mml></mjx-container> 这个可行区域缩得极快。GP 和 RL 这类标准搜索方法对此没有应对机制：它们不记得哪些区域已经探过、哪些方向反复撞墙，越往后越在原地打转。</p><p>更头疼的是这类方法把每个因子当独立优化问题处理，只看 IC/ICIR 这种个体指标，不考虑新因子和已有库的协同。即使个体指标很好，加进库里冗余。</p><h2 id="方法">方法<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#%E6%96%B9%E6%B3%95">#</a></h2><p>FactorMiner 的解法有两层：把领域知识封装成 agent 可复用的 skill，把过去的探索经验沉淀成 memory，再用一个 retrieve/generate/evaluate/distill 的循环把两者串起来。</p><p><img alt="FactorMiner 系统架构图，展示 Ralph Loop 框架" loading="lazy" src="https://coriva.eu.org/factorminer-paper-review/factorminer-architecture.webp"></p><h3 id="skill-架构">Skill 架构<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#skill-%E6%9E%B6%E6%9E%84">#</a></h3><p>Skill 包含一个 60+ 算子的 operator library（如 TsRank、Rsquare 等），以及一条标准化的多阶段验证流程：</p><ol><li>Stage 1: Fast IC screening，在小资产子集上快筛 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="6" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D43C TEX-I"></mjx-c></mjx-mi><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D436 TEX-I"></mjx-c></mjx-mi><mjx-texatom texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c2265"></mjx-c></mjx-mo><mjx-mi class="mjx-i" space="4"><mjx-c class="mjx-c1D70F TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mo stretchy="false">|</mo><mi>I</mi><mi>C</mi><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mo>≥</mo><mi>τ</mi></math></mjx-assistive-mml></mjx-container></li><li>Stage 2: Correlation check，对全库做 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="7" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-munder limits="false"><mjx-mo class="mjx-n"><mjx-c class="mjx-c6D"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c78"></mjx-c></mjx-mo><mjx-script style="vertical-align: -0.15em;"><mjx-texatom size="s" texclass="ORD"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2208"></mjx-c></mjx-mo><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4C TEX-C"></mjx-c></mjx-mi></mjx-texatom></mjx-texatom></mjx-script></mjx-munder><mjx-texatom space="2" texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D70C TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FC TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mi class="mjx-i" space="2"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-texatom texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3C"></mjx-c></mjx-mo><mjx-mi class="mjx-i" space="4"><mjx-c class="mjx-c1D703 TEX-I"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><munder><mo data-mjx-texclass="OP" movablelimits="true">max</mo><mrow data-mjx-texclass="ORD"><mi>β</mi><mo>∈</mo><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">L</mi></mrow></mrow></munder><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mi>ρ</mi><mo stretchy="false">(</mo><mi>α</mi><mo>,</mo><mi>β</mi><mo stretchy="false">)</mo><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mo>&lt;</mo><mi>θ</mi></math></mjx-assistive-mml></mjx-container></li><li>Stage 2.5: Replacement check，候选和现有因子高相关但自身更好时触发替换</li><li>Stage 3: Batch deduplication，本批候选之间也去重</li><li>Stage 4: Full validation，全资产 OOS 测试</li></ol><p>Skill 设计把 “agent reasoning” 和 “工具执行” 完全解耦：LLM 只负责提出候选公式，IC 计算、相关性检验、admit 判定全部由确定性 Python 代码完成。论文称之为避免 calculation hallucination：LLM 没机会编造一个不存在的 IC 数字。</p><h3 id="experience-memory">Experience Memory<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#experience-memory">#</a></h3><p>Memory 记录两类内容：</p><ul><li><strong>Successful Patterns</strong> <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="8" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c50 TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em; margin-left: -0.037em;"><mjx-texatom size="s" texclass="ORD"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c73"></mjx-c><mjx-c class="mjx-c75"></mjx-c><mjx-c class="mjx-c63"></mjx-c><mjx-c class="mjx-c63"></mjx-c></mjx-mtext></mjx-texatom></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">P</mi></mrow><mrow data-mjx-texclass="ORD"><mtext>succ</mtext></mrow></msub></math></mjx-assistive-mml></mjx-container>：反复入库的因子模板，比如"用 Skew/Kurt 做高阶矩 regime"、“用 Rsquare 做趋势回归自适应”</li><li><strong>Forbidden Regions</strong> <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="9" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c50 TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em; margin-left: -0.037em;"><mjx-texatom size="s" texclass="ORD"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c66"></mjx-c><mjx-c class="mjx-c61"></mjx-c><mjx-c class="mjx-c69"></mjx-c><mjx-c class="mjx-c6C"></mjx-c></mjx-mtext></mjx-texatom></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">P</mi></mrow><mrow data-mjx-texclass="ORD"><mtext>fail</mtext></mrow></msub></math></mjx-assistive-mml></mjx-container>：和现有库相关性总是超标的方向，比如简单的 VWAP 偏离变体、标准化收益率</li></ul><p>Memory 的更新通过三个抽象算子完成：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="10" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-msubsup><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4D TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.247em; margin-left: 0px;"><mjx-texatom size="s" texclass="ORD"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c66"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c6D"></mjx-c></mjx-mtext></mjx-texatom><mjx-spacer style="margin-top: 0.182em;"></mjx-spacer><mjx-texatom size="s" texclass="ORD"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-texatom></mjx-script></mjx-msubsup><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mi class="mjx-n" space="4"><mjx-c class="mjx-c3A6"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4D TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-msub space="2"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D70F TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em; margin-left: -0.08em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mstyle><mjx-mspace style="width: 1em;"></mjx-mspace></mjx-mstyle><mjx-msub space="2"><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4D TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em;"><mjx-texatom size="s" texclass="ORD"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-texatom></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mi class="mjx-n" space="4"><mjx-c class="mjx-c3A8"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4D TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-msubsup space="2"><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4D TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.247em; margin-left: 0px;"><mjx-texatom size="s" texclass="ORD"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c66"></mjx-c><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c6D"></mjx-c></mjx-mtext></mjx-texatom><mjx-spacer style="margin-top: 0.182em;"></mjx-spacer><mjx-texatom size="s" texclass="ORD"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-mn class="mjx-n"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-texatom></mjx-script></mjx-msubsup><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mstyle><mjx-mspace style="width: 1em;"></mjx-mspace></mjx-mstyle><mjx-texatom space="2" texclass="ORD"><mjx-mi class="mjx-fr"><mjx-c class="mjx-c1D52A TEX-FR"></mjx-c></mjx-mi></mjx-texatom><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mi class="mjx-n" space="4"><mjx-c class="mjx-c39E"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4D TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-msub space="2"><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4C TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><msubsup><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">M</mi></mrow><mrow data-mjx-texclass="ORD"><mi>t</mi><mo>+</mo><mn>1</mn></mrow><mrow data-mjx-texclass="ORD"><mtext>form</mtext></mrow></msubsup><mo>=</mo><mi mathvariant="normal">Φ</mi><mo stretchy="false">(</mo><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">M</mi></mrow><mi>t</mi></msub><mo>,</mo><msub><mi>τ</mi><mi>t</mi></msub><mo stretchy="false">)</mo><mo>,</mo><mstyle scriptlevel="0"><mspace width="1em"></mspace></mstyle><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">M</mi></mrow><mrow data-mjx-texclass="ORD"><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><mi mathvariant="normal">Ψ</mi><mo stretchy="false">(</mo><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">M</mi></mrow><mi>t</mi></msub><mo>,</mo><msubsup><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">M</mi></mrow><mrow data-mjx-texclass="ORD"><mi>t</mi><mo>+</mo><mn>1</mn></mrow><mrow data-mjx-texclass="ORD"><mtext>form</mtext></mrow></msubsup><mo stretchy="false">)</mo><mo>,</mo><mstyle scriptlevel="0"><mspace width="1em"></mspace></mstyle><mrow data-mjx-texclass="ORD"><mi mathvariant="fraktur">m</mi></mrow><mo>=</mo><mi mathvariant="normal">Ξ</mi><mo stretchy="false">(</mo><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">M</mi></mrow><mi>t</mi></msub><mo>,</mo><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">L</mi></mrow><mi>t</mi></msub><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p>其中 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="11" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D70F TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em; margin-left: -0.08em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>τ</mi><mi>t</mi></msub></math></mjx-assistive-mml></mjx-container> 是本轮的挖掘轨迹（每个候选的公式、IC、相关性、是否 admit），<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="12" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-n"><mjx-c class="mjx-c3A6"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi mathvariant="normal">Φ</mi></math></mjx-assistive-mml></mjx-container> 把轨迹蒸馏成模板，<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="13" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-n"><mjx-c class="mjx-c3A8"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi mathvariant="normal">Ψ</mi></math></mjx-assistive-mml></mjx-container> 整合到现有 memory，<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="14" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-n"><mjx-c class="mjx-c39E"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi mathvariant="normal">Ξ</mi></math></mjx-assistive-mml></mjx-container> 在生成阶段把 memory 检索成 prompt 中的"推荐方向"和"禁区方向"。</p><p>实现上 memory 不是稠密表征也不是 replay buffer，就是若干自然语言模板加 canonical example，配合当前库状态做检索。</p><h3 id="ralph-loop">Ralph Loop<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#ralph-loop">#</a></h3><p>整个流程论文叫 Ralph Loop：retrieve → generate → evaluate → distill 循环。每轮 agent 先从 memory 取先验，按先验生成一批候选公式，过 multi-stage 流程，把结果（入库的、因相关性被拒的、因 IC 不够被拒的）蒸馏回 memory，再开始下一轮。</p><p>LLM backbone 是 Gemini 3.0 Flash。整套循环跑在自研的 GPU 加速算子库上。</p><h2 id="memory-与-skill-的作用机制">memory 与 skill 的作用机制<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#memory-%E4%B8%8E-skill-%E7%9A%84%E4%BD%9C%E7%94%A8%E6%9C%BA%E5%88%B6">#</a></h2><p>memory 起到的作用是改变 prompt 给 LLM 的采样分布。论文写成：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="15" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D70B TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FC TEX-I"></mjx-c></mjx-mi><mjx-texatom texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-texatom texclass="ORD"><mjx-mi class="mjx-fr"><mjx-c class="mjx-c1D52A TEX-FR"></mjx-c></mjx-mi></mjx-texatom><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mstyle><mjx-mspace style="width: 1em;"></mjx-mspace></mjx-mstyle><mjx-texatom space="2" texclass="ORD"><mjx-mi class="mjx-fr"><mjx-c class="mjx-c1D52A TEX-FR"></mjx-c></mjx-mi></mjx-texatom><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mi class="mjx-n" space="4"><mjx-c class="mjx-c39E"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4D TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-msub space="2"><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c4C TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D461 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mi>π</mi><mo stretchy="false">(</mo><mi>α</mi><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mrow data-mjx-texclass="ORD"><mi mathvariant="fraktur">m</mi></mrow><mo stretchy="false">)</mo><mo>,</mo><mstyle scriptlevel="0"><mspace width="1em"></mspace></mstyle><mrow data-mjx-texclass="ORD"><mi mathvariant="fraktur">m</mi></mrow><mo>=</mo><mi mathvariant="normal">Ξ</mi><mo stretchy="false">(</mo><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">M</mi></mrow><mi>t</mi></msub><mo>,</mo><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">L</mi></mrow><mi>t</mi></msub><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="16" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-texatom texclass="ORD"><mjx-mi class="mjx-fr"><mjx-c class="mjx-c1D52A TEX-FR"></mjx-c></mjx-mi></mjx-texatom></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mrow data-mjx-texclass="ORD"><mi mathvariant="fraktur">m</mi></mrow></math></mjx-assistive-mml></mjx-container> 把检索到的"成功模板"和"禁区"塞进 prompt，让 LLM 生成时偏向 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="17" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c50 TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em; margin-left: -0.037em;"><mjx-texatom size="s" texclass="ORD"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c68"></mjx-c></mjx-mtext></mjx-texatom></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">P</mi></mrow><mrow data-mjx-texclass="ORD"><mtext>orth</mtext></mrow></msub></math></mjx-assistive-mml></mjx-container> 这块区域。这不是严格的搜索空间裁剪，是采样分布的偏置：没有 memory 时 LLM 也有自己的预训练先验，但缺少对当前库状态的感知，越到后期重复撞 forbidden region 的概率越高。</p><p>skill 的解耦设计另外解决了 LLM agent 在数值计算上的不可靠问题。让 LLM 自己算 IC 会出现编造数字的情况；把这些计算外包给 deterministic skill，agent 只在符号层面操作，可靠性才能立住。</p><h2 id="实验结果">实验结果<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#%E5%AE%9E%E9%AA%8C%E7%BB%93%E6%9E%9C">#</a></h2><p>数据集是 A 股 CSI500、CSI1000、HS300 加 Binance 上 64 个加密资产，全部用 10 分钟 bar，2024 训练，2025 测试，预测目标是下一根 10 分钟的开收价格变化。</p><p>Baseline 六个：Random Formula (RF)、Alpha101 Classic、Alpha101 Adapted 高频版、GPLearn、AlphaForge、AlphaAgent。所有方法用同样的 operator library、admission 规则、评估引擎，对比的是搜索算法本身。</p><p><strong>Top-40 因子库样本外表现（IC % / ICIR）：</strong></p><table><thead><tr><th>方法</th><th>CSI500</th><th>CSI1000</th><th>HS300</th><th>Crypto</th></tr></thead><tbody><tr><td>Random Formula</td><td>2.68 / 0.25</td><td>2.88 / 0.30</td><td>1.45 / 0.09</td><td>n/a</td></tr><tr><td>Alpha101 Classic</td><td>4.49 / 0.42</td><td>4.86 / 0.50</td><td>2.11 / 0.14</td><td>n/a</td></tr><tr><td>Alpha101 Adapted</td><td>5.06 / 0.43</td><td>5.32 / 0.49</td><td>2.40 / 0.15</td><td>n/a</td></tr><tr><td>GPLearn</td><td>6.04 / 0.43</td><td>5.86 / 0.48</td><td>4.12 / 0.16</td><td>2.50 / 0.15</td></tr><tr><td>AlphaForge</td><td>4.48 / 0.38</td><td>4.64 / 0.42</td><td>3.53 / 0.25</td><td>2.52 / 0.16</td></tr><tr><td>AlphaAgent</td><td>5.90 / 0.46</td><td>6.21 / 0.51</td><td>4.69 / 0.30</td><td>2.86 / 0.17</td></tr><tr><td><strong>FactorMiner</strong></td><td><strong>8.25 / 0.77</strong></td><td><strong>7.78 / 0.76</strong></td><td><strong>7.46 / 0.38</strong></td><td><strong>3.82 / 0.28</strong></td></tr></tbody></table><p>四个市场 IC 和 ICIR 都是最优。CSI500 上对最强 baseline AlphaAgent 的相对提升约 40% (IC)、67% (ICIR)，HS300 上对 AlphaAgent 提升约 59%（vs 老 Alpha101 Classic 则超过 3 倍）。HS300 整体 IC 水平低于 CSI500，原因是大盘股 microstructure 信号比中小盘更弱。</p><p>Crypto 上 FactorMiner 对 AlphaAgent 的提升约 34%，幅度小于 A 股。论文给出的解释是 skill 编码的是跨市场的微观结构通性而不是单市场的特异规则，所以从 A 股训得的配置能直接迁移过去。但 Random Formula 和 Alpha101 在 Crypto 上没跑（论文表里没填），所以"完整 baseline 横扫"只到 LLM 类方法这层。</p><h3 id="学习集成与-ic-加权的边际收益">学习集成与 IC 加权的边际收益<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#%E5%AD%A6%E4%B9%A0%E9%9B%86%E6%88%90%E4%B8%8E-ic-%E5%8A%A0%E6%9D%83%E7%9A%84%E8%BE%B9%E9%99%85%E6%94%B6%E7%9B%8A">#</a></h3><p>论文还把库丢给 Lasso 和 XGBoost 做选股。多数 baseline 上学习模型比等权和 IC 加权有明显提升；FactorMiner 上的提升非常有限，CSI500 上 EW 和 ICW 的 ICIR 是 1.29/1.31，Lasso 和 XGBoost 是 1.21/1.29，甚至略有下降。原因是 FactorMiner 的库构造时已经做了正交化（Stage 2 + Stage 3），简单等权就吃掉了大部分可利用的预测信号，learned selection 没多少残留空间。</p><h2 id="memory-的消融">Memory 的消融<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#memory-%E7%9A%84%E6%B6%88%E8%9E%8D">#</a></h2><p>论文把 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="18" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-n"><mjx-c class="mjx-c3A6"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mi class="mjx-n" space="2"><mjx-c class="mjx-c3A8"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c2C"></mjx-c></mjx-mo><mjx-mi class="mjx-n" space="2"><mjx-c class="mjx-c39E"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi mathvariant="normal">Φ</mi><mo>,</mo><mi mathvariant="normal">Ψ</mi><mo>,</mo><mi mathvariant="normal">Ξ</mi></math></mjx-assistive-mml></mjx-container> 三个 memory 算子关掉，跑 No Memory 版本对比。</p><p><img alt="Have Memory 和 No Memory 在高质量候选数、admit 数、yield rate、rejection rate 上的对比" loading="lazy" src="https://coriva.eu.org/factorminer-paper-review/factorminer-ablation.webp"></p><p>读数：</p><ul><li>High-quality 候选（<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="19" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D43C TEX-I"></mjx-c></mjx-mi><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D436 TEX-I"></mjx-c></mjx-mi><mjx-texatom texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3E"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="4"><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c2E"></mjx-c><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mo stretchy="false">|</mo><mi>I</mi><mi>C</mi><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mo>&gt;</mo><mn>0.02</mn></math></mjx-assistive-mml></mjx-container>）：96 vs 32，3.0×</li><li>Admit：43 vs 18，2.4×</li><li>Yield rate（高质量候选占比）：60.0% vs 20.0%</li><li>Rejection rate（高质量候选中因冗余被拒的比例）：55.2% vs 43.8%</li></ul><p>Yield rate 提升说明 memory 把搜索拉到了更可能命中的区域。Rejection rate 反而升高这个点更有意思：memory 引导生成的候选 IC 更高，但更容易和已有库相关，所以需要更激进的去重才能维持正交性。这正是 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="20" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-n"><mjx-c class="mjx-c3A8"></mjx-c></mjx-mi></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi mathvariant="normal">Ψ</mi></math></mjx-assistive-mml></mjx-container> 算子在工作，把单纯追求 IC 的搜索转成 IC 和正交性的联合优化，直接对应 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="21" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-texatom texclass="ORD"><mjx-mi class="mjx-cal mjx-i"><mjx-c class="mjx-c50 TEX-C"></mjx-c></mjx-mi></mjx-texatom><mjx-script style="vertical-align: -0.15em; margin-left: -0.037em;"><mjx-texatom size="s" texclass="ORD"><mjx-mtext class="mjx-n"><mjx-c class="mjx-c6F"></mjx-c><mjx-c class="mjx-c72"></mjx-c><mjx-c class="mjx-c74"></mjx-c><mjx-c class="mjx-c68"></mjx-c></mjx-mtext></mjx-texatom></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mrow data-mjx-texclass="ORD"><mi data-mjx-variant="-tex-calligraphic" mathvariant="script">P</mi></mrow><mrow data-mjx-texclass="ORD"><mtext>orth</mtext></mrow></msub></math></mjx-assistive-mml></mjx-container> 那条约束。</p><p>阈值方面这组消融用了较松的 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="22" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D43C TEX-I"></mjx-c></mjx-mi><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D436 TEX-I"></mjx-c></mjx-mi><mjx-texatom texclass="ORD"><mjx-mo class="mjx-n"><mjx-c class="mjx-c7C"></mjx-c></mjx-mo></mjx-texatom><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3E"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="4"><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c2E"></mjx-c><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mo stretchy="false">|</mo><mi>I</mi><mi>C</mi><mrow data-mjx-texclass="ORD"><mo stretchy="false">|</mo></mrow><mo>&gt;</mo><mn>0.02</mn></math></mjx-assistive-mml></mjx-container> 和 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="23" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D703 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="4"><mjx-c class="mjx-c30"></mjx-c><mjx-c class="mjx-c2E"></mjx-c><mjx-c class="mjx-c38"></mjx-c><mjx-c class="mjx-c35"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>θ</mi><mo>=</mo><mn>0.85</mn></math></mjx-assistive-mml></mjx-container>，论文说是为了保证样本足够做对比，主实验用了更严的阈值。</p><h2 id="gpu-算子库与评估开销">GPU 算子库与评估开销<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#gpu-%E7%AE%97%E5%AD%90%E5%BA%93%E4%B8%8E%E8%AF%84%E4%BC%B0%E5%BC%80%E9%94%80">#</a></h2><p>论文实现了一套 GPU 加速算子库，对比 Pandas、C 编译版（Bottleneck）、GPU 三个 backend 在 CSI500 (12,610 × 500) 数据上的算子计算时间：</p><ul><li>TsRank：1843ms (Pandas) → 393ms (C) → 31ms (GPU)，GPU 加速 59×</li><li>TsCorr / TsStd 等：8–59× 加速区间</li><li>C 版平均也比 GPU 慢 5.4× (1092ms vs 202ms)</li></ul><p>整体效果是评估 1000 个候选因子从 70 分钟（Pandas）压到 6 分钟。论文称之为 “qualitative enabler”：没有这套加速，整个 retrieve-generate-evaluate-distill 循环根本不可能在合理时间内迭代。很多 LLM agent 论文跳过底层计算效率，但因子挖掘是 evaluation-bound 任务，eval 太慢循环就转不起来。</p><p>LLM 一律用 Gemini 3.0 Flash，没有针对挖因子做 fine-tuning。论文未报告调用次数和 token 成本。</p><h2 id="局限">局限<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#%E5%B1%80%E9%99%90">#</a></h2><p>论文最后两节列了几条 limitation：</p><ul><li>没有和端到端的神经预测模型做直接对比，比如把 110 个因子作为特征丢进 LightGBM，对比直接用 raw OHLCV 训神经网络</li><li>没有 transaction cost-aware 的回测，只评估 IC/ICIR 这类信号质量指标</li><li>Memory 更新是 offline 的，展望是做 online memory updates 以适应非平稳市场</li><li>A 股训练得到的 memory 直接迁移到 Crypto，但有效性是经验性的，没给理论保证</li></ul><p>实际更关心的两个问题论文没回答：一是 LLM 提示词的工程量有多大、对结果的鲁棒性如何；二是 110 个因子在 2025 年继续推到 2026 年还能保持多少 IC。第一点是工程复现门槛，第二点是因子衰减问题。</p><h2 id="小结">小结<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/factorminer-paper-review/#%E5%B0%8F%E7%BB%93">#</a></h2><p>FactorMiner 解决的问题是"因子库越大越难加新因子"，路径是把搜索过程从无记忆的随机/进化采样改成有 memory 引导的 agent 循环。两个核心组件 skill 和 memory 各司其职：skill 保证数值计算可靠，memory 把过去的探索经验沉淀成下一轮的先验。</p><p>实验上对比 GPLearn、AlphaForge、AlphaAgent 等近期工作，四个市场 IC 和 ICIR 都最优，A 股训得的 memory 还能零样本迁移到加密市场。消融实验直接证明了 memory 的作用：yield rate 从 20% 提到 60%，admit 数从 18 涨到 43。论文一并放出了 110 个 A 股高频因子库，对想做后续研究的人是一个直接可用的工件。</p><p>延伸阅读：</p><ul><li><a href="https://coriva.eu.org/zh/posts/alphagpt-paper-review/">AlphaGPT 论文简读</a>：LLM 参与因子挖掘的早期工作</li><li><a href="https://coriva.eu.org/zh/posts/alphaagent-paper-review/">AlphaAgent 论文简读</a>：多 agent 框架与抗衰减</li><li><a href="https://coriva.eu.org/zh/posts/quantaalpha-paper-review/">QuantaAlpha 论文简读</a>：trajectory 视角下的自进化挖掘</li></ul></div><footer class="post-footer"><ul class="post-tags"><li><a href="https://coriva.eu.org/tags/quant/">Quant</a></li><li><a href="https://coriva.eu.org/tags/llm/">LLM</a></li><li><a href="https://coriva.eu.org/tags/paper/">Paper</a></li></ul><nav class="paginav"><a class="next" href="https://coriva.eu.org/quantaalpha-paper-review/"><span class="title">下一页 »</span><br><span>QuantaAlpha：把因子挖掘当成轨迹来进化</span></a></nav></footer><div id="waline" data-v-app=""><div data-waline=""><!--v-if--><div class="wl-comment"><!--v-if--><div class="wl-panel"><div class="wl-header item3"><div class="wl-header-item"><label for="wl-nick">NickName</label><input id="wl-nick" class="wl-input wl-nick" name="nick" type="text"></div><div class="wl-header-item"><label for="wl-mail">E-Mail</label><input id="wl-mail" class="wl-input wl-mail" name="mail" type="email"></div><div class="wl-header-item"><label for="wl-link">Website</label><input id="wl-link" class="wl-input wl-link" name="link" type="text"></div></div><textarea id="wl-edit" class="wl-editor" placeholder="Comment here..."></textarea><div class="wl-preview" style="display: none;"><hr><h4>Preview:</h4><div class="wl-content"></div></div><div class="wl-footer"><div class="wl-actions"><a href="https://guides.github.com/features/mastering-markdown/" title="Markdown Guide" aria-label="Markdown is supported" class="wl-action" target="_blank" rel="noopener noreferrer"><svg width="16" height="16" ariaHidden="true"><path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.69C0 12.48.52 13 1.15 13h13.69c.64 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3zM9 11H7V8L5.5 9.92 4 8v3H2V5h2l1.5 2L7 5h2v6zm2.99.5L9.5 8H11V5h2v3h1.5l-2.51 3.5z" fill="currentColor"></path></svg></a><button type="button" class="wl-action" title="Emoji" style=""><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M563.2 463.3 677 540c1.7 1.2 3.7 1.8 5.8 1.8.7 0 1.4-.1 2-.2 2.7-.5 5.1-2.1 6.6-4.4l25.3-37.8c1.5-2.3 2.1-5.1 1.6-7.8s-2.1-5.1-4.4-6.6l-73.6-49.1 73.6-49.1c2.3-1.5 3.9-3.9 4.4-6.6.5-2.7 0-5.5-1.6-7.8l-25.3-37.8a10.1 10.1 0 0 0-6.6-4.4c-.7-.1-1.3-.2-2-.2-2.1 0-4.1.6-5.8 1.8l-113.8 76.6c-9.2 6.2-14.7 16.4-14.7 27.5.1 11 5.5 21.3 14.7 27.4zM387 348.8h-45.5c-5.7 0-10.4 4.7-10.4 10.4v153.3c0 5.7 4.7 10.4 10.4 10.4H387c5.7 0 10.4-4.7 10.4-10.4V359.2c0-5.7-4.7-10.4-10.4-10.4zm333.8 241.3-41-20a10.3 10.3 0 0 0-8.1-.5c-2.6.9-4.8 2.9-5.9 5.4-30.1 64.9-93.1 109.1-164.4 115.2-5.7.5-9.9 5.5-9.5 11.2l3.9 45.5c.5 5.3 5 9.5 10.3 9.5h.9c94.8-8 178.5-66.5 218.6-152.7 2.4-5 .3-11.2-4.8-13.6zm186-186.1c-11.9-42-30.5-81.4-55.2-117.1-24.1-34.9-53.5-65.6-87.5-91.2-33.9-25.6-71.5-45.5-111.6-59.2-41.2-14-84.1-21.1-127.8-21.1h-1.2c-75.4 0-148.8 21.4-212.5 61.7-63.7 40.3-114.3 97.6-146.5 165.8-32.2 68.1-44.3 143.6-35.1 218.4 9.3 74.8 39.4 145 87.3 203.3.1.2.3.3.4.5l36.2 38.4c1.1 1.2 2.5 2.1 3.9 2.6 73.3 66.7 168.2 103.5 267.5 103.5 73.3 0 145.2-20.3 207.7-58.7 37.3-22.9 70.3-51.5 98.1-85 27.1-32.7 48.7-69.5 64.2-109.1 15.5-39.7 24.4-81.3 26.6-123.8 2.4-43.6-2.5-87-14.5-129zm-60.5 181.1c-8.3 37-22.8 72-43 104-19.7 31.1-44.3 58.6-73.1 81.7-28.8 23.1-61 41-95.7 53.4-35.6 12.7-72.9 19.1-110.9 19.1-82.6 0-161.7-30.6-222.8-86.2l-34.1-35.8c-23.9-29.3-42.4-62.2-55.1-97.7-12.4-34.7-18.8-71-19.2-107.9-.4-36.9 5.4-73.3 17.1-108.2 12-35.8 30-69.2 53.4-99.1 31.7-40.4 71.1-72 117.2-94.1 44.5-21.3 94-32.6 143.4-32.6 49.3 0 97 10.8 141.8 32 34.3 16.3 65.3 38.1 92 64.8 26.1 26 47.5 56 63.6 89.2 16.2 33.2 26.6 68.5 31 105.1 4.6 37.5 2.7 75.3-5.6 112.3z" fill="currentColor"></path></svg></button><!--v-if--><input id="wl-image-upload" class="upload" aria-hidden="true" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif"><label for="wl-image-upload" class="wl-action" title="Upload Image" aria-label="Upload Image"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M784 112H240c-88 0-160 72-160 160v480c0 88 72 160 160 160h544c88 0 160-72 160-160V272c0-88-72-160-160-160zm96 640c0 52.8-43.2 96-96 96H240c-52.8 0-96-43.2-96-96V272c0-52.8 43.2-96 96-96h544c52.8 0 96 43.2 96 96v480z" fill="currentColor"></path><path d="M352 480c52.8 0 96-43.2 96-96s-43.2-96-96-96-96 43.2-96 96 43.2 96 96 96zm0-128c17.6 0 32 14.4 32 32s-14.4 32-32 32-32-14.4-32-32 14.4-32 32-32zm462.4 379.2-3.2-3.2-177.6-177.6c-25.6-25.6-65.6-25.6-91.2 0l-80 80-36.8-36.8c-25.6-25.6-65.6-25.6-91.2 0L200 728c-4.8 6.4-8 14.4-8 24 0 17.6 14.4 32 32 32 9.6 0 16-3.2 22.4-9.6L380.8 640l134.4 134.4c6.4 6.4 14.4 9.6 24 9.6 17.6 0 32-14.4 32-32 0-9.6-4.8-17.6-9.6-24l-52.8-52.8 80-80L769.6 776c6.4 4.8 12.8 8 20.8 8 17.6 0 32-14.4 32-32 0-8-3.2-16-8-20.8z" fill="currentColor"></path></svg></label><button type="button" class="wl-action" title="Preview"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M710.816 654.301c70.323-96.639 61.084-230.578-23.705-314.843-46.098-46.098-107.183-71.109-172.28-71.109-65.008 0-126.092 25.444-172.28 71.109-45.227 46.098-70.756 107.183-70.756 172.106 0 64.923 25.444 126.007 71.194 172.106 46.099 46.098 107.184 71.109 172.28 71.109 51.414 0 100.648-16.212 142.824-47.404l126.53 126.006c7.058 7.06 16.297 10.979 26.406 10.979 10.105 0 19.343-3.919 26.402-10.979 14.467-14.467 14.467-38.172 0-52.723L710.816 654.301zm-315.107-23.265c-65.88-65.88-65.88-172.54 0-238.42 32.069-32.07 74.245-49.149 119.471-49.149 45.227 0 87.407 17.603 119.472 49.149 65.88 65.879 65.88 172.539 0 238.42-63.612 63.178-175.242 63.178-238.943 0zm0 0" fill="currentColor"></path><path d="M703.319 121.603H321.03c-109.8 0-199.469 89.146-199.469 199.38v382.034c0 109.796 89.236 199.38 199.469 199.38h207.397c20.653 0 37.384-16.645 37.384-37.299 0-20.649-16.731-37.296-37.384-37.296H321.03c-68.582 0-124.352-55.77-124.352-124.267V321.421c0-68.496 55.77-124.267 124.352-124.267h382.289c68.582 0 124.352 55.771 124.352 124.267V524.72c0 20.654 16.736 37.299 37.385 37.299 20.654 0 37.384-16.645 37.384-37.299V320.549c-.085-109.8-89.321-198.946-199.121-198.946zm0 0" fill="currentColor"></path></svg></button></div><div class="wl-info"><div class="wl-captcha-container"></div><div class="wl-text-number">0 <!--v-if--> &nbsp;Words</div><button type="button" class="wl-btn">Login</button><button type="submit" class="primary wl-btn" title="Cmd|Ctrl + Enter">Submit</button></div><div class="wl-gif-popup"><input type="text" placeholder="Search GIF"><!--v-if--><div class="wl-loading"><svg width="30" height="30" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid"><circle cx="50" cy="50" fill="none" stroke="currentColor" strokeWidth="4" r="40" stroke-dasharray="85 30"><animateTransform attributeName="transform" type="rotate" repeatCount="indefinite" dur="1s" values="0 50 50;360 50 50" keyTimes="0;1"></animateTransform></circle></svg></div></div><div class="wl-emoji-popup"><div class="wl-tab-wrapper"><button type="button" title="weibo_smile"><!--v-if--></button><button type="button" title="weibo_lovely"><!--v-if--></button><button type="button" title="weibo_blush"><!--v-if--></button><button type="button" title="weibo_grin"><!--v-if--></button><button type="button" title="weibo_laugh"><!--v-if--></button><button type="button" title="weibo_joy"><!--v-if--></button><button type="button" title="weibo_angry"><!--v-if--></button><button type="button" title="weibo_bye"><!--v-if--></button><button type="button" title="weibo_hammer"><!--v-if--></button><button type="button" title="weibo_kiss"><!--v-if--></button><button type="button" title="weibo_love"><!--v-if--></button><button type="button" title="weibo_mask"><!--v-if--></button><button type="button" title="weibo_money"><!--v-if--></button><button type="button" title="weibo_quiet"><!--v-if--></button><button type="button" title="weibo_rage"><!--v-if--></button><button type="button" title="weibo_sad"><!--v-if--></button><button type="button" title="weibo_shy"><!--v-if--></button><button type="button" title="weibo_sick"><!--v-if--></button><button type="button" title="weibo_slient"><!--v-if--></button><button type="button" title="weibo_smirk"><!--v-if--></button><button type="button" title="weibo_slap"><!--v-if--></button><button type="button" title="weibo_antic"><!--v-if--></button><button type="button" title="weibo_desire"><!--v-if--></button><button type="button" title="weibo_longing"><!--v-if--></button><button type="button" title="weibo_no_idea"><!--v-if--></button><button type="button" title="weibo_look_down"><!--v-if--></button><button type="button" title="weibo_clap"><!--v-if--></button><button type="button" title="weibo_yum"><!--v-if--></button><button type="button" title="weibo_sleep"><!--v-if--></button><button type="button" title="weibo_dizzy_face"><!--v-if--></button><button type="button" title="weibo_chuckle"><!--v-if--></button><button type="button" title="weibo_disappointed"><!--v-if--></button><button type="button" title="weibo_flushed"><!--v-if--></button><button type="button" title="weibo_heart_eyes"><!--v-if--></button><button type="button" title="weibo_no"><!--v-if--></button><button type="button" title="weibo_shuai"><!--v-if--></button><button type="button" title="weibo_suprised"><!--v-if--></button><button type="button" title="weibo_think"><!--v-if--></button><button type="button" title="weibo_vomit"><!--v-if--></button><button type="button" title="weibo_scream"><!--v-if--></button><button type="button" title="weibo_sleepy"><!--v-if--></button><button type="button" title="weibo_sob"><!--v-if--></button><button type="button" title="weibo_sunglasses"><!--v-if--></button><button type="button" title="weibo_greddy"><!--v-if--></button><button type="button" title="weibo_pick_nose"><!--v-if--></button><button type="button" title="weibo_annoyed"><!--v-if--></button><button type="button" title="weibo_awkward"><!--v-if--></button><button type="button" title="weibo_confused"><!--v-if--></button><button type="button" title="weibo_grievance"><!--v-if--></button><button type="button" title="weibo_poor"><!--v-if--></button><button type="button" title="weibo_wink"><!--v-if--></button><button type="button" title="weibo_rolling_eyes"><!--v-if--></button><button type="button" title="weibo_watermalon"><!--v-if--></button><button type="button" title="weibo_annoyed_left"><!--v-if--></button><button type="button" title="weibo_annoyed_right"><!--v-if--></button><button type="button" title="weibo_yawn"><!--v-if--></button><button type="button" title="weibo_hufen"><!--v-if--></button><button type="button" title="weibo_doge"><!--v-if--></button><button type="button" title="weibo_husky"><!--v-if--></button><button type="button" title="weibo_dog_annoyed"><!--v-if--></button><button type="button" title="weibo_dog_bye"><!--v-if--></button><button type="button" title="weibo_dog_consider"><!--v-if--></button><button type="button" title="weibo_dog_cry"><!--v-if--></button><button type="button" title="weibo_dog_joy"><!--v-if--></button><button type="button" title="weibo_dog_laugh"><!--v-if--></button><button type="button" title="weibo_dog_sweat"><!--v-if--></button><button type="button" title="weibo_dog_think"><!--v-if--></button><button type="button" title="weibo_dog_yum"><!--v-if--></button><button type="button" title="weibo_cat"><!--v-if--></button><button type="button" title="weibo_cat_annoyed"><!--v-if--></button><button type="button" title="weibo_cat_bye"><!--v-if--></button><button type="button" title="weibo_cat_cry"><!--v-if--></button><button type="button" title="weibo_cat_think"><!--v-if--></button><button type="button" title="weibo_girl_annoyed"><!--v-if--></button><button type="button" title="weibo_boy"><!--v-if--></button><button type="button" title="weibo_girl"><!--v-if--></button><button type="button" title="weibo_panda"><!--v-if--></button><button type="button" title="weibo_pig"><!--v-if--></button><button type="button" title="weibo_rabbit"><!--v-if--></button><button type="button" title="weibo_ultraman"><!--v-if--></button><button type="button" title="weibo_wool_group"><!--v-if--></button><button type="button" title="weibo_yan"><!--v-if--></button><button type="button" title="weibo_xi"><!--v-if--></button><button type="button" title="weibo_soap"><!--v-if--></button><button type="button" title="weibo_meng"><!--v-if--></button><button type="button" title="weibo_jiong"><!--v-if--></button><button type="button" title="weibo_geili"><!--v-if--></button><button type="button" title="weibo_shenma"><!--v-if--></button><button type="button" title="weibo_alpaca"><!--v-if--></button></div><div><!--v-if--></div><!--v-if--></div></div></div><!--v-if--></div><div class="wl-meta-head"><div class="wl-count"><!--v-if--> Comments</div><ul class="wl-sort"><li class="active">Latest</li><li class="">Oldest</li><li class="">Hottest</li></ul></div><div class="wl-cards"></div><div class="wl-empty">No comment yet.</div><div class="wl-meta-foot"><div class="wl-rss"><a href="https://comments.coriva.eu.org/api/comment/rss?path=%2Ffactorminer-paper-review%2F" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this post"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this post</span></a><a href="https://comments.coriva.eu.org/api/comment/rss" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this site"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this site</span></a></div><div class="wl-power"> Powered by <a href="https://github.com/walinejs/waline" target="_blank" rel="noopener noreferrer"> Waline </a> v3.15.2</div></div></div></div><link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css"><script type="module">
+  import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
+  import { pageviewCount } from 'https://unpkg.com/@waline/client@v3/dist/pageview.js';
+  init({
+    el: '#waline',
+    serverURL: 'https://comments.coriva.eu.org',
+    lang: 'en',
+    pageview: false,
+  });
+  pageviewCount({
+    serverURL: 'https://comments.coriva.eu.org',
+  });
+</script></article><aside class="toc-sidebar" id="toc-sidebar"><nav class="toc-sidebar-nav"><span class="toc-sidebar-title">目录</span><div class="toc-sidebar-inner"><nav id="TableOfContents"><ul><li><a href="https://coriva.eu.org/factorminer-paper-review/#%E9%97%AE%E9%A2%98%E8%83%8C%E6%99%AF">问题背景</a></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#%E6%96%B9%E6%B3%95">方法</a><ul><li><a href="https://coriva.eu.org/factorminer-paper-review/#skill-%E6%9E%B6%E6%9E%84">Skill 架构</a></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#experience-memory">Experience Memory</a></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#ralph-loop">Ralph Loop</a></li></ul></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#memory-%E4%B8%8E-skill-%E7%9A%84%E4%BD%9C%E7%94%A8%E6%9C%BA%E5%88%B6">memory 与 skill 的作用机制</a></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#%E5%AE%9E%E9%AA%8C%E7%BB%93%E6%9E%9C">实验结果</a><ul><li><a href="https://coriva.eu.org/factorminer-paper-review/#%E5%AD%A6%E4%B9%A0%E9%9B%86%E6%88%90%E4%B8%8E-ic-%E5%8A%A0%E6%9D%83%E7%9A%84%E8%BE%B9%E9%99%85%E6%94%B6%E7%9B%8A">学习集成与 IC 加权的边际收益</a></li></ul></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#memory-%E7%9A%84%E6%B6%88%E8%9E%8D">Memory 的消融</a></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#gpu-%E7%AE%97%E5%AD%90%E5%BA%93%E4%B8%8E%E8%AF%84%E4%BC%B0%E5%BC%80%E9%94%80">GPU 算子库与评估开销</a></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#%E5%B1%80%E9%99%90">局限</a></li><li><a href="https://coriva.eu.org/factorminer-paper-review/#%E5%B0%8F%E7%BB%93" class="">小结</a></li></ul></nav></div></nav><nav class="related-posts"><h2>相关文章</h2><ul><li><a href="https://coriva.eu.org/quantaalpha-paper-review/"><span class="related-title">QuantaAlpha：把因子挖掘当成轨迹来进化</span>
+<span class="related-date">2026-05-20</span></a></li><li><a href="https://coriva.eu.org/alphaagent-paper-review/"><span class="related-title">AlphaAgent：用正则化探索对抗因子衰减</span>
+<span class="related-date">2026-04-21</span></a></li><li><a href="https://coriva.eu.org/alphagpt-paper-review/"><span class="related-title">AlphaGPT：用大模型挖掘量化因子</span>
+<span class="related-date">2026-04-10</span></a></li><li><a href="https://coriva.eu.org/0dte-options-guide/"><span class="related-title">末日期权（0DTE）完全指南：机制、Greeks 与盈亏真相</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/qlib-tutorial/"><span class="related-title">Qlib 教程：从安装到第一个量化策略</span>
+<span class="related-date">2026-05-11</span></a></li></ul></nav></aside></div></main><footer class="footer"><span>© 2026 <a href="https://coriva.eu.org/">Coriva</a></span> ·
+<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+<a href="https://finicounter.eu.org/" target="_blank">Total Views</a>:
+<span id="finicount_views">7,281</span></span></footer><a href="https://coriva.eu.org/factorminer-paper-review/#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g" style="visibility: hidden; opacity: 0;"><svg viewBox="0 0 12 6" fill="currentcolor"><path d="M12 6H0l6-6z"></path></svg>
+</a><script async="" src="//finicounter.eu.org/finicounter.js"></script><script>(function(){var e,t,n,s=document.getElementById("toc-sidebar");if(!s)return;if(t=s.querySelectorAll('a[href^="#"]'),!t.length)return;e=[],t.forEach(function(t){var s=decodeURIComponent(t.getAttribute("href").slice(1)),n=document.getElementById(s);n&&e.push({el:n,link:t})});function o(){for(var o=window.scrollY||document.documentElement.scrollTop,i=100,s=null,n=0;n<e.length;n++)e[n].el.getBoundingClientRect().top+window.scrollY-i<=o&&(s=e[n]);t.forEach(function(e){e.classList.remove("active")}),s&&s.link.classList.add("active")}n=!1,window.addEventListener("scroll",function(){n||(requestAnimationFrame(function(){o(),n=!1}),n=!0)}),o()})()</script><script>let menu=document.getElementById("menu");if(menu){const e=localStorage.getItem("menu-scroll-position");e&&(menu.scrollLeft=parseInt(e,10)),menu.onscroll=function(){localStorage.setItem("menu-scroll-position",menu.scrollLeft)}}document.querySelectorAll('a[href^="#"]').forEach(e=>{e.addEventListener("click",function(e){e.preventDefault();var t=this.getAttribute("href").substr(1);window.matchMedia("(prefers-reduced-motion: reduce)").matches?document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView():document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView({behavior:"smooth"}),t==="top"?history.replaceState(null,null," "):history.pushState(null,null,`#${t}`)})})</script><script>var mybutton=document.getElementById("top-link");window.onscroll=function(){document.body.scrollTop>800||document.documentElement.scrollTop>800?(mybutton.style.visibility="visible",mybutton.style.opacity="1"):(mybutton.style.visibility="hidden",mybutton.style.opacity="0")}</script><script>document.getElementById("theme-toggle").addEventListener("click",()=>{const e=document.querySelector("html");e.dataset.theme==="dark"?(e.dataset.theme="light",localStorage.setItem("pref-theme","light")):(e.dataset.theme="dark",localStorage.setItem("pref-theme","dark"))})</script><script>document.querySelectorAll("pre > code").forEach(e=>{const n=e.parentNode.parentNode,t=document.createElement("button");t.classList.add("copy-code"),t.innerHTML="复制";function s(){t.innerHTML="已复制！",setTimeout(()=>{t.innerHTML="复制"},2e3)}t.addEventListener("click",t=>{if("clipboard"in navigator){navigator.clipboard.writeText(e.textContent),s();return}const n=document.createRange();n.selectNodeContents(e);const o=window.getSelection();o.removeAllRanges(),o.addRange(n);try{document.execCommand("copy"),s()}catch{}o.removeRange(n)}),n.classList.contains("highlight")?n.appendChild(t):n.parentNode.firstChild==n||(e.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName=="TABLE"?e.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(t):e.parentNode.appendChild(t))})</script></body></html>

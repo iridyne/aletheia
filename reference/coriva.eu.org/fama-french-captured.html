@@ -1,0 +1,797 @@
+<!doctype html>
+<html lang="zh" dir="auto" data-theme="dark"><head><meta charset="utf-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no"><meta name="robots" content="index, follow"><title>Fama-French 因子模型：从三因子到五因子的量化选股基础 | Coriva</title>
+<meta name="keywords" content="Quant,Trading"><meta name="description" content="用大白话讲清楚 Fama-French 三因子和五因子模型的原理、因子构造方法、Python 回归实战，以及因子模型在量化选股中的应用和局限。"><meta name="author" content="Coriva"><link rel="canonical" href="https://coriva.eu.org/fama-french-factor-model/"><meta name="msvalidate.01" content="F8E2F274161B653649F8818FD127CE87"><link crossorigin="anonymous" href="/assets/css/stylesheet.8fe2fa5580263673749c0854ddc4fdff83d8cd245ff94138be9f54fc4bc84fca.css" integrity="sha256-j+L6VYAmNnN0nAhU3cT9/4PYzSRf+UE4vp9U/EvIT8o=" rel="preload stylesheet" as="style"><link rel="icon" href="https://coriva.eu.org/favicon.ico"><link rel="icon" type="image/png" sizes="16x16" href="https://coriva.eu.org/favicon-16x16.png"><link rel="icon" type="image/png" sizes="32x32" href="https://coriva.eu.org/favicon-32x32.png"><link rel="apple-touch-icon" href="https://coriva.eu.org/apple-touch-icon.png"><link rel="mask-icon" href="https://coriva.eu.org/safari-pinned-tab.svg"><meta name="theme-color" content="#2e2e33"><meta name="msapplication-TileColor" content="#2e2e33"><link rel="alternate" hreflang="zh" href="https://coriva.eu.org/fama-french-factor-model/"><link rel="alternate" hreflang="en" href="https://coriva.eu.org/en/fama-french-factor-model/"><noscript><style>#theme-toggle,.top-link{display:none}</style><style>@media(prefers-color-scheme:dark){:root{--theme:rgb(29, 30, 32);--entry:rgb(46, 46, 51);--primary:rgb(218, 218, 219);--secondary:rgb(155, 156, 157);--tertiary:rgb(65, 66, 68);--content:rgb(196, 196, 197);--code-block-bg:rgb(46, 46, 51);--code-bg:rgb(55, 56, 62);--border:rgb(51, 51, 51);color-scheme:dark}.list{background:var(--theme)}.toc{background:var(--entry)}}@media(prefers-color-scheme:light){.list::-webkit-scrollbar-thumb{border-color:var(--code-bg)}}</style></noscript><script>localStorage.getItem("pref-theme")==="dark"?document.querySelector("html").dataset.theme="dark":localStorage.getItem("pref-theme")==="light"?document.querySelector("html").dataset.theme="light":window.matchMedia("(prefers-color-scheme: dark)").matches?document.querySelector("html").dataset.theme="dark":document.querySelector("html").dataset.theme="light"</script><meta name="google-adsense-account" content="ca-pub-2660281922577700"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/400.css" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@fontsource/fira-code@5/500.css" rel="stylesheet"><style>code,kbd,samp,pre{font-family:fira code,cascadia code,source code pro,sf mono,Menlo,Consolas,monospace}.entry-footer .pageview-meta{display:none}.post-single .post-description{display:none}.post-single-wrapper{display:flex;gap:4rem;align-items:flex-start}.post-single-wrapper .post-single{flex:1;min-width:0}.toc-sidebar{display:none}@media(min-width:1280px){body:not(.list) .main{max-width:calc(var(--main-width) + var(--gap) * 2 + 272px)}.post-single-wrapper .post-single{max-width:var(--main-width)}.toc-sidebar{display:block;width:220px;flex-shrink:0;position:sticky;top:calc(var(--header-height) + 1rem);max-height:calc(100vh - var(--header-height) - 3rem);overflow-y:auto;scrollbar-width:none;padding-left:1rem;border-left:1px solid var(--border)}.toc-sidebar::-webkit-scrollbar{display:none}.toc-sidebar-nav{font-size:.8rem;line-height:1.65}.toc-sidebar-title{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.toc-sidebar-inner ul{list-style:none;padding-left:0;margin:0}.toc-sidebar-inner ul ul{padding-left:.9em}.toc-sidebar-inner li{margin:.2em 0}.toc-sidebar-inner a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;transition:color .2s;opacity:.8}.toc-sidebar-inner a:hover{color:var(--primary);opacity:1}.toc-sidebar-inner a.active{color:var(--primary);font-weight:500;opacity:1}}.related-posts{margin-top:1.5rem;padding-top:1.2rem;border-top:1px solid var(--border)}.related-posts h2{display:block;font-weight:600;margin-bottom:.75rem;color:var(--primary);font-size:.9rem;letter-spacing:.02em}.related-posts ul{list-style:none;padding:0;margin:0}.related-posts li{margin:.2em 0}.related-posts a{color:var(--secondary);text-decoration:none;display:block;padding:.15em 0;font-size:.8rem;line-height:1.65;transition:color .2s;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.related-posts a:hover{color:var(--primary);opacity:1}.related-date{display:none}</style><script>MathJax={tex:{inlineMath:[["\\(","\\)"]],displayMath:[["$$","$$"],["\\[","\\]"]]}}</script><script async="" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script><script async="" src="https://www.googletagmanager.com/gtag/js?id=G-C74ZBKDR6V"></script><script>var dnt,doNotTrack=!1;if(!1&&(dnt=navigator.doNotTrack||window.doNotTrack||navigator.msDoNotTrack,doNotTrack=dnt=="1"||dnt=="yes"),!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date),gtag("config","G-C74ZBKDR6V")}</script><meta property="og:url" content="https://coriva.eu.org/fama-french-factor-model/"><meta property="og:site_name" content="Coriva"><meta property="og:title" content="Fama-French 因子模型：从三因子到五因子的量化选股基础"><meta property="og:description" content="用大白话讲清楚 Fama-French 三因子和五因子模型的原理、因子构造方法、Python 回归实战，以及因子模型在量化选股中的应用和局限。"><meta property="og:locale" content="zh"><meta property="og:type" content="article"><meta property="article:section" content="posts"><meta property="article:published_time" content="2026-04-16T14:22:55+08:00"><meta property="article:modified_time" content="2026-04-16T14:22:55+08:00"><meta property="article:tag" content="Quant"><meta property="article:tag" content="Trading"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="Fama-French 因子模型：从三因子到五因子的量化选股基础"><meta name="twitter:description" content="用大白话讲清楚 Fama-French 三因子和五因子模型的原理、因子构造方法、Python 回归实战，以及因子模型在量化选股中的应用和局限。"><script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Posts","item":"https://coriva.eu.org/posts/"},{"@type":"ListItem","position":2,"name":"Fama-French 因子模型：从三因子到五因子的量化选股基础","item":"https://coriva.eu.org/fama-french-factor-model/"}]}</script><script type="application/ld+json">{"@context":"https://schema.org","@type":"BlogPosting","headline":"Fama-French 因子模型：从三因子到五因子的量化选股基础","name":"Fama-French 因子模型：从三因子到五因子的量化选股基础","description":"用大白话讲清楚 Fama-French 三因子和五因子模型的原理、因子构造方法、Python 回归实战，以及因子模型在量化选股中的应用和局限。","keywords":["Quant","Trading"],"articleBody":"一只股票涨了 20%，这 20% 里有多少是因为大盘整体在涨，多少是因为它是小盘股，多少是因为它便宜？Fama-French 因子模型就是用来回答这个问题的工具。它把股票收益拆解成几个可解释的\"因子\"，是量化选股的基础框架之一。这篇文章从最基础的 CAPM 讲起，一步步推进到三因子和五因子模型，最后用 Python 跑一遍因子回归。\nCAPM：一个因子的世界 在 Fama-French 之前，金融学用 CAPM（资本资产定价模型） 解释股票收益。CAPM 的核心公式：\n$$ E(R_i) = R_f + \\beta_i (R_m - R_f) $$翻译成人话：一只股票的预期收益 = 无风险利率 + 这只股票对市场的敏感度（β）× 市场风险溢价。\nβ 大于 1 的股票比大盘波动更剧烈，承担了更多风险，所以预期收益更高。β 小于 1 的反之。CAPM 的世界观很简洁：股票收益的差异只由一个东西决定，就是它对整体市场的暴露程度。\n问题出在哪？实际数据不买账。\n1981 年 Banz 发现，小市值股票的长期收益率显著高于大市值股票，超出 CAPM 预测的部分用 β 解释不了。1992 年 Fama 和 French 又发现，高账面市值比（B/M）的股票（也就是市场觉得\"便宜\"的股票）长期跑赢低 B/M 的\"贵\"股票。这两个现象被称为规模溢价和价值溢价，是 CAPM 的两大\"异象\"。\n一个因子解释不了的东西，那就加因子。\n三因子模型：规模和价值 1993 年，Fama 和 French 在 CAPM 的基础上加了两个因子，提出三因子模型：\n$$ R_i - R_f = \\alpha_i + \\beta_1 (R_m - R_f) + \\beta_2 \\cdot \\text{SMB} + \\beta_3 \\cdot \\text{HML} + \\varepsilon_i $$三个因子分别是：\nMKT（市场因子），就是 CAPM 里的 \\(R_m - R_f\\)。大盘涨 1%，如果你的 \\(\\beta_1 = 1.2\\)，这个因子贡献 1.2% 的收益。\nSMB（Small Minus Big，规模因子）。把所有股票按市值分成两组，小盘股组合的收益减去大盘股组合的收益。如果一只股票的 \\(\\beta_2\\) 是正的，说明它的表现和小盘股同步，吃到了规模溢价。\nHML（High Minus Low，价值因子）。把所有股票按账面市值比（B/M）分成两组，高 B/M（便宜）股票的收益减去低 B/M（贵）股票的收益。\\(\\beta_3\\) 为正说明这只股票有价值股特征。\n公式左边的 \\(\\alpha_i\\) 是关键：它代表三个因子都解释不了的\"超额收益\"。如果一个基金经理的 α 显著为正，说明他确实有选股能力，赚的不只是承担市场、规模、价值三种风险带来的补偿。反过来说，很多看上去收益不错的基金，拆开一看 α 接近零，收益全是因子暴露带来的，换个 ETF 组合就能近似复制。\n因子怎么构造 Fama 和 French 的原始构造方法：每年 6 月底，把所有股票按市值中位数分成大（Big）和小（Small）两组；同时按账面市值比的 30%/70% 分位数分成高（High）、中（Medium）、低（Low）三组。2 × 3 = 6 个组合。\nSMB = （三个小盘组合的平均收益）-（三个大盘组合的平均收益） HML = （两个高 B/M 组合的平均收益）-（两个低 B/M 组合的平均收益） 这种做多一边、做空另一边的构造方式叫多空对冲组合（long-short portfolio）。因子收益代表的是一种风格溢价，和市场整体涨跌无关。\n五因子模型：盈利和投资 三因子模型解释了规模和价值效应，但还有些\"异象\"它搞不定。两个盈利能力差不多、市值也差不多的股票，为什么长期收益率差很多？Novy-Marx 在 2013 年发现盈利能力（gross profitability）可以预测股票收益。Fama 和 French 在 2015 年的论文里把盈利和投资两个维度加进来，扩展成五因子模型：\n$$ R_i - R_f = \\alpha_i + \\beta_1 (R_m - R_f) + \\beta_2 \\cdot \\text{SMB} + \\beta_3 \\cdot \\text{HML} + \\beta_4 \\cdot \\text{RMW} + \\beta_5 \\cdot \\text{CMA} + \\varepsilon_i $$新增的两个因子：\nRMW（Robust Minus Weak，盈利因子）。盈利能力强（高营业利润率）的公司组合收益减去盈利能力弱的公司组合收益。直觉上好理解：赚钱能力强的公司，股票长期表现更好。\nCMA（Conservative Minus Aggressive，投资因子）。投资保守（资产增长率低）的公司收益减去投资激进（大量扩张）的公司收益。听上去反直觉，但数据显示：疯狂扩张的公司往往过度投资，回报率下降，股价长期跑输那些稳健经营的公司。\n五因子模型有一个有趣的副作用：加了 RMW 和 CMA 之后，HML（价值因子）的解释力明显变弱了。Fama 和 French 自己也在论文里承认，五因子模型中 HML 几乎是多余的，因为价值效应可以被盈利和投资两个因子大部分解释掉。这引发了学术界不小的争论：价值投资到底是一个独立的风险溢价，还只是盈利能力和投资风格的副产品？\nPython 因子回归实战 理论讲完，下面用 Python 跑一遍。我们模拟一只\"小盘价值基金\"的月度收益，然后分别用三因子和五因子模型做回归，看各因子的系数和 α。\n实际操作中，因子数据可以从 Kenneth French 的 Data Library 免费下载。这里为了代码自包含，用合成数据模拟。\nimport numpy as np from numpy.linalg import lstsq def run_factor_regression(): np.random.seed(42) n = 240 # 20 years of monthly data # Simulate factor returns (monthly) mkt = np.random.normal(0.007, 0.045, n) smb = np.random.normal(0.002, 0.032, n) hml = np.random.normal(0.003, 0.028, n) rmw = np.random.normal(0.0025, 0.022, n) cma = np.random.normal(0.002, 0.020, n) # Simulate fund returns: small-cap value fund # True betas: MKT=1.05, SMB=0.45, HML=0.38, RMW=0.18, CMA=0.12 # True alpha: 0.001 (0.1% per month) alpha_true = 0.001 fund = (alpha_true + 1.05 * mkt + 0.45 * smb + 0.38 * hml + 0.18 * rmw + 0.12 * cma + np.random.normal(0, 0.012, n)) # --- Three-factor regression --- X3 = np.column_stack([np.ones(n), mkt, smb, hml]) beta3, residuals3, _, _ = lstsq(X3, fund, rcond=None) pred3 = X3 @ beta3 ss_res3 = np.sum((fund - pred3) ** 2) ss_tot = np.sum((fund - np.mean(fund)) ** 2) r2_3 = 1 - ss_res3 / ss_tot # Standard errors mse3 = ss_res3 / (n - 4) se3 = np.sqrt(np.diag(mse3 * np.linalg.inv(X3.T @ X3))) t3 = beta3 / se3 print(\"=== Three-Factor Model ===\") print(f\" Alpha: {beta3[0]*100:.3f}% /month (t={t3[0]:.2f})\") print(f\" MKT: {beta3[1]:.3f} (t={t3[1]:.2f})\") print(f\" SMB: {beta3[2]:.3f} (t={t3[2]:.2f})\") print(f\" HML: {beta3[3]:.3f} (t={t3[3]:.2f})\") print(f\" R²: {r2_3:.4f}\") # --- Five-factor regression --- X5 = np.column_stack([np.ones(n), mkt, smb, hml, rmw, cma]) beta5, _, _, _ = lstsq(X5, fund, rcond=None) pred5 = X5 @ beta5 ss_res5 = np.sum((fund - pred5) ** 2) r2_5 = 1 - ss_res5 / ss_tot mse5 = ss_res5 / (n - 6) se5 = np.sqrt(np.diag(mse5 * np.linalg.inv(X5.T @ X5))) t5 = beta5 / se5 print(\"\\n=== Five-Factor Model ===\") print(f\" Alpha: {beta5[0]*100:.3f}% /month (t={t5[0]:.2f})\") print(f\" MKT: {beta5[1]:.3f} (t={t5[1]:.2f})\") print(f\" SMB: {beta5[2]:.3f} (t={t5[2]:.2f})\") print(f\" HML: {beta5[3]:.3f} (t={t5[3]:.2f})\") print(f\" RMW: {beta5[4]:.3f} (t={t5[4]:.2f})\") print(f\" CMA: {beta5[5]:.3f} (t={t5[5]:.2f})\") print(f\" R²: {r2_5:.4f}\") print(f\"\\n R² improvement: {r2_3:.4f} -\u003e {r2_5:.4f} (+{(r2_5-r2_3)*100:.2f}%)\") run_factor_regression() 运行结果：\n=== Three-Factor Model === Alpha: 0.302% /month (t=3.81) MKT: 1.035 (t=57.98) SMB: 0.455 (t=18.49) HML: 0.422 (t=15.20) R²: 0.9416 === Five-Factor Model === Alpha: 0.213% /month (t=2.64) MKT: 1.043 (t=59.28) SMB: 0.450 (t=18.67) HML: 0.420 (t=15.47) RMW: 0.121 (t=3.27) CMA: 0.055 (t=1.49) R²: 0.9448 R² improvement: 0.9416 -\u003e 0.9448 (+0.32%) 几个值得注意的结果：\nMKT 系数 1.04，接近我们设定的真实值 1.05。t 值接近 60，极其显著。这只\"基金\"基本跟着大盘走。\nSMB 系数 0.45，显著为正，说明这只基金确实偏小盘。如果你买了一只号称\"大盘蓝筹\"的基金，跑回归发现 SMB 显著为正，那基金经理实际上是在买小盘股，和宣传不符。\n三因子的 α 是 0.302%/月，t 值 3.81，统计上显著。换到五因子模型后 α 降到 0.213%，t 值 2.64。原来三因子里\"解释不了\"的超额收益，有一部分其实是 RMW 和 CMA 因子的暴露。这就是因子模型的核心用途：剥掉因子暴露后，看真正的 α 还剩多少。\nR² 从 0.9416 升到 0.9448。五因子比三因子多解释了 0.32% 的收益方差。提升不大，但 RMW 的 t 值 3.27 是显著的，说明盈利因子确实有独立的解释力。CMA 的 t 值 1.49 不显著，在这组数据里投资因子的效果偏弱。\n因子模型的局限 因子模型是量化选股的基础框架，但不是万能的。\n因子溢价会消失。小盘股溢价是三因子模型的核心卖点之一，但 1980 年代之后美股小盘股溢价大幅衰减，有些年份甚至为负。一种解释是：学术论文发表后大量资金涌入小盘股策略，溢价被套利掉了。因子拥挤是所有因子策略面临的长期威胁。\n换个市场可能不灵。Fama-French 因子是在美股上发现的。搬到 A 股，规模效应（小盘股跑赢）依然很强，但价值效应（低估值跑赢）长期失效。A 股的\"便宜\"股票很多是基本面恶化的垃圾股，买入持有不但不赚钱还会亏。直接照搬美股因子模型到其他市场是危险的。\n数据挖掘的重灾区。学术界已经\"发现\"了几百个所谓的因子（有人统计超过 400 个）。很多因子只在特定的时间段和特定的市场里有效，换个样本就消失了。Harvey, Liu \u0026 Zhu (2016) 的论文指出，用传统的 t \u003e 2 标准，大量\"显著\"的因子其实是多重检验下的统计幻觉。\n线性假设。因子模型假设收益和因子之间是线性关系。现实中，因子的效果可能是非线性的：小盘股溢价可能集中在最小的 10% 股票上，而不是\"越小越好\"的线性递增。\n因子模型和量化选股 因子模型不只是一个分析工具，它是量化选股策略的理论地基。\n最直接的应用：因子选股。如果你相信价值因子长期有效，就系统性地买入高 B/M 的股票、卖出低 B/M 的股票。如果你同时相信多个因子，就把它们组合起来，构建多因子评分模型。A 股量化私募大量使用的\"多因子模型\"，底层逻辑就是这个。\n因子归因。基金经理说自己年化 25%，因子模型可以告诉你：其中 18% 是市场涨的，4% 是小盘股溢价，2% 是价值溢价，真正的 α 只有 1%。你愿意为 1% 的 α 付 2% 的管理费吗？这就是因子归因的实际价值。\n因子中性。有些策略不想承担任何因子风险，只赚纯 α。方法是在构建组合时，约束对每个因子的暴露为零。比如做多一组股票的同时，做空等量的、因子暴露相反的股票，让组合的 SMB、HML 等系数都接近零。剩下的收益就是和因子无关的纯选股能力。\n因子模型的数学不复杂，本质就是多元线性回归。真正难的是：选哪些因子，怎么处理因子之间的相关性，因子权重怎么动态调整，以及怎么避免在历史数据上过度拟合。\n","wordCount":"3537","inLanguage":"zh","datePublished":"2026-04-16T14:22:55+08:00","dateModified":"2026-04-16T14:22:55+08:00","author":{"@type":"Person","name":"Coriva"},"mainEntityOfPage":{"@type":"WebPage","@id":"https://coriva.eu.org/fama-french-factor-model/"},"publisher":{"@type":"Organization","name":"Coriva","logo":{"@type":"ImageObject","url":"https://coriva.eu.org/favicon.ico"}}}</script><style type="text/css">.CtxtMenu_InfoClose {  top:.2em; right:.2em;}
+.CtxtMenu_InfoContent {  overflow:auto; text-align:left; font-size:80%;  padding:.4em .6em; border:1px inset; margin:1em 0px;  max-height:20em; max-width:30em; background-color:#EEEEEE;  white-space:normal;}
+.CtxtMenu_Info.CtxtMenu_MousePost {outline:none;}
+.CtxtMenu_Info {  position:fixed; left:50%; width:auto; text-align:center;  border:3px outset; padding:1em 2em; background-color:#DDDDDD;  color:black;  cursor:default; font-family:message-box; font-size:120%;  font-style:normal; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 15px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius:15px;               /* Safari and Chrome */  -moz-border-radius:15px;                  /* Firefox */  -khtml-border-radius:15px;                /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */  filter:progid:DXImageTransform.Microsoft.dropshadow(OffX=2, OffY=2, Color="gray", Positive="true"); /* IE */}
+</style><style type="text/css">.CtxtMenu_MenuClose {  position:absolute;  cursor:pointer;  display:inline-block;  border:2px solid #AAA;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  font-family: "Courier New", Courier;  font-size:24px;  color:#F0F0F0}
+.CtxtMenu_MenuClose span {  display:block; background-color:#AAA; border:1.5px solid;  border-radius:18px;  -webkit-border-radius: 18px;             /* Safari and Chrome */  -moz-border-radius: 18px;                /* Firefox */  -khtml-border-radius: 18px;              /* Konqueror */  line-height:0;  padding:8px 0 6px     /* may need to be browser-specific */}
+.CtxtMenu_MenuClose:hover {  color:white!important;  border:2px solid #CCC!important}
+.CtxtMenu_MenuClose:hover span {  background-color:#CCC!important}
+.CtxtMenu_MenuClose:hover:focus {  outline:none}
+</style><style type="text/css">.CtxtMenu_Menu {  position:absolute;  background-color:white;  color:black;  width:auto; padding:5px 0px;  border:1px solid #CCCCCC; margin:0; cursor:default;  font: menu; text-align:left; text-indent:0; text-transform:none;  line-height:normal; letter-spacing:normal; word-spacing:normal;  word-wrap:normal; white-space:nowrap; float:none; z-index:201;  border-radius: 5px;                     /* Opera 10.5 and IE9 */  -webkit-border-radius: 5px;             /* Safari and Chrome */  -moz-border-radius: 5px;                /* Firefox */  -khtml-border-radius: 5px;              /* Konqueror */  box-shadow:0px 10px 20px #808080;         /* Opera 10.5 and IE9 */  -webkit-box-shadow:0px 10px 20px #808080; /* Safari 3 & Chrome */  -moz-box-shadow:0px 10px 20px #808080;    /* Forefox 3.5 */  -khtml-box-shadow:0px 10px 20px #808080;  /* Konqueror */}
+.CtxtMenu_MenuItem {  padding: 1px 2em;  background:transparent;}
+.CtxtMenu_MenuArrow {  position:absolute; right:.5em; padding-top:.25em; color:#666666;  font-family: null; font-size: .75em}
+.CtxtMenu_MenuActive .CtxtMenu_MenuArrow {color:white}
+.CtxtMenu_MenuArrow.CtxtMenu_RTL {left:.5em; right:auto}
+.CtxtMenu_MenuCheck {  position:absolute; left:.7em;  font-family: null}
+.CtxtMenu_MenuCheck.CtxtMenu_RTL { right:.7em; left:auto }
+.CtxtMenu_MenuRadioCheck {  position:absolute; left: .7em;}
+.CtxtMenu_MenuRadioCheck.CtxtMenu_RTL {  right: .7em; left:auto}
+.CtxtMenu_MenuInputBox {  padding-left: 1em; right:.5em; color:#666666;  font-family: null;}
+.CtxtMenu_MenuInputBox.CtxtMenu_RTL {  left: .1em;}
+.CtxtMenu_MenuComboBox {  left:.1em; padding-bottom:.5em;}
+.CtxtMenu_MenuSlider {  left: .1em;}
+.CtxtMenu_SliderValue {  position:absolute; right:.1em; padding-top:.25em; color:#333333;  font-size: .75em}
+.CtxtMenu_SliderBar {  outline: none; background: #d3d3d3}
+.CtxtMenu_MenuLabel {  padding: 1px 2em 3px 1.33em;  font-style:italic}
+.CtxtMenu_MenuRule {  border-top: 1px solid #DDDDDD;  margin: 4px 3px;}
+.CtxtMenu_MenuDisabled {  color:GrayText}
+.CtxtMenu_MenuActive {  background-color: #606872;  color: white;}
+.CtxtMenu_MenuDisabled:focus {  background-color: #E8E8E8}
+.CtxtMenu_MenuLabel:focus {  background-color: #E8E8E8}
+.CtxtMenu_ContextMenu:focus {  outline:none}
+.CtxtMenu_ContextMenu .CtxtMenu_MenuItem:focus {  outline:none}
+.CtxtMenu_SelectionMenu {  position:relative; float:left;  border-bottom: none; -webkit-box-shadow:none; -webkit-border-radius:0px; }
+.CtxtMenu_SelectionItem {  padding-right: 1em;}
+.CtxtMenu_Selection {  right: 40%; width:50%; }
+.CtxtMenu_SelectionBox {  padding: 0em; max-height:20em; max-width: none;  background-color:#FFFFFF;}
+.CtxtMenu_SelectionDivider {  clear: both; border-top: 2px solid #000000;}
+.CtxtMenu_Menu .CtxtMenu_MenuClose {  top:-10px; left:-10px}
+</style><style id="waline-darkmode"></style><style id="MJX-CHTML-styles">
+mjx-container[jax="CHTML"] {
+  line-height: 0;
+}
+
+mjx-container [space="1"] {
+  margin-left: .111em;
+}
+
+mjx-container [space="2"] {
+  margin-left: .167em;
+}
+
+mjx-container [space="3"] {
+  margin-left: .222em;
+}
+
+mjx-container [space="4"] {
+  margin-left: .278em;
+}
+
+mjx-container [space="5"] {
+  margin-left: .333em;
+}
+
+mjx-container [rspace="1"] {
+  margin-right: .111em;
+}
+
+mjx-container [rspace="2"] {
+  margin-right: .167em;
+}
+
+mjx-container [rspace="3"] {
+  margin-right: .222em;
+}
+
+mjx-container [rspace="4"] {
+  margin-right: .278em;
+}
+
+mjx-container [rspace="5"] {
+  margin-right: .333em;
+}
+
+mjx-container [size="s"] {
+  font-size: 70.7%;
+}
+
+mjx-container [size="ss"] {
+  font-size: 50%;
+}
+
+mjx-container [size="Tn"] {
+  font-size: 60%;
+}
+
+mjx-container [size="sm"] {
+  font-size: 85%;
+}
+
+mjx-container [size="lg"] {
+  font-size: 120%;
+}
+
+mjx-container [size="Lg"] {
+  font-size: 144%;
+}
+
+mjx-container [size="LG"] {
+  font-size: 173%;
+}
+
+mjx-container [size="hg"] {
+  font-size: 207%;
+}
+
+mjx-container [size="HG"] {
+  font-size: 249%;
+}
+
+mjx-container [width="full"] {
+  width: 100%;
+}
+
+mjx-box {
+  display: inline-block;
+}
+
+mjx-block {
+  display: block;
+}
+
+mjx-itable {
+  display: inline-table;
+}
+
+mjx-row {
+  display: table-row;
+}
+
+mjx-row > * {
+  display: table-cell;
+}
+
+mjx-mtext {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mstyle {
+  display: inline-block;
+}
+
+mjx-merror {
+  display: inline-block;
+  color: red;
+  background-color: yellow;
+}
+
+mjx-mphantom {
+  visibility: hidden;
+}
+
+_::-webkit-full-page-media, _:future, :root mjx-container {
+  will-change: opacity;
+}
+
+mjx-assistive-mml {
+  position: absolute !important;
+  top: 0px;
+  left: 0px;
+  clip: rect(1px, 1px, 1px, 1px);
+  padding: 1px 0px 0px 0px !important;
+  border: 0px !important;
+  display: block !important;
+  width: auto !important;
+  overflow: hidden !important;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+mjx-assistive-mml[display="block"] {
+  width: 100% !important;
+}
+
+mjx-math {
+  display: inline-block;
+  text-align: left;
+  line-height: 0;
+  text-indent: 0;
+  font-style: normal;
+  font-weight: normal;
+  font-size: 100%;
+  font-size-adjust: none;
+  letter-spacing: normal;
+  border-collapse: collapse;
+  word-wrap: normal;
+  word-spacing: normal;
+  white-space: nowrap;
+  direction: ltr;
+  padding: 1px 0;
+}
+
+mjx-container[jax="CHTML"][display="true"] {
+  display: block;
+  text-align: center;
+  margin: 1em 0;
+}
+
+mjx-container[jax="CHTML"][display="true"][width="full"] {
+  display: flex;
+}
+
+mjx-container[jax="CHTML"][display="true"] mjx-math {
+  padding: 0;
+}
+
+mjx-container[jax="CHTML"][justify="left"] {
+  text-align: left;
+}
+
+mjx-container[jax="CHTML"][justify="right"] {
+  text-align: right;
+}
+
+mjx-mi {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c {
+  display: inline-block;
+}
+
+mjx-utext {
+  display: inline-block;
+  padding: .75em 0 .2em 0;
+}
+
+mjx-mo {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-stretchy-h {
+  display: inline-table;
+  width: 100%;
+}
+
+mjx-stretchy-h > * {
+  display: table-cell;
+  width: 0;
+}
+
+mjx-stretchy-h > * > mjx-c {
+  display: inline-block;
+  transform: scalex(1.0000001);
+}
+
+mjx-stretchy-h > * > mjx-c::before {
+  display: inline-block;
+  width: initial;
+}
+
+mjx-stretchy-h > mjx-ext {
+  /* IE */ overflow: hidden;
+  /* others */ overflow: clip visible;
+  width: 100%;
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c::before {
+  transform: scalex(500);
+}
+
+mjx-stretchy-h > mjx-ext > mjx-c {
+  width: 0;
+}
+
+mjx-stretchy-h > mjx-beg > mjx-c {
+  margin-right: -.1em;
+}
+
+mjx-stretchy-h > mjx-end > mjx-c {
+  margin-left: -.1em;
+}
+
+mjx-stretchy-v {
+  display: inline-block;
+}
+
+mjx-stretchy-v > * {
+  display: block;
+}
+
+mjx-stretchy-v > mjx-beg {
+  height: 0;
+}
+
+mjx-stretchy-v > mjx-end > mjx-c {
+  display: block;
+}
+
+mjx-stretchy-v > * > mjx-c {
+  transform: scaley(1.0000001);
+  transform-origin: left center;
+  overflow: hidden;
+}
+
+mjx-stretchy-v > mjx-ext {
+  display: block;
+  height: 100%;
+  box-sizing: border-box;
+  border: 0px solid transparent;
+  /* IE */ overflow: hidden;
+  /* others */ overflow: visible clip;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c::before {
+  width: initial;
+  box-sizing: border-box;
+}
+
+mjx-stretchy-v > mjx-ext > mjx-c {
+  transform: scaleY(500) translateY(.075em);
+  overflow: visible;
+}
+
+mjx-mark {
+  display: inline-block;
+  height: 0px;
+}
+
+mjx-msub {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-mn {
+  display: inline-block;
+  text-align: left;
+}
+
+mjx-c::before {
+  display: block;
+  width: 0;
+}
+
+.MJX-TEX {
+  font-family: MJXZERO, MJXTEX;
+}
+
+.TEX-B {
+  font-family: MJXZERO, MJXTEX-B;
+}
+
+.TEX-I {
+  font-family: MJXZERO, MJXTEX-I;
+}
+
+.TEX-MI {
+  font-family: MJXZERO, MJXTEX-MI;
+}
+
+.TEX-BI {
+  font-family: MJXZERO, MJXTEX-BI;
+}
+
+.TEX-S1 {
+  font-family: MJXZERO, MJXTEX-S1;
+}
+
+.TEX-S2 {
+  font-family: MJXZERO, MJXTEX-S2;
+}
+
+.TEX-S3 {
+  font-family: MJXZERO, MJXTEX-S3;
+}
+
+.TEX-S4 {
+  font-family: MJXZERO, MJXTEX-S4;
+}
+
+.TEX-A {
+  font-family: MJXZERO, MJXTEX-A;
+}
+
+.TEX-C {
+  font-family: MJXZERO, MJXTEX-C;
+}
+
+.TEX-CB {
+  font-family: MJXZERO, MJXTEX-CB;
+}
+
+.TEX-FR {
+  font-family: MJXZERO, MJXTEX-FR;
+}
+
+.TEX-FRB {
+  font-family: MJXZERO, MJXTEX-FRB;
+}
+
+.TEX-SS {
+  font-family: MJXZERO, MJXTEX-SS;
+}
+
+.TEX-SSB {
+  font-family: MJXZERO, MJXTEX-SSB;
+}
+
+.TEX-SSI {
+  font-family: MJXZERO, MJXTEX-SSI;
+}
+
+.TEX-SC {
+  font-family: MJXZERO, MJXTEX-SC;
+}
+
+.TEX-T {
+  font-family: MJXZERO, MJXTEX-T;
+}
+
+.TEX-V {
+  font-family: MJXZERO, MJXTEX-V;
+}
+
+.TEX-VB {
+  font-family: MJXZERO, MJXTEX-VB;
+}
+
+mjx-stretchy-v mjx-c, mjx-stretchy-h mjx-c {
+  font-family: MJXZERO, MJXTEX-S1, MJXTEX-S4, MJXTEX, MJXTEX-A ! important;
+}
+
+@font-face /* 0 */ {
+  font-family: MJXZERO;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Zero.woff") format("woff");
+}
+
+@font-face /* 1 */ {
+  font-family: MJXTEX;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Regular.woff") format("woff");
+}
+
+@font-face /* 2 */ {
+  font-family: MJXTEX-B;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Bold.woff") format("woff");
+}
+
+@font-face /* 3 */ {
+  font-family: MJXTEX-I;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-Italic.woff") format("woff");
+}
+
+@font-face /* 4 */ {
+  font-family: MJXTEX-MI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Main-Italic.woff") format("woff");
+}
+
+@font-face /* 5 */ {
+  font-family: MJXTEX-BI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Math-BoldItalic.woff") format("woff");
+}
+
+@font-face /* 6 */ {
+  font-family: MJXTEX-S1;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size1-Regular.woff") format("woff");
+}
+
+@font-face /* 7 */ {
+  font-family: MJXTEX-S2;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size2-Regular.woff") format("woff");
+}
+
+@font-face /* 8 */ {
+  font-family: MJXTEX-S3;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size3-Regular.woff") format("woff");
+}
+
+@font-face /* 9 */ {
+  font-family: MJXTEX-S4;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Size4-Regular.woff") format("woff");
+}
+
+@font-face /* 10 */ {
+  font-family: MJXTEX-A;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_AMS-Regular.woff") format("woff");
+}
+
+@font-face /* 11 */ {
+  font-family: MJXTEX-C;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Regular.woff") format("woff");
+}
+
+@font-face /* 12 */ {
+  font-family: MJXTEX-CB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Calligraphic-Bold.woff") format("woff");
+}
+
+@font-face /* 13 */ {
+  font-family: MJXTEX-FR;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Regular.woff") format("woff");
+}
+
+@font-face /* 14 */ {
+  font-family: MJXTEX-FRB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Fraktur-Bold.woff") format("woff");
+}
+
+@font-face /* 15 */ {
+  font-family: MJXTEX-SS;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Regular.woff") format("woff");
+}
+
+@font-face /* 16 */ {
+  font-family: MJXTEX-SSB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Bold.woff") format("woff");
+}
+
+@font-face /* 17 */ {
+  font-family: MJXTEX-SSI;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_SansSerif-Italic.woff") format("woff");
+}
+
+@font-face /* 18 */ {
+  font-family: MJXTEX-SC;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Script-Regular.woff") format("woff");
+}
+
+@font-face /* 19 */ {
+  font-family: MJXTEX-T;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Typewriter-Regular.woff") format("woff");
+}
+
+@font-face /* 20 */ {
+  font-family: MJXTEX-V;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Regular.woff") format("woff");
+}
+
+@font-face /* 21 */ {
+  font-family: MJXTEX-VB;
+  src: url("https://cdn.jsdelivr.net/npm/mathjax@3/es5/output/chtml/fonts/woff-v2/MathJax_Vector-Bold.woff") format("woff");
+}
+
+mjx-c.mjx-c1D438.TEX-I::before {
+  padding: 0.68em 0.764em 0 0;
+  content: "E";
+}
+
+mjx-c.mjx-c28::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: "(";
+}
+
+mjx-c.mjx-c1D445.TEX-I::before {
+  padding: 0.683em 0.759em 0.021em 0;
+  content: "R";
+}
+
+mjx-c.mjx-c1D456.TEX-I::before {
+  padding: 0.661em 0.345em 0.011em 0;
+  content: "i";
+}
+
+mjx-c.mjx-c29::before {
+  padding: 0.75em 0.389em 0.25em 0;
+  content: ")";
+}
+
+mjx-c.mjx-c3D::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "=";
+}
+
+mjx-c.mjx-c1D453.TEX-I::before {
+  padding: 0.705em 0.55em 0.205em 0;
+  content: "f";
+}
+
+mjx-c.mjx-c2B::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "+";
+}
+
+mjx-c.mjx-c1D6FD.TEX-I::before {
+  padding: 0.705em 0.566em 0.194em 0;
+  content: "\3B2";
+}
+
+mjx-c.mjx-c1D45A.TEX-I::before {
+  padding: 0.442em 0.878em 0.011em 0;
+  content: "m";
+}
+
+mjx-c.mjx-c2212::before {
+  padding: 0.583em 0.778em 0.082em 0;
+  content: "\2212";
+}
+
+mjx-c.mjx-c1D6FC.TEX-I::before {
+  padding: 0.442em 0.64em 0.011em 0;
+  content: "\3B1";
+}
+
+mjx-c.mjx-c31::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "1";
+}
+
+mjx-c.mjx-c32::before {
+  padding: 0.666em 0.5em 0 0;
+  content: "2";
+}
+
+mjx-c.mjx-c22C5::before {
+  padding: 0.31em 0.278em 0 0;
+  content: "\22C5";
+}
+
+mjx-c.mjx-c53::before {
+  padding: 0.705em 0.556em 0.022em 0;
+  content: "S";
+}
+
+mjx-c.mjx-c4D::before {
+  padding: 0.683em 0.917em 0 0;
+  content: "M";
+}
+
+mjx-c.mjx-c42::before {
+  padding: 0.683em 0.708em 0 0;
+  content: "B";
+}
+
+mjx-c.mjx-c33::before {
+  padding: 0.665em 0.5em 0.022em 0;
+  content: "3";
+}
+
+mjx-c.mjx-c48::before {
+  padding: 0.683em 0.75em 0 0;
+  content: "H";
+}
+
+mjx-c.mjx-c4C::before {
+  padding: 0.683em 0.625em 0 0;
+  content: "L";
+}
+
+mjx-c.mjx-c1D700.TEX-I::before {
+  padding: 0.452em 0.466em 0.022em 0;
+  content: "\3B5";
+}
+
+mjx-c.mjx-c2E::before {
+  padding: 0.12em 0.278em 0 0;
+  content: ".";
+}
+
+mjx-c.mjx-c34::before {
+  padding: 0.677em 0.5em 0 0;
+  content: "4";
+}
+
+mjx-c.mjx-c52::before {
+  padding: 0.683em 0.736em 0.022em 0;
+  content: "R";
+}
+
+mjx-c.mjx-c57::before {
+  padding: 0.683em 1.028em 0.022em 0;
+  content: "W";
+}
+
+mjx-c.mjx-c35::before {
+  padding: 0.666em 0.5em 0.022em 0;
+  content: "5";
+}
+
+mjx-c.mjx-c43::before {
+  padding: 0.705em 0.722em 0.021em 0;
+  content: "C";
+}
+
+mjx-c.mjx-c41::before {
+  padding: 0.716em 0.75em 0 0;
+  content: "A";
+}
+</style></head><body id="top"><header class="header"><nav class="nav"><div class="logo"><a href="https://coriva.eu.org/" accesskey="h" title="Coriva (Alt + H)"><img src="https://coriva.eu.org/logo.png" alt="" aria-label="logo" height="35">Coriva</a><div class="logo-switches"><button id="theme-toggle" accesskey="t" title="(Alt + T)" aria-label="Toggle theme"><svg id="moon" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg><svg id="sun" width="24" height="18" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg></button><ul class="lang-switch"><li>|</li><li><a href="https://coriva.eu.org/en/" title="English" aria-label="English">English</a></li></ul></div></div><ul id="menu"><li><a href="https://coriva.eu.org/archives/" title="归档"><span>归档</span></a></li><li><a href="https://coriva.eu.org/categories/" title="分类"><span>分类</span></a></li><li><a href="https://coriva.eu.org/tags/" title="标签"><span>标签</span></a></li><li><a href="https://coriva.eu.org/search/" title="搜索 (Alt + /)" accesskey="/"><span>搜索</span></a></li></ul></nav></header><main class="main"><div class="post-single-wrapper"><article class="post-single"><header class="post-header"><div class="breadcrumbs"><a href="https://coriva.eu.org/">主页</a>&nbsp;»&nbsp;<a href="https://coriva.eu.org/posts/">Posts</a></div><h1 class="post-title entry-hint-parent">Fama-French 因子模型：从三因子到五因子的量化选股基础</h1><div class="post-description">用大白话讲清楚 Fama-French 三因子和五因子模型的原理、因子构造方法、Python 回归实战，以及因子模型在量化选股中的应用和局限。</div><div class="post-meta"><span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> Posted on 2026-04-16</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path></svg> In Quant</span>&nbsp;·&nbsp;<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg> 8 min read</span><span class="pageview-meta">&nbsp;·&nbsp;<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg> <span class="waline-pageview-count" data-path="/fama-french-factor-model/">152</span></span>&nbsp;|&nbsp;<span>语言:</span><ul class="i18n_list"><li><a href="https://coriva.eu.org/en/fama-french-factor-model/">English</a></li></ul></div></header><div class="post-content"><p>一只股票涨了 20%，这 20% 里有多少是因为大盘整体在涨，多少是因为它是小盘股，多少是因为它便宜？Fama-French 因子模型就是用来回答这个问题的工具。它把股票收益拆解成几个可解释的"因子"，是量化选股的基础框架之一。这篇文章从最基础的 CAPM 讲起，一步步推进到三因子和五因子模型，最后用 Python 跑一遍因子回归。</p><h2 id="capm一个因子的世界">CAPM：一个因子的世界<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/fama-french-factor-model/#capm%E4%B8%80%E4%B8%AA%E5%9B%A0%E5%AD%90%E7%9A%84%E4%B8%96%E7%95%8C">#</a></h2><p>在 Fama-French 之前，金融学用 <strong>CAPM（资本资产定价模型）</strong> 解释股票收益。CAPM 的核心公式：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="0" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D438 TEX-I"></mjx-c></mjx-mi><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-msub space="4"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D453 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D45A TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D453 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><mi>E</mi><mo stretchy="false">(</mo><msub><mi>R</mi><mi>i</mi></msub><mo stretchy="false">)</mo><mo>=</mo><msub><mi>R</mi><mi>f</mi></msub><mo>+</mo><msub><mi>β</mi><mi>i</mi></msub><mo stretchy="false">(</mo><msub><mi>R</mi><mi>m</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub><mo stretchy="false">)</mo></math></mjx-assistive-mml></mjx-container><p>翻译成人话：一只股票的预期收益 = 无风险利率 + 这只股票对市场的敏感度（β）× 市场风险溢价。</p><p>β 大于 1 的股票比大盘波动更剧烈，承担了更多风险，所以预期收益更高。β 小于 1 的反之。CAPM 的世界观很简洁：股票收益的差异只由一个东西决定，就是它对整体市场的暴露程度。</p><p>问题出在哪？实际数据不买账。</p><p>1981 年 Banz 发现，小市值股票的长期收益率显著高于大市值股票，超出 CAPM 预测的部分用 β 解释不了。1992 年 Fama 和 French 又发现，高账面市值比（B/M）的股票（也就是市场觉得"便宜"的股票）长期跑赢低 B/M 的"贵"股票。这两个现象被称为<strong>规模溢价</strong>和<strong>价值溢价</strong>，是 CAPM 的两大"异象"。</p><p>一个因子解释不了的东西，那就加因子。</p><h2 id="三因子模型规模和价值">三因子模型：规模和价值<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/fama-french-factor-model/#%E4%B8%89%E5%9B%A0%E5%AD%90%E6%A8%A1%E5%9E%8B%E8%A7%84%E6%A8%A1%E5%92%8C%E4%BB%B7%E5%80%BC">#</a></h2><p>1993 年，Fama 和 French 在 CAPM 的基础上加了两个因子，提出三因子模型：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="1" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D453 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-msub space="4"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FC TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D45A TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D453 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c53"></mjx-c><mjx-c class="mjx-c4D"></mjx-c><mjx-c class="mjx-c42"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c33"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c48"></mjx-c><mjx-c class="mjx-c4D"></mjx-c><mjx-c class="mjx-c4C"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D700 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><msub><mi>R</mi><mi>i</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub><mo>=</mo><msub><mi>α</mi><mi>i</mi></msub><mo>+</mo><msub><mi>β</mi><mn>1</mn></msub><mo stretchy="false">(</mo><msub><mi>R</mi><mi>m</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub><mo stretchy="false">)</mo><mo>+</mo><msub><mi>β</mi><mn>2</mn></msub><mo>⋅</mo><mtext>SMB</mtext><mo>+</mo><msub><mi>β</mi><mn>3</mn></msub><mo>⋅</mo><mtext>HML</mtext><mo>+</mo><msub><mi>ε</mi><mi>i</mi></msub></math></mjx-assistive-mml></mjx-container><p>三个因子分别是：</p><p><strong>MKT（市场因子）</strong>，就是 CAPM 里的 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="2" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D45A TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D453 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>R</mi><mi>m</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub></math></mjx-assistive-mml></mjx-container>。大盘涨 1%，如果你的 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="3" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-mn class="mjx-n" space="4"><mjx-c class="mjx-c31"></mjx-c><mjx-c class="mjx-c2E"></mjx-c><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>β</mi><mn>1</mn></msub><mo>=</mo><mn>1.2</mn></math></mjx-assistive-mml></mjx-container>，这个因子贡献 1.2% 的收益。</p><p><strong>SMB（Small Minus Big，规模因子）</strong>。把所有股票按市值分成两组，小盘股组合的收益减去大盘股组合的收益。如果一只股票的 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="4" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>β</mi><mn>2</mn></msub></math></mjx-assistive-mml></mjx-container> 是正的，说明它的表现和小盘股同步，吃到了规模溢价。</p><p><strong>HML（High Minus Low，价值因子）</strong>。把所有股票按账面市值比（B/M）分成两组，高 B/M（便宜）股票的收益减去低 B/M（贵）股票的收益。<mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="5" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c33"></mjx-c></mjx-mn></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>β</mi><mn>3</mn></msub></math></mjx-assistive-mml></mjx-container> 为正说明这只股票有价值股特征。</p><p>公式左边的 <mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" tabindex="0" ctxtmenu_counter="6" style="font-size: 113.1%; position: relative;"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FC TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="inline"><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>α</mi><mi>i</mi></msub></math></mjx-assistive-mml></mjx-container> 是关键：它代表三个因子都解释不了的"超额收益"。如果一个基金经理的 α 显著为正，说明他确实有选股能力，赚的不只是承担市场、规模、价值三种风险带来的补偿。反过来说，很多看上去收益不错的基金，拆开一看 α 接近零，收益全是因子暴露带来的，换个 ETF 组合就能近似复制。</p><h3 id="因子怎么构造">因子怎么构造<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/fama-french-factor-model/#%E5%9B%A0%E5%AD%90%E6%80%8E%E4%B9%88%E6%9E%84%E9%80%A0">#</a></h3><p>Fama 和 French 的原始构造方法：每年 6 月底，把所有股票按市值中位数分成大（Big）和小（Small）两组；同时按账面市值比的 30%/70% 分位数分成高（High）、中（Medium）、低（Low）三组。2 × 3 = 6 个组合。</p><ul><li>SMB = （三个小盘组合的平均收益）-（三个大盘组合的平均收益）</li><li>HML = （两个高 B/M 组合的平均收益）-（两个低 B/M 组合的平均收益）</li></ul><p>这种做多一边、做空另一边的构造方式叫<strong>多空对冲组合（long-short portfolio）</strong>。因子收益代表的是一种风格溢价，和市场整体涨跌无关。</p><h2 id="五因子模型盈利和投资">五因子模型：盈利和投资<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/fama-french-factor-model/#%E4%BA%94%E5%9B%A0%E5%AD%90%E6%A8%A1%E5%9E%8B%E7%9B%88%E5%88%A9%E5%92%8C%E6%8A%95%E8%B5%84">#</a></h2><p>三因子模型解释了规模和价值效应，但还有些"异象"它搞不定。两个盈利能力差不多、市值也差不多的股票，为什么长期收益率差很多？Novy-Marx 在 2013 年发现盈利能力（gross profitability）可以预测股票收益。Fama 和 French 在 2015 年的论文里把盈利和投资两个维度加进来，扩展成五因子模型：</p><mjx-container class="MathJax CtxtMenu_Attached_0" jax="CHTML" display="true" tabindex="0" ctxtmenu_counter="7" style="font-size: 113.1%; position: relative;"><mjx-math display="true" class="MJX-TEX" aria-hidden="true" style="margin-left: 0px; margin-right: 0px;"><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D453 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="4"><mjx-c class="mjx-c3D"></mjx-c></mjx-mo><mjx-msub space="4"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FC TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c31"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c28"></mjx-c></mjx-mo><mjx-msub><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D45A TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2212"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D445 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D453 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub><mjx-mo class="mjx-n"><mjx-c class="mjx-c29"></mjx-c></mjx-mo><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c32"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c53"></mjx-c><mjx-c class="mjx-c4D"></mjx-c><mjx-c class="mjx-c42"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c33"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c48"></mjx-c><mjx-c class="mjx-c4D"></mjx-c><mjx-c class="mjx-c4C"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c34"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c52"></mjx-c><mjx-c class="mjx-c4D"></mjx-c><mjx-c class="mjx-c57"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D6FD TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mn class="mjx-n" size="s"><mjx-c class="mjx-c35"></mjx-c></mjx-mn></mjx-script></mjx-msub><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c22C5"></mjx-c></mjx-mo><mjx-mtext class="mjx-n" space="3"><mjx-c class="mjx-c43"></mjx-c><mjx-c class="mjx-c4D"></mjx-c><mjx-c class="mjx-c41"></mjx-c></mjx-mtext><mjx-mo class="mjx-n" space="3"><mjx-c class="mjx-c2B"></mjx-c></mjx-mo><mjx-msub space="3"><mjx-mi class="mjx-i"><mjx-c class="mjx-c1D700 TEX-I"></mjx-c></mjx-mi><mjx-script style="vertical-align: -0.15em;"><mjx-mi class="mjx-i" size="s"><mjx-c class="mjx-c1D456 TEX-I"></mjx-c></mjx-mi></mjx-script></mjx-msub></mjx-math><mjx-assistive-mml unselectable="on" display="block"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><msub><mi>R</mi><mi>i</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub><mo>=</mo><msub><mi>α</mi><mi>i</mi></msub><mo>+</mo><msub><mi>β</mi><mn>1</mn></msub><mo stretchy="false">(</mo><msub><mi>R</mi><mi>m</mi></msub><mo>−</mo><msub><mi>R</mi><mi>f</mi></msub><mo stretchy="false">)</mo><mo>+</mo><msub><mi>β</mi><mn>2</mn></msub><mo>⋅</mo><mtext>SMB</mtext><mo>+</mo><msub><mi>β</mi><mn>3</mn></msub><mo>⋅</mo><mtext>HML</mtext><mo>+</mo><msub><mi>β</mi><mn>4</mn></msub><mo>⋅</mo><mtext>RMW</mtext><mo>+</mo><msub><mi>β</mi><mn>5</mn></msub><mo>⋅</mo><mtext>CMA</mtext><mo>+</mo><msub><mi>ε</mi><mi>i</mi></msub></math></mjx-assistive-mml></mjx-container><p>新增的两个因子：</p><p><strong>RMW（Robust Minus Weak，盈利因子）</strong>。盈利能力强（高营业利润率）的公司组合收益减去盈利能力弱的公司组合收益。直觉上好理解：赚钱能力强的公司，股票长期表现更好。</p><p><strong>CMA（Conservative Minus Aggressive，投资因子）</strong>。投资保守（资产增长率低）的公司收益减去投资激进（大量扩张）的公司收益。听上去反直觉，但数据显示：疯狂扩张的公司往往过度投资，回报率下降，股价长期跑输那些稳健经营的公司。</p><p>五因子模型有一个有趣的副作用：加了 RMW 和 CMA 之后，HML（价值因子）的解释力明显变弱了。Fama 和 French 自己也在论文里承认，五因子模型中 HML 几乎是多余的，因为价值效应可以被盈利和投资两个因子大部分解释掉。这引发了学术界不小的争论：价值投资到底是一个独立的风险溢价，还只是盈利能力和投资风格的副产品？</p><p><img alt="Fama-French 五因子累计收益模拟对比" loading="lazy" src="https://coriva.eu.org/fama-french-factor-model/factor-cumulative-returns.webp"></p><h2 id="python-因子回归实战">Python 因子回归实战<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/fama-french-factor-model/#python-%E5%9B%A0%E5%AD%90%E5%9B%9E%E5%BD%92%E5%AE%9E%E6%88%98">#</a></h2><p>理论讲完，下面用 Python 跑一遍。我们模拟一只"小盘价值基金"的月度收益，然后分别用三因子和五因子模型做回归，看各因子的系数和 α。</p><p>实际操作中，因子数据可以从 Kenneth French 的 <a href="https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html">Data Library</a> 免费下载。这里为了代码自包含，用合成数据模拟。</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-python" data-lang="python"><span class="line"><span class="cl"><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+</span></span><span class="line"><span class="cl"><span class="kn">from</span> <span class="nn">numpy.linalg</span> <span class="kn">import</span> <span class="n">lstsq</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="k">def</span> <span class="nf">run_factor_regression</span><span class="p">():</span>
+</span></span><span class="line"><span class="cl">    <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">n</span> <span class="o">=</span> <span class="mi">240</span>  <span class="c1"># 20 years of monthly data</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># Simulate factor returns (monthly)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">mkt</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.007</span><span class="p">,</span> <span class="mf">0.045</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">smb</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.032</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">hml</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.003</span><span class="p">,</span> <span class="mf">0.028</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">rmw</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.0025</span><span class="p">,</span> <span class="mf">0.022</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">cma</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mf">0.002</span><span class="p">,</span> <span class="mf">0.020</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># Simulate fund returns: small-cap value fund</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># True betas: MKT=1.05, SMB=0.45, HML=0.38, RMW=0.18, CMA=0.12</span>
+</span></span><span class="line"><span class="cl">    <span class="c1"># True alpha: 0.001 (0.1% per month)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">alpha_true</span> <span class="o">=</span> <span class="mf">0.001</span>
+</span></span><span class="line"><span class="cl">    <span class="n">fund</span> <span class="o">=</span> <span class="p">(</span><span class="n">alpha_true</span> <span class="o">+</span> <span class="mf">1.05</span> <span class="o">*</span> <span class="n">mkt</span> <span class="o">+</span> <span class="mf">0.45</span> <span class="o">*</span> <span class="n">smb</span> <span class="o">+</span> <span class="mf">0.38</span> <span class="o">*</span> <span class="n">hml</span>
+</span></span><span class="line"><span class="cl">            <span class="o">+</span> <span class="mf">0.18</span> <span class="o">*</span> <span class="n">rmw</span> <span class="o">+</span> <span class="mf">0.12</span> <span class="o">*</span> <span class="n">cma</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">normal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">0.012</span><span class="p">,</span> <span class="n">n</span><span class="p">))</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># --- Three-factor regression ---</span>
+</span></span><span class="line"><span class="cl">    <span class="n">X3</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">column_stack</span><span class="p">([</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n</span><span class="p">),</span> <span class="n">mkt</span><span class="p">,</span> <span class="n">smb</span><span class="p">,</span> <span class="n">hml</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="n">beta3</span><span class="p">,</span> <span class="n">residuals3</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">lstsq</span><span class="p">(</span><span class="n">X3</span><span class="p">,</span> <span class="n">fund</span><span class="p">,</span> <span class="n">rcond</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">pred3</span> <span class="o">=</span> <span class="n">X3</span> <span class="o">@</span> <span class="n">beta3</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ss_res3</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">fund</span> <span class="o">-</span> <span class="n">pred3</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ss_tot</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">fund</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">fund</span><span class="p">))</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">r2_3</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">ss_res3</span> <span class="o">/</span> <span class="n">ss_tot</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># Standard errors</span>
+</span></span><span class="line"><span class="cl">    <span class="n">mse3</span> <span class="o">=</span> <span class="n">ss_res3</span> <span class="o">/</span> <span class="p">(</span><span class="n">n</span> <span class="o">-</span> <span class="mi">4</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">se3</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">mse3</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">X3</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">X3</span><span class="p">)))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">t3</span> <span class="o">=</span> <span class="n">beta3</span> <span class="o">/</span> <span class="n">se3</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="s2">"=== Three-Factor Model ==="</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  Alpha:  </span><span class="si">{</span><span class="n">beta3</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">% /month  (t=</span><span class="si">{</span><span class="n">t3</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  MKT:    </span><span class="si">{</span><span class="n">beta3</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (t=</span><span class="si">{</span><span class="n">t3</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  SMB:    </span><span class="si">{</span><span class="n">beta3</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (t=</span><span class="si">{</span><span class="n">t3</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  HML:    </span><span class="si">{</span><span class="n">beta3</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (t=</span><span class="si">{</span><span class="n">t3</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  R²:     </span><span class="si">{</span><span class="n">r2_3</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="c1"># --- Five-factor regression ---</span>
+</span></span><span class="line"><span class="cl">    <span class="n">X5</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">column_stack</span><span class="p">([</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n</span><span class="p">),</span> <span class="n">mkt</span><span class="p">,</span> <span class="n">smb</span><span class="p">,</span> <span class="n">hml</span><span class="p">,</span> <span class="n">rmw</span><span class="p">,</span> <span class="n">cma</span><span class="p">])</span>
+</span></span><span class="line"><span class="cl">    <span class="n">beta5</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">lstsq</span><span class="p">(</span><span class="n">X5</span><span class="p">,</span> <span class="n">fund</span><span class="p">,</span> <span class="n">rcond</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">pred5</span> <span class="o">=</span> <span class="n">X5</span> <span class="o">@</span> <span class="n">beta5</span>
+</span></span><span class="line"><span class="cl">    <span class="n">ss_res5</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">((</span><span class="n">fund</span> <span class="o">-</span> <span class="n">pred5</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">r2_5</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">ss_res5</span> <span class="o">/</span> <span class="n">ss_tot</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="n">mse5</span> <span class="o">=</span> <span class="n">ss_res5</span> <span class="o">/</span> <span class="p">(</span><span class="n">n</span> <span class="o">-</span> <span class="mi">6</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="n">se5</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">mse5</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">X5</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">X5</span><span class="p">)))</span>
+</span></span><span class="line"><span class="cl">    <span class="n">t5</span> <span class="o">=</span> <span class="n">beta5</span> <span class="o">/</span> <span class="n">se5</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">=== Five-Factor Model ==="</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  Alpha:  </span><span class="si">{</span><span class="n">beta5</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">% /month  (t=</span><span class="si">{</span><span class="n">t5</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  MKT:    </span><span class="si">{</span><span class="n">beta5</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (t=</span><span class="si">{</span><span class="n">t5</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  SMB:    </span><span class="si">{</span><span class="n">beta5</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (t=</span><span class="si">{</span><span class="n">t5</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  HML:    </span><span class="si">{</span><span class="n">beta5</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (t=</span><span class="si">{</span><span class="n">t5</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  RMW:    </span><span class="si">{</span><span class="n">beta5</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (t=</span><span class="si">{</span><span class="n">t5</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  CMA:    </span><span class="si">{</span><span class="n">beta5</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  (t=</span><span class="si">{</span><span class="n">t5</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  R²:     </span><span class="si">{</span><span class="n">r2_5</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">  R² improvement: </span><span class="si">{</span><span class="n">r2_3</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">r2_5</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> (+</span><span class="si">{</span><span class="p">(</span><span class="n">r2_5</span><span class="o">-</span><span class="n">r2_3</span><span class="p">)</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">%)"</span><span class="p">)</span>
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl"><span class="n">run_factor_regression</span><span class="p">()</span>
+</span></span></code></pre><button class="copy-code">复制</button></div><p>运行结果：</p><div class="highlight"><pre tabindex="0" class="chroma"><code class="language-fallback" data-lang="fallback"><span class="line"><span class="cl">=== Three-Factor Model ===
+</span></span><span class="line"><span class="cl">  Alpha:  0.302% /month  (t=3.81)
+</span></span><span class="line"><span class="cl">  MKT:    1.035  (t=57.98)
+</span></span><span class="line"><span class="cl">  SMB:    0.455  (t=18.49)
+</span></span><span class="line"><span class="cl">  HML:    0.422  (t=15.20)
+</span></span><span class="line"><span class="cl">  R²:     0.9416
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">=== Five-Factor Model ===
+</span></span><span class="line"><span class="cl">  Alpha:  0.213% /month  (t=2.64)
+</span></span><span class="line"><span class="cl">  MKT:    1.043  (t=59.28)
+</span></span><span class="line"><span class="cl">  SMB:    0.450  (t=18.67)
+</span></span><span class="line"><span class="cl">  HML:    0.420  (t=15.47)
+</span></span><span class="line"><span class="cl">  RMW:    0.121  (t=3.27)
+</span></span><span class="line"><span class="cl">  CMA:    0.055  (t=1.49)
+</span></span><span class="line"><span class="cl">  R²:     0.9448
+</span></span><span class="line"><span class="cl">
+</span></span><span class="line"><span class="cl">  R² improvement: 0.9416 -&gt; 0.9448 (+0.32%)
+</span></span></code></pre><button class="copy-code">复制</button></div><p>几个值得注意的结果：</p><p><strong>MKT 系数 1.04</strong>，接近我们设定的真实值 1.05。t 值接近 60，极其显著。这只"基金"基本跟着大盘走。</p><p><strong>SMB 系数 0.45</strong>，显著为正，说明这只基金确实偏小盘。如果你买了一只号称"大盘蓝筹"的基金，跑回归发现 SMB 显著为正，那基金经理实际上是在买小盘股，和宣传不符。</p><p><strong>三因子的 α 是 0.302%/月</strong>，t 值 3.81，统计上显著。换到五因子模型后 α 降到 0.213%，t 值 2.64。原来三因子里"解释不了"的超额收益，有一部分其实是 RMW 和 CMA 因子的暴露。这就是因子模型的核心用途：剥掉因子暴露后，看真正的 α 还剩多少。</p><p><strong>R² 从 0.9416 升到 0.9448</strong>。五因子比三因子多解释了 0.32% 的收益方差。提升不大，但 RMW 的 t 值 3.27 是显著的，说明盈利因子确实有独立的解释力。CMA 的 t 值 1.49 不显著，在这组数据里投资因子的效果偏弱。</p><p><img alt="因子回归系数对比：三因子 vs 五因子模型" loading="lazy" src="https://coriva.eu.org/fama-french-factor-model/factor-regression-results.webp"></p><h2 id="因子模型的局限">因子模型的局限<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/fama-french-factor-model/#%E5%9B%A0%E5%AD%90%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%B1%80%E9%99%90">#</a></h2><p>因子模型是量化选股的基础框架，但不是万能的。</p><p><strong>因子溢价会消失</strong>。小盘股溢价是三因子模型的核心卖点之一，但 1980 年代之后美股小盘股溢价大幅衰减，有些年份甚至为负。一种解释是：学术论文发表后大量资金涌入小盘股策略，溢价被套利掉了。因子拥挤是所有因子策略面临的长期威胁。</p><p><strong>换个市场可能不灵</strong>。Fama-French 因子是在美股上发现的。搬到 A 股，规模效应（小盘股跑赢）依然很强，但价值效应（低估值跑赢）长期失效。A 股的"便宜"股票很多是基本面恶化的垃圾股，买入持有不但不赚钱还会亏。直接照搬美股因子模型到其他市场是危险的。</p><p><strong>数据挖掘的重灾区</strong>。学术界已经"发现"了几百个所谓的因子（有人统计超过 400 个）。很多因子只在特定的时间段和特定的市场里有效，换个样本就消失了。Harvey, Liu &amp; Zhu (2016) 的论文指出，用传统的 t &gt; 2 标准，大量"显著"的因子其实是多重检验下的统计幻觉。</p><p><strong>线性假设</strong>。因子模型假设收益和因子之间是线性关系。现实中，因子的效果可能是非线性的：小盘股溢价可能集中在最小的 10% 股票上，而不是"越小越好"的线性递增。</p><h2 id="因子模型和量化选股">因子模型和量化选股<a hidden="" class="anchor" aria-hidden="true" href="https://coriva.eu.org/fama-french-factor-model/#%E5%9B%A0%E5%AD%90%E6%A8%A1%E5%9E%8B%E5%92%8C%E9%87%8F%E5%8C%96%E9%80%89%E8%82%A1">#</a></h2><p>因子模型不只是一个分析工具，它是量化选股策略的理论地基。</p><p>最直接的应用：<strong>因子选股</strong>。如果你相信价值因子长期有效，就系统性地买入高 B/M 的股票、卖出低 B/M 的股票。如果你同时相信多个因子，就把它们组合起来，构建多因子评分模型。A 股量化私募大量使用的"多因子模型"，底层逻辑就是这个。</p><p><strong>因子归因</strong>。基金经理说自己年化 25%，因子模型可以告诉你：其中 18% 是市场涨的，4% 是小盘股溢价，2% 是价值溢价，真正的 α 只有 1%。你愿意为 1% 的 α 付 2% 的管理费吗？这就是因子归因的实际价值。</p><p><strong>因子中性</strong>。有些策略不想承担任何因子风险，只赚纯 α。方法是在构建组合时，约束对每个因子的暴露为零。比如做多一组股票的同时，做空等量的、因子暴露相反的股票，让组合的 SMB、HML 等系数都接近零。剩下的收益就是和因子无关的纯选股能力。</p><p>因子模型的数学不复杂，本质就是多元线性回归。真正难的是：选哪些因子，怎么处理因子之间的相关性，因子权重怎么动态调整，以及怎么避免在历史数据上过度拟合。</p></div><footer class="post-footer"><ul class="post-tags"><li><a href="https://coriva.eu.org/tags/quant/">Quant</a></li><li><a href="https://coriva.eu.org/tags/trading/">Trading</a></li></ul><nav class="paginav"><a class="prev" href="https://coriva.eu.org/quant-math-basics/"><span class="title">« 上一页</span><br><span>量化交易的数学基础：从对数收益率到线性回归</span>
+</a><a class="next" href="https://coriva.eu.org/quant-trading-markets/"><span class="title">下一页 »</span><br><span>量化交易市场全景：股票、期货、期权、外汇、加密货币怎么选</span></a></nav></footer><div id="waline" data-v-app=""><div data-waline=""><!--v-if--><div class="wl-comment"><!--v-if--><div class="wl-panel"><div class="wl-header item3"><div class="wl-header-item"><label for="wl-nick">NickName</label><input id="wl-nick" class="wl-input wl-nick" name="nick" type="text"></div><div class="wl-header-item"><label for="wl-mail">E-Mail</label><input id="wl-mail" class="wl-input wl-mail" name="mail" type="email"></div><div class="wl-header-item"><label for="wl-link">Website</label><input id="wl-link" class="wl-input wl-link" name="link" type="text"></div></div><textarea id="wl-edit" class="wl-editor" placeholder="Comment here..."></textarea><div class="wl-preview" style="display: none;"><hr><h4>Preview:</h4><div class="wl-content"></div></div><div class="wl-footer"><div class="wl-actions"><a href="https://guides.github.com/features/mastering-markdown/" title="Markdown Guide" aria-label="Markdown is supported" class="wl-action" target="_blank" rel="noopener noreferrer"><svg width="16" height="16" ariaHidden="true"><path d="M14.85 3H1.15C.52 3 0 3.52 0 4.15v7.69C0 12.48.52 13 1.15 13h13.69c.64 0 1.15-.52 1.15-1.15v-7.7C16 3.52 15.48 3 14.85 3zM9 11H7V8L5.5 9.92 4 8v3H2V5h2l1.5 2L7 5h2v6zm2.99.5L9.5 8H11V5h2v3h1.5l-2.51 3.5z" fill="currentColor"></path></svg></a><button type="button" class="wl-action" title="Emoji" style=""><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M563.2 463.3 677 540c1.7 1.2 3.7 1.8 5.8 1.8.7 0 1.4-.1 2-.2 2.7-.5 5.1-2.1 6.6-4.4l25.3-37.8c1.5-2.3 2.1-5.1 1.6-7.8s-2.1-5.1-4.4-6.6l-73.6-49.1 73.6-49.1c2.3-1.5 3.9-3.9 4.4-6.6.5-2.7 0-5.5-1.6-7.8l-25.3-37.8a10.1 10.1 0 0 0-6.6-4.4c-.7-.1-1.3-.2-2-.2-2.1 0-4.1.6-5.8 1.8l-113.8 76.6c-9.2 6.2-14.7 16.4-14.7 27.5.1 11 5.5 21.3 14.7 27.4zM387 348.8h-45.5c-5.7 0-10.4 4.7-10.4 10.4v153.3c0 5.7 4.7 10.4 10.4 10.4H387c5.7 0 10.4-4.7 10.4-10.4V359.2c0-5.7-4.7-10.4-10.4-10.4zm333.8 241.3-41-20a10.3 10.3 0 0 0-8.1-.5c-2.6.9-4.8 2.9-5.9 5.4-30.1 64.9-93.1 109.1-164.4 115.2-5.7.5-9.9 5.5-9.5 11.2l3.9 45.5c.5 5.3 5 9.5 10.3 9.5h.9c94.8-8 178.5-66.5 218.6-152.7 2.4-5 .3-11.2-4.8-13.6zm186-186.1c-11.9-42-30.5-81.4-55.2-117.1-24.1-34.9-53.5-65.6-87.5-91.2-33.9-25.6-71.5-45.5-111.6-59.2-41.2-14-84.1-21.1-127.8-21.1h-1.2c-75.4 0-148.8 21.4-212.5 61.7-63.7 40.3-114.3 97.6-146.5 165.8-32.2 68.1-44.3 143.6-35.1 218.4 9.3 74.8 39.4 145 87.3 203.3.1.2.3.3.4.5l36.2 38.4c1.1 1.2 2.5 2.1 3.9 2.6 73.3 66.7 168.2 103.5 267.5 103.5 73.3 0 145.2-20.3 207.7-58.7 37.3-22.9 70.3-51.5 98.1-85 27.1-32.7 48.7-69.5 64.2-109.1 15.5-39.7 24.4-81.3 26.6-123.8 2.4-43.6-2.5-87-14.5-129zm-60.5 181.1c-8.3 37-22.8 72-43 104-19.7 31.1-44.3 58.6-73.1 81.7-28.8 23.1-61 41-95.7 53.4-35.6 12.7-72.9 19.1-110.9 19.1-82.6 0-161.7-30.6-222.8-86.2l-34.1-35.8c-23.9-29.3-42.4-62.2-55.1-97.7-12.4-34.7-18.8-71-19.2-107.9-.4-36.9 5.4-73.3 17.1-108.2 12-35.8 30-69.2 53.4-99.1 31.7-40.4 71.1-72 117.2-94.1 44.5-21.3 94-32.6 143.4-32.6 49.3 0 97 10.8 141.8 32 34.3 16.3 65.3 38.1 92 64.8 26.1 26 47.5 56 63.6 89.2 16.2 33.2 26.6 68.5 31 105.1 4.6 37.5 2.7 75.3-5.6 112.3z" fill="currentColor"></path></svg></button><!--v-if--><input id="wl-image-upload" class="upload" aria-hidden="true" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif"><label for="wl-image-upload" class="wl-action" title="Upload Image" aria-label="Upload Image"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M784 112H240c-88 0-160 72-160 160v480c0 88 72 160 160 160h544c88 0 160-72 160-160V272c0-88-72-160-160-160zm96 640c0 52.8-43.2 96-96 96H240c-52.8 0-96-43.2-96-96V272c0-52.8 43.2-96 96-96h544c52.8 0 96 43.2 96 96v480z" fill="currentColor"></path><path d="M352 480c52.8 0 96-43.2 96-96s-43.2-96-96-96-96 43.2-96 96 43.2 96 96 96zm0-128c17.6 0 32 14.4 32 32s-14.4 32-32 32-32-14.4-32-32 14.4-32 32-32zm462.4 379.2-3.2-3.2-177.6-177.6c-25.6-25.6-65.6-25.6-91.2 0l-80 80-36.8-36.8c-25.6-25.6-65.6-25.6-91.2 0L200 728c-4.8 6.4-8 14.4-8 24 0 17.6 14.4 32 32 32 9.6 0 16-3.2 22.4-9.6L380.8 640l134.4 134.4c6.4 6.4 14.4 9.6 24 9.6 17.6 0 32-14.4 32-32 0-9.6-4.8-17.6-9.6-24l-52.8-52.8 80-80L769.6 776c6.4 4.8 12.8 8 20.8 8 17.6 0 32-14.4 32-32 0-8-3.2-16-8-20.8z" fill="currentColor"></path></svg></label><button type="button" class="wl-action" title="Preview"><svg viewBox="0 0 1024 1024" width="24" height="24"><path d="M710.816 654.301c70.323-96.639 61.084-230.578-23.705-314.843-46.098-46.098-107.183-71.109-172.28-71.109-65.008 0-126.092 25.444-172.28 71.109-45.227 46.098-70.756 107.183-70.756 172.106 0 64.923 25.444 126.007 71.194 172.106 46.099 46.098 107.184 71.109 172.28 71.109 51.414 0 100.648-16.212 142.824-47.404l126.53 126.006c7.058 7.06 16.297 10.979 26.406 10.979 10.105 0 19.343-3.919 26.402-10.979 14.467-14.467 14.467-38.172 0-52.723L710.816 654.301zm-315.107-23.265c-65.88-65.88-65.88-172.54 0-238.42 32.069-32.07 74.245-49.149 119.471-49.149 45.227 0 87.407 17.603 119.472 49.149 65.88 65.879 65.88 172.539 0 238.42-63.612 63.178-175.242 63.178-238.943 0zm0 0" fill="currentColor"></path><path d="M703.319 121.603H321.03c-109.8 0-199.469 89.146-199.469 199.38v382.034c0 109.796 89.236 199.38 199.469 199.38h207.397c20.653 0 37.384-16.645 37.384-37.299 0-20.649-16.731-37.296-37.384-37.296H321.03c-68.582 0-124.352-55.77-124.352-124.267V321.421c0-68.496 55.77-124.267 124.352-124.267h382.289c68.582 0 124.352 55.771 124.352 124.267V524.72c0 20.654 16.736 37.299 37.385 37.299 20.654 0 37.384-16.645 37.384-37.299V320.549c-.085-109.8-89.321-198.946-199.121-198.946zm0 0" fill="currentColor"></path></svg></button></div><div class="wl-info"><div class="wl-captcha-container"></div><div class="wl-text-number">0 <!--v-if--> &nbsp;Words</div><button type="button" class="wl-btn">Login</button><button type="submit" class="primary wl-btn" title="Cmd|Ctrl + Enter">Submit</button></div><div class="wl-gif-popup"><input type="text" placeholder="Search GIF"><!--v-if--><div class="wl-loading"><svg width="30" height="30" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid"><circle cx="50" cy="50" fill="none" stroke="currentColor" strokeWidth="4" r="40" stroke-dasharray="85 30"><animateTransform attributeName="transform" type="rotate" repeatCount="indefinite" dur="1s" values="0 50 50;360 50 50" keyTimes="0;1"></animateTransform></circle></svg></div></div><div class="wl-emoji-popup"><div class="wl-tab-wrapper"><button type="button" title="weibo_smile"><!--v-if--></button><button type="button" title="weibo_lovely"><!--v-if--></button><button type="button" title="weibo_blush"><!--v-if--></button><button type="button" title="weibo_grin"><!--v-if--></button><button type="button" title="weibo_laugh"><!--v-if--></button><button type="button" title="weibo_joy"><!--v-if--></button><button type="button" title="weibo_angry"><!--v-if--></button><button type="button" title="weibo_bye"><!--v-if--></button><button type="button" title="weibo_hammer"><!--v-if--></button><button type="button" title="weibo_kiss"><!--v-if--></button><button type="button" title="weibo_love"><!--v-if--></button><button type="button" title="weibo_mask"><!--v-if--></button><button type="button" title="weibo_money"><!--v-if--></button><button type="button" title="weibo_quiet"><!--v-if--></button><button type="button" title="weibo_rage"><!--v-if--></button><button type="button" title="weibo_sad"><!--v-if--></button><button type="button" title="weibo_shy"><!--v-if--></button><button type="button" title="weibo_sick"><!--v-if--></button><button type="button" title="weibo_slient"><!--v-if--></button><button type="button" title="weibo_smirk"><!--v-if--></button><button type="button" title="weibo_slap"><!--v-if--></button><button type="button" title="weibo_antic"><!--v-if--></button><button type="button" title="weibo_desire"><!--v-if--></button><button type="button" title="weibo_longing"><!--v-if--></button><button type="button" title="weibo_no_idea"><!--v-if--></button><button type="button" title="weibo_look_down"><!--v-if--></button><button type="button" title="weibo_clap"><!--v-if--></button><button type="button" title="weibo_yum"><!--v-if--></button><button type="button" title="weibo_sleep"><!--v-if--></button><button type="button" title="weibo_dizzy_face"><!--v-if--></button><button type="button" title="weibo_chuckle"><!--v-if--></button><button type="button" title="weibo_disappointed"><!--v-if--></button><button type="button" title="weibo_flushed"><!--v-if--></button><button type="button" title="weibo_heart_eyes"><!--v-if--></button><button type="button" title="weibo_no"><!--v-if--></button><button type="button" title="weibo_shuai"><!--v-if--></button><button type="button" title="weibo_suprised"><!--v-if--></button><button type="button" title="weibo_think"><!--v-if--></button><button type="button" title="weibo_vomit"><!--v-if--></button><button type="button" title="weibo_scream"><!--v-if--></button><button type="button" title="weibo_sleepy"><!--v-if--></button><button type="button" title="weibo_sob"><!--v-if--></button><button type="button" title="weibo_sunglasses"><!--v-if--></button><button type="button" title="weibo_greddy"><!--v-if--></button><button type="button" title="weibo_pick_nose"><!--v-if--></button><button type="button" title="weibo_annoyed"><!--v-if--></button><button type="button" title="weibo_awkward"><!--v-if--></button><button type="button" title="weibo_confused"><!--v-if--></button><button type="button" title="weibo_grievance"><!--v-if--></button><button type="button" title="weibo_poor"><!--v-if--></button><button type="button" title="weibo_wink"><!--v-if--></button><button type="button" title="weibo_rolling_eyes"><!--v-if--></button><button type="button" title="weibo_watermalon"><!--v-if--></button><button type="button" title="weibo_annoyed_left"><!--v-if--></button><button type="button" title="weibo_annoyed_right"><!--v-if--></button><button type="button" title="weibo_yawn"><!--v-if--></button><button type="button" title="weibo_hufen"><!--v-if--></button><button type="button" title="weibo_doge"><!--v-if--></button><button type="button" title="weibo_husky"><!--v-if--></button><button type="button" title="weibo_dog_annoyed"><!--v-if--></button><button type="button" title="weibo_dog_bye"><!--v-if--></button><button type="button" title="weibo_dog_consider"><!--v-if--></button><button type="button" title="weibo_dog_cry"><!--v-if--></button><button type="button" title="weibo_dog_joy"><!--v-if--></button><button type="button" title="weibo_dog_laugh"><!--v-if--></button><button type="button" title="weibo_dog_sweat"><!--v-if--></button><button type="button" title="weibo_dog_think"><!--v-if--></button><button type="button" title="weibo_dog_yum"><!--v-if--></button><button type="button" title="weibo_cat"><!--v-if--></button><button type="button" title="weibo_cat_annoyed"><!--v-if--></button><button type="button" title="weibo_cat_bye"><!--v-if--></button><button type="button" title="weibo_cat_cry"><!--v-if--></button><button type="button" title="weibo_cat_think"><!--v-if--></button><button type="button" title="weibo_girl_annoyed"><!--v-if--></button><button type="button" title="weibo_boy"><!--v-if--></button><button type="button" title="weibo_girl"><!--v-if--></button><button type="button" title="weibo_panda"><!--v-if--></button><button type="button" title="weibo_pig"><!--v-if--></button><button type="button" title="weibo_rabbit"><!--v-if--></button><button type="button" title="weibo_ultraman"><!--v-if--></button><button type="button" title="weibo_wool_group"><!--v-if--></button><button type="button" title="weibo_yan"><!--v-if--></button><button type="button" title="weibo_xi"><!--v-if--></button><button type="button" title="weibo_soap"><!--v-if--></button><button type="button" title="weibo_meng"><!--v-if--></button><button type="button" title="weibo_jiong"><!--v-if--></button><button type="button" title="weibo_geili"><!--v-if--></button><button type="button" title="weibo_shenma"><!--v-if--></button><button type="button" title="weibo_alpaca"><!--v-if--></button></div><div><!--v-if--></div><!--v-if--></div></div></div><!--v-if--></div><div class="wl-meta-head"><div class="wl-count"><!--v-if--> Comments</div><ul class="wl-sort"><li class="active">Latest</li><li class="">Oldest</li><li class="">Hottest</li></ul></div><div class="wl-cards"></div><div class="wl-empty">No comment yet.</div><div class="wl-meta-foot"><div class="wl-rss"><a href="https://comments.coriva.eu.org/api/comment/rss?path=%2Ffama-french-factor-model%2F" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this post"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this post</span></a><a href="https://comments.coriva.eu.org/api/comment/rss" target="_blank" rel="noopener noreferrer" alt="Subscribe to comments of this site"><svg width="16" height="16" viewBox="0 0 24 24"><g transform="translate(0 -1028.4)"><g><path d="m4 1031.4c-1.1046 0-2 0.9-2 2v16c0 1.1 0.8954 2 2 2h16c1.105 0 2-0.9 2-2v-16c0-1.1-0.895-2-2-2h-16z" fill="#d35400"></path><path d="m4 2c-1.1046 0-2 0.8954-2 2v16c0 1.105 0.8954 2 2 2h16c1.105 0 2-0.895 2-2v-16c0-1.1046-0.895-2-2-2h-16z" transform="translate(0 1028.4)" fill="#e67e22"></path><path d="m5 1034.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#d35400"></path><path d="m5 1033.4v2.3c6.443 0 11.667 5.2 11.667 11.7h2.333c0-7.8-6.268-14-14-14zm0 4.6v2.4c3.866 0 7 3.1 7 7h2.333c0-5.2-4.178-9.4-9.333-9.4zm2.0417 5.3c-1.1276 0-2.0417 0.9-2.0417 2s0.9141 2.1 2.0417 2.1c1.1275 0 2.0416-1 2.0416-2.1s-0.9141-2-2.0416-2z" fill="#ecf0f1"></path></g></g></svg><span>Subscribe to comments of this site</span></a></div><div class="wl-power"> Powered by <a href="https://github.com/walinejs/waline" target="_blank" rel="noopener noreferrer"> Waline </a> v3.15.2</div></div></div></div><link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css"><script type="module">
+  import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
+  import { pageviewCount } from 'https://unpkg.com/@waline/client@v3/dist/pageview.js';
+  init({
+    el: '#waline',
+    serverURL: 'https://comments.coriva.eu.org',
+    lang: 'en',
+    pageview: false,
+  });
+  pageviewCount({
+    serverURL: 'https://comments.coriva.eu.org',
+  });
+</script></article><aside class="toc-sidebar" id="toc-sidebar"><nav class="toc-sidebar-nav"><span class="toc-sidebar-title">目录</span><div class="toc-sidebar-inner"><nav id="TableOfContents"><ul><li><a href="https://coriva.eu.org/fama-french-factor-model/#capm%E4%B8%80%E4%B8%AA%E5%9B%A0%E5%AD%90%E7%9A%84%E4%B8%96%E7%95%8C">CAPM：一个因子的世界</a></li><li><a href="https://coriva.eu.org/fama-french-factor-model/#%E4%B8%89%E5%9B%A0%E5%AD%90%E6%A8%A1%E5%9E%8B%E8%A7%84%E6%A8%A1%E5%92%8C%E4%BB%B7%E5%80%BC">三因子模型：规模和价值</a><ul><li><a href="https://coriva.eu.org/fama-french-factor-model/#%E5%9B%A0%E5%AD%90%E6%80%8E%E4%B9%88%E6%9E%84%E9%80%A0">因子怎么构造</a></li></ul></li><li><a href="https://coriva.eu.org/fama-french-factor-model/#%E4%BA%94%E5%9B%A0%E5%AD%90%E6%A8%A1%E5%9E%8B%E7%9B%88%E5%88%A9%E5%92%8C%E6%8A%95%E8%B5%84">五因子模型：盈利和投资</a></li><li><a href="https://coriva.eu.org/fama-french-factor-model/#python-%E5%9B%A0%E5%AD%90%E5%9B%9E%E5%BD%92%E5%AE%9E%E6%88%98">Python 因子回归实战</a></li><li><a href="https://coriva.eu.org/fama-french-factor-model/#%E5%9B%A0%E5%AD%90%E6%A8%A1%E5%9E%8B%E7%9A%84%E5%B1%80%E9%99%90">因子模型的局限</a></li><li><a href="https://coriva.eu.org/fama-french-factor-model/#%E5%9B%A0%E5%AD%90%E6%A8%A1%E5%9E%8B%E5%92%8C%E9%87%8F%E5%8C%96%E9%80%89%E8%82%A1" class="">因子模型和量化选股</a></li></ul></nav></div></nav><nav class="related-posts"><h2>相关文章</h2><ul><li><a href="https://coriva.eu.org/0dte-options-guide/"><span class="related-title">末日期权（0DTE）完全指南：机制、Greeks 与盈亏真相</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/qlib-tutorial/"><span class="related-title">Qlib 教程：从安装到第一个量化策略</span>
+<span class="related-date">2026-05-11</span></a></li><li><a href="https://coriva.eu.org/quant-math-basics/"><span class="related-title">量化交易的数学基础：从对数收益率到线性回归</span>
+<span class="related-date">2026-04-20</span></a></li><li><a href="https://coriva.eu.org/quant-trading-markets/"><span class="related-title">量化交易市场全景：股票、期货、期权、外汇、加密货币怎么选</span>
+<span class="related-date">2026-04-16</span></a></li><li><a href="https://coriva.eu.org/cta-strategy-guide/"><span class="related-title">CTA 策略入门：趋势跟踪、期货套利与 Python 实战</span>
+<span class="related-date">2026-04-16</span></a></li></ul></nav></aside></div></main><footer class="footer"><span>© 2026 <a href="https://coriva.eu.org/">Coriva</a></span> ·
+<span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentcolor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+<a href="https://finicounter.eu.org/" target="_blank">Total Views</a>:
+<span id="finicount_views">7,288</span></span></footer><a href="https://coriva.eu.org/fama-french-factor-model/#top" aria-label="go to top" title="Go to Top (Alt + G)" class="top-link" id="top-link" accesskey="g" style="visibility: hidden; opacity: 0;"><svg viewBox="0 0 12 6" fill="currentcolor"><path d="M12 6H0l6-6z"></path></svg>
+</a><script async="" src="//finicounter.eu.org/finicounter.js"></script><script>(function(){var e,t,n,s=document.getElementById("toc-sidebar");if(!s)return;if(t=s.querySelectorAll('a[href^="#"]'),!t.length)return;e=[],t.forEach(function(t){var s=decodeURIComponent(t.getAttribute("href").slice(1)),n=document.getElementById(s);n&&e.push({el:n,link:t})});function o(){for(var o=window.scrollY||document.documentElement.scrollTop,i=100,s=null,n=0;n<e.length;n++)e[n].el.getBoundingClientRect().top+window.scrollY-i<=o&&(s=e[n]);t.forEach(function(e){e.classList.remove("active")}),s&&s.link.classList.add("active")}n=!1,window.addEventListener("scroll",function(){n||(requestAnimationFrame(function(){o(),n=!1}),n=!0)}),o()})()</script><script>let menu=document.getElementById("menu");if(menu){const e=localStorage.getItem("menu-scroll-position");e&&(menu.scrollLeft=parseInt(e,10)),menu.onscroll=function(){localStorage.setItem("menu-scroll-position",menu.scrollLeft)}}document.querySelectorAll('a[href^="#"]').forEach(e=>{e.addEventListener("click",function(e){e.preventDefault();var t=this.getAttribute("href").substr(1);window.matchMedia("(prefers-reduced-motion: reduce)").matches?document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView():document.querySelector(`[id='${decodeURIComponent(t)}']`).scrollIntoView({behavior:"smooth"}),t==="top"?history.replaceState(null,null," "):history.pushState(null,null,`#${t}`)})})</script><script>var mybutton=document.getElementById("top-link");window.onscroll=function(){document.body.scrollTop>800||document.documentElement.scrollTop>800?(mybutton.style.visibility="visible",mybutton.style.opacity="1"):(mybutton.style.visibility="hidden",mybutton.style.opacity="0")}</script><script>document.getElementById("theme-toggle").addEventListener("click",()=>{const e=document.querySelector("html");e.dataset.theme==="dark"?(e.dataset.theme="light",localStorage.setItem("pref-theme","light")):(e.dataset.theme="dark",localStorage.setItem("pref-theme","dark"))})</script><script>document.querySelectorAll("pre > code").forEach(e=>{const n=e.parentNode.parentNode,t=document.createElement("button");t.classList.add("copy-code"),t.innerHTML="复制";function s(){t.innerHTML="已复制！",setTimeout(()=>{t.innerHTML="复制"},2e3)}t.addEventListener("click",t=>{if("clipboard"in navigator){navigator.clipboard.writeText(e.textContent),s();return}const n=document.createRange();n.selectNodeContents(e);const o=window.getSelection();o.removeAllRanges(),o.addRange(n);try{document.execCommand("copy"),s()}catch{}o.removeRange(n)}),n.classList.contains("highlight")?n.appendChild(t):n.parentNode.firstChild==n||(e.parentNode.parentNode.parentNode.parentNode.parentNode.nodeName=="TABLE"?e.parentNode.parentNode.parentNode.parentNode.parentNode.appendChild(t):e.parentNode.appendChild(t))})</script></body></html>
