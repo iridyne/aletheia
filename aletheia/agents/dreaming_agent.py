@@ -191,20 +191,46 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
     if not reviews:
         return
 
-    summaries = "\n".join(
-        f"- [{r.get('title', 'untitled')}] strategy={r.get('strategy_id', '?')}"
-        for r in reviews[:10]
-    )
+    # Build rich case lines including PnL metrics so the LLM has something
+    # concrete to summarise and the evidence_json is populated for lesson_reviewer.
+    case_lines = []
+    for r in reviews[:10]:
+        from aletheia.knowledge.frontmatter import parse_frontmatter
+        from pathlib import Path
+        meta: dict = {}
+        fpath = r.get("file_path")
+        if fpath:
+            try:
+                meta, _ = parse_frontmatter(Path(fpath))
+                meta = meta or {}
+            except Exception:
+                pass
+        outcome = meta.get("outcome", "?")
+        pnl = meta.get("realized_pnl_pct", "?")
+        factor = meta.get("factor_key", "?")
+        scanner = meta.get("scanner_family", "?")
+        close = meta.get("close_reason", "?")
+        case_lines.append(
+            f"- [{r.get('title', 'untitled')}] outcome={outcome} pnl={pnl}% "
+            f"factor={factor} scanner={scanner} close={close} strategy={r.get('strategy_id', '?')}"
+        )
+    summaries = "\n".join(case_lines)
+
     content, err = await llm_complete(
         system=(
-            "You are a trading lesson extractor. Given recent trade case studies, "
-            "extract 1-3 actionable lessons. Return a JSON array where each object has: "
-            '"summary" (one sentence), "category" (one of: risk_sizing, entry_timing, '
-            'exit_timing, symbol_selection, general), "severity" (info|warning|critical). '
+            "You are a trading lesson extractor. Given recent trade case studies with "
+            "quantitative metrics (outcome, realized_pnl_pct, factor_key, scanner_family, "
+            "close_reason), extract 1-3 actionable lessons grounded in the data. "
+            "Return a JSON array where each object has: "
+            '"summary" (one sentence referencing specific metrics), '
+            '"category" (one of: risk_sizing, entry_timing, exit_timing, symbol_selection, general), '
+            '"severity" (info|warning|critical), '
+            '"evidence" (object with fields: outcome_counts (dict), avg_pnl_pct (float or null), '
+            'factor_keys (list of strings), scanner_families (list of strings)). '
             "Return ONLY the JSON array, no other text."
         ),
-        user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons.",
-        max_tokens=400,
+        user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
+        max_tokens=600,
     )
     log_tool(run_id, "llm_complete_lessons", "observe", True)
     if err:
@@ -217,16 +243,60 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         logger.warning("dreaming_agent: lesson extraction LLM returned non-JSON")
         return
 
+    # Build aggregate evidence from the case study metadata directly — this gives
+    # lesson_reviewer deterministic numbers even if the LLM skipped the evidence field.
+    agg_evidence: dict = {}
+    if reviews:
+        from pathlib import Path
+        from aletheia.knowledge.frontmatter import parse_frontmatter
+        outcomes: list[str] = []
+        pnls: list[float] = []
+        factors: list[str] = []
+        scanners: list[str] = []
+        for r in reviews[:10]:
+            fpath = r.get("file_path")
+            if fpath:
+                try:
+                    meta, _ = parse_frontmatter(Path(fpath))
+                    meta = meta or {}
+                    if meta.get("outcome"):
+                        outcomes.append(meta["outcome"])
+                    if meta.get("realized_pnl_pct") is not None:
+                        try:
+                            pnls.append(float(meta["realized_pnl_pct"]))
+                        except (ValueError, TypeError):
+                            pass
+                    if meta.get("factor_key"):
+                        factors.append(meta["factor_key"])
+                    if meta.get("scanner_family"):
+                        scanners.append(meta["scanner_family"])
+                except Exception:
+                    pass
+        outcome_counts: dict[str, int] = {}
+        for o in outcomes:
+            outcome_counts[o] = outcome_counts.get(o, 0) + 1
+        agg_evidence = {
+            "outcome_counts": outcome_counts,
+            "avg_pnl_pct": round(sum(pnls) / len(pnls), 3) if pnls else None,
+            "factor_keys": list(dict.fromkeys(factors)),
+            "scanner_families": list(dict.fromkeys(scanners)),
+            "case_count": len(reviews),
+        }
+
     store = LessonStore()
     for lesson in lessons[:3]:
         if not isinstance(lesson, dict) or not lesson.get("summary"):
             continue
+        # Merge LLM-supplied evidence with deterministic aggregate; deterministic wins.
+        llm_evidence = lesson.get("evidence") or {}
+        evidence = {**llm_evidence, **agg_evidence}
         created = store.create(
             summary=lesson["summary"],
             source_type="trade_case_study",
             source_id=reviews[0].get("id", "unknown"),
             category=lesson.get("category", "general"),
             severity=lesson.get("severity", "info"),
+            evidence=evidence,
         )
         log_tool(run_id, "create_lesson", "observe", True, output=created.lesson_id)
         outputs.append(f"lesson:{created.lesson_id}")

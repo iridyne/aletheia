@@ -141,7 +141,9 @@ def create_post_trade_review(
     metadata: dict | None = None,
     strategy_id: str | None = None,
     confidence: str = "medium_confidence",
+    tags: list[str] | None = None,
 ) -> KnowledgeItem | None:
+    import json as _json
     if confidence not in VALID_CONFIDENCES:
         raise ValueError(f"Invalid confidence: {confidence}")
     if not _is_quality_pass(content):
@@ -159,6 +161,7 @@ def create_post_trade_review(
         strategy_id=strategy_id,
         confidence=confidence,
         content_hash=ch,
+        tags=_json.dumps(tags or [], ensure_ascii=False),
     )
     try:
         insert_knowledge_item(item)

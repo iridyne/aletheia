@@ -4,6 +4,7 @@ Also triggers structured case study generation and guard candidate detection
 from the trade_case_builder module (deterministic, no LLM).
 """
 
+import hashlib
 import logging
 
 from aletheia.agents import register_agent
@@ -13,6 +14,35 @@ from aletheia.knowledge.manager import create_post_trade_review
 from aletheia.storage.repositories import get_trade_proposal, get_order, list_fills, list_orders
 
 logger = logging.getLogger("aletheia.agents.post_trade_reviewer")
+
+
+def _fills_window_key(strategy_id: str | None, fills: list) -> str:
+    """Stable fingerprint of the fills seen for a strategy.
+
+    Built from (strategy_id, sorted fill ids) so the same set of fills always
+    hashes to the same key regardless of ordering. A new fill for this strategy
+    produces a different key → triggers a fresh LLM review. No new fills →
+    same key → skip.
+    """
+    sid = strategy_id or "global"
+    fill_ids = sorted(f.get("id", "") for f in fills)
+    raw = f"{sid}:{','.join(fill_ids)}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _review_already_written(strategy_id: str | None, window_key: str) -> bool:
+    """Return True if a post_trade_review for this exact fills-window exists."""
+    from aletheia.storage.sqlite import get_db
+    tag_fragment = f"window:{window_key}"
+    row = get_db().execute(
+        "SELECT id FROM knowledge_items "
+        "WHERE item_type = 'post_trade_review' "
+        "  AND strategy_id IS ? "
+        "  AND tags LIKE ? "
+        "LIMIT 1",
+        (strategy_id, f"%{tag_fragment}%"),
+    ).fetchone()
+    return row is not None
 
 
 @register_agent("post_trade_reviewer")
@@ -50,6 +80,18 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
         strategy_fills[None] = []
 
     for strategy_id, strat_fills in strategy_fills.items():
+        # Idempotency: skip if we already reviewed this exact set of fills.
+        # Prevents redundant LLM calls when the agent runs every 4h with the
+        # same static fill pool (the historical "post_trade_review flood" bug).
+        window_key = _fills_window_key(strategy_id, strat_fills)
+        if _review_already_written(strategy_id, window_key):
+            logger.debug(
+                "post_trade_reviewer: skip strategy=%s window=%s (already reviewed)",
+                strategy_id, window_key,
+            )
+            outputs.append(f"post_trade_review_skipped:already_reviewed:{strategy_id}")
+            continue
+
         # Enrich context with position entry/exit data and market context
         position_details = []
         for f in strat_fills[:10]:
@@ -101,6 +143,7 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
             metadata={"source": "post_trade_reviewer"},
             strategy_id=strategy_id,
             confidence=confidence,
+            tags=[f"window:{window_key}"],
         )
         if item:
             log_tool(run_id, "create_post_trade_review", "observe", True, output=item.id)
