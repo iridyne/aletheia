@@ -13,7 +13,7 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-06-18 · 维护者：Aletheia Dev
+> **最后更新**：2026-06-30 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
 
@@ -694,7 +694,7 @@
 - **影响**：UI 或程序化调用可在无二次确认的情况下恢复全局交易制动器；违反 `docs/design/risk_engine_contract.md §4` 所述的"human-confirmed release"不变量。
 - **最小修复建议**：在 `KillSwitchRequest` 增加 `confirm_release: bool = False` 字段，当 `active=False` 时若 `confirm_release` 非 `True` 则返回 `400`；或引入独立的 `POST /api/risk/kill-switch/release` 端点要求显式确认字段。
 - **优先级**：🔴 信任边界
-- **状态**：🔴 **待修复**（需显式授权后施工，涉及 trust boundary 路径）
+- **状态**：✅ **已修复 (commit `1737957`)** — `KillSwitchRequest` 加 `confirm_release: bool = False` 字段；release 路径若 `confirm_release` 非 `true` 则返回 422；前端 client/RiskControls/CommandPalette 同步补 confirm 确认。
 
 ---
 
@@ -852,7 +852,7 @@
 
 | 项 | 原因 |
 |----|------|
-| **EH-1** risk/engine.py fail-open guards(异常返最宽松值) | trust-boundary，需先写 spec claim(RED)再改 |
+| ~~**EH-1**~~ ✅ risk/engine.py fail-open guards | **已修复 (commit `f75431b`)** — `_check_account_leverage_ratio` except 改 fail-closed，返回 violation 字符串而非 pass-through；spec RE-B14 GREEN。 |
 | **EH-2** paper_broker btc_entry_price None 级联 | execution trust-adjacent，现有 btc_beta guard 有 except-None 保底 |
 | **CUI-2** RegimeConfig UI(尤其 short_enabled) | regime.* 影响 AI 决策，冻结观察期敏感，Round 2 后 |
 | **CC-2** _consecutive_failures TOCTOU | 纯理论，1-worker pool 不并发同 job_id |
@@ -898,13 +898,7 @@
 
 ### §18.2 新发现(pre-existing,非本会话,待修)
 
-- 🟠 **OP-WINRATE** `agent_shell/operator_loop.py:395-399` — 7d win_rate/total_pnl/PF
-  从 `list_fills()` 算,但 **fills 表无 realized_pnl 字段**(只有 fill_price/quantity/fee)→
-  `f.get("realized_pnl") or 0` 恒 0 → win_rate_7d 恒 0%、total_pnl_7d 恒 0。
-  operator 据此(< 35% win_rate 路径)可能误触发 tighten 动作。**pre-existing,半冻结区
-  (operator_loop),需改数据源 fills→positions JOIN。Round 2 评估。**
-  (code review 原报为"与 trading_context 的 cleanup-filter 分歧",核实后实为更深的
-  fills-无-pnl bug。)
+- ✅ **OP-WINRATE** `agent_shell/operator_loop.py:407-418` — **已修复 (A9)**。原从 `list_fills()` 算,fills 表无 realized_pnl 字段导致 win_rate/total_pnl 恒 0。修复：改读 `list_positions(status="closed")` → 读 `realized_pnl` 字段；两处（主评估 :407 + `_get_strategy_performance` :498）同步修正。
 
 ### §18.3 卫生项(🟡,下一 sprint)
 
@@ -922,9 +916,7 @@
 
 ### §18.4 越界发现(非本会话 scope,记录待查)
 
-- 🔴 **APP-HMAC** `server/app.py:428` — tunnel auth guard 用 `token != expected`
-  (timing side-channel),应 `hmac.compare_digest`。守 kill-switch/gateway-restart,
-  tunnel 暴露时是 trust 边界。**非本会话改动,但真实 trust 问题,优先核实修复。**
+- ✅ **APP-HMAC** `server/app.py:470` — **已修复**。原 `token != expected` timing side-channel 已改为 `if not hmac.compare_digest(token, expected):`，timing-safe 比较。
 
 ---
 
@@ -932,9 +924,10 @@
 
 > 归档 `MINIMUM_PROFIT_LOOP_AUDIT` / `SYSTEM_WIDE_DATA_FLOW_AUDIT` / `PIPELINE_GAPS` / `DOC_IMPL_GAP_ANALYSIS` 四份快照报告前，经 4-agent 对 HEAD 逐条核实：绝大多数已修，或已被 FIX_PLAN / `frozen_optimization_backlog.md` 捕获。以下是**仍开放且无别处记录**的残余项，迁移至此以免归档丢失。原报告见 `archive/`。
 
-### 🔴 风险不变量
+### ~~🔴~~ ✅ 风险不变量
 
-- **CUM-ADD — per-symbol 累积加仓无上限**（P1，源 DOC_IMPL_GAP）：`aletheia/execution/paper_broker.py:69` `new_qty = existing["quantity"] + quantity` 把同 symbol 多次加仓合并为单仓；`risk/engine.py` #5 只校验**单笔** notional，#6 `max_open_positions` 是**持仓计数**门（averaging 合并后恒为 1 仓，永不触发）→ 多次单笔合规加仓可在单一 symbol 累积成超额敞口（报告实例：SOL 31 笔 → 790 USDT）。**修法**：risk engine 加 per-symbol 累积 notional cap（读现有持仓 notional + 本单）。⚠️ 触 `risk/engine.py`（信任边界 + 冻结路径邻近），Round 1 后施工。亦列入 [`FIX_PLAN_2026-06-26.md`](FIX_PLAN_2026-06-26.md) C。
+- ✅ **CUM-ADD — per-symbol 累积 notional cap 已实现**（commit `547d36c`）：`risk/engine.py` 新增 check #19 `max_per_symbol_notional_usdt`（默认 400 USDT），读取现有 open positions 的 symbol 累积 notional + 本单 notional，超额返回 violation 拒绝开仓。config `risk.max_per_symbol_notional_usdt` 已加 Settings 控件。spec RE-B15 GREEN。
+  - 补充：check #6b `symbol_already_open` 同时存在，平行阻止同 symbol 同 pool 重复开仓。paper_broker.py 的 averaging 路径在 risk engine 拒绝后实际不可达。
 
 ### 🟡 工程/功能债（源 PIPELINE_GAPS，均 P2/P3，无 P0）
 

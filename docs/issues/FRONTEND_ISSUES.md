@@ -13,7 +13,7 @@
 > - 🟠 字段缺失 / 设计方向偏差（§23.x 列出但前端没做、TradingView §4.5 借鉴未到位）
 > - 🟡 工程基础（类型断言、列表组件、内联 style、详情路由模式）
 >
-> **最后更新**：2026-06-07 · 维护者：Aletheia Dev
+> **最后更新**：2026-06-30 · 维护者：Aletheia Dev
 > **来源**：规格 §23（13 子节）+ §2/§4/§13/§15/§29 + trust §3 + 全前端代码静态对照
 >
 
@@ -104,11 +104,11 @@
 
 ### 1.3 trust §3 UI Honesty 局部破口
 
-- 🔴 **Overview `today_pnl ?? unrealized_pnl` 静默 fallback**
-  - 佐证：`Overview.tsx:71` `<td>{portfolio?.today_pnl ?? portfolio?.unrealized_pnl ?? '—'}</td>`
-  - 规格：trust §3.2 "Use 'not available' when data is absent"；§3.3 forbidden patterns "Do not... convert backend errors into empty success states"——这里把"今日盈亏不可用"悄悄换成了"未实现盈亏"，两者语义完全不同
-  - 影响：用户看到一个数字以为是"今天赚/亏多少"，实际是"未实现浮盈"——UI 撒了谎
-  - 最小修复：当 `today_pnl` 为 null 时显示 "not available"；或显式拆成两行 "Today PnL" + "Unrealized PnL"
+- 🟡 **Overview `today_pnl ?? unrealized_pnl` 静默 fallback**（PARTIAL，`AccountSnapshot.tsx`）
+  - 佐证：`AccountSnapshot.tsx:33-34` 已加 `usingUnrealizedFallback` 标志字段区分两种情况，但 Overview.tsx 的 `<td>{portfolio?.today_pnl ?? portfolio?.unrealized_pnl ?? '—'}</td>` fallback 逻辑本身仍在
+  - 规格：trust §3.2 "Use 'not available' when data is absent"；两字段语义不同（今日盈亏 vs 未实现浮盈）
+  - 当前状态：**PARTIAL** — `usingUnrealizedFallback` 标志已加，UI 层可区分；但 Overview 页面是否读此标志展示不同文字仍需核实；fallback 替换未彻底消除
+  - 剩余工作：Overview.tsx 消费 `usingUnrealizedFallback`，fallback 时显示 "Unrealized PnL（today unavailable）" 而非静默替换
 
 - 🔴 **StrategyLifecycle Promote 失败弹原始 `alert(e.message)`**
   - 佐证：`StrategyLifecycle.tsx:23` `onError: (e: any) => alert(e.message)`

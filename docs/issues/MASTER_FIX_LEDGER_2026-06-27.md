@@ -178,9 +178,9 @@
 | ID | 状态 | 文件 | 备注 |
 |---|---|---|---|
 | **R0 / L-Bug-C** 透传 opportunity_id + scanner_family | ✅ **已修(本会话)** | trading_context.py:148 + trading_decision.py(dataclass/helper/meta/proposal) | LP-S05 翻 GREEN。总根因。 |
-| **B1** ranker 检索去 post_trade_review 幻觉 | 待修 | paper_trader_ranker.py:412 | item_types 去掉 'post_trade_review' 只留 'trade_case_study'(一行) |
+| **B1** ranker 检索去 post_trade_review 幻觉 | ✅ **已修** | paper_trader_ranker.py:412 | item_types 只留 'trade_case_study' |
 | **B2 / R3** 重构 _lesson_penalty(字面匹配→结构化) | 待修 | paper_trader_ranker.py:400-422 | 改排序逻辑,需新 spec |
-| **C1 / R2** post_trade_reviewer 提示改 + confidence 降 medium | partial(PnL 已注入) | post_trade_reviewer.py:71-72,85 | 挡幻觉出检索池 |
+| **C1 / R2** post_trade_reviewer 提示改 + confidence 降 medium | ✅ **已修** | post_trade_reviewer.py:71-72,85 | confidence 改 medium；test_experience_loop 更新 |
 | **C2 / R2b** risk_critic 输入扩容 | 待修 | risk_critic.py:23-24,41 | 喂逐条拒因,停自动升 high |
 | **C4** dreaming _extract_lessons 接真实 PnL | 待修 | dreaming_agent.py:176-224 | 依赖 C1 |
 | **C5** archive 历史幻觉 post_trade_review | 待修 | manager.py:288(脚本) | 须在 B1 之后 |
@@ -190,20 +190,20 @@
 
 | ID | 状态 | 文件 | spec |
 |---|---|---|---|
-| **L-Bug-A** Layer3 lessons 死过滤器 | 待修 | trading_context.py:382 | LP-S01 |
-| **L-Bug-A'** Layer3 guards 加 item_type | 待修 | trading_context.py:398 | LP-S02 |
-| **L-Bug-B** ps_lessons 接入决策链 | 待修 | trading_context.py + trading_decision.py + lessons.py:71 | LP-S03 |
-| **S-Bug-C** strategy KPI 暴露 | 待修 | trading_context.py:276 + trade_stats.py:227 build_strategy_kpis | SP-S03 |
+| **L-Bug-A** Layer3 lessons 死过滤器 | ✅ **已修** | trading_context.py | 改 item_type='trade_case_study'；LP-S01 GREEN |
+| **L-Bug-A'** Layer3 guards 加 item_type | ✅ **已修** | trading_context.py | 改 item_type='guard_candidate'；LP-S02 GREEN |
+| **L-Bug-B** ps_lessons 接入决策链 | ✅ **已修** | trading_context.py + trading_decision.py | list_knowledge_items(status='proposed') 接入；LP-S03 GREEN |
+| **S-Bug-C** strategy KPI 暴露 | ✅ **已修** | trading_context.py:276 + trade_stats.py | build_strategy_kpis() 填真实 win_rate/total_pnl/trade_count；SP-S03 GREEN |
 | **A10** calibration/memo/reasoning_feedback 注入 prompt | ✅已完成 | trading_decision.py:653-669 — memo/calibration/reasoning_feedback 全部注入；代码已修，账本滞后 | |
-| **A6 / §13.1** ranker evidence 硬编码 paper_internal | 待修 | paper_trader_ranker.py:723 | |
-| **A7 / §13.2** today_pnl 跨模式语义 | 待修 | trading_context.py:75 + pnl.py:184 | rename today_realized_pnl |
-| **A9 / §18.2** operator win_rate 用 fills 恒 0 | 待修 | operator_loop.py:385-403,495-505 | 改读 closed positions realized_pnl |
+| **A6 / §13.1** ranker evidence 硬编码 paper_internal | ✅ **已修** | paper_trader_ranker.py:728 | 改 `NOT LIKE '%live%'` 涵盖多 broker |
+| **A7 / §13.2** today_pnl 跨模式语义 | 待修 | trading_context.py:75 + pnl.py:184 | rename today_realized_pnl（纯命名，低优先） |
+| **A9 / §18.2** operator win_rate 用 fills 恒 0 | ✅ **已修** | operator_loop.py:407-418,498+ | 改读 closed positions realized_pnl；两处同步 |
 | **A11** regime 重启后 bias 未恢复+无 publish | ✅已完成 | detector.py:257-279 — get_current_regime() 从 DB 恢复 bias 并写 _published_regime；ranker/trading_context 均消费；publish 机制完整 | |
 | **A13 / PT-2** PiDecision 缺 opportunity_id | ✅已完成 | commands.py:1875 + reflection.py:59 — result dict + PiDecision 构造器均已接线；spec DM-A13 GREEN | |
 | **L-Bug-D B2** guard 升级器读错目录 | 待修 | guards.py:96 vs files/markdown.py:57 | LP-S06 |
 | **L-Bug-D B3** guard 候选缺 frontmatter | 待修 | outcome_recorder.py:262-277 | LP-S06 |
-| **final_conviction** dead code(算了不读) | 待修 | trading_decision.py:300 | 删 or 用 |
-| **equity/stock show_errors=** yfinance 移除致 100% 失败 | 待修 | equity_observer.py:128 + stock_observer.py:111 | 真 bug,删参数 |
+| **final_conviction** dead code(算了不读) | ✅ **已修** | trading_decision.py | 删除 DebateResult 未读字段 + _run_debate 计算 |
+| **equity/stock show_errors=** yfinance 移除致 100% 失败 | ✅ **已修** | equity_observer.py + stock_observer.py | 删 show_errors=False 参数(yfinance API 已移除) |
 | **§15.4** equity_observer KB write-back 缺失 | 待修 | equity_observer.py | conf>0.7 写 research_note |
 
 ## 批次 3 — 信任边界 + 安全不变量(P3c)· 逐项谨慎 + spec-first + 汇报高亮
@@ -213,9 +213,9 @@
 
 | ID | 状态 | 文件 | 风险 |
 |---|---|---|---|
-| **CUM-ADD** per-symbol 累积加仓无上限 | 待修(真 gap) | risk/engine.py + paper_broker.py:69 | 加 per-symbol notional cap + spec |
-| **A5/CR-EX-03** bitget Position 缺 opportunity_id | 待修 | bitget_broker.py:158(+paper/okx/binance 克隆同步) | risk check #16 失效 |
-| **B1** kill-switch confirm_release 二次确认 | 待修 | routes/risk.py:80-92 | 防误解锁 |
+| **CUM-ADD** per-symbol 累积加仓无上限 | ✅ **已修 (commit `547d36c`)** | risk/engine.py:289-313 check #19 + config max_per_symbol_notional_usdt + Settings 控件 | spec RE-B15 GREEN |
+| **A5/CR-EX-03** bitget Position 缺 opportunity_id | ✅ **已修 (commit `fee8dda`)** | bitget/okx/binance/paper 四 broker 全透传；risk check #16 sector 集中度复活 | spec EX-S06/EX-B09 GREEN |
+| **B1** kill-switch confirm_release 二次确认 | ✅ **已修 (commit `1737957`)** | routes/risk.py:80-104 KillSwitchRequest + confirm 字段 + 422 | test_risk_routes GREEN |
 | **B-P1-2** risk_critic 类型洗白(research_note) | 待修 | risk_critic.py:42 | 新 item_type 或文档化 |
 | **B-P1-5** broker fee reconcile 真实回填 | partial(estimated marker 已修) | reconciliation.py | 仅 live 有意义 |
 | **B4** PostSubmitDBError 替代 type:ignore | ✅ 已修(2026-06-30 核实) | binance_broker.py:169 + okx_broker.py:231 | raise PostSubmitDBError |
@@ -225,9 +225,9 @@
 ## 批次 4 — 一般 bug + dead code + UI honesty + 测试债(P3d)· 可 Workflow 并行(独立低风险)
 
 详见 `_RAW_SWEEP_LEDGER.md` general_bug / dead_code / ui_honesty / test_debt / perf 段。要点:
-- **一般 bug**:F2 universe POST /policy 缺失 · E3 volume_scanner 内存态丢失 · E5 operator retire 无超时 · F6 symbol_map KeyError · F5 score_event 空壳 · BinanceClient eager-init · symbol_map · prune FK CASCADE · dreaming_log 16 孤儿指针 · CR-PI-01 scanner weight 不持久化 · E2 UTA connected_brokers · I1 price_feed docstring 谎言 · CR-SCH-01 job failure(partial)
+- **一般 bug**:F2 universe POST /policy 缺失 · E3 volume_scanner 内存态丢失 · E5 operator retire 无超时 · F6 symbol_map KeyError · ~~F5 score_event 空壳~~ **✅ 已修 (commit `3136133`)** · BinanceClient eager-init · symbol_map · prune FK CASCADE · dreaming_log 16 孤儿指针 · CR-PI-01 scanner weight 不持久化 · E2 UTA connected_brokers · I1 price_feed docstring 谎言 · CR-SCH-01 job failure(partial)
 - **端点缺失**:D6 strategy-performance · D7 serenity-pipeline(+ api_reference 同步)
-- **dead code**:D5 strategy_experiments 空表 DROP · D12 detect_contradictions stub · F5 score_event · BrokerBreakdown(PnLZone.tsx:67) · BITGET_GRANULARITY
+- **dead code**:D5 strategy_experiments 空表 DROP · D12 detect_contradictions stub · ~~F5 score_event~~ ✅ 已实现 · BrokerBreakdown(PnLZone.tsx:67) · BITGET_GRANULARITY
 - **UI honesty**:chart 硬编码色(3.7) · text slice 截断(Learning.tsx:242) · P3.11 timer · P3.12 price line · P3.14 WebSocket · P3.15 stop viz · ~~D14 Regime/Guard config UI(Config↔UI rule)~~ **✅ 已修 72abaf4 (2026-06-30)** · inline styles/as any(typing 债)
 - **测试债**:Tier1/2/3 mock-only 清理 · conftest selector policy(D17-1) · architecture-fitness guard(D8)
 - **perf/运维**:prune_system_actions TTL(D2/C1) · Serenity 三表 TTL(D1) · net.py httpx connect timeout(D21)
