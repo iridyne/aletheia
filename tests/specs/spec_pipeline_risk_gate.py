@@ -349,3 +349,62 @@ def test_risk_gate_stale_market_data_for_live(tmp_path, monkeypatch):
         f"Expected stale_market_data violation when data absent, "
         f"got violations={result.violations}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 2: Sample-Aware Kelly Sizing (SZ-*) — Coriva impl plan 2026-06-30
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "SZ-SAMPLE-KELLY", "pipeline_risk_gate",
+        "§sizing sample_aware_kelly_param",
+        "L2a",
+        "vol_target_size 接受 paper_trade_count 参数；< 10 笔时 effective_kelly=0.1，"
+        "10-30 笔线性爬升到 base_kelly（cfg.trading.vol_kelly_cap_fraction）。"
+        "新策略自动降仓，成熟策略行为不变（向后兼容 paper_trade_count=0 默认值）。",
+        status="implemented",
+    ),
+)
+def test_vol_target_size_accepts_paper_trade_count():
+    """vol_target_size 必须有 paper_trade_count 参数（L2a structural）。"""
+    import inspect
+    from aletheia.trading import sizing
+
+    sig = inspect.signature(sizing.vol_target_size)
+    assert "paper_trade_count" in sig.parameters, (
+        "vol_target_size 缺少 paper_trade_count 参数 — SZ-SAMPLE-KELLY 未实现"
+    )
+    # Default must be 0 (backward compatible — existing callers pass nothing)
+    default = sig.parameters["paper_trade_count"].default
+    assert default == 0, (
+        f"paper_trade_count 默认值应为 0（向后兼容），得到 {default!r}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "SZ-SAMPLE-KELLY-SCALE", "pipeline_risk_gate",
+        "§sizing sample_kelly_reduces_size",
+        "L2b",
+        "paper_trade_count=3 时 size <= paper_trade_count=50 时的 50%。"
+        "新策略前 10 笔自动降低仓位，不影响成熟策略。",
+        status="implemented",
+    ),
+)
+def test_vol_target_size_reduced_for_new_strategy():
+    """paper_trade_count=3 的 size 不超过 paper_trade_count=50 的 50%。"""
+    import pytest
+    from aletheia.trading.sizing import vol_target_size
+
+    try:
+        sz_new = vol_target_size("BTC/USDT", conviction=70, paper_trade_count=3)
+        sz_mature = vol_target_size("BTC/USDT", conviction=70, paper_trade_count=50)
+    except Exception as e:
+        pytest.fail(f"vol_target_size with paper_trade_count failed: {e}")
+
+    assert sz_new <= sz_mature * 0.5, (
+        f"新策略(3笔) size={sz_new:.2f} 应 <= 成熟策略(50笔) size={sz_mature:.2f} 的 50%"
+        f"（得到比率 {sz_new/sz_mature if sz_mature else 'N/A':.2f}）"
+    )

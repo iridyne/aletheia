@@ -76,6 +76,7 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
+    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
     result = await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
     assert len(opps) == 1
@@ -99,6 +100,7 @@ async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
         return None, "llm_unavailable"
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
+    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
     result = await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
     assert len(opps) == 0  # no neutral noise created
@@ -121,6 +123,7 @@ async def test_observer_emits_spot_and_perp_when_futures_enabled(tmp_path, monke
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
+    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
     await run_agent("market_observer", trigger_type="manual")
 
     opps = repo.list_opportunities()
@@ -202,6 +205,7 @@ async def test_observer_stores_canonical_format_symbol(tmp_path, monkeypatch):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
+    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
     await run_agent("market_observer", trigger_type="manual")
 
     opps = repo.list_opportunities()
@@ -230,6 +234,7 @@ async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
+    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
 
     # Step 1: observer creates opportunity
     await run_agent("market_observer", trigger_type="manual")

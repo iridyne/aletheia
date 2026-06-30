@@ -230,6 +230,7 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
     async def fake_llm_structured(*a, **kw):
         return None, "llm_unavailable: simulated"
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
+    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
 
     # Stub build_market_context so observer doesn't need network.
     async def fake_builder(symbols, market_type="spot", **kw):
@@ -274,6 +275,7 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
             ],
         }, None)
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
+    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
 
     async def fake_builder(symbols, market_type="spot", **kw):
         return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
@@ -317,6 +319,7 @@ def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
             "key_observations": [],
         }, None)
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
+    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
 
     async def fake_builder(symbols, market_type="spot", **kw):
         # Big realistic snapshot — would be ugly if it leaked into thesis.
@@ -360,6 +363,7 @@ def test_observer_ignores_invalid_confidence_score(tmp_path, monkeypatch):
             "key_observations": "should be a list but isn't",
         }, None)
     monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
+    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
 
     async def fake_builder(symbols, market_type="spot", **kw):
         return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})

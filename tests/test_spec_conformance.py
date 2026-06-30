@@ -144,6 +144,10 @@ def _import_all_specs():
         # D8-S01/B01/S03 are implemented; D8-S02/S04/B02/B03/C01 are
         # missing_tripwire xfails awaiting implementation. 2026-06-30.
         spec_kill_conditions,
+        # Factor feedback quality gates (FF-*): min sample size before preferred,
+        # outlier-driven PF detection, hard_blocked status + ranker hard-reject.
+        # 2026-06-30 Round 2 Coriva impl plan.
+        spec_factor_feedback,
     )
 
 

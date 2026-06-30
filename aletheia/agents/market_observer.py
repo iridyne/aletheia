@@ -110,6 +110,75 @@ ending with }.
 Not financial advice."""
 
 
+_SCANNER_KEYWORD_MAP: list[tuple[str, str]] = [
+    # trend-family — must come before reversion checks (more specific)
+    ("breakout", "breakout"),
+    ("breakdown", "breakout"),
+    ("momentum", "momentum"),
+    ("ma_cross", "ma_crossover"),
+    ("sma cross", "ma_crossover"),
+    ("trend", "trend"),
+    # reversion-family
+    ("oversold", "reversion"),
+    ("overbought", "reversion"),
+    ("mean reversion", "reversion"),
+    ("divergence", "reversion"),
+    # volatility/special
+    ("squeeze", "volatility"),
+    ("funding", "funding_arb"),
+    ("arb", "arb"),
+]
+
+
+def _infer_scanner_family(rationale: str, observations: list[str]) -> str | None:
+    """Infer a scanner_family from LLM rationale + observations when not set by universe.
+
+    Used so that the sideways regime tax (P0-2) can fire on non-universe opportunities.
+    Returns the first matching family, or None if no keyword matches.
+    """
+    text = (rationale + " " + " ".join(observations)).lower()
+    for keyword, family in _SCANNER_KEYWORD_MAP:
+        if keyword in text:
+            return family
+    return None
+
+
+def _has_sufficient_signal(context_str: str) -> bool:
+    """Deterministic pre-filter: returns True if the context contains actionable signals.
+
+    Checks RSI deviation from 50, ATR%, and momentum keywords.
+    Used to skip the LLM call for calm markets (P1-7 — saves wall-clock budget).
+    """
+    import re
+
+    # RSI deviation check: |RSI - 50| > 12 is actionable
+    # Table format: | RSI | <timeframe> | <value> | — skip two columns before the number
+    rsi_match = re.search(r'RSI[^|]*\|[^|]*\|[^|]*?(\d+\.?\d*)', context_str, re.IGNORECASE)
+    if rsi_match:
+        try:
+            if abs(float(rsi_match.group(1)) - 50) > 12:
+                return True
+        except ValueError:
+            pass
+
+    # ATR% check: > 0.8% indicates meaningful volatility
+    atr_match = re.search(r'ATR[^|]*\|[^|]*?(\d+\.?\d+)%', context_str, re.IGNORECASE)
+    if atr_match:
+        try:
+            if float(atr_match.group(1)) > 0.8:
+                return True
+        except ValueError:
+            pass
+
+    # Keyword check: presence of directional/momentum keywords
+    keywords = ("breakout", "breakdown", "oversold", "overbought", "squeeze",
+                "divergence", "spike")
+    if any(kw in context_str.lower() for kw in keywords):
+        return True
+
+    return False
+
+
 async def _analyze_symbol(
     symbol: str,
     market_type: str,
@@ -269,6 +338,13 @@ async def _analyze_symbol(
             context = f"{symbol}: no snapshot yet"
         return None, f"market_context_fallback:{symbol}:{e}"
 
+    # P1-7: deterministic pre-filter — skip LLM for symbols with no actionable signal
+    cfg_for_filter = load_config()
+    force_full = getattr(getattr(cfg_for_filter, "observer", None), "force_full_scan", False)
+    if not force_full and not _has_sufficient_signal(context):
+        logger.debug("pre-filter: no sufficient signal for %s — skipping LLM call", symbol)
+        return None, f"pre_filter_skip:{symbol}:no_sufficient_signal"
+
     record_step(
         run_id, f"market_read_input:{symbol}",
         input_data=f"symbol={symbol} ctx_len={len(context)} memory={len(memory_block) > 0}",
@@ -358,6 +434,10 @@ async def _analyze_symbol(
             log_tool(run_id, "annotate_opportunity", "observe", True, output=existing["id"])
             return existing["id"], llm_error
 
+    # P0-2: fill scanner_family from LLM text when not set by universe member,
+    # so the sideways regime tax can fire on non-universe opportunities.
+    effective_scanner_family = scanner_family or _infer_scanner_family(rationale, observations)
+
     opp = Opportunity(
         symbol=symbol,
         market=instrument_market_to_db_market(market_type),
@@ -370,7 +450,7 @@ async def _analyze_symbol(
         asset_class=asset_class,
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
-        scanner_family=scanner_family,
+        scanner_family=effective_scanner_family,
         key_observations=json.dumps(observations) if observations else "",
         funding_rate=funding_rate_val,
         open_interest=open_interest_val,

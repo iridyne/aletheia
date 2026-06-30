@@ -49,17 +49,22 @@ def _resolve_venue(strategy_id: str | None, global_mode: str) -> str:
     return global_mode
 
 
-def _atr_adjusted_notional(atr_pct: float | None, symbol: str | None = None) -> float:
+def _atr_adjusted_notional(
+    atr_pct: float | None,
+    symbol: str | None = None,
+    strategy_id: str | None = None,
+) -> float:
     """Scale notional via volatility-target sizing when enabled.
 
-    Delegates to unified vol_target_size() when vol_sizing_enabled=True.
-    Falls back to legacy ATR inversion otherwise.
+    P1-5: looks up paper_trade_count for strategy_id so new strategies start at
+    0.1 Kelly and ramp up as evidence accumulates.
     """
     from aletheia.config.loader import load_config
     cfg = load_config()
     if cfg.trading.vol_sizing_enabled and symbol:
         from aletheia.trading.sizing import vol_target_size
-        return vol_target_size(symbol, atr_pct_override=atr_pct)
+        ptc = _get_strategy_paper_trade_count(strategy_id)
+        return vol_target_size(symbol, atr_pct_override=atr_pct, paper_trade_count=ptc)
     base = cfg.trading.default_notional_usdt
     if not atr_pct or atr_pct <= 0:
         return base
@@ -67,6 +72,22 @@ def _atr_adjusted_notional(atr_pct: float | None, symbol: str | None = None) -> 
     scale = target / (atr_pct * 100)
     scale = max(0.4, min(2.0, scale))
     return round(base * scale, 2)
+
+
+def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
+    """Closed paper/demo positions count for a strategy — used for sample-aware Kelly."""
+    if not strategy_id:
+        return 0
+    try:
+        from aletheia.storage.sqlite import get_db
+        row = get_db().execute(
+            "SELECT count(*) FROM positions "
+            "WHERE strategy_id = ? AND status = 'closed' AND execution_mode NOT LIKE '%live%'",
+            (strategy_id,),
+        ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
 
 
 @register_agent("paper_trader")

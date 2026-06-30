@@ -176,6 +176,10 @@ def _compute_group_stats(
     }
 
 
+_MIN_TRADES_FOR_PREFERRED = 8     # P0-4: raised from 3; 3-trade win_rate CI spans 0-1
+_MIN_TRADES_FOR_HARD_BLOCKED = 10  # P1-4: need sufficient evidence before hard block
+
+
 def _classify_factor(
     trade_count: int,
     min_trades: int,
@@ -183,15 +187,32 @@ def _classify_factor(
     win_rate: float,
     profit_factor: float,
 ) -> tuple[str, str]:
-    """Classify a factor into watch/blocked_candidate/active/preferred."""
+    """Classify a factor into watch/blocked_candidate/hard_blocked/active/preferred."""
     if trade_count < min_trades:
         return "watch", f"insufficient_data({trade_count}/{min_trades})"
 
-    if expectancy < 0 and win_rate < 0.40:
-        return "blocked_candidate", f"negative_expectancy({expectancy:.4f})_low_winrate({win_rate:.2%})"
+    # P1-4: hard_blocked — strong negative signal with sufficient evidence
+    if (trade_count >= _MIN_TRADES_FOR_HARD_BLOCKED
+            and win_rate < 0.30 and expectancy < -0.5):
+        return "hard_blocked", f"hard_blocked:wr={win_rate:.2%}_n={trade_count}"
 
-    if expectancy > 0 and profit_factor >= 1.2:
-        return "preferred", f"positive_expectancy({expectancy:.4f})_pf({profit_factor:.2f})"
+    if expectancy < 0 and win_rate < 0.40:
+        return "blocked_candidate", (
+            f"negative_expectancy({expectancy:.4f})_low_winrate({win_rate:.2%})"
+        )
+
+    # P0-4: outlier detection — high PF with small sample may be single-trade outlier
+    if profit_factor > 5.0 and trade_count < 15:
+        return "active", f"possible_outlier_driven(pf={profit_factor:.1f},n={trade_count})"
+
+    # P0-4: require n >= 8 and win_rate >= 0.45 for preferred promotion
+    if (expectancy > 0 and profit_factor >= 1.2
+            and win_rate >= 0.45
+            and trade_count >= _MIN_TRADES_FOR_PREFERRED):
+        return "preferred", (
+            f"positive_expectancy({expectancy:.4f})_pf({profit_factor:.2f})"
+            f"_wr={win_rate:.2%}_n={trade_count}"
+        )
 
     return "active", "meets_minimum_criteria"
 

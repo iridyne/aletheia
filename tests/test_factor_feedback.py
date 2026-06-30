@@ -142,7 +142,8 @@ def test_lookup_factor_signal_with_matching_history():
             "late_entry_penalty": None,
         })
     assert signal["trade_count"] == 3
-    assert signal["status"] == "preferred"  # all winners except one small loss
+    # 3 笔不满足 preferred 门槛（需要 >= 8）— 返回 active 是正确行为（P0-4）
+    assert signal["status"] == "active"
 
 
 # ---------------------------------------------------------------------------

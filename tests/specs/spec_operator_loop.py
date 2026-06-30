@@ -878,3 +878,130 @@ def test_l2_proposal_artifact_carries_human_confirm_required():
         "operator_layer.md §不变式3 (L2 operations require human confirmation even after "
         "PI approval)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Round 2 Ranker Signal-Quality Claims (Coriva impl plan 2026-06-30)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-SCORE-NORM", "operator_layer",
+        "§ranker confidence_score normalization",
+        "L2b",
+        "confidence_score 贡献上限为 50 分（经 clip_norm 到 [0,1] 再乘 50）"
+        "——防止 0-100 原始值直接主导 regime/factor 信号（Round 1 方向集中根因）。"
+        "paper_trader_ranker._compute_trade_score 中 conf_score 直接加分路径必须被替换。",
+        status="implemented",
+    ),
+)
+def test_score_norm_confidence_capped():
+    """confidence_score=100 时贡献不超过 75 分（clip_norm 后上限 50 + default offsets）。"""
+    from aletheia.agents.paper_trader_ranker import _compute_trade_score
+    from aletheia.regime.detector import MarketRegime
+    import unittest.mock as mock
+
+    neutral_regime = MarketRegime(state="sideways", confidence=0.3)
+    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
+                    return_value=neutral_regime):
+        high_conf_opp = {"confidence_score": 100, "symbol": "BTC/USDT",
+                         "scanner_family": "test"}
+        score = _compute_trade_score(high_conf_opp, None, {"status": "watch"}, "high")
+    assert score <= 75.0, (
+        f"confidence_score=100 贡献超出预期上限 75（实际={score}），"
+        "regime/factor 信号将被压制 — 检查 clip_norm 是否正确"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-SIDEWAYS-TREND-TAX", "operator_layer",
+        "§ranker sideways regime trend tax",
+        "L2b",
+        "sideways regime (confidence>0.6) + trend-family scanner → score -= 25。"
+        "当前 sideways 分支完全缺失，CTA 文献实证其为趋势跟踪最差 regime。",
+        status="implemented",
+    ),
+)
+def test_sideways_trend_tax_applied():
+    """sideways + breakout scanner 应比 reversion 低至少 15 分。"""
+    from aletheia.agents.paper_trader_ranker import _compute_trade_score
+    from aletheia.regime.detector import MarketRegime
+    import unittest.mock as mock
+
+    sideways = MarketRegime(state="sideways", confidence=0.75)
+    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
+                    return_value=sideways):
+        base_opp = {"confidence_score": 50, "symbol": "ETH/USDT", "scanner_family": "breakout"}
+        score_trend = _compute_trade_score(base_opp, None, {"status": "watch"}, "medium",
+                                           direction="long")
+        opp_rev = dict(base_opp, scanner_family="reversion")
+        score_rev = _compute_trade_score(opp_rev, None, {"status": "watch"}, "medium",
+                                          direction="long")
+    assert score_trend < score_rev - 15, (
+        f"sideways + breakout({score_trend}) 应比 reversion({score_rev}) 低至少 15 分（trend_tax 未触发）"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-FACTOR-SMOOTH", "operator_layer",
+        "§ranker factor IC smooth scoring",
+        "L2b",
+        "factor_status != blocked_candidate 时用 IC 代理连续加权（(win_rate-0.5)*2*20），"
+        "替换离散 ±5/±20 跳跃。win_rate 已由 lookup_factor_signal 返回，无新依赖。",
+        status="implemented",
+    ),
+)
+def test_factor_scoring_is_continuous():
+    """win_rate=0.52 和 win_rate=0.60 的分差应在 (0, 10) 区间（连续而非离散跳变）。"""
+    from aletheia.agents.paper_trader_ranker import _compute_trade_score
+    from aletheia.regime.detector import MarketRegime
+    import unittest.mock as mock
+
+    flat = MarketRegime(state="sideways", confidence=0.1)
+    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
+                    return_value=flat):
+        base = {"confidence_score": 50, "symbol": "BTC/USDT", "scanner_family": "test"}
+        sig_low  = {"status": "active", "win_rate": 0.52, "trade_count": 10}
+        sig_high = {"status": "active", "win_rate": 0.60, "trade_count": 10}
+        s_low  = _compute_trade_score(base, None, sig_low, "medium", direction="long")
+        s_high = _compute_trade_score(base, None, sig_high, "medium", direction="long")
+    delta = s_high - s_low
+    assert 0 < delta < 10, (
+        f"win_rate 0.52→0.60 分差 {delta:.1f} 超出连续范围 (0,10)；"
+        "factor 评分仍为离散跳跃，检查 IC 代理实现"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OL-REGIME-SMOOTH", "operator_layer",
+        "§ranker regime confidence smooth weighting",
+        "L2b",
+        "regime 加分乘以 confidence^1.5（连续），消除 >0.5 断崖。"
+        "confidence=0.49 vs 0.51 的分差应 < 5（原差距 ±20）。",
+        status="implemented",
+    ),
+)
+def test_regime_scoring_no_cliff():
+    """regime.confidence=0.49 vs 0.51 分差应 < 5（无断崖）。"""
+    from aletheia.agents.paper_trader_ranker import _compute_trade_score
+    from aletheia.regime.detector import MarketRegime
+    import unittest.mock as mock
+
+    base_opp = {"confidence_score": 50, "symbol": "BTC/USDT", "scanner_family": "test"}
+
+    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
+                    return_value=MarketRegime(state="bear", confidence=0.49)):
+        s_below = _compute_trade_score(base_opp, None, {"status": "watch"}, "medium",
+                                        direction="short")
+    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
+                    return_value=MarketRegime(state="bear", confidence=0.51)):
+        s_above = _compute_trade_score(base_opp, None, {"status": "watch"}, "medium",
+                                        direction="short")
+    assert abs(s_above - s_below) < 5, (
+        f"confidence 0.49→0.51 分差 {abs(s_above-s_below):.1f} 超出 5 分，"
+        "regime 评分仍有断崖效应"
+    )

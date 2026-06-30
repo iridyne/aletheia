@@ -76,8 +76,14 @@ def vol_target_size(
     conviction: int = 70,
     drawdown_pct: float = 0.0,
     atr_pct_override: float | None = None,
+    paper_trade_count: int = 0,
 ) -> float:
-    """Unified volatility-target sizing: risk_budget / ATR% * conviction scale.
+    """Unified volatility-target sizing with sample-aware Kelly fraction.
+
+    P1-5: paper_trade_count adjusts the effective Kelly fraction:
+      < 10 trades  → effective_kelly = 0.10 (one-tenth Kelly — new strategies start small)
+      10-30 trades → linear ramp from 0.10 to base_kelly
+      >= 30 trades → base_kelly unchanged (backward compatible)
 
     Reads config for risk budget and caps. Falls back to flat base_notional
     when vol_sizing_enabled=False or no ATR data is available.
@@ -86,8 +92,20 @@ def vol_target_size(
 
     cfg = load_config()
     base = cfg.trading.default_notional_usdt
+    base_kelly = cfg.trading.vol_kelly_cap_fraction
+
+    # P1-5: sample-aware Kelly fraction
+    if paper_trade_count < 10:
+        effective_kelly = 0.1
+    elif paper_trade_count < 30:
+        t = (paper_trade_count - 10) / 20.0
+        effective_kelly = 0.1 + t * (base_kelly - 0.1)
+    else:
+        effective_kelly = base_kelly
+
     if not cfg.trading.vol_sizing_enabled:
-        return compute_position_size(conviction, base, drawdown_pct=drawdown_pct)
+        return compute_position_size(conviction, base, drawdown_pct=drawdown_pct,
+                                     kelly_fraction=effective_kelly)
 
     # Get ATR%
     atr_pct = atr_pct_override
@@ -95,20 +113,20 @@ def vol_target_size(
         atr_pct = _lookup_atr_pct(symbol)
 
     if not atr_pct or atr_pct <= 0:
-        return compute_position_size(conviction, base, drawdown_pct=drawdown_pct)
+        return compute_position_size(conviction, base, drawdown_pct=drawdown_pct,
+                                     kelly_fraction=effective_kelly)
 
     # Core formula: size such that 1 ATR move = risk_budget
-    # raw_size = risk_budget / (atr_pct / 100)
     risk_budget = cfg.trading.vol_target_risk_usdt
     raw_size = risk_budget / (atr_pct / 100.0)
 
-    # Kelly cap: single position <= kelly_cap_fraction of base notional
-    # base * kelly_cap_fraction * 4 * _MAX_MULTIPLIER keeps the range in-line with compute_position_size output
-    kelly_cap = base * (cfg.trading.vol_kelly_cap_fraction * 4) * _MAX_MULTIPLIER
+    # Kelly cap scaled by effective_kelly
+    kelly_cap = base * (effective_kelly * 4) * _MAX_MULTIPLIER
     sized = min(raw_size, kelly_cap)
 
     # Apply conviction multiplier and drawdown scale
-    return compute_position_size(conviction, sized, drawdown_pct=drawdown_pct)
+    return compute_position_size(conviction, sized, drawdown_pct=drawdown_pct,
+                                 kelly_fraction=effective_kelly)
 
 
 def _lookup_atr_pct(symbol: str) -> float | None:

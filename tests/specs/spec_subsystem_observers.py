@@ -232,3 +232,46 @@ def test_equity_observer_opportunity_execution_eligible():
             f"Opportunity() at line {call.lineno}: execution_eligible={ast.unparse(val)!r}, "
             "expected False"
         )
+
+
+# ---------------------------------------------------------------------------
+# Round 2: Market Observer LLM Pre-Filter (OBS-PRE-FILTER)
+# Coriva impl plan 2026-06-30 — P1-7
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "OBS-PRE-FILTER", "agent_contracts",
+        "§market_observer pre_filter_no_signal",
+        "L2a",
+        "_has_sufficient_signal() 函数存在于 market_observer.py，"
+        "且在 _analyze_symbol() 中于 llm_structured 调用前被调用。",
+        status="implemented",
+    ),
+)
+def test_observer_has_pre_filter_function():
+    import inspect
+    import aletheia.agents.market_observer as mo
+    assert hasattr(mo, "_has_sufficient_signal"), (
+        "_has_sufficient_signal 不存在 — OBS-PRE-FILTER 未实现"
+    )
+    src = inspect.getsource(mo._analyze_symbol)
+    assert "_has_sufficient_signal" in src, (
+        "_analyze_symbol 未调用 _has_sufficient_signal — pre-filter 未接入"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "OBS-PRE-FILTER-LOGIC", "agent_contracts",
+        "§market_observer pre_filter_signal_detection",
+        "L2b",
+        "_has_sufficient_signal: RSI>12 偏离返回 True；平静市场返回 False。",
+        status="implemented",
+    ),
+)
+def test_pre_filter_signal_detection():
+    import aletheia.agents.market_observer as mo
+    assert mo._has_sufficient_signal("| RSI | 1h | 72.3 | rising |") is True
+    assert mo._has_sufficient_signal("| RSI | 1h | 51.2 | flat |") is False

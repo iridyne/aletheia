@@ -206,9 +206,12 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                     f"(bull {debate.bull_confidence} vs bear {debate.bear_confidence}) → skip]"
                 )
 
-    # Compute sizing for trade-like actions
+    # Compute sizing for trade-like actions (P1-5: pass strategy trade count for sample-aware Kelly)
     if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
-        decision.position_size_usdt = _compute_position_size(decision.conviction, symbol=decision.symbol)
+        ptc = _get_strategy_paper_trade_count(decision.strategy_id)
+        decision.position_size_usdt = _compute_position_size(
+            decision.conviction, symbol=decision.symbol, paper_trade_count=ptc
+        )
     elif decision.action in trade_actions:
         decision.action = "skip"
 
@@ -393,19 +396,40 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 
 # ── sizing ────────────────────────────────────────────────────────────────────
 
-def _compute_position_size(conviction: int, symbol: str | None = None) -> float:
+def _compute_position_size(
+    conviction: int,
+    symbol: str | None = None,
+    paper_trade_count: int = 0,
+) -> float:
     """Compute notional position size from conviction score (0-100).
 
-    When vol_sizing_enabled and symbol is provided, uses ATR-normalized sizing.
+    P1-5: paper_trade_count is passed through to vol_target_size so new strategies
+    start at 0.1 Kelly and ramp up as evidence accumulates (30+ trades = full Kelly).
     """
     from aletheia.config.loader import load_config
     cfg = load_config()
     if cfg.trading.vol_sizing_enabled and symbol:
         from aletheia.trading.sizing import vol_target_size
-        return vol_target_size(symbol, conviction=conviction)
+        return vol_target_size(symbol, conviction=conviction, paper_trade_count=paper_trade_count)
     from aletheia.trading.sizing import compute_position_size
     base = cfg.trading.default_notional_usdt
     return compute_position_size(conviction, base)
+
+
+def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
+    """Return closed paper/demo positions count for a strategy — used for sample-aware Kelly."""
+    if not strategy_id:
+        return 0
+    try:
+        from aletheia.storage.sqlite import get_db
+        row = get_db().execute(
+            "SELECT count(*) FROM positions "
+            "WHERE strategy_id = ? AND status = 'closed' AND execution_mode NOT LIKE '%live%'",
+            (strategy_id,),
+        ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
 
 
 # ── prompt builders ───────────────────────────────────────────────────────────

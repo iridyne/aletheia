@@ -292,10 +292,10 @@ def test_regime_scoring_is_direction_aware():
         score_bull_long = _compute_trade_score(opp, None, factor_signal, "high", None, direction="long")
         score_bull_short = _compute_trade_score(opp, None, factor_signal, "high", None, direction="short")
 
-    # Bear: shorts score higher than longs (+15 vs -20 delta = 35 pt gap)
+    # Bear: shorts score higher than longs (regime smooth: gap < old discrete 35pt but direction preserved)
     assert score_bear_short > score_bear_long
-    assert score_bear_short - score_bear_long == 35.0
+    assert score_bear_short - score_bear_long > 10  # meaningful gap, not just noise
 
-    # Bull: longs score higher than shorts (+15 vs -15 delta = 30 pt gap)
+    # Bull: longs score higher than shorts (gap < old discrete 30pt but direction preserved)
     assert score_bull_long > score_bull_short
-    assert score_bull_long - score_bull_short == 30.0
+    assert score_bull_long - score_bull_short > 10

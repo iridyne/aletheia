@@ -275,6 +275,15 @@ def _evaluate_candidate(
     }
     factor_signal = lookup_factor_signal(candidate_for_factor)
 
+    # P1-4: hard_blocked is a hard reject — high confidence cannot override a confirmed loser
+    if factor_signal.get("status") == "hard_blocked":
+        return _make_candidate(
+            opp, skip_reason="factor_hard_blocked",
+            direction=direction, strategy_id=strategy_id,
+            factor_signal=factor_signal,
+            universe_member=universe_member,
+        )
+
     # Guard evaluation (deterministic, no LLM)
     guard_eval = _evaluate_guards_safe(
         opp, universe_member, factor_signal, direction, confidence,
@@ -327,30 +336,39 @@ def _compute_trade_score(
     """Compute deterministic trade quality score."""
     score = 0.0
 
-    # Confidence contribution
+    # P0-1: Confidence contribution (clip-normalized: max 50 pts, was 100)
+    # Prevents raw 0-100 score from dominating regime/factor signals (Round 1 direction bias).
+    _clip_norm = lambda v, lo, hi: (min(max(float(v or 0), lo), hi) - lo) / (hi - lo + 1e-8)
+
     conf_score = opp.get("confidence_score")
     if conf_score is not None:
-        score += float(conf_score)
+        score += 50 * _clip_norm(conf_score, 0, 100)
     else:
         score += _CONFIDENCE_SCORE_DEFAULT.get(confidence, 20)
 
-    # Universe metadata
+    # Universe metadata (P0-1: clip-normalize universe scores)
     if universe_member:
-        score += 0.5 * float(universe_member.get("total_score") or 0)
-        score += 0.5 * float(universe_member.get("tradability_score") or 0)
+        score += 25 * _clip_norm(universe_member.get("total_score") or 0, 0, 100)
+        score += 10 * _clip_norm(universe_member.get("tradability_score") or 0, 0, 100)
         score -= float(universe_member.get("late_entry_penalty") or 0)
         score -= float(universe_member.get("crowding_risk") or 0)
 
-    # Factor feedback bonus/penalty
+    # P0-3: Factor feedback — IC-proxy continuous weighting (replaces discrete ±5/±20 jumps)
     factor_status = factor_signal.get("status", "watch")
-    if factor_status == "preferred":
-        score += 20
-    elif factor_status == "blocked_candidate":
+    factor_win_rate = factor_signal.get("win_rate")
+    factor_trade_count = factor_signal.get("trade_count", 0)
+
+    if factor_status == "blocked_candidate":
         score -= 50
-    elif factor_status == "active":
-        score += 5
-    elif factor_status == "watch":
-        score -= 5
+    else:
+        # IC proxy: (win_rate - 0.5) * 2, range [-1, +1]; max ±20 pts
+        # Sample weight: ramps to full weight at 10 trades (avoids noise from 3-trade factors)
+        if factor_win_rate is not None and factor_trade_count >= 3:
+            ic_proxy = (factor_win_rate - 0.5) * 2
+            sample_weight = min(1.0, factor_trade_count / 10.0)
+            score += 20 * ic_proxy * sample_weight
+        else:
+            score -= 5  # no history: mild penalty (was 0 for watch)
 
     # Strategy evidence bonus/penalty (backtest + paper PnL attribution)
     if strategy_evidence:
@@ -367,17 +385,29 @@ def _compute_trade_score(
         elif drift_status == "paper_confirming":
             score += 10
 
-    # Regime-aware scoring: reward direction-aligned candidates, penalize mismatches.
-    # "bear + short" and "bull + long" are aligned; the opposite is a mismatch.
-    # "volatile" suppresses both directions slightly; "sideways" is neutral.
+    # P0-5: Regime-aware scoring with smooth confidence weighting (no 0.5 cliff).
+    # P0-2: Sideways branch added — trend-family scanners penalised in sideways (CTA lit.).
+    _BASE_REGIME_DELTA = {
+        ("bear", "short"): +20,
+        ("bear", "long"):  -25,
+        ("bull", "long"):  +20,
+        ("bull", "short"): -20,
+    }
+    _TREND_FAMILIES = {"breakout", "momentum", "ma_crossover", "trend"}
+
     regime = get_current_regime()
-    if regime.confidence > 0.5:
-        if regime.state == "bear":
-            score += 15 if direction == "short" else -20
-        elif regime.state == "bull":
-            score += 15 if direction == "long" else -15
-        elif regime.state == "volatile":
-            score -= 10  # both directions carry elevated risk
+    if regime.state in ("bear", "bull"):
+        delta = _BASE_REGIME_DELTA.get((regime.state, direction), 0)
+        weight = regime.confidence ** 1.5  # smooth: avoids hard cliff at 0.5
+        score += delta * weight
+    elif regime.state == "volatile":
+        score -= 10 * (regime.confidence ** 1.5)
+    elif regime.state == "sideways" and regime.confidence > 0.6:
+        scanner = (opp.get("scanner_family") or "").lower()
+        if any(t in scanner for t in _TREND_FAMILIES):
+            score -= 25  # trend-following performs worst in sideways
+        elif "reversion" in scanner or "arb" in scanner:
+            score += 15  # mean-reversion strategies benefit from sideways
 
     # P2: Executable RuleSet bonus — verified strategies get preference
     if strategy_has_ruleset:
