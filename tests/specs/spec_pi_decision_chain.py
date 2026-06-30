@@ -267,7 +267,7 @@ def test_b_path_council_not_yet_implemented():
         "在 Auto 模式下与任何其他模式完全相同地运行。risk_engine.py 不得读取"
         " operator.permission_mode 并做 skip/bypass 分支判断。L2c 系统不变式：任意"
         " permission_mode 下，违规 proposal 均返回 approved=False。",
-        status="missing",
+        status="implemented",
     )
 )
 def test_risk_engine_does_not_read_operator_permission_mode(tmp_path, monkeypatch):
