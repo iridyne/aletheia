@@ -313,3 +313,56 @@ def test_legacy_vocab_normalized_to_canonical():
     # Strictly increasing weight along the ladder (speculative < ... < disclosed).
     ordered = [scores[t] for t in TIER_LADDER]
     assert ordered == sorted(ordered) and len(set(ordered)) == len(ordered), scores
+
+
+# ---------------------------------------------------------------------------
+# SE-S07 — crypto-only symbol filter (anti-hallucination)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "SE-S07", _CONTRACT, "§4 crypto-only symbol filter", "L2a",
+        "research_worker.py defines and applies _is_tradeable_crypto_symbol() to reject "
+        "non-crypto symbols (stocks, forex, macro aggregates) before persisting a "
+        "SerenityOpportunity, preventing LLM hallucinations from entering the PI context",
+    ),
+)
+def test_research_worker_has_tradeable_symbol_filter():
+    src = _RESEARCH_WORKER.read_text(encoding="utf-8")
+    assert "_is_tradeable_crypto_symbol" in src, (
+        "research_worker.py missing _is_tradeable_crypto_symbol — hallucinated symbols like "
+        "MSTR/USD or SPY can reach the PI trading context"
+    )
+    assert "_ALLOWED_QUOTE_CURRENCIES" in src, (
+        "research_worker.py missing _ALLOWED_QUOTE_CURRENCIES allowlist"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "SE-I07", _CONTRACT, "§4 filter rejects non-crypto, allows crypto", "L2b",
+        "_is_tradeable_crypto_symbol() returns False for stocks/forex/aggregates and "
+        "True for valid crypto USDT-quoted pairs",
+    ),
+)
+def test_tradeable_symbol_filter_behavior():
+    from aletheia.agents.research_worker import _is_tradeable_crypto_symbol
+
+    # Must reject hallucination symbols
+    assert not _is_tradeable_crypto_symbol("MSTR/USD"), "stock ticker should be rejected"
+    assert not _is_tradeable_crypto_symbol("SPY"), "ETF ticker without slash should be rejected"
+    assert not _is_tradeable_crypto_symbol("GBP/USD"), "forex pair should be rejected"
+    assert not _is_tradeable_crypto_symbol("GBTC/USD"), "GBTC/USD should be rejected"
+    assert not _is_tradeable_crypto_symbol("ALTCOINS"), "macro aggregate should be rejected"
+    assert not _is_tradeable_crypto_symbol("STABLECOIN_SUPPLY_AGGREGATE"), "aggregate should be rejected"
+    assert not _is_tradeable_crypto_symbol("USDT/INR"), "fiat-quoted pair should be rejected"
+    assert not _is_tradeable_crypto_symbol(""), "empty string should be rejected"
+    assert not _is_tradeable_crypto_symbol("BTC/USD"), "USD-quoted pair should be rejected"
+
+    # Must accept valid crypto pairs
+    assert _is_tradeable_crypto_symbol("BTC/USDT"), "BTC/USDT should be accepted"
+    assert _is_tradeable_crypto_symbol("ETH/USDT"), "ETH/USDT should be accepted"
+    assert _is_tradeable_crypto_symbol("SOL/USDT"), "SOL/USDT should be accepted"
+    assert _is_tradeable_crypto_symbol("DOGE/USDT"), "DOGE/USDT should be accepted"
+    assert _is_tradeable_crypto_symbol("ETH/BTC"), "ETH/BTC should be accepted"

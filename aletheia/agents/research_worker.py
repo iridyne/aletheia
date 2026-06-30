@@ -29,6 +29,28 @@ logger = logging.getLogger("aletheia.research_worker")
 
 _EXECUTOR_LOCK = threading.Lock()
 
+# Crypto-only allowlist: the quote currency must be one of these for a serenity
+# opportunity to be persisted.  Blocks LLM hallucinations like MSTR/USD, SPY,
+# GBP/USD, ALTCOINS etc. from reaching the trading decision chain.
+_ALLOWED_QUOTE_CURRENCIES = frozenset({"USDT", "USDC", "BTC", "ETH", "BUSD"})
+
+
+def _is_tradeable_crypto_symbol(symbol: str) -> bool:
+    """Return True only for canonical crypto pairs with an allowed quote currency."""
+    if not symbol or "/" not in symbol:
+        return False
+    parts = symbol.split("/")
+    if len(parts) != 2:
+        return False
+    base, quote = parts[0].strip(), parts[1].strip()
+    # quote must be an allowed crypto currency
+    if quote not in _ALLOWED_QUOTE_CURRENCIES:
+        return False
+    # base must look like a crypto ticker (letters/digits, 2-10 chars)
+    if not base or not base.isalnum() or len(base) > 10:
+        return False
+    return True
+
 
 def _get_recent_news_for_research() -> str:
     """Fetch recent high-relevance analyzed news for injection into research context."""
@@ -182,9 +204,15 @@ _THEMES_SYSTEM = (
 )
 
 _OPPORTUNITIES_SYSTEM = (
-    "You are an opportunity identifier. Given research themes with evidence, identify potential opportunities. "
+    "You are an opportunity identifier for a crypto derivatives trading system. "
+    "Given research themes with evidence, identify potential opportunities. "
+    "CRITICAL: only output symbols that are actual crypto perpetual/spot pairs tradeable on OKX or Bitget, "
+    "such as BTC/USDT, ETH/USDT, SOL/USDT. "
+    "NEVER output stock tickers (MSTR, SPY, GBTC), forex pairs (GBP/USD), "
+    "macro aggregates (ALTCOINS, STABLECOIN_SUPPLY_AGGREGATE), or any non-USDT quoted crypto pairs. "
     "Return ONLY a JSON array of opportunity objects. Each must have: "
-    '"symbol" (string: canonical format like "BTC/USDT"), "direction" (string: "long" or "short"), '
+    '"symbol" (string: canonical crypto format, quote must be USDT — e.g. "BTC/USDT"), '
+    '"direction" (string: "long" or "short"), '
     '"thesis" (string: why this is an opportunity), '
     '"evidence_tier" (string, your PROPOSED grade: one of "disclosed", "high_confidence", "likely", "speculative" '
     '— an independent evaluator assigns the authoritative tier from the supporting evidence), '
@@ -508,6 +536,13 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         if not err:
             opp_items = _parse_json_array(opps_text, "opportunities")
             for i, item in enumerate(opp_items[:5]):
+                raw_sym = (item.get("symbol") or "").strip()
+                if not _is_tradeable_crypto_symbol(raw_sym):
+                    logger.info(
+                        "Skipping non-tradeable symbol from LLM: %r — only USDT-quoted crypto pairs allowed",
+                        raw_sym,
+                    )
+                    continue
                 theme_id = persisted_themes[min(i, len(persisted_themes) - 1)] if persisted_themes else None
                 if theme_id:
                     # The opportunity's authoritative tier is derived from the strongest
