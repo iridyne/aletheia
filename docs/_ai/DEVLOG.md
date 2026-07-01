@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-07-01 — reconciler 假孤儿 thrash 根因修复 + Scorecard 去污
+
+### 触发
+监控抓到做空仓批量 reconciled_gone 平仓 + 相同价 adopted 重开 → thrash 循环。
+
+### 根因
+非 Bitget 账户上 classify_positions 在 unified 缓存过期时回退读空的 legacy Bitget 缓存 →
+误判全部 OKX 持仓 orphaned → 本地平(不动交易所)→ 重认领 → 无限 thrash。41% 仓位
+reconciled_gone、56% adopted、strategy 归因被毁(10/110 真实平仓带 strategy_id)。
+
+### 修复(commit 5d6bb89,SDD)
+- P0 classify_positions 回退 broker 感知(非 Bitget+unified 过期 → bail);PL-ADOPT-10/11/12
+- P1 go_live_scorecard 排除 synthetic 平仓(新建 analytics/close_reasons.py);AN-S03
+- 穷尽排查确认缓存错配只坑 reconciler 一处
+
+### 未做(P2,触 execution 边界待 owner 批)
+adopt 交易所保护单 / adoption strategy_id / factor_feedback 过滤。
+
+### 验证
+conformance 500 全绿;full suite 1815/0;真配置 stale 路径 0 false-orphan;doctor healthy。
+报告 docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md。
+
+---
+
 ## 2026-07-01 — Phase 2A+ 剩余四项收口（2A/2A+ 全 CLOSED）
 
 ### 触发

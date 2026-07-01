@@ -3,7 +3,21 @@
 > 只写意图/计划,不写运行态事实(regime/持仓/db 大小/gateway 状态——这些换台机器必过期)。
 > 真实状态一律 `aletheia doctor`。详细意图叙事见 `docs/_ai/CURRENT_TASK.md`(canonical)。
 
-## Status: Phase 2A + 2A+ 全 CLOSED —— 进入「先跑攒干净窗」观察阶段
+## Status: reconciler 假孤儿 thrash 已修复(5d6bb89)—— 干净窗从此刻重新起算
+
+观察 2A+.10 做空链路时发现并修复一个**污染整个观察窗的根因 bug**:非 Bitget 账户上
+reconciler 在 unified 缓存过期时读空的 legacy Bitget 缓存 → 误判全部 OKX 持仓 orphaned →
+本地平仓(不动交易所)→ 重认领 → 无限 thrash。41% 仓位 reconciled_gone、56% adopted、
+strategy 归因被毁。已 SDD 修复(P0 broker 感知回退 + P1 Scorecard 去污,spec PL-ADOPT-10~12/
+AN-S03,full suite 1815/0)。详见 `docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md`
++ AI_HANDOFF/DEVLOG。**修复前的 adopted 碎片/thrash 数据不计入策略评估,干净窗从修复后起算。**
+
+**P2 待 owner 批(触 execution 边界)**:adopt 仓下交易所保护单 / adoption 保留 strategy_id /
+factor_feedback 是否过滤 thrash。
+
+---
+
+## 上阶段:Phase 2A + 2A+ 全 CLOSED —— 进入「先跑攒干净窗」观察阶段
 
 本会话把 Phase 2A+ 剩余四项(2A+.2/.4/.9/.11)一次收口,ROADMAP 的 Phase 2A(可执行策略)
 与 Phase 2A+(方向性)代码层面全部关闭。commit `f093e36`(实现) + `8cea488`(文档),push master。

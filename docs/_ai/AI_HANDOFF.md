@@ -7,7 +7,42 @@
 
 ## Last Updated
 
-2026-07-01 (Phase 2A+ 剩余四项收口 — 2A/2A+ 全 CLOSED)
+2026-07-01 (reconciler 假孤儿 thrash 根因修复 + Scorecard 去污)
+
+---
+
+## Recent Change (reconciler 假孤儿 thrash 修复 — 2026-07-01)
+
+### 背景
+观察 Phase 2A+.10 做空链路时监控抓到:6 空仓 2s 内全平(reconciled_gone,均未碰 stop/tp),
+5min 后以相同入场价全部 source=adopted 重开。追到代码核心 → 自维持 thrash 循环。根因分析
+报告 `docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md`(commit 3ea0005/5d6bb89)。
+
+### 根因
+非 Bitget 账户(okx_demo)上 `position_reconciler.classify_positions` 在 unified 多 broker
+缓存过期(≥600s)时回退读 legacy Bitget-only 缓存 → 该缓存新鲜但空(0 持仓,status=ok)→
+诚实性守卫因 status=ok 不触发 → 所有 OKX 持仓误判 orphaned → reconcile 平仓(仅本地记账不动
+交易所)→ 持仓仍在 OKX → 下周期 auto-adopt 重认领 → 无限 thrash。触发窗口=exchange_sync
+连续 2 次 OKX 同步超时使 unified age>600s,撞 5min reconcile 节拍。
+
+### 损益评估
+41% 仓位 reconciled_gone、56% source=adopted;PnL 数字未被粉饰(reconciled_gone 净 -0.72,
+≈平),但**strategy 归因被毁**:仅 10/110 真实平仓带 strategy_id,0/116 adopted 带 strategy_id,
+64% 真实平仓在 adopted 碎片上(默认 2%/4% 价位非策略价位)。owner 干净窗基本是 thrash 产物。
+
+### 修复(SDD,commit 5d6bb89)
+- **P0** classify_positions 回退改 broker 感知:仅 Bitget/live 才回退 legacy 缓存;非 Bitget +
+  unified 过期 → bail 全 managed。spec PL-ADOPT-10/11/12。实测真配置 stale 路径 0 false-orphan。
+- **P1** go_live_scorecard 四项交易指标排除 synthetic 平仓(新建 analytics/close_reasons.py 单一
+  真源;trade_case_builder 复用)。spec AN-S03。
+- 穷尽排查:缓存错配只坑 reconciler 一处(其它消费者 mode=None 默认路径已被 profit-loop 保护)。
+
+### 未做(P2,触 execution 边界,待 owner 批)
+adopt 仓不下交易所保护单 / adoption 抹 strategy_id / factor_feedback 是否过滤 thrash。
+
+### 验证
+conformance 496→500 全绿;full suite 1815 passed/0 failed;gateway restart 后真配置模拟 stale 路径
+0 false-orphan;doctor health.rollup healthy(reconciled_ratio 是 trailing 窗,会自愈)。
 
 ---
 
