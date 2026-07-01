@@ -174,7 +174,9 @@ class OKXClient:
 
         params = {}
         if order.client_oid:
-            params["clOrdId"] = order.client_oid[:32]
+            # OKX clOrdId: alphanumeric only, max 32 chars. Strip hyphens from UUIDs
+            # and "close-<uuid>" prefixes before truncating.
+            params["clOrdId"] = order.client_oid.replace("-", "")[:32]
 
         if spot:
             # No leverage, no contract conversion: amount == coin quantity.
