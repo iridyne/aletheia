@@ -6,6 +6,7 @@ import logging
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
 from aletheia.storage.repositories import list_agent_runs
 
@@ -231,6 +232,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         ),
         user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
         max_tokens=600,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_complete_lessons", "observe", True)
     if err:
@@ -343,6 +345,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
                "(3) one suggested focus for tomorrow. Keep it brief.",
         user=f"Recent agent activity:\n{activity}{post_mortem_ctx}\n\nWrite the dreaming log.",
         max_tokens=700,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_complete", "observe", True)
     item = None

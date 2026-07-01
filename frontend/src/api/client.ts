@@ -249,13 +249,13 @@ export const api = {
   setExchangeMode: (mode: string) => post('/settings/exchange-mode', { mode }),
 
   // Model provider config
-  getModelConfig: () => fetchJson<{ default_provider: string; providers: Record<string, any> }>('/model'),
+  getModelConfig: () => fetchJson<{ default_provider: string; deep_provider: string | null; fast_provider: string | null; providers: Record<string, any> }>('/model'),
   getModelHealth: () => fetchJson<{ provider: string; available: boolean; model: string; error: string | null; models: string[] }[]>('/model/health'),
   pingModel: () => post<{ ok: boolean; latency_ms: number; model: string; response: string; error: string | null }>('/model/ping'),
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
-    enabled?: boolean; default?: boolean; api_key?: string; codex_model?: string
-    workspace_url?: string; auth_scheme?: string
+    enabled?: boolean; default?: boolean; set_as_deep?: boolean; set_as_fast?: boolean
+    api_key?: string; codex_model?: string; workspace_url?: string; auth_scheme?: string
   }) => post('/settings/model', body),
   testModelCandidate: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
@@ -344,7 +344,7 @@ export const api = {
   }>(`/analytics/pipeline-funnel?hours=${hours}`),
   getLearningFunnel: () => fetchJson<{
     knowledge_items_by_type: Array<{ item_type: string; count: number }>
-    pi_actual_visibility: { layer3_lesson_filter_db_hits: number; layer3_guards_in_recent_30: number; comment: string }
+    pi_actual_visibility: { layer3_lesson_hits: number; layer3_guards_available: number; note: string }
     ps_lessons: { total: number; by_status: Array<{ status: string; count: number }>; latest_created_at: string | null }
     serenity_opportunities_active: number
   }>('/analytics/learning-funnel'),

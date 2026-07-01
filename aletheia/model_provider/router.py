@@ -314,3 +314,20 @@ async def _safe_healthcheck(name: str) -> ModelHealth:
         return await provider.healthcheck()
     except Exception as e:
         return ModelHealth(provider=name, available=False, error=str(e))
+
+
+def get_provider_for_tier(tier: str | None) -> str:
+    """Translate a routing tier label to a configured provider name.
+
+    tier="deep"  → cfg.models.deep_provider  (falls back to default_provider if None)
+    tier="fast"  → cfg.models.fast_provider  (falls back to default_provider if None)
+    tier=None    → cfg.models.default_provider
+
+    Unknown tiers fall back to default_provider — never raises.
+    """
+    cfg = load_config()
+    if tier == "deep":
+        return cfg.models.deep_provider or cfg.models.default_provider
+    if tier == "fast":
+        return cfg.models.fast_provider or cfg.models.default_provider
+    return cfg.models.default_provider

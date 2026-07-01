@@ -3284,9 +3284,16 @@ function ModelProviderCard({ qc }: any) {
 
   if (!data) return <p className="hint">Loading providers…</p>
 
+  const deepName = (data as any).deep_provider
+  const fastName = (data as any).fast_provider
+
   return (
     <div className="flex flex-col gap-2">
       <ModelPingButton />
+      <div style={{ fontSize: '0.72rem', color: 'var(--muted)', display: 'flex', gap: '1rem', paddingLeft: '0.2rem' }}>
+        <span>Deep (decisions): <span style={{ color: 'var(--text)' }}>{deepName || '→ default'}</span></span>
+        <span>Fast (research): <span style={{ color: 'var(--text)' }}>{fastName || '→ default'}</span></span>
+      </div>
       {ALL_PROVIDERS.map(p => (
         <ProviderCard
           key={p}
@@ -3295,6 +3302,8 @@ function ModelProviderCard({ qc }: any) {
           health={(health as any[]).find(x => x.provider === p)}
           allHealth={health as any[]}
           isDefault={p === data.default_provider}
+          isDeep={p === deepName}
+          isFast={p === fastName}
           isExpanded={expanded === p}
           onToggle={() => setExpanded(expanded === p ? null : p)}
           qc={qc}
@@ -3323,8 +3332,8 @@ function ModelPingButton() {
   )
 }
 
-function ProviderCard({ name, config, health, allHealth, isDefault, isExpanded, onToggle, qc }: {
-  name: string; config: any; health: any; allHealth: any[]; isDefault: boolean
+function ProviderCard({ name, config, health, allHealth, isDefault, isDeep, isFast, isExpanded, onToggle, qc }: {
+  name: string; config: any; health: any; allHealth: any[]; isDefault: boolean; isDeep: boolean; isFast: boolean
   isExpanded: boolean; onToggle: () => void; qc: any
 }) {
   const isHTTP = HTTP_PROVIDERS.has(name)
@@ -3444,7 +3453,7 @@ function ProviderCard({ name, config, health, allHealth, isDefault, isExpanded, 
           ) : name === 'anthropic_native' ? (
             <ClaudeOAuthPanel config={config} health={health} qc={qc} />
           ) : isHTTP ? (
-            <HTTPProviderForm name={name} config={config} isDefault={isDefault} qc={qc} />
+            <HTTPProviderForm name={name} config={config} isDefault={isDefault} isDeep={isDeep} isFast={isFast} qc={qc} />
           ) : name === 'codex_cli' ? (
             <CodexCLIPanel config={config} health={health} qc={qc} />
           ) : (
@@ -3465,8 +3474,8 @@ const TIER_COLORS: Record<string, string> = {
   reasoning: 'var(--blue)',
 }
 
-function HTTPProviderForm({ name, config, isDefault, qc }: {
-  name: string; config: any; isDefault: boolean; qc: any
+function HTTPProviderForm({ name, config, isDefault, isDeep, isFast, qc }: {
+  name: string; config: any; isDefault: boolean; isDeep: boolean; isFast: boolean; qc: any
 }) {
   const [baseUrl, setBaseUrl] = useState(() => config?.base_url || '')
   const [model, setModel] = useState(() => config?.model || '')
@@ -3548,6 +3557,17 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
     mutationFn: () => api.setModelProvider({ provider: name, enabled: true, default: true }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
   })
+
+  const setRoutingRole = useMutation({
+    mutationFn: (role: string) => {
+      if (role === 'default') return api.setModelProvider({ provider: name, enabled: true, default: true })
+      if (role === 'deep') return api.setModelProvider({ provider: name, enabled: true, set_as_deep: true })
+      return api.setModelProvider({ provider: name, enabled: true, set_as_fast: true })
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['model'] }); qc.invalidateQueries({ queryKey: ['status'] }) },
+  })
+
+  const currentRole = isDefault ? 'default' : isDeep ? 'deep' : isFast ? 'fast' : 'none'
 
   const filteredModels = (!modelEditing || !model) ? (detectedModels ?? []) : (detectedModels?.filter(m =>
     m.slug.toLowerCase().includes(model.toLowerCase()) || m.display_name.toLowerCase().includes(model.toLowerCase())
@@ -3643,15 +3663,24 @@ function HTTPProviderForm({ name, config, isDefault, qc }: {
       </label>
 
       {/* Row 4: Actions — full width */}
-      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
         <button onClick={() => verifyAndSave.mutate()} disabled={verifyAndSave.isPending}>
           {verifyAndSave.isPending ? 'Verifying…' : 'Verify & Save'}
         </button>
-        {!isDefault && (
-          <button className="secondary" onClick={() => setDefault.mutate()} disabled={setDefault.isPending}>
-            Set as Default
-          </button>
-        )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', color: 'var(--muted)', margin: 0 }}>
+          Routing role
+          <select
+            value={currentRole}
+            onChange={e => setRoutingRole.mutate(e.target.value)}
+            disabled={setRoutingRole.isPending}
+            style={{ fontSize: '0.78rem', padding: '0.28rem 0.4rem' }}
+          >
+            <option value="default">Default</option>
+            <option value="deep">Deep tier (decisions)</option>
+            <option value="fast">Fast tier (research)</option>
+            {currentRole === 'none' && <option value="none" disabled>— unassigned —</option>}
+          </select>
+        </label>
         <button className="secondary" onClick={() => detectMut.mutate()} disabled={detectMut.isPending} title="Re-detect models" style={{ marginLeft: 'auto', padding: '0.42rem 0.55rem' }}>
           {detectMut.isPending ? '↻ …' : '↻'}
         </button>

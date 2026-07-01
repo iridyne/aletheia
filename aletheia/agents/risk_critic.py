@@ -3,6 +3,7 @@
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_research_note
 from aletheia.storage.repositories import list_trade_proposals, list_risk_decisions
 
@@ -45,6 +46,7 @@ async def run_risk_critic(permission_mode: str = "Observe", run_id: str | None =
                "Keep under 200 words.",
         user=f"{ctx}\n\nWrite a risk lesson note.",
         max_tokens=600,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_complete", "observe", True)
     if err:

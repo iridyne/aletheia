@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     insert_opportunity, list_strategies,
@@ -356,6 +357,7 @@ async def _analyze_symbol(
         user=f"/no_think\nMarket data for {symbol}:\n{context}{memory_block}\n\nReturn the market read JSON.",
         schema=MarketRead,
         max_tokens=2048,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_structured", "observe", True)
 
