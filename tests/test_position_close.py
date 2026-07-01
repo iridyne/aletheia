@@ -14,7 +14,10 @@ from aletheia.storage import repositories as repo
 
 # Paper round-trip fee model (see portfolio/pnl.close_position):
 # realized = gross_pnl - (entry_price + exit_price) * qty * PAPER_FEE_RATE
-PAPER_FEE_RATE = 0.001
+# 0.0006 = Bitget-taker 0.06% both sides — matches execution_fee_pct default and
+# _EXIT_FEE_BY_MODE["paper_internal"] after the 2026-07-01 demo/live fee-parity fix
+# (PR#35 P1/P3: exit fee by mode + execution_fee_pct 0.1%→0.06%).
+PAPER_FEE_RATE = 0.0006
 
 
 def _round_trip_fee(entry: float, exit_price: float, qty: float) -> float:

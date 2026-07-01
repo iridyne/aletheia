@@ -58,7 +58,8 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     assert row["status"] == "closed"
     assert row["close_reason"] == "stop_loss"
     # closed at stop 98 -> gross (98-100)*1 = -2, minus round-trip fees
-    expected = -2.0 - (100.0 + 98.0) * 1.0 * 0.001
+    # 0.0006 = paper_internal fee both sides after PR#35 demo/live fee-parity fix.
+    expected = -2.0 - (100.0 + 98.0) * 1.0 * 0.0006
     assert row["realized_pnl"] == pytest.approx(expected)
     assert len(repo.list_positions(status="open")) == 0
 
@@ -77,7 +78,8 @@ def test_take_profit_closes_short(tmp_path, monkeypatch):
     row = repo._select_one("positions", p.id)
     assert row["close_reason"] == "take_profit"
     # closed at TP 180 -> gross (200-180)*2 = 40, minus round-trip fees
-    expected = 40.0 - (200.0 + 180.0) * 2.0 * 0.001
+    # 0.0006 = paper_internal fee both sides after PR#35 demo/live fee-parity fix.
+    expected = 40.0 - (200.0 + 180.0) * 2.0 * 0.0006
     assert row["realized_pnl"] == pytest.approx(expected)
 
 
