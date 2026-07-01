@@ -231,3 +231,71 @@ def test_fallback_context_marks_degraded():
     from aletheia.trading import market_context
 
     assert "DEGRADED" in inspect.getsource(market_context)
+
+
+# ---------------------------------------------------------------------------
+# UP-14 — UniverseMember persists all_scores (2A+.12) — round-trip, not string
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("UP-14", "universe_pipeline", "§2A+.12 all_scores persisted", "L2b",
+              "UniverseMember carries all_scores (5-family JSON) end-to-end: model "
+              "field + migration column + service write + DB round-trip"),
+)
+def test_all_scores_persists_round_trip(tmp_path, monkeypatch):
+    """all_scores(五家分数) 必须真落库并读得回,不是构造后被 model_dump 静默丢弃。
+
+    用真实对象检查 + DB round-trip(不是 source 字符串 grep),避免 SP-S05 式假绿:
+      1. model_fields 真含 all_scores(字段被删→立即挂)
+      2. _ADDITIVE_COLUMNS 真注册 universe_members.all_scores(未注册→立即挂)
+      3. insert → read back,all_scores JSON 完整往返(写路径断→立即挂)
+    """
+    import json
+    import sqlite3
+
+    # 1. 模型字段(真 introspection,非字符串)
+    from aletheia.storage.models import UniverseMember
+    assert "all_scores" in UniverseMember.model_fields, "UniverseMember 缺 all_scores 字段"
+
+    # 2. migration 注册(真 list 成员判断,非字符串)
+    from aletheia.storage.migrations import _ADDITIVE_COLUMNS
+    cols = {(c, t) for c, t, _ in _ADDITIVE_COLUMNS}
+    assert ("all_scores", "universe_members") in cols, (
+        "_ADDITIVE_COLUMNS 未注册 universe_members.all_scores → 列不存在,model_dump 写库会丢"
+    )
+
+    # 3. DB round-trip
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    sq._db_conn = conn
+    run_migrations()
+
+    # FK not enforced on this raw connection (foreign_keys defaults OFF), so a
+    # snapshot/registry row isn't required to exercise the all_scores round-trip.
+    scores = {"momentum": 30.0, "mean_reversion": 0.0, "volatility": 12.0,
+              "derivatives": 25.0, "event": 0.0, "short_bias": 18.0}
+    member = UniverseMember(
+        snapshot_id="snap_test", asset_id="asset_test", symbol="BTC/USDT",
+        rank=1, total_score=42.0, scanner_family="momentum",
+        all_scores=json.dumps(scores),
+    )
+    repo.insert_universe_member(member)
+
+    row = conn.execute(
+        "SELECT all_scores FROM universe_members WHERE id=?", (member.id,)
+    ).fetchone()
+    assert row is not None, "member 未落库"
+    assert json.loads(row["all_scores"]) == scores, (
+        f"all_scores 未完整往返: {row['all_scores']}"
+    )

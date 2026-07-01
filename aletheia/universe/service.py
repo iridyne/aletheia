@@ -237,6 +237,7 @@ class UniverseService:
                     crowding_risk=item.get("crowding_risk"),
                     late_entry_penalty=item.get("late_entry_penalty"),
                     scanner_family=item.get("scanner_family"),
+                    all_scores=json.dumps(item.get("all_scores", {})),
                     quote_volume_24h=item.get("quote_volume_24h"),
                     spread_bps=item.get("spread_bps"),
                     ttl_sec=ttl_sec,

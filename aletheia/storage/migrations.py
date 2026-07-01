@@ -1441,6 +1441,8 @@ _ADDITIVE_COLUMNS = [
     ("execution_venue", "strategy_records", "TEXT"),
     # Batch 2 ATR sizing: volatility-scaled position notional
     ("atr_pct", "universe_members", "REAL"),
+    # Phase 2A+.12: persist all-family scores dict for ensemble analysis
+    ("all_scores", "universe_members", "TEXT DEFAULT '{}'"),
     ("entry_market_summary", "positions", "TEXT"),
     # LLM structured observations preserved from market_observer output
     ("key_observations", "opportunities", "TEXT NOT NULL DEFAULT ''"),
