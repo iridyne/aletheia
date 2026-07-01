@@ -59,6 +59,22 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 
 Issue 分工：`docs/issues/BACKEND_ISSUES.md`（bugs/contract drift/dead code，带 file:line）；`docs/issues/FRONTEND_ISSUES.md`（UI spec gaps/honesty breaches）。
 
+## 并发会话 / 多 Workspace 开发（强制 — 血泪教训 2026-07-01）
+
+**前提**：owner 会同时开多个 workspace/会话在同一 repo 上干活。这是常态，不是异常。目标不是"别并发"，而是**在并发下仍不互相破坏**。根问题：多个会话共享**同一个 checkout（工作树 + HEAD + index）**时，一方 `git checkout` 会改变另一方看到的当前分支——曾导致"我以为在 fix 分支、实际在 master"，差点在 master 上误 commit+push。
+
+**隔离优先（首选适应性举措）**：
+- **每个并发会话在自己的 `git worktree` 里干活**（`.claude/worktrees/<name>/`，本 repo 已在用）。worktree = 独立目录 + 独立 HEAD + 独立工作树 + 独立 `dashboard_static/` build 产物，从物理上消除分支/暂存/build 冲突。**不要多个会话在主 checkout 上并行切分支**。
+- 注意 worktree 陷阱：worktree 的 `data/` 为空，restart gateway 会让交易系统空跑；前端上线必须回主仓 FF-merge（见记忆 worktree-gateway-empty-data-trap）。
+
+**若确实在共享 checkout 上操作（无法隔离时）**：
+1. **每次 commit/push/merge/checkout 前**先 `git branch --show-current` + `git status -sb` 重核当前分支与领先/落后，**别信记忆或上文快照**（HEAD 是共享状态，随时被别的会话切走）。
+2. **固化工作用 plumbing，不切 HEAD**：`TREE=$(git write-tree); C=$(git commit-tree $TREE -p HEAD -F - <<'MSG'…MSG); git branch <name> $C`。创建 commit+分支引用但不动 HEAD/工作树/index，对并发会话零干扰；远比 `checkout -b`（会被并发切换干扰）可靠。
+3. **只 `git add` 明确文件**，禁 `git add -A`。提交后 `git show --stat <commit>` 核实文件数对得上——**工具输出可能串入别的会话的 git 结果**（曾出现假的"2 files changed"成功回显，实为并发会话的 commit）；数字对不上立即核实，别向 owner 谎报成功。
+4. **不轻易 `reset --hard` / `checkout`**（会覆盖别的会话正在编辑的工作树）。冲突时优先保护对方改动，不强推。分叉时用 `git merge` 造 merge commit 调和，别 rebase/force。
+5. **前端 build 产物陷阱**：`dashboard_static/` 是 gitignore 的 build 产物、不随 git 走；多会话切分支会把它搅成半成品 → **页面能加载但黑屏**（JS chunk 404，React 崩溃）。诊断：`curl --noproxy '*' http://127.0.0.1:8787/` 看引用的 `/assets/*.js` 是否全 200；修复：`cd frontend && npm run build`。
+6. **gateway 是全局单例**（不随 worktree 隔离，`.claude/worktrees/` 共用主仓 gateway）；别在多个会话/worktree 同时 restart。
+
 ## Spec-Driven Development (SDD)
 
 Spec as Code：L2 契约文档的关键断言已编码为 `tests/specs/spec_*.py` 中的可执行测试。

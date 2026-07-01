@@ -8,7 +8,7 @@
 >
 > 上层愿景见 [VISION](../product/VISION.md);全局文档分层见 [DOC_SYSTEM_PLAN](../product/DOC_SYSTEM_PLAN.md)。
 
-> Last updated: 2026-06-25
+> Last updated: 2026-07-01 (Phase 2A closed + 2A+ status audited against code — see REMAINING_WORK_2026-07-01.md)
 > Sources: PIPELINE_STATUS.md + deep research (102 agents, 20 sources) + WORLD_MAP.md (full architecture vision)
 >   + external Agent Framework Research Report 2025–2026 (validation only — see [agent_framework_research_2025_2026.md](../references/agent_framework_research_2025_2026.md))
 >   + Round 1 experiment data (T+3d: 37 closed, PF=1.416, WR=40.5%) — see [ROUND1_JUDGMENT_PREVIEW](../_ai/ROUND1_JUDGMENT_PREVIEW.md)
@@ -429,118 +429,114 @@ shipping criteria.
 
 ## Phase 2A — Structured Signals & Executable Strategy
 
+> **Status (2026-07-01):** **CLOSED — code implementation done.** All 6 tasks
+> DONE or partial-with-known-design-nuance. Observation phase now in progress
+> (see gate below). Ledger closure evidence recorded in
+> [`REMAINING_WORK_2026-07-01.md`](REMAINING_WORK_2026-07-01.md).
+
 **Goal**: Strategy output becomes machine-readable. Paper_trader actually executes strategy rules.
 
-This phase closes the current honesty gap in the paper loop: `strategy_designer`
-stores free-text `entry_rule` / `exit_rule`, but `paper_trader` still trades on
-opportunity direction + confidence only. Until that changes, promotion gates are
-measuring "opportunity-direction luck + fixed sizing," not whether the strategy's
-own rules were ever executed.
+This phase closes the honesty gap in the paper loop: `strategy_designer` used to
+store only free-text `entry_rule` / `exit_rule`, and `paper_trader` traded on
+opportunity direction + confidence only. That gap is now closed via the
+`RuleSet` DSL: designer compiles LLM-produced structured conditions into a
+serialised `RuleSet`, the `ruleset_scanner` evaluates entry/exit on real OHLCV
+bars each cycle, and `paper_trader` Path A consumes the resulting signals.
 
 ### Tasks
 
-| ID | Task | Reference |
-|---|---|---|
-| 2A.1 | Define declarative `ConditionClause` / `Condition` models for `entry_conditions` stored in strategy parameters | TradingAgents structured output |
-| 2A.2 | Lock `entry_conditions` to the currently computed indicator/timeframe vocabulary and reject unsupported references at parse time | Fixes gap C in PIPELINE_STATUS |
-| 2A.3 | `strategy_designer` emits `entry_conditions` alongside legacy free-text `entry_rule` / `exit_rule` | WORLD_MAP 4.6 |
-| 2A.4 | `paper_trader` evaluates `entry_conditions` against current market context before opening paper positions | Fixes gap C in PIPELINE_STATUS |
-| 2A.5 | Add a condition evaluator plus a structured market-context indicator snapshot for auditable rule checks | — |
-| 2A.6 | Strategy lifecycle: promotion gate now checks "strategy rules were actually tested" | WORLD_MAP 4.6 |
+| ID | Task | Status | Evidence |
+|---|---|---|---|
+| 2A.1 | Declarative `ConditionClause` / `Condition` models for `entry_conditions` stored in strategy parameters | **DONE** | `aletheia/strategy/dsl.py:19-149` (Comparator/Condition/RuleExpr/RuleSet) + `aletheia/agents/strategy_designer.py:40-56` (`ConditionSpec`/`ExecutableStrategySpec`) |
+| 2A.2 | Lock `entry_conditions` to currently computed indicator vocabulary; reject unsupported references at parse time | **DONE** | `strategy_designer.py:30-36` (`_VALID_INDICATORS`) + `:256-262` (compile-time rejection) + `evaluator.py:87` (runtime backstop) |
+| 2A.3 | `strategy_designer` emits `entry_conditions` alongside legacy free-text `entry_rule`/`exit_rule` | **DONE** | `strategy_designer.py:488-496` — `parameters["ruleset"]` (compiled DSL) and `parameters["entry_rule"]`/`["exit_rule"]` (legacy text) coexist |
+| 2A.4 | `paper_trader` evaluates `entry_conditions` against current market context before opening paper positions | **PARTIAL** — RuleSet-bearing strategies only | `ruleset_scanner.py:146` + `paper_trader_ranker.py:258-264` gate entry via `evaluate_at_bar()`. Nuance: (a) actual open is by PI daemon consuming `signal_pending` (PI-central architecture); (b) strategies without a RuleSet have no indicator-level entry check, only meta-gates (regime/factor/guards) |
+| 2A.5 | Condition evaluator + structured market-context indicator snapshot for auditable rule checks | **DONE** | `aletheia/strategy/evaluator.py:105-248` (6 comparators + AND/OR + multi-TF + None-on-insufficient) + `aletheia/trading/market_context.py:65-251` (3-TF snapshot with 8 indicators, auditable markdown + debug dict). Spec locks EV-S01/EV-S02 |
+| 2A.6 | Strategy lifecycle promotion gate checks "strategy rules were actually tested" (ruleset_evaluated) | **DONE** (2026-07-01 `7506a04`) | `strategy_lifecycle.py:238-241` — `failures.append("ruleset_never_evaluated:0_path_a_fills")` when strategy has `ruleset` but zero Path-A fills. Spec **PG-B06** GREEN. Gate fires for both `paper_passed` and `live_candidate` promotions |
 
-### Design Constraints
+### Design Constraints (unchanged)
 
-- **2A is entry-side only**: declarative exit logic stays out of scope here and remains a
-  **Phase 2B** follow-up.
-- **Fixed vocabulary only**: `entry_conditions` may reference only indicators the system
-  already computes. Timeframes stay fixed at `1h`, `4h`, `1d`; indicator surface stays fixed
-  at `last_close`, `sma_20`, `sma_50`, `rsi_14`, `atr_14`, `bb_lower`, `bb_upper`,
-  `bb_pct_b`, `momentum_10`, `volume_zscore_20`.
-- **No executable strategy code**: `entry_conditions` remain pure declarative JSON data.
-  No `eval`, no `exec`, no generated Python, no dynamic dispatch that would smuggle code
-  execution back into the trading path.
-- **No schema migration required**: `StrategyRecord.parameters` remains the storage home for
-  `entry_conditions`, alongside the existing free-text `entry_rule` / `exit_rule`.
-- **Backward compatibility is mandatory**: strategies without `entry_conditions` keep the
-  current direction+confidence behavior until they are upgraded.
+- **2A is entry-side only**: declarative exit logic stays a Phase 2B follow-up (though the
+  DSL already carries an exit RuleExpr for RuleSet-bearing strategies).
+- **No executable strategy code**: `entry_conditions` remain pure declarative JSON. No
+  `eval`, no `exec`, no generated Python.
+- **Fixed vocabulary**: enforced by `_VALID_INDICATORS` whitelist. Actual vocab now covers
+  20 names (`sma`/`ema`/`rsi`/`atr`/`bollinger_*`/`momentum_pct`/`zscore`/`donchian_*`/
+  `obv`/`volume_sma_ratio`/`vwap` + primitives). The earlier version of this doc listed
+  a smaller/older vocab — that doc text was stale, not the enforcement.
+- **No schema migration required**: `StrategyRecord.parameters` remains the JSON home for
+  `ruleset` + `entry_rule`/`exit_rule`.
+- **Backward compatibility**: strategies without `ruleset` keep the current
+  direction+confidence + regime-gate behaviour.
 
-### Implementation Shape & Sequence
+### Observation Gate (2026-07-01 onward — evidence phase)
 
-1. Add declarative `ConditionClause` / `Condition` models with explicit `Literal`
-   validation for indicator, timeframe, and operator.
-2. Add a condition evaluator that reads the structured market-context snapshot and returns
-   an auditable result per clause, per condition, and for the final entry decision.
-3. Expose a compact `{timeframe -> indicator -> value}` market-context snapshot builder so
-   the evaluator consumes the exact indicator surface the system already computes.
-4. Wire `paper_trader` so it evaluates `entry_conditions` before proposal creation; if the
-   rules do not pass, mark the opportunity as reviewed instead of creating a trade proposal.
-5. Extend `strategy_designer` so new strategies emit `entry_conditions` alongside the
-   existing natural-language rule text, preserving human-readable strategy rationale.
-6. Tighten `check_promotion_gates()` so strategies that carry `entry_conditions` must show
-   evidence that those rules were actually evaluated during paper trading.
-
-### Phase 2A Implementation Notes
-
-- Operator handling in the evaluator stays on an explicit whitelist via `Literal`, with
-  hardcoded `if/elif` dispatch only.
-- Audit output must distinguish `market_data_unavailable` from `entry_trigger_not_met`;
-  missing inputs must not masquerade as a failed signal.
-- Promotion-gate evidence must prove a real rule evaluation happened during paper trading,
-  not just that a strategy had free-text rules attached to it.
-- For legacy strategies with no `entry_conditions`, the evaluator step is skipped and the
-  current autonomous paper loop remains unchanged.
-
-### Observation Gate
-
-- [ ] paper_trader decision logs show `entry_conditions` evaluation (not just direction+confidence)
-- [ ] At least 3 strategies have machine-readable `entry_conditions`
-- [ ] Promotion gate distinguishes "strategy rule validated" vs "random signal luck"
+- [ ] Ruleset-bearing strategies produce at least 1 Path-A `signal_pending` in a clean window
+- [ ] `check_promotion_gates` refuses to promote a ruleset strategy with 0 Path-A fills (PG-B06 spec is proof by construction; observation confirms it in prod)
+- [ ] Path B (opportunity-driven) candidates that have a ruleset are blocked by `ruleset_entry_not_met` when the DSL condition is false, not by opportunistic direction/confidence bias
+- [ ] Paper trades executed via Path A show correlation to their strategy's declared conditions, not just opportunity direction luck
 
 ---
 
 ## Phase 2A+ — Strategy Pool & Signal Directionality (Regime → Short 完善)
 
+> **Status (2026-07-01, updated):** **~85% CLOSED.** 8 tasks DONE / 3 PARTIAL / 1 PENDING.
+> Structural spine complete; short_bias dead-code fixed (`04ef582`), all_scores persisted
+> (`8d3bb93`). Only remaining PENDING = 2A+.9 (per-regime family_quota) — an enhancement,
+> not a closure blocker. PARTIAL: 2A+.2 (applicable_regimes never set), 2A+.4 (frontend
+> tags), 2A+.11 (atr_4h/bb_width_4h — defer/enhancement). 2A+.10 端到端 short path 代码
+> 就绪,待 bear regime 运行观察。See table + REMAINING_WORK_2026-07-01.md.
+
 > **前置**: Phase 5.4 Market Regime Detector 已完成 (2026-06-17 `cfbfff6`)。
-> 本 Phase 将 regime 信息从“被动过滤”升级为“主动引导策略选择”。
+> 本 Phase 将 regime 信息从"被动过滤"升级为"主动引导策略选择"。
 
 **Goal**: 策略声明自身的方向偏好和适用 regime，信号方向成为固有属性而非事后推断。
 
 ### P2 — Strategy Pool (direction_affinity + applicable_regimes)
 
-| ID | Task | Status |
-|---|---|---|
-| 2A+.1 | `StrategyRecord` 新增 `direction_affinity` ("long"/"short"/"both") 和 `applicable_regimes` ("bull,sideways"/"all") 字段 | **DONE** (schema + migration) |
-| 2A+.2 | `strategy_designer` 产出策略时自动填写 direction_affinity + applicable_regimes | PENDING |
-| 2A+.3 | `paper_trader_ranker` 按当前 regime 过滤不适用策略 | PENDING |
-| 2A+.4 | Dashboard Strategy 列表展示 direction_affinity + applicable_regimes 标签 | PENDING |
-| 2A+.5 | Settings UI 新增 RegimeConfig 面板(enabled / min_hold_periods / bias_threshold / short_enabled) | PENDING |
+| ID | Task | Status | Evidence / Gap |
+|---|---|---|---|
+| 2A+.1 | `StrategyRecord` 新增 `direction_affinity`/`applicable_regimes` 字段 | **DONE** | `storage/models.py:280-281` + `storage/migrations.py:1437-1438` |
+| 2A+.2 | `strategy_designer` 产出策略时自动填写 direction_affinity + applicable_regimes | **PARTIAL** (2026-07-01 `7506a04`) | direction_affinity 已写 (`strategy_designer.py:526-533`, spec **SP-S04**). Gap: **`applicable_regimes` 从未被 designer 设值**,永远默认 "all",regime 过滤对 designer 产出策略等于 no-op |
+| 2A+.3 | `paper_trader_ranker` 按当前 regime 过滤不适用策略 | **DONE** | `paper_trader_ranker.py:206-215` + `:521-550` `_check_strategy_regime_fit()`,两道 gate(direction_affinity + applicable_regimes),7 个单元测试覆盖 |
+| 2A+.4 | Dashboard Strategy 列表展示 direction_affinity + applicable_regimes 标签 | **PARTIAL** — 纯前端未做 | 后端完整;`frontend/src/types.ts:199-208` `StrategyRecord` interface **不含两个字段**,`StrategyLifecycle.tsx` 表格/抽屉均无展示 |
+| 2A+.5 | Settings UI 新增 RegimeConfig 面板(enabled / min_hold_periods / bias_threshold / short_enabled) | **DONE** | `frontend/src/pages/Settings.tsx:370-447`(4 控件齐全) + `server/routes/settings.py:400-420` POST /settings/regime + `config/schema.py:486-490` RegimeConfig model + runtime consumption `universe/service.py:105-285` |
 
 ### P3 — Signal Directionality Refactoring
 
-| ID | Task | Status |
-|---|---|---|
-| 2A+.6 | Scanner 输出 direction 字段，使方向成为信号固有属性 | PENDING |
-| 2A+.7 | `emit_deterministic_opportunities()` 中移除 `_infer_direction()` 后推断逻辑，改读 scanner 原生 direction | **PARTIAL** — 2026-07-01 US-4: forward-outcome direction (`service.py:256`) 与 opportunity 已同源改读 `scanner_direction`；signal_emitter 保留 `_infer_direction` 作 fallback（符合下方 §Design Constraints 第 3 条）。spec UP-01/UP-03 |
-| 2A+.8 | 新增 `short_momentum` / `bear_breakout` scanner family(专为做空设计) | PENDING |
-| 2A+.9 | Scanner family_quota 配置支持按 regime 动态调整 | PENDING |
-| 2A+.10 | 端到端验证：bear regime + short scanner → short opportunity → paper_trader 执行做空 | PENDING |
-| 2A+.11 | Universe 真 4h 特征(rsi_4h/atr_4h/bb_width_4h)接入 scorer（当前收集未消费）— Scanner 审计 US-16 defer（增强，非 bug） | PENDING |
-| 2A+.12 | UniverseMember 持久化 `all_scores`(5-family) 供 ensemble 分析 — Scanner 审计 US-12 defer（需先有消费者，否则违反 data_utilization「无消费者数据=负债」） | PENDING |
+| ID | Task | Status | Evidence / Gap |
+|---|---|---|---|
+| 2A+.6 | Scanner 输出 direction 字段,使方向成为信号固有属性 | **DONE** | `universe/scanners.py:11-421` — 5 个 scorer 函数返回 `(score, reasons, direction)` 三元组;`run_all_scanners()` 打包 `scanner_direction` 到 dict(line 460). Spec UP-01/UP-03 GREEN |
+| 2A+.7 | `emit_deterministic_opportunities()` 改读 scanner 原生 direction | **DONE** | `signal_emitter.py:88` + `service.py:267-268` 均 `feat.get("scanner_direction") or _infer_direction(...)` — 原生 direction 是主路径,`_infer_direction` 是 fallback(符合 §Design Constraints 第 3 条允许) |
+| 2A+.8 | 新增 `short_bias` scanner family(专为做空设计) | **DONE** (2026-07-01 `04ef582`) | `scanners.py` `score_short_bias()`(4h+24h 下行 + 非拥挤空头 + RSI 有下跌空间,只发 short)+ 注册进 `run_all_scanners()`. 删除 signal_emitter 冗余死码分支. **SP-S05 重写为 L2b 行为可达性 spec**(验证 scorer 产出 + all_scores 注册),反向验证:移除注册后 spec 立即变红报"死码". ⚠️ 修复了 `7506a04` 的假 DONE(原 spec 只查字符串致死码假绿) |
+| 2A+.9 | Scanner family_quota 配置支持按 regime 动态调整 | **PENDING** | 无 per-regime 结构:`config/schema.py:473-476` 是单一静态 dict,`allocator.py:226` 无 regime 参数 |
+| 2A+.10 | 端到端验证:bear regime + short scanner → short opportunity → paper_trader 执行做空 | **代码就绪,待运行观察** (2026-07-01 `04ef582` 解锁) | bear regime 检测、ranker +20 bear+short 加分、paper_trader 处理 short stop 全部就绪(`regime/detector.py:26,34-35` + `paper_trader_ranker.py:388-404` + `paper_trader.py:260-263`);2A+.8 阻塞点已解除,short_bias family 现可产出 scanner_family="short_bias" 成员. **剩「端到端验证」本身 = 运行观察项**(需 bear/volatile regime 真实出现 + short_enabled 开 才能观察到完整链路),非代码缺口 |
+| 2A+.11 | Universe 真 4h 特征(rsi_4h/atr_4h/bb_width_4h)接入 scorer | **PARTIAL** | `rsi_4h` 已被 `score_momentum` 消费(`scanners.py:69,78-82` +5 bonus). Gap:`atr_4h` 与 `bb_width_4h` 在 `features.py:144-151` 有计算但**零 scorer 读**,仅在 features.py 与 docs 出现. `docs/plans/scanner_observer_audit_fix_plan_2026-07-01.md:170` 标 US-16 defer("增强,非 bug") |
+| 2A+.12 | UniverseMember 持久化 `all_scores`(5-family) 供 ensemble 分析 | **DONE** (2026-07-01 `8d3bb93`) | `models.py` `UniverseMember.all_scores: str="{}"` + `migrations.py` `_ADDITIVE_COLUMNS` 注册 + `service.py` 构造时 `all_scores=json.dumps(item.get("all_scores",{}))`. Spec **UP-14** L2b 真实 DB round-trip(insert→SQL→读回)验证. 迁移已在真实 app.db 生效 |
 
 ### Design Constraints
 
-- **不改 Risk Engine / Execution 边界**：做空信号仍经 Risk Engine gate 才能执行
-- **backward compatible**：现有策略无 direction_affinity 默认 "both"、applicable_regimes 默认 "all"
-- **Scanner 方向输出是 optional 扩展**：无 direction 字段的 scanner 退回 `_infer_direction()` 逻辑
-- **short_enabled=False 是全局 kill switch**：无论 regime 如何，关闭后永不产生 short signal
+- **不改 Risk Engine / Execution 边界**:做空信号仍经 Risk Engine gate 才能执行
+- **backward compatible**:现有策略无 direction_affinity 默认 "both"、applicable_regimes 默认 "all"
+- **Scanner 方向输出是 optional 扩展**:无 direction 字段的 scanner 退回 `_infer_direction()` 逻辑
+- **short_enabled=False 是全局 kill switch**:无论 regime 如何,关闭后永不产生 short signal
 
 ### Observation Gate
 
-- [ ] Bear regime 下系统能自然产生 short opportunities
+- [ ] Bear regime 下系统能自然产生 short opportunities *(2A+.8 已真实修复 `04ef582`;待 bear regime 出现观察实际产出)*
 - [ ] Strategy Pool 中至少存在 1 个 direction_affinity="short" 的策略在 paper_running
 - [ ] short opportunity → paper_trader → 执行做空 → position_manager 管理退出
-- [ ] Bull regime 下 short signals 被 regime gate 正确过滤
-- [ ] RegimeConfig 可通过 Dashboard Settings 切换
+- [ ] Bull regime 下 short signals 被 regime gate 正确过滤 *(ranker 逻辑就绪,待有真 short signal 才能观察)*
+- [x] RegimeConfig 可通过 Dashboard Settings 切换 *(2A+.5 DONE)*
+
+### 最短剩余工作路径(更新:2A+.8 + 2A+.12 已完成)
+
+- [x] **2A+.8 真实修复(DONE `04ef582`)** — `score_short_bias()` + 注册 `run_all_scanners()`;SP-S05 改行为可达性 spec;顺带解锁 2A+.10 端到端 short path
+- [x] **2A+.12(DONE `8d3bb93`)** — `models.py` all_scores 字段 + `migrations.py` `_ADDITIVE_COLUMNS` + `service.py` 构造填值;UP-14 round-trip spec
+- [ ] **2A+.4(0.25 天)** — `frontend/src/types.ts` 加两字段 + `StrategyLifecycle.tsx` 抽屉/表格加两列
+- [ ] **2A+.2 applicable_regimes(0.25 天)** — designer 从 `direction_bias` + regime 结果推导 applicable_regimes 并传入 `create_strategy`;SP-S04 spec 扩展检查 applicable_regimes 写路径
+
+2A+.9 (per-regime family_quota) 与 2A+.11 (atr_4h/bb_width_4h) 是增强项,不是收口必需 — 属"证据出来后再看有没有必要"
 
 ---
 

@@ -1,5 +1,9 @@
 # 真实剩余工作 + Ledger 对账 — 2026-06-30
 
+> **⚠️ STATUS: SUPERSEDED by [`REMAINING_WORK_2026-07-01.md`](REMAINING_WORK_2026-07-01.md) (2026-07-01)。**
+> 本文 §1.1 列的"Phase 2A 头号缺口"已于 2026-07-01 收口（DSL 本体 + PG-B06 晋级门），
+> §2.1 的 spot-parity 分支已 merge（commit `8bfb00c`）。当前状态请读 07-01 版；本文仅作历史归档。
+
 > 性质：L4 状态快照（易腐）。用 **git + SDD conformance matrix + ROADMAP** 三个"不会撒谎"的源核出真实剩余，**不照搬 `docs/issues/` 与 `docs/plans/` 的表面读数**（见 §0）。
 > 上游：本次文档/设计审查（[报告](../research/PLATFORM_DOC_DESIGN_REVIEW_2026-06-30.md) + [实施计划](../plans/doc_design_review_impl_plan_2026-06-30.md)）。
 
