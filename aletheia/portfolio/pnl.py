@@ -110,9 +110,19 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         raise ValueError(f"position not found: {position_id}")
 
     gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
-    # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation
-    _DEMO_MODES = ("paper_internal", "bitget_demo", "binance_testnet", "okx_demo")
-    fee_rate = 0.001 if row.get("execution_mode", "") in _DEMO_MODES else 0.0006
+    # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
+    # Fee rates must match the open-leg constants in each broker file so realized PnL
+    # is internally consistent regardless of which execution path opened the position.
+    _EXIT_FEE_BY_MODE: dict[str, float] = {
+        "paper_internal": 0.0006,      # matches paper_broker default (Bitget taker)
+        "bitget_demo": 0.0006,         # bitget_broker._DEMO_FEE_RATE
+        "bitget_live_limited": 0.0006, # bitget_broker._LIVE_FEE_RATE
+        "okx_demo": 0.0005,            # okx_broker._OKX_FEE_RATE
+        "okx_live_limited": 0.0005,
+        "binance_testnet": 0.0004,     # binance_broker._TESTNET_FEE_RATE
+        "binance_live_limited": 0.0004,
+    }
+    fee_rate = _EXIT_FEE_BY_MODE.get(row.get("execution_mode", ""), 0.0006)
     entry_fee = row.get("entry_fee") or (row["entry_price"] * row["quantity"] * fee_rate)
     exit_fee = exit_price * row["quantity"] * fee_rate
     realized = gross_pnl - entry_fee - exit_fee
