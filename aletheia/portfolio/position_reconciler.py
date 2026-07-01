@@ -138,8 +138,15 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     # Prefer unified (UTA) state — covers all brokers (OKX/Bitget/Binance).
     # Fall back to legacy Bitget-only cache for backwards compat.
     cached = None
+    # View-completeness gate (P0, 2026-07-02): only trust the unified view for
+    # classification when the ACTIVE broker is actually in it. A unified cache can
+    # be FRESH yet MISSING the active broker (e.g. OKX API 50001 → UTA drops okx,
+    # leaving only bitget). Classifying OKX locals against that incomplete view
+    # orphans them → thrash. This is the "fresh but incomplete" variant the earlier
+    # stale-cache fix did not cover. See dynamic_sizing_operator_persona_design.md §4.1.
+    _view_complete, _view_reason = exchange_sync.active_broker_view_complete()
     unified = exchange_sync.get_unified_cached_state()
-    if unified is not None:
+    if unified is not None and _view_complete:
         age = unified.get("age_seconds")
         if age is not None and age < 600:
             cached = {
@@ -147,6 +154,11 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
                 "age_seconds": age,
                 "fetched_at": unified.get("fetched_at", ""),
             }
+    if not _view_complete:
+        logger.warning(
+            "Reconcile: active-broker view incomplete (%s) — not classifying against "
+            "an incomplete unified view (prevents false-orphan thrash).", _view_reason,
+        )
     if cached is None:
         # No fresh multi-broker (unified) view. The legacy per-mode cache is
         # written ONLY by the Bitget sync, so falling back to it is safe only when

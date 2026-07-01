@@ -1,8 +1,11 @@
 """Portfolio PnL computation + snapshots (guide §7 portfolio/)."""
 
+import logging
 from datetime import datetime, timezone
 
 from aletheia.storage.models import PortfolioSnapshot
+
+logger = logging.getLogger("aletheia.pnl")
 from aletheia.storage.repositories import (
     list_positions, insert_portfolio_snapshot, update_position, list_market_snapshots,
 )
@@ -418,6 +421,24 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     if uta_state:
         uta_equity = uta_state.get("total_equity_usdt")
     exchange_equity = uta_equity or summary.get("exchange_equity_usdt")
+    # View-completeness gate (P0, 2026-07-02): the UNIFIED total (uta_equity) is a
+    # multi-broker SUM. When the ACTIVE broker is missing from the unified view
+    # (e.g. OKX API 50001 → the sum is only the idle bitget $167, not the real
+    # ~$89k), recording it as "account equity" poisons the drawdown history with a
+    # fake ~99% drawdown that then zeroes the size cap (drawdown-notional-trap
+    # family). Skip the row rather than record a lie. The legacy single-broker
+    # fallback (exchange_equity_usdt) is a direct per-broker read and is NOT subject
+    # to this — only the unified-sum path can misattribute another broker's balance.
+    if uta_equity is not None:
+        from aletheia.portfolio.exchange_sync import active_broker_view_complete
+        _view_complete, _view_reason = active_broker_view_complete()
+        if not _view_complete:
+            logger.warning(
+                "Skipping exchange_account equity snapshot: unified total is missing the "
+                "active broker (%s) — recording it would poison the drawdown history.",
+                _view_reason,
+            )
+            exchange_equity = None
     if exchange_equity is not None:
         exc_snap = PortfolioSnapshot(
             total_value_usdt=float(exchange_equity),

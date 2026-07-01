@@ -456,6 +456,17 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         total_value_usdt IS its equity, so keep the existing path.
     """
     try:
+        # View-completeness gate (P0, 2026-07-02): for exchange-backed modes, if the
+        # active broker is missing from the unified view (e.g. OKX API down), the
+        # equity snapshots may reflect the WRONG broker's balance — computing a
+        # drawdown from that fabricates a false ~99% DD that zeroes the size cap.
+        # Skip drawdown scaling (return 1.0, the $-notional caps still bound size).
+        if execution_mode != "paper_internal":
+            from aletheia.portfolio.exchange_sync import active_broker_view_complete
+            _complete, _ = active_broker_view_complete()
+            if not _complete:
+                return 1.0
+
         from aletheia.storage.repositories import list_portfolio_snapshots
         snapshots = list_portfolio_snapshots(limit=50)
         if len(snapshots) < 3:

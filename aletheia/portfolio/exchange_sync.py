@@ -225,6 +225,41 @@ def get_unified_cached_state() -> Optional[dict]:
     return raw
 
 
+def active_broker_view_complete(cfg=None) -> tuple[bool, str]:
+    """Is the ACTIVE paper broker actually present in the unified (multi-broker) view?
+
+    The UTA sync records brokers that returned an account in `accounts[].broker_id`
+    and brokers whose query FAILED in `errors`. When the active broker (e.g.
+    okx_demo) is NOT among the connected accounts — its API failed (`50001`),
+    creds missing, etc. — the unified view is INCOMPLETE for the account we
+    actually trade. Acting on it is unsafe on two fronts, both observed 2026-07-01:
+
+      - reconciler: classifies the active broker's real positions as `orphaned`
+        (they're absent from the incomplete view) → reconcile-close → re-adopt
+        thrash. This is distinct from a STALE cache — the view can be fresh yet
+        missing the broker we care about.
+      - sizing / drawdown: reads the WRONG account's equity (e.g. the idle bitget
+        $167 instead of the real okx ~$89k), fabricating a false drawdown or
+        mis-scaling any %-of-equity size.
+
+    Returns (complete, reason). `paper_internal` (no exchange) is always complete.
+    A missing unified cache is treated as INCOMPLETE (conservative) — callers
+    should refuse destructive/size-scaling action rather than guess.
+    """
+    from aletheia.config.loader import load_config
+    cfg = cfg or load_config()
+    active = (cfg.exchange.paper_execution_mode or "").strip()
+    if not active or active == "paper_internal":
+        return True, "paper_internal (no exchange view needed)"
+    unified = get_unified_cached_state()
+    if unified is None:
+        return False, "no unified view cached"
+    connected = {(a.get("broker_id") or "") for a in (unified.get("accounts") or [])}
+    if active in connected:
+        return True, f"{active} connected"
+    return False, f"{active} not connected (have {sorted(connected) or 'none'})"
+
+
 def sync_exchange_account() -> Optional[ExchangeAccountState]:
     """Fetch the real account state from Bitget once and cache it.
 

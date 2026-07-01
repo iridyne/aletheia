@@ -679,9 +679,11 @@ def test_non_bitget_fresh_unified_manages(tmp_path, monkeypatch):
     ))
 
     from aletheia.portfolio import position_reconciler as pr
+    # Fresh unified that INCLUDES the active broker (okx_demo) in accounts → complete.
     monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
         "positions": [{"symbol": "BNBUSDT", "side": "short", "quantity": 0.03,
                        "entry_price": 562.73, "mark_price": 560.0}],
+        "accounts": [{"broker_id": "okx_demo", "equity_usdt": 89000.0}],
         "age_seconds": 5.0, "fetched_at": "2026-07-01T00:00:00+00:00",
     })
 
@@ -1054,3 +1056,130 @@ def test_run_reconcile_circuit_breaker_suspends(tmp_path, monkeypatch):
     assert summary["adopted"] == [], "thrash detected → auto-adopt must be suspended too"
     # The real open position must survive.
     assert len(repo.list_positions(status="open")) == 1
+
+
+# ===========================================================================
+# P0 safety foundation (2026-07-02): active-broker view-completeness gate.
+# Fixes BOTH #1 (sizing off wrong equity) and #2 (reconciler orphans a broker
+# whose API is down) via one predicate: is the ACTIVE broker actually present in
+# the unified view? A fresh unified cache can still be MISSING the active broker
+# (OKX 50001 → UTA drops okx, leaving only bitget) — the "fresh but incomplete"
+# variant the earlier stale-cache fix did not cover.
+# See docs/design/dynamic_sizing_operator_persona_design.md §4.1.
+# ===========================================================================
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-19", "pipeline_adopted_position", "§19 active_broker_view_complete", "L2b",
+        "active_broker_view_complete() returns False when the active paper broker "
+        "(okx_demo) is NOT among the unified view's connected accounts (its API "
+        "failed), True when it is, and True for paper_internal (no exchange).",
+    ),
+)
+def test_active_broker_view_complete(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.portfolio import exchange_sync as es
+
+    # okx_demo active, but unified only has bitget → INCOMPLETE.
+    _write_config(tmp_path, monkeypatch, "okx_demo")
+    monkeypatch.setattr(es, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "bitget_demo", "equity_usdt": 167.0}], "age_seconds": 5.0,
+    })
+    complete, reason = es.active_broker_view_complete()
+    assert complete is False, f"okx missing from unified must be incomplete: {reason}"
+
+    # okx_demo present → COMPLETE.
+    monkeypatch.setattr(es, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "okx_demo", "equity_usdt": 89000.0}], "age_seconds": 5.0,
+    })
+    complete, _ = es.active_broker_view_complete()
+    assert complete is True, "okx present in unified must be complete"
+
+    # paper_internal → always complete (no exchange view needed).
+    _write_config(tmp_path, monkeypatch, "paper_internal")
+    complete, _ = es.active_broker_view_complete()
+    assert complete is True, "paper_internal needs no exchange view"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-20", "pipeline_adopted_position", "§20 fresh_but_incomplete_no_orphan", "L2b",
+        "classify_positions does NOT orphan the active broker's positions when the "
+        "unified view is FRESH but MISSING that broker (OKX-down case) — it bails to "
+        "all-managed. This is the thrash variant beyond the stale-cache fix.",
+    ),
+)
+def test_fresh_but_incomplete_unified_never_orphans(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    _write_config(tmp_path, monkeypatch, "okx_demo")
+
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    repo.insert_position(Position(
+        symbol="BNB/USDT", market_type="usdt_futures", direction="short",
+        quantity=0.03, entry_price=562.73, execution_mode="okx_demo", status="open",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    # FRESH unified (age 5s) but accounts only has bitget — OKX is down/missing.
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "positions": [], "accounts": [{"broker_id": "bitget_demo", "equity_usdt": 167.0}],
+        "age_seconds": 5.0, "fetched_at": "2026-07-02T00:00:00+00:00",
+    })
+    # Even if the legacy bitget cache were readable, it must not be used for okx.
+    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
+                        lambda mode=None: {"positions": [], "age_seconds": 5.0, "fetched_at": "x"})
+    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
+
+    r = pr.classify_positions("demo")
+    assert len(r.orphaned) == 0, (
+        f"fresh-but-OKX-missing unified must NOT orphan the OKX position "
+        f"(got {len(r.orphaned)}) — this is the OKX-down thrash variant"
+    )
+    assert len(r.managed) == 1, "the real OKX position must be reported managed (safe)"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-21", "pipeline_adopted_position", "§21 drawdown_skips_on_incomplete_view", "L2b",
+        "#1 sizing guard: _portfolio_drawdown_scale returns 1.0 (skips) when the "
+        "active-broker view is incomplete, instead of computing a FALSE ~99% drawdown "
+        "off a wrong-broker equity snapshot (the drawdown-notional-trap family).",
+    ),
+)
+def test_drawdown_scale_skips_on_incomplete_view(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _write_config(tmp_path, monkeypatch, "okx_demo")
+
+    from aletheia.storage.models import PortfolioSnapshot
+    from aletheia.storage import repositories as repo
+    # exchange_account snapshots that WOULD read as a ~99% drawdown (peak 89000 →
+    # current 167). Explicit increasing created_at so the NEWEST (current, values[-1]
+    # in the chronological window) is the 167 low — deterministic, not timestamp-tied.
+    for i, v in enumerate((89000.0, 89000.0, 167.0)):
+        repo.insert_portfolio_snapshot(PortfolioSnapshot(
+            total_value_usdt=v, unrealized_pnl=0.0, realized_pnl=0.0,
+            positions_count=0, execution_mode="exchange_account",
+            created_at=f"2026-07-02T00:0{i}:00+00:00",
+        ))
+
+    from aletheia.risk import engine
+    import aletheia.portfolio.exchange_sync as es
+
+    # Incomplete view (okx missing) → guard must fire → 1.0 (NOT the false DD → 0).
+    monkeypatch.setattr(es, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "bitget_demo", "equity_usdt": 167.0}], "age_seconds": 5.0})
+    assert engine._portfolio_drawdown_scale("okx_demo") == 1.0, (
+        "incomplete view must skip drawdown scaling, not fabricate a 99% DD"
+    )
+
+    # Complete view (okx present) → the guard does NOT fire; the (test) snapshots
+    # then drive a real, large drawdown → scale well below 1.0. Proves the 1.0 above
+    # was the GUARD, not the default.
+    monkeypatch.setattr(es, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "okx_demo", "equity_usdt": 89000.0}], "age_seconds": 5.0})
+    assert engine._portfolio_drawdown_scale("okx_demo") < 1.0, (
+        "complete view must compute the real drawdown from the snapshots (proves the "
+        "1.0 in the incomplete case came from the guard, not a default)"
+    )
