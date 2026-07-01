@@ -941,3 +941,116 @@ def test_adopt_no_false_strategy_attribution(tmp_path, monkeypatch):
         f"a genuinely-exited (stop_loss) position must NOT leak its strategy_id to a "
         f"new external adoption, got {row['strategy_id']!r}"
     )
+
+
+# ===========================================================================
+# Self-monitoring + runtime self-heal (A + B, 2026-07-01).
+# A: detect_reconcile_thrash — a root-cause-agnostic fingerprint of the close→reopen
+#    flip-flop (same symbol+dir both reconciled_gone-closed AND re-adopted in a
+#    window). Doubles as a REGRESSION tripwire for the P0 broker-cache fix.
+# B: run_reconcile circuit-breaker — on the thrash fingerprint, suspend the
+#    destructive orphan-close + auto-adopt for that cycle (runtime state, NOT a code
+#    change) and alert. Mirrors the LLM-outage / connectivity auto-pause pattern.
+# ===========================================================================
+
+
+def _mk_churn_signature(repo, Position, symbol, direction="short", entry=100.0):
+    """One flip-flop: a reconciled_gone close + a source=adopted (re)open, both
+    recent. Inserted as status=closed so they don't perturb classify_positions —
+    the detector counts them by close_reason / source + timestamp, not status."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    repo.insert_position(Position(
+        symbol=symbol, market_type="usdt_futures", direction=direction,
+        quantity=1.0, entry_price=entry, execution_mode="bitget_demo",
+        status="closed", close_reason="reconciled_gone", closed_at=now,
+    ))
+    repo.insert_position(Position(
+        symbol=symbol, market_type="usdt_futures", direction=direction,
+        quantity=1.0, entry_price=entry, execution_mode="bitget_demo",
+        status="closed", source="adopted", opened_at=now, closed_at=now,
+    ))
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-17", "pipeline_adopted_position", "§17 detect_reconcile_thrash", "L2b",
+        "detect_reconcile_thrash flags the close→reopen flip-flop fingerprint (same "
+        "symbol+dir both reconciled_gone-closed AND re-adopted in-window). Trips "
+        "(is_thrashing) at >=2 distinct churned symbols; a single one is an early "
+        "signal only. Regression tripwire for the broker-cache fix.",
+    ),
+)
+def test_detect_reconcile_thrash_fingerprint(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
+
+    # Clean → no thrash.
+    r0 = detect_reconcile_thrash(window_minutes=30)
+    assert r0["is_thrashing"] is False and r0["churn_count"] == 0
+
+    # One churned symbol → early signal, but NOT tripping (needs >=2).
+    _mk_churn_signature(repo, Position, "BNB/USDT", "short", 562.73)
+    r1 = detect_reconcile_thrash(window_minutes=30)
+    assert r1["churn_count"] == 1 and r1["is_thrashing"] is False, (
+        f"single flip-flop must not trip the breaker: {r1}"
+    )
+
+    # Two distinct churned symbols → systemic → trips.
+    _mk_churn_signature(repo, Position, "ETH/USDT", "short", 1574.8)
+    r2 = detect_reconcile_thrash(window_minutes=30)
+    assert r2["churn_count"] == 2 and r2["is_thrashing"] is True, (
+        f"two flip-flopped symbols must trip is_thrashing: {r2}"
+    )
+    assert set(r2["churned_symbols"]) == {"BNB/USDT:short", "ETH/USDT:short"}
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-18", "pipeline_adopted_position", "§18 reconcile_circuit_breaker", "L2c",
+        "run_reconcile suspends the destructive orphan-close + auto-adopt for a cycle "
+        "when detect_reconcile_thrash trips — a runtime self-heal that stops a thrash "
+        "loop at the reconciler without touching code (mirrors LLM/connectivity "
+        "auto-pause). summary flags the suspension; real positions are left intact.",
+    ),
+)
+def test_run_reconcile_circuit_breaker_suspends(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _stub_notifications(monkeypatch)
+    # bitget_demo so classify uses the (stubbed) legacy cache and WOULD orphan.
+    _write_config(tmp_path, monkeypatch, "bitget_demo")
+
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.portfolio import position_reconciler as pr
+
+    # Thrash fingerprint present (2 churned symbols, recent, status=closed).
+    _mk_churn_signature(repo, Position, "BNB/USDT", "short", 562.73)
+    _mk_churn_signature(repo, Position, "ETH/USDT", "short", 1574.8)
+
+    # A real OPEN orphan that classify WOULD reconcile-close absent the breaker.
+    orphan = Position(
+        symbol="SOL/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=150.0, current_price=151.0, execution_mode="bitget_demo",
+        status="open",
+    )
+    repo.insert_position(orphan)
+
+    # Exchange view: fresh but empty → SOL orphaned (were it not for the breaker).
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: None)
+    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
+                        lambda mode=None: {"positions": [], "age_seconds": 5.0,
+                                           "fetched_at": "2026-07-01T00:00:00+00:00"})
+    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
+
+    summary = pr.run_reconcile()
+    assert summary.get("suspended"), "circuit-breaker must flag suspension in the summary"
+    assert summary["closed_orphans"] == [], (
+        f"thrash detected → orphan-close must be suspended, got {summary['closed_orphans']}"
+    )
+    assert summary["adopted"] == [], "thrash detected → auto-adopt must be suspended too"
+    # The real open position must survive.
+    assert len(repo.list_positions(status="open")) == 1

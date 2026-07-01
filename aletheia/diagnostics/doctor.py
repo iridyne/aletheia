@@ -907,6 +907,40 @@ def _probe_reconciled_ratio(report: Report) -> None:
         report.add("loop.reconciled_ratio", "info", f"probe error: {e}")
 
 
+def _probe_reconcile_thrash(report: Report) -> None:
+    """Precise detector for the reconciler false-orphan THRASH (distinct from the
+    ambiguous reconciled_ratio): the close→reopen flip-flop fingerprint — the same
+    (symbol, direction) both reconciled_gone-closed AND re-adopted within 30 min.
+
+    Unlike reconciled_ratio (which can be high for legitimate orphan cleanup too),
+    this fingerprint only appears when the reconciler is fighting itself. It is the
+    live REGRESSION tripwire for the 2026-07-01 broker-cache fix + a self-heal
+    signal: run_reconcile's circuit-breaker suspends on the same condition. Read-only.
+    """
+    try:
+        from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
+        t = detect_reconcile_thrash(window_minutes=30)
+        churned = t["churned_symbols"]
+        detail = (f"{t['churn_count']} churned in {t['window_minutes']}min "
+                  f"(reconciled_gone={t['reconciled_gone_recent']}, "
+                  f"adopted={t['adopted_recent']}); {', '.join(churned[:5]) or 'none'}")
+        if t["is_thrashing"]:
+            report.add("loop.reconcile_thrash", "warn",
+                       f"reconciler thrash fingerprint: {detail}",
+                       "same symbol both reconciled_gone-closed AND re-adopted in-window "
+                       "= reconciler fighting itself. The run_reconcile circuit-breaker "
+                       "should have suspended; investigate position_reconciler.classify_"
+                       "positions (broker-cache mismatch?) — see ENTRY_EXIT_ASYMMETRY_"
+                       "ANALYSIS_2026-07-01.md")
+        elif t["churn_count"] == 1:
+            report.add("loop.reconcile_thrash", "info",
+                       f"single flip-flop (early signal, not tripping): {detail}")
+        else:
+            report.add("loop.reconcile_thrash", "ok", f"no thrash fingerprint: {detail}")
+    except Exception as e:
+        report.add("loop.reconcile_thrash", "info", f"probe error: {e}")
+
+
 def _probe_concentration(report: Report) -> None:
     """24h fills concentration — flag if a single symbol×direction dominates.
 
@@ -1728,6 +1762,7 @@ def build_report() -> Report:
         _probe_knowledge_flood,
         _probe_learning_retrieval,
         _probe_reconciled_ratio,
+        _probe_reconcile_thrash,
         _probe_concentration,
         # content-quality (Phase 2): "is the AI's output garbage", not "is the loop alive"
         *_CONTENT_PROBES,

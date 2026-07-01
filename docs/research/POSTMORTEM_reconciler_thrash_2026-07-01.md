@@ -132,7 +132,26 @@ ultracode 要求穷尽，但本 workspace 有每分钟 token 限额，宽 fan-ou
 
 ---
 
-## 4. 交叉引用
+## 4. 从事故到自监测/自愈能力（A + B 已落地）
+
+owner 问："能不能让 System Operator 运行时通过 doctor 发现这个问题并自愈?" 这次把该能力
+落成了**通用的、根因无关的**自监测 + 运行态自愈（commit 见 §5），并明确了边界:
+
+- **自监测（A,`doctor loop.reconcile_thrash`)**:不看模糊的 reconciled_ratio,而是抓
+  **close→reopen flip-flop 指纹**(同 symbol+dir 在 30min 内既被 reconciled_gone 平又被 adopted
+  重开)。>=2 个 symbol 翻搅→warn。它同时是这次修复的**回归哨兵**——修复退化或换个 broker 出同类
+  错配,立刻报。
+- **自愈(B,`run_reconcile` 断路器)**:命中指纹→本周期**暂停孤儿平仓+自动认领**+审计+通知,
+  逐周期重评、churn 消退自动恢复。**纯运行态**(跳过一个周期),不改代码不碰下单——与 LLM 掉线/
+  断连 auto-pause 同一安全档位。
+- **边界(刻意为之)**:代码级根因**不自动改**。VISION 中心赌注是 harness/信任 > 原始智力;
+  让 AI 自动改写交易决策链代码是爆炸半径最大的自动化,恰是本项目要对抗的。目标是
+  **自监测 + 自愈(运行态止血) + 自动提交代码计划,代码合并由人把关**([[aletheia-ai-native-bugfix-path]]
+  的"数据自动修/代码出计划"边界)。
+- **诚实的局限**:自愈只能治**已知失败指纹**,预测不了新 bug。所谓"自进化"= 不断积累
+  "探针+运行态断路器+代码计划"的库,每块砖由一次事故播种。这次是第一块。
+
+## 5. 交叉引用
 
 - 根因分析（症状/代码追溯 file:line/损益/修复）：`ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md`
 - commits：`5d6bb89`(P0 thrash 根因 + P1 Scorecard 去污)、`da38fbf`(P2 三项)

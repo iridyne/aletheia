@@ -239,6 +239,56 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     return result
 
 
+def detect_reconcile_thrash(window_minutes: int = 30) -> dict:
+    """Detect the false-orphan thrash fingerprint, ROOT-CAUSE-AGNOSTIC.
+
+    The signature is a close→reopen flip-flop: the SAME (symbol, direction) is both
+    reconciled_gone-closed AND re-adopted within a short window. That only happens
+    when the reconciler is fighting itself (a real position keeps getting orphaned
+    then re-adopted) — the exact shape of the 2026-07-01 broker-cache thrash. This
+    detector does NOT know or care about the root cause, so it also catches a
+    REGRESSION of that fix, a key-mismatch, or a brand-new broker's version of the
+    same bug. Pure read-only.
+
+    is_thrashing trips at >=2 distinct churned symbols (systemic — two independent
+    symbols flip-flopping in one window is not coincidence; a single one is surfaced
+    as an early signal but does not trip the breaker).
+
+    Returns {window_minutes, reconciled_gone_recent, adopted_recent,
+             churned_symbols (["SYM:dir", ...]), churn_count, is_thrashing}.
+    """
+    from datetime import datetime, timezone, timedelta
+    out = {
+        "window_minutes": window_minutes, "reconciled_gone_recent": 0,
+        "adopted_recent": 0, "churned_symbols": [], "churn_count": 0,
+        "is_thrashing": False,
+    }
+    try:
+        from aletheia.storage.sqlite import get_db
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
+        db = get_db()
+        closed = db.execute(
+            "SELECT symbol, direction FROM positions WHERE status='closed' "
+            "AND close_reason='reconciled_gone' AND closed_at >= ?", (cutoff,)
+        ).fetchall()
+        adopted = db.execute(
+            "SELECT symbol, direction FROM positions WHERE source='adopted' "
+            "AND opened_at >= ?", (cutoff,)
+        ).fetchall()
+    except Exception:
+        return out
+
+    closed_keys = {(r["symbol"], _norm_direction(r["direction"] or "")) for r in closed}
+    adopted_keys = {(r["symbol"], _norm_direction(r["direction"] or "")) for r in adopted}
+    churned = sorted(closed_keys & adopted_keys)
+    out["reconciled_gone_recent"] = len(closed)
+    out["adopted_recent"] = len(adopted)
+    out["churned_symbols"] = [f"{s}:{d}" for s, d in churned]
+    out["churn_count"] = len(churned)
+    out["is_thrashing"] = len(churned) >= 2
+    return out
+
+
 def _recover_strategy_link(symbol: str, direction: str, entry_price: float) -> tuple[str | None, str | None]:
     """Recover (strategy_id, opportunity_id) for an external about to be adopted,
     IFF it tightly matches a very recently thrash-closed local position.
@@ -619,6 +669,51 @@ def run_reconcile(mode: str | None = None) -> dict:
                 "Live reconcile: %d external, %d orphaned — alert only (no autonomous action)",
                 len(result.external), len(result.orphaned),
             )
+        return summary
+
+    # Runtime self-heal circuit-breaker (B, 2026-07-01): if the close→reopen
+    # flip-flop fingerprint is present, the reconciler is fighting itself — SUSPEND
+    # the two destructive actions (orphan-close + auto-adopt) for this cycle and
+    # alert, instead of feeding the thrash. Root-cause-agnostic, so it also catches
+    # a REGRESSION of the P0 broker-cache fix or a new broker's version of the bug.
+    # This is a runtime-state guard (skip a cycle), NOT a code change — the same
+    # safety archetype as the LLM-outage / connectivity auto-pause. Re-evaluated
+    # every cycle, so it self-clears once the churn subsides.
+    thrash = detect_reconcile_thrash()
+    if thrash["is_thrashing"]:
+        summary["suspended"] = True
+        summary["thrash"] = thrash
+        logger.warning(
+            "Reconcile SUSPENDED (self-heal): thrash fingerprint — churned=%s "
+            "(reconciled_gone_recent=%d, adopted_recent=%d). Orphan-close + auto-adopt "
+            "skipped this cycle to break the loop.",
+            thrash["churned_symbols"], thrash["reconciled_gone_recent"], thrash["adopted_recent"],
+        )
+        write_audit({
+            "actor": "system", "source": "position_reconciler",
+            "event_type": "reconcile_suspended", "entity_type": "portfolio",
+            "message": (
+                f"Reconcile self-heal: thrash fingerprint detected "
+                f"({thrash['churn_count']} churned symbols) — orphan-close + auto-adopt "
+                f"suspended this cycle"
+            ),
+            "after": {"churned_symbols": thrash["churned_symbols"],
+                      "reconciled_gone_recent": thrash["reconciled_gone_recent"],
+                      "adopted_recent": thrash["adopted_recent"]},
+        })
+        try:
+            from aletheia.notifications import notify_operator
+            notify_operator(
+                title="Reconcile self-heal: position thrash detected",
+                message=(f"{thrash['churn_count']} symbols flip-flopping "
+                         f"({', '.join(thrash['churned_symbols'][:5])}). Orphan-close + "
+                         f"auto-adopt suspended. Likely a reconciler classification / "
+                         f"exchange-cache issue — investigate position_reconciler."),
+                level="warning", event_type="self_heal", entity_type="portfolio",
+                error_log=False,
+            )
+        except Exception:
+            pass
         return summary
 
     # Demo mode: auto-adopt + orphan close

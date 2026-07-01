@@ -289,3 +289,42 @@ def test_frontdoor_probe_reports_backend_readiness(monkeypatch):
     checks = {c.name: c for c in r.checks}
     assert checks["process.frontdoor"].severity == "ok"
     assert checks["process.backend"].severity == "ok"
+
+
+# --- loop.reconcile_thrash probe (A, 2026-07-01) ---
+
+def _insert_churn(symbol, direction="short", entry=100.0):
+    """A flip-flop signature row-pair (reconciled_gone close + adopted reopen), recent."""
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    now = datetime.now(timezone.utc).isoformat()
+    repo.insert_position(Position(
+        symbol=symbol, market_type="usdt_futures", direction=direction,
+        quantity=1.0, entry_price=entry, execution_mode="bitget_demo",
+        status="closed", close_reason="reconciled_gone", closed_at=now,
+    ))
+    repo.insert_position(Position(
+        symbol=symbol, market_type="usdt_futures", direction=direction,
+        quantity=1.0, entry_price=entry, execution_mode="bitget_demo",
+        status="closed", source="adopted", opened_at=now, closed_at=now,
+    ))
+
+
+def test_reconcile_thrash_probe_ok_when_clean(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    r = dx.Report(generated_at="t")
+    dx._probe_reconcile_thrash(r)
+    c = next(c for c in r.checks if c.name == "loop.reconcile_thrash")
+    assert c.severity == "ok", f"clean DB must be ok, got {c.severity}: {c.detail}"
+
+
+def test_reconcile_thrash_probe_warns_on_fingerprint(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    # Two distinct symbols flip-flopping in-window → systemic → warn.
+    _insert_churn("BNB/USDT", "short", 562.73)
+    _insert_churn("ETH/USDT", "short", 1574.8)
+    r = dx.Report(generated_at="t")
+    dx._probe_reconcile_thrash(r)
+    c = next(c for c in r.checks if c.name == "loop.reconcile_thrash")
+    assert c.severity == "warn", f"thrash fingerprint must warn, got {c.severity}: {c.detail}"
+    assert "churned" in c.detail
