@@ -98,9 +98,11 @@ def test_index_is_sole_fts_write_gate():
 
 @spec_claim(
     SpecClaim(
-        "KF-S02", _CONTRACT, "§C operator_assessment FTS body", "L2a",
-        "_persist_assessment() in operator_loop.py must call _index(item, content) "
-        "after insert_knowledge_item() so operator assessments are FTS-searchable. "
+        "KF-S02", _CONTRACT, "§C operator_assessment FTS body + DB content", "L2a",
+        "_persist_assessment() in operator_loop.py must (1) call _index(item, content) "
+        "after insert_knowledge_item() so operator assessments are FTS-searchable, AND "
+        "(2) store content in KnowledgeItem.content so reindex_all() can rebuild FTS "
+        "without disk files (operator_assessment has no file_path). "
         "Root Cause C: it previously inserted with no _index call — FTS rows had "
         "empty body, invisible to retrieve_lessons() BM25 queries.",
     ),
@@ -108,13 +110,17 @@ def test_index_is_sole_fts_write_gate():
 def test_persist_assessment_calls_index():
     src = _OPERATOR_LOOP.read_text(encoding="utf-8")
     assert "_persist_assessment" in src, "operator_loop.py missing _persist_assessment"
-    # Find the function body and confirm _index is called
-    # We look for the pattern of _index being imported and called inside the function
     assert "from aletheia.knowledge.manager import _index" in src, (
         "_persist_assessment must import and call _index() to write FTS body"
     )
     assert "_index(item, content)" in src, (
         "_persist_assessment must call _index(item, content) after insert_knowledge_item()"
+    )
+    # content= must be passed to KnowledgeItem so reindex_all() can recover FTS
+    # without disk files (operator_assessment stores no file_path).
+    assert "content=content" in src, (
+        "_persist_assessment must pass content= to KnowledgeItem so reindex_all() "
+        "can rebuild FTS from DB when disk files are absent"
     )
 
 

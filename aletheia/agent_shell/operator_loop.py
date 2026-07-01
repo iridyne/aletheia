@@ -1496,6 +1496,8 @@ def _persist_assessment(summary: dict) -> None:
             item_type="operator_assessment",
             title=title,
             confidence="high_confidence",
+            # Store body in DB so reindex_all() can rebuild FTS without disk files.
+            content=content,
             tags=json.dumps(summary, ensure_ascii=False, default=str),
         )
         insert_knowledge_item(item)

@@ -136,11 +136,18 @@ def reindex_all() -> int:
                     continue
                 body = _read_body(row.get("file_path"))
                 if not body.strip():
-                    # Root Cause B: disk file deleted or content empty.
-                    # Indexing a blank body produces an invisible FTS row
-                    # (BM25 returns nothing for zero tokens) — skip instead.
-                    skipped_empty += 1
-                    continue
+                    # Fallback: some item types (e.g. operator_assessment) store
+                    # their content in the DB `content` column rather than a disk
+                    # file. Use that as the index body when file_path is absent.
+                    db_content = row.get("content") or ""
+                    if db_content.strip():
+                        body = db_content
+                    else:
+                        # Root Cause B: disk file deleted + no DB content.
+                        # Indexing a blank body produces an invisible FTS row
+                        # (BM25 returns nothing for zero tokens) — skip instead.
+                        skipped_empty += 1
+                        continue
                 item = KnowledgeItem(**{k: row[k] for k in row if k in KnowledgeItem.model_fields})
                 if index_knowledge_item(item, body):
                     count += 1
