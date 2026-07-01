@@ -48,6 +48,15 @@ def _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=False
         yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
     )
 
+    # D8-B02/C01 scorecard gate requires composite_score >= 70; fresh test DB
+    # has no demo PnL.  Mock a passing scorecard so the unlock flow proceeds
+    # end-to-end.  Tests that deliberately send confirm=false or omit
+    # acknowledge_first_unlock still fail at the prerequisite checks above.
+    monkeypatch.setattr(
+        "aletheia.analytics.go_live_scorecard.compute_scorecard",
+        lambda: {"composite_score": 95.0, "traffic_light": "green", "blockers": []},
+    )
+
 
 # ---------------------------------------------------------------------------
 # PL-LU-01  L2b  confirm_required: POST without confirm=true → 4xx
@@ -243,4 +252,68 @@ def test_forbidden_intents_cover_level3_actions():
     assert "modify_permissions" in FORBIDDEN_INTENTS, (
         "INVARIANT VIOLATION: modify_permissions not in FORBIDDEN_INTENTS "
         "(OL-C03 double-lock gap — §15.1)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# PL-LU-NEG  scorecard_gate_blocks_unlock — D8-B02/C01 composite_score < 70 → 403
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-LU-NEG", "pipeline_live_unlock", "§scorecard_gate_negative", "L2b",
+        "When composite_score < 70, /api/settings/live-unlock returns 403 with "
+        "scorecard_gate_failed error code (fail-closed safety boundary).",
+        status="implemented",
+    ),
+)
+def test_scorecard_gate_blocks_unlock_when_low(tmp_path, monkeypatch):
+    """Negative-path end-to-end: scorecard gate MUST reject unlock when demo
+    performance is below the composite_score ≥ 70 threshold."""
+    import yaml
+    import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    cfg = AletheiaConfig()
+    cfg.live.state = "live_disabled"
+    cfg.live.first_live_confirmation_done = True
+    (tmp_path / "config.yaml").write_text(
+        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
+    )
+
+    # Simulate a failing scorecard (composite_score=34.2, red light, blockers).
+    monkeypatch.setattr(
+        "aletheia.analytics.go_live_scorecard.compute_scorecard",
+        lambda: {
+            "composite_score": 34.2,
+            "traffic_light": "red",
+            "blockers": ["0 trades (target ≥50)"],
+        },
+    )
+
+    from fastapi.testclient import TestClient
+
+    client = TestClient(_make_live_app(), raise_server_exceptions=False)
+    resp = client.post(
+        "/api/settings/live-unlock",
+        json={"confirm": True, "acknowledge_first_unlock": True},
+    )
+    assert resp.status_code == 403, (
+        f"Scorecard gate must reject low-score unlock with 403, got {resp.status_code}"
+    )
+
+    detail = resp.json().get("detail", {})
+    assert detail.get("error") == "scorecard_gate_failed", (
+        f"Expected error code scorecard_gate_failed, got: {detail}"
+    )
+    assert detail.get("composite_score", 0) < 70, (
+        f"composite_score should be < 70 in this scenario, got {detail.get('composite_score')}"
+    )
+    assert detail.get("traffic_light") == "red", (
+        f"traffic_light should be red when score < 50, got {detail.get('traffic_light')}"
     )

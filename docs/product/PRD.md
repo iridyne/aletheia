@@ -35,7 +35,7 @@
 | 痛点 | 解决方案 |
 |------|----------|
 | 人无法 24/7 盯盘 | 7 类 scanner agent 持续扫描市场 |
-| 交易决策受情绪/FOMO 驱动 | PI Agent 结构化决策（Bull/Bear debate + conviction sizing） |
+| 交易决策受情绪/FOMO 驱动 | System Operator 结构化决策（Bull/Bear debate + conviction sizing） |
 | 交易经验不积累 | Knowledge Base + FTS5 检索 + 自动 review + dreaming 整理 |
 | 策略无法系统性验证 | RuleSet DSL + Backtest pipeline + Paper trading 自动评估 |
 | 风控依赖自律 | Risk Engine 硬限不可被 agent 绕过 |
@@ -62,13 +62,13 @@
 | 数据采集 | Crypto market data (BTC/ETH/SOL + universe), OHLCV, funding rate, taker ratio | Done |
 | 信号发现 | Market Observer, Scanner chain, Universe forward outcomes | Done |
 | 策略 | RuleSet DSL, Strategy Lifecycle (paper-live), Backtest pipeline | Done |
-| 决策 | PI Agent (sole decision maker), Bull/Bear debate, conviction sizing | Done |
+| 决策 | System Operator (sole decision maker), Bull/Bear debate, conviction sizing | Done |
 | 执行 | Paper broker, Bitget demo, Binance testnet, TPSL exchange orders | Done |
 | 风控 | Risk Engine (hard limits), position sizing, correlation risk, daily-loss kill switch | Done |
 | 学习 | Knowledge Base (FTS5), Dreaming agent, Post-trade review, Confidence calibration | Done |
 | 前端 | Bloomberg-dense cockpit, 14-page Web UI, Go-Live Scorecard | Done |
 | 运维 | Gateway supervisor, Watchdog, Doctor probes, Self-heal layer | Done |
-| 操作员 | PI Agent event-driven daemon, Operator Loop (4-stage), Command Center | Done |
+| 操作员 | System Operator (event-driven daemon + Operator Loop 4-stage + Command Center) | Done |
 
 ### 5.2 延期（有设计，未授权实施）
 
@@ -77,7 +77,7 @@
 | Live trading (实盘) | 需积累足够 paper 数据 + 用户显式授权 | ROADMAP Phase 6 |
 | Self-evolution Tier 2-3 | 需 Tier 1 积累数据 | plans/self_evolution_plan.md |
 | News intelligence scanner | 缺数据源 + 不是当前瓶颈 | ROADMAP Phase 5 |
-| Cross-agent debate | 架构复杂度高, 当前 PI Agent 辩论已覆盖 | ROADMAP Phase 4 |
+| Cross-agent debate | 架构复杂度高, 当前 System Operator 辩论已覆盖 | ROADMAP Phase 4 |
 | Trailing stop ML optimization | 需更多交易数据 | — |
 
 ### 5.3 永不做
@@ -130,15 +130,15 @@
 
 | 术语 | 定义 |
 |------|------|
-| PI Agent | Primary Intelligence Agent — 系统唯一的交易决策者 |
+| System Operator | Primary Intelligence Agent — 系统唯一的交易决策者 |
 | Scanner | 市场扫描 agent，产出信号/机会，但不做决策 |
 | Opportunity | Scanner 发现的潜在交易机会（未决策） |
-| Proposal | PI Agent 产出的交易提案（待 Risk Engine 审批） |
+| Proposal | System Operator 产出的交易提案（待 Risk Engine 审批） |
 | RuleSet | 结构化策略规则（DSL 定义，可回测，可执行） |
 | Strategy Lifecycle | 策略从假设到纸上验证到实盘候选到实盘的晋级路径 |
 | Guard Pipeline | 执行前的检查链（Risk Engine 硬限不可绕过） |
 | Kill Switch | 紧急熔断：触发后所有交易活动停止直到人工恢复 |
-| Conviction Sizing | 基于 PI Agent confidence 的 fractional Kelly 仓位计算 |
+| Conviction Sizing | 基于 System Operator confidence 的 fractional Kelly 仓位计算 |
 | Dreaming | 每日知识整理 agent（灵感来自 Sophia/ALMA 论文） |
 | Go-Live Scorecard | 10 项指标的综合评分，决定是否可安全上线实盘 |
 | Operator Loop | 15-60min 级别的自动化运维循环（评估/调优/提议） |

@@ -495,10 +495,37 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         lessons: list[dict] = []
         for item in case_items:
             meta = item.get("metadata") or {}
+            raw_content = item.get("content") or item.get("summary") or ""
+            if not raw_content:
+                # L-Bug-D fix: DB content=NULL; actual content lives on disk at file_path.
+                # Read frontmatter (outcome/pnl/factor_key) + body prefix to give PI real data.
+                fpath = item.get("file_path")
+                if fpath:
+                    try:
+                        from pathlib import Path as _Path
+                        from aletheia.knowledge.frontmatter import parse_frontmatter as _pfm
+                        _meta, _body = _pfm(_Path(fpath))
+                        parts: list[str] = []
+                        if _meta:
+                            if _meta.get("outcome"):
+                                parts.append(
+                                    f"outcome={_meta['outcome']} pnl={_meta.get('realized_pnl_pct', '?')}%"
+                                )
+                            if _meta.get("factor_key"):
+                                parts.append(
+                                    f"factor={_meta['factor_key']} scanner={_meta.get('scanner_family', '?')}"
+                                )
+                            if _meta.get("close_reason"):
+                                parts.append(f"close={_meta['close_reason']}")
+                        if _body:
+                            parts.append(_body[:150].strip())
+                        raw_content = " | ".join(parts) if parts else (item.get("title") or "")
+                    except Exception:
+                        raw_content = item.get("title") or ""
             lessons.append({
                 "type": item.get("item_type"),
                 "symbol": meta.get("symbol"),
-                "content": (item.get("content") or item.get("summary") or item.get("title") or "")[:300],
+                "content": raw_content[:300],
                 "source": meta.get("source_trade"),
             })
         layer["lessons"] = lessons
@@ -601,12 +628,14 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     except Exception:
         layer["serenity_opportunities"] = []
 
-    # L-Bug-B (LEARNING_LOOP_AUDIT): dreaming-agent post-trade lessons (ps_lessons)
-    # had 184+ proposed rows but ZERO consumer path — written, never read by PI.
-    # Surface as advisory context (risk/engine handles accepted lessons separately).
+    # L-Bug-B fix: inject APPLIED lessons (evidence-reviewed + policy-stamped),
+    # not proposed (unreviewed raw output). Status flow: proposed → accepted → applied.
+    # lesson_reviewer accepts then immediately marks_applied in the same run, so
+    # 'accepted' is a transient state; 'applied' is the stable post-review population.
+    # These lessons have passed: deterministic floor (≥20 settled outcomes) + LLM judge.
     try:
         from aletheia.learning.lessons import LessonStore
-        ps = LessonStore().list_all(status="proposed", limit=5)
+        ps = LessonStore().list_all(status="applied", limit=5)
         layer["ps_lessons"] = [
             {"summary": l.summary, "severity": l.severity, "category": l.category}
             for l in ps

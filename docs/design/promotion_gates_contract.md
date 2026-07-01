@@ -66,7 +66,7 @@ post_trade_reviews_required = True
 
 > ⚠️ **偏差 1 — 高频放松规则(代码有,意图未写):** `strategy_lifecycle.py:228-241`——若 `paper_trade_count≥30`,runtime 门槛从 14 天**放松到 3 天**。这是代码真实逻辑,trust §5.2 未记录。**裁决**:文档为准——本契约采纳此规则为金标准并补记于此(高频策略快速验证合理),trust §5.2 待批次3补注。
 
-> ✅ **偏差 2 — PI 审批门 (已实现, 2026-06-23 落地):** `promote_strategy()` 在目标状态为 `paper_running` 时,调用 `_has_pi_approval(strategy_id)`(`strategy_lifecycle.py:142-150`),查询 `pi_decisions` 表是否存在 `action='recommend_promote'` 记录(`strategy_lifecycle.py:167-172`)。无该记录则返回 `{"success": False, "error": "Promotion to paper_running requires PI Agent approval ..."}`,硬阻断晋级。**门已是单点卡口,原"未实现"标记已失效,予以移除。**
+> ✅ **偏差 2 — System Operator 审批门 (已实现, 2026-06-23 落地):** `promote_strategy()` 在目标状态为 `paper_running` 时,调用 `_has_pi_approval(strategy_id)`(`strategy_lifecycle.py:142-150`),查询 `pi_decisions` 表是否存在 `action='recommend_promote'` 记录(`strategy_lifecycle.py:167-172`)。无该记录则返回 `{"success": False, "error": "Promotion to paper_running requires System Operator approval ..."}`,硬阻断晋级。**门已是单点卡口,原"未实现"标记已失效,予以移除。**
 
 ---
 

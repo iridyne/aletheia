@@ -158,6 +158,11 @@ def _import_all_specs():
         # compliance for Bitget r-series tokens. Attaches to data_utilization_contract.
         # 2026-07-01 xStocks adaptation.
         spec_equity_observer,
+        # Agent-tier model routing (MR-* claims): guards deep_provider / fast_provider
+        # schema fields, get_provider_for_tier() resolver, helpers provider= param, and
+        # per-tier agent call sites. Attaches to model_routing_contract.
+        # 2026-07-01 two-tier model routing implementation.
+        spec_model_routing,
     )
 
 

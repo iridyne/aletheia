@@ -8,7 +8,7 @@
 
 ## 0. 这份计划要解决什么（一句话）
 
-Serenity 是一个**独立交易流派**（深研产业链供需的一手逻辑、找出被市场低估的环节、长期持有），但它生成的研究**今天没有任何人执行**——promote 产出死记录、研究只作为 Layer 3 顾问文本飘过 PI。本计划把 Serenity 研究**升级为 PI Agent 的一等公民输入**，让金字塔顶端的 PI 像人类分析师一样评估它、做风控、下最终命令；并给长期持有的仓位一套不同于短线的退出机制——**入场决定权与风控始终留在 PI / Risk Engine**（不绕过）。
+Serenity 是一个**独立交易流派**（深研产业链供需的一手逻辑、找出被市场低估的环节、长期持有），但它生成的研究**今天没有任何人执行**——promote 产出死记录、研究只作为 Layer 3 顾问文本飘过。本计划把 Serenity 研究**升级为 System Operator 的一等公民输入**，让金字塔顶端的 System Operator 像人类分析师一样评估它、做风控、下最终命令；并给长期持有的仓位一套不同于短线的退出机制——**入场决定权与风控始终留在 System Operator / Risk Engine**（不绕过）。
 
 Owner 的 5 项拍板已锁定（见报告 §8）：
 
@@ -38,7 +38,7 @@ promote（手动按钮 / 自动开关 default off）  [Phase 3]
         │  写 PiDecision(action='signal_pending', signal_source='serenity')
         │  + notify_pi_daemon(source='serenity_promote')
         ▼
-PI Agent（pi_daemon → evaluate_trading_opportunity）
+System Operator（pi_daemon → evaluate_trading_opportunity）
         │  Serenity 作为 Layer 3 「结构化一等输入」+ 可被 _attach 回填  [Phase 2]
         │  PI 像人类分析师评估证据/合理性 → 决定 action
         ▼
@@ -52,7 +52,7 @@ Position(trade_school='serenity')
         │  改用论点失效退出（thesis-invalidation）
 ```
 
-**不变量（D3）**：`agent_contracts.md` 的「PI Agent = 唯一交易决策者」**不修改**。Serenity 不新建绕过 PI 的 `serenity_executor`（报告 Option B 已被 owner 否决）。这反而移除了原报告里最大的治理阻塞。
+**不变量（D3）**：`agent_contracts.md` 的「System Operator = 唯一交易决策者」**不修改**。Serenity 不新建绕过 System Operator 的 `serenity_executor`（报告 Option B 已被 owner 否决）。这反而移除了原报告里最大的治理阻塞。
 
 ---
 

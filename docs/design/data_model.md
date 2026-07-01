@@ -177,11 +177,11 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `prediction_probability_snapshots` | Probability time series |
 | `prediction_market_claims` | Claims derived from predictions |
 
-### K. PI Agent Decisions (1 table)
+### K. System Operator Decisions (1 table)
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `pi_decisions` | Structured PI Agent decisions | decision_type, action, symbol, conviction, reasoning (JSON), opportunity_id, **signal_source** |
+| `pi_decisions` | Structured System Operator decisions | decision_type, action, symbol, conviction, reasoning (JSON), opportunity_id, **signal_source** |
 
 > `signal_source ∈ {'market_observer','serenity'}` (default `'market_observer'`) — discriminator for which table `opportunity_id` resolves against. Both `opportunities.id` (market_observer) and `serenity_opportunities.id` are bare `uuid4().hex[:12]` with no type tag, so the id alone is cross-table ambiguous. Stamped by `_attach_opportunity_context` (market_observer takes precedence). Phase 2 of Serenity Option A — see `docs/plans/serenity_execution_path.md` §3.2.
 
@@ -252,7 +252,7 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | UniverseMember | universe_members | Universe |
 | UniverseForwardOutcome | universe_forward_outcomes | Universe |
 | UniversePolicy | universe_policies | Universe |
-| PiDecision | pi_decisions | PI Agent |
+| PiDecision | pi_decisions | System Operator |
 
 ---
 

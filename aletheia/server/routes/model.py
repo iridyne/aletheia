@@ -57,7 +57,12 @@ async def get_model_config():
             entry["mode"] = pcfg.mode
             entry["codex_model"] = pcfg.codex_model
         providers[name] = entry
-    return {"default_provider": cfg.models.default_provider, "providers": providers}
+    return {
+        "default_provider": cfg.models.default_provider,
+        "deep_provider": cfg.models.deep_provider,
+        "fast_provider": cfg.models.fast_provider,
+        "providers": providers,
+    }
 
 
 @router.get("/model/health")
@@ -327,6 +332,8 @@ class ModelConfigRequest(BaseModel):
     codex_model: str | None = None
     workspace_url: str | None = None
     default: bool | None = None
+    set_as_deep: bool | None = None
+    set_as_fast: bool | None = None
     api_key: str | None = None
     auth_scheme: str | None = None
     model_fallback_enabled: bool | None = None
@@ -374,6 +381,10 @@ async def set_model(req: ModelConfigRequest):
         ))
     if req.default:
         cfg.models.default_provider = req.provider
+    if req.set_as_deep:
+        cfg.models.deep_provider = req.provider
+    if req.set_as_fast:
+        cfg.models.fast_provider = req.provider
 
     if req.api_key:
         secret_ref = f"model.{req.provider}.api_key"
@@ -393,8 +404,13 @@ async def set_model(req: ModelConfigRequest):
                    + (" (api_key set)" if req.api_key else ""),
     })
 
-    return {"provider": req.provider, "default_provider": cfg.models.default_provider,
-            "api_key": _key_status(pcfg.api_key_secret_ref)}
+    return {
+        "provider": req.provider,
+        "default_provider": cfg.models.default_provider,
+        "deep_provider": cfg.models.deep_provider,
+        "fast_provider": cfg.models.fast_provider,
+        "api_key": _key_status(pcfg.api_key_secret_ref),
+    }
 
 
 # --- OpenAI subscription OAuth ---

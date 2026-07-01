@@ -1,5 +1,9 @@
 # Aletheia PI Operator Agent Dual-Process Design
 
+> **[历史归档 — 2026-07-01]** 本文档是 2026-06-10 设计阶段的归档文件。
+> "PI Operator Agent"已统一更名为"System Operator"（见 `DECISIONS.md §2026-07-01`）。
+> 当前权威设计文档：`docs/design/operator_layer.md`。
+
 > For `worktree-dev` only. This is a design and implementation-conversion spec, not an authorization to merge to `master` or relax any trading safety invariant.
 >
 > Coverage proof for the external PI reference file lives in

@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
+from aletheia.model_provider.router import get_provider_for_tier
 
 logger = logging.getLogger("aletheia.agents.lesson_reviewer")
 
@@ -146,6 +147,7 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str]:
             "Is this lesson empirically supported? Return the JSON."
         ),
         max_tokens=200,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_judge_lesson", "observe", err is None)
     if err:

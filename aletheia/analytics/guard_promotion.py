@@ -50,7 +50,7 @@ def run_promotion_check() -> dict:
         loss_rate = len(losses) / len(matched) if matched else 0
 
         if loss_rate >= 0.6:
-            if _update_guard_status(guard.guard_id, "active"):
+            if _promote_guard_to_active(guard.guard_id, loss_rate):
                 promotions += 1
                 logger.info("Promoted guard %s to active (loss_rate=%.0f%%)",
                             guard.guard_id, loss_rate * 100)
@@ -65,6 +65,49 @@ def run_promotion_check() -> dict:
         "deprecations": deprecations,
         "candidates_checked": len(candidates),
     }
+
+
+def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
+    """Promote a candidate guard to active, writing default penalty fields.
+
+    score_penalty=10.0 / enforcement=hard_block are written so ranker
+    evaluate_guards actually penalizes matching opportunities (断口G fix).
+    """
+    guards_dir = get_data_dir() / "knowledge" / "guards"
+    candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
+
+    for search_dir in [guards_dir, candidates_dir]:
+        if not search_dir.exists():
+            continue
+        for path in search_dir.glob("*.md"):
+            try:
+                meta, body = parse_frontmatter(path)
+                if not meta or meta.get("guard_id") != guard_id:
+                    continue
+
+                meta["status"] = "active"
+                # Ensure penalty values are set so guard actually affects scoring
+                if not meta.get("score_penalty"):
+                    meta["score_penalty"] = 10.0
+                if not meta.get("enforcement"):
+                    meta["enforcement"] = "blocking"
+                if not meta.get("block_candidate"):
+                    meta["block_candidate"] = True
+
+                content = render_frontmatter(meta, body)
+                if search_dir == candidates_dir:
+                    target = guards_dir / path.name
+                    guards_dir.mkdir(parents=True, exist_ok=True)
+                    target.write_text(content, encoding="utf-8")
+                    path.unlink()
+                else:
+                    path.write_text(content, encoding="utf-8")
+                return True
+            except Exception as e:
+                logger.warning("Failed to promote guard %s: %s", guard_id, e)
+                continue
+
+    return False
 
 
 def _update_guard_status(guard_id: str, new_status: str) -> bool:

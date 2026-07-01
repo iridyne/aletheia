@@ -95,7 +95,7 @@ explicit user authorization regardless of whether earlier gates are satisfied.
 | 层 | 内容 | 状态 | 前置 |
 |---|---|---|---|
 | **A — 确定性自愈 supervisor** | 无 LLM。code-drift/stale→重启、端口清理、限频持久化。这是稳定性根基,不是操作员。 | **DONE** (`8a6e008` + `abd7773`) | — |
-| **B — LLM Apex Agent Shell (Pi Agent)** | 顶层 LLM 系统操作员。下文展开。 | **IN PROGRESS** — Python control plane, Command Center, shell supervision, operator event/task loop 已落地；更深的 PI runtime / delegation / lifecycle 仍在后续 track | **直接在 master 推进**;触 trust 边界(execution / 凭证 / live)的改动需显式授权 |
+| **B — LLM Apex Agent Shell (System Operator)** | 顶层 LLM 系统操作员。下文展开。 | **IN PROGRESS** — Python control plane, Command Center, shell supervision, operator event/task loop 已落地；更深的 runtime / delegation / lifecycle 仍在后续 track | **直接在 master 推进**;触 trust 边界(execution / 凭证 / live)的改动需显式授权 |
 
 ### Track B 核心架构(§8)
 

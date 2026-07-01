@@ -1,5 +1,7 @@
 """Tests for live-limited gated path."""
 
+from unittest.mock import patch
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 
@@ -43,10 +45,12 @@ async def test_live_unlock_requires_confirm(client):
 @pytest.mark.anyio
 async def test_live_unlock_with_confirm(client):
     # First-ever unlock now requires a second explicit acknowledgment.
-    resp = await client.post(
-        "/api/settings/live-unlock",
-        json={"confirm": True, "acknowledge_first_unlock": True},
-    )
+    with patch("aletheia.analytics.go_live_scorecard.compute_scorecard") as sc:
+        sc.return_value = {"composite_score": 95.0, "traffic_light": "green", "blockers": []}
+        resp = await client.post(
+            "/api/settings/live-unlock",
+            json={"confirm": True, "acknowledge_first_unlock": True},
+        )
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "live_limited"
@@ -58,7 +62,9 @@ async def test_live_unlock_with_confirm(client):
 
 @pytest.mark.anyio
 async def test_live_lock(client):
-    await client.post("/api/settings/live-unlock", json={"confirm": True})
+    with patch("aletheia.analytics.go_live_scorecard.compute_scorecard") as sc:
+        sc.return_value = {"composite_score": 95.0, "traffic_light": "green", "blockers": []}
+        await client.post("/api/settings/live-unlock", json={"confirm": True, "acknowledge_first_unlock": True})
     resp = await client.post("/api/settings/live-lock")
     assert resp.status_code == 200
     assert resp.json()["status"] == "live_disabled"

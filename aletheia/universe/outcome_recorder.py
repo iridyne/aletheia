@@ -274,6 +274,7 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
                 metadata={
                     "guard_id": guard_id,
                     "status": "candidate",
+                    "scope": "paper_entry",
                     # applies_to (built from scanner_family/direction in load_trading_guards)
                     # filters which trades count; predicates must be non-empty for the
                     # matcher to fire (_predicates_match returns False on []), so encode

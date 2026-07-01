@@ -6,6 +6,7 @@ import logging
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
 from aletheia.storage.repositories import list_agent_runs
 
@@ -226,11 +227,18 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             '"category" (one of: risk_sizing, entry_timing, exit_timing, symbol_selection, general), '
             '"severity" (info|warning|critical), '
             '"evidence" (object with fields: outcome_counts (dict), avg_pnl_pct (float or null), '
-            'factor_keys (list of strings), scanner_families (list of strings)). '
+            'factor_keys (list of strings), scanner_families (list of strings)), '
+            '"recommendation" (optional — include ONLY when evidence strongly supports a specific '
+            'trading constraint; must be one of: '
+            '{"action": "block_scanner", "scanner": "<scanner_family>"}, '
+            '{"action": "block_direction", "direction": "short"|"long"}, '
+            '{"action": "reduce_size", "factor": 0.3-0.8}; '
+            'omit entirely if lesson is general advice without a concrete constraint). '
             "Return ONLY the JSON array, no other text."
         ),
         user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
         max_tokens=600,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_complete_lessons", "observe", True)
     if err:
@@ -297,6 +305,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             category=lesson.get("category", "general"),
             severity=lesson.get("severity", "info"),
             evidence=evidence,
+            recommendation=lesson.get("recommendation") or None,  # L-Bug-A fix
         )
         log_tool(run_id, "create_lesson", "observe", True, output=created.lesson_id)
         outputs.append(f"lesson:{created.lesson_id}")
@@ -343,6 +352,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
                "(3) one suggested focus for tomorrow. Keep it brief.",
         user=f"Recent agent activity:\n{activity}{post_mortem_ctx}\n\nWrite the dreaming log.",
         max_tokens=700,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_complete", "observe", True)
     item = None

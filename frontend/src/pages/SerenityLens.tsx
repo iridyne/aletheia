@@ -416,10 +416,11 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
 function ThemesTab() {
   const qc = useQueryClient()
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<string>('active')
 
   const { data: themes = [] } = useQuery({
-    queryKey: ['serenity-themes'],
-    queryFn: api.getSerenityThemes,
+    queryKey: ['serenity-themes', statusFilter],
+    queryFn: () => api.getSerenityThemes(statusFilter),
   })
 
   const statusMut = useMutation({
@@ -451,16 +452,28 @@ function ThemesTab() {
     return <ThemeDetailPanel themeId={selectedTheme} onBack={() => setSelectedTheme(null)} />
   }
 
-  if (!themes.length) {
-    return (
-      <div className="lens-empty-state">
-        <p>No themes discovered yet.</p>
-        <p className="text-muted">Run research to generate themes from market evidence and claims.</p>
-      </div>
-    )
-  }
+  const STATUS_FILTERS = ['active', 'watching', 'dismissed', 'promoted'] as const
 
   return (
+    <div>
+      <div className="lens-filter-bar">
+        {STATUS_FILTERS.map(s => (
+          <button
+            key={s}
+            className={`lens-filter-btn${statusFilter === s ? ' active' : ''}`}
+            onClick={() => setStatusFilter(s)}
+          >
+            {humanize(s)}
+          </button>
+        ))}
+      </div>
+
+      {!themes.length && (
+        <div className="lens-empty-state">
+          <p>No {humanize(statusFilter).toLowerCase()} themes.</p>
+        </div>
+      )}
+
     <div className="lens-theme-cards">
       {themes.map((t: any) => (
         <Card key={t.id} className="lens-theme-card">
@@ -521,6 +534,7 @@ function ThemesTab() {
           </div>
         </Card>
       ))}
+    </div>
     </div>
   )
 }

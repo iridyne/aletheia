@@ -363,7 +363,9 @@ def _check_lesson_constraints(proposal) -> list[str]:
         from aletheia.learning.lessons import LessonStore
         import json
         store = LessonStore()
-        active_lessons = store.list_all(status="accepted", limit=50)
+        # L-Bug-E fix: 'accepted' is a transient state (lesson_reviewer calls
+        # accept then mark_applied in the same run), so query 'applied' instead.
+        active_lessons = store.list_all(status="applied", limit=50)
         sym_canonical = to_canonical(proposal.symbol)
 
         from datetime import datetime, timezone
@@ -417,6 +419,14 @@ def _check_lesson_constraints(proposal) -> list[str]:
                         logger.info("dry-run advisory (would block): %s", token)
                     else:
                         violations.append(token)
+
+            elif action == "reduce_size":
+                # Advisory only — log but do not block (docstring intent preserved)
+                factor = float(rec.get("factor", 1.0))
+                logger.info(
+                    "lesson reduce_size advisory: lesson=%s factor=%.2f (not enforced as hard block)",
+                    lesson.lesson_id, factor,
+                )
 
     except Exception as e:
         logger.warning("_check_lesson_constraints failed (safe-reject): %s", e)

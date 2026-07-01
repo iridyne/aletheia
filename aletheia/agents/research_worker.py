@@ -413,6 +413,8 @@ async def _run_pipeline(run_id: str, run: dict) -> None:
 async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     """Multi-stage research pipeline with partial persistence."""
     from aletheia.agents.helpers import llm_complete
+    from aletheia.model_provider.router import get_provider_for_tier
+    _fast = get_provider_for_tier("fast")
 
     # Build context from profile/brief
     brief = run.get("brief_snapshot") or ""
@@ -470,6 +472,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             system=_ICT_METHODOLOGY_SYSTEM,
             user=f"Research context:\n{research_context}\n\nCollect relevant evidence.",
             max_tokens=16384,
+            provider=_fast,
         )
         if err:
             if "429" in err or "rate" in err.lower():
@@ -487,6 +490,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                 system=lens_system,
                 user=f"Research context:\n{research_context}\n\nCollect relevant evidence from your {lens_name} perspective.",
                 max_tokens=8192,
+                provider=_fast,
             )
             if lens_err:
                 if "429" in lens_err or "rate" in lens_err.lower():
@@ -550,6 +554,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         system=_CLAIMS_SYSTEM,
         user=f"Evidence:\n{evidence_summary}\n\nExtract structured claims.",
         max_tokens=8192,
+        provider=_fast,
     )
     if err:
         if "429" in err or "rate" in err.lower():
@@ -593,6 +598,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         system=_THEMES_SYSTEM,
         user=f"Claims:\n{claims_for_prompt}\n\nCluster into investment research themes.",
         max_tokens=8192,
+        provider=_fast,
     )
     if err:
         if "429" in err or "rate" in err.lower():
@@ -650,6 +656,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             system=_OPPORTUNITIES_SYSTEM,
             user=f"Research themes:\n{themes_for_prompt}\n\nIdentify potential opportunities.",
             max_tokens=8192,
+            provider=_fast,
         )
         if not err:
             opp_items = _parse_json_array(opps_text, "opportunities")

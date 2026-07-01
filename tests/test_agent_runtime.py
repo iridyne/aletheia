@@ -150,14 +150,25 @@ async def test_research_agent_creates_note(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    # Mock LLM to return substantive content (≥80 chars to pass quality gate).
-    async def _fake_llm(system, user, max_tokens=800):
-        return ("Daily dreaming log: market observer ran 3 cycles, research agent produced 2 notes. "
-                "Insight: momentum signals correlated with funding rate divergence. "
-                "Focus for tomorrow: validate SOL breakout thesis with volume confirmation.", None)
+    # Mock LLM: accept **kwargs so provider= arg doesn't cause TypeError.
+    # The mock returns plain text for dreaming_log calls and an empty JSON array
+    # for lesson extraction calls (which expect a JSON array).
+    call_count = {"n": 0}
+    async def _fake_llm(system, user, max_tokens=800, **kwargs):
+        call_count["n"] += 1
+        # lesson extraction call expects JSON array
+        if "JSON array" in system:
+            return ("[]", None)
+        return (
+            "Daily dreaming log: market observer ran 3 cycles, research agent produced 2 notes. "
+            "Insight: momentum signals correlated with funding rate divergence. "
+            "Focus for tomorrow: validate SOL breakout thesis with volume confirmation.",
+            None,
+        )
     monkeypatch.setattr("aletheia.agents.dreaming_agent.llm_complete", _fake_llm)
 
-    result = await run_agent("dreaming_agent", trigger_type="manual")
+    # Use cron trigger so both dreaming_log and daily_review paths are exercised.
+    result = await run_agent("dreaming_agent", trigger_type="cron")
     assert result["status"] in _OK
     assert any("dreaming_log:" in o for o in result["outputs"])
     assert any("daily_review:" in o for o in result["outputs"])
