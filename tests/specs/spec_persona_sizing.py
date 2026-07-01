@@ -294,3 +294,112 @@ def test_sizing_policy_health(tmp_path, monkeypatch):
     assert h["buckets"]["bull"]["clean_samples"] == 4
     assert h["buckets"]["bull"]["active"] is True
     assert h["buckets"]["volatile"]["active"] is False  # no samples
+
+
+@spec_claim(
+    SpecClaim("PS-S10", "persona_sizing", "§8 progressive unlock ladder + distress refreeze", "L2b",
+              "effective_operator_decidable: OFF → static dict (P1-P3); ON → unlock the "
+              "persona ladder in order as clean closes accrue (step-gated); distress "
+              "(kill switch / drawdown) refreezes ALL. Zero unlock at zero samples."),
+)
+def test_progressive_unlock_ladder(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.persona import effective_operator_decidable
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_unlock_step_samples = 5
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    roll = cfg.trading.personas["roll"]
+
+    # OFF → static (empty) regardless of samples.
+    assert effective_operator_decidable(roll, cfg) == {}
+
+    cfg.trading.persona_progressive_unlock_enabled = True
+    # 0 clean closes → nothing unlocked.
+    assert effective_operator_decidable(roll, cfg) == {}
+
+    # 12 clean closes, step 5 → floor(12/5)=2 ladder params unlocked (notional, leverage).
+    for _ in range(12):
+        _closed(repo, Position, "bull", pnl=1.0)
+    dec = effective_operator_decidable(roll, cfg)
+    assert dec.get("notional_usdt") and dec.get("leverage_max"), f"first 2 ladder params unlocked: {dec}"
+    assert "per_trade_loss_pct" not in dec, "3rd ladder param not yet unlocked at 12/5"
+
+    # Distress (kill switch) → refreeze ALL.
+    cfg.runtime.kill_switch_active = True
+    assert effective_operator_decidable(roll, cfg) == {}, "distress must refreeze all unlocked params"
+
+
+@spec_claim(
+    SpecClaim("PS-S11", "persona_sizing", "§6.3 pyramid add-on policy (gated + hard-capped)", "L2b",
+              "pyramid_plan adds to a WINNER only when enabled + persona has adds; each "
+              "add = add_fraction of base; total is HARD-CAPPED by max_per_symbol_notional; "
+              "no add when disabled / not enough profit / max_adds reached / cap hit."),
+)
+def test_pyramid_plan(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.trading import sizing_policy
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.active_persona = "roll"   # max_adds init 2, add_fraction init 0.5
+    cfg.trading.persona_pyramid_add_trigger_pct = 1.0
+    cfg.risk.max_per_symbol_notional_usdt = 400.0
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    winner = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 5.0}  # +5% → past trigger
+
+    # Disabled → no add.
+    assert sizing_policy.pyramid_plan(winner, adds_done=0, cfg=cfg)["add"] is False
+
+    # Enabled → add = 0.5 * 100 base = 50 notional.
+    cfg.trading.persona_pyramid_enabled = True
+    plan = sizing_policy.pyramid_plan(winner, adds_done=0, cfg=cfg)
+    assert plan["add"] is True and abs(plan["add_notional"] - 50.0) < 1e-6, plan
+
+    # Not a winner (0 profit) → no add.
+    flat = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 0.0}
+    assert sizing_policy.pyramid_plan(flat, adds_done=0, cfg=cfg)["add"] is False
+
+    # max_adds reached (roll init 2) → no add.
+    assert sizing_policy.pyramid_plan(winner, adds_done=2, cfg=cfg)["add"] is False
+
+    # HARD CAP: a huge base near the per-symbol cap → add clamped to remaining room.
+    big = {"entry_price": 100.0, "quantity": 3.9, "unrealized_pnl": 20.0}  # base 390, cap 400
+    capped = sizing_policy.pyramid_plan(big, adds_done=0, cfg=cfg)
+    assert capped["add_notional"] <= 10.0 + 1e-6, f"add must be clamped to per-symbol cap room: {capped}"
+
+
+@spec_claim(
+    SpecClaim("PS-S12", "persona_sizing", "§4.2 risk envelope stays the outer bound", "L2c",
+              "Invariant: persona/learning only produce DECISION INPUTS. The pyramid "
+              "hard-cap never lets base+adds exceed max_per_symbol_notional_usdt — the "
+              "risk envelope is immutable regardless of persona/learning state."),
+)
+def test_pyramid_never_exceeds_exposure_cap(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.trading import sizing_policy
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_pyramid_enabled = True
+    cfg.trading.active_persona = "roll"
+    cfg.risk.max_per_symbol_notional_usdt = 300.0
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    base = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 10.0}  # base 100
+    total = 100.0
+    for i in range(5):  # try to over-add
+        plan = sizing_policy.pyramid_plan(base, adds_done=i, cfg=cfg)
+        if not plan["add"]:
+            break
+        total += plan["add_notional"]
+    assert total <= 300.0 + 1e-6, f"cumulative exposure must never exceed the cap: {total}"

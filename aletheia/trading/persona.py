@@ -132,6 +132,34 @@ def decide_param_value(prange, risk_appetite: float) -> float:
     return prange.min + a * (prange.max - prange.min)
 
 
+def effective_operator_decidable(persona, cfg=None) -> dict:
+    """Which params are CURRENTLY operator-decidable (P4 progressive unlock).
+
+    - persona_progressive_unlock_enabled OFF → the static persona.operator_decidable
+      (P1-P3 behavior, unchanged).
+    - ON → unlock the persona's unlock_ladder in order: position i is decidable once
+      (i+1) * unlock_step clean closes have accrued. Account DISTRESS (drawdown / kill
+      switch) refreezes ALL (returns {}). This is the auto-refreeze safety.
+    """
+    from aletheia.config.loader import load_config
+    cfg = cfg or load_config()
+    static = dict(persona.operator_decidable or {})
+    if not getattr(cfg.trading, "persona_progressive_unlock_enabled", False):
+        return static
+    ladder = list(persona.unlock_ladder or [])
+    if not ladder:
+        return static
+    from aletheia.trading.sizing_policy import clean_close_count, in_distress
+    if in_distress(cfg):
+        return {}  # refreeze everything under distress
+    step = max(1, int(getattr(cfg.trading, "persona_unlock_step_samples", 25)))
+    unlocked_n = min(len(ladder), clean_close_count() // step)
+    out = dict(static)
+    for i in range(unlocked_n):
+        out[ladder[i]] = True
+    return out
+
+
 def effective_sizing_params(cfg=None, symbol: str | None = None, direction: str | None = None) -> dict:
     """Resolve the effective sizing params for the current decision.
 
@@ -150,10 +178,12 @@ def effective_sizing_params(cfg=None, symbol: str | None = None, direction: str 
 
     out: dict = {}
     ctx = None  # built lazily, only if some param is operator_decidable
+    # P4: progressive unlock may widen the decidable set beyond the static dict.
+    decidable = effective_operator_decidable(persona, cfg) if persona is not None else {}
     for key, (attr, default) in _LEGACY_FALLBACK.items():
         legacy = getattr(cfg.trading, attr, default) if attr else default
         if persona is not None and key in (persona.params or {}):
-            if (persona.operator_decidable or {}).get(key):
+            if decidable.get(key):
                 # P2: the Operator decides WITHIN [min, max] by context. Only params
                 # explicitly marked operator_decidable (progressive unlock, P4) take
                 # this path; the rest stay pinned at init. Default personas mark none,

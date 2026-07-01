@@ -434,6 +434,11 @@ class TradingPersona(BaseModel):
     description: str = ""
     params: dict[str, PersonaParam] = Field(default_factory=dict)
     operator_decidable: dict[str, bool] = Field(default_factory=dict)
+    # Progressive-unlock ladder (P4): the ORDER params are unfrozen in when
+    # persona_progressive_unlock_enabled is on. Position i unlocks only after the
+    # earlier ones and enough clean samples accrue; distress refreezes all. Empty =
+    # never progressively unlock this persona (use the static operator_decidable).
+    unlock_ladder: list[str] = Field(default_factory=list)
 
 
 def _default_personas() -> dict:
@@ -471,6 +476,7 @@ def _default_personas() -> dict:
                 "add_fraction": P(0.0, 0.0, 0.5),
             },
             operator_decidable={},
+            unlock_ladder=["notional_usdt", "per_trade_loss_pct", "kelly_fraction"],
         ),
         "roll": TradingPersona(
             name="roll",
@@ -484,6 +490,9 @@ def _default_personas() -> dict:
                 "add_fraction": P(0.0, 0.5, 1.0),
             },
             operator_decidable={},
+            # 滚仓解冻顺序:先仓位%→杠杆→止损→加仓→kelly(影响可控→影响大)。
+            unlock_ladder=["notional_usdt", "leverage_max", "per_trade_loss_pct",
+                           "max_adds", "kelly_fraction"],
         ),
     }
 
@@ -544,6 +553,21 @@ class TradingConfig(BaseModel):
     # recent policy is degrading — a soft circuit-breaker, no config flip needed.
     persona_learning_enabled: bool = False
     persona_learning_min_samples: int = 15
+    # --- Progressive unlock (P4): unfreeze operator-decidable params one at a time ---
+    # When enabled, a persona's unlock_ladder params become operator_decidable in
+    # order — the next unlocks only after persona_unlock_step_samples more clean
+    # closes accrue; account distress (drawdown / kill switch) refreezes ALL. Default
+    # OFF → the static operator_decidable dict applies (P1-P3 behavior, zero change).
+    persona_progressive_unlock_enabled: bool = False
+    persona_unlock_step_samples: int = 25
+    # --- Pyramid add-on (P4, roll persona): add to winners, bounded ---
+    # DEFAULT OFF. When on, a winning position may be scaled into up to the persona's
+    # max_adds, each add = add_fraction of the base notional, HARD-CAPPED by the risk
+    # engine's total/per-symbol exposure limits. add_trigger_pct = unrealized profit %
+    # required before the next add. NOTE: this flag governs the pyramid DECISION; live
+    # scale-in order placement is a separate, owner-gated step (it places orders).
+    persona_pyramid_enabled: bool = False
+    persona_pyramid_add_trigger_pct: float = 1.0
 
 
 class UpdateConfig(BaseModel):

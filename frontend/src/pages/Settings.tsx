@@ -1782,6 +1782,10 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [activePersona, setActivePersona] = useState('conservative')
   const [personaLearningEnabled, setPersonaLearningEnabled] = useState(false)
   const [personaLearningMinSamples, setPersonaLearningMinSamples] = useState('15')
+  const [personaUnlockEnabled, setPersonaUnlockEnabled] = useState(false)
+  const [personaUnlockStep, setPersonaUnlockStep] = useState('25')
+  const [personaPyramidEnabled, setPersonaPyramidEnabled] = useState(false)
+  const [personaPyramidTrigger, setPersonaPyramidTrigger] = useState('1.0')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -1813,6 +1817,10 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
     setActivePersona(trading.active_persona ?? 'conservative')
     setPersonaLearningEnabled(!!trading.persona_learning_enabled)
     setPersonaLearningMinSamples(String(trading.persona_learning_min_samples ?? 15))
+    setPersonaUnlockEnabled(!!trading.persona_progressive_unlock_enabled)
+    setPersonaUnlockStep(String(trading.persona_unlock_step_samples ?? 25))
+    setPersonaPyramidEnabled(!!trading.persona_pyramid_enabled)
+    setPersonaPyramidTrigger(String(trading.persona_pyramid_add_trigger_pct ?? 1.0))
   }, [settings])
 
   const mut = useMutation({
@@ -1838,6 +1846,10 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
       active_persona: activePersona,
       persona_learning_enabled: personaLearningEnabled,
       persona_learning_min_samples: parseInt(personaLearningMinSamples),
+      persona_progressive_unlock_enabled: personaUnlockEnabled,
+      persona_unlock_step_samples: parseInt(personaUnlockStep),
+      persona_pyramid_enabled: personaPyramidEnabled,
+      persona_pyramid_add_trigger_pct: parseFloat(personaPyramidTrigger),
       market_aware_exits: {
         enabled: maeEnabled,
         urgent_exit_score: parseInt(maeUrgentScore),
@@ -2032,6 +2044,45 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
                   <span>Min clean samples per bucket</span>
                   <input type="number" min={3} max={500} step={1} value={personaLearningMinSamples}
                     onChange={e => { setPersonaLearningMinSamples(e.target.value); setMsg(null) }}
+                    className="mono w-auto" />
+                </label>
+              )}
+            </div>
+            <div className="mt-2">
+              <Toggle
+                checked={personaUnlockEnabled}
+                label="Progressive unlock (逐个解冻 operator-decidable 参数)"
+                onChange={v => { setPersonaUnlockEnabled(v); setMsg(null) }}
+              />
+              <p className="hint mt-1">
+                P4: unfreezes the persona's ladder params one at a time as clean closes accrue;
+                account distress (drawdown / kill switch) refreezes ALL. Default OFF = static decidable set.
+              </p>
+              {personaUnlockEnabled && (
+                <label className="mt-2">
+                  <span>Clean closes per unlock step</span>
+                  <input type="number" min={1} max={1000} step={1} value={personaUnlockStep}
+                    onChange={e => { setPersonaUnlockStep(e.target.value); setMsg(null) }}
+                    className="mono w-auto" />
+                </label>
+              )}
+            </div>
+            <div className="mt-2">
+              <Toggle
+                checked={personaPyramidEnabled}
+                label="Pyramid add-on (滚仓:盈利加仓,roll only)"
+                onChange={v => { setPersonaPyramidEnabled(v); setMsg(null) }}
+              />
+              <p className="hint mt-1">
+                P4: scale into winners up to the persona's max_adds, each add = add_fraction of base,
+                HARD-CAPPED by per-symbol exposure. Decision layer only; live scale-in order placement
+                is a separate owner-gated step. Default OFF.
+              </p>
+              {personaPyramidEnabled && (
+                <label className="mt-2">
+                  <span>Add trigger (unrealized profit %)</span>
+                  <input type="number" min={0.1} max={50} step={0.1} value={personaPyramidTrigger}
+                    onChange={e => { setPersonaPyramidTrigger(e.target.value); setMsg(null) }}
                     className="mono w-auto" />
                 </label>
               )}
@@ -2741,6 +2792,8 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'trading.default_notional_usdt', 'trading.vol_sizing_enabled', 'trading.vol_target_risk_usdt', 'trading.vol_target_pct', 'trading.vol_kelly_cap_fraction',
     'trading.persona_sizing_enabled', 'trading.active_persona', 'trading.personas',
     'trading.persona_learning_enabled', 'trading.persona_learning_min_samples',
+    'trading.persona_progressive_unlock_enabled', 'trading.persona_unlock_step_samples',
+    'trading.persona_pyramid_enabled', 'trading.persona_pyramid_add_trigger_pct',
     'health.enabled', 'health.alert_via_telegram', 'health.alert_via_windows_toast', 'health.require_llm_at_startup',
     'health.self_heal_enabled', 'health.self_heal_code_drift', 'health.self_heal_market_data', 'health.self_heal_port_cleanup',
     'health.max_agent_failure_ratio', 'health.llm_unavailable_alert_after', 'health.market_data_max_staleness_min',

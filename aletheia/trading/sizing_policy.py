@@ -64,6 +64,42 @@ def _clean_bucket_rewards(regime_bucket: str) -> list[float]:
     return out
 
 
+def clean_close_count() -> int:
+    """Total count of GENUINE closed positions (synthetic/administrative excluded).
+
+    Drives the progressive-unlock gate (P4): params unfreeze as clean evidence
+    accrues. Read-only; 0 on error."""
+    from aletheia.storage.sqlite import get_db
+    from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
+    try:
+        syn = tuple(SYNTHETIC_CLOSE_REASONS)
+        ph = ",".join("?" * len(syn))
+        row = get_db().execute(
+            f"SELECT COUNT(*) FROM positions WHERE status='closed' "
+            f"AND realized_pnl IS NOT NULL "
+            f"AND (close_reason IS NULL OR close_reason NOT IN ({ph}))",
+            syn,
+        ).fetchone()
+        return int(row[0] or 0)
+    except Exception:
+        return 0
+
+
+def in_distress(cfg=None) -> bool:
+    """True when the account is in drawdown or the kill switch is active — the
+    progressive-unlock gate refreezes ALL params in distress."""
+    from aletheia.config.loader import load_config
+    cfg = cfg or load_config()
+    try:
+        if getattr(cfg.runtime, "kill_switch_active", False):
+            return True
+        from aletheia.risk.engine import _portfolio_drawdown_scale
+        mode = cfg.exchange.paper_execution_mode or "paper_internal"
+        return _portfolio_drawdown_scale(mode) < 0.8
+    except Exception:
+        return False
+
+
 def learned_appetite_adjustment(regime_bucket: str | None, cfg=None) -> float:
     """Reward-driven appetite nudge for the current context bucket, in [-MAX_ADJ, MAX_ADJ].
 
@@ -83,6 +119,61 @@ def learned_appetite_adjustment(regime_bucket: str | None, cfg=None) -> float:
     mean_r = sum(rewards) / len(rewards)
     adj = mean_r / _REWARD_SCALE_PCT * MAX_ADJ
     return max(-MAX_ADJ, min(MAX_ADJ, adj))
+
+
+def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
+    """Decide whether/how to scale into a WINNING position (P4 pyramid).
+
+    Pure DECISION only (no order placement). Returns
+      {"add": bool, "add_notional": float, "reason": str}.
+
+    Gates (all must hold, else add=False): persona_pyramid_enabled; active persona has
+    max_adds>0 and add_fraction>0; adds_done < max_adds; the position is a winner past
+    persona_pyramid_add_trigger_pct of unrealized profit. The add is then HARD-CAPPED
+    so base_notional + all adds stays within the risk engine's per-symbol exposure
+    limit (roll uses high leverage → exposure discipline is the whole safety story)."""
+    from aletheia.config.loader import load_config
+    cfg = cfg or load_config()
+    t = cfg.trading
+    if not getattr(t, "persona_pyramid_enabled", False):
+        return {"add": False, "add_notional": 0.0, "reason": "pyramid disabled"}
+    if not getattr(t, "persona_sizing_enabled", False):
+        return {"add": False, "add_notional": 0.0, "reason": "persona sizing disabled"}
+    persona = (t.personas or {}).get(t.active_persona)
+    if persona is None:
+        return {"add": False, "add_notional": 0.0, "reason": "no active persona"}
+    max_adds = int(persona.params.get("max_adds").init) if "max_adds" in persona.params else 0
+    add_frac = float(persona.params.get("add_fraction").init) if "add_fraction" in persona.params else 0.0
+    if max_adds <= 0 or add_frac <= 0:
+        return {"add": False, "add_notional": 0.0, "reason": "persona has no pyramiding"}
+    if adds_done >= max_adds:
+        return {"add": False, "add_notional": 0.0, "reason": f"max_adds reached ({max_adds})"}
+
+    entry = float(position.get("entry_price") or 0)
+    qty = float(position.get("quantity") or 0)
+    base_notional = entry * qty
+    if base_notional <= 0:
+        return {"add": False, "add_notional": 0.0, "reason": "no base notional"}
+    upnl = float(position.get("unrealized_pnl") or 0)
+    profit_pct = (upnl / base_notional * 100.0) if base_notional else 0.0
+    if profit_pct < float(getattr(t, "persona_pyramid_add_trigger_pct", 1.0)):
+        return {"add": False, "add_notional": 0.0,
+                "reason": f"not enough profit ({profit_pct:.2f}%) to add"}
+
+    desired = base_notional * add_frac
+    # HARD CAP: base + already-added + this add must fit the per-symbol exposure limit.
+    cap = float(getattr(cfg.risk, "max_per_symbol_notional_usdt", 0) or 0)
+    if cap > 0:
+        already = base_notional * (1 + add_frac * adds_done)
+        room = max(0.0, cap - already)
+        add_notional = min(desired, room)
+        if add_notional <= 0:
+            return {"add": False, "add_notional": 0.0,
+                    "reason": f"per-symbol exposure cap {cap} reached"}
+    else:
+        add_notional = desired
+    return {"add": True, "add_notional": round(add_notional, 4),
+            "reason": f"winner +{profit_pct:.2f}%, add {adds_done + 1}/{max_adds}"}
 
 
 def sizing_policy_health(cfg=None) -> dict:

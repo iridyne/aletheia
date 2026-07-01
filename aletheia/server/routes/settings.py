@@ -891,6 +891,10 @@ class TradingConfigUpdate(SettingsRequest):
     active_persona: Optional[str] = None
     persona_learning_enabled: Optional[bool] = None
     persona_learning_min_samples: Optional[int] = None
+    persona_progressive_unlock_enabled: Optional[bool] = None
+    persona_unlock_step_samples: Optional[int] = None
+    persona_pyramid_enabled: Optional[bool] = None
+    persona_pyramid_add_trigger_pct: Optional[float] = None
     market_aware_exits: Optional[MarketAwareExitsUpdate] = None
 
 
@@ -901,6 +905,8 @@ _TRADING_BOUNDS: dict[str, tuple[float, float]] = {
     "slippage_bps": (0.0, 200.0),
     "execution_fee_pct": (0.0, 5.0),
     "persona_learning_min_samples": (3, 500),
+    "persona_unlock_step_samples": (1, 1000),
+    "persona_pyramid_add_trigger_pct": (0.1, 50.0),
 }
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 
