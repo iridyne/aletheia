@@ -407,3 +407,57 @@ def test_pyramid_never_exceeds_exposure_cap(tmp_path, monkeypatch):
             break
         total += plan["add_notional"]
     assert total <= 300.0 + 1e-6, f"cumulative exposure must never exceed the cap: {total}"
+
+
+@spec_claim(
+    SpecClaim("PS-S13", "persona_sizing", "§8 durable rollout auto-advance (health-gated)", "L2b",
+              "advance_persona_rollout advances the ladder ONE step per call when "
+              "healthy (sizing→unlock→learning), holds on distress / when complete, and "
+              "no-ops unless persona_auto_advance_enabled. NEVER touches owner-gated "
+              "items (leverage/roll/pyramid). This is the cross-session progression job."),
+)
+def test_advance_persona_rollout(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.trading.persona_rollout import advance_persona_rollout
+
+    saved = {}
+    monkeypatch.setattr(loader, "save_config", lambda c: saved.update({"cfg": c}))
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **k: None, raising=False)
+
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    # Master switch OFF → disabled no-op.
+    assert advance_persona_rollout()["action"] == "disabled"
+
+    # ON but persona_sizing not started → hold.
+    cfg.trading.persona_auto_advance_enabled = True
+    assert advance_persona_rollout()["action"] == "hold"
+
+    # sizing on, healthy → advance to progressive_unlock.
+    cfg.trading.persona_sizing_enabled = True
+    r = advance_persona_rollout()
+    assert r["action"] == "advanced" and r["step"] == "progressive_unlock"
+    assert cfg.trading.persona_progressive_unlock_enabled is True
+
+    # next call → advance to learning.
+    r = advance_persona_rollout()
+    assert r["action"] == "advanced" and r["step"] == "learning"
+    assert cfg.trading.persona_learning_enabled is True
+
+    # both on → hold (rollout complete). Owner-gated flags never touched.
+    r = advance_persona_rollout()
+    assert r["action"] == "hold"
+    assert cfg.trading.persona_pyramid_enabled is False  # never auto-enabled
+    assert cfg.trading.active_persona == "conservative"   # never auto-switched to roll
+
+    # distress → hold even mid-ladder.
+    cfg2 = AletheiaConfig()
+    cfg2.trading.persona_auto_advance_enabled = True
+    cfg2.trading.persona_sizing_enabled = True
+    cfg2.runtime.kill_switch_active = True   # distress
+    monkeypatch.setattr(loader, "load_config", lambda: cfg2)
+    assert advance_persona_rollout()["action"] == "hold"
+    assert cfg2.trading.persona_progressive_unlock_enabled is False  # not advanced under distress

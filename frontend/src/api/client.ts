@@ -379,6 +379,7 @@ export const api = {
     persona_learning_enabled: boolean; persona_learning_min_samples: number
     persona_progressive_unlock_enabled: boolean; persona_unlock_step_samples: number
     persona_pyramid_enabled: boolean; persona_pyramid_add_trigger_pct: number
+    persona_auto_advance_enabled: boolean
     sweep_use_optuna: boolean; sweep_n_trials: number; sweep_optuna_timeout_sec: number; sweep_top_k: number
     market_aware_exits: Partial<{
       enabled: boolean; min_hold_hours_before_market_exit: number; max_signal_age_min: number

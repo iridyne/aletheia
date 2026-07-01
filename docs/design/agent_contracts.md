@@ -41,6 +41,7 @@
 | 28 | backtest_orchestrator | cron 04:00 CST | agents | Run pending backtests |
 | 29 | universe_refresh | 10min | io | Universe composition refresh |
 | 30 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
+| 31 | persona_rollout | 8h | io | Advance dynamic-sizing rollout ladder one health-gated step (no-op unless persona_auto_advance_enabled) |
 
 ---
 

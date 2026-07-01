@@ -895,6 +895,7 @@ class TradingConfigUpdate(SettingsRequest):
     persona_unlock_step_samples: Optional[int] = None
     persona_pyramid_enabled: Optional[bool] = None
     persona_pyramid_add_trigger_pct: Optional[float] = None
+    persona_auto_advance_enabled: Optional[bool] = None
     market_aware_exits: Optional[MarketAwareExitsUpdate] = None
 
 

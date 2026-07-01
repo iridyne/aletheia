@@ -1786,6 +1786,7 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [personaUnlockStep, setPersonaUnlockStep] = useState('25')
   const [personaPyramidEnabled, setPersonaPyramidEnabled] = useState(false)
   const [personaPyramidTrigger, setPersonaPyramidTrigger] = useState('1.0')
+  const [personaAutoAdvance, setPersonaAutoAdvance] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -1821,6 +1822,7 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
     setPersonaUnlockStep(String(trading.persona_unlock_step_samples ?? 25))
     setPersonaPyramidEnabled(!!trading.persona_pyramid_enabled)
     setPersonaPyramidTrigger(String(trading.persona_pyramid_add_trigger_pct ?? 1.0))
+    setPersonaAutoAdvance(!!trading.persona_auto_advance_enabled)
   }, [settings])
 
   const mut = useMutation({
@@ -1850,6 +1852,7 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
       persona_unlock_step_samples: parseInt(personaUnlockStep),
       persona_pyramid_enabled: personaPyramidEnabled,
       persona_pyramid_add_trigger_pct: parseFloat(personaPyramidTrigger),
+      persona_auto_advance_enabled: personaAutoAdvance,
       market_aware_exits: {
         enabled: maeEnabled,
         urgent_exit_score: parseInt(maeUrgentScore),
@@ -2066,6 +2069,19 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
                     className="mono w-auto" />
                 </label>
               )}
+              <div className="mt-2">
+                <Toggle
+                  checked={personaAutoAdvance}
+                  label="Auto-advance rollout (跨会话:每 8h 健康门控推进一步)"
+                  onChange={v => { setPersonaAutoAdvance(v); setMsg(null) }}
+                />
+                <p className="hint mt-1">
+                  P4 ops: the <code>persona_rollout</code> scheduler job (in the gateway, watchdog-backed →
+                  cross-session/reboot) advances the ladder one health-gated step every 8h
+                  (progressive_unlock → learning). Holds on distress/thrash. NEVER auto-touches leverage /
+                  roll / pyramid live orders. Default OFF.
+                </p>
+              </div>
             </div>
             <div className="mt-2">
               <Toggle
@@ -2794,6 +2810,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'trading.persona_learning_enabled', 'trading.persona_learning_min_samples',
     'trading.persona_progressive_unlock_enabled', 'trading.persona_unlock_step_samples',
     'trading.persona_pyramid_enabled', 'trading.persona_pyramid_add_trigger_pct',
+    'trading.persona_auto_advance_enabled',
     'health.enabled', 'health.alert_via_telegram', 'health.alert_via_windows_toast', 'health.require_llm_at_startup',
     'health.self_heal_enabled', 'health.self_heal_code_drift', 'health.self_heal_market_data', 'health.self_heal_port_cleanup',
     'health.max_agent_failure_ratio', 'health.llm_unavailable_alert_after', 'health.market_data_max_staleness_min',

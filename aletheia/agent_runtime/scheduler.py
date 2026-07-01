@@ -444,6 +444,13 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
         misfire_grace_time=120, executor="io",
     )
+    # Persona rollout progression (P4 ops): every 8h, advance the dynamic-sizing
+    # ladder one health-gated step (no-op unless persona_auto_advance_enabled). Durable
+    # cross-session because it lives in the gateway (watchdog-backed). See persona_rollout.py.
+    _scheduler.add_job(
+        _guarded("persona_rollout", _run_persona_rollout), "interval", hours=8,
+        id="persona_rollout", misfire_grace_time=600, executor="io",
+    )
     # News RSS feed collector — fetches enabled feeds every N minutes (default 15).
     _scheduler.add_job(
         _guarded("news_fetch", _run_news_fetch), "interval",
@@ -1232,6 +1239,19 @@ def _run_news_fetch():
 async def _async_news_fetch():
     from aletheia.data.news_collector import fetch_news_feeds
     await fetch_news_feeds()
+
+
+def _run_persona_rollout():
+    """Every 8h: advance the dynamic-sizing persona rollout one health-gated step.
+    No-op unless cfg.trading.persona_auto_advance_enabled. Owner-gated items (leverage,
+    roll, pyramid live) are never touched. See trading/persona_rollout.py."""
+    try:
+        from aletheia.trading.persona_rollout import advance_persona_rollout
+        result = advance_persona_rollout()
+        if result.get("action") == "advanced":
+            logger.info("persona_rollout: advanced → %s", result.get("step"))
+    except Exception as e:
+        logger.warning("persona_rollout job failed: %s", e)
 
 
 def _run_health_check():

@@ -573,6 +573,11 @@ class TradingConfig(BaseModel):
     # scale-in order placement is a separate, owner-gated step (it places orders).
     persona_pyramid_enabled: bool = False
     persona_pyramid_add_trigger_pct: float = 1.0
+    # Durable, cross-session rollout auto-advance (P4 ops). When True, the
+    # `persona_rollout` scheduler job (every 8h) advances the ladder one health-gated
+    # step at a time (progressive_unlock → learning). Default OFF. NEVER auto-advances
+    # owner-gated items (demo leverage cap, roll, pyramid live). See persona_rollout.py.
+    persona_auto_advance_enabled: bool = False
 
 
 class UpdateConfig(BaseModel):
