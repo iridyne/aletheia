@@ -32,7 +32,19 @@ VISION 核心赌注的结构性大缺口已闭合。6 项：**5 DONE + 1 PARTIAL
 
 **下一步 = 让它跑，攒干净窗证据**（观察门见 ROADMAP，不是再写码）。
 
-### 1.1 Phase 2A+（方向性）：~85% CLOSED — 8 DONE / 3 PARTIAL / 1 PENDING（2A+.8 + 2A+.12 已修）
+### 1.1 Phase 2A+（方向性）：✅ CLOSED — 12/12 代码就绪（2A+.10 剩运行观察）
+
+> **2026-07-01 二次收口**：剩余四项（2A+.2 / 2A+.4 / 2A+.9 / 2A+.11）全部实现 + 行为 spec GREEN。
+> conformance 493→496 claims；full suite 1815 passed / 0 failed（确定序）。owner 指令「尽量把 2a 完全完成，不要再遗留任何项目」已落地。
+>
+> | ID | 收口动作 | 证据 |
+> |---|---|---|
+> | 2A+.2 designer 写 applicable_regimes | `_derive_regime_targeting()` 按方向推导 (long→排除 bear / short→排除 bull / neutral→all)，**写成 ranker 能 json.loads 的数组**（逗号串会被静默丢弃）；两个 create_strategy 调用点都传 | SP-S04 升级 L2a→L2b（含 ranker `_check_strategy_regime_fit` 真过滤断言） |
+> | 2A+.4 Dashboard 方向标签 | `types.ts` 加 direction_affinity/applicable_regimes；`StrategyLifecycle.tsx` 加 Direction 列 + drawer 两字段（`fmtRegimes` 解析 JSON 数组） | 前端 build 通过；后端 `GET /strategies` 已全通 |
+> | 2A+.9 family_quota 按 regime | schema 加 `family_quota_by_regime`（4 regime 默认值：bear 提 short_bias/derivatives、starve momentum）；`resolve_family_quota()` + allocator 消费 regime_state；service 传 `current_regime.state`；Settings UI 每 regime 一栏 + 逐行 sum=1.0 校验 + 后端校验 | UP-16 L2b（端到端 bear 收紧 momentum 名额）；Config↔UI 覆盖矩阵登记 |
+> | 2A+.11 atr_4h/bb_width_4h 接 scorer | `score_volatility` 加 4h 多时间框架确认（4h ATR 持续放量 / 4h BB 挤压蓄能） | UP-15 L2b（加字段后分数上升，反向验证防死码） |
+
+**历史读数（已被上表 SUPERSEDED）**：~85% CLOSED — 8 DONE / 3 PARTIAL / 1 PENDING（2A+.8 + 2A+.12 已修）
 
 **✅ 假 DONE 已修复（`04ef582`，2026-07-01）**：`7506a04` 曾在 `signal_emitter._infer_direction` 加 `family == "short_bias"` 分支 + SP-S05 spec，看似 short scanner 做完——**实际是死码**（`run_all_scanners()` 从未注册 short_bias，`scanner_family` 永不等于 "short_bias"），SP-S05 只 `assert 字符串 in src` 故**假 GREEN**。已修：scanners.py 加 `score_short_bias()` 权威 scorer + 注册进 `run_all_scanners()`；删 signal_emitter 冗余死码分支；**SP-S05 重写为 L2b 行为可达性 spec**（验证 scorer 产出 + all_scores 注册）。反向验证：临时移除注册后 spec 立即变红并精确报"死码"，证明防假绿有效。此项从 PENDING→DONE，并解锁 2A+.10 端到端 short path（剩「端到端验证」本身是运行观察项）。
 
@@ -42,21 +54,15 @@ VISION 核心赌注的结构性大缺口已闭合。6 项：**5 DONE + 1 PARTIAL
 
 | ID | verdict | gap |
 |---|---|---|
-| 2A+.2 designer 写 applicable_regimes | PARTIAL | direction_affinity 已写；**applicable_regimes 永远默认 "all"**，regime 过滤对 designer 产出策略是 no-op |
-| 2A+.4 Dashboard 方向标签 | PARTIAL | 后端全通；前端 `types.ts` 无字段、`StrategyLifecycle.tsx` 无展示 |
+| 2A+.2 designer 写 applicable_regimes | ✅ **DONE** | `_derive_regime_targeting()`；写 JSON 数组供 ranker 消费；SP-S04 L2b |
+| 2A+.4 Dashboard 方向标签 | ✅ **DONE** | `types.ts` + `StrategyLifecycle.tsx` Direction 列 + drawer；build 通过 |
 | 2A+.8 专用 short scanner family | ✅ **DONE** (`04ef582`) | `score_short_bias()` + 注册 `run_all_scanners()`；SP-S05 改 L2b 行为可达性 spec；删死码分支 |
-| 2A+.9 family_quota 按 regime | PENDING | 无 per-regime 结构，纯静态 dict（增强项，非收口必需） |
+| 2A+.9 family_quota 按 regime | ✅ **DONE** | `family_quota_by_regime` + `resolve_family_quota()` + allocator/service 消费；UP-16 L2b；Settings UI |
 | 2A+.10 端到端 short 验证 | 代码就绪·待观察 | 2A+.8 已解锁；剩「端到端验证」本身是运行观察项（需 bear regime 真实出现） |
-| 2A+.11 atr_4h/bb_width_4h 接 scorer | PARTIAL | rsi_4h 已消费；另两个收集未消费（US-16 defer，增强非 bug） |
+| 2A+.11 atr_4h/bb_width_4h 接 scorer | ✅ **DONE** | `score_volatility` 4h 多 TF 确认；UP-15 L2b |
 | 2A+.12 UniverseMember 持久化 all_scores | ✅ **DONE** (`8d3bb93`) | model 字段 + migration 列 + service 填值；UP-14 真实 DB round-trip spec；迁移已在真实 app.db 生效 |
 
-**剩余收口路径（2A+.8 + 2A+.12 已完成）**：
-- [x] **2A+.8 真修（DONE `04ef582`）**：`score_short_bias()` + 注册 + SP-S05 行为可达性 spec + 解锁 2A+.10。
-- [x] **2A+.12（DONE `8d3bb93`）**：models + migration + service 三处 + UP-14 round-trip spec。
-- [ ] **2A+.4（0.25 天）**：`types.ts` + `StrategyLifecycle.tsx` 加两字段展示。
-- [ ] **2A+.2（0.25 天）**：designer 推导 applicable_regimes；SP-S04 spec 扩展。
-
-2A+.9 / 2A+.11 = 增强项，"证据出来再看要不要做"。Phase 2A+ 现 ~85%(8 DONE/3 PARTIAL/1 PENDING)。
+**收口路径全部完成**（除 2A+.10 运行观察项，无代码待办）。Phase 2A+ 12/12 代码就绪。
 
 ---
 

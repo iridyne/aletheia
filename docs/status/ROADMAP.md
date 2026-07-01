@@ -480,12 +480,10 @@ bars each cycle, and `paper_trader` Path A consumes the resulting signals.
 
 ## Phase 2A+ — Strategy Pool & Signal Directionality (Regime → Short 完善)
 
-> **Status (2026-07-01, updated):** **~85% CLOSED.** 8 tasks DONE / 3 PARTIAL / 1 PENDING.
-> Structural spine complete; short_bias dead-code fixed (`04ef582`), all_scores persisted
-> (`8d3bb93`). Only remaining PENDING = 2A+.9 (per-regime family_quota) — an enhancement,
-> not a closure blocker. PARTIAL: 2A+.2 (applicable_regimes never set), 2A+.4 (frontend
-> tags), 2A+.11 (atr_4h/bb_width_4h — defer/enhancement). 2A+.10 端到端 short path 代码
-> 就绪,待 bear regime 运行观察。See table + REMAINING_WORK_2026-07-01.md.
+> **Status (2026-07-01, 二次收口):** **✅ CLOSED — 12/12 代码就绪。** 剩 2A+.10 = 纯运行观察项
+> (需 bear/volatile regime 真实出现)。此前 PARTIAL/PENDING 四项(2A+.2 / 2A+.4 / 2A+.9 / 2A+.11)
+> 已全部实现 + 行为 spec GREEN。conformance 493→496 claims;full suite 1815 passed / 0 failed
+> (确定序)。owner 指令「尽量把 2a 完全完成,不要再遗留任何项目」已落地。See table + REMAINING_WORK_2026-07-01.md §1.1。
 
 > **前置**: Phase 5.4 Market Regime Detector 已完成 (2026-06-17 `cfbfff6`)。
 > 本 Phase 将 regime 信息从"被动过滤"升级为"主动引导策略选择"。
@@ -497,9 +495,9 @@ bars each cycle, and `paper_trader` Path A consumes the resulting signals.
 | ID | Task | Status | Evidence / Gap |
 |---|---|---|---|
 | 2A+.1 | `StrategyRecord` 新增 `direction_affinity`/`applicable_regimes` 字段 | **DONE** | `storage/models.py:280-281` + `storage/migrations.py:1437-1438` |
-| 2A+.2 | `strategy_designer` 产出策略时自动填写 direction_affinity + applicable_regimes | **PARTIAL** (2026-07-01 `7506a04`) | direction_affinity 已写 (`strategy_designer.py:526-533`, spec **SP-S04**). Gap: **`applicable_regimes` 从未被 designer 设值**,永远默认 "all",regime 过滤对 designer 产出策略等于 no-op |
+| 2A+.2 | `strategy_designer` 产出策略时自动填写 direction_affinity + applicable_regimes | **DONE** (2026-07-01) | `_derive_regime_targeting(direction)` 同时推导 direction_affinity + applicable_regimes(long→排除 bear / short→排除 bull / neutral→all)。**关键:applicable_regimes 写成 JSON 数组**——ranker 用 `json.loads`+`isinstance(list)` 解析,逗号串会被静默丢弃使过滤失效。primary + sweep-variant 两个 `create_strategy` 调用点都传。spec **SP-S04 升级 L2a→L2b**(含 ranker `_check_strategy_regime_fit` 真过滤断言) |
 | 2A+.3 | `paper_trader_ranker` 按当前 regime 过滤不适用策略 | **DONE** | `paper_trader_ranker.py:206-215` + `:521-550` `_check_strategy_regime_fit()`,两道 gate(direction_affinity + applicable_regimes),7 个单元测试覆盖 |
-| 2A+.4 | Dashboard Strategy 列表展示 direction_affinity + applicable_regimes 标签 | **PARTIAL** — 纯前端未做 | 后端完整;`frontend/src/types.ts:199-208` `StrategyRecord` interface **不含两个字段**,`StrategyLifecycle.tsx` 表格/抽屉均无展示 |
+| 2A+.4 | Dashboard Strategy 列表展示 direction_affinity + applicable_regimes 标签 | **DONE** (2026-07-01) | `types.ts` `StrategyRecord` 加两字段;`StrategyLifecycle.tsx` 加 **Direction 列**(affinity badge,long=green/short=red/both=muted)+ drawer 两字段(`fmtRegimes()` 解析 JSON 数组为人读串,malformed 不抛)。build 通过 |
 | 2A+.5 | Settings UI 新增 RegimeConfig 面板(enabled / min_hold_periods / bias_threshold / short_enabled) | **DONE** | `frontend/src/pages/Settings.tsx:370-447`(4 控件齐全) + `server/routes/settings.py:400-420` POST /settings/regime + `config/schema.py:486-490` RegimeConfig model + runtime consumption `universe/service.py:105-285` |
 
 ### P3 — Signal Directionality Refactoring
@@ -509,9 +507,9 @@ bars each cycle, and `paper_trader` Path A consumes the resulting signals.
 | 2A+.6 | Scanner 输出 direction 字段,使方向成为信号固有属性 | **DONE** | `universe/scanners.py:11-421` — 5 个 scorer 函数返回 `(score, reasons, direction)` 三元组;`run_all_scanners()` 打包 `scanner_direction` 到 dict(line 460). Spec UP-01/UP-03 GREEN |
 | 2A+.7 | `emit_deterministic_opportunities()` 改读 scanner 原生 direction | **DONE** | `signal_emitter.py:88` + `service.py:267-268` 均 `feat.get("scanner_direction") or _infer_direction(...)` — 原生 direction 是主路径,`_infer_direction` 是 fallback(符合 §Design Constraints 第 3 条允许) |
 | 2A+.8 | 新增 `short_bias` scanner family(专为做空设计) | **DONE** (2026-07-01 `04ef582`) | `scanners.py` `score_short_bias()`(4h+24h 下行 + 非拥挤空头 + RSI 有下跌空间,只发 short)+ 注册进 `run_all_scanners()`. 删除 signal_emitter 冗余死码分支. **SP-S05 重写为 L2b 行为可达性 spec**(验证 scorer 产出 + all_scores 注册),反向验证:移除注册后 spec 立即变红报"死码". ⚠️ 修复了 `7506a04` 的假 DONE(原 spec 只查字符串致死码假绿) |
-| 2A+.9 | Scanner family_quota 配置支持按 regime 动态调整 | **PENDING** | 无 per-regime 结构:`config/schema.py:473-476` 是单一静态 dict,`allocator.py:226` 无 regime 参数 |
+| 2A+.9 | Scanner family_quota 配置支持按 regime 动态调整 | **DONE** (2026-07-01) | `config/schema.py` 加 `family_quota_by_regime`(4 regime 默认:bear 提 short_bias/derivatives 到 0.30、starve momentum 到 0.10;volatile 提 volatility 到 0.30)。`allocator.resolve_family_quota(cfg, regime_state)` 命中则覆盖静态 quota,None→回退(向后兼容)。`service.py` 传 `current_regime.state`。Settings UI 每 regime 一行 + 逐行 sum=1.0 校验 + 后端 regime 名/求和校验。spec **UP-16** L2b(端到端 bear 收紧 momentum 名额) |
 | 2A+.10 | 端到端验证:bear regime + short scanner → short opportunity → paper_trader 执行做空 | **代码就绪,待运行观察** (2026-07-01 `04ef582` 解锁) | bear regime 检测、ranker +20 bear+short 加分、paper_trader 处理 short stop 全部就绪(`regime/detector.py:26,34-35` + `paper_trader_ranker.py:388-404` + `paper_trader.py:260-263`);2A+.8 阻塞点已解除,short_bias family 现可产出 scanner_family="short_bias" 成员. **剩「端到端验证」本身 = 运行观察项**(需 bear/volatile regime 真实出现 + short_enabled 开 才能观察到完整链路),非代码缺口 |
-| 2A+.11 | Universe 真 4h 特征(rsi_4h/atr_4h/bb_width_4h)接入 scorer | **PARTIAL** | `rsi_4h` 已被 `score_momentum` 消费(`scanners.py:69,78-82` +5 bonus). Gap:`atr_4h` 与 `bb_width_4h` 在 `features.py:144-151` 有计算但**零 scorer 读**,仅在 features.py 与 docs 出现. `docs/plans/scanner_observer_audit_fix_plan_2026-07-01.md:170` 标 US-16 defer("增强,非 bug") |
+| 2A+.11 | Universe 真 4h 特征(rsi_4h/atr_4h/bb_width_4h)接入 scorer | **DONE** (2026-07-01) | `rsi_4h` 已被 `score_momentum` 消费(+5 bonus)。`score_volatility` 新增 **4h 多时间框架确认**:4h ATR>4% 持续放量 +12、4h BB<3% 挤压蓄能 +12——把 1h 噪声与真实波动 regime 区分开。spec **UP-15** L2b(加字段后分数上升,反向验证防死码) |
 | 2A+.12 | UniverseMember 持久化 `all_scores`(5-family) 供 ensemble 分析 | **DONE** (2026-07-01 `8d3bb93`) | `models.py` `UniverseMember.all_scores: str="{}"` + `migrations.py` `_ADDITIVE_COLUMNS` 注册 + `service.py` 构造时 `all_scores=json.dumps(item.get("all_scores",{}))`. Spec **UP-14** L2b 真实 DB round-trip(insert→SQL→读回)验证. 迁移已在真实 app.db 生效 |
 
 ### Design Constraints
@@ -529,14 +527,16 @@ bars each cycle, and `paper_trader` Path A consumes the resulting signals.
 - [ ] Bull regime 下 short signals 被 regime gate 正确过滤 *(ranker 逻辑就绪,待有真 short signal 才能观察)*
 - [x] RegimeConfig 可通过 Dashboard Settings 切换 *(2A+.5 DONE)*
 
-### 最短剩余工作路径(更新:2A+.8 + 2A+.12 已完成)
+### 最短剩余工作路径(2026-07-01 二次收口:全部完成)
 
 - [x] **2A+.8 真实修复(DONE `04ef582`)** — `score_short_bias()` + 注册 `run_all_scanners()`;SP-S05 改行为可达性 spec;顺带解锁 2A+.10 端到端 short path
 - [x] **2A+.12(DONE `8d3bb93`)** — `models.py` all_scores 字段 + `migrations.py` `_ADDITIVE_COLUMNS` + `service.py` 构造填值;UP-14 round-trip spec
-- [ ] **2A+.4(0.25 天)** — `frontend/src/types.ts` 加两字段 + `StrategyLifecycle.tsx` 抽屉/表格加两列
-- [ ] **2A+.2 applicable_regimes(0.25 天)** — designer 从 `direction_bias` + regime 结果推导 applicable_regimes 并传入 `create_strategy`;SP-S04 spec 扩展检查 applicable_regimes 写路径
+- [x] **2A+.4** — `types.ts` 加两字段 + `StrategyLifecycle.tsx` Direction 列/抽屉
+- [x] **2A+.2 applicable_regimes** — `_derive_regime_targeting()` 推导并写 JSON 数组;SP-S04 升级 L2b
+- [x] **2A+.9 per-regime family_quota** — `family_quota_by_regime` + `resolve_family_quota()` + allocator/service 消费 + Settings UI;UP-16
+- [x] **2A+.11 atr_4h/bb_width_4h** — `score_volatility` 4h 多 TF 确认;UP-15
 
-2A+.9 (per-regime family_quota) 与 2A+.11 (atr_4h/bb_width_4h) 是增强项,不是收口必需 — 属"证据出来后再看有没有必要"
+**唯一剩余 = 2A+.10 端到端 short 运行观察**(需 bear/volatile regime + short_enabled 真实出现,非代码待办)。
 
 ---
 
