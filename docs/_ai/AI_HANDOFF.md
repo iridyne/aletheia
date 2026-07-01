@@ -7,11 +7,79 @@
 
 ## Last Updated
 
-2026-06-30 (P3d debt 核实 + BACKEND_ISSUES/LEDGER 文档同步)
+2026-07-01 (Scanner/Observer 审计修复 P0–P3 + System Operator 重命名 + 双层模型路由)
 
 ---
 
-## Recent Change (P3d 债务核实 — 2026-06-30)
+## Recent Change (Scanner + Observer 审计修复 P0–P3 — 2026-07-01)
+
+### 背景
+基于两份审计报告（`docs/research/{UNIVERSE_SCANNER,MARKET_OBSERVER}_AUDIT_2026-07-01.md`）制定并实施 `docs/plans/scanner_observer_audit_fix_plan_2026-07-01.md`。宽 fan-out 核实 workflow 因 workspace rate-limit 全灭，改手动逐条 grep+读源码核实，查出报告 **6 处根因偏差**（见报告 §0）。分支 `fix/scanner-observer-audit-fixes`，spec `UP-01~13` GREEN。
+
+### 关键修复
+- **US-4（最高杠杆，一处解三处）**：`service.py:256` forward-outcome direction 改用 `scanner_direction`（与 signal_emitter 同源）+ `_infer_direction` 加 event 分支 → 消解 momentum 54% direction=None + event 0 条 forward outcome + 胜率统计双重失真。
+- **US-1**：`compute_total_score` 消费 `scanner_weights`（PI 手调权重此前完全不生效）。
+- **US-3/US-8**：inserted_members 补 market_type + feature 按 (symbol, market_type) 复合 key（perp 不再错标 spot）。
+- **US-9**：short_enabled=False 硬拦 short（不再被 score≥66 绕过）。**US-5/US-6**：BB squeeze O(n²)→O(n)；price_precision tick-size 保真。
+- **MO-1**：key_observations 进 System Operator layer1（+渲染）。**MO-2**：guard advisory 改 per-symbol（闭合学习回路断口 F）。
+- **MO-3/4/6/7/8/9/11/12/13/14**：F&G 填充、scanner_family hint、RS rank 单symbol省略、crowding n/a、fallback DEGRADED 标注、news 48h 过滤、prediction 流动性过滤、load_config 移出循环。
+
+### 未做（有理由，非遗漏）
+- **US-7**（sync 失败）：`get_current_universe` 读侧已 fallback 静态池 + `run.status=failed` 已记录，无需重建。
+- **US-12（all_scores 入库）/US-16（4h 特征接入 scorer）**：无消费者/属增强 → defer `ROADMAP.md`。
+- **MO-5/MO-10/MO-15**：MO-1 已补信息 / FTS MATCH 已保证相关性 / 每 cycle 一次开销可忽略。
+
+### 验证
+`tests/specs/spec_universe_pipeline.py`（13 claims GREEN）+ 全量回归。**运行态状态一律以 `aletheia doctor` 为准。**
+
+---
+
+## Recent Change (System Operator 重命名 + earendil-works/pi 结论 + 双层模型路由 — 2026-07-01)
+
+### 背景
+
+本次会话完成三项工作：(1) 双层模型路由上线；(2) earendil-works/pi 研究与结论；(3) 术语统一。
+
+### 1. 双层模型路由（commit e5a8010）
+
+**问题**：所有 agent 共用单一 `default_provider`，顶层决策 agent 和批量数据提取 agent
+用同一个模型（成本/质量都难优化）。
+
+**实现**：
+- `aletheia/config/schema.py`：`ModelsConfig` 加 `deep_provider` / `fast_provider` 两个可选字段
+- `aletheia/model_provider/router.py`：新增 `get_provider_for_tier(tier)` 翻译函数
+- `aletheia/agents/helpers.py`：`llm_complete` / `llm_structured` / `llm_stream` 加 `provider=` 参数
+- deep 层（顶层决策）：`trading_decision.py`、`strategy_designer.py`、`risk_critic.py`、
+  `market_observer.py`、`dreaming_agent.py`、`lesson_reviewer.py` 共 11 个 call site
+- fast 层（批量提取）：`research_worker.py` 5 个 call site
+- 前端 Settings：Routing Role 下拉（Default / Deep tier / Fast tier）
+- `tests/specs/spec_model_routing.py`：5 个 MR-* SDD claims 全 GREEN
+
+**向后兼容**：`deep_provider=None` / `fast_provider=None` → 自动降级 `default_provider`，
+现有配置零迁移。
+
+### 2. earendil-works/pi 研究结论
+
+**结论**：earendil-works/pi（`@earendil/pi` npm 包）是**终端编程助手 CLI**（RPC/SDK/Skills
+框架，让 AI 辅助编码），与 Aletheia System Operator（交易决策 + 系统监管）**完全不同职责**。
+
+**关键核查**：
+- `operator-shell/package.json`：无 `@earendil` 依赖
+- `operator-shell/src/pi_runtime_adapter.ts`：调用的是 Aletheia Python `/api/operator/internal/llm-session`，
+  不调 earendil npm API
+- 历史"crosswalk 文档"对照的是内部计划文档 vs 双进程设计规格，不是 earendil 代码映射
+
+**决定**：不引入 earendil-works/pi，operator-shell 完全自建（~6k TS + ~6k Python）。
+
+### 3. 术语统一：PI Agent → System Operator
+
+所有活文档统一用"System Operator"；`pi_daemon.py` 文件名保留（改名触 trust boundary）；
+历史归档文档（`docs/design/specs/2026-06-10-pi-*.md` 等）只加文件头标注不全量改写。
+决策详见 `DECISIONS.md` § 2026-07-01。
+
+---
+
+## Previous Change (P3d 债务核实 — 2026-06-30)
 
 ### 核实结果
 

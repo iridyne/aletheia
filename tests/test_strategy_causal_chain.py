@@ -28,10 +28,12 @@ from aletheia.trading.strategy_lifecycle import create_strategy, check_promotion
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    import aletheia.regime.detector as _det
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     for sub in ("logs", "knowledge/research_notes", "knowledge/strategies"):
         (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+    _det.reset_state()  # clear module-level regime cache so cross-test pollution can't filter candidates
     reset_db()
     sq._db_conn = None
     conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
@@ -74,7 +76,7 @@ _MOCK_EXEC_SPEC = {
 
 def _patch_llm_structured(monkeypatch):
     """Mock llm_structured to return a valid executable strategy spec."""
-    async def fake_llm_structured(system, user, schema=None, max_tokens=800):
+    async def fake_llm_structured(system, user, schema=None, max_tokens=800, **kw):
         return _MOCK_EXEC_SPEC, None
 
     monkeypatch.setattr(
@@ -137,6 +139,9 @@ async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
     """Phase 4a/4e: Strategy stops at paper_candidate. After PI Agent promotes it,
     paper_trader writes signal_pending entries for PI Agent to execute."""
     setup_env(tmp_path, monkeypatch)
+    # Reset global regime cache so prior tests' published regime doesn't bleed in.
+    import aletheia.regime.detector as _det
+    monkeypatch.setattr(_det, "_published_regime", None)
     _set_mode("Paper")
     _patch_llm_structured(monkeypatch)
 
@@ -182,6 +187,8 @@ async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
     """Phase 4a/4e: Paper trader now writes signals. To test promotion gates,
     we simulate PI Agent creating a position for the strategy."""
     setup_env(tmp_path, monkeypatch)
+    import aletheia.regime.detector as _det
+    monkeypatch.setattr(_det, "_published_regime", None)
     _set_mode("Paper")
     _patch_llm_structured(monkeypatch)
 

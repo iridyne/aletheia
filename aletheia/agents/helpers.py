@@ -11,14 +11,15 @@ from aletheia.model_provider.fallback import complete_with_fallback
 logger = logging.getLogger("aletheia.agents")
 
 
-async def llm_complete(system: str, user: str, *, max_tokens: int = 800) -> tuple[str | None, str | None]:
-    """Call the default model provider. Returns (content, error).
+async def llm_complete(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None) -> tuple[str | None, str | None]:
+    """Call the model provider. Returns (content, error).
 
     Never raises — on any failure returns (None, error_message) so the agent can
     record a clean error and still complete its run.
+    provider: explicit provider name (or None → use default_provider).
     """
     try:
-        provider = get_provider()
+        provider = get_provider(provider)
         resp = await complete_with_fallback(ModelRequest(
             messages=[{"role": "user", "content": user}],
             system=system,
@@ -89,15 +90,16 @@ def _extract_json_object(text: str):
     return None
 
 
-async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 1024) -> tuple[dict | None, str | None]:
+async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 1024, provider: str | None = None) -> tuple[dict | None, str | None]:
     """Call the provider's structured() and return (parsed_dict, error).
 
     Never raises — absorbs provider errors AND the JSON-parse failure in the
     provider impl, returning (None, error) so the caller can fall back cleanly.
     `schema` is a Pydantic model class (uses model_json_schema()).
+    provider: explicit provider name (or None → use default_provider).
     """
     try:
-        provider = get_provider()
+        provider = get_provider(provider)
         schema_json = json.dumps(schema.model_json_schema() if hasattr(schema, "model_json_schema") else {})
         base_messages = [
             {"role": "user", "content": user},
@@ -166,14 +168,15 @@ async def llm_structured(system: str, user: str, *, schema, max_tokens: int = 10
         return None, f"llm_unavailable: {e}"
 
 
-async def llm_stream(system: str, user: str, *, max_tokens: int = 800) -> AsyncIterator[StreamChunk]:
-    """Stream response chunks from the default provider.
+async def llm_stream(system: str, user: str, *, max_tokens: int = 800, provider: str | None = None) -> AsyncIterator[StreamChunk]:
+    """Stream response chunks from the provider.
 
     Yields StreamChunk objects. On failure yields a single chunk with done=True.
     Callers should iterate with `async for chunk in llm_stream(...)`.
+    provider: explicit provider name (or None → use default_provider).
     """
     try:
-        provider = get_provider()
+        provider = get_provider(provider)
         async for chunk in provider.stream(ModelRequest(
             messages=[{"role": "user", "content": user}],
             system=system,

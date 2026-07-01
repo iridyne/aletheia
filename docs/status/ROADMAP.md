@@ -95,7 +95,7 @@ explicit user authorization regardless of whether earlier gates are satisfied.
 | 层 | 内容 | 状态 | 前置 |
 |---|---|---|---|
 | **A — 确定性自愈 supervisor** | 无 LLM。code-drift/stale→重启、端口清理、限频持久化。这是稳定性根基,不是操作员。 | **DONE** (`8a6e008` + `abd7773`) | — |
-| **B — LLM Apex Agent Shell (Pi Agent)** | 顶层 LLM 系统操作员。下文展开。 | **IN PROGRESS** — Python control plane, Command Center, shell supervision, operator event/task loop 已落地；更深的 PI runtime / delegation / lifecycle 仍在后续 track | **直接在 master 推进**;触 trust 边界(execution / 凭证 / live)的改动需显式授权 |
+| **B — LLM Apex Agent Shell (System Operator)** | 顶层 LLM 系统操作员。下文展开。 | **IN PROGRESS** — Python control plane, Command Center, shell supervision, operator event/task loop 已落地；更深的 runtime / delegation / lifecycle 仍在后续 track | **直接在 master 推进**;触 trust 边界(execution / 凭证 / live)的改动需显式授权 |
 
 ### Track B 核心架构(§8)
 
@@ -520,10 +520,12 @@ own rules were ever executed.
 | ID | Task | Status |
 |---|---|---|
 | 2A+.6 | Scanner 输出 direction 字段，使方向成为信号固有属性 | PENDING |
-| 2A+.7 | `emit_deterministic_opportunities()` 中移除 `_infer_direction()` 后推断逻辑，改读 scanner 原生 direction | PENDING |
+| 2A+.7 | `emit_deterministic_opportunities()` 中移除 `_infer_direction()` 后推断逻辑，改读 scanner 原生 direction | **PARTIAL** — 2026-07-01 US-4: forward-outcome direction (`service.py:256`) 与 opportunity 已同源改读 `scanner_direction`；signal_emitter 保留 `_infer_direction` 作 fallback（符合下方 §Design Constraints 第 3 条）。spec UP-01/UP-03 |
 | 2A+.8 | 新增 `short_momentum` / `bear_breakout` scanner family(专为做空设计) | PENDING |
 | 2A+.9 | Scanner family_quota 配置支持按 regime 动态调整 | PENDING |
 | 2A+.10 | 端到端验证：bear regime + short scanner → short opportunity → paper_trader 执行做空 | PENDING |
+| 2A+.11 | Universe 真 4h 特征(rsi_4h/atr_4h/bb_width_4h)接入 scorer（当前收集未消费）— Scanner 审计 US-16 defer（增强，非 bug） | PENDING |
+| 2A+.12 | UniverseMember 持久化 `all_scores`(5-family) 供 ensemble 分析 — Scanner 审计 US-12 defer（需先有消费者，否则违反 data_utilization「无消费者数据=负债」） | PENDING |
 
 ### Design Constraints
 

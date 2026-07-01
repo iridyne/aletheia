@@ -249,13 +249,13 @@ export const api = {
   setExchangeMode: (mode: string) => post('/settings/exchange-mode', { mode }),
 
   // Model provider config
-  getModelConfig: () => fetchJson<{ default_provider: string; providers: Record<string, any> }>('/model'),
+  getModelConfig: () => fetchJson<{ default_provider: string; deep_provider: string | null; fast_provider: string | null; providers: Record<string, any> }>('/model'),
   getModelHealth: () => fetchJson<{ provider: string; available: boolean; model: string; error: string | null; models: string[] }[]>('/model/health'),
   pingModel: () => post<{ ok: boolean; latency_ms: number; model: string; response: string; error: string | null }>('/model/ping'),
   setModelProvider: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
-    enabled?: boolean; default?: boolean; api_key?: string; codex_model?: string
-    workspace_url?: string; auth_scheme?: string
+    enabled?: boolean; default?: boolean; set_as_deep?: boolean; set_as_fast?: boolean
+    api_key?: string; codex_model?: string; workspace_url?: string; auth_scheme?: string
   }) => post('/settings/model', body),
   testModelCandidate: (body: {
     provider: string; base_url?: string; protocol?: string; model?: string
@@ -342,6 +342,12 @@ export const api = {
     }
     fills: number
   }>(`/analytics/pipeline-funnel?hours=${hours}`),
+  getLearningFunnel: () => fetchJson<{
+    knowledge_items_by_type: Array<{ item_type: string; count: number }>
+    pi_actual_visibility: { layer3_lesson_hits: number; layer3_guards_available: number; note: string }
+    ps_lessons: { total: number; by_status: Array<{ status: string; count: number }>; latest_created_at: string | null }
+    serenity_opportunities_active: number
+  }>('/analytics/learning-funnel'),
   getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
   // Releasing the brake requires confirm_release=true (backend returns 422 otherwise).
   setKillSwitch: (active: boolean, reason = '', confirmRelease = false) =>
@@ -495,7 +501,7 @@ export const api = {
   togglePrediction: (enabled: boolean) => post<{ enabled: boolean }>('/prediction/toggle', { enabled }),
 
   // Serenity Lens endpoints (research-first investigation pipeline)
-  getSerenityThemes: () => fetchJson<SerenityTheme[]>('/serenity/themes'),
+  getSerenityThemes: (status?: string) => fetchJson<SerenityTheme[]>(status ? `/serenity/themes?status=${status}` : '/serenity/themes'),
   getSerenityTheme: (id: string) => fetchJson<SerenityTheme & { tags: string[] }>(`/serenity/themes/${id}`),
   getSerenityThemeOverview: (id: string) => fetchJson<SerenityThemeOverview>(`/serenity/themes/${id}/overview`),
   createSerenityTheme: (body: Partial<SerenityTheme> & { name: string }) =>
@@ -751,6 +757,43 @@ export const api = {
   // Trade Analytics panel
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
   getStrategyKpis: () => fetchJson<Record<string, { trade_count: number; win_rate: number; total_pnl: number }>>('/analytics/strategy-kpis'),
+  getStrategyEvidence: () => fetchJson<Array<{
+    strategy_id: string
+    strategy_name: string
+    state: string
+    symbol: string
+    timeframe: string
+    direction_bias: string | null
+    has_ruleset: boolean
+    compile_status: string
+    paper_summary: { trade_count: number; expectancy: number; win_rate: number; total_pnl: number; profit_factor: number } | null
+    drift_summary: { drift_status: string; paper_trade_count: number; paper_expectancy: number; backtest_expectancy: number; paper_to_backtest_ratio: number | null } | null
+    factor_summary: { total_factors: number; blocked_count: number; preferred_count: number } | null
+    evidence_status: string
+    recommended_action: string
+    recommended_action_reasons: string[]
+  }>>('/analytics/strategy-evidence'),
+  getBacktestPaperDrift: () => fetchJson<Array<{
+    strategy_id: string
+    strategy_name: string
+    state: string
+    symbol: string
+    timeframe: string
+    backtest_trade_count: number
+    backtest_win_rate: number
+    backtest_profit_factor: number
+    backtest_total_return_pct: number
+    backtest_max_drawdown_pct: number
+    paper_trade_count: number
+    paper_expectancy: number
+    paper_win_rate: number
+    paper_profit_factor: number
+    paper_total_pnl: number
+    drift_expectancy: number | null
+    paper_to_backtest_ratio: number | null
+    drift_status: string
+    drift_reasons: string[]
+  }>>('/analytics/backtest-paper-drift'),
   getEquityCurve: (days?: number) => fetchJson<{
     points: { time: string; pnl: number; cumulative_pnl: number }[];
     current_unrealized: number;

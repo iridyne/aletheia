@@ -63,7 +63,12 @@ async def get_settings():
         "live": cfg.live.model_dump(mode="json"),
         "agent": cfg.agent.model_dump(mode="json"),
         "operator": cfg.operator.model_dump(mode="json"),
-        "models": {"default_provider": cfg.models.default_provider, "providers": providers_safe},
+        "models": {
+            "default_provider": cfg.models.default_provider,
+            "deep_provider": cfg.models.deep_provider,
+            "fast_provider": cfg.models.fast_provider,
+            "providers": providers_safe,
+        },
         "risk": cfg.risk.model_dump(mode="json"),
         "update": cfg.update.model_dump(mode="json"),
         "trading": cfg.trading.model_dump(mode="json"),

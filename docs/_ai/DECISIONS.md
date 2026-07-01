@@ -1,5 +1,29 @@
 # Decisions
 
+## 2026-07-01 — Scanner/Observer 审计修复的架构决策
+
+### Context
+基于两份审计报告修复 universe scanner + market observer。手动核实（宽 fan-out workflow 因 workspace rate-limit 全灭）查出报告 6 处根因偏差，若干项据此改变处置。
+
+### Decisions
+1. **forward-outcome direction 必须与 opportunity 同源（single source of truth）**
+   - 问题：`service.py:256` 用 `_infer_direction` 重算方向，opportunity 用 `scanner_direction`；分裂造成 momentum 54% direction=None + event 0 条 + 胜率统计污染。
+   - 决定：inserted_members direction 改用 `item.get("scanner_direction") or _infer_direction(...)`，与 signal_emitter 完全对齐。方向只有一个权威来源（scanner 内在方向），`_infer_direction` 仅作 fallback。spec UP-01/UP-03 锁定。
+
+2. **`all_scores` 不落库（避免无消费者数据）**
+   - 报告建议持久化 5-family 分数供 ensemble 分析。
+   - 决定：**不加列**。当前无任何消费者，落库违反 data_utilization 契约「无消费者数据=负债」。有明确消费需求时再加，记入 ROADMAP。
+
+3. **scanner_weights 与 calibration 相乘叠加，而非替换**
+   - `scanner_weights`（PI 手调）与 calibration（自动胜率）都是 family 级乘数。
+   - 决定：`opportunity *= calibration × scanner_weights`。空 dict → 全 1.0，不改变默认行为。关联 OL-C09。
+
+4. **guard advisory 用 scanner_family（LLM 前可得）做 per-symbol 匹配，不用 direction**
+   - direction 是 LLM 输出（LLM 前不可得）；scanner_family 来自 universe member（LLM 前已知）。
+   - 决定：MO-2 用 scanner_family 做 per-symbol guard 匹配，闭合断口 F 核心（scanner_family 缺失致恒不匹配）。direction 维度作为后续增强。
+
+---
+
 ## 2026-06-29 — OpenAlice TaG 借鉴策略的 5 个决策
 
 ### Context
@@ -596,3 +620,52 @@ All AI sessions should follow start/end protocols documented in AGENTS.md.
 ### Alternatives Considered
 
 None — process improvement, not technical tradeoff.
+
+---
+
+## 2026-07-01 — System Operator 命名统一 + earendil-works/pi 研究结论
+
+### Context
+
+项目内长期混用"PI Agent"/"Pi Agent"称呼底层的交易决策+系统监管 agent 组件群。同期研究了
+`earendil-works/pi`（GitHub npm 包）是否可复用/借鉴——因名称"pi"与项目历史命名重合，导致
+7 次审计误报（A2/A4 误归因到外部 npm）。
+
+### Decisions
+
+1. **统一术语为"System Operator"，废弃"PI Agent"**
+   - 原"PI Agent"在代码层从未命名为"pi"——三个组件分别叫 `operator-shell`、`operator_loop`、
+     `pi_daemon`，只有最底层沿用了历史残留的 `pi_` 前缀。
+   - **决定**：所有活文档（ROADMAP、AI_HANDOFF、DECISIONS、CURRENT_TASK、设计契约等）
+     统一使用"System Operator"或"Operator Layer"；历史归档文档（`docs/design/specs/2026-06-10-pi-*.md`、
+     `docs/plans/pi_agent_*.md`）保留原名、只在文件头部加历史标注，不做全量改写（归档文件
+     不是维护对象）。
+   - `pi_daemon.py` 文件名保留（改名是破坏性重构，触 trust boundary），但文档一律描述为
+     "trading decision daemon"（其职责名）而非"PI Agent"。
+
+2. **earendil-works/pi 与 Aletheia 无代码层关联，不引入**
+   - earendil-works/pi（`@earendil/pi` npm 包）是终端编程助手 CLI：RPC/SDK/Skills 框架，
+     用于让 AI agent 辅助编码，与 Aletheia 的交易决策/系统监管职责完全不同。
+   - `operator-shell/src/pi_runtime_adapter.ts` 命名为"pi_runtime_adapter"是历史命名——
+     它调用的是 Aletheia Python `/api/operator/internal/llm-session`，**不调用** earendil npm 包
+     的任何 API。源码 grep 确认：`operator-shell/package.json` 无 `@earendil` 依赖。
+   - **决定**：earendil-works/pi 不引入，不再作为借鉴参考对象。operator-shell 是完全自建
+     (~6k 行 TypeScript + ~6k 行 Python），无需外部 agent 运行时。
+   - 过去的"crosswalk 文档"（`docs/design/specs/2026-06-10-pi-operator-agent-design-crosswalk.md`）
+     对照的是内部计划文档 `aletheia_pi_agent_implementation_plan.md` 与双进程设计规格，
+     **不是** earendil-works/pi 代码的映射——crosswalk 名称造成误读，已记录为历史文档。
+
+### Reasoning
+
+**名称是认知负债**：7 路审计误报（A2/A4 混淆 TS operator-shell 与 Python pi_daemon）的
+直接根因是"PI Agent"一词指向不清楚，修名是降低维护认知成本的最低成本修复。
+
+**不引入 earendil-works/pi 的核心原因**：职责错位（coding harness ≠ trading operator）+
+Aletheia 已完整自建（operator-shell 自身已是 LLM agent runtime）+ 引入外部 agent 运行时
+与 trust boundary 设计哲学冲突（agent 不可自由 tool-use，所有命令走 Command Registry）。
+
+### References
+
+- 三组件区分图：`docs/design/operator_layer.md` §[必看] 警告框
+- memory：`aletheia-pi-agent-full-build-decision`（含 A2/A4 误报根因详述）
+- 历史设计归档：`docs/design/specs/2026-06-10-pi-operator-agent-design-crosswalk.md`

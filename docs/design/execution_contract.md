@@ -86,7 +86,6 @@ trade_proposals.id
 2. 确保 `sync_universe_registry()` 已写入 `venue="hyperliquid"` 行
 
 **Spec claims**：`EX-S07`（结构）/ `EX-B10`（paper_internal 免检）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。
-
 ---
 
 ## 4. TPSL 交易所挂单
@@ -171,7 +170,7 @@ trade_proposals.id
 | 4 | ruleset_exit | `_decide_exit` 返回 None 且 `position_id ∈ ruleset_exit_position_ids` | `position_manager.py:348-349` |
 | 5 | market_aware_exit | **仅当 1–4 都未触发**且 `market_aware_exits.enabled`;`urgent_exit` 才平,`tighten_stop` 只收紧不平 | `exit_rules.py:27`,调用点 `position_manager.py:352` |
 
-**PI Agent 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)经**同一** `close_position_routed()` 入口平仓,**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于路由中枢,不在触发器优先级链内。
+**System Operator 退出路径独立**:`review_portfolio_state()`(`commands.py:1922`,LLM 决策)经**同一** `close_position_routed()` 入口平仓,**不进入** `evaluate_open_positions` 自动循环——两条路径汇合于路由中枢,不在触发器优先级链内。
 
 ### 10.2 close_position_routed 路由契约(唯一平仓中枢)
 

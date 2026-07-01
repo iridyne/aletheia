@@ -721,6 +721,10 @@ def _run_dreaming_agent():
     cfg = load_config()
     if cfg.runtime.paused:
         return
+
+    # Step 1: Serenity research pipeline (evidence collection, theme clustering, opps).
+    # enqueue_research_run launches a background thread and returns immediately — it
+    # never raises, so the old fallback to run_dreaming_agent was unreachable.
     try:
         from aletheia.storage.models import SerenityResearchRun
         from aletheia.storage import repositories as repo
@@ -728,17 +732,29 @@ def _run_dreaming_agent():
         run = SerenityResearchRun(trigger_type="scheduled", mode="standard", status="queued")
         repo.insert_serenity_research_run(run)
         enqueue_research_run(run.id)
-    except Exception:
-        # Fallback: direct agent call if new pipeline fails
-        try:
-            _run_async_with_timeout("dreaming_agent", _async_run("dreaming_agent"))
-        except TimeoutError:
-            logger.warning(
-                "dreaming_agent fallback timed out after %.0fs",
-                _ASYNC_JOB_TIMEOUT_SEC["dreaming_agent"],
-            )
-        except Exception as e:
-            logger.warning("dreaming_agent job failed: %s", e)
+    except Exception as e:
+        logger.warning("dreaming_agent: serenity research enqueue failed: %s", e)
+
+    # Step 2: Lesson extraction — mines actionable lessons from recent trade case studies
+    # and writes them to ps_lessons (proposed). lesson_reviewer at 03:00 then reviews
+    # and marks them applied. This step was previously only reachable via fallback
+    # (断口U6 fix: run it explicitly, independent of the serenity pipeline).
+    try:
+        from aletheia.agents.dreaming_agent import _extract_lessons
+        outputs: list[str] = []
+        errors: list[str] = []
+        _run_async_with_timeout(
+            "dreaming_agent",  # reuse existing timeout (300s)
+            _extract_lessons("dreaming_daily_sched", outputs, errors),
+        )
+        if outputs:
+            logger.info("dreaming_agent: lesson extraction outputs: %s", outputs)
+        if errors:
+            logger.warning("dreaming_agent: lesson extraction errors: %s", errors)
+    except TimeoutError:
+        logger.warning("dreaming_agent: lesson extraction timed out")
+    except Exception as e:
+        logger.warning("dreaming_agent: lesson extraction failed: %s", e)
 
 
 def _run_lesson_reviewer():

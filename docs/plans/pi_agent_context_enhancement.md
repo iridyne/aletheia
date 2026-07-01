@@ -1,4 +1,6 @@
-# PI Agent Context Enhancement — 设计报告
+# System Operator Context Enhancement — 设计报告
+
+> **[历史归档 — 2026-07-01]** 文件名保留，"PI Agent"已更名为"System Operator"。
 
 > 状态：设计讨论稿（2026-06-20）。需用户确认后实施。
 > 目标：让 PI Trading Decision Agent 拿到足够丰富的上下文做出高质量的自适应决策，同时保留 LLM 自由推理空间。

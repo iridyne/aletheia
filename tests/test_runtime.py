@@ -157,15 +157,19 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
                           change_pct_24h=1.5, provider="fake")
         async def get_ohlcv(self, symbol, timeframe, limit):
             return []
-        async def close(self):
-            pass
+    async def close(self):
+        pass
 
     monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
 
-    # Disable xStocks so this test covers only the 3 crypto symbols.
+    # Disable xStocks so this test covers only the 3 crypto symbols (spot-only
+    # collection path).  Must clear both the new stock-token field and the
+    # legacy alias — the new field has a non-empty default that would add
+    # r-series instruments to the collect run.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_xstocks = []
+    cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
     from aletheia.trading.market_data import collect_market_snapshots

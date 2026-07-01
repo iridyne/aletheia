@@ -338,6 +338,7 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
 async def _assess_opportunity(ctx: dict) -> dict | None:
     """Call LLM with full trading context; return raw decision dict."""
     from aletheia.agents.helpers import llm_structured
+    from aletheia.model_provider.router import get_provider_for_tier
 
     system = (
         "You are the Trading Decision Authority for an autonomous paper trading system. "
@@ -349,7 +350,8 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
     user = _build_assessment_prompt(ctx)
     schema_text = _json_schema_hint(_DECISION_SCHEMA)
     full_user = f"{user}\n\nReturn JSON: {schema_text}"
-    result, err = await llm_structured(system, full_user, schema=_DummySchema(_DECISION_SCHEMA))
+    result, err = await llm_structured(system, full_user, schema=_DummySchema(_DECISION_SCHEMA),
+                                       provider=get_provider_for_tier("deep"))
     if err:
         logger.warning("LLM assessment failed: %s", err)
         return None
@@ -360,6 +362,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
     """Run Bull/Bear adversarial debate for a symbol."""
     import asyncio
     from aletheia.agents.helpers import llm_structured
+    from aletheia.model_provider.router import get_provider_for_tier
 
     bull_user = _build_bull_prompt(symbol, direction, ctx)
     bear_user = _build_bear_prompt(symbol, direction, ctx)
@@ -369,9 +372,12 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
     system_bull = "You are a bull analyst. Return a JSON object matching the schema."
     system_bear = "You are a bear analyst. Return a JSON object matching the schema."
 
+    _deep_provider = get_provider_for_tier("deep")
     (bull_result, bull_err), (bear_result, bear_err) = await asyncio.gather(
-        llm_structured(system_bull, f"{bull_user}\n\nReturn JSON: {bull_schema_hint}", schema=_DummySchema(_BULL_SCHEMA)),
-        llm_structured(system_bear, f"{bear_user}\n\nReturn JSON: {bear_schema_hint}", schema=_DummySchema(_BEAR_SCHEMA)),
+        llm_structured(system_bull, f"{bull_user}\n\nReturn JSON: {bull_schema_hint}",
+                       schema=_DummySchema(_BULL_SCHEMA), provider=_deep_provider),
+        llm_structured(system_bear, f"{bear_user}\n\nReturn JSON: {bear_schema_hint}",
+                       schema=_DummySchema(_BEAR_SCHEMA), provider=_deep_provider),
     )
     if bull_err or bear_err or not bull_result or not bear_result:
         logger.debug("debate failed bull_err=%s bear_err=%s", bull_err, bear_err)
@@ -667,6 +673,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"  {o['symbol']} [{o.get('market', '?')}] {o.get('direction_bias', '?')} "
             f"conf={o.get('confidence_score', '?')} "
             f"[{o.get('scanner_family', '')}]: {o.get('thesis', '')}"
+            f"{(' | obs: ' + '; '.join(o['key_observations'])) if o.get('key_observations') else ''}"
             for o in opps[:8]
         )
         parts += ["## Open Opportunities (market_observer output)", opp_lines, ""]

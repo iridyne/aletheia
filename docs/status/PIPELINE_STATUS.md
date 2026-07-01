@@ -204,7 +204,7 @@ risk_critic：已排入 scheduler（每 6h）
         │   持 WAL 锁(1652 次 locked)→ 提交条件修复;管道恢复
         └─ 72h observation period                              在观测机继续
 
-[并行开发线] worktree-dev — Operator Layer / Pi Agent
+[并行开发线] worktree-dev — Operator Layer / System Operator
         ├─ 目标:推进 Stage 1(read-only supervisor) 的实现
         ├─ 交互:Command Center 专页为主,Ctrl+K 仅作快捷入口
         ├─ 已落地:

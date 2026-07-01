@@ -137,7 +137,10 @@ def _render_recent_closes(symbol: str, closes: list[float], take: int = 10) -> s
 def _render_relative_strength(returns_24h: dict[str, float | None]) -> str:
     """Rank table for cross-asset relative strength."""
     valid = {s: r for s, r in returns_24h.items() if r is not None}
-    if not valid:
+    # MO-6: a cross-asset RANK needs ≥2 assets. With one symbol "Rank 1 of 1" reads
+    # to the LLM as "strongest in market". market_observer analyzes one symbol at a
+    # time, so this block was always a meaningless Rank 1 — omit it.
+    if len(valid) < 2:
         return ""
     ranks = relative_strength_rank({**valid})
     rows = ["| Rank | Symbol | 24h % |", "|---:|---|---:|"]
@@ -261,7 +264,12 @@ async def build_market_context(
             else:
                 legacy_lines.append(f"{sym}: no snapshot yet")
         debug["fallback"] = True
-        return "\n".join(legacy_lines), debug
+        # MO-7: mark the degraded path explicitly. The normal snapshot tells the LLM
+        # "if you cite a number it must come from this block"; the fallback dropped
+        # that framing, so the model couldn't tell live data from last-known.
+        header = ("## Market data snapshot (⚠️ DEGRADED — live OHLCV unavailable; "
+                  "figures below are last-known and may be stale)\n")
+        return header + "\n".join(legacy_lines), debug
 
     rs_block = _render_relative_strength(returns_24h)
 

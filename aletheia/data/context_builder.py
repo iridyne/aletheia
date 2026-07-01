@@ -114,10 +114,23 @@ def render_enriched_context_md(
             oi = f"${lv.open_interest_usd:,.0f}" if lv.open_interest_usd else "n/a"
             oi_d = f"{lv.oi_delta_1h_pct:+.1f}%" if lv.oi_delta_1h_pct is not None else "n/a"
             lsr = f"{lv.long_short_ratio:.2f}" if lv.long_short_ratio is not None else "n/a"
+            # MO-8: crowding_score is 0.0 when NO crowding input exists (funding/OI/
+            # LSR all None). Rendering "0/100" reads to the LLM as "not crowded";
+            # show n/a instead so absence-of-data isn't mistaken for a real signal.
+            has_crowd_input = (lv.funding_rate is not None
+                               or lv.oi_delta_1h_pct is not None
+                               or lv.long_short_ratio is not None)
+            crowd = f"{lv.crowding_score:.0f}/100" if has_crowd_input else "n/a"
             rows.append(
-                f"| {sym} | {fr} | {fr_ann} | {oi} | {oi_d} | {lsr} | {lv.crowding_score:.0f}/100 |"
+                f"| {sym} | {fr} | {fr_ann} | {oi} | {oi_d} | {lsr} | {crowd} |"
             )
-        sections.append("### Derivatives state\n" + "\n".join(rows))
+        # MO-9: glossary so the LLM reads LSR/Crowding consistently.
+        sections.append(
+            "### Derivatives state\n"
+            "_LSR = long/short account ratio (>1 crowd-long, <1 crowd-short, "
+            "n/a=no data); Crowding 0-100, higher = more one-sided._\n"
+            + "\n".join(rows)
+        )
 
         # Flag funding opportunities
         opps = [sym for sym, lv in leverage.items() if lv.funding_opportunity]
@@ -253,6 +266,13 @@ def build_market_context_from_db(symbols: list[str]) -> MarketContextSnapshot:
             nasdaq_close=macro_row.get("nasdaq_close"),
             risk_regime=macro_row.get("risk_regime", "neutral"),
             observed_at=macro_row.get("observed_at", ""),
+            # MO-3: F&G + top movers are collected (macro/coingecko collectors) and
+            # rendered (build_market_context_snapshot §Macro), but were never read
+            # here — so the runtime path always saw None. macro_snapshots stores all
+            # three columns; surface them.
+            fng_value=macro_row.get("fng_value"),
+            fng_classification=macro_row.get("fng_classification"),
+            top_movers_summary=macro_row.get("top_movers_summary"),
         )
 
     return build_market_context_snapshot(symbols, tradability, leverage_states, macro)

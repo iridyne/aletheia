@@ -8,7 +8,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import Tabs from '../components/Tabs'
 import PnLChart from '../charts/PnLChart'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
+import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
 
@@ -311,7 +311,7 @@ function KnowledgeTab() {
         {selectedLesson && (
           <>
             <DrawerSection label="Summary">
-              <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{selectedLesson.summary || '—'}</p>
+              <p className="text-sm text-pre-wrap">{selectedLesson.summary || '—'}</p>
             </DrawerSection>
             <DrawerSection label="Metadata">
               <DrawerField label="Category" value={<Badge tone="blue">{humanize(selectedLesson.category || '—')}</Badge>} />
@@ -332,7 +332,7 @@ function KnowledgeTab() {
         {selectedGuard && (
           <>
             <DrawerSection label="Description">
-              <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{selectedGuard.description || '—'}</p>
+              <p className="text-sm text-pre-wrap">{selectedGuard.description || '—'}</p>
             </DrawerSection>
             <DrawerSection label="Properties">
               <DrawerField label="Guard ID" value={selectedGuard.guard_id} mono />
@@ -395,6 +395,8 @@ function ReportsTab() {
         <CardHeader title="Portfolio PnL" />
         <PnLChart />
       </Card>
+
+      <LearningFunnelPanel />
 
       <Card>
         <CardHeader title="Strategy promotion" meta={`${activeStrategies.length} in paper / live`} />
@@ -612,4 +614,63 @@ function severityTone(s: unknown): StatusTone {
   if (v === 'warning' || v === 'medium' || v === 'warn') return 'yellow'
   if (v === 'info' || v === 'low') return 'blue'
   return 'muted'
+}
+
+const ITEM_TYPE_LABEL: Record<string, string> = {
+  system_action: 'System Action',
+  post_trade_review: 'Post-Trade Review',
+  trade_case_study: 'Case Study',
+  research_note: 'Research Note',
+  guard_candidate: 'Guard Candidate',
+  dreaming_log: 'Dreaming Log',
+  strategy_memory: 'Strategy Memory',
+  operator_assessment: 'Operator Assessment',
+  daily_review: 'Daily Review',
+  reasoning_feedback: 'Reasoning Feedback',
+  trading_memo: 'Trading Memo',
+  calibration_report: 'Calibration Report',
+}
+
+function LearningFunnelPanel() {
+  const { data, isLoading } = useQuery({ queryKey: ['learning-funnel'], queryFn: api.getLearningFunnel, staleTime: 120000 })
+
+  if (isLoading) return (
+    <Card>
+      <CardHeader title="Knowledge Funnel" />
+      <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
+    </Card>
+  )
+  if (!data) return null
+
+  const totalItems = data.knowledge_items_by_type.reduce((s, x) => s + x.count, 0)
+  const visibility = data.pi_actual_visibility
+  const ps = data.ps_lessons
+  const lessonApplied = ps.by_status.find(x => x.status === 'applied')?.count ?? 0
+  const lessonProposed = ps.by_status.find(x => x.status === 'proposed')?.count ?? 0
+
+  return (
+    <Card>
+      <CardHeader title="Knowledge Funnel" meta={`${totalItems.toLocaleString()} items`} />
+      <div className="funnel-meta-row">
+        <span className="funnel-meta-pill">PI lessons (case studies): <strong>{visibility.layer3_lesson_hits}</strong></span>
+        <span className="funnel-meta-pill">Guards available: <strong>{visibility.layer3_guards_available}</strong></span>
+        <span className="funnel-meta-pill">Lessons applied: <strong>{lessonApplied}</strong> / proposed: <strong>{lessonProposed}</strong></span>
+        <span className="funnel-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active}</strong></span>
+      </div>
+      <div className="funnel-bars">
+        {data.knowledge_items_by_type.map(({ item_type, count }) => {
+          const pct = totalItems > 0 ? (count / totalItems) * 100 : 0
+          return (
+            <div key={item_type} className="funnel-bar-row">
+              <span className="funnel-bar-label">{ITEM_TYPE_LABEL[item_type] ?? humanize(item_type)}</span>
+              <div className="funnel-bar-track">
+                <Meter pct={pct} className="funnel-bar-fill" />
+              </div>
+              <span className="funnel-bar-count mono">{count.toLocaleString()}</span>
+            </div>
+          )
+        })}
+      </div>
+    </Card>
+  )
 }

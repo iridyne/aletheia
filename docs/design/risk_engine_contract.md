@@ -105,7 +105,7 @@ class RiskCheckResult:
 | 路径 | 公式 | 位置 |
 |------|------|------|
 | paper_trader(规则路径) | 固定 `notional=$25 / price` | `paper_trader.py:124` |
-| PI Agent(conviction 路径) | `compute_position_size(conviction, base, kelly, dd)` — conviction 0-100 映射 [0.3,2.5]× × quarter-Kelly × 回撤缩放 | `trading/sizing.py:19-64`, 调用于 `trading_decision.py:154` |
+| System Operator(conviction 路径) | `compute_position_size(conviction, base, kelly, dd)` — conviction 0-100 映射 [0.3,2.5]× × quarter-Kelly × 回撤缩放 | `trading/sizing.py:19-64`, 调用于 `trading_decision.py:154` |
 
 config:`trading.default_notional_usdt=25`, `vol_kelly_cap_fraction=0.25`, `vol_sizing_enabled=True`(`schema.py:329`)。
 

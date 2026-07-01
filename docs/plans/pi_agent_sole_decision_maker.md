@@ -1,4 +1,7 @@
-# 架构审计报告：PI Agent 唯一决策者重构
+# 架构审计报告：System Operator 唯一决策者重构
+
+> **[历史归档 — 2026-07-01]** 文件名保留原样，"PI Agent"已更名为"System Operator"。
+> 当前架构权威文档：`docs/design/operator_layer.md`。
 
 > 日期：2026-06-21
 > 触发：策略错配 bug 修复 → 发现 paper_trader 双路径完全绕过 PI Agent → 全框架审计

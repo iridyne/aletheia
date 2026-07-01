@@ -822,13 +822,17 @@ def _probe_learning_retrieval(report: Report) -> None:
                 report.add("loop.retrieval_pool", "ok", detail)
 
         # --- 2. guard promotion stall ---------------------------------------
+        # Active guards live in the file system (knowledge/guards/*.md with status=active),
+        # not in knowledge_items. Count from files for an honest signal.
         candidates = db.execute(
             "SELECT COUNT(*) FROM knowledge_items WHERE item_type='guard_candidate'"
         ).fetchone()[0]
-        active_guards = db.execute(
-            "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trading_guard' "
-            "AND (status='active' OR status IS NULL)"
-        ).fetchone()[0]
+        active_guards = 0
+        try:
+            from aletheia.knowledge.guards import load_trading_guards
+            active_guards = len(load_trading_guards(status="active"))
+        except Exception:
+            pass
         auto_promote = True
         try:
             from aletheia.config.loader import load_config

@@ -96,6 +96,17 @@ def _retrieve_lessons_safe(role: str, query: str, k: int) -> str:
         return ""
 
 
+def build_guard_advisory(guard_context: dict) -> str:
+    """Public: guard-only advisory block for one (symbol, scanner_family[, direction]).
+
+    market_observer must build this PER-SYMBOL — guards match on symbol/
+    scanner_family/direction, which the run-level lesson block can't carry (it was
+    built once from a symbol LIST with no family, so guards never matched — 断口F).
+    Returns "" when no guard applies.
+    """
+    return _build_guard_advisory(guard_context)
+
+
 def _build_guard_advisory(context: dict) -> str:
     """Build advisory guard block for LLM prompt injection."""
     try:

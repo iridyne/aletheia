@@ -40,6 +40,10 @@ def _import_all_specs():
         spec_pipeline_live_unlock,
         spec_pipeline_market_data,
         spec_spot_parity,
+        # Universe pipeline integrity (UP-*): Scanner/Observer audit fixes 2026-07-01.
+        # Same-source forward-outcome direction, scanner_weights consumption,
+        # market_type propagation, composite feature keying.
+        spec_universe_pipeline,
         spec_pipeline_paper_trade,
         spec_pipeline_position_manager,
         spec_pipeline_operator_loop,
@@ -158,6 +162,11 @@ def _import_all_specs():
         # compliance for Bitget r-series tokens. Attaches to data_utilization_contract.
         # 2026-07-01 xStocks adaptation.
         spec_equity_observer,
+        # Agent-tier model routing (MR-* claims): guards deep_provider / fast_provider
+        # schema fields, get_provider_for_tier() resolver, helpers provider= param, and
+        # per-tier agent call sites. Attaches to model_routing_contract.
+        # 2026-07-01 two-tier model routing implementation.
+        spec_model_routing,
     )
 
 

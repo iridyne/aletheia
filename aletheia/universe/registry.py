@@ -20,6 +20,25 @@ _LEVERAGED_SUFFIXES = ("3L", "3S", "5L", "5S", "2L", "2S", "UP", "DOWN", "BULL",
 _EXCLUDED_BASES = {"BTTC", "LUNC", "LUNA", "UST", "FTT"}
 
 
+def _precision_to_decimals(p) -> int | None:
+    """CCXT market precision → integer decimal places.
+
+    CCXT reports precision in one of two modes: DECIMAL_PLACES (an int like 3) or
+    TICK_SIZE (a float like 0.001). int(0.001) == 0 silently destroyed tick-size
+    precision, so downstream orders rounded to whole units and got rejected.
+    Convert a sub-1 tick size to its decimal-place count.
+    """
+    if p is None:
+        return None
+    try:
+        if isinstance(p, float) and 0 < p < 1:
+            import math
+            return max(0, int(round(-math.log10(p))))
+        return int(p)
+    except (ValueError, OverflowError):
+        return None
+
+
 def _is_excluded(symbol_info: dict) -> bool:
     """Filter out leveraged tokens, test symbols, and known-bad assets."""
     base = (symbol_info.get("base") or "").upper()
@@ -29,6 +48,10 @@ def _is_excluded(symbol_info: dict) -> bool:
         return True
     if base in _EXCLUDED_BASES:
         return True
+    # US-15: "_" excludes exchange-native underscore ids (e.g. dated futures
+    # "BTC_USDT_240628"). On venues whose SPOT ids use "_" (e.g. KuCoin "BTC_USDT")
+    # this would over-exclude everything — revisit if adding such a venue. Current
+    # venues (OKX/Bitget) use "-"/no separator, so this is safe today.
     if "TEST" in symbol_id or "_" in symbol_id:
         return True
     return False
@@ -118,6 +141,10 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
 
             # Demo whitelist filter: skip symbols not executable on demo
             if demo_whitelist is not None and canonical not in demo_whitelist:
+                # US-14: was a silent continue. Debug-log so an unexpectedly empty
+                # demo universe (whitelist-format mismatch) is diagnosable.
+                logger.debug("demo_whitelist: skip %s (not executable on %s)",
+                             canonical, cfg.exchange.paper_execution_mode)
                 continue
 
             limits = info.get("limits") or {}
@@ -138,8 +165,8 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
                 quote_asset=quote,
                 status="active",
                 min_notional=min_notional,
-                price_precision=int(price_prec) if price_prec is not None else None,
-                amount_precision=int(amount_prec) if amount_prec is not None else None,
+                price_precision=_precision_to_decimals(price_prec),
+                amount_precision=_precision_to_decimals(amount_prec),
                 first_seen_at=now,
                 last_seen_at=now,
                 is_blacklisted=blacklisted,

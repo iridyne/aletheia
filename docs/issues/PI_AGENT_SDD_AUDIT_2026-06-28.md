@@ -1,4 +1,6 @@
-# PI Agent — SDD ↔ 代码 对照审计（2026-06-28）
+# System Operator — SDD ↔ 代码 对照审计（2026-06-28）
+
+> **[历史归档 — 2026-07-01]** "PI Agent"已更名为"System Operator"。文件名保留。
 
 > 7 路并行审计（pi_agent_sole_decision_maker / operator_layer / PI_OPERATOR_DESIGN_DECISIONS + context_enhancement / agent_contracts + scheduler / promotion_gates / implementation_plan / spec 覆盖）逐条断言对照实际代码。
 > 原始结构化结果：`.claude/jobs/.../pi_audit.json`。总计 **76 ok / 14 missing / 32 incomplete = 46 个问题项**。

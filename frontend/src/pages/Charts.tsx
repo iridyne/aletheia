@@ -44,7 +44,7 @@ function SymbolStrip({
         const opp = opportunityMap[sym]
         const flashClass = flashes[sym] ? ` tick-flash-${flashes[sym]}` : ''
         return (
-          <button
+          <Button
             key={sym}
             className={`symbol-chip${isActive ? ' active' : ''}`}
             onClick={() => onSelect(sym)}
@@ -61,7 +61,7 @@ function SymbolStrip({
                 {fmtDelta(change)}%
               </span>
             )}
-          </button>
+          </Button>
         )
       })}
     </div>

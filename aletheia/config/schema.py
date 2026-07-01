@@ -230,6 +230,11 @@ class ProviderConfig(BaseModel):
 
 class ModelsConfig(BaseModel):
     default_provider: str = "openai_compatible"
+    # Two-tier model routing (MR, 2026-07-01): let top-level decision agents use a
+    # stronger model while bulk data-extraction agents use a cheaper/faster one.
+    # None → fall back to default_provider, so existing configs need no migration.
+    deep_provider: str | None = None   # decision/analysis tier: trading_decision, strategy_designer, risk_critic, …
+    fast_provider: str | None = None   # extraction tier: research_worker bulk LLM calls
     providers: dict[str, ProviderConfig] = Field(default_factory=lambda: {
         "openai_compatible": ProviderConfig(
             type="openai_compatible",

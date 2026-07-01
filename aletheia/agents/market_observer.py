@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     insert_opportunity, list_strategies,
@@ -191,6 +192,7 @@ async def _analyze_symbol(
     universe_snapshot_id: str | None = None,
     universe_member_id: str | None = None,
     scanner_family: str | None = None,
+    force_full: bool = False,
 ) -> tuple[str | None, str | None]:
     """Run market context build + LLM read for a single symbol.
 
@@ -296,7 +298,7 @@ async def _analyze_symbol(
             params = tuple(f"%{kw}%" for kw in keyword_variants)
             pred_rows = _select_all(
                 "prediction_markets",
-                where=f"({where_clauses}) AND status = 'active'",
+                where=f"({where_clauses}) AND status = 'active' AND COALESCE(volume_24h, 0) > 0",
                 params=params,
                 order="abs(probability_change_24h) DESC",
                 limit=3,
@@ -316,11 +318,16 @@ async def _analyze_symbol(
         # Append recent news headlines for this symbol
         try:
             from aletheia.storage.sqlite import get_db
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
             news_db = get_db()
+            # MO-12: only headlines from the last 48h. Without this, week-old news
+            # surfaced as the "latest 3" and the LLM treated it as current context.
+            news_cutoff = (_dt.now(_tz.utc) - _td(hours=48)).isoformat()
             news_rows = news_db.execute(
                 "SELECT title, source, created_at FROM news_items "
-                "WHERE symbols_mentioned LIKE ? ORDER BY created_at DESC LIMIT 3",
-                (f"%{symbol.split('/')[0]}%",),
+                "WHERE symbols_mentioned LIKE ? AND created_at > ? "
+                "ORDER BY created_at DESC LIMIT 3",
+                (f"%{symbol.split('/')[0]}%", news_cutoff),
             ).fetchall()
             if news_rows:
                 news_lines = [f"- [{r[2][:10]}] {r[0]} ({r[1]})" for r in news_rows]
@@ -338,24 +345,51 @@ async def _analyze_symbol(
             context = f"{symbol}: no snapshot yet"
         return None, f"market_context_fallback:{symbol}:{e}"
 
-    # P1-7: deterministic pre-filter — skip LLM for symbols with no actionable signal
-    cfg_for_filter = load_config()
-    force_full = getattr(getattr(cfg_for_filter, "observer", None), "force_full_scan", False)
+    # P1-7: deterministic pre-filter — skip LLM for symbols with no actionable signal.
+    # MO-14: force_full is passed in (computed once per run). load_config() has no
+    # cache, so calling it per-symbol was a file read + YAML parse every iteration.
     if not force_full and not _has_sufficient_signal(context):
         logger.debug("pre-filter: no sufficient signal for %s — skipping LLM call", symbol)
         return None, f"pre_filter_skip:{symbol}:no_sufficient_signal"
 
+    # MO-2 (断口F fix): per-symbol guard advisory. Guards match on symbol +
+    # scanner_family, which only exist per-symbol — the run-level memory_block was
+    # built from a symbol LIST with no family, so no guard ever matched. Build it
+    # here where scanner_family is known.
+    sym_memory = memory_block
+    if scanner_family:
+        try:
+            from aletheia.knowledge.router import build_guard_advisory
+            guard_block = build_guard_advisory({
+                "symbol": symbol,
+                "asset_class": asset_class,
+                "scanner_family": scanner_family,
+            })
+            if guard_block:
+                sym_memory = f"{memory_block}{guard_block}"
+        except Exception:
+            pass
+
+    # MO-4: tell the LLM which scanner family surfaced this symbol so it VALIDATES
+    # that signal family rather than doing a generic technical read.
+    scanner_hint = (
+        f"\n\nThis symbol was surfaced by the '{scanner_family}' scanner — "
+        f"focus your read on validating that signal family."
+        if scanner_family else ""
+    )
+
     record_step(
         run_id, f"market_read_input:{symbol}",
-        input_data=f"symbol={symbol} ctx_len={len(context)} memory={len(memory_block) > 0}",
+        input_data=f"symbol={symbol} ctx_len={len(context)} memory={len(sym_memory) > 0}",
         output_data=context[:1000],
     )
 
     read, err = await llm_structured(
         system=_SYSTEM_PROMPT,
-        user=f"/no_think\nMarket data for {symbol}:\n{context}{memory_block}\n\nReturn the market read JSON.",
+        user=f"/no_think\nMarket data for {symbol}:\n{context}{sym_memory}{scanner_hint}\n\nReturn the market read JSON.",
         schema=MarketRead,
         max_tokens=2048,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_structured", "observe", True)
 
@@ -526,11 +560,13 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     memory_block = ""
     try:
         from aletheia.knowledge.router import build_advisory_context
-        guard_ctx = {"symbols": symbols, "asset_class": "crypto"}
+        # Guard advisory is now built PER-SYMBOL inside _analyze_symbol (guards match
+        # on symbol + scanner_family, absent here where we only have a symbol LIST —
+        # this is why the old guard_context={"symbols": [...]} never matched, 断口F).
+        # The run-level block carries only symbol-agnostic lessons / case studies.
         memory_block = build_advisory_context(
             role="market_observer",
             query=f"{' '.join(symbols)} market regime risk funding volatility",
-            guard_context=guard_ctx,
             k=3,
         )
         log_tool(run_id, "retrieve_lessons", "observe", True,
@@ -584,6 +620,9 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     # normally before cancellation → clean teardown, no leak. Skipped instruments are
     # picked up next 15-min cycle (logged, not silent).
     import time as _time
+    # MO-14: compute force_full ONCE per run (load_config has no cache; per-symbol
+    # calls were a file read + YAML parse each iteration).
+    _force_full = getattr(getattr(cfg, "observer", None), "force_full_scan", False)
     _loop_deadline = _time.monotonic() + _MARKET_OBSERVER_LOOP_BUDGET_SEC
     for _idx, instrument in enumerate(instruments):
         if _time.monotonic() > _loop_deadline:
@@ -614,6 +653,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 universe_snapshot_id=universe_snapshot_id,
                 universe_member_id=u_member.get("id") if u_member else None,
                 scanner_family=u_member.get("scanner_family") if u_member else None,
+                force_full=_force_full,
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")

@@ -112,6 +112,8 @@ def create_strategy(
     name: str,
     description: str | None = None,
     parameters: dict | None = None,
+    direction_affinity: str = "both",
+    applicable_regimes: str = "all",
 ) -> StrategyRecord:
     """Create a new strategy in draft state.
 
@@ -120,12 +122,20 @@ def create_strategy(
     JSON string so promotion gates and post-trade reviews can later audit
     "what parameters was this strategy actually running" (trust §4.2). Defaults
     to an empty object for backward compatibility.
+
+    `direction_affinity` declares the direction this strategy is designed for:
+    "long" | "short" | "both". The paper ranker uses this to skip the strategy
+    for mismatched opportunities in regime-aware filtering (Phase 2A).
+    `applicable_regimes` is a comma-separated list of regime states where this
+    strategy should be active, or "all" to run in every regime.
     """
     strategy = StrategyRecord(
         name=name,
         description=description,
         state="draft",
         parameters=json.dumps(parameters or {}),
+        direction_affinity=direction_affinity,
+        applicable_regimes=applicable_regimes,
     )
     insert_strategy(strategy)
     write_audit({
@@ -215,6 +225,20 @@ def check_promotion_gates(strategy_id: str) -> dict:
 
     if record["state"] not in ("paper_running", "paper_passed"):
         failures.append(f"must_be_in_paper_running_or_paper_passed_state (currently: {record['state']})")
+
+    # Phase 2A: if the strategy has a compiled RuleSet, it must have been evaluated
+    # at least once (Path-A fill exists). A ruleset that was never run cannot prove
+    # its entry conditions work — block promotion until evidence accumulates.
+    import json as _json
+    _params = {}
+    try:
+        _params = _json.loads(record.get("parameters") or "{}")
+    except Exception:
+        pass
+    if _params.get("ruleset"):
+        path_a_fills = list_strategy_fills(strategy_id, execution_mode_prefix="paper")
+        if not path_a_fills:
+            failures.append("ruleset_never_evaluated:0_path_a_fills")
 
     # Paper/development evidence is tied to paper/demo execution modes only.
     orders = list_strategy_orders(strategy_id, execution_mode_prefix="paper")

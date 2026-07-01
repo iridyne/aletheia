@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.config.loader import load_config
 from aletheia.trading.instruments import tradable_symbols_from_config, observed_symbols_from_config
 from aletheia.knowledge.manager import create_strategy_memory
@@ -413,6 +414,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         ),
         schema=ExecutableStrategySpec,
         max_tokens=900,
+        provider=get_provider_for_tier("deep"),
     )
     log_tool(run_id, "llm_structured", "observe", True)
 
@@ -437,6 +439,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
             ),
             schema=ExecutableStrategySpec,
             max_tokens=900,
+            provider=get_provider_for_tier("deep"),
         )
         if retry_spec and not retry_err:
             ruleset_json, compile_diagnosis = _compile_ruleset(retry_spec)
@@ -464,6 +467,7 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
             ),
             schema=StrategySpec,
             max_tokens=600,
+            provider=get_provider_for_tier("deep"),
         )
         if spec_fallback:
             spec = spec_fallback
@@ -519,7 +523,15 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         outputs.append(f"dedup_skipped:{chosen_symbol}:{timeframe}:{direction}")
         return {"outputs": outputs, "errors": errors}
 
-    strategy = create_strategy(name=name, description=description, parameters=parameters)
+    # Map direction_bias → direction_affinity for StrategyRecord model field.
+    # "neutral" has no directional preference, maps to "both".
+    _affinity_map = {"long": "long", "short": "short", "neutral": "both"}
+    strategy = create_strategy(
+        name=name,
+        description=description,
+        parameters=parameters,
+        direction_affinity=_affinity_map.get(direction, "both"),
+    )
     log_tool(run_id, "create_strategy_hypothesis", "observe", True, output=strategy.id)
     outputs.append(f"strategy:{strategy.id}")
 
