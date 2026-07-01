@@ -191,12 +191,14 @@ def _evaluate_candidate(
                 strategy = s
                 break
 
-    # Venue-aware symbol filter: apply OKX demo filter when resolved venue is okx_demo
+    # Venue-aware symbol filter: apply OKX demo filter when resolved venue is okx_demo.
+    # Use opp market_type so swap-only symbols don't pass a perp candidate.
     resolved_venue = (strategy.get("execution_venue") if strategy else None) or global_venue
     if resolved_venue == "okx_demo":
         try:
             from aletheia.execution.okx_broker import _get_demo_symbols
-            _okx_supported = _get_demo_symbols()
+            _opp_market_type = (opp.get("market") or "usdt_futures").lower()
+            _okx_supported = _get_demo_symbols(_opp_market_type)
             if _okx_supported is not None and to_canonical(symbol) not in _okx_supported:
                 return _make_candidate(opp, skip_reason="okx_demo_symbol_not_supported",
                                        direction=direction, strategy_id=strategy_id)

@@ -133,11 +133,12 @@ def _load_registry_symbols(venue: str) -> frozenset | None:
         return None
 
 
-def _check_symbol_availability(symbol: str, execution_mode: str) -> str | None:
+def _check_symbol_availability(symbol: str, execution_mode: str, market_type: str = "usdt_futures") -> str | None:
     """Return a rejection reason if the symbol is not available on the target exchange.
 
     Returns None when available, or when availability is unknown (fail-open).
     paper_internal is always None — it does not route to a real exchange.
+    market_type is used for OKX demo to distinguish swap vs spot symbol sets.
     """
     if execution_mode == "paper_internal":
         return None
@@ -147,11 +148,13 @@ def _check_symbol_availability(symbol: str, execution_mode: str) -> str | None:
 
     # OKX demo has a curated sandbox symbol set — use the dedicated broker cache
     # which loads via ccxt.okx sandbox mode (subset of live OKX symbols).
+    # The check is market-type-aware: swap and spot have separate frozensets so a
+    # symbol available only as spot (e.g. WLD) does not pass a perp order.
     if execution_mode == "okx_demo":
         from aletheia.execution.okx_broker import _get_demo_symbols
-        supported = _get_demo_symbols()
+        supported = _get_demo_symbols(market_type)
         if supported is not None and canonical not in supported:
-            return f"{symbol} not available on OKX demo"
+            return f"{symbol} not available on OKX demo ({market_type})"
         return None
 
     # All other real-exchange modes: check universe_registry (venue = CCXT exchange name).
@@ -196,7 +199,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
 
     # Symbol availability pre-check: if the exchange doesn't list this symbol,
     # reject gracefully here instead of letting CCXT throw an opaque error.
-    _unavail = _check_symbol_availability(proposal.symbol, allowed_mode)
+    _unavail = _check_symbol_availability(proposal.symbol, allowed_mode, proposal.market_type)
     if _unavail:
         update_trade_proposal(proposal.id, status="rejected")
         logger.info("Proposal %s skipped — symbol not on exchange: %s", proposal.id, _unavail)

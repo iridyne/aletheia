@@ -59,53 +59,60 @@ class TestLazyExchangeInit:
 
 
 class TestSymbolFilter:
-    """O(1) symbol filter tests."""
+    """O(1) symbol filter tests — market-type-aware."""
 
     def test_filter_none_means_fail_open(self):
         """When cache is None (never loaded), filter allows everything."""
         from aletheia.execution.okx_broker import _get_demo_symbols
-        # Patch refresh to return 0 (simulating failure to load)
         with patch("aletheia.execution.okx_broker.refresh_okx_demo_symbols", return_value=0):
             import aletheia.execution.okx_broker as mod
             mod._okx_demo_symbols = None
-            result = _get_demo_symbols()
-            # After a failed refresh, remains None → fail-open
+            result = _get_demo_symbols("usdt_futures")
             assert result is None or isinstance(result, frozenset)
 
     def test_filter_with_populated_set_blocks_unsupported(self):
-        """Symbols not in the frozenset are blocked."""
+        """Symbols not in swap frozenset are blocked for perp orders."""
         import aletheia.execution.okx_broker as mod
-        mod._okx_demo_symbols = frozenset({"BTC/USDT", "ETH/USDT"})
-        mod._okx_demo_symbols_loaded_at = 9999999999.0  # far future = not stale
-
-        result = mod._get_demo_symbols()
-        assert result is not None
-        assert "BTC/USDT" in result
-        assert "DOGE/USDT" not in result
-
-    def test_filter_is_frozenset_o1_lookup(self):
-        """Confirm the filter uses frozenset for O(1) membership testing."""
-        import aletheia.execution.okx_broker as mod
-        mod._okx_demo_symbols = frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"})
+        mod._okx_demo_symbols = {
+            "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
+            "spot": frozenset({"BTC/USDT", "ETH/USDT", "DOGE/USDT"}),
+        }
         mod._okx_demo_symbols_loaded_at = 9999999999.0
 
-        symbols = mod._get_demo_symbols()
+        swap_result = mod._get_demo_symbols("usdt_futures")
+        assert swap_result is not None
+        assert "BTC/USDT" in swap_result
+        assert "DOGE/USDT" not in swap_result  # DOGE is spot-only
+
+        spot_result = mod._get_demo_symbols("spot")
+        assert "DOGE/USDT" in spot_result  # DOGE passes as spot
+
+    def test_filter_is_frozenset_o1_lookup(self):
+        """Confirm the filter returns a frozenset for O(1) membership testing."""
+        import aletheia.execution.okx_broker as mod
+        mod._okx_demo_symbols = {
+            "swap": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}),
+            "spot": frozenset({"BTC/USDT"}),
+        }
+        mod._okx_demo_symbols_loaded_at = 9999999999.0
+
+        symbols = mod._get_demo_symbols("usdt_futures")
         assert isinstance(symbols, frozenset)
 
-    def test_refresh_builds_frozenset_from_markets(self):
-        """refresh_okx_demo_symbols builds a frozenset from CCXT markets."""
+    def test_refresh_builds_dict_of_frozensets_from_markets(self):
+        """refresh_okx_demo_symbols builds {"swap": frozenset, "spot": frozenset}."""
         import aletheia.execution.okx_broker as mod
 
-        fake_markets = frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"})
+        fake_result = {
+            "swap": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}),
+            "spot": frozenset({"BTC/USDT", "ETH/USDT"}),
+        }
 
-        async def fake_load():
-            return fake_markets
-
-        with patch("aletheia.execution.okx_broker._run_coro", return_value=fake_markets):
+        with patch("aletheia.execution.okx_broker._run_coro", return_value=fake_result):
             count = mod.refresh_okx_demo_symbols()
 
-        assert count == 3
-        assert mod._okx_demo_symbols == fake_markets
+        assert count == 5  # 3 swap + 2 spot
+        assert mod._okx_demo_symbols == fake_result
 
 
 class TestPaperToolsIntegration:

@@ -305,10 +305,12 @@ class OKXClient:
             await self._session.close()
 
     @staticmethod
-    async def load_demo_markets() -> frozenset:
+    async def load_demo_markets() -> dict:
         """Load supported symbols on OKX demo (sandbox) without credentials.
 
-        Returns a frozenset of canonical symbols (e.g. {"BTC/USDT", "ETH/USDT"}).
+        Returns {"swap": frozenset, "spot": frozenset} of canonical symbols.
+        Keeping the sets separate lets the pre-flight check be market-type-aware:
+        a symbol available only as spot (e.g. WLD) must not pass a perp order.
         """
         from aletheia.net import aiohttp_session, ccxt_timeout_options
         session = aiohttp_session()
@@ -321,21 +323,23 @@ class OKXClient:
         exchange.set_sandbox_mode(True)
         try:
             await exchange.load_markets()
-            symbols = set()
-            # Accept BOTH spot and swap USDT markets — the whitelist is keyed on the
-            # canonical pair (spot/perp collapse to the same canonical), so including
-            # spot also recognises any spot-only USDT symbol the venue offers.
+            swap_symbols: set = set()
+            spot_symbols: set = set()
             for key, info in exchange.markets.items():
                 if not info.get("active", True):
                     continue
-                if info.get("type") not in ("swap", "spot"):
+                mtype = info.get("type")
+                if mtype not in ("swap", "spot"):
                     continue
                 quote = (info.get("quote") or "").upper()
                 if quote != "USDT":
                     continue
                 canonical = to_canonical(info.get("base", "") + "/USDT")
-                symbols.add(canonical)
-            return frozenset(symbols)
+                if mtype == "swap":
+                    swap_symbols.add(canonical)
+                else:
+                    spot_symbols.add(canonical)
+            return {"swap": frozenset(swap_symbols), "spot": frozenset(spot_symbols)}
         finally:
             await exchange.close()
             await session.close()

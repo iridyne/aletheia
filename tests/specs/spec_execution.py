@@ -623,24 +623,33 @@ def test_symbol_check_paper_internal_always_passes():
 @spec_claim(
     SpecClaim(
         "EX-B11", "execution_contract", "§3.2 symbol filter", "L2b",
-        "When the OKX demo frozenset is loaded and a symbol is absent, "
-        "_check_symbol_availability returns a non-empty reason string; "
-        "a present symbol returns None",
+        "When the OKX demo symbol sets are loaded and a symbol is absent for the "
+        "given market_type, _check_symbol_availability returns a non-empty reason; "
+        "a present symbol returns None; market_type-awareness blocks swap-absent symbols",
     ),
 )
 def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     import aletheia.execution.gateway as gw
     import aletheia.execution.okx_broker as okx_broker
 
-    # Inject a known frozenset (WLD/USDT absent, BTC/USDT present)
-    monkeypatch.setattr(okx_broker, "_okx_demo_symbols", frozenset({"BTC/USDT", "ETH/USDT"}))
+    # New structure: {"swap": frozenset, "spot": frozenset}
+    # WLD/USDT is spot-only on OKX demo — absent from swap, present in spot.
+    monkeypatch.setattr(okx_broker, "_okx_demo_symbols", {
+        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
+        "spot": frozenset({"BTC/USDT", "ETH/USDT", "WLD/USDT"}),
+    })
     monkeypatch.setattr(okx_broker, "_okx_demo_symbols_loaded_at", float("inf"))
 
-    reason = gw._check_symbol_availability("WLDUSDT", "okx_demo")
-    assert reason is not None, "Absent symbol must produce a rejection reason"
+    # WLD is in spot but NOT in swap → perp order must be rejected
+    reason = gw._check_symbol_availability("WLDUSDT", "okx_demo", "usdt_futures")
+    assert reason is not None, "Absent-from-swap symbol must produce a rejection reason"
     assert "WLD" in reason or "not available" in reason.lower()
 
-    assert gw._check_symbol_availability("BTCUSDT", "okx_demo") is None
+    # WLD spot order must pass
+    assert gw._check_symbol_availability("WLDUSDT", "okx_demo", "spot") is None
+
+    # BTC is in swap → perp order passes
+    assert gw._check_symbol_availability("BTCUSDT", "okx_demo", "usdt_futures") is None
 
 
 # ---------------------------------------------------------------------------
