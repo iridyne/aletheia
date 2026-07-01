@@ -7,7 +7,35 @@
 
 ## Last Updated
 
-2026-07-01 (reconciler 假孤儿 thrash 根因修复 + Scorecard 去污)
+2026-07-02 (动态 sizing/persona/learning P0–P4 实现 + PR#35 费率漂移修复)
+
+---
+
+## Recent Change (动态 sizing / persona / learning 系统 P0–P4 — 2026-07-02)
+
+### 背景
+owner 定方向:仓位/杠杆/加仓/止损在风控硬边界∩persona区间内由 Operator 动态决 + Learning 拟合 +
+渐进解冻。设计 `docs/design/dynamic_sizing_operator_persona_design.md`(IMPLEMENTED P0-P4)。
+
+### 三层决策盒 + 五期(全默认 OFF = 零行为变化)
+- **P0**(`3e8015f`)`active_broker_view_complete()` 视图完整性门:修 #1(sizing 读错权益)+
+  #2(reconciler thrash 的 unified-新鲜但缺 broker 变体)。PL-ADOPT-19/20/21。
+- **P1**(`ad580a1`)persona 区间 schema + `trading/persona.py` resolver seam(conservative==扁平配置)。
+- **P2**(`9c27dc4`)`build_sizing_context()`→risk_appetite;上下文决策(仅 operator_decidable 参数)。
+- **P3**(`3fbdd79`)`trading/sizing_policy.py` regime 干净窗奖励学习 appetite;doctor loop.sizing_policy。
+- **P4**(`884e035`)progressive unlock(ladder+distress refreeze)+ pyramid_plan(硬顶 clamp)。
+- specs PS-S01..S12(spec_persona_sizing.py);conformance 510→522;full suite 1817/0。
+
+### 未接(owner-gated)
+金字塔**实盘 scale-in 下单**(policy 已实现,下单触 execution 边界,需 owner 授权+给 max 数值)。
+
+### 顺带
+合并 PR#35(demo/live 费率等价性)后 6 个费率漂移用例失败,已对齐测试期望 0.1%→0.06%
+(`d8aedeb`+`149774d`,只改测试不改 PR#35 代码)。
+
+### 边界/开启
+风控硬上限 immutable / live 人工 / Learning 只吃干净窗 / 渐进解冻+refreeze。owner 分步:
+persona_sizing→跑干净窗→unlock→learning→(授权)金字塔;每步 demo+doctor 观察。
 
 ---
 

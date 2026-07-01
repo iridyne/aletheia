@@ -3,7 +3,16 @@
 > 只写意图/计划,不写运行态事实(regime/持仓/db 大小/gateway 状态——这些换台机器必过期)。
 > 真实状态一律 `aletheia doctor`。详细意图叙事见 `docs/_ai/CURRENT_TASK.md`(canonical)。
 
-## Status: reconciler 假孤儿 thrash 已修复(5d6bb89)—— 干净窗从此刻重新起算
+## Status: 动态 sizing/persona/learning 系统 P0–P4 已实现(全默认休眠)
+
+Operator 在风控硬边界∩persona区间内动态决仓位/杠杆/加仓/止损 + Learning 拟合 + 渐进解冻,
+五期全部落地且**默认 OFF = 零行为变化**(commit 3e8015f/ad580a1/9c27dc4/3fbdd79/884e035;
+设计 `docs/design/dynamic_sizing_operator_persona_design.md`;memory dynamic-sizing-persona-system)。
+唯一未接=金字塔实盘 scale-in 下单(policy 已实现,下单触 execution 边界,需 owner 授权+给 max)。
+**下一步(owner)**:分步开启——persona_sizing→跑干净窗→progressive_unlock→learning→(授权)金字塔;
+每步 demo + 看 doctor `loop.sizing_policy` + 干净窗,退化关回。
+
+## 前一状态: reconciler 假孤儿 thrash 已修复(5d6bb89)—— 干净窗从此刻重新起算
 
 观察 2A+.10 做空链路时发现并修复一个**污染整个观察窗的根因 bug**:非 Bitget 账户上
 reconciler 在 unified 缓存过期时读空的 legacy Bitget 缓存 → 误判全部 OKX 持仓 orphaned →

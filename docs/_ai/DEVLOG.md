@@ -1,5 +1,21 @@
 # Development Log
 
+## 2026-07-02 — 动态 sizing / persona / learning 系统 P0–P4
+
+owner 方向落地:Operator 在风控硬边界∩persona区间内动态决仓位/杠杆/加仓/止损 + Learning 拟合 +
+渐进解冻。全默认 OFF(零行为变化)。设计 `docs/design/dynamic_sizing_operator_persona_design.md`。
+
+- P0 `3e8015f` active_broker_view_complete 视图完整性门(修 #1 权益基准 + #2 thrash 变体)
+- P1 `ad580a1` persona 区间 schema + persona.py resolver seam(conservative==扁平配置零变化)
+- P2 `9c27dc4` build_sizing_context→risk_appetite;operator_decidable 参数上下文决策
+- P3 `3fbdd79` sizing_policy regime 干净窗奖励学习 + doctor loop.sizing_policy
+- P4 `884e035` 渐进解冻 ladder(distress refreeze)+ 金字塔 pyramid_plan(硬顶 clamp)
+- specs PS-S01..S12;conformance 522;full suite 1817/0
+- 未接:金字塔实盘下单(owner-gated,会 place orders)
+- 顺带:PR#35 费率漂移 6 用例对齐(d8aedeb+149774d,只改测试)
+
+---
+
 ## 2026-07-01 — reconciler 假孤儿 thrash 根因修复 + Scorecard 去污
 
 ### 触发
