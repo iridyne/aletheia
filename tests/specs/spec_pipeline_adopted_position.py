@@ -593,3 +593,133 @@ def test_adopted_audit_carries_commit_hash(tmp_path, monkeypatch):
         f"audit after_state.parent_hash {after.get('parent_hash')!r} must equal "
         f"proposal.parent_hash {prop.get('parent_hash')!r}."
     )
+
+
+# ===========================================================================
+# Reconciler broker-safety (2026-07-01) — false-orphan thrash prevention.
+#
+# Root cause: on a non-Bitget account (okx_demo), classify_positions fell back to
+# the legacy Bitget-only "demo" cache when the unified (multi-broker) cache was
+# stale/absent. That cache is fresh-but-empty for a non-Bitget account, so every
+# real position was classified `orphaned` → reconcile-close (local only) → the
+# position survives on the exchange → re-adopt next cycle → endless thrash.
+# 41% of positions closed reconciled_gone, 56% source=adopted, destroying
+# strategy attribution. See docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
+# ===========================================================================
+
+
+def _write_config(tmp_path, monkeypatch, paper_execution_mode: str, mode: str = "demo"):
+    """Write a config.yaml selecting the active paper broker and reset the cache."""
+    import yaml
+    import aletheia.config.loader as loader
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump({
+        "exchange": {"mode": mode, "paper_execution_mode": paper_execution_mode},
+        "trading": {"auto_adopt_enabled": True},
+    }), encoding="utf-8")
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._cached_config = None
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-10", "pipeline_adopted_position", "§10 non_bitget_no_false_orphan", "L2b",
+        "On a NON-Bitget account (paper_execution_mode='okx_demo') with no fresh "
+        "unified cache, classify_positions must NOT orphan real local positions by "
+        "reading the empty legacy Bitget cache — it bails to all-managed. This is the "
+        "false-orphan thrash root-cause lock.",
+    ),
+)
+def test_non_bitget_stale_unified_never_orphans(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _write_config(tmp_path, monkeypatch, paper_execution_mode="okx_demo")
+
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    repo.insert_position(Position(
+        symbol="BNB/USDT", market_type="usdt_futures", direction="short",
+        quantity=0.03, entry_price=562.73, execution_mode="okx_demo",
+    ))
+
+    # No fresh unified (multi-broker) view...
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: None)
+    # ...but the legacy Bitget "demo" cache is fresh-but-EMPTY (the trap):
+    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
+                        lambda mode=None: {"positions": [], "age_seconds": 5.0,
+                                           "fetched_at": "2026-07-01T00:00:00+00:00"})
+    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
+
+    r = pr.classify_positions("demo")
+    assert len(r.orphaned) == 0, (
+        f"non-Bitget account must NOT false-orphan against the empty Bitget cache "
+        f"(got {len(r.orphaned)} orphaned). This is the reconcile-close/re-adopt thrash."
+    )
+    assert len(r.managed) == 1, "the real OKX position must be reported managed (safe), not lost"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-11", "pipeline_adopted_position", "§11 non_bitget_fresh_unified_managed", "L2b",
+        "On a non-Bitget account, when the unified cache IS fresh and shows the "
+        "position, classify_positions reports it managed (the healthy path still "
+        "works — the fix only changes the degraded/stale case).",
+    ),
+)
+def test_non_bitget_fresh_unified_manages(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _write_config(tmp_path, monkeypatch, paper_execution_mode="okx_demo")
+
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    repo.insert_position(Position(
+        symbol="BNB/USDT", market_type="usdt_futures", direction="short",
+        quantity=0.03, entry_price=562.73, execution_mode="okx_demo",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "positions": [{"symbol": "BNBUSDT", "side": "short", "quantity": 0.03,
+                       "entry_price": 562.73, "mark_price": 560.0}],
+        "age_seconds": 5.0, "fetched_at": "2026-07-01T00:00:00+00:00",
+    })
+
+    r = pr.classify_positions("demo")
+    assert len(r.managed) == 1, "fresh unified showing the position → managed"
+    assert len(r.orphaned) == 0, "fresh unified showing the position → not orphaned"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-12", "pipeline_adopted_position", "§12 no_orphan_close_thrash_e2e", "L2c",
+        "End-to-end: run_reconcile('demo') on a non-Bitget account with no fresh "
+        "unified view closes ZERO orphans (closed_orphans == []). The thrash loop "
+        "(false-orphan → local close → re-adopt) is prevented at the source.",
+    ),
+)
+def test_run_reconcile_non_bitget_no_orphan_close(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, paper_execution_mode="okx_demo")
+
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    repo.insert_position(Position(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="short",
+        quantity=1.0, entry_price=1574.8, current_price=1560.0, execution_mode="okx_demo",
+    ))
+
+    from aletheia.portfolio import position_reconciler as pr
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: None)
+    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
+                        lambda mode=None: {"positions": [], "age_seconds": 5.0,
+                                           "fetched_at": "2026-07-01T00:00:00+00:00"})
+    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
+
+    summary = pr.run_reconcile()
+    assert summary["closed_orphans"] == [], (
+        f"non-Bitget + stale unified must close ZERO orphans, got "
+        f"{summary['closed_orphans']} — this is the thrash the fix prevents"
+    )
+    # The real position must still be open (not falsely swept).
+    assert len(repo.list_positions(status="open")) == 1

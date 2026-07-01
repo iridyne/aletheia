@@ -148,7 +148,23 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
                 "fetched_at": unified.get("fetched_at", ""),
             }
     if cached is None:
-        cached = exchange_sync.get_cached_state(mode)
+        # No fresh multi-broker (unified) view. The legacy per-mode cache is
+        # written ONLY by the Bitget sync, so falling back to it is safe only when
+        # the active paper broker IS Bitget. On a non-Bitget account (e.g.
+        # okx_demo) that cache is fresh-but-EMPTY of this account's positions, so
+        # classifying against it marks every real position `orphaned` →
+        # reconcile-close (local only) → the position survives on the exchange →
+        # re-adopt next cycle → an endless false-orphan thrash (41% of positions
+        # closed reconciled_gone, 56% re-adopted, strategy attribution destroyed).
+        # For a non-Bitget account with no usable unified view, leave `cached`
+        # None so the guard below reports all-managed and bails — never infer
+        # orphans from a wrong-broker cache. Live keeps the legacy path (live
+        # reconcile is alert-only and Bitget-based today). See
+        # docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
+        from aletheia.config.loader import load_config
+        _active_is_bitget = (load_config().exchange.paper_execution_mode or "").startswith("bitget")
+        if mode == "live" or _active_is_bitget:
+            cached = exchange_sync.get_cached_state(mode)
     sync_status = exchange_sync.status_for(cached)
 
     local_open = list_positions(status="open")

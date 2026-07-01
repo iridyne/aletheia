@@ -145,3 +145,63 @@ def test_resolve_stale_shadows_uses_historical_bar():
     assert rn["pnl_pct"] == 10.0 and rn["resolved_at"], "naive UTC timestamp not handled"
     ro = _row(orphan_id)
     assert ro["resolved_at"] is None, "symbol with no OHLCV must stay unresolved"
+
+
+# ---------------------------------------------------------------------------
+# AN-S03 — go-live Scorecard excludes synthetic/administrative closes
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("AN-S03", "analytics_contract", "§scorecard excludes synthetic closes", "L2b",
+              "go_live_scorecard trade metrics (volume / profit_factor / win_rate / "
+              "max_drawdown) must EXCLUDE synthetic closes (reconciled_gone, "
+              "demo_validation_cleanup, units_bug_cleanup) — reconciler orphan sweeps "
+              "are not real trade outcomes and were polluting the go-live readiness "
+              "signal (Win-line A). See ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.",
+              status="implemented"),
+)
+def test_scorecard_excludes_synthetic_closes():
+    """Behavioral proof on the autouse in-memory DB.
+
+    Insert 3 genuine closes (WR 66.7%, PF 4.0) + 10 synthetic reconciled_gone
+    LOSSES. If the scorecard counted the synthetic rows, WR would collapse to 15%
+    and PF to ~0 and the trade count would read 13. Post-fix it must read the
+    genuine cohort only.
+    """
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.analytics import go_live_scorecard as sc
+
+    def _closed(symbol, direction, pnl, reason):
+        repo.insert_position(Position(
+            symbol=symbol, market_type="usdt_futures", direction=direction,
+            quantity=1.0, entry_price=100.0, execution_mode="okx_demo",
+            status="closed", realized_pnl=pnl, close_reason=reason,
+            closed_at="2026-07-01T00:00:00+00:00",
+        ))
+
+    # Genuine cohort: 2 wins (+10 each), 1 loss (-5) → WR 66.7%, PF 20/5 = 4.0
+    _closed("BTC/USDT", "long", 10.0, "take_profit")
+    _closed("ETH/USDT", "long", 10.0, "take_profit")
+    _closed("SOL/USDT", "long", -5.0, "stop_loss")
+    # Synthetic thrash: 10 reconciler sweeps, all large losses — must be excluded
+    for i in range(10):
+        _closed(f"JUNK{i}/USDT", "short", -1000.0, "reconciled_gone")
+
+    vol = sc._check_trade_volume()
+    assert "3 trades" in vol["detail"], (
+        f"trade volume must count only genuine closes (3), got: {vol['detail']!r} "
+        "— synthetic reconciled_gone sweeps are being counted"
+    )
+
+    wr = sc._check_win_rate()
+    assert "66.7%" in wr["detail"], (
+        f"win rate must be computed on genuine closes (66.7%), got: {wr['detail']!r}"
+    )
+    assert wr["score"] >= 100.0, "genuine WR 66.7% ≥ 45% target → full score"
+
+    pf = sc._check_profit_factor()
+    assert "PF 4.00" in pf["detail"] or "PF 4.0" in pf["detail"], (
+        f"profit factor must exclude synthetic losses (expected PF 4.0), got: {pf['detail']!r}"
+    )

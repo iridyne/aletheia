@@ -41,6 +41,27 @@ def compute_scorecard() -> dict:
     }
 
 
+def _genuine_closed_pnls(order_by_closed_at: bool = False) -> list[float]:
+    """realized_pnl of GENUINE closed positions (synthetic/administrative excluded).
+
+    Reconciler orphan sweeps (reconciled_gone) and bug/demo cleanups are not trade
+    outcomes; counting them pollutes PF / win-rate / drawdown / volume (Win-line A).
+    NULL close_reason is kept (unknown ≠ synthetic). See close_reasons.py +
+    docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
+    syn = tuple(SYNTHETIC_CLOSE_REASONS)
+    placeholders = ",".join("?" * len(syn))
+    order = " ORDER BY closed_at ASC" if order_by_closed_at else ""
+    sql = (
+        "SELECT realized_pnl FROM positions WHERE status='closed' "
+        f"AND (close_reason IS NULL OR close_reason NOT IN ({placeholders})){order}"
+    )
+    rows = get_db().execute(sql, syn).fetchall()
+    return [r[0] for r in rows if r[0] is not None]
+
+
 def _criterion(key: str, label: str, score: float, weight: float, detail: str) -> dict:
     if score >= 100:
         status = "pass"
@@ -61,9 +82,7 @@ def _criterion(key: str, label: str, score: float, weight: float, detail: str) -
 
 def _check_trade_volume() -> dict:
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        count = db.execute("SELECT COUNT(*) FROM positions WHERE status='closed'").fetchone()[0]
+        count = len(_genuine_closed_pnls())
         target = 50
         score = min(count / target, 1.0) * 100
         return _criterion("trade_volume", "Trade Volume (≥50 closed)", score, 0.135,
@@ -173,15 +192,11 @@ def compute_pnl_by_trade_school() -> dict:
 
 def _check_profit_factor() -> dict:
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        rows = db.execute(
-            "SELECT realized_pnl FROM positions WHERE status='closed'"
-        ).fetchall()
-        if not rows:
+        pnls = _genuine_closed_pnls()
+        if not pnls:
             return _criterion("profit_factor", "Profit Factor (≥1.2)", 0, 0.18, "no trades")
-        gross_profit = sum(r[0] for r in rows if r[0] > 0)
-        gross_loss = sum(abs(r[0]) for r in rows if r[0] < 0)
+        gross_profit = sum(p for p in pnls if p > 0)
+        gross_loss = sum(abs(p) for p in pnls if p < 0)
         pf = gross_profit / gross_loss if gross_loss > 0 else 99.0
         # Kill-floor: PF < 0.5 is a hard stop regardless of go-live target (product §8 K1)
         if pf < 0.5:
@@ -197,15 +212,11 @@ def _check_profit_factor() -> dict:
 
 def _check_win_rate() -> dict:
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        rows = db.execute(
-            "SELECT realized_pnl FROM positions WHERE status='closed'"
-        ).fetchall()
-        if not rows:
+        pnls = _genuine_closed_pnls()
+        if not pnls:
             return _criterion("win_rate", "Win Rate (≥45%)", 0, 0.135, "no trades")
-        wins = sum(1 for r in rows if r[0] > 0)
-        total = len(rows)
+        wins = sum(1 for p in pnls if p > 0)
+        total = len(pnls)
         wr = wins / total * 100
         target = 45.0
         score = min(wr / target, 1.0) * 100 if wr < target else 100.0
@@ -217,18 +228,14 @@ def _check_win_rate() -> dict:
 
 def _check_max_drawdown() -> dict:
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        rows = db.execute(
-            "SELECT realized_pnl FROM positions WHERE status='closed' ORDER BY closed_at ASC"
-        ).fetchall()
-        if not rows:
+        pnls = _genuine_closed_pnls(order_by_closed_at=True)
+        if not pnls:
             return _criterion("max_drawdown", "Max Drawdown (<10%)", 100, 0.135, "no trades")
         cum = 0.0
         peak = 0.0
         max_dd = 0.0
-        for r in rows:
-            cum += r[0]
+        for p in pnls:
+            cum += p
             if cum > peak:
                 peak = cum
             dd = peak - cum

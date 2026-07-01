@@ -156,3 +156,37 @@ adopt 时下交易所保护单（demo 阶段先摸清路径合理）。
   **同一个"legacy Bitget 缓存 vs 多 broker"错配**的另一个受害者(那次是 equity,这次是 positions)。
   提示：`exchange_sync` 的 Bitget-only legacy 缓存在多 broker 时代是**系统性错配源**,值得一次性清算。
 - [[aletheia-adopted-position-missing-sltp]]：adopted 仓缺 SL/TP 已修过一次 —— 需复核是否覆盖交易所侧。
+
+---
+
+## 7. 修复实现（2026-07-01,SDD 完成）
+
+穷尽排查确认:缓存错配**只坑 reconciler 一处**(其它消费者都走 `get_cached_state(mode=None)`
+默认路径,已被 profit-loop 修复保护,非 Bitget 自动返回 unified)。下游 thrash 污染只有
+go_live_scorecard 未过滤(round1-progress 有 strict-cohort、trade_case_builder 已过滤)。
+
+**P0 — 掐断 thrash 源头(`position_reconciler.classify_positions`)**
+`cached is None`(unified 过期/缺失)时的回退改为 **broker 感知**:仅当活跃 broker 是 Bitget
+(或 live)才回退读 legacy per-mode 缓存;非 Bitget 账户则保持 `cached=None` → 既有诚实性守卫
+报全 managed 并 bail,**绝不**拿空的 Bitget 缓存误判孤儿。thrash 从源头消失。
+- spec **PL-ADOPT-10/11/12**(L2b×2 + L2c 端到端):非 Bitget + 无新鲜 unified → 零孤儿 /
+  新鲜 unified 见仓 → managed / run_reconcile 端到端零 orphan-close。反向验证:改前三条全红
+  (1 orphaned、thrash close reconciled_gone、WR 被污染),改后全绿。
+
+**P1 — Scorecard 去污(`go_live_scorecard`)**
+新增 `_genuine_closed_pnls()`,四项交易指标(volume/PF/WR/回撤)统一排除 synthetic 平仓;
+NULL close_reason 保留(未知≠合成)。新建 `analytics/close_reasons.py` 为单一真源
+(`SYNTHETIC_CLOSE_REASONS` = reconciled_gone/demo_validation_cleanup/units_bug_cleanup),
+`trade_case_builder` 改为复用它(顺带补齐 units_bug_cleanup 排除)。
+- spec **AN-S03**(L2b):插 3 真实平仓 + 10 合成亏损,断言 scorecard 只算真实 cohort。
+
+**验证**:conformance 496→500 claims 全绿;目标子系统 90 tests 全绿;full suite 回归 + doctor
+`loop.reconciled_ratio` 观察 + gateway restart + 监控确认 thrash 停止。
+
+**P2 — 仍未做(需 owner 批,触 execution 边界)**：①adopted 仓不下交易所保护单(demo 无碍/
+上实盘裸奔)②adoption 抹 strategy_id(P0 修好后 adoption 变罕见,影响自然降)③factor_feedback
+是否过滤 thrash。三项列入 backlog,owner 定夺。
+
+**历史污染数据**：不追溯清洗(reconciled_gone 净 PnL≈-0.72,对 PnL 数字无实质影响;真正的
+归因损失已成历史)。**修复后应视为新干净窗起点**——旧 adopted 碎片/thrash 数据不计入策略评估
+(符合 EXPERIMENT_PROTOCOL 污染期排除原则)。
