@@ -2,14 +2,14 @@
 
 USER-AUTHORIZED autonomous behavior (paper only). Containment:
 - Only runs when permission mode is Paper or Full. Denied in Observe.
-- Submits exclusively through the paper wrapper, which rejects any non-paper mode
-  (only paper_internal / bitget_demo allowed) — the live path is unreachable here.
+- Submits exclusively through the paper wrapper — the live path is unreachable here.
 - Every order still passes the Risk Engine (kill switch, daily loss, etc.).
 - Consumed opportunities are marked `proposed` for idempotency (no duplicates).
 
-Execution target is `exchange.paper_execution_mode`: `bitget_demo` places real orders
-on Bitget's demo (simulated) API; `paper_internal` fills locally. Bitget demo only
-supports USDT futures, so paper trades are submitted as `usdt_futures`.
+Execution target is `exchange.paper_execution_mode` with credential-based fallback:
+if the configured exchange demo has no credentials, `paper_internal` is used automatically.
+Exchange demo (bitget_demo/okx_demo/binance_testnet) uses the real exchange sandbox;
+`paper_internal` fills locally with slippage simulation.
 
 PaperTrader v3 (RuleSet-Driven):
   Path A — RuleSet signals: for each paper_running strategy with a compiled RuleSet,
@@ -37,6 +37,46 @@ logger = logging.getLogger("aletheia.agents.paper_trader")
 
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
+
+
+_EXCHANGE_CRED_KEYS: dict[str, str] = {
+    # execution_mode  → secrets key prefix for the relevant credential
+    "bitget_demo":       "bitget.demo",
+    "bitget_live_limited": "bitget.live",
+    "okx_demo":          "okx.demo",
+    "okx_live_limited":  "okx.live",
+    "binance_testnet":   "binance.testnet",
+    "binance_live_limited": "binance.live",
+}
+
+
+def _has_credentials(execution_mode: str) -> bool:
+    """Return True when the credentials required for execution_mode are configured."""
+    prefix = _EXCHANGE_CRED_KEYS.get(execution_mode)
+    if not prefix:
+        return False
+    try:
+        from aletheia.config.secrets import get_secret
+        return bool(get_secret(f"{prefix}.api_key"))
+    except Exception:
+        return False
+
+
+def _resolve_execution_mode(configured_mode: str) -> str:
+    """Return the best available execution mode for paper trading.
+
+    Priority: configured exchange demo (real sandbox) > paper_internal (local sim).
+    Falls back to paper_internal when the configured exchange demo has no credentials,
+    so the system degrades gracefully on a fresh install or when credentials are missing.
+    """
+    if configured_mode == "paper_internal":
+        return "paper_internal"
+    if _has_credentials(configured_mode):
+        return configured_mode
+    logger.info(
+        "No credentials found for %s — falling back to paper_internal", configured_mode
+    )
+    return "paper_internal"
 
 
 def _resolve_venue(strategy_id: str | None, global_mode: str) -> str:
@@ -102,7 +142,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         errors.append(f"create_paper_proposal not permitted in mode {permission_mode}")
         return {"outputs": outputs, "errors": errors}
 
-    execution_mode = cfg.exchange.paper_execution_mode
+    execution_mode = _resolve_execution_mode(cfg.exchange.paper_execution_mode)
 
     # Snapshot of currently open symbols — used to skip redundant signal writes.
     open_symbols: set[str] = {p["symbol"] for p in list_positions(status="open")}

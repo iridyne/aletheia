@@ -417,7 +417,7 @@ class TradingConfig(BaseModel):
     max_position_hold_hours: float = 72.0
     # Edge Lab: realistic paper fill simulation
     slippage_bps: float = 5.0        # basis points of adverse slippage on paper fills
-    execution_fee_pct: float = 0.1   # % fee per side (replaces hardcoded 0.1%)
+    execution_fee_pct: float = 0.06  # % fee per side — Bitget taker (0.06%); change to match your live exchange
     # Minimum LLM confidence for paper_trader to open a position
     # (high | medium | speculative). Below this, the opportunity is recorded but
     # not traded.

@@ -13,6 +13,7 @@ from aletheia.storage.repositories import (
     insert_trade_proposal,
     transaction,
     update_trade_proposal,
+    update_position,
 )
 from aletheia.files.jsonl import write_audit
 
@@ -260,9 +261,9 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 _cfg = load_config()
                 _tp_pct = _cfg.trading.default_take_profit_pct
                 _entry = proposal.price or 0.0
-                _tp = None
-                if _tp_pct and _entry > 0:
-                    _tp = round(_entry * (1 + _tp_pct / 100.0), 8) if proposal.direction in ("long", "buy") else round(_entry * (1 - _tp_pct / 100.0), 8)
+                # TP is intentionally NOT pre-computed here — we anchor it to the
+                # actual exchange fill_price returned below, not the snapshot price
+                # in the proposal (which may be stale by the time the order fills).
                 result = execute_live_order(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
@@ -275,11 +276,16 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     strategy_id=proposal.strategy_id,
                     execution_mode=allowed_mode,
                     stop_price=proposal.stop_price,
-                    take_profit_price=_tp,
+                    take_profit_price=None,
                     leverage=proposal.leverage,
                     opportunity_id=proposal.opportunity_id,
                     trade_school=proposal.trade_school,
                 )
+                # Anchor TP to confirmed fill price (not proposal snapshot price).
+                _actual_fill = result.get("fill_price") or _entry
+                if _tp_pct and _actual_fill > 0 and result.get("position_id"):
+                    _tp = round(_actual_fill * (1 + _tp_pct / 100.0), 8) if proposal.direction in ("long", "buy") else round(_actual_fill * (1 - _tp_pct / 100.0), 8)
+                    update_position(result["position_id"], take_profit_price=_tp)
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({
                     "actor": "system", "source": "execution_gateway",
@@ -335,9 +341,6 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                 _cfg2 = load_config()
                 _tp_pct2 = _cfg2.trading.default_take_profit_pct
                 _entry2 = proposal.price or 0.0
-                _tp2 = None
-                if _tp_pct2 and _entry2 > 0:
-                    _tp2 = round(_entry2 * (1 + _tp_pct2 / 100.0), 8) if proposal.direction in ("long", "buy") else round(_entry2 * (1 - _tp_pct2 / 100.0), 8)
                 result = execute_live_order(
                     proposal_id=proposal.id,
                     risk_decision_id=risk_result.decision_id,
@@ -350,11 +353,16 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     strategy_id=proposal.strategy_id,
                     execution_mode=allowed_mode,
                     stop_price=proposal.stop_price,
-                    take_profit_price=_tp2,
+                    take_profit_price=None,
                     leverage=proposal.leverage,
                     opportunity_id=proposal.opportunity_id,
                     trade_school=proposal.trade_school,
                 )
+                # Anchor TP to confirmed fill price (not proposal snapshot price).
+                _actual_fill2 = result.get("fill_price") or _entry2
+                if _tp_pct2 and _actual_fill2 > 0 and result.get("position_id"):
+                    _tp2 = round(_actual_fill2 * (1 + _tp_pct2 / 100.0), 8) if proposal.direction in ("long", "buy") else round(_actual_fill2 * (1 - _tp_pct2 / 100.0), 8)
+                    update_position(result["position_id"], take_profit_price=_tp2)
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({
                     "actor": "system", "source": "execution_gateway",
@@ -364,7 +372,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     "after": {"status": "executed"},
                     "message": (
                         f"Live order placed: {proposal.symbol} {proposal.direction} "
-                        f"{proposal.quantity or 0.0}@{proposal.price or 0.0} "
+                        f"{proposal.quantity or 0.0}@{_actual_fill2} "
                         f"(ex:{result['exchange_order_id']})"
                     ),
                 })
