@@ -11,6 +11,7 @@ import logging
 from collections import Counter, defaultdict
 from typing import Any
 
+from aletheia.analytics.close_reasons import is_synthetic_close
 from aletheia.analytics.trade_attribution import (
     build_trade_attribution_rows,
     confidence_bucket,
@@ -19,6 +20,16 @@ from aletheia.analytics.trade_attribution import (
 )
 
 logger = logging.getLogger("aletheia.analytics.factor_feedback")
+
+
+def _genuine_rows(rows: list[dict]) -> list[dict]:
+    """Drop synthetic/administrative closes (reconciler orphan sweeps, cleanups).
+
+    These are not trade outcomes — feeding them to the signal gate mis-teaches
+    win-rate / expectancy (they mostly close at ≈entry, near-random). See
+    close_reasons.py + docs/research/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
+    """
+    return [r for r in rows if not is_synthetic_close(r.get("close_reason"))]
 
 
 def build_factor_feedback(limit: int = 500, min_trades: int = 3) -> list[dict]:
@@ -33,7 +44,7 @@ def build_factor_feedback(limit: int = 500, min_trades: int = 3) -> list[dict]:
 
     Returns a list of factor feedback dicts with status classification.
     """
-    rows = build_trade_attribution_rows(limit=limit)
+    rows = _genuine_rows(build_trade_attribution_rows(limit=limit))
     if not rows:
         return []
 
@@ -70,7 +81,7 @@ def lookup_factor_signal(candidate: dict) -> dict:
     Returns the signal for the most specific matching factor (exact key).
     Falls back to scanner-level. Returns 'watch' if no history.
     """
-    rows = build_trade_attribution_rows(limit=500)
+    rows = _genuine_rows(build_trade_attribution_rows(limit=500))
     if not rows:
         return _watch_signal(factor_key(candidate))
 

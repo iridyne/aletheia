@@ -183,9 +183,22 @@ NULL close_reason 保留(未知≠合成)。新建 `analytics/close_reasons.py` 
 **验证**:conformance 496→500 claims 全绿;目标子系统 90 tests 全绿;full suite 回归 + doctor
 `loop.reconciled_ratio` 观察 + gateway restart + 监控确认 thrash 停止。
 
-**P2 — 仍未做(需 owner 批,触 execution 边界)**：①adopted 仓不下交易所保护单(demo 无碍/
-上实盘裸奔)②adoption 抹 strategy_id(P0 修好后 adoption 变罕见,影响自然降)③factor_feedback
-是否过滤 thrash。三项列入 backlog,owner 定夺。
+**P2 — 已全部实施(owner 授权,2026-07-01)**：
+
+- **P2-1 adopted 仓交易所保护单**：核实发现比"adopted-only"更大——**OKX broker 对任何仓位都不下
+  交易所 TP/SL**(只有 Bitget 下),且 `exchange_tpsl_enabled` 默认 False(全局休眠,连 Bitget 现在
+  也不下)。实施:OKXClient 新增 `place_algo_order`/`cancel_algo_order`(CCXT 4.5.56 确认支持
+  stopLoss/takeProfit trigger 参数);okx_broker 新增 `place_okx_protective_orders`;
+  `execution.stops.place_exchange_protective_orders` broker 分发器;adopt_position 落库后调用。
+  **双重门控**:`exchange_tpsl_enabled`(默认 False→休眠,零生产影响,owner 开关才激活)+ **DEMO-only**
+  (绝不给 live 自动下单)。graceful(下单失败只 warn 不 raise)。spec PL-ADOPT-13/14。
+  bitget-demo 分发是 trivial follow-up(当前活跃 broker 是 okx)。
+- **P2-2 strategy_id 归因**:根问题(thrash 抹归因)已被 P0 从源头解决。防御性补充:adopt_position
+  新增 `_recover_strategy_link`——external 若**紧配**近 15min 内 reconciled_gone 平掉的本地仓
+  (同 symbol+dir、entry 差<0.5%),继承其 strategy_id/opportunity_id;否则 NULL(genuine external
+  不误归因)。spec PL-ADOPT-15(继承)/16(不误归因)。
+- **P2-3 factor_feedback 过滤 thrash**:`build_factor_feedback`/`lookup_factor_signal` 复用
+  `close_reasons.is_synthetic_close` 过滤 reconciled_gone 等,信号门不再被 thrash 误教。spec LP-S15。
 
 **历史污染数据**：不追溯清洗(reconciled_gone 净 PnL≈-0.72,对 PnL 数字无实质影响;真正的
 归因损失已成历史)。**修复后应视为新干净窗起点**——旧 adopted 碎片/thrash 数据不计入策略评估

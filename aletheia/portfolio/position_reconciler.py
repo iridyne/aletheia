@@ -239,6 +239,44 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     return result
 
 
+def _recover_strategy_link(symbol: str, direction: str, entry_price: float) -> tuple[str | None, str | None]:
+    """Recover (strategy_id, opportunity_id) for an external about to be adopted,
+    IFF it tightly matches a very recently thrash-closed local position.
+
+    P0 stops the systemic false-orphan thrash at the source, but any residual
+    transient orphan→re-adopt would still sever attribution (adopted rows get
+    strategy_id=NULL). This recovers it, but ONLY on a tight match — same symbol +
+    direction, close_reason='reconciled_gone' (a bookkeeping close, NOT a real
+    stop_loss/take_profit exit), closed within 15 min, entry within 0.5% — so a
+    genuinely-new external position is never mis-attributed. Returns (None, None)
+    when there is no confident match.
+    """
+    from datetime import datetime, timezone, timedelta
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+        rows = list_positions(status="closed")
+    except Exception:
+        return None, None
+    best = None
+    for r in rows:
+        if (r.get("symbol") != symbol
+                or _norm_direction(r.get("direction") or "") != direction
+                or r.get("close_reason") != "reconciled_gone"
+                or not r.get("strategy_id")):
+            continue
+        closed_at = r.get("closed_at") or ""
+        if closed_at < cutoff:
+            continue
+        ep = float(r.get("entry_price") or 0)
+        if ep <= 0 or abs(ep - entry_price) / ep > 0.005:
+            continue
+        if best is None or closed_at > (best.get("closed_at") or ""):
+            best = r
+    if best is not None:
+        return best.get("strategy_id"), best.get("opportunity_id")
+    return None, None
+
+
 def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     """Adopt one external exchange position into the local books under management.
 
@@ -281,6 +319,12 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             f"adopt_position: refusing to adopt {symbol} {direction} with "
             f"quantity={quantity} entry_price={entry_price} (need both > 0)"
         )
+
+    # Attribution recovery (P2-2): if this external matches a position we just
+    # thrash-closed (reconciled_gone), inherit its strategy_id/opportunity_id so a
+    # transient orphan→re-adopt keeps trade attribution intact. Tight match only
+    # (see _recover_strategy_link) — a genuinely-new external stays unattributed.
+    recovered_strategy_id, recovered_opp_id = _recover_strategy_link(symbol, direction, entry_price)
 
     # Adopted positions are USDT-futures mix positions on Bitget.
     market_type = "usdt_futures"
@@ -355,6 +399,9 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         execution_mode=execution_mode,
         proposal_id=proposal.id,
         order_id=order.id,
+        # Recovered attribution (None for a genuinely-new external — the honest default).
+        strategy_id=recovered_strategy_id,
+        opportunity_id=recovered_opp_id,
         status="open",
         source="adopted",
         opened_at=opened_at,
@@ -396,6 +443,23 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         },
         "message": rationale,
     })
+    # Exchange-side protective bracket (P2-1, 2026-07-01): persist DB stop/tp is not
+    # enough — an adopted position had no NATIVE exchange SL/TP, so it was unprotected
+    # if the gateway went down. Place a reduce-only exchange bracket now. Gated by
+    # cfg.trading.exchange_tpsl_enabled (default False → dormant) + DEMO-only inside
+    # the dispatcher (never an autonomous live order). Non-fatal: a placement failure
+    # must not undo the adoption. See execution.stops.place_exchange_protective_orders.
+    try:
+        from aletheia.execution.stops import place_exchange_protective_orders
+        place_exchange_protective_orders({
+            "id": position.id, "symbol": symbol, "market_type": market_type,
+            "direction": direction, "quantity": quantity,
+            "stop_price": _adopted_stop, "take_profit_price": _adopted_tp,
+            "execution_mode": execution_mode,
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("adopt_position: exchange protective-order placement skipped: %s", e)
+
     try:
         from aletheia.notifications import notify_operator
         notify_operator(

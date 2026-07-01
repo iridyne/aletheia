@@ -28,3 +28,48 @@ def merge_protective_stop(
     if direction in ("long", "buy"):
         return max(new_stop, old_stop)
     return min(new_stop, old_stop)
+
+
+def place_exchange_protective_orders(position: dict) -> dict:
+    """Place exchange-side reduce-only SL/TP for an EXISTING position (e.g. an
+    adopted one), when enabled and supported. Broker-agnostic dispatch, non-fatal.
+
+    Gating (both must hold, else no-op returning {}):
+      1. cfg.trading.exchange_tpsl_enabled is True (the global feature switch;
+         defaults False → this is dormant until the operator opts in).
+      2. execution_mode is a DEMO mode. Live is deliberately excluded: the
+         reconciler auto-adopts, so placing an exchange order on a live position
+         would be an AUTONOMOUS LIVE ORDER (forbidden by the safety rules). Live
+         adopted positions keep their DB stop/tp for human/position_manager use.
+
+    Adoption parity: entry paths already persist brackets at open. This closes the
+    gap where adopt_position persisted DB stop/tp but never placed the exchange-side
+    bracket, leaving adopted positions without native protection when the gateway is
+    down. Returns placed ids ({} if none). Bitget-demo parity is a trivial follow-up
+    (adopt is OKX-only today — the active paper broker is okx_demo).
+    """
+    from aletheia.config.loader import load_config
+
+    cfg = load_config()
+    if not cfg.trading.exchange_tpsl_enabled:
+        return {}
+
+    mode = position.get("execution_mode") or ""
+    stop = position.get("stop_price")
+    tp = position.get("take_profit_price")
+    if not stop and not tp:
+        return {}
+
+    if mode == "okx_demo":
+        from aletheia.execution.okx_broker import place_okx_protective_orders
+        return place_okx_protective_orders(
+            position_id=position["id"],
+            symbol=position["symbol"],
+            market_type=position.get("market_type") or "usdt_futures",
+            direction=position["direction"],
+            quantity=float(position.get("quantity") or 0),
+            stop_price=stop,
+            take_profit_price=tp,
+            execution_mode=mode,
+        )
+    return {}

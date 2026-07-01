@@ -608,14 +608,15 @@ def test_adopted_audit_carries_commit_hash(tmp_path, monkeypatch):
 # ===========================================================================
 
 
-def _write_config(tmp_path, monkeypatch, paper_execution_mode: str, mode: str = "demo"):
+def _write_config(tmp_path, monkeypatch, paper_execution_mode: str, mode: str = "demo",
+                  exchange_tpsl_enabled: bool = False):
     """Write a config.yaml selecting the active paper broker and reset the cache."""
     import yaml
     import aletheia.config.loader as loader
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.dump({
         "exchange": {"mode": mode, "paper_execution_mode": paper_execution_mode},
-        "trading": {"auto_adopt_enabled": True},
+        "trading": {"auto_adopt_enabled": True, "exchange_tpsl_enabled": exchange_tpsl_enabled},
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
     loader._cached_config = None
@@ -723,3 +724,220 @@ def test_run_reconcile_non_bitget_no_orphan_close(tmp_path, monkeypatch):
     )
     # The real position must still be open (not falsely swept).
     assert len(repo.list_positions(status="open")) == 1
+
+
+# ===========================================================================
+# Exchange-side protective orders on adopt (P2-1, 2026-07-01).
+# adopt_position persisted DB stop/tp but placed NO native exchange bracket →
+# an adopted position was unprotected on the exchange if the gateway went down.
+# Gated by cfg.trading.exchange_tpsl_enabled (default False → dormant) + DEMO-only
+# (never an autonomous live order). See execution.stops.place_exchange_protective_orders.
+# ===========================================================================
+
+
+class _FakeOKXClient:
+    """Network-boundary stub: returns bracket ids without touching OKX."""
+    placed: list = []
+
+    def __init__(self, mode="demo"):
+        self.mode = mode
+
+    async def place_algo_order(self, symbol, market_type, close_side, quantity,
+                               stop_price=None, take_profit_price=None):
+        _FakeOKXClient.placed.append({
+            "symbol": symbol, "close_side": close_side, "quantity": quantity,
+            "stop_price": stop_price, "take_profit_price": take_profit_price,
+        })
+        return {"sl": "algo-sl-1", "tp": "algo-tp-1"}
+
+    async def close(self):
+        return None
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-13", "pipeline_adopted_position", "§13 protective_order_dispatch_gating", "L2b",
+        "execution.stops.place_exchange_protective_orders: no-op when "
+        "exchange_tpsl_enabled=False (dormant) OR the mode is not a supported DEMO "
+        "mode (live never gets an autonomous exchange order); places + persists the "
+        "bracket id when enabled AND okx_demo.",
+    ),
+)
+def test_protective_order_dispatch_gating(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.execution import okx_broker
+
+    def _insert_okx_short():
+        p = Position(symbol="BNB/USDT", market_type="usdt_futures", direction="short",
+                     quantity=0.03, entry_price=562.73, execution_mode="okx_demo",
+                     status="open", stop_price=573.98, take_profit_price=540.22)
+        repo.insert_position(p)
+        return p
+
+    monkeypatch.setattr(okx_broker, "OKXClient", _FakeOKXClient)
+    from aletheia.execution.stops import place_exchange_protective_orders
+
+    # 1. flag OFF → dormant no-op (even okx_demo)
+    _write_config(tmp_path, monkeypatch, "okx_demo", exchange_tpsl_enabled=False)
+    p1 = _insert_okx_short()
+    _FakeOKXClient.placed = []
+    assert place_exchange_protective_orders({
+        "id": p1.id, "symbol": "BNB/USDT", "market_type": "usdt_futures",
+        "direction": "short", "quantity": 0.03, "stop_price": 573.98,
+        "take_profit_price": 540.22, "execution_mode": "okx_demo",
+    }) == {}, "flag OFF must be a dormant no-op"
+    assert _FakeOKXClient.placed == [], "no exchange call when flag off"
+
+    # 2. flag ON + LIVE mode → never an autonomous live order
+    _write_config(tmp_path, monkeypatch, "okx_demo", exchange_tpsl_enabled=True)
+    _FakeOKXClient.placed = []
+    assert place_exchange_protective_orders({
+        "id": p1.id, "symbol": "BNB/USDT", "market_type": "usdt_futures",
+        "direction": "short", "quantity": 0.03, "stop_price": 573.98,
+        "take_profit_price": 540.22, "execution_mode": "bitget_live_limited",
+    }) == {}, "live mode must never place an autonomous exchange order"
+    assert _FakeOKXClient.placed == [], "no exchange call for live mode"
+
+    # 3. flag ON + okx_demo → places bracket + persists id (RESULT, not just call)
+    ids = place_exchange_protective_orders({
+        "id": p1.id, "symbol": "BNB/USDT", "market_type": "usdt_futures",
+        "direction": "short", "quantity": 0.03, "stop_price": 573.98,
+        "take_profit_price": 540.22, "execution_mode": "okx_demo",
+    })
+    assert ids == {"sl": "algo-sl-1", "tp": "algo-tp-1"}
+    # short → close side is BUY (reduce the short)
+    assert _FakeOKXClient.placed and _FakeOKXClient.placed[-1]["close_side"] == "buy"
+    import json
+    row = conn.execute("SELECT exchange_tpsl_order_id FROM positions WHERE id=?", (p1.id,)).fetchone()
+    assert json.loads(row["exchange_tpsl_order_id"]) == {"sl": "algo-sl-1", "tp": "algo-tp-1"}, (
+        "placed bracket ids must be persisted to positions.exchange_tpsl_order_id"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-14", "pipeline_adopted_position", "§14 adopt_places_exchange_bracket", "L2b",
+        "adopt_position(demo, okx) with exchange_tpsl_enabled=True places an exchange "
+        "protective bracket and persists exchange_tpsl_order_id — closing the "
+        "'adopted position unprotected on the exchange' gap end-to-end.",
+    ),
+)
+def test_adopt_places_exchange_bracket(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+    _write_config(tmp_path, monkeypatch, "okx_demo", exchange_tpsl_enabled=True)
+
+    from aletheia.execution import okx_broker
+    _FakeOKXClient.placed = []
+    monkeypatch.setattr(okx_broker, "OKXClient", _FakeOKXClient)
+
+    from aletheia.portfolio.position_reconciler import adopt_position
+    ids = adopt_position(_make_exchange_pos(symbol="BNB/USDT", side="short",
+                                            quantity=0.03, entry_price=562.73),
+                         account_mode="demo")
+
+    import json
+    row = conn.execute(
+        "SELECT exchange_tpsl_order_id FROM positions WHERE id=?", (ids["position_id"],)
+    ).fetchone()
+    assert row["exchange_tpsl_order_id"] is not None, (
+        "adopted okx_demo position must have an exchange bracket when exchange_tpsl_enabled"
+    )
+    assert json.loads(row["exchange_tpsl_order_id"]) == {"sl": "algo-sl-1", "tp": "algo-tp-1"}
+    assert _FakeOKXClient.placed, "adopt must have called the OKX protective-order path"
+
+
+# ===========================================================================
+# Strategy-attribution recovery on adopt (P2-2, 2026-07-01).
+# The thrash (now fixed at source by P0) severed strategy_id: a strategy position
+# orphan-closed then re-adopted came back with strategy_id=NULL. Defense-in-depth:
+# when adopting an external that TIGHTLY matches a very recently reconciled_gone
+# local close (same symbol+dir, ~entry, <15min), inherit its strategy_id/opp_id so
+# any residual transient orphan→re-adopt keeps attribution intact. Tight match so a
+# genuinely-new external is never mis-attributed.
+# ===========================================================================
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-15", "pipeline_adopted_position", "§15 adopt_recovers_strategy_id", "L2b",
+        "adopt_position inherits strategy_id + opportunity_id from a recently "
+        "reconciled_gone local close that matches (symbol, direction, ~entry_price), "
+        "so a transient orphan→re-adopt keeps trade attribution.",
+    ),
+)
+def test_adopt_recovers_strategy_id_from_recent_thrash_close(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+
+    from datetime import datetime, timezone
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    now = datetime.now(timezone.utc).isoformat()
+    # A strategy position that was just thrash-closed (reconciled_gone) seconds ago.
+    repo.insert_position(Position(
+        symbol="BNB/USDT", market_type="usdt_futures", direction="short",
+        quantity=0.03, entry_price=562.73, execution_mode="okx_demo",
+        status="closed", close_reason="reconciled_gone", closed_at=now,
+        strategy_id="strat-xyz", opportunity_id="opp-abc",
+    ))
+
+    ids = adopt_position(_make_exchange_pos(symbol="BNB/USDT", side="short",
+                                            quantity=0.03, entry_price=562.73),
+                         account_mode="demo")
+    row = conn.execute(
+        "SELECT strategy_id, opportunity_id FROM positions WHERE id=?", (ids["position_id"],)
+    ).fetchone()
+    assert row["strategy_id"] == "strat-xyz", (
+        f"adopted position must recover strategy_id from the recent thrash close, "
+        f"got {row['strategy_id']!r}"
+    )
+    assert row["opportunity_id"] == "opp-abc", "opportunity_id must be recovered too"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-ADOPT-16", "pipeline_adopted_position", "§16 adopt_no_false_attribution", "L2b",
+        "adopt_position does NOT inherit a strategy_id when there is no tight recent "
+        "reconciled_gone match — a genuinely-new external position stays "
+        "strategy_id=NULL (no mis-attribution).",
+    ),
+)
+def test_adopt_no_false_strategy_attribution(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    _stub_notifications(monkeypatch)
+    _stub_audit(monkeypatch, tmp_path)
+
+    from datetime import datetime, timezone
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    now = datetime.now(timezone.utc).isoformat()
+    # A genuine EXIT (stop_loss) of a strategy position — NOT a thrash close.
+    # A new external must NOT inherit its strategy_id (the position really exited).
+    repo.insert_position(Position(
+        symbol="ETH/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=1600.0, execution_mode="okx_demo",
+        status="closed", close_reason="stop_loss", closed_at=now,
+        strategy_id="strat-should-not-leak",
+    ))
+
+    ids = adopt_position(_make_exchange_pos(symbol="ETH/USDT", side="long",
+                                            quantity=1.0, entry_price=1600.0),
+                         account_mode="demo")
+    row = conn.execute(
+        "SELECT strategy_id FROM positions WHERE id=?", (ids["position_id"],)
+    ).fetchone()
+    assert row["strategy_id"] is None, (
+        f"a genuinely-exited (stop_loss) position must NOT leak its strategy_id to a "
+        f"new external adoption, got {row['strategy_id']!r}"
+    )

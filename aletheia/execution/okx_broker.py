@@ -243,6 +243,56 @@ def execute_live_order(
 
 
 # ---------------------------------------------------------------------------
+# Exchange-side protective orders (parity with bitget_broker._try_place_tpsl)
+# ---------------------------------------------------------------------------
+
+def place_okx_protective_orders(
+    position_id: str,
+    symbol: str,
+    market_type: str,
+    direction: str,
+    quantity: float,
+    stop_price: float | None,
+    take_profit_price: float | None,
+    execution_mode: str,
+) -> dict:
+    """Place reduce-only SL/TP trigger orders on OKX for an EXISTING position and
+    persist the resulting ids to positions.exchange_tpsl_order_id.
+
+    OKX equivalent of bitget_broker._try_place_tpsl. Non-fatal — a placement error
+    is logged, never raised (a position must never fail to exist because its
+    exchange bracket could not be placed). Gating (flag + demo-only) is the
+    caller's job (execution.stops.place_exchange_protective_orders).
+    """
+    import json as _json
+    from aletheia.storage.repositories import update_position
+
+    close_side = "sell" if direction in ("long", "buy") else "buy"
+    mode = "demo" if execution_mode == "okx_demo" else "live"
+    ids: dict = {}
+    try:
+        client = OKXClient(mode=mode)
+        try:
+            ids = _run_coro(client.place_algo_order(
+                symbol=symbol, market_type=market_type, close_side=close_side,
+                quantity=quantity, stop_price=stop_price, take_profit_price=take_profit_price,
+            ))
+        finally:
+            try:
+                _run_coro(client.close())
+            except Exception:
+                pass
+    except Exception as e:  # noqa: BLE001 — protective placement must never raise
+        logger.warning("OKX protective order placement failed for %s %s: %s", symbol, direction, e)
+        return {}
+
+    if ids:
+        update_position(position_id, exchange_tpsl_order_id=_json.dumps(ids))
+        logger.info("OKX protective orders placed for %s %s: %s", symbol, direction, ids)
+    return ids
+
+
+# ---------------------------------------------------------------------------
 # Position close
 # ---------------------------------------------------------------------------
 

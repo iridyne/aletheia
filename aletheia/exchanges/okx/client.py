@@ -248,6 +248,73 @@ class OKXClient:
             filled_quantity=filled_qty,
         )
 
+    async def place_algo_order(
+        self,
+        symbol: str,
+        market_type: str,
+        close_side: str,
+        quantity: float,
+        stop_price: float | None = None,
+        take_profit_price: float | None = None,
+    ) -> dict:
+        """Place reduce-only protective trigger orders (SL and/or TP) for an EXISTING position.
+
+        Unlike place_order (which opens), this places standalone conditional/algo
+        orders that close the position when a trigger price is hit — the OKX
+        equivalent of Bitget's place_tpsl_order. `close_side` is the side that
+        REDUCES the position (sell for a long, buy for a short). `quantity` is in
+        COIN units; for perps it is converted to contracts via contractSize, same
+        as place_order. SL and TP are placed as two separate reduce-only trigger
+        orders (mirrors bitget_broker._try_place_tpsl). Returns {"sl": id, "tp": id}
+        for whichever legs were placed. Non-fatal per leg — a failed leg is logged
+        and omitted, never raised, so a partial bracket still protects.
+
+        Perp only: OKX spot has no reduce-only / position concept, so protective
+        trigger orders are not placed for spot (caller must not rely on them).
+        """
+        if is_leveraged_market(market_type) is False:
+            logger.info("OKX spot has no reduce-only protective orders — skipping for %s", symbol)
+            return {}
+
+        ccxt_symbol = okx_ccxt_symbol(market_type, symbol)
+        ex = self._ensure_exchange()
+        contract_size = await self._contract_size(ccxt_symbol)
+        amount = quantity / contract_size if contract_size else quantity
+
+        result: dict = {}
+        # Two separate reduce-only market-trigger orders. CCXT-okx maps the unified
+        # stopLossPrice / takeProfitPrice params to OKX algo (slTriggerPx/tpTriggerPx)
+        # orders with market execution.
+        legs = []
+        if stop_price:
+            legs.append(("sl", {"reduceOnly": True, "stopLossPrice": float(stop_price)}))
+        if take_profit_price:
+            legs.append(("tp", {"reduceOnly": True, "takeProfitPrice": float(take_profit_price)}))
+
+        for leg, params in legs:
+            try:
+                resp = await ex.create_order(
+                    symbol=ccxt_symbol, type="market", side=close_side,
+                    amount=amount, price=None, params=params,
+                )
+                oid = resp.get("id") or ""
+                if oid:
+                    result[leg] = oid
+            except ccxt.BaseError as e:
+                logger.warning("OKX %s trigger placement failed for %s: %s", leg, symbol, e)
+            except Exception as e:  # noqa: BLE001 — protective placement must never raise
+                logger.warning("OKX %s trigger placement error for %s: %s", leg, symbol, e)
+        return result
+
+    async def cancel_algo_order(self, symbol: str, market_type: str, algo_id: str) -> None:
+        """Cancel a pending algo/trigger order. Non-fatal on failure."""
+        ccxt_symbol = okx_ccxt_symbol(market_type, symbol)
+        try:
+            ex = self._ensure_exchange()
+            await ex.cancel_order(algo_id, ccxt_symbol, params={"trigger": True})
+        except Exception as e:  # noqa: BLE001
+            logger.warning("OKX cancel algo %s (%s) failed: %s", algo_id, symbol, e)
+
     async def get_positions(self) -> list[dict]:
         """Fetch open positions.
 

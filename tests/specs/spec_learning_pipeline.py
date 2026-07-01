@@ -1115,3 +1115,50 @@ def test_dreaming_agent_lesson_evidence_populated():
     assert "evidence" in sig.parameters, (
         "LessonStore.create() must accept an `evidence` parameter"
     )
+
+
+# ---------------------------------------------------------------------------
+# LP-S15 — factor_feedback (signal gate) excludes synthetic/thrash closes
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("LP-S15", "learning_pipeline", "§factor_feedback excludes synthetic closes", "L2b",
+              "build_factor_feedback / lookup_factor_signal must exclude synthetic "
+              "closes (reconciled_gone etc.) from win-rate/expectancy — reconciler "
+              "orphan sweeps are not trade outcomes and were mis-teaching the signal "
+              "gate. See ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.",
+              status="implemented"),
+)
+def test_factor_feedback_excludes_synthetic_closes():
+    """Mock attribution rows (no DB): a factor whose rows are ALL reconciled_gone
+    must read as no-history (watch, trade_count 0); a mixed factor counts only the
+    genuine rows."""
+    from unittest.mock import patch
+    from aletheia.analytics import factor_feedback as ff
+
+    def _row(reason, pnl):
+        return {"scanner_family": "momentum", "direction": "long", "symbol": "BTC/USDT",
+                "confidence": "high", "late_entry_penalty": 0,
+                "realized_pnl": pnl, "close_reason": reason}
+
+    # All-synthetic factor → excluded → no history.
+    all_synth = [_row("reconciled_gone", p) for p in (5.0, -3.0, 4.0, -2.0, 6.0)]
+    with patch.object(ff, "build_trade_attribution_rows", lambda limit=500: all_synth):
+        sig = ff.lookup_factor_signal({"scanner_family": "momentum", "direction": "long",
+                                       "symbol": "BTC/USDT", "confidence": "high"})
+        assert sig["trade_count"] == 0, (
+            f"reconciled_gone rows must be excluded from the signal gate, got "
+            f"trade_count={sig['trade_count']}"
+        )
+        assert sig["status"] == "watch", "all-synthetic factor must read as no-history/watch"
+
+    # Mixed factor → only the 3 genuine rows count.
+    mixed = ([_row("take_profit", 5.0), _row("stop_loss", -2.0), _row("take_profit", 4.0)]
+             + [_row("reconciled_gone", -99.0) for _ in range(5)])
+    with patch.object(ff, "build_trade_attribution_rows", lambda limit=500: mixed):
+        sig = ff.lookup_factor_signal({"scanner_family": "momentum", "direction": "long",
+                                       "symbol": "BTC/USDT", "confidence": "high"})
+        assert sig["trade_count"] == 3, (
+            f"only genuine closes must count, got trade_count={sig['trade_count']}"
+        )
