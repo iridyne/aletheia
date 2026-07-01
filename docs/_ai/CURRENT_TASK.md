@@ -45,7 +45,18 @@
 > `aletheia doctor` 的 `loop.profit` 探针为准,本文不断言**。实验判决记账见
 > `EXPERIMENT_PROTOCOL.md`:修复生效前(污染期)的 skip/proposal 数据不计入策略评估。
 
-## 最新完成：双层模型路由 + System Operator 重命名（2026-07-01）
+## 最新完成：Scanner/Observer 审计修复 P0–P3（2026-07-01）
+
+- 两份审计报告 → plan（`docs/plans/scanner_observer_audit_fix_plan_2026-07-01.md`）→ 实施。
+  宽 fan-out 核实 workflow 因 workspace rate-limit 全灭，改手动核实，查出报告 **6 处根因偏差**（见报告 §0）。
+  分支 `fix/scanner-observer-audit-fixes`。
+- **最高杠杆**：`service.py:256` forward-outcome direction 同源修复（一处消解 momentum 54% direction=None
+  + event 0 条 forward outcome + 胜率统计双重失真）。其余 P0-P3 见 `DEVLOG.md` / `AI_HANDOFF.md`。
+- spec `UP-01~13` 全 GREEN；全量 **1815 passed**；无新增 doctor WARN。
+- **defer 到 ROADMAP**（非遗漏，有理由）：US-16（真 4h 特征接入 scorer，属增强）、
+  US-12（all_scores 入库，待有消费者，否则违反 data_utilization 契约）。
+
+## 上一批完成：双层模型路由 + System Operator 重命名（2026-07-01）
 
 - **双层模型路由**（commit `e5a8010`）：`deep_provider` / `fast_provider` 双通道，
   11 个 deep call site + 5 个 fast call site 已注入，前端 Settings 加 Routing Role 下拉。

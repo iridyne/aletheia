@@ -56,6 +56,9 @@
 - **Outputs**: opportunities table (symbol, direction, confidence, key_observations JSON)
 - **Side effects**: Writes to `opportunities` table; triggers PI daemon wake via `notify_pi_daemon()`
 - **Error behavior**: Degrades to basic technical-only signals when LLM unavailable
+- **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
+- **Guard advisory contract** (spec UP-07, 断口F): guard advisory is built PER-SYMBOL inside `_analyze_symbol` with `{symbol, scanner_family, asset_class}` via `router.build_guard_advisory()` — NOT run-level with a symbol list (which never matched any guard). The run-level memory_block carries only symbol-agnostic lessons.
+- **Downstream contract** (spec UP-06): `key_observations` (the LLM's numeric citations) IS surfaced to the System Operator's layer1 snapshot; previously only a truncated thesis reached the decision.
 
 #### equity_observer (replaces stock_observer)
 

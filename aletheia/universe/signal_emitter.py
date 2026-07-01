@@ -42,6 +42,7 @@ def emit_deterministic_opportunities(
     scored_features: list[dict],
     linked_strategy_id: str | None = None,
     regime=None,
+    short_enabled: bool = True,
 ) -> int:
     """Generate one deterministic Opportunity per eligible high-scoring universe member.
 
@@ -58,7 +59,12 @@ def emit_deterministic_opportunities(
     Returns:
         Number of opportunities created.
     """
-    feat_by_symbol: dict[str, dict] = {f["symbol"]: f for f in scored_features}
+    # Key by (symbol, market_type): the same symbol can appear as both spot and
+    # perp in one refresh. Keying by symbol alone let one overwrite the other, so
+    # an emitted opportunity could inherit funding/direction from the wrong market.
+    feat_by_key: dict[tuple, dict] = {
+        (f["symbol"], f.get("market_type", "spot")): f for f in scored_features
+    }
     created = 0
     _high_conf_emitted = False
 
@@ -74,7 +80,7 @@ def emit_deterministic_opportunities(
         if total_score < _MIN_SCORE:
             continue
 
-        feat = feat_by_symbol.get(symbol)
+        feat = feat_by_key.get((symbol, market_type))
         if not feat:
             continue
 
@@ -106,7 +112,7 @@ def emit_deterministic_opportunities(
             pass
 
         # Regime bias gate: filter signals that conflict with current regime
-        if regime is not None and not _passes_regime_gate(direction, total_score, regime):
+        if regime is not None and not _passes_regime_gate(direction, total_score, regime, short_enabled):
             logger.debug(
                 "regime-filtered %s %s %s (regime=%s, bias=%.2f)",
                 family, direction, symbol, regime.state,
@@ -181,7 +187,7 @@ def emit_deterministic_opportunities(
     return created
 
 
-def _passes_regime_gate(direction: str, total_score: float, regime) -> bool:
+def _passes_regime_gate(direction: str, total_score: float, regime, short_enabled: bool = True) -> bool:
     """Check if a signal's direction passes the regime bias gate.
 
     Logic:
@@ -189,7 +195,14 @@ def _passes_regime_gate(direction: str, total_score: float, regime) -> bool:
       - If bias >= threshold, always pass
       - If bias < threshold, only pass if score is exceptionally high (top 20% above _HIGH_CONF_THRESHOLD)
         This allows strong contrarian signals to survive even in hostile regimes.
+
+    US-9: short_enabled=False is a HARD operator switch — no score may override it.
+    Previously a high-score short slipped through the score-override branch below,
+    silently violating the operator's global short disable.
     """
+    if direction == "short" and not short_enabled:
+        return False
+
     bias = regime.long_bias if direction == "long" else regime.short_bias
 
     if bias >= _REGIME_BIAS_THRESHOLD:
@@ -322,5 +335,17 @@ def _infer_direction(family: str | None, feat: dict) -> str | None:
             return None
 
         return "short"
+
+    if family == "event":
+        # Event catalyst: follow the sharp 1h displacement. Thresholds mirror
+        # score_event (>4% long / <-4% short) so a fallback here agrees with the
+        # scanner's intrinsic direction. Only used when scanner_direction is
+        # absent — the primary path prefers the scanner's own direction.
+        if ret_1h is not None:
+            if ret_1h > 4.0:
+                return "long"
+            if ret_1h < -4.0:
+                return "short"
+        return None
 
     return None

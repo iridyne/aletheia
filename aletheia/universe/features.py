@@ -167,7 +167,11 @@ async def _fetch_single_feature(
             if len(closes_1h) >= 100:
                 historical_widths = []
                 for i in range(20, min(100, len(closes_1h))):
-                    h_bb = bollinger(closes_1h[:i], 20, 2.0)
+                    # US-5: window slice [i-20:i] is O(20); the prefix slice [:i]
+                    # was O(i) → O(n²) overall (up to 80 full recomputes/asset).
+                    # bollinger uses the last `period` points, so the two are
+                    # numerically identical.
+                    h_bb = bollinger(closes_1h[i - 20:i], 20, 2.0)
                     if h_bb and h_bb[1] > 0:
                         historical_widths.append((h_bb[2] - h_bb[0]) / h_bb[1] * 100)
                 if historical_widths:

@@ -40,6 +40,10 @@ def _import_all_specs():
         spec_pipeline_live_unlock,
         spec_pipeline_market_data,
         spec_spot_parity,
+        # Universe pipeline integrity (UP-*): Scanner/Observer audit fixes 2026-07-01.
+        # Same-source forward-outcome direction, scanner_weights consumption,
+        # market_type propagation, composite feature keying.
+        spec_universe_pipeline,
         spec_pipeline_paper_trade,
         spec_pipeline_position_manager,
         spec_pipeline_operator_loop,

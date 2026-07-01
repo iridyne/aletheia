@@ -673,6 +673,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
             f"  {o['symbol']} [{o.get('market', '?')}] {o.get('direction_bias', '?')} "
             f"conf={o.get('confidence_score', '?')} "
             f"[{o.get('scanner_family', '')}]: {o.get('thesis', '')}"
+            f"{(' | obs: ' + '; '.join(o['key_observations'])) if o.get('key_observations') else ''}"
             for o in opps[:8]
         )
         parts += ["## Open Opportunities (market_observer output)", opp_lines, ""]

@@ -11,6 +11,9 @@ logger = logging.getLogger("aletheia.universe.allocator")
 
 # Calibration: minimum samples before adjusting a family's weight
 _MIN_CALIBRATION_SAMPLES = 10
+# US-13: explore candidates below this total_score are too weak to promote into the
+# executable universe (they would be flagged execution_eligible with a near-zero score).
+_EXPLORE_MIN_SCORE = 20.0
 # Per-family calibration horizon (matches typical holding period)
 _FAMILY_CALIBRATION_HORIZON = {
     "momentum": "4h",
@@ -133,9 +136,14 @@ def compute_total_score(
     the family's empirical hit_rate performance.
     """
     opportunity = scanner_result.get("opportunity_score", 0)
+    family = scanner_result.get("scanner_family", "momentum")
     if calibration:
-        family = scanner_result.get("scanner_family", "momentum")
         opportunity *= calibration.get(family, 1.0)
+    # Operator-adjustable per-family weight. The PI Operator writes
+    # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
+    # shows it, but scoring never consumed it — the manual bias was inert. Empty
+    # dict (default) → 1.0 for every family, preserving current behavior.
+    opportunity *= cfg.scanner_weights.get(family, 1.0)
     tradability = feat.get("tradability_score", 50.0)
 
     # Liquidity score from volume (simple: high volume = good liquidity)
@@ -239,8 +247,12 @@ def allocate_universe(scored: list[dict], cfg: UniverseConfig) -> list[dict]:
     # Explore selection: random sample from remainder
     explore_selected: list[dict] = []
     if remainder and explore_count > 0:
-        sample_size = min(explore_count, len(remainder))
-        explore_selected = random.sample(remainder, sample_size)
+        # US-13: don't let explore promote 0/low-score candidates into the executable
+        # universe. Keep exploration, but require minimal viability first.
+        viable = [r for r in remainder if r.get("total_score", 0) >= _EXPLORE_MIN_SCORE]
+        if viable:
+            sample_size = min(explore_count, len(viable))
+            explore_selected = random.sample(viable, sample_size)
 
     # Combine and assign TTL + rank metadata
     final = exploit_selected + explore_selected

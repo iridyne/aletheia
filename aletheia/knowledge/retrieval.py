@@ -218,7 +218,7 @@ def retrieve_lessons(query: str, *, k: int = 3, item_types: list[str] | None = N
 
         sql = (
             "SELECT item_id, item_type, title, confidence, created_at, "
-            "snippet(knowledge_fts, 1, '', '', ' … ', 24) AS snip, bm25(knowledge_fts) AS bm "
+            "snippet(knowledge_fts, 1, '', '', ' … ', 48) AS snip, bm25(knowledge_fts) AS bm "
             "FROM knowledge_fts WHERE knowledge_fts MATCH ? AND confidence = ?"
         )
         params: list = [match, _ALLOWED_CONFIDENCE]

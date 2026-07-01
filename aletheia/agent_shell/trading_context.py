@@ -33,6 +33,26 @@ def build_enriched_trading_context() -> dict[str, Any]:
 # ── Layer 1: Environment Snapshot ────────────────────────────────────────────
 
 
+def _top_observations(raw, n: int = 2) -> list[str]:
+    """Parse the key_observations JSON blob → first n data-cited bullets.
+
+    market_observer stores its most specific LLM output (numeric citations like
+    "1h RSI 68, price > SMA20") in opportunities.key_observations, but the PI
+    layer1 snapshot historically dropped it — the PI saw only a truncated thesis.
+    Surfacing a couple of observations restores the citations for the decision.
+    """
+    if not raw:
+        return []
+    try:
+        import json as _json
+        obs = _json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(obs, list):
+            return [str(x) for x in obs[:n] if x]
+    except Exception:
+        pass
+    return []
+
+
 def _build_layer1_snapshot() -> dict[str, Any]:
     """Current market + portfolio state. Fresh each call, never cached."""
     layer: dict[str, Any] = {}
@@ -166,7 +186,11 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "confidence": o.get("confidence"),
                 "confidence_score": o.get("confidence_score"),
                 "scanner_family": o.get("scanner_family"),
-                "thesis": (o.get("thesis") or "")[:150],
+                "thesis": (o.get("thesis") or "")[:220],
+                # market_observer's LLM writes its most specific, data-cited output
+                # here; the PI was previously blind to it (only the truncated thesis
+                # surfaced). Expose the top observations so the decision can cite them.
+                "key_observations": _top_observations(o.get("key_observations")),
             }
             for o in opps
         ]

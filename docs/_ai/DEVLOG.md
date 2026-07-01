@@ -1,5 +1,23 @@
 # Development Log
 
+## 2026-07-01 — Scanner + Observer 审计修复 P0–P3
+
+### 触发
+两份审计报告（Universe Scanner + Market Observer）→ plan → 实施。核实 workflow 因 workspace rate-limit 全灭，改手动核实，查出报告 6 处根因偏差。分支 `fix/scanner-observer-audit-fixes`，spec `UP-01~13` GREEN。
+
+### 关键修复
+- **US-4（最高杠杆）**：`service.py:256` forward-outcome direction 用 `scanner_direction` 同源 + `_infer_direction` 加 event 分支 → 一处修复 momentum 54% None + event 0 条 + 胜率统计双重失真。
+- **US-1**：`compute_total_score` 消费 `scanner_weights`（PI 手调此前无效）。
+- **US-3/8**：perp market_type 传递 + feature 复合 key。**US-9**：short 硬禁不被高分绕过。
+- **US-5/6**：BB squeeze O(n²)→O(n)；price_precision tick-size 保真。
+- **MO-1**：key_observations 进 layer1。**MO-2**：per-symbol guard（闭合断口 F）。
+- **MO-3/4/6/7/8/9/11/12/13/14**：F&G 填充 / scanner_family hint / RS rank 单symbol省略 / crowding n/a / fallback DEGRADED / news 48h / prediction 流动性 / load_config 移出循环。
+
+### 不做（有理由）
+US-7（读侧已 fallback）/ US-12·US-16（无消费者·增强 → ROADMAP）/ MO-5·10·15（已覆盖 / 收益微）。
+
+---
+
 ## 2026-07-01 — 双层模型路由上线 + System Operator 重命名 + earendil-works/pi 研究
 
 ### 触发

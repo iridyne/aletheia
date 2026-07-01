@@ -94,9 +94,19 @@ class TestInferDirection:
     def test_derivatives_no_data(self):
         assert _infer_direction("derivatives", _feat()) is None
 
-    # unknown family
-    def test_unknown_family(self):
+    # event — sharp 1h displacement (mirrors score_event ±4% thresholds)
+    def test_event_below_threshold_no_direction(self):
         assert _infer_direction("event", _feat(return_1h=2.0)) is None
+
+    def test_event_sharp_up_long(self):
+        assert _infer_direction("event", _feat(return_1h=9.0)) == "long"
+
+    def test_event_sharp_down_short(self):
+        assert _infer_direction("event", _feat(return_1h=-9.0)) == "short"
+
+    # truly unknown family
+    def test_unknown_family(self):
+        assert _infer_direction("nonsense", _feat(return_1h=2.0)) is None
 
     def test_none_family(self):
         assert _infer_direction(None, _feat(return_1h=2.0)) is None

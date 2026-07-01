@@ -252,8 +252,20 @@ class UniverseService:
                     "id": member.id,
                     "snapshot_id": snap.id,
                     "symbol": item["symbol"],
+                    # Carry market_type so signal_emitter labels perp opportunities
+                    # correctly. Without this key every emitted opportunity fell back
+                    # to "spot" (signal_emitter:70), mislabeling perp/derivatives.
+                    "market_type": item.get("market_type", "spot"),
                     "scanner_family": item.get("scanner_family"),
-                    "direction": _infer_direction(item.get("scanner_family"), item),
+                    # Direction MUST come from the same source the opportunity
+                    # uses (signal_emitter: scanner_direction first). Re-inferring
+                    # here dropped the scanner's own direction — momentum/event
+                    # candidates whose _infer_direction returned None were logged
+                    # to forward outcomes as direction=None (54% of momentum rows),
+                    # and the recorded direction could disagree with the emitted
+                    # opportunity, double-corrupting win-rate stats.
+                    "direction": item.get("scanner_direction")
+                    or _infer_direction(item.get("scanner_family"), item),
                     "entry_price_usd": entry_price,
                     "total_score": item["total_score"],
                     "expires_at": member_expires,
@@ -270,6 +282,7 @@ class UniverseService:
                 emit_deterministic_opportunities(
                     inserted_members, snap.id, scored_features=scored,
                     regime=current_regime,
+                    short_enabled=cfg.regime.short_enabled,
                 )
             except Exception as e:
                 logger.warning("Deterministic opportunity emission failed (non-fatal): %s", e)

@@ -92,7 +92,7 @@ lesson_reviewer 的同一次 run 里先 accept 后立刻 mark_applied，accepted
 
 ---
 
-### ❌ 断口 F — market_observer guard_context 缺关键字段
+### ✅ 断口 F — 已修复（MO-2，2026-07-01 分支 fix/scanner-observer-audit-fixes）
 **严重度：MEDIUM**  
 **位置**：`aletheia/agents/market_observer.py:531`  
 
@@ -102,7 +102,7 @@ market_observer 调用 `build_advisory_context(guard_context={"symbols": ..., "a
 `_applies_to_context` 在 `scanner_family=None` 时直接返回 False。  
 → guard advisory block 对 market_observer LLM 永远是空字符串。  
 
-**修复**：market_observer 的 guard_context 需补充每个 symbol 的 scanner_family/direction 信息（从 universe snapshot 取）。
+**修复（已实施 MO-2）**：guard advisory 从循环外全局构建（用 `symbols` list，`_applies_to_context` 恒 False）移入 `_analyze_symbol`，用 per-symbol `scanner_family`（universe member 已知，LLM 前可得）经新增的 `router.build_guard_advisory()` 构建。run 级 memory_block 现只承载 symbol-agnostic lessons。spec `UP-07` 锁定。
 
 ---
 

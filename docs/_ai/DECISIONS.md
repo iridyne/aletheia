@@ -1,5 +1,29 @@
 # Decisions
 
+## 2026-07-01 — Scanner/Observer 审计修复的架构决策
+
+### Context
+基于两份审计报告修复 universe scanner + market observer。手动核实（宽 fan-out workflow 因 workspace rate-limit 全灭）查出报告 6 处根因偏差，若干项据此改变处置。
+
+### Decisions
+1. **forward-outcome direction 必须与 opportunity 同源（single source of truth）**
+   - 问题：`service.py:256` 用 `_infer_direction` 重算方向，opportunity 用 `scanner_direction`；分裂造成 momentum 54% direction=None + event 0 条 + 胜率统计污染。
+   - 决定：inserted_members direction 改用 `item.get("scanner_direction") or _infer_direction(...)`，与 signal_emitter 完全对齐。方向只有一个权威来源（scanner 内在方向），`_infer_direction` 仅作 fallback。spec UP-01/UP-03 锁定。
+
+2. **`all_scores` 不落库（避免无消费者数据）**
+   - 报告建议持久化 5-family 分数供 ensemble 分析。
+   - 决定：**不加列**。当前无任何消费者，落库违反 data_utilization 契约「无消费者数据=负债」。有明确消费需求时再加，记入 ROADMAP。
+
+3. **scanner_weights 与 calibration 相乘叠加，而非替换**
+   - `scanner_weights`（PI 手调）与 calibration（自动胜率）都是 family 级乘数。
+   - 决定：`opportunity *= calibration × scanner_weights`。空 dict → 全 1.0，不改变默认行为。关联 OL-C09。
+
+4. **guard advisory 用 scanner_family（LLM 前可得）做 per-symbol 匹配，不用 direction**
+   - direction 是 LLM 输出（LLM 前不可得）；scanner_family 来自 universe member（LLM 前已知）。
+   - 决定：MO-2 用 scanner_family 做 per-symbol guard 匹配，闭合断口 F 核心（scanner_family 缺失致恒不匹配）。direction 维度作为后续增强。
+
+---
+
 ## 2026-06-29 — OpenAlice TaG 借鉴策略的 5 个决策
 
 ### Context
