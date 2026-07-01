@@ -72,7 +72,7 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
-    async def fake_structured(system, user, *, schema, max_tokens=400):
+    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
@@ -96,7 +96,7 @@ async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
-    async def fake_structured(system, user, *, schema, max_tokens=400):
+    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
         return None, "llm_unavailable"
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
@@ -119,7 +119,7 @@ async def test_observer_emits_spot_and_perp_when_futures_enabled(tmp_path, monke
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 
-    async def fake_structured(system, user, *, schema, max_tokens=400):
+    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
@@ -201,7 +201,7 @@ async def test_observer_stores_canonical_format_symbol(tmp_path, monkeypatch):
     cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
 
-    async def fake_structured(system, user, *, schema, max_tokens=400):
+    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
@@ -230,7 +230,7 @@ async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
     cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)
 
-    async def fake_structured(system, user, *, schema, max_tokens=400):
+    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
         return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)

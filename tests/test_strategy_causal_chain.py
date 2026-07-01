@@ -74,7 +74,7 @@ _MOCK_EXEC_SPEC = {
 
 def _patch_llm_structured(monkeypatch):
     """Mock llm_structured to return a valid executable strategy spec."""
-    async def fake_llm_structured(system, user, schema=None, max_tokens=800):
+    async def fake_llm_structured(system, user, schema=None, max_tokens=800, **kw):
         return _MOCK_EXEC_SPEC, None
 
     monkeypatch.setattr(
