@@ -207,15 +207,21 @@ owner 要点:把 Operator 可抉择的**大参数值域**纳入 Learning,让它�
 
 ---
 
-## 12. 待 owner 拍板(现在是"区间"而非单值)
+## 12. 初步 max 数值(owner + operator 已定,2026-07-02)
 
-对每个 persona,请给区间而非固定值:
-1. **基准仓位%**:各档 [init%, max%](现 0.03%,想要的上限?)
-2. **杠杆**:各档 [init, max](roll 的 max?10x?20x?——触信任边界,需明确授权数字)
-3. **单笔最大亏损**:各档 max(USDT 绝对值——护栏核心)
-4. **加仓**:roll 的 max_adds + 每次浮盈滚入比上限
-5. **解冻优先级/门槛**:先解冻哪个?干净窗样本门槛 K=?
-6. **BTC 大盘档的定义**:用什么衡量"大盘价值水平"(SMA 带?已实现价格?regime?)——决定 §3(c) 的实现。
+依据:经典 1%/2% 单笔风控铁律、分数 Kelly(0.25-0.5)、零售永续杠杆规范、Turtle 式递减加仓+总量封顶。
+owner 拍板三项高风险数字,其余按下表编入 `_default_personas`(commit 见 STATUS 头):
+
+- ✅ **Roll 最大杠杆 = 10x(硬顶 15x)**(20x 强平缓冲太薄被否)。⚠️ 现风控 `max_futures_leverage_demo=5`
+  仍会 clamp 到 5x —— 真要跑 10x 需 owner 单独抬这个信任边界配置(未动)。
+- ✅ **Roll 单笔最大亏损 = 1.0%**(1% 铁律;`per_trade_loss_pct` max=1.0)。
+- ✅ **金字塔总加仓 ≤ 1× 初始仓(总敞口 ≤ 2×)** + max_adds=3 + 单标的敞口硬顶 —— `pyramid_plan` 已实现双 cap。
+
+已编入默认值:conservative 单笔 1%/杠杆≤3-5x;balanced 单笔 1.5%/杠杆≤5x;roll 见上 + Kelly≤0.5、
+基准 $20-200(≈权益 0.02-0.2%,小本)。**仍待 owner**(非阻塞,后续按需):
+- 各档基准若要改用"%-of-equity"而非 $ 名义(现为 $;设计倾向 % — 需一次单位切换)。
+- BTC 大盘档 §3(c) 的专用度量(现用 regime 代理;可换 SMA 带/已实现价格)。
+- 解冻门槛 K(现 persona_unlock_step_samples=25/persona_learning_min_samples=15,可调)。
 
 ---
 

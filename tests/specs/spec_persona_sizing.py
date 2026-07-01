@@ -367,8 +367,12 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     flat = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 0.0}
     assert sizing_policy.pyramid_plan(flat, adds_done=0, cfg=cfg)["add"] is False
 
-    # max_adds reached (roll init 2) → no add.
+    # TOTAL added ≤ 1× base (owner 2026-07-02): after 2 adds of 0.5×base each, the
+    # cumulative pyramid = base, so a 3rd add is refused by the total cap.
     assert sizing_policy.pyramid_plan(winner, adds_done=2, cfg=cfg)["add"] is False
+
+    # max_adds hard limit (roll init 3) also refuses beyond the count.
+    assert sizing_policy.pyramid_plan(winner, adds_done=3, cfg=cfg)["add"] is False
 
     # HARD CAP: a huge base near the per-symbol cap → add clamped to remaining room.
     big = {"entry_price": 100.0, "quantity": 3.9, "unrealized_pnl": 20.0}  # base 390, cap 400

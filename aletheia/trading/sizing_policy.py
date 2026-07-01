@@ -161,19 +161,25 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
                 "reason": f"not enough profit ({profit_pct:.2f}%) to add"}
 
     desired = base_notional * add_frac
-    # HARD CAP: base + already-added + this add must fit the per-symbol exposure limit.
+    already_added = base_notional * add_frac * adds_done
+
+    # CAP 1 (owner 2026-07-02): TOTAL pyramided ≤ 1× base_notional (so total exposure
+    # ≤ ~2× base). This is the primary pyramid discipline — winners scale, but bounded.
+    total_room = max(0.0, base_notional - already_added)
+    add_notional = min(desired, total_room)
+
+    # CAP 2 (risk envelope): base + adds must fit the per-symbol exposure limit —
+    # the immutable outer bound regardless of persona/pyramid state.
     cap = float(getattr(cfg.risk, "max_per_symbol_notional_usdt", 0) or 0)
     if cap > 0:
-        already = base_notional * (1 + add_frac * adds_done)
-        room = max(0.0, cap - already)
-        add_notional = min(desired, room)
-        if add_notional <= 0:
-            return {"add": False, "add_notional": 0.0,
-                    "reason": f"per-symbol exposure cap {cap} reached"}
-    else:
-        add_notional = desired
+        room = max(0.0, cap - (base_notional + already_added))
+        add_notional = min(add_notional, room)
+
+    if add_notional <= 0:
+        return {"add": False, "add_notional": 0.0,
+                "reason": "pyramid cap reached (total≤1x base and per-symbol exposure)"}
     return {"add": True, "add_notional": round(add_notional, 4),
-            "reason": f"winner +{profit_pct:.2f}%, add {adds_done + 1}/{max_adds}"}
+            "reason": f"winner +{profit_pct:.2f}%, add {adds_done + 1}/{max_adds} (total≤1x base)"}
 
 
 def sizing_policy_health(cfg=None) -> dict:

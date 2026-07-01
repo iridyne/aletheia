@@ -482,11 +482,16 @@ def _default_personas() -> dict:
             name="roll",
             description="滚仓:小本金+高杠杆+金字塔加浮盈+极紧止损,博超额(高方差)",
             params={
+                # Grounded initial values (owner + operator, 2026-07-02): 1% single-
+                # trade loss (classic 1% rule), leverage init 10x / HARD CAP 15x (20x
+                # buffer too thin), fractional Kelly ≤0.5, ≤3 pyramid adds. NOTE: the
+                # risk-engine demo leverage cap (max_futures_leverage_demo=5) still
+                # clamps this until the owner raises it (a separate trust-boundary call).
                 "notional_usdt": P(20, 50, 200),
                 "kelly_fraction": P(0.10, 0.25, 0.50),
-                "leverage_max": P(5, 10, 20),
-                "per_trade_loss_pct": P(0.5, 0.75, 1.0),  # 极紧
-                "max_adds": P(0, 2, 4),
+                "leverage_max": P(5, 10, 15),
+                "per_trade_loss_pct": P(0.5, 0.75, 1.0),  # 极紧,max 1% = 单笔亏损铁律
+                "max_adds": P(0, 3, 3),
                 "add_fraction": P(0.0, 0.5, 1.0),
             },
             operator_decidable={},
