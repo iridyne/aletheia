@@ -601,12 +601,14 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     except Exception:
         layer["serenity_opportunities"] = []
 
-    # L-Bug-B (LEARNING_LOOP_AUDIT): dreaming-agent post-trade lessons (ps_lessons)
-    # had 184+ proposed rows but ZERO consumer path — written, never read by PI.
-    # Surface as advisory context (risk/engine handles accepted lessons separately).
+    # L-Bug-B fix: inject APPLIED lessons (evidence-reviewed + policy-stamped),
+    # not proposed (unreviewed raw output). Status flow: proposed → accepted → applied.
+    # lesson_reviewer accepts then immediately marks_applied in the same run, so
+    # 'accepted' is a transient state; 'applied' is the stable post-review population.
+    # These lessons have passed: deterministic floor (≥20 settled outcomes) + LLM judge.
     try:
         from aletheia.learning.lessons import LessonStore
-        ps = LessonStore().list_all(status="proposed", limit=5)
+        ps = LessonStore().list_all(status="applied", limit=5)
         layer["ps_lessons"] = [
             {"summary": l.summary, "severity": l.severity, "category": l.category}
             for l in ps
