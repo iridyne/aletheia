@@ -887,6 +887,8 @@ class TradingConfigUpdate(SettingsRequest):
     vol_target_pct: Optional[float] = None
     vol_kelly_cap_fraction: Optional[float] = None
     exchange_tpsl_enabled: Optional[bool] = None
+    persona_sizing_enabled: Optional[bool] = None
+    active_persona: Optional[str] = None
     market_aware_exits: Optional[MarketAwareExitsUpdate] = None
 
 
@@ -916,6 +918,9 @@ async def update_trading_config(req: TradingConfigUpdate):
         if field == "min_confidence_to_trade":
             if value not in _VALID_CONFIDENCE:
                 raise HTTPException(400, f"min_confidence_to_trade must be one of {sorted(_VALID_CONFIDENCE)}")
+        elif field == "active_persona":
+            if value not in (cfg.trading.personas or {}):
+                raise HTTPException(400, f"active_persona must be one of {sorted(cfg.trading.personas or {})}")
         elif field in _TRADING_BOUNDS:
             lo, hi = _TRADING_BOUNDS[field]
             if not (lo <= value <= hi):

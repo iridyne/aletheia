@@ -409,6 +409,85 @@ class MarketAwareExitsConfig(BaseModel):
     tighten_pct: float = 0.8
 
 
+class PersonaParam(BaseModel):
+    """One Operator-decidable sizing parameter as a bounded range [min, init, max].
+
+    Persona supplies the range; the System Operator decides the actual value WITHIN
+    it (P2+, context-aware); the risk-engine hard caps remain the outer envelope the
+    range can never exceed. For P1 the effective value is `init`.
+    See docs/design/dynamic_sizing_operator_persona_design.md.
+    """
+    min: float
+    init: float
+    max: float
+
+
+class TradingPersona(BaseModel):
+    """A named 'trading style' = a bundle of Operator-decidable sizing bounds.
+
+    `params` maps a param name → its [min,init,max] range. `operator_decidable`
+    marks which params the Operator may move within range (P2+); others stay pinned
+    at init. Recognised param keys (P1): notional_usdt, kelly_fraction, leverage_max,
+    per_trade_loss_pct, max_adds, add_fraction.
+    """
+    name: str
+    description: str = ""
+    params: dict[str, PersonaParam] = Field(default_factory=dict)
+    operator_decidable: dict[str, bool] = Field(default_factory=dict)
+
+
+def _default_personas() -> dict:
+    """Built-in personas. `conservative` init values equal the current flat-config
+    defaults so enabling persona sizing with the default persona is a ZERO behavior
+    change. `balanced`/`roll` widen the ranges (roll = small base + high leverage +
+    pyramid, per owner's 滚仓 brief). All ranges stay inside the risk-engine hard
+    envelope; the Operator/Learning can never exceed the envelope regardless.
+    """
+    def P(mn, i, mx):
+        return PersonaParam(min=mn, init=i, max=mx)
+    return {
+        "conservative": TradingPersona(
+            name="conservative",
+            description="现状档:窄区间,init=当前扁平配置(启用后零行为变化)",
+            params={
+                "notional_usdt": P(5, 25, 100),      # == default_notional_usdt
+                "kelly_fraction": P(0.10, 0.25, 0.40),  # == vol_kelly_cap_fraction
+                "leverage_max": P(1, 5, 5),
+                "per_trade_loss_pct": P(1.0, 2.0, 2.0),  # == default_stop_loss_pct
+                "max_adds": P(0, 0, 0),
+                "add_fraction": P(0.0, 0.0, 0.0),
+            },
+            operator_decidable={},  # P1: all pinned at init
+        ),
+        "balanced": TradingPersona(
+            name="balanced",
+            description="温和放大:更大基准与温和加仓上限",
+            params={
+                "notional_usdt": P(25, 200, 500),
+                "kelly_fraction": P(0.15, 0.35, 0.50),
+                "leverage_max": P(1, 5, 5),
+                "per_trade_loss_pct": P(1.0, 2.0, 3.0),
+                "max_adds": P(0, 0, 1),
+                "add_fraction": P(0.0, 0.0, 0.5),
+            },
+            operator_decidable={},
+        ),
+        "roll": TradingPersona(
+            name="roll",
+            description="滚仓:小本金+高杠杆+金字塔加浮盈+极紧止损,博超额(高方差)",
+            params={
+                "notional_usdt": P(20, 50, 200),
+                "kelly_fraction": P(0.10, 0.25, 0.50),
+                "leverage_max": P(5, 10, 20),
+                "per_trade_loss_pct": P(0.5, 0.75, 1.0),  # 极紧
+                "max_adds": P(0, 2, 4),
+                "add_fraction": P(0.0, 0.5, 1.0),
+            },
+            operator_decidable={},
+        ),
+    }
+
+
 class TradingConfig(BaseModel):
     # Paper position exit rules used by the position_manager. Non-zero defaults so
     # the autonomous loop actually closes positions and realizes PnL.
@@ -449,6 +528,15 @@ class TradingConfig(BaseModel):
     # Market-aware exit intelligence: uses Market Observer signals to dynamically
     # tighten stops or exit early when market conditions deteriorate.
     market_aware_exits: "MarketAwareExitsConfig" = Field(default_factory=lambda: MarketAwareExitsConfig())
+    # --- Trading personas (dynamic-sizing design, P1) ---
+    # When persona_sizing_enabled is False (DEFAULT), sizing uses the flat fields
+    # above (default_notional_usdt / vol_kelly_cap_fraction / ...) → ZERO behavior
+    # change. When True, sizing reads the ACTIVE persona's params (P1: their init).
+    # The Operator/Learning that decides values WITHIN each persona range arrives in
+    # P2/P3; the risk-engine hard caps stay the immutable outer envelope regardless.
+    persona_sizing_enabled: bool = False
+    active_persona: str = "conservative"
+    personas: dict[str, TradingPersona] = Field(default_factory=_default_personas)
 
 
 class UpdateConfig(BaseModel):

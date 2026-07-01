@@ -1778,6 +1778,8 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [maeTightenScore, setMaeTightenScore] = useState('60')
   const [maeCollapseScore, setMaeCollapseScore] = useState('30')
   const [maeTightenAtrMult, setMaeTightenAtrMult] = useState('0.8')
+  const [personaEnabled, setPersonaEnabled] = useState(false)
+  const [activePersona, setActivePersona] = useState('conservative')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -1805,6 +1807,8 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
     setVolRiskUsdt(String(trading.vol_target_risk_usdt ?? 25))
     setVolTargetPct(String(trading.vol_target_pct ?? 1.5))
     setVolKellyCap(String(trading.vol_kelly_cap_fraction ?? 0.25))
+    setPersonaEnabled(!!trading.persona_sizing_enabled)
+    setActivePersona(trading.active_persona ?? 'conservative')
   }, [settings])
 
   const mut = useMutation({
@@ -1826,6 +1830,8 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
       vol_target_risk_usdt: parseFloat(volRiskUsdt),
       vol_target_pct: parseFloat(volTargetPct),
       vol_kelly_cap_fraction: parseFloat(volKellyCap),
+      persona_sizing_enabled: personaEnabled,
+      active_persona: activePersona,
       market_aware_exits: {
         enabled: maeEnabled,
         urgent_exit_score: parseInt(maeUrgentScore),
@@ -1966,6 +1972,46 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
           When ON, stop-loss and take-profit orders are placed directly on Bitget at position open.
           The local polling loop remains active as a fallback. Enable only after verifying demo behavior.
         </p>
+      </div>
+      <div className="settings-inline-note">
+        <Toggle
+          checked={personaEnabled}
+          label="Persona-based sizing (动态 sizing 蓝本)"
+          onChange={v => { setPersonaEnabled(v); setMsg(null) }}
+        />
+        <p className="hint mt-1">
+          When ON, sizing reads the active persona's bounds instead of the flat fields above.
+          P1 uses each param's <code>init</code>; the System Operator picks values within range in
+          later phases. Default OFF = legacy sizing (zero change). Risk-engine hard caps always bound
+          the final size regardless of persona.
+        </p>
+        {personaEnabled && (
+          <>
+            <label className="mt-2">
+              <span>Active persona</span>
+              <select value={activePersona} className="w-auto"
+                onChange={e => { setActivePersona(e.target.value); setMsg(null) }}>
+                {Object.keys(trading.personas || {}).map((name: string) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+            {(() => {
+              const p = (trading.personas || {})[activePersona]
+              if (!p) return null
+              return (
+                <div className="mt-2">
+                  <span className="settings-field-label">{p.description || activePersona} — 参数区间 (min / init / max)</span>
+                  <div className="settings-field-grid">
+                    {Object.entries(p.params || {}).map(([k, r]: any) => (
+                      <div key={k} className="mono text-sm">{k}: {r.min} / <b>{r.init}</b> / {r.max}</div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+          </>
+        )}
       </div>
       <div className="settings-inline-note">
         <Toggle
@@ -2667,6 +2713,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.min_confidence_to_trade', 'trading.auto_adopt_enabled',
     'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct', 'trading.exchange_tpsl_enabled',
     'trading.default_notional_usdt', 'trading.vol_sizing_enabled', 'trading.vol_target_risk_usdt', 'trading.vol_target_pct', 'trading.vol_kelly_cap_fraction',
+    'trading.persona_sizing_enabled', 'trading.active_persona', 'trading.personas',
     'health.enabled', 'health.alert_via_telegram', 'health.alert_via_windows_toast', 'health.require_llm_at_startup',
     'health.self_heal_enabled', 'health.self_heal_code_drift', 'health.self_heal_market_data', 'health.self_heal_port_cleanup',
     'health.max_agent_failure_ratio', 'health.llm_unavailable_alert_after', 'health.market_data_max_staleness_min',

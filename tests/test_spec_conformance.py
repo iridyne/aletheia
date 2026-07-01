@@ -23,6 +23,7 @@ def _import_all_specs():
         spec_operator_loop,
         spec_subsystem_observers,
         spec_audit_chain,
+        spec_persona_sizing,
         # Freeze-era RED tripwires (written 2026-06-24 / extended 2026-06-27 during
         # EXPERIMENT FREEZE). Their claims are status="missing" + xfail(strict): they
         # describe the decision-chain learning fixes to apply on Round 2 解冻当天 (see

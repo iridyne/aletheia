@@ -89,10 +89,15 @@ def vol_target_size(
     when vol_sizing_enabled=False or no ATR data is available.
     """
     from aletheia.config.loader import load_config
+    from aletheia.trading.persona import effective_sizing_params
 
     cfg = load_config()
-    base = cfg.trading.default_notional_usdt
-    base_kelly = cfg.trading.vol_kelly_cap_fraction
+    # Persona seam (P1): when persona sizing is enabled, base notional + kelly come
+    # from the active persona's init; otherwise these resolve to the legacy flat
+    # config (default_notional_usdt / vol_kelly_cap_fraction) → zero behavior change.
+    _eff = effective_sizing_params(cfg)
+    base = _eff["notional_usdt"]
+    base_kelly = _eff["kelly_fraction"]
 
     # P1-5: sample-aware Kelly fraction
     if paper_trade_count < 10:
