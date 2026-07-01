@@ -2205,6 +2205,9 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .drawer-list { padding-left: 1rem; font-size: 0.8rem; }
 .drawer-list-error { color: var(--red); }
 .drawer-table { font-size: 0.78rem; width: 100%; }
+.strategy-diag-grid { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: 4px; }
+.strategy-diag-block { background: var(--c-surface-raised); border-radius: 6px; padding: 8px 12px; min-width: 120px; }
+.strategy-diag-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; margin-bottom: 2px; }
 .opp-thesis { font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; }
 /* ThesisText structured rendering */
 .thesis-text { font-size: 0.82rem; line-height: 1.6; }

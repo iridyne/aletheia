@@ -67,6 +67,16 @@ const columns = [
       return <span className={`mono ${tone}`}>{fmtDelta(kpi.total_pnl)}</span>
     },
   }),
+  col.display({
+    id: 'action',
+    header: 'Diagnosis',
+    cell: info => {
+      const ev = (info.row.original as any)._ev
+      if (!ev) return <span className="text-muted">—</span>
+      const tone = ACTION_TONE[ev.recommended_action] || 'muted'
+      return <Badge tone={tone as any}>{humanize(ev.recommended_action)}</Badge>
+    },
+  }),
   col.accessor('created_at', {
     header: 'Created',
     cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span>,
@@ -87,10 +97,27 @@ function PipelineStepper({ currentState }: { currentState: string }) {
   )
 }
 
+const ACTION_TONE: Record<string, string> = {
+  promote_candidate: 'green',
+  needs_more_paper: 'yellow',
+  retire_candidate: 'red',
+  needs_executable_ruleset: 'yellow',
+  monitor: 'blue',
+}
+
+const DRIFT_TONE: Record<string, string> = {
+  ok: 'green',
+  degraded: 'yellow',
+  severe_degradation: 'red',
+  no_paper_evidence: 'muted',
+  no_backtest: 'muted',
+}
+
 export default function StrategyLifecycle() {
   const qc = useQueryClient()
   const { data = [], isLoading: strategiesLoading } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
   const { data: kpis = {} } = useQuery({ queryKey: ['strategy-kpis'], queryFn: api.getStrategyKpis, staleTime: 60000 })
+  const { data: evidenceList = [] } = useQuery({ queryKey: ['strategy-evidence'], queryFn: api.getStrategyEvidence, staleTime: 120000 })
   const [selected, setSelected] = useState<StrategyRecord | null>(null)
   const [promoteError, setPromoteError] = useState<string | null>(null)
 
@@ -111,8 +138,9 @@ export default function StrategyLifecycle() {
   })
 
   const kpiMap = kpis as Record<string, { trade_count: number; win_rate: number; total_pnl: number }>
+  const evidenceMap = Object.fromEntries((evidenceList as any[]).map(e => [e.strategy_id, e]))
   const rows = (data as StrategyRecord[])
-    .map(s => ({ ...s, _kpi: kpiMap[s.id] }))
+    .map(s => ({ ...s, _kpi: kpiMap[s.id], _ev: evidenceMap[s.id] }))
     .sort((a, b) => stateRank(a.state) - stateRank(b.state))
 
   function handlePromote() {
@@ -176,6 +204,8 @@ export default function StrategyLifecycle() {
               <DrawerField label="Updated" value={fmtTimestamp(selected.updated_at)} mono />
             </DrawerSection>
             <PromotionGates strategyId={selected.id} />
+            <StrategyDiagnosis evidence={evidenceMap[selected.id]} />
+            <BacktestPaperDriftPanel strategyId={selected.id} />
             <BacktestHistory strategyId={selected.id} />
             {promoteError && (
               <DrawerSection label="Action Error">
@@ -330,5 +360,106 @@ function BacktestEquityChart({ curve }: { curve: number[] }) {
         </AreaChart>
       </ResponsiveContainer>
     </div>
+  )
+}
+
+// ── Strategy Diagnosis (strategy-evidence) ────────────────────────────────────
+function StrategyDiagnosis({ evidence }: { evidence: any }) {
+  if (!evidence) return null
+  const { recommended_action, recommended_action_reasons, evidence_status, paper_summary, factor_summary } = evidence
+  const tone = ACTION_TONE[recommended_action] || 'muted'
+  return (
+    <DrawerSection label="Diagnosis">
+      <div className="flex gap-2 mb-2 flex-wrap">
+        <Badge tone={tone as any}>{humanize(recommended_action)}</Badge>
+        <Badge tone="muted">{humanize(evidence_status)}</Badge>
+      </div>
+      {recommended_action_reasons?.length > 0 && (
+        <ul className="drawer-list mb-2">
+          {recommended_action_reasons.map((r: string, i: number) => (
+            <li key={i} className="text-sm text-muted">{humanize(r)}</li>
+          ))}
+        </ul>
+      )}
+      <div className="strategy-diag-grid">
+        {paper_summary && paper_summary.trade_count > 0 && (
+          <div className="strategy-diag-block">
+            <div className="strategy-diag-label">Paper trades</div>
+            <div className="mono">{paper_summary.trade_count} · WR {(paper_summary.win_rate * 100).toFixed(0)}% · PF {paper_summary.profit_factor?.toFixed(2) ?? '—'}</div>
+            <div className={`mono text-sm ${paper_summary.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>
+              {fmtDelta(paper_summary.total_pnl)} USDT
+            </div>
+          </div>
+        )}
+        {factor_summary && (
+          <div className="strategy-diag-block">
+            <div className="strategy-diag-label">Factors</div>
+            <div className="mono">{factor_summary.total_factors} total</div>
+            {factor_summary.blocked_count > 0 && <div className="mono text-sm pnl-negative">{factor_summary.blocked_count} blocked</div>}
+            {factor_summary.preferred_count > 0 && <div className="mono text-sm pnl-positive">{factor_summary.preferred_count} preferred</div>}
+          </div>
+        )}
+      </div>
+    </DrawerSection>
+  )
+}
+
+// ── Backtest vs Paper Drift (backtest-paper-drift) ────────────────────────────
+function BacktestPaperDriftPanel({ strategyId }: { strategyId: string }) {
+  const { data: driftList, isLoading } = useQuery({
+    queryKey: ['backtest-paper-drift'],
+    queryFn: api.getBacktestPaperDrift,
+    staleTime: 120000,
+  })
+
+  if (isLoading) return null
+  const row = (driftList as any[] | undefined)?.find(r => r.strategy_id === strategyId)
+  if (!row || row.paper_trade_count === 0) return null
+
+  const driftTone = DRIFT_TONE[row.drift_status] || 'muted'
+  const ratio = row.paper_to_backtest_ratio
+  const ratioText = ratio != null ? `${(ratio * 100).toFixed(0)}% of backtest` : '—'
+
+  return (
+    <DrawerSection label="Backtest vs Paper Drift">
+      <div className="flex gap-2 mb-2">
+        <Badge tone={driftTone as any}>{humanize(row.drift_status)}</Badge>
+        <span className="text-muted text-sm">{ratioText}</span>
+      </div>
+      <TableWrap>
+        <table className="drawer-table">
+          <thead><tr><th></th><th>Backtest</th><th>Paper</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Trades</td>
+              <td className="mono">{row.backtest_trade_count}</td>
+              <td className="mono">{row.paper_trade_count}</td>
+            </tr>
+            <tr>
+              <td>Win%</td>
+              <td className="mono">{(row.backtest_win_rate * 100).toFixed(0)}%</td>
+              <td className="mono">{(row.paper_win_rate * 100).toFixed(0)}%</td>
+            </tr>
+            <tr>
+              <td>PF</td>
+              <td className="mono">{row.backtest_profit_factor?.toFixed(2) ?? '—'}</td>
+              <td className="mono">{row.paper_profit_factor?.toFixed(2) ?? '—'}</td>
+            </tr>
+            <tr>
+              <td>Expectancy</td>
+              <td className={`mono ${row.backtest_expectancy >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>{row.backtest_expectancy?.toFixed(2)}</td>
+              <td className={`mono ${row.paper_expectancy >= 0 ? 'pnl-positive' : 'pnl-negative'}`}>{row.paper_expectancy?.toFixed(2)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </TableWrap>
+      {row.drift_reasons?.length > 0 && (
+        <ul className="drawer-list mt-1">
+          {row.drift_reasons.map((r: string, i: number) => (
+            <li key={i} className="text-sm text-muted">{humanize(r)}</li>
+          ))}
+        </ul>
+      )}
+    </DrawerSection>
   )
 }

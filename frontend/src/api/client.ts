@@ -751,6 +751,43 @@ export const api = {
   // Trade Analytics panel
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
   getStrategyKpis: () => fetchJson<Record<string, { trade_count: number; win_rate: number; total_pnl: number }>>('/analytics/strategy-kpis'),
+  getStrategyEvidence: () => fetchJson<Array<{
+    strategy_id: string
+    strategy_name: string
+    state: string
+    symbol: string
+    timeframe: string
+    direction_bias: string | null
+    has_ruleset: boolean
+    compile_status: string
+    paper_summary: { trade_count: number; expectancy: number; win_rate: number; total_pnl: number; profit_factor: number } | null
+    drift_summary: { drift_status: string; paper_trade_count: number; paper_expectancy: number; backtest_expectancy: number; paper_to_backtest_ratio: number | null } | null
+    factor_summary: { total_factors: number; blocked_count: number; preferred_count: number } | null
+    evidence_status: string
+    recommended_action: string
+    recommended_action_reasons: string[]
+  }>>('/analytics/strategy-evidence'),
+  getBacktestPaperDrift: () => fetchJson<Array<{
+    strategy_id: string
+    strategy_name: string
+    state: string
+    symbol: string
+    timeframe: string
+    backtest_trade_count: number
+    backtest_win_rate: number
+    backtest_profit_factor: number
+    backtest_total_return_pct: number
+    backtest_max_drawdown_pct: number
+    paper_trade_count: number
+    paper_expectancy: number
+    paper_win_rate: number
+    paper_profit_factor: number
+    paper_total_pnl: number
+    drift_expectancy: number | null
+    paper_to_backtest_ratio: number | null
+    drift_status: string
+    drift_reasons: string[]
+  }>>('/analytics/backtest-paper-drift'),
   getEquityCurve: (days?: number) => fetchJson<{
     points: { time: string; pnl: number; cumulative_pnl: number }[];
     current_unrealized: number;
