@@ -2209,6 +2209,20 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
 .strategy-diag-grid { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-top: 4px; }
 .strategy-diag-block { background: var(--c-surface-raised); border-radius: 6px; padding: 8px 12px; min-width: 120px; }
 .strategy-diag-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; margin-bottom: 2px; }
+/* Learning Funnel */
+.funnel-meta-row { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.funnel-meta-pill { font-size: 0.75rem; background: var(--c-surface-raised); border-radius: 4px; padding: 3px 8px; color: var(--muted); }
+.funnel-meta-pill strong { color: var(--text); }
+.funnel-bars { display: flex; flex-direction: column; gap: 6px; }
+.funnel-bar-row { display: grid; grid-template-columns: 140px 1fr 52px; align-items: center; gap: 8px; }
+.funnel-bar-label { font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.funnel-bar-track { height: 8px; background: var(--c-surface-raised); border-radius: 4px; overflow: hidden; }
+.funnel-bar-fill { height: 100%; background: var(--c-accent); border-radius: 4px; transition: width 0.3s; }
+.funnel-bar-count { font-size: 0.72rem; text-align: right; }
+/* SerenityLens filter bar */
+.lens-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: var(--space-3); }
+.lens-filter-btn { padding: 4px 12px; font-size: 0.78rem; border-radius: 20px; border: 1px solid var(--c-border); background: var(--c-surface-raised); color: var(--muted); cursor: pointer; }
+.lens-filter-btn.active { background: var(--c-accent); color: #fff; border-color: var(--c-accent); }
 .opp-thesis { font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; }
 /* ThesisText structured rendering */
 .thesis-text { font-size: 0.82rem; line-height: 1.6; }

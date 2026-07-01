@@ -342,6 +342,12 @@ export const api = {
     }
     fills: number
   }>(`/analytics/pipeline-funnel?hours=${hours}`),
+  getLearningFunnel: () => fetchJson<{
+    knowledge_items_by_type: Array<{ item_type: string; count: number }>
+    pi_actual_visibility: { layer3_lesson_filter_db_hits: number; layer3_guards_in_recent_30: number; comment: string }
+    ps_lessons: { total: number; by_status: Array<{ status: string; count: number }>; latest_created_at: string | null }
+    serenity_opportunities_active: number
+  }>('/analytics/learning-funnel'),
   getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
   // Releasing the brake requires confirm_release=true (backend returns 422 otherwise).
   setKillSwitch: (active: boolean, reason = '', confirmRelease = false) =>
@@ -495,7 +501,7 @@ export const api = {
   togglePrediction: (enabled: boolean) => post<{ enabled: boolean }>('/prediction/toggle', { enabled }),
 
   // Serenity Lens endpoints (research-first investigation pipeline)
-  getSerenityThemes: () => fetchJson<SerenityTheme[]>('/serenity/themes'),
+  getSerenityThemes: (status?: string) => fetchJson<SerenityTheme[]>(status ? `/serenity/themes?status=${status}` : '/serenity/themes'),
   getSerenityTheme: (id: string) => fetchJson<SerenityTheme & { tags: string[] }>(`/serenity/themes/${id}`),
   getSerenityThemeOverview: (id: string) => fetchJson<SerenityThemeOverview>(`/serenity/themes/${id}/overview`),
   createSerenityTheme: (body: Partial<SerenityTheme> & { name: string }) =>
