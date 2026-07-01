@@ -7,7 +7,42 @@
 
 ## Last Updated
 
-2026-07-01 (Scanner/Observer 审计修复 P0–P3 + System Operator 重命名 + 双层模型路由)
+2026-07-01 (Phase 2A+ 剩余四项收口 — 2A/2A+ 全 CLOSED)
+
+---
+
+## Recent Change (Phase 2A+ 剩余四项收口 — 2026-07-01)
+
+### 背景
+owner 指令「尽量把 2a 完全完成,不要再遗留任何项目」。承接 Phase 2A CLOSED（`7506a04`）
+与 2A+.8/.12 已修（`04ef582`/`8d3bb93`），本次把 2A+ 剩余四项 PARTIAL/PENDING 一次做完，
+Phase 2A + 2A+ 代码层面全部 CLOSED（唯一剩 2A+.10 = 纯运行观察，非代码）。
+commit：`f093e36`（实现）+ `8cea488`（文档收口），已 push master。
+
+### 关键修复
+- **2A+.2 designer 写 applicable_regimes**：新增 `_derive_regime_targeting(direction)`
+  同时推导 direction_affinity + applicable_regimes（long→排除 bear / short→排除 bull /
+  neutral→all，与 affinity gate 一致而非双重限制）。**关键陷阱**：applicable_regimes 必须写成
+  **JSON 数组**——`paper_trader_ranker._check_strategy_regime_fit` 用 `json.loads`+`isinstance(list)`
+  解析，逗号串会 json.loads 失败被静默丢弃使过滤失效。primary + sweep-variant 两个 create_strategy
+  调用点都传。SP-S04 升级 L2a→L2b（含 ranker 真过滤断言）。
+- **2A+.4 Dashboard 方向标签**：`types.ts` 加两字段；`StrategyLifecycle.tsx` 加 Direction 列
+  （affinity badge）+ drawer（`fmtRegimes()` 解析 JSON 数组，malformed 不抛）。后端 GET /strategies
+  已返全列。
+- **2A+.9 family_quota 按 regime**：`config/schema.py` 加 `family_quota_by_regime`（4 regime 默认：
+  bear 提 short_bias/derivatives、starve momentum）；`allocator.resolve_family_quota(cfg, regime_state)`
+  命中覆盖、None 回退静态（向后兼容）；`service.py` 传 `current_regime.state`；settings 路由 +
+  Settings UI 每 regime 一行 + 逐行 sum=1.0 前后端双校验。UP-16 L2b。
+- **2A+.11 atr_4h/bb_width_4h 接 scorer**：`score_volatility` 加 4h 多时间框架确认（4h ATR>4%
+  持续放量 +12 / 4h BB<3% 挤压蓄能 +12），区分 1h 噪声与真实波动 regime。UP-15 L2b（反向验证防死码）。
+
+### 未做（有理由,非遗漏）
+- **2A+.10 端到端 short 验证**：非代码——需 bear/volatile regime 真实出现观察全链路；且「bull regime
+  下 short 被 gate 过滤」需 bull 出现才能验。运行观察证据留在 `data/observation/`（gitignored）。
+
+### 验证
+conformance 493→496 claims 全绿；full suite 1815 passed / 0 failed（确定序两遍）。前端 build 通过。
+`aletheia doctor` health.rollup healthy。**运行态状态一律以 `aletheia doctor` 为准。**
 
 ---
 

@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-01 — Phase 2A+ 剩余四项收口（2A/2A+ 全 CLOSED）
+
+### 触发
+owner「尽量把 2a 完全完成,不要再遗留任何项目」。四项 PARTIAL/PENDING 一次做完。
+commit `f093e36`（实现）+ `8cea488`（文档）,push master。
+
+### 关键实现
+- **2A+.2**：`_derive_regime_targeting(direction)` 推导 direction_affinity + applicable_regimes。
+  **陷阱**：applicable_regimes 须写 **JSON 数组**——ranker 用 `json.loads`+`isinstance(list)` 解析,
+  逗号串被静默丢弃使过滤失效。primary + sweep-variant 两调用点都传。SP-S04 升 L2b。
+- **2A+.4**：`types.ts` + `StrategyLifecycle.tsx` Direction 列/drawer（`fmtRegimes` 解析 JSON）。
+- **2A+.9**：`family_quota_by_regime` + `resolve_family_quota()` + allocator/service 消费 +
+  Settings UI 每 regime 逐行 sum=1.0 双校验。UP-16 L2b。
+- **2A+.11**：`score_volatility` 接 atr_4h/bb_width_4h 4h 多 TF 确认。UP-15 L2b。
+
+### 不做（有理由）
+2A+.10 端到端 short 验证 = 运行观察项（非代码）,需 bear/volatile + bull 真实出现,证据留 `data/observation/`。
+
+### 验证
+conformance 493→496 全绿；full suite 1815 passed/0 failed；build 通过；doctor healthy。
+
+---
+
 ## 2026-07-01 — Scanner + Observer 审计修复 P0–P3
 
 ### 触发

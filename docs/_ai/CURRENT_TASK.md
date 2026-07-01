@@ -45,7 +45,23 @@
 > `aletheia doctor` 的 `loop.profit` 探针为准,本文不断言**。实验判决记账见
 > `EXPERIMENT_PROTOCOL.md`:修复生效前(污染期)的 skip/proposal 数据不计入策略评估。
 
-## 最新完成：Scanner/Observer 审计修复 P0–P3（2026-07-01）
+## 最新完成：Phase 2A+ 剩余四项收口 — 2A/2A+ 全 CLOSED（2026-07-01）
+
+owner「尽量把 2a 完全完成,不要再遗留任何项目」。四项 PARTIAL/PENDING 一次做完
+（`f093e36` 实现 + `8cea488` 文档,push master）：
+- **2A+.2** designer 写 applicable_regimes（`_derive_regime_targeting`；**须写 JSON 数组**,
+  否则 ranker `json.loads`+`isinstance(list)` 解析失败静默丢弃使过滤失效；SP-S04 升 L2b）。
+- **2A+.4** 前端 Direction 列 + drawer（`fmtRegimes` 解析 JSON）。
+- **2A+.9** `family_quota_by_regime` regime 感知配额 + `resolve_family_quota()` + Settings UI（UP-16）。
+- **2A+.11** `score_volatility` 接 atr_4h/bb_width_4h 4h 多 TF 确认（UP-15，反向验证防死码）。
+- 验证：conformance 493→496 全绿；full suite 1815 passed / 0 failed；build 通过；doctor healthy。
+
+**唯一剩余 = 2A+.10 端到端 short 验证（非代码,运行观察项）**：需 bear/volatile regime + bull
+翻转真实出现才能观察完整链路 + 短过滤。**阶段进入 owner 定「先跑攒干净窗」——不再堆 phase,
+观察集中做空有无 edge。运行态证据（regime/持仓/胜率）留 `data/observation/`（gitignored),
+以 `aletheia doctor` 为准,本文不断言。**
+
+## 上一批完成：Scanner/Observer 审计修复 P0–P3（2026-07-01）
 
 - 两份审计报告 → plan（`docs/plans/scanner_observer_audit_fix_plan_2026-07-01.md`）→ 实施。
   宽 fan-out 核实 workflow 因 workspace rate-limit 全灭，改手动核实，查出报告 **6 处根因偏差**（见报告 §0）。
@@ -56,7 +72,7 @@
 - **defer 到 ROADMAP**（非遗漏，有理由）：US-16（真 4h 特征接入 scorer，属增强）、
   US-12（all_scores 入库，待有消费者，否则违反 data_utilization 契约）。
 
-## 上一批完成：双层模型路由 + System Operator 重命名（2026-07-01）
+## 更早完成：双层模型路由 + System Operator 重命名（2026-07-01）
 
 - **双层模型路由**（commit `e5a8010`）：`deep_provider` / `fast_provider` 双通道，
   11 个 deep call site + 5 个 fast call site 已注入，前端 Settings 加 Routing Role 下拉。

@@ -1,33 +1,26 @@
 # Current Task
 
-## Status: IDLE — Evolve 模块审计完成
+> 只写意图/计划,不写运行态事实(regime/持仓/db 大小/gateway 状态——这些换台机器必过期)。
+> 真实状态一律 `aletheia doctor`。详细意图叙事见 `docs/_ai/CURRENT_TASK.md`(canonical)。
 
-本会话完成了两批工作：
+## Status: Phase 2A + 2A+ 全 CLOSED —— 进入「先跑攒干净窗」观察阶段
 
-### 批次 1 — Learning 模块 5-bug 修复 (d85f7b3)
+本会话把 Phase 2A+ 剩余四项(2A+.2/.4/.9/.11)一次收口,ROADMAP 的 Phase 2A(可执行策略)
+与 Phase 2A+(方向性)代码层面全部关闭。commit `f093e36`(实现) + `8cea488`(文档),push master。
 
-| Bug | 修复 |
-|-----|------|
-| Signal Settler 无独立调度 | 新增 `outcome_settler` 15min scheduler job |
-| Guard UI 缺失 | `POST /settings/guard` + Settings Guard Promotion 开关 |
-| spec_lesson_guards 覆盖 | master 已有完整版本，LP-S01~S06 加 explicit status |
-| knowledge_contract §6.A1 文档腐化 | 更新为 L-Bug-B 已修复后的真实状态 |
-
-### 批次 2 — Evolve 模块全量审计 + Guards 子标签 (6df3999)
-
-扫描 StrategyLifecycle / Learning / SerenityLens 三页所有子功能，发现并修复：
-- `client.ts` 陈旧注释移除（L-Bug-B 已接通的错误描述）
-- `LessonRow` 类型补齐 TTL 字段（activated_at/dry_run_until/expires_at）
-- Knowledge Base 新增 "Active Guards" 子标签（接通后端 `/api/knowledge/guards`，之前零前端消费者）
-
-### Ledger 核实
-
-大量 ledger "待修"项经代码核查已修复（show_errors、B1 ranker、A9 operator win_rate、L-Bug-D B2/B3）。
-
-## Doctor 状态
-
-全 info 无 warn。PI 自保（distress 模式）= 设计行为；infra.db_size 325MB 增长中但磁盘 79GB 充裕。
+### 本次完成
+- **2A+.2** designer 写 applicable_regimes(`_derive_regime_targeting`;**须写 JSON 数组**,
+  否则 ranker `json.loads`+`isinstance(list)` 静默丢弃使过滤失效;SP-S04 升 L2b)
+- **2A+.4** 前端 Direction 列 + drawer(`fmtRegimes` 解析 JSON)
+- **2A+.9** `family_quota_by_regime` regime 感知配额 + `resolve_family_quota()` + Settings UI(UP-16)
+- **2A+.11** `score_volatility` 接 atr_4h/bb_width_4h 4h 多 TF 确认(UP-15,反向验证防死码)
+- 验证:conformance 493→496 全绿;full suite 1815 passed / 0 failed;build 通过
 
 ## Next
 
-无预定计划。等待用户指定下一个目标。
+**不再堆 phase**(owner 定「先跑再说」)。唯一剩 2A+.10 端到端 short 验证 = 运行观察项(非代码):
+- 观察 bear/volatile regime 下做空链路端到端是否跑通(scanner→机会→signal→PI→执行→退出)
+- 观察 bull regime 翻转时 short 是否被 regime gate 正确过滤
+- 核心问题:集中做空到底有没有 edge(信号是否仍近随机)——运行态证据留 `data/observation/`(gitignored)
+
+其余活动/并行工作线(TaG 借鉴、账户级纳管)见 `docs/_ai/CURRENT_TASK.md`。
