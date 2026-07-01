@@ -798,6 +798,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
   const [fallbackSymbols, setFallbackSymbols] = useState('BTC/USDT, ETH/USDT, SOL/USDT')
   const [marketType, setMarketType] = useState('crypto')
   const [familyQuota, setFamilyQuota] = useState<Record<string, string>>({})
+  const [familyQuotaByRegime, setFamilyQuotaByRegime] = useState<Record<string, Record<string, string>>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [changed, setChanged] = useState(false)
 
@@ -820,13 +821,26 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
     const stringified: Record<string, string> = {}
     for (const [k, v] of Object.entries(fq)) stringified[k] = String(v)
     setFamilyQuota(stringified)
+    const fqr = (universe.family_quota_by_regime || {}) as Record<string, Record<string, number>>
+    const fqrStr: Record<string, Record<string, string>> = {}
+    for (const [regime, quota] of Object.entries(fqr)) {
+      fqrStr[regime] = {}
+      for (const [fam, v] of Object.entries(quota)) fqrStr[regime][fam] = String(v)
+    }
+    setFamilyQuotaByRegime(fqrStr)
   }, [settings])
 
   const mut = useMutation({
     mutationFn: () => {
       const fqParsed: Record<string, number> = {}
       for (const [k, v] of Object.entries(familyQuota)) fqParsed[k] = parseFloat(v) || 0
+      const fqrParsed: Record<string, Record<string, number>> = {}
+      for (const [regime, quota] of Object.entries(familyQuotaByRegime)) {
+        fqrParsed[regime] = {}
+        for (const [fam, v] of Object.entries(quota)) fqrParsed[regime][fam] = parseFloat(v) || 0
+      }
       return api.updateUniverseConfig({
+        family_quota_by_regime: fqrParsed,
         enabled,
         refresh_interval_min: parseInt(refreshMin),
         max_candidates: parseInt(maxCandidates),
@@ -950,12 +964,45 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
           return <div style={{ fontSize: '0.72rem', color: ok ? 'var(--green)' : 'var(--red)', marginTop: 'var(--space-1)' }}>Total: {total.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
         })()}
       </div>
+      <div className="mb-3">
+        <span className="settings-field-label">Per-regime family quota (2A+.9 — overrides the static quota above when that regime is active; each row must sum to 1.0)</span>
+        {Object.entries(familyQuotaByRegime).map(([regime, quota]) => {
+          const rt = Object.values(quota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
+          const ok = Math.abs(rt - 1.0) < 0.001
+          return (
+            <div key={regime} className="mb-2">
+              <span className="settings-field-label">{humanize(regime)}</span>
+              <div className="settings-field-grid">
+                {Object.entries(quota).map(([family, val]) => (
+                  <label className="settings-field" key={family}>
+                    <span>{humanize(family)}</span>
+                    <input type="number" min={0} max={1} step={0.05} value={val}
+                      onChange={e => {
+                        const nv = e.target.value
+                        setFamilyQuotaByRegime(prev => ({ ...prev, [regime]: { ...prev[regime], [family]: nv } }))
+                        setChanged(true); setMsg(null)
+                      }} />
+                  </label>
+                ))}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: ok ? 'var(--green)' : 'var(--red)', marginTop: 'var(--space-1)' }}>Total: {rt.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
+            </div>
+          )
+        })}
+      </div>
       <div className="flex items-center gap-2">
         <button onClick={() => {
           const total = Object.values(familyQuota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
           if (Math.abs(total - 1.0) > 0.001) {
             setMsg({ ok: false, text: `Family quota must sum to 1.0 (currently ${total.toFixed(3)})` })
             return
+          }
+          for (const [regime, quota] of Object.entries(familyQuotaByRegime)) {
+            const rt = Object.values(quota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
+            if (Math.abs(rt - 1.0) > 0.001) {
+              setMsg({ ok: false, text: `${humanize(regime)} regime quota must sum to 1.0 (currently ${rt.toFixed(3)})` })
+              return
+            }
           }
           mut.mutate()
         }} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
@@ -2635,7 +2682,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'universe.enabled', 'universe.refresh_interval_min', 'universe.max_candidates', 'universe.core_pool_size',
     'universe.min_volume_24h_usdt', 'universe.max_spread_bps', 'universe.min_depth_10bps_usd',
     'universe.explore_ratio', 'universe.blacklist', 'universe.fallback_symbols',
-    'universe.market_type', 'universe.family_quota',
+    'universe.market_type', 'universe.family_quota', 'universe.family_quota_by_regime',
     'tunnel.enabled', 'tunnel.tunnel_id', 'tunnel.hostname',
     'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min', 'market_data.enable_yfinance_macro',
     'market_data.observed_stocks', 'market_data.observed_stock_tokens', 'market_data.observed_prediction_markets',

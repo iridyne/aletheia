@@ -250,6 +250,21 @@ def score_volatility(feat: dict) -> tuple[float, list[str], str | None]:
         score += 10.0
         reasons.append("BB narrow")
 
+    # === 4h timeframe confirmation (2A+.11: multi-TF, not 1h noise) ===
+    # 1h ATR/BB spike on a single candle; the true 4h reading distinguishes a
+    # sustained volatility regime from noise. A high 4h ATR confirms the
+    # expansion is real; a narrow 4h Bollinger band is a higher-timeframe
+    # squeeze (more energy coiled → stronger breakout), so it earns a slightly
+    # larger bonus than the 1h squeeze above.
+    atr_4h = feat.get("atr_4h")
+    bb_width_4h = feat.get("bb_width_4h")
+    if atr_4h is not None and atr_4h > 4.0:
+        score += 12.0
+        reasons.append(f"4h ATR {atr_4h:.1f}% sustained")
+    if bb_width_4h is not None and bb_width_4h < 3.0:
+        score += 12.0
+        reasons.append(f"4h BB squeeze {bb_width_4h:.1f}%")
+
     # === Direction: from 4h trend ===
     if ret_4h is not None and abs(ret_4h) > 2.0:
         direction = "long" if ret_4h > 0 else "short"

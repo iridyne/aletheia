@@ -203,6 +203,8 @@ export interface StrategyRecord {
   state: string
   parameters: string | null
   execution_venue: string | null
+  direction_affinity: string | null
+  applicable_regimes: string | null
   created_at: string
   updated_at: string | null
 }

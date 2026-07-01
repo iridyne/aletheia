@@ -709,6 +709,7 @@ export const api = {
     snapshot_ttl_enabled: boolean; snapshot_ttl_hours: number;
     blacklist: string[]; fallback_symbols: string[];
     market_type: string; family_quota: Record<string, number>;
+    family_quota_by_regime: Record<string, Record<string, number>>;
   }>) => post<any>('/settings/universe', body),
 
   // Strategy Factory config

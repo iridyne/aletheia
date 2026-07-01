@@ -299,3 +299,92 @@ def test_all_scores_persists_round_trip(tmp_path, monkeypatch):
     assert json.loads(row["all_scores"]) == scores, (
         f"all_scores 未完整往返: {row['all_scores']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# UP-15 — score_volatility consumes 4h TF features (2A+.11) — behavioral, not grep
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("UP-15", "universe_pipeline", "§2A+.11 4h TF volatility confirm", "L2b",
+              "score_volatility reads atr_4h + bb_width_4h (collected by features.py "
+              "but previously consumed by zero scorer): 4h ATR expansion / 4h BB "
+              "squeeze raise the volatility score — multi-TF confirmation, not 1h noise"),
+)
+def test_score_volatility_consumes_4h_features():
+    """atr_4h/bb_width_4h 必须真被 score_volatility 消费(行为差,非源码字符串):
+
+      1. 基线 volatility setup(1h ATR+量能+方向)得分 base
+      2. 追加 atr_4h 高(4h 持续放量)→ 分数 > base(4h 确认加分)
+      3. 追加 bb_width_4h 窄(4h 挤压蓄能)→ 分数 > base
+    反向验证:若 scorer 不读这两个字段,后两者恒等于 base → 立即挂。
+    """
+    from aletheia.universe.scanners import score_volatility
+
+    # 基线:1h ATR 扩张 + 量能突破 + 4h 方向明确,但无 4h 确认字段
+    base_feat = {
+        "atr_pct": 5.5, "vol_ratio": 2.5, "return_4h": 3.0,
+        "bb_width_pct": 4.0,
+    }
+    base_score, _, base_dir = score_volatility(dict(base_feat))
+    assert base_dir == "long", "基线应产出方向(否则 score 被清零,无法比较)"
+
+    # 4h ATR 持续放量 → 确认真实波动 regime,应加分
+    atr4h_score, atr4h_reasons, _ = score_volatility({**base_feat, "atr_4h": 6.0})
+    assert atr4h_score > base_score, (
+        f"atr_4h 高未加分: {atr4h_score} !> {base_score} — score_volatility 未消费 atr_4h"
+    )
+
+    # 4h BB 挤压 → 高时间框架蓄能,应加分
+    bb4h_score, bb4h_reasons, _ = score_volatility({**base_feat, "bb_width_4h": 2.0})
+    assert bb4h_score > base_score, (
+        f"bb_width_4h 窄未加分: {bb4h_score} !> {base_score} — score_volatility 未消费 bb_width_4h"
+    )
+
+
+# ---------------------------------------------------------------------------
+# UP-16 — allocate_universe applies per-regime family quota (2A+.9) — behavioral
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("UP-16", "universe_pipeline", "§2A+.9 regime-aware family quota", "L2b",
+              "allocate_universe resolves family quota by regime: a bear regime "
+              "gives short_bias/derivatives more slots than the static quota, and "
+              "regime_state=None falls back to the static family_quota (backward compat)"),
+)
+def test_allocate_universe_regime_aware_quota():
+    """per-regime family_quota 必须真影响分配(行为差,非源码 grep):
+
+      1. resolve_family_quota(bear) 返回 bear 覆盖(short_bias 份额 > 静态)
+      2. regime_state=None → 回退静态 family_quota(向后兼容)
+      3. allocate_universe 在 bear regime 下,short_bias 候选获得的名额
+         多于同一批候选在 static(None)下的名额
+    """
+    from aletheia.universe.allocator import resolve_family_quota, allocate_universe
+    from aletheia.config.schema import UniverseConfig
+
+    cfg = UniverseConfig(max_candidates=20, explore_ratio=0.0)
+
+    # 1. bear 覆盖生效,short_bias 份额高于静态(静态里 short_bias 不在表,回退默认)
+    bear_q = resolve_family_quota(cfg, "bear")
+    assert bear_q.get("short_bias", 0) >= 0.25, f"bear 未提升 short_bias 份额: {bear_q}"
+
+    # 2. None → 静态 family_quota(同一对象/等值)
+    assert resolve_family_quota(cfg, None) == cfg.family_quota
+
+    # 3. 端到端:20 个 momentum 候选。static quota momentum=0.35(→7 席),
+    #    bear quota momentum=0.10(→2 席)——bear 应放行更少的 long-only momentum。
+    scored = [
+        {"symbol": f"C{i}/USDT", "scanner_family": "momentum",
+         "total_score": 90.0 - i, "tradability_score": 50.0}
+        for i in range(20)
+    ]
+    bear_sel = allocate_universe([dict(s) for s in scored], cfg, regime_state="bear")
+    static_sel = allocate_universe([dict(s) for s in scored], cfg, regime_state=None)
+    bear_mom = sum(1 for x in bear_sel if x.get("scanner_family") == "momentum")
+    static_mom = sum(1 for x in static_sel if x.get("scanner_family") == "momentum")
+    assert bear_mom < static_mom, (
+        f"bear regime 未收紧 momentum 名额: bear={bear_mom} static={static_mom}"
+    )

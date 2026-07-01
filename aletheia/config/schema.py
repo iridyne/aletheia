@@ -474,6 +474,23 @@ class UniverseConfig(BaseModel):
         "momentum": 0.35, "mean_reversion": 0.25,
         "derivatives": 0.35, "event": 0.05,
     })
+    # Per-regime family quota overrides (2A+.9). Maps regime state
+    # (bull/bear/sideways/volatile) → family quota dict. When the current regime
+    # has an entry here, it REPLACES `family_quota` for that refresh; otherwise
+    # allocation falls back to the static `family_quota` above. Rationale: a bear
+    # regime should give short_bias/derivatives more of the universe and starve
+    # long-only momentum, a volatile regime should favour the volatility family,
+    # etc. Empty dict → fully backward compatible (static quota everywhere).
+    family_quota_by_regime: dict[str, dict[str, float]] = Field(default_factory=lambda: {
+        "bull": {"momentum": 0.40, "mean_reversion": 0.15, "derivatives": 0.25,
+                 "volatility": 0.10, "event": 0.05, "short_bias": 0.05},
+        "bear": {"short_bias": 0.30, "derivatives": 0.30, "mean_reversion": 0.20,
+                 "momentum": 0.10, "volatility": 0.05, "event": 0.05},
+        "sideways": {"mean_reversion": 0.35, "momentum": 0.20, "derivatives": 0.25,
+                     "volatility": 0.10, "event": 0.05, "short_bias": 0.05},
+        "volatile": {"volatility": 0.30, "derivatives": 0.25, "momentum": 0.20,
+                     "mean_reversion": 0.15, "event": 0.05, "short_bias": 0.05},
+    })
     blacklist: list[str] = Field(default_factory=list)
     fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
     snapshot_ttl_enabled: bool = True

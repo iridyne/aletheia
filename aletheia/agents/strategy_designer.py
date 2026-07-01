@@ -27,6 +27,33 @@ _ACTIVATION_PATH = ["research_note", "strategy_hypothesis", "paper_candidate", "
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
 
+# Direction → StrategyRecord regime-targeting fields (2A+.2).
+# affinity: hard directional preference for the ranker's direction_affinity gate.
+# applicable_regimes: a JSON-ARRAY whitelist the ranker parses with
+# json.loads + isinstance(list) — a comma-separated string is silently dropped
+# (no filtering), which is exactly why regime targeting was previously a no-op.
+# We exclude only the hard-opposite regime, staying coherent with the affinity
+# gate (bear+long / bull+short) instead of double-restricting.
+_DIRECTION_AFFINITY = {"long": "long", "short": "short", "neutral": "both"}
+_DIRECTION_REGIMES = {
+    "long": '["bull", "sideways", "volatile"]',   # exclude bear
+    "short": '["bear", "sideways", "volatile"]',  # exclude bull
+    "neutral": "all",
+}
+
+
+def _derive_regime_targeting(direction: str) -> tuple[str, str]:
+    """Map a strategy's direction_bias → (direction_affinity, applicable_regimes).
+
+    applicable_regimes is returned as a JSON-array string because
+    paper_trader_ranker._check_regime_fit parses it with json.loads and requires
+    isinstance(list); a comma-separated value fails json.loads and is silently
+    ignored, making the regime whitelist inert.
+    """
+    d = (direction or "neutral").lower()
+    return _DIRECTION_AFFINITY.get(d, "both"), _DIRECTION_REGIMES.get(d, "all")
+
+
 _VALID_INDICATORS = {
     "close", "open", "high", "low", "volume",
     "sma", "ema", "rsi", "atr",
@@ -523,14 +550,15 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         outputs.append(f"dedup_skipped:{chosen_symbol}:{timeframe}:{direction}")
         return {"outputs": outputs, "errors": errors}
 
-    # Map direction_bias → direction_affinity for StrategyRecord model field.
-    # "neutral" has no directional preference, maps to "both".
-    _affinity_map = {"long": "long", "short": "short", "neutral": "both"}
+    # Map direction_bias → (direction_affinity, applicable_regimes) so the
+    # ranker's regime-aware gate is no longer inert for designer strategies.
+    _affinity, _regimes = _derive_regime_targeting(direction)
     strategy = create_strategy(
         name=name,
         description=description,
         parameters=parameters,
-        direction_affinity=_affinity_map.get(direction, "both"),
+        direction_affinity=_affinity,
+        applicable_regimes=_regimes,
     )
     log_tool(run_id, "create_strategy_hypothesis", "observe", True, output=strategy.id)
     outputs.append(f"strategy:{strategy.id}")
@@ -678,6 +706,8 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
                     v_strat = create_strategy(
                         name=variant_name, description=f"Param variant of {name}",
                         parameters=variant_params,
+                        direction_affinity=_affinity,
+                        applicable_regimes=_regimes,
                     )
                     for t in _ACTIVATION_PATH:
                         if t == "paper_running":

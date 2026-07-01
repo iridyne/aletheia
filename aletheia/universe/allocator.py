@@ -201,12 +201,29 @@ def compute_total_score(
     return max(0.0, min(100.0, total))
 
 
-def allocate_universe(scored: list[dict], cfg: UniverseConfig) -> list[dict]:
+def resolve_family_quota(cfg: UniverseConfig, regime_state: str | None) -> dict[str, float]:
+    """Return the family-quota ratios to apply for the current regime (2A+.9).
+
+    If the regime state has a per-regime override in cfg.family_quota_by_regime,
+    it REPLACES the static cfg.family_quota for this allocation. Otherwise the
+    static quota is used (empty override map → fully backward compatible).
+    """
+    if regime_state:
+        override = (cfg.family_quota_by_regime or {}).get(regime_state)
+        if override:
+            return override
+    return cfg.family_quota
+
+
+def allocate_universe(
+    scored: list[dict], cfg: UniverseConfig, regime_state: str | None = None,
+) -> list[dict]:
     """Select final universe candidates with quota enforcement and explore/exploit.
 
     Steps:
     1. Sort by total_score descending
-    2. Apply family quotas (no single family exceeds its share)
+    2. Apply family quotas (regime-aware — see resolve_family_quota) so no single
+       family exceeds its share
     3. Split into exploit (by score) and explore (random from remainder)
     4. Assign TTL per family
     5. Cap at max_candidates
@@ -221,9 +238,10 @@ def allocate_universe(scored: list[dict], cfg: UniverseConfig) -> list[dict]:
     exploit_count = int(max_total * (1 - cfg.explore_ratio))
     explore_count = max_total - exploit_count
 
-    # Family quota limits (absolute counts)
+    # Family quota limits (absolute counts) — regime-aware (2A+.9)
+    quota = resolve_family_quota(cfg, regime_state)
     family_limits: dict[str, int] = {}
-    for family, ratio in cfg.family_quota.items():
+    for family, ratio in quota.items():
         family_limits[family] = max(1, int(max_total * ratio))
 
     # Exploit selection: top by score, respecting quotas
@@ -274,7 +292,8 @@ def allocate_universe(scored: list[dict], cfg: UniverseConfig) -> list[dict]:
         item["risk_flags"] = risk_flags
 
     logger.info(
-        "Allocation: %d scored → %d exploit + %d explore = %d final",
+        "Allocation: %d scored → %d exploit + %d explore = %d final (regime=%s)",
         len(scored), len(exploit_selected), len(explore_selected), len(final),
+        regime_state or "static",
     )
     return final

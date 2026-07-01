@@ -193,7 +193,10 @@ class UniverseService:
                 )
                 scored.append({**feat, **scanner_result, "total_score": total})
 
-            allocated = allocate_universe(scored, cfg.universe)
+            allocated = allocate_universe(
+                scored, cfg.universe,
+                regime_state=current_regime.state if current_regime else None,
+            )
 
             now = datetime.now(timezone.utc)
             snapshot_ttl_sec = int(cfg.universe.snapshot_ttl_hours * 3600)

@@ -31,6 +31,19 @@ const NEXT_STATE: Record<string, string> = {
   live_candidate: 'live_limited',
 }
 
+const AFFINITY_TONE: Record<string, string> = { long: 'green', short: 'red', both: 'muted' }
+
+// applicable_regimes is stored as a JSON array (e.g. ["bull","sideways"]) or the
+// literal "all". Render a human-readable summary; never throw on malformed input.
+function fmtRegimes(raw: string | null | undefined): string {
+  if (!raw || raw === 'all') return 'All regimes'
+  try {
+    const list = JSON.parse(raw)
+    if (Array.isArray(list) && list.length) return list.join(', ')
+  } catch { /* fall through */ }
+  return String(raw)
+}
+
 const col = createColumnHelper<StrategyRecord & { _kpi?: { trade_count: number; win_rate: number; total_pnl: number } }>()
 
 const columns = [
@@ -39,6 +52,13 @@ const columns = [
     header: 'State',
     cell: info => <StatusBadge status={info.getValue()} />,
     sortingFn: (a, b) => stateRank(a.original.state) - stateRank(b.original.state),
+  }),
+  col.accessor('direction_affinity', {
+    header: 'Direction',
+    cell: info => {
+      const aff = info.getValue() || 'both'
+      return <Badge tone={(AFFINITY_TONE[aff] || 'muted') as any}>{humanize(aff)}</Badge>
+    },
   }),
   col.display({
     id: 'trades',
@@ -182,6 +202,12 @@ export default function StrategyLifecycle() {
             <DrawerSection label="Details">
               <DrawerField label="Name" value={selected.name} />
               <DrawerField label="State" value={<StatusBadge status={selected.state} />} />
+              <DrawerField label="Direction Affinity" value={
+                <Badge tone={(AFFINITY_TONE[selected.direction_affinity || 'both'] || 'muted') as any}>
+                  {humanize(selected.direction_affinity || 'both')}
+                </Badge>
+              } />
+              <DrawerField label="Applicable Regimes" value={fmtRegimes(selected.applicable_regimes)} />
               <DrawerField label="Description" value={selected.description} />
               <DrawerField label="Execution Venue" value={
                 <select

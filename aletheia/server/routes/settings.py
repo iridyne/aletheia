@@ -1015,6 +1015,7 @@ class UniverseConfigUpdate(SettingsRequest):
     fallback_symbols: Optional[list[str]] = None
     market_type: Optional[str] = None
     family_quota: Optional[dict[str, float]] = None
+    family_quota_by_regime: Optional[dict[str, dict[str, float]]] = None
 
 
 _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
@@ -1055,6 +1056,24 @@ async def update_universe_config(req: UniverseConfigUpdate):
             if abs(total - 1.0) > 0.01:
                 raise HTTPException(400, f"family_quota values must sum to 1.0 (got {total:.3f})")
             value = {k: round(float(v), 2) for k, v in value.items()}
+        if field == "family_quota_by_regime":
+            # Nested {regime: {family: ratio}}. An empty map disables per-regime
+            # override (falls back to static family_quota). Each present regime's
+            # quotas must sum to 1.0, same rule as the static quota.
+            if not isinstance(value, dict):
+                raise HTTPException(400, "family_quota_by_regime must be a dict")
+            _VALID_REGIMES = {"bull", "bear", "sideways", "volatile"}
+            cleaned: dict[str, dict[str, float]] = {}
+            for regime_state, quota in value.items():
+                if regime_state not in _VALID_REGIMES:
+                    raise HTTPException(400, f"unknown regime '{regime_state}' (valid: {sorted(_VALID_REGIMES)})")
+                if not isinstance(quota, dict) or not quota:
+                    raise HTTPException(400, f"quota for regime '{regime_state}' must be a non-empty dict")
+                total = sum(float(v) for v in quota.values())
+                if abs(total - 1.0) > 0.01:
+                    raise HTTPException(400, f"family_quota_by_regime['{regime_state}'] must sum to 1.0 (got {total:.3f})")
+                cleaned[regime_state] = {k: round(float(v), 2) for k, v in quota.items()}
+            value = cleaned
         setattr(cfg.universe, field, value)
 
     save_config(cfg)
