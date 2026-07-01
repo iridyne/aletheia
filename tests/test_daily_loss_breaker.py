@@ -45,7 +45,8 @@ def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     repo.insert_position(pos)
     close_position(pos.id, exit_price=90.0, reason="stop_loss")  # gross -10, minus fees
     # gross (90-100)*1 = -10, minus round-trip fees -> still far past the $1 cap
-    expected = -10.0 - (100.0 + 90.0) * 1.0 * 0.001
+    # 0.0006 = paper_internal fee both sides after PR#35 demo/live fee-parity fix.
+    expected = -10.0 - (100.0 + 90.0) * 1.0 * 0.0006
     assert today_realized_pnl() == pytest.approx(expected)
 
     p = TradeProposal(symbol="ETHUSDT", market_type="spot", direction="long",
