@@ -8,7 +8,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import Tabs from '../components/Tabs'
 import PnLChart from '../charts/PnLChart'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, CardHeader, StatusText } from '../components/ui'
+import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
 
@@ -664,7 +664,7 @@ function LearningFunnelPanel() {
             <div key={item_type} className="funnel-bar-row">
               <span className="funnel-bar-label">{ITEM_TYPE_LABEL[item_type] ?? humanize(item_type)}</span>
               <div className="funnel-bar-track">
-                <div className="funnel-bar-fill" style={{ width: `${pct.toFixed(1)}%` }} />
+                <Meter pct={pct} className="funnel-bar-fill" />
               </div>
               <span className="funnel-bar-count mono">{count.toLocaleString()}</span>
             </div>

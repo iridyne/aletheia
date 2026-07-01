@@ -458,13 +458,13 @@ function ThemesTab() {
     <div>
       <div className="lens-filter-bar">
         {STATUS_FILTERS.map(s => (
-          <button
+          <Button
             key={s}
             className={`lens-filter-btn${statusFilter === s ? ' active' : ''}`}
             onClick={() => setStatusFilter(s)}
           >
             {humanize(s)}
-          </button>
+          </Button>
         ))}
       </div>
 

@@ -100,7 +100,7 @@ async def test_ac07_agent_creates_artifacts(client, monkeypatch):
 async def test_ac08_knowledge_base(client, monkeypatch):
     c, _ = client
     # Mock LLM to return substantive content so quality gate passes.
-    async def _fake_llm(system, user, max_tokens=800):
+    async def _fake_llm(system, user, max_tokens=800, **kw):
         return ("Daily dreaming log: market observer ran 3 cycles, research agent produced 2 notes. "
                 "Insight: momentum correlated with funding divergence. Focus: validate SOL breakout.", None)
     monkeypatch.setattr("aletheia.agents.dreaming_agent.llm_complete", _fake_llm)
