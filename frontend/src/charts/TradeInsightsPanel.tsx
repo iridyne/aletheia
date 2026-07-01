@@ -690,6 +690,9 @@ export default function TradeInsightsPanel() {
 
   return (
     <div className="insights-panel">
+      <div className="insights-date-range">
+        Since {data.since} · {data.trade_count} closed trades
+      </div>
       <EquityCurve data={data.equity_curve} />
       <DrawdownCurve data={data.drawdown_curve} />
 

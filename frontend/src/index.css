@@ -3076,6 +3076,11 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   flex-direction: column;
   gap: var(--space-4);
 }
+.insights-date-range {
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: 4px 0 2px;
+}
 .insights-section-label {
   font-size: 0.78rem;
   font-weight: 600;

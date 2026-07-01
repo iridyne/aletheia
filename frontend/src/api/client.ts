@@ -711,7 +711,7 @@ export const api = {
   updateMarketDataConfig: (body: Partial<{
     ccxt_exchange: string; ccxt_fallback: string;
     ohlcv_cache_ttl_min: number; enable_yfinance_macro: boolean;
-    observed_stocks: string[]; observed_xstocks: string[];
+    observed_stocks: string[]; observed_stock_tokens: string[]; observed_xstocks: string[];
     observed_prediction_markets: string[];
     // Round 2 macro signals
     enable_long_short_ratio: boolean;
@@ -929,6 +929,8 @@ export interface ExitReasonEntry {
 }
 
 export interface TradeInsights {
+  since: string         // ISO date, e.g. "2026-06-22" — all metrics cover closed_at >= since
+  trade_count: number
   equity_curve: EquityPoint[]
   drawdown_curve: DrawdownPoint[]
   by_direction: Record<string, DirectionStats>

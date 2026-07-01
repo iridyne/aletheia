@@ -1,10 +1,15 @@
 """Comprehensive trade analytics for the Insights visualization panel.
 
 Single SQL query over closed positions; all chart data computed in Python.
+Date filter aligned with analytics.py _ROUND1_START_UTC so all PnL numbers
+are consistent across the Analytics tab and Trade Insights panel.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
+
+# Keep in sync with aletheia/server/routes/analytics.py _ROUND1_START_UTC
+_SINCE_UTC = "2026-06-22"
 
 
 def build_trade_insights() -> dict:
@@ -15,11 +20,14 @@ def build_trade_insights() -> dict:
         "SELECT id, symbol, market_type, direction, realized_pnl, entry_price, quantity, "
         "       opened_at, closed_at, regime_tag, close_reason, stop_price "
         "FROM positions "
-        "WHERE status = 'closed' "
-        "ORDER BY closed_at ASC"
+        "WHERE status = 'closed' AND closed_at >= ? "
+        "ORDER BY closed_at ASC",
+        (_SINCE_UTC,),
     ).fetchall()
 
     return {
+        "since":                  _SINCE_UTC,
+        "trade_count":            len(rows),
         "equity_curve":           _equity_curve(rows),
         "drawdown_curve":         _drawdown_curve(rows),
         "by_direction":           _by_direction(rows),
