@@ -1,6 +1,17 @@
 # 设计：System-Operator 集成的动态仓位决策 + 交易 Persona + Learning 策略域
 
-> **STATUS: PROPOSED（设计文档,未实施——无代码/无 spec）**。owner 定调:仓位/杠杆/加仓/单笔止损
+> **STATUS: IMPLEMENTED P0–P4（2026-07-02,全部默认休眠 flag-gated,零行为变化直到 owner 开启)。**
+> 唯一未接的:P4b 金字塔的**实盘 scale-in 下单执行**(policy 已实现并测过,但真实下单是独立
+> owner-gated 步骤,会 place orders,需 owner 给定 max 数值 + 明确授权)。
+> 落地映射:P0=`3e8015f`(视图完整性门,修 #1/#2)· P1=`ad580a1`(persona 区间 schema+resolver)·
+> P2=`9c27dc4`(Operator 规则式上下文决策)· P3=`3fbdd79`(regime 干净窗学习)· P4=`884e035`
+> (渐进解冻+金字塔 policy)。specs:PS-S01..S12 + PL-ADOPT-19..21。所有 flag 默认 OFF。
+>
+> **owner 开启顺序建议**:先 `persona_sizing_enabled`(选 persona,静态 init)→ 跑一段干净窗 →
+> 开 progressive_unlock(逐个解冻)→ 数据够了开 persona_learning → 最后(单独授权)接金字塔实盘。
+> 每步先 demo、看 doctor `loop.sizing_policy` + 干净窗指标,退化则关回。
+
+> (原始设计,已实施:)owner 定调:仓位/杠杆/加仓/单笔止损
 > 不再是静态配置,而是在**风控硬边界 ∩ persona 区间**内由 **System Operator 按上下文动态决策**;并把
 > 这个决策空间纳入 **Learning(Evolve)** 作为可学习策略域;用**渐进冻结/解冻**控制复杂度。
 > 承接并升级 `docs/research/POSITION_SIZING_AND_PERSONAS_2026-07-01.md`(那份的三档静态草案 → 本份的
