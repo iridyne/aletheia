@@ -15,8 +15,12 @@ reconciled_gone、56% adopted、strategy 归因被毁(10/110 真实平仓带 str
 - P1 go_live_scorecard 排除 synthetic 平仓(新建 analytics/close_reasons.py);AN-S03
 - 穷尽排查确认缓存错配只坑 reconciler 一处
 
-### 未做(P2,触 execution 边界待 owner 批)
-adopt 交易所保护单 / adoption strategy_id / factor_feedback 过滤。
+### P2(owner 授权已实施,da38fbf)
+- P2-1 OKX 交易所保护单(OKXClient.place_algo_order + stops 分发器 + adopt 调用;双门控
+  exchange_tpsl_enabled 休眠 + demo-only);PL-ADOPT-13/14
+- P2-2 adopt._recover_strategy_link 归因恢复(P0 已解根问题,此为防御性;紧配不误归因);PL-ADOPT-15/16
+- P2-3 factor_feedback 过滤 synthetic 平仓;LP-S15
+- conformance 505 全绿;full suite 1815/0;gateway restart live
 
 ### 验证
 conformance 500 全绿;full suite 1815/0;真配置 stale 路径 0 false-orphan;doctor healthy。

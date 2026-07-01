@@ -37,8 +37,15 @@
   真源;trade_case_builder 复用)。spec AN-S03。
 - 穷尽排查:缓存错配只坑 reconciler 一处(其它消费者 mode=None 默认路径已被 profit-loop 保护)。
 
-### 未做(P2,触 execution 边界,待 owner 批)
-adopt 仓不下交易所保护单 / adoption 抹 strategy_id / factor_feedback 是否过滤 thrash。
+### P2(owner 授权已实施,commit da38fbf)
+- P2-1 adopted 仓交易所保护单:核实更大——OKX broker 从不下交易所 TP/SL(只 Bitget),
+  `exchange_tpsl_enabled` 默认 False(休眠)。新增 OKXClient.place_algo_order + okx_broker
+  place_okx_protective_orders + stops.place_exchange_protective_orders 分发 + adopt 调用。
+  双门控 flag(休眠零生产影响)+ DEMO-only(不给 live 自动下单)。PL-ADOPT-13/14。
+- P2-2 归因:P0 已解根问题;防御性补 adopt._recover_strategy_link(紧配近 15min reconciled_gone
+  本地平仓继承 strategy_id,否则 NULL 不误归因)。PL-ADOPT-15/16。
+- P2-3 factor_feedback 过滤 synthetic 平仓(is_synthetic_close),信号门不再被误教。LP-S15。
+- 验证:conformance 505 全绿;full suite 1815/0;gateway restart P2 live。
 
 ### 验证
 conformance 496→500 全绿;full suite 1815 passed/0 failed;gateway restart 后真配置模拟 stale 路径
