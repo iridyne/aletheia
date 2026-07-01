@@ -13,14 +13,14 @@
 
 | 角色 | 组件 | 职责 | 自治权 |
 |------|------|------|--------|
-| 基金经理 | **PI Agent** | 所有买卖决策最终由他拍板 | 唯一决策者 |
+| 基金经理 | **System Operator** | 所有买卖决策最终由他拍板 | 唯一决策者 |
 | 研究员 | Market Observer | 每10分钟扫一遍市场，发现机会 | 只写 Opportunity，不下单 |
 | 交易员助理 | Paper Trader | 收集信号交给老板 | 只写 signal_pending，不下单 |
 | 量化工程师 | Strategy Designer | 设计新策略+回测 | 升阶止于 paper_candidate |
 | 风控主管 | Operator Loop | 建议淘汰/降级策略 | 只写 recommend_*，不直接执行 |
 | 安全保镖 | Position Manager | 止损/止盈/追踪止损 | **唯一自治执行权**（钱不等人） |
 
-**核心原则**：所有"动脑子"的决定由 PI Agent 一人做；其他组件只产出信号和建议。
+**核心原则**：所有"动脑子"的决定由 System Operator 一人做；其他组件只产出信号和建议。
 
 ---
 
@@ -83,11 +83,11 @@ Paper Trader (5min)
 
 ---
 
-## 第四章：PI Agent 决策 — 唯一的"按钮"在这里
+## 第四章：System Operator 决策 — 唯一的"按钮"在这里
 
-![PI Agent Decision](diagrams/04_pi_agent_decision.png)
+![System Operator Decision](diagrams/04_pi_agent_decision.png)
 
-每 5 分钟，PI Agent 醒来。面前摆着三层信息：
+每 5 分钟，System Operator 醒来。面前摆着三层信息：
 
 ### Layer 1: 市场现在长什么样
 - 所有币的价格快照
@@ -132,7 +132,7 @@ Paper Trader (5min)
 
 ![Execution and Risk](diagrams/05_execution_and_risk.png)
 
-PI Agent 说 `trade ETH/USDT long conviction=8` 之后：
+System Operator 说 `trade ETH/USDT long conviction=8` 之后：
 
 ### Step 1: 仓位计算
 ```
@@ -170,7 +170,7 @@ Proposal → Order → Fill → Position → Exchange TPSL 挂单
 
 ![Position Management](diagrams/06_position_management.png)
 
-这是系统中**唯一不经 PI Agent 的环节**。原因：止损必须秒级执行，不能等 LLM。
+这是系统中**唯一不经 System Operator 的环节**。原因：止损必须秒级执行，不能等 LLM。
 
 每分钟自动检查：
 
@@ -202,7 +202,7 @@ Proposal → Order → Fill → Position → Exchange TPSL 挂单
 ### 2. Knowledge Lesson（知识教训）
 - 自动分析本次交易的成功/失败原因
 - 写入知识库
-- **下轮效果**：PI Agent Layer 3 看到最近教训
+- **下轮效果**：System Operator Layer 3 看到最近教训
 
 ### 3. Strategy Evidence（策略证据）
 - paper_trades 计数 +1
@@ -210,7 +210,7 @@ Proposal → Order → Fill → Position → Exchange TPSL 挂单
 - 检查 promotion_gates：≥5 笔 + 期望为正？
 - **下轮效果**：满足条件 → Operator 可以推荐升级
 
-这三条路径在 5 分钟后的下一轮 PI Agent 决策中生效——正反馈循环。
+这三条路径在 5 分钟后的下一轮 System Operator 决策中生效——正反馈循环。
 
 ---
 
@@ -223,7 +223,7 @@ Proposal → Order → Fill → Position → Exchange TPSL 挂单
 ```
 draft → research_note → strategy_hypothesis → paper_candidate ⛔ STOP
                                                       ↓
-                                             [PI Agent 批准]
+                                        [System Operator 批准]
                                                       ↓
                                               paper_running ✅
                                               (RuleSet 激活)
@@ -233,24 +233,24 @@ draft → research_note → strategy_hypothesis → paper_candidate ⛔ STOP
 - `draft`：刚创建
 - `research_note`：有研究支撑
 - `strategy_hypothesis`：可被回测验证
-- `paper_candidate`：**强制止步！** 等 PI Agent
+- `paper_candidate`：**强制止步！** 等 System Operator
 
-**PI Agent 决策门**：
+**System Operator 决策门**：
 - Designer 写 `recommend_promote` 到 `pi_decisions`
-- PI Agent 评估后决定同意/拒绝
+- System Operator 评估后决定同意/拒绝
 
 ### 策略退出路径
 
 - Operator Loop（每60min）评估策略表现
 - 表现差 → 写 `recommend_retire` 或 `recommend_demote`
-- PI Agent 确认后执行
-- PI Agent 也可以拒绝（"再观察"）
+- System Operator 确认后执行
+- System Operator 也可以拒绝（"再观察"）
 
 ### 策略变体（Param Sweep）
 
 - Optuna 优化参数后产生变体策略
 - 同样止步于 `paper_candidate`
-- 同样需要 PI Agent 确认才能激活
+- 同样需要 System Operator 确认才能激活
 
 ---
 
@@ -264,12 +264,12 @@ draft → research_note → strategy_hypothesis → paper_candidate ⛔ STOP
 
 | 原则 | 实现 |
 |------|------|
-| **PI Agent 是唯一决策者** | 所有 trade/promote/retire 动作必须经过 PI Agent |
+| **System Operator 是唯一决策者** | 所有 trade/promote/retire 动作必须经过 System Operator |
 | **其他组件只产出信号** | Observer 写 Opportunity, Paper Trader 写 signal_pending, Operator 写 recommend_* |
 | **安全层自治** | 止损/止盈/追踪不等审批，秒级执行保护资金 |
 | **正反馈循环** | 每笔交易的结果在 5 分钟内影响下一个决策 |
-| **策略升阶有门禁** | 自动推进止于 paper_candidate，激活需 PI Agent 确认 |
-| **Risk Engine 是硬墙** | 无论 PI Agent 多有信心，5 关审批不通过就不下单 |
+| **策略升阶有门禁** | 自动推进止于 paper_candidate，激活需 System Operator 确认 |
+| **Risk Engine 是硬墙** | 无论 System Operator 多有信心，5 关审批不通过就不下单 |
 
 ---
 
@@ -280,7 +280,7 @@ draft → research_note → strategy_hypothesis → paper_candidate ⛔ STOP
 | Market Data Collector | 5 min | 拉取价格/FR/OI/Taker/Liquidation |
 | Market Observer | 10 min | LLM 分析 → 写 Opportunity |
 | Paper Trader | 5 min | 信号收集 → 写 signal_pending |
-| PI Agent | 5 min | 读 pending signals → 决策 → 执行 |
+| System Operator | 5 min | 读 pending signals → 决策 → 执行 |
 | Position Manager | 1 min | 追踪止损 / 检查平仓条件 |
 | Operator Loop | 60 min | 策略评估 → recommend_retire/demote |
 | Strategy Designer | 事件触发 | 创建/回测新策略 |

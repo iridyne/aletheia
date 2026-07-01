@@ -15,8 +15,8 @@
 | 2 | market_observer | 15min | observer | Scan for trading opportunities |
 | 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
-| 5 | paper_trader | 5min | agents | Collect signals → signal_pending PiDecisions (PI Agent submits proposals — Phase 4a) |
-| 6 | pi_trading_decision | ~15min (configurable) | agents | PI Agent heartbeat (daemon fallback) |
+| 5 | paper_trader | 5min | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a) |
+| 6 | pi_trading_decision | ~15min (configurable) | agents | System Operator heartbeat (daemon fallback) |
 | 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
 | 9 | position_reconcile | 5min | io | Reconcile local vs exchange positions |
@@ -118,11 +118,11 @@
 - **Trigger**: scheduler every 5min
 - **Inputs**: Active strategies (paper_running), opportunities, universe features, PI decisions
 - **LLM**: No (pure rule evaluation)
-- **Outputs**: signal_pending PiDecisions (Phase 4a: PI Agent is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
-- **Side effects**: Writes signal_pending decisions for PI Agent consumption; RuleSet exit signals may close positions directly
+- **Outputs**: signal_pending PiDecisions (Phase 4a: System Operator is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
+- **Side effects**: Writes signal_pending decisions for System Operator consumption; RuleSet exit signals may close positions directly
 - **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)
 
-#### PI Agent (pi_trading_decision / pi_daemon)
+#### System Operator — Trading Decision Daemon (pi_trading_decision / pi_daemon)
 
 - **Trigger**: Event-driven daemon (debounce 8s, cooldown 60s, heartbeat 5min)
 - **Inputs**: 
@@ -304,7 +304,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
                    |                      |
                    v                      v
         +-------------------+    +------------------+
-        | signal_pending    |--->| PI Agent (daemon)|
+        | signal_pending    |--->| System Operator  |
         +-------------------+    +------------------+
                                           |
                                           v

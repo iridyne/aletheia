@@ -85,7 +85,7 @@ D8-B02 / D8-C01（`tests/specs/spec_kill_conditions.py`）是 xfail tripwire，
 **产品定义（2026-06-30）**：Live 模式一旦由人类开启，PI Operator 在 `Auto(4)` 权限下对主赛道（perp + spot）享有全权操作能力——开仓、平仓、调仓，无需逐笔人工确认。
 
 **UI 警示墙（强制）**：Dashboard 的 Live 解锁入口必须在人类确认前展示醒目警示，包含以下全部要素：
-- "PI Agent 将完全自主执行交易，操作不可预测"
+- "System Operator 将完全自主执行交易，操作不可预测"
 - "真实资金损失可能发生"
 - "开启后所有操作由人类承担后果"
 
@@ -99,7 +99,7 @@ D8-B02 / D8-C01（`tests/specs/spec_kill_conditions.py`）是 xfail tripwire，
 
 `aletheia/risk/engine.py` 中的 `evaluate_proposal()` **不得**读取 `cfg.operator.permission_mode` 并做 skip/bypass 分支判断。
 
-**原因**：Operator 面的 `permission_mode`（ReadOnly/Research/PaperAuto/AllowEditing/Auto）控制 PI Agent 可以调用哪些命令，不影响 risk_engine 的判断逻辑。若 Auto 模式能豁免任何关卡，PI 可借助权限提升绕过资金安全约束。
+**原因**：Operator 面的 `permission_mode`（ReadOnly/Research/PaperAuto/AllowEditing/Auto）控制 System Operator 可以调用哪些命令，不影响 risk_engine 的判断逻辑。若 Auto 模式能豁免任何关卡，System Operator 可借助权限提升绕过资金安全约束。
 
 **当前实现（代码为准）**：`engine.py` 读取的是 Worker 面 `cfg.agent.permission_mode`，仅对 `Observe` 权限添加 `permission_mode_insufficient` violation，不存在 skip/bypass 分支。`operator.permission_mode` 不在 engine.py 中出现。
 
@@ -118,7 +118,7 @@ Observe(0) < Paper(1) < Full(2)
 ```
 默认 `agent.permission_mode = "Paper"`(`schema.py:116`)。
 
-**Operator 面(PI Agent/Dashboard)** `agent_shell/permissions.py:10`:
+**Operator 面(System Operator/Dashboard)** `agent_shell/permissions.py:10`:
 ```
 ReadOnly(0) < Research(1) < PaperAuto(2) < AllowEditing(3) < Auto(4)
 ```

@@ -1,11 +1,16 @@
-# Aletheia Trading OS — Pi Agent Runtime Integration Design Report
+# Aletheia Trading OS — System Operator Layer Design
 
-**Version:** 0.1  
-**Purpose:** Define how Aletheia should integrate a Pi/OpenClaw-style agent runtime as the top-level system agent, so the product becomes a coherent self-managing Agentic Trading OS rather than a set of disconnected micro-agents and backend services.
+> **命名说明（2026-07-01）**：本文档历史文件名 / 原标题含"Pi Agent"，现统一更名为
+> "System Operator"。代码层文件名（`pi_daemon.py`、`pi_runtime_adapter.ts`）因触 trust
+> boundary 保持不变，但在文档、注释、会话交流中一律使用"System Operator"。
+> earendil-works/pi（外部 npm 包）与本文无关——详见 `DECISIONS.md §2026-07-01`。
+
+**Version:** 0.2 (2026-07-01: 重命名 PI Agent → System Operator)  
+**Purpose:** Define how Aletheia's System Operator layer works as the top-level system agent, so the product becomes a coherent self-managing Agentic Trading OS rather than a set of disconnected micro-agents and backend services.
 
 ---
 
-> ## [必看] PI Agent = 三个不同的组件,别混(2026-06-28)
+> ## [必看] System Operator = 三个不同的组件,别混(2026-06-28)
 >
 > 历次审计反复把三者当成同一个(7 路审计 A2/A4 误报根因)。三个独立组件,语言/进程/职责不同:
 >
@@ -554,7 +559,7 @@ Forbidden Direct Commands
 > 代码中这两个动作均通过 `pi_decisions` 表**间接执行**（Phase 4d 模式）：
 > `_action_retire_strategy`（`operator_loop.py:552`）和
 > `_action_demote_strategy`（`operator_loop.py:583`）只向表中写入
-> `recommend_retire` / `recommend_demote` 记录，由 PI Agent 消费后才真正执行策略生命周期变更。
+> `recommend_retire` / `recommend_demote` 记录，由 System Operator 消费后才真正执行策略生命周期变更。
 > 直接退出/降级不发生；`_execute_level1_action` 调用这两个函数时，返回 `status: "recommended"` 而非 `status: "executed"`。
 
 ### loosen_confidence / increase_sizing / widen_stop_loss — Level 分类不一致（已知待清理项）
@@ -591,7 +596,7 @@ Auto:
 
 > ⚠️ **retire/demote 的实际流程**：对于 `retire_strategy` / `demote_strategy` 命令，
 > Operator 执行后不立即修改策略状态，而是向 `pi_decisions` 表写入推荐记录（Phase 4d 间接执行，
-> `operator_loop.py:553-578`）。PI Agent 在下次轮询时消费该记录并完成实际生命周期变更。
+> `operator_loop.py:553-578`）。System Operator 在下次轮询时消费该记录并完成实际生命周期变更。
 > 命令返回 `status: "recommended"`，不是 `status: "executed"`。
 
 ```text
@@ -1262,7 +1267,10 @@ Aletheia:
 
 ## 26. References
 
-- Pi Agent Harness repository: https://github.com/earendil-works/pi
+> **[2026-07-01 注]** earendil-works/pi 是 coding CLI（与本项目无代码关联），列于此仅供历史参考。
+> 决策详见 `DECISIONS.md §2026-07-01`。
+
+- earendil-works/pi (coding CLI, unrelated to Aletheia): https://github.com/earendil-works/pi
 - Pi project website: https://pi.dev/
 - Armin Ronacher, “Pi: The Minimal Agent Within OpenClaw”: https://lucumr.pocoo.org/2026/1/31/pi/
 - OpenAlice repository: https://github.com/TraderAlice/OpenAlice

@@ -224,11 +224,11 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 ## §6 已知管道断裂
 
-### A1. ps_lessons ↔ PI Agent prompt（L-Bug-B — 已修复 2026-06-27）
+### A1. ps_lessons ↔ System Operator prompt（L-Bug-B — 已修复 2026-06-27）
 
-**现状（修复后）**: `trading_context.py:592-603` 读取 `LessonStore().list_all(status="proposed", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py:764-774` 将其渲染为 `## Recent Post-trade Lessons` 进入 PI Agent prompt。
+**现状（修复后）**: `trading_context.py:592-603` 读取 `LessonStore().list_all(status="proposed", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py:764-774` 将其渲染为 `## Recent Post-trade Lessons` 进入 System Operator prompt。
 
-ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_context Layer3 → PI prompt → risk engine `_check_lesson_constraints()`（status="accepted" 的 lesson）。
+ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_context Layer3 → System Operator prompt → risk engine `_check_lesson_constraints()`（status="accepted" 的 lesson）。
 
 **原始缺陷（Round 1）**: ps_lessons 写入但无消费者，dreaming 工作进死路。修复 commit: b9ad957（2026-06-27）。
 
@@ -276,11 +276,11 @@ ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_c
 | `paper_trader_ranker` | `retrieve_lessons(query, k=3, item_types=["trade_case_study","post_trade_review"])` | `agents/paper_trader_ranker.py:405-412` |
 | `strategy_designer` | `build_advisory_context(role="strategy_designer", ...)` | `agents/strategy_designer.py:339-344` |
 | `market_observer` | `build_advisory_context(role="market_observer", guard_context=..., ...)` | `agents/market_observer.py:386-393` |
-| PI Agent (trading_context Layer 3) | 直接 `list_knowledge_items(limit=20)` + item_type 过滤 `lesson / accepted_lesson / trading_guard` | `agent_shell/trading_context.py:362-378` |
+| System Operator (trading_context Layer 3) | 直接 `list_knowledge_items(limit=20)` + item_type 过滤 `lesson / accepted_lesson / trading_guard` | `agent_shell/trading_context.py:362-378` |
 | `dreaming_agent` | `list_knowledge_items(item_type="post_trade_review", ...)` | `agents/dreaming_agent.py:69, 184, 302` |
 
 ⚠️ **注意**: `trading_context.py:367` 过滤 `item_type in ("lesson", "accepted_lesson", "trading_guard")`。
-`lesson` 和 `accepted_lesson` 均不在 `trust_and_change_control.md §4.1` 的允许枚举中。这两个类型如果有历史存量数据则可被 PI Agent 消费，但当前生产者无人写入这两个类型——属于遗留字符串，实际无效。
+`lesson` 和 `accepted_lesson` 均不在 `trust_and_change_control.md §4.1` 的允许枚举中。这两个类型如果有历史存量数据则可被 System Operator 消费，但当前生产者无人写入这两个类型——属于遗留字符串，实际无效。
 
 ### 7.3 promotion_gates_contract 中的 knowledge 依赖
 
@@ -308,13 +308,13 @@ ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_c
 - 负反馈归因（regime + 方向 + scanner 组合）→ 降权对应组合
 - **边界**：Ranker 调整只影响机会排序，不影响 risk_engine 关卡，不影响 sizing
 
-### 8.2 PI system prompt 片段（中风险）
+### 8.2 System Operator system prompt 片段（中风险）
 
-PI Agent 的 system prompt 分为两层：
+System Operator 的 system prompt 分为两层：
 - **基础层**（宪法约束，人类专有）：角色定义、FORBIDDEN_INTENTS 提示、风格约定
 - **追加片段层**（学习可写入）：以下三条路径
 
-**学习内容注入 PI prompt 的三条合法路径**（完整枚举，由 LP-S14 spec claim 锁定）：
+**学习内容注入 System Operator prompt 的三条合法路径**（完整枚举，由 LP-S14 spec claim 锁定）：
 
 | 路径 | 数据来源 | 代码锚点 |
 |------|---------|---------|

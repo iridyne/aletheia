@@ -1,4 +1,7 @@
-# Aletheia Pi Agent Implementation Plan
+# Aletheia System Operator Implementation Plan
+
+> **[历史归档 — 2026-07-01]** 原标题"Pi Agent Implementation Plan"，"PI Agent"已更名
+> 为"System Operator"。文件名保留。当前架构权威文档：`docs/design/operator_layer.md`。
 
 > Version: v1.0  
 > Target System: **Aletheia Trading OS**  

@@ -1,5 +1,11 @@
 # PI Operator Agent Design Crosswalk
 
+> **[历史归档 — 2026-07-01]** 本文档是 2026-06-10 设计阶段的归档文件。
+> - "PI Operator Agent"已统一更名为"System Operator"（见 `DECISIONS.md §2026-07-01`）
+> - 本文对照的是内部计划文档 `aletheia_pi_agent_implementation_plan.md`，**不是**
+>   earendil-works/pi（外部 npm 包）的代码映射——两者无代码关联
+> - 本文仅供历史参考，不作为当前设计的权威文档，请阅读 `docs/design/operator_layer.md`
+
 Purpose: prove that the repo-specific dual-process design fully covers `C:\Users\Administrator\Downloads\aletheia_pi_agent_implementation_plan.md`, and identify the exact local design section that carries each requirement.
 
 > **2026-06-11 status note**: This crosswalk remains the coverage proof for the frozen design package.

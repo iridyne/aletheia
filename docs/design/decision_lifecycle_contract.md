@@ -86,7 +86,7 @@ LLM 输出到 proposal 的**唯一中间载体**(跳5→6)。
 
 ## 4. 不变量
 
-- **DL-INV-1 单一开仓决策权**:`trading_decision.evaluate`(LLM)是唯一开仓决策者;`paper_trader` 只收集信号(Phase 4a,`paper_trader.py` 注释 "PI Agent is the sole decision maker"),不直接提交 proposal。
+- **DL-INV-1 单一开仓决策权**:`trading_decision.evaluate`(LLM)是唯一开仓决策者;`paper_trader` 只收集信号(Phase 4a,System Operator 是唯一 proposal 提交者),不直接提交 proposal。
 - **DL-INV-2 conviction 门**:`conviction < 55` 必 skip(`_MIN_CONVICTION_TO_TRADE`)。改此阈值须同步本契约 + DL-C01。
 - **DL-INV-3 guard advisory**:跳6 的 guard chain 只写 `decision_meta['guards']`,**不硬拦**;唯一硬门是风控引擎(见 `execution_contract` guard 澄清段 + spec PI-S02)。
 - **DL-INV-4 归因继承**:`_attach_opportunity_context` 必须按 `signal_source` 把 opportunity_id/strategy_id/scanner_family 回填到 decision,否则学习闭环断链(LEARNING_LOOP_AUDIT §R0)。

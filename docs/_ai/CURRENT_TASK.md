@@ -45,6 +45,17 @@
 > `aletheia doctor` 的 `loop.profit` 探针为准,本文不断言**。实验判决记账见
 > `EXPERIMENT_PROTOCOL.md`:修复生效前(污染期)的 skip/proposal 数据不计入策略评估。
 
+## 最新完成：双层模型路由 + System Operator 重命名（2026-07-01）
+
+- **双层模型路由**（commit `e5a8010`）：`deep_provider` / `fast_provider` 双通道，
+  11 个 deep call site + 5 个 fast call site 已注入，前端 Settings 加 Routing Role 下拉。
+  SDD: 5 个 MR-* claims 全 GREEN。
+- **术语统一**：文档层"PI Agent"→"System Operator"。代码层文件名不变（触 trust boundary）。
+- **earendil-works/pi 研究结论**：外部 npm，coding CLI，与本项目无代码关联，不引入。
+  详见 `docs/_ai/DECISIONS.md §2026-07-01`。
+
+---
+
 ## 当前活动工作线:OpenAlice TaG 借鉴系列(2026-06-29 起)
 
 研究报告 `docs/research/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md` + 借鉴清单状态卡 `docs/issues/TAG_BORROW_BACKLOG.md`。分支 `worktree-openalice-tag-research` 待 owner 审核 merge(5 commit:P0-1 + Vibe Trading 核查 + P1-2 + L2 docs + L4 docs)。

@@ -7,11 +7,56 @@
 
 ## Last Updated
 
-2026-06-30 (P3d debt 核实 + BACKEND_ISSUES/LEDGER 文档同步)
+2026-07-01 (System Operator 重命名 + earendil-works/pi 研究结论 + 双层模型路由上线)
 
 ---
 
-## Recent Change (P3d 债务核实 — 2026-06-30)
+## Recent Change (System Operator 重命名 + earendil-works/pi 结论 + 双层模型路由 — 2026-07-01)
+
+### 背景
+
+本次会话完成三项工作：(1) 双层模型路由上线；(2) earendil-works/pi 研究与结论；(3) 术语统一。
+
+### 1. 双层模型路由（commit e5a8010）
+
+**问题**：所有 agent 共用单一 `default_provider`，顶层决策 agent 和批量数据提取 agent
+用同一个模型（成本/质量都难优化）。
+
+**实现**：
+- `aletheia/config/schema.py`：`ModelsConfig` 加 `deep_provider` / `fast_provider` 两个可选字段
+- `aletheia/model_provider/router.py`：新增 `get_provider_for_tier(tier)` 翻译函数
+- `aletheia/agents/helpers.py`：`llm_complete` / `llm_structured` / `llm_stream` 加 `provider=` 参数
+- deep 层（顶层决策）：`trading_decision.py`、`strategy_designer.py`、`risk_critic.py`、
+  `market_observer.py`、`dreaming_agent.py`、`lesson_reviewer.py` 共 11 个 call site
+- fast 层（批量提取）：`research_worker.py` 5 个 call site
+- 前端 Settings：Routing Role 下拉（Default / Deep tier / Fast tier）
+- `tests/specs/spec_model_routing.py`：5 个 MR-* SDD claims 全 GREEN
+
+**向后兼容**：`deep_provider=None` / `fast_provider=None` → 自动降级 `default_provider`，
+现有配置零迁移。
+
+### 2. earendil-works/pi 研究结论
+
+**结论**：earendil-works/pi（`@earendil/pi` npm 包）是**终端编程助手 CLI**（RPC/SDK/Skills
+框架，让 AI 辅助编码），与 Aletheia System Operator（交易决策 + 系统监管）**完全不同职责**。
+
+**关键核查**：
+- `operator-shell/package.json`：无 `@earendil` 依赖
+- `operator-shell/src/pi_runtime_adapter.ts`：调用的是 Aletheia Python `/api/operator/internal/llm-session`，
+  不调 earendil npm API
+- 历史"crosswalk 文档"对照的是内部计划文档 vs 双进程设计规格，不是 earendil 代码映射
+
+**决定**：不引入 earendil-works/pi，operator-shell 完全自建（~6k TS + ~6k Python）。
+
+### 3. 术语统一：PI Agent → System Operator
+
+所有活文档统一用"System Operator"；`pi_daemon.py` 文件名保留（改名触 trust boundary）；
+历史归档文档（`docs/design/specs/2026-06-10-pi-*.md` 等）只加文件头标注不全量改写。
+决策详见 `DECISIONS.md` § 2026-07-01。
+
+---
+
+## Previous Change (P3d 债务核实 — 2026-06-30)
 
 ### 核实结果
 

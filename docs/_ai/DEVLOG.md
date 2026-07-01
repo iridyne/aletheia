@@ -1,5 +1,37 @@
 # Development Log
 
+## 2026-07-01 — 双层模型路由上线 + System Operator 重命名 + earendil-works/pi 研究
+
+### 触发
+
+接续上一会话：完成双层模型路由功能；研究 earendil-works/pi 是否可复用；owner 指示
+全面统一"PI Agent"→"System Operator"术语，并完成文档同步。
+
+### 双层模型路由（commit e5a8010）
+
+**问题**：所有 agent 共用单一 `default_provider`，顶层决策与批量提取无法分流到不同模型。
+
+**实现**：
+- `ModelsConfig` 新增 `deep_provider` / `fast_provider`（`None` → fallback default）
+- `get_provider_for_tier("deep"|"fast")` 翻译层（`model_provider/router.py`）
+- `llm_complete` / `llm_structured` / `llm_stream` 加 `provider=` 参数
+- deep 层 11 个 call site（trading_decision / strategy_designer / risk_critic / market_observer / dreaming_agent / lesson_reviewer）
+- fast 层 5 个 call site（research_worker 全部批量 LLM 调用）
+- 前端 Routing Role 下拉 + 路由摘要行
+- SDD: 5 个 MR-* claims GREEN
+
+### earendil-works/pi 研究结论
+
+核查 `operator-shell/package.json`（无 `@earendil` 依赖）和 `pi_runtime_adapter.ts`（调
+Aletheia Python API，不调外部 npm）确认：earendil-works/pi 是 coding CLI，与 Aletheia
+operator 无关。operator-shell 完全自建。决策详见 `DECISIONS.md §2026-07-01`。
+
+### 术语统一
+
+活文档统一"System Operator"；`pi_daemon.py` 文件名保留；历史归档文档加头部标注。
+
+---
+
 ## 2026-06-29 — OpenAlice TaG 深度研究 + P0-1 hash 基础设施 + P1-2 reconcile audit 链入
 
 ### 触发

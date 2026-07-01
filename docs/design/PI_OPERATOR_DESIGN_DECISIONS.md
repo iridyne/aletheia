@@ -1,6 +1,8 @@
-# PI Operator 设计决策书
+# System Operator 设计决策书
 
 > 2026-06-21 | 基于 codebase 约束 + 竞品分析 + 控制论原则
+> **命名更新（2026-07-01）**：原标题"PI Operator"已统一为"System Operator"。
+> 详见 `docs/_ai/DECISIONS.md §2026-07-01`。
 
 ---
 
