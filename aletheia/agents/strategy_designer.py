@@ -523,7 +523,15 @@ async def run_strategy_designer(permission_mode: str = "Observe", run_id: str | 
         outputs.append(f"dedup_skipped:{chosen_symbol}:{timeframe}:{direction}")
         return {"outputs": outputs, "errors": errors}
 
-    strategy = create_strategy(name=name, description=description, parameters=parameters)
+    # Map direction_bias → direction_affinity for StrategyRecord model field.
+    # "neutral" has no directional preference, maps to "both".
+    _affinity_map = {"long": "long", "short": "short", "neutral": "both"}
+    strategy = create_strategy(
+        name=name,
+        description=description,
+        parameters=parameters,
+        direction_affinity=_affinity_map.get(direction, "both"),
+    )
     log_tool(run_id, "create_strategy_hypothesis", "observe", True, output=strategy.id)
     outputs.append(f"strategy:{strategy.id}")
 

@@ -97,3 +97,44 @@ def test_trading_context_uses_strategy_kpis():
         "win_rate=None total_pnl=None trade_count=None. "
         "See round2_week1_decision_chain_fixes.md Fix S-Bug-C"
     )
+
+
+# ---------------------------------------------------------------------------
+# SP-S04 — strategy_designer must write direction_affinity (Phase 2A)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("SP-S04", "strategy_pool", "§direction_affinity written", "L2a",
+              "strategy_designer writes direction_affinity to StrategyRecord parameters"),
+)
+def test_strategy_designer_writes_direction_affinity():
+    """strategy_designer.py 源码必须在生成策略时写入 direction_affinity。"""
+    import pathlib
+    src = (pathlib.Path(_project_root()) / "aletheia/agents/strategy_designer.py").read_text(encoding="utf-8")
+    assert "direction_affinity" in src, (
+        "strategy_designer.py 从不写 direction_affinity — 所有策略的方向偏好永远是默认值 'both'，"
+        "ranker 的 regime-aware 过滤等于无效（过滤依据永远为真）。"
+        "Phase 2A 修复：strategy_designer 需在 LLM 生成策略时推断并写入 direction_affinity。"
+    )
+
+
+# ---------------------------------------------------------------------------
+# SP-S05 — short scanner family exists in signal_emitter (Phase 2A)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("SP-S05", "strategy_pool", "§short scanner family", "L2a",
+              "signal_emitter.py has a 'short_bias' scanner family for bearish-specific signals"),
+)
+def test_short_bias_scanner_family_exists():
+    """专用 short_bias scanner family 必须在 signal_emitter 中存在。"""
+    import pathlib
+    src = (pathlib.Path(_project_root()) / "aletheia/universe/signal_emitter.py").read_text(encoding="utf-8")
+    assert 'family == "short_bias"' in src or "family == 'short_bias'" in src, (
+        "signal_emitter.py 没有 'short_bias' scanner family 的处理分支 — "
+        "在 bear regime 下没有专门针对空头的信号生成逻辑，"
+        "空头机会只能从通用 momentum/derivatives 家族的副产品中产生。"
+        "Phase 2A 修复：新增 short_bias family，在 bear/volatile regime 下主动寻找做空信号。"
+    )
