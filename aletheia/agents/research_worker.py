@@ -83,6 +83,43 @@ def _get_recent_news_for_research() -> str:
         return ""
 
 
+def _get_equity_context_block() -> str:
+    """Build a short equity context block for injection into the research prompt.
+
+    Reads the configured stock tokens and recently observed equity opportunities
+    to give Serenity lenses awareness of the observed US equity universe.
+    Returns an empty string when no equities are configured (zero-overhead).
+    """
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.data.symbols import stock_token_to_ticker, is_stock_token
+
+        cfg = load_config()
+        tokens = list(cfg.market_data.observed_stock_tokens or [])
+        tokens += list(cfg.market_data.observed_xstocks or [])
+
+        tickers = sorted({
+            stock_token_to_ticker(t)
+            for t in tokens
+            if is_stock_token(t) and stock_token_to_ticker(t)
+        })
+        if not tickers:
+            return ""
+
+        lines = [
+            "\n\nObserved US equity universe (exchange stock tokens — observation only, not traded):",
+        ]
+        lines.append(f"Tickers: {', '.join(tickers)}")
+        lines.append(
+            "These are available as r-series tokens (rNVDA/USDT, rTSLA/USDT, etc.) "
+            "and/or ON-series tokens (NVDAON/USDT) on Bitget. "
+            "Focus supply-chain and thematic research on these names and their ecosystems."
+        )
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 # --- Stage prompts ---
 
 _EVIDENCE_SYSTEM = (
@@ -172,15 +209,49 @@ _LENS_MACRO_SYSTEM = (
     "Return 4-8 macro evidence items. Return raw JSON array, no markdown."
 )
 
+_LENS_EQUITY_CHAIN_SYSTEM = (
+    "You are an EQUITY SUPPLY-CHAIN RESEARCHER for a trading research system. "
+    "Your mandate: analyse US-listed companies accessible via exchange-traded stock tokens "
+    "(Bitget r-series: rNVDA, rTSLA, rAAPL, rAMD, rMSFT, etc.) with a focus on "
+    "industrial supply-chain dynamics, competitive positioning, and near-term catalysts. "
+    "Think like an investor looking for HIDDEN ALPHA in the value chain: "
+    "  • Upstream suppliers that will benefit BEFORE the headline name does "
+    "  • Downstream customers whose order flow signals demand acceleration or contraction "
+    "  • Adjacent competitors/substitutes gaining or losing share "
+    "  • Capital-expenditure announcements that ripple through equipment/materials suppliers "
+    "  • Regulatory / patent / geopolitical factors that shift competitive advantage "
+    "Focus especially on SMALL and MID-CAP names available as r-series tokens — these often "
+    "have less coverage and more mispricing. Provide concrete, actionable signals with "
+    "supporting reasoning; avoid generic macro commentary already covered by the macro lens. "
+    "Return ONLY a JSON array of evidence objects. Each must have: "
+    '"title" (string: company/theme name + key finding), '
+    '"source" (string: use "research", "news", or "market_data"), '
+    '"source_ref" (string: e.g. "NVDA Q1 2026 earnings, supply-chain channel checks"), '
+    '"summary" (string: 2-3 sentences — WHO, WHAT signal, and WHY it matters for price), '
+    '"symbol" (string or null: the stock token canonical symbol, e.g. "rNVDA/USDT" or '
+    '"rPLD/USDT"; prefer the r-series form; null if the insight is theme-level), '
+    '"tier" (string: "likely" for analyst/news-backed claims; "speculative" for inferred; '
+    '"high_confidence" only if there is an external verifiable URL/filing you can cite), '
+    '"confidence" (string: same scale as tier), "supports" (boolean). '
+    "Return 5-12 evidence items covering a diverse set of companies and themes. "
+    "Return raw JSON array, no markdown."
+)
+
 # Registry of all standard research lenses. Order matters: technical first for
 # price anchoring, then flow (derivatives context), sentiment (narrative), macro (cycle).
-# Kept sequential to avoid Databricks rate-limit 429s (workspace token/min cap).
+# equity_chain lens runs last (longest context, most LLM budget).
+# Lenses are run sequentially to stay within Databricks token-per-minute rate limits.
+# equity_chain is appended only when equity tickers are configured (see _run_pipeline_inner).
 RESEARCH_LENSES = [
     ("technical", _LENS_TECHNICAL_SYSTEM),
     ("flow", _LENS_FLOW_SYSTEM),
     ("sentiment", _LENS_SENTIMENT_SYSTEM),
     ("macro", _LENS_MACRO_SYSTEM),
 ]
+
+# The equity_chain lens is added dynamically when observed_equities/observed_stock_tokens
+# are non-empty. Kept separate so standard crypto-only runs are unaffected.
+_EQUITY_CHAIN_LENS = ("equity_chain", _LENS_EQUITY_CHAIN_SYSTEM)
 
 _CLAIMS_SYSTEM = (
     "You are a structured claim extractor. Given evidence summaries, extract atomic claims. "
@@ -328,13 +399,25 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         )
 
     news_block = _get_recent_news_for_research()
+
+    # Inject equity context when stock tokens are configured, so all lenses are
+    # aware of the observed universe and the equity_chain lens gets a rich brief.
+    equity_block = _get_equity_context_block()
+    has_equity_context = bool(equity_block)
+
     research_context = (
         f"Research profile:\n{profile_context}\n"
         f"Brief: {brief}\n"
         f"{existing_context}\n"
         f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
         f"{news_block}"
+        f"{equity_block}"
     )
+
+    # Build active lens list: standard 4 lenses + equity_chain when equities present.
+    active_lenses = list(RESEARCH_LENSES)
+    if has_equity_context and run.get("mode") != "methodology":
+        active_lenses.append(_EQUITY_CHAIN_LENS)
 
     # --- Stage 1: Collect Evidence (S1: multi-lens parallel research) ---
     _check_cancellation(run_id)
@@ -342,7 +425,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     _emit_event(run_id, "stage.started", stage="collect_evidence", message="Collecting evidence")
 
     # ICT methodology mode: single specialized prompt, no multi-lens.
-    # Standard mode: iterate over 4 research lenses sequentially (rate-limit safe).
+    # Standard mode: iterate over lenses sequentially (rate-limit safe).
     persisted_evidence_ids: list[str] = []
     all_evidence_items: list[dict] = []  # all items across all lenses (for Stage 2)
     lens_summaries: dict[str, int] = {}  # lens → count (for synthesis event)
@@ -361,9 +444,9 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         all_evidence_items = evidence_items
         lens_summaries["methodology"] = len(evidence_items)
     else:
-        # S1: 4-lens sequential research — technical, flow, sentiment, macro.
-        # Sequential (not asyncio.gather) to stay within Databricks rate limits.
-        for lens_name, lens_system in RESEARCH_LENSES:
+        # S1: sequential lens research — technical, flow, sentiment, macro, and optionally
+        # equity_chain. Sequential (not asyncio.gather) to stay within rate limits.
+        for lens_name, lens_system in active_lenses:
             _check_cancellation(run_id)
             lens_text, lens_err = await llm_complete(
                 system=lens_system,

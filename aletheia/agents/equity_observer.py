@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_structured, log_tool, record_step
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.data.symbols import ticker_to_xstock
+from aletheia.data.symbols import ticker_to_stock_tokens, stock_token_exchange
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
 from aletheia.config.loader import load_config
@@ -197,29 +197,34 @@ def _fetch_live_price(ticker: str) -> float | None:
     return None
 
 
-async def _fetch_xstock_price(xstock_symbol: str) -> float | None:
-    """Fetch current ask/mid price for a Bitget ON-series xStock.
+async def _fetch_stock_token_price(token_symbol: str, exchange: str = "bitget") -> float | None:
+    """Fetch current price for a tokenized equity token on the given exchange.
 
-    Returns the price as float, or None on any failure.
-    Deliberately uses a dedicated CCXTProvider(bitget, bitget) — ON-series tokens
-    only list on Bitget, so the usual market data provider (binance/bybit) won't work.
+    Uses a dedicated CCXTProvider per call so event-loop binding is safe.
+    exchange defaults to 'bitget' — the current home for both r-series and
+    ON-series tokens.  Future OKX SWAP tokens pass exchange='okx'.
     """
     from aletheia.data.ccxt_provider import CCXTProvider
-    provider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
+    provider = CCXTProvider(exchange=exchange, fallback_exchange=exchange)
     try:
-        ticker = await provider.get_ticker(xstock_symbol)
+        ticker = await provider.get_ticker(token_symbol)
         if ticker:
             price = ticker.get("last") or ticker.get("ask") or ticker.get("bid")
             if price and float(price) > 0:
                 return float(price)
     except Exception as e:
-        logger.debug("xstock fetch failed for %s: %s", xstock_symbol, e)
+        logger.debug("stock token price fetch failed for %s@%s: %s", token_symbol, exchange, e)
     finally:
         await provider.close()
     return None
 
 
-def _render_equity_snapshot(data: dict, xstock_price: float | None, deviation_pct: float | None) -> str:
+def _render_equity_snapshot(
+    data: dict,
+    xstock_price: float | None,
+    deviation_pct: float | None,
+    xstock_symbol: str | None = None,
+) -> str:
     """Render indicator dict + optional xstock data as markdown for LLM."""
     def fmt(v, f="{:.2f}"):
         return "n/a" if v is None else f.format(v)
@@ -240,12 +245,13 @@ def _render_equity_snapshot(data: dict, xstock_price: float | None, deviation_pc
     ]
 
     if xstock_price is not None:
-        lines.append(f"| Bitget xStock price (ON-series) | {fmt(xstock_price)} |")
+        xstock_label = xstock_symbol or "stock token"
+        lines.append(f"| Exchange token price ({xstock_label}) | {fmt(xstock_price)} |")
         if deviation_pct is not None:
             flag = ""
             if deviation_pct > _XSTOCK_DEVIATION_ALERT_PCT:
                 flag = " ⚠ premium alert"
-            lines.append(f"| xStock deviation from close | {deviation_pct:.2f}%{flag} |")
+            lines.append(f"| Token deviation from close | {deviation_pct:.2f}%{flag} |")
 
     return "\n".join(lines)
 
@@ -277,38 +283,49 @@ async def _analyze_equity(
 
     log_tool(run_id, "get_equity_snapshot", "observe", True, output=ticker)
 
-    # xStock cross-validation (optional): fetch real-time on-chain proxy price
-    xstock_symbol = ticker_to_xstock(ticker)
+    # Stock token cross-validation (optional): fetch real-time on-chain proxy price.
+    # ticker_to_stock_tokens() returns tokens in priority order (r-series first, then
+    # ON-series) so we pick the first one that is both in the observed config list and
+    # successfully returns a price.  This is exchange-agnostic — r-series resolves
+    # to Bitget, future OKX SWAP entries resolve to OKX automatically.
+    candidate_tokens = ticker_to_stock_tokens(ticker)
+    xstock_symbol: str | None = None
     xstock_price: float | None = None
     deviation_pct: float | None = None
-    xstock_in_config = xstock_symbol in observed_xstocks if xstock_symbol else False
 
-    if xstock_symbol and xstock_in_config:
-        xstock_price = await _fetch_xstock_price(xstock_symbol)
-        if xstock_price is not None and data["last"] > 0:
-            # data["last"] is yfinance previous-day close; xstock_price is live.
-            # During market hours the stock may have moved legitimately, so we use
-            # the intraday live price from yfinance (fast_info) when available to
-            # give a same-timeframe comparison. Falls back to prior close otherwise.
-            ref_price = await loop.run_in_executor(None, _fetch_live_price, data["ticker"])
-            ref_price = ref_price if (ref_price and ref_price > 0) else data["last"]
-            deviation_pct = abs(xstock_price - ref_price) / ref_price * 100.0
-            if deviation_pct > _XSTOCK_DEVIATION_ANOMALY_PCT:
-                logger.warning(
-                    "xStock data anomaly for %s: deviation=%.2f%% (threshold=%.1f%%), excluding from LLM",
-                    ticker, deviation_pct, _XSTOCK_DEVIATION_ANOMALY_PCT,
-                )
-                # Still record the deviation in metadata but don't pass to LLM
-                xstock_price_for_llm = None
-                deviation_for_llm = None
-            else:
-                xstock_price_for_llm = xstock_price
-                deviation_for_llm = deviation_pct
+    for token_sym in candidate_tokens:
+        if token_sym not in observed_xstocks:
+            continue
+        xstock_symbol = token_sym
+        exchange = stock_token_exchange(token_sym)
+        price = await _fetch_stock_token_price(token_sym, exchange)
+        if price is not None:
+            xstock_price = price
+            break
+
+    if xstock_price is not None and data["last"] > 0:
+        # data["last"] is yfinance previous-day close; xstock_price is live.
+        # During market hours the stock may have moved legitimately, so we use
+        # the intraday live price from yfinance (fast_info) when available for
+        # a same-timeframe comparison. Falls back to prior close otherwise.
+        ref_price = await loop.run_in_executor(None, _fetch_live_price, data["ticker"])
+        ref_price = ref_price if (ref_price and ref_price > 0) else data["last"]
+        deviation_pct = abs(xstock_price - ref_price) / ref_price * 100.0
+        if deviation_pct > _XSTOCK_DEVIATION_ANOMALY_PCT:
+            logger.warning(
+                "Stock token data anomaly for %s (%s): deviation=%.2f%% (threshold=%.1f%%), excluding from LLM",
+                ticker, xstock_symbol, deviation_pct, _XSTOCK_DEVIATION_ANOMALY_PCT,
+            )
+            xstock_price_for_llm = None
+            deviation_for_llm = None
+        else:
+            xstock_price_for_llm = xstock_price
+            deviation_for_llm = deviation_pct
     else:
         xstock_price_for_llm = None
         deviation_for_llm = None
 
-    snapshot_text = _render_equity_snapshot(data, xstock_price_for_llm, deviation_for_llm)
+    snapshot_text = _render_equity_snapshot(data, xstock_price_for_llm, deviation_for_llm, xstock_symbol)
 
     record_step(
         run_id, f"equity_read_input:{ticker}",
@@ -383,10 +400,13 @@ async def _analyze_equity(
         },
     }
     if xstock_price is not None:
-        meta["xstock"] = {
+        token_meta = {
             "symbol": xstock_symbol,
             "price": xstock_price,
+            "exchange": stock_token_exchange(xstock_symbol) if xstock_symbol else "bitget",
         }
+        meta["stock_token"] = token_meta
+        meta["xstock"] = token_meta  # backward-compat alias
         if deviation_pct is not None:
             meta["deviation_pct"] = round(deviation_pct, 4)
             if deviation_pct > _XSTOCK_DEVIATION_ALERT_PCT:
@@ -430,7 +450,11 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
         outputs.append("no_equities_configured")
         return {"outputs": outputs, "errors": errors}
 
-    observed_xstocks: list[str] = cfg.market_data.observed_xstocks or []
+    # Merge new observed_stock_tokens (r-series + ON-series + future OKX) with the
+    # legacy observed_xstocks so existing configs continue to work without changes.
+    _new = list(cfg.market_data.observed_stock_tokens or [])
+    _legacy = list(cfg.market_data.observed_xstocks or [])
+    observed_xstocks: list[str] = list(dict.fromkeys(_new + _legacy))  # dedup, order-preserving
 
     linked_strategy_id = None
     for s in list_strategies(limit=50):
