@@ -86,7 +86,6 @@ trade_proposals.id
 2. 确保 `sync_universe_registry()` 已写入 `venue="hyperliquid"` 行
 
 **Spec claims**：`EX-S07`（结构）/ `EX-B10`（paper_internal 免检）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。
-
 ---
 
 ## 4. TPSL 交易所挂单
