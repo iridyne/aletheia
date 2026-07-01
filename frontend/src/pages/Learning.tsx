@@ -311,7 +311,7 @@ function KnowledgeTab() {
         {selectedLesson && (
           <>
             <DrawerSection label="Summary">
-              <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{selectedLesson.summary || '—'}</p>
+              <p className="text-sm text-pre-wrap">{selectedLesson.summary || '—'}</p>
             </DrawerSection>
             <DrawerSection label="Metadata">
               <DrawerField label="Category" value={<Badge tone="blue">{humanize(selectedLesson.category || '—')}</Badge>} />
@@ -332,7 +332,7 @@ function KnowledgeTab() {
         {selectedGuard && (
           <>
             <DrawerSection label="Description">
-              <p className="text-sm" style={{ whiteSpace: 'pre-wrap' }}>{selectedGuard.description || '—'}</p>
+              <p className="text-sm text-pre-wrap">{selectedGuard.description || '—'}</p>
             </DrawerSection>
             <DrawerSection label="Properties">
               <DrawerField label="Guard ID" value={selectedGuard.guard_id} mono />

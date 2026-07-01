@@ -874,6 +874,7 @@ th.sortable:hover { color: var(--text); }
 .text-muted { color: var(--muted); }
 .text-error { color: var(--red); }
 .text-sm { font-size: 0.78rem; }
+.text-pre-wrap { white-space: pre-wrap; }
 .text-xs { font-size: 0.7rem; }
 .mono { font-family: var(--mono); }
 .mt-1 { margin-top: var(--space-1); }

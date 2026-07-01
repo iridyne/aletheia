@@ -9,6 +9,7 @@ Invariants:
 """
 
 import json
+from unittest.mock import patch
 import pytest
 from httpx import AsyncClient, ASGITransport
 
@@ -121,10 +122,12 @@ async def test_secret_not_in_config_or_logs(client):
 async def test_permission_and_live_changes_audited(client):
     c, tmp_path = client
     await c.post("/api/settings/permission-mode", json={"mode": "Paper"})
-    await c.post(
-        "/api/settings/live-unlock",
-        json={"confirm": True, "acknowledge_first_unlock": True},
-    )
+    with patch("aletheia.analytics.go_live_scorecard.compute_scorecard") as sc:
+        sc.return_value = {"composite_score": 95.0, "traffic_light": "green", "blockers": []}
+        await c.post(
+            "/api/settings/live-unlock",
+            json={"confirm": True, "acknowledge_first_unlock": True},
+        )
     audit = tmp_path / "logs" / "audit.jsonl"
     assert audit.exists()
     events = [json.loads(l) for l in audit.read_text(encoding="utf-8").splitlines() if l.strip()]

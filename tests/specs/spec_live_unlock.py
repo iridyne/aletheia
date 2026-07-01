@@ -247,6 +247,14 @@ def test_live_unlock_writes_audit_event(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
 
+    # D8-B02/C01 scorecard gate: mock a passing scorecard so the unlock pipeline
+    # proceeds; these tests verify the unlock *audit/operator* behavior, not the
+    # scorecard gate itself (covered by spec_pipeline_live_unlock).
+    monkeypatch.setattr(
+        "aletheia.analytics.go_live_scorecard.compute_scorecard",
+        lambda: {"composite_score": 95.0, "traffic_light": "green", "blockers": []},
+    )
+
     client = TestClient(_make_live_app(), raise_server_exceptions=False)
     resp = client.post(
         "/api/settings/live-unlock",
@@ -333,6 +341,11 @@ def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
         yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
     )
 
+    monkeypatch.setattr(
+        "aletheia.analytics.go_live_scorecard.compute_scorecard",
+        lambda: {"composite_score": 95.0, "traffic_light": "green", "blockers": []},
+    )
+
     client = TestClient(_make_live_app(), raise_server_exceptions=False)
     resp = client.post(
         "/api/settings/live-unlock",
@@ -371,6 +384,11 @@ def test_unlock_invariant_state_and_permission(tmp_path, monkeypatch):
     cfg.live.first_live_confirmation_done = True  # already confirmed once
     (tmp_path / "config.yaml").write_text(
         yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        "aletheia.analytics.go_live_scorecard.compute_scorecard",
+        lambda: {"composite_score": 95.0, "traffic_light": "green", "blockers": []},
     )
 
     client = TestClient(_make_live_app(), raise_server_exceptions=False)
