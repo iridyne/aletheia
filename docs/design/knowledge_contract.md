@@ -4,7 +4,7 @@
 > 改动信任不变量前必须 change control (§5)。
 > Source files: `aletheia/knowledge/manager.py` · `retrieval.py` · `guards.py` · `router.py`
 > Cross-references: `docs/governance/trust_and_change_control.md §4` · `docs/design/agent_contracts.md` · `docs/design/data_model.md §3.C`
-> Last updated: 2026-06-29
+> Last updated: 2026-07-01
 
 ---
 
@@ -338,3 +338,49 @@ PI Agent 的 system prompt 分为两层：
 
 三路融合方案（置信度衰减 × 时间 half-life × PI 决策时主动过滤）需深度研究后设计。
 研究计划：`docs/plans/learning_mechanism_research_plan.md`。
+
+---
+
+## §9 FTS 完整性不变量（2026-07-01 根因分析）
+
+### 9.1 三个根因（已复盘）
+
+2026-07-01 审计发现 FTS 记录缺失/无效由三个独立缺陷叠加造成：
+
+| # | 根因 | 受影响类型 | 修复 |
+|---|------|-----------|------|
+| A | **绕过 manager 反模式** — 调用方直接调 `insert_knowledge_item()` 而不经过 `manager.py`；`_index()` 只存在于 `manager.py`，因此这些 item 永远不会进 FTS | `operator_assessment`（已修）；`trading_memo` / `reasoning_feedback` / `calibration_report` / `system_action`（均为设计上不走 FTS 的类型，见 9.2） | `operator_loop._persist_assessment` 补调 `_index()`（commit 6253679）|
+| B | **磁盘文件删除导致 reindex_all() 索引空 body** — `_read_body()` 对不存在的文件返回 `""`；旧版 `reindex_all()` 不区分"文件缺失"和"文件为空"，直接写入空 body FTS 行；空行计数存在但 BM25 查询永远找不到 | `trade_case_study`（历史 reset 删除了磁盘文件，保留了 DB 行） | `reindex_all()` 增加 `if not body.strip(): skip + warn` 守卫（`retrieval.py`，本次修复）|
+| C | **_persist_assessment 漏调 _index** — 函数构建了 `content` 字符串但只调用 `insert_knowledge_item()`，没有调 `_index()`；FTS 行存在但 body 为空 | `operator_assessment` | 同上 commit 6253679 |
+
+### 9.2 哪些 item_type 不需要 FTS（设计上的 bypass 是合理的）
+
+以下四个 item_type 绕过 manager 直接调 `insert_knowledge_item()` 是**合理的**，因为它们的消费路径不走 FTS `retrieve_lessons()`：
+
+| item_type | 生产者 | 消费方式 | FTS 必要性 |
+|-----------|--------|---------|-----------|
+| `system_action` | `commands._emit_self_heal_action` | 结构化 JSON，operator 直接 SQL 查询 | ✗ 不需要 |
+| `trading_memo` | `insight_synthesizer._persist_memo` | `trading_context.py` 直接 `get_latest_trading_memo()` | ✗ 不需要 |
+| `reasoning_feedback` | `reasoning_feedback._persist_feedback` | `trading_context.py` 直接 `get_latest_reasoning_feedback()` | ✗ 不需要 |
+| `calibration_report` | `confidence_calibration._persist_report` | `analytics_routes` 直接 `get_latest_calibration_report()` | ✗ 不需要 |
+
+**规则**：如果新增 item_type 需要走 FTS 检索（即需要被 `retrieve_lessons()` 或 `build_advisory_context()` 找到），**必须**通过 `manager.py` 的 `create_*()` 函数写入，不得直接调 `insert_knowledge_item()`。如果消费路径是直接查询而非 FTS，则直接写入合理，但须在 §2 表中注明"FTS不需要"。
+
+### 9.3 强制性：新 item_type 添加清单
+
+新增 `item_type` 时，除 §2.2 的 5 处同步义务外，还须：
+
+1. **确认消费路径**：FTS（`retrieve_lessons` / `build_advisory_context`）还是直接查询
+2. **选择写入路径**：FTS 消费 → 必须在 `manager.py` 增加 `create_*()` 函数；直接查询 → 可绕过，但须在本表 §9.2 登记
+3. **为 `create_*()` 函数设置正确的 `confidence`**：只有 `high_confidence` 才会被 `_index()` 索引
+4. **KF-C01 spec claim 会在 CI 中自动检测** `create_*()` 是否调用了 `_index()`
+
+### 9.4 磁盘文件与 DB 行的生命周期耦合
+
+写入时：`write_*_file()` 先于 `insert_knowledge_item()` 执行；DB 失败时 `path.unlink()` 回滚磁盘（`manager.py:84`）。
+不存在"DB 有行但磁盘无文件"的正向路径，但历史 data/ 目录 reset 可以造成反向不一致（磁盘无文件，DB 有行）。
+
+**运营规则**：
+- 不得直接删除 `data/knowledge/` 下的 Markdown 文件
+- 需要撤销知识项时，使用 `archive_item()` 或 `deprecate_item()`，而非文件系统 rm
+- 若发现"DB 有行磁盘无文件"的孤立状态，用 `reindex_all()` 可发现（会 WARNING 打出数量）；补救只能重新生成内容后调 `_index(item, content)` 手动注入

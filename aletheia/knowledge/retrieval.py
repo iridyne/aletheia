@@ -130,13 +130,26 @@ def reindex_all() -> int:
         try:
             db.execute("DELETE FROM knowledge_fts")
             count = 0
+            skipped_empty = 0
             for row in list_knowledge_items(limit=100000, status="active"):
                 if row.get("confidence") != _ALLOWED_CONFIDENCE:
                     continue
                 body = _read_body(row.get("file_path"))
+                if not body.strip():
+                    # Root Cause B: disk file deleted or content empty.
+                    # Indexing a blank body produces an invisible FTS row
+                    # (BM25 returns nothing for zero tokens) — skip instead.
+                    skipped_empty += 1
+                    continue
                 item = KnowledgeItem(**{k: row[k] for k in row if k in KnowledgeItem.model_fields})
                 if index_knowledge_item(item, body):
                     count += 1
+            if skipped_empty:
+                logger.warning(
+                    "reindex_all: skipped %d high_confidence items with empty body "
+                    "(file missing or deleted — these items are unrecoverable from FTS)",
+                    skipped_empty,
+                )
             if not already_in_tx:
                 db.commit()
         except Exception:

@@ -148,6 +148,10 @@ def _import_all_specs():
         # outlier-driven PF detection, hard_blocked status + ranker hard-reject.
         # 2026-06-30 Round 2 Coriva impl plan.
         spec_factor_feedback,
+        # Knowledge FTS integrity (KF-*): three root causes of FTS missing records —
+        # (A) bypass-manager anti-pattern, (B) disk-file deletion silent empty-body,
+        # (C) operator_assessment _index() missing. 2026-07-01 root-cause analysis.
+        spec_knowledge_fts,
     )
 
 
