@@ -652,8 +652,8 @@ function LearningFunnelPanel() {
     <Card>
       <CardHeader title="Knowledge Funnel" meta={`${totalItems.toLocaleString()} items`} />
       <div className="funnel-meta-row">
-        <span className="funnel-meta-pill">PI lessons visible: <strong>{visibility.layer3_lesson_filter_db_hits}</strong></span>
-        <span className="funnel-meta-pill">Guards visible: <strong>{visibility.layer3_guards_in_recent_30}</strong></span>
+        <span className="funnel-meta-pill">PI lessons (case studies): <strong>{visibility.layer3_lesson_hits}</strong></span>
+        <span className="funnel-meta-pill">Guards available: <strong>{visibility.layer3_guards_available}</strong></span>
         <span className="funnel-meta-pill">Lessons applied: <strong>{lessonApplied}</strong> / proposed: <strong>{lessonProposed}</strong></span>
         <span className="funnel-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active}</strong></span>
       </div>

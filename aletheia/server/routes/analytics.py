@@ -563,22 +563,24 @@ def get_learning_funnel():
     except Exception:
         pass
 
-    # The known consumption bugs (currently true; will flip after Round 2 fixes)
-    # Layer3 lessons filter: ('lesson','accepted_lesson','trading_guard') — DB rows for these.
+    # Layer3 actual visibility: what PI really reads each cycle.
+    # L-Bug-A fix (b9ad957): layer3 lessons = trade_case_study (not the old
+    # 'lesson'/'accepted_lesson'/'trading_guard' types that had no producers).
+    # L-Bug-A' fix: guard_candidate queried by item_type directly (not limit window).
     layer3_lesson_hits = int(db.execute(
-        "SELECT COUNT(*) FROM knowledge_items "
-        "WHERE item_type IN ('lesson','accepted_lesson','trading_guard')"
+        "SELECT COUNT(*) FROM knowledge_items WHERE item_type = 'trade_case_study'"
     ).fetchone()[0])
-    layer3_guards_in_window = int(cnt.get("guard_candidate", 0))
+    # PI reads up to 3 guard_candidates; report available pool size (capped at 3).
+    layer3_guards_in_window = min(int(cnt.get("guard_candidate", 0)), 3)
 
     return {
         "knowledge_items_by_type": type_total,
         "pi_lessons_window_limit_20_distribution": pi_window_20,
         "pi_guards_window_limit_30_distribution": pi_window_30,
         "pi_actual_visibility": {
-            "layer3_lesson_filter_db_hits": layer3_lesson_hits,
-            "layer3_guards_in_recent_30": layer3_guards_in_window,
-            "comment": "both should be > 0 after Round 2 fixes L-Bug-A / L-Bug-A'",
+            "layer3_lesson_hits": layer3_lesson_hits,
+            "layer3_guards_available": layer3_guards_in_window,
+            "note": "PI reads up to 7 trade_case_study + up to 3 guard_candidate per cycle (L-Bug-A/A' fixed b9ad957)",
         },
         "ps_lessons": ps_summary,
         "serenity_opportunities_active": serenity_active,
