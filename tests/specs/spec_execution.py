@@ -661,6 +661,7 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     SpecClaim(
         "EX-B12", "execution_contract", "§3.2 symbol filter", "L2b",
         "For registry-based modes (bitget, binance): absent symbol → rejection reason; "
+        "spot-only symbol rejects a perp order (market-type-aware); "
         "empty/unsynced registry → None (fail-open, never blocks legitimate orders)",
     ),
 )
@@ -668,16 +669,32 @@ def test_symbol_check_registry_modes(monkeypatch):
     import aletheia.execution.gateway as gw
     import aletheia.storage.repositories as repo
 
-    # ── case A: registry loaded with known symbols, WLD absent ──
+    # ── case A: registry loaded, WLD absent for usdt_futures ──
     gw._registry_symbol_cache.clear()
     monkeypatch.setattr(
         repo, "list_universe_assets",
-        lambda *a, **kw: [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}],
+        lambda *a, **kw: [
+            {"symbol": "BTC/USDT", "market_type": "usdt_futures"},
+            {"symbol": "ETH/USDT", "market_type": "usdt_futures"},
+        ],
     )
-    reason = gw._check_symbol_availability("WLDUSDT", "bitget_demo")
+    reason = gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures")
     assert reason is not None, "Registry loaded but symbol absent — must reject"
 
-    # ── case B: registry empty (not yet synced) → fail-open ──
+    # ── case B: WLD available as spot, but NOT for a perp order ──
+    gw._registry_symbol_cache.clear()
+    monkeypatch.setattr(
+        repo, "list_universe_assets",
+        lambda *a, **kw: [
+            {"symbol": "BTC/USDT", "market_type": "usdt_futures"},
+            {"symbol": "WLD/USDT", "market_type": "spot"},
+        ],
+    )
+    reason_spot_only = gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures")
+    assert reason_spot_only is not None, "Spot-only symbol must reject a perp order"
+    assert gw._check_symbol_availability("WLDUSDT", "bitget_demo", "spot") is None
+
+    # ── case C: registry empty (not yet synced) → fail-open ──
     gw._registry_symbol_cache.clear()
     monkeypatch.setattr(repo, "list_universe_assets", lambda *a, **kw: [])
     reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_testnet")

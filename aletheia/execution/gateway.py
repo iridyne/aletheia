@@ -103,13 +103,13 @@ _EXECUTION_MODE_TO_VENUE: dict[str, str] = {
     "binance_live_limited": "binance",
 }
 
-_registry_symbol_cache: dict[str, tuple[frozenset, float]] = {}
+_registry_symbol_cache: dict[str, tuple[dict, float]] = {}
 _registry_cache_ttl = 14400  # 4h — same cadence as OKX broker cache
 _registry_cache_lock = threading.Lock()
 
 
-def _load_registry_symbols(venue: str) -> frozenset | None:
-    """Return cached frozenset of canonical symbols for a venue from universe_registry.
+def _load_registry_symbols(venue: str) -> dict | None:
+    """Return cached {market_type: frozenset} of canonical symbols for a venue.
 
     Returns None on cache miss + DB failure (fail-open).
     """
@@ -123,11 +123,17 @@ def _load_registry_symbols(venue: str) -> frozenset | None:
         assets = list_universe_assets(venue=venue, active_only=True, limit=3000)
         if not assets:
             return None  # registry not yet synced — fail-open
-        symbols = frozenset(row["symbol"] for row in assets)
+        by_type: dict[str, set] = {}
+        for row in assets:
+            mtype = row.get("market_type") or "usdt_futures"
+            by_type.setdefault(mtype, set()).add(row["symbol"])
+        result = {k: frozenset(v) for k, v in by_type.items()}
         with _registry_cache_lock:
-            _registry_symbol_cache[venue] = (symbols, time.time())
-        logger.debug("Symbol cache loaded: %d symbols for venue=%s", len(symbols), venue)
-        return symbols
+            _registry_symbol_cache[venue] = (result, time.time())
+        total = sum(len(v) for v in result.values())
+        logger.debug("Symbol cache loaded: %d symbols (%s) for venue=%s",
+                     total, list(result.keys()), venue)
+        return result
     except Exception as exc:
         logger.warning("Failed to load registry symbols for venue=%s: %s", venue, exc)
         return None
@@ -138,7 +144,8 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
 
     Returns None when available, or when availability is unknown (fail-open).
     paper_internal is always None — it does not route to a real exchange.
-    market_type is used for OKX demo to distinguish swap vs spot symbol sets.
+    The check is market-type-aware for all exchange modes: a symbol available
+    only as spot will not pass a futures/perp order, and vice versa.
     """
     if execution_mode == "paper_internal":
         return None
@@ -146,10 +153,7 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
     from aletheia.data.symbols import to_canonical
     canonical = to_canonical(symbol)
 
-    # OKX demo has a curated sandbox symbol set — use the dedicated broker cache
-    # which loads via ccxt.okx sandbox mode (subset of live OKX symbols).
-    # The check is market-type-aware: swap and spot have separate frozensets so a
-    # symbol available only as spot (e.g. WLD) does not pass a perp order.
+    # OKX demo uses a dedicated CCXT sandbox market load (subset of live OKX).
     if execution_mode == "okx_demo":
         from aletheia.execution.okx_broker import _get_demo_symbols
         supported = _get_demo_symbols(market_type)
@@ -157,14 +161,17 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
             return f"{symbol} not available on OKX demo ({market_type})"
         return None
 
-    # All other real-exchange modes: check universe_registry (venue = CCXT exchange name).
+    # All other real-exchange modes: check universe_registry, market-type-aware.
     venue = _EXECUTION_MODE_TO_VENUE.get(execution_mode)
     if venue is None:
         return None  # unknown/future mode — fail-open
 
-    supported = _load_registry_symbols(venue)
+    registry = _load_registry_symbols(venue)
+    if registry is None:
+        return None  # registry not yet synced — fail-open
+    supported = registry.get(market_type)
     if supported is not None and canonical not in supported:
-        return f"{symbol} not available on {execution_mode}"
+        return f"{symbol} ({market_type}) not available on {execution_mode}"
     return None
 
 

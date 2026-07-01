@@ -11,7 +11,6 @@ market-type-aware so a symbol available only as spot does not pass a perp order.
 """
 
 import asyncio
-import json
 import logging
 import threading
 import time
@@ -20,6 +19,7 @@ from datetime import datetime
 
 from aletheia.data.symbols import to_canonical
 from aletheia.exchanges.okx.client import OKXClient, OrderRequest
+from aletheia.execution.broker_utils import clean_error_message
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
@@ -94,39 +94,6 @@ def refresh_okx_demo_symbols() -> int:
 
 # ---------------------------------------------------------------------------
 # Error message sanitiser
-# ---------------------------------------------------------------------------
-
-def _clean_error_message(raw: str) -> str:
-    """Extract a human-readable message from an OKX/CCXT error string.
-
-    OKX errors arrive as:  'OKX: okx {"code":"1","data":[{..."sMsg":"<text>"...}],...}'
-    CCXT symbol errors:    'okx does not have market symbol WLD/USDT:USDT'
-    Anything else is returned trimmed and unchanged.
-    """
-    if not raw:
-        return raw
-    # Try to extract sMsg from OKX JSON payload
-    json_start = raw.find("{")
-    if json_start != -1:
-        try:
-            payload = json.loads(raw[json_start:])
-            data = payload.get("data") or []
-            if data and isinstance(data, list):
-                smsg = data[0].get("sMsg", "").strip()
-                if smsg:
-                    return f"OKX: {smsg}"
-            msg = payload.get("msg", "").strip()
-            if msg:
-                return f"OKX: {msg}"
-        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-            pass
-    # CCXT "does not have market symbol" → friendlier wording
-    if "does not have market symbol" in raw:
-        # Extract the symbol from the message
-        parts = raw.split("does not have market symbol")
-        sym_part = parts[-1].strip().split(":")[0].strip()  # strip settle suffix
-        return f"Symbol {sym_part} not available on OKX"
-    return raw.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +171,7 @@ def execute_live_order(
             client_oid=proposal_id, leverage=leverage,
         )))
     except Exception as e:
-        update_order(order.id, status="error", error_reason=_clean_error_message(str(e))[:500])
+        update_order(order.id, status="error", error_reason=clean_error_message(str(e))[:500])
         raise
     finally:
         try:
@@ -380,7 +347,7 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
             client_oid=f"close-{position_id}",
         )))
     except Exception as e:
-        update_order(close_order.id, status="error", error_reason=str(e)[:500])
+        update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
         update_position(position_id, pending_close_status="error")
         raise
     finally:
