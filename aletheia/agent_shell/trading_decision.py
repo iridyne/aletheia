@@ -590,14 +590,20 @@ def _build_assessment_prompt(ctx: dict) -> str:
     # D2: show the INDEPENDENTLY assessed tier (authoritative gate), not the self-grade.
     # Phase 2: also surface the deterministic score/bucket/evidence_count so the PI
     # weighs research picks on the same transparent scale the Serenity scorer uses.
-    serenity_lines = "\n".join(
-        f"  {o['symbol']} {o.get('direction', '?')} "
-        f"[conf={o.get('confidence_score', '?')} tier={o.get('assessed_tier') or o.get('evidence_tier', '?')} "
-        f"score={o.get('score', '?')} bucket={o.get('bucket', '?')} evidence={o.get('evidence_count', 0)}]: "
-        f"{o.get('thesis', '')}"
-        + (f"\n      key evidence: {o['key_evidence']}" if o.get("key_evidence") else "")
-        for o in serenity_opps
-    ) or ""
+    # EQ-R: equity stock tokens are observation-only — labelled [EQUITY/OBS] so the PI
+    # knows not to include them as order candidates.
+    _serenity_lines: list[str] = []
+    for o in serenity_opps:
+        _is_eq = o.get("asset_class") == "equity" or not o.get("execution_eligible", True)
+        _eq_tag = " [EQUITY/OBS — research context only, do not trade]" if _is_eq else ""
+        _serenity_lines.append(
+            f"  {o['symbol']}{_eq_tag} {o.get('direction', '?')} "
+            f"[conf={o.get('confidence_score', '?')} tier={o.get('assessed_tier') or o.get('evidence_tier', '?')} "
+            f"score={o.get('score', '?')} bucket={o.get('bucket', '?')} evidence={o.get('evidence_count', 0)}]: "
+            f"{o.get('thesis', '')}"
+            + (f"\n      key evidence: {o['key_evidence']}" if o.get("key_evidence") else "")
+        )
+    serenity_lines = "\n".join(_serenity_lines) or ""
 
     # ── Data Health Alerts ──
     data_health = layer1.get("data_health", {})
@@ -978,6 +984,11 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     # opportunity that actually carries an id (the attribution anchor).
     serenity_opps = (ctx.get("layer3") or {}).get("serenity_opportunities") or []
     for o in serenity_opps:
+        # EQ-R: equity observation-only tokens must never become execution anchors.
+        if not o.get("execution_eligible", True):
+            continue
+        if o.get("asset_class") == "equity":
+            continue
         if o.get("symbol") != decision.symbol:
             continue
         sdir = o.get("direction")

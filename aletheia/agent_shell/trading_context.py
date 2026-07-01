@@ -562,6 +562,13 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 verdict = _json.loads(o.get("verdict_json") or "{}")
             except Exception:
                 verdict = {}
+                _asset_class = o.get("asset_class") or "crypto"
+            _market_type = o.get("market_type") or "spot"
+            # EQ-R (2026-07-01): equity stock tokens are observation-only.
+            # They appear in the PI's research context as background information
+            # but are NOT surfaced as order-routing candidates (execution_eligible=False).
+            # The PI should reference them for macro/sector context, not try to trade them.
+            _execution_eligible = (_asset_class != "equity")
             serenity_opps.append({
                 # Phase 2: attribution anchor — without the id the PI's pick can never be
                 # linked back to serenity_opportunities (signal_source='serenity').
@@ -584,6 +591,11 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 "verdict": verdict,
                 # S2: researchability grade (A/B/C) — informs PI of data quality.
                 "researchability_grade": o.get("researchability_grade") or "C",
+                # EQ-R: instrument classification for execution routing and display.
+                # execution_eligible=False means PI treats this as research context only.
+                "asset_class": _asset_class,
+                "market_type": _market_type,
+                "execution_eligible": _execution_eligible,
             })
         layer["serenity_opportunities"] = serenity_opps
     except Exception:

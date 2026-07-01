@@ -35,21 +35,44 @@ _EXECUTOR_LOCK = threading.Lock()
 _ALLOWED_QUOTE_CURRENCIES = frozenset({"USDT", "USDC", "BTC", "ETH", "BUSD"})
 
 
-def _is_tradeable_crypto_symbol(symbol: str) -> bool:
-    """Return True only for canonical crypto pairs with an allowed quote currency."""
+def _is_allowed_serenity_symbol(symbol: str) -> bool:
+    """Return True for symbols that may be persisted as SerenityOpportunity records.
+
+    Accepts:
+    - Canonical crypto pairs: BTC/USDT, ETH/USDT, SOL/USDT …  (USDT/USDC/BTC/ETH quote)
+    - Exchange stock tokens:  rNVDA/USDT, rTSLA/USDT, AAPLON/USDT … (is_stock_token=True)
+
+    Rejects:
+    - Bare tickers without a quote: MSTR, SPY, BTC
+    - Forex / USD-quoted pairs: GBP/USD, AAPL/USD
+    - Macro aggregates / non-tradeable: ALTCOINS, STABLECOIN_SUPPLY_AGGREGATE
+    - Symbols longer than 14 chars base (catches most hallucinated tickers)
+
+    The function is intentionally permissive toward stock tokens: they are
+    observation-only (asset_class="equity") but valid Serenity research targets.
+    The execution guard lives in trading_context Layer 3, not here.
+    """
+    from aletheia.data.symbols import is_stock_token as _is_stock_token
     if not symbol or "/" not in symbol:
         return False
     parts = symbol.split("/")
     if len(parts) != 2:
         return False
     base, quote = parts[0].strip(), parts[1].strip()
-    # quote must be an allowed crypto currency
+    # Stock tokens (rNVDA, AAPLON, …) are explicitly allowed.
+    if _is_stock_token(symbol):
+        return True
+    # Crypto pairs must have an allowed quote currency.
     if quote not in _ALLOWED_QUOTE_CURRENCIES:
         return False
-    # base must look like a crypto ticker (letters/digits, 2-10 chars)
-    if not base or not base.isalnum() or len(base) > 10:
+    # Base must look like a crypto ticker (letters/digits, 2-14 chars).
+    if not base or not base.isalnum() or len(base) > 14:
         return False
     return True
+
+
+# Legacy alias kept so any call sites we missed still compile.
+_is_tradeable_crypto_symbol = _is_allowed_serenity_symbol
 
 
 def _get_recent_news_for_research() -> str:
@@ -110,9 +133,18 @@ def _get_equity_context_block() -> str:
             "\n\nObserved US equity universe (exchange stock tokens — observation only, not traded):",
         ]
         lines.append(f"Tickers: {', '.join(tickers)}")
+        # Build a concise list of the token formats actually configured so the
+        # equity_chain lens knows which symbols to use in its output.
+        from aletheia.data.symbols import ticker_to_stock_tokens as _t2st
+        example_tokens: list[str] = []
+        for _t in tickers[:4]:
+            _toks = _t2st(_t)
+            if _toks:
+                example_tokens.append(_toks[0])  # r-series first (highest liquidity)
+        token_examples = ", ".join(example_tokens) if example_tokens else "rNVDA/USDT, rTSLA/USDT"
         lines.append(
-            "These are available as r-series tokens (rNVDA/USDT, rTSLA/USDT, etc.) "
-            "and/or ON-series tokens (NVDAON/USDT) on Bitget. "
+            f"These are available as exchange-traded stock tokens (e.g. {token_examples}). "
+            "Use the canonical token symbol (with /USDT quote) when identifying specific opportunities. "
             "Focus supply-chain and thematic research on these names and their ecosystems."
         )
         return "\n".join(lines)
@@ -212,7 +244,8 @@ _LENS_MACRO_SYSTEM = (
 _LENS_EQUITY_CHAIN_SYSTEM = (
     "You are an EQUITY SUPPLY-CHAIN RESEARCHER for a trading research system. "
     "Your mandate: analyse US-listed companies accessible via exchange-traded stock tokens "
-    "(Bitget r-series: rNVDA, rTSLA, rAAPL, rAMD, rMSFT, etc.) with a focus on "
+    "(e.g. rNVDA/USDT, rTSLA/USDT, rAAPL/USDT, rAMD/USDT, rMSFT/USDT and similar r-series; "
+    "or ON-series tokens like AAPLON/USDT, TSLAON/USDT) with a focus on "
     "industrial supply-chain dynamics, competitive positioning, and near-term catalysts. "
     "Think like an investor looking for HIDDEN ALPHA in the value chain: "
     "  • Upstream suppliers that will benefit BEFORE the headline name does "
@@ -228,8 +261,8 @@ _LENS_EQUITY_CHAIN_SYSTEM = (
     '"source" (string: use "research", "news", or "market_data"), '
     '"source_ref" (string: e.g. "NVDA Q1 2026 earnings, supply-chain channel checks"), '
     '"summary" (string: 2-3 sentences — WHO, WHAT signal, and WHY it matters for price), '
-    '"symbol" (string or null: the stock token canonical symbol, e.g. "rNVDA/USDT" or '
-    '"rPLD/USDT"; prefer the r-series form; null if the insight is theme-level), '
+    '"symbol" (string or null: the stock token canonical symbol WITH /USDT quote, e.g. "rNVDA/USDT" '
+    'or "rPLD/USDT"; prefer the r-series form; null if the insight is theme-level only), '
     '"tier" (string: "likely" for analyst/news-backed claims; "speculative" for inferred; '
     '"high_confidence" only if there is an external verifiable URL/filing you can cite), '
     '"confidence" (string: same scale as tier), "supports" (boolean). '
@@ -275,14 +308,16 @@ _THEMES_SYSTEM = (
 )
 
 _OPPORTUNITIES_SYSTEM = (
-    "You are an opportunity identifier for a crypto derivatives trading system. "
+    "You are an opportunity identifier for a trading research system. "
     "Given research themes with evidence, identify potential opportunities. "
-    "CRITICAL: only output symbols that are actual crypto perpetual/spot pairs tradeable on OKX or Bitget, "
-    "such as BTC/USDT, ETH/USDT, SOL/USDT. "
-    "NEVER output stock tickers (MSTR, SPY, GBTC), forex pairs (GBP/USD), "
-    "macro aggregates (ALTCOINS, STABLECOIN_SUPPLY_AGGREGATE), or any non-USDT quoted crypto pairs. "
+    "SYMBOL RULES — only two valid formats: "
+    "(1) Crypto perpetual/spot: BTC/USDT, ETH/USDT, SOL/USDT (quote must be USDT/USDC/BTC/ETH). "
+    "(2) Exchange stock tokens: rNVDA/USDT, rTSLA/USDT, rAAPL/USDT (Bitget r-series); "
+    "or AAPLON/USDT, TSLAON/USDT (Bitget ON-series). "
+    "NEVER output bare stock tickers (MSTR, SPY), forex (GBP/USD), "
+    "USD-quoted equity (AAPL/USD), macro aggregates, or symbols without a /USDT quote. "
     "Return ONLY a JSON array of opportunity objects. Each must have: "
-    '"symbol" (string: canonical crypto format, quote must be USDT — e.g. "BTC/USDT"), '
+    '"symbol" (string: canonical format per the rules above — e.g. "BTC/USDT" or "rNVDA/USDT"), '
     '"direction" (string: "long" or "short"), '
     '"thesis" (string: why this is an opportunity), '
     '"evidence_tier" (string, your PROPOSED grade: one of "disclosed", "high_confidence", "likely", "speculative" '
@@ -620,14 +655,29 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             opp_items = _parse_json_array(opps_text, "opportunities")
             for i, item in enumerate(opp_items[:5]):
                 raw_sym = (item.get("symbol") or "").strip()
-                if not _is_tradeable_crypto_symbol(raw_sym):
+                if not _is_allowed_serenity_symbol(raw_sym):
                     logger.info(
-                        "Skipping non-tradeable symbol from LLM: %r — only USDT-quoted crypto pairs allowed",
+                        "Skipping hallucinated symbol from LLM: %r "
+                        "— must be USDT-quoted crypto pair or exchange stock token",
                         raw_sym,
                     )
                     continue
                 theme_id = persisted_themes[min(i, len(persisted_themes) - 1)] if persisted_themes else None
                 if theme_id:
+                    # Classify instrument: stock token (equity, spot) vs crypto pair.
+                    # This drives execution routing in trading_context Layer 3 and the
+                    # slash/no-slash display rule in the frontend via fmtSymbol().
+                    from aletheia.data.symbols import (
+                        is_stock_token as _is_stock_token,
+                        stock_token_market_type as _stock_mkt_type,
+                    )
+                    _sym = item.get("symbol", "BTC/USDT")
+                    if _is_stock_token(_sym):
+                        _asset_class = "equity"
+                        _market_type = _stock_mkt_type(_sym)  # "spot" for r-series/ON-series; "swap" for future OKX SWAP
+                    else:
+                        _asset_class = "crypto"
+                        _market_type = "spot"  # Serenity generates spot opportunities; swap/perp handled by PI
                     # The opportunity's authoritative tier is derived from the strongest
                     # INDEPENDENTLY ASSESSED supporting evidence under this theme, not the
                     # LLM's self-graded `evidence_tier` (which is kept only as a proposal).
@@ -649,7 +699,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                     }
                     opp = SerenityOpportunity(
                         theme_id=theme_id,
-                        symbol=item.get("symbol", "BTC/USDT"),
+                        symbol=_sym,
                         direction=item.get("direction", "long"),
                         thesis=item.get("thesis"),
                         evidence_tier=normalize_tier(item.get("evidence_tier")),
@@ -659,6 +709,8 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                         risk_flags=json.dumps(item.get("risk_flags", [])),
                         verdict_json=json.dumps(verdict_obj),
                         researchability_grade=r_grade,
+                        asset_class=_asset_class,
+                        market_type=_market_type,
                     )
                     try:
                         repo.insert_serenity_opportunity(opp)
