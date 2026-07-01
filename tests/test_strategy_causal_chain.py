@@ -28,10 +28,12 @@ from aletheia.trading.strategy_lifecycle import create_strategy, check_promotion
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    import aletheia.regime.detector as _det
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     for sub in ("logs", "knowledge/research_notes", "knowledge/strategies"):
         (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+    _det.reset_state()  # clear module-level regime cache so cross-test pollution can't filter candidates
     reset_db()
     sq._db_conn = None
     conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
