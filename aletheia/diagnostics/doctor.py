@@ -907,6 +907,37 @@ def _probe_reconciled_ratio(report: Report) -> None:
         report.add("loop.reconciled_ratio", "info", f"probe error: {e}")
 
 
+def _probe_sizing_policy(report: Report) -> None:
+    """Persona-learning (P3) health: is the sizing learner active, and is any active
+    regime bucket bleeding (negative clean reward while nudging appetite)? Dormant by
+    default → info. A bucket that is active AND has negative mean reward is flagged
+    warn (the learner is defensive there, but the operator should see the bleed).
+    Read-only."""
+    try:
+        from aletheia.trading.sizing_policy import sizing_policy_health
+        h = sizing_policy_health()
+        if not h["enabled"]:
+            report.add("loop.sizing_policy", "info", "persona learning dormant (persona_learning_enabled=False)")
+            return
+        active = {b: v for b, v in h["buckets"].items() if v["active"]}
+        if not active:
+            report.add("loop.sizing_policy", "info",
+                       f"persona learning ON, no bucket past sample gate ({h['min_samples']})")
+            return
+        bleeding = {b: v for b, v in active.items() if (v["mean_reward_pct"] or 0) < 0}
+        summary = ", ".join(f"{b}:n={v['clean_samples']} r={v['mean_reward_pct']}% adj={v['appetite_adj']}"
+                            for b, v in active.items())
+        if bleeding:
+            report.add("loop.sizing_policy", "warn",
+                       f"active learning buckets bleeding: {summary}",
+                       "the learner is sizing DOWN there (defensive), but a negative-reward "
+                       "regime bucket may warrant refreezing the param or reviewing the strategy")
+        else:
+            report.add("loop.sizing_policy", "ok", f"active learning buckets: {summary}")
+    except Exception as e:
+        report.add("loop.sizing_policy", "info", f"probe error: {e}")
+
+
 def _probe_reconcile_thrash(report: Report) -> None:
     """Precise detector for the reconciler false-orphan THRASH (distinct from the
     ambiguous reconciled_ratio): the close→reopen flip-flop fingerprint — the same
@@ -1763,6 +1794,7 @@ def build_report() -> Report:
         _probe_learning_retrieval,
         _probe_reconciled_ratio,
         _probe_reconcile_thrash,
+        _probe_sizing_policy,
         _probe_concentration,
         # content-quality (Phase 2): "is the AI's output garbage", not "is the loop alive"
         *_CONTENT_PROBES,

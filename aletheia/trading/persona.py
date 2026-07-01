@@ -110,6 +110,17 @@ def build_sizing_context(symbol: str | None = None, direction: str | None = None
     except Exception:
         pass
 
+    # P3: persona learning nudges appetite by the current regime bucket's clean-window
+    # reward (dormant unless persona_learning_enabled + enough clean samples; bounded).
+    try:
+        from aletheia.trading.sizing_policy import learned_appetite_adjustment
+        adj = learned_appetite_adjustment(ctx.get("regime"), cfg)
+        if adj:
+            appetite += adj
+            ctx["learned_adj"] = adj
+    except Exception:
+        pass
+
     ctx["risk_appetite"] = max(0.0, min(1.0, appetite))
     return ctx
 

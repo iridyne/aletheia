@@ -537,6 +537,13 @@ class TradingConfig(BaseModel):
     persona_sizing_enabled: bool = False
     active_persona: str = "conservative"
     personas: dict[str, TradingPersona] = Field(default_factory=_default_personas)
+    # --- Persona learning (P3): the Operator's decision space as a learnable policy ---
+    # When enabled, the sizing risk_appetite is nudged by the historical clean-window
+    # reward of the current context bucket (regime). Default OFF (dormant). The learner
+    # self-refreezes (returns no adjustment) when it lacks clean samples or its own
+    # recent policy is degrading — a soft circuit-breaker, no config flip needed.
+    persona_learning_enabled: bool = False
+    persona_learning_min_samples: int = 15
 
 
 class UpdateConfig(BaseModel):

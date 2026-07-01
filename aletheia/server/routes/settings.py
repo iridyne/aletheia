@@ -889,6 +889,8 @@ class TradingConfigUpdate(SettingsRequest):
     exchange_tpsl_enabled: Optional[bool] = None
     persona_sizing_enabled: Optional[bool] = None
     active_persona: Optional[str] = None
+    persona_learning_enabled: Optional[bool] = None
+    persona_learning_min_samples: Optional[int] = None
     market_aware_exits: Optional[MarketAwareExitsUpdate] = None
 
 
@@ -898,6 +900,7 @@ _TRADING_BOUNDS: dict[str, tuple[float, float]] = {
     "max_position_hold_hours": (1.0, 8760.0),
     "slippage_bps": (0.0, 200.0),
     "execution_fee_pct": (0.0, 5.0),
+    "persona_learning_min_samples": (3, 500),
 }
 _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 

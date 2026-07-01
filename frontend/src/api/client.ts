@@ -376,6 +376,7 @@ export const api = {
     default_notional_usdt: number; vol_sizing_enabled: boolean
     vol_target_risk_usdt: number; vol_target_pct: number; vol_kelly_cap_fraction: number
     persona_sizing_enabled: boolean; active_persona: string
+    persona_learning_enabled: boolean; persona_learning_min_samples: number
     sweep_use_optuna: boolean; sweep_n_trials: number; sweep_optuna_timeout_sec: number; sweep_top_k: number
     market_aware_exits: Partial<{
       enabled: boolean; min_hold_hours_before_market_exit: number; max_signal_age_min: number

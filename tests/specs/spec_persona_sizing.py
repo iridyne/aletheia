@@ -186,3 +186,111 @@ def test_operator_decidable_param_is_context_decided(tmp_path, monkeypatch):
     # kelly is NOT decidable → stays at init
     assert eff["kelly_fraction"] == roll.params["kelly_fraction"].init
     assert eff["_risk_appetite"] is not None
+
+
+def _closed(repo, Position, regime, pnl, reason="take_profit", entry=100.0, qty=1.0):
+    repo.insert_position(Position(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=qty, entry_price=entry, execution_mode="okx_demo",
+        status="closed", realized_pnl=pnl, close_reason=reason, regime_tag=regime,
+        closed_at="2026-07-02T00:00:00+00:00",
+    ))
+
+
+@spec_claim(
+    SpecClaim("PS-S07", "persona_sizing", "§7 learned appetite nudge (dormant + bounded)", "L2b",
+              "learned_appetite_adjustment returns 0.0 when learning disabled OR clean "
+              "samples < gate (self-refreeze); when enabled with enough clean wins in a "
+              "bucket → positive bounded nudge; clean losses → negative nudge."),
+)
+def test_learned_appetite_adjustment(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.trading import sizing_policy
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_learning_min_samples = 3
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    # 4 clean BULL wins (+2% each).
+    for _ in range(4):
+        _closed(repo, Position, "bull", pnl=2.0)
+
+    # Disabled → dormant (0.0) even with data.
+    cfg.trading.persona_learning_enabled = False
+    assert sizing_policy.learned_appetite_adjustment("bull", cfg) == 0.0
+
+    # Enabled → positive bounded nudge for the profitable bucket.
+    cfg.trading.persona_learning_enabled = True
+    adj = sizing_policy.learned_appetite_adjustment("bull", cfg)
+    assert 0 < adj <= sizing_policy.MAX_ADJ, f"profitable bucket → positive bounded nudge, got {adj}"
+
+    # A bucket below the sample gate → 0 (self-refreeze on thin data).
+    assert sizing_policy.learned_appetite_adjustment("volatile", cfg) == 0.0
+
+    # A losing bucket → negative nudge (defensive).
+    for _ in range(4):
+        _closed(repo, Position, "bear", pnl=-2.0, reason="stop_loss")
+    assert sizing_policy.learned_appetite_adjustment("bear", cfg) < 0
+
+
+@spec_claim(
+    SpecClaim("PS-S08", "persona_sizing", "§7 learning uses CLEAN data only", "L2b",
+              "synthetic/administrative closes (reconciled_gone) are excluded from the "
+              "learner's reward — a huge fake reconciled_gone 'win' must not move the "
+              "appetite nudge (the reconciler-thrash-poisons-learning lesson)."),
+)
+def test_learning_excludes_synthetic_closes(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.trading import sizing_policy
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_learning_enabled = True
+    cfg.trading.persona_learning_min_samples = 3
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+
+    # 4 clean bull LOSSES (-2%) + 10 synthetic reconciled_gone huge "wins" (+50%).
+    for _ in range(4):
+        _closed(repo, Position, "bull", pnl=-2.0, reason="stop_loss")
+    for _ in range(10):
+        _closed(repo, Position, "bull", pnl=50.0, reason="reconciled_gone")
+
+    # If synthetic wins leaked in, the nudge would be strongly POSITIVE. It must stay
+    # negative (only the 4 genuine losses count).
+    adj = sizing_policy.learned_appetite_adjustment("bull", cfg)
+    assert adj < 0, f"synthetic closes must not move the learner; got {adj}"
+
+
+@spec_claim(
+    SpecClaim("PS-S09", "persona_sizing", "§9 sizing_policy_health observability", "L2b",
+              "sizing_policy_health reports enabled flag + per-regime clean sample "
+              "counts / mean reward / active flag for the doctor probe; dormant when "
+              "learning disabled."),
+)
+def test_sizing_policy_health(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.trading import sizing_policy
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_learning_enabled = True
+    cfg.trading.persona_learning_min_samples = 3
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    for _ in range(4):
+        _closed(repo, Position, "bull", pnl=2.0)
+
+    h = sizing_policy.sizing_policy_health(cfg)
+    assert h["enabled"] is True
+    assert h["buckets"]["bull"]["clean_samples"] == 4
+    assert h["buckets"]["bull"]["active"] is True
+    assert h["buckets"]["volatile"]["active"] is False  # no samples

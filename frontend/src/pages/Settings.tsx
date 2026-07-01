@@ -1780,6 +1780,8 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [maeTightenAtrMult, setMaeTightenAtrMult] = useState('0.8')
   const [personaEnabled, setPersonaEnabled] = useState(false)
   const [activePersona, setActivePersona] = useState('conservative')
+  const [personaLearningEnabled, setPersonaLearningEnabled] = useState(false)
+  const [personaLearningMinSamples, setPersonaLearningMinSamples] = useState('15')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -1809,6 +1811,8 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
     setVolKellyCap(String(trading.vol_kelly_cap_fraction ?? 0.25))
     setPersonaEnabled(!!trading.persona_sizing_enabled)
     setActivePersona(trading.active_persona ?? 'conservative')
+    setPersonaLearningEnabled(!!trading.persona_learning_enabled)
+    setPersonaLearningMinSamples(String(trading.persona_learning_min_samples ?? 15))
   }, [settings])
 
   const mut = useMutation({
@@ -1832,6 +1836,8 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
       vol_kelly_cap_fraction: parseFloat(volKellyCap),
       persona_sizing_enabled: personaEnabled,
       active_persona: activePersona,
+      persona_learning_enabled: personaLearningEnabled,
+      persona_learning_min_samples: parseInt(personaLearningMinSamples),
       market_aware_exits: {
         enabled: maeEnabled,
         urgent_exit_score: parseInt(maeUrgentScore),
@@ -2010,6 +2016,26 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
                 </div>
               )
             })()}
+            <div className="mt-2">
+              <Toggle
+                checked={personaLearningEnabled}
+                label="Persona learning (按 regime 干净窗奖励学习 sizing)"
+                onChange={v => { setPersonaLearningEnabled(v); setMsg(null) }}
+              />
+              <p className="hint mt-1">
+                P3: nudges risk-appetite by each regime bucket's clean-window reward (synthetic/thrash
+                closes excluded). Dormant until a bucket has enough clean samples; bounded ±0.3; self-
+                refreezes on thin/degrading data. Watch <code>loop.sizing_policy</code> in doctor.
+              </p>
+              {personaLearningEnabled && (
+                <label className="mt-2">
+                  <span>Min clean samples per bucket</span>
+                  <input type="number" min={3} max={500} step={1} value={personaLearningMinSamples}
+                    onChange={e => { setPersonaLearningMinSamples(e.target.value); setMsg(null) }}
+                    className="mono w-auto" />
+                </label>
+              )}
+            </div>
           </>
         )}
       </div>
@@ -2714,6 +2740,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct', 'trading.exchange_tpsl_enabled',
     'trading.default_notional_usdt', 'trading.vol_sizing_enabled', 'trading.vol_target_risk_usdt', 'trading.vol_target_pct', 'trading.vol_kelly_cap_fraction',
     'trading.persona_sizing_enabled', 'trading.active_persona', 'trading.personas',
+    'trading.persona_learning_enabled', 'trading.persona_learning_min_samples',
     'health.enabled', 'health.alert_via_telegram', 'health.alert_via_windows_toast', 'health.require_llm_at_startup',
     'health.self_heal_enabled', 'health.self_heal_code_drift', 'health.self_heal_market_data', 'health.self_heal_port_cleanup',
     'health.max_agent_failure_ratio', 'health.llm_unavailable_alert_after', 'health.market_data_max_staleness_min',
