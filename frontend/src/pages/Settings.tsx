@@ -1116,7 +1116,7 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
   const [longShortRatio, setLongShortRatio] = useState(md.enable_long_short_ratio ?? true)
   const [historyHours, setHistoryHours] = useState(md.derivatives_history_hours ?? 24)
   const [stocks, setStocks] = useState(listToCsv(md.observed_stocks))
-  const [xstocks, setXstocks] = useState(listToCsv(md.observed_xstocks))
+  const [stockTokens, setStockTokens] = useState(listToCsv(md.observed_stock_tokens))
   const [predMarkets, setPredMarkets] = useState(listToCsv(md.observed_prediction_markets))
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -1128,7 +1128,7 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
     setLongShortRatio(md.enable_long_short_ratio ?? true)
     setHistoryHours(md.derivatives_history_hours ?? 24)
     setStocks(listToCsv(md.observed_stocks))
-    setXstocks(listToCsv(md.observed_xstocks))
+    setStockTokens(listToCsv(md.observed_stock_tokens))
     setPredMarkets(listToCsv(md.observed_prediction_markets))
   }, [settings])
 
@@ -1141,7 +1141,7 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
       enable_long_short_ratio: longShortRatio,
       derivatives_history_hours: historyHours,
       observed_stocks: parseCsvList(stocks),
-      observed_xstocks: parseCsvList(xstocks),
+      observed_stock_tokens: parseCsvList(stockTokens),
       observed_prediction_markets: parseCsvList(predMarkets),
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
@@ -1155,7 +1155,7 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
     || longShortRatio !== (md.enable_long_short_ratio ?? true)
     || historyHours !== (md.derivatives_history_hours ?? 24)
     || stocks !== listToCsv(md.observed_stocks)
-    || xstocks !== listToCsv(md.observed_xstocks)
+    || stockTokens !== listToCsv(md.observed_stock_tokens)
     || predMarkets !== listToCsv(md.observed_prediction_markets)
 
   useEffect(() => { onDirty?.('market-data', dirty) }, [dirty])
@@ -1195,9 +1195,9 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
           onChange={e => { setStocks(e.target.value); setMsg(null) }}
           className="mono w-full" />
       </Row>
-      <Row label="Observed xStocks" hint="Bitget ON-series tokenized stocks (e.g. AAPLON/USDT). Comma-separated.">
-        <input value={xstocks} placeholder="AAPLON/USDT, TSLAON/USDT"
-          onChange={e => { setXstocks(e.target.value); setMsg(null) }}
+      <Row label="Stock tokens" hint="Exchange-traded equity tokens for real-time price tracking. Supports Bitget r-series (rNVDA/USDT, rTSLA/USDT) and ON-series (AAPLON/USDT). Comma-separated. Used by equity_observer for cross-validation and Serenity for supply-chain research.">
+        <input value={stockTokens} placeholder="rNVDA/USDT, rTSLA/USDT, AAPLON/USDT"
+          onChange={e => { setStockTokens(e.target.value); setMsg(null) }}
           className="mono w-full" />
       </Row>
       <Row label="Prediction markets" hint="Polymarket category slugs to track. Comma-separated.">
@@ -2638,7 +2638,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'universe.market_type', 'universe.family_quota',
     'tunnel.enabled', 'tunnel.tunnel_id', 'tunnel.hostname',
     'market_data.ccxt_exchange', 'market_data.ccxt_fallback', 'market_data.ohlcv_cache_ttl_min', 'market_data.enable_yfinance_macro',
-    'market_data.observed_stocks', 'market_data.observed_xstocks', 'market_data.observed_prediction_markets',
+    'market_data.observed_stocks', 'market_data.observed_stock_tokens', 'market_data.observed_prediction_markets',
     // These DO have UI controls — were missing from the set so the coverage matrix
     // falsely labelled them "config.yaml only" (CUI-3, honesty fix):
     'market_data.prediction_enabled',   // PredictionToggleCard

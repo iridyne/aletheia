@@ -108,39 +108,137 @@ def to_yfinance(symbol: str) -> str:
     return f"{base}-{quote}" if quote else base
 
 
-# Bitget ON-series xStocks: base token (without /USDT) → canonical equity ticker.
-# xStocks are tokenized US equities on Bitget — they track NYSE/NASDAQ prices
-# but are a separate on-chain instrument (may carry small premium/discount).
-# Extend this dict as new xStock pairs are listed; ticker_to_xstock() derives
-# the reverse mapping automatically.
+# ---------------------------------------------------------------------------
+# Generic stock token registry
+# ---------------------------------------------------------------------------
+# Explicit registry for tokenized equity tokens where the name does NOT follow
+# a simple pattern (ON-series, ETFs with non-obvious tickers, future OKX SWAP,
+# etc.).  Maps canonical_symbol → (equity_ticker, exchange).
+#
+# Bitget r-series tokens (rNVDA/USDT, rTSLA/USDT …) are handled automatically
+# by the _is_r_series_base() rule — no need to enumerate all 113+ entries here.
+# Add explicit entries only for tokens that break the rule or live on a
+# different exchange.
+_STOCK_TOKEN_REGISTRY: dict[str, tuple[str, str]] = {
+    # Bitget ON-series
+    "AAPLON/USDT": ("AAPL", "bitget"),
+    "TSLAON/USDT": ("TSLA", "bitget"),
+    "NVDAON/USDT": ("NVDA", "bitget"),
+    "AMZNON/USDT": ("AMZN", "bitget"),
+    "MSFTON/USDT": ("MSFT", "bitget"),
+    "METAON/USDT": ("META", "bitget"),
+    "GOOGLON/USDT": ("GOOGL", "bitget"),
+    "GOOGLBON/USDT": ("GOOG", "bitget"),
+    "AMDON/USDT": ("AMD", "bitget"),
+    "NFLXON/USDT": ("NFLX", "bitget"),
+    # Bitget ON-series ETFs / commodity ETFs
+    "SPYON/USDT": ("SPY", "bitget"),
+    "QQQON/USDT": ("QQQ", "bitget"),
+    "IVVON/USDT": ("IVV", "bitget"),
+    "ITOTON/USDT": ("ITOT", "bitget"),
+    "IWMON/USDT": ("IWM", "bitget"),
+    "IAON/USDT": ("IAU", "bitget"),
+    "SLVON/USDT": ("SLV", "bitget"),
+    # Future OKX SWAP (instCategory=3) — add entries here as they are integrated,
+    # e.g. "AAPL/USDT": ("AAPL", "okx") once the OKX stock-SWAP adapter exists.
+}
+
+# Backward-compat view of the ON-series registry (base token → ticker).
+# Used only by the deprecated xstock_to_ticker / ticker_to_xstock functions.
 _XSTOCK_BASE_TO_TICKER: dict[str, str] = {
-    "AAPLON": "AAPL",
-    "TSLAON": "TSLA",
-    "NVDAON": "NVDA",
-    "SPYON": "SPY",
-    "MSFTON": "MSFT",
-    "AMZNON": "AMZN",
-    "GOOGLON": "GOOGL",
-    "METAON": "META",
-    "NFLXON": "NFLX",
-    "GOOGLBON": "GOOG",
+    sym.split("/")[0]: ticker
+    for sym, (ticker, _) in _STOCK_TOKEN_REGISTRY.items()
+    if sym.endswith("/USDT")
 }
 
 
-def xstock_to_ticker(symbol: str) -> str | None:
-    """Map a Bitget xStock symbol to its canonical equity ticker.
+def _is_r_series_base(base: str) -> bool:
+    """True for Bitget r-series token base coins: lowercase 'r' + 2-5 uppercase chars.
 
-    'AAPLON/USDT' → 'AAPL'. Returns None if not in the mapping table.
-    Input may be in any format (canonical 'AAPLON/USDT' or bare 'AAPLON').
+    Examples: 'rNVDA' (True), 'rTSLA' (True), 'rT' (False — too short),
+    'rTMUS' (True), 'rCMCSA' (False — 5 uppercase chars after 'r' → would be 6 → actually
+    CMCSA is 5 chars → True).  The rule mirrors Bitget's naming convention where the
+    base coin is a literal 'r' prepended to the standard stock/ETF ticker.
     """
-    base = symbol.split("/")[0].strip().upper()
-    return _XSTOCK_BASE_TO_TICKER.get(base)
+    if not base or base[0] != "r":
+        return False
+    stem = base[1:]
+    return stem.isupper() and 2 <= len(stem) <= 6
+
+
+def stock_token_to_ticker(symbol: str) -> str | None:
+    """Generic: map any exchange stock token symbol → equity ticker.
+
+    Resolution order:
+    1. Explicit ``_STOCK_TOKEN_REGISTRY`` (ON-series, OKX SWAP, manual overrides).
+    2. Bitget r-series rule: strip leading 'r' → ticker ('rNVDA/USDT' → 'NVDA').
+
+    Returns None when the symbol is not a recognised stock token.
+    """
+    canon = to_canonical(symbol)
+    entry = _STOCK_TOKEN_REGISTRY.get(canon)
+    if entry:
+        return entry[0]
+    base = canon.split("/")[0]
+    if _is_r_series_base(base):
+        return base[1:].upper()
+    return None
+
+
+def stock_token_exchange(symbol: str) -> str:
+    """Get the exchange that lists this stock token.
+
+    Currently all known tokens (ON-series + r-series) are on Bitget.
+    Extend ``_STOCK_TOKEN_REGISTRY`` with ``(ticker, "okx")`` entries when OKX
+    SWAP stock tokens are integrated; this function reads them transparently.
+    """
+    canon = to_canonical(symbol)
+    entry = _STOCK_TOKEN_REGISTRY.get(canon)
+    if entry:
+        return entry[1]
+    return "bitget"  # default: r-series tokens live on Bitget
+
+
+def is_stock_token(symbol: str) -> bool:
+    """Return True if symbol is a tokenized equity/ETF on any supported exchange."""
+    return stock_token_to_ticker(symbol) is not None
+
+
+def ticker_to_stock_tokens(ticker: str) -> list[str]:
+    """All stock token canonical symbols available for an equity ticker.
+
+    Returns tokens in priority order: highest-liquidity first.
+    Currently: Bitget r-series (high liquidity, ~$10B/day) before ON-series.
+
+    Example: 'NVDA' → ['rNVDA/USDT', 'NVDAON/USDT']
+    """
+    t = ticker.strip().upper()
+    results: list[str] = []
+    # r-series (primary, highest liquidity): rNVDA/USDT
+    if _is_r_series_base(f"r{t}"):
+        results.append(f"r{t}/USDT")
+    # Registry entries (ON-series, OKX SWAP, etc.)
+    for sym, (sym_ticker, _) in _STOCK_TOKEN_REGISTRY.items():
+        if sym_ticker == t and sym not in results:
+            results.append(sym)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatibility aliases (ON-series original API)
+# ---------------------------------------------------------------------------
+
+def xstock_to_ticker(symbol: str) -> str | None:
+    """Deprecated: use stock_token_to_ticker().  Maps any stock token → equity ticker."""
+    return stock_token_to_ticker(symbol)
 
 
 def ticker_to_xstock(ticker: str) -> str | None:
-    """Map a canonical equity ticker to its Bitget xStock symbol.
+    """Deprecated: use ticker_to_stock_tokens().
 
-    'AAPL' → 'AAPLON/USDT'. Returns None if no xStock exists for the ticker.
+    Returns the Bitget ON-series symbol for a ticker ('AAPL' → 'AAPLON/USDT'), or
+    None if no ON-series exists.  Preserves the old behaviour of preferring ON-series
+    over r-series for callers that were written before r-series support was added.
     """
     inv = {v: k for k, v in _XSTOCK_BASE_TO_TICKER.items()}
     base = inv.get(ticker.strip().upper())

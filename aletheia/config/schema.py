@@ -126,9 +126,6 @@ class MarketDataConfig(BaseModel):
     # volume, stored in onchain_snapshots and folded into the macro context block.
     # Fills the on-chain hole left by the never-built Glassnode. Phase B cadence.
     enable_defillama: bool = True
-    # US equities to observe (Yahoo Finance tickers). stock_observer runs only
-    # during US market hours (Mon–Fri 14:30–21:00 UTC). Empty = disabled.
-    observed_stocks: list[str] = Field(default_factory=list)
     # Master switch for prediction market observation (Polymarket). When False,
     # prediction_observer does not run and the Prediction Lens page shows disabled.
     prediction_enabled: bool = False
@@ -137,17 +134,25 @@ class MarketDataConfig(BaseModel):
     observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])
     # US equities to observe — canonical Yahoo Finance tickers (e.g. "AAPL").
     # equity_observer fetches daily bars via yfinance AND real-time price via
-    # Bitget xStocks (if a matching ON-series token exists). Runs Mon–Fri
-    # 14:30–21:00 UTC (US market hours). Empty = disabled.
+    # exchange stock tokens (r-series + ON-series on Bitget; future OKX SWAP).
+    # Runs Mon–Fri 14:30–21:00 UTC (US market hours). Empty = disabled.
     observed_equities: list[str] = Field(default_factory=list)
-    # Deprecated: use observed_equities instead. Kept for backwards compatibility
-    # so existing config.yaml files continue to load without error.
+    # Deprecated: use observed_equities instead. Kept for backwards compat.
     observed_stocks: list[str] = Field(default_factory=list)
-    # Bitget tokenized xStocks (ON-series spot symbols). market_observer observes
-    # these via Bitget CCXT (no API key needed); asset_class="equity", never traded.
-    observed_xstocks: list[str] = Field(
-        default_factory=lambda: ["AAPLON/USDT", "TSLAON/USDT", "NVDAON/USDT", "SPYON/USDT"]
+    # Tokenized equity/ETF spot symbols on any supported exchange (Bitget ON-series,
+    # Bitget r-series, future OKX SWAP).  Canonical form e.g. "rNVDA/USDT",
+    # "AAPLON/USDT".  equity_observer uses these for real-time price cross-validation.
+    # Replaces the narrower observed_xstocks (which remains a backward-compat alias).
+    # Default covers the major r-series + ON-series starters; edit in Settings UI.
+    observed_stock_tokens: list[str] = Field(
+        default_factory=lambda: [
+            "rNVDA/USDT", "rTSLA/USDT", "rAAPL/USDT", "rAMD/USDT",
+            "rMSFT/USDT", "rGOOGL/USDT", "rAMZN/USDT", "rMETA/USDT",
+            "AAPLON/USDT", "TSLAON/USDT", "NVDAON/USDT", "SPYON/USDT",
+        ]
     )
+    # Deprecated: use observed_stock_tokens instead.
+    observed_xstocks: list[str] = Field(default_factory=list)
     # Third-tier fallback: CoinGecko + Binance public API when CCXT primary+fallback both fail.
     enable_crypto_fallback: bool = True
     # Coinalyze cross-exchange OI + liquidation aggregator (requires API key).

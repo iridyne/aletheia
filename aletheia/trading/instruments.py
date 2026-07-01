@@ -1,6 +1,9 @@
 """Tradable instrument definitions and timeframes (guide §3.2, §22.1)."""
 
-from aletheia.data.symbols import InstrumentId, to_canonical, MARKET_SPOT, MARKET_PERP
+from aletheia.data.symbols import (
+    InstrumentId, to_canonical, MARKET_SPOT, MARKET_PERP,
+    stock_token_exchange, is_stock_token,
+)
 
 # MVP tradable symbols — Bitget execution format (used by risk engine + order router)
 TRADABLE_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
@@ -59,21 +62,51 @@ def observed_symbols_from_config(cfg) -> list[str]:
     return cfg.market_data.observed_symbols
 
 
-def xstocks_instruments_from_config(cfg) -> list[InstrumentId]:
-    """Return Bitget tokenized xStocks as InstrumentId list.
+def stock_tokens_from_config(cfg) -> list[InstrumentId]:
+    """Return all configured tokenized equity/ETF instruments as InstrumentId list.
 
-    These use exchange="bitget" so CCXTProvider fetches from Bitget (the only
-    exchange listing ON-series tokens like AAPLON/USDT, TSLAON/USDT).
-    asset_class is handled by the caller — always "equity", never traded.
+    Reads ``observed_stock_tokens`` (new field) and falls back to the deprecated
+    ``observed_xstocks`` so existing configs continue to work.
+
+    Exchange is inferred via ``stock_token_exchange()`` — Bitget r-series and
+    ON-series resolve to "bitget"; future OKX SWAP entries resolve to "okx".
+    This makes the function exchange-agnostic: new token series on any exchange
+    only need a registry entry in ``symbols.py``.
+
+    Invalid / non-token entries are silently skipped so a bad config line does
+    not break the entire collection run.
     """
-    symbols = getattr(cfg.market_data, "observed_xstocks", []) or []
+    tokens = list(getattr(cfg.market_data, "observed_stock_tokens", None) or [])
+    # Backward-compat: merge observed_xstocks into the list (deduplicated).
+    legacy = list(getattr(cfg.market_data, "observed_xstocks", None) or [])
+    seen: set[str] = set()
+    merged: list[str] = []
+    for s in tokens + legacy:
+        key = to_canonical(s)
+        if key and key not in seen:
+            seen.add(key)
+            merged.append(s)
+
     result = []
-    for s in symbols:
+    for s in merged:
+        if not is_stock_token(s):
+            continue
+        exchange = stock_token_exchange(s)
         try:
-            result.append(InstrumentId.from_parts("bitget", s, MARKET_SPOT))
+            result.append(InstrumentId.from_parts(exchange, s, MARKET_SPOT))
         except (ValueError, Exception):
             pass
     return result
+
+
+def xstocks_instruments_from_config(cfg) -> list[InstrumentId]:
+    """Deprecated: use stock_tokens_from_config().
+
+    Kept for call sites that were written before r-series support was added.
+    Returns the same list as stock_tokens_from_config() — all stock tokens,
+    not just ON-series — since callers use the result identically.
+    """
+    return stock_tokens_from_config(cfg)
 
 
 def observed_instruments_from_config(cfg) -> list[InstrumentId]:
