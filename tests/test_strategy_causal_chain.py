@@ -137,6 +137,9 @@ async def test_strategy_id_flows_through_chain(tmp_path, monkeypatch):
     """Phase 4a/4e: Strategy stops at paper_candidate. After PI Agent promotes it,
     paper_trader writes signal_pending entries for PI Agent to execute."""
     setup_env(tmp_path, monkeypatch)
+    # Reset global regime cache so prior tests' published regime doesn't bleed in.
+    import aletheia.regime.detector as _det
+    monkeypatch.setattr(_det, "_published_regime", None)
     _set_mode("Paper")
     _patch_llm_structured(monkeypatch)
 
@@ -182,6 +185,8 @@ async def test_promotion_gate_counts_bound_paper_trades(tmp_path, monkeypatch):
     """Phase 4a/4e: Paper trader now writes signals. To test promotion gates,
     we simulate PI Agent creating a position for the strategy."""
     setup_env(tmp_path, monkeypatch)
+    import aletheia.regime.detector as _det
+    monkeypatch.setattr(_det, "_published_regime", None)
     _set_mode("Paper")
     _patch_llm_structured(monkeypatch)
 
