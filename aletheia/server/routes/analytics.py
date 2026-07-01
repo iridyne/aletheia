@@ -570,8 +570,10 @@ def get_learning_funnel():
     layer3_lesson_hits = int(db.execute(
         "SELECT COUNT(*) FROM knowledge_items WHERE item_type = 'trade_case_study'"
     ).fetchone()[0])
-    # PI reads up to 3 guard_candidates; report available pool size (capped at 3).
-    layer3_guards_in_window = min(int(cnt.get("guard_candidate", 0)), 3)
+    # PI reads up to 3 guard_candidates by item_type filter (L-Bug-A' fix).
+    # Count from full table (cnt only covers last 30 rows and guard_candidate is rare there).
+    total_by_type = {row["item_type"]: row["count"] for row in type_total}
+    layer3_guards_in_window = min(int(total_by_type.get("guard_candidate", 0)), 3)
 
     return {
         "knowledge_items_by_type": type_total,
