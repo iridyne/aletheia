@@ -90,6 +90,11 @@ export interface SerenityOpportunity {
   confidence_score: number | null
   created_at: string
   updated_at: string
+  // EQ-R (2026-07-01): instrument classification for display + routing.
+  // asset_class: "crypto" (default) | "equity" (US stock tokens from equity_chain lens)
+  // market_type: "spot" | "swap" | "perp" — drives slash/no-slash display via fmtSymbol()
+  asset_class?: string
+  market_type?: string
   serenity_score?: {
     opportunity_id: string
     score: number

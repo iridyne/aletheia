@@ -152,6 +152,12 @@ def _import_all_specs():
         # (A) bypass-manager anti-pattern, (B) disk-file deletion silent empty-body,
         # (C) operator_assessment _index() missing. 2026-07-01 root-cause analysis.
         spec_knowledge_fts,
+        # Equity observer + generic stock-token registry (EQ-R* claims): guards the
+        # exchange-agnostic _STOCK_TOKEN_REGISTRY + r-series rule, equity_observer's
+        # priority token lookup, Serenity equity_chain lens, and schema/doc R5
+        # compliance for Bitget r-series tokens. Attaches to data_utilization_contract.
+        # 2026-07-01 xStocks adaptation.
+        spec_equity_observer,
     )
 
 

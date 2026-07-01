@@ -56,11 +56,12 @@ def test_xstocks_instruments_from_config(tmp_path, monkeypatch):
 
 
 def test_xstocks_instruments_empty_when_not_configured(tmp_path, monkeypatch):
-    """No crash when observed_xstocks is empty."""
+    """No crash when both observed_xstocks and observed_stock_tokens are empty."""
     _setup(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_xstocks = []
+    cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
     xs = xstocks_instruments_from_config(cfg)
     assert xs == []

@@ -52,7 +52,8 @@
 | **Hyperliquid OI/资金费率/预测** | HyperliquidCollector | `funding/OI` (exchange=hyperliquid*) | **market_observer→跨venue资金费率对比→LLM** (本次新增路由) | ✅ |
 | **DefiLlama 链上(稳定币/TVL/DEX)** | DefiLlamaCollector | `onchain_snapshots` | market_observer→macro 链上块→LLM | ✅ |
 | 预测市场 | PolymarketProvider | prediction 表 | market_observer 预测块→LLM (启用时) | ✅ |
-| 美股/xStocks | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
+| 美股/xStocks (ON-series, 15 tokens) | equity_observer | equity 表 | **observation-only（不交易，仅交叉验证/溢价监测）** | 🟡 |
+| **美股 r-series 代币 (113 tokens, Bitget)** | equity_observer (stock token cross-validation) | 不落库，实时抓取作 cross-val | **equity_observer → `_fetch_stock_token_price()` → yfinance 偏差监测 → LLM equity snapshot**；亦注入 Serenity equity_chain lens 上下文 | ✅ |
 | 市场状态 regime | MacroCollector._classify_risk_regime()（内联派生，无独立 RegimeCollector 类） | `macro_snapshots.risk_regime` | market_observer / context_builder → regime 评分 → LLM | ✅ |
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
 | 清算 liquidations | CoinalyzeCollector（已建，待 scheduler 接入；DU-S06/DU-T01 追踪） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |

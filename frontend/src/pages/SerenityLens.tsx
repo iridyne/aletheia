@@ -679,7 +679,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
                   return (
                     <OpportunityRow
                       key={o.id}
-                      symbol={fmtSymbol(o.symbol, o.market || o.market_type)}
+                      symbol={fmtSymbol(o.symbol, o.market_type)}
                       direction={humanize(o.direction)}
                       rec={rec}
                       grade={grade}
