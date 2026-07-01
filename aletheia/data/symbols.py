@@ -143,6 +143,19 @@ _STOCK_TOKEN_REGISTRY: dict[str, tuple[str, str]] = {
     # e.g. "AAPL/USDT": ("AAPL", "okx") once the OKX stock-SWAP adapter exists.
 }
 
+# Market-type overrides for stock tokens that are NOT plain spot.
+# All entries in _STOCK_TOKEN_REGISTRY default to MARKET_SPOT ("spot").
+# When OKX SWAP stock tokens are added to the registry, register their canonical
+# symbols here too so stock_token_market_type() returns the correct value.
+# Format: canonical_symbol → market_type string (matches InstrumentId._VALID_MARKET_TYPES).
+#
+# Example for future OKX SWAP:
+#   "AAPL/USDT": "swap",    # perpetual SWAP on OKX
+#   "AAPL-USD-XPERP": "perp",
+_STOCK_TOKEN_NON_SPOT: dict[str, str] = {
+    # (currently empty — all known Bitget r-series and ON-series are spot)
+}
+
 # Backward-compat view of the ON-series registry (base token → ticker).
 # Used only by the deprecated xstock_to_ticker / ticker_to_xstock functions.
 _XSTOCK_BASE_TO_TICKER: dict[str, str] = {
@@ -174,14 +187,19 @@ def stock_token_to_ticker(symbol: str) -> str | None:
     2. Bitget r-series rule: strip leading 'r' → ticker ('rNVDA/USDT' → 'NVDA').
 
     Returns None when the symbol is not a recognised stock token.
+
+    Note: to_canonical() uppercases everything, destroying the lowercase 'r'
+    prefix used by the r-series rule.  We therefore extract the original base
+    from the raw symbol (before uppercasing) to preserve case for the rule check.
     """
     canon = to_canonical(symbol)
     entry = _STOCK_TOKEN_REGISTRY.get(canon)
     if entry:
         return entry[0]
-    base = canon.split("/")[0]
-    if _is_r_series_base(base):
-        return base[1:].upper()
+    # Extract original base preserving case ('rNVDA/USDT' → 'rNVDA').
+    raw_base = symbol.strip().split("/")[0].split(":")[0]
+    if _is_r_series_base(raw_base):
+        return raw_base[1:].upper()
     return None
 
 
@@ -202,6 +220,24 @@ def stock_token_exchange(symbol: str) -> str:
 def is_stock_token(symbol: str) -> bool:
     """Return True if symbol is a tokenized equity/ETF on any supported exchange."""
     return stock_token_to_ticker(symbol) is not None
+
+
+def stock_token_market_type(symbol: str) -> str:
+    """Return the market type for a stock token symbol.
+
+    All current Bitget r-series and ON-series tokens are spot (cash-settled,
+    no funding rate, no liquidation).  Future OKX SWAP tokens are perpetual
+    swaps — register them in ``_STOCK_TOKEN_NON_SPOT`` to override.
+
+    Returns MARKET_SPOT ("spot") for any unregistered / unknown symbol so callers
+    always get a valid string (never None).
+
+    Use this when building InstrumentId or deciding the display convention:
+      - spot → keep slash  (BTC/USDT  →  BTC/USDT)
+      - swap/perp → drop slash  (AAPL/USDT  →  AAPLUSDT)
+    """
+    canon = to_canonical(symbol)
+    return _STOCK_TOKEN_NON_SPOT.get(canon, MARKET_SPOT)
 
 
 def ticker_to_stock_tokens(ticker: str) -> list[str]:

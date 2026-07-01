@@ -1515,6 +1515,13 @@ _ADDITIVE_COLUMNS = [
     # NULL on legacy rows; insert_trade_proposal() fills both for new writes.
     ("commit_hash", "trade_proposals", "TEXT"),
     ("parent_hash", "trade_proposals", "TEXT"),
+    # EQ-R (2026-07-01, r-series/equity_chain): instrument classification on serenity opps.
+    # asset_class distinguishes equity stock tokens from crypto so trading_context can
+    # skip equity observations in the PI's order-routing context.
+    # market_type ("spot"|"swap"|"perp") drives the slash/no-slash display rule.
+    # NULL on legacy rows → treat as "crypto" / "spot" (safe default).
+    ("asset_class", "serenity_opportunities", "TEXT NOT NULL DEFAULT 'crypto'"),
+    ("market_type", "serenity_opportunities", "TEXT NOT NULL DEFAULT 'spot'"),
 ]
 
 
