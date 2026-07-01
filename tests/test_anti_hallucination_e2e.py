@@ -129,15 +129,20 @@ def test_layer3_guards_from_guard_candidate(tmp_path, monkeypatch):
 
 
 def test_ps_lessons_surface_to_pi_prompt(tmp_path, monkeypatch):
-    """L-Bug-B: dreaming ps_lessons must reach Layer3 AND the PI prompt — 184+ proposed
-    lessons previously had zero consumer path."""
+    """L-Bug-B: dreaming ps_lessons must reach Layer3 AND the PI prompt.
+    Layer3 reads status='applied' (evidence-reviewed lessons). Proposed/accepted
+    are earlier pipeline stages and are intentionally excluded from PI context."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.learning.lessons import LessonStore
-    LessonStore().create(
+    store = LessonStore()
+    lesson = store.create(
         summary="Avoid chasing late breakouts in low-liquidity alts",
         source_type="post_trade_review", source_id="ptr-1",
         category="entry_timing", severity="warn",
     )
+    # Advance lesson to applied status (the only status visible to Layer3)
+    store.accept(lesson.lesson_id)
+    store.mark_applied(lesson.lesson_id, policy_version_id="test-policy-1")
     from aletheia.agent_shell.trading_context import _build_layer3_wisdom
     layer3 = _build_layer3_wisdom()
     assert layer3["ps_lessons"], "ps_lessons must surface into Layer3"

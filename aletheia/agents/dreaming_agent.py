@@ -227,7 +227,13 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             '"category" (one of: risk_sizing, entry_timing, exit_timing, symbol_selection, general), '
             '"severity" (info|warning|critical), '
             '"evidence" (object with fields: outcome_counts (dict), avg_pnl_pct (float or null), '
-            'factor_keys (list of strings), scanner_families (list of strings)). '
+            'factor_keys (list of strings), scanner_families (list of strings)), '
+            '"recommendation" (optional — include ONLY when evidence strongly supports a specific '
+            'trading constraint; must be one of: '
+            '{"action": "block_scanner", "scanner": "<scanner_family>"}, '
+            '{"action": "block_direction", "direction": "short"|"long"}, '
+            '{"action": "reduce_size", "factor": 0.3-0.8}; '
+            'omit entirely if lesson is general advice without a concrete constraint). '
             "Return ONLY the JSON array, no other text."
         ),
         user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
@@ -299,6 +305,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             category=lesson.get("category", "general"),
             severity=lesson.get("severity", "info"),
             evidence=evidence,
+            recommendation=lesson.get("recommendation") or None,  # L-Bug-A fix
         )
         log_tool(run_id, "create_lesson", "observe", True, output=created.lesson_id)
         outputs.append(f"lesson:{created.lesson_id}")
