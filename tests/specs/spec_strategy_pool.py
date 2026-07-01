@@ -120,21 +120,43 @@ def test_strategy_designer_writes_direction_affinity():
 
 
 # ---------------------------------------------------------------------------
-# SP-S05 — short scanner family exists in signal_emitter (Phase 2A)
+# SP-S05 — short_bias scanner family is REACHABLE (Phase 2A+.8)
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
-    SpecClaim("SP-S05", "strategy_pool", "§short scanner family", "L2a",
-              "signal_emitter.py has a 'short_bias' scanner family for bearish-specific signals"),
+    SpecClaim("SP-S05", "strategy_pool", "§short scanner family", "L2b",
+              "short_bias scanner family is REACHABLE: score_short_bias fires 'short' on bearish setups AND is registered in run_all_scanners"),
 )
-def test_short_bias_scanner_family_exists():
-    """专用 short_bias scanner family 必须在 signal_emitter 中存在。"""
-    import pathlib
-    src = (pathlib.Path(_project_root()) / "aletheia/universe/signal_emitter.py").read_text(encoding="utf-8")
-    assert 'family == "short_bias"' in src or "family == 'short_bias'" in src, (
-        "signal_emitter.py 没有 'short_bias' scanner family 的处理分支 — "
-        "在 bear regime 下没有专门针对空头的信号生成逻辑，"
-        "空头机会只能从通用 momentum/derivatives 家族的副产品中产生。"
-        "Phase 2A 修复：新增 short_bias family，在 bear/volatile regime 下主动寻找做空信号。"
+def test_short_bias_scanner_family_reachable():
+    """专用 short_bias scanner family 必须**可达**，不能是死码。
+
+    2026-07-01 教训（假绿陷阱）：先前的 SP-S05 只 `assert 'family == "short_bias"' in src`
+    —— 字符串写了就 GREEN，但那段分支在 run_all_scanners 里从未注册，运行时永不可达，
+    是死码。本 spec 改为**行为可达性**检查，任何"写了但没接通"的回归都会被抓住：
+      1. score_short_bias 在 bearish setup 上真的产出 direction="short" 且 score>0
+      2. score_short_bias 在 bullish setup 上返回 None（不误发）
+      3. short_bias 已注册进 run_all_scanners（出现在 all_scores 里 → 可被选中）
+    """
+    from aletheia.universe.scanners import score_short_bias, run_all_scanners
+
+    # 1. 干净 bearish setup → 产出 short 信号
+    bearish = {
+        "return_4h": -4.0, "return_24h": -6.0,
+        "funding_rate": -0.006, "rsi_14": 40.0,
+        "relative_strength_24h": -5.0,
+    }
+    score, reasons, direction = score_short_bias(bearish)
+    assert direction == "short", f"score_short_bias 未在 bearish setup 产出 short: {direction}"
+    assert score > 0, f"score_short_bias 产出 short 但 score={score}"
+
+    # 2. bullish setup → 不误发
+    bullish = {"return_4h": 3.0, "return_24h": 5.0, "rsi_14": 60.0}
+    assert score_short_bias(bullish)[2] is None, "score_short_bias 在 bullish setup 误发信号"
+
+    # 3. 已注册进 run_all_scanners（可达性核心断言）— all_scores 包含 short_bias
+    result = run_all_scanners(bearish)
+    assert "short_bias" in result.get("all_scores", {}), (
+        "short_bias 未注册进 run_all_scanners — scanner_family 永远不会是 'short_bias'，"
+        "该 family 是死码。必须在 run_all_scanners 的 results dict 中注册 score_short_bias。"
     )

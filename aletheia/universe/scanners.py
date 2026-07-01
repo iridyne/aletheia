@@ -421,6 +421,70 @@ def score_event(feat: dict) -> tuple[float, list[str], str | None]:
     return max(0.0, min(100.0, score)), reasons, direction
 
 
+def score_short_bias(feat: dict) -> tuple[float, list[str], str | None]:
+    """Score dedicated bearish setups for bear/volatile regimes (Phase 2A+.8).
+
+    Fires ONLY "short". Looks for confluence of sustained downward momentum
+    (4h + 24h aligned), non-crowded short positioning (funding not deeply
+    positive = shorts not already piled in), and RSI with room to fall (not
+    already oversold). Complements the generic momentum/derivatives families
+    with a short-specific edge; the regime gate in signal_emitter filters it
+    out in bull markets, and short_enabled=False kills it globally.
+
+    Returns (score, reasons, direction). direction is "short" or None.
+    """
+    score = 0.0
+    reasons: list[str] = []
+
+    ret_4h = feat.get("return_4h")
+    ret_24h = feat.get("return_24h")
+    rsi_val = feat.get("rsi_14")
+    funding = feat.get("funding_rate")
+    rs_24h = feat.get("rs_beta_adj_24h") or feat.get("relative_strength_24h")
+
+    # === Core gate: meaningful downward momentum on 4h (not noise) ===
+    if ret_4h is None or ret_4h >= -1.0:
+        return 0.0, [], None
+    if ret_4h <= -5.0:
+        score += 30.0
+        reasons.append(f"4h {ret_4h:.1f}% sharp decline")
+    elif ret_4h <= -2.5:
+        score += 22.0
+        reasons.append(f"4h {ret_4h:.1f}% decline")
+    else:
+        score += 14.0
+        reasons.append(f"4h {ret_4h:.1f}% soft decline")
+
+    # === 24h trend confirmation (required) — don't fade a dip in an uptrend ===
+    if ret_24h is not None and ret_24h >= 0:
+        return 0.0, [], None
+    if ret_24h is not None and ret_24h < -3.0:
+        score += 15.0
+        reasons.append(f"24h {ret_24h:.1f}% aligned")
+
+    # === Relative weakness vs BTC strengthens the short ===
+    if rs_24h is not None and rs_24h < -3.0:
+        score += 15.0
+        reasons.append(f"RS24h {rs_24h:.1f}% weak vs BTC")
+
+    # === Funding gate: avoid crowded shorts (squeeze risk) ===
+    # Deeply positive funding = longs paying = shorts already crowded. Skip.
+    if funding is not None and funding > 0.01:
+        return 0.0, [], None
+    if funding is not None and funding < -0.005:
+        score += 10.0
+        reasons.append(f"funding {funding:.3f} (longs still paying)")
+
+    # === RSI room-to-fall gate: reject if already oversold (poor entry) ===
+    if rsi_val is not None and rsi_val < 25:
+        return 0.0, [], None
+    if rsi_val is not None and rsi_val < 45:
+        score += 8.0
+        reasons.append(f"rsi {rsi_val:.0f} room to fall")
+
+    return max(0.0, min(100.0, score)), reasons, "short"
+
+
 def run_all_scanners(feat: dict) -> dict:
     """Run all scanner families. Returns best result with direction.
 
@@ -433,6 +497,7 @@ def run_all_scanners(feat: dict) -> dict:
         "volatility": score_volatility(feat),
         "derivatives": score_derivatives(feat),
         "event": score_event(feat),
+        "short_bias": score_short_bias(feat),
     }
 
     # Prefer scanners with direction

@@ -14,6 +14,12 @@ from aletheia.universe.filters import apply_tradability_filters
 from aletheia.universe.scanners import run_all_scanners
 from aletheia.universe.allocator import allocate_universe, compute_total_score
 
+# Authoritative registered-family set — derived from run_all_scanners itself so
+# these assertions track the code instead of a hardcoded list that silently goes
+# stale (this test previously hardcoded 4 families, omitting 'event' and later
+# 'short_bias'). all_scores carries every registered family regardless of score.
+_VALID_FAMILIES = set(run_all_scanners({}).get("all_scores", {}).keys())
+
 
 def _make_cfg():
     cfg = MagicMock()
@@ -105,7 +111,7 @@ def test_full_pipeline_filters_and_scores():
         scored.append({**feat, **scanner_result, "total_score": total})
 
     assert all(0 <= item["total_score"] <= 100 for item in scored)
-    assert all(item["scanner_family"] in ("momentum", "mean_reversion", "volatility", "derivatives") for item in scored)
+    assert all(item["scanner_family"] in _VALID_FAMILIES for item in scored)
 
     # Step 3: allocate
     allocated = allocate_universe(scored, cfg.universe)
@@ -134,7 +140,7 @@ def test_pipeline_scorer_assigns_families():
 
     # At least 1 family assigned (may be all momentum if data skews that way)
     assert len(families_seen) >= 1
-    assert all(f in ("momentum", "mean_reversion", "volatility", "derivatives") for f in families_seen)
+    assert all(f in _VALID_FAMILIES for f in families_seen)
 
 
 def test_pipeline_ttl_varies_by_family():

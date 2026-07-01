@@ -311,30 +311,12 @@ def _infer_direction(family: str | None, feat: dict) -> str | None:
             return direction
         return None
 
-    if family == "short_bias":
-        # Phase 2A: bearish-specific scanner for bear/volatile regimes.
-        # Looks for confluence of downward momentum + oversold funding (shorts crowded
-        # = squeeze risk) avoided + structural weakness.
-        # Only emits "short"; regime gate above will filter in bull markets.
-
-        # Require meaningful downward price action on 4h (not just noise)
-        if ret_4h is None or ret_4h >= -1.0:
-            return None
-
-        # Additional confirmation: 24h trend also negative
-        if ret_24h is not None and ret_24h >= 0:
-            return None
-
-        # Avoid crowded short (high positive funding = longs paying, shorts crowded)
-        # This is different from derivatives family: here we check the short side
-        if funding is not None and funding > 0.01:
-            return None
-
-        # RSI not yet oversold (leave room for the trade to work)
-        if rsi is not None and rsi < 25:
-            return None
-
-        return "short"
+    # NOTE: family == "short_bias" is NOT handled here. It is a first-class
+    # scanner family whose direction is emitted intrinsically by
+    # scanners.score_short_bias() → run_all_scanners() sets scanner_direction,
+    # so _infer_direction is never the source for short_bias members. Keeping a
+    # duplicate threshold branch here would risk drift (2026-07-01: the previous
+    # duplicate was dead code + a fake-GREEN spec; removed once the scorer landed).
 
     if family == "event":
         # Event catalyst: follow the sharp 1h displacement. Thresholds mirror
