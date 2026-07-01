@@ -25,6 +25,7 @@ from datetime import datetime
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_bitget
 from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+from aletheia.execution.broker_utils import clean_error_message
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
@@ -112,7 +113,7 @@ def execute_live_order(
             client_oid=proposal_id, leverage=leverage,
         )))
     except Exception as e:
-        update_order(order.id, status="error", error_reason=str(e)[:500])
+        update_order(order.id, status="error", error_reason=clean_error_message(str(e))[:500])
         raise
 
     exchange_order_id = order_resp.order_id or ""
@@ -315,7 +316,7 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
             hold_side=hold_side,
         )))
     except Exception as e:
-        update_order(close_order.id, status="error", error_reason=str(e)[:500])
+        update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
         update_position(position_id, pending_close_status="error")
         raise
 

@@ -623,24 +623,33 @@ def test_symbol_check_paper_internal_always_passes():
 @spec_claim(
     SpecClaim(
         "EX-B11", "execution_contract", "§3.2 symbol filter", "L2b",
-        "When the OKX demo frozenset is loaded and a symbol is absent, "
-        "_check_symbol_availability returns a non-empty reason string; "
-        "a present symbol returns None",
+        "When the OKX demo symbol sets are loaded and a symbol is absent for the "
+        "given market_type, _check_symbol_availability returns a non-empty reason; "
+        "a present symbol returns None; market_type-awareness blocks swap-absent symbols",
     ),
 )
 def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     import aletheia.execution.gateway as gw
     import aletheia.execution.okx_broker as okx_broker
 
-    # Inject a known frozenset (WLD/USDT absent, BTC/USDT present)
-    monkeypatch.setattr(okx_broker, "_okx_demo_symbols", frozenset({"BTC/USDT", "ETH/USDT"}))
+    # New structure: {"swap": frozenset, "spot": frozenset}
+    # WLD/USDT is spot-only on OKX demo — absent from swap, present in spot.
+    monkeypatch.setattr(okx_broker, "_okx_demo_symbols", {
+        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
+        "spot": frozenset({"BTC/USDT", "ETH/USDT", "WLD/USDT"}),
+    })
     monkeypatch.setattr(okx_broker, "_okx_demo_symbols_loaded_at", float("inf"))
 
-    reason = gw._check_symbol_availability("WLDUSDT", "okx_demo")
-    assert reason is not None, "Absent symbol must produce a rejection reason"
+    # WLD is in spot but NOT in swap → perp order must be rejected
+    reason = gw._check_symbol_availability("WLDUSDT", "okx_demo", "usdt_futures")
+    assert reason is not None, "Absent-from-swap symbol must produce a rejection reason"
     assert "WLD" in reason or "not available" in reason.lower()
 
-    assert gw._check_symbol_availability("BTCUSDT", "okx_demo") is None
+    # WLD spot order must pass
+    assert gw._check_symbol_availability("WLDUSDT", "okx_demo", "spot") is None
+
+    # BTC is in swap → perp order passes
+    assert gw._check_symbol_availability("BTCUSDT", "okx_demo", "usdt_futures") is None
 
 
 # ---------------------------------------------------------------------------
@@ -652,6 +661,7 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     SpecClaim(
         "EX-B12", "execution_contract", "§3.2 symbol filter", "L2b",
         "For registry-based modes (bitget, binance): absent symbol → rejection reason; "
+        "spot-only symbol rejects a perp order (market-type-aware); "
         "empty/unsynced registry → None (fail-open, never blocks legitimate orders)",
     ),
 )
@@ -659,16 +669,32 @@ def test_symbol_check_registry_modes(monkeypatch):
     import aletheia.execution.gateway as gw
     import aletheia.storage.repositories as repo
 
-    # ── case A: registry loaded with known symbols, WLD absent ──
+    # ── case A: registry loaded, WLD absent for usdt_futures ──
     gw._registry_symbol_cache.clear()
     monkeypatch.setattr(
         repo, "list_universe_assets",
-        lambda *a, **kw: [{"symbol": "BTC/USDT"}, {"symbol": "ETH/USDT"}],
+        lambda *a, **kw: [
+            {"symbol": "BTC/USDT", "market_type": "usdt_futures"},
+            {"symbol": "ETH/USDT", "market_type": "usdt_futures"},
+        ],
     )
-    reason = gw._check_symbol_availability("WLDUSDT", "bitget_demo")
+    reason = gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures")
     assert reason is not None, "Registry loaded but symbol absent — must reject"
 
-    # ── case B: registry empty (not yet synced) → fail-open ──
+    # ── case B: WLD available as spot, but NOT for a perp order ──
+    gw._registry_symbol_cache.clear()
+    monkeypatch.setattr(
+        repo, "list_universe_assets",
+        lambda *a, **kw: [
+            {"symbol": "BTC/USDT", "market_type": "usdt_futures"},
+            {"symbol": "WLD/USDT", "market_type": "spot"},
+        ],
+    )
+    reason_spot_only = gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures")
+    assert reason_spot_only is not None, "Spot-only symbol must reject a perp order"
+    assert gw._check_symbol_availability("WLDUSDT", "bitget_demo", "spot") is None
+
+    # ── case C: registry empty (not yet synced) → fail-open ──
     gw._registry_symbol_cache.clear()
     monkeypatch.setattr(repo, "list_universe_assets", lambda *a, **kw: [])
     reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_testnet")

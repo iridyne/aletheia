@@ -5,8 +5,9 @@ State-consistency protocol identical to binance_broker/bitget_broker:
 2. Call exchange
 3. Backfill exchange_order_id, fill, position
 
-Includes an O(1) symbol filter for OKX demo mode: a frozenset of supported
-symbols is cached module-level and refreshed every 4h by the scheduler.
+Includes an O(1) symbol filter for OKX demo mode: two frozensets (swap and spot)
+are cached module-level and refreshed every 4h by the scheduler. The check is
+market-type-aware so a symbol available only as spot does not pass a perp order.
 """
 
 import asyncio
@@ -18,6 +19,7 @@ from datetime import datetime
 
 from aletheia.data.symbols import to_canonical
 from aletheia.exchanges.okx.client import OKXClient, OrderRequest
+from aletheia.execution.broker_utils import clean_error_message
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
@@ -32,32 +34,43 @@ _OKX_FEE_RATE = 0.0005  # OKX futures taker fee
 _OPEN_CLOSE_STATES = {"pending", "submitted", "partial"}
 
 # ---------------------------------------------------------------------------
-# O(1) Symbol filter cache for OKX demo
+# O(1) Symbol filter cache for OKX demo — market-type-aware
+#
+# _okx_demo_symbols is now a dict {"swap": frozenset, "spot": frozenset}.
+# Both sets store canonical symbols (BTC/USDT).  A futures/perp order is only
+# allowed when the canonical is in the "swap" set; a spot order requires "spot".
 # ---------------------------------------------------------------------------
 
-_okx_demo_symbols: frozenset | None = None
+_okx_demo_symbols: dict | None = None  # {"swap": frozenset, "spot": frozenset}
 _okx_demo_symbols_loaded_at: float = 0.0
 _OKX_SYMBOLS_TTL = 14400  # 4h
 _symbols_lock = threading.Lock()
 
 
-def _get_demo_symbols() -> frozenset | None:
-    """Return cached OKX demo supported symbols, loading lazily if missing or stale.
+def _get_demo_symbols(market_type: str = "usdt_futures") -> frozenset | None:
+    """Return cached OKX demo symbols for the given market_type, loading lazily.
+
+    market_type "usdt_futures" / "perp" → swap frozenset
+    market_type "spot"                  → spot frozenset
 
     Returns None only when the initial load fails (fail-open: allow the order through).
     """
     global _okx_demo_symbols, _okx_demo_symbols_loaded_at
     if _okx_demo_symbols is not None and (time.time() - _okx_demo_symbols_loaded_at) < _OKX_SYMBOLS_TTL:
-        return _okx_demo_symbols
+        key = "spot" if market_type == "spot" else "swap"
+        return _okx_demo_symbols.get(key)
     # Cache missing or stale — trigger a synchronous refresh
     refresh_okx_demo_symbols()
-    return _okx_demo_symbols  # may still be None if refresh failed (fail-open)
+    if _okx_demo_symbols is None:
+        return None  # refresh failed, fail-open
+    key = "spot" if market_type == "spot" else "swap"
+    return _okx_demo_symbols.get(key)
 
 
 def refresh_okx_demo_symbols() -> int:
     """Refresh the OKX demo symbol cache. Called by scheduler every 4h.
 
-    Returns the number of supported symbols loaded.
+    Returns the total number of supported symbols loaded (swap + spot).
     """
     global _okx_demo_symbols, _okx_demo_symbols_loaded_at
 
@@ -67,14 +80,20 @@ def refresh_okx_demo_symbols() -> int:
 
     with _symbols_lock:
         try:
-            symbols = _run_coro(_load())
-            _okx_demo_symbols = symbols
+            result = _run_coro(_load())
+            _okx_demo_symbols = result
             _okx_demo_symbols_loaded_at = time.time()
-            logger.info("OKX demo symbols refreshed: %d pairs", len(symbols))
-            return len(symbols)
+            total = len(result.get("swap", frozenset())) + len(result.get("spot", frozenset()))
+            logger.info("OKX demo symbols refreshed: %d swap + %d spot",
+                        len(result.get("swap", frozenset())), len(result.get("spot", frozenset())))
+            return total
         except Exception as e:
             logger.warning("Failed to refresh OKX demo symbols: %s", e)
             return 0
+
+
+# ---------------------------------------------------------------------------
+# Error message sanitiser
 
 
 # ---------------------------------------------------------------------------
@@ -118,13 +137,13 @@ def execute_live_order(
     For okx_demo: checks the O(1) symbol filter first. Unsupported symbols
     are rejected with an audit record before any exchange call.
     """
-    # O(1) symbol filter for demo mode. On rejection we just raise — the gateway's
-    # try/except writes a complete demo_order_error audit (incl. proposal status
-    # transition), so a write_audit here only produced a duplicate record (EC-2).
+    # O(1) symbol filter for demo mode — market-type-aware. On rejection we just raise
+    # — the gateway's try/except writes a complete demo_order_error audit (incl. proposal
+    # status transition), so a write_audit here only produced a duplicate record (EC-2).
     if execution_mode == "okx_demo":
-        supported = _get_demo_symbols()
+        supported = _get_demo_symbols(market_type)
         if supported is not None and to_canonical(symbol) not in supported:
-            raise RuntimeError(f"OKX demo does not support {symbol}")
+            raise RuntimeError(f"OKX demo does not support {symbol} ({market_type})")
 
     mode = "demo" if execution_mode == "okx_demo" else "live"
     client = OKXClient(mode=mode)
@@ -152,7 +171,7 @@ def execute_live_order(
             client_oid=proposal_id, leverage=leverage,
         )))
     except Exception as e:
-        update_order(order.id, status="error", error_reason=str(e)[:500])
+        update_order(order.id, status="error", error_reason=clean_error_message(str(e))[:500])
         raise
     finally:
         try:
@@ -378,7 +397,7 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
             client_oid=f"close-{position_id}",
         )))
     except Exception as e:
-        update_order(close_order.id, status="error", error_reason=str(e)[:500])
+        update_order(close_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
         update_position(position_id, pending_close_status="error")
         raise
     finally:
