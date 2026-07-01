@@ -92,10 +92,11 @@ def vol_target_size(
     from aletheia.trading.persona import effective_sizing_params
 
     cfg = load_config()
-    # Persona seam (P1): when persona sizing is enabled, base notional + kelly come
-    # from the active persona's init; otherwise these resolve to the legacy flat
-    # config (default_notional_usdt / vol_kelly_cap_fraction) → zero behavior change.
-    _eff = effective_sizing_params(cfg)
+    # Persona seam (P1/P2): base notional + kelly come from the active persona
+    # (P2: context-decided within range for operator_decidable params; else init);
+    # persona OFF → legacy flat config (default_notional_usdt / vol_kelly_cap_fraction),
+    # zero behavior change. `symbol` feeds the P2 sizing context (regime/F&G/vol).
+    _eff = effective_sizing_params(cfg, symbol=symbol)
     base = _eff["notional_usdt"]
     base_kelly = _eff["kelly_fraction"]
 
