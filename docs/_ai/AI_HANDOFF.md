@@ -7,7 +7,40 @@
 
 ## Last Updated
 
-2026-07-02 (Position C Phase A + B 全部完成 — 引擎删除 + 决策链解耦 + 信任边界 + 全 operator/UI 面移除;剩 Phase C 文档)
+2026-07-02 (Position C **全部完成** A+B+C — 规则引擎删除 + 决策链解耦 + 信任边界 + 全 operator/UI 面移除 + 文档/spec 同步)
+
+---
+
+## Recent Change (Position C Phase C 完成 — 文档/spec 同步 → Position C 全部收官 — 2026-07-02)
+
+> **Position C(规则引擎删除)A+B+C 全部完成。** 分支 `refactor/strategy-position-b-p0p1`,
+> 全量绿,未 merge master。上线路径见文末。
+
+### Phase C 交付
+- **SDD spec 诚实性**(`commit`):spec_strategy_pool 删 SP-S04(测已删 strategy_designer 码);
+  spec_model_routing MR-S04 六→五 deep-tier(去 strategy_designer);spec_promotion_gates 不改
+  (Option B 保留 check_promotion_gates)。conformance 537 绿。
+- **8 契约文档**:scheduler/agent_contracts/SYSTEM_MAP job 表(去 designer+backtest 加 guard_promotion +
+  agent 段/timeout/数据流图);api_reference(删 strategies gates/promote/retire + backtest + strategy-evidence
+  端点);data_model(4 表标 legacy read-only);promotion_gates_contract + README(LEGACY 横幅);
+  execution_contract §9(死字符串诚实性缺口 → 标记已由删除解决);trust_and_change_control §6.1 +
+  decision_lifecycle 无需改(引擎非受控信任边界/无引用)。
+- **整洁项**:删孤儿 backtest_paper_drift.py + 其单测(路由已删)。
+  遗留(无害 optional,已记):ranker always-None strategy_evidence 死参、operator_recommendations
+  喂已删分支的死计算(2 处 list_artifacts,操作控制面敏感故未动)、router.py + knowledge_contract 的
+  strategy_designer 知识路由(dead-but-consistent 配置,Phase A 有意保留)。
+
+### Position C 全景(A+B+C)
+- **A**:`aletheia/strategy/` 整包 + strategy_designer/strategy_evidence/ruleset_scanner/lifecycle_automation
+  物理删;ranker/paper_trader/scheduler 解耦;guard_promotion 重挂保命。
+- **B**:风控 #14 → scanner-family 证据门(信任边界,SDD-first);决策链/analytics landmine 清;前端页删 +
+  #14 Settings UI;doctor strategy_health 改 legacy-only;operator 命令面(6 命令 + 推荐 + 路由 + 动作)移除。
+- **C**:spec + 契约文档同步(本条)。
+- **保留(Option B)**:create_strategy/promote_strategy/check_promotion_gates 内部 legacy 函数;
+  strategy_records/backtest_* 表只读 legacy;strategy_id 可空归因列;GET /strategies + venue 端点。
+
+### 上线路径
+Position C 已闭环,可整体 FF-merge 回主仓 + 主仓 restart + HTTP 实测(worktree data/ 空不代表运行态)。
 
 ---
 
