@@ -97,29 +97,6 @@ async def test_approve_missing_proposal_404(client):
 
 
 @pytest.mark.anyio
-async def test_strategy_promote_and_retire(client):
-    from aletheia.trading.strategy_lifecycle import create_strategy
-    s = create_strategy("Test Strategy")
-    resp = await client.post(f"/api/strategies/{s.id}/promote", json={"target_state": "research_note"})
-    assert resp.status_code == 200
-    assert resp.json()["new_state"] == "research_note"
-
-    resp = await client.get(f"/api/strategies/{s.id}")
-    assert resp.json()["state"] == "research_note"
-
-    resp = await client.post(f"/api/strategies/{s.id}/retire")
-    assert resp.status_code == 200
-
-
-@pytest.mark.anyio
-async def test_illegal_promotion_rejected(client):
-    from aletheia.trading.strategy_lifecycle import create_strategy
-    s = create_strategy("Jump")
-    resp = await client.post(f"/api/strategies/{s.id}/promote", json={"target_state": "live_limited"})
-    assert resp.status_code == 400
-
-
-@pytest.mark.anyio
 async def test_portfolio_endpoint(client):
     repo.insert_position(Position(symbol="SOLUSDT", market_type="spot", direction="long",
                                   quantity=10.0, entry_price=150.0, execution_mode="bitget_demo"))

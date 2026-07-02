@@ -116,7 +116,7 @@ async def test_operator_command_can_continue_selected_child_session(operator_env
     )
 
     fake_response = {
-        "intent": "get_strategy_lifecycle",
+        "intent": "get_failed_tasks",
         "risk_level": "read",
         "response": "Strategy session continued",
         "action": None,
@@ -146,8 +146,8 @@ async def test_operator_command_can_continue_selected_child_session(operator_env
     assert len(messages) == 2
     assert messages[0]["content"] == {"text": "continue this review"}
     assert messages[1]["content"]["text"] == "Strategy session continued"
-    assert messages[1]["content"]["intent"] == "get_strategy_lifecycle"
-    assert messages[1]["content"]["command"] == "get_strategy_lifecycle"
+    assert messages[1]["content"]["intent"] == "get_failed_tasks"
+    assert messages[1]["content"]["command"] == "get_failed_tasks"
     assert messages[1]["content"]["risk_level"] == "read"
     assert messages[1]["content"]["needs_confirmation"] is False
     assert messages[1]["content"]["permitted"] is True

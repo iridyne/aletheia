@@ -30,7 +30,6 @@ logger = logging.getLogger("aletheia.operator_loop")
 
 _MAX_CONFIG_PATCHES_PER_DAY = 3
 _COOLDOWN_SECONDS = 7200  # 2h same-param cooldown
-_MAX_STRATEGY_DESIGNER_TRIGGERS_PER_DAY = 3
 _MAX_OPTUNA_TRIGGERS_PER_DAY = 2
 _MAX_NOTIFICATIONS_PER_DAY = 10
 _MAX_RESEARCH_TRIGGERS_PER_DAY = 1
@@ -256,7 +255,7 @@ class OperatorAction:
 # Level classification
 _LEVEL_1_ACTIONS = {
     "retire_strategy", "demote_strategy",
-    "trigger_strategy_designer", "trigger_optuna_sweep",
+    "trigger_optuna_sweep",
     "tighten_confidence", "reduce_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "request_backfill", "notify_operator",
     "trigger_strategy_research",
@@ -556,8 +555,6 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result = _action_retire_strategy(action)
     elif action.action_type == "demote_strategy":
         result = _action_demote_strategy(action)
-    elif action.action_type == "trigger_strategy_designer":
-        result = _action_trigger_strategy_designer(action)
     elif action.action_type == "trigger_optuna_sweep":
         result = _action_trigger_optuna_sweep(action)
     elif action.action_type == "tighten_confidence":
@@ -665,28 +662,6 @@ def _action_demote_strategy(action: OperatorAction) -> dict:
         return {"action": "demote_strategy", "status": "recommended", "strategy_id": strategy_id}
     except Exception as e:
         return {"action": "demote_strategy", "status": "error", "reason": str(e)}
-
-
-def _action_trigger_strategy_designer(action: OperatorAction) -> dict:
-    if _count_actions_today("trigger_strategy_designer") >= _MAX_STRATEGY_DESIGNER_TRIGGERS_PER_DAY:
-        return {"action": "trigger_strategy_designer", "status": "rate_limited",
-                "reason": f"already triggered {_MAX_STRATEGY_DESIGNER_TRIGGERS_PER_DAY}x today"}
-    try:
-        from aletheia.agent_runtime.orchestrator import run_agent
-        import asyncio
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop is not None:
-            loop.create_task(run_agent("strategy_designer", trigger_type="operator"))
-        else:
-            asyncio.run(run_agent("strategy_designer", trigger_type="operator"))
-        _record_action("trigger_strategy_designer")
-        logger.info("operator: triggered strategy_designer — %s", action.reason)
-        return {"action": "trigger_strategy_designer", "status": "executed"}
-    except Exception as e:
-        return {"action": "trigger_strategy_designer", "status": "error", "reason": str(e)}
 
 
 _ICT_RESEARCH_BRIEF = (
@@ -1194,14 +1169,6 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     # parallel operator mechanism: Python operator_loop keeps ONLY dynamic config tuning
     # (which TS does not do). assessment.underperforming_strategies is still surfaced in the
     # assessment for observability and for the TS shell's own evaluation.
-
-    if assessment.uncovered_symbols and assessment.strategies_paper_running < 3:
-        actions.append(OperatorAction(
-            action_type="trigger_strategy_designer",
-            level=1,
-            params={"uncovered": assessment.uncovered_symbols[:3]},
-            reason=f"{len(assessment.uncovered_symbols)} symbols without active strategy",
-        ))
 
     # Stage 3: Parameter Tuning — TIGHTEN rules (Level 1, with escalation)
     if (assessment.signal_status == "degraded"

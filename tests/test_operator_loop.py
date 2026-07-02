@@ -139,21 +139,6 @@ class TestDecideActions:
         reduce = [a for a in actions if a.action_type == "reduce_sizing"]
         assert len(reduce) == 1
 
-    def test_trigger_designer_when_uncovered(self, tmp_path, monkeypatch):
-        _init_test_db(tmp_path, monkeypatch)
-        _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
-
-        assessment = SystemAssessment(
-            timestamp="2026-01-01T00:00:00Z",
-            ohlcv_ready=True,
-            signal_status="healthy",
-            strategies_paper_running=1,
-            uncovered_symbols=["SOL/USDT", "AVAX/USDT"],
-        )
-        actions = decide_actions(assessment)
-        designer = [a for a in actions if a.action_type == "trigger_strategy_designer"]
-        assert len(designer) == 1
 
     def test_notify_on_kill_switch(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)

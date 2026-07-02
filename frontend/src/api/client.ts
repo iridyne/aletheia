@@ -480,8 +480,6 @@ export const api = {
   getPortfolio: () => fetchJson<Record<string, any>>('/portfolio'),
   getUtaState: () => fetchJson<Record<string, any>>('/uta/state'),
   getStrategies: () => fetchJson<any[]>('/strategies'),
-  promoteStrategy: (id: string, target_state: string) => post(`/strategies/${id}/promote`, { target_state }),
-  retireStrategy: (id: string) => post(`/strategies/${id}/retire`),
   setStrategyVenue: (id: string, execution_venue: string | null) =>
     fetchJson<any>(`/strategies/${id}/venue`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ execution_venue }) }),
   getKnowledge: (type = 'research_note') => fetchJson<any[]>(`/knowledge?type=${encodeURIComponent(type)}`),
@@ -489,7 +487,6 @@ export const api = {
   getDreamingLogs: () => fetchJson<any[]>('/knowledge/dreaming-logs'),
   getPostTradeReviews: () => fetchJson<any[]>('/knowledge?type=post_trade_review'),
   getKnowledgeContent: (id: string) => fetchJson<{ id: string; content: string; error?: string }>(`/knowledge/${id}/content`),
-  getStrategyGates: (id: string) => fetchJson<Record<string, any>>(`/strategies/${id}/gates`),
 
   // Prediction Market Lens endpoints
   getPredictionOpportunities: () => fetchJson<import('../types').PredictionMarket[]>('/prediction/opportunities'),
