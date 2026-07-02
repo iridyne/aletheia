@@ -4,7 +4,7 @@
 > 本文档是设计概览,非 L2 契约。子系统级契约见:
 > - docs/design/promotion_gates_contract.md (Strategy lifecycle — ⚠️ LEGACY Position C)
 > - docs/design/learning_contract.md (Learning subsystem — 🟡 新建 2026-07-02)
-> - Serenity specs: 	ests/specs/spec_serenity_*.py (8 logical contracts)
+> - Serenity specs: 	ests/specs/spec_serenity_*.py (9 个) — 统一 L2 契约见 docs/design/serenity_contract.md (🟡 新建 2026-07-02)
 > Created: 2026-07-02
 
 ---

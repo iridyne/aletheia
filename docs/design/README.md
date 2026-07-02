@@ -44,6 +44,7 @@ L4 状态/参考   status/* · references/* · _ai/* ── 现在是什么样/�
 | [data_layer](data_layer.md) | CCXT provider 重构 / symbol 格式 | 🟡 契约(部分 Phase 已实现) |
 | [knowledge_contract](knowledge_contract.md) | Knowledge 检索子系统 / LessonStore / GuardStore / 双轨断裂清单 | ✅ 金标准(批次6 新建) |
 | [learning_contract](learning_contract.md) | 学习子系统 — LessonStore 状态机 / SkillStore 权限 / 守卫时间戳 / 晋升链 | 🟡 新建 2026-07-02 |
+| [serenity_contract](serenity_contract.md) | Serenity 深度研究镜头 — 生成者/评估者分离(D2) / tier 阶梯 / 证据评分 + bucket / 多镜头研究 / trade_school 持有周期 / 信任边界隔离 | 🟡 新建 2026-07-02 |
 | [scheduler_contract](scheduler_contract.md) | 调度器 job 清单 / 频率 / 执行器分组 / 故障隔离 | ✅ 金标准(批次6 新建) |
 | [audit_chain_contract](audit_chain_contract.md) | 审计链完整性 / risk_decisions / 操作日志 / 不可变性要求 | ✅ 金标准(批次6 新建) |
 | [decision_lifecycle_contract](decision_lifecycle_contract.md) | **横切脊柱**:opportunity→PiDecision→TradeProposal 各 seam + 中间载体(Opportunity/TradingDecision/signal_pending)字段语义 + conviction 门 | ✅ 金标准(新建 2026-06-30) |

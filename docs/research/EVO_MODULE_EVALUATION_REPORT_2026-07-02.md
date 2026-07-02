@@ -193,3 +193,20 @@
 | Learning | 70% (SkillStore 空壳) | ⭐⭐ (仅 pipeline spec) | ⭐⭐ (无 L2 + data_model gap) | SkillStore 无生产者 |
 
 **核心结论**: Strategy 和 Serenity Lens 模块的实现质量高,测试覆盖充分,与 STD 文档体系基本对齐。Learning 模块是三者中最弱的 — LessonStore 功能完整但 SkillStore 是空壳,且缺乏 L2 契约和 data_model spec 覆盖。建议按 P0→P1→P2 顺序修复。
+
+---
+
+## 7. 后续处理进展 (2026-07-02)
+
+P0→P1→P2 落地后,继续处理剩余偏差,结论集中如下:
+
+| 项 | 处理 | 依据 |
+|---|------|------|
+| L2 (Serenity 无独立 L2 契约) | ✅ 已建 `docs/design/serenity_contract.md` — 统一入口,收拢 9 个 `spec_serenity_*.py` 断言(约 73 claim):D2 分离 / tier 阶梯 / 评分 + bucket / 多镜头研究 / 归因 / 晋升 / trade_school 持有 / 实盘信任边界隔离 | design/README.md 已加索引 |
+| L3 (阶段映射不完整) | ✅ 已核实非 bug (见 §2.2) | stage_score_map 已补齐所有别名 key,`.get()` 命中不走 fallback |
+| S3 / P2-4 (晋级门 config 暴露) | ✅ 裁决 LEGACY 冻结,不做 | `promote_strategy()` 全仓无活调用者;见 promotion_gates_contract.md §6 |
+| R1 (SkillStore 接生产者) | ⏸️ 维持预留 | 前置条件(owner 授权 + Lesson→Skill 晋升设计 + 充足干净窗数据)均未满足;架构本身安全(FORBIDDEN_LAYERS 已锁) |
+| R2 (双轨统一接口) | ❌ 不做 | learning_contract.md §8 已论证两路故意分离 + LP-DUAL-01 锁死;强行统一会破坏信任不变量 |
+| L1 (评分权重硬编码) | ⏸️ MVP 不暴露 | Serenity 行为参数(止损/持有天数/自动晋升/PI 阈值)已 config 化 + 前端控件;硬编码的仅内部评分映射,非用户该调的行为参数 |
+
+R6/R7 死字段(`artifact_path` / `created_from_lessons_json`)已在 learning_contract.md 文档化为"预留",实质收口。修正: 符号过滤 `_is_tradeable_crypto_symbol` 实际在 `aletheia/agents/research_worker.py`(`_is_allowed_serenity_symbol` 别名),非本报告 §2 标题所列的 serenity_evidence.py。
