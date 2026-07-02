@@ -32,6 +32,19 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 - GitHub Actions failures: disable the broken workflow to stop alerts; do not archive the repo.
 - Priority: State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy
 
+## API 性能规则（血泪教训 2026-07-02 — 强制执行）
+
+`async def` handler 里的同步阻塞操作（磁盘读、`threading.Lock`、SQLite）会冻住整个 uvicorn event loop，等效于 `time.sleep(N)`。FastAPI 只对 `sync def` 自动 threadpool 保护，`async def` 是开发者的责任。根因案例：`GET /api/settings` 因 `load_config()` 零缓存，冷路径实测 **30 秒**（backend 直连 :8788），修复（5s TTL 缓存）后降至 <50ms。
+
+**写新 handler 前必须确认以下四条：**
+
+1. **热路径读必须有缓存**：每次请求都要读的数据（config、health threshold、retention 配置等）必须加 TTL 内存缓存（5–60 s）+ 写入时主动失效。不加缓存的 `load_config()` / `yaml.safe_load()` / `model_validate()` 禁止出现在 async handler 热路径。
+2. **初始化操作只跑一次**：`ensure_data_dirs()` 类"首次运行才需要"的操作必须用 flag 保护，不得在每次写操作中重复执行（35 次 mkdir 系统调用 × 每次保存 = 累积延迟）。
+3. **新端点上线前直连实测**：`Measure-Command { Invoke-WebRequest -Uri 'http://127.0.0.1:8788/api/<endpoint>' -UseBasicParsing }` — 直连后端（:8788），绕过 frontdoor 缓存。冷路径 >100ms 必须有解释，>500ms 必须修。
+4. **UI 轮询间隔下限**：健康探针（exchange 连接测试）≥ 60s；状态轮询（status/kill-switch）≥ 10s 且 handler 必须是纯内存操作（<5ms）；LLM 相关 ≥ 30s。Settings 页面打开时并发轮询数不超过 8 个。
+
+> 完整根因分析 + 已知遗留慢点 + 快速检查清单：`docs/_ai/ASYNC_PERFORMANCE_LESSONS.md`
+
 ## Testing Strategy
 
 全量测试 ~5min（515+ tests，I/O-bound，SQLite setup/teardown 是瓶颈，并行无收益）。
