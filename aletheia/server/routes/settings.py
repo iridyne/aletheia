@@ -720,6 +720,9 @@ class RiskConfigUpdate(SettingsRequest):
     correlation_guard_enabled: Optional[bool] = None
     max_sector_concentration_pct: Optional[float] = None
     max_portfolio_beta: Optional[float] = None
+    # Scanner-family live-eligibility gate (#14, Position C 2026-07-02)
+    live_family_min_samples: Optional[int] = None
+    live_family_min_win_rate_pct: Optional[float] = None
 
 
 # Fields that must never be changed via the dashboard (safety invariants).
@@ -751,6 +754,8 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_open_positions_demo": (1, 200),
     "max_sector_concentration_pct": (10.0, 100.0),
     "max_portfolio_beta": (0.5, 10.0),
+    "live_family_min_samples": (1, 500),
+    "live_family_min_win_rate_pct": (0.0, 100.0),
 }
 
 

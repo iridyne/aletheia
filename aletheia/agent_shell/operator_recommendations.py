@@ -1241,35 +1241,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         if item.get("strategy_id")
     }
     needs_operator_evaluation_strategy_ids = sorted(flagged_strategy_ids - evaluated_strategy_ids)
-    if not cfg.runtime.paused and needs_operator_evaluation_strategy_ids:
-        first_flagged = next(
-            (
-                item
-                for item in [*under_review_strategies, *paused_paper_strategies]
-                if str(item.get("id") or "") == needs_operator_evaluation_strategy_ids[0]
-            ),
-            None,
-        )
-        strategy_name = first_flagged.get("name") if first_flagged else None
-        recommendations.append(
-            {
-                "id": "strategy-review-due",
-                "kind": "strategy_review_due",
-                "severity": "medium",
-                "summary": (
-                    f"Strategy {strategy_name or needs_operator_evaluation_strategy_ids[0]} still needs an operator evaluation session."
-                    if len(needs_operator_evaluation_strategy_ids) == 1
-                    else f"{len(needs_operator_evaluation_strategy_ids)} strategies still need operator evaluation sessions."
-                ),
-                "taskType": "evaluate_strategy_state",
-                "metadata": {
-                    "strategy_ids": needs_operator_evaluation_strategy_ids,
-                    "strategy_id": needs_operator_evaluation_strategy_ids[0],
-                    "strategy_name": strategy_name,
-                },
-            }
-        )
-
     failed_under_review_candidate = next(
         (
             (
@@ -1292,86 +1263,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         ),
         None,
     )
-    if not cfg.runtime.paused and failed_under_review_candidate:
-        strategy_id, strategy_name, failed_gates = failed_under_review_candidate
-        gate_summary = ", ".join(failed_gates[:3]) if failed_gates else "promotion checks failed"
-        review_notes = (
-            f"Promotion gates failed: {gate_summary}"
-            if failed_gates
-            else "Promotion gates failed during recent operator evaluation"
-        )
-        recommendations.append(
-            {
-                "id": f"mark-strategy-under-review:{strategy_id}",
-                "kind": "mark_strategy_under_review_due",
-                "severity": "medium",
-                "summary": (
-                    f"Strategy {strategy_name or strategy_id} failed recent promotion gates ({gate_summary}) and should be marked under review before paper automation continues."
-                ),
-                "taskType": "create_repair_proposal",
-                "metadata": {
-                    "strategy_id": strategy_id,
-                    "strategy_name": strategy_name,
-                    "failed_gates": failed_gates,
-                    "review_notes": review_notes,
-                    "repair_command": "mark_strategy_under_review",
-                },
-            }
-        )
-
-    if (
-        not cfg.runtime.paused
-        and not active_paper_strategies
-        and (recent_research_notes or recent_strategy_hypotheses)
-        and not recent_strategy_designer_runs
-    ):
-        recommendations.append(
-            {
-                "id": "strategy-design-due",
-                "kind": "strategy_design_due",
-                "severity": "medium",
-                "summary": (
-                    "Recent research inputs exist but no active paper strategy is visible. "
-                    "Delegate strategy_designer to turn current hypotheses into a fresh paper strategy."
-                ),
-                "taskType": "run_strategy_design",
-                "metadata": {
-                    "task_type": "run_strategy_design",
-                    "recent_research_note_count": len(recent_research_notes),
-                    "recent_strategy_hypothesis_count": len(recent_strategy_hypotheses),
-                },
-            }
-        )
-
-    pause_paper_strategy_candidates = [
-        item
-        for item in under_review_strategies
-        if str(item.get("state") or "") in {"paper_running", "paper_passed"}
-        and not _truthy_flag(item.get("paper_trading_paused"))
-    ]
-    if not cfg.runtime.paused and pause_paper_strategy_candidates:
-        first_pause_candidate = pause_paper_strategy_candidates[0]
-        strategy_id = str(first_pause_candidate.get("id") or "")
-        strategy_name = first_pause_candidate.get("name") or strategy_id
-        review_notes = str(first_pause_candidate.get("review_notes") or "").strip()
-        recommendations.append(
-            {
-                "id": f"pause-paper-strategy:{strategy_id}",
-                "kind": "pause_paper_strategy_due",
-                "severity": "medium",
-                "summary": (
-                    f"Strategy {strategy_name} is under review while paper trading remains active. Pause paper trading until review completes."
-                ),
-                "taskType": "pause_paper_strategy",
-                "metadata": {
-                    "task_type": "pause_paper_strategy",
-                    "strategy_id": strategy_id,
-                    "strategy_name": strategy_name,
-                    "reason": review_notes or "strategy marked under review",
-                },
-            }
-        )
-
     raw_recent_strategy_promotion_proposals = [
         artifact
         for artifact in list_artifacts(limit=500)
@@ -1434,54 +1325,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         for strategy_id, target_state in promotion_ready_strategy_targets
         if (strategy_id, target_state) not in proposed_strategy_targets
     )
-    if not cfg.runtime.paused and needs_operator_promotion_proposal_strategy_ids:
-        first_candidate = next(
-            (
-                item
-                for item in active_paper_strategies
-                if str(item.get("id") or "") == needs_operator_promotion_proposal_strategy_ids[0]
-            ),
-            None,
-        )
-        strategy_name = first_candidate.get("name") if first_candidate else None
-        first_evaluation = next(
-            (
-                item
-                for item in recent_strategy_evaluations
-                if str(item.get("strategy_id") or "")
-                == needs_operator_promotion_proposal_strategy_ids[0]
-            ),
-            None,
-        )
-        target_state = (
-            "paper_passed"
-            if str(
-                ((first_evaluation or {}).get("evaluation") or {}).get("strategy", {}).get("state")
-                or ""
-            )
-            == "paper_running"
-            else "live_candidate"
-        )
-        recommendations.append(
-            {
-                "id": "strategy-promotion-proposal-due",
-                "kind": "strategy_promotion_proposal_due",
-                "severity": "medium",
-                "summary": (
-                    f"Strategy {strategy_name or needs_operator_promotion_proposal_strategy_ids[0]} passed recent promotion checks and should be proposed for {target_state} human review."
-                    if len(needs_operator_promotion_proposal_strategy_ids) == 1
-                    else f"{len(needs_operator_promotion_proposal_strategy_ids)} strategies passed recent promotion checks and should be proposed for human review."
-                ),
-                "taskType": "create_repair_proposal",
-                "metadata": {
-                    "strategy_ids": needs_operator_promotion_proposal_strategy_ids,
-                    "strategy_id": needs_operator_promotion_proposal_strategy_ids[0],
-                    "strategy_name": strategy_name,
-                    "target_state": target_state,
-                    "proposal_command": "propose_strategy_promotion",
-                },
-            }
-        )
     live_limited_ready_strategy_ids = {
         str(item.get("strategy_id"))
         for item in recent_strategy_evaluations

@@ -190,15 +190,6 @@ def _check_event_triggers(
             surge = volume_24h / prev_volume_24h
             _notify(f"Volume surge {symbol}: {surge:.1f}x 24h vol")
 
-        # Trigger strategy designer on significant move
-        if et.trigger_strategy_design and abs_pct >= et.strategy_design_min_move_pct:
-            try:
-                from aletheia.agent_runtime.scheduler import trigger_strategy_designer_on_demand
-                trigger_strategy_designer_on_demand()
-                logger.info("event_trigger: designer on-demand fired for %s (%.1f%%)", symbol, price_change_pct)
-            except Exception as e:
-                logger.debug("event_trigger: designer trigger failed: %s", e)
-
         # Wake PI Agent on any significant price/volume event
         if abs_pct >= et.price_move_pct_threshold or (
             volume_24h and prev_volume_24h and prev_volume_24h > 0

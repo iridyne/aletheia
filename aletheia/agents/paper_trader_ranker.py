@@ -18,20 +18,20 @@ from aletheia.analytics.trade_attribution import (
     late_entry_bucket,
     factor_key as compute_factor_key,
 )
-from aletheia.analytics.strategy_evidence import _classify_evidence_status
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.repositories import (
     get_ohlcv_candles,
-    get_strategy,
     get_universe_member,
     list_opportunities,
-    list_strategies,
 )
 from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
 from aletheia.regime.detector import get_current_regime, MarketRegime
 from aletheia.trading.instruments import tradable_symbols_from_config
-from aletheia.trading.strategy_lifecycle import is_active_paper_strategy, is_paper_trading_paused
+# Position C (2026-07-02): strategy rules-engine deleted. The ranker no longer
+# resolves a StrategyRecord, evaluates a RuleSet, or reads backtest evidence.
+# linked_strategy_id is passed through as a pure attribution label; regime
+# affinity is now a scanner-family scoring signal (see _scanner_regime_scoring).
 
 logger = logging.getLogger("aletheia.agents.paper_trader_ranker")
 
@@ -158,43 +158,19 @@ def _evaluate_candidate(
             if universe_member.get("expires_at") and universe_member["expires_at"] < now_iso:
                 return _make_candidate(opp, skip_reason="ttl_expired")
 
-    # Strategy resolution — must match opportunity symbol or be generic (no symbol field)
+    # Strategy attribution passthrough (Position C 2026-07-02): the rules engine is
+    # gone. We no longer resolve a StrategyRecord, check pause/regime/market-type
+    # affinity, read backtest evidence, or evaluate a RuleSet entry gate. The opp's
+    # linked_strategy_id (mostly NULL now) rides through purely as an attribution
+    # label. Regime affinity is applied as a scanner-family scoring signal below.
     strategy_id = opp.get("linked_strategy_id")
-    strategy = None
-    if strategy_id:
-        strategy = _safe_get(get_strategy, strategy_id)
-        if strategy:
-            if is_paper_trading_paused(strategy):
-                return _make_candidate(opp, skip_reason=f"paused_strategy:{strategy_id}")
-            # Verify linked strategy actually targets this symbol (or is generic)
-            params_raw = strategy.get("parameters") or "{}"
-            try:
-                _p = _json.loads(params_raw) if isinstance(params_raw, str) else params_raw
-            except (ValueError, TypeError):
-                _p = {}
-            _strat_sym = _p.get("symbol")
-            if _strat_sym and to_canonical(_strat_sym) != to_canonical(symbol):
-                strategy_id = None
-                strategy = None
-    if not strategy_id:
-        for s in list_strategies(limit=50):
-            if not is_active_paper_strategy(s):
-                continue
-            s_params_raw = s.get("parameters") or "{}"
-            try:
-                s_params = _json.loads(s_params_raw) if isinstance(s_params_raw, str) else s_params_raw
-            except (ValueError, TypeError):
-                s_params = {}
-            s_sym = s_params.get("symbol")
-            if not s_sym or to_canonical(s_sym) == to_canonical(symbol):
-                strategy_id = s["id"]
-                strategy = s
-                break
+    strategy_evidence = None
+    strategy_has_ruleset = False
+    ruleset_entry_result = None
 
-    # Venue-aware symbol filter: apply OKX demo filter when resolved venue is okx_demo.
-    # Use opp market_type so swap-only symbols don't pass a perp candidate.
-    resolved_venue = (strategy.get("execution_venue") if strategy else None) or global_venue
-    if resolved_venue == "okx_demo":
+    # Venue-aware symbol filter: apply OKX demo filter when the global venue is
+    # okx_demo. Use opp market_type so swap-only symbols don't pass a perp candidate.
+    if global_venue == "okx_demo":
         try:
             from aletheia.execution.okx_broker import _get_demo_symbols
             _opp_market_type = (opp.get("market") or "usdt_futures").lower()
@@ -204,67 +180,6 @@ def _evaluate_candidate(
                                        direction=direction, strategy_id=strategy_id)
         except Exception:
             pass
-
-    # Regime-aware strategy filtering (P0: direction_affinity + applicable_regimes)
-    regime = get_current_regime()
-    if strategy:
-        regime_skip = _check_strategy_regime_fit(strategy, direction, regime)
-        if regime_skip:
-            return _make_candidate(
-                opp, skip_reason=regime_skip,
-                direction=direction, strategy_id=strategy_id,
-                universe_member=universe_member,
-            )
-
-        # Market-type affinity (Round 2 perp enablement): a spot-only strategy must
-        # not take a perp opportunity, nor a futures-only strategy a spot one. "both"
-        # (default) matches either. opp.market is "spot" | "usdt_futures".
-        mta = (strategy.get("market_type_affinity") or "both").lower()
-        opp_market = (opp.get("market") or "spot").lower()
-        if mta not in ("both", "") and mta != opp_market:
-            return _make_candidate(
-                opp, skip_reason=f"market_type_mismatch:{mta}!={opp_market}",
-                direction=direction, strategy_id=strategy_id,
-                universe_member=universe_member,
-            )
-
-    # Strategy evidence gate (backtest + paper PnL)
-    strategy_evidence = None
-    if strategy:
-        strategy_evidence = _lookup_strategy_evidence(strategy)
-        ev_status = strategy_evidence.get("evidence_status")
-        if ev_status in _EVIDENCE_BLOCK_STATUSES:
-            return _make_candidate(
-                opp, skip_reason=f"strategy_evidence:{ev_status}",
-                direction=direction, strategy_id=strategy_id,
-                universe_member=universe_member,
-                strategy_evidence=strategy_evidence,
-            )
-
-    # RuleSet entry validation
-    ruleset_entry_result = None
-    strategy_has_ruleset = False
-    if strategy:
-        params_raw = strategy.get("parameters") or "{}"
-        try:
-            params = _json.loads(params_raw) if isinstance(params_raw, str) else params_raw
-        except (ValueError, TypeError):
-            params = {}
-        ruleset_json = params.get("ruleset")
-        # Symbol-specific strategies: only apply their RuleSet to the target symbol.
-        # A strategy designed for DEXE/USDT must not block ADA/USDT opportunities.
-        strategy_target = params.get("symbol")
-        ruleset_applies = not strategy_target or to_canonical(strategy_target) == to_canonical(symbol)
-        if ruleset_json and ruleset_applies:
-            strategy_has_ruleset = True
-            ruleset_entry_result = _check_ruleset_entry(symbol, ruleset_json, params)
-            if ruleset_entry_result is not True:
-                return _make_candidate(
-                    opp, skip_reason=f"ruleset_entry_not_met:{ruleset_entry_result}",
-                    direction=direction, strategy_id=strategy_id,
-                    strategy_has_ruleset=True, universe_member=universe_member,
-                    strategy_evidence=strategy_evidence,
-                )
 
     # Factor feedback lookup
     candidate_for_factor = {
@@ -325,6 +240,29 @@ def _evaluate_candidate(
     )
 
 
+_SCANNER_REGIME_SCORING_DEFAULTS = {
+    "bear_short": 20.0, "bear_long": -25.0,
+    "bull_long": 20.0, "bull_short": -20.0,
+    "volatile_penalty": 10.0,
+    "sideways_trend_penalty": 25.0, "sideways_reversion_bonus": 15.0,
+}
+
+
+def _scanner_regime_scoring() -> dict:
+    """Config-driven scanner-family regime score deltas (P1b).
+
+    Reads cfg.universe.scanner_regime_scoring; falls back to the hardcoded
+    defaults so a missing/partial config never changes the prior behavior.
+    Merged over defaults so a partial override only touches the keys it sets.
+    """
+    try:
+        from aletheia.config.loader import load_config
+        cfg_vals = getattr(load_config().universe, "scanner_regime_scoring", None) or {}
+    except Exception:
+        cfg_vals = {}
+    return {**_SCANNER_REGIME_SCORING_DEFAULTS, **cfg_vals}
+
+
 def _compute_trade_score(
     opp: dict,
     universe_member: dict | None,
@@ -372,28 +310,23 @@ def _compute_trade_score(
         else:
             score -= 5  # no history: mild penalty (was 0 for watch)
 
-    # Strategy evidence bonus/penalty (backtest + paper PnL attribution)
-    if strategy_evidence:
-        ev_status = strategy_evidence.get("evidence_status")
-        if ev_status in _EVIDENCE_PENALTY_STATUSES:
-            score += _EVIDENCE_PENALTY_STATUSES[ev_status]
-        elif ev_status in _EVIDENCE_BONUS_STATUSES:
-            score += _EVIDENCE_BONUS_STATUSES[ev_status]
-
-        # Paper drift penalty: underperforming = extra penalty
-        drift_status = strategy_evidence.get("drift_status")
-        if drift_status == "paper_underperforming":
-            score -= 15
-        elif drift_status == "paper_confirming":
-            score += 10
+    # Position C (2026-07-02): the strategy-evidence bonus/penalty (backtest +
+    # paper-drift scoring) was removed with the rules engine. Per-family live edge is
+    # surfaced to the PI via family_direction_edge (P1a); the deterministic ranker no
+    # longer scores on per-strategy backtest evidence.
 
     # P0-5: Regime-aware scoring with smooth confidence weighting (no 0.5 cliff).
     # P0-2: Sideways branch added — trend-family scanners penalised in sideways (CTA lit.).
+    # P1b (2026-07-02): deltas are config-driven (cfg.universe.scanner_regime_scoring),
+    # defaults reproduce the prior hardcoded values EXACTLY. This is a SOFT, scanner-
+    # family-level signal applied to ALL candidates including strategy-less ones — NOT a
+    # hard block (owner directive: no low-dim hard interception). Locked by SP-S06/SP-S07.
+    _srs = _scanner_regime_scoring()
     _BASE_REGIME_DELTA = {
-        ("bear", "short"): +20,
-        ("bear", "long"):  -25,
-        ("bull", "long"):  +20,
-        ("bull", "short"): -20,
+        ("bear", "short"): _srs["bear_short"],
+        ("bear", "long"):  _srs["bear_long"],
+        ("bull", "long"):  _srs["bull_long"],
+        ("bull", "short"): _srs["bull_short"],
     }
     _TREND_FAMILIES = {"breakout", "momentum", "ma_crossover", "trend"}
 
@@ -403,17 +336,16 @@ def _compute_trade_score(
         weight = regime.confidence ** 1.5  # smooth: avoids hard cliff at 0.5
         score += delta * weight
     elif regime.state == "volatile":
-        score -= 10 * (regime.confidence ** 1.5)
+        score -= _srs["volatile_penalty"] * (regime.confidence ** 1.5)
     elif regime.state == "sideways" and regime.confidence > 0.6:
         scanner = (opp.get("scanner_family") or "").lower()
         if any(t in scanner for t in _TREND_FAMILIES):
-            score -= 25  # trend-following performs worst in sideways
+            score -= _srs["sideways_trend_penalty"]  # trend-following worst in sideways
         elif "reversion" in scanner or "arb" in scanner:
-            score += 15  # mean-reversion strategies benefit from sideways
+            score += _srs["sideways_reversion_bonus"]  # mean-reversion benefits from sideways
 
-    # P2: Executable RuleSet bonus — verified strategies get preference
-    if strategy_has_ruleset:
-        score += 15
+    # Position C (2026-07-02): the "+15 executable RuleSet bonus" was removed with
+    # the rules engine — there are no RuleSets to prefer.
 
     # P1: Lesson-aware scoring — penalty for symbol+direction with negative experience
     score += _lesson_penalty(opp.get("symbol"), direction, opp.get("scanner_family"))
@@ -520,62 +452,10 @@ def _memo_scoring(symbol: str | None, direction: str | None, regime: MarketRegim
         return 0.0
 
 
-def _check_strategy_regime_fit(
-    strategy: dict, direction: str | None, regime: MarketRegime
-) -> str | None:
-    """Check if strategy is compatible with current regime. Returns skip reason or None."""
-    params_raw = strategy.get("parameters") or "{}"
-    try:
-        params = _json.loads(params_raw) if isinstance(params_raw, str) else params_raw
-    except (ValueError, TypeError):
-        params = {}
-
-    # Check direction_affinity vs regime
-    affinity = strategy.get("direction_affinity") or params.get("direction_affinity") or "both"
-    if regime.confidence > 0.6:
-        if regime.state == "bear" and affinity == "long":
-            return f"regime_mismatch:bear_vs_long_only(conf={regime.confidence:.2f})"
-        if regime.state == "bull" and affinity == "short":
-            return f"regime_mismatch:bull_vs_short_only(conf={regime.confidence:.2f})"
-
-    # Check applicable_regimes
-    applicable = strategy.get("applicable_regimes") or params.get("applicable_regimes") or "all"
-    if applicable != "all":
-        try:
-            regime_list = _json.loads(applicable) if isinstance(applicable, str) else applicable
-        except (ValueError, TypeError):
-            regime_list = None
-        if regime_list and isinstance(regime_list, list):
-            if regime.state not in regime_list:
-                return f"regime_not_applicable:{regime.state} not in {regime_list}"
-
-    return None
-
-
-def _check_ruleset_entry(symbol: str, ruleset_json, params: dict) -> bool | None:
-    """Evaluate RuleSet entry signal. Returns True/False/None."""
-    try:
-        from aletheia.strategy.dsl import RuleSet
-        from aletheia.strategy.evaluator import BarData, evaluate_at_bar
-
-        ruleset = RuleSet.from_json(ruleset_json)
-        tf = params.get("timeframe") or "1h"
-        candles = get_ohlcv_candles(symbol, tf, limit=200)
-        if not candles:
-            return None
-        bars = [
-            BarData(
-                ts=int(c["ts"]), open=float(c["open"]),
-                high=float(c["high"]), low=float(c["low"]),
-                close=float(c["close"]), volume=float(c["volume"]),
-            )
-            for c in candles
-        ]
-        sig = evaluate_at_bar(ruleset, bars, len(bars) - 1)
-        return sig.get("entry")
-    except Exception as e:
-        logger.debug("RuleSet check failed for %s: %s", symbol, e)
-        return None
+# Position C (2026-07-02): _check_strategy_regime_fit and _check_ruleset_entry were
+# removed with the strategy rules engine. Regime affinity is now a scanner-family
+# scoring signal (_scanner_regime_scoring / _compute_trade_score); there is no
+# RuleSet to evaluate. Deleting these also drops the last aletheia.strategy imports.
 
 
 def _evaluate_guards_safe(
@@ -716,105 +596,11 @@ def _parse_risk_flags(universe_member: dict | None) -> list:
     return []
 
 
-def _lookup_strategy_evidence(strategy: dict) -> dict:
-    """Lightweight per-strategy evidence lookup for ranker scoring.
-
-    Returns {evidence_status, backtest_expectancy, paper_expectancy, drift_status}.
-    Avoids the full build_strategy_evidence_snapshot() cost by doing minimal queries.
-    """
-    result = {
-        "evidence_status": None,
-        "backtest_expectancy": None,
-        "backtest_profit_factor": None,
-        "paper_expectancy": None,
-        "paper_trade_count": 0,
-        "drift_status": None,
-    }
-    try:
-        params_raw = strategy.get("parameters") or "{}"
-        params = _json.loads(params_raw) if isinstance(params_raw, str) else params_raw
-        has_ruleset = bool(params.get("ruleset"))
-        compile_status = "ok" if has_ruleset else "no_ruleset"
-        if has_ruleset:
-            try:
-                from aletheia.strategy.dsl import RuleSet
-                RuleSet.from_json(params["ruleset"])
-            except Exception:
-                compile_status = "compile_error"
-
-        # Fetch latest backtest for this strategy
-        latest_backtest = None
-        try:
-            from aletheia.storage.sqlite import get_db
-            db = get_db()
-            bt_row = db.execute(
-                "SELECT expectancy, profit_factor, trade_count "
-                "FROM backtest_runs WHERE strategy_id = ? "
-                "ORDER BY created_at DESC LIMIT 1",
-                (strategy["id"],),
-            ).fetchone()
-            if bt_row:
-                latest_backtest = {
-                    "expectancy": bt_row[0],
-                    "profit_factor": bt_row[1],
-                    "trade_count": bt_row[2],
-                }
-                result["backtest_expectancy"] = bt_row[0]
-                result["backtest_profit_factor"] = bt_row[1]
-        except Exception:
-            pass
-
-        # Fetch paper PnL summary from positions linked to this strategy
-        paper_summary = None
-        try:
-            from aletheia.storage.sqlite import get_db
-            db = get_db()
-            paper_row = db.execute(
-                "SELECT count(*) as cnt, "
-                "avg(realized_pnl_pct) as avg_pnl, "
-                "sum(CASE WHEN realized_pnl_pct > 0 THEN 1 ELSE 0 END) as wins "
-                # A6 (LEARNING_LOOP_AUDIT §13.1): paper-stage executions include
-                # bitget_demo/okx_demo/etc., not just paper_internal. Hard-coding
-                # 'paper_internal' dropped those closed positions from the strategy's
-                # paper evidence count. Match all non-live (paper/demo) modes.
-                "FROM positions WHERE strategy_id = ? AND status = 'closed' "
-                "AND execution_mode NOT LIKE '%live%'",
-                (strategy["id"],),
-            ).fetchone()
-            if paper_row and paper_row[0] > 0:
-                cnt = paper_row[0]
-                paper_summary = {
-                    "trade_count": cnt,
-                    "expectancy": paper_row[1],
-                }
-                result["paper_expectancy"] = paper_row[1]
-                result["paper_trade_count"] = cnt
-        except Exception:
-            pass
-
-        # Drift status
-        if latest_backtest and paper_summary and paper_summary["trade_count"] >= 3:
-            bt_exp = latest_backtest.get("expectancy") or 0
-            paper_exp = paper_summary.get("expectancy") or 0
-            ratio = paper_exp / bt_exp if bt_exp != 0 else None
-            if bt_exp > 0 and paper_exp < 0:
-                result["drift_status"] = "backtest_false_positive"
-            elif bt_exp > 0 and ratio is not None and ratio >= 0.5:
-                result["drift_status"] = "paper_confirming"
-            elif bt_exp > 0 and ratio is not None and ratio < 0.5:
-                result["drift_status"] = "paper_underperforming"
-            else:
-                result["drift_status"] = "no_clear_drift"
-
-        # Classify evidence
-        drift_for_classify = {"drift_status": result["drift_status"]} if result["drift_status"] else None
-        result["evidence_status"] = _classify_evidence_status(
-            has_ruleset, compile_status, latest_backtest, paper_summary, drift_for_classify,
-        )
-    except Exception as e:
-        logger.debug("Strategy evidence lookup failed for %s: %s", strategy.get("id"), e)
-
-    return result
+# Position C (2026-07-02): _lookup_strategy_evidence was removed with the strategy
+# rules engine. It read backtest_runs + classified evidence via the deleted
+# analytics.strategy_evidence module. Per-family live edge (the honest replacement)
+# is surfaced to the PI via repositories.family_direction_edge (P1a), and the ranker
+# no longer gates or scores on per-strategy backtest evidence.
 
 
 def _safe_get(fn, key: str | None):

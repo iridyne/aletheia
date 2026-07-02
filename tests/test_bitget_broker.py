@@ -126,20 +126,30 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     save_config(cfg)
 
     # fresh market data so the data-freshness check passes
-    from aletheia.storage.models import MarketSnapshot
-    from aletheia.storage.repositories import insert_strategy
-    from aletheia.storage.models import StrategyRecord
+    from datetime import datetime, timezone
+    from aletheia.storage.models import MarketSnapshot, Opportunity, UniverseForwardOutcome
 
-    repo.insert_strategy(StrategyRecord(name="Live Strategy", state="live_candidate"))
-    strategy_rows = repo.list_strategies()
-    strategy_id = strategy_rows[0]["id"]
+    # #14 scanner-family evidence gate (Position C 2026-07-02): a LIVE order is
+    # live-eligible only if its scanner_family has a proven clean-window edge. Seed
+    # 30 winning settled outcomes for (momentum, long) + an opportunity carrying that
+    # family so the proposal passes gate #14 and routes to the broker.
+    now = datetime.now(timezone.utc).isoformat()
+    for i in range(30):
+        repo.insert_forward_outcome(UniverseForwardOutcome(
+            member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
+            scanner_family="momentum", direction="long", horizon="24h",
+            entry_price_usd=100.0, due_at=now, settled_at=now,
+            exit_price_usd=105.0, forward_return_pct=5.0, status="settled",
+        ))
+    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long", scanner_family="momentum")
+    repo.insert_opportunity(opp)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000))
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
         symbol="BTCUSDT", market_type="spot", direction="long",
         quantity=0.00001, price=60000.0, execution_mode="bitget_live_limited", stop_price=59000.0,
-        strategy_id=strategy_id,
+        opportunity_id=opp.id,
     )
     assert result["status"] == "executed"
     assert result["exchange_order_id"] == "EX-123"

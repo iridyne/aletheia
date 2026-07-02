@@ -74,24 +74,6 @@ def test_volume_below_multiplier_no_trigger():
     mock_notify.assert_not_called()
 
 
-def test_strategy_designer_triggered():
-    """Price move above strategy_design_min_move_pct should trigger designer."""
-    cfg = _make_cfg(price_threshold=3.0, min_move=5.0)
-    with patch.object(price_feed, "_notify"), \
-         patch("aletheia.agent_runtime.scheduler.trigger_strategy_designer_on_demand") as mock_trigger:
-        price_feed._check_event_triggers("BTC/USDT", 6.0, None, None, cfg)
-    mock_trigger.assert_called_once()
-
-
-def test_strategy_designer_not_triggered_below_min_move():
-    """Price move above price_threshold but below min_move should NOT trigger designer."""
-    cfg = _make_cfg(price_threshold=3.0, min_move=5.0)
-    with patch.object(price_feed, "_notify"), \
-         patch("aletheia.agent_runtime.scheduler.trigger_strategy_designer_on_demand") as mock_trigger:
-        price_feed._check_event_triggers("BTC/USDT", 4.0, None, None, cfg)
-    mock_trigger.assert_not_called()
-
-
 def test_disabled_no_action():
     """When event_triggers.enabled=False, nothing fires."""
     cfg = _make_cfg(enabled=False)

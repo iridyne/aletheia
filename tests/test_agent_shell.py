@@ -56,19 +56,20 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
 # --- Registry tests ---
 
 def test_registry_has_32_commands():
-    assert len(COMMANDS) == 43
+    # Position C (2026-07-02): removed 6 strategy-FSM operator commands.
+    assert len(COMMANDS) == 37
 
 
 def test_registry_all_read_commands_require_observe():
     read_cmds = [c for c in COMMANDS.values() if c.risk_level == "read"]
-    assert len(read_cmds) == 13
+    assert len(read_cmds) == 12
     for cmd in read_cmds:
         assert cmd.required_permission == "Observe"
 
 
 def test_registry_operational_commands_require_paper():
     ops = [c for c in COMMANDS.values() if c.risk_level == "operational"]
-    assert len(ops) == 17
+    assert len(ops) == 14
     observe_ops = {c.name for c in ops if c.required_permission == "Observe"}
     paper_ops = {c.name for c in ops if c.required_permission == "Paper"}
     assert observe_ops == {
@@ -80,10 +81,7 @@ def test_registry_operational_commands_require_paper():
         "pause_agents",
         "resume_agents",
         "set_symbol_observe_only",
-        "create_paper_experiment",
         "reconcile_positions",
-        "pause_paper_strategy",
-        "propose_strategy_promotion",
         "propose_prompt_change",
         "propose_schedule_change",
         "propose_live_limited_enablement",
@@ -142,12 +140,12 @@ def test_allowed_commands_observe():
     assert "pause_agents" not in cmds
     assert "create_review_report" in cmds
     assert "create_diagnostic_report" in cmds
-    assert len(cmds) == 19
+    assert len(cmds) == 18
 
 
 def test_allowed_commands_paper():
     cmds = allowed_commands("Paper")
-    assert len(cmds) == 43
+    assert len(cmds) == 37
 
 
 # --- Intent keyword fallback tests ---
@@ -187,16 +185,6 @@ def test_keyword_operator_status():
     assert intent.command == "get_operator_status"
 
 
-def test_keyword_strategy_lifecycle():
-    intent = _classify_keyword("show the strategy lifecycle")
-    assert intent.command == "get_strategy_lifecycle"
-
-
-def test_keyword_live_candidate_status_is_not_forbidden():
-    intent = _classify_keyword("show the live candidate strategy status")
-    assert intent.command == "get_strategy_lifecycle"
-
-
 def test_keyword_failed_tasks():
     intent = _classify_keyword("review failed tasks")
     assert intent.command == "get_failed_tasks"
@@ -222,11 +210,6 @@ def test_keyword_dreaming_log():
     assert intent.command == "create_dreaming_log"
 
 
-def test_keyword_strategy_draft():
-    intent = _classify_keyword("create a strategy draft")
-    assert intent.command == "create_strategy_draft"
-
-
 def test_keyword_mark_task_done():
     intent = _classify_keyword("mark task done")
     assert intent.command == "mark_task_done"
@@ -247,11 +230,6 @@ def test_keyword_symbol_observe_only():
     assert intent.command == "set_symbol_observe_only"
 
 
-def test_keyword_create_paper_experiment():
-    intent = _classify_keyword("create paper experiment")
-    assert intent.command == "create_paper_experiment"
-
-
 def test_keyword_create_review_report():
     intent = _classify_keyword("create a risk review report")
     assert intent.command == "create_review_report"
@@ -260,11 +238,6 @@ def test_keyword_create_review_report():
 def test_keyword_create_diagnostic_report():
     intent = _classify_keyword("create a system health diagnostic report")
     assert intent.command == "create_diagnostic_report"
-
-
-def test_keyword_propose_strategy_promotion():
-    intent = _classify_keyword("propose strategy promotion")
-    assert intent.command == "propose_strategy_promotion"
 
 
 def test_keyword_propose_prompt_change():
@@ -295,16 +268,6 @@ def test_keyword_propose_command_center_behavior_change():
 def test_keyword_archive_low_value_notification():
     intent = _classify_keyword("archive this recommendation")
     assert intent.command == "archive_low_value_notification"
-
-
-def test_keyword_mark_strategy_under_review():
-    intent = _classify_keyword("mark strategy under review")
-    assert intent.command == "mark_strategy_under_review"
-
-
-def test_keyword_pause_paper_strategy():
-    intent = _classify_keyword("pause paper strategy")
-    assert intent.command == "pause_paper_strategy"
 
 
 def test_keyword_resume():
@@ -922,13 +885,13 @@ async def test_runtime_reuses_explicit_session_id_for_operator_turn(tmp_path, mo
 
         runtime = AgentShellRuntime()
         resp = await runtime.handle(
-            "show the strategy lifecycle",
+            "review failed tasks",
             permission_mode="ReadOnly",
             permission_scope="operator",
             session_id="strategy-session-1",
         )
 
-    assert resp.intent == "get_strategy_lifecycle"
+    assert resp.intent == "get_failed_tasks"
     commands = list_commands("strategy-session-1")
     assert len(commands) == 1
     sessions = list_sessions(limit=10)
@@ -1130,30 +1093,6 @@ async def test_create_dreaming_log_handler_preserves_item_type(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_create_strategy_draft_creates_draft_and_strategy_memory(tmp_path, monkeypatch):
-    _init_agent_shell_db(tmp_path, monkeypatch)
-
-    from aletheia.agent_shell.commands import create_strategy_draft
-    from aletheia.storage.repositories import get_strategy, list_knowledge_items
-
-    result = await create_strategy_draft(
-        {
-            "title": "Mean Reversion Draft",
-            "content": "Fade intraday overextension with tight invalidation.",
-            "parameters": {"symbol": "BTCUSDT", "timeframe": "15m"},
-        }
-    )
-
-    assert result["created"] is True
-    strategy = get_strategy(result["id"])
-    assert strategy is not None
-    assert strategy["state"] == "draft"
-    memories = list_knowledge_items(item_type="strategy_memory")
-    assert len(memories) == 1
-    assert memories[0]["title"] == "Mean Reversion Draft"
-
-
-@pytest.mark.asyncio
 async def test_mark_task_done_completes_operator_task(tmp_path, monkeypatch):
     _init_agent_shell_db(tmp_path, monkeypatch)
 
@@ -1244,27 +1183,6 @@ async def test_set_symbol_observe_only_removes_trading_but_keeps_observation(tmp
 
 
 @pytest.mark.asyncio
-async def test_create_paper_experiment_advances_to_paper_candidate(tmp_path, monkeypatch):
-    _init_agent_shell_db(tmp_path, monkeypatch)
-
-    from aletheia.agent_shell.commands import create_paper_experiment
-    from aletheia.storage.repositories import get_strategy
-
-    result = await create_paper_experiment(
-        {
-            "title": "Momentum Experiment",
-            "content": "Probe breakout continuation with paper-only sizing.",
-            "parameters": {"symbol": "ETHUSDT", "timeframe": "1h"},
-        }
-    )
-
-    assert result["created"] is True
-    strategy = get_strategy(result["id"])
-    assert strategy is not None
-    assert strategy["state"] == "paper_candidate"
-
-
-@pytest.mark.asyncio
 async def test_archive_low_value_notification_creates_artifact_and_filters_recommendations(
     tmp_path, monkeypatch
 ):
@@ -1291,30 +1209,6 @@ async def test_archive_low_value_notification_creates_artifact_and_filters_recom
 
     after = build_recommendations(limit=10)
     assert all(item["id"] != "gateway-paused" for item in after)
-
-
-@pytest.mark.asyncio
-async def test_mark_strategy_under_review_updates_strategy_record(tmp_path, monkeypatch):
-    _init_agent_shell_db(tmp_path, monkeypatch)
-
-    from aletheia.agent_shell.commands import mark_strategy_under_review
-    from aletheia.storage.repositories import get_strategy
-    from aletheia.trading.strategy_lifecycle import create_strategy
-
-    strategy = create_strategy("Review Candidate", "needs operator review")
-
-    result = await mark_strategy_under_review(
-        {
-            "strategy_id": strategy.id,
-            "review_notes": "paper drawdown looks unstable",
-        }
-    )
-
-    assert result["updated"] is True
-    record = get_strategy(strategy.id)
-    assert record is not None
-    assert record["under_review"] == 1
-    assert record["review_notes"] == "paper drawdown looks unstable"
 
 
 @pytest.mark.asyncio
@@ -1416,82 +1310,6 @@ async def test_create_diagnostic_report_supports_specialized_health_report_types
     assert artifacts[0]["content"]["report_type"] == report_type
     assert artifacts[0]["content"]["file_path"] == str(report_path)
     assert summary == artifacts[0]["content"]["summary"]
-
-
-@pytest.mark.asyncio
-async def test_pause_paper_strategy_marks_strategy_paused_and_reviews_open_opportunities(
-    tmp_path, monkeypatch
-):
-    _init_agent_shell_db(tmp_path, monkeypatch)
-
-    from aletheia.agent_shell.commands import pause_paper_strategy
-    from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import get_opportunity, get_strategy, insert_opportunity
-    from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
-
-    strategy = create_strategy("Paused Strategy", "pause this strategy")
-    from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision
-    insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strategy.id, debate_ran=False))
-    for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
-        promote_strategy(strategy.id, target)
-
-    opp = Opportunity(
-        symbol="BTC/USDT",
-        market="spot",
-        direction_bias="long",
-        thesis="linked to active strategy",
-        confidence="medium",
-        source_agent="market_observer",
-        linked_strategy_id=strategy.id,
-    )
-    insert_opportunity(opp)
-
-    result = await pause_paper_strategy(
-        {
-            "strategy_id": strategy.id,
-            "reason": "risk review pending",
-        }
-    )
-
-    assert result["paused"] is True
-    record = get_strategy(strategy.id)
-    assert record is not None
-    assert record["paper_trading_paused"] == 1
-    assert record["paper_pause_reason"] == "risk review pending"
-    updated_opp = get_opportunity(opp.id)
-    assert updated_opp is not None
-    assert updated_opp["status"] == "reviewed"
-
-
-@pytest.mark.asyncio
-async def test_propose_strategy_promotion_creates_artifact_with_gate_preview(tmp_path, monkeypatch):
-    _init_agent_shell_db(tmp_path, monkeypatch)
-
-    from aletheia.agent_shell.commands import propose_strategy_promotion
-    from aletheia.agent_shell.operator_store import list_artifacts
-    from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
-
-    strategy = create_strategy("Promotion Candidate", "paper strategy")
-    from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision
-    insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=strategy.id, debate_ran=False))
-    for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
-        promote_strategy(strategy.id, target)
-
-    result = await propose_strategy_promotion(
-        {
-            "strategy_id": strategy.id,
-            "target_state": "live_candidate",
-            "rationale": "paper evidence looks promising",
-        }
-    )
-
-    assert result["proposed"] is True
-    artifacts = list_artifacts(session_id="operator-main")
-    assert artifacts[0]["artifact_type"] == "strategy_promotion_proposal"
-    assert artifacts[0]["content"]["target_state"] == "live_candidate"
-    assert "gate_preview" in artifacts[0]["content"]
 
 
 @pytest.mark.asyncio

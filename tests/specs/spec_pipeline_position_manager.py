@@ -428,6 +428,53 @@ def test_close_position_writes_audit_event_row(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
+        "PL-PM-08", "pipeline_position_manager", "§7 ruleset_exit_bypass_removed", "L2a",
+        "RuleSet exit signals must NOT auto-close a position. Exit authority belongs "
+        "to SL/TP/max_hold/market-aware/PI only. Neither position_manager.evaluate_open_positions "
+        "nor paper_trader may wire a RuleSet exit into close_position — this locks the "
+        "PI-central exit invariant against re-introducing the deterministic-rule bypass "
+        "(Position B, P0 defuse 2026-07-02). The bypass had zero live effect (0/208 closes) "
+        "but was a wired-but-dormant override of PI autonomy.",
+        status="implemented",
+    ),
+)
+def test_ruleset_exit_bypass_removed():
+    """Structural removal invariant: the RuleSet auto-close bypass is gone.
+
+    A behavioral test would need a live paper_running strategy whose RuleSet exit
+    fires against an open position — heavy setup that also can't distinguish
+    'bypass removed' from 'exit rule didn't fire'. The honest lock for a REMOVAL is
+    structural: the wiring that turned a RuleSet exit signal into a close_position()
+    call no longer exists in either exit path. PL-PM-02/03/04 (SL/TP/max_hold) stay
+    green, proving legitimate exits are untouched.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent.parent
+    pm_src = (root / "aletheia" / "portfolio" / "position_manager.py").read_text(encoding="utf-8")
+    pt_src = (root / "aletheia" / "agents" / "paper_trader.py").read_text(encoding="utf-8")
+
+    # position_manager must not turn a ruleset exit into an exit decision tuple
+    assert '"ruleset_exit_signal"' not in pm_src and "'ruleset_exit_signal'" not in pm_src, (
+        "position_manager still wires a ruleset_exit_signal decision — the PI-central "
+        "exit bypass was re-introduced. Exit authority must be SL/TP/max_hold/market/PI only."
+    )
+    assert "scan_active_rulesets" not in pm_src, (
+        "position_manager still calls scan_active_rulesets in the exit loop — remove it "
+        "(P0 defuse). RuleSet exits must not close positions."
+    )
+
+    # paper_trader must not auto-close on a ruleset exit
+    assert "_handle_ruleset_exit" not in pt_src, (
+        "paper_trader still calls _handle_ruleset_exit (close_position bypass). Removed in P0."
+    )
+    assert 'reason="ruleset_exit_signal"' not in pt_src and "reason='ruleset_exit_signal'" not in pt_src, (
+        "paper_trader still closes positions with reason='ruleset_exit_signal' — bypass not removed."
+    )
+
+
+@spec_claim(
+    SpecClaim(
         "PL-PM-07", "pipeline_position_manager", "§6 paused_vs_protective_close", "L2c",
         "runtime.paused must NOT block protective exits: the scheduler's "
         "_run_position_manager still closes a stop-loss-breaching position when paused. "

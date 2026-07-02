@@ -1022,6 +1022,20 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
           <p className="hint m-0">Adjusted autonomously by the System Operator. Reset via <code>aletheia config set universe.scanner_weights &#123;&#125;</code>.</p>
         </div>
       )}
+      {universe?.scanner_regime_scoring && Object.keys(universe.scanner_regime_scoring).length > 0 && (
+        <div className="mb-3">
+          <span className="settings-field-label">Regime scoring deltas (soft, read-only)</span>
+          <div className="settings-field-grid">
+            {Object.entries(universe.scanner_regime_scoring as Record<string, number>).map(([k, v]) => (
+              <label className="settings-field" key={k}>
+                <span>{humanize(k)}</span>
+                <input type="number" value={v} readOnly className="mono" />
+              </label>
+            ))}
+          </div>
+          <p className="hint m-0">Soft ranker score deltas applied per candidate by regime × direction/family (applies to strategy-less opportunities too — not a hard block). Tune via <code>aletheia config set universe.scanner_regime_scoring &#123;…&#125;</code>.</p>
+        </div>
+      )}
       <p className="hint">
         When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
         and feeds the top {maxCandidates} to agents. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.
@@ -2467,6 +2481,13 @@ const RISK_CORR: NumField[] = [
   { key: 'max_portfolio_beta',           label: 'Max portfolio BTC beta',   unit: '',   min: 0.5, max: 10, step: 0.5 },
 ]
 
+// Scanner-family live-eligibility gate (risk check #14). A LIVE trade needs its
+// scanner_family (in the proposal's direction) to show a clean-window edge.
+const RISK_FAMILY_GATE: NumField[] = [
+  { key: 'live_family_min_samples',      label: 'Live family min samples',  unit: '',  min: 1, max: 500, step: 1, isInt: true },
+  { key: 'live_family_min_win_rate_pct', label: 'Live family min win rate', unit: '%', min: 0, max: 100, step: 1 },
+]
+
 const RISK_FUTURES_LIVE: NumField[] = [
   { key: 'max_leverage_major_live', label: 'Major (BTC/ETH)',    unit: 'x', min: 1, max: 10, step: 1, isInt: true },
   { key: 'max_leverage_mid_live',   label: 'Mid-cap',            unit: 'x', min: 1, max: 5,  step: 1, isInt: true },
@@ -2495,7 +2516,7 @@ function RiskCard({ settings, qc }: any) {
   useEffect(() => {
     if (!risk) return
     const init: Record<string, any> = {}
-    ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN].forEach(f => { init[f.key] = risk[f.key] })
+    ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FAMILY_GATE, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN].forEach(f => { init[f.key] = risk[f.key] })
     RISK_BOOLS.forEach(f => { init[f.key] = risk[f.key] })
     setVals(init)
   }, [settings])
@@ -2503,7 +2524,7 @@ function RiskCard({ settings, qc }: any) {
   const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null); setErrors({}) }
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  const allNumFields = [...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN]
+  const allNumFields = [...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FAMILY_GATE, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN]
 
   const validateAndSave = () => {
     const errs: Record<string, string> = {}
@@ -2560,6 +2581,10 @@ function RiskCard({ settings, qc }: any) {
       {/* Cross-mode guards (both demo and live) */}
       <div className="section-label mt-4">Per-symbol exposure (demo + live)</div>
       <NumGrid fields={RISK_SHARED} vals={vals} set={set} errors={errors} />
+
+      {/* Scanner-family live-eligibility gate (risk check #14) */}
+      <div className="section-label mt-4">Live scanner-family evidence gate (#14)</div>
+      <NumGrid fields={RISK_FAMILY_GATE} vals={vals} set={set} errors={errors} />
 
       <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
 
@@ -2802,6 +2827,7 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     ...RISK_SHARED.map(f => `risk.${f.key}`),
     ...RISK_BOOLS.map(f => `risk.${f.key}`),
     ...RISK_CORR.map(f => `risk.${f.key}`),
+    ...RISK_FAMILY_GATE.map(f => `risk.${f.key}`),
     'trading.default_stop_loss_pct', 'trading.default_take_profit_pct', 'trading.max_position_hold_hours',
     'trading.slippage_bps', 'trading.execution_fee_pct', 'trading.min_confidence_to_trade', 'trading.auto_adopt_enabled',
     'trading.trail_enabled', 'trading.trail_atr_mult', 'trading.trail_pct', 'trading.breakeven_trigger_pct', 'trading.exchange_tpsl_enabled',

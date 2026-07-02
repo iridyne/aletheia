@@ -91,11 +91,12 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 |--------|------|-------------|
 | GET | `/strategies` | List all strategies |
 | GET | `/strategies/summary` | Condensed strategy status overview |
-| GET | `/strategies/{id}` | Strategy detail with parameters |
-| GET | `/strategies/{id}/gates` | Promotion gate status for strategy |
+| GET | `/strategies/{id}` | Strategy detail with parameters (legacy read-only) |
 | PATCH | `/strategies/{id}/venue` | Change strategy venue (paper/live) |
-| POST | `/strategies/{id}/promote` | Promote strategy to next lifecycle stage |
-| POST | `/strategies/{id}/retire` | Retire a strategy |
+
+> Rules engine removed (Position C, 2026-07-02): `/strategies/{id}/gates`, `/promote`,
+> `/retire` deleted — strategies are no longer created/promoted; `strategy_records` is a
+> read-only legacy table. GET routes remain for historical attribution display.
 
 ---
 
@@ -106,8 +107,6 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/analytics/trade-insights` | Win rate, Sharpe, profit factor, drawdown |
 | GET | `/analytics/trade-stats` | Rolling trade statistics |
 | GET | `/analytics/strategy-kpis` | Per-strategy KPI breakdown |
-| GET | `/analytics/strategy-evidence` | Evidence for strategy decisions |
-| GET | `/analytics/backtest-paper-drift` | Backtest vs paper performance drift |
 | GET | `/analytics/exit-policy-advice` | Exit policy recommendations |
 | GET | `/analytics/trade-paths` | Trade decision path visualization data |
 | GET | `/analytics/go-live-scorecard` | 10-criteria composite go-live score |
@@ -116,10 +115,11 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/analytics/reasoning-feedback` | Per-bucket rejection/win rates |
 | GET | `/analytics/family-scorecard` | Scanner family performance |
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
-| GET | `/analytics/backtest/runs` | List backtest runs |
-| GET | `/analytics/backtest/runs/{id}` | Backtest run detail with trades |
-| GET | `/analytics/backtest/compare/{strategy_id}` | Compare backtest vs paper |
-| GET | `/analytics/strategy-performance` | Per-strategy KPIs + latest backtest summary (D6) |
+| GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
+
+> Backtest endpoints (`/analytics/backtest/runs`, `/runs/{id}`, `/compare/{id}`,
+> `/backtest-paper-drift`) and `/analytics/strategy-evidence` were deleted with the
+> rules engine (Position C, 2026-07-02).
 
 ---
 
@@ -460,8 +460,6 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/analytics/equity-curve` | Portfolio equity curve data |
-| GET | `/analytics/strategy-evidence` | Per-strategy evidence snapshots |
-| GET | `/analytics/backtest-paper-drift` | Backtest vs paper trading drift |
 | GET | `/analytics/exit-policy-advice` | Exit strategy diagnostics |
 | GET | `/analytics/trade-paths` | MFE/MAE path analysis |
 | GET | `/analytics/family-scorecard` | Strategy family scorecard |

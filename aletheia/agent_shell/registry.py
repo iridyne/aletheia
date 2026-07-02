@@ -96,15 +96,6 @@ COMMANDS: dict[str, CommandDef] = {
         audit_event_type="operator_explain_proposal",
         backend_handler="explain_proposal",
     ),
-    "get_strategy_lifecycle": CommandDef(
-        name="get_strategy_lifecycle",
-        risk_class="read",
-        worker_permission_required="Observe",
-        operator_permission_required="ReadOnly",
-        description="Inspect strategy state and promotion-gate readiness",
-        audit_event_type="operator_get_strategy_lifecycle",
-        backend_handler="get_strategy_lifecycle",
-    ),
     "get_failed_tasks": CommandDef(
         name="get_failed_tasks",
         risk_class="read",
@@ -151,15 +142,6 @@ COMMANDS: dict[str, CommandDef] = {
         description="Create a research note in the knowledge base",
         audit_event_type="operator_create_research_note",
         backend_handler="create_research_note",
-    ),
-    "create_strategy_draft": CommandDef(
-        name="create_strategy_draft",
-        risk_class="low_risk_write",
-        worker_permission_required="Paper",
-        operator_permission_required="Research",
-        description="Create a draft strategy and optional strategy memory note",
-        audit_event_type="operator_create_strategy_draft",
-        backend_handler="create_strategy_draft",
     ),
     "create_dreaming_log": CommandDef(
         name="create_dreaming_log",
@@ -251,15 +233,6 @@ COMMANDS: dict[str, CommandDef] = {
         audit_event_type="operator_archive_low_value_notification",
         backend_handler="archive_low_value_notification",
     ),
-    "mark_strategy_under_review": CommandDef(
-        name="mark_strategy_under_review",
-        risk_class="low_risk_write",
-        worker_permission_required="Paper",
-        operator_permission_required="Research",
-        description="Mark a strategy under operator review with a structured review note",
-        audit_event_type="operator_mark_strategy_under_review",
-        backend_handler="mark_strategy_under_review",
-    ),
     # A路架构 observer-as-tool 命令：PI 把 observer 作为工具调用而非独立发言方。
     # 这三条注册条目是 PCI-G02 (A路结构证明) 的代码锚点，handler 由 commands.py 实现。
     "observe_market": CommandDef(
@@ -319,16 +292,6 @@ COMMANDS: dict[str, CommandDef] = {
         audit_event_type="operator_set_symbol_observe_only",
         backend_handler="set_symbol_observe_only",
     ),
-    "create_paper_experiment": CommandDef(
-        name="create_paper_experiment",
-        risk_class="controlled_operational",
-        worker_permission_required="Paper",
-        operator_permission_required="PaperAuto",
-        description="Create a new paper experiment strategy and advance it to paper_candidate",
-        requires_confirmation=True,
-        audit_event_type="operator_create_paper_experiment",
-        backend_handler="create_paper_experiment",
-    ),
     "reconcile_positions": CommandDef(
         name="reconcile_positions",
         risk_class="controlled_operational",
@@ -338,26 +301,6 @@ COMMANDS: dict[str, CommandDef] = {
         requires_confirmation=True,
         audit_event_type="operator_reconcile_positions",
         backend_handler="reconcile_positions",
-    ),
-    "pause_paper_strategy": CommandDef(
-        name="pause_paper_strategy",
-        risk_class="controlled_operational",
-        worker_permission_required="Paper",
-        operator_permission_required="PaperAuto",
-        description="Pause a paper strategy and clear any still-open linked opportunities from execution",
-        requires_confirmation=True,
-        audit_event_type="operator_pause_paper_strategy",
-        backend_handler="pause_paper_strategy",
-    ),
-    "propose_strategy_promotion": CommandDef(
-        name="propose_strategy_promotion",
-        risk_class="proposal_only",
-        worker_permission_required="Paper",
-        operator_permission_required="AllowEditing",
-        description="Create a proposal artifact for promoting a strategy lifecycle state",
-        requires_proposal=True,
-        audit_event_type="operator_propose_strategy_promotion",
-        backend_handler="propose_strategy_promotion",
     ),
     "propose_prompt_change": CommandDef(
         name="propose_prompt_change",

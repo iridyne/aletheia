@@ -149,7 +149,7 @@ trade_proposals.id
 
 ## 9. 目标态差距 — 当前活跃
 
-- ⚠️ [execution_path_honesty §1.3](../governance/execution_path_honesty.md):strategy 的 `entry_rule/exit_rule` 是**从不被解析执行的死字符串**(`models.py:216-219`,`strategy_designer.py:68-69,488-489`)。交易方向实际来自 opportunity 的 LLM `direction_bias`,strategy 仅提供 `strategy_id` 供晋级门挂靠统计。`strategy/dsl.py` 的 `RuleSet` 是预期替代路径,但尚未接入执行链。**契约诚实声明**:当前"策略规则驱动交易"不成立;策略层是 advisory。诚实化三路径(命名/确定性 gate/真 DSL)见该文档 §7,均需显式授权。
+- ✅ **已由 Position C 解决(2026-07-02)**:此前 strategy 的 `entry_rule/exit_rule`/`RuleSet` 是"从不被解析执行的死字符串",strategy 层名义上驱动交易实则 advisory——这个诚实性缺口现已**通过删除整个规则引擎彻底消除**(`aletheia/strategy/` 整包 + `strategy_designer.py` + `ruleset_scanner.py` 删除)。交易方向唯一来自 PI Agent 对 opportunity 的决策(`evaluate_trading_opportunity`);`strategy_id` 仅作可空历史归因标签(legacy)。不再存在"策略规则驱动交易"的名实不符。
 
 ---
 

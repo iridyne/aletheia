@@ -26,7 +26,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "market_data": 90.0,
     "market_observer": 240.0,
     "dreaming_agent": 300.0,
-    "strategy_designer": 300.0,
     "paper_trader": 300.0,
     "pi_trading_decision": 300.0,
     "equity_observer": 240.0,
@@ -39,7 +38,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "data_collectors": 45.0,
     "exchange_sync": 60.0,
     "portfolio_snapshot": 45.0,
-    "backtest_orchestrator": 600.0,
     "price_feed": 45.0,
     "daily_summary": 60.0,
     "ohlcv_nightly_backfill": 3600.0,
@@ -366,18 +364,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="confidence_calibration", misfire_grace_time=300, executor="io",
     )
     _scheduler.add_job(
-        _guarded("strategy_designer_daily", _run_strategy_designer), "cron", hour=1, minute=0, id="strategy_designer_daily",
-        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
-    )
-    _scheduler.add_job(
-        _guarded("strategy_designer_eu", _run_strategy_designer), "cron", hour=9, minute=0, id="strategy_designer_eu",
-        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
-    )
-    _scheduler.add_job(
-        _guarded("strategy_designer_us", _run_strategy_designer), "cron", hour=17, minute=0, id="strategy_designer_us",
-        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
-    )
-    _scheduler.add_job(
         _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",
         misfire_grace_time=60, executor="io",
     )
@@ -508,11 +494,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="data_collectors", misfire_grace_time=60,
         next_run_time=datetime.now() + timedelta(seconds=30), executor="io",
     )
-    # Strategy backtest orchestrator — daily evaluation of all active strategies.
-    # Runs after strategy_designer (01:00) so newly generated strategies get tested.
+    # Guard promotion — deterministic learning task (candidate guards → active).
+    # Re-homed from the deleted backtest_orchestrator cycle (which used to drive it
+    # via lifecycle_automation). Same daily 04:00 CST cadence, gated by runtime.paused.
     _scheduler.add_job(
-        _guarded("backtest_orchestrator", _run_backtest_orchestrator), "cron", hour=4, minute=0,
-        id="backtest_orchestrator", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
+        _guarded("guard_promotion", _run_guard_promotion), "cron", hour=4, minute=0,
+        id="guard_promotion", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
     # Nightly OHLCV backfill — bulk-download history for universe + observed symbols.
     if cfg.historical_data.nightly_backfill_enabled:
@@ -796,48 +783,6 @@ def _run_shadow_resolver():
             )
     except Exception as e:
         logger.warning("shadow_resolver job failed: %s", e)
-
-
-def _run_strategy_designer():
-    cfg = load_config()
-    if cfg.runtime.paused:
-        return
-    try:
-        _run_async_with_timeout("strategy_designer", _async_run("strategy_designer"))
-    except TimeoutError:
-        logger.warning(
-            "strategy_designer job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["strategy_designer"],
-        )
-    except Exception as e:
-        logger.warning("strategy_designer job failed: %s", e)
-
-
-# ── Event-driven strategy design trigger ──────────────────────────────────────
-
-import time as _time
-
-_last_event_design_time: float = 0.0
-_EVENT_DESIGN_COOLDOWN_SEC: float = 1800.0  # 30 min debounce
-
-
-def trigger_strategy_designer_on_demand() -> bool:
-    """Trigger strategy_designer outside cron when high-score universe candidates appear.
-
-    Returns True if the designer was triggered, False if debounced.
-    Thread-safe: the agents executor (pool=1) serializes concurrent calls.
-    """
-    global _last_event_design_time
-    now = _time.time()
-    cooldown = load_config().strategy_factory.event_cooldown_minutes * 60
-    if now - _last_event_design_time < cooldown:
-        logger.debug("strategy_designer event-trigger debounced (%.0fs since last)",
-                     now - _last_event_design_time)
-        return False
-    _last_event_design_time = now
-    logger.info("strategy_designer triggered by high-score universe signal")
-    _run_strategy_designer()
-    return True
 
 
 def _run_reconciliation():
@@ -1457,49 +1402,22 @@ def _run_outcome_settler():
         _record_job_failure("outcome_settler", str(e))
 
 
-def _run_backtest_orchestrator():
+def _run_guard_promotion():
+    """Promote candidate trading guards to active when evidence threshold met.
+
+    Deterministic, no-LLM learning task. Re-homed from the deleted
+    backtest_orchestrator → lifecycle_automation cycle. Gated by
+    config.guard.auto_promote_enabled inside run_promotion_check().
+    """
     cfg = load_config()
     if cfg.runtime.paused:
         return
     try:
-        _run_sync_with_timeout("backtest_orchestrator", _backtest_orchestrator_body)
-    except TimeoutError:
-        logger.warning(
-            "backtest_orchestrator job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["backtest_orchestrator"],
-        )
+        from aletheia.analytics.guard_promotion import run_promotion_check
+        result = run_promotion_check()
+        logger.info("guard_promotion: %s", result)
     except Exception as e:
-        logger.warning("backtest_orchestrator job failed: %s", e)
-
-
-def _backtest_orchestrator_body():
-    from aletheia.strategy.orchestrator import run_all_backtests, generate_daily_report
-    from aletheia.strategy.performance_ledger import (
-        compute_ledger_snapshot, append_ledger_event,
-    )
-    from aletheia.files.jsonl import write_audit
-
-    result = run_all_backtests(retire_killed=True)
-    generate_daily_report(result)
-    logger.info("Backtest orchestrator: %d evaluated, %d killed, %d kept",
-                result.strategies_evaluated, result.strategies_killed, result.strategies_kept)
-
-    snapshot = compute_ledger_snapshot(period_days=7)
-    append_ledger_event(snapshot)
-
-    write_audit({
-        "actor": "system", "source": "scheduler",
-        "event_type": "backtest_orchestrator_complete",
-        "entity_type": "strategy",
-        "message": (
-            f"Backtest run: {result.strategies_evaluated} evaluated, "
-            f"{result.strategies_killed} killed, {result.strategies_kept} kept"
-        ),
-    })
-
-    from aletheia.analytics.lifecycle_automation import run_lifecycle_automation
-    lc_result = run_lifecycle_automation()
-    logger.info("Lifecycle automation: %s", lc_result)
+        logger.warning("guard_promotion job failed: %s", e)
 
 
 def _run_ohlcv_nightly_backfill():

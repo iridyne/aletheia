@@ -7,7 +7,6 @@ import AgentActivity from './pages/AgentActivity'
 import Learning from './pages/Learning'
 import Proposals from './pages/Proposals'
 import TradesPositions from './pages/TradesPositions'
-import StrategyLifecycle from './pages/StrategyLifecycle'
 import Charts from './pages/Charts'
 import Settings from './pages/Settings'
 import RiskControls from './pages/RiskControls'
@@ -62,7 +61,6 @@ export const NAV: NavGroup[] = [
   {
     group: 'Evolve',
     items: [
-      { to: '/strategies', label: 'Strategies' },
       { to: '/learning', label: 'Learning' },
       { to: '/serenity-lens', label: 'Serenity Lens' },
     ],
@@ -505,7 +503,6 @@ export default function App() {
             {/* Legacy paths kept as redirects so existing cross-links/bookmarks resolve. */}
             <Route path="/paper-trades" element={<TradesPositions />} />
             <Route path="/positions" element={<TradesPositions />} />
-            <Route path="/strategies" element={<StrategyLifecycle />} />
             <Route path="/charts" element={<Charts />} />
             <Route path="/prediction-markets" element={<PredictionLens />} />
             <Route path="/command-center" element={<CommandCenter />} />

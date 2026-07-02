@@ -7,7 +7,204 @@
 
 ## Last Updated
 
-2026-07-02 (动态 sizing/persona/learning P0–P4 实现 + PR#35 费率漂移修复)
+2026-07-02 (Position C **全部完成** A+B+C — 规则引擎删除 + 决策链解耦 + 信任边界 + 全 operator/UI 面移除 + 文档/spec 同步)
+
+---
+
+## Recent Change (Position C Phase C 完成 — 文档/spec 同步 → Position C 全部收官 — 2026-07-02)
+
+> **Position C(规则引擎删除)A+B+C 全部完成。** 分支 `refactor/strategy-position-b-p0p1`,
+> 全量绿,未 merge master。上线路径见文末。
+
+### Phase C 交付
+- **SDD spec 诚实性**(`commit`):spec_strategy_pool 删 SP-S04(测已删 strategy_designer 码);
+  spec_model_routing MR-S04 六→五 deep-tier(去 strategy_designer);spec_promotion_gates 不改
+  (Option B 保留 check_promotion_gates)。conformance 537 绿。
+- **8 契约文档**:scheduler/agent_contracts/SYSTEM_MAP job 表(去 designer+backtest 加 guard_promotion +
+  agent 段/timeout/数据流图);api_reference(删 strategies gates/promote/retire + backtest + strategy-evidence
+  端点);data_model(4 表标 legacy read-only);promotion_gates_contract + README(LEGACY 横幅);
+  execution_contract §9(死字符串诚实性缺口 → 标记已由删除解决);trust_and_change_control §6.1 +
+  decision_lifecycle 无需改(引擎非受控信任边界/无引用)。
+- **整洁项**:删孤儿 backtest_paper_drift.py + 其单测(路由已删)。
+  遗留(无害 optional,已记):ranker always-None strategy_evidence 死参、operator_recommendations
+  喂已删分支的死计算(2 处 list_artifacts,操作控制面敏感故未动)、router.py + knowledge_contract 的
+  strategy_designer 知识路由(dead-but-consistent 配置,Phase A 有意保留)。
+
+### Position C 全景(A+B+C)
+- **A**:`aletheia/strategy/` 整包 + strategy_designer/strategy_evidence/ruleset_scanner/lifecycle_automation
+  物理删;ranker/paper_trader/scheduler 解耦;guard_promotion 重挂保命。
+- **B**:风控 #14 → scanner-family 证据门(信任边界,SDD-first);决策链/analytics landmine 清;前端页删 +
+  #14 Settings UI;doctor strategy_health 改 legacy-only;operator 命令面(6 命令 + 推荐 + 路由 + 动作)移除。
+- **C**:spec + 契约文档同步(本条)。
+- **保留(Option B)**:create_strategy/promote_strategy/check_promotion_gates 内部 legacy 函数;
+  strategy_records/backtest_* 表只读 legacy;strategy_id 可空归因列;GET /strategies + venue 端点。
+
+### 上线路径
+Position C 已闭环,可整体 FF-merge 回主仓 + 主仓 restart + HTTP 实测(worktree data/ 空不代表运行态)。
+
+---
+
+## Recent Change (Position C Phase B 全部完成 — 2026-07-02)
+
+> 承接下方「Phase A 后半」。同一 worktree/分支。**Phase A + B 全部完成,12 commit 领先 master,全量 1702 绿。**
+> owner 已定 **Option B**。**唯一剩余 = Phase C(文档/spec 同步)**。
+
+### 已交付(全绿)
+- **`49c580f` 风控 #14 闸改写(信任边界,owner 批「家族证据门·沿用旧量级」)**:strategy FSM 准入 →
+  scanner_family 干净窗证据门(经 opportunity 解析 family → `family_direction_edge` 要 n≥
+  `risk.live_family_min_samples`(30) 且 win_rate≥`risk.live_family_min_win_rate_pct`(50));fail-closed;
+  删死码 `_LIVE_ELIGIBLE_STATES`;token `family_not_live_eligible:*`。SDD-first:RE-S06 + RE-S04/S04b 前缀
+  加 "family_" + risk_engine_contract §2 #14 改写 + 3 行为测试。
+- **`49b9cf3` 决策链 + analytics 路由 landmine 清理**:trading_decision 去 ruleset_signals;
+  commands.evaluate_trading_opportunity 去 scan_active_rulesets;routes/analytics 删 strategy-evidence +
+  backtest 端点。**至此 aletheia/ 内无任何对已删模块的 import**。
+- **`0df5016` 前端 + #14 Config↔UI 闭合**:App.tsx 去 StrategyLifecycle import/route/nav;删
+  `pages/StrategyLifecycle.tsx`;client.ts 删死方法(getStrategyEvidence/getBacktestPaperDrift/
+  getBacktestRuns/Detail/Compare);Learning.tsx 去 "Strategy promotion" 板+PromoCard;**#14 两 config 字段
+  Settings UI 补齐**(settings.py RiskConfigUpdate+_RISK_BOUNDS / client.ts 类型 / Settings.tsx
+  RISK_FAMILY_GATE 段)。`npm run build` 通过(tsc 无错 + 780 模块)。
+- **`6541502` doctor content.strategy_health 改 legacy-only**:引擎删后 strategy_records 冻结,旧 zombie WARN
+  会误报;改为报 legacy 计数 info(probe-honesty);test_operator_loop content_health 捕获测试的 WARN 源
+  换成 content.proposal_bias。
+- **`0df5016` 前端 + #14 Config↔UI 闭合**(见上)。**`6541502` doctor legacy-only**(见上)。**`ac8a7d6` handoff**。
+- **`8b8b7ba` operator 命令面移除(#7,Phase B 收官)**:6 个 strategy-FSM 命令(get_strategy_lifecycle/
+  create_strategy_draft/create_paper_experiment/mark_strategy_under_review/pause_paper_strategy/
+  propose_strategy_promotion)+ dispatch + registry CommandDef + intent + keyword;operator_recommendations
+  5 条指向已删命令/agent 的推荐分支(保留 live_limited_enablement_proposal_due);operator_loop
+  trigger_strategy_designer OperatorAction(+ 自主发射 + _action + MAX 常量);routes/data promote/retire/gates
+  端点;client.ts promoteStrategy/retireStrategy/getStrategyGates。retire/demote 动作保留(已收敛 TS)。
+  底层 create_strategy 等按 Option B 保留。命令级测试 ~19 删/改(6 文件),全量 1702 绿。
+
+### ✅ owner 已定 = Option B
+`create_strategy`/`promote_strategy`/`check_promotion_gates` **作内部 legacy 函数保留**(写保留的 legacy 表,
+~15 测试 fixture 零改);strategy_lifecycle.py 不收缩 FSM 函数(promote_strategy 仍用 _has_pi_approval)。已只删 operator/UI 面。
+
+### ⏳ 唯一剩余 = Phase C(文档/spec 同步,纯文档为主,无 runtime/测试影响)
+- **spec 诚实性**:`spec_strategy_pool` SP-S04(strategy_designer regime targeting,已删)标废 + 迁 SP-S05/S06/S07
+  到 scanner spec;`spec_model_routing` 去 strategy_designer 引用。(注:spec 测试体不被 pytest 收集,故不报错,
+  但 conformance matrix 计数偏高——诚实性问题。)
+- **8 契约文档**:trust_and_change_control §6.1 受控模块清单(去 strategy 引擎)、decision_lifecycle、
+  agent_contracts(去 strategy_designer job + backtest_orchestrator,加 guard_promotion)、promotion_gates 标废、
+  api_reference(去 strategies/backtest 端点)、data_model(strategy_records/backtest_* 标 legacy-only)、
+  SYSTEM_MAP(scheduler job 表:去 strategy_designer_daily/eu/us + backtest_orchestrator,加 guard_promotion)、
+  design/README。risk_engine_contract §2 #14 已在 49c580f 改。
+- **整洁项(无害,可选)**:backtest_paper_drift.py 孤儿死码(路由已删,只剩单测)可删;paper_trader_ranker
+  always-None 的 strategy_evidence 死参可清;operator_recommendations 留了喂已删分支的死计算(未用变量 +
+  2 处 list_artifacts(500))可清。
+
+### 上线路径
+Phase C 完成后一次性把这些 commit FF-merge 回主仓 + 主仓 restart + HTTP 实测(worktree data/ 空,不代表运行态)。
+
+---
+
+## Recent Change (Position C Phase A 后半 — 引擎包物理删除 + guard_promotion re-home — 2026-07-02)
+
+> 承接下方「Position C Phase A 前半」。本次在 worktree `.claude/worktrees/strategy-deletion`
+> (基于分支 `refactor/strategy-position-b-p0p1`)完成 Phase A 后半。用 worktree 隔离而非在
+
+> 承接下方「Position C Phase A 前半」。本次在 worktree `.claude/worktrees/strategy-deletion`
+> (基于分支 `refactor/strategy-position-b-p0p1`)完成 Phase A 后半。用 worktree 隔离而非在
+> 主 checkout 切分支 —— gateway 全程跑主仓 master 稳定完整引擎,auto-restart git hook 有主工作树
+> 守卫不会从 worktree 触发,把计划 §3「半删状态被重启崩溃」的风险从"缓解"变成"消除"。
+
+### 已交付(本次 commit,Phase A 后半)
+- **scheduler 解耦**:删 3 个 strategy_designer cron job + backtest_orchestrator job +
+  `_run_strategy_designer` / `trigger_strategy_designer_on_demand` / `_run_backtest_orchestrator` /
+  `_backtest_orchestrator_body` + 两个 `_ASYNC_JOB_TIMEOUT_SEC` 条目。
+- **3 个热路径调用点解耦**:signal_emitter(event-driven design 块 + `_high_conf_emitted` 死变量)、
+  price_feed(significant-move designer 触发块)、post_trade_reviewer(P3 review→design 事件链 +
+  `_trigger_strategy_adaptation` 函数)全部移除。
+- **dreaming_agent**:去 performance_ledger 的 factory_block(Strategy Factory metrics 段)。
+- **cli/strategy**:删 backtest 命令(留 list/status 读 legacy 表)。
+- **物理删除**:`aletheia/strategy/` 整包(14 文件)+ `agents/strategy_designer.py` +
+  `analytics/strategy_evidence.py` + `trading/ruleset_scanner.py` + `analytics/lifecycle_automation.py`。
+- **测试**:删 9 个纯引擎 test_*(dsl/backtest_gate/param_sweep*/walk_forward/orchestrator/evidence/
+  causal_chain/event_driven_design)+ spec_evaluator_contracts(去 test_spec_conformance 导入);
+  调整 test_runtime(job 集 + 删 designer 测试)、test_event_triggers(删 2 designer 测试)、
+  test_experience_loop(删 designer 测试)、test_learning_loop_integration(删 TestRegimeAwareFiltering/
+  TestRuleSetBonus/TestPostTradeEventChain 三类,留 TestLessonAwareScoring —— 前两类本是 b9f733f 就该清
+  的漏网,上会话只跑 ranker 子集没发现)。
+
+### ⚠️ 计划外的关键 ripple(计划 §2 未预料 —— 已妥善闭合)
+删 backtest_orchestrator 会**静默掐断 `guard_promotion`(活跃学习子系统,doctor 13 active guards)**:
+它唯一触发链是 backtest_orchestrator → `run_lifecycle_automation` → `run_promotion_check`,无其它 scheduler
+入口。**处置**:`analytics/lifecycle_automation.py` 三函数中 `apply_strategy_evidence_actions`(用被删的
+strategy_evidence)、`apply_exit_policy_feedback`(写 suggested_exit_params,消费者是被删的 strategy_designer,
+前端不读)均已死 → 整文件删;`run_promotion_check` **重新挂成独立 scheduler job `guard_promotion`**
+(daily 04:00 CST,executor=io,gated by runtime.paused —— 精确保留原节拍与门控,零行为变化)。
+test_runtime required job 集加 `guard_promotion` 锁死防回归。
+
+### 验证(证据)
+- 20 个入口模块(app/scheduler/operator_loop/commands/routes/doctor/agents/cli 等)全部 import OK ——
+  **物理删包不破坏系统 import**(所有外部引擎引用都是函数内 lazy)。
+- 受影响 8 个测试文件 112 passed;spec conformance 537 claims / 99%。
+- 全量套件:**1721 passed / 3 skipped / 0 failed**(182s;总数较 8f55261 的 1842 减少 = 删除 ~100+ 引擎测试)。
+
+### 仍留待 Phase B/C(未合并 master 前必须清完 —— 分支合并前这些不会 live)
+- **Phase B 运行时地雷**(lazy import,import-安全,被调时降级,非 hot path):
+  `commands.py:1880` ruleset_scanner;`routes/analytics.py:12/164/176/191/219` strategy_evidence +
+  strategy.repositories(backtest 端点)。连同 doctor `content.strategy_health` / `_has_pi_approval`、
+  **风控 #14 闸(SDD-first,owner 已放行)**、前端 StrategyLifecycle 页 + Learning gates 一并 Phase B 删。
+- **Phase C spec 诚实性**(claim 注册表,不被 pytest 执行故不报错但 matrix 略虚高):
+  `spec_strategy_pool` SP-S04(strategy_designer regime targeting,已删)标废 + 迁 SP-S05/S06/S07 到 scanner
+  spec;`spec_model_routing` 去 strategy_designer 引用;+ 8 份契约文档同步 + agent_contracts/SYSTEM_MAP
+  的 scheduler job 表(去 strategy_designer_daily/backtest_orchestrator,加 guard_promotion)。
+- **附带遗留**(harmless dead,Phase C 清):`knowledge/router.py` AgentRole Literal 含 "strategy_designer"
+  路由项;`config/schema.py`/`trading/instruments.py` 注释;`config.strategy_factory.*` / event_triggers
+  designer 字段(schema 保留不影响 import)。
+- **保留不删**:`strategy_records`/`backtest_runs`/`backtest_trades` 表(只读 legacy,不 DROP);
+  `strategy_id`/`linked_strategy_id` 列。
+
+### 上线注意
+本分支仍**未 merge master**;主仓 gateway 跑的是含完整引擎的 master。合并须在 Phase B/C 完成后一次性
+FF-merge 到主仓(彼时运行时地雷已清),再主仓 restart + HTTP 实测(worktree 的 data/ 为空不能代表)。
+
+---
+
+## Recent Change (Strategy 模块存废 → Position B 交付 + Position C 删除进行中 — 2026-07-02)
+
+### 背景 / 判决
+多 agent 存废分析（6-lens 证据 + 3 立场 + 红队 + 综合）审视 Strategy 模块（规则引擎 vs
+Agentic 决策的范式冲突）。**owner 拍板：选 C —— 整套规则引擎删掉；现在做；放行 P3（风控 #14 闸）；
+代码与文档必须全程同步。** 分析报告与推理链见两份计划：
+- `docs/plans/strategy_module_position_b_refactor_2026-07-02.md`（B 的 P0/P1，已交付）
+- `docs/plans/strategy_engine_deletion_position_c_2026-07-02.md`（C 的删除计划 + 真实 ripple + 分阶段）
+
+关键认知：RuleSet 在代码里是**真·因果件**（硬入场闸 + 绕过 PI 的自动平仓 + 每日 backtest 退役），
+但活体效果为零（208 笔平仓 ruleset_exit=0，84 策略 0 曾到 paper_running）= "范式冲突代码上真实、
+行为上休眠"的已布线未引爆层。完整性核查发现 `universe_forward_outcomes`+`calibration_stats`+Tier-1
+guard **已是** scanner-family thesis 存储，别重建。
+
+### 已交付（commit，全绿）
+- **Position B P0/P1**（`8f55261`，全量 1842 passed）：P0 拆引信（移除 RuleSet 绕过 PI 的自动平仓，
+  spec PL-PM-08）；P1a per-family thesis 证据喂 PI（`family_direction_edge`，DU-S10/S11）；
+  P1b regime 归位 scanner-family（`cfg.universe.scanner_regime_scoring` no-op 抽取，SP-S06/S07）。
+- **Position C Phase A 前半**（`b9f733f`，−457 行）：ranker + paper_trader **完全从引擎解耦**
+  （去 strategy 解析/regime-fit/ruleset-entry/evidence 门/Path A；所有 `aletheia.strategy` import 移除）。
+  引擎包**暂留未删** = 系统仍可完整 import = 安全中间态。ranker 10 / guards+ranker 24 绿。
+
+### ⏳ 未完成（owner 选"A：新会话专注续做" —— 下一会话从这里接）
+分支 `refactor/strategy-position-b-p0p1`（**注意：主 checkout 当前 HEAD 就在此分支**，非 master；
+含 B+C 两批 commit，未 merge master）。剩余按 C 计划分阶段：
+- **Phase A 后半**：scheduler（3 designer job + backtest job + `_run_strategy_designer` /
+  `trigger_strategy_designer_on_demand` / `_run_backtest_orchestrator` / `_backtest_orchestrator_body`）；
+  3 个 `trigger_strategy_designer_on_demand` 调用点（signal_emitter:182 / price_feed:196 /
+  post_trade_reviewer:171，均 lazy import = 运行时地雷）；dreaming_agent（performance_ledger）；
+  lifecycle_automation（strategy_evidence）；cli/strategy。**然后物理删** `aletheia/strategy/` 整包 +
+  strategy_designer.py + analytics/strategy_evidence.py + trading/ruleset_scanner.py + ~10 测试文件。
+- **Phase B**：commands.py（operator create/promote 命令面）、routes/data.py+analytics.py（strategies/
+  backtest 端点）、doctor 探针（content.strategy_health / `_has_pi_approval`）、**风控 #14 闸（信任边界，
+  SDD-first，owner 已放行）**、前端 StrategyLifecycle 页 + Learning 页 gates。
+- **Phase C**：8 份契约文档同步（trust_and_change_control §6.1 / decision_lifecycle / agent_contracts /
+  promotion_gates 废止 / risk_engine #14 / api_reference / data_model / SYSTEM_MAP / design README）
+  + SDD spec 删改（spec_strategy_pool / spec_promotion_gates / spec_evaluator_contracts / backtest*）
+  + test_spec_conformance 导入更新。
+- **保留不删**：`strategy_records`/`backtest_runs`/`backtest_trades` 表（只读 legacy，历史可查，不 DROP）；
+  `strategy_id`/`linked_strategy_id` 列（可空归因标签）。
+
+### 不变量
+交易状态一致性 > 一切；每阶段结束 import-clean + 测试绿 + commit（gateway 重启落绿 commit）；
+风控其余 19 关不动只改 #14。
 
 ---
 

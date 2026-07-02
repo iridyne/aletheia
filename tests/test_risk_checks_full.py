@@ -235,24 +235,29 @@ def test_missing_stop_price_fails_single_trade_risk_check(tmp_path, monkeypatch)
     assert any("max_single_trade_risk_missing_stop_price" in v for v in result.violations)
 
 
-# --- strategy_lifecycle_state (live) ---
+# --- scanner-family live-eligibility gate (#14, Position C 2026-07-02) ---
+# The strategy-FSM eligibility gate was replaced by an evidence gate on the
+# proposal's scanner_family (family_direction_edge clean-window WR + samples).
 
-def test_live_requires_live_eligible_strategy(tmp_path, monkeypatch):
+def test_live_family_without_evidence_rejected(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
-    from aletheia.trading.strategy_lifecycle import create_strategy
-    s = create_strategy("Draft Strat")  # state = draft, not live-eligible
+    from aletheia.storage.models import Opportunity
+    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
+                      scanner_family="momentum")
+    repo.insert_opportunity(opp)
     snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
     repo.insert_market_snapshot(snap)
     p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000,
-                      strategy_id=s.id)
+                      opportunity_id=opp.id)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
-    assert any("strategy_not_live_eligible" in v for v in result.violations)
+    # family has zero settled outcomes → no_evidence → not live-eligible
+    assert any("family_not_live_eligible" in v for v in result.violations)
 
 
-def test_live_requires_strategy_id(tmp_path, monkeypatch):
+def test_live_without_resolvable_family_rejected(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
     snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
@@ -265,10 +270,40 @@ def test_live_requires_strategy_id(tmp_path, monkeypatch):
         quantity=0.0001,
         price=60000,
     )
-    # No strategy_id on a live proposal is not eligible for risk approval.
+    # No opportunity_id → scanner_family can't be resolved → fail-closed reject.
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
-    assert any("strategy_not_live_eligible" in v for v in result.violations)
+    assert any("family_not_live_eligible:unknown" in v for v in result.violations)
+
+
+def test_live_family_with_clean_window_edge_passes_gate14(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _unlock_live_auto(tmp_path)
+    from datetime import datetime, timezone
+    from aletheia.storage.models import Opportunity, UniverseForwardOutcome
+    now = datetime.now(timezone.utc).isoformat()
+    # 30 winning settled outcomes for (momentum, long) in the 7d clean window.
+    for i in range(30):
+        repo.insert_forward_outcome(UniverseForwardOutcome(
+            member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
+            scanner_family="momentum", direction="long", horizon="24h",
+            entry_price_usd=100.0, due_at=now, settled_at=now,
+            exit_price_usd=105.0, forward_return_pct=5.0, status="settled",
+        ))
+    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
+                      scanner_family="momentum")
+    repo.insert_opportunity(opp)
+    snap = MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=60000)
+    repo.insert_market_snapshot(snap)
+    p = TradeProposal(symbol="BTCUSDT", market_type="spot", direction="long",
+                      execution_mode="bitget_live_limited", quantity=0.0001, price=60000,
+                      opportunity_id=opp.id, stop_price=59000)
+    repo.insert_trade_proposal(p)
+    result = evaluate_proposal(p)
+    # >=30 wins, WR=100% → check #14 passes (other live checks may still fire).
+    assert not any("family_not_live_eligible" in v for v in result.violations), (
+        f"family gate should pass with 30 winning outcomes, got: {result.violations}"
+    )
 
 
 # --- demo/paper bounds (§2.3: paper evidence must be built from bounded trades) ---

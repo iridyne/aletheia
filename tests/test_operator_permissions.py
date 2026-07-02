@@ -78,14 +78,6 @@ def test_operator_permissions_use_canonical_ladder():
     assert reason is None
 
     allowed, reason = check_permission(
-        "create_strategy_draft",
-        "Research",
-        permission_scope="operator",
-    )
-    assert allowed is True
-    assert reason is None
-
-    allowed, reason = check_permission(
         "run_market_scan",
         "Research",
         permission_scope="operator",

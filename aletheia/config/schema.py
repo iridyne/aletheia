@@ -314,6 +314,12 @@ class RiskConfig(BaseModel):
     correlation_guard_enabled: bool = True
     max_sector_concentration_pct: float = 60.0
     max_portfolio_beta: float = 3.0
+    # Scanner-family live-eligibility gate (check #14, Position C 2026-07-02).
+    # Replaces the deleted strategy-FSM eligibility gate: a LIVE trade needs its
+    # scanner_family (in the proposal's direction) to show a proven clean-window
+    # edge — at least N settled forward outcomes AND win_rate >= threshold.
+    live_family_min_samples: int = 30
+    live_family_min_win_rate_pct: float = 50.0
 
 
 class TelegramConfig(BaseModel):
@@ -627,6 +633,22 @@ class UniverseConfig(BaseModel):
     # Per-family scoring weight multipliers (operator-adjustable via adjust_scanner_weight).
     # Default 1.0 means no bias; values >1 boost that family's candidates, <1 suppresses.
     scanner_weights: dict[str, float] = Field(default_factory=dict)
+    # Scanner-family regime scoring (P1b 2026-07-02, Position B). The regime→direction
+    # and regime→family score deltas the ranker applies per candidate. This is a SOFT,
+    # scanner-family-level signal that applies to ALL opportunities — including the ~70%
+    # that have NO linked strategy (the orphan gap) — NOT a hard block. It deliberately
+    # stays soft per owner directive (high-dimensional, refutable self-evolution; no
+    # low-dimensional symbol/direction/scanner hard interception; see memory
+    # negfeedback-high-dimensional-evolve). Defaults reproduce the prior hardcoded ranker
+    # values EXACTLY (verified no-op) — extracted to config so the regime affinity lives
+    # at the scanner-family layer, is operator/learning-tunable, and is documented rather
+    # than buried in _compute_trade_score. Locked by spec SP-S06/SP-S07.
+    scanner_regime_scoring: dict[str, float] = Field(default_factory=lambda: {
+        "bear_short": 20.0, "bear_long": -25.0,
+        "bull_long": 20.0, "bull_short": -20.0,
+        "volatile_penalty": 10.0,
+        "sideways_trend_penalty": 25.0, "sideways_reversion_bonus": 15.0,
+    })
 
 
 class RegimeConfig(BaseModel):

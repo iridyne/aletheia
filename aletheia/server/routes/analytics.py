@@ -6,20 +6,6 @@ from fastapi import APIRouter
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
-@router.get("/strategy-evidence")
-def get_strategy_evidence():
-    """Per-strategy evidence snapshot with recommended actions."""
-    from aletheia.analytics.strategy_evidence import build_strategy_evidence_snapshot
-    return build_strategy_evidence_snapshot(limit=100)
-
-
-@router.get("/backtest-paper-drift")
-def get_backtest_paper_drift():
-    """Backtest vs paper drift analysis per strategy."""
-    from aletheia.analytics.backtest_paper_drift import build_backtest_paper_drift
-    return build_backtest_paper_drift(limit=100)
-
-
 @router.get("/exit-policy-advice")
 def get_exit_policy_advice():
     """Exit policy diagnosis and suggestions."""
@@ -158,79 +144,13 @@ def get_trade_insights():
     return build_trade_insights()
 
 
-@router.get("/backtest/runs")
-def get_backtest_runs(strategy_id: str | None = None, limit: int = 20):
-    """List backtest runs, optionally filtered by strategy."""
-    from aletheia.strategy.repositories import list_backtest_runs
-    runs = list_backtest_runs(strategy_id=strategy_id, limit=limit)
-    for r in runs:
-        r.pop("equity_curve_json", None)
-        r.pop("ruleset_json", None)
-    return runs
-
-
-@router.get("/backtest/runs/{run_id}")
-def get_backtest_run_detail(run_id: str):
-    """Single backtest run with equity curve and trades."""
-    import json as _json
-    from aletheia.strategy.repositories import get_backtest_run, list_backtest_trades
-    run = get_backtest_run(run_id)
-    if not run:
-        from fastapi import HTTPException
-        raise HTTPException(404, "backtest run not found")
-    curve_raw = run.pop("equity_curve_json", None)
-    run["equity_curve"] = _json.loads(curve_raw) if curve_raw else []
-    run["trades"] = list_backtest_trades(run_id, limit=500)
-    return run
-
-
-@router.get("/backtest/compare/{strategy_id}")
-def get_backtest_compare(strategy_id: str):
-    """Latest backtest equity curve vs paper trade PnL for a strategy."""
-    import json as _json
-    from aletheia.strategy.repositories import list_backtest_runs
-    from aletheia.storage.repositories import list_strategy_positions
-
-    runs = list_backtest_runs(strategy_id=strategy_id, limit=1)
-    if not runs:
-        return {"strategy_id": strategy_id, "backtest": [], "paper": []}
-
-    run = runs[0]
-    curve_raw = run.get("equity_curve_json")
-    backtest_curve = _json.loads(curve_raw) if curve_raw else []
-
-    # Paper: closed positions for this strategy, cumulative PnL
-    positions = list_strategy_positions(strategy_id, status="closed", limit=500)
-    positions.sort(key=lambda p: p.get("closed_at") or "")
-    cumulative = 100.0
-    paper_curve = [cumulative]
-    for p in positions:
-        pnl_pct = float(p.get("realized_pnl_pct") or 0)
-        cumulative = round(cumulative * (1 + pnl_pct / 100), 4)
-        paper_curve.append(cumulative)
-
-    return {"strategy_id": strategy_id, "backtest": backtest_curve, "paper": paper_curve}
-
-
 @router.get("/strategy-performance")
 def get_strategy_performance():
-    """Per-strategy detailed performance: KPIs + latest backtest run summary (D6)."""
+    """Per-strategy detailed performance KPIs. Backtest run summary removed with
+    the rules engine (Position C 2026-07-02); latest_backtest kept as an empty
+    object for response-shape back-compat."""
     from aletheia.analytics.trade_stats import build_strategy_kpis
-    from aletheia.strategy.repositories import list_backtest_runs
-
-    kpis = build_strategy_kpis()
-    backtest_latest: dict = {}
-    for sid in list(kpis.keys()):
-        runs = list_backtest_runs(strategy_id=sid, limit=1)
-        if runs:
-            r = runs[0]
-            backtest_latest[sid] = {
-                "run_id": r.get("id"),
-                "sharpe": r.get("sharpe"),
-                "max_drawdown": r.get("max_drawdown"),
-                "created_at": r.get("created_at"),
-            }
-    return {"strategies": kpis, "latest_backtest": backtest_latest}
+    return {"strategies": build_strategy_kpis(), "latest_backtest": {}}
 
 
 @router.get("/go-live-scorecard")

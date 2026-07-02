@@ -970,30 +970,6 @@ async def set_strategy_venue(strategy_id: str, req: SetVenueRequest):
     return {"strategy_id": strategy_id, "execution_venue": req.execution_venue}
 
 
-class PromoteRequest(BaseModel):
-    target_state: str
-
-
-@router.post("/strategies/{strategy_id}/promote")
-async def promote_strategy_route(strategy_id: str, req: PromoteRequest):
-    _ensure_db()
-    from aletheia.trading.strategy_lifecycle import promote_strategy
-    result = promote_strategy(strategy_id, req.target_state)
-    if not result.get("success"):
-        raise HTTPException(400, result.get("error", "Promotion failed"))
-    return result
-
-
-@router.post("/strategies/{strategy_id}/retire")
-async def retire_strategy_route(strategy_id: str):
-    _ensure_db()
-    from aletheia.trading.strategy_lifecycle import promote_strategy
-    result = promote_strategy(strategy_id, "retired")
-    if not result.get("success"):
-        raise HTTPException(400, result.get("error", "Retire failed"))
-    return result
-
-
 @router.get("/market/snapshots")
 async def get_market_snapshots(
     symbol: str | None = None,
@@ -1301,17 +1277,6 @@ async def get_knowledge_content(item_id: str):
     except Exception:
         return {"id": item_id, "content": "", "error": "read_failed"}
     return {"id": item_id, "content": content}
-
-
-@router.get("/strategies/{strategy_id}/gates")
-async def get_strategy_gates(strategy_id: str):
-    """Check promotion gates for a strategy without actually promoting."""
-    _ensure_db()
-    s = repo.get_strategy(strategy_id)
-    if s is None:
-        raise HTTPException(404, "Strategy not found")
-    from aletheia.trading.strategy_lifecycle import check_promotion_gates
-    return check_promotion_gates(strategy_id)
 
 
 # ---------------------------------------------------------------------------

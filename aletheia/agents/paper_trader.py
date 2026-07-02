@@ -1,4 +1,4 @@
-"""Paper Trader agent — turns open opportunities and RuleSet signals into paper proposals.
+"""Paper Trader agent — ranks open opportunities into pending signals for the PI Agent.
 
 USER-AUTHORIZED autonomous behavior (paper only). Containment:
 - Only runs when permission mode is Paper or Full. Denied in Observe.
@@ -11,13 +11,11 @@ if the configured exchange demo has no credentials, `paper_internal` is used aut
 Exchange demo (bitget_demo/okx_demo/binance_testnet) uses the real exchange sandbox;
 `paper_internal` fills locally with slippage simulation.
 
-PaperTrader v3 (RuleSet-Driven):
-  Path A — RuleSet signals: for each paper_running strategy with a compiled RuleSet,
-    evaluate_at_bar() produces entry/exit signals directly from OHLCV bars.
-    Multiple strategies can fire simultaneously (multi-strategy parallel).
-    Exit signals close existing positions. Entry signals open new ones.
-  Path B — Opportunity-driven (fallback): original ranked candidate selection from
-    market_observer opportunities. Runs after Path A to consume remaining signals.
+PaperTrader v4 (opportunity-driven, Position C 2026-07-02): the RuleSet rules engine
+was deleted. The paper trader ranks market_observer opportunities deterministically
+and writes the top candidates as signal_pending PiDecisions for the PI Agent to
+evaluate. The PI Agent is the sole decision maker; the paper trader never opens or
+closes positions itself.
 """
 from __future__ import annotations
 
@@ -29,9 +27,7 @@ from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_b
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.execution.paper_tools import create_paper_proposal
-from aletheia.storage.repositories import update_opportunity, get_strategy, list_positions
-from aletheia.trading.market_data import latest_snapshot
-from aletheia.trading.ruleset_scanner import RuleSetSignal, scan_active_rulesets
+from aletheia.storage.repositories import update_opportunity, list_positions
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
 
@@ -77,16 +73,6 @@ def _resolve_execution_mode(configured_mode: str) -> str:
         "No credentials found for %s — falling back to paper_internal", configured_mode
     )
     return "paper_internal"
-
-
-def _resolve_venue(strategy_id: str | None, global_mode: str) -> str:
-    """Resolve execution venue: strategy.execution_venue overrides global mode."""
-    if not strategy_id:
-        return global_mode
-    strategy = get_strategy(strategy_id)
-    if strategy and strategy.get("execution_venue"):
-        return strategy["execution_venue"]
-    return global_mode
 
 
 def _atr_adjusted_notional(
@@ -149,31 +135,13 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # Track symbols that received a signal_pending write in this cycle (cross-path dedup).
     cycle_pending_symbols: set[str] = set()
 
-    # ── Path A: RuleSet-driven signals (multi-strategy parallel) ──────────────
-    try:
-        ruleset_signals = scan_active_rulesets(execution_mode=execution_mode)
-    except Exception as e:
-        logger.warning("ruleset scan failed: %s", e)
-        ruleset_signals = []
+    # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
+    # strategy rules engine. The paper trader is now purely opportunity-driven: it
+    # ranks market_observer opportunities and writes the top ones as signal_pending
+    # for the PI Agent to decide (PI-central). There is no RuleSet scan and no
+    # deterministic-rule entry/exit path.
 
-    for sig in ruleset_signals:
-        try:
-            if sig.signal_type == "exit" and sig.position_id:
-                out = _handle_ruleset_exit(sig, run_id)
-            else:
-                if sig.symbol in open_symbols:
-                    outputs.append(f"skip_existing_position:{sig.symbol}")
-                    continue
-                sig_venue = _resolve_venue(sig.strategy_id, execution_mode)
-                out = _handle_ruleset_entry(sig, cfg, sig_venue, run_id)
-                if out:
-                    cycle_pending_symbols.add(sig.symbol)
-            if out:
-                outputs.append(out)
-        except Exception as e:
-            errors.append(f"ruleset_signal_error:{sig.symbol}:{e}")
-
-    # ── Path B: Opportunity-driven (fallback, ranked) ─────────────────────────
+    # ── Opportunity-driven (ranked) ───────────────────────────────────────────
     candidates = build_paper_candidates(limit=50)
 
     _PERMANENT_SKIP_PREFIXES = ("neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:", "equity_shadow_track")
@@ -257,77 +225,8 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     return {"outputs": outputs, "errors": errors}
 
 
-# ── RuleSet signal handlers ───────────────────────────────────────────────────
-
-def _handle_ruleset_exit(sig: RuleSetSignal, run_id: str | None) -> str | None:
-    """Close a position triggered by RuleSet exit signal."""
-    from aletheia.portfolio.pnl import close_position, _latest_price
-    price = _latest_price(sig.symbol)
-    if price is None:
-        logger.warning("no_price_for_exit:%s", sig.symbol)
-        return None
-    try:
-        close_position(sig.position_id, exit_price=float(price), reason="ruleset_exit_signal")
-        logger.info("ruleset_exit: closed position %s for %s", sig.position_id, sig.symbol)
-        return f"ruleset_exit:{sig.symbol}:{sig.strategy_id[:8]}"
-    except Exception as e:
-        logger.warning("ruleset_exit failed for %s: %s", sig.position_id, e)
-        return None
-
-
-def _handle_ruleset_entry(
-    sig: RuleSetSignal,
-    cfg,
-    execution_mode: str,
-    run_id: str | None,
-) -> str | None:
-    """Record a RuleSet entry signal as signal_pending for PI Agent to evaluate.
-
-    PI Agent is the sole decision maker — Path A writes signals, not proposals.
-    """
-    snap = latest_snapshot(sig.symbol)
-    price = (snap or {}).get("price")
-    if not price:
-        logger.warning("no_price_for_entry:%s", sig.symbol)
-        return None
-
-    price = float(price)
-
-    # Use RuleSet-derived stop if available, else fall back to config %
-    stop_price = sig.stop_price
-    if stop_price is None:
-        stop_pct = cfg.trading.default_stop_loss_pct
-        if sig.direction == "long":
-            stop_price = round(price * (1 - stop_pct / 100.0), 8)
-        else:
-            stop_price = round(price * (1 + stop_pct / 100.0), 8)
-
-    try:
-        from aletheia.storage.models import PiDecision
-        from aletheia.storage.repositories import insert_pi_decision
-        pi_dec = PiDecision(
-            symbol=sig.symbol,
-            direction=sig.direction,
-            action="signal_pending",
-            conviction=0,
-            reasoning=(
-                f"RuleSet entry: strategy={sig.strategy_id[:8]} "
-                f"name={sig.strategy_name} tf={sig.timeframe} "
-                f"price={price} stop={stop_price}"
-            ),
-            proposal_id=None,
-            debate_ran=False,
-        )
-        insert_pi_decision(pi_dec)
-        try:
-            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-            notify_pi_daemon(source="paper_trader_ruleset")
-        except Exception:
-            pass
-    except Exception as e:
-        logger.debug("signal_pending write failed for ruleset %s: %s", sig.symbol, e)
-
-    logger.info("ruleset_signal_pending: %s %s strategy=%s", sig.direction, sig.symbol, sig.strategy_id[:8])
-    return f"ruleset_signal_pending:{sig.symbol}:{sig.strategy_id[:8]}"
+# Position C (2026-07-02): _handle_ruleset_entry removed with the rules engine.
+# The paper trader no longer produces RuleSet-driven signals; it is purely
+# opportunity-driven (ranked → signal_pending → PI decides).
 
 

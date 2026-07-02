@@ -4,6 +4,14 @@
 > **基线**:意图源 [trust §5](../governance/trust_and_change_control.md) 已是近完整规范,代码 100% 吻合;一处残余偏差(偏差1)标 ⚠️;偏差2(PI 审批门)已于 2026-06-23 确认实现,标 ✅。
 > Last updated: 2026-06-21 · 维护者:Aletheia Dev
 
+> **⚠️ LEGACY (Position C, 2026-07-02)**:规则引擎删除后,策略不再被创建/晋级——本契约描述的
+> `check_promotion_gates`/`check_live_limited_gates`/`LIFECYCLE_STATES`/`promote_strategy` 作为**内部
+> legacy 函数保留**(Option B),但**已无任何生产路径 wire 到晋级**:strategy_designer 已删、每日
+> backtest_orchestrator 已删、operator 的 create/promote 命令面已删、前端 StrategyLifecycle 页已删。
+> 实盘准入(风控 #14)也已从"策略处 live_candidate/live_limited"改为 **scanner_family 干净窗证据门**
+> (见 [risk_engine_contract §2 #14](risk_engine_contract.md))。本契约保留为历史归因 + 该批函数的行为规范;
+> 不再是活的晋级机制。
+
 ---
 
 ## 1. 生命周期状态机

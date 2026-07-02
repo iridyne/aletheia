@@ -320,15 +320,11 @@ def evaluate_open_positions() -> dict:
     # Check for exchange-bracket-triggered closes before the local polling loop
     _sync_exchange_closed(cfg)
 
-    # Collect RuleSet exit signals once (avoids redundant bar fetches per position)
-    ruleset_exit_position_ids: set[str] = set()
-    try:
-        from aletheia.trading.ruleset_scanner import scan_active_rulesets
-        for sig in scan_active_rulesets():
-            if sig.signal_type == "exit" and sig.position_id:
-                ruleset_exit_position_ids.add(sig.position_id)
-    except Exception as e:
-        logger.warning("ruleset exit scan failed: %s", e)
+    # NOTE (P0 defuse, 2026-07-02): RuleSet exit signals no longer auto-close
+    # positions. Exit authority is SL/TP/max_hold/market-aware/PI only — a
+    # deterministic RuleSet must not override PI autonomy (PI-central, Option A).
+    # The former ruleset exit-scan path had zero live effect (0/208 closes) but
+    # was a wired-but-dormant bypass. Locked by spec PL-PM-08.
 
     # Build market signal index once per cycle (batch query, not per-position)
     market_signal_index: dict = {}
@@ -363,8 +359,6 @@ def evaluate_open_positions() -> dict:
         _maybe_update_trailing_stop(p, float(price), cfg)
 
         decision = _decide_exit(p, float(price), cfg)
-        if decision is None and p["id"] in ruleset_exit_position_ids:
-            decision = ("ruleset_exit_signal", float(price))
 
         # Market-aware exit: only when mechanical exits didn't fire
         if decision is None and cfg.trading.market_aware_exits.enabled:

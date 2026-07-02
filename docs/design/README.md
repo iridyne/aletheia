@@ -32,7 +32,7 @@ L4 状态/参考   status/* · references/* · _ai/* ── 现在是什么样/�
 | [risk_engine_contract](risk_engine_contract.md) | Risk Engine 16 关审批 / kill switch / sizing / 硬限保证 | ✅ 金标准(批次1新建) |
 | [execution_contract](execution_contract.md) | proposal→order→fill→position 因果链 / 执行模式 / 原子性 / 对账 | ✅ 金标准(批次1新建) |
 | [live_unlock_contract](live_unlock_contract.md) | live 解锁信任边界 / permission 双面 / FORBIDDEN_INTENTS | ✅ 金标准(批次1新建) |
-| [promotion_gates_contract](promotion_gates_contract.md) | 策略晋级门 8 阈值 / 生命周期状态机 / 实盘晋级双门 | ✅ 金标准(批次1新建) |
+| [promotion_gates_contract](promotion_gates_contract.md) | 策略晋级门 8 阈值 / 生命周期状态机 / 实盘晋级双门 | ⚠️ LEGACY(Position C 引擎删除后无活晋级路径;函数保留见文首横幅) |
 
 ### 数据与接口
 

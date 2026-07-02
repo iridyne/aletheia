@@ -128,34 +128,6 @@ def _build_learning_ledger() -> str:
     coverage_line = (f"{review_coverage:.0%}" if review_coverage is not None
                      else "n/a (no strategies past paper yet)")
 
-    # --- Strategy Factory metrics (meta-evaluation) ---
-    factory_block = ""
-    try:
-        from aletheia.strategy.performance_ledger import (
-            compute_ledger_trend, load_ledger_history,
-        )
-        history = load_ledger_history(max_entries=2)
-        if history:
-            latest = history[-1]
-            trend = compute_ledger_trend()
-            trend_label = "IMPROVING" if trend.improving else ("STAGNANT" if trend.stagnant else "NEUTRAL")
-            factory_block = (
-                "\n### Strategy Factory (is the brain getting smarter?)\n"
-                f"- Compile rate: {latest.compile_rate_pct:.0f}% "
-                f"({latest.strategies_with_ruleset}/{latest.strategies_created} executable)\n"
-                f"- Survival rate: {latest.survival_rate_pct:.0f}% "
-                f"(positive expectancy after costs)\n"
-                f"- Kill rate: {latest.kill_rate_pct:.0f}% "
-                f"(system decisiveness)\n"
-                f"- Time to verdict: {latest.avg_time_to_verdict_hours:.1f}h avg\n"
-                f"- Trend: **{trend_label}**\n"
-            )
-            if trend.signals:
-                for s in trend.signals[:4]:
-                    factory_block += f"  - {s}\n"
-    except Exception:
-        pass
-
     return (
         "\n\n## Learning Ledger\n"
         f"- Strategies by state: {strat_line}\n"
@@ -170,7 +142,6 @@ def _build_learning_ledger() -> str:
         f"- Lessons consulted (24h): {lessons_consulted} "
         "(retrieve_lessons calls returning >=1 lesson — real FTS retrieval, not bare calls)\n"
         f"- Playbook reads (24h): {playbook_reads} (load_playbooks calls)\n"
-        + factory_block
     )
 
 

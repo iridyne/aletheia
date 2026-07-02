@@ -120,12 +120,6 @@ def _import_all_specs():
         # advisory, operator_loop→TS convergence lock, recommend_promote approval gate.
         # From the 2026-06-28 PI-agent SDD audit (docs/issues/PI_AGENT_SDD_AUDIT).
         spec_pi_decision_chain,
-        # Strategy evaluator regression locks (2026-06-28, content-probe fixes). EV-*
-        # claims attach to "evaluator_contract" — momentum_pct must honour the
-        # `period` key (EV-S01) and the scanner must inject multi_tf_bars for
-        # cross-timeframe conditions (EV-S02). Pure L2a structural, not a trust
-        # boundary, so not in REQUIRED_CONTRACTS.
-        spec_evaluator_contracts,
         # Shadow-trade resolution health (2026-06-28, content-probe fixes). AN-*
         # claims attach to "analytics_contract" — unresolved counterfactual shadow
         # trades must not pile up unbounded. Behavioral/data (L2b), not in

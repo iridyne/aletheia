@@ -1122,51 +1122,21 @@ def _probe_git_hooks(report: Report) -> None:
 # loop.knowledge_flood / loop.retrieval_pool / loop.reconciled_ratio / loop.concentration.
 
 def _probe_content_strategy_health(report: Report) -> None:
-    """Zombie strategies (paper_running for days with ~0 trades) and PI-blocked
-    candidates — doctor otherwise has zero strategy awareness."""
+    """Legacy strategy records (read-only). The rules engine was deleted (Position C
+    2026-07-02): no new strategies are generated or promoted, so strategy_records is a
+    frozen legacy table kept only for historical attribution. Probe-honesty: report the
+    count as info — the old zombie / PI-approval WARN no longer applies (there is no
+    engine to act on a stuck strategy)."""
     try:
         from aletheia.storage.sqlite import get_db
-        from aletheia.trading.strategy_lifecycle import _has_pi_approval
-        db = get_db()
-        rows = list(db.execute(
-            "SELECT sr.id, sr.name, sr.state, sr.created_at, sr.paper_trading_paused, "
-            "       COUNT(p.id) AS closed "
-            "FROM strategy_records sr "
-            "LEFT JOIN positions p ON p.strategy_id = sr.id AND p.status='closed' "
-            "GROUP BY sr.id"
-        ))
+        row = get_db().execute("SELECT COUNT(*) AS n FROM strategy_records").fetchone()
+        n = (row["n"] if row else 0) or 0
     except Exception as e:
         report.add("content.strategy_health", "info", f"probe error: {e}")
         return
-    if not rows:
-        report.add("content.strategy_health", "info", "no strategies yet")
-        return
-
-    zombies, blocked = [], []
-    for r in rows:
-        age = _age_minutes(r["created_at"])
-        age_days = (age or 0) / 1440
-        if r["state"] == "paper_running" and not r["paper_trading_paused"] \
-                and age_days > 3 and (r["closed"] or 0) < 5:
-            zombies.append(f"{(r['name'] or r['id'])[:24]}({r['closed']}tr/{age_days:.0f}d)")
-        if r["state"] == "paper_candidate":
-            try:
-                if not _has_pi_approval(r["id"]):
-                    blocked.append((r["name"] or r["id"])[:24])
-            except Exception:
-                pass
-
-    if zombies:
-        report.add("content.strategy_health", "warn",
-                   f"{len(zombies)} zombie strategy(ies) paper_running but barely trading: {', '.join(zombies)}",
-                   "stuck strategy producing no trades — inspect its ruleset/universe match "
-                   "or retire it (aletheia inspect strategies)")
-    elif blocked:
-        report.add("content.strategy_health", "info",
-                   f"{len(blocked)} paper_candidate awaiting PI approval: {', '.join(blocked)}")
-    else:
-        report.add("content.strategy_health", "ok",
-                   f"{len(rows)} strategies, none zombie/blocked")
+    report.add("content.strategy_health", "info",
+               f"{n} legacy strategy records (rules engine removed 2026-07-02; "
+               "frozen legacy table, historical attribution only)")
 
 
 def _probe_content_memo_quality(report: Report) -> None:

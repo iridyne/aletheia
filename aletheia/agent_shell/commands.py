@@ -111,14 +111,6 @@ def _join_summaries(items: list[str], *, limit: int = 3) -> str:
     return " ".join(rendered)
 
 
-def _strategy_inputs(params: dict, *, default_title: str) -> tuple[str, str, dict]:
-    title = str(params.get("title") or params.get("name") or default_title).strip() or default_title
-    content = str(params.get("content") or params.get("description") or "").strip()
-    raw_parameters = params.get("parameters")
-    parameters = raw_parameters if isinstance(raw_parameters, dict) else {}
-    return title, content, parameters
-
-
 def _default_schedule_for(agent_name: str) -> str | None:
     schedules = {
         "market_data": "every 5 minutes",
@@ -329,14 +321,6 @@ def _truthy_flag(value) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in {"", "0", "false", "no", "none", "null"}
     return bool(value)
-
-
-def _is_strategy_under_review(strategy: dict | None) -> bool:
-    return _truthy_flag((strategy or {}).get("under_review"))
-
-
-def _is_paper_strategy_paused(strategy: dict | None) -> bool:
-    return _truthy_flag((strategy or {}).get("paper_trading_paused"))
 
 
 def _resolve_strategy(
@@ -648,82 +632,6 @@ async def explain_proposal(params: dict) -> dict:
     }
 
 
-async def get_strategy_lifecycle(params: dict) -> dict:
-    from aletheia.trading.strategy_lifecycle import (
-        _allowed_targets,
-        check_live_limited_gates,
-        check_promotion_gates,
-    )
-
-    strategy_id = params.get("strategy_id")
-    strategy, strategies = _resolve_strategy(strategy_id)
-
-    if strategy is None:
-        return {"error": "No strategies found."}
-
-    allowed_targets = _allowed_targets(strategy["state"])
-    under_review = _is_strategy_under_review(strategy)
-    paper_trading_paused = _is_paper_strategy_paused(strategy)
-
-    promotion_gates = None
-    if strategy["state"] in {"paper_running", "paper_passed"}:
-        promotion_gates = check_promotion_gates(strategy["id"])
-
-    live_limited_gates = None
-    if strategy["state"] in {"live_candidate", "live_limited"}:
-        live_limited_gates = check_live_limited_gates(strategy["id"])
-
-    gate_summary = ""
-    if promotion_gates:
-        gate_summary = (
-            "promotion gates passed"
-            if promotion_gates["passed"]
-            else f"promotion gates blocked: {', '.join(promotion_gates['failures'])}"
-        )
-    elif live_limited_gates:
-        gate_summary = (
-            "live-limited gates passed"
-            if live_limited_gates["passed"]
-            else f"live-limited gates blocked: {', '.join(live_limited_gates['failures'])}"
-        )
-    else:
-        gate_summary = "no gated promotion checks apply at the current state"
-
-    operator_flags = []
-    if under_review:
-        operator_flags.append("under review")
-    if paper_trading_paused:
-        operator_flags.append("paper trading paused")
-    operator_flag_summary = ""
-    if operator_flags:
-        operator_flag_summary = f" Operator flags: {', '.join(operator_flags)}."
-
-    return {
-        "message": (
-            f"Strategy {strategy['name']} is in state {strategy['state']}. "
-            f"Next allowed targets: {', '.join(allowed_targets) if allowed_targets else 'none'}. "
-            f"{gate_summary}.{operator_flag_summary}"
-        ),
-        "strategy": {
-            "id": strategy["id"],
-            "name": strategy["name"],
-            "state": strategy["state"],
-            "description": strategy.get("description"),
-            "under_review": under_review,
-            "review_notes": strategy.get("review_notes"),
-            "review_updated_at": strategy.get("review_updated_at"),
-            "paper_trading_paused": paper_trading_paused,
-            "paper_pause_reason": strategy.get("paper_pause_reason"),
-            "paper_paused_at": strategy.get("paper_paused_at"),
-            "updated_at": strategy.get("updated_at"),
-        },
-        "allowed_targets": allowed_targets,
-        "promotion_gates": promotion_gates,
-        "live_limited_gates": live_limited_gates,
-        "strategy_count": len(strategies),
-    }
-
-
 async def get_failed_tasks(params: dict) -> dict:
     from aletheia.agent_shell.operator_store import list_tasks
 
@@ -845,25 +753,6 @@ async def create_research_note(params: dict) -> dict:
     if item is None:
         return {"error": "Research note rejected by quality gate (content too short or placeholder)."}
     return {"created": True, "id": item.id, "title": title}
-
-
-async def create_strategy_draft(params: dict) -> dict:
-    from aletheia.knowledge.manager import create_strategy_memory
-    from aletheia.trading.strategy_lifecycle import create_strategy
-
-    title, content, parameters = _strategy_inputs(params, default_title="Operator Strategy Draft")
-    strategy = create_strategy(name=title, description=content or None, parameters=parameters)
-    memory = None
-    if content:
-        memory = create_strategy_memory(strategy.id, title, content)
-    return {
-        "created": True,
-        "id": strategy.id,
-        "title": title,
-        "state": "draft",
-        "message": f"Created strategy draft {title} in draft state.",
-        "strategy_memory_id": memory.id if memory else None,
-    }
 
 
 async def create_dreaming_log(params: dict) -> dict:
@@ -1270,45 +1159,6 @@ async def archive_low_value_notification(params: dict) -> dict:
     }
 
 
-async def mark_strategy_under_review(params: dict) -> dict:
-    from aletheia.agent_shell.operator_store import create_event
-
-    strategy_id = params.get("strategy_id")
-    strategy, _ = _resolve_strategy(strategy_id)
-    if strategy is None:
-        return {"error": "No strategies found."}
-
-    review_notes = str(
-        params.get("review_notes") or params.get("reason") or "operator review requested"
-    ).strip()
-    review_updated_at = datetime.now(timezone.utc).isoformat()
-    update_strategy(
-        strategy["id"],
-        under_review=1,
-        review_notes=review_notes,
-        review_updated_at=review_updated_at,
-        updated_at=review_updated_at,
-    )
-    create_event(
-        event_type="strategy_under_review",
-        source="agent_shell_command",
-        session_id=_proposal_session_id(),
-        related_entity_type="strategy",
-        related_entity_id=strategy["id"],
-        payload={
-            "strategy_name": strategy["name"],
-            "summary": f"{strategy['name']} marked under review.",
-            "review_notes": review_notes,
-        },
-    )
-    return {
-        "updated": True,
-        "strategy_id": strategy["id"],
-        "message": f"Marked strategy {strategy['name']} under review.",
-        "review_notes": review_notes,
-    }
-
-
 async def reconcile_positions(params: dict) -> dict:
     from aletheia.portfolio.position_reconciler import run_reconcile
 
@@ -1465,137 +1315,6 @@ async def set_symbol_observe_only(params: dict) -> dict:
         "message": f"{canonical} is now observe-only.",
         "symbol_list": list(cfg.risk.symbol_list),
         "observed_symbols": observed_symbols,
-    }
-
-
-async def create_paper_experiment(params: dict) -> dict:
-    from aletheia.knowledge.manager import create_strategy_memory
-    from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
-
-    title, content, parameters = _strategy_inputs(params, default_title="Paper Experiment")
-    strategy = create_strategy(name=title, description=content or None, parameters=parameters)
-    memory = None
-    if content:
-        memory = create_strategy_memory(strategy.id, title, content)
-
-    state = "draft"
-    for target in ("research_note", "strategy_hypothesis", "paper_candidate"):
-        result = promote_strategy(strategy.id, target)
-        if not result.get("success"):
-            return {"error": result.get("error", f"Failed to promote strategy to {target}.")}
-        state = target
-
-    return {
-        "created": True,
-        "id": strategy.id,
-        "title": title,
-        "state": state,
-        "message": f"Created paper experiment {title} and advanced it to {state}.",
-        "strategy_memory_id": memory.id if memory else None,
-    }
-
-
-async def pause_paper_strategy(params: dict) -> dict:
-    from aletheia.agent_shell.operator_store import create_event
-
-    preferred_states = {"paper_candidate", "paper_running", "paper_passed"}
-    strategy, _ = _resolve_strategy(params.get("strategy_id"), preferred_states=preferred_states)
-    if strategy is None:
-        return {"error": "No paper strategy found to pause."}
-
-    reason = str(params.get("reason") or "paused by operator").strip()
-    paused_at = datetime.now(timezone.utc).isoformat()
-    update_strategy(
-        strategy["id"],
-        paper_trading_paused=1,
-        paper_pause_reason=reason,
-        paper_paused_at=paused_at,
-        updated_at=paused_at,
-    )
-
-    reviewed_open_opportunities = 0
-    for opportunity in list_opportunities(limit=200):
-        if opportunity.get("linked_strategy_id") != strategy["id"]:
-            continue
-        if opportunity.get("status") != "open":
-            continue
-        update_opportunity(opportunity["id"], status="reviewed")
-        reviewed_open_opportunities += 1
-
-    summary = f"{strategy['name']} paused for paper trading."
-    if reviewed_open_opportunities:
-        summary += f" Reviewed {reviewed_open_opportunities} open linked opportunit(ies)."
-    create_event(
-        event_type="strategy_paused",
-        source="agent_shell_command",
-        session_id=_proposal_session_id(),
-        related_entity_type="strategy",
-        related_entity_id=strategy["id"],
-        payload={
-            "strategy_name": strategy["name"],
-            "summary": summary,
-            "reason": reason,
-            "reviewed_open_opportunity_count": reviewed_open_opportunities,
-        },
-    )
-    return {
-        "paused": True,
-        "strategy_id": strategy["id"],
-        "message": summary,
-        "reviewed_open_opportunity_count": reviewed_open_opportunities,
-    }
-
-
-async def propose_strategy_promotion(params: dict) -> dict:
-    from aletheia.trading.strategy_lifecycle import (
-        _allowed_targets,
-        _live_lifecycle_gate,
-        check_live_limited_gates,
-        check_promotion_gates,
-    )
-
-    strategy_id = params.get("strategy_id")
-    strategy, _ = _resolve_strategy(strategy_id)
-    if strategy is None:
-        return {"error": "No strategies found for proposal generation."}
-
-    allowed_targets = _allowed_targets(strategy["state"])
-    target_state = str(params.get("target_state") or (allowed_targets[0] if allowed_targets else "")).strip()
-    if not target_state:
-        return {"error": "Cannot create promotion proposal without a target state."}
-
-    gate_preview: dict | None = None
-    if target_state in {"paper_passed", "live_candidate"}:
-        gate_preview = check_promotion_gates(strategy["id"])
-    elif target_state == "live_limited":
-        gate_preview = {
-            "strategy_gate": check_live_limited_gates(strategy["id"]),
-            "runtime_gate": _live_lifecycle_gate(),
-        }
-
-    rationale = str(params.get("rationale") or "").strip()
-    content = {
-        "strategy_id": strategy["id"],
-        "strategy_name": strategy["name"],
-        "current_state": strategy["state"],
-        "target_state": target_state,
-        "allowed_targets": allowed_targets,
-        "gate_preview": gate_preview,
-        "rationale": rationale,
-        "requires_human_approval": True,
-    }
-    artifact_id = _create_proposal_artifact(
-        artifact_type="strategy_promotion_proposal",
-        title=f"Promote {strategy['name']} to {target_state}",
-        content=content,
-        related_entity_type="strategy",
-        related_entity_id=strategy["id"],
-    )
-    return {
-        "proposed": True,
-        "artifact_id": artifact_id,
-        "message": f"Created a promotion proposal for {strategy['name']} -> {target_state}.",
-        "proposal": content,
     }
 
 
@@ -1875,23 +1594,6 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
 
-    # Enrich with RuleSet signals (passed separately to prompt builder)
-    try:
-        from aletheia.trading.ruleset_scanner import scan_active_rulesets
-        signals = scan_active_rulesets(execution_mode=execution_mode)
-        ctx["ruleset_signals"] = [
-            {
-                "symbol": s.symbol,
-                "signal_type": s.signal_type,
-                "direction": s.direction,
-                "strategy": s.strategy_name,
-                "timeframe": s.timeframe,
-            }
-            for s in signals
-        ]
-    except Exception:
-        ctx["ruleset_signals"] = []
-
     # Run PI agent decision loop
     decision = await _evaluate(ctx)
 
@@ -2043,13 +1745,11 @@ HANDLERS: dict[str, callable] = {
     "get_positions": get_positions,
     "explain_agent_run": explain_agent_run,
     "explain_proposal": explain_proposal,
-    "get_strategy_lifecycle": get_strategy_lifecycle,
     "get_failed_tasks": get_failed_tasks,
     "get_recommendations": get_recommendations,
     "pause_agents": pause_agents,
     "resume_agents": resume_agents,
     "create_research_note": create_research_note,
-    "create_strategy_draft": create_strategy_draft,
     "create_dreaming_log": create_dreaming_log,
     "create_diagnostic_todo": create_diagnostic_todo,
     "mark_task_done": mark_task_done,
@@ -2060,14 +1760,10 @@ HANDLERS: dict[str, callable] = {
     "create_review_report": create_review_report,
     "create_diagnostic_report": create_diagnostic_report,
     "archive_low_value_notification": archive_low_value_notification,
-    "mark_strategy_under_review": mark_strategy_under_review,
     "reconcile_positions": reconcile_positions,
     "run_market_scan": run_market_scan,
     "rerun_failed_agent_task": rerun_failed_agent_task,
     "set_symbol_observe_only": set_symbol_observe_only,
-    "create_paper_experiment": create_paper_experiment,
-    "pause_paper_strategy": pause_paper_strategy,
-    "propose_strategy_promotion": propose_strategy_promotion,
     "propose_prompt_change": propose_prompt_change,
     "propose_schedule_change": propose_schedule_change,
     "propose_live_limited_enablement": propose_live_limited_enablement,

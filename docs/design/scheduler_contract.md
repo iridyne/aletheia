@@ -68,9 +68,6 @@ _EXECUTOR_WORKERS = {
 | 3 | `dreaming_daily` | 333 | cron | hour=2, minute=0, tz=Asia/Shanghai | agents | 300 | 300 |
 | 4 | `insight_synthesizer` | 337 | cron | hour=2, minute=30, tz=Asia/Shanghai | agents | 120 | 600 |
 | 5 | `confidence_calibration` | 341 | interval | hours=6 | io | 30 | 300 |
-| 6 | `strategy_designer_daily` | 345 | cron | hour=1, minute=0, tz=Asia/Shanghai | agents | 300 | 300 |
-| 7 | `strategy_designer_eu` | 349 | cron | hour=9, minute=0, tz=Asia/Shanghai | agents | 300 | 300 |
-| 8 | `strategy_designer_us` | 353 | cron | hour=17, minute=0, tz=Asia/Shanghai | agents | 300 | 300 |
 | 9 | `reconciliation` | 357 | interval | minutes=2 | io | — | 60 |
 | 10 | `portfolio_snapshot` | 361 | interval | minutes=10 | default | 45 | 120 |
 | 11 | `exchange_sync` | 366 | interval | minutes=5 | io | 60 | 60 |
@@ -88,7 +85,7 @@ _EXECUTOR_WORKERS = {
 | 23 | `risk_critic` | 430 | interval | hours=6 | agents | 300 | 300 |
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
 | 25 | `data_collectors` | 444 | interval | minutes=2 | io | 45 | 60 |
-| 26 | `backtest_orchestrator` | 451 | cron | hour=4, minute=0, tz=Asia/Shanghai | agents | 600 | 600 |
+| 26 | `guard_promotion` | — | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
 | 27 | `ohlcv_nightly_backfill` | 457 | cron | hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30, tz=Asia/Shanghai | io | 3600 | 600 |
 | 28 | `okx_demo_symbols` | 464 | interval | hours=4 | io | — | 600 |
 | 29 | `daily_summary` | 471 | cron | hour=cfg.telegram.daily_summary_hour_cst (default 8), minute=0, tz=Asia/Shanghai | io | 60 | 600 |

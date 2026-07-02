@@ -62,7 +62,7 @@ def test_risk_engine_has_minimum_check_count():
                                       "daily_loss", "exchange_", "account_",
                                       "leverage_", "data_", "total_",
                                       "single_trade_", "lifecycle_",
-                                      "lesson_", "correlation_")):
+                                      "lesson_", "correlation_", "family_")):
                 violations.add(node.value)
     assert len(violations) >= 16, (
         f"Expected >= 16 distinct check violation tokens, found {len(violations)}: "
@@ -861,7 +861,7 @@ def test_risk_engine_has_20_check_floor_with_new_tokens():
                 "exchange_", "account_", "leverage_", "data_",
                 "total_", "single_trade_", "lifecycle_", "lesson_",
                 "correlation_", "stale_", "exceeds_", "sector_",
-                "portfolio_", "strategy_", "liquidation_",
+                "portfolio_", "strategy_", "liquidation_", "family_",
             )):
                 violations.add(node.value)
 
@@ -1266,4 +1266,35 @@ def test_d2_c02_position_pool_trade_school_boundary_declared():
         "INVARIANT DRIFT: engine.py check #5/#6 position counting has no trade_school "
         "declaration. Product decision required: shared pool (current) or isolated pool "
         "per trade_school. Document the decision as a comment near check #5/#6."
+    )
+
+
+# --- RE-S06: check #14 rewired to scanner-family evidence gate (Position C) ---
+
+@spec_claim(
+    SpecClaim("RE-S06", "risk_engine_contract", "§2 check #14", "L2a",
+              "Check #14 (live-eligibility) is evidence-based on the proposal's "
+              "scanner_family (family_direction_edge: >= risk.live_family_min_samples "
+              "settled outcomes AND win_rate >= live_family_min_win_rate_pct), NOT the "
+              "deleted strategy-FSM state. Emits family_not_live_eligible:* and no "
+              "longer references get_strategy / _LIVE_ELIGIBLE_STATES for #14.",
+              status="implemented"),
+)
+def test_re_b17_check14_is_family_evidence_gate():
+    from pathlib import Path
+    src = (Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py").read_text(encoding="utf-8")
+    # New evidence-based gate present …
+    assert "family_not_live_eligible" in src, "check #14 must emit family_not_live_eligible"
+    assert "_resolve_proposal_family" in src and "_family_live_edge" in src, (
+        "check #14 must resolve scanner_family + query family_direction_edge"
+    )
+    assert "live_family_min_samples" in src and "live_family_min_win_rate_pct" in src, (
+        "check #14 thresholds must be config-driven (risk.live_family_*)"
+    )
+    # … and the deleted strategy-FSM eligibility gate is gone.
+    assert "strategy_not_live_eligible" not in src, (
+        "check #14 must no longer emit the strategy-FSM token strategy_not_live_eligible"
+    )
+    assert "_LIVE_ELIGIBLE_STATES" not in src, (
+        "the strategy-FSM eligible-states set must be removed with the rules engine"
     )

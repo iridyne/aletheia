@@ -379,93 +379,6 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
     kinds = {item["kind"] for item in recommendations.json()}
     assert "dreaming_due" in kinds
     assert "review_due" in kinds
-    assert "strategy_review_due" in kinds
-    assert "strategy_promotion_proposal_due" in kinds
-
-
-@pytest.mark.anyio
-async def test_operator_recommendations_include_pause_paper_strategy_due_for_under_review_active_paper_strategy(
-    client,
-):
-    from datetime import datetime, timezone
-
-    from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy
-
-    strategy = StrategyRecord(
-        name="Pause Candidate",
-        state="paper_running",
-        under_review=True,
-        review_notes="paper drawdown breached review threshold",
-        review_updated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    insert_strategy(strategy)
-
-    recommendations = await client.get("/api/operator/recommendations")
-    assert recommendations.status_code == 200
-
-    due = next(
-        item
-        for item in recommendations.json()
-        if item["kind"] == "pause_paper_strategy_due"
-    )
-    assert due["metadata"]["strategy_id"] == strategy.id
-    assert due["metadata"]["task_type"] == "pause_paper_strategy"
-    assert "under review" in due["summary"].lower()
-
-
-@pytest.mark.anyio
-async def test_operator_recommendations_include_mark_strategy_under_review_due_for_failed_promotion_gates(
-    client,
-):
-    from aletheia.agent_shell.operator_store import create_artifact
-    from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy
-
-    strategy = StrategyRecord(
-        name="Review Candidate",
-        state="paper_running",
-    )
-    insert_strategy(strategy)
-
-    create_artifact(
-        task_id=None,
-        session_id="strategy-eval-session",
-        artifact_type="strategy_evaluation",
-        title="Failed promotion-gate evaluation",
-        content={
-            "strategy_id": strategy.id,
-            "strategy_name": "Review Candidate",
-            "summary": "Promotion gates failed for paper strategy.",
-            "evaluation": {
-                "strategy": {
-                    "id": strategy.id,
-                    "name": "Review Candidate",
-                    "state": "paper_running",
-                },
-                "promotion_gates": {
-                    "passed": False,
-                    "failures": ["drawdown_too_high", "win_rate_below_threshold"],
-                },
-            },
-        },
-    )
-
-    recommendations = await client.get("/api/operator/recommendations")
-    assert recommendations.status_code == 200
-
-    due = next(
-        item
-        for item in recommendations.json()
-        if item["kind"] == "mark_strategy_under_review_due"
-    )
-    assert due["taskType"] == "create_repair_proposal"
-    assert due["metadata"]["strategy_id"] == strategy.id
-    assert due["metadata"]["failed_gates"] == [
-        "drawdown_too_high",
-        "win_rate_below_threshold",
-    ]
-    assert due["metadata"]["repair_command"] == "mark_strategy_under_review"
 
 
 @pytest.mark.anyio
@@ -493,53 +406,6 @@ async def test_operator_recommendations_include_prompt_change_proposal_due_for_r
 
     kinds = {item["kind"] for item in recommendations.json()}
     assert "agent_prompt_change_proposal_due" in kinds
-
-
-@pytest.mark.anyio
-async def test_operator_recommendations_include_live_candidate_promotion_due_for_paper_passed_strategy(client):
-    from aletheia.agent_shell.operator_store import create_artifact
-    from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy
-
-    strategy = StrategyRecord(
-        name="Live Candidate Candidate",
-        state="paper_passed",
-    )
-    insert_strategy(strategy)
-
-    create_artifact(
-        task_id=None,
-        session_id="strategy-eval-session",
-        artifact_type="strategy_evaluation",
-        title="Live-candidate-ready evaluation",
-        content={
-            "strategy_id": strategy.id,
-            "strategy_name": "Live Candidate Candidate",
-            "summary": "Promotion gates passed for paper_passed strategy.",
-            "evaluation": {
-                "strategy": {
-                    "id": strategy.id,
-                    "name": "Live Candidate Candidate",
-                    "state": "paper_passed",
-                },
-                "promotion_gates": {
-                    "passed": True,
-                    "failures": [],
-                },
-            },
-        },
-    )
-
-    recommendations = await client.get("/api/operator/recommendations")
-    assert recommendations.status_code == 200
-
-    proposal_due = next(
-        item
-        for item in recommendations.json()
-        if item["kind"] == "strategy_promotion_proposal_due"
-    )
-    assert proposal_due["metadata"]["target_state"] == "live_candidate"
-    assert proposal_due["metadata"]["proposal_command"] == "propose_strategy_promotion"
 
 
 @pytest.mark.anyio
@@ -845,30 +711,6 @@ async def test_operator_recommendations_include_agent_performance_report_refresh
     assert due[0]["taskType"] == "create_review_report"
     assert due[0]["metadata"]["report_type"] == "agent_performance"
     assert due[0]["metadata"]["failed_run_count"] == 1
-
-
-@pytest.mark.anyio
-async def test_operator_recommendations_include_strategy_design_due_when_recent_strategy_inputs_exist_without_active_paper_strategy(
-    client,
-):
-    from aletheia.knowledge.manager import create_research_note, create_strategy_memory
-    from aletheia.trading.strategy_lifecycle import create_strategy
-
-    create_research_note("Breakout Research", "Recent market structure favors breakout continuation with BTC breaking resistance and volume confirming the move.")
-    strategy = create_strategy("Draft Strategy Anchor", "anchor strategy for memory path")
-    create_strategy_memory(strategy.id, "Momentum Hypothesis", "Probe ETH continuation on 1h.")
-
-    recommendations = await client.get("/api/operator/recommendations")
-    assert recommendations.status_code == 200
-
-    due = next(
-        item
-        for item in recommendations.json()
-        if item["kind"] == "strategy_design_due"
-    )
-    assert due["taskType"] == "run_strategy_design"
-    assert due["metadata"]["recent_research_note_count"] == 1
-    assert due["metadata"]["recent_strategy_hypothesis_count"] == 1
 
 
 @pytest.mark.anyio

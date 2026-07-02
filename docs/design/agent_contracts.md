@@ -23,9 +23,6 @@
 | 10 | post_trade_reviewer | 4h | agents | Review closed trades for lessons |
 | 11 | risk_critic | 6h | agents | Evaluate risk exposure, flag violations |
 | 12 | dreaming_daily | cron 02:00 CST | agents | Synthesize daily knowledge summary |
-| 13 | strategy_designer_daily | cron 01:00 CST | agents | Generate new strategy proposals |
-| 14 | strategy_designer_eu | cron 09:00 CST | agents | EU session strategy generation |
-| 15 | strategy_designer_us | cron 17:00 CST | agents | US session strategy generation |
 | 16 | insight_synthesizer | cron 02:30 CST | agents | Cross-agent insight synthesis |
 | 17 | confidence_calibration | 6h | io | Compute ECE calibration metrics |
 | 18 | pi_operator_loop | cron 每4h:15 CST | agents | High-level operator assessment loop |
@@ -38,7 +35,7 @@
 | 25 | daily_summary | cron 08:00 CST (configurable) | io | Generate daily performance summary |
 | 26 | data_collectors | 2min | io | Funding rate, OI, liquidation, orderbook |
 | 27 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
-| 28 | backtest_orchestrator | cron 04:00 CST | agents | Run pending backtests |
+| 28 | guard_promotion | cron 04:00 CST | io | Promote candidate trading guards to active (learning; re-homed from deleted backtest_orchestrator, Position C) |
 | 29 | universe_refresh | 10min | io | Universe composition refresh |
 | 30 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
 | 31 | persona_rollout | 8h | io | Advance dynamic-sizing rollout ladder one health-gated step (no-op unless persona_auto_advance_enabled) |
@@ -157,24 +154,15 @@
 
 ---
 
-### C. Strategy Agents
+### C. Strategy Agents — REMOVED (Position C, 2026-07-02)
 
-#### strategy_designer
-
-- **Trigger**: 3x daily (03:00, 08:00, 14:00 UTC) + event-driven from post_trade_reviewer
-- **Inputs**: knowledge_items, market_regimes, closed positions performance, research notes
-- **LLM**: Yes (strategy generation)
-- **Outputs**: strategy_records (new strategies with parameters JSON, entry_conditions)
-- **Side effects**: Writes strategies; notifies PI daemon; promotes to paper_candidate only
-- **Key invariant**: Cannot promote beyond paper_candidate (requires walk-forward)
-
-#### backtest_orchestrator
-
-- **Trigger**: scheduler every 4h
-- **Inputs**: Strategies needing validation, historical OHLCV data
-- **LLM**: No (mechanical backtesting)
-- **Outputs**: backtest_runs, backtest_trades
-- **Side effects**: Updates strategy promotion gates based on results
+The rules engine (`strategy_designer` + `backtest_orchestrator`) was **deleted**.
+Strategy generation / DSL / backtesting no longer exist; the PI Agent
+(`evaluate_trading_opportunity`) is the sole decision path. Legacy
+`strategy_records` / `backtest_runs` / `backtest_trades` tables are kept read-only
+for historical attribution (not written to). The deterministic `guard_promotion`
+job (candidate trading guards → active; a learning task) was re-homed from the
+deleted daily backtest cycle and now runs standalone (see scheduler_contract §job table).
 
 ---
 
@@ -186,7 +174,7 @@
 - **Inputs**: Recently closed positions (no existing review), market context at entry/exit
 - **LLM**: Yes (analysis of trade quality)
 - **Outputs**: knowledge_items (item_type=post_trade_review)
-- **Side effects**: Writes reviews; may trigger strategy_designer event
+- **Side effects**: Writes reviews (the review→strategy_designer event chain was removed with the rules engine, Position C)
 
 #### risk_critic
 
@@ -255,7 +243,7 @@ All agents share the same SQLite DB. Invariants that MUST hold (full detail in [
 | Job | Timeout | Job | Timeout |
 |-----|---------|-----|---------|
 | market_data | 90s | dreaming_agent | 300s |
-| market_observer | 240s | strategy_designer | 300s |
+| market_observer | 240s | risk_critic | 300s |
 | paper_trader | 300s | pi_trading_decision | 300s |
 | post_trade_reviewer | 300s | exchange_sync | 60s |
 
@@ -336,5 +324,6 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
                                               dreaming_daily (02:00)
                                                           |
                                                           v
-                                              strategy_designer (3x/day)
+                          PI Agent decision context (evaluate_trading_opportunity)
+                          [strategy_designer removed — Position C, 2026-07-02]
 ```
