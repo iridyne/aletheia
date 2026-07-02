@@ -212,6 +212,16 @@ class TestIsSyntheticClosure:
     def test_demo_cleanup_is_synthetic(self):
         assert _is_synthetic_closure({"close_reason": "demo_validation_cleanup"}) is True
 
+    def test_units_bug_cleanup_is_synthetic(self):
+        assert _is_synthetic_closure({"close_reason": "units_bug_cleanup"}) is True
+
+    def test_retry_after_fix_is_synthetic(self):
+        # One-off remediation for the OKX clOrdId-hyphen bug (5e9ceb5): positions
+        # whose earlier close was blocked by the bug got re-closed post-fix and
+        # tagged retry_after_fix. It's an administrative close, not a trade outcome —
+        # keep it out of scorecard/learning/factor-feedback.
+        assert _is_synthetic_closure({"close_reason": "retry_after_fix"}) is True
+
     def test_genuine_reasons_not_synthetic(self):
         for reason in ("stop_loss", "take_profit", "manual", "signal_exit", None, ""):
             assert _is_synthetic_closure({"close_reason": reason}) is False
