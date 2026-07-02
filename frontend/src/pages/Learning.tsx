@@ -385,9 +385,6 @@ function ReportsTab() {
   const { data: dreaming = [] } = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
   const { data: reviews = [] } = useQuery({ queryKey: ['reviews'], queryFn: () => api.getKnowledge('daily_review') })
   const { data: postTradeReviews = [] } = useQuery({ queryKey: ['post-trade-reviews'], queryFn: api.getPostTradeReviews })
-  const { data: strategies = [] } = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
-
-  const activeStrategies = (strategies as StrategyRecord[]).filter(s => s.state !== 'draft' && s.state !== 'retired')
 
   return (
     <>
@@ -397,17 +394,6 @@ function ReportsTab() {
       </Card>
 
       <LearningFunnelPanel />
-
-      <Card>
-        <CardHeader title="Strategy promotion" meta={`${activeStrategies.length} in paper / live`} />
-        {activeStrategies.length === 0 ? (
-          <p className="text-muted text-sm">No strategies in paper or live — promote candidates from the Strategies page.</p>
-        ) : (
-          <div className="promo-grid">
-            {activeStrategies.map(s => <PromoCard key={s.id} strategy={s} />)}
-          </div>
-        )}
-      </Card>
 
       <div className="learn-grid">
         <Card>
@@ -424,66 +410,6 @@ function ReportsTab() {
         </Card>
       </div>
     </>
-  )
-}
-
-// The metrics we surface per strategy, in priority order. Whitelisted (not Object.entries)
-// so the nested `gates: {}` object can never leak through as "[object Object]", and a null
-// value renders an honest dash instead of vanishing.
-const PROMO_METRICS: { key: string; label: string; fmt: (v: number) => string }[] = [
-  { key: 'total_trades', label: 'Trades', fmt: v => String(Math.round(v)) },
-  { key: 'win_rate', label: 'Win rate', fmt: pctMaybeRatio },
-  { key: 'profit_factor', label: 'Profit factor', fmt: v => fmtNum(v) },
-  { key: 'sharpe', label: 'Sharpe', fmt: v => fmtNum(v) },
-  { key: 'max_drawdown', label: 'Max DD', fmt: pctMaybeRatio },
-  { key: 'total_pnl', label: 'PnL', fmt: v => fmtSigned(v) },
-]
-
-function PromoCard({ strategy }: { strategy: StrategyRecord }) {
-  const { data } = useQuery({
-    queryKey: ['strategy-gates', strategy.id],
-    queryFn: () => api.getStrategyGates(strategy.id),
-    enabled: !!strategy.id,
-  })
-  const metrics = (data?.metrics || {}) as Record<string, any>
-  const passed = !!data?.passed
-  const promoteTo = data?.promote_to as string | undefined
-  const totalTrades = Number(metrics.total_trades) || 0
-
-  return (
-    <div className="promo-card">
-      <div className="promo-head">
-        <span className="promo-name">{strategy.name}</span>
-        <span className="promo-flow">
-          <StatusBadge status={strategy.state} />
-          {promoteTo && (
-            <>
-              <span className="promo-arrow">→</span>
-              <Badge tone={passed ? 'green' : 'muted'}>{humanize(promoteTo)}</Badge>
-            </>
-          )}
-        </span>
-      </div>
-      <div className="promo-gate">
-        {passed ? (
-          <StatusText tone="green">Gates passed — ready to promote</StatusText>
-        ) : (
-          <span className="text-muted text-sm">{totalTrades > 0 ? 'Below promotion gates' : 'Awaiting trade data'}</span>
-        )}
-      </div>
-      <div className="promo-metrics">
-        {PROMO_METRICS.map(m => {
-          const raw = metrics[m.key]
-          const has = raw != null && Number.isFinite(Number(raw))
-          return (
-            <div key={m.key} className="promo-metric">
-              <span className="promo-metric-label">{m.label}</span>
-              <span className="promo-metric-val mono">{has ? m.fmt(Number(raw)) : '—'}</span>
-            </div>
-          )
-        })}
-      </div>
-    </div>
   )
 }
 

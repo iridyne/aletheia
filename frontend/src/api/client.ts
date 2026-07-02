@@ -362,6 +362,7 @@ export const api = {
     allow_short_demo: boolean; allow_short_live: boolean
     kill_switch_enabled_live: boolean; kill_switch_enabled_demo: boolean
     correlation_guard_enabled: boolean; max_sector_concentration_pct: number; max_portfolio_beta: number
+    live_family_min_samples: number; live_family_min_win_rate_pct: number
   }>) => post<{ updated: Record<string, any>; risk: Record<string, any> }>('/settings/risk', body),
   updateSymbolFilter: (body: { mode: string; symbols: string[] }) =>
     post<{ mode: string; symbols: string[] }>('/settings/symbols', body),
@@ -763,43 +764,6 @@ export const api = {
   // Trade Analytics panel
   getTradeStats: () => fetchJson<TradeStats>('/analytics/trade-stats'),
   getStrategyKpis: () => fetchJson<Record<string, { trade_count: number; win_rate: number; total_pnl: number }>>('/analytics/strategy-kpis'),
-  getStrategyEvidence: () => fetchJson<Array<{
-    strategy_id: string
-    strategy_name: string
-    state: string
-    symbol: string
-    timeframe: string
-    direction_bias: string | null
-    has_ruleset: boolean
-    compile_status: string
-    paper_summary: { trade_count: number; expectancy: number; win_rate: number; total_pnl: number; profit_factor: number } | null
-    drift_summary: { drift_status: string; paper_trade_count: number; paper_expectancy: number; backtest_expectancy: number; paper_to_backtest_ratio: number | null } | null
-    factor_summary: { total_factors: number; blocked_count: number; preferred_count: number } | null
-    evidence_status: string
-    recommended_action: string
-    recommended_action_reasons: string[]
-  }>>('/analytics/strategy-evidence'),
-  getBacktestPaperDrift: () => fetchJson<Array<{
-    strategy_id: string
-    strategy_name: string
-    state: string
-    symbol: string
-    timeframe: string
-    backtest_trade_count: number
-    backtest_win_rate: number
-    backtest_profit_factor: number
-    backtest_total_return_pct: number
-    backtest_max_drawdown_pct: number
-    paper_trade_count: number
-    paper_expectancy: number
-    paper_win_rate: number
-    paper_profit_factor: number
-    paper_total_pnl: number
-    drift_expectancy: number | null
-    paper_to_backtest_ratio: number | null
-    drift_status: string
-    drift_reasons: string[]
-  }>>('/analytics/backtest-paper-drift'),
   getEquityCurve: (days?: number) => fetchJson<{
     points: { time: string; pnl: number; cumulative_pnl: number }[];
     current_unrealized: number;
@@ -811,12 +775,6 @@ export const api = {
   getConfidenceCalibration: () => fetchJson<CalibrationReport>('/analytics/confidence-calibration'),
   getReasoningFeedback: () => fetchJson<ReasoningFeedback>('/analytics/reasoning-feedback'),
 
-  getBacktestRuns: (strategyId?: string) =>
-    fetchJson<any[]>(`/analytics/backtest/runs${strategyId ? `?strategy_id=${strategyId}` : ''}`),
-  getBacktestRunDetail: (runId: string) =>
-    fetchJson<any>(`/analytics/backtest/runs/${runId}`),
-  getBacktestCompare: (strategyId: string) =>
-    fetchJson<any>(`/analytics/backtest/compare/${strategyId}`),
   getStrategyPerformance: () =>
     fetchJson<any>('/analytics/strategy-performance'),
   getSerenityPipeline: () =>
