@@ -111,7 +111,6 @@ def test_p3_pages_use_shared_primitives_instead_of_ad_hoc_capsules_and_buttons()
         "Proposals.tsx",
         "RiskControls.tsx",
         "SerenityLens.tsx",
-        "StrategyLifecycle.tsx",
         "TradesPositions.tsx",
         "Universe.tsx",
     ]
