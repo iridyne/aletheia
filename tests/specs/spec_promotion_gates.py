@@ -404,48 +404,17 @@ def test_operator_retire_inserts_pi_decision(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PG-B06 — check_promotion_gates must check RuleSet has been evaluated (Phase 2A)
+# PG-B06 — REMOVED (Position C 2026-07-02): ruleset_evaluated gate was part of
+# the rules engine (strategy_designer, backtest_orchestrator, RuleSet Path-A
+# evaluation) — all deleted with the rules engine. check_promotion_gates no
+# longer has a ruleset gate; the RuleSet concept itself no longer exists
+# (see promotion_gates_contract.md Position C banner).
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "PG-B06", "promotion_gates_contract", "§2 ruleset_evaluated gate", "L2b",
-        "check_promotion_gates fails with 'ruleset_never_evaluated' when strategy has a ruleset but zero Path-A fills",
-    ),
-)
-def test_promotion_gate_fails_when_ruleset_never_evaluated(tmp_path, monkeypatch):
-    """策略有 ruleset 但从未产生 Path-A fill 时，晋级门应拒绝。
+# No test body — claim PG-B06 retired with the rules engine.
 
-    Phase 2A 前提：paper_running 策略进晋级门的必要条件之一是 RuleSet 已被
-    实际求值并产生过至少一次 fill（Path A），而非仅存在于 parameters 字段中。
-    这防止"写了 ruleset 但 scanner 从未跑过"的策略悄悄晋级。
-    """
-    _make_test_db(tmp_path, monkeypatch)
 
-    import json
-    from aletheia.storage.models import StrategyRecord
-    from aletheia.storage import repositories as repo
-    from aletheia.trading.strategy_lifecycle import check_promotion_gates
-
-    ruleset_params = json.dumps({
-        "ruleset": {"entry_conditions": [{"indicator": "rsi_14", "op": "lt", "value": 30}]},
-        "direction_affinity": "long",
-    })
-    strategy = StrategyRecord(
-        name="ruleset_strategy_no_fills",
-        state="paper_running",
-        parameters=ruleset_params,
-    )
-    repo.insert_strategy(strategy)
-
-    result = check_promotion_gates(strategy.id)
-
-    assert not result["passed"], "Strategy with ruleset but zero Path-A fills should fail promotion"
-    ruleset_failures = [f for f in result["failures"] if "ruleset_never_evaluated" in f]
-    assert ruleset_failures, (
-        f"Expected 'ruleset_never_evaluated' failure token; got failures: {result['failures']}"
-    )
 
 
 # ---------------------------------------------------------------------------

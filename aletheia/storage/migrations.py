@@ -904,7 +904,10 @@ CREATE TABLE IF NOT EXISTS ps_lessons (
     status TEXT NOT NULL,
     artifact_path TEXT,
     created_at TEXT NOT NULL,
-    applied_policy_version TEXT
+    applied_policy_version TEXT,
+    activated_at TEXT,
+    dry_run_until TEXT,
+    expires_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ps_skills (
@@ -1510,9 +1513,6 @@ _ADDITIVE_COLUMNS = [
     # 2026-06-29: lesson block guard fields (dry-run window + TTL expiry).
     # Prevent immediately-accepted lessons from blocking all trades without
     # cooldown (sleeping bomb fix; see spec_lesson_guards.py LG-S01..S04).
-    ("activated_at", "ps_lessons", "TEXT"),
-    ("dry_run_until", "ps_lessons", "TEXT"),
-    ("expires_at", "ps_lessons", "TEXT"),
     # P0-1 (2026-06-29, OpenAlice TaG borrow): proposal-level hash chain.
     # NULL on legacy rows; insert_trade_proposal() fills both for new writes.
     ("commit_hash", "trade_proposals", "TEXT"),
