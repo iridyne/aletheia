@@ -100,57 +100,11 @@ def test_trading_context_uses_strategy_kpis():
 
 
 # ---------------------------------------------------------------------------
-# SP-S04 — strategy_designer must write direction_affinity (Phase 2A)
+# SP-S04 — REMOVED (Position C 2026-07-02): tested strategy_designer's
+# _derive_regime_targeting + ranker._check_strategy_regime_fit, both deleted with
+# the rules engine. Regime affinity now lives in the scanner-family layer — see
+# SP-S06/S07 below (config-driven, strategy-independent) and the universe pipeline.
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim("SP-S04", "strategy_pool", "§direction_affinity + applicable_regimes written", "L2b",
-              "strategy_designer derives BOTH direction_affinity AND applicable_regimes "
-              "from direction_bias; applicable_regimes is a JSON-array the ranker can "
-              "parse (a comma string would be silently dropped → regime gate inert)"),
-)
-def test_strategy_designer_writes_regime_targeting():
-    """行为可达性(非源码字符串):designer 的方向→regime 映射必须
-
-      1. long/short/neutral 各产出正确的 direction_affinity
-      2. applicable_regimes 是 ranker 真能解析的 **JSON array**(json.loads→list),
-         排除硬相反 regime;neutral→"all"
-      3. ranker._check_regime_fit 真的用它过滤(long 策略在 bear 高置信 regime 被挡)
-
-    反向验证:若 applicable_regimes 写成逗号串,第 2 步 json.loads 会失败 → 立即挂。
-    """
-    import json
-    from aletheia.agents.strategy_designer import _derive_regime_targeting
-
-    # 1 + 2. 方向 → (affinity, regimes) 映射正确且 regimes 可 JSON 解析
-    aff_long, reg_long = _derive_regime_targeting("long")
-    assert aff_long == "long"
-    parsed_long = json.loads(reg_long)  # 逗号串会在此炸 → 保证 ranker 能消费
-    assert isinstance(parsed_long, list) and "bear" not in parsed_long, (
-        f"long 策略 applicable_regimes 应排除 bear: {parsed_long}"
-    )
-
-    aff_short, reg_short = _derive_regime_targeting("short")
-    assert aff_short == "short"
-    parsed_short = json.loads(reg_short)
-    assert isinstance(parsed_short, list) and "bull" not in parsed_short, (
-        f"short 策略 applicable_regimes 应排除 bull: {parsed_short}"
-    )
-
-    aff_neutral, reg_neutral = _derive_regime_targeting("neutral")
-    assert aff_neutral == "both" and reg_neutral == "all"
-
-    # 3. ranker 真的用它过滤:long 策略在高置信 bear regime 应被挡
-    from aletheia.agents.paper_trader_ranker import _check_strategy_regime_fit
-
-    class _Regime:
-        state = "bear"
-        confidence = 0.9
-
-    strat = {"direction_affinity": aff_long, "applicable_regimes": reg_long, "parameters": "{}"}
-    verdict = _check_strategy_regime_fit(strat, "long", _Regime())
-    assert verdict is not None, "long 策略在 bear regime 应被 ranker regime 门挡下"
 
 
 # ---------------------------------------------------------------------------

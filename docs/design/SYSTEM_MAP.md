@@ -16,7 +16,7 @@
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
 | `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes | paper_trader_ranker(universe_score), risk_engine(beta/correlation), guard_candidate generation | ✅ |
-| `ohlcv_nightly_backfill` | cron(可配) | ohlcv_bars | backtest_orchestrator, strategy evaluator | ✅ |
+| `ohlcv_nightly_backfill` | cron(可配) | ohlcv_bars | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `okx_demo_symbols` | 4h | (内存 set 缓存) | okx_broker(filter) | ✅ |
 
 ---
@@ -35,8 +35,7 @@
 | `risk_critic` | 6h | risk_decisions history | knowledge_items(lesson) | retrieve_lessons() → LLM prompts | ✅ |
 | `equity_observer` | 工作日 14-21UTC /30min | yfinance + bitget xStocks | opportunities(equity) | paper_trader_ranker | ✅ |
 | `prediction_observer` | 30min | polymarket/kalshi API | prediction_market_runs + opportunities | paper_trader_ranker, divergence_scanner | ✅ |
-| `strategy_designer_*` | cron 01/09/17 CST | market_snapshots + knowledge | strategy_records(hypothesis) | backtest_orchestrator | ✅ |
-| `backtest_orchestrator` | cron 04:00 CST | strategies + ohlcv_bars | backtest_runs, backtest_trades | strategy_lifecycle(promotion evidence) | ✅ |
+| `guard_promotion` | cron 04:00 CST | guard_candidate knowledge_items | trading_guard(active) | ✅ 学习任务(引擎删除后从 backtest_orchestrator 重挂,Position C) |
 | `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | ⚠️ serenity 4表仅API消费 |
 | `insight_synthesizer` | cron 02:30 CST | knowledge_items + market_snapshots | trading_memo(knowledge_items) | retrieve_lessons() | ✅ |
 | `confidence_calibration` | 6h | predictions + outcomes | calibration reports | UI(analytics) | ⚠️ |
@@ -59,7 +58,7 @@
 
 | 模块 | 写入路径 | 读取路径 | 管道 |
 |------|---------|---------|------|
-| knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/strategy_designer) | ✅ |
+| knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/trading_decision(PI)) | ✅ |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | paper_trader_ranker(evaluate_guards), risk_engine(check#15) | ✅ |
 | ps_lessons (LessonStore) | dreaming_agent | trading_context Layer3 → PI prompt → risk engine #15(accepted) | ⚠️ 双轨:**影响决策**但不进 knowledge_fts(有意设计,见 knowledge_contract §6.A1) |
 | ps_skills (SkillStore) | **无生产者** | 仅 persistence API | ⚠️ aspirational:Tier2/3 预留架构,当前惰性(见 knowledge_contract §6.A2) |

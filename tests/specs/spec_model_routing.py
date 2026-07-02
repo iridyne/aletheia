@@ -138,15 +138,15 @@ def test_get_provider_for_tier_exists_and_resolves():
 @spec_claim(
     SpecClaim(
         "MR-S04", _CONTRACT, "§deep-tier-call-sites", "L2b",
-        "The six deep-tier agents (trading_decision, strategy_designer, risk_critic, "
-        "market_observer, dreaming_agent, lesson_reviewer) call get_provider_for_tier "
-        "and pass its result as provider= to llm_complete / llm_structured.",
+        "The five deep-tier agents (trading_decision, risk_critic, market_observer, "
+        "dreaming_agent, lesson_reviewer) call get_provider_for_tier and pass its "
+        "result as provider= to llm_complete / llm_structured. "
+        "(strategy_designer was removed with the rules engine, Position C 2026-07-02.)",
     ),
 )
 def test_deep_tier_agents_use_provider_routing():
     deep_files = [
         _ROOT / "aletheia" / "agent_shell" / "trading_decision.py",
-        _ROOT / "aletheia" / "agents" / "strategy_designer.py",
         _ROOT / "aletheia" / "agents" / "risk_critic.py",
         _ROOT / "aletheia" / "agents" / "market_observer.py",
         _ROOT / "aletheia" / "agents" / "dreaming_agent.py",

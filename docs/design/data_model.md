@@ -57,10 +57,10 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `strategy_records` | Strategy definitions | name, status, parameters (JSON), direction_affinity |
-| `strategy_experiments` | A/B test variants | strategy_id, variant, metrics (JSON) |
-| `backtest_runs` | Backtest execution records | strategy_id, timeframe, sharpe, profit_factor |
-| `backtest_trades` | Individual backtest trades | run_id, entry_time, exit_time, pnl |
+| `strategy_records` | **Legacy read-only** (rules engine removed Position C 2026-07-02): historical strategy defs; no longer written. Kept for `strategy_id` attribution | name, status, parameters (JSON), direction_affinity |
+| `strategy_experiments` | **Legacy read-only** (A/B variants; engine removed Position C) | strategy_id, variant, metrics (JSON) |
+| `backtest_runs` | **Legacy read-only** (backtest engine removed Position C); historical only | strategy_id, timeframe, sharpe, profit_factor |
+| `backtest_trades` | **Legacy read-only** (backtest engine removed Position C); historical only | run_id, entry_time, exit_time, pnl |
 
 ### C. Knowledge & Learning (3 tables)
 
