@@ -127,13 +127,26 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
             except (ValueError, Exception):
                 pass
         return result
-    # Legacy path: symbols + exchange from config
+    # Legacy path: symbols + exchange from config.
+    # Dedup: when both spot and usdt_futures are enabled, emit ONE instrument per
+    # canonical symbol using cfg.exchange.preferred_market_type. Directional
+    # analysis (market_observer LLM read) is instrument-agnostic — the same ETH
+    # read 76% long whether the instrument is spot or perp (price ≈ identical).
+    # Emitting two would call the LLM twice for the same signal and downstream
+    # consumers (paper_trader, PI) could open duplicate positions. OD-S01 locks.
     exchange = cfg.market_data.ccxt_exchange or "binance"
+    preferred = getattr(cfg.exchange, "preferred_market_type", "auto")
     result = []
     for sym in cfg.market_data.observed_symbols:
-        if cfg.exchange.enabled_markets.get("spot", True):
+        spot_ok = cfg.exchange.enabled_markets.get("spot", True)
+        perp_ok = cfg.exchange.enabled_markets.get("usdt_futures", False)
+        if spot_ok and perp_ok:
+            # Both enabled — pick one by configured preference ("auto" → perp).
+            mt = MARKET_SPOT if preferred == "spot" else MARKET_PERP
+            result.append(InstrumentId.from_parts(exchange, sym, mt))
+        elif spot_ok:
             result.append(InstrumentId.from_parts(exchange, sym, MARKET_SPOT))
-        if cfg.exchange.enabled_markets.get("usdt_futures", False):
+        elif perp_ok:
             result.append(InstrumentId.from_parts(exchange, sym, MARKET_PERP))
     return result
 

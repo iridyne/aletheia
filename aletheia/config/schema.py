@@ -65,6 +65,14 @@ class ExchangeConfig(BaseModel):
     name: str = "bitget"
     mode: str = "demo"
     enabled_markets: dict[str, bool] = Field(default_factory=lambda: {"spot": True, "usdt_futures": True})
+    # When both spot and usdt_futures are enabled, which market_type to emit per
+    # canonical symbol in the legacy observed_instruments_from_config path.
+    # "auto" → perp (Aletheia primary trading instrument; short requires perp,
+    # long defaults to perp). "spot" | "perp" → always that type. Prevents
+    # market_observer from running the LLM twice for the same ETH (redundant
+    # 76% vs 74% spot vs perp directional read — price is the same). Dedup
+    # OD-S01 locks this against regression.
+    preferred_market_type: str = "auto"
     # Symbol list — semantics determined by risk.symbol_filter_mode:
     #   "whitelist" → only these may trade; "blacklist" → these are blocked.
     symbol_list: list[str] = Field(default_factory=list)

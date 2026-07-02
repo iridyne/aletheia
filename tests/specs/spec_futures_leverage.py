@@ -422,15 +422,17 @@ def test_perp_observed_by_default_config():
     cfg = AletheiaConfig()
     assert cfg.market_data.observed_instruments == []          # empty → legacy derivation
     assert cfg.exchange.enabled_markets.get("usdt_futures") is True
+    assert cfg.exchange.preferred_market_type == "auto"        # default = perp bias
 
     insts = observed_instruments_from_config(cfg)
-    markets = {i.market_type for i in insts}
-    assert "spot" in markets
-    assert "perp" in markets, (
-        "usdt_futures enabled must yield perp instruments from observed_symbols — "
-        "no explicit observed_instruments perp entries needed (deferred §6 is moot; "
-        "hardcoding them would override observed_symbols/enabled_markets and reduce flexibility)"
-    )
-    # every observed symbol gets a perp counterpart
-    perp_syms = {i.symbol for i in insts if i.market_type == "perp"}
-    assert set(cfg.market_data.observed_symbols).issubset(perp_syms)
+
+    # Single preferred_market_type per symbol (default perp) — NOT both. Every
+    # symbol gets exactly one instrument for LLM reasoning; spot is no longer
+    # duplicated into a redundant side-by-side perp.
+    assert len(insts) > 0, "expected instruments from default config"
+    by_symbol: dict[str, list[str]] = {}
+    for i in insts:
+        by_symbol.setdefault(i.symbol, []).append(i.market_type)
+    for sym, mts in by_symbol.items():
+        assert len(mts) == 1, f"{sym}: expected 1 market_type (deduped), got {mts}"
+        assert mts[0] == "perp", f"{sym}: expected perp (auto), got {mts[0]}"

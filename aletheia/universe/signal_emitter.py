@@ -119,8 +119,13 @@ def emit_deterministic_opportunities(
             )
             continue
 
-        # De-duplicate: same symbol already has an open opportunity from this snapshot
-        existing = find_open_opportunity_by_symbol_snapshot(symbol, snapshot_id)
+        # De-duplicate: same symbol + market_type already has an open opportunity from
+        # this snapshot.  Same read is a different market (e.g. spot vs perp — same
+        # price, same signal).  Dedup OD-S02 locks: only the first market's opp is a hit.
+        existing = find_open_opportunity_by_symbol_snapshot(
+            symbol, snapshot_id,
+            market=instrument_market_to_db_market(market_type),
+        )
         if existing:
             continue
 

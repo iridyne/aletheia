@@ -444,10 +444,15 @@ async def _analyze_symbol(
         thesis_parts.append(f"score={confidence_score}/100")
     thesis = " ".join(thesis_parts) if thesis_parts else f"No structured rationale — {symbol} market read (direction={direction})"
 
-    # If a deterministic opportunity already exists for this symbol+snapshot,
-    # annotate it with LLM insights instead of creating a duplicate.
+    # If a deterministic opportunity already exists for this symbol+snapshot+market,
+    # annotate it with LLM insights instead of creating a duplicate. Pass market
+    # so a same-symbol opp from a market is not mistaken for this one's opp.
+    # OD-S02 locks.
     if universe_snapshot_id:
-        existing = find_open_opportunity_by_symbol_snapshot(symbol, universe_snapshot_id)
+        existing = find_open_opportunity_by_symbol_snapshot(
+            symbol, universe_snapshot_id,
+            market=instrument_market_to_db_market(market_type),
+        )
         if existing:
             updates: dict = {"thesis": thesis}
             if funding_rate_val is not None:

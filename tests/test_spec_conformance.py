@@ -165,6 +165,10 @@ def _import_all_specs():
         # per-tier agent call sites. Attaches to model_routing_contract.
         # 2026-07-01 two-tier model routing implementation.
         spec_model_routing,
+        # Cross-market-type opportunity deduplication (OD-*): one instrument per
+        # canonical symbol when both spot and usdt_futures are enabled; LLM is not
+        # called twice for the same directional read. Reuses data_layer_contract.
+        spec_market_type_dedup,
     )
 
 

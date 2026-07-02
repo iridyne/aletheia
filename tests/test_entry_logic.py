@@ -107,9 +107,14 @@ async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
     assert any("llm_unavailable" in e for e in result.get("errors", []))
 
 
-async def test_observer_emits_spot_and_perp_when_futures_enabled(tmp_path, monkeypatch):
-    """Round 2: with usdt_futures enabled the spot-only guard is lifted — a single
-    symbol yields BOTH a spot and a perp opportunity (perp.market == 'usdt_futures')."""
+async def test_observer_dedups_same_symbol_when_both_markets_enabled(tmp_path, monkeypatch):
+    """With both spot+usdt_futures enabled, a single symbol yields ONE
+    opportunity (market == preferred_market_type which defaults to "auto" → perp).
+
+    Previously this emitted a redundant perp for every spot — running the LLM
+    twice for the same ETH and risking duplicate positions downstream. Directional
+    analysis is instrument-agnostic: the same ETH reads 76% long whether spot or
+    perp (price ≈ identical). OD-S01/S03 lock the dedup behavior."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -127,10 +132,9 @@ async def test_observer_emits_spot_and_perp_when_futures_enabled(tmp_path, monke
     await run_agent("market_observer", trigger_type="manual")
 
     opps = repo.list_opportunities()
-    markets = {o["market"] for o in opps}
-    assert "spot" in markets, f"spot opportunity missing: {markets}"
-    assert "usdt_futures" in markets, f"perp opportunity not emitted (guard not lifted?): {markets}"
-    assert all(o["symbol"] == "BTC/USDT" for o in opps)
+    assert len(opps) == 1, f"expected 1 opp (deduped), got {len(opps)}: {[o['market'] for o in opps]}"
+    assert opps[0]["market"] == "usdt_futures", f"expected perp (auto bias), got {opps[0]['market']}"
+    assert opps[0]["symbol"] == "BTC/USDT"
 
 
 # --- paper_trader honors direction + confidence; records non-traded signals ---
