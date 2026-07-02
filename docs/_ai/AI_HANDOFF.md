@@ -7,14 +7,14 @@
 
 ## Last Updated
 
-2026-07-02 (Position C Phase B 大部分交付 — #14 信任边界 + landmine + 前端 + doctor;剩 operator 命令面)
+2026-07-02 (Position C Phase A + B 全部完成 — 引擎删除 + 决策链解耦 + 信任边界 + 全 operator/UI 面移除;剩 Phase C 文档)
 
 ---
 
-## Recent Change (Position C Phase B 大部分交付 — 2026-07-02)
+## Recent Change (Position C Phase B 全部完成 — 2026-07-02)
 
-> 承接下方「Phase A 后半」。同一 worktree/分支。Phase B 分批做,已交付 **5 个 commit(全绿,9 commit 领先 master)**。
-> owner 已定 **Option B**(见下)。**唯一剩余 Phase B = operator 命令面 #7**;Config↔UI 缺口已闭合。
+> 承接下方「Phase A 后半」。同一 worktree/分支。**Phase A + B 全部完成,12 commit 领先 master,全量 1702 绿。**
+> owner 已定 **Option B**。**唯一剩余 = Phase C(文档/spec 同步)**。
 
 ### 已交付(全绿)
 - **`49c580f` 风控 #14 闸改写(信任边界,owner 批「家族证据门·沿用旧量级」)**:strategy FSM 准入 →
@@ -33,28 +33,34 @@
 - **`6541502` doctor content.strategy_health 改 legacy-only**:引擎删后 strategy_records 冻结,旧 zombie WARN
   会误报;改为报 legacy 计数 info(probe-honesty);test_operator_loop content_health 捕获测试的 WARN 源
   换成 content.proposal_bias。
-- **`ac8a7d6` handoff**。
+- **`0df5016` 前端 + #14 Config↔UI 闭合**(见上)。**`6541502` doctor legacy-only**(见上)。**`ac8a7d6` handoff**。
+- **`8b8b7ba` operator 命令面移除(#7,Phase B 收官)**:6 个 strategy-FSM 命令(get_strategy_lifecycle/
+  create_strategy_draft/create_paper_experiment/mark_strategy_under_review/pause_paper_strategy/
+  propose_strategy_promotion)+ dispatch + registry CommandDef + intent + keyword;operator_recommendations
+  5 条指向已删命令/agent 的推荐分支(保留 live_limited_enablement_proposal_due);operator_loop
+  trigger_strategy_designer OperatorAction(+ 自主发射 + _action + MAX 常量);routes/data promote/retire/gates
+  端点;client.ts promoteStrategy/retireStrategy/getStrategyGates。retire/demote 动作保留(已收敛 TS)。
+  底层 create_strategy 等按 Option B 保留。命令级测试 ~19 删/改(6 文件),全量 1702 绿。
 
 ### ✅ owner 已定 = Option B
 `create_strategy`/`promote_strategy`/`check_promotion_gates` **作内部 legacy 函数保留**(写保留的 legacy 表,
-~15 测试 fixture 零改);strategy_lifecycle.py 不收缩 FSM 函数(promote_strategy 仍用 _has_pi_approval)。
-只删 operator/UI 面。
+~15 测试 fixture 零改);strategy_lifecycle.py 不收缩 FSM 函数(promote_strategy 仍用 _has_pi_approval)。已只删 operator/UI 面。
 
-### ⏳ 唯一剩余 Phase B = #7 operator 命令面(引用保留 legacy 函数,import-安全非 landmine;分支未合并故不 live)
-- **commands.py**:删 `create_strategy_draft`(:850)/promote 处理(:1470)/gate-preview(:1550,:1664)/
-  `get_strategy_lifecycle`(:651)+ 命令 dispatch 表条目(:2052)+ `_strategy_inputs` 助手。
-- **registry.py**(:155)/`intent.py`(:32,:110):去 `create_strategy_draft` 命令注册+intent。
-- **operator_loop.py**(:272,:559-689,:1200):去 `promote_strategy`/`trigger_strategy_designer` OperatorAction +
-  `_action_*` 处理(trigger_strategy_designer 是 Phase A 遗留的运行时地雷:run_agent("strategy_designer")→ValueError)。
-- **routes/data.py**(:978 promote / :990 retire / :1313 gates):删这 3 端点。
-- **命令级测试影响**(比函数级 15 文件小):test_agent_shell(create_strategy_draft 命令/intent)、
-  test_operator_permissions(:81 命令白名单)、test_operator_loop(:155/:217/:411 promote_strategy/designer action)。
-  底层 create_strategy 保留故大多 fixture 测试零改。
+### ⏳ 唯一剩余 = Phase C(文档/spec 同步,纯文档为主,无 runtime/测试影响)
+- **spec 诚实性**:`spec_strategy_pool` SP-S04(strategy_designer regime targeting,已删)标废 + 迁 SP-S05/S06/S07
+  到 scanner spec;`spec_model_routing` 去 strategy_designer 引用。(注:spec 测试体不被 pytest 收集,故不报错,
+  但 conformance matrix 计数偏高——诚实性问题。)
+- **8 契约文档**:trust_and_change_control §6.1 受控模块清单(去 strategy 引擎)、decision_lifecycle、
+  agent_contracts(去 strategy_designer job + backtest_orchestrator,加 guard_promotion)、promotion_gates 标废、
+  api_reference(去 strategies/backtest 端点)、data_model(strategy_records/backtest_* 标 legacy-only)、
+  SYSTEM_MAP(scheduler job 表:去 strategy_designer_daily/eu/us + backtest_orchestrator,加 guard_promotion)、
+  design/README。risk_engine_contract §2 #14 已在 49c580f 改。
+- **整洁项(无害,可选)**:backtest_paper_drift.py 孤儿死码(路由已删,只剩单测)可删;paper_trader_ranker
+  always-None 的 strategy_evidence 死参可清;operator_recommendations 留了喂已删分支的死计算(未用变量 +
+  2 处 list_artifacts(500))可清。
 
-### Phase C(不变)
-spec_strategy_pool SP-S04 标废 + 迁 S05/06/07;spec_model_routing 去 strategy_designer;8 契约文档 +
-agent_contracts/SYSTEM_MAP job 表(去 designer/backtest,加 guard_promotion);backtest_paper_drift.py 现成
-孤儿死码(只剩单测,路由已删)可清。paper_trader_ranker 里 always-None 的 strategy_evidence 死参可清(化妆)。
+### 上线路径
+Phase C 完成后一次性把这些 commit FF-merge 回主仓 + 主仓 restart + HTTP 实测(worktree data/ 空,不代表运行态)。
 
 ---
 
