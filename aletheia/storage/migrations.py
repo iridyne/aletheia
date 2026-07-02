@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS trade_proposals (
     stop_price REAL,
     execution_mode TEXT NOT NULL DEFAULT 'paper_internal',
     agent_rationale TEXT,
+    attribution_snapshot TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     source TEXT NOT NULL DEFAULT 'native',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -1502,6 +1503,9 @@ _ADDITIVE_COLUMNS = [
     # only Serenity-sourced rows are stamped 'serenity' by submit_decision_as_proposal.
     ("trade_school", "trade_proposals", "TEXT NOT NULL DEFAULT 'short_term'"),
     ("trade_school", "positions", "TEXT NOT NULL DEFAULT 'short_term'"),
+    # Quant review QR-2026-07-01-04: replay-stable paper attribution. Older
+    # proposals keep NULL and the paper broker falls back to live context.
+    ("attribution_snapshot", "trade_proposals", "TEXT"),
     # P2 / S4 (2026-06-28, AI Berkshire forced-verdict): PI must provide explicit
     # counter-argument even when recommending a trade.
     ("bear_case", "pi_decisions", "TEXT DEFAULT ''"),

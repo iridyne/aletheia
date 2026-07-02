@@ -48,3 +48,4 @@ Thumbs.db
 # Chat exports (large personal conversation dumps — keep out of repo history)
 docs/ChatExport_*/
 docs/ChatExport_*.zip
+.omc/
