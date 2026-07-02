@@ -1,5 +1,6 @@
 """Config loader: reads/writes data/config.yaml, bootstraps defaults."""
 
+import os
 import tempfile
 import threading
 import time
@@ -160,7 +161,6 @@ def save_config(cfg: AletheiaConfig) -> None:
             dir=str(CONFIG_PATH.parent), suffix=".tmp"
         )
         try:
-            import os
             os.write(tmp_fd, content.encode("utf-8"))
             os.close(tmp_fd)
             os.replace(tmp_path, str(CONFIG_PATH))

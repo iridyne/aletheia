@@ -828,7 +828,7 @@ async def create_improvement_proposal(params: dict) -> dict:
     from aletheia.knowledge.manager import create_research_note as _create
     item = _create(title=f"[PROPOSAL] {title}", content=content,
                    metadata={"type": "improvement_proposal"})
-    return {"created": True, "id": item.id, "title": title}
+    return {"created": True, "id": item.id if item else None, "title": title}
 
 
 async def draft_extension_manifest(params: dict) -> dict:

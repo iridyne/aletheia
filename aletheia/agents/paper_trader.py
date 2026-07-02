@@ -95,7 +95,7 @@ def _atr_adjusted_notional(
     if not atr_pct or atr_pct <= 0:
         return base
     target = cfg.trading.vol_target_pct
-    scale = target / (atr_pct * 100)
+    scale = target / atr_pct
     scale = max(0.4, min(2.0, scale))
     return round(base * scale, 2)
 

@@ -375,7 +375,7 @@ def _parse_xml_status(xml_str: str) -> dict:
     # Enabled state from <Settings><Enabled>
     enabled_el = root.find(".//t:Settings/t:Enabled", ns)
     if enabled_el is not None:
-        result["task_enabled"] = enabled_el.text.lower() == "true"
+        result["task_enabled"] = (enabled_el.text or "").lower() == "true"
 
     # Interval from repetition
     interval_el = root.find(".//t:Triggers//t:Repetition/t:Interval", ns)

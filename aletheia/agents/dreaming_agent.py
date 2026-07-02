@@ -217,7 +217,8 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         return
 
     try:
-        lessons = json.loads(content.strip().strip("`").removeprefix("json").strip())
+        content_str = (content or "").strip().strip("`").removeprefix("json").strip()
+        lessons = json.loads(content_str)
     except (json.JSONDecodeError, ValueError):
         logger.warning("dreaming_agent: lesson extraction LLM returned non-JSON")
         return

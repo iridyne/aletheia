@@ -196,7 +196,7 @@ def promote_strategy(strategy_id: str, target_state: str) -> dict:
         if live_gate["failures"]:
             return {"success": False, "error": f"Live promotion gates failed: {live_gate['failures']}"}
 
-    update_strategy(strategy_id, state=target_state, updated_at=datetime.utcnow().isoformat())
+    update_strategy(strategy_id, state=target_state, updated_at=datetime.now(timezone.utc).isoformat())
     if target_state in ("retired", "deprecated"):
         event_type = "strategy_retired"
         msg = f"Strategy retired: {current} -> {target_state}"

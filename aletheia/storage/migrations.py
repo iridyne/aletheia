@@ -1,5 +1,7 @@
 """Idempotent SQLite schema migrations."""
 
+import sqlite3
+
 from aletheia.storage.sqlite import get_db
 
 SCHEMA_SQL = """

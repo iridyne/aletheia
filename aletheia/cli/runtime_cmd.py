@@ -69,6 +69,7 @@ def candidate(
     artifact_path: str = typer.Option("", "--artifact-path"),
 ):
     """Create a candidate runtime record without promoting it."""
+    record = None
     try:
         record = _service().prepare_candidate(
             actor="human-cli",
@@ -82,7 +83,8 @@ def candidate(
         )
     except RuntimeTransitionError as exc:
         _fail(exc)
-    typer.echo(f"Candidate: {record['runtime_id']} ({record['state']})")
+    if record:
+        typer.echo(f"Candidate: {record['runtime_id']} ({record['state']})")
 
 
 @runtime_app.command()
@@ -93,12 +95,14 @@ def shadow(runtime_id: str = typer.Argument("", help="Candidate runtime id. Defa
     if not target:
         typer.echo("No candidate runtime available.")
         raise typer.Exit(1)
+    validated = None
     try:
         started = svc.start_shadow(target, actor="human-cli", cause="runtime_cli_shadow")
         validated = svc.validate_shadow(started["runtime_id"], actor="human-cli", cause="runtime_cli_shadow")
     except RuntimeTransitionError as exc:
         _fail(exc)
-    typer.echo(f"Shadow: {validated['runtime_id']} ({validated['state']})")
+    if validated:
+        typer.echo(f"Shadow: {validated['runtime_id']} ({validated['state']})")
 
 
 @runtime_app.command()
@@ -109,13 +113,14 @@ def promote(runtime_id: str = typer.Argument("", help="Ready runtime id. Default
     if not target:
         typer.echo("No promotable runtime available.")
         raise typer.Exit(1)
+    payload = None
     try:
         payload = svc.promote(target, actor="human-cli", cause="runtime_cli_promote")
     except RuntimeTransitionError as exc:
         _fail(exc)
-    current = payload.get("current") or {}
+    current = (payload or {}).get("current") or {}
     typer.echo(f"Current: {current.get('runtime_id')} ({current.get('state')})")
-    if (payload.get("activation") or {}).get("restart_required"):
+    if (payload or {}).get("activation", {}).get("restart_required"):
         typer.echo("Activation: restart required (supervisor respawn)")
 
 
@@ -130,23 +135,26 @@ def drain(
     if not target:
         typer.echo("No draining runtime available.")
         raise typer.Exit(1)
+    record = None
     try:
         record = svc.drain(target, actor="human-cli", cause="runtime_cli_drain", force=force)
     except RuntimeTransitionError as exc:
         _fail(exc)
-    typer.echo(f"Draining: {record.get('runtime_id')} ({record.get('state')})")
+    if record:
+        typer.echo(f"Draining: {record.get('runtime_id')} ({record.get('state')})")
 
 
 @runtime_app.command()
 def rollback():
     """Rollback to the latest pre-promote checkpoint."""
+    payload = None
     try:
         payload = _service().rollback(actor="human-cli", cause="runtime_cli_rollback")
     except RuntimeTransitionError as exc:
         _fail(exc)
-    current = payload.get("current") or {}
+    current = (payload or {}).get("current") or {}
     typer.echo(f"Current: {current.get('runtime_id')} ({current.get('state')})")
-    if (payload.get("activation") or {}).get("restart_required"):
+    if (payload or {}).get("activation", {}).get("restart_required"):
         typer.echo("Activation: restart required (supervisor respawn)")
 
 
