@@ -772,20 +772,23 @@ class TestContentHealthSelfSupervision:
         assert decide_actions(assessment) == []
 
     def test_build_system_assessment_populates_content_health(self, tmp_path, monkeypatch):
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timezone
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         import aletheia.storage.sqlite as sq
-        # A zombie strategy: paper_running for 10 days with 0 closed trades → content.strategy_health warn
-        old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
-        sq._db_conn.execute(
-            "INSERT INTO strategy_records (id, name, state, created_at, paper_trading_paused) "
-            "VALUES (?,?,?,?,0)", ("zomb1", "Zombie_Strat", "paper_running", old),
-        )
+        # 20 one-directional (short) proposals in 24h → content.proposal_bias warn.
+        # (The strategy-FSM zombie WARN was removed with the rules engine, Position C
+        # 2026-07-02; proposal_bias is a still-live content probe that WARNs.)
+        now = datetime.now(timezone.utc).isoformat()
+        for i in range(20):
+            sq._db_conn.execute(
+                "INSERT INTO trade_proposals (id, symbol, market_type, direction, created_at, status) "
+                "VALUES (?,?,?,?,?,?)", (f"p{i}", "BTC/USDT", "spot", "short", now, "pending"),
+            )
         sq._db_conn.commit()
         from aletheia.agent_shell.operator_loop import build_system_assessment
         assessment = build_system_assessment()
         names = {c["name"] for c in assessment.content_health}
-        assert "content.strategy_health" in names, \
-            f"content_health did not capture the zombie strategy: {assessment.content_health}"
+        assert "content.proposal_bias" in names, \
+            f"content_health did not capture the proposal bias: {assessment.content_health}"
         assert all(c["severity"] in ("warn", "blocker") for c in assessment.content_health)

@@ -59,17 +59,13 @@ def test_strategy_health_empty_is_info(db):
     assert _verdict(dx._probe_content_strategy_health).severity == "info"
 
 
-def test_strategy_health_flags_zombie(db):
-    _ins(db, "strategy_records", id="s1", name="zomb", state="paper_running",
+def test_strategy_health_reports_legacy_count_as_info(db):
+    # Rules engine deleted (Position C 2026-07-02): strategy_records is a frozen
+    # legacy table. Any records → info with the count, never zombie WARN / ok.
+    _ins(db, "strategy_records", id="s1", name="old", state="paper_running",
          created_at=_ago(days=10), paper_trading_paused=0)
     v = _verdict(dx._probe_content_strategy_health)
-    assert v.severity == "warn" and "zombie" in v.detail.lower()
-
-
-def test_strategy_health_recent_strategy_is_ok(db):
-    _ins(db, "strategy_records", id="s2", name="fresh", state="paper_running",
-         created_at=_ago(hours=2), paper_trading_paused=0)
-    assert _verdict(dx._probe_content_strategy_health).severity == "ok"
+    assert v.severity == "info" and "legacy" in v.detail.lower()
 
 
 # --- content.memo_quality ----------------------------------------------------
