@@ -484,13 +484,17 @@ def _build_layer2_short_term() -> dict[str, Any]:
         db = get_db()
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
         rows = db.execute(
-            "SELECT symbol, direction, reasoning, created_at FROM pi_decisions "
+            "SELECT symbol, direction, reasoning, created_at, opportunity_id, signal_source "
+            "FROM pi_decisions "
             "WHERE action = 'signal_pending' AND created_at >= ? "
             "ORDER BY created_at DESC LIMIT 5",
             (cutoff,),
         ).fetchall()
         layer["pending_signals"] = [
-            {"symbol": r[0], "direction": r[1], "reasoning": r[2][:100], "at": r[3]}
+            {
+                "symbol": r[0], "direction": r[1], "reasoning": r[2][:100],
+                "at": r[3], "opportunity_id": r[4], "signal_source": r[5],
+            }
             for r in rows
         ]
     except Exception:
@@ -613,13 +617,12 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 verdict = _json.loads(o.get("verdict_json") or "{}")
             except Exception:
                 verdict = {}
-                _asset_class = o.get("asset_class") or "crypto"
+            _asset_class = o.get("asset_class") or "crypto"
             _market_type = o.get("market_type") or "spot"
-            # EQ-R (2026-07-01): equity stock tokens are observation-only.
-            # They appear in the PI's research context as background information
-            # but are NOT surfaced as order-routing candidates (execution_eligible=False).
-            # The PI should reference them for macro/sector context, not try to trade them.
-            _execution_eligible = (_asset_class != "equity")
+            # EQ-R (2026-07-01): pure-observation equity tokens (equity_observer)
+            # are NOT execution candidates. Serenity-produced "equity_tradeable"
+            # stock tokens ARE eligible — they passed the research pipeline.
+            _execution_eligible = (_asset_class not in ("equity",))
             serenity_opps.append({
                 # Phase 2: attribution anchor — without the id the PI's pick can never be
                 # linked back to serenity_opportunities (signal_source='serenity').

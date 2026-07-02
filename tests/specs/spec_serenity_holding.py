@@ -425,3 +425,87 @@ def test_decide_exit_short_term_still_capped():
     assert reason == "max_hold", (
         f"short_term cap fired the wrong reason: {reason!r} (expected 'max_hold')"
     )
+
+
+# ---------------------------------------------------------------------------
+# L2a — Thesis-invalidation exit
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "SH-S08", _CONTRACT, "§thesis-invalidation exit for serenity positions", "L2a",
+        "position_manager._decide_exit returns ('thesis_invalidated', price) when the "
+        "underlying serenity_opportunity status != 'active' — research conclusion "
+        "invalidation triggers position close",
+    ),
+)
+def test_decide_exit_thesis_invalidated():
+    src = _POSITION_MANAGER.read_text(encoding="utf-8")
+    assert "thesis_invalidated" in src, (
+        "position_manager has no thesis_invalidated exit — serenity positions stay "
+        "open forever even after the research conclusion is dismissed/expired"
+    )
+    assert "get_serenity_opportunity" in src, (
+        "position_manager does not look up the opportunity status — thesis "
+        "invalidation check can't work without reading the opp record"
+    )
+    assert 'trade_school' in src and 'serenity' in src, (
+        "thesis-invalidation check is not guarded by trade_school=='serenity' — "
+        "it would fire for short_term positions that have no serenity context"
+    )
+
+
+# ---------------------------------------------------------------------------
+# SH-S09 — Serenity position close writes PostMortem (feedback loop closure)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "SH-S09", _CONTRACT, "§4.2 serenity close → auto PostMortem", "L2a",
+        "close_position in pnl.py checks trade_school=='serenity' + opportunity_id "
+        "and calls _close_serenity_feedback to write SerenityPostMortem and update "
+        "the opportunity status — closing the attribution/learning feedback loop",
+    ),
+)
+def test_close_position_writes_serenity_post_mortem():
+    _PNL = _ROOT / "aletheia" / "portfolio" / "pnl.py"
+    src = _PNL.read_text(encoding="utf-8")
+    assert "_close_serenity_feedback" in src, (
+        "pnl.py has no _close_serenity_feedback — serenity positions close without "
+        "writing PostMortem, severing the learning feedback loop"
+    )
+    assert "SerenityPostMortem" in src, (
+        "pnl.py never imports/uses SerenityPostMortem — cannot write feedback"
+    )
+    assert "traded_closed" in src, (
+        "pnl.py does not update serenity_opportunities.status to 'traded_closed' — "
+        "the opportunity lifecycle never closes after position exit"
+    )
+
+
+# ---------------------------------------------------------------------------
+# SH-S10 — trade_attribution resolves serenity opportunity_id (fallback path)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "SH-S10", _CONTRACT, "§4.2 trade_attribution serenity fallback", "L2a",
+        "trade_attribution._build_row falls back to get_serenity_opportunity when "
+        "the standard opportunities join returns None for serenity positions — "
+        "preserving the full causal chain for serenity-sourced trades",
+    ),
+)
+def test_trade_attribution_serenity_fallback():
+    _ATTR = _ROOT / "aletheia" / "analytics" / "trade_attribution.py"
+    src = _ATTR.read_text(encoding="utf-8")
+    assert "get_serenity_opportunity" in src, (
+        "trade_attribution never calls get_serenity_opportunity — serenity positions "
+        "lose their causal chain (scanner_family=None, confidence=None)"
+    )
+    assert "trade_school" in src, (
+        "trade_attribution does not check trade_school — cannot distinguish serenity "
+        "positions for the fallback path"
+    )

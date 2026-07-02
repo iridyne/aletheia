@@ -118,6 +118,67 @@ def test_layer3_surfaces_serenity_id():
 
 @spec_claim(
     SpecClaim(
+        "SA-S05", _CONTRACT, "§3.2 pending_signals carry opportunity_id for direct attribution", "L2a",
+        "trading_context pending_signals query selects opportunity_id + signal_source "
+        "columns — the direct attribution path that bypasses layer3 limit=5 truncation",
+    ),
+)
+def test_pending_signals_carry_opportunity_id():
+    src = _TRADING_CONTEXT.read_text(encoding="utf-8")
+    # Find the Phase 4b block and verify the SQL query includes opportunity_id
+    phase4b_idx = src.index("Phase 4b")
+    region = src[phase4b_idx:phase4b_idx + 600]
+    assert "opportunity_id" in region, (
+        "pending_signals query does not SELECT opportunity_id — serenity attribution "
+        "relies on layer3 limit=5 which silently truncates promoted opps"
+    )
+    assert "signal_source" in region, (
+        "pending_signals query does not SELECT signal_source — cannot distinguish "
+        "serenity signals from market_observer in the direct match path"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "SA-I03", _CONTRACT, "§3.2 pending_signal direct match takes priority over layer3", "L2b",
+        "When a serenity pending_signal matches the PI pick by symbol+direction, "
+        "_attach_opportunity_context uses its opportunity_id directly — not the "
+        "layer3 serenity_opportunities (which may be limit-truncated)",
+    ),
+)
+def test_pending_signal_direct_match_bypasses_layer3():
+    from aletheia.agent_shell.trading_decision import (
+        TradingDecision,
+        _attach_opportunity_context,
+    )
+
+    decision = TradingDecision(
+        action="trade", symbol="BTC/USDT", direction="long", conviction=70, reasoning="x"
+    )
+    ctx = {
+        "layer1": {"opportunities": []},
+        "layer2": {
+            "pending_signals": [
+                {"symbol": "BTC/USDT", "direction": "long",
+                 "opportunity_id": "ser-direct-111", "signal_source": "serenity",
+                 "reasoning": "auto-promote", "at": "2026-07-01T12:00:00"}
+            ]
+        },
+        "layer3": {
+            "serenity_opportunities": []  # empty — simulates limit=5 truncation
+        },
+    }
+    _attach_opportunity_context(decision, ctx)
+    assert decision.opportunity_id == "ser-direct-111", (
+        f"pending_signal direct match failed: {decision.opportunity_id!r}"
+    )
+    assert decision.signal_source == "serenity", (
+        f"signal_source should be 'serenity', got {decision.signal_source!r}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
         "SA-I01", _CONTRACT, "§3.2 Serenity pick → traceable source", "L2b",
         "When a PI pick maps ONLY to a Serenity opportunity, the backfill sets "
         "opportunity_id = serenity id AND signal_source = 'serenity' (no silent None)",

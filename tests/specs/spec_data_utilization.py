@@ -323,6 +323,63 @@ def test_market_context_timeframes_cover_all_three_periods():
 
 
 # ---------------------------------------------------------------------------
+# DU-S08 / DU-S09 — Serenity research pipeline data injection
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S08", _CONTRACT, "§yfinance fundamentals in research_worker", "L2a",
+        "research_worker._get_equity_context_block injects yfinance fundamentals "
+        "(PE, PS, MCap, RevGrowth, Margin) into the research LLM prompt when "
+        "stock tokens are configured — grounding equity_chain lens in real data",
+    ),
+)
+def test_research_worker_injects_yfinance():
+    rw = _ROOT / "aletheia" / "agents" / "research_worker.py"
+    src = rw.read_text(encoding="utf-8")
+    assert "yfinance" in src, (
+        "research_worker does not reference yfinance — equity_chain lens has no "
+        "fundamentals grounding and relies purely on LLM hallucination"
+    )
+    assert "trailingPE" in src or "forwardPE" in src, (
+        "research_worker does not extract PE ratio from yfinance"
+    )
+    assert "marketCap" in src, (
+        "research_worker does not extract market cap from yfinance"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S09", _CONTRACT, "§coinalyze flow data in research_worker", "L2a",
+        "research_worker._get_flow_context_block injects real OI and liquidation "
+        "data from the Coinalyze-populated DB tables into the research LLM prompt — "
+        "grounding derivatives flow analysis in actual market data",
+    ),
+)
+def test_research_worker_injects_coinalyze_flow():
+    rw = _ROOT / "aletheia" / "agents" / "research_worker.py"
+    src = rw.read_text(encoding="utf-8")
+    assert "_get_flow_context_block" in src, (
+        "research_worker has no _get_flow_context_block — Coinalyze data collected "
+        "but never injected into research prompt (orphan data)"
+    )
+    assert "open_interest_snapshots" in src, (
+        "research_worker does not read open_interest_snapshots table"
+    )
+    assert "liquidation_events" in src, (
+        "research_worker does not read liquidation_events table"
+    )
+    assert "open_interest_usd" in src, (
+        "research_worker uses wrong column name for OI value"
+    )
+    assert "flow_block" in src, (
+        "research_worker does not wire _get_flow_context_block into research_context"
+    )
+
+
+# ---------------------------------------------------------------------------
 # DU-T01 — tripwire: CoinalyzeCollector actually writes to open_interest_snapshots
 # ---------------------------------------------------------------------------
 

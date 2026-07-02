@@ -108,6 +108,9 @@ def _import_all_specs():
         # sentiment/macro) replace single-lens Stage 1 to reduce directional bias. Sequential
         # execution to stay within rate limits; lens registry pattern for easy extension.
         spec_serenity_multi_lens,
+        # Serenity xStocks execution path (SX-* claims). equity_tradeable asset_class
+        # enables Serenity-produced stock tokens to be traded by PI (P2).
+        spec_serenity_xstock_execution,
         # Round 2 high-dimensional negative-feedback closure (IFL-* claims attach to
         # "insight_feedback_loop"). Guards the three audited defects: clean-window floor
         # (②, implemented), Module J memo_effectiveness + bias-cap enforcement (③, xfail

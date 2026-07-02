@@ -243,6 +243,15 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
             age_hours = (datetime.now(timezone.utc) - opened).total_seconds() / 3600.0
             if age_hours >= max_hold:
                 return "max_hold", price
+
+    # Thesis-invalidation exit (serenity only): close when the underlying
+    # research opportunity has been dismissed/expired/downgraded.
+    if position.get("trade_school") == "serenity" and position.get("opportunity_id"):
+        from aletheia.storage.repositories import get_serenity_opportunity
+        opp = get_serenity_opportunity(position["opportunity_id"])
+        if opp and opp.get("status") != "active":
+            return "thesis_invalidated", price
+
     return None
 
 

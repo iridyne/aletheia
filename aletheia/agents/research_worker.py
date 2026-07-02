@@ -147,6 +147,88 @@ def _get_equity_context_block() -> str:
             "Use the canonical token symbol (with /USDT quote) when identifying specific opportunities. "
             "Focus supply-chain and thematic research on these names and their ecosystems."
         )
+
+        # Inject yfinance fundamentals for the observed tickers
+        try:
+            import yfinance as yf
+            fundamentals_lines: list[str] = []
+            for t in tickers[:6]:
+                try:
+                    info = yf.Ticker(t).info
+                    pe = info.get("trailingPE") or info.get("forwardPE")
+                    ps = info.get("priceToSalesTrailing12Months")
+                    mcap = info.get("marketCap")
+                    rev_growth = info.get("revenueGrowth")
+                    margin = info.get("profitMargins")
+                    sector = info.get("sector", "")
+                    parts_f: list[str] = [f"{t}:"]
+                    if pe:
+                        parts_f.append(f"PE={pe:.1f}")
+                    if ps:
+                        parts_f.append(f"PS={ps:.1f}")
+                    if mcap:
+                        parts_f.append(f"MCap=${mcap / 1e9:.0f}B")
+                    if rev_growth is not None:
+                        parts_f.append(f"RevGrowth={rev_growth * 100:.0f}%")
+                    if margin is not None:
+                        parts_f.append(f"Margin={margin * 100:.0f}%")
+                    if sector:
+                        parts_f.append(f"({sector})")
+                    if len(parts_f) > 1:
+                        fundamentals_lines.append(" ".join(parts_f))
+                except Exception:
+                    continue
+            if fundamentals_lines:
+                lines.append("\nFundamentals (latest):")
+                lines.extend(fundamentals_lines)
+        except ImportError:
+            pass
+
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _get_flow_context_block() -> str:
+    """Inject real OI and liquidation data from Coinalyze into the research context.
+
+    Reads the most recent 4h of data from open_interest_snapshots and
+    liquidation_events tables (populated by the Coinalyze collector scheduled job).
+    Returns empty string when no data is available.
+    """
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        oi_rows = db.execute(
+            "SELECT symbol, open_interest_usd, oi_change_1h_pct, observed_at "
+            "FROM open_interest_snapshots "
+            "WHERE observed_at > datetime('now', '-4 hours') "
+            "GROUP BY symbol HAVING MAX(observed_at) "
+            "ORDER BY open_interest_usd DESC LIMIT 10"
+        ).fetchall()
+        liq_rows = db.execute(
+            "SELECT symbol, side, SUM(quantity_usd) as total_usd, COUNT(*) as count "
+            "FROM liquidation_events "
+            "WHERE event_time > datetime('now', '-4 hours') "
+            "GROUP BY symbol, side "
+            "ORDER BY total_usd DESC LIMIT 10"
+        ).fetchall()
+        if not oi_rows and not liq_rows:
+            return ""
+        lines = ["\n\nDerivatives Flow Data (real-time, Coinalyze aggregated):"]
+        if oi_rows:
+            lines.append("Open Interest (top by USD value):")
+            for r in oi_rows:
+                lines.append(
+                    f"  {r['symbol']}: OI=${r['open_interest_usd'] / 1e6:.1f}M "
+                    f"Δ1h={r['oi_change_1h_pct'] or 0:.1f}%"
+                )
+        if liq_rows:
+            lines.append("Liquidations (4h aggregated):")
+            for r in liq_rows:
+                lines.append(
+                    f"  {r['symbol']} {r['side']}: ${r['total_usd'] / 1e3:.0f}K ({r['count']} events)"
+                )
         return "\n".join(lines)
     except Exception:
         return ""
@@ -442,6 +524,9 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     equity_block = _get_equity_context_block()
     has_equity_context = bool(equity_block)
 
+    # Inject derivatives flow data (Coinalyze OI + liquidations) when available.
+    flow_block = _get_flow_context_block()
+
     research_context = (
         f"Research profile:\n{profile_context}\n"
         f"Brief: {brief}\n"
@@ -449,6 +534,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
         f"Date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
         f"{news_block}"
         f"{equity_block}"
+        f"{flow_block}"
     )
 
     # Build active lens list: standard 4 lenses + equity_chain when equities present.
@@ -680,7 +766,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                     )
                     _sym = item.get("symbol", "BTC/USDT")
                     if _is_stock_token(_sym):
-                        _asset_class = "equity"
+                        _asset_class = "equity_tradeable"
                         _market_type = _stock_mkt_type(_sym)  # "spot" for r-series/ON-series; "swap" for future OKX SWAP
                     else:
                         _asset_class = "crypto"
@@ -727,6 +813,48 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
 
     _emit_event(run_id, "stage.completed", stage="generate_opportunities",
                 message=f"Generated {len(persisted_opps)} opportunities")
+
+    # --- Auto-promote (D5 switch) ---
+    try:
+        from aletheia.config.loader import load_config as _load_cfg
+        _cfg = _load_cfg()
+        if _cfg.serenity.auto_promote and persisted_opps:
+            from aletheia.trading.serenity_scoring import score_serenity_opportunity
+            from aletheia.storage.models import PiDecision
+            promoted_theme_ids: set[str] = set()
+            promoted_count = 0
+            for opp_id in persisted_opps:
+                opp = repo.get_serenity_opportunity(opp_id)
+                if not opp or opp.get("status") != "active":
+                    continue
+                evidence = repo.list_serenity_evidence(theme_id=opp["theme_id"], limit=200)
+                gates = repo.list_serenity_risk_gates(opportunity_id=opp_id, limit=200)
+                score_result = score_serenity_opportunity(opp, evidence=evidence, risk_gates=gates)
+                if score_result["score"] < _cfg.serenity.min_score_for_pi:
+                    continue
+                repo.update_serenity_opportunity(opp_id, action_intent="pi_evaluate")
+                pi_dec = PiDecision(
+                    symbol=opp.get("symbol"),
+                    direction=opp.get("direction"),
+                    action="signal_pending",
+                    conviction=0,
+                    reasoning=f"Auto-promote: score={score_result['score']} opp={opp_id[:8]}",
+                    opportunity_id=opp_id,
+                    signal_source="serenity",
+                    debate_ran=False,
+                )
+                repo.insert_pi_decision(pi_dec)
+                promoted_count += 1
+                promoted_theme_ids.add(opp["theme_id"])
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for tid in promoted_theme_ids:
+                repo.update_serenity_theme(tid, status="promoted", promoted_at=now_iso, updated_at=now_iso)
+            if promoted_count:
+                from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+                notify_pi_daemon(source="serenity_auto_promote")
+                _emit_event(run_id, "auto_promote", message=f"Auto-promoted {promoted_count} opportunities")
+    except Exception as e:
+        logger.warning("auto_promote failed (non-fatal): %s", e)
 
     # --- Stage 5: Persist Summary ---
     _check_cancellation(run_id)

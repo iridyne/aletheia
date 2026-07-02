@@ -986,12 +986,32 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             decision.market_type = o.get("market")
         return
 
-    # Serenity fallback (Phase 2): the pick matched no market_observer opportunity.
-    # Try the research long-hold picks surfaced in Layer 3. Only anchor on an
-    # opportunity that actually carries an id (the attribution anchor).
+    # Serenity direct match (Phase 2 fix): pending_signals carry opportunity_id
+    # from auto_promote. Match directly — avoids the layer3 limit=5 truncation
+    # that would otherwise sever the attribution chain for promoted opps.
+    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
+    for p in pending:
+        if p.get("signal_source") != "serenity":
+            continue
+        if p.get("symbol") != decision.symbol:
+            continue
+        pdir = p.get("direction")
+        if decision.direction and pdir and pdir != decision.direction:
+            continue
+        oid = p.get("opportunity_id")
+        if not oid:
+            continue
+        decision.opportunity_id = oid
+        decision.signal_source = "serenity"
+        return
+
+    # Serenity fallback (Phase 2): the pick matched no market_observer opportunity
+    # and no pending_signal. Try the research long-hold picks surfaced in Layer 3.
+    # Only anchor on an opportunity that actually carries an id (the attribution anchor).
     serenity_opps = (ctx.get("layer3") or {}).get("serenity_opportunities") or []
     for o in serenity_opps:
-        # EQ-R: equity observation-only tokens must never become execution anchors.
+        # EQ-R: observation-only equity tokens must never become execution anchors.
+        # "equity_tradeable" (Serenity research-produced) IS eligible — skip only "equity".
         if not o.get("execution_eligible", True):
             continue
         if o.get("asset_class") == "equity":

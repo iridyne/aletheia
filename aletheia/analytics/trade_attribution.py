@@ -42,6 +42,13 @@ def _build_row(pos: dict) -> dict | None:
     risk_decision = _lookup_risk_decision(proposal.get("id") if proposal else None)
     universe_member = _lookup_universe_member(opportunity)
 
+    # Serenity fallback: when the position's opportunity_id points to
+    # serenity_opportunities (not market_observer's opportunities table),
+    # the join above returns None. Fall back to serenity attribution.
+    serenity_opp = None
+    if opportunity is None and pos.get("trade_school") == "serenity" and pos.get("opportunity_id"):
+        serenity_opp = _safe_get(repo.get_serenity_opportunity, pos["opportunity_id"])
+
     # Compute realized_pnl_pct
     entry_price = float(pos.get("entry_price") or 0)
     realized_pnl = float(pos.get("realized_pnl") or 0)
@@ -55,21 +62,29 @@ def _build_row(pos: dict) -> dict | None:
     # Parse risk_flags from universe_member
     risk_flags = _parse_json_list(universe_member.get("risk_flags")) if universe_member else []
 
+    # Resolve source fields from whichever opportunity source matched
+    _opp_id = (opportunity.get("id") if opportunity else None) or (serenity_opp.get("id") if serenity_opp else None)
+    _source_agent = (opportunity.get("source_agent") if opportunity else None) or ("serenity_research" if serenity_opp else None)
+    _scanner_family = (opportunity.get("scanner_family") if opportunity else None) or ("serenity" if serenity_opp else None)
+    _confidence = opportunity.get("confidence") if opportunity else None
+    _confidence_score = (opportunity.get("confidence_score") if opportunity else None) or (serenity_opp.get("confidence_score") if serenity_opp else None)
+    _opp_status = (opportunity.get("status") if opportunity else None) or (serenity_opp.get("status") if serenity_opp else None)
+
     return {
         "position_id": pos.get("id"),
         "proposal_id": proposal.get("id") if proposal else None,
         "order_id": pos.get("order_id"),
-        "opportunity_id": opportunity.get("id") if opportunity else None,
+        "opportunity_id": _opp_id,
         "strategy_id": pos.get("strategy_id"),
         "symbol": pos.get("symbol"),
         "market_type": pos.get("market_type"),
         "direction": pos.get("direction"),
         "execution_mode": pos.get("execution_mode"),
-        "source_agent": opportunity.get("source_agent") if opportunity else None,
-        "scanner_family": opportunity.get("scanner_family") if opportunity else None,
-        "confidence": opportunity.get("confidence") if opportunity else None,
-        "confidence_score": opportunity.get("confidence_score") if opportunity else None,
-        "opportunity_status": opportunity.get("status") if opportunity else None,
+        "source_agent": _source_agent,
+        "scanner_family": _scanner_family,
+        "confidence": _confidence,
+        "confidence_score": _confidence_score,
+        "opportunity_status": _opp_status,
         "universe_member_id": opportunity.get("universe_member_id") if opportunity else None,
         "universe_rank": universe_member.get("rank") if universe_member else None,
         "universe_total_score": universe_member.get("total_score") if universe_member else None,
@@ -84,6 +99,7 @@ def _build_row(pos: dict) -> dict | None:
         "realized_pnl": realized_pnl,
         "realized_pnl_pct": round(realized_pnl_pct, 4),
         "close_reason": pos.get("close_reason"),
+        "trade_school": pos.get("trade_school"),
         "opened_at": pos.get("opened_at"),
         "closed_at": pos.get("closed_at"),
         "holding_hours": holding_hours,

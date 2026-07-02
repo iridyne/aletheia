@@ -382,3 +382,39 @@ def test_settings_serenity_endpoint_persists_and_bounds(tmp_path, monkeypatch):
     assert bad.status_code == 400, (
         f"out-of-band min_score_for_pi should be 400, got {bad.status_code}: {bad.text}"
     )
+
+
+# ---------------------------------------------------------------------------
+# L2a — Auto-promote pipeline integration
+# ---------------------------------------------------------------------------
+
+_RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
+
+
+@spec_claim(
+    SpecClaim(
+        "SP-S06", _CONTRACT, "§auto_promote pipeline integration", "L2a",
+        "When auto_promote=True and score≥min_score_for_pi, research_worker writes "
+        "signal_pending PiDecision after pipeline stage 4 (generate_opportunities)",
+    ),
+)
+def test_research_worker_auto_promote_block_exists():
+    src = _RESEARCH_WORKER.read_text(encoding="utf-8")
+    assert "auto_promote" in src, (
+        "research_worker.py has no auto_promote reference — the D5 switch is dead"
+    )
+    assert "score_serenity_opportunity" in src, (
+        "research_worker does not call the scorer — can't gate on min_score_for_pi"
+    )
+    assert "PiDecision(" in src, (
+        "research_worker does not construct PiDecision — auto-promote has no consumer"
+    )
+    assert "signal_pending" in src, (
+        "research_worker does not set action='signal_pending' — PI queue won't pick up"
+    )
+    assert "notify_pi_daemon" in src, (
+        "research_worker does not wake PI daemon after auto-promote"
+    )
+    assert "serenity_auto_promote" in src, (
+        "research_worker auto-promote source tag missing — audit trail incomplete"
+    )
