@@ -28,8 +28,6 @@ _MAX_DEMO_DATA_AGE_SECONDS = 1800
 # proposal could read the pre-trip config and slip through (TOCTOU). APScheduler
 # runs jobs on a threadpool, so this lock closes that window.
 _eval_lock = threading.Lock()
-# Strategy lifecycle states eligible for live execution.
-_LIVE_ELIGIBLE_STATES = {"live_candidate", "live_limited"}
 
 
 def _is_live(execution_mode: str) -> bool:
@@ -238,15 +236,30 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             if max_risk > 0 and risk_amount > max_risk:
                 violations.append(f"exceeds_single_trade_risk:{risk_amount}>{max_risk}")
 
-        # 14. Strategy lifecycle state — live needs a live-eligible strategy.
-        from aletheia.storage.repositories import get_strategy
-        if proposal.strategy_id is None:
-            violations.append("strategy_not_live_eligible:missing")
+        # 14. Scanner-family evidence gate — live needs a family with a proven
+        # clean-window edge. Replaces the deleted strategy-FSM eligibility gate
+        # (Position C 2026-07-02): the rules engine no longer promotes strategies
+        # through paper→live, so live-eligibility is now evidence-based on the
+        # proposal's scanner_family (resolved via its opportunity) rather than a
+        # per-strategy lifecycle state. Fail-closed: unknown family / no evidence
+        # / insufficient samples / sub-threshold win-rate all reject the live trade.
+        prop_family = _resolve_proposal_family(proposal)
+        min_n = int(getattr(risk, "live_family_min_samples", 30) or 0)
+        min_wr = float(getattr(risk, "live_family_min_win_rate_pct", 50.0) or 0.0)
+        if prop_family is None:
+            violations.append("family_not_live_eligible:unknown")
         else:
-            strat = get_strategy(proposal.strategy_id)
-            if strat is None or strat.get("state") not in _LIVE_ELIGIBLE_STATES:
-                state = strat.get("state") if strat else "missing"
-                violations.append(f"strategy_not_live_eligible:{state}")
+            edge = _family_live_edge(prop_family, proposal.direction)
+            if edge is None:
+                violations.append(f"family_not_live_eligible:{prop_family}:no_evidence")
+            elif (edge.get("n") or 0) < min_n:
+                violations.append(
+                    f"family_not_live_eligible:{prop_family}:samples={edge.get('n')}<{min_n}"
+                )
+            elif (edge.get("win_rate") or 0.0) < min_wr:
+                violations.append(
+                    f"family_not_live_eligible:{prop_family}:wr={edge.get('win_rate')}<{min_wr}"
+                )
     else:
         # Demo single-trade risk: paper trades may omit a stop (we don't force one),
         # but when a stop is present the loss-at-stop must stay within the demo cap.
@@ -634,6 +647,38 @@ def _lookup_beta(symbol: str) -> float | None:
             return float(row[0])
     except Exception:
         pass
+    return None
+
+
+def _resolve_proposal_family(proposal) -> str | None:
+    """Resolve a proposal's scanner_family via its opportunity (mirrors check #16)."""
+    if not getattr(proposal, "opportunity_id", None):
+        return None
+    try:
+        from aletheia.storage.sqlite import get_db
+        row = get_db().execute(
+            "SELECT scanner_family FROM opportunities WHERE id = ?",
+            (proposal.opportunity_id,),
+        ).fetchone()
+        return row[0] if row and row[0] else None
+    except Exception:
+        return None
+
+
+def _family_live_edge(family: str, direction: str) -> dict | None:
+    """Clean-window (scanner_family, direction) edge from settled forward outcomes.
+
+    Returns the matching family_direction_edge row ({n, win_rate (0-100), ...}) or
+    None when the family has no settled evidence in the 7d clean window / on error.
+    Check #14 (live-eligibility) gates on this — see engine §14.
+    """
+    try:
+        from aletheia.storage.repositories import family_direction_edge
+        for row in family_direction_edge(within_days=7):
+            if row.get("scanner_family") == family and row.get("direction") == direction:
+                return row
+    except Exception:
+        return None
     return None
 
 

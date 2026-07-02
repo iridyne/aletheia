@@ -314,6 +314,12 @@ class RiskConfig(BaseModel):
     correlation_guard_enabled: bool = True
     max_sector_concentration_pct: float = 60.0
     max_portfolio_beta: float = 3.0
+    # Scanner-family live-eligibility gate (check #14, Position C 2026-07-02).
+    # Replaces the deleted strategy-FSM eligibility gate: a LIVE trade needs its
+    # scanner_family (in the proposal's direction) to show a proven clean-window
+    # edge — at least N settled forward outcomes AND win_rate >= threshold.
+    live_family_min_samples: int = 30
+    live_family_min_win_rate_pct: float = 50.0
 
 
 class TelegramConfig(BaseModel):
