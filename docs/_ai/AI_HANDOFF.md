@@ -7,53 +7,54 @@
 
 ## Last Updated
 
-2026-07-02 (Position C Phase B 部分交付 — #14 信任边界改写 + 决策链/路由 landmine 清理)
+2026-07-02 (Position C Phase B 大部分交付 — #14 信任边界 + landmine + 前端 + doctor;剩 operator 命令面)
 
 ---
 
-## Recent Change (Position C Phase B 部分交付 — #14 证据门 + landmine 清理 — 2026-07-02)
+## Recent Change (Position C Phase B 大部分交付 — 2026-07-02)
 
-> 承接下方「Phase A 后半」。同一 worktree/分支。Phase B 分批做,已交付 2 个 commit(全绿),
-> 剩余 3 块(operator 命令面 / doctor+strategy_lifecycle 收缩 / 前端)带一个 owner 判断题,checkpoint 待续。
+> 承接下方「Phase A 后半」。同一 worktree/分支。Phase B 分批做,已交付 **5 个 commit(全绿,9 commit 领先 master)**。
+> owner 已定 **Option B**(见下)。**唯一剩余 Phase B = operator 命令面 #7**;Config↔UI 缺口已闭合。
 
-### 已交付
-- **`49c580f` 风控 #14 闸改写(信任边界,owner 明确批准「家族证据门·沿用旧量级」)**:
-  strategy FSM 准入 → scanner_family 干净窗证据门(经 opportunity 解析 family → `family_direction_edge`
-  要 n≥`risk.live_family_min_samples`(30) 且 win_rate≥`risk.live_family_min_win_rate_pct`(50));
-  fail-closed;删死码 `_LIVE_ELIGIBLE_STATES`;token `family_not_live_eligible:*`。SDD-first:
-  RE-S06 claim + RE-S04/S04b 前缀加 "family_" + risk_engine_contract §2 #14 改写 + 3 行为测试。
-- **`49b9cf3` 决策链 + analytics 路由 landmine 清理**:trading_decision 去 ruleset_signals(prompt
-  "## Active Signals" 段);commands.evaluate_trading_opportunity 去 scan_active_rulesets 注入;
-  routes/analytics 删 /strategy-evidence + /backtest-paper-drift + /backtest/{runs,runs/id,compare/id}
-  + /strategy-performance 改纯 KPIs。**至此 aletheia/ 内已无任何对已删模块的 import**。
+### 已交付(全绿)
+- **`49c580f` 风控 #14 闸改写(信任边界,owner 批「家族证据门·沿用旧量级」)**:strategy FSM 准入 →
+  scanner_family 干净窗证据门(经 opportunity 解析 family → `family_direction_edge` 要 n≥
+  `risk.live_family_min_samples`(30) 且 win_rate≥`risk.live_family_min_win_rate_pct`(50));fail-closed;
+  删死码 `_LIVE_ELIGIBLE_STATES`;token `family_not_live_eligible:*`。SDD-first:RE-S06 + RE-S04/S04b 前缀
+  加 "family_" + risk_engine_contract §2 #14 改写 + 3 行为测试。
+- **`49b9cf3` 决策链 + analytics 路由 landmine 清理**:trading_decision 去 ruleset_signals;
+  commands.evaluate_trading_opportunity 去 scan_active_rulesets;routes/analytics 删 strategy-evidence +
+  backtest 端点。**至此 aletheia/ 内无任何对已删模块的 import**。
+- **`0df5016` 前端 + #14 Config↔UI 闭合**:App.tsx 去 StrategyLifecycle import/route/nav;删
+  `pages/StrategyLifecycle.tsx`;client.ts 删死方法(getStrategyEvidence/getBacktestPaperDrift/
+  getBacktestRuns/Detail/Compare);Learning.tsx 去 "Strategy promotion" 板+PromoCard;**#14 两 config 字段
+  Settings UI 补齐**(settings.py RiskConfigUpdate+_RISK_BOUNDS / client.ts 类型 / Settings.tsx
+  RISK_FAMILY_GATE 段)。`npm run build` 通过(tsc 无错 + 780 模块)。
+- **`6541502` doctor content.strategy_health 改 legacy-only**:引擎删后 strategy_records 冻结,旧 zombie WARN
+  会误报;改为报 legacy 计数 info(probe-honesty);test_operator_loop content_health 捕获测试的 WARN 源
+  换成 content.proposal_bias。
+- **`ac8a7d6` handoff**。
 
-### ⚠️ 合并 master 前必须闭合(Config↔UI 硬规则,本次新增 schema 字段所致)
-`risk.live_family_min_samples` + `risk.live_family_min_win_rate_pct` 已加进 `config/schema.py` RiskConfig,
-但**尚无 Settings UI 控件**。补齐路径(全声明式):`settings.py` RiskConfigUpdate 加 2 字段 + `_RISK_BOUNDS`
-加边界(建议 samples 5–200 / wr 0–100);`client.ts` updateRiskConfig body 类型加 2 键;`Settings.tsx`
-加 NumField 数组 + render section(不要塞进 RISK_SHARED,那是 per-symbol)+ 纳入 init/allNumFields/搜索索引(~2816)。
+### ✅ owner 已定 = Option B
+`create_strategy`/`promote_strategy`/`check_promotion_gates` **作内部 legacy 函数保留**(写保留的 legacy 表,
+~15 测试 fixture 零改);strategy_lifecycle.py 不收缩 FSM 函数(promote_strategy 仍用 _has_pi_approval)。
+只删 operator/UI 面。
 
-### ⏳ 剩余 Phase B(引用的都是保留 legacy 函数,import-安全非 landmine;分支未合并故不 live)
-- **前端 Task(需 npm build)**:App.tsx 删 StrategyLifecycle import/route/nav("Strategies");删
-  `pages/StrategyLifecycle.tsx`(它调 getStrategyEvidence/getBacktestRuns 等**已删端点=现已 broken**);
-  client.ts 删死方法(getStrategyEvidence/getBacktestPaperDrift/getBacktestRuns/Detail/Compare);
-  Learning.tsx `ReportsTab` 去 "Strategy promotion" 板 + `PromoCard`(调 getStrategyGates)。
-- **operator 命令面(commands.py + registry/intent/operator_loop)+ routes/data.py**:删 create_strategy_draft /
-  promote / gates 命令处理 + promote/gates 端点。**判断题(见下)**。
-- **doctor + strategy_lifecycle 收缩**:doctor `content.strategy_health` 探针改 legacy-only + 去 `_has_pi_approval`;
-  strategy_lifecycle.py 收缩为 attribution 助手(保留 is_active_paper_strategy 等)。
-
-### 🔑 owner 判断题(下会话先问再动)
-`create_strategy`/`promote_strategy`/`check_promotion_gates` 被 **~15 个测试文件当 fixture** 用
-(test_agent_shell/acceptance/operator_events/three_gaps/workflow_routes/cli/dreaming_ledger/knowledge…)。
-选项:(A) 彻底删这些 FSM 函数 + 改 ~15 测试(工作量大,契合"收缩为 attribution 助手");
-(B) 只删 operator/UI 面(命令+路由+前端),create_strategy 等作为**内部 legacy 函数保留**(写保留的
-legacy 表,import-安全,测试零改动)。B 更小、更 MVP;A 更彻底。建议 B。
+### ⏳ 唯一剩余 Phase B = #7 operator 命令面(引用保留 legacy 函数,import-安全非 landmine;分支未合并故不 live)
+- **commands.py**:删 `create_strategy_draft`(:850)/promote 处理(:1470)/gate-preview(:1550,:1664)/
+  `get_strategy_lifecycle`(:651)+ 命令 dispatch 表条目(:2052)+ `_strategy_inputs` 助手。
+- **registry.py**(:155)/`intent.py`(:32,:110):去 `create_strategy_draft` 命令注册+intent。
+- **operator_loop.py**(:272,:559-689,:1200):去 `promote_strategy`/`trigger_strategy_designer` OperatorAction +
+  `_action_*` 处理(trigger_strategy_designer 是 Phase A 遗留的运行时地雷:run_agent("strategy_designer")→ValueError)。
+- **routes/data.py**(:978 promote / :990 retire / :1313 gates):删这 3 端点。
+- **命令级测试影响**(比函数级 15 文件小):test_agent_shell(create_strategy_draft 命令/intent)、
+  test_operator_permissions(:81 命令白名单)、test_operator_loop(:155/:217/:411 promote_strategy/designer action)。
+  底层 create_strategy 保留故大多 fixture 测试零改。
 
 ### Phase C(不变)
 spec_strategy_pool SP-S04 标废 + 迁 S05/06/07;spec_model_routing 去 strategy_designer;8 契约文档 +
 agent_contracts/SYSTEM_MAP job 表(去 designer/backtest,加 guard_promotion);backtest_paper_drift.py 现成
-孤儿死码(只剩单测,路由已删)可清。
+孤儿死码(只剩单测,路由已删)可清。paper_trader_ranker 里 always-None 的 strategy_evidence 死参可清(化妆)。
 
 ---
 
