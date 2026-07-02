@@ -873,10 +873,12 @@ def _probe_reconciled_ratio(report: Report) -> None:
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
+        cutoff_72h = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
         rows = list(db.execute(
             "SELECT close_reason FROM positions "
-            "WHERE status='closed' AND closed_at >= '2026-06-22' "
-            "ORDER BY closed_at DESC LIMIT 50"
+            "WHERE status='closed' AND closed_at >= ? "
+            "ORDER BY closed_at DESC LIMIT 50",
+            (cutoff_72h,),
         ))
         if not rows:
             report.add("loop.reconciled_ratio", "info",
@@ -896,8 +898,9 @@ def _probe_reconciled_ratio(report: Report) -> None:
             report.add("loop.reconciled_ratio", "warn",
                        f"reconciler dominates closes: {detail}",
                        "judgement PF/WR is driven by orphan sweep, not AI — "
-                       "investigate position_reconciler._try_get_tpsl_fill_price "
-                       "and reconciler trigger frequency")
+                       "common cause: gateway restart while exchange TP/SL was active "
+                       "(okx_demo mode: _try_get_tpsl_fill_price is Bitget-only, "
+                       "so OKX TP/SL fills appear as reconciled_gone instead of take_profit/stop_loss)")
         elif recon_pct > 25:
             report.add("loop.reconciled_ratio", "info",
                        f"reconciled noticeable: {detail}")
@@ -1360,7 +1363,8 @@ def _probe_content_proposal_bias(report: Report) -> None:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         rows = list(db.execute(
             "SELECT direction, COUNT(*) n FROM trade_proposals "
-            "WHERE created_at >= ? GROUP BY direction ORDER BY n DESC",
+            "WHERE created_at >= ? AND source != 'adopted' "
+            "GROUP BY direction ORDER BY n DESC",
             (cutoff,),
         ))
     except Exception as e:
