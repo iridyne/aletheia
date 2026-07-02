@@ -1,5 +1,42 @@
 # Decisions
 
+## 2026-07-02 — Universe registry whitelist dict 格式类型不一致致 pipeline 静默全杀
+
+### Context
+
+`OKXClient.load_demo_markets()` 被改为返回 `{"swap": frozenset, "spot": frozenset}` dict，目的是让 gateway 的 pre-flight 检查能按 market_type 区分（F1 修复：`WLD` 等仅 spot 挂单的币种不能被路由到 perp 订单）。但 `universe/registry.py:_load_demo_whitelist()` 仍按旧接口签名返回 `frozenset | None`，直接 return dict。
+
+`sync_registry` 用 `canonical not in demo_whitelist` 过滤。Python `in` 在 dict 上查的是 **key**（"swap"/"spot"），不是 frozenset 里的 symbol → 所有真实 symbol 检查都失败 → `sync_registry` 注册 0 个 asset → snapshot selected=0 → universe 永久 fallback 到 3 个静态币。
+
+DB 铁证：`universe_registry` 1434 行，active=0；scanner runs 5826 次+，最近数百次全部 scanned=0。
+
+### Root Cause Pattern：interface 转换边界断裂
+
+helper 改变了返回类型（`frozenset` → `dict[str, frozenset]`），所有 caller 必须同步适配。本次仅 gateway 路径（`okx_broker._get_demo_symbols`）做了适配，registry 路径遗漏。静默失败——没有 exception、没有 error log（`logger.debug` 级别），只能通过 DB 全零或用户报"只有 3 个币"才能发现。
+
+### Decisions
+
+1. **Fix in helper, not caller（保持向后兼容）**
+   - `_load_demo_whitelist()` 内部 collapse dict → frozenset 并集。保持签名 `frozenset | None` 不变。
+   - Rationale：最小改动（1 个函数内 5 行），registry.py 的 `if canonical not in whitelist` 判断逻辑不动，gateway 路径也不受影响。
+
+2. **追加回归测试 `test_registry_whitelist.py`**
+   - 4 个 case：dict collapse 成 frozenset、签名不变、symbol 可测试、non-okx 返回 None、空 markets。
+   - 覆巢之下：成员 `test_dict_vs_frozenset_membership` 直接演示 bug 模式，确保未来不能「无感」破回去。
+
+3. **教训：调用方多样化场景下的 interface 变更必须清查所有 site**
+   - 规则：当 helper 返回结构从 scalar/flat 改成 nested dict/list 时，**grep 所有 caller 并逐一对齐**。
+   - 规则：当 caller 用 `in`/`not in` 操作符时，如果返回类型在 dict/frozenset/list 之间切换，这是高崩风险——dict `in` 查 key、frozenset `in` 查 value。
+   - 规则：静默失败（debug-log + continue）是高危模式——考虑在 registry sync count=0 时 `logger.warning`，让运维可观测。
+   - 规则：核心数据路径（registry sync、opportunity emission、order placement）的 count=0 状态应该记录到 stability_monitor 或 health endpoint，不能靠日志 grep。
+
+### Files
+- `aletheia/universe/registry.py:58` — `_load_demo_whitelist` collapse dict → frozenset
+- `tests/test_registry_whitelist.py` — 新增回归测试（4 case）
+- DB: `data/app.db universe_registry` 1434 行将随下次 refresh 逐步激活（okx venue 377 行重新变为 active）
+
+---
+
 ## 2026-07-01 — Scanner/Observer 审计修复的架构决策
 
 ### Context

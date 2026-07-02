@@ -61,10 +61,16 @@ async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
     """Load the demo symbol whitelist for the active execution mode.
 
     Returns None if no demo filtering is needed (live mode or full-access demos).
+
+    OKXClient.load_demo_markets() returns {"swap": frozenset, "spot": frozenset}.
+    Collapse to a single frozenset so callers can do `symbol in whitelist`.
     """
     if paper_execution_mode == "okx_demo":
         from aletheia.exchanges.okx.client import OKXClient
-        return await OKXClient.load_demo_markets()
+        markets = await OKXClient.load_demo_markets()
+        if markets is None:
+            return None
+        return markets.get("swap", frozenset()) | markets.get("spot", frozenset())
     # bitget_demo and binance_testnet support their full perp list — no extra filter
     return None
 
