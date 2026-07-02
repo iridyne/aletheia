@@ -325,6 +325,29 @@ def _evaluate_candidate(
     )
 
 
+_SCANNER_REGIME_SCORING_DEFAULTS = {
+    "bear_short": 20.0, "bear_long": -25.0,
+    "bull_long": 20.0, "bull_short": -20.0,
+    "volatile_penalty": 10.0,
+    "sideways_trend_penalty": 25.0, "sideways_reversion_bonus": 15.0,
+}
+
+
+def _scanner_regime_scoring() -> dict:
+    """Config-driven scanner-family regime score deltas (P1b).
+
+    Reads cfg.universe.scanner_regime_scoring; falls back to the hardcoded
+    defaults so a missing/partial config never changes the prior behavior.
+    Merged over defaults so a partial override only touches the keys it sets.
+    """
+    try:
+        from aletheia.config.loader import load_config
+        cfg_vals = getattr(load_config().universe, "scanner_regime_scoring", None) or {}
+    except Exception:
+        cfg_vals = {}
+    return {**_SCANNER_REGIME_SCORING_DEFAULTS, **cfg_vals}
+
+
 def _compute_trade_score(
     opp: dict,
     universe_member: dict | None,
@@ -389,11 +412,16 @@ def _compute_trade_score(
 
     # P0-5: Regime-aware scoring with smooth confidence weighting (no 0.5 cliff).
     # P0-2: Sideways branch added — trend-family scanners penalised in sideways (CTA lit.).
+    # P1b (2026-07-02): deltas are config-driven (cfg.universe.scanner_regime_scoring),
+    # defaults reproduce the prior hardcoded values EXACTLY. This is a SOFT, scanner-
+    # family-level signal applied to ALL candidates including strategy-less ones — NOT a
+    # hard block (owner directive: no low-dim hard interception). Locked by SP-S06/SP-S07.
+    _srs = _scanner_regime_scoring()
     _BASE_REGIME_DELTA = {
-        ("bear", "short"): +20,
-        ("bear", "long"):  -25,
-        ("bull", "long"):  +20,
-        ("bull", "short"): -20,
+        ("bear", "short"): _srs["bear_short"],
+        ("bear", "long"):  _srs["bear_long"],
+        ("bull", "long"):  _srs["bull_long"],
+        ("bull", "short"): _srs["bull_short"],
     }
     _TREND_FAMILIES = {"breakout", "momentum", "ma_crossover", "trend"}
 
@@ -403,13 +431,13 @@ def _compute_trade_score(
         weight = regime.confidence ** 1.5  # smooth: avoids hard cliff at 0.5
         score += delta * weight
     elif regime.state == "volatile":
-        score -= 10 * (regime.confidence ** 1.5)
+        score -= _srs["volatile_penalty"] * (regime.confidence ** 1.5)
     elif regime.state == "sideways" and regime.confidence > 0.6:
         scanner = (opp.get("scanner_family") or "").lower()
         if any(t in scanner for t in _TREND_FAMILIES):
-            score -= 25  # trend-following performs worst in sideways
+            score -= _srs["sideways_trend_penalty"]  # trend-following worst in sideways
         elif "reversion" in scanner or "arb" in scanner:
-            score += 15  # mean-reversion strategies benefit from sideways
+            score += _srs["sideways_reversion_bonus"]  # mean-reversion benefits from sideways
 
     # P2: Executable RuleSet bonus — verified strategies get preference
     if strategy_has_ruleset:

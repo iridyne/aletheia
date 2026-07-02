@@ -158,17 +158,21 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
 
     for sig in ruleset_signals:
         try:
-            if sig.signal_type == "exit" and sig.position_id:
-                out = _handle_ruleset_exit(sig, run_id)
-            else:
-                if sig.symbol in open_symbols:
-                    outputs.append(f"skip_existing_position:{sig.symbol}")
-                    continue
-                sig_venue = _resolve_venue(sig.strategy_id, execution_mode)
-                out = _handle_ruleset_entry(sig, cfg, sig_venue, run_id)
-                if out:
-                    cycle_pending_symbols.add(sig.symbol)
+            if sig.signal_type == "exit":
+                # P0 defuse (2026-07-02): RuleSet exit signals no longer auto-close.
+                # Exit authority is SL/TP/max_hold/market-aware/PI only (PI-central,
+                # Option A). A deterministic rule must not override PI autonomy. The
+                # former ruleset-exit close had zero live effect (0/208 closes) but
+                # was a dormant bypass. Locked by spec PL-PM-08.
+                outputs.append(f"ruleset_exit_ignored:{sig.symbol}")
+                continue
+            if sig.symbol in open_symbols:
+                outputs.append(f"skip_existing_position:{sig.symbol}")
+                continue
+            sig_venue = _resolve_venue(sig.strategy_id, execution_mode)
+            out = _handle_ruleset_entry(sig, cfg, sig_venue, run_id)
             if out:
+                cycle_pending_symbols.add(sig.symbol)
                 outputs.append(out)
         except Exception as e:
             errors.append(f"ruleset_signal_error:{sig.symbol}:{e}")
@@ -258,21 +262,10 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
 
 
 # ── RuleSet signal handlers ───────────────────────────────────────────────────
-
-def _handle_ruleset_exit(sig: RuleSetSignal, run_id: str | None) -> str | None:
-    """Close a position triggered by RuleSet exit signal."""
-    from aletheia.portfolio.pnl import close_position, _latest_price
-    price = _latest_price(sig.symbol)
-    if price is None:
-        logger.warning("no_price_for_exit:%s", sig.symbol)
-        return None
-    try:
-        close_position(sig.position_id, exit_price=float(price), reason="ruleset_exit_signal")
-        logger.info("ruleset_exit: closed position %s for %s", sig.position_id, sig.symbol)
-        return f"ruleset_exit:{sig.symbol}:{sig.strategy_id[:8]}"
-    except Exception as e:
-        logger.warning("ruleset_exit failed for %s: %s", sig.position_id, e)
-        return None
+# NOTE (P0 defuse, 2026-07-02): the ruleset exit-close handler was removed.
+# RuleSet exit signals must not auto-close positions — exit authority is
+# SL/TP/max_hold/market-aware/PI only (PI-central, Option A). Locked by spec
+# PL-PM-08. Entry signals below remain a pure signal_pending writer (PI decides).
 
 
 def _handle_ruleset_entry(

@@ -169,6 +169,27 @@ def _build_layer1_snapshot() -> dict[str, Any]:
             order="created_at DESC",
             limit=10,
         )
+        # Thesis evidence (P1a 2026-07-02): per-(scanner_family, direction) live edge
+        # from settled forward outcomes, so the PI can weigh each candidate against
+        # the actual track record of its scanner family + direction — the missing
+        # decision-time signal the learning loop already computed but never surfaced.
+        _edge_map: dict[tuple, dict] = {}
+        try:
+            from aletheia.storage.repositories import family_direction_edge
+            for _e in family_direction_edge(horizon="24h", within_days=7):
+                _edge_map[(_e["scanner_family"], _e["direction"])] = {
+                    "n": _e["n"], "win_rate": _e["win_rate"], "avg_return": _e["avg_return"],
+                }
+        except Exception:
+            _edge_map = {}
+
+        def _family_edge_for(o: dict) -> dict | None:
+            fam = o.get("scanner_family")
+            d = (o.get("direction_bias") or "long")
+            if d not in ("long", "short"):
+                d = "long"
+            return _edge_map.get((fam, d))
+
         layer["opportunities"] = [
             {
                 # R0 fix: carry the opportunity id so the PI Agent's pick can be
@@ -186,6 +207,10 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "confidence": o.get("confidence"),
                 "confidence_score": o.get("confidence_score"),
                 "scanner_family": o.get("scanner_family"),
+                # Per-(scanner_family, direction) live edge from settled forward
+                # outcomes (thesis evidence). None when the family has no settled
+                # outcomes in the 7d window yet.
+                "family_edge": _family_edge_for(o),
                 "thesis": (o.get("thesis") or "")[:220],
                 # market_observer's LLM writes its most specific, data-cited output
                 # here; the PI was previously blind to it (only the truncated thesis

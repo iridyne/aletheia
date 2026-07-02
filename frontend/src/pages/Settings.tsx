@@ -1022,6 +1022,20 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
           <p className="hint m-0">Adjusted autonomously by the PI Operator. Reset via <code>aletheia config set universe.scanner_weights &#123;&#125;</code>.</p>
         </div>
       )}
+      {universe?.scanner_regime_scoring && Object.keys(universe.scanner_regime_scoring).length > 0 && (
+        <div className="mb-3">
+          <span className="settings-field-label">Regime scoring deltas (soft, read-only)</span>
+          <div className="settings-field-grid">
+            {Object.entries(universe.scanner_regime_scoring as Record<string, number>).map(([k, v]) => (
+              <label className="settings-field" key={k}>
+                <span>{humanize(k)}</span>
+                <input type="number" value={v} readOnly className="mono" />
+              </label>
+            ))}
+          </div>
+          <p className="hint m-0">Soft ranker score deltas applied per candidate by regime × direction/family (applies to strategy-less opportunities too — not a hard block). Tune via <code>aletheia config set universe.scanner_regime_scoring &#123;…&#125;</code>.</p>
+        </div>
+      )}
       <p className="hint">
         When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
         and feeds the top {maxCandidates} to agents. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.

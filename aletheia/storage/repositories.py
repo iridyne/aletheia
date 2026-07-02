@@ -1568,6 +1568,47 @@ def calibration_stats() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[dict]:
+    """Per-(scanner_family, direction) forward-outcome edge from settled outcomes.
+
+    Thesis evidence for the PI Agent (Position B, P1a 2026-07-02): unlike
+    calibration_stats() which folds direction into the win metric and groups only
+    by (family, horizon), this groups by (scanner_family, direction) so the PI can
+    see "momentum:long" and "momentum:short" as SEPARATE falsifiable theses at
+    decision time. Reuses the existing universe_forward_outcomes store — no new
+    table. Read-only; direction-aware win (long wins on +return, short on -return).
+
+    Returns rows: {scanner_family, direction, n, win_rate, avg_return}.
+    Only families with n >= 1 in the window are returned.
+    """
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
+    rows = db.execute(
+        "SELECT scanner_family, COALESCE(direction, 'long') as direction, "
+        "COUNT(*) as n, "
+        "AVG(forward_return_pct) as avg_return, "
+        "SUM(CASE "
+        "  WHEN direction = 'short' AND forward_return_pct < 0 THEN 1 "
+        "  WHEN COALESCE(direction, 'long') != 'short' AND forward_return_pct > 0 THEN 1 "
+        "  ELSE 0 END) as win_count "
+        "FROM universe_forward_outcomes "
+        "WHERE status = 'settled' AND horizon = ? "
+        "AND settled_at >= ? AND ABS(forward_return_pct) <= 100 "
+        "AND scanner_family IS NOT NULL "
+        "GROUP BY scanner_family, COALESCE(direction, 'long') "
+        "ORDER BY n DESC",
+        (horizon, cutoff),
+    ).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        n = d.get("n") or 0
+        d["win_rate"] = round((d.get("win_count") or 0) / n * 100, 1) if n else None
+        d["avg_return"] = round(d["avg_return"], 3) if d.get("avg_return") is not None else None
+        out.append(d)
+    return out
+
+
 def guard_candidate_exists_recent(symbol: str, scanner_family: str, within_days: int = 7) -> bool:
     """Return True if a guard_candidate for this symbol+family was created within within_days."""
     db = get_db()

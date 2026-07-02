@@ -380,6 +380,112 @@ def test_research_worker_injects_coinalyze_flow():
 
 
 # ---------------------------------------------------------------------------
+# DU-S10 / DU-S11 — forward-outcome thesis evidence reaches the PI decision
+#   (Position B, P1a 2026-07-02). The universe_forward_outcomes store already
+#   accumulates per-(scanner_family, direction) live edge and drives Tier-1
+#   self-evolution, but the PI Agent only saw a universe-wide aggregate
+#   win-rate — it could not weigh a candidate against ITS family+direction
+#   track record. These claims lock: (S10) the aggregation groups by
+#   (scanner_family, direction); (S11) it is routed into the PI context +
+#   prompt, closing the collected-but-not-consumed-at-decision-time gap.
+# ---------------------------------------------------------------------------
+
+
+def _setup_du_db(tmp_path, monkeypatch):
+    import sqlite3
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    sq._db_conn = conn
+    run_migrations()
+    return conn
+
+
+def _seed_forward_outcome(conn, family, direction, forward_return, horizon="24h"):
+    import uuid
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO universe_forward_outcomes "
+        "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+        " entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
+        " forward_return_pct, status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "X/USDT",
+         family, direction, horizon, 100.0, now, now, now, 101.0,
+         forward_return, "settled"),
+    )
+    conn.commit()
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S10", _CONTRACT, "§thesis evidence aggregation", "L2b",
+        "repositories.family_direction_edge groups settled forward outcomes by "
+        "(scanner_family, direction) with a direction-aware win_rate — momentum:long "
+        "and momentum:short are SEPARATE theses, not folded together.",
+    ),
+)
+def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
+    conn = _setup_du_db(tmp_path, monkeypatch)
+    from aletheia.storage.repositories import family_direction_edge
+
+    # momentum:long — 3 outcomes, 2 wins (positive return = long win)
+    _seed_forward_outcome(conn, "momentum", "long", 2.0)
+    _seed_forward_outcome(conn, "momentum", "long", 1.0)
+    _seed_forward_outcome(conn, "momentum", "long", -1.0)
+    # momentum:short — 2 outcomes, 2 wins (negative return = short win)
+    _seed_forward_outcome(conn, "momentum", "short", -2.0)
+    _seed_forward_outcome(conn, "momentum", "short", -3.0)
+
+    rows = family_direction_edge(horizon="24h", within_days=7)
+    by_key = {(r["scanner_family"], r["direction"]): r for r in rows}
+
+    assert ("momentum", "long") in by_key, "momentum:long thesis missing"
+    assert ("momentum", "short") in by_key, "momentum:short thesis missing — direction was folded"
+    long_edge = by_key[("momentum", "long")]
+    short_edge = by_key[("momentum", "short")]
+    assert long_edge["n"] == 3 and abs(long_edge["win_rate"] - 66.7) < 0.5, (
+        f"momentum:long win_rate wrong: {long_edge}"
+    )
+    assert short_edge["n"] == 2 and abs(short_edge["win_rate"] - 100.0) < 0.5, (
+        f"momentum:short win_rate wrong (short wins on negative return): {short_edge}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "DU-S11", _CONTRACT, "§no-orphan: forward-outcome edge → PI", "L2a",
+        "trading_context attaches family_edge to each Layer-1 opportunity (from "
+        "family_direction_edge) AND trading_decision renders it in the opportunity "
+        "line — the per-family+direction track record reaches the PI at decision "
+        "time, not just the universe-wide aggregate.",
+    ),
+)
+def test_forward_outcome_edge_routed_to_pi():
+    tc = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
+    td = (_ROOT / "aletheia" / "agent_shell" / "trading_decision.py").read_text(encoding="utf-8")
+    assert "family_direction_edge" in tc, (
+        "trading_context must call family_direction_edge to build the thesis-evidence map"
+    )
+    assert '"family_edge"' in tc or "'family_edge'" in tc, (
+        "trading_context must attach family_edge to each opportunity"
+    )
+    assert "_fmt_family_edge" in td, (
+        "trading_decision must render family_edge in the PI prompt (opportunity line)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # DU-T01 — tripwire: CoinalyzeCollector actually writes to open_interest_snapshots
 # ---------------------------------------------------------------------------
 

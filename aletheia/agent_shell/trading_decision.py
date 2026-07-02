@@ -442,6 +442,25 @@ def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
 
 _OI_DIV_LABEL = {1: "hidden_acc", -1: "weak_rally", 0: ""}
 
+def _fmt_family_edge(edge: dict | None) -> str:
+    """Format per-(scanner_family, direction) live edge for the opportunity line.
+
+    Thesis evidence (P1a): shows the PI the actual settled track record of this
+    candidate's scanner family + direction so it weighs the pick against real
+    outcomes, not just the current signal. Empty string when no settled data yet
+    (never fabricate an edge from zero samples). n>=5 lends the number weight.
+    """
+    if not edge or not edge.get("n"):
+        return ""
+    n = edge["n"]
+    wr = edge.get("win_rate")
+    ar = edge.get("avg_return")
+    wr_s = f"{wr:.0f}%WR" if wr is not None else "?WR"
+    ar_s = f"{ar:+.2f}%avg" if ar is not None else ""
+    weak = " (thin)" if n < 5 else ""
+    return f" {{edge:{n}T {wr_s} {ar_s}{weak}}}"
+
+
 def _fmt_feature_line(f: dict) -> str:
     """Format one universe feature entry for the assessment prompt."""
     sym = f["symbol"]
@@ -672,7 +691,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         opp_lines = "\n".join(
             f"  {o['symbol']} [{o.get('market', '?')}] {o.get('direction_bias', '?')} "
             f"conf={o.get('confidence_score', '?')} "
-            f"[{o.get('scanner_family', '')}]: {o.get('thesis', '')}"
+            f"[{o.get('scanner_family', '')}]{_fmt_family_edge(o.get('family_edge'))}: {o.get('thesis', '')}"
             f"{(' | obs: ' + '; '.join(o['key_observations'])) if o.get('key_observations') else ''}"
             for o in opps[:8]
         )
