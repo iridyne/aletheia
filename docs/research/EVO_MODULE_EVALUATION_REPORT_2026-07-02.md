@@ -70,7 +70,7 @@
 |---|--------|------|------|------|
 | L1 | 🟡 | 评分权重硬编码 | serenity_scoring.py:145-165 | tier_score_map / stage_score_map / avg_score_map 硬编码在函数内,非 config-driven。MVP 可接受,但无法在不改代码的情况下调优 |
 | L2 | 🟡 | 无独立 L2 契约文档 | design/README.md | Serenity 评分/证据模块无独立 L2 契约。8 个 spec_*.py 全部是 "logical contract"(不在 REQUIRED_CONTRACTS),分散无统一入口 |
-| L3 | 🟡 | _normalize_stage_for_score 映射不完整 | serenity_scoring.py:46-57 | "validation" → "research", "demand" → "demand_wave", "order" → "order_night" 等映射存在,但 SERENITY_STAGE_ORDER 与 _normalize_stage_for_score 的映射不完全一致(如 "candidate" → "candidate_position" 在 _stage_index 中处理但不在 _normalize_stage_for_score 中) |
+| L3 | ⚪ 已核实非 bug (2026-07-02) | _normalize_stage_for_score 别名分散 (可维护性瑕疵,非缺陷) | serenity_scoring.py:42-76, 203-213 | **复核结论**: 评分路径 stage_score_map (行 203-213) 已补齐所有别名 key ("order":22 / "candidate":26 / "demand":12 均在表内),`_normalize_stage_for_score` 未覆盖的别名 `.get()` 照样命中,不走 fallback;`_stage_index` (行 66-76) 自身处理全部别名 (candidate→candidate_position / order→order_night / sample→supply_chain)。**评分与阶段索引均正确,无错误行为**。别名逻辑分散在三处是可维护性瑕疵,非 bug。**不修 (不过度工程化)**。 |
 
 ### 2.3 测试覆盖
 
