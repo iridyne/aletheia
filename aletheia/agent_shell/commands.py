@@ -1875,23 +1875,6 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
 
-    # Enrich with RuleSet signals (passed separately to prompt builder)
-    try:
-        from aletheia.trading.ruleset_scanner import scan_active_rulesets
-        signals = scan_active_rulesets(execution_mode=execution_mode)
-        ctx["ruleset_signals"] = [
-            {
-                "symbol": s.symbol,
-                "signal_type": s.signal_type,
-                "direction": s.direction,
-                "strategy": s.strategy_name,
-                "timeframe": s.timeframe,
-            }
-            for s in signals
-        ]
-    except Exception:
-        ctx["ruleset_signals"] = []
-
     # Run PI agent decision loop
     decision = await _evaluate(ctx)
 

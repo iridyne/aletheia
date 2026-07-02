@@ -512,7 +512,6 @@ def _build_assessment_prompt(ctx: dict) -> str:
     layer1 = ctx.get("layer1", {})
     layer2 = ctx.get("layer2", {})
     layer3 = ctx.get("layer3", {})
-    ruleset_signals = ctx.get("ruleset_signals", [])
 
     # ── Layer 1: Environment Snapshot ──
     positions = layer1.get("positions", [])
@@ -550,11 +549,6 @@ def _build_assessment_prompt(ctx: dict) -> str:
     ) or "  (no data)"
 
     risk = layer1.get("risk", {})
-
-    signal_lines = "\n".join(
-        f"  {s['symbol']} {s['signal_type']} {s.get('direction', '')} via {s['strategy']}"
-        for s in ruleset_signals[:7]
-    ) or "  (none active)"
 
     # ── Layer 2: Short-term Memory ──
     reflection = layer2.get("reflection")
@@ -679,9 +673,6 @@ def _build_assessment_prompt(ctx: dict) -> str:
         feature_lines,
         "",
         _SIGNAL_RULES,
-        "",
-        "## Active Signals",
-        signal_lines,
         "",
     ]
 
