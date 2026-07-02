@@ -1,5 +1,8 @@
 """Config loader: reads/writes data/config.yaml, bootstraps defaults."""
 
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 import yaml
@@ -42,8 +45,16 @@ def get_data_dir() -> Path:
     return DATA_DIR
 
 
+# ensure_data_dirs tracks the last DATA_DIR it ran for; re-runs only when
+# DATA_DIR changes (e.g. in tests with monkeypatched tmp paths).
+_dirs_ensured_for: Path | None = None
+
+
 def ensure_data_dirs() -> None:
-    """Create the full data directory tree on first run."""
+    """Create the full data directory tree (once per unique DATA_DIR)."""
+    global _dirs_ensured_for
+    if _dirs_ensured_for == DATA_DIR:
+        return
     dirs = [
         DATA_DIR,
         DATA_DIR / "logs",
@@ -83,6 +94,7 @@ def ensure_data_dirs() -> None:
     ]
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
+    _dirs_ensured_for = DATA_DIR
 
 
 _MODE_MIGRATION = {
@@ -97,9 +109,27 @@ _OPERATOR_MODE_MIGRATION = {
     "Full": "Auto",
 }
 
+# ─── In-memory config cache ───────────────────────────────────────────────────
+# Avoids repeated disk reads on every API request.  TTL = 5 s; invalidated
+# immediately by save_config() so mutations are always reflected.
+# Cache key includes CONFIG_PATH so monkeypatched test paths don't collide.
+_config_write_lock = threading.Lock()
+_config_cache: "tuple[float, Path, AletheiaConfig] | None" = None
+_CONFIG_CACHE_TTL = 5.0
+
+
+def _invalidate_config_cache() -> None:
+    global _config_cache
+    _config_cache = None
+
 
 def load_config() -> AletheiaConfig:
-    """Load config from disk or return defaults."""
+    """Load config from disk or return defaults.  Hot path uses in-memory cache."""
+    global _config_cache
+    if _config_cache is not None:
+        ts, cached_path, cfg = _config_cache
+        if time.monotonic() - ts < _CONFIG_CACHE_TTL and cached_path == CONFIG_PATH:
+            return cfg
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         cfg = AletheiaConfig.model_validate(raw)
@@ -112,18 +142,16 @@ def load_config() -> AletheiaConfig:
             changed = True
         if changed:
             save_config(cfg)
+        _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
         return cfg
-    return AletheiaConfig()
-
-
-import tempfile
-import threading
-
-_config_write_lock = threading.Lock()
+    cfg = AletheiaConfig()
+    _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
+    return cfg
 
 
 def save_config(cfg: AletheiaConfig) -> None:
     """Persist config to disk (atomic write + thread lock)."""
+    _invalidate_config_cache()
     ensure_data_dirs()
     data = cfg.model_dump(mode="json")
     content = yaml.dump(data, default_flow_style=False, sort_keys=False)

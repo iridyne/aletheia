@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 import threading
+import time
 
 from aletheia.config.loader import get_data_dir
 
@@ -17,6 +18,9 @@ _GENESIS_HASH = "0" * 64
 _audit_hash_lock = threading.Lock()
 _last_audit_hash: str | None = None
 
+_max_bytes_cache: "tuple[float, int] | None" = None
+_MAX_BYTES_TTL = 60.0
+
 
 def _log_dir() -> Path:
     d = get_data_dir() / "logs"
@@ -25,12 +29,23 @@ def _log_dir() -> Path:
 
 
 def _max_bytes() -> int:
-    """JSONL rotation threshold in bytes (from config retention.jsonl_max_mb)."""
+    """JSONL rotation threshold in bytes (from config retention.jsonl_max_mb).
+
+    Result is cached for 60 s so repeated write_audit() calls do not trigger
+    an extra load_config() disk read on every invocation.
+    """
+    global _max_bytes_cache
+    if _max_bytes_cache is not None:
+        ts, val = _max_bytes_cache
+        if time.monotonic() - ts < _MAX_BYTES_TTL:
+            return val
     try:
         from aletheia.config.loader import load_config
-        return int(load_config().retention.jsonl_max_mb * 1024 * 1024)
+        val = int(load_config().retention.jsonl_max_mb * 1024 * 1024)
     except Exception:
-        return 50 * 1024 * 1024
+        val = 50 * 1024 * 1024
+    _max_bytes_cache = (time.monotonic(), val)
+    return val
 
 
 def append_jsonl(filename: str, record: dict) -> None:
@@ -204,7 +219,7 @@ def write_audit(event: dict) -> None:
     try:
         with _audit_hash_lock:
             with _exclusive_file_lock(_log_dir() / ".audit.lock"):
-                prev_hash = _get_last_audit_hash(use_cache=False)
+                prev_hash = _get_last_audit_hash(use_cache=True)
                 event["_prev_hash"] = prev_hash
                 line = json.dumps(event, default=str, ensure_ascii=False)
                 _append_jsonl_line(_log_dir() / "audit.jsonl", line)
