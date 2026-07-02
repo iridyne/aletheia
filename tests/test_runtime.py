@@ -79,7 +79,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
         "position_manager", "reconciliation", "position_reconcile",
         "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
         "price_feed", "tpsl_fill_check", "connectivity_monitor",
-        "strategy_designer_daily", "post_trade_reviewer", "risk_critic",
+        "guard_promotion", "post_trade_reviewer", "risk_critic",
         "universe_refresh", "pi_operator_loop",
     }
     missing = required - job_ids
@@ -225,15 +225,6 @@ async def test_tool_calls_logged(tmp_path, monkeypatch):
 
 
 # --- New agents exist and run ---
-
-@pytest.mark.anyio
-async def test_strategy_designer_creates_strategy(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    result = await run_agent("strategy_designer", trigger_type="manual")
-    assert any("strategy:" in o for o in result["outputs"])
-    assert len(repo.list_strategies()) == 1
-    reset_db()
-
 
 @pytest.mark.anyio
 async def test_portfolio_agent_writes_snapshot(tmp_path, monkeypatch):

@@ -60,3 +60,20 @@
 - `strategy_id` 列保留可空；legacy 表不 DROP。
 - 风控其余 19 关不动；只改 #14。
 - 每阶段结束系统可 import + 测试绿。
+
+## 5. 执行状态
+
+- **Phase A 前半** ✅ `b9f733f`（ranker + paper_trader 解耦）。
+- **Phase A 后半** ✅（本次，worktree `.claude/worktrees/strategy-deletion`）：scheduler/3 调用点/
+  dreaming/cli 解耦 + 引擎包 + strategy_designer + strategy_evidence + ruleset_scanner +
+  lifecycle_automation 物理删 + 9 纯引擎测试删 + 4 测试调整 + spec_evaluator_contracts 删。
+  验证：20 入口 import OK、受影响 8 测试文件 112 绿、spec 537/99%、全量套件绿。
+  - **计划外 ripple（已闭合）**：删 backtest_orchestrator 掐断 `guard_promotion` 唯一触发链
+    （经 lifecycle_automation）。→ lifecycle_automation 三函数其余两个已死，整删；`run_promotion_check`
+    重挂为独立 scheduler job `guard_promotion`（daily 04:00 CST，gated by paused，零行为变化）。
+- **Phase B** ⏳：commands.py(ruleset_scanner lazy)、routes/data+analytics(strategy_evidence +
+  strategy.repositories lazy 端点)、doctor(strategy_health/`_has_pi_approval`)、风控 #14 闸、前端
+  StrategyLifecycle 页 + Learning gates。这些是 import-安全的运行时地雷，合并 master 前必须清完。
+- **Phase C** ⏳：spec_strategy_pool(SP-S04 废 + S05/06/07 迁 scanner)、spec_model_routing(去
+  strategy_designer)、8 契约文档 + agent_contracts/SYSTEM_MAP job 表(去 designer/backtest，加
+  guard_promotion) + test_spec_conformance。

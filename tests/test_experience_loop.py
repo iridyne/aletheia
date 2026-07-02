@@ -150,24 +150,6 @@ async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkey
     reset_db()
 
 
-async def test_designer_injects_and_survives_offline_llm(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
-    from aletheia.trading.playbooks import seed_playbooks
-    seed_playbooks(tmp_path)
-
-    result = await run_agent("strategy_designer", trigger_type="manual")
-    assert result["status"] in ("completed", "completed_with_errors")
-    # Strategy still created despite offline LLM (graceful default spec).
-    assert repo.list_strategies(limit=10)
-    calls = repo.list_tool_calls(run_id=result["run_id"])
-    names = {c["tool_name"] for c in calls}
-    assert "retrieve_lessons" in names
-    assert "load_playbooks" in names
-    reset_db()
-
-
 # --- producer-side promotion: substantive lessons reach the retrieval gate (§6) ---
 # Producers write medium_confidence by default; only LLM-produced, evidence-backed
 # reviews/critiques are promoted to high_confidence so they actually become retrievable.

@@ -7,7 +7,68 @@
 
 ## Last Updated
 
-2026-07-02 (Strategy 模块存废判决 + Position B P0/P1 交付 + Position C 引擎删除 Phase A 前半)
+2026-07-02 (Position C 引擎删除 Phase A 后半 完成 — 引擎包物理删除 + guard_promotion 重新挂载)
+
+---
+
+## Recent Change (Position C Phase A 后半 — 引擎包物理删除 + guard_promotion re-home — 2026-07-02)
+
+> 承接下方「Position C Phase A 前半」。本次在 worktree `.claude/worktrees/strategy-deletion`
+> (基于分支 `refactor/strategy-position-b-p0p1`)完成 Phase A 后半。用 worktree 隔离而非在
+> 主 checkout 切分支 —— gateway 全程跑主仓 master 稳定完整引擎,auto-restart git hook 有主工作树
+> 守卫不会从 worktree 触发,把计划 §3「半删状态被重启崩溃」的风险从"缓解"变成"消除"。
+
+### 已交付(本次 commit,Phase A 后半)
+- **scheduler 解耦**:删 3 个 strategy_designer cron job + backtest_orchestrator job +
+  `_run_strategy_designer` / `trigger_strategy_designer_on_demand` / `_run_backtest_orchestrator` /
+  `_backtest_orchestrator_body` + 两个 `_ASYNC_JOB_TIMEOUT_SEC` 条目。
+- **3 个热路径调用点解耦**:signal_emitter(event-driven design 块 + `_high_conf_emitted` 死变量)、
+  price_feed(significant-move designer 触发块)、post_trade_reviewer(P3 review→design 事件链 +
+  `_trigger_strategy_adaptation` 函数)全部移除。
+- **dreaming_agent**:去 performance_ledger 的 factory_block(Strategy Factory metrics 段)。
+- **cli/strategy**:删 backtest 命令(留 list/status 读 legacy 表)。
+- **物理删除**:`aletheia/strategy/` 整包(14 文件)+ `agents/strategy_designer.py` +
+  `analytics/strategy_evidence.py` + `trading/ruleset_scanner.py` + `analytics/lifecycle_automation.py`。
+- **测试**:删 9 个纯引擎 test_*(dsl/backtest_gate/param_sweep*/walk_forward/orchestrator/evidence/
+  causal_chain/event_driven_design)+ spec_evaluator_contracts(去 test_spec_conformance 导入);
+  调整 test_runtime(job 集 + 删 designer 测试)、test_event_triggers(删 2 designer 测试)、
+  test_experience_loop(删 designer 测试)、test_learning_loop_integration(删 TestRegimeAwareFiltering/
+  TestRuleSetBonus/TestPostTradeEventChain 三类,留 TestLessonAwareScoring —— 前两类本是 b9f733f 就该清
+  的漏网,上会话只跑 ranker 子集没发现)。
+
+### ⚠️ 计划外的关键 ripple(计划 §2 未预料 —— 已妥善闭合)
+删 backtest_orchestrator 会**静默掐断 `guard_promotion`(活跃学习子系统,doctor 13 active guards)**:
+它唯一触发链是 backtest_orchestrator → `run_lifecycle_automation` → `run_promotion_check`,无其它 scheduler
+入口。**处置**:`analytics/lifecycle_automation.py` 三函数中 `apply_strategy_evidence_actions`(用被删的
+strategy_evidence)、`apply_exit_policy_feedback`(写 suggested_exit_params,消费者是被删的 strategy_designer,
+前端不读)均已死 → 整文件删;`run_promotion_check` **重新挂成独立 scheduler job `guard_promotion`**
+(daily 04:00 CST,executor=io,gated by runtime.paused —— 精确保留原节拍与门控,零行为变化)。
+test_runtime required job 集加 `guard_promotion` 锁死防回归。
+
+### 验证(证据)
+- 20 个入口模块(app/scheduler/operator_loop/commands/routes/doctor/agents/cli 等)全部 import OK ——
+  **物理删包不破坏系统 import**(所有外部引擎引用都是函数内 lazy)。
+- 受影响 8 个测试文件 112 passed;spec conformance 537 claims / 99%。
+- 全量套件:**1721 passed / 3 skipped / 0 failed**(182s;总数较 8f55261 的 1842 减少 = 删除 ~100+ 引擎测试)。
+
+### 仍留待 Phase B/C(未合并 master 前必须清完 —— 分支合并前这些不会 live)
+- **Phase B 运行时地雷**(lazy import,import-安全,被调时降级,非 hot path):
+  `commands.py:1880` ruleset_scanner;`routes/analytics.py:12/164/176/191/219` strategy_evidence +
+  strategy.repositories(backtest 端点)。连同 doctor `content.strategy_health` / `_has_pi_approval`、
+  **风控 #14 闸(SDD-first,owner 已放行)**、前端 StrategyLifecycle 页 + Learning gates 一并 Phase B 删。
+- **Phase C spec 诚实性**(claim 注册表,不被 pytest 执行故不报错但 matrix 略虚高):
+  `spec_strategy_pool` SP-S04(strategy_designer regime targeting,已删)标废 + 迁 SP-S05/S06/S07 到 scanner
+  spec;`spec_model_routing` 去 strategy_designer 引用;+ 8 份契约文档同步 + agent_contracts/SYSTEM_MAP
+  的 scheduler job 表(去 strategy_designer_daily/backtest_orchestrator,加 guard_promotion)。
+- **附带遗留**(harmless dead,Phase C 清):`knowledge/router.py` AgentRole Literal 含 "strategy_designer"
+  路由项;`config/schema.py`/`trading/instruments.py` 注释;`config.strategy_factory.*` / event_triggers
+  designer 字段(schema 保留不影响 import)。
+- **保留不删**:`strategy_records`/`backtest_runs`/`backtest_trades` 表(只读 legacy,不 DROP);
+  `strategy_id`/`linked_strategy_id` 列。
+
+### 上线注意
+本分支仍**未 merge master**;主仓 gateway 跑的是含完整引擎的 master。合并须在 Phase B/C 完成后一次性
+FF-merge 到主仓(彼时运行时地雷已清),再主仓 restart + HTTP 实测(worktree 的 data/ 为空不能代表)。
 
 ---
 
