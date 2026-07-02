@@ -394,7 +394,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
         <Row label="Autonomous learning" hint="When ON, agents run dreaming/research cycles unprompted. When OFF, only human-triggered runs execute.">
           <Toggle checked={autoLearn} onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
         </Row>
-        <Row label="Bypass PI distress gate" hint="When ON, historical win-rate/PnL stats are hidden from the PI Agent prompt so poor past performance cannot trigger self-protection. Use during demo/test phases only — disable before evaluating real results.">
+        <Row label="Bypass distress gate" hint="When ON, historical win-rate/PnL stats are hidden from the System Operator prompt so poor past performance cannot trigger self-protection. Use during demo/test phases only — disable before evaluating real results.">
           <Toggle checked={bypassDistressGate} onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
         </Row>
       </Section>
@@ -420,9 +420,9 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
       <Section
         title="Regime Detection"
-        description="Market regime classifier that adjusts trade direction bias. Identifies trending/ranging/bear conditions to guide the PI Agent's direction preference."
+        description="Market regime classifier that adjusts trade direction bias. Identifies trending/ranging/bear conditions to guide the System Operator's direction preference."
       >
-        <Row label="Regime detection enabled" hint="When ON, regime detector classifies market conditions and injects bias into PI Agent context.">
+        <Row label="Regime detection enabled" hint="When ON, regime detector classifies market conditions and injects bias into System Operator context.">
           <Toggle checked={regimeCfg.enabled !== false} onChange={v => regimeMut.mutate({ enabled: v })} disabled={regimeMut.isPending} />
         </Row>
         <Row label="Short trades enabled" hint="Allow short direction trades when regime is bearish. Disable to restrict to long-only.">
@@ -538,7 +538,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
         </Row>
         <Row
           label="Operator loop"
-          hint="When enabled, the PI Operator runs system-level assessments every 4h and takes Level 1 actions automatically."
+          hint="When enabled, the System Operator runs system-level assessments every 4h and takes Level 1 actions automatically."
         >
           <Toggle
             checked={operatorLoopEnabled}
@@ -550,8 +550,8 @@ function AgentModelsTab({ status, settings, qc }: any) {
           />
         </Row>
         <Row
-          label="PI daemon (event-driven)"
-          hint="When ON, PI Agent wakes instantly on signal arrival instead of polling every 15 min. Disable to revert to legacy polling."
+          label="System Operator daemon (event-driven)"
+          hint="When ON, System Operator wakes instantly on signal arrival instead of polling every 15 min. Disable to revert to legacy polling."
         >
           <Toggle
             checked={piDaemonEnabled}
@@ -1019,7 +1019,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
               </label>
             ))}
           </div>
-          <p className="hint m-0">Adjusted autonomously by the PI Operator. Reset via <code>aletheia config set universe.scanner_weights &#123;&#125;</code>.</p>
+          <p className="hint m-0">Adjusted autonomously by the System Operator. Reset via <code>aletheia config set universe.scanner_weights &#123;&#125;</code>.</p>
         </div>
       )}
       <p className="hint">
@@ -1456,7 +1456,7 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
 
 // Live unlock warning wall — §4b of live_unlock_contract.md.
 // All three elements MUST be present (spec LU-S03):
-//   (1) "PI Agent 将完全自主执行交易，操作不可预测"
+//   (1) "System Operator 将完全自主执行交易，操作不可预测"
 //   (2) "真实资金损失可能发生"
 //   (3) "开启后所有操作由人类承担后果"
 function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
@@ -1468,7 +1468,7 @@ function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
     <div style={{ border: '2px solid var(--color-danger, #d9534f)', borderRadius: 6, padding: '16px', marginTop: 8, background: 'var(--color-danger-bg, #fff5f5)' }}>
       <p style={{ fontWeight: 700, marginBottom: 8 }}>实盘解锁警示 — 请仔细阅读</p>
       <ul style={{ margin: '0 0 12px 18px', lineHeight: 1.7 }}>
-        <li>PI Agent 将完全自主执行交易，操作不可预测</li>
+        <li>System Operator 将完全自主执行交易，操作不可预测</li>
         <li>真实资金损失可能发生</li>
         <li>开启后所有操作由人类承担后果</li>
       </ul>

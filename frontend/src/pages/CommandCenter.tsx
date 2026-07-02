@@ -484,7 +484,7 @@ function HeartbeatZone({
 
   return (
     <div className="cc-heartbeat-zone">
-      {/* ── 左格：PI 正在思考 ── */}
+      {/* ── 左格：System Operator 正在思考 ── */}
       <Card className="cc-heartbeat-card">
         <div className="cc-heartbeat-title">
           <span

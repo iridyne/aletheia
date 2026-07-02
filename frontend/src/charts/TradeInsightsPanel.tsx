@@ -572,7 +572,7 @@ function ConvictionCalibrationChart() {
     return (
       <Card>
         <SectionLabel>Conviction Calibration (ECE)</SectionLabel>
-        <p className="text-muted text-sm">No calibration data yet — requires PI Agent decisions with closed positions.</p>
+        <p className="text-muted text-sm">No calibration data yet — requires System Operator decisions with closed positions.</p>
       </Card>
     )
   }
