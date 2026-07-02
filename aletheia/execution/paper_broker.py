@@ -88,6 +88,15 @@ def execute_paper_order(
                 update_kwargs["stop_price"] = max(stop_price, old_stop) if direction in ("long", "buy") else min(stop_price, old_stop)
             else:
                 update_kwargs["stop_price"] = stop_price
+        # Accumulate entry-fee and slippage across averaging-in legs: the standing
+        # position must reflect the full cost basis of every leg so realized PnL
+        # after a close isn't overstated. Standalone NULL/0.0 from legacy rows → 0.
+        new_entry_fee = round(fill_price * quantity * fee_rate, 8)
+        new_slippage_cost = round(abs(fill_price - price) * quantity, 8)
+        existing_entry_fee = existing.get("entry_fee")
+        existing_slippage = existing.get("slippage_cost")
+        update_kwargs["entry_fee"] = round((existing_entry_fee or 0.0) + new_entry_fee, 8)
+        update_kwargs["slippage_cost"] = round((existing_slippage or 0.0) + new_slippage_cost, 8)
         update_position(existing["id"], **update_kwargs)
         position_id = existing["id"]
     else:
