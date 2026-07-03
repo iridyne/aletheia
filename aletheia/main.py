@@ -25,6 +25,7 @@ from aletheia.cli.tunnel import tunnel_app
 from aletheia.cli.inspect_cmd import inspect_app
 from aletheia.cli.data_cmd import data_app
 from aletheia.cli.exchange_cmd import exchange_app
+from aletheia.cli.alpha import alpha_app
 
 app = typer.Typer(
     name="aletheia",
@@ -42,6 +43,7 @@ app.add_typer(tunnel_app, name="tunnel", help="Cloudflare Tunnel (public access)
 app.add_typer(inspect_app, name="inspect", help="Query runtime state (read-only, agent-friendly).")
 app.add_typer(data_app, name="data", help="Historical data management.")
 app.add_typer(exchange_app, name="exchange", help="Switch active exchange, mode, and view config.")
+app.add_typer(alpha_app, name="alpha", help="Read-only alpha attribution audit.")
 
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")

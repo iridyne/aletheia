@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+from typer.testing import CliRunner
+
+
+def _iso(days_ago: int = 0, hours_after: int = 0) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days_ago) + timedelta(hours=hours_after)).isoformat()
+
+
+def _ms(iso_ts: str, hours_after: int = 0) -> int:
+    dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00")) + timedelta(hours=hours_after)
+    return int(dt.timestamp() * 1000)
+
+
+def _insert_ohlcv(db, symbol: str, timeframe: str, entry_at: str, entry: float, exits: dict[int, float]) -> None:
+    db.execute(
+        "INSERT OR REPLACE INTO market_ohlcv "
+        "(symbol, timeframe, ts, open, high, low, close, volume, provider) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'test')",
+        (symbol, timeframe, _ms(entry_at), entry, entry, entry, entry),
+    )
+    for hours, close in exits.items():
+        db.execute(
+            "INSERT OR REPLACE INTO market_ohlcv "
+            "(symbol, timeframe, ts, open, high, low, close, volume, provider) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'test')",
+            (symbol, timeframe, _ms(entry_at, hours), close, close, close, close),
+        )
+
+
+def _insert_shadow(db, batch: str, opp: str, rank: int, pnl: float, selected: int = 0) -> None:
+    db.execute(
+        "INSERT INTO shadow_trades "
+        "(id, batch_id, opportunity_id, symbol, direction, scanner_family, trade_score, rank, "
+        "entry_price, was_selected, created_at, pnl_pct, resolved_at) "
+        "VALUES (?, ?, ?, 'BTC/USDT', 'long', 'momentum', ?, ?, 100, ?, ?, ?, ?)",
+        (f"sh-{batch}-{rank}-{opp}", batch, opp, 100 - rank, rank, selected, _iso(days_ago=1), pnl, _iso()),
+    )
+
+
+def _insert_trade_chain(db, idx: int, pnl_pct: float, scanner: str = "momentum", closed_at: str | None = None) -> None:
+    opp_id = f"opp-{idx}"
+    prop_id = f"prop-{idx}"
+    pos_id = f"pos-{idx}"
+    closed = closed_at or _iso(days_ago=1)
+    db.execute(
+        "INSERT INTO opportunities (id, symbol, market, direction_bias, confidence, status, scanner_family) "
+        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 'high', 'open', ?)",
+        (opp_id, scanner),
+    )
+    db.execute(
+        "INSERT INTO trade_proposals "
+        "(id, opportunity_id, symbol, market_type, direction, quantity, price, execution_mode, status, created_at) "
+        "VALUES (?, ?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, 'paper_internal', 'executed', ?)",
+        (prop_id, opp_id, _iso(days_ago=2)),
+    )
+    db.execute(
+        "INSERT INTO positions "
+        "(id, symbol, market_type, direction, quantity, entry_price, current_price, realized_pnl, "
+        "execution_mode, proposal_id, status, close_reason, opened_at, closed_at) "
+        "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 1, 100, ?, ?, 'paper_internal', ?, "
+        "'closed', 'signal_exit', ?, ?)",
+        (pos_id, 100 + pnl_pct, pnl_pct, prop_id, _iso(days_ago=2), closed),
+    )
+
+
+def test_empty_alpha_audit_returns_five_insufficient_verdicts():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+
+    report = build_alpha_attribution_audit(days=30)
+
+    assert set(report["verdicts"]) == {"universe", "ranker", "system_operator", "learning", "serenity"}
+    assert all(v["verdict"] == "insufficient_data" for v in report["verdicts"].values())
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
+
+
+def test_ranker_alpha_detects_top1_underperforming_shadow_baseline():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        batch = f"b{i}"
+        _insert_shadow(db, batch, f"opp-r1-{i}", 1, -2.0, selected=1)
+        _insert_shadow(db, batch, f"opp-r2-{i}", 2, 1.0)
+        _insert_shadow(db, batch, f"opp-r3-{i}", 3, 2.0)
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+    ranker = report["verdicts"]["ranker"]
+
+    assert ranker["verdict"] == "negative"
+    assert ranker["sample_size"] == 5
+    assert ranker["baseline"] > ranker["observed"]
+    assert report["main_bottleneck"]["layer"] == "Ranker Alpha"
+
+
+def test_system_operator_alpha_compares_executed_trade_to_same_batch_shadows():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        _insert_trade_chain(db, i, pnl_pct=-3.0)
+        batch = f"sys{i}"
+        _insert_shadow(db, batch, f"opp-{i}", 1, -3.0, selected=1)
+        _insert_shadow(db, batch, f"alt-a-{i}", 2, 2.0)
+        _insert_shadow(db, batch, f"alt-b-{i}", 3, 1.0)
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+    operator = report["verdicts"]["system_operator"]
+
+    assert operator["verdict"] == "negative"
+    assert operator["sample_size"] == 5
+    assert operator["details"]["shadow_sample_size"] == 10
+    assert operator["baseline"] > operator["observed"]
+
+
+def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    entry = _iso(days_ago=2)
+    for i in range(8):
+        sym = f"BASE{i}/USDT"
+        db.execute(
+            "INSERT INTO universe_registry (id, venue, market_type, symbol, status, is_blacklisted) "
+            "VALUES (?, 'bitget', 'spot', ?, 'active', 0)",
+            (f"asset-base-{i}", sym),
+        )
+        _insert_ohlcv(db, sym, "1h", entry, 100.0, {1: 100.0})
+    for i in range(5):
+        db.execute(
+            "INSERT INTO universe_forward_outcomes "
+            "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+            "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, status) "
+            "VALUES (?, ?, 'snap', ?, 'momentum', 'long', '1h', 100, ?, ?, ?, 102, 2.0, 'settled')",
+            (f"ufo-{i}", f"member-{i}", f"SEL{i}/USDT", entry, _iso(days_ago=2, hours_after=1), _iso(days_ago=1)),
+        )
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+    universe = report["verdicts"]["universe"]
+
+    assert universe["verdict"] == "positive"
+    assert universe["sample_size"] == 5
+    assert universe["baseline"] == 0.0
+    assert universe["observed"] == 2.0
+
+
+def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    event_at = _iso(days_ago=10)
+    for i in range(5):
+        _insert_trade_chain(db, 100 + i, pnl_pct=-2.0, closed_at=_iso(days_ago=15))
+    for i in range(5):
+        _insert_trade_chain(db, 200 + i, pnl_pct=2.0, closed_at=_iso(days_ago=5))
+    db.execute(
+        "INSERT INTO ps_lessons "
+        "(lesson_id, source_type, source_id, category, severity, summary, evidence_json, status, created_at, activated_at) "
+        "VALUES ('lesson-alpha', 'trade_case_study', 'case-1', 'risk', 'warn', 'momentum improved', "
+        "?, 'accepted', ?, ?)",
+        ('{"scanner_family":"momentum","direction":"long","symbol":"BTC/USDT"}', event_at, event_at),
+    )
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+    learning = report["verdicts"]["learning"]
+
+    assert learning["verdict"] == "positive"
+    assert learning["sample_size"] == 5
+    assert learning["baseline"] == -2.0
+    assert learning["observed"] == 2.0
+
+
+def test_cli_and_api_surface_alpha_audit():
+    from aletheia.main import app
+    from aletheia.server.app import app as fastapi_app
+    from aletheia.server.routes.analytics import get_alpha_attribution
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["alpha", "audit", "--days", "7"])
+
+    assert result.exit_code == 0
+    assert "Alpha Attribution Audit" in result.output
+    assert "System Operator:" in result.output
+
+    assert any(route.path == "/api/analytics/alpha-attribution" for route in fastapi_app.routes)
+    data = get_alpha_attribution(days=7)
+    assert data["window_days"] == 7
+    assert set(data["verdicts"]) == {"universe", "ranker", "system_operator", "learning", "serenity"}

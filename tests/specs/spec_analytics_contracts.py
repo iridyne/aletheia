@@ -153,6 +153,33 @@ def test_resolve_stale_shadows_uses_historical_bar():
 
 
 # ---------------------------------------------------------------------------
+# AN-S04 — alpha attribution audit is read-only and honest about thin data
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("AN-S04", "analytics_contract", "§alpha attribution audit", "L2b",
+              "Alpha Attribution Audit must return exactly the five judging-layer "
+              "verdicts (Universe, Ranker, System Operator, Learning, Serenity), "
+              "include baseline/sample/delta/confidence fields, and use "
+              "insufficient_data instead of fake conclusions when samples are thin.",
+              status="implemented"),
+)
+def test_alpha_attribution_contract_shape_on_empty_db():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+
+    report = build_alpha_attribution_audit(days=30)
+    assert set(report["verdicts"]) == {
+        "universe", "ranker", "system_operator", "learning", "serenity",
+    }
+    for item in report["verdicts"].values():
+        assert item["verdict"] == "insufficient_data"
+        for key in ("sample_size", "baseline", "observed", "delta", "confidence_label", "reason"):
+            assert key in item
+    assert report["main_bottleneck"]["layer"] == "insufficient_data"
+
+
+# ---------------------------------------------------------------------------
 # AN-S03 — go-live Scorecard excludes synthetic/administrative closes
 # ---------------------------------------------------------------------------
 

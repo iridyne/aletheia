@@ -199,6 +199,13 @@ def get_reasoning_feedback():
     return get_latest_reasoning_feedback() or {"status": "no_data"}
 
 
+@router.get("/alpha-attribution")
+def get_alpha_attribution(days: int = 30):
+    """Read-only five-layer alpha attribution audit."""
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    return build_alpha_attribution_audit(days=days)
+
+
 # --- Round 1 progress / pipeline-funnel / learning-funnel ---
 # Read-only observability endpoints added 2026-06-24 to make the freeze-period
 # experiment status visible without manual SQL. None of these affect AI decisions.
