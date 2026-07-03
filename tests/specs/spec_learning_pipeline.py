@@ -685,7 +685,7 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
               "Exactly three learning-content paths reach the PI system prompt via "
               "trading_decision.py: (1) trading_memo (layer2.trading_memo), "
               "(2) reasoning_feedback (layer2.reasoning_feedback), "
-              "(3) ps_lessons (layer3.ps_lessons, proposed lessons from LessonStore). "
+              "(3) ps_lessons (layer3.ps_lessons, applied lessons from LessonStore). "
               "knowledge_contract.md §8.2 previously said trading_memo was the "
               "'only' path — that was incorrect; the corrected §8.2 enumerates "
               "all three. This claim locks the complete set so future additions "
@@ -732,7 +732,7 @@ def test_pi_prompt_learning_paths_complete_enumeration():
     assert "reasoning_feedback" in tc_src, (
         "trading_context.py does not populate layer['reasoning_feedback'] — §8.2 source broken"
     )
-    # path 3: ps_lessons comes from LessonStore (status='proposed')
+    # path 3: ps_lessons comes from LessonStore (status='applied')
     assert "ps_lessons" in tc_src, (
         "trading_context.py does not populate layer['ps_lessons'] — §8.2 source broken"
     )
@@ -1182,7 +1182,7 @@ def test_trading_decision_reads_lessons_from_lesson_store():
     """LP-DUAL-01: the structured prompt block comes from LessonStore, not FTS.
 
     Dual-path invariant: trading_context.py populates layer3["ps_lessons"]
-    from LessonStore.list_all(status="proposed") because only the structured
+    from LessonStore.list_all(status="applied") because only the structured
     store carries evidence_json + activated_at + expires_at. The FTS path
     (retrieve_lessons) returns knowledge_fts-sourced Lesson dataclasses that
     lack these fields — they serve a different consumer (ranker / advisory).
