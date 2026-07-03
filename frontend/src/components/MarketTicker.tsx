@@ -63,6 +63,7 @@ export default function MarketTicker() {
       queryKey: ['ticker-snap', sym],
       queryFn: () => api.getMarketSnapshots(sym, 1),
       refetchInterval: 15000,
+      meta: { background: true },
     })),
   })
 

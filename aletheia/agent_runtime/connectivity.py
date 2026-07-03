@@ -260,12 +260,15 @@ async def startup_exchange_gate(cfg=None) -> None:
         from aletheia.config.loader import load_config
         cfg = load_config()
 
+    global _last_probe_result, _consecutive_failures, _consecutive_successes
     result = await probe_exchange(cfg)
+    _last_probe_result = {**result, "ts": time.time()}
     if result["reachable"]:
+        _consecutive_failures = 0
+        _consecutive_successes += 1
         logger.info("startup exchange gate: %s reachable (%.0fms)", cfg.exchange.name, result.get("latency_ms", 0))
         return
 
     logger.warning("startup exchange gate: %s unreachable — will pause", cfg.exchange.name)
-    global _consecutive_failures
     _consecutive_failures = cfg.health.exchange_probe_failure_threshold
     await _pause_for_network(cfg, result)

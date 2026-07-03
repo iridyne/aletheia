@@ -1,9 +1,9 @@
-import { useEffect, useRef, type MutableRefObject } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { parseAllIssues, sortedIssues } from './health-issues'
 
-const POLL_MS = 5000
+const POLL_MS = 10000
+const FAILURES_BEFORE_ALERT = 3
 
 function browserPermission(): NotificationPermission | 'unsupported' {
   if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported'
@@ -21,20 +21,23 @@ function notifyBrowser(key: string, title: string, body: string, lastKeyRef: Mut
 export default function BackendConnectionGuard() {
   const lastNotified = useRef('')
   const wasOffline = useRef(false)
+  const [failureCount, setFailureCount] = useState(0)
 
   const { data, dataUpdatedAt, errorUpdatedAt } = useQuery({
-    queryKey: ['backend-connection'],
-    queryFn: api.getStatus,
+    queryKey: ['backend-ready'],
+    queryFn: api.getReady,
     refetchInterval: POLL_MS,
     refetchIntervalInBackground: true,
-    retry: 0,
+    retry: 1,
     staleTime: 0,
+    meta: { background: true },
   })
 
-  const disconnected = !!errorUpdatedAt && (!dataUpdatedAt || errorUpdatedAt > dataUpdatedAt)
+  const disconnected = failureCount >= FAILURES_BEFORE_ALERT && !!errorUpdatedAt && (!dataUpdatedAt || errorUpdatedAt > dataUpdatedAt)
 
   useEffect(() => {
     if (!dataUpdatedAt) return
+    setFailureCount(0)
     if (wasOffline.current) {
       notifyBrowser('aletheia-backend-restored', 'Aletheia backend restored',
         'Dashboard API connection is healthy again.', lastNotified)
@@ -44,25 +47,16 @@ export default function BackendConnectionGuard() {
 
   useEffect(() => {
     if (!errorUpdatedAt) return
+    setFailureCount((count) => count + 1)
     wasOffline.current = true
   }, [errorUpdatedAt])
-
-  const allIssues = sortedIssues(parseAllIssues(data?.health_issues ?? []))
-  const hasSchedulerActual = typeof data?.scheduler_running === 'boolean'
-  const schedulerBroken = hasSchedulerActual && !!data?.scheduler_enabled && !data?.scheduler_running
 
   useEffect(() => {
     if (disconnected) {
       notifyBrowser('aletheia-backend-disconnected', 'Aletheia backend unreachable',
-        'The dashboard cannot reach /api/status. The watchdog may be restarting the gateway.', lastNotified)
-    } else if (schedulerBroken) {
-      notifyBrowser('aletheia-scheduler-not-running', 'Aletheia scheduler is not active',
-        `Desired scheduler state is enabled, actual state is ${data?.scheduler_state || 'unknown'}.`, lastNotified)
-    } else if (allIssues.some(i => i.key.startsWith('code_updated_pending_restart:'))) {
-      const drift = allIssues.find(i => i.key.startsWith('code_updated_pending_restart:'))!
-      notifyBrowser('aletheia-code-drift', 'Aletheia restart needed', `Code drift: ${drift.detail}`, lastNotified)
+        'The dashboard cannot reach /api/ready. The watchdog may be restarting the gateway.', lastNotified)
     }
-  }, [disconnected, schedulerBroken, allIssues.map(i => i.key).join(',')])
+  }, [disconnected])
 
   useEffect(() => {
     if (browserPermission() === 'default') {
