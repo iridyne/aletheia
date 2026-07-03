@@ -754,12 +754,13 @@ def _get_data_health_summary() -> dict[str, Any]:
             """SELECT COUNT(*),
                       SUM(CASE
                         WHEN direction = 'short' AND forward_return_pct < 0 THEN 1
-                        WHEN COALESCE(direction, 'long') != 'short' AND forward_return_pct > 0 THEN 1
+                        WHEN direction = 'long' AND forward_return_pct > 0 THEN 1
                         ELSE 0
                       END)
                FROM universe_forward_outcomes
                WHERE status = 'settled' AND horizon = '24h'
-                 AND settled_at >= ? AND ABS(forward_return_pct) <= 100""",
+                 AND settled_at >= ? AND ABS(forward_return_pct) <= 100
+                 AND direction IN ('long', 'short')""",
             (cutoff,),
         ).fetchone()
         settled, wins = row if row else (0, None)
