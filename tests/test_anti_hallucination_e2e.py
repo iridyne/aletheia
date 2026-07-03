@@ -172,6 +172,60 @@ def test_a10_layer2_signals_injected_into_prompt():
     assert "RF: momentum scanner" in prompt
 
 
+def test_layer2_trade_analytics_collected(tmp_path, monkeypatch):
+    """Trades/Positions analytics must enter System Operator Layer 2, not only the UI."""
+    setup_env(tmp_path, monkeypatch)
+
+    expected = {
+        "totals": {"trade_count": 4, "win_rate": 50.0, "total_pnl": 12.5, "avg_hold_hours": 5.0},
+        "by_source": [{"source_type": "opportunity", "trade_count": 3, "win_rate": 66.7, "total_pnl": 15.0}],
+        "by_family": [{"family": "momentum", "trade_count": 2, "win_rate": 50.0, "total_pnl": 3.0}],
+        "hold_distribution": [{"bucket": "1-4h", "count": 2, "pct": 50.0}],
+    }
+    monkeypatch.setattr("aletheia.analytics.trade_stats.build_trade_stats", lambda: expected)
+
+    from aletheia.agent_shell.trading_context import _build_layer2_short_term
+    layer2 = _build_layer2_short_term()
+
+    assert layer2["trade_analytics"] == expected
+
+
+def test_trade_analytics_rendered_into_operator_prompt():
+    """System Operator prompt must include Trades Analytics by source/family/hold time."""
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+
+    ctx = {
+        "layer1": {},
+        "layer2": {
+            "trade_analytics": {
+                "totals": {
+                    "trade_count": 4,
+                    "win_rate": 50.0,
+                    "total_pnl": 12.5,
+                    "avg_hold_hours": 5.0,
+                    "median_hold_hours": 3.0,
+                },
+                "by_source": [
+                    {"source_type": "opportunity", "trade_count": 3, "win_rate": 66.7, "total_pnl": 15.0},
+                ],
+                "by_family": [
+                    {"family": "momentum", "trade_count": 2, "win_rate": 50.0, "total_pnl": 3.0},
+                ],
+                "hold_distribution": [
+                    {"bucket": "1-4h", "count": 2, "pct": 50.0},
+                ],
+            },
+        },
+        "layer3": {},
+    }
+    prompt = _build_assessment_prompt(ctx)
+
+    assert "Trades Analytics" in prompt
+    assert "source opportunity" in prompt
+    assert "family momentum" in prompt
+    assert "hold 1-4h" in prompt
+
+
 def test_data_health_signal_win_rate_excludes_unknown_direction(tmp_path, monkeypatch):
     """System Operator data health must not count unknown-direction outcomes as long.
 
