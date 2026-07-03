@@ -39,44 +39,119 @@ except ImportError:
     pass  # hypothesis is optional; property tests are skipped if missing
 
 
+_PYTEST_MARKERS = [
+    "real_place_order: test exercises BitgetClient.place_order directly with httpx "
+    "mocked (no network) - opt out of the place_order guard.",
+    "real_llm: test provides its own LLM mock - opt out of the fast-fail guard.",
+    "real_network: test needs real network calls - opt out of the market-data guard.",
+    "real_db: test requires a real file-backed SQLite DB (WAL/lock/cross-connection) "
+    "- opt out of the in-memory DB injection.",
+    "spec: spec-driven development test",
+    "L2a: structural spec check (static, fast)",
+    "L2b: behavioral spec check (needs fixtures)",
+    "L2c: invariant spec check (cross-operation)",
+    "online: test hits a live external API (network-gated; skipped when offline).",
+    "slow: manually marked slow tests; daily loop can skip with -m 'not slow'.",
+    "slow_optimizable: duration classifier tag for slow call-path tests worth inspecting.",
+    "slow_structural: duration classifier tag for slow setup/teardown/framework overhead.",
+    "tier_unit: fast unit/pure-function tests.",
+    "tier_integration: tests that cross module, route, DB, scheduler, broker, or runtime boundaries.",
+    "tier_e2e: end-to-end pipeline tests.",
+    "tier_spec: executable specification tests under tests/specs.",
+    "domain_operator: System Operator / agent shell / operator loop tests.",
+    "domain_universe: universe scanner / allocator / signal tests.",
+    "domain_serenity: Serenity Lens / research pipeline tests.",
+    "domain_risk: Risk Engine / kill switch / risk route tests.",
+    "domain_execution: order, broker, position, trade, and execution-path tests.",
+    "domain_market_data: market data, exchange data, price feed, and collector tests.",
+    "domain_learning: knowledge, learning, dreaming, lesson, and feedback tests.",
+    "domain_frontend: frontend/static UI source checks.",
+    "domain_runtime: gateway, scheduler, runtime continuity, lifecycle, and supervisor tests.",
+    "domain_storage: storage, DB, migration, retention, and audit-log tests.",
+    "domain_security: secrets, auth, permission, and safety guard tests.",
+    "domain_config: config/settings tests.",
+    "domain_misc: fallback domain marker when no narrower domain applies.",
+]
+
+_INTEGRATION_TOKENS = (
+    "acceptance",
+    "broker",
+    "daemon",
+    "frontdoor",
+    "gateway",
+    "integration",
+    "lifecycle",
+    "routes",
+    "runtime",
+    "scheduler",
+    "server",
+    "service",
+    "shell",
+    "status",
+    "storage",
+    "supervisor",
+    "workflow",
+    "workbench",
+)
+
+_DOMAIN_PATTERNS = [
+    ("domain_operator", ("operator", "agent_shell", "pi_daemon", "command")),
+    ("domain_universe", ("universe",)),
+    ("domain_serenity", ("serenity",)),
+    ("domain_risk", ("risk", "kill_switch", "guard", "daily_loss")),
+    ("domain_execution", ("trade", "trading", "position", "broker", "bitget", "okx", "order", "fill", "tpsl", "leverage", "execution", "paper_")),
+    ("domain_market_data", ("market", "price", "collector", "ccxt", "coingecko", "macro", "regime", "xstocks", "prediction")),
+    ("domain_learning", ("knowledge", "learning", "dreaming", "lesson", "feedback", "hypothesis", "anti_hallucination")),
+    ("domain_frontend", ("frontend", "webui", "navigation_ia", "settings_ui", "build_config")),
+    ("domain_runtime", ("runtime", "scheduler", "lifecycle", "supervisor", "gateway", "frontdoor", "startup", "resume", "health", "doctor", "pidfile", "update", "autostart")),
+    ("domain_storage", ("storage", "db", "retention", "audit", "fts", "history")),
+    ("domain_security", ("security", "secret", "auth", "permission", "codex")),
+    ("domain_config", ("config", "settings")),
+]
+
+
 def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        "real_place_order: test exercises BitgetClient.place_order directly with httpx "
-        "mocked (no network) — opt out of the place_order guard.",
-    )
-    config.addinivalue_line(
-        "markers",
-        "real_llm: test provides its own LLM mock — opt out of the fast-fail guard.",
-    )
-    config.addinivalue_line(
-        "markers",
-        "real_network: test needs real network calls — opt out of the market-data guard.",
-    )
-    config.addinivalue_line(
-        "markers",
-        "real_db: test requires a real file-backed SQLite DB (WAL/lock/cross-connection) "
-        "— opt out of the in-memory DB injection.",
-    )
-    # SDD spec-level markers
-    config.addinivalue_line("markers", "spec: spec-driven development test")
-    config.addinivalue_line("markers", "L2a: structural spec (static, fast)")
-    config.addinivalue_line("markers", "L2b: behavioral spec (needs fixtures)")
-    config.addinivalue_line("markers", "L2c: invariant spec (cross-operation)")
-    config.addinivalue_line(
-        "markers",
-        "online: test hits a live external API (network-gated; skipped when offline).",
-    )
-    config.addinivalue_line(
-        "markers",
-        "slow: test is slow (real TCP timeout paths / ASGI lifespan teardown, not the "
-        "already-optimized in-memory DB). Daily loop: `-m \"not slow\"` to skip; the "
-        "pre-commit background full run still includes them.",
-    )
-    config.addinivalue_line("markers", "spec: spec-driven development test")
-    config.addinivalue_line("markers", "L2a: structural spec check (static, fast)")
-    config.addinivalue_line("markers", "L2b: behavioral spec check (needs fixtures)")
-    config.addinivalue_line("markers", "L2c: invariant spec check (cross-operation)")
+    for marker in _PYTEST_MARKERS:
+        config.addinivalue_line("markers", marker)
+
+
+def _normalized_node_path(item) -> str:
+    path = getattr(item, "path", None) or getattr(item, "fspath", "")
+    normalized = str(path).replace("\\", "/").lower()
+    tests_idx = normalized.rfind("tests/")
+    return normalized[tests_idx:] if tests_idx >= 0 else normalized
+
+
+def _classify_test_tier(path: str) -> str:
+    name = path.rsplit("/", 1)[-1]
+    if "tests/e2e/" in path or name.endswith("_e2e.py") or "_e2e" in name:
+        return "tier_e2e"
+    if "tests/specs/" in path or name.startswith("spec_") or name == "test_spec_conformance.py":
+        return "tier_spec"
+    if any(token in name for token in _INTEGRATION_TOKENS):
+        return "tier_integration"
+    return "tier_unit"
+
+
+def _classify_test_domains(path: str) -> list[str]:
+    domains = [
+        marker
+        for marker, tokens in _DOMAIN_PATTERNS
+        if any(token in path for token in tokens)
+    ]
+    return domains or ["domain_misc"]
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):  # noqa: ARG001
+    for item in items:
+        path = _normalized_node_path(item)
+        tier = _classify_test_tier(path)
+        item.add_marker(getattr(pytest.mark, tier))
+        if tier == "tier_e2e":
+            item.add_marker(pytest.mark.e2e)
+        for domain in _classify_test_domains(path):
+            item.add_marker(getattr(pytest.mark, domain))
 
 
 @pytest.fixture(autouse=True)

@@ -1,7 +1,7 @@
 """Spec: Serenity Decision Attribution (Phase 2 — signal_source discriminator)
 
-Owner decision 2026-06-27 (Option A, PI-central): Serenity research is a
-first-class input to the apex PI Agent, NOT an independent executor. When the PI
+Owner decision 2026-06-27 (Option A, System Operator-centered): Serenity research is a
+first-class input to the apex System Operator, NOT an independent executor. When the System Operator
 acts on a Serenity-sourced pick, the decision MUST carry a traceable source so the
 attribution chain is complete on the signal side.
 

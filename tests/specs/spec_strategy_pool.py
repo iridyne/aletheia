@@ -1,7 +1,7 @@
 """Spec: Strategy Pool exposure (RED, written 2026-06-24 during freeze).
 
 These claims describe how the Strategies subsystem MUST expose per-strategy
-KPIs (win_rate / total_pnl / trade_count) to the PI Agent decision chain
+KPIs (win_rate / total_pnl / trade_count) to the System Operator decision chain
 after Round 2 解冻. They are recorded with status="missing" because the
 production code path (trading_context.py's Layer 2 strategies builder) is
 inside the EXPERIMENT FREEZE clearance and cannot be modified during Round 1.

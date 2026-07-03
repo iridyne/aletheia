@@ -208,10 +208,9 @@ async def _fetch_stock_token_price(token_symbol: str, exchange: str = "bitget") 
     provider = CCXTProvider(exchange=exchange, fallback_exchange=exchange)
     try:
         ticker = await provider.get_ticker(token_symbol)
-        if ticker:
-            price = ticker.get("last") or ticker.get("ask") or ticker.get("bid")
-            if price and float(price) > 0:
-                return float(price)
+        price = getattr(ticker, "last_price", None)
+        if price and float(price) > 0:
+            return float(price)
     except Exception as e:
         logger.debug("stock token price fetch failed for %s@%s: %s", token_symbol, exchange, e)
     finally:
@@ -293,11 +292,22 @@ async def _analyze_equity(
     xstock_price: float | None = None
     deviation_pct: float | None = None
 
+    observed_tokens = set(observed_xstocks or [])
+    for token_sym in candidate_tokens:
+        if token_sym not in observed_tokens:
+            continue
+        if not stock_token_exchange(token_sym):
+            continue
+        token_price = await _fetch_stock_token_price(token_sym, stock_token_exchange(token_sym))
+        if token_price is not None:
+            xstock_symbol = token_sym
+            xstock_price = token_price
+            break
+
     xstock_price_for_llm = None
     deviation_for_llm = None
-    if xstock_symbol and xstock_in_config:
-        xstock_price = await _fetch_xstock_price(xstock_symbol)
-        if xstock_price is not None and data["last"] > 0:
+    if xstock_symbol and xstock_price is not None:
+        if data["last"] > 0:
             # data["last"] is yfinance previous-day close; xstock_price is live.
             # During market hours the stock may have moved legitimately, so we use
             # the intraday live price from yfinance (fast_info) when available to

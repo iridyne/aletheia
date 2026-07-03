@@ -56,6 +56,11 @@ def test_shadow_trades_resolution_bounded():
 
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
     try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='shadow_trades'"
+        ).fetchone()
+        if not exists:
+            pytest.skip("production app.db has no shadow_trades table to evaluate")
         row = conn.execute(
             "SELECT "
             "  SUM(CASE WHEN created_at < datetime('now','-7 days') THEN 1 ELSE 0 END) AS old_total, "

@@ -102,6 +102,11 @@ def test_layer3_lessons_filter_aligned():
         pytest.skip("no production app.db on this machine")
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
     try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_items'"
+        ).fetchone()
+        if not exists:
+            pytest.skip("production app.db has no knowledge_items table to evaluate")
         n = conn.execute(
             "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trade_case_study'"
         ).fetchone()[0]
@@ -209,7 +214,7 @@ def test_proposal_carries_opportunity_id():
 
     That one line severs the attribution chain at the source: market_observer
     already writes scanner_family/universe/confidence into the opportunity, but
-    the PI Agent drops opportunity_id at order time and nothing backfills it.
+    the System Operator drops opportunity_id at order time and nothing backfills it.
     """
     import pathlib
     src = (pathlib.Path(_project_root()) / _TRADING_DECISION).read_text(encoding="utf-8")
@@ -310,6 +315,11 @@ def test_runtime_pi_decisions_carry_opportunity_id():
 
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
     try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pi_decisions'"
+        ).fetchone()
+        if not exists:
+            pytest.skip("production app.db has no pi_decisions table to evaluate")
         rows = conn.execute(
             "SELECT opportunity_id FROM pi_decisions "
             "WHERE action = 'signal_pending' "
@@ -463,6 +473,11 @@ def test_applied_policy_version_closure():
         pytest.skip("no production app.db on this machine")
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
     try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ps_lessons'"
+        ).fetchone()
+        if not exists:
+            pytest.skip("production app.db has no ps_lessons table to evaluate")
         cols = [r[1] for r in conn.execute("PRAGMA table_info(ps_lessons)")]
     finally:
         conn.close()
@@ -685,7 +700,7 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
               "Exactly three learning-content paths reach the PI system prompt via "
               "trading_decision.py: (1) trading_memo (layer2.trading_memo), "
               "(2) reasoning_feedback (layer2.reasoning_feedback), "
-              "(3) ps_lessons (layer3.ps_lessons, proposed lessons from LessonStore). "
+              "(3) ps_lessons (layer3.ps_lessons, applied lessons from LessonStore). "
               "knowledge_contract.md §8.2 previously said trading_memo was the "
               "'only' path — that was incorrect; the corrected §8.2 enumerates "
               "all three. This claim locks the complete set so future additions "
@@ -732,7 +747,7 @@ def test_pi_prompt_learning_paths_complete_enumeration():
     assert "reasoning_feedback" in tc_src, (
         "trading_context.py does not populate layer['reasoning_feedback'] — §8.2 source broken"
     )
-    # path 3: ps_lessons comes from LessonStore (status='proposed')
+    # path 3: ps_lessons comes from LessonStore (status='applied')
     assert "ps_lessons" in tc_src, (
         "trading_context.py does not populate layer['ps_lessons'] — §8.2 source broken"
     )
@@ -1182,7 +1197,7 @@ def test_trading_decision_reads_lessons_from_lesson_store():
     """LP-DUAL-01: the structured prompt block comes from LessonStore, not FTS.
 
     Dual-path invariant: trading_context.py populates layer3["ps_lessons"]
-    from LessonStore.list_all(status="proposed") because only the structured
+    from LessonStore.list_all(status="applied") because only the structured
     store carries evidence_json + activated_at + expires_at. The FTS path
     (retrieve_lessons) returns knowledge_fts-sourced Lesson dataclasses that
     lack these fields — they serve a different consumer (ranker / advisory).

@@ -111,27 +111,27 @@ def test_xstock_base_to_ticker_mapping_exists():
     assert "_XSTOCK_BASE_TO_TICKER" in src, (
         "_XSTOCK_BASE_TO_TICKER dict not found in aletheia/data/symbols.py"
     )
-    # Also verify it is assigned as a dict (plain or annotated), not just a comment.
-    # The source uses an annotated assignment: `_XSTOCK_BASE_TO_TICKER: dict[str, str] = {…}`
-    # which the AST represents as AnnAssign, not Assign.
+    # Also verify it is assigned from a dict expression (plain or annotated), not
+    # just a comment. The implementation may use a dict literal or derive the map
+    # from the canonical stock-token registry with a dict comprehension.
     tree = ast.parse(src)
     dict_names: set[str] = set()
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.AnnAssign)
             and isinstance(node.target, ast.Name)
-            and isinstance(node.value, ast.Dict)
+            and isinstance(node.value, (ast.Dict, ast.DictComp))
         ):
             dict_names.add(node.target.id)
         elif (
             isinstance(node, ast.Assign)
             and len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name)
-            and isinstance(node.value, ast.Dict)
+            and isinstance(node.value, (ast.Dict, ast.DictComp))
         ):
             dict_names.add(node.targets[0].id)
     assert "_XSTOCK_BASE_TO_TICKER" in dict_names, (
-        "_XSTOCK_BASE_TO_TICKER is not assigned as a dict literal in symbols.py"
+        "_XSTOCK_BASE_TO_TICKER is not assigned from a dict expression in symbols.py"
     )
 
 

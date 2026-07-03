@@ -1,7 +1,7 @@
 """E2E: anti-hallucination attribution chain (R0) — opportunity → context → decision.
 
 Locks the R0 fix end-to-end (LEARNING_LOOP_AUDIT_2026-06-26 §R0): a seeded open
-opportunity must surface into the PI Agent's Layer-1 context WITH its id +
+opportunity must surface into the System Operator's Layer-1 context WITH its id +
 scanner_family, and when the PI picks that symbol+direction,
 _attach_opportunity_context backfills the real opportunity_id (+ strategy_id +
 scanner_family) onto the decision — instead of the old hard-coded None that severed
@@ -170,6 +170,105 @@ def test_a10_layer2_signals_injected_into_prompt():
     assert "MEMO: short bias" in prompt
     assert "CAL: conviction" in prompt
     assert "RF: momentum scanner" in prompt
+
+
+def test_layer2_trade_analytics_collected(tmp_path, monkeypatch):
+    """Trades/Positions analytics must enter System Operator Layer 2, not only the UI."""
+    setup_env(tmp_path, monkeypatch)
+
+    expected = {
+        "totals": {"trade_count": 4, "win_rate": 50.0, "total_pnl": 12.5, "avg_hold_hours": 5.0},
+        "by_source": [{"source_type": "opportunity", "trade_count": 3, "win_rate": 66.7, "total_pnl": 15.0}],
+        "by_family": [{"family": "momentum", "trade_count": 2, "win_rate": 50.0, "total_pnl": 3.0}],
+        "hold_distribution": [{"bucket": "1-4h", "count": 2, "pct": 50.0}],
+    }
+    monkeypatch.setattr("aletheia.analytics.trade_stats.build_trade_stats", lambda: expected)
+
+    from aletheia.agent_shell.trading_context import _build_layer2_short_term
+    layer2 = _build_layer2_short_term()
+
+    assert layer2["trade_analytics"] == expected
+
+
+def test_trade_analytics_rendered_into_operator_prompt():
+    """System Operator prompt must include Trades Analytics by source/family/hold time."""
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+
+    ctx = {
+        "layer1": {},
+        "layer2": {
+            "trade_analytics": {
+                "totals": {
+                    "trade_count": 4,
+                    "win_rate": 50.0,
+                    "total_pnl": 12.5,
+                    "avg_hold_hours": 5.0,
+                    "median_hold_hours": 3.0,
+                },
+                "by_source": [
+                    {"source_type": "opportunity", "trade_count": 3, "win_rate": 66.7, "total_pnl": 15.0},
+                ],
+                "by_family": [
+                    {"family": "momentum", "trade_count": 2, "win_rate": 50.0, "total_pnl": 3.0},
+                ],
+                "hold_distribution": [
+                    {"bucket": "1-4h", "count": 2, "pct": 50.0},
+                ],
+            },
+        },
+        "layer3": {},
+    }
+    prompt = _build_assessment_prompt(ctx)
+
+    assert "Trades Analytics" in prompt
+    assert "source opportunity" in prompt
+    assert "family momentum" in prompt
+    assert "hold 1-4h" in prompt
+
+
+def test_data_health_signal_win_rate_excludes_unknown_direction(tmp_path, monkeypatch):
+    """System Operator data health must not count unknown-direction outcomes as long.
+
+    Historical NULL direction rows are not honest long or short evidence. They
+    should not affect the signal win-rate that the operator sees in Layer 1.
+    """
+    setup_env(tmp_path, monkeypatch)
+
+    from datetime import datetime, timezone
+    from aletheia.storage.models import UniverseForwardOutcome
+    from aletheia.storage import repositories as repo
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _outcome(symbol: str, direction: str | None, ret: float) -> UniverseForwardOutcome:
+        return UniverseForwardOutcome(
+            member_id=f"m_{symbol}_{direction}_{ret}",
+            snapshot_id="snap_data_health",
+            symbol=symbol,
+            scanner_family="momentum",
+            direction=direction,
+            horizon="24h",
+            entry_price_usd=100.0,
+            entry_ts=now,
+            due_at=now,
+            settled_at=now,
+            exit_price_usd=100.0 * (1 + ret / 100.0),
+            forward_return_pct=ret,
+            status="settled",
+        )
+
+    repo.insert_forward_outcomes_batch([
+        _outcome("AAA/USDT", None, 9.0),
+        _outcome("BBB/USDT", None, -9.0),
+        _outcome("CCC/USDT", "long", 3.0),
+    ])
+
+    from aletheia.agent_shell.trading_context import _get_data_health_summary
+    summary = _get_data_health_summary()
+
+    assert summary["signal_win_rate_24h"] == 100.0, (
+        f"unknown-direction rows leaked into data-health win rate: {summary}"
+    )
 
 
 def test_b1_ranker_penalty_ignores_post_trade_review(tmp_path, monkeypatch):

@@ -351,7 +351,7 @@ function SerenityLinksSection({ marketId }: { marketId: string }) {
         <div key={e.id} className="pred-serenity-link">
           <Badge tone="green">evidence</Badge>
           <span>{e.title}</span>
-          <a href="/serenity" className="lens-cross-link">→ View in Serenity Lens</a>
+          <a href="/serenity-lens" className="lens-cross-link">→ View in Serenity Lens</a>
         </div>
       ))}
     </DrawerSection>

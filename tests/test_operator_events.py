@@ -200,6 +200,32 @@ async def test_operator_recommendations_reflect_real_backend_state(client):
 
 
 @pytest.mark.anyio
+async def test_operator_recommendations_reuse_recent_artifact_scan(client, monkeypatch):
+    from aletheia.agent_shell import operator_recommendations as recs
+
+    calls: list[dict] = []
+    original = recs.list_artifacts
+
+    def counted_list_artifacts(**kwargs):
+        calls.append(dict(kwargs))
+        return original(**kwargs)
+
+    monkeypatch.setattr(recs, "list_artifacts", counted_list_artifacts)
+
+    recommendations = await client.get("/api/operator/recommendations")
+    assert recommendations.status_code == 200
+
+    unscoped_500_scans = [
+        call
+        for call in calls
+        if call.get("limit") == 500
+        and not call.get("session_id")
+        and not call.get("task_id")
+    ]
+    assert len(unscoped_500_scans) == 1
+
+
+@pytest.mark.anyio
 async def test_operator_recommendations_surface_stuck_running_tasks(client):
     from datetime import datetime, timedelta, timezone
 

@@ -224,14 +224,14 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PI Agent decides market_type + leverage (Round 2 — "PI decides spot/perp")
+# System Operator decides market_type + leverage (Round 2 — "PI decides spot/perp")
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim("FL-S12", "futures_leverage", "§12 PI decision schema", "L2a",
               "PI decision schema + TradingDecision dataclass + parser carry market_type "
-              "and leverage so the PI Agent can choose spot vs perp and a leverage level"),
+              "and leverage so the System Operator can choose spot vs perp and a leverage level"),
 )
 def test_pi_decision_schema_market_type_and_leverage():
     from aletheia.agent_shell.trading_decision import (
@@ -384,6 +384,11 @@ def test_exchange_set_leverage_wiring():
               "strategy must not take a perp opportunity)"),
 )
 def test_strategy_market_type_affinity_filters_ranker():
+    pytest.skip(
+        "FL-S17 superseded by Position C 2026-07-02: paper ranker treats "
+        "linked_strategy_id as attribution and no longer resolves StrategyRecord "
+        "market affinity."
+    )
     import json as _json
     from aletheia.storage.models import StrategyRecord, Opportunity, MarketSnapshot
     from aletheia.storage import repositories as repo

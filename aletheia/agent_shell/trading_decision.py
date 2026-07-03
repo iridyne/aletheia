@@ -618,6 +618,8 @@ def _build_assessment_prompt(ctx: dict) -> str:
         ) or "  (none active)"
     )
 
+    trade_analytics_lines = "" if _bypass else _fmt_trade_analytics(layer2.get("trade_analytics"))
+
     # ── Layer 3: Long-term Wisdom ──
     lessons = layer3.get("lessons", [])
     lesson_lines = "\n".join(
@@ -779,6 +781,12 @@ def _build_assessment_prompt(ctx: dict) -> str:
         strat_lines,
         "",
     ]
+    if trade_analytics_lines:
+        parts += [
+            "## Trades Analytics (closed positions)",
+            trade_analytics_lines,
+            "",
+        ]
 
     # A10 (LEARNING_LOOP_AUDIT / PIPELINE_GAPS D1): these three analytics signals
     # were COMPUTED in layer2 (trading_context._build_layer2_short_term) but never
@@ -903,6 +911,59 @@ def _build_assessment_prompt(ctx: dict) -> str:
     ]
 
     return "\n".join(parts)
+
+
+def _fmt_trade_analytics(trade_analytics: dict | None) -> str:
+    if not trade_analytics:
+        return ""
+
+    lines: list[str] = []
+    totals = trade_analytics.get("totals") or {}
+    total_trades = int(totals.get("trade_count") or 0)
+    if total_trades:
+        lines.append(
+            "  total: "
+            f"{total_trades} trades, WR={totals.get('win_rate', '?')}%, "
+            f"PnL=${float(totals.get('total_pnl') or 0):+.2f}, "
+            f"avg_hold={totals.get('avg_hold_hours', '?')}h, "
+            f"median_hold={totals.get('median_hold_hours', '?')}h"
+        )
+
+    for src in (trade_analytics.get("by_source") or [])[:3]:
+        if not src.get("trade_count"):
+            continue
+        lines.append(
+            f"  source {src.get('source_type', 'unknown')}: "
+            f"{src.get('trade_count', 0)}T WR={src.get('win_rate', '?')}% "
+            f"PnL=${float(src.get('total_pnl') or 0):+.2f} "
+            f"expectancy={src.get('expectancy_pct', '?')}%"
+        )
+
+    for fam in (trade_analytics.get("by_family") or [])[:4]:
+        if not fam.get("trade_count"):
+            continue
+        family = fam.get("family") or fam.get("scanner_family") or "unknown"
+        lines.append(
+            f"  family {family}: "
+            f"{fam.get('trade_count', 0)}T WR={fam.get('win_rate', '?')}% "
+            f"expectancy={fam.get('expectancy_pct', '?')}% "
+            f"alpha_vs_btc={fam.get('alpha_vs_btc_pct', '?')}"
+        )
+
+    hold = [
+        h for h in (trade_analytics.get("hold_distribution") or [])
+        if h.get("count", 0)
+    ][:4]
+    if hold:
+        lines.append(
+            "  hold "
+            + ", ".join(
+                f"{h.get('bucket', '?')}={h.get('count', 0)} ({h.get('pct', 0)}%)"
+                for h in hold
+            )
+        )
+
+    return "\n".join(lines)
 
 
 def _fmt_funding(rate: float | None) -> str:

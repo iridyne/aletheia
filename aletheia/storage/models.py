@@ -865,6 +865,7 @@ class UniverseMember(BaseModel):
     crowding_risk: float | None = None
     late_entry_penalty: float | None = None
     scanner_family: str | None = None
+    regime_tag: str | None = None
     # JSON dict {family: score} of all 5+ scanner families' scores for this member
     # (Phase 2A+.12). Enables ensemble/consensus analysis beyond the single winning
     # family; without persistence the run_all_scanners all_scores dict was discarded.
@@ -886,8 +887,8 @@ class UniverseForwardOutcome(BaseModel):
     symbol: str
     scanner_family: str | None = None
     # Trade direction the scanner family implied at selection ("long" | "short").
-    # None for legacy rows / members with no inferable direction; win-rate
-    # calibration treats those as long (positive return = win) for back-compat.
+    # None for legacy rows / members with no inferable direction; direction-aware
+    # win-rate calibration excludes those rows because their side is unknown.
     direction: str | None = None
     horizon: str  # "15m" | "1h" | "4h" | "24h"
     entry_price_usd: float

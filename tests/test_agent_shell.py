@@ -352,6 +352,62 @@ def test_context_summary_text():
     assert "5 recent runs" in text
 
 
+def test_repair_context_includes_doctor_section():
+    assert "doctor" in sections_for_profile("repair_context")
+
+
+@patch("aletheia.agent_shell.context.load_config")
+@patch("aletheia.agent_runtime.health.compute_health",
+       return_value={"healthy": False, "issues": ["market_data_stale:45m"]})
+@patch("aletheia.diagnostics.doctor.build_report")
+def test_build_context_doctor_section_surfaces_fix_hints(mock_doctor, mock_health, mock_cfg):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    cfg = MagicMock()
+    cfg.agent.permission_mode = "Paper"
+    cfg.live.state = "live_disabled"
+    cfg.runtime.paused = False
+    cfg.runtime.kill_switch_active = False
+    cfg.exchange.mode = "demo"
+    mock_cfg.return_value = cfg
+
+    mock_doctor.return_value = SimpleNamespace(to_dict=lambda: {
+        "generated_at": "2026-07-03T00:00:00Z",
+        "healthy": False,
+        "summary": {
+            "total": 2,
+            "blockers": ["process.gateway"],
+            "warns": ["health.rollup"],
+        },
+        "checks": [
+            {
+                "name": "process.gateway",
+                "severity": "blocker",
+                "detail": "stopped",
+                "fix_hint": "`aletheia gateway start`",
+            },
+            {
+                "name": "health.rollup",
+                "severity": "warn",
+                "detail": "degraded: market_data_stale:45m",
+                "fix_hint": "inspect market data scheduler",
+            },
+        ],
+    })
+
+    ctx = build_app_context(["system", "doctor"])
+
+    assert ctx["doctor"]["healthy"] is False
+    assert ctx["doctor"]["summary"]["blockers"] == ["process.gateway"]
+    assert ctx["doctor"]["attention_checks"][0]["fix_hint"] == "`aletheia gateway start`"
+
+    text = context_summary_text(ctx)
+    assert "Doctor: 1 blocker(s), 1 warn(s)" in text
+    assert "process.gateway" in text
+    assert "`aletheia gateway start`" in text
+
+
 # --- Runtime integration test (mocked LLM) ---
 
 @pytest.mark.asyncio
