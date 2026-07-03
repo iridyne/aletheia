@@ -36,7 +36,7 @@ Learning 现在可以描述为“可学习、可反馈、局部可自修复、�
 | `retrieve_lessons` 工具调用 | 2006 次 | agent 已经实际调用学习检索 |
 | `build_case_studies` 调用 | 566 次 | 交易案例构建器持续运行 |
 | `detect_guard_candidates` 调用 | 566 次 | guard 候选生成持续运行 |
-| Learning 相关测试 | 本轮存储链路 22 passed；相关 spec 29 passed, 3 skipped | time-decay xfail 已解除 |
+| Learning 相关测试 | 本轮存储链路 22 passed；相关 spec 32 passed | time-decay xfail 已解除 |
 
 ## 已经实现的能力
 
@@ -363,7 +363,7 @@ cd frontend; npm run build
 本轮矛盾检测：4 targeted passed；knowledge suite 17 passed
 本轮 SkillStore/time-decay targeted：5 passed
 本轮 Learning 存储链路：22 passed
-本轮 Learning/Insight spec：29 passed, 3 skipped
+本轮 Learning/Insight spec：32 passed
 frontend build：passed
 ```
 
