@@ -2,15 +2,52 @@ import type { InfraEvent, SystemStatus } from '../types'
 
 const BASE = '/api'
 
-function extractApiError(status: number, body: string): string {
+function cleanErrorText(value: unknown): string | null {
+  if (value == null) return null
+  const text = String(value).trim()
+  return text ? text.replace(/_/g, ' ') : null
+}
+
+function formatErrorValue(value: unknown): string | null {
+  if (value == null) return null
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return cleanErrorText(value)
+  }
+  if (Array.isArray(value)) {
+    const items = value.map(formatErrorValue).filter(Boolean)
+    return items.length ? items.join('; ') : null
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    const explicit = cleanErrorText(record.message)
+      || cleanErrorText(record.reason)
+      || cleanErrorText(record.error)
+      || cleanErrorText(record.detail)
+    const failures = formatErrorValue(record.failures)
+      || formatErrorValue(record.errors)
+      || formatErrorValue(record.gates)
+
+    const parts: string[] = []
+    if (explicit) parts.push(explicit)
+    if (failures) parts.push(`Failures: ${failures}`)
+
+    if (parts.length === 0) {
+      for (const [key, item] of Object.entries(record).slice(0, 4)) {
+        const formatted = formatErrorValue(item)
+        if (formatted) parts.push(`${cleanErrorText(key)}: ${formatted}`)
+      }
+    }
+    return parts.length ? parts.join(' - ') : null
+  }
+  return null
+}
+
+export function extractApiError(status: number, body: string): string {
   try {
     const obj = JSON.parse(body)
     const detail = obj.detail
-    if (typeof detail === 'string') return detail
-    if (detail && typeof detail === 'object') {
-      if (detail.reason) return detail.reason.replace(/_/g, ' ')
-      if (detail.message) return detail.message
-    }
+    const formatted = formatErrorValue(detail)
+    if (formatted) return formatted
   } catch { /* not JSON, fall through */ }
   if (body.length > 80) return `${status} error`
   return body || `${status} error`
