@@ -7,7 +7,25 @@
 
 ## Last Updated
 
-2026-07-03 (discussion.md 口述长文全量落地 7 项,已 FF-merge master)
+2026-07-03 (discussion 批次经验沉淀入口已补)
+
+---
+
+## Recent Change (discussion 批次开发经验沉淀 - 2026-07-03)
+
+新增 `docs/_ai/DISCUSSION_DEVELOPMENT_LESSONS_2026-07-03.md`,总结本轮 20+ worktree
+批量修复的可复用经验:
+
+- 长文先拆成 Dxx 可验证清单,审计和修复分支分开。
+- 性能先量化再修 top offender;本轮 `/api/operator/recommendations` 重复 artifact scan
+  6 -> 1,减少 83.3%。
+- 前端源码更新后必须 `npm run build` + `uv run aletheia gateway restart --no-browser`,
+  否则浏览器仍可能看到旧 `dashboard_static`。
+- 合并后清理 worktree、已合并本地分支、未登记旧目录。
+- owner 决策项不能伪装成 bug fix: `reduce_size`、DB retention、历史 PI 标识符迁移、
+  live/风控语义都要单独确认。
+
+`DEV_PROTOCOL.md` 和 `AI_WORKFLOW.md` 已加入口,后续 AI 接大批量任务前应先读该文档。
 
 ---
 
