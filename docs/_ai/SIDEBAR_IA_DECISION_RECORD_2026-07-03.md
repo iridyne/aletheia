@@ -7,7 +7,7 @@ Touched only frontend navigation honesty and this decision record.
 Did not add a Strategy page, did not change backend routes, did not change trading,
 risk, execution gateway, credential, live-unlock, or data-model behavior.
 
-## Finding
+## Prior Finding
 
 The main sidebar already matched the current IA:
 
@@ -58,4 +58,37 @@ learning/evolution loop.
 ## Verification
 
 - `uv run pytest tests/test_frontend_navigation_ia.py -q` -> 2 passed.
+
+---
+
+## Owner Follow-up Decision
+
+Owner rejected the remaining 5-phase IA as too implementation-shaped. `Overview`
+and `Settings` must stay global first-level entries, and `Learning` must follow
+the same rule. Learning must not render as a `Learning -> Learning` nested
+structure.
+
+## Revised Decision
+
+Use a trading-desk IA:
+
+- Global: Overview, Command Center.
+- Research: Universe Board, Markets, Prediction Markets, Serenity Lens, News Intel.
+- Decision: Approval Desk, Agent Activity.
+- Portfolio: Trades & Positions, Risk & Controls.
+- Global: Learning, Settings.
+
+Do not use `Observe / Decide / Execute / Evolve / Operate` labels in the
+sidebar. The old labels are useful architecture language, but they are not the
+best operator-facing navigation names.
+
+## Revised Quantified Result
+
+- Active sidebar entries: 13 -> 13.
+- Old workflow group labels in active sidebar: 5 -> 0.
+- Operator-facing business groups: 5 -> 3.
+- Global first-level entries: 1 -> 4 (`Overview`, `Command Center`, `Learning`, `Settings`).
+- Nested `Learning -> Learning` structures: 0.
+- `Settings` under Operate: 1 -> 0.
+- `Serenity Lens` remains in research/discovery flow: 1.
 
