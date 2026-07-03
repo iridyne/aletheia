@@ -31,6 +31,8 @@
 - `uv run aletheia doctor --json --verbose` 结构化输出包含 `diagnostics.logs` / `diagnostics.attention`。
 - `uv run aletheia doctor --bundle <tmp-file>` 可写出可解析 JSON bundle。
 - `uv run aletheia gateway logs -n 2` 可输出多路日志尾部。
+- `uv run pytest -m fast -n 4 -q -o cache_dir=.pytest_cache_ai` 通过；并行快层曾暴露
+  `paper_trader` 调度门对极简测试配置桩过脆，已补安全默认值和回归测试。
 
 注意：当前工作区另有历史数据下载/交易决策/审计链相关未提交改动，属于其它边界；本批次不要混入这些文件。
 

@@ -871,9 +871,10 @@ def _run_portfolio_snapshot():
 
 def _run_paper_trader():
     cfg = load_config()
-    if cfg.runtime.paused:
+    runtime = getattr(cfg, "runtime", None)
+    if getattr(runtime, "paused", False):
         return
-    if cfg.runtime.kill_switch_active:
+    if getattr(runtime, "kill_switch_active", False):
         logger.info("paper_trader: kill_switch active, skipping scheduler trigger")
         return
     if cfg.agent.permission_mode not in ("Paper", "Full"):

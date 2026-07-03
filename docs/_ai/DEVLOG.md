@@ -22,6 +22,7 @@ owner 担心 MVP/Round 1/Round 2 阶段系统日志不够详细、doctor 命令�
 - `doctor --json --verbose` 可解析且包含深度诊断字段。
 - `doctor --bundle` 可写出可解析 JSON 文件。
 - `gateway logs -n 2` 可输出多路日志尾部。
+- `fast -n 4` 并行快层通过；顺手修复 `paper_trader` 调度门对极简测试配置桩过脆的问题。
 
 ### 注意
 本批不改交易执行、风控、密钥、实盘开关。工作区里同时存在其它会话的历史数据下载、
