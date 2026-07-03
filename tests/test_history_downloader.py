@@ -108,6 +108,34 @@ async def test_download_left_gap_starts_near_oldest_existing():
 
 
 @pytest.mark.asyncio
+async def test_download_left_gap_retries_closer_window_when_listing_start_is_empty():
+    tf_ms = 3_600_000
+    oldest_ts = 1_700_000_000_000
+    newest_ts = oldest_ts + 100 * tf_ms
+
+    provider = AsyncMock()
+    provider.get_ohlcv = AsyncMock(side_effect=[
+        [],
+        _make_candles(oldest_ts - 10 * tf_ms, 10),
+        [],
+    ])
+    provider.close = AsyncMock()
+
+    with patch("aletheia.config.loader.load_config", return_value=_mock_config()), \
+         patch("aletheia.data.history_downloader.time.time", return_value=(newest_ts + tf_ms) / 1000), \
+         patch("aletheia.storage.repositories.get_ohlcv_newest_ts", return_value=newest_ts), \
+         patch("aletheia.storage.repositories.get_ohlcv_coverage",
+               return_value={"bar_count": 100, "oldest_ts": oldest_ts, "newest_ts": newest_ts}), \
+         patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
+         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+        result = await download_symbol_history("NES/USDT", "1h", months=6)
+
+    assert result.bars_fetched == 10
+    assert provider.get_ohlcv.await_args_list[0].kwargs["since"] == oldest_ts - 500 * tf_ms
+    assert provider.get_ohlcv.await_args_list[1].kwargs["since"] == oldest_ts - 100 * tf_ms
+
+
+@pytest.mark.asyncio
 async def test_download_right_gap_runs_after_empty_left_gap():
     """An empty left-gap page must not prevent latest-bar catch-up."""
     tf_ms = 3_600_000
@@ -116,6 +144,9 @@ async def test_download_right_gap_runs_after_empty_left_gap():
 
     provider = AsyncMock()
     provider.get_ohlcv = AsyncMock(side_effect=[
+        [],
+        [],
+        [],
         [],
         _make_candles(newest_ts + tf_ms, 5),
     ])
@@ -131,7 +162,7 @@ async def test_download_right_gap_runs_after_empty_left_gap():
         result = await download_symbol_history("RE/USDT", "1h", months=6)
 
     assert result.bars_fetched == 5
-    assert provider.get_ohlcv.await_args_list[1].kwargs["since"] == newest_ts + tf_ms
+    assert provider.get_ohlcv.await_args_list[4].kwargs["since"] == newest_ts + tf_ms
 
 
 @pytest.mark.asyncio

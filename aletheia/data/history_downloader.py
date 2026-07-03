@@ -17,6 +17,7 @@ logger = logging.getLogger("aletheia.history_downloader")
 
 _PAGE_SIZE = 500
 _RATE_LIMIT_SEC = 0.35
+_LEFT_GAP_PROBE_PAGES = (500, 100, 24, 6)
 
 
 @dataclass
@@ -122,18 +123,26 @@ async def download_symbol_history(
             # distant requested start can return an empty page for new listings.
             left_cursor = oldest_existing
             while left_cursor > start_ts + tf_ms and total_fetched < max_bars:
+                candles = []
                 window_since = max(start_ts, left_cursor - _PAGE_SIZE * tf_ms)
                 try:
-                    candles = await provider.get_ohlcv(
-                        symbol, timeframe, limit=_PAGE_SIZE, since=window_since
-                    )
+                    for probe_pages in _LEFT_GAP_PROBE_PAGES:
+                        window_since = max(start_ts, left_cursor - probe_pages * tf_ms)
+                        candles = await provider.get_ohlcv(
+                            symbol, timeframe, limit=_PAGE_SIZE, since=window_since
+                        )
+                        candles = [
+                            c for c in (candles or [])
+                            if window_since <= c.timestamp < left_cursor
+                        ]
+                        if candles:
+                            break
                 except Exception as e:
                     error = str(e)
                     logger.warning("history_downloader: fetch failed %s %s since=%d: %s",
                                    symbol, timeframe, window_since, e)
                     break
 
-                candles = [c for c in (candles or []) if window_since <= c.timestamp < left_cursor]
                 if not candles:
                     break
 
