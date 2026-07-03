@@ -1,5 +1,26 @@
 # Development Log
 
+## 2026-07-03 — discussion 批次开发经验沉淀
+
+### 触发
+owner 要求把本轮 20+ worktree、多分支、多模块修复过程里的经验和教训写成本地开发文档,
+让后续 AI 继续开发时能直接看到,避免重复踩坑。
+
+### 交付
+- 新增 `docs/_ai/DISCUSSION_DEVELOPMENT_LESSONS_2026-07-03.md`。
+- `DEV_PROTOCOL.md` 加大批量修复经验入口。
+- `AI_WORKFLOW.md` 的 Context Recovery Protocol 加该文档。
+- `AI_HANDOFF.md` 和 `CURRENT_TASK.md` 加短入口。
+
+### 内容要点
+- 长文先拆成 Dxx 可验证清单,审计和修复分支分开。
+- 性能先量化再修 top offender;本轮 recommendations 重复 artifact scan 6 -> 1。
+- 前端源码更新后必须 build 静态包并重启 gateway。
+- 合并后要清理 worktree、已合并分支、未登记旧目录。
+- owner 决策项不能伪装成 bug fix。
+
+---
+
 ## 2026-07-02 — 动态 sizing / persona / learning 系统 P0–P4
 
 owner 方向落地:Operator 在风控硬边界∩persona区间内动态决仓位/杠杆/加仓/止损 + Learning 拟合 +

@@ -16,8 +16,9 @@
 4. Read docs/_ai/CURRENT_TASK.md
 5. Read docs/_ai/AI_HANDOFF.md
 6. Read docs/_ai/DECISIONS.md
-7. Inspect git status
-8. Summarize current state before making changes
+7. Read docs/_ai/DISCUSSION_DEVELOPMENT_LESSONS_2026-07-03.md for large-batch fix lessons
+8. Inspect git status
+9. Summarize current state before making changes
 
 ## End-of-Session Protocol
 

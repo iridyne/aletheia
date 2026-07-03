@@ -36,6 +36,11 @@
 扫一眼真值,看上述指标是否仍在累积。改动让某项指标退化时再回头调。代码改动后记得
 `uv run aletheia gateway restart --no-browser`,scheduler 跑的是内存中的旧代码。
 
+**大批量修复前置阅读**:如果下一次任务类似 `discussion.md` 这种跨前端、后端、测试、
+文档、运行验证的长问题,先读 `docs/_ai/DISCUSSION_DEVELOPMENT_LESSONS_2026-07-03.md`。
+该文档总结了本轮 20+ worktree 批量修复的拆解、量化、性能、pytest、worktree 收尾和
+owner 决策边界经验。
+
 > **结构性阻碍已清除(意图记录,2026-06-24)**:最小赚钱循环
 > (opportunities→paper_trader→signal_pending→PI→proposal→risk→execution)曾被
 > **五层叠加阻碍**卡死(OKX contractSize 单位 / PI 余额幻觉 8 bug / OKX 跨 loop /

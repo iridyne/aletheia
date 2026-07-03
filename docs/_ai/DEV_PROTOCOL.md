@@ -30,3 +30,19 @@ git **不**同步**运行态事实**——这些都是每台机器本地的、�
 边开发边观察，无隔离观察窗口。`code_drift` 自愈重启是预期行为，不是失败信号。
 
 唯一硬阻塞线：**Phase 6 (Live)** 需要用户显式授权。其余 Phase 和 Track B 可并行推进，改动不触 `execution/`/凭证/live 即可自主合并。
+
+## 4. 大批量修复经验入口（2026-07-03）
+
+`discussion.md` 批次曾同时打开 20+ worktree,覆盖前端延迟、Universe、Learning、pytest、
+侧边栏 IA、System Operator、DB retention 等问题。后续 AI 接类似大任务前,先读:
+
+- `docs/_ai/DISCUSSION_DEVELOPMENT_LESSONS_2026-07-03.md`
+
+核心原则:
+
+1. 先把 owner 长文拆成可验证问题清单,不要直接改代码。
+2. 审计分支和修复分支分开。
+3. 性能问题先量化,再修 top offender。
+4. 前端源码更新后必须 `npm run build` 并重启 gateway,否则 UI 仍是旧静态包。
+5. 合并后清理已并入 `master` 的 worktree 和本地分支。
+6. `reduce_size`、DB retention、历史审计迁移、live/风控语义必须 owner 决策。
