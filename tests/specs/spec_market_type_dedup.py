@@ -110,6 +110,38 @@ def test_signal_emitter_passes_market_filter():
 
 
 @spec_claim(
+    SpecClaim("OD-S02d", "data_layer_contract", "§3 universe preferred market", "L2b",
+              "UniverseService's same-symbol member dedup keeps the configured "
+              "preferred market instrument (auto→perp, spot→spot) instead of "
+              "letting the highest-scoring spot row crowd out perp rows"),
+)
+def test_universe_member_dedup_respects_preferred_market():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.service import _dedupe_by_symbol_preferred_market
+
+    allocated = [
+        {"symbol": "BTC/USDT", "market_type": "spot", "total_score": 90.0},
+        {"symbol": "BTC/USDT", "market_type": "perp", "total_score": 50.0},
+        {"symbol": "ETH/USDT", "market_type": "spot", "total_score": 60.0},
+    ]
+
+    cfg = AletheiaConfig()
+    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
+    cfg.exchange.preferred_market_type = "auto"
+
+    deduped = _dedupe_by_symbol_preferred_market([dict(x) for x in allocated], cfg)
+    by_symbol = {x["symbol"]: x for x in deduped}
+    assert by_symbol["BTC/USDT"]["market_type"] == "perp", (
+        "auto preference should keep perp even when the spot duplicate has a higher score"
+    )
+
+    cfg.exchange.preferred_market_type = "spot"
+    deduped = _dedupe_by_symbol_preferred_market([dict(x) for x in allocated], cfg)
+    by_symbol = {x["symbol"]: x for x in deduped}
+    assert by_symbol["BTC/USDT"]["market_type"] == "spot"
+
+
+@spec_claim(
     SpecClaim("OD-S02c", "data_layer_contract", "§3 market_observer passes market", "L2a",
               "market_observer passes market= to find_open_opportunity_by_symbol_snapshot "
               "so same-symbol opps in different markets don't overwrite each other"),

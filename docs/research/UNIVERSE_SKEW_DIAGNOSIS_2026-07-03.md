@@ -47,6 +47,15 @@ vol 4.6% / short 1.4%。**偏斜在 member 层就已存在**——不是 emit �
   explore 把刚封顶的 momentum 又塞回来，悄悄抵消了配额平衡。
 - 这是 84% momentum（配额只有 30%）的直接机制。
 
+### RC2b — member 去重忽略 preferred market → perp 通道被 spot 覆盖
+- 配置层 `preferred_market_type="auto"` 默认应偏向 perp（OD-S01 已锁定），但
+  `UniverseService.refresh` 在 allocate 之后按 `symbol` 去重时只保留 `total_score`
+  最高项，完全不看 `market_type`。
+- 真实库复核：最近 500 条 universe_members 全部是 `market_type="spot"`，perp=0；
+  这会让 futures/perp 观察与 derivatives family 的机会入口被 spot 行挤掉。
+- 修复：同 symbol 仍只保留 1 个 instrument，但先按配置保留 preferred market
+  (`auto→perp`, `spot→spot`)，同 preferred market 内再比分数。锁定 spec **OD-S02d**。
+
 ### RC3 — regime 上下文在 member 层断裂 → regime 感知学习被压到 unknown
 - 最近 200 条 opportunities 的 regime_tag：150 条 None、50 条 sideways；最近 500 条
   universe_members 的 regime_tag：500 条 None（100%）。
@@ -71,6 +80,8 @@ vol 4.6% / short 1.4%。**偏斜在 member 层就已存在**——不是 emit �
 - **RC3a 修复**（`models.py` + `service.py`）：`UniverseMember` 恢复 `regime_tag` 字段，
   `UniverseService.refresh` 把当前 `market_regimes.state` 写入 member 与内存 member dict。
   锁定 spec **UP-18**（model field + migration column + DB round-trip + service assignment）。
+- **RC2b 修复**（`service.py`）：member 去重从“最高分 spot 可覆盖 perp”改为“同 symbol
+  保留配置首选 market；auto 默认 perp”。锁定 spec **OD-S02d**。
 
 **量化预期**：合成池（81% momentum 输入、regime=None）下，选中集 momentum 占比从
 ~84% 降到配额上限附近（≈30–50%，视非 momentum 候选供给），mean_reversion / volatility /
