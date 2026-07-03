@@ -11,7 +11,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 5. System Operator、机会排序器、Risk Engine 会读取这些学习结果。
 6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Active Guards 和学习漏斗。
 
-但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 4 个关键点：结构化检索过滤、矛盾检测、Learning 管理动作、SkillStore/时间衰减机制。
+但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 4 个关键点：历史 scanner_family 覆盖补齐、矛盾检测、Learning 管理动作、SkillStore/时间衰减机制。
 
 ## 当前量化状态
 
@@ -21,6 +21,9 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | --- | ---: | --- |
 | `knowledge_items` 数据库大小 | 431.6 MB | 学习/审计数据已经有明显体量 |
 | active `trade_case_study` | 174 条 | 已经有可被 Learning 使用的交易案例；93 条 synthetic 历史污染已软归档 |
+| active high-confidence `trade_case_study` | 78 条 | 当前真正会进入 FTS 学习检索的交易案例 |
+| high-confidence case study 带 symbol/direction | 78 / 78 条 | symbol/direction 过滤覆盖完整 |
+| high-confidence case study 带真实 scanner_family | 9 / 78 条 | 历史 scanner_family 覆盖不足，是下一步数据补齐问题 |
 | active `guard_candidate` | 131 条 | 已经能自动产生候选防守规则 |
 | active high-confidence research notes | 397 条 | 市场研究知识已进入知识库 |
 | active strategy memory | 56 条 | 策略记忆有持久化 |
@@ -119,15 +122,36 @@ dry-run: {'matched': 93, 'archived': 0, 'remaining_active': 93, 'reindexed': Non
 real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 569, 'dry_run': False}
 ```
 
+### Learning 检索缺少结构化过滤
+
+问题：`retrieve_lessons("BTC/USDT long momentum")` 过去只做全文 token 匹配，会把 SOL、DOGE、FIL、AAVE 等其他币种案例召回。机会排序器虽然把 `symbol + direction + scanner_family` 拼进 query，但检索层没有把它们当成硬条件。
+
+修复：
+
+- `retrieve_lessons()` 新增 `symbol` / `direction` / `scanner_family` 可选过滤参数。
+- FTS 仍负责候选召回，但返回前会读取 canonical knowledge item 的 frontmatter，按结构化字段做二次过滤。
+- 机会排序器 `_lesson_penalty()` 现在把机会的 symbol、direction、scanner_family 明确传入检索层。
+- 修复新建 `trade_case_study` 时 FTS `outcome` 可能为空的问题：创建时如果正文无 frontmatter，会回读已写入文件的 frontmatter，确保亏损/盈利结果立即可用于 ranker。
+
+量化结果：
+
+| 查询 | 修复前/未过滤召回 | 修复后结构化过滤 |
+| --- | --- | --- |
+| `BTC/USDT long momentum` | 5 条，来自 SOL/DOGE/FIL/AAVE | 0 条，因当前没有 BTC long momentum 高置信案例 |
+| `BTC/USDT short stop_loss` | 5 条，混入 DOGE/ETH/SOL/FIL | 2 条，均为 BTC/USDT short |
+| `SOL/USDT long momentum` | 5 条，混入 DOGE/FIL/AAVE | 0 条，因现有 SOL momentum 案例是 medium_confidence，不进入 FTS |
+
+这次修复的意义不是“返回更多”，而是“宁可没有足够证据，也不拿别的币种/方向/来源当证据”。这符合 Learning 的语义诚实要求。
+
 ## 仍需处理的问题
 
-### P0：Learning 检索缺少结构化过滤
+### P1：历史 case study 的 scanner_family 覆盖不足
 
-当前 `retrieve_lessons("BTC/USDT long momentum")` 会返回一些 SOL、DOGE、FIL、AAVE 的案例。这不是系统崩坏，但说明全文检索使用的是较宽松的 token 匹配，symbol/direction/scanner 没有被作为硬过滤条件。
+当前 78 条 active high-confidence case study 全部带 symbol/direction，但只有 9 条带真实 scanner_family。结构化过滤修复后，scanner_family 维度会更诚实，也会暴露历史数据覆盖不足。
 
-影响：机会排序器和 System Operator 可能读到“语义相关但交易对象不相关”的历史案例，降低判断准确率。
+影响：对于 scanner_family 明确的机会，系统可能因为历史案例缺少同 scanner_family 证据而返回 0 条 lesson。这不会污染判断，但会降低可学习样本量。
 
-建议：给 `trade_case_study` 的 frontmatter/metadata 建立统一字段，并让检索支持 symbol、direction、scanner_family 的可选过滤。
+建议：对历史 case study 做一次只读归因补齐或降级，目标是把真实 scanner_family 覆盖率从 9/78 提升到可解释水平；不能补齐的不要伪造，应保留 unknown。
 
 ### P1：矛盾检测仍是空实现
 
@@ -158,7 +182,7 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 ## 下一步建议
 
-1. 给 `retrieve_lessons` 增加结构化过滤，优先保证同 symbol / direction / scanner 的经验被读取。
+1. 补齐或降级历史 case study 的 scanner_family 覆盖，目标是减少结构化过滤后的“无证据”结果。
 2. 给 Learning 页面补人工审核入口，让 owner 能确认或否决系统总结出的规则。
 3. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
 4. 处理 55 条缺少正文的 high-confidence 知识，目标是恢复正文或降级退出 FTS 期望池。
@@ -202,6 +226,18 @@ uv run pytest tests/test_knowledge_maintenance.py tests/test_fts_coverage.py tes
 20 passed in 3.59s
 ```
 
+新增结构化 Learning 检索测试：
+
+```powershell
+uv run pytest tests/test_fts_coverage.py tests/test_learning_loop_integration.py tests/test_experience_loop.py tests/test_knowledge_maintenance.py -q
+```
+
+结果：
+
+```text
+26 passed in 3.67s
+```
+
 补充 API 采样：
 
 | 接口 | 结果 |
@@ -213,3 +249,5 @@ uv run pytest tests/test_knowledge_maintenance.py tests/test_fts_coverage.py tes
 | `/api/knowledge?type=trade_case_study` | 本次修复前 400，修复后由测试覆盖为 200 |
 | `/api/knowledge?type=trade_case_study` | 清理并重启 gateway 后 200，84ms |
 | `/api/analytics/learning-funnel` | 清理并重启 gateway 后 200，16ms |
+| `/api/knowledge?type=trade_case_study` | 结构化检索修复并重启 gateway 后 200，94ms |
+| `/api/analytics/learning-funnel` | 结构化检索修复并重启 gateway 后 200，30ms |
