@@ -270,6 +270,64 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 
 ---
 
+## 十一、分层 marker 与慢测试二分类（2026-07-03）
+
+`pyproject.toml` 和 `tests/conftest.py` 现在把 pytest collection 自动分成四层：
+
+| Marker | 用途 |
+|---|---|
+| `tier_unit` | 日常最快回归，纯函数/局部模块为主 |
+| `tier_integration` | 跨 route / DB / scheduler / runtime / broker 边界 |
+| `tier_e2e` | 端到端 pipeline 和 `_e2e` 文件 |
+| `tier_spec` | `tests/specs/spec_*.py` 与 spec conformance matrix |
+
+领域 marker 也会自动添加：`domain_operator` / `domain_universe` /
+`domain_serenity` / `domain_risk` / `domain_execution` / `domain_market_data` /
+`domain_learning` / `domain_frontend` / `domain_runtime` / `domain_storage` /
+`domain_security` / `domain_config` / `domain_misc`。
+
+常用命令：
+
+```powershell
+# 日常最快层
+uv run pytest -m tier_unit -q
+
+# 只跑一个领域
+uv run pytest -m "tier_integration and domain_operator" -q
+
+# 只跑上次失败；cacheprovider 已启用，.pytest_cache/ 被 .gitignore 排除
+uv run pytest --lf -q
+uv run pytest --ff -q
+
+# 慢任务挖掘 + 二分类
+uv run pytest tests/ -q --tb=no --durations=20 2>&1 |
+  uv run python scripts/pytest_slow_classifier.py --threshold 1.0
+```
+
+慢测试二分类脚本只按 pytest phase 做可解释分类：
+
+| Tag | 含义 |
+|---|---|
+| `slow_optimizable` | `call` 阶段慢，优先检查 mock、fixture、provider retry、DB fan-out |
+| `slow_structural` | `setup` / `teardown` 慢，多数是框架、lifespan、fixture 成本 |
+
+2026-07-03 实测：
+
+- 默认 collection：`2274 tests collected in 1.82s`
+- 四层覆盖：`tier_unit=1230`, `tier_integration=416`, `tier_e2e=63`, `tier_spec=565`
+  ，总和正好 2274，层级覆盖率 100%。
+- `tier_unit`: `1228 passed, 1 skipped, 1044 deselected`，pytest 时间 59.88s。
+- `tier_e2e`: `63 passed, 2210 deselected`，pytest 时间 5.73s。
+- 全量含 `spec_*.py`: `2246 passed, 10 failed, 10 skipped, 7 xfailed`，
+  pytest 时间 164.98s；失败率 0.44%（10/2274），不是测试框架崩溃。
+- 全量 slow top 20 二分类：`slow_optimizable=20`, `slow_structural=0`，
+  说明当前最慢项集中在 test body，不是 setup/teardown。
+
+注意：`spec_*.py` 现在被 `python_files` 默认收集。这样会更准确地暴露 SDD
+契约红灯；当前 spec 层仍有红灯，不应通过禁收集或静默 xfail 掩盖。
+
+---
+
 ## 实测基线复核 (2026-07-03)
 
 全量 `uv run pytest tests/ -q`:**110s / 1699 测试**(1686 passed, 3 skipped,

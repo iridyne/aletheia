@@ -27,8 +27,9 @@ def _import_all_specs():
         # EXPERIMENT FREEZE). Their claims are status="missing" + xfail(strict): they
         # describe the decision-chain learning fixes to apply on Round 2 解冻当天 (see
         # docs/plans/round2_week1_decision_chain_fixes.md). They were NOT in this list
-        # before — i.e. the tripwires existed on disk but were never collected/armed
-        # (the SDD collection trap: spec_*.py do not match pytest python_files).
+        # before — i.e. the tripwires existed on disk but were only armed through
+        # this matrix or explicit file paths. pyproject now includes spec_*.py in
+        # python_files, so tests/specs/ is directly collectible too.
         spec_learning_pipeline,
         spec_strategy_pool,
         spec_futures_leverage,
