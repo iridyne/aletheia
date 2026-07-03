@@ -102,6 +102,11 @@ def test_layer3_lessons_filter_aligned():
         pytest.skip("no production app.db on this machine")
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
     try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_items'"
+        ).fetchone()
+        if not exists:
+            pytest.skip("production app.db has no knowledge_items table to evaluate")
         n = conn.execute(
             "SELECT COUNT(*) FROM knowledge_items WHERE item_type='trade_case_study'"
         ).fetchone()[0]
@@ -310,6 +315,11 @@ def test_runtime_pi_decisions_carry_opportunity_id():
 
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
     try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pi_decisions'"
+        ).fetchone()
+        if not exists:
+            pytest.skip("production app.db has no pi_decisions table to evaluate")
         rows = conn.execute(
             "SELECT opportunity_id FROM pi_decisions "
             "WHERE action = 'signal_pending' "
@@ -463,6 +473,11 @@ def test_applied_policy_version_closure():
         pytest.skip("no production app.db on this machine")
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
     try:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ps_lessons'"
+        ).fetchone()
+        if not exists:
+            pytest.skip("production app.db has no ps_lessons table to evaluate")
         cols = [r[1] for r in conn.execute("PRAGMA table_info(ps_lessons)")]
     finally:
         conn.close()

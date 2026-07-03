@@ -619,7 +619,7 @@ def _write_config(tmp_path, monkeypatch, paper_execution_mode: str, mode: str = 
         "trading": {"auto_adopt_enabled": True, "exchange_tpsl_enabled": exchange_tpsl_enabled},
     }), encoding="utf-8")
     monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
-    loader._cached_config = None
+    loader._invalidate_config_cache()
 
 
 @spec_claim(
@@ -1161,7 +1161,7 @@ def test_drawdown_scale_skips_on_incomplete_view(tmp_path, monkeypatch):
         repo.insert_portfolio_snapshot(PortfolioSnapshot(
             total_value_usdt=v, unrealized_pnl=0.0, realized_pnl=0.0,
             positions_count=0, execution_mode="exchange_account",
-            created_at=f"2026-07-02T00:0{i}:00+00:00",
+            snapshot_at=f"2026-07-02T00:0{i}:00+00:00",
         ))
 
     from aletheia.risk import engine

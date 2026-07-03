@@ -33,6 +33,7 @@ class TestLessonAwareScoring:
                 item_id="l1", item_type="trade_case_study",
                 title="Loss on BTC long", snippet="This trade resulted in a loss of -3.5%",
                 confidence="high_confidence", created_at="2026-06-17T00:00:00Z", score=0.8,
+                outcome="loss",
             ),
         ]
         with patch("aletheia.knowledge.retrieval.retrieve_lessons", return_value=mock_lessons):
@@ -62,7 +63,8 @@ class TestLessonAwareScoring:
         mock_lessons = [
             Lesson(item_id=f"l{i}", item_type="trade_case_study",
                    title=f"Loss {i}", snippet="massive loss and drawdown failure",
-                   confidence="high_confidence", created_at="2026-06-17T00:00:00Z", score=1.0)
+                   confidence="high_confidence", created_at="2026-06-17T00:00:00Z", score=1.0,
+                   outcome="loss")
             for i in range(5)
         ]
         with patch("aletheia.knowledge.retrieval.retrieve_lessons", return_value=mock_lessons):

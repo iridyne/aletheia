@@ -384,6 +384,11 @@ def test_exchange_set_leverage_wiring():
               "strategy must not take a perp opportunity)"),
 )
 def test_strategy_market_type_affinity_filters_ranker():
+    pytest.skip(
+        "FL-S17 superseded by Position C 2026-07-02: paper ranker treats "
+        "linked_strategy_id as attribution and no longer resolves StrategyRecord "
+        "market affinity."
+    )
     import json as _json
     from aletheia.storage.models import StrategyRecord, Opportunity, MarketSnapshot
     from aletheia.storage import repositories as repo
