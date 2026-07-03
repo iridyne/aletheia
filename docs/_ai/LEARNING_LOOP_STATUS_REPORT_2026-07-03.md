@@ -20,10 +20,10 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | 指标 | 当前值 | 说明 |
 | --- | ---: | --- |
 | `knowledge_items` 数据库大小 | 431.6 MB | 学习/审计数据已经有明显体量 |
-| active `trade_case_study` | 174 条 | 已经有可被 Learning 使用的交易案例；93 条 synthetic 历史污染已软归档 |
-| active high-confidence `trade_case_study` | 78 条 | 当前真正会进入 FTS 学习检索的交易案例 |
-| high-confidence case study 带 symbol/direction | 78 / 78 条 | symbol/direction 过滤覆盖完整 |
-| high-confidence case study 带真实 scanner_family | 9 / 78 条 | 历史 scanner_family 覆盖不足，是下一步数据补齐问题 |
+| active `trade_case_study` | 168 条 | 已经有可被 Learning 使用的交易案例；所有已知 synthetic 历史污染已软归档 |
+| active high-confidence `trade_case_study` | 75 条 | 当前真正会进入 FTS 学习检索的交易案例 |
+| high-confidence case study 带 symbol/direction | 75 / 75 条 | symbol/direction 过滤覆盖完整 |
+| high-confidence case study 带真实 scanner_family | 9 / 75 条 | 历史 scanner_family 覆盖不足，已用同 symbol/direction fallback 缓解 |
 | active `guard_candidate` | 131 条 | 已经能自动产生候选防守规则 |
 | active high-confidence research notes | 397 条 | 市场研究知识已进入知识库 |
 | active strategy memory | 56 条 | 策略记忆有持久化 |
@@ -31,7 +31,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | `ps_lessons` proposed | 67 条 | 候选 lesson 已形成 |
 | `ps_lessons` applied | 25 条 | 已有 lesson 被应用到策略/风控读取路径 |
 | lesson policy versions | 7 个 active | 说明 lesson reviewer 已经产出可追踪版本 |
-| FTS 可检索知识 | 569 条 | 只有 high-confidence active 知识进入全文检索 |
+| FTS 可检索知识 | 566 条 | 只有 high-confidence active 知识进入全文检索 |
 | `retrieve_lessons` 工具调用 | 2006 次 | agent 已经实际调用学习检索 |
 | `build_case_studies` 调用 | 566 次 | 交易案例构建器持续运行 |
 | `detect_guard_candidates` 调用 | 566 次 | guard 候选生成持续运行 |
@@ -122,6 +122,19 @@ dry-run: {'matched': 93, 'archived': 0, 'remaining_active': 93, 'reindexed': Non
 real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 569, 'dry_run': False}
 ```
 
+补充清理（2026-07-03）：维护命令最初只覆盖 `reconciled_gone` / `demo_validation_cleanup`，后来发现统一 synthetic close reason 清单还包括 `units_bug_cleanup` / `retry_after_fix`。已修复维护命令，改为复用 `SYNTHETIC_CLOSE_REASONS` 单一来源，并再次执行软归档。
+
+补充量化结果：
+
+| 项目 | 数量 |
+| --- | ---: |
+| `units_bug_cleanup` active case study | 6 -> 0 |
+| `units_bug_cleanup` FTS active case study | 3 -> 0 |
+| `retry_after_fix` active case study | 0 -> 0 |
+| 4 类 synthetic close reason active case study | 全部 0 |
+| 4 类 synthetic close reason FTS active case study | 全部 0 |
+| 第二次 FTS 重建后索引总量 | 566 |
+
 ### Learning 检索缺少结构化过滤
 
 问题：`retrieve_lessons("BTC/USDT long momentum")` 过去只做全文 token 匹配，会把 SOL、DOGE、FIL、AAVE 等其他币种案例召回。机会排序器虽然把 `symbol + direction + scanner_family` 拼进 query，但检索层没有把它们当成硬条件。
@@ -143,11 +156,35 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 这次修复的意义不是“返回更多”，而是“宁可没有足够证据，也不拿别的币种/方向/来源当证据”。这符合 Learning 的语义诚实要求。
 
+### 当前架构下的 case study 质量门修正
+
+问题：`trade_case_builder` 仍把 `strategy_id` 作为 high-confidence 的必要条件。但 Strategy/RuleSet 引擎已经移除，新的短线交易链路不再稳定携带 `strategy_id`。这会让有 proposal/opportunity/scanner 的真实交易案例被降成 medium-confidence，无法进入 FTS。
+
+修复：
+
+- `has_full_chain` 从 `proposal_id + opportunity_id + strategy_id` 改为 `proposal_id + opportunity_id`。
+- 理由：proposal 证明交易执行链，opportunity 证明信号来源链；strategy_id 不再是当前架构的必要归因字段。
+- 增加测试，锁住“无 strategy_id 但有 proposal/opportunity 仍可作为完整归因案例”。
+
+同时，为了让历史 case study 在 scanner_family 覆盖不足时仍有价值：
+
+- `_lesson_penalty()` 先查同 `symbol + direction + scanner_family`。
+- 如果没有结果，再 fallback 到同 `symbol + direction`。
+- 不会 fallback 到其他 symbol 或其他 direction。
+
+真实采样：
+
+| 查询 | scanner 精确结果 | fallback 结果 | Ranker 处罚 |
+| --- | ---: | ---: | ---: |
+| `SOL/USDT long momentum` | 0 条 | 5 条同 SOL long | -13.880216 |
+| `BTC/USDT short momentum` | 0 条 | 2 条同 BTC short | -6.996936 |
+| `BTC/USDT long momentum` | 0 条 | 1 条同 BTC long scratch | 0 |
+
 ## 仍需处理的问题
 
 ### P1：历史 case study 的 scanner_family 覆盖不足
 
-当前 78 条 active high-confidence case study 全部带 symbol/direction，但只有 9 条带真实 scanner_family。结构化过滤修复后，scanner_family 维度会更诚实，也会暴露历史数据覆盖不足。
+当前 75 条 active high-confidence case study 全部带 symbol/direction，但只有 9 条带真实 scanner_family。结构化过滤修复后，scanner_family 维度会更诚实，也会暴露历史数据覆盖不足。
 
 影响：对于 scanner_family 明确的机会，系统可能因为历史案例缺少同 scanner_family 证据而返回 0 条 lesson。这不会污染判断，但会降低可学习样本量。
 
@@ -236,6 +273,18 @@ uv run pytest tests/test_fts_coverage.py tests/test_learning_loop_integration.py
 
 ```text
 26 passed in 3.67s
+```
+
+新增当前架构归因门和 fallback 测试：
+
+```powershell
+uv run pytest tests/test_knowledge_maintenance.py tests/test_trade_case_builder.py tests/test_learning_loop_integration.py tests/test_fts_coverage.py tests/test_experience_loop.py -q
+```
+
+结果：
+
+```text
+56 passed in 3.69s
 ```
 
 补充 API 采样：
