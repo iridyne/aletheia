@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -298,6 +299,63 @@ async def test_resume_agents_blocks_when_llm_unavailable(tmp_path, monkeypatch):
     assert result["error"].startswith("Resume blocked")
     assert result["resume_gate"]["reason"] == "llm_unavailable"
     assert loader.load_config().runtime.paused is True
+
+
+def _insert_recent_proposal(conn, i: int, direction: str) -> None:
+    created_at = (datetime.now(timezone.utc) - timedelta(minutes=i)).isoformat()
+    conn.execute(
+        "INSERT INTO trade_proposals (id, symbol, market_type, direction, created_at, source) "
+        "VALUES (?,?,?,?,?,?)",
+        (f"bias-p{i}", "BTC/USDT", "spot", direction, created_at, "native"),
+    )
+    conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_trading_decision_brakes_one_sided_recent_proposals(tmp_path, monkeypatch):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    for i in range(22):
+        _insert_recent_proposal(conn, i, "long")
+
+    from aletheia.agent_shell import trading_decision as td
+
+    monkeypatch.setattr(td, "_assess_opportunity", AsyncMock(return_value={
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "conviction": 70,
+        "reasoning": "momentum continuation",
+    }))
+    debate = AsyncMock()
+    monkeypatch.setattr(td, "_run_debate", debate)
+
+    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+
+    assert decision.action == "watch"
+    assert "directional proposal brake" in decision.reasoning
+    debate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_trading_decision_bias_brake_allows_high_conviction(tmp_path, monkeypatch):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    for i in range(22):
+        _insert_recent_proposal(conn, i, "long")
+
+    from aletheia.agent_shell import trading_decision as td
+
+    monkeypatch.setattr(td, "_assess_opportunity", AsyncMock(return_value={
+        "action": "trade",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "conviction": 90,
+        "reasoning": "exceptionally clean setup",
+    }))
+
+    decision = await td.evaluate_trading_opportunity({"layer1": {"opportunities": []}})
+
+    assert decision.action == "trade"
+    assert decision.position_size_usdt is not None
 
 
 # --- Synthesis fallback tests ---

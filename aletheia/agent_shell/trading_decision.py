@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger("aletheia.agent_shell.trading_decision")
@@ -50,6 +51,10 @@ _MIN_CONVICTION_TO_TRADE = 55       # below this, skip (even after debate)
 _DEBATE_RANGE = (40, 80)            # conviction in this range triggers debate
 _MAX_CONVICTION_MULTIPLIER = 2.0    # cap: 2× base notional at 100% conviction
 _MIN_CONVICTION_MULTIPLIER = 0.5    # floor: 0.5× base notional at low conviction
+_BIAS_BRAKE_WINDOW_HOURS = 24
+_BIAS_BRAKE_MIN_PROPOSALS = 20
+_BIAS_BRAKE_MAX_DIRECTION_PCT = 0.80
+_BIAS_BRAKE_BYPASS_CONVICTION = 85
 
 
 @dataclass
@@ -184,6 +189,12 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
     # "scale_in" and "flip" are trade-like actions that go through debate+sizing
     trade_actions = ("trade", "scale_in", "flip")
+
+    bias_brake_reason = _proposal_bias_brake_reason(decision)
+    if bias_brake_reason:
+        decision.action = "watch"
+        decision.reasoning = f"{decision.reasoning} [{bias_brake_reason}]"
+        return decision
 
     # Run debate for uncertain conviction range
     if (decision.action in trade_actions
@@ -462,6 +473,46 @@ def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
         return int(row[0]) if row else 0
     except Exception:
         return 0
+
+
+def _proposal_bias_brake_reason(decision: TradingDecision) -> str | None:
+    """Stop ordinary-conviction proposals from amplifying a one-sided 24h run.
+
+    This is a proposal-layer guardrail, not a trading signal. It never forces the
+    opposite direction; it only turns another same-direction trade into watch when
+    the recent proposal stream is already dominated by that direction.
+    """
+    if decision.action not in ("trade", "scale_in", "flip"):
+        return None
+    if decision.direction not in ("long", "short"):
+        return None
+    if decision.conviction >= _BIAS_BRAKE_BYPASS_CONVICTION:
+        return None
+    try:
+        from aletheia.storage.sqlite import get_db
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=_BIAS_BRAKE_WINDOW_HOURS)).isoformat()
+        rows = list(get_db().execute(
+            "SELECT direction, COUNT(*) n FROM trade_proposals "
+            "WHERE created_at >= ? AND source != 'adopted' "
+            "GROUP BY direction ORDER BY n DESC",
+            (cutoff,),
+        ))
+    except Exception as e:
+        logger.debug("proposal bias brake skipped: %s", e)
+        return None
+
+    total = sum(int(r["n"]) for r in rows)
+    if total < _BIAS_BRAKE_MIN_PROPOSALS or not rows:
+        return None
+    top_dir = rows[0]["direction"]
+    top_n = int(rows[0]["n"])
+    top_pct = top_n / total if total else 0
+    if top_dir != decision.direction or top_pct <= _BIAS_BRAKE_MAX_DIRECTION_PCT:
+        return None
+    return (
+        f"directional proposal brake: recent {total} proposals are "
+        f"{top_pct:.0%} {top_dir}; waiting for cleaner evidence before adding another {top_dir}"
+    )
 
 
 # ── prompt builders ───────────────────────────────────────────────────────────

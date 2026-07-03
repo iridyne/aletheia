@@ -42,6 +42,31 @@ def test_chain_links_correctly(tmp_path):
     assert second["_prev_hash"] == first_hash
 
 
+def test_write_audit_rechecks_disk_after_external_append(tmp_path):
+    """A second process can append after this process cached the previous hash."""
+    from aletheia.files.jsonl import write_audit, verify_audit_chain, _hash_record
+
+    write_audit({"action": "first", "timestamp": "2026-01-01T00:00:00"})
+
+    path = tmp_path / "audit.jsonl"
+    first_line = path.read_text("utf-8").strip()
+    second_record = {
+        "action": "external",
+        "timestamp": "2026-01-01T00:00:30",
+        "_prev_hash": _hash_record(first_line),
+    }
+    second_line = json.dumps(second_record, ensure_ascii=False)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(second_line + "\n")
+
+    write_audit({"action": "third", "timestamp": "2026-01-01T00:01:00"})
+
+    lines = path.read_text("utf-8").strip().splitlines()
+    third = json.loads(lines[2])
+    assert third["_prev_hash"] == _hash_record(second_line)
+    assert verify_audit_chain()["valid"] is True
+
+
 def test_verify_valid_chain(tmp_path):
     from aletheia.files.jsonl import write_audit, verify_audit_chain
 

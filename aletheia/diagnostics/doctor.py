@@ -895,12 +895,22 @@ def _probe_reconciled_ratio(report: Report) -> None:
         detail = (f"last {total}: reconciled={reconciled}({recon_pct}%), "
                   f"units_bug={units_bug}, ai_driven={ai_driven}({ai_pct}%)")
         if recon_pct > 50:
-            report.add("loop.reconciled_ratio", "warn",
-                       f"reconciler dominates closes: {detail}",
-                       "judgement PF/WR is driven by orphan sweep, not AI — "
-                       "common cause: gateway restart while exchange TP/SL was active "
-                       "(okx_demo mode: _try_get_tpsl_fill_price is Bitget-only, "
-                       "so OKX TP/SL fills appear as reconciled_gone instead of take_profit/stop_loss)")
+            active_thrash = False
+            try:
+                from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
+                active_thrash = bool(detect_reconcile_thrash(window_minutes=30).get("churned_symbols"))
+            except Exception:
+                active_thrash = False
+            if active_thrash:
+                report.add("loop.reconciled_ratio", "warn",
+                           f"reconciler dominates closes: {detail}",
+                           "current close→reopen churn is present; judgement PF/WR is driven by "
+                           "orphan sweep rather than AI exits")
+            else:
+                report.add("loop.reconciled_ratio", "info",
+                           f"historical reconciler-dominated closes: {detail}; no active churn fingerprint",
+                           "recent judgement PF/WR remains polluted by historical orphan sweeps, but "
+                           "loop.reconcile_thrash is the current-fault detector")
         elif recon_pct > 25:
             report.add("loop.reconciled_ratio", "info",
                        f"reconciled noticeable: {detail}")
@@ -1431,21 +1441,20 @@ def _probe_audit_chain(report: Report) -> None:
     else:
         errors = result.get("errors", [])
         error_timestamps = result.get("error_timestamps", [])
-        # Splits at effective restart after the file-lock fix. Lock committed 2026-06-15
-        # (9ae782e) but gateway only restarted with new code around 2026-06-25T12:34 UTC —
-        # the last observed concurrent-writer race. Zero breaks since.
-        FILE_LOCK_TS = "2026-06-25T13:00:00"
+        # Split at the effective fix boundary. The file lock fixed same-process
+        # races, but cross-process writers could still reuse a stale per-process
+        # hash cache until write_audit started re-reading the tail under lock.
+        EFFECTIVE_CHAIN_FIX_TS = "2026-07-03T07:00:00"
         ts_padded = list(error_timestamps) + [""] * len(errors)
-        post_lock = [e for e, t in zip(errors, ts_padded) if t and t > FILE_LOCK_TS]
-        if not post_lock:
+        post_fix = [e for e, t in zip(errors, ts_padded) if t and t > EFFECTIVE_CHAIN_FIX_TS]
+        if not post_fix:
             report.add("trust.audit_chain", "info",
-                       f"{len(errors)} historical chain break(s), all pre-effective-lock "
-                       f"(before 2026-06-25T13:00 gateway restart); "
-                       f"zero post-lock breaks ({records} records{reanchor_extra})")
+                       f"{len(errors)} historical chain break(s), all before cross-process "
+                       f"hash-cache fix; zero post-fix breaks ({records} records{reanchor_extra})")
         else:
-            detail = f"chain BROKEN — {len(post_lock)} post-lock error(s) in {records} records: {post_lock[:3]}"
+            detail = f"chain BROKEN — {len(post_fix)} post-fix error(s) in {records} records: {post_fix[:3]}"
             report.add("trust.audit_chain", "warn", detail,
-                       "audit log may have been tampered with or corrupted (post file-lock break)")
+                       "audit log may have been tampered with or corrupted (post hash-cache fix)")
 
 
 def _probe_config_consistency(report: Report) -> None:

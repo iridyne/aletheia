@@ -38,8 +38,10 @@ async def download_symbol_history(
 ) -> DownloadResult:
     """Download historical OHLCV data for a symbol, persisting to SQLite.
 
-    Incremental: detects newest existing bar and only fetches the gap.
-    Paginates backward from now in chunks of 500 bars.
+    Incremental: fills both the left gap (before the oldest local bar) and the
+    right gap (after the newest local bar). New listings on some exchanges return
+    empty data when queried from far before listing, so left-gap fetches step
+    backward from the local oldest bar instead of starting at the month boundary.
     """
     from aletheia.config.loader import load_config
     from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
@@ -59,34 +61,35 @@ async def download_symbol_history(
 
     newest_existing = get_ohlcv_newest_ts(symbol, timeframe)
 
-    # Determine the oldest bar to detect left-gap (history before existing data)
+    # Determine the oldest bar to detect left-gap (history before existing data).
     from aletheia.storage.repositories import get_ohlcv_coverage
     cov = get_ohlcv_coverage(symbol, timeframe)
     oldest_existing = cov.get("oldest_ts")
-
-    # Two gaps can exist: left (before oldest) and right (after newest).
-    # Prioritize the left gap when oldest > start_ts (missing deep history).
-    if oldest_existing and oldest_existing > start_ts + tf_ms:
-        fetch_since = start_ts
-        fetch_until = oldest_existing - tf_ms
-    elif newest_existing and newest_existing > start_ts:
-        fetch_since = newest_existing + tf_ms
-        fetch_until = now_ms
-    else:
-        fetch_since = start_ts
-        fetch_until = now_ms
-
-    if fetch_since >= fetch_until:
-        return DownloadResult(symbol, timeframe, 0, newest_existing, newest_existing)
+    if not newest_existing:
+        newest_existing = cov.get("newest_ts")
 
     provider = get_market_data_provider(exchange=exchange)
     total_fetched = 0
     first_ts: int | None = None
     last_ts: int | None = None
     error: str | None = None
-    current_since = fetch_since
 
-    try:
+    def _record_page(candles: list) -> None:
+        nonlocal total_fetched, first_ts, last_ts
+        if not candles:
+            return
+        upsert_ohlcv_candles(symbol, timeframe, candles, exchange=exchange or "")
+        page_oldest = candles[0].timestamp
+        page_newest = candles[-1].timestamp
+        first_ts = page_oldest if first_ts is None else min(first_ts, page_oldest)
+        last_ts = page_newest if last_ts is None else max(last_ts, page_newest)
+        total_fetched += len(candles)
+        if progress_callback:
+            progress_callback(total_fetched)
+
+    async def _fetch_forward(fetch_since: int, fetch_until: int) -> None:
+        nonlocal error
+        current_since = fetch_since
         while current_since < fetch_until and total_fetched < max_bars:
             try:
                 candles = await provider.get_ohlcv(
@@ -101,25 +104,50 @@ async def download_symbol_history(
             if not candles:
                 break
 
-            upsert_ohlcv_candles(symbol, timeframe, candles, exchange=exchange or "")
+            candles = [c for c in candles if fetch_since <= c.timestamp < fetch_until]
+            if not candles:
+                break
 
-            page_oldest = candles[0].timestamp
-            page_newest = candles[-1].timestamp
-
-            if first_ts is None:
-                first_ts = page_oldest
-            last_ts = page_newest
-            total_fetched += len(candles)
-
-            if progress_callback:
-                progress_callback(total_fetched)
-
-            current_since = page_newest + tf_ms
+            _record_page(candles)
+            current_since = candles[-1].timestamp + tf_ms
 
             if len(candles) < _PAGE_SIZE:
                 break
 
             await asyncio.sleep(_RATE_LIMIT_SEC)
+
+    try:
+        if oldest_existing and newest_existing:
+            # Left gap: fetch near the local oldest bar first. Querying from the
+            # distant requested start can return an empty page for new listings.
+            left_cursor = oldest_existing
+            while left_cursor > start_ts + tf_ms and total_fetched < max_bars:
+                window_since = max(start_ts, left_cursor - _PAGE_SIZE * tf_ms)
+                try:
+                    candles = await provider.get_ohlcv(
+                        symbol, timeframe, limit=_PAGE_SIZE, since=window_since
+                    )
+                except Exception as e:
+                    error = str(e)
+                    logger.warning("history_downloader: fetch failed %s %s since=%d: %s",
+                                   symbol, timeframe, window_since, e)
+                    break
+
+                candles = [c for c in (candles or []) if window_since <= c.timestamp < left_cursor]
+                if not candles:
+                    break
+
+                _record_page(candles)
+                left_cursor = candles[0].timestamp
+
+                if len(candles) < _PAGE_SIZE:
+                    break
+
+                await asyncio.sleep(_RATE_LIMIT_SEC)
+
+            await _fetch_forward(newest_existing + tf_ms, now_ms)
+        else:
+            await _fetch_forward(start_ts, now_ms)
     finally:
         await provider.close()
 

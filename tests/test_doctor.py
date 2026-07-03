@@ -328,3 +328,23 @@ def test_reconcile_thrash_probe_warns_on_fingerprint(tmp_path, monkeypatch):
     c = next(c for c in r.checks if c.name == "loop.reconcile_thrash")
     assert c.severity == "warn", f"thrash fingerprint must warn, got {c.severity}: {c.detail}"
     assert "churned" in c.detail
+
+
+def test_reconciled_ratio_high_without_active_thrash_is_info(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+
+    now = datetime.now(timezone.utc).isoformat()
+    for i in range(12):
+        repo.insert_position(Position(
+            symbol=f"T{i}/USDT", market_type="usdt_futures", direction="long",
+            quantity=1.0, entry_price=100.0, execution_mode="okx_demo",
+            status="closed", close_reason="reconciled_gone", closed_at=now,
+        ))
+
+    r = dx.Report(generated_at="t")
+    dx._probe_reconciled_ratio(r)
+    c = next(c for c in r.checks if c.name == "loop.reconciled_ratio")
+    assert c.severity == "info"
+    assert "no active churn" in c.detail
