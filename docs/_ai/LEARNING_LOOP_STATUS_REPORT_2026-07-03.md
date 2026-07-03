@@ -1,0 +1,182 @@
+# Learning Loop 状态进展报告（2026-07-03）
+
+## 结论
+
+Learning 已经不是空页面或单纯日志展示。当前系统具备一条可运行的学习闭环：
+
+1. 平仓/成交/机会归因进入后端。
+2. `trade_case_study` 把真实交易过程整理成可复用案例。
+3. Dreaming Agent 从案例中提炼 `ps_lessons`。
+4. Lesson Reviewer 把证据足够的 lesson 变成 active policy。
+5. System Operator、机会排序器、Risk Engine 会读取这些学习结果。
+6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Active Guards 和学习漏斗。
+
+但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 4 个关键点：历史污染数据清理、结构化检索过滤、矛盾检测、SkillStore/时间衰减机制。
+
+## 当前量化状态
+
+数据来自本机 `data/app.db`，查询时间为 2026-07-03。
+
+| 指标 | 当前值 | 说明 |
+| --- | ---: | --- |
+| `knowledge_items` 数据库大小 | 431.6 MB | 学习/审计数据已经有明显体量 |
+| active `trade_case_study` | 267 条 | 已经有可被 Learning 使用的交易案例 |
+| active `guard_candidate` | 131 条 | 已经能自动产生候选防守规则 |
+| active high-confidence research notes | 397 条 | 市场研究知识已进入知识库 |
+| active strategy memory | 56 条 | 策略记忆有持久化 |
+| active daily review | 12 条 | 日度复盘存在 |
+| `ps_lessons` proposed | 67 条 | 候选 lesson 已形成 |
+| `ps_lessons` applied | 25 条 | 已有 lesson 被应用到策略/风控读取路径 |
+| lesson policy versions | 7 个 active | 说明 lesson reviewer 已经产出可追踪版本 |
+| FTS 可检索知识 | 614 条 | 只有 high-confidence active 知识进入全文检索 |
+| `retrieve_lessons` 工具调用 | 2006 次 | agent 已经实际调用学习检索 |
+| `build_case_studies` 调用 | 566 次 | 交易案例构建器持续运行 |
+| `detect_guard_candidates` 调用 | 566 次 | guard 候选生成持续运行 |
+| Learning 相关测试 | 82 passed, 1 xfailed | xfail 是已知的 time-decay 缺口 |
+
+## 已经实现的能力
+
+### 1. 从交易历史中学习
+
+已实现。`post_trade_reviewer` 和 `trade_case_builder` 会从历史成交、平仓原因、机会归因、策略 ID、scanner family 等数据生成案例。高质量案例会进入 `trade_case_study`，并被后续 agent 读取。
+
+关键证据：
+
+- `trade_case_builder` 已过滤新的 `reconciled_gone` / `demo_validation_cleanup` 这类非真实关闭原因。
+- `trade_case_study` 进入 System Operator 的 Layer3 wisdom。
+- `paper_trader_ranker` 会检索亏损案例，对相似机会降权。
+- `risk_engine` 会读取 applied lessons，对 `block_symbol` / `block_direction` / `block_scanner` 进行约束。
+
+### 2. 从经验中形成可执行 lesson
+
+已实现一半以上。Dreaming Agent 会读取 `trade_case_study`，提炼结构化 lesson，Lesson Reviewer 会根据证据进行 promoted / rejected / demoted，并写入 policy version。
+
+这说明系统已经可以把“复盘文本”推进到“可执行规则”的阶段，而不是只把复盘存在 Markdown 里。
+
+### 3. 前端展示 Learning 状态
+
+已实现监控型界面。Learning 页面可以展示：
+
+- Dreaming summary
+- Knowledge Base
+- Post-Trade Lessons
+- Active Guards
+- Learning Funnel
+
+但当前页面主要是只读状态，不是完整的 Learning 管理台。它还缺少对 lesson/guard 的人工确认、归档、拒绝、晋升入口。
+
+### 4. 局部自修复
+
+部分实现。Lesson Reviewer 已经能在证据变差时 demote accepted lessons，Knowledge Manager 禁止硬删除、支持 archive/deprecate，避免错误知识被直接抹掉。
+
+但更高阶的自修复仍缺失：知识之间的矛盾检测还是 stub，历史污染案例不会自动清理，旧规则随时间衰减/失效的机制还没有真正完成。
+
+## 本次发现并修复的问题
+
+### API 白名单没有覆盖真实 Learning 类型
+
+问题：`/api/knowledge?type=...` 只允许 5 种老类型，拒绝了 `trade_case_study`、`guard_candidate`、`trading_guard`、`trading_memo` 等真实 Learning 类型。结果是：后端已有数据，但通用 API 会返回 400，容易让前端或后续 AI 误判“Learning 没数据”。
+
+修复：
+
+- 补齐 `VALID_KNOWLEDGE_TYPES`，覆盖 Learning 合约中的真实类型。
+- 新增回归测试，确认 Learning 类型返回 200，未知类型仍返回 400。
+
+量化结果：
+
+- 修复前：`/api/knowledge?type=trade_case_study` 返回 400。
+- 修复后：测试覆盖 4 个 Learning 类型，全部返回 200。
+- 未放宽安全边界：未知类型仍返回 400。
+
+## 仍需处理的问题
+
+### P0：历史污染案例仍在 active 和 FTS 中
+
+虽然新代码已经阻止新的 `reconciled_gone` / `demo_validation_cleanup` 案例进入学习语料，但历史数据还在：
+
+| 项目 | 数量 |
+| --- | ---: |
+| active `trade_case_study` 总数 | 267 |
+| active 中带 synthetic close reason 的案例 | 93 |
+| 仍在 FTS 检索索引中的 synthetic active 案例 | 46 |
+
+影响：这些不是真实交易经验，但可能被 System Operator、ranker 或 Dreaming 检索到，污染“系统从交易历史学习”的质量。
+
+建议处理方式：不硬删除。写一个一次性维护命令，将这些案例 archive/deprecate，并重建 FTS 索引。执行前后量化目标：
+
+- active synthetic case study：93 -> 0
+- FTS synthetic active case study：46 -> 0
+- hard delete：0
+
+### P0：Learning 检索缺少结构化过滤
+
+当前 `retrieve_lessons("BTC/USDT long momentum")` 会返回一些 SOL、DOGE、FIL、AAVE 的案例。这不是系统崩坏，但说明全文检索使用的是较宽松的 token 匹配，symbol/direction/scanner 没有被作为硬过滤条件。
+
+影响：机会排序器和 System Operator 可能读到“语义相关但交易对象不相关”的历史案例，降低判断准确率。
+
+建议：给 `trade_case_study` 的 frontmatter/metadata 建立统一字段，并让检索支持 symbol、direction、scanner_family 的可选过滤。
+
+### P1：矛盾检测仍是空实现
+
+`detect_contradictions()` 目前仍返回空列表。文档已经明确要求 UI 不能把它展示成“无矛盾”，只能说“未检测”。
+
+影响：系统还不会主动发现“旧规则和新证据冲突”。
+
+### P1：Learning 页面缺少管理动作
+
+前端可以看 Learning 状态，但不能完成 lesson/guard 的人工审核闭环。
+
+建议增加：
+
+- accept / reject proposed lesson
+- archive / deprecate low-quality knowledge
+- promote guard_candidate to trading_guard
+- 查看某个 lesson 的证据来源和最近效果
+
+### P2：SkillStore producer 和 time-decay 仍缺失
+
+当前 SkillStore 没有稳定 producer，time-decay overturn 仍是已知 xfail。这意味着系统已经能产生“规则”，但还没有形成长期“技能库”和自然衰减机制。
+
+## 下一步建议
+
+1. 先清理历史 synthetic case study，目标是 active/FTS 污染归零。
+2. 给 `retrieve_lessons` 增加结构化过滤，优先保证同 symbol / direction / scanner 的经验被读取。
+3. 给 Learning 页面补人工审核入口，让 owner 能确认或否决系统总结出的规则。
+4. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
+5. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
+
+## 验证记录
+
+已运行：
+
+```powershell
+uv run pytest tests/test_learning_stores.py tests/test_learning_loop_integration.py tests/test_knowledge.py tests/test_knowledge_router.py tests/test_knowledge_maintenance.py tests/specs/spec_learning_pipeline.py tests/specs/spec_lesson_guards.py tests/specs/spec_knowledge_fts.py -q
+```
+
+结果：
+
+```text
+79 passed, 3 skipped, 1 xfailed in 5.90s
+```
+
+新增 API 白名单回归测试：
+
+```powershell
+uv run pytest tests/test_server.py::test_knowledge_route_accepts_learning_item_types tests/test_server.py::test_knowledge_route_rejects_unknown_item_type -q
+```
+
+结果：
+
+```text
+2 passed in 1.74s
+```
+
+补充 API 采样：
+
+| 接口 | 结果 |
+| --- | --- |
+| `/api/analytics/learning-funnel` | repeated direct/frontdoor samples 全部 200，平均 4.8-19.6ms |
+| `/api/dreaming/summary` | 200 |
+| `/api/persistence/lessons?limit=20` | 200 |
+| `/api/knowledge/guards` | 200 |
+| `/api/knowledge?type=trade_case_study` | 本次修复前 400，修复后由测试覆盖为 200 |

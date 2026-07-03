@@ -54,6 +54,20 @@ async def test_status(client):
 
 
 @pytest.mark.anyio
+async def test_knowledge_route_accepts_learning_item_types(client):
+    for item_type in ("trade_case_study", "guard_candidate", "trading_guard", "trading_memo"):
+        resp = await client.get(f"/api/knowledge?type={item_type}")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_knowledge_route_rejects_unknown_item_type(client):
+    resp = await client.get("/api/knowledge?type=made_up_type")
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
 async def test_pause_resume(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
 

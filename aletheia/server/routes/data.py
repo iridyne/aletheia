@@ -35,11 +35,19 @@ from aletheia.trading.serenity_evidence import (
 router = APIRouter(prefix="/api", tags=["data"])
 
 VALID_KNOWLEDGE_TYPES = {
+    "calibration_report",
+    "dreaming_log",
+    "daily_review",
+    "guard_candidate",
+    "operator_assessment",
+    "post_trade_review",
+    "reasoning_feedback",
     "research_note",
     "strategy_memory",
-    "daily_review",
-    "dreaming_log",
-    "post_trade_review",
+    "system_action",
+    "trade_case_study",
+    "trading_guard",
+    "trading_memo",
 }
 
 
