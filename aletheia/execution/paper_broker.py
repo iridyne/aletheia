@@ -30,6 +30,7 @@ def execute_paper_order(
     execution_mode: str = "paper_internal",
     strategy_id: str | None = None,
     stop_price: float | None = None,
+    take_profit: float | None = None,
     leverage: int | None = None,
     opportunity_id: str | None = None,
     trade_school: str = "short_term",
@@ -100,7 +101,9 @@ def execute_paper_order(
         update_position(existing["id"], **update_kwargs)
         position_id = existing["id"]
     else:
-        take_profit_price = _take_profit_for(direction, fill_price)
+        # Prefer the System Operator's explicit take_profit (2026-07-03); fall back
+        # to the config-percentage TP anchored to fill for legacy proposals.
+        take_profit_price = take_profit if take_profit else _take_profit_for(direction, fill_price)
         filled_take_profit = take_profit_price
         attribution = _paper_position_attribution(symbol, fill_price, attribution_snapshot)
         btc_entry_price = attribution["btc_entry_price"]

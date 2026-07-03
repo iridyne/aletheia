@@ -64,6 +64,7 @@ class TradingDecision:
     opposing_signals: list[str] = field(default_factory=list)
     position_size_usdt: float | None = None
     stop_price: float | None = None
+    take_profit: float | None = None
     # Futures: which venue + leverage the PI chose. market_type defaults to
     # usdt_futures (the demo/perp venue) when the LLM omits it; leverage is the
     # PI's requested level, clamped to the per-tier cap at submit time.
@@ -118,6 +119,12 @@ _DECISION_SCHEMA = {
         # leverage: integer ≥1, only meaningful for usdt_futures. The risk engine
         # clamps this to the per-asset-tier cap, so a high request is safely reduced.
         "leverage": {"type": "integer", "minimum": 1, "maximum": 20},
+        # Entry discipline (owner discussion #6): the operator may commit an explicit
+        # stop and take-profit price at decision time. When omitted, the proposal
+        # builder derives them from config defaults so the four-element entry
+        # (entry/stop/tp/reward:risk) is always complete before the limit order.
+        "stop_price": {"type": "number"},
+        "take_profit": {"type": "number"},
         "risk_factors": {"type": "array", "items": {"type": "string"}},
         "supporting_signals": {"type": "array", "items": {"type": "string"}},
         "opposing_signals": {"type": "array", "items": {"type": "string"}},
@@ -276,6 +283,23 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         else:
             stop_price = round(price * (1 + stop_pct / 100.0), 8)
 
+    # Entry discipline (owner discussion #6): commit take-profit + reward:risk
+    # BEFORE the (limit) order, so the entry is a planned bet, not a gambler's
+    # market-buy. take_profit: the operator's explicit price, else config default
+    # anchored to the entry (price). risk_reward = reward-per-unit / risk-per-unit
+    # from the committed entry/stop/tp. The risk engine rejects a native limit
+    # entry that is missing any of the four (see engine.py check).
+    take_profit = decision.take_profit
+    if take_profit is None:
+        tp_pct = cfg.trading.default_take_profit_pct
+        if decision.direction == "long":
+            take_profit = round(price * (1 + tp_pct / 100.0), 8)
+        else:
+            take_profit = round(price * (1 - tp_pct / 100.0), 8)
+    _risk_per_unit = abs(price - stop_price)
+    _reward_per_unit = abs(take_profit - price)
+    risk_reward = round(_reward_per_unit / _risk_per_unit, 2) if _risk_per_unit > 0 else None
+
     decision_meta = {
         "conviction": decision.conviction,
         "debate_ran": decision.debate_ran,
@@ -325,6 +349,8 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         price=price,
         leverage=leverage,
         stop_price=stop_price,
+        take_profit=take_profit,
+        risk_reward=risk_reward,
         execution_mode=execution_mode,
         strategy_id=decision.strategy_id,
         opportunity_id=decision.opportunity_id,
@@ -938,6 +964,13 @@ def _parse_decision(raw: dict) -> TradingDecision:
         leverage = 1
     raw_assumptions = raw.get("key_assumptions")
     key_assumptions = raw_assumptions if isinstance(raw_assumptions, list) else []
+
+    def _num(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
     return TradingDecision(
         action=raw.get("action", "skip"),
         symbol=raw.get("symbol"),
@@ -946,6 +979,8 @@ def _parse_decision(raw: dict) -> TradingDecision:
         reasoning=raw.get("reasoning", ""),
         market_type=mt,
         leverage=leverage,
+        stop_price=_num(raw.get("stop_price")),
+        take_profit=_num(raw.get("take_profit")),
         risk_factors=raw.get("risk_factors", []),
         supporting_signals=raw.get("supporting_signals", []),
         opposing_signals=raw.get("opposing_signals", []),

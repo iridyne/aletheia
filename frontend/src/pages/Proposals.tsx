@@ -162,6 +162,8 @@ export default function Proposals() {
               <DrawerField label="Price" value={selected.price} mono />
               <DrawerField label="Leverage" value={selected.leverage ? `${selected.leverage}x` : null} mono />
               <DrawerField label="Stop" value={selected.stop_price} mono />
+              <DrawerField label="Take Profit" value={selected.take_profit} mono />
+              <DrawerField label="Reward:Risk" value={selected.risk_reward != null ? `${selected.risk_reward}:1` : null} mono />
             </DrawerSection>
             <DrawerSection label="Rationale">
               <ProposalRationaleDetail rationale={selected.agent_rationale} />
@@ -225,6 +227,8 @@ function ProposalCard({
         <span>px <b>{p.price ?? 'mkt'}</b></span>
         {p.leverage ? <span>lev <b>{p.leverage}x</b></span> : null}
         <span>stop <b>{p.stop_price ?? '—'}</b></span>
+        <span>tp <b>{p.take_profit ?? '—'}</b></span>
+        <span>r:r <b>{p.risk_reward != null ? `${p.risk_reward}:1` : '—'}</b></span>
         <span>{humanize(p.order_type)}</span>
       </div>
 

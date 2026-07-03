@@ -1523,6 +1523,11 @@ _ADDITIVE_COLUMNS = [
     # NULL on legacy rows; insert_trade_proposal() fills both for new writes.
     ("commit_hash", "trade_proposals", "TEXT"),
     ("parent_hash", "trade_proposals", "TEXT"),
+    # Entry discipline (2026-07-03, owner discussion #6): take-profit price +
+    # reward:risk committed at proposal time for limit entries. NULL on legacy
+    # market proposals (closes, reconciler-adopted chains).
+    ("take_profit", "trade_proposals", "REAL"),
+    ("risk_reward", "trade_proposals", "REAL"),
     # EQ-R (2026-07-01, r-series/equity_chain): instrument classification on serenity opps.
     # asset_class distinguishes equity stock tokens from crypto so trading_context can
     # skip equity observations in the PI's order-routing context.

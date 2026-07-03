@@ -10,6 +10,8 @@ export interface TradeProposal {
   price: number | null
   leverage: number | null
   stop_price: number | null
+  take_profit: number | null
+  risk_reward: number | null
   execution_mode: string
   agent_rationale: string | null
   status: string

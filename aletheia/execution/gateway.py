@@ -33,6 +33,8 @@ def submit_proposal(
     price: float = 0.0,
     leverage: int | None = None,
     stop_price: float | None = None,
+    take_profit: float | None = None,
+    risk_reward: float | None = None,
     execution_mode: str = "paper_internal",
     strategy_id: str | None = None,
     opportunity_id: str | None = None,
@@ -58,6 +60,8 @@ def submit_proposal(
         price=price,
         leverage=leverage,
         stop_price=stop_price,
+        take_profit=take_profit,
+        risk_reward=risk_reward,
         execution_mode=execution_mode,
         agent_rationale=agent_rationale,
         attribution_snapshot=attribution_snapshot,
@@ -246,6 +250,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     execution_mode=allowed_mode,
                     strategy_id=proposal.strategy_id,
                     stop_price=proposal.stop_price,
+                    take_profit=proposal.take_profit,
                     leverage=proposal.leverage,
                     opportunity_id=proposal.opportunity_id,
                     trade_school=proposal.trade_school,
@@ -302,11 +307,20 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     opportunity_id=proposal.opportunity_id,
                     trade_school=proposal.trade_school,
                 )
-                # Anchor TP to confirmed fill price (not proposal snapshot price).
-                _actual_fill = result.get("fill_price") or _entry
-                if _tp_pct and _actual_fill > 0 and result.get("position_id"):
-                    _tp = round(_actual_fill * (1 + _tp_pct / 100.0), 8) if proposal.direction in ("long", "buy") else round(_actual_fill * (1 - _tp_pct / 100.0), 8)
-                    update_position(result["position_id"], take_profit_price=_tp)
+                # TP source (2026-07-03): prefer the System Operator's explicit
+                # take_profit from the proposal (an entry now commits to it up
+                # front); fall back to the config-percentage anchored to the
+                # confirmed fill price for legacy proposals that carry no TP.
+                if result.get("position_id"):
+                    _actual_fill = result.get("fill_price") or _entry
+                    if proposal.take_profit:
+                        _tp = proposal.take_profit
+                    elif _tp_pct and _actual_fill > 0:
+                        _tp = round(_actual_fill * (1 + _tp_pct / 100.0), 8) if proposal.direction in ("long", "buy") else round(_actual_fill * (1 - _tp_pct / 100.0), 8)
+                    else:
+                        _tp = None
+                    if _tp:
+                        update_position(result["position_id"], take_profit_price=_tp)
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({
                     "actor": "system", "source": "execution_gateway",
@@ -379,11 +393,19 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     opportunity_id=proposal.opportunity_id,
                     trade_school=proposal.trade_school,
                 )
-                # Anchor TP to confirmed fill price (not proposal snapshot price).
-                _actual_fill2 = result.get("fill_price") or _entry2
-                if _tp_pct2 and _actual_fill2 > 0 and result.get("position_id"):
-                    _tp2 = round(_actual_fill2 * (1 + _tp_pct2 / 100.0), 8) if proposal.direction in ("long", "buy") else round(_actual_fill2 * (1 - _tp_pct2 / 100.0), 8)
-                    update_position(result["position_id"], take_profit_price=_tp2)
+                # TP source (2026-07-03): prefer the System Operator's explicit
+                # take_profit from the proposal; fall back to config-percentage
+                # anchored to the confirmed fill price for legacy proposals.
+                if result.get("position_id"):
+                    _actual_fill2 = result.get("fill_price") or _entry2
+                    if proposal.take_profit:
+                        _tp2 = proposal.take_profit
+                    elif _tp_pct2 and _actual_fill2 > 0:
+                        _tp2 = round(_actual_fill2 * (1 + _tp_pct2 / 100.0), 8) if proposal.direction in ("long", "buy") else round(_actual_fill2 * (1 - _tp_pct2 / 100.0), 8)
+                    else:
+                        _tp2 = None
+                    if _tp2:
+                        update_position(result["position_id"], take_profit_price=_tp2)
                 update_trade_proposal(proposal.id, status="executed")
                 write_audit({
                     "actor": "system", "source": "execution_gateway",

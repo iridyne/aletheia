@@ -23,6 +23,9 @@ def create_paper_proposal(
     strategy_id: str | None = None,
     opportunity_id: str | None = None,
     stop_price: float | None = None,
+    take_profit: float | None = None,
+    risk_reward: float | None = None,
+    order_type: str = "limit",
     agent_rationale: str | None = None,
     trade_school: str = "short_term",
 ) -> dict:
@@ -30,6 +33,11 @@ def create_paper_proposal(
 
     Raises ValueError if execution_mode is not a paper/demo mode — defense in depth
     so an autonomous caller cannot smuggle a live order through this path.
+
+    order_type defaults to "limit" (2026-07-03, owner discussion #6): a System
+    Operator entry rests as a maker at `price` rather than crossing the spread as
+    a taker, saving fees. Callers that must guarantee a fill (a market close)
+    pass order_type="market" explicitly.
     """
     if execution_mode not in _PAPER_MODES:
         raise ValueError(
@@ -41,11 +49,13 @@ def create_paper_proposal(
         symbol=symbol,
         market_type=market_type,
         direction=direction,
-        order_type="market",
+        order_type=order_type,
         quantity=quantity,
         price=price,
         leverage=leverage,
         stop_price=stop_price,
+        take_profit=take_profit,
+        risk_reward=risk_reward,
         execution_mode=execution_mode,
         strategy_id=strategy_id,
         opportunity_id=opportunity_id,

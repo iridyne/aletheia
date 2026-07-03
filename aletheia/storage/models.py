@@ -119,6 +119,14 @@ class TradeProposal(BaseModel):
     # Optional fields used by §21.3 risk checks (max_leverage, max_single_trade_risk).
     leverage: int | None = None
     stop_price: float | None = None
+    # Entry discipline (2026-07-03, owner discussion #6): a System Operator entry
+    # must commit to all four numbers BEFORE the order — entry (price, used as the
+    # LIMIT price), stop (stop_price), take-profit, and the resulting reward:risk
+    # ratio — so a trade is a planned bet, not a gambler's market-buy. take_profit
+    # is the absolute TP price; risk_reward = |tp - entry| / |entry - stop|.
+    # Both NULL on legacy market proposals (closes, reconciler-adopted chains).
+    take_profit: float | None = None
+    risk_reward: float | None = None
     execution_mode: str = "paper_internal"
     agent_rationale: str | None = None
     # JSON snapshot captured at proposal/decision time for replay-stable paper

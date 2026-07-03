@@ -97,6 +97,25 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
     if proposal.market_type == "usdt_futures" and not cfg.exchange.enabled_markets.get("usdt_futures"):
         violations.append("futures_market_disabled")
 
+    # 2b. Entry-plan completeness (owner discussion #6, 2026-07-03): a native LIMIT
+    #     entry must commit all four numbers BEFORE the order — entry (price), stop
+    #     (stop_price), take-profit, and reward:risk (risk_reward) — so a trade is a
+    #     planned bet, not a gambler's market-buy. Missing any → reject. Scoped to
+    #     order_type=="limit" AND source=="native": market closes/reduces and
+    #     reconciler-adopted chains legitimately carry no TP/RR and are exempt.
+    if proposal.order_type == "limit" and proposal.source == "native":
+        _missing = []
+        if not proposal.price:
+            _missing.append("entry_price")
+        if not proposal.stop_price:
+            _missing.append("stop_loss")
+        if not proposal.take_profit:
+            _missing.append("take_profit")
+        if not proposal.risk_reward or proposal.risk_reward <= 0:
+            _missing.append("risk_reward")
+        if _missing:
+            violations.append(f"incomplete_entry_plan:{'+'.join(_missing)}")
+
     # 3. Live state
     live_state = cfg.live.state
     if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited") and live_state == "live_disabled":

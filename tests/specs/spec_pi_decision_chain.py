@@ -351,3 +351,59 @@ def test_low_risk_write_commands_reject_docs_prefix_path():
         "未找到 docs/ 前缀路径拒绝逻辑——PI 可能绕过 file_artifacts.py 守卫覆写宪法文档。"
         "请在 handler 中加入 if path.startswith('docs/'): return {'error': ...} 守卫。"
     )
+
+
+@spec_claim(
+    SpecClaim("PI-S05", "execution_contract", "§entry discipline (limit + 4 fields)", "L2b",
+              "owner discussion #6: a System Operator entry is a planned bet, not a "
+              "gambler's market-buy. create_paper_proposal defaults order_type='limit' "
+              "(maker), and a NATIVE limit entry missing any of entry/stop/take_profit/"
+              "risk_reward is rejected by the risk engine (incomplete_entry_plan)."),
+)
+def test_entry_discipline_limit_default_and_four_field_gate():
+    """行为断言(非源码 grep):
+
+    1. create_paper_proposal 默认下单类型 = 'limit'(maker,省手续费)。
+    2. 风控对 native limit 入场缺任一要素(入场价/止损/止盈/盈亏比)→ 拒单
+       (incomplete_entry_plan)。
+    3. 四要素齐全的 native limit 入场 → 不再触发 incomplete_entry_plan。
+    4. 平仓/adopt 等 market 单不受此门槛约束(scoped to limit+native)。
+    """
+    import inspect
+    from aletheia.execution import paper_tools
+    from aletheia.storage.models import TradeProposal
+    from aletheia.risk.engine import evaluate_proposal
+
+    # 1. limit 默认
+    sig = inspect.signature(paper_tools.create_paper_proposal)
+    assert sig.parameters["order_type"].default == "limit", (
+        "create_paper_proposal 默认下单类型应为 'limit'(maker 挂单)"
+    )
+
+    common = dict(symbol="BTC/USDT", market_type="spot", direction="long",
+                  quantity=0.001, price=50000.0, execution_mode="paper_internal")
+
+    # 2. native limit 缺 take_profit + risk_reward → incomplete_entry_plan
+    incomplete = TradeProposal(order_type="limit", source="native",
+                               stop_price=49000.0, **common)
+    res = evaluate_proposal(incomplete)
+    assert any("incomplete_entry_plan" in v for v in res.violations), (
+        f"native limit 入场缺四要素应被拒,violations={res.violations}"
+    )
+
+    # 3. 四要素齐全 → 不再有 incomplete_entry_plan(其它无关违规不影响本断言)
+    complete = TradeProposal(order_type="limit", source="native",
+                             stop_price=49000.0, take_profit=52000.0,
+                             risk_reward=2.0, **common)
+    res2 = evaluate_proposal(complete)
+    assert not any("incomplete_entry_plan" in v for v in res2.violations), (
+        f"四要素齐全不应触发 incomplete_entry_plan,violations={res2.violations}"
+    )
+
+    # 4. market 平仓单(source=native 但 order_type=market)不受门槛约束
+    market_close = TradeProposal(order_type="market", source="native",
+                                 stop_price=None, **common)
+    res3 = evaluate_proposal(market_close)
+    assert not any("incomplete_entry_plan" in v for v in res3.violations), (
+        f"market 单不应触发入场计划门槛,violations={res3.violations}"
+    )
