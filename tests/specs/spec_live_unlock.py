@@ -526,7 +526,7 @@ def test_live_lock_resets_operator_permission(tmp_path, monkeypatch):
     SpecClaim(
         "LU-S03", "live_unlock_contract", "§4b ui warning wall", "L2a",
         "Settings.tsx LiveUnlockWarningWall contains all three required elements: "
-        "(1) PI Agent 将完全自主执行交易，操作不可预测 "
+        "(1) System Operator 将完全自主执行交易，操作不可预测 "
         "(2) 真实资金损失可能发生 "
         "(3) 开启后所有操作由人类承担后果",
     ),
@@ -539,7 +539,7 @@ def test_ui_warning_wall_three_elements():
     source = settings_tsx.read_text(encoding="utf-8")
 
     required_phrases = [
-        "PI Agent 将完全自主执行交易，操作不可预测",
+        "System Operator 将完全自主执行交易，操作不可预测",
         "真实资金损失可能发生",
         "开启后所有操作由人类承担后果",
     ]

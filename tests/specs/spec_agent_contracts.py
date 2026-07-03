@@ -35,8 +35,8 @@ def test_scheduler_max_workers_cap():
 
 @spec_claim(
     SpecClaim(
-        "AC-S02", "agent_contracts", "§2 PI agent", "L2a",
-        "PI Agent (trading_decision) exists with evaluate_trading_opportunity entry point",
+        "AC-S02", "agent_contracts", "§2 System Operator", "L2a",
+        "System Operator (trading_decision) exists with evaluate_trading_opportunity entry point",
     ),
 )
 def test_pi_agent_entry_point():
@@ -285,9 +285,9 @@ def test_llm_fallback_retries_on_transient_error():
 
 @spec_claim(
     SpecClaim(
-        "AC-B03", "agent_contracts", "§2 PI Agent safety", "L2c",
+        "AC-B03", "agent_contracts", "§2 System Operator safety", "L2c",
         "trading_decision.py does NOT import any live execution module "
-        "(gateway, bitget_broker, okx_broker, binance_broker) — PI Agent advises, never orders",
+        "(gateway, bitget_broker, okx_broker, binance_broker) — System Operator advises, never orders",
     ),
 )
 def test_pi_agent_no_live_execution_imports():
@@ -315,8 +315,8 @@ def test_pi_agent_no_live_execution_imports():
                 if alias.name in live_execution_modules:
                     found.append(alias.name)
     assert found == [], (
-        f"PI Agent (trading_decision.py) must not import live execution modules: {found}. "
-        "PI Agent advises only — live orders must not be reachable from this path."
+        f"System Operator (trading_decision.py) must not import live execution modules: {found}. "
+        "System Operator advises only — live orders must not be reachable from this path."
     )
 
 

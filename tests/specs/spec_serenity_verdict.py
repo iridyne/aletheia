@@ -72,7 +72,7 @@ def test_research_worker_prompt_includes_verdict():
     SpecClaim(
         "SV-S03", _CONTRACT, "§3 TradingDecision.bear_case field exists", "L2a",
         "trading_decision.py TradingDecision dataclass has bear_case field (str) "
-        "so PI Agent decisions carry explicit counter-arguments",
+        "so System Operator decisions carry explicit counter-arguments",
     ),
 )
 def test_trading_decision_bear_case_field():
@@ -194,14 +194,14 @@ def test_pipeline_persists_verdict():
     SpecClaim(
         "SV-C01", _CONTRACT, "§5 trading_context Layer 3 exposes verdict", "L2c",
         "agent_shell/trading_context.py Layer 3 serenity_opps block includes "
-        "'verdict' key (parsed from verdict_json) so PI Agent can read it",
+        "'verdict' key (parsed from verdict_json) so System Operator can read it",
     ),
 )
 def test_trading_context_exposes_verdict():
     src = _TRADING_CONTEXT.read_text(encoding="utf-8")
     assert "verdict" in src, (
         "trading_context.py Layer 3 serenity block does not include 'verdict' field — "
-        "PI Agent cannot see forced verdict output"
+        "System Operator cannot see forced verdict output"
     )
 
 

@@ -109,7 +109,7 @@ def test_cleanup_writes_audit(tmp_path, monkeypatch):
 def test_prune_pi_decisions_keeps_decisions_deletes_transient(tmp_path, monkeypatch):
     """prune_pi_decisions removes old transient rows (signal_pending/skip/watch)
     but NEVER touches decision-bearing rows (trade/close/recommend_promote) —
-    they are the PI Agent's audit trail. Regression guard for the PT-1 cleanup."""
+    they are the System Operator's audit trail. Regression guard for the PT-1 cleanup."""
     conn = setup_env(tmp_path, monkeypatch)
     rows = [
         ("sp_old", "signal_pending", _old(30)),   # transient, old → delete

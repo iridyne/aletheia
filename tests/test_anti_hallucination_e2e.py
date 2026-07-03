@@ -1,7 +1,7 @@
 """E2E: anti-hallucination attribution chain (R0) — opportunity → context → decision.
 
 Locks the R0 fix end-to-end (LEARNING_LOOP_AUDIT_2026-06-26 §R0): a seeded open
-opportunity must surface into the PI Agent's Layer-1 context WITH its id +
+opportunity must surface into the System Operator's Layer-1 context WITH its id +
 scanner_family, and when the PI picks that symbol+direction,
 _attach_opportunity_context backfills the real opportunity_id (+ strategy_id +
 scanner_family) onto the decision — instead of the old hard-coded None that severed

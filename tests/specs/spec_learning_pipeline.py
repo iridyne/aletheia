@@ -209,7 +209,7 @@ def test_proposal_carries_opportunity_id():
 
     That one line severs the attribution chain at the source: market_observer
     already writes scanner_family/universe/confidence into the opportunity, but
-    the PI Agent drops opportunity_id at order time and nothing backfills it.
+    the System Operator drops opportunity_id at order time and nothing backfills it.
     """
     import pathlib
     src = (pathlib.Path(_project_root()) / _TRADING_DECISION).read_text(encoding="utf-8")

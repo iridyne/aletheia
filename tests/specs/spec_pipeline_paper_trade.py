@@ -211,7 +211,7 @@ def test_paper_trader_ranker_filters_low_score(tmp_path, monkeypatch):
         f"Expected ranker to filter speculative opportunity when min_confidence='high', "
         f"but {delta} new signal_pending rows were created. "
         f"outputs={result.get('outputs')}. "
-        "Ranker confidence gate must prevent sub-threshold signals from reaching PI Agent."
+        "Ranker confidence gate must prevent sub-threshold signals from reaching System Operator."
     )
 
 
@@ -284,7 +284,7 @@ def test_paper_trader_signal_has_opportunity_id(tmp_path, monkeypatch):
     Fixed PT-2 (A13, LEARNING_LOOP_AUDIT): paper_trader now passes
     opportunity_id=candidate.get('opportunity_id') into PiDecision (paper_trader.py:165).
     The dedicated pi_decisions.opportunity_id column (models.py:901, migration:1304)
-    enables the PI Agent to trace which opportunity triggered each signal.
+    enables the System Operator to trace which opportunity triggered each signal.
     """
     conn = _setup_db(tmp_path, monkeypatch)
 
@@ -345,7 +345,7 @@ def test_paper_trader_marks_opportunity_consumed(tmp_path, monkeypatch):
     Fixed 2026-06-24 (PT-1, freeze exception): paper_trader now calls
     update_opportunity(opp_id, status='reviewed') after writing each signal_pending,
     so the next cycle won't re-emit the same opportunity as a duplicate signal
-    (which the PI Agent read as "pipeline data integrity compromised" → all-skip).
+    (which the System Operator read as "pipeline data integrity compromised" → all-skip).
     """
     conn = _setup_db(tmp_path, monkeypatch)
 

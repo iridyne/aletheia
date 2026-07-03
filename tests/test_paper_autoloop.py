@@ -54,7 +54,7 @@ def _set_mode(mode, kill=False, **_kwargs):
 
 
 async def test_paperauto_autoloop_executes_paper(tmp_path, monkeypatch):
-    """Phase 4a: Paper trader Path B now writes signal_pending for PI Agent."""
+    """Phase 4a: Paper trader Path B now writes signal_pending for System Operator."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
     opp = _seed()
@@ -102,7 +102,7 @@ def test_observe_mode_scheduler_gate(tmp_path, monkeypatch):
 
 
 async def test_kill_switch_blocks_autoloop(tmp_path, monkeypatch):
-    """Phase 4a: With kill_switch, paper_trader still writes signals but PI Agent
+    """Phase 4a: With kill_switch, paper_trader still writes signals but System Operator
     won't execute them (Risk Engine blocks at proposal time)."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper", kill=True)  # kill switch engaged
@@ -111,7 +111,7 @@ async def test_kill_switch_blocks_autoloop(tmp_path, monkeypatch):
     await run_agent("paper_trader", trigger_type="manual")
 
     # Path B still collects signals regardless of kill_switch
-    # (PI Agent + Risk Engine handle blocking at execution time)
+    # (System Operator + Risk Engine handle blocking at execution time)
     from aletheia.storage.repositories import list_pi_decisions
     decisions = list_pi_decisions(limit=10)
     pending = [d for d in decisions if d.get("action") == "signal_pending"]
@@ -139,7 +139,7 @@ async def test_autoloop_never_triggers_live(tmp_path, monkeypatch):
 
 async def test_opportunity_id_linkage_and_idempotency(tmp_path, monkeypatch):
     """Phase 4a: Paper trader writes signal_pending. Second run may write additional
-    signals (idempotency is now handled by PI Agent, not paper_trader)."""
+    signals (idempotency is now handled by System Operator, not paper_trader)."""
     setup_env(tmp_path, monkeypatch)
     _set_mode("Paper")
     opp = _seed()
