@@ -46,6 +46,11 @@ owner 决策边界经验。
 最后才用 `pytest-xdist` 并行或全量测试。完整规则见
 `docs/operations/PYTEST_OPTIMIZATION_GUIDE.md`。
 
+**前后端通讯通路规则（2026-07-03）**:dashboard 不能把所有请求都当成同一类加载。
+连接探活走 `/api/ready`，业务健康走 `/api/health`/`/api/status`，ticker/建议类请求
+作为后台轮询，不驱动全局加载条。完整约束见
+`docs/_ai/RUNTIME_COMMUNICATION_LANES.md`。
+
 > **结构性阻碍已清除(意图记录,2026-06-24)**:最小赚钱循环
 > (opportunities→paper_trader→signal_pending→PI→proposal→risk→execution)曾被
 > **五层叠加阻碍**卡死(OKX contractSize 单位 / PI 余额幻觉 8 bug / OKX 跨 loop /

@@ -1,5 +1,30 @@
 # Development Log
 
+## 2026-07-03 — Runtime 通讯通路拆分与 dashboard 稳定性
+
+### 触发
+owner 反馈页面顶部加载条常驻 90%、BTC/ETH/SOL 顶栏显示 stale feed、前端经常报
+backend unreachable；要求按事务重要性拆分前后端通路，并参考 OpenAlice 等 agentic
+trading 项目的实时/后台通讯经验。
+
+### 交付
+- 连接探活改为轻量 `/api/ready`，backend guard 不再用 `/api/status` 作为在线判断。
+- backend guard 10s 轮询、连续 3 次失败才通知，降低短暂慢请求/重启窗口造成的噪声。
+- 顶部 FetchProgress 忽略后台轮询和长期 refetch 请求，避免常驻 90%。
+- ticker 三个 symbol 查询标记为后台请求，仍诚实显示 stale，但不再驱动全局加载条。
+- 健康汇总读取缓存化；请求路径不再直接跑交易所外部探测。
+- OKX/CCXT `load_markets()` 增加坏 market id 过滤，避免 `id=None` 行导致市场刷新中断。
+- recommendations 作为 advisory/background 通路做 15s 短缓存。
+- 新增 `docs/_ai/RUNTIME_COMMUNICATION_LANES.md`，固定五类通讯通路和后续扩展规则。
+
+### 验证
+- Runtime/frontend 通讯相关 55 个测试通过。
+- Operator recommendations 相关 32 个测试通过。
+- Frontend build 通过。
+- `aletheia doctor` 通过 gateway/frontdoor/backend 基础检查；剩余 warnings 属于既有运营/数据质量项。
+
+---
+
 ## 2026-07-03 — pytest 分层与 AI 快反馈链路
 
 ### 触发

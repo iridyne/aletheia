@@ -7,7 +7,30 @@
 
 ## Last Updated
 
-2026-07-03 (pytest 分层与 AI 快反馈链路已补)
+2026-07-03 (runtime 通讯通路拆分 + pytest 分层已补)
+
+---
+
+## Recent Change (runtime 通讯通路拆分与前后端稳定性 — 2026-07-03)
+
+针对 dashboard 加载条卡 90%、ticker stale、backend unreachable 误报/频报这一组问题，
+完成一轮前后端通讯通路收口：
+
+- 连接探活改走轻量 `/api/ready`，不再用重型 `/api/status` 判断“后端是否在线”。
+- 前端 backend guard 改为 10s 轮询、连续 3 次失败才通知，减少短暂重启/慢请求造成的误报。
+- 顶部 FetchProgress 只统计用户可见请求，忽略后台轮询和带 `refetchInterval` 的长期请求。
+- 市场 ticker 查询标记为后台请求，避免 ticker 轮询把全局加载条常驻在 90%。
+- `/api/health` / `/api/status` 复用 5s 健康缓存；健康汇总不再在请求路径内直接打交易所外部探测。
+- OKX/CCXT `load_markets()` 增加坏 market id 防护：丢弃 `id=None` 的异常行，避免一个坏行打断市场刷新。
+- `/api/operator/recommendations` 归入 advisory/background 通路：15s 短缓存，pytest 下自动旁路缓存保证测试诚实。
+- 新增 `docs/_ai/RUNTIME_COMMUNICATION_LANES.md`，记录 liveness / control-status / market-display / advisory / future-push 五类通路。
+
+验证：
+- `uv run pytest tests/test_ccxt_provider_factory.py tests/test_health_fast_path.py tests/test_frontend_runtime_comm.py tests/test_status_routes.py tests/test_server.py tests/test_operator_events.py -q`
+- `cd frontend && npm run build`
+- `uv run aletheia doctor`
+
+注意：当前真实运行态仍以 `aletheia doctor` 为准；本文不记录 gateway PID、快照时间等本机事实。
 
 ---
 
