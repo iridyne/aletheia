@@ -31,7 +31,6 @@ logger = logging.getLogger("aletheia.knowledge.maintenance")
 _LEGACY_TYPE = "post_trade_review"
 _FROM = "high_confidence"
 _TO = "medium_confidence"
-_SYNTHETIC_CASE_REASONS = ("reconciled_gone", "demo_validation_cleanup")
 
 
 def reclassify_legacy_reviews(*, dry_run: bool = False) -> dict:
@@ -92,12 +91,13 @@ def archive_synthetic_trade_case_studies(*, dry_run: bool = False) -> dict:
     """
     from aletheia.storage.sqlite import get_db
     from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
 
     db = get_db()
     like_clauses: list[str] = []
     params: list[str] = []
     for column in ("title", "content", "tags", "file_path"):
-        for reason in _SYNTHETIC_CASE_REASONS:
+        for reason in SYNTHETIC_CLOSE_REASONS:
             like_clauses.append(f"COALESCE({column}, '') LIKE ?")
             params.append(f"%{reason}%")
 

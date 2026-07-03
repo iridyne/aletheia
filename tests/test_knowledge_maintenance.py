@@ -140,3 +140,23 @@ def test_archive_synthetic_trade_case_studies_dry_run_and_idempotent(tmp_path, m
     again = archive_synthetic_trade_case_studies()
     assert again["matched"] == 0
     assert again["archived"] == 0
+
+
+def test_archive_synthetic_trade_case_studies_uses_shared_close_reason_list(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.manager import create_trade_case_study
+    from aletheia.knowledge.maintenance import archive_synthetic_trade_case_studies
+
+    for reason in ("units_bug_cleanup", "retry_after_fix"):
+        create_trade_case_study(
+            title=f"Case: ETH/USDT short ({reason})",
+            content=(
+                f"ETH/USDT short was closed by {reason}. This administrative close "
+                "reason is not a genuine trade outcome and must leave active Learning."
+            ),
+            confidence="high_confidence",
+        )
+
+    summary = archive_synthetic_trade_case_studies()
+    assert summary["matched"] == 2
+    assert summary["archived"] == 2
