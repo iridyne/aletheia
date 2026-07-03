@@ -816,13 +816,13 @@
 | Rank | ID | 位置 | 说明 | 级别 |
 |------|-----|------|------|------|
 | 10 | **CR-PI-01** | `aletheia/agent_shell/operator_loop.py:882` | scanner family 权重调整不持久化（不调 `save_config()`），自治调校 no-op；需同步 `schema.py` + 前端 Settings | 🔴 🔒实质冻结(改自治调校行为→改AI决策)，Round 2 |
-| 17 | **CR-SCH-01** | `aletheia/agent_runtime/scheduler.py:771` | 24/30 个 job 无 `_record_job_failure`；持续失败不报警 | 🟠 ⏳ 可做，工程债，下一 sprint(纯可观测性，不改决策) |
-| 19 | **CR-AR-02** | `aletheia/server/routes/settings.py:12` | `POST /settings/permission-mode` 拒绝全部 5 种 operator 模式 | 🟠 ⏳ 需核实 operator 权限模式枚举语义后做 |
+| 17 | **CR-SCH-01** | `aletheia/agent_runtime/scheduler.py` | 24/30 个 job 无 `_record_job_failure`；持续失败不报警 | ✅ **已修 (2026-07-03, `5887c78`)** — 所有注册 scheduler job 的 swallowed failure/timeout 均进入 `_record_job_failure`；外层 `_run_job_guarded` 兜底未捕获异常并在成功后清零。Spec `AC-B05` + `tests/test_scheduler_timeouts.py` 覆盖。 |
+| 19 | **CR-AR-02** | `aletheia/server/routes/settings.py:12` | `POST /settings/permission-mode` 拒绝全部 5 种 operator 模式 | ✅ **误报证伪 (2026-06-24 DO-7)** — permission-mode 的 3 值 allowlist 是 worker surface 正确语义，非 operator 5 模式入口；无需改。 |
 | 22 | **CR-RE-03** | `aletheia/risk/engine.py:154` | demo 日损门控误用 `max_live_limited_cap_usdt` 作 capital_base | 🟠 ✅ **已修 (2026-06-24 SDD)** — demo 改用 `starting_capital_usdt`(对齐 check #13);RE-B13 RED→GREEN。实证:UTC6/23 清账 -23.26 触发 $1 日损限阻断 PI 全部交易。config 同步 starting_capital 100→88000(日损限 $1→$880) |
-| 23 | **EC-2** | `aletheia/execution/gateway.py` | OKX symbol-filter 拒绝路径产生双重 audit 记录（噪声，无安全风险） | 🟡 ⏳ 低优先噪声，下一 sprint |
+| 23 | **EC-2** | `aletheia/execution/gateway.py` | OKX symbol-filter 拒绝路径产生双重 audit 记录（噪声，无安全风险） | ✅ **已修 (2026-06-24 DO-3)** — 删除 okx_broker 内重复 write_audit，保留 gateway 的更完整 demo_order_error 审计。 |
 | — | **OL-2 full** | `aletheia/agent_shell/operator_loop.py:669` | Optuna sweep 完整实现（optuna_jobs 表 + background worker + enqueue 状态），OL-2 partial fix 已入 §16.1 | 🟠 ⏳ 需新建 optuna_jobs 表+worker，独立功能开发 |
 
-> **2026-06-23 三档处理结论**：§16.4 全部项已分类标注。`⏳ 可做`项(CR-SCH-01/CR-AR-02/EC-2)为非紧急工程债，不在本会话批量修复(避免扩大回归面)，排入下一 sprint。`🔒实质冻结`(CR-PI-01)与`🔐trust 专项`(CR-RE-03)需专门处理，不顺手改。本会话聚焦已完成的 §16.2 trust 项 + §15 operator 项。
+> **2026-07-03 状态同步**：原 `⏳ 可做`项中 CR-SCH-01 已修并有 spec；CR-AR-02 已证伪为误报；EC-2 已由 DO-3 修复。仍开放的是 CR-PI-01(自治调校行为，需专项)、OL-2 full(新功能)、以及下文 §18.3 的低优先卫生项。
 
 ---
 
@@ -867,7 +867,7 @@
 | **EH-2** paper_broker btc_entry_price None 级联 | execution trust-adjacent，现有 btc_beta guard 有 except-None 保底 |
 | **CUI-2** RegimeConfig UI(尤其 short_enabled) | regime.* 影响 AI 决策，冻结观察期敏感，Round 2 后 |
 | **CC-2** _consecutive_failures TOCTOU | 纯理论，1-worker pool 不并发同 job_id |
-| **CR-SCH-01** 22 job 补 _record_job_failure | 5 种结构模式非机械包裹，下一 sprint 专项 |
+| ~~**CR-SCH-01** 22 job 补 _record_job_failure~~ ✅ | 已修 (2026-07-03 `5887c78`) — 所有注册 job wrapper 均记录 swallowed failure；`AC-B05` 锁定。 |
 | **CR-RE-03** demo 日损用 live capital cap | trust-boundary，需 spec 先行 |
 
 ### §17.3 系统健康评估
@@ -908,15 +908,15 @@
 
 - ✅ **OP-WINRATE** `agent_shell/operator_loop.py:407-418` — **已修复 (A9)**。原从 `list_fills()` 算,fills 表无 realized_pnl 字段导致 win_rate/total_pnl 恒 0。修复：改读 `list_positions(status="closed")` → 读 `realized_pnl` 字段；两处（主评估 :407 + `_get_strategy_performance` :498）同步修正。
 
-### §18.3 卫生项(🟡,下一 sprint)
+### §18.3 卫生项(🟡)
 
-- `paper_trader.py:163` — PT-1 修复的 update_opportunity 包 `except:pass`,DB 锁时
-  静默失败致重复信号复发。应加 logger.debug。(本会话引入,低危)
-- `strategy_lifecycle.py:405` — `"live" in exec_mode` 子串匹配,应用 `_is_live()`
-  与全局一致(future-trap)。
-- `trading_decision.py:300` — debate 重构后 `final_conviction` 字段算了不再被读,
-  reader-trap。caller 用 `initial + advantage*0.3`。
-- `doctor.py:474` — `_probe_profit_loop` day-0(prop_age=None)误报 STALLED。
+已核实关闭:
+- ✅ `paper_trader.py:163` — 已加 `logger.debug("opportunity reviewed-mark failed: %s", _e)`；DB 锁时不再静默吞掉 reviewed 标记失败。
+- ✅ `strategy_lifecycle.py:405` — 已改为显式 live execution mode tuple，移除 `"live" in exec_mode` 子串 future-trap。
+- ✅ `trading_decision.py:300` — 已删 `DebateResult.final_conviction` 未读字段/计算，仅保留 raw bull/bear confidence；注释说明真实调整在 `evaluate_trading_opportunity()`。
+- ✅ `doctor.py:474` — `_probe_profit_loop` 已加 day-0 grace；`prop_age is None` 且机会窗口尚新时报告 warming up，而非误报 STALLED；`PL-PROFIT-*` spec 覆盖。
+
+仍开放(低优先):
 - `repositories.py:1067` — prune_pi_decisions 复制 _delete_old_rows tx 模式(4 处重复),
   altitude:应给 _delete_old_rows 加 where-clause 参数。
 - `trading_context.py:228` — `_NON_STRATEGY_CLOSE_REASONS` 硬编码字符串,altitude:
