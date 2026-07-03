@@ -65,6 +65,8 @@ AI-native agentic trading system. Local-first, file-based "Trading-as-Git" platf
 
 ## AI Collaboration Rules
 
+**面向 owner 汇报用大白话，不甩黑话（强制 — 血泪教训 2026-07-02）**：owner 是单人 trader，不是读代码的工程师同事。对话汇报 / handoff 摘要 / 状态说明里**禁止甩内部代号和术语**——"契约 / spec / claim / bucket / signal_source / trade_school / LP-S07"这类词对他是噪音，只会抬高认知与判断压力，反复出现会让他"渐行渐远、听不出是哪个模块出了问题"。规则：①**先讲人话结论**——"哪个模块、什么后果、现在什么状态"，再展开细节；②内部概念用生活化翻译("契约文档"=某模块的**说明书**：它该怎么跑、哪些红线不能碰；"spec/claim"=自动检查项；"bucket"=分档)；③不得已要用代号，首次出现紧跟一句人话解释，能不用就不用；④**别因为"任务本身很技术"(写文档/审代码)就默认可以甩术语——汇报口径和任务技术度无关**。唯一例外：写进代码 / docs / spec 的技术措辞照常严谨。
+
 意图/事实分离：git 同步**意图**（代码+文档），绝不写运行态事实（gateway 进程/app.db/config.yaml/凭证）进任何 git 文档——在另一台机器上必然过期。详见 `docs/_ai/DEV_PROTOCOL.md`。
 
 会话开始：`git pull --ff-only` → `aletheia doctor` → 读 CLAUDE.md / AGENTS.md / CURRENT_TASK.md / AI_HANDOFF.md。

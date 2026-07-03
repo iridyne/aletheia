@@ -136,13 +136,19 @@ def vol_target_size(
 
 
 def _lookup_atr_pct(symbol: str) -> float | None:
-    """Fetch ATR% from universe_feature_snapshots (most recent row)."""
+    """Fetch ATR% from universe_feature_snapshots (most recent row).
+
+    universe_feature_snapshots uses asset_id (FK → universe_registry) + ts,
+    not symbol + snapshot_at. We join through universe_registry to filter by symbol.
+    """
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         row = db.execute(
-            "SELECT atr_pct FROM universe_feature_snapshots "
-            "WHERE symbol = ? ORDER BY snapshot_at DESC LIMIT 1",
+            "SELECT ufs.atr_pct FROM universe_feature_snapshots ufs "
+            "JOIN universe_registry ur ON ufs.asset_id = ur.id "
+            "WHERE ur.symbol = ? "
+            "ORDER BY ufs.ts DESC LIMIT 1",
             (symbol,),
         ).fetchone()
         if row and row[0]:

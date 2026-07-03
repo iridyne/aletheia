@@ -10,7 +10,7 @@ orders — it only converges local bookkeeping.
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
 from aletheia.storage.repositories import list_orders, update_order
@@ -107,7 +107,7 @@ def reconcile() -> dict:
         if order_market in failed_markets:
             continue
         if str(o["exchange_order_id"]) not in all_open_ids:
-            update_order(o["id"], status="filled", filled_at=datetime.utcnow().isoformat())
+            update_order(o["id"], status="filled", filled_at=datetime.now(timezone.utc).isoformat())
             write_audit({
                 "actor": "system", "source": "reconciliation",
                 "event_type": "order_reconciled_filled", "entity_type": "order",

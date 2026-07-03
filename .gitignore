@@ -48,3 +48,12 @@ Thumbs.db
 # Chat exports (large personal conversation dumps — keep out of repo history)
 docs/ChatExport_*/
 docs/ChatExport_*.zip
+
+# OMC / review tooling state (Workspace Claude Code session artifacts)
+.omc/
+
+# Quant-review snapshots / scratch (one-off byproducts, not source)
+docs/review/tmp/
+docs/**/*.bak
+docs/**/*.before-fix
+

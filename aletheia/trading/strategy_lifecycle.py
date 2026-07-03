@@ -196,7 +196,7 @@ def promote_strategy(strategy_id: str, target_state: str) -> dict:
         if live_gate["failures"]:
             return {"success": False, "error": f"Live promotion gates failed: {live_gate['failures']}"}
 
-    update_strategy(strategy_id, state=target_state, updated_at=datetime.utcnow().isoformat())
+    update_strategy(strategy_id, state=target_state, updated_at=datetime.now(timezone.utc).isoformat())
     if target_state in ("retired", "deprecated"):
         event_type = "strategy_retired"
         msg = f"Strategy retired: {current} -> {target_state}"
@@ -377,9 +377,13 @@ def _max_drawdown_pct(pnls: list[float]) -> float:
     from aletheia.config.loader import load_config
 
     cfg = load_config()
-    capital_base = cfg.risk.max_live_limited_cap_usdt
+    # Use starting_capital_usdt as the drawdown base — it represents the actual
+    # paper capital at risk. max_live_limited_cap_usdt is a position-size limit,
+    # NOT a capital base, and may legitimately be 0 (live disabled). Falling back
+    # to an arbitrary 100.0 made drawdown% meaningless (BACKEND_ISSUES S-Bug-5.5).
+    capital_base = getattr(cfg.risk, "starting_capital_usdt", None)
     if not capital_base or capital_base <= 0:
-        capital_base = getattr(cfg.risk, "starting_capital_usdt", None) or 100.0
+        capital_base = 100.0
     equity = 0.0
     peak = 0.0
     max_drawdown = 0.0
@@ -388,6 +392,7 @@ def _max_drawdown_pct(pnls: list[float]) -> float:
         peak = max(peak, equity)
         max_drawdown = max(max_drawdown, peak - equity)
     return round((max_drawdown / capital_base) * 100.0, 6)
+
 
 
 def _max_consecutive_losses(pnls: list[float]) -> int:

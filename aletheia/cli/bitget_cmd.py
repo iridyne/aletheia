@@ -37,7 +37,7 @@ def sync():
         typer.echo("Sync skipped or failed (no credentials, or exchange error). "
                    "Check `aletheia bitget test` and `aletheia secrets list`.", err=True)
         raise typer.Exit(1)
-    s = state.__dict__ if state else cached
+    s = state.__dict__ if state else (cached or {})
     typer.echo(f"status: {status_for(cached)}")
     typer.echo(f"mode: {s.get('mode')}")
     typer.echo(f"equity_usdt: {s.get('equity_usdt')}")

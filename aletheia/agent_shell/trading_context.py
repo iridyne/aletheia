@@ -596,9 +596,29 @@ def _build_layer3_wisdom() -> dict[str, Any]:
         guards: list[dict] = []
         for item in items:
             meta = item.get("metadata") or {}
+            raw_content = item.get("content") or item.get("summary") or item.get("title") or ""
+            if not raw_content:
+                # Phase 3b: guard_candidate content lives on disk; DB content may be NULL.
+                fpath = item.get("file_path")
+                if fpath:
+                    try:
+                        from pathlib import Path as _Path
+                        from aletheia.knowledge.frontmatter import parse_frontmatter as _pfm
+                        _meta, _body = _pfm(_Path(fpath))
+                        parts: list[str] = []
+                        if _meta:
+                            if _meta.get("outcome"):
+                                parts.append(f"outcome={_meta['outcome']} return={_meta.get('forward_return_pct', '?')}%%")
+                            if _meta.get("scanner_family"):
+                                parts.append(f"scanner={_meta['scanner_family']}")
+                        if _body:
+                            parts.append(_body[:150].strip())
+                        raw_content = " | ".join(parts) if parts else (item.get("title") or "")
+                    except Exception:
+                        raw_content = item.get("title") or ""
             guards.append({
                 "symbol": meta.get("symbol"),
-                "content": (item.get("content") or item.get("summary") or item.get("title") or "")[:200],
+                "content": raw_content[:200],
             })
         layer["guard_candidates"] = guards
     except Exception:

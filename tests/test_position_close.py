@@ -38,6 +38,30 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
+def test_close_with_entry_fee_zero_keeps_zero_no_fallback(tmp_path, monkeypatch):
+    """Sprint B (QR-2026-07-01-02): close_position must NOT fall back to re-deriving
+    entry_fee from the fee schedule when entry_fee=0.0 is the stored value — truthiness
+    fallback treated 0.0 as missing and inflated realized PnL by the re-derived fee."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.pnl import close_position
+    p = Position(symbol="SOLUSDT", market_type="spot", direction="long",
+                 quantity=2.0, entry_price=100.0, execution_mode="paper_internal",
+                 entry_fee=0.0)
+    repo.insert_position(p)
+
+    result = close_position(p.id, exit_price=110.0)
+    # Sprint B: entry_fee=0.0 (stored) is preserved, not re-derived from the schedule.
+    # gross=(110-100)*2=20; entry_fee=0.0; paper_internal exit rate=PAPER_FEE_RATE
+    # (matches production _EXIT_FEE_BY_MODE): exit_fee=110*2*0.0006=0.132.
+    # realized = 20 - 0.132 - 0.0 = 19.868.
+    exit_fee = 110.0 * 2.0 * PAPER_FEE_RATE
+    expected = 20.0 - exit_fee - 0.0
+    assert result["realized_pnl"] == pytest.approx(expected)
+
+    closed = repo._select_one("positions", p.id)
+    assert closed["entry_fee"] == 0.0  # not overwritten by re-derived value
+
+
 def test_close_long_position_realizes_profit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.pnl import close_position

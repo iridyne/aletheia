@@ -1,4 +1,9 @@
-"""Skill store — learned agent capabilities with permission enforcement."""
+"""Skill store — learned agent capabilities with permission enforcement.
+
+RESERVED — not connected to any consumer in the current MVP.
+Lesson → Skill promotion chain is a future Tier 2/3 feature.
+See docs/design/learning_contract.md §4.
+"""
 
 import json
 from datetime import datetime, timezone

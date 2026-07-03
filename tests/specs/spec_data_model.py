@@ -618,3 +618,90 @@ def test_proposal_hash_chain_integrity(tmp_path, monkeypatch):
         f"after status='executed'={recomputed_after_status_change!r}. "
         "Hash input must exclude `status` (it is mutable post-insert)."
     )
+
+
+# ---------------------------------------------------------------------------
+# DM-S19 — PSLesson model has all learning-contract fields
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S19", "data_model", "§3 learning tables", "L2a",
+        "PSLesson pydantic model declares all learning-contract fields: lesson_id, "
+        "source_type, source_id, category, severity, summary, evidence_json, "
+        "recommendation_json, status, artifact_path, created_at, "
+        "applied_policy_version, activated_at, dry_run_until, expires_at",
+    ),
+)
+def test_ps_lesson_model_has_contract_fields():
+    """Structural: PSLesson model mirrors the ps_lessons table contract."""
+    from aletheia.storage.models import PSLesson
+
+    fields = set(PSLesson.model_fields.keys())
+    expected = {
+        "lesson_id", "source_type", "source_id", "category", "severity",
+        "summary", "evidence_json", "recommendation_json", "status",
+        "artifact_path", "created_at", "applied_policy_version",
+        "activated_at", "dry_run_until", "expires_at",
+    }
+    missing = expected - fields
+    assert not missing, f"PSLesson model missing fields: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# DM-S20 — PSSkill model has all learning-contract fields
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S20", "data_model", "§3 learning tables", "L2a",
+        "PSSkill pydantic model declares all learning-contract fields: skill_id, "
+        "name, scope, description, inputs_json, outputs_json, risk_level, "
+        "allowed_layers_json, forbidden_layers_json, created_from_lessons_json, "
+        "version, artifact_path, created_at, status",
+    ),
+)
+def test_ps_skill_model_has_contract_fields():
+    """Structural: PSSkill model mirrors the ps_skills table contract."""
+    from aletheia.storage.models import PSSkill
+
+    fields = set(PSSkill.model_fields.keys())
+    expected = {
+        "skill_id", "name", "scope", "description", "inputs_json",
+        "outputs_json", "risk_level", "allowed_layers_json",
+        "forbidden_layers_json", "created_from_lessons_json", "version",
+        "artifact_path", "created_at", "status",
+    }
+    missing = expected - fields
+    assert not missing, f"PSSkill model missing fields: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# DM-S21 — migrations.py SCHEMA_SQL defines ps_lessons / ps_skills / ps_policy_versions
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S21", "data_model", "§3 learning tables", "L2a",
+        "migrations.py SCHEMA_SQL contains CREATE TABLE for ps_lessons, ps_skills, "
+        "and ps_policy_versions tables",
+    ),
+)
+def test_migrations_define_learning_tables():
+    """Structural: the three learning tables are declared in SCHEMA_SQL."""
+    from pathlib import Path
+    migrations_src = (
+        Path(__file__).parent.parent.parent / "aletheia" / "storage" / "migrations.py"
+    ).read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS ps_lessons" in migrations_src, (
+        "migrations.py missing ps_lessons CREATE TABLE"
+    )
+    assert "CREATE TABLE IF NOT EXISTS ps_skills" in migrations_src, (
+        "migrations.py missing ps_skills CREATE TABLE"
+    )
+    assert "CREATE TABLE IF NOT EXISTS ps_policy_versions" in migrations_src, (
+        "migrations.py missing ps_policy_versions CREATE TABLE"
+    )

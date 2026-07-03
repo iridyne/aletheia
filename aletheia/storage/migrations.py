@@ -1,5 +1,7 @@
 """Idempotent SQLite schema migrations."""
 
+import sqlite3
+
 from aletheia.storage.sqlite import get_db
 
 SCHEMA_SQL = """
@@ -74,6 +76,7 @@ CREATE TABLE IF NOT EXISTS trade_proposals (
     stop_price REAL,
     execution_mode TEXT NOT NULL DEFAULT 'paper_internal',
     agent_rationale TEXT,
+    attribution_snapshot TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     source TEXT NOT NULL DEFAULT 'native',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -904,7 +907,10 @@ CREATE TABLE IF NOT EXISTS ps_lessons (
     status TEXT NOT NULL,
     artifact_path TEXT,
     created_at TEXT NOT NULL,
-    applied_policy_version TEXT
+    applied_policy_version TEXT,
+    activated_at TEXT,
+    dry_run_until TEXT,
+    expires_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ps_skills (
@@ -1502,6 +1508,9 @@ _ADDITIVE_COLUMNS = [
     # only Serenity-sourced rows are stamped 'serenity' by submit_decision_as_proposal.
     ("trade_school", "trade_proposals", "TEXT NOT NULL DEFAULT 'short_term'"),
     ("trade_school", "positions", "TEXT NOT NULL DEFAULT 'short_term'"),
+    # Quant review QR-2026-07-01-04: replay-stable paper attribution. Older
+    # proposals keep NULL and the paper broker falls back to live context.
+    ("attribution_snapshot", "trade_proposals", "TEXT"),
     # P2 / S4 (2026-06-28, AI Berkshire forced-verdict): PI must provide explicit
     # counter-argument even when recommending a trade.
     ("bear_case", "pi_decisions", "TEXT DEFAULT ''"),
@@ -1510,9 +1519,6 @@ _ADDITIVE_COLUMNS = [
     # 2026-06-29: lesson block guard fields (dry-run window + TTL expiry).
     # Prevent immediately-accepted lessons from blocking all trades without
     # cooldown (sleeping bomb fix; see spec_lesson_guards.py LG-S01..S04).
-    ("activated_at", "ps_lessons", "TEXT"),
-    ("dry_run_until", "ps_lessons", "TEXT"),
-    ("expires_at", "ps_lessons", "TEXT"),
     # P0-1 (2026-06-29, OpenAlice TaG borrow): proposal-level hash chain.
     # NULL on legacy rows; insert_trade_proposal() fills both for new writes.
     ("commit_hash", "trade_proposals", "TEXT"),
@@ -1568,7 +1574,7 @@ def _ensure_knowledge_fts(db) -> None:
     db.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5("
         "title, body, item_type UNINDEXED, item_id UNINDEXED, "
-        "confidence UNINDEXED, created_at UNINDEXED)"
+        "confidence UNINDEXED, created_at UNINDEXED, outcome UNINDEXED)"
     )
 
 
@@ -1755,6 +1761,22 @@ CREATE INDEX IF NOT EXISTS idx_volume_ranking_ts ON volume_ranking_snapshots(obs
 """
 
 
+
+def _ensure_knowledge_fts_outcome_column(db) -> None:
+    """Recreate knowledge_fts with outcome column if missing.
+
+    FTS5 does not support ALTER TABLE ADD COLUMN on external-content-less
+    tables, so we DROP + CREATE IF NOT EXISTS. The next reindex_all() call
+    rebuilds the index from knowledge_items.
+    """
+    try:
+        cols = [row[1] for row in db.execute("PRAGMA table_info(knowledge_fts)").fetchall()]
+        if "outcome" not in cols:
+            db.execute("DROP TABLE IF EXISTS knowledge_fts")
+    except Exception:
+        pass
+    # _ensure_knowledge_fts will recreate with outcome column
+
 def _run_all_ddl(db) -> None:
     """Execute every DDL statement against db (used for both real and blueprint DBs)."""
     db.executescript(SCHEMA_SQL)
@@ -1768,6 +1790,7 @@ def _run_all_ddl(db) -> None:
     db.executescript(_VOLUME_RANKING_DDL)
     _ensure_columns(db)
     _ensure_runtime_baseline(db)
+    _ensure_knowledge_fts_outcome_column(db)
     _ensure_knowledge_fts(db)
     db.executescript(_CORE_INDEXES_SQL)
     db.commit()

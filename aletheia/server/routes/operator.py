@@ -1399,7 +1399,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
                 "final_answer": None,
             }
 
-        if "FINAL_ANSWER:" in content:
+        if content and "FINAL_ANSWER:" in content:
             answer = content.split("FINAL_ANSWER:", 1)[1].strip()
             return {
                 "status": "completed",
@@ -1408,7 +1408,7 @@ async def operator_llm_session(payload: LlmSessionRequest):
                 "final_answer": answer,
             }
 
-        if "TOOL_CALL:" in content:
+        if content and "TOOL_CALL:" in content:
             call_line = content.split("TOOL_CALL:", 1)[1].strip()
             parts = call_line.split(" ", 1)
             cmd_name = parts[0].strip()

@@ -6,6 +6,8 @@ protective stop/TP so the position_manager can act on it. Causal chain unchanged
 
 import sqlite3
 
+import pytest
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
@@ -41,6 +43,47 @@ def test_paper_order_stores_stop_and_tp(tmp_path, monkeypatch):
     assert pos["stop_price"] == 98.0
     # TP is derived from fill_price (after slippage), not raw price
     assert pos["take_profit_price"] == pytest.approx(104.0, rel=0.01)
+
+
+def test_average_in_accumulates_entry_fee_and_slippage(tmp_path, monkeypatch):
+    """Sprint B (QR-2026-07-01-02): a second fill must add its own entry_fees and
+    slippage on top of the standing position's accumulated costs, not drop them."""
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.config.loader as loader
+    class _T:
+        slippage_bps = 5
+        execution_fee_pct = 0.1
+        default_take_profit_pct = 4.0
+    class _C:
+        trading = _T()
+    monkeypatch.setattr(loader, "load_config", lambda: _C())
+
+    from aletheia.execution.paper_broker import execute_paper_order
+    r1 = execute_paper_order(
+        proposal_id="p1", risk_decision_id="r1",
+        symbol="BTCUSDT", market_type="spot", direction="long",
+        order_type="market", quantity=1.0, price=100.0,
+        execution_mode="paper_internal",
+    )
+    pid = r1["position_id"]
+    execute_paper_order(
+        proposal_id="p2", risk_decision_id="r2",
+        symbol="BTCUSDT", market_type="spot", direction="long",
+        order_type="market", quantity=2.0, price=110.0,
+        execution_mode="paper_internal",
+    )
+    pos = repo._select_one("positions", pid)
+    assert pos["quantity"] == 3.0  # averaged fill
+
+    slip = 5 / 10_000.0
+    fee_rate = 0.001
+    fill1 = 100.0 * (1 + slip)
+    fill2 = 110.0 * (1 + slip)
+    expected_entry_fee = round(fill1 * 1.0 * fee_rate + fill2 * 2.0 * fee_rate, 8)
+    expected_slippage = round(abs(fill1 - 100.0) * 1.0 + abs(fill2 - 110.0) * 2.0, 8)
+
+    assert pos["entry_fee"] == pytest.approx(expected_entry_fee)
+    assert pos["slippage_cost"] == pytest.approx(expected_slippage)
 
 
 def test_average_in_tightens_stop_to_more_protective(tmp_path, monkeypatch):

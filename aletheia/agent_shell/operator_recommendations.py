@@ -585,17 +585,21 @@ def build_risk_summary(limit: int = 20, *, cfg=None) -> dict:
                 }
                 aggregated[boundary_key] = bucket
             bucket["rejection_count"] += 1
-            if violation_text not in bucket["sample_violations"] and len(bucket["sample_violations"]) < 3:
-                bucket["sample_violations"].append(violation_text)
+            violations: list[str] = bucket["sample_violations"]
+            if violation_text not in violations and len(violations) < 3:
+                violations.append(violation_text)
+            decision_ids: list[str] = bucket["decision_ids"]
             decision_id = decision.get("id")
-            if decision_id and decision_id not in bucket["decision_ids"]:
-                bucket["decision_ids"].append(decision_id)
+            if decision_id and decision_id not in decision_ids:
+                decision_ids.append(decision_id)
+            symbols: list[str] = bucket["affected_symbols"]
             symbol = decision.get("symbol")
-            if symbol and symbol not in bucket["affected_symbols"]:
-                bucket["affected_symbols"].append(symbol)
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+            modes: list[str] = bucket["execution_modes"]
             execution_mode = decision.get("execution_mode")
-            if execution_mode and execution_mode not in bucket["execution_modes"]:
-                bucket["execution_modes"].append(execution_mode)
+            if execution_mode and execution_mode not in modes:
+                modes.append(execution_mode)
             if (
                 isinstance(candidate.get("suggested_value"), (int, float))
                 and isinstance(bucket.get("suggested_value"), (int, float))
@@ -651,11 +655,13 @@ def build_risk_summary(limit: int = 20, *, cfg=None) -> dict:
             }
             symbol_rejections[symbol] = bucket
         bucket["rejection_count"] += 1
+        decision_ids: list[str] = bucket["decision_ids"]
         decision_id = decision.get("id")
-        if decision_id and decision_id not in bucket["decision_ids"]:
-            bucket["decision_ids"].append(decision_id)
-        if execution_mode and execution_mode not in bucket["execution_modes"]:
-            bucket["execution_modes"].append(execution_mode)
+        if decision_id and decision_id not in decision_ids:
+            decision_ids.append(decision_id)
+        modes: list[str] = bucket["execution_modes"]
+        if execution_mode and execution_mode not in modes:
+            modes.append(execution_mode)
         created_at = _parse_utc_timestamp(decision.get("created_at"))
         if created_at and (
             _parse_utc_timestamp(bucket.get("latest_created_at")) is None
@@ -1263,118 +1269,6 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         ),
         None,
     )
-    raw_recent_strategy_promotion_proposals = [
-        artifact
-        for artifact in list_artifacts(limit=500)
-        if artifact.get("artifact_type") == "strategy_promotion_proposal"
-        and (_parse_utc_timestamp(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
-        > datetime.now(timezone.utc) - timedelta(hours=24)
-    ]
-    recent_strategy_promotion_proposals = []
-    for artifact in raw_recent_strategy_promotion_proposals:
-        content = artifact.get("content")
-        if not isinstance(content, dict):
-            content = {}
-        recent_strategy_promotion_proposals.append(
-            {
-                "strategy_id": content.get("strategy_id"),
-                "target_state": content.get("target_state"),
-            }
-        )
-    recent_live_limited_enablement_proposals = []
-    for artifact in list_artifacts(limit=500):
-        if artifact.get("artifact_type") != "live_limited_enablement_proposal":
-            continue
-        created_at = _parse_utc_timestamp(artifact.get("created_at"))
-        if created_at is None or created_at <= datetime.now(timezone.utc) - timedelta(hours=24):
-            continue
-        content = artifact.get("content")
-        if not isinstance(content, dict):
-            content = {}
-        recent_live_limited_enablement_proposals.append(
-            {
-                "strategy_id": content.get("strategy_id"),
-            }
-        )
-    promotion_ready_strategy_targets = {
-        (
-            str(item.get("strategy_id")),
-            "paper_passed"
-            if str(
-                ((item.get("evaluation") or {}).get("strategy") or {}).get("state") or ""
-            )
-            == "paper_running"
-            else "live_candidate",
-        )
-        for item in recent_strategy_evaluations
-        if item.get("strategy_id")
-        and isinstance(item.get("evaluation"), dict)
-        and isinstance(item["evaluation"].get("strategy"), dict)
-        and str(item["evaluation"]["strategy"].get("state") or "")
-        in {"paper_running", "paper_passed"}
-        and isinstance(item["evaluation"].get("promotion_gates"), dict)
-        and bool(item["evaluation"]["promotion_gates"].get("passed")) is True
-    }
-    proposed_strategy_targets = {
-        (str(item.get("strategy_id")), str(item.get("target_state") or ""))
-        for item in recent_strategy_promotion_proposals
-        if item.get("strategy_id") and item.get("target_state")
-    }
-    needs_operator_promotion_proposal_strategy_ids = sorted(
-        strategy_id
-        for strategy_id, target_state in promotion_ready_strategy_targets
-        if (strategy_id, target_state) not in proposed_strategy_targets
-    )
-    live_limited_ready_strategy_ids = {
-        str(item.get("strategy_id"))
-        for item in recent_strategy_evaluations
-        if item.get("strategy_id")
-        and isinstance(item.get("evaluation"), dict)
-        and isinstance(item["evaluation"].get("strategy"), dict)
-        and str(item["evaluation"]["strategy"].get("state") or "") == "live_candidate"
-        and isinstance(item["evaluation"].get("live_limited_gates"), dict)
-        and bool(item["evaluation"]["live_limited_gates"].get("passed")) is True
-    }
-    proposed_live_limited_strategy_ids = {
-        str(item.get("strategy_id"))
-        for item in recent_live_limited_enablement_proposals
-        if item.get("strategy_id")
-    }
-    needs_operator_live_limited_enablement_strategy_ids = sorted(
-        live_limited_ready_strategy_ids - proposed_live_limited_strategy_ids
-    )
-    if not cfg.runtime.paused and needs_operator_live_limited_enablement_strategy_ids:
-        first_live_candidate = next(
-            (
-                item
-                for item in strategies
-                if str(item.get("id") or "")
-                == needs_operator_live_limited_enablement_strategy_ids[0]
-            ),
-            None,
-        )
-        strategy_name = first_live_candidate.get("name") if first_live_candidate else None
-        recommendations.append(
-            {
-                "id": "live-limited-enablement-proposal-due",
-                "kind": "live_limited_enablement_proposal_due",
-                "severity": "medium",
-                "summary": (
-                    f"Strategy {strategy_name or needs_operator_live_limited_enablement_strategy_ids[0]} passed live-limited safety checks and should create a human-reviewed live-limited enablement proposal."
-                    if len(needs_operator_live_limited_enablement_strategy_ids) == 1
-                    else f"{len(needs_operator_live_limited_enablement_strategy_ids)} live-candidate strategies passed live-limited safety checks and should create enablement proposals for human review."
-                ),
-                "taskType": "create_repair_proposal",
-                "metadata": {
-                    "strategy_ids": needs_operator_live_limited_enablement_strategy_ids,
-                    "strategy_id": needs_operator_live_limited_enablement_strategy_ids[0],
-                    "strategy_name": strategy_name,
-                    "proposal_command": "propose_live_limited_enablement",
-                    "target_state": "live_limited",
-                },
-            }
-        )
-
     recent_agent_runs = repo.list_agent_runs(limit=50)
     market_observer_runs = [
         run for run in recent_agent_runs if str(run.get("agent_name") or "") == "market_observer"
@@ -1904,3 +1798,4 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         ]
 
     return recommendations[:limit]
+    

@@ -66,7 +66,7 @@ class _RegimeVote:
             REGIME_SIDEWAYS: self.sideways,
             REGIME_VOLATILE: self.volatile,
         }
-        best = max(scores, key=scores.get)  # type: ignore[arg-type]
+        best = max(scores, key=lambda k: scores[k])
         total = sum(scores.values()) or 1.0
         confidence = scores[best] / total
         return best, round(confidence, 3)

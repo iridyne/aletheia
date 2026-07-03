@@ -15,7 +15,6 @@ def _import_all_specs():
         spec_risk_engine,
         spec_execution,
         spec_live_unlock,
-        spec_promotion_gates,
         spec_data_model,
         spec_agent_contracts,
         spec_api_reference,
@@ -125,6 +124,9 @@ def _import_all_specs():
         # trades must not pile up unbounded. Behavioral/data (L2b), not in
         # REQUIRED_CONTRACTS.
         spec_analytics_contracts,
+        # Quant-review paper attribution replay (2026-07-01, QR-04): proposal-time
+        # attribution snapshot threads into paper_broker position fields.
+        spec_pipeline_paper_attribution,
         spec_pi_decision_chain,
         spec_operator_contract_parity,
         spec_operator_single_source,
@@ -178,7 +180,6 @@ REQUIRED_CONTRACTS = [
     "risk_engine_contract",
     "execution_contract",
     "live_unlock_contract",
-    "promotion_gates_contract",
     "data_model",
     "agent_contracts",
     "api_reference",

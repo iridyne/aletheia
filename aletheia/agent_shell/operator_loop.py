@@ -268,7 +268,7 @@ _LEVEL_1_ACTIONS = {
 }
 
 _LEVEL_2_ACTIONS = {
-    "promote_strategy", "loosen_confidence", "increase_sizing",
+    "loosen_confidence", "increase_sizing",
     "widen_stop_loss", "neutral_drift",
     "add_universe_symbol",
     # L2 self-heal actions (operator_layer.md §自愈档位 L2) — require human confirmation.

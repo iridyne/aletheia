@@ -136,6 +136,7 @@ class OKXClient:
             ex = self._ensure_exchange()
             if not ex.markets:
                 await ex.load_markets()
+                assert ex.markets is not None
             m = ex.markets.get(ccxt_symbol) or {}
             cs = m.get("contractSize")
             return float(cs) if cs else 1.0
@@ -394,6 +395,7 @@ class OKXClient:
             await exchange.load_markets()
             swap_symbols: set = set()
             spot_symbols: set = set()
+
             for key, info in exchange.markets.items():
                 if not info.get("active", True):
                     continue

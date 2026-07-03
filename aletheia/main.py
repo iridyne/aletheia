@@ -14,7 +14,6 @@ from aletheia.cli.model import model_app
 from aletheia.cli.permission import permission_app
 from aletheia.cli.secrets_cmd import secrets_app
 from aletheia.cli.bitget_cmd import bitget_app
-from aletheia.cli.strategy import strategy_app
 from aletheia.cli.risk_cmd import risk_app
 from aletheia.cli.update_cmd import update_app
 from aletheia.cli.runtime_cmd import runtime_app
@@ -52,7 +51,6 @@ app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience
 app.add_typer(model_app, name="model", help="[deprecated → Settings] Model provider commands.")
 app.add_typer(permission_app, name="permission", help="[deprecated → Settings] Agent permission mode.")
 app.add_typer(secrets_app, name="secrets", help="[deprecated → Settings] Secrets management.")
-app.add_typer(strategy_app, name="strategy", help="[deprecated → Strategies page] Strategy lifecycle.")
 app.add_typer(risk_app, name="risk", help="[deprecated → Risk panel] Risk / kill-switch commands.")
 app.add_typer(update_app, name="update", help="[deprecated → Settings] Code self-upgrade commands.")
 

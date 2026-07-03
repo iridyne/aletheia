@@ -322,16 +322,6 @@ COMMANDS: dict[str, CommandDef] = {
         audit_event_type="operator_propose_schedule_change",
         backend_handler="propose_schedule_change",
     ),
-    "propose_live_limited_enablement": CommandDef(
-        name="propose_live_limited_enablement",
-        risk_class="proposal_only",
-        worker_permission_required="Paper",
-        operator_permission_required="AllowEditing",
-        description="Create a proposal artifact for human review of live-limited enablement",
-        requires_proposal=True,
-        audit_event_type="operator_propose_live_limited_enablement",
-        backend_handler="propose_live_limited_enablement",
-    ),
     "propose_risk_boundary_change": CommandDef(
         name="propose_risk_boundary_change",
         risk_class="proposal_only",

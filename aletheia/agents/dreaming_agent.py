@@ -217,7 +217,8 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         return
 
     try:
-        lessons = json.loads(content.strip().strip("`").removeprefix("json").strip())
+        content_str = (content or "").strip().strip("`").removeprefix("json").strip()
+        lessons = json.loads(content_str)
     except (json.JSONDecodeError, ValueError):
         logger.warning("dreaming_agent: lesson extraction LLM returned non-JSON")
         return
@@ -269,6 +270,20 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
         # Merge LLM-supplied evidence with deterministic aggregate; deterministic wins.
         llm_evidence = lesson.get("evidence") or {}
         evidence = {**llm_evidence, **agg_evidence}
+        # Phase 1c: deterministic recommendation fallback when LLM omits it.
+        # If aggregate evidence shows a clear loss pattern for a specific scanner,
+        # generate a block_scanner recommendation so risk engine can act.
+        rec = lesson.get("recommendation") or None
+        if not rec and agg_evidence.get("outcome_counts"):
+            losses = agg_evidence["outcome_counts"].get("loss", 0)
+            total = sum(agg_evidence["outcome_counts"].values())
+            if total >= 3 and losses / total >= 0.6 and agg_evidence.get("scanner_families"):
+                rec = {"action": "block_scanner", "scanner": agg_evidence["scanner_families"][0]}
+                logger.info(
+                    "dreaming_agent: deterministic recommendation generated "
+                    "(block_scanner=%%s, loss_rate=%%d/%%d)",
+                    rec["scanner"], losses, total,
+                )
         created = store.create(
             summary=lesson["summary"],
             source_type="trade_case_study",
@@ -276,7 +291,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
             category=lesson.get("category", "general"),
             severity=lesson.get("severity", "info"),
             evidence=evidence,
-            recommendation=lesson.get("recommendation") or None,  # L-Bug-A fix
+            recommendation=rec,
         )
         log_tool(run_id, "create_lesson", "observe", True, output=created.lesson_id)
         outputs.append(f"lesson:{created.lesson_id}")

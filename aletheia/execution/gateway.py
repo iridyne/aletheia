@@ -1,12 +1,16 @@
 """Execution Gateway — all orders flow through here. No direct exchange access."""
 
+import json
 import logging
 import threading
 import time
 
 from aletheia.config.loader import load_config
 from aletheia.risk.engine import evaluate_proposal
-from aletheia.execution.paper_broker import execute_paper_order
+from aletheia.execution.paper_broker import (
+    capture_paper_attribution_snapshot,
+    execute_paper_order,
+)
 from aletheia.storage.models import TradeProposal
 from aletheia.storage.repositories import (
     get_trade_proposal,
@@ -39,6 +43,10 @@ def submit_proposal(
 
     Flow: Proposal -> Risk Engine -> Permission -> Live State -> Execution -> Fill -> Audit
     """
+    attribution_snapshot = None
+    if execution_mode == "paper_internal":
+        attribution_snapshot = _capture_attribution_snapshot_json(symbol)
+
     proposal = TradeProposal(
         strategy_id=strategy_id,
         opportunity_id=opportunity_id,
@@ -52,6 +60,7 @@ def submit_proposal(
         stop_price=stop_price,
         execution_mode=execution_mode,
         agent_rationale=agent_rationale,
+        attribution_snapshot=attribution_snapshot,
         trade_school=trade_school,
     )
     insert_trade_proposal(proposal)
@@ -223,6 +232,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
 
     try:
         if allowed_mode == "paper_internal":
+            attribution_snapshot = _ensure_paper_attribution_snapshot(proposal)
             with transaction():
                 result = execute_paper_order(
                     proposal_id=proposal.id,
@@ -239,6 +249,7 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     leverage=proposal.leverage,
                     opportunity_id=proposal.opportunity_id,
                     trade_school=proposal.trade_school,
+                    attribution_snapshot=attribution_snapshot,
                 )
                 update_trade_proposal(proposal.id, status="executed")
             write_audit({
@@ -416,3 +427,33 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
         return {"status": "error", "proposal_id": proposal.id, "message": str(e)}
 
     return {"status": "unknown_mode", "proposal_id": proposal.id}
+
+
+def _ensure_paper_attribution_snapshot(proposal: TradeProposal) -> dict | None:
+    snapshot = _loads_attribution_snapshot(proposal.attribution_snapshot)
+    if snapshot:
+        return snapshot
+
+    encoded = _capture_attribution_snapshot_json(proposal.symbol)
+    if not encoded:
+        return None
+    update_trade_proposal(proposal.id, attribution_snapshot=encoded)
+    return _loads_attribution_snapshot(encoded)
+
+
+def _capture_attribution_snapshot_json(symbol: str) -> str | None:
+    try:
+        snapshot = capture_paper_attribution_snapshot(symbol)
+        return json.dumps(snapshot, default=str)
+    except Exception:
+        return None
+
+
+def _loads_attribution_snapshot(raw: str | None) -> dict | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    return parsed if isinstance(parsed, dict) else None

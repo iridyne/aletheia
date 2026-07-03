@@ -97,7 +97,7 @@ async def analyze_news(news_id: str, req: AnalyzeRequest = AnalyzeRequest()):
             f"Provide a brief (2-3 sentence) impact assessment for crypto markets. "
             f"Focus on: affected assets, direction of impact, and confidence level."
         )
-        analysis = await llm_complete(prompt)
+        analysis = await llm_complete("Market impact analysis", prompt)
     except Exception as e:
         logger.warning("LLM analysis failed: %s", e)
         analysis = "Analysis unavailable — model provider not configured or unreachable."

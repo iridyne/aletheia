@@ -9,7 +9,6 @@ from aletheia.agent_runtime.orchestrator import run_agent
 import aletheia.config.loader as config_loader
 from aletheia.storage.repositories import (
     get_agent_run,
-    get_strategy,
     get_trade_proposal,
     list_agent_runs,
     list_fills,
@@ -21,10 +20,8 @@ from aletheia.storage.repositories import (
     list_risk_decisions,
     list_run_steps,
     list_trade_proposals,
-    list_strategies,
     list_tool_calls,
     update_opportunity,
-    update_strategy,
 )
 
 logger = logging.getLogger("aletheia.agent_shell.commands")
@@ -123,7 +120,6 @@ def _default_schedule_for(agent_name: str) -> str | None:
         "post_trade_reviewer": "every 4 hours",
         "risk_critic": "every 6 hours",
         "dreaming_agent": "daily at 02:00",
-        "strategy_designer": "daily at 01:00",
     }
     return schedules.get(agent_name)
 
@@ -321,22 +317,6 @@ def _truthy_flag(value) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in {"", "0", "false", "no", "none", "null"}
     return bool(value)
-
-
-def _resolve_strategy(
-    strategy_id: str | None,
-    *,
-    preferred_states: set[str] | None = None,
-) -> tuple[dict | None, list[dict]]:
-    strategies = list_strategies(limit=50)
-    if strategy_id:
-        return get_strategy(strategy_id), strategies
-    if preferred_states:
-        for strategy in strategies:
-            if strategy.get("state") in preferred_states:
-                return strategy, strategies
-    return (strategies[0] if strategies else None), strategies
-
 
 def _create_proposal_artifact(
     *,
@@ -828,7 +808,7 @@ async def create_improvement_proposal(params: dict) -> dict:
     from aletheia.knowledge.manager import create_research_note as _create
     item = _create(title=f"[PROPOSAL] {title}", content=content,
                    metadata={"type": "improvement_proposal"})
-    return {"created": True, "id": item.id, "title": title}
+    return {"created": True, "id": item.id if item else None, "title": title}
 
 
 async def draft_extension_manifest(params: dict) -> dict:
@@ -1377,46 +1357,6 @@ async def propose_schedule_change(params: dict) -> dict:
         "message": f"Created a schedule-change proposal for {agent_name}.",
         "proposal": content,
     }
-
-
-async def propose_live_limited_enablement(params: dict) -> dict:
-    from aletheia.trading.strategy_lifecycle import _allowed_targets, _live_lifecycle_gate, check_live_limited_gates
-
-    strategy_id = params.get("strategy_id")
-    strategy, _ = _resolve_strategy(strategy_id)
-    if strategy is None:
-        return {"error": "No strategies found for live-limited enablement proposal."}
-
-    gate_preview = {
-        "allowed_targets": _allowed_targets(strategy["state"]),
-        "strategy_gate": check_live_limited_gates(strategy["id"]),
-        "runtime_gate": _live_lifecycle_gate(),
-    }
-    rationale = str(params.get("rationale") or "").strip()
-    content = {
-        "strategy_id": strategy["id"],
-        "strategy_name": strategy["name"],
-        "current_state": strategy["state"],
-        "target_state": "live_limited",
-        "gate_preview": gate_preview,
-        "rationale": rationale,
-        "requires_human_approval": True,
-    }
-    artifact_id = _create_proposal_artifact(
-        artifact_type="live_limited_enablement_proposal",
-        title=f"Live-limited enablement proposal: {strategy['name']}",
-        content=content,
-        related_entity_type="strategy",
-        related_entity_id=strategy["id"],
-    )
-    return {
-        "proposed": True,
-        "artifact_id": artifact_id,
-        "message": f"Created a live-limited enablement proposal for {strategy['name']}.",
-        "proposal": content,
-    }
-
-
 async def propose_risk_boundary_change(params: dict) -> dict:
     changes = params.get("changes")
     changes = changes if isinstance(changes, dict) else {}
@@ -1766,7 +1706,6 @@ HANDLERS: dict[str, callable] = {
     "set_symbol_observe_only": set_symbol_observe_only,
     "propose_prompt_change": propose_prompt_change,
     "propose_schedule_change": propose_schedule_change,
-    "propose_live_limited_enablement": propose_live_limited_enablement,
     "propose_risk_boundary_change": propose_risk_boundary_change,
     "propose_command_center_behavior_change": propose_command_center_behavior_change,
     "propose_extension_enablement": propose_extension_enablement,

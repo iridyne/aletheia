@@ -1162,3 +1162,101 @@ def test_factor_feedback_excludes_synthetic_closes():
         assert sig["trade_count"] == 3, (
             f"only genuine closes must count, got trade_count={sig['trade_count']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# LP-DUAL-01 — trading_decision.py MUST read ps_lessons from LessonStore
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-DUAL-01", "learning_pipeline", "§8.4 dual path invariant", "L2c",
+        "trading_decision.py MUST read structured ps_lessons from LessonStore "
+        "(not retrieve_lessons) for the PI prompt block, because FTS results "
+        "lack evidence_json and guard timestamps",
+        status="implemented",
+    ),
+)
+def test_trading_decision_reads_lessons_from_lesson_store():
+    """LP-DUAL-01: the structured prompt block comes from LessonStore, not FTS.
+
+    Dual-path invariant: trading_context.py populates layer3["ps_lessons"]
+    from LessonStore.list_all(status="proposed") because only the structured
+    store carries evidence_json + activated_at + expires_at. The FTS path
+    (retrieve_lessons) returns knowledge_fts-sourced Lesson dataclasses that
+    lack these fields — they serve a different consumer (ranker / advisory).
+    trading_decision.py renders the pre-populated ps_lessons from the context.
+    Neither module calls retrieve_lessons() for the structured block.
+    """
+    import pathlib
+    root = pathlib.Path(_project_root())
+    tc_src = (root / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
+    td_src = (root / "aletheia" / "agent_shell" / "trading_decision.py").read_text(encoding="utf-8")
+
+    # trading_context.py must reference LessonStore (the structured CRUD store)
+    assert "LessonStore" in tc_src, (
+        "trading_context.py does not reference LessonStore for ps_lessons"
+    )
+    # trading_context.py must use list_all to read ps_lessons
+    assert "list_all" in tc_src, (
+        "trading_context.py does not call list_all for ps_lessons"
+    )
+    # trading_decision.py must render ps_lessons from the context
+    assert "ps_lessons" in td_src, (
+        "trading_decision.py does not render ps_lessons into the PI prompt"
+    )
+    # Neither module must call retrieve_lessons for the structured block
+    assert "retrieve_lessons" not in tc_src, (
+        "trading_context.py must not use retrieve_lessons for ps_lessons"
+    )
+    assert "retrieve_lessons" not in td_src, (
+        "trading_decision.py must not use retrieve_lessons for ps_lessons"
+    )
+
+# ---------------------------------------------------------------------------
+# LP-P3-01 — SkillStore producer gap (tracked, not blocking)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim(
+        "LP-P3-01", "learning_pipeline", "§SkillStore producer", "L2a",
+        "SkillStore.create() is never called by any Agent or Scheduler job "
+        "(only the manual REST API in server/routes/persistence.py). "
+        "This is an empty-shell reservation for Self-Evolution Tiers 2/3. "
+        "Status tracked via learning_contract.md section A2.",
+        status="missing",
+    ),
+)
+def test_skill_store_has_no_producer():
+    """LP-P3-01: track the SkillStore empty-shell gap.
+
+    Reads all Scheduler jobs and Agent entry points -- confirms none call
+    SkillStore().create(). Fires when a producer is wired without updating
+    learning_contract.md.
+    """
+    import pathlib
+
+    root = pathlib.Path(_project_root())
+
+    producers = []
+    for py_file in root.rglob("*.py"):
+        rel = str(py_file)
+        if "learning/" in rel or "persistence.py" in rel:
+            continue
+        # Exclude test files — they legitimately create via SkillStore
+        if "/tests/" in rel or "tests\\" in rel:
+            continue
+        try:
+            src = py_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if "SkillStore" in src and ".create(" in src:
+            producers.append(rel)
+
+    assert not producers, (
+        "SkillStore().create() is now called from outside learning/ and "
+        "persistence.py: " + str(producers)
+        + ". Update learning_contract.md A2."
+    )
