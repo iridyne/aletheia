@@ -31,48 +31,48 @@ import { deriveMasterState } from './lib/systemState'
 export type NavItem = { to: string; label: string }
 export type NavGroup = { group: string; items: NavItem[] }
 
-// Nav grouped by the 5 workflow phases (docs/WEBUI_PAGE_MAP.md target IA):
-// Observe -> Decide -> Execute -> Evolve -> Operate.
+// Nav follows the owner-approved trading-desk IA:
+// global entries -> Research -> Decision -> Portfolio -> global entries.
 // Keep this list honest: items must point only at implemented routes.
 export const NAV: NavGroup[] = [
-  { group: '', items: [{ to: '/', label: 'Overview' }] },
   {
-    group: 'Observe',
+    group: '',
     items: [
-      { to: '/charts', label: 'Markets' },
-      { to: '/prediction-markets', label: 'Prediction Markets' },
-      { to: '/universe', label: 'Universe' },
-      // Serenity Lens is a supply-chain research/discovery path (a way to observe
-      // the world for opportunities), not a learning/evolution loop — belongs here.
-      { to: '/serenity-lens', label: 'Serenity Lens' },
+      { to: '/', label: 'Overview' },
+      { to: '/command-center', label: 'Command Center' },
     ],
   },
   {
-    group: 'Decide',
+    group: 'Research',
+    items: [
+      { to: '/universe', label: 'Universe Board' },
+      { to: '/charts', label: 'Markets' },
+      { to: '/prediction-markets', label: 'Prediction Markets' },
+      // Serenity Lens is a supply-chain research/discovery path (a way to observe
+      // the world for opportunities), not a learning/evolution loop — belongs here.
+      { to: '/serenity-lens', label: 'Serenity Lens' },
+      { to: '/news', label: 'News Intel' },
+    ],
+  },
+  {
+    group: 'Decision',
     items: [
       { to: '/proposals', label: 'Approval Desk' },
       { to: '/agent-activity', label: 'Agent Activity' },
     ],
   },
   {
-    group: 'Execute',
+    group: 'Portfolio',
     items: [
       { to: '/trades', label: 'Trades & Positions' },
+      { to: '/risk', label: 'Risk & Controls' },
     ],
   },
   {
-    group: 'Evolve',
+    group: '',
     items: [
       { to: '/learning', label: 'Learning' },
-    ],
-  },
-  {
-    group: 'Operate',
-    items: [
-      { to: '/command-center', label: 'Command Center' },
-      { to: '/risk', label: 'Risk & Controls' },
       { to: '/settings', label: 'Settings' },
-      { to: '/news', label: 'News Intel' },
     ],
   },
 ]
@@ -462,7 +462,7 @@ export default function App() {
         </div>
         <nav>
           {NAV.map(({ group, items }) => (
-            <div key={group || 'home'} className="nav-group">
+            <div key={group || items.map(i => i.to).join('|')} className="nav-group">
               {group && (
                 <button className="nav-group-label" onClick={() => toggle(group)}>
                   <span>{group}</span>

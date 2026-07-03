@@ -9,19 +9,36 @@ def _read(rel: str) -> str:
     return (FRONTEND / rel).read_text(encoding="utf-8")
 
 
-def test_sidebar_places_serenity_under_observe_and_keeps_evolve_to_learning():
+def test_sidebar_uses_trading_desk_ia_with_global_entries():
     app = _read("App.tsx")
     nav = re.search(r"export const NAV: NavGroup\[\] = \[(.*?)\n\]", app, re.S)
     assert nav, "App.tsx must expose the data-driven NAV array"
     nav_text = nav.group(1)
 
-    observe = re.search(r"group: 'Observe'.*?group: 'Decide'", nav_text, re.S)
-    evolve = re.search(r"group: 'Evolve'.*?group: 'Operate'", nav_text, re.S)
-    assert observe, "Observe nav group is missing"
-    assert evolve, "Evolve nav group is missing"
+    assert "group: 'Observe'" not in nav_text
+    assert "group: 'Evolve'" not in nav_text
+    assert "group: 'Operate'" not in nav_text
 
-    assert "{ to: '/serenity-lens', label: 'Serenity Lens' }" in observe.group(0)
-    assert "{ to: '/learning', label: 'Learning' }" in evolve.group(0)
+    top = re.search(r"items: \[\s*\{ to: '/', label: 'Overview' \},\s*\{ to: '/command-center', label: 'Command Center' \},\s*\]", nav_text, re.S)
+    research = re.search(r"group: 'Research'.*?group: 'Decision'", nav_text, re.S)
+    decision = re.search(r"group: 'Decision'.*?group: 'Portfolio'", nav_text, re.S)
+    portfolio = re.search(r"group: 'Portfolio'.*?\{ to: '/learning', label: 'Learning' \}", nav_text, re.S)
+    bottom = re.search(r"items: \[\s*\{ to: '/learning', label: 'Learning' \},\s*\{ to: '/settings', label: 'Settings' \},\s*\]", nav_text, re.S)
+
+    assert top, "Overview and Command Center must be top-level global entries"
+    assert research, "Research nav group is missing"
+    assert decision, "Decision nav group is missing"
+    assert portfolio, "Portfolio nav group is missing"
+    assert bottom, "Learning and Settings must be top-level global entries"
+
+    assert "{ to: '/universe', label: 'Universe Board' }" in research.group(0)
+    assert "{ to: '/serenity-lens', label: 'Serenity Lens' }" in research.group(0)
+    assert "{ to: '/news', label: 'News Intel' }" in research.group(0)
+    assert "{ to: '/proposals', label: 'Approval Desk' }" in decision.group(0)
+    assert "{ to: '/trades', label: 'Trades & Positions' }" in portfolio.group(0)
+    assert "{ to: '/risk', label: 'Risk & Controls' }" in portfolio.group(0)
+    assert "group: 'Learning'" not in nav_text
+    assert "group: 'Settings'" not in nav_text
     assert "Strategy Lifecycle" not in nav_text
     assert "/strategies" not in nav_text
 
