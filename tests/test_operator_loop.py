@@ -199,7 +199,6 @@ class TestActionExecution:
     def test_level_classification(self, tmp_path, monkeypatch):
         from aletheia.agent_shell.operator_loop import classify_action
         assert classify_action("retire_strategy") == 1
-        assert classify_action("promote_strategy") == 2
         assert classify_action("deactivate_kill_switch") == 3
         assert classify_action("unknown_action") == 2
 
@@ -393,7 +392,7 @@ class TestRunOperatorLoop:
         from aletheia.agent_shell.operator_loop import OperatorAction, _create_proposal
 
         action = OperatorAction(
-            action_type="promote_strategy", level=2,
+            action_type="restart_collector", level=1,
             params={"strategy_id": "test-strat"},
             reason="win_rate exceeds threshold",
         )

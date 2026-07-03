@@ -40,7 +40,6 @@ Available commands:
 - set_symbol_observe_only: user wants a symbol observed but not tradable
 - propose_prompt_change: user wants to propose changing a prompt or playbook
 - propose_schedule_change: user wants to propose a scheduler cadence change
-- propose_live_limited_enablement: user wants to propose human review for live-limited enablement
 - propose_risk_boundary_change: user wants to propose a risk boundary change
 - propose_command_center_behavior_change: user wants to propose a Command Center behavior change
 - propose_extension_enablement: user wants to propose human approval for enabling an extension
@@ -67,11 +66,6 @@ _KEYWORD_MAP: dict[str, list[str]] = {
     "set_symbol_observe_only": ["observe only", "mark symbol observe only", "set observe only"],
     "propose_prompt_change": ["propose prompt change", "prompt change proposal", "propose playbook change"],
     "propose_schedule_change": ["propose schedule change", "schedule change proposal", "propose cadence change"],
-    "propose_live_limited_enablement": [
-        "propose live limited enablement",
-        "live limited enablement proposal",
-        "propose live-limited enablement",
-    ],
     "propose_risk_boundary_change": [
         "propose risk boundary change",
         "risk boundary proposal",

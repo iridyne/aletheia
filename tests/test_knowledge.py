@@ -119,11 +119,13 @@ def test_post_trade_review_creation(tmp_path, monkeypatch):
 async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
 
-    from aletheia.trading.strategy_lifecycle import create_strategy
+    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.repositories import insert_strategy
     from aletheia.agent_runtime.tool_registry import init_tool_registry
 
     init_tool_registry()
-    strategy = create_strategy("Post Trade Review Strategy")
+    strategy = StrategyRecord(name="Post Trade Review Strategy", state="draft")
+    insert_strategy(strategy)
     proposal = TradeProposal(
         strategy_id=strategy.id,
         symbol="BTCUSDT",

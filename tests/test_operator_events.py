@@ -314,14 +314,15 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
     from aletheia.agent_shell.operator_store import create_artifact
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
-    from aletheia.trading.strategy_lifecycle import create_strategy, promote_strategy
+    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.repositories import insert_strategy, update_strategy
 
     from aletheia.storage.models import PiDecision
-    review_strategy = create_strategy("Review Candidate", "needs operator review")
+    review_strategy = StrategyRecord(name="Review Candidate", description="needs operator review", state="draft")
+    insert_strategy(review_strategy)
     repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=review_strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
-        result = promote_strategy(review_strategy.id, target)
-        assert result["success"] is True
+        update_strategy(review_strategy.id, state=target)
     repo.update_strategy(
         review_strategy.id,
         under_review=1,
@@ -329,11 +330,11 @@ async def test_operator_recommendations_include_shell_specialist_work_from_backe
         review_updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    promotion_strategy = create_strategy("Promotion Candidate", "promotion proposal due")
+    promotion_strategy = StrategyRecord(name="Promotion Candidate", description="promotion proposal due", state="draft")
+    insert_strategy(promotion_strategy)
     repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=promotion_strategy.id, debate_ran=False))
     for target in ("research_note", "strategy_hypothesis", "paper_candidate", "paper_running"):
-        result = promote_strategy(promotion_strategy.id, target)
-        assert result["success"] is True
+        update_strategy(promotion_strategy.id, state=target)
 
     repo.insert_position(
         Position(
@@ -406,55 +407,6 @@ async def test_operator_recommendations_include_prompt_change_proposal_due_for_r
 
     kinds = {item["kind"] for item in recommendations.json()}
     assert "agent_prompt_change_proposal_due" in kinds
-
-
-@pytest.mark.anyio
-async def test_operator_recommendations_include_live_limited_enablement_due_for_live_candidate_strategy(
-    client,
-):
-    from aletheia.agent_shell.operator_store import create_artifact
-    from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy
-
-    strategy = StrategyRecord(
-        name="Live Limited Candidate",
-        state="live_candidate",
-    )
-    insert_strategy(strategy)
-
-    create_artifact(
-        task_id=None,
-        session_id="strategy-eval-session",
-        artifact_type="strategy_evaluation",
-        title="Live-limited-ready evaluation",
-        content={
-            "strategy_id": strategy.id,
-            "strategy_name": "Live Limited Candidate",
-            "summary": "Live-limited gates passed for live_candidate strategy.",
-            "evaluation": {
-                "strategy": {
-                    "id": strategy.id,
-                    "name": "Live Limited Candidate",
-                    "state": "live_candidate",
-                },
-                "live_limited_gates": {
-                    "passed": True,
-                    "failures": [],
-                },
-            },
-        },
-    )
-
-    recommendations = await client.get("/api/operator/recommendations")
-    assert recommendations.status_code == 200
-
-    proposal_due = next(
-        item
-        for item in recommendations.json()
-        if item["kind"] == "live_limited_enablement_proposal_due"
-    )
-    assert proposal_due["metadata"]["proposal_command"] == "propose_live_limited_enablement"
-    assert proposal_due["metadata"]["strategy_id"] == strategy.id
 
 
 @pytest.mark.anyio
