@@ -2,11 +2,11 @@
 
 The minimum profit loop is the system's core revenue closed loop:
     opportunities -> paper_trader ranks -> signal_pending pi_decisions
-    -> PI Agent LLM decides -> trade_proposals -> risk -> orders -> positions
+    -> System Operator LLM decides -> trade_proposals -> risk -> orders -> positions
 
 This spec pins the invariants that keep that loop OBSERVABLE and correctly fed,
 so a silent stall surfaces in tests + `aletheia doctor` instead of reaching the
-user. Born from the 2026-06-23 incident: the PI Agent was fed a phantom $167
+user. Born from the 2026-06-23 incident: the System Operator was fed a phantom $167
 balance (wrong broker cache) and skipped every signal for 20h while the observe
 stage kept producing opportunities — the system looked alive but earned nothing.
 
@@ -67,7 +67,7 @@ def _put_setting(conn, key: str, value: str):
         "L2b",
         "get_cached_state() default path returns the active account's true equity "
         "(unified cache) when the active paper broker is non-Bitget — not the idle "
-        "Bitget demo balance. Prevents PI Agent phantom-bankruptcy skip.",
+        "Bitget demo balance. Prevents System Operator phantom-bankruptcy skip.",
     ),
 )
 def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
@@ -110,7 +110,7 @@ def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
     equity = state.get("equity_usdt") or state.get("total_equity_usdt")
     assert equity == pytest.approx(88687.0), (
         f"default get_cached_state() must return active-account equity, got {equity} "
-        "(regression: PI Agent would see phantom-bankrupt $167 and skip every signal)"
+        "(regression: System Operator would see phantom-bankrupt $167 and skip every signal)"
     )
 
     # Explicit mode="demo" (CLI bitget tools) must still get the per-mode cache.

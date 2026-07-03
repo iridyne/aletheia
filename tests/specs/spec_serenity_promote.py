@@ -1,6 +1,6 @@
 """Spec: Serenity promote → PI evaluation queue (Phase 3 — Option A, D5 switch)
 
-Owner decision 2026-06-27 (Option A, PI-central): the apex PI Agent is the SOLE
+Owner decision 2026-06-27 (Option A, System Operator-centered): the apex System Operator is the SOLE
 trade-decision maker. Phase 2 wired the `signal_source` discriminator on
 `pi_decisions`; this phase replaces the legacy `StrategyRecord(state='draft')`
 dead-record path with a real producer → consumer chain:

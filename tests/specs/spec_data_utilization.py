@@ -383,7 +383,7 @@ def test_research_worker_injects_coinalyze_flow():
 # DU-S10 / DU-S11 — forward-outcome thesis evidence reaches the PI decision
 #   (Position B, P1a 2026-07-02). The universe_forward_outcomes store already
 #   accumulates per-(scanner_family, direction) live edge and drives Tier-1
-#   self-evolution, but the PI Agent only saw a universe-wide aggregate
+#   self-evolution, but the System Operator only saw a universe-wide aggregate
 #   win-rate — it could not weigh a candidate against ITS family+direction
 #   track record. These claims lock: (S10) the aggregation groups by
 #   (scanner_family, direction); (S11) it is routed into the PI context +

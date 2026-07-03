@@ -23,7 +23,7 @@ def _db():
 
 
 def check_domain_1() -> list[tuple[str, bool, str]]:
-    """决策引擎（PI Agent）"""
+    """决策引擎（System Operator）"""
     results = []
     conn = _db()
     cur = conn.cursor()

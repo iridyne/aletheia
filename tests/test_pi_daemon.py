@@ -1,4 +1,4 @@
-"""Tests for the PI Agent event-driven daemon (pi_daemon.py)."""
+"""Tests for the System Operator event-driven daemon (pi_daemon.py)."""
 
 import asyncio
 from unittest.mock import patch
