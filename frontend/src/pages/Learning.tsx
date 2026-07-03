@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
 import type { KnowledgeItem, StrategyRecord } from '../types'
@@ -263,6 +263,7 @@ const guardColumns = [
 ]
 
 function KnowledgeTab() {
+  const queryClient = useQueryClient()
   const [tab, setTab] = useState<typeof KB_TABS[number]['key']>('research')
   const [selected, setSelected] = useState<KnowledgeItem | null>(null)
   const [selectedLesson, setSelectedLesson] = useState<LessonRow | null>(null)
@@ -287,6 +288,19 @@ function KnowledgeTab() {
     [KB_TABS[4].key]: Array.isArray(d4) ? d4.length : undefined,
     [KB_TABS[5].key]: Array.isArray(d5) ? d5.length : undefined,
   }
+  const lessonAction = useMutation({
+    mutationFn: ({ lessonId, action }: { lessonId: string; action: 'accept' | 'reject' | 'archive' }) => {
+      if (action === 'accept') return api.acceptLesson(lessonId)
+      if (action === 'reject') return api.rejectLesson(lessonId)
+      return api.archiveLesson(lessonId)
+    },
+    onSuccess: (updated: LessonRow) => {
+      setSelectedLesson(updated)
+      queryClient.invalidateQueries({ queryKey: ['knowledge'] })
+      queryClient.invalidateQueries({ queryKey: ['lessons-all'] })
+      queryClient.invalidateQueries({ queryKey: ['learning-funnel'] })
+    },
+  })
 
   return (
     <>
@@ -312,6 +326,35 @@ function KnowledgeTab() {
           <>
             <DrawerSection label="Summary">
               <p className="text-sm text-pre-wrap">{selectedLesson.summary || '—'}</p>
+            </DrawerSection>
+            <DrawerSection label="Actions">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={lessonAction.isPending || selectedLesson.status === 'accepted' || selectedLesson.status === 'applied'}
+                  onClick={() => lessonAction.mutate({ lessonId: selectedLesson.lesson_id, action: 'accept' })}
+                >
+                  Accept
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={lessonAction.isPending || selectedLesson.status === 'rejected'}
+                  onClick={() => lessonAction.mutate({ lessonId: selectedLesson.lesson_id, action: 'reject' })}
+                >
+                  Reject
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  disabled={lessonAction.isPending || selectedLesson.status === 'archived'}
+                  onClick={() => lessonAction.mutate({ lessonId: selectedLesson.lesson_id, action: 'archive' })}
+                >
+                  Archive
+                </Button>
+              </div>
+              {lessonAction.error && <p className="text-error text-sm">{lessonAction.error.message}</p>}
             </DrawerSection>
             <DrawerSection label="Metadata">
               <DrawerField label="Category" value={<Badge tone="blue">{humanize(selectedLesson.category || '—')}</Badge>} />

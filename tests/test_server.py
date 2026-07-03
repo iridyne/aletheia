@@ -68,6 +68,48 @@ async def test_knowledge_route_rejects_unknown_item_type(client):
 
 
 @pytest.mark.anyio
+async def test_lesson_management_actions(client):
+    from aletheia.learning.lessons import LessonStore
+
+    store = LessonStore()
+    lesson = store.create(
+        summary="BTC long momentum lesson",
+        source_type="trade_case_study",
+        source_id="case-1",
+    )
+
+    accepted = await client.post(f"/api/persistence/lessons/{lesson.lesson_id}/accept")
+    assert accepted.status_code == 200
+    accepted_body = accepted.json()
+    assert accepted_body["status"] == "accepted"
+    assert accepted_body["activated_at"]
+    assert accepted_body["dry_run_until"]
+
+    rejected = await client.post(f"/api/persistence/lessons/{lesson.lesson_id}/reject")
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+    archived = await client.post(f"/api/persistence/lessons/{lesson.lesson_id}/archive")
+    assert archived.status_code == 200
+    assert archived.json()["status"] == "archived"
+
+    from aletheia.storage.event_store import get_event_store
+    events = get_event_store().list_by_aggregate("lesson", lesson.lesson_id)
+    assert [e.event_type for e in events] == [
+        "LESSON_CREATED",
+        "LESSON_ACCEPTED",
+        "LESSON_REJECTED",
+        "LESSON_ARCHIVED",
+    ]
+
+
+@pytest.mark.anyio
+async def test_lesson_management_action_rejects_unknown_lesson(client):
+    resp = await client.post("/api/persistence/lessons/missing-lesson/accept")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_pause_resume(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
 

@@ -211,6 +211,46 @@ async def get_lesson(lesson_id: str):
     return lesson.model_dump()
 
 
+def _lesson_or_404(store, lesson_id: str):
+    lesson = store.get(lesson_id)
+    if not lesson:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return lesson
+
+
+@router.post("/lessons/{lesson_id}/accept")
+async def accept_lesson(lesson_id: str):
+    """Accept a proposed lesson into dry-run review."""
+    from aletheia.learning.lessons import LessonStore
+
+    store = LessonStore()
+    _lesson_or_404(store, lesson_id)
+    store.accept(lesson_id)
+    return _lesson_or_404(store, lesson_id).model_dump()
+
+
+@router.post("/lessons/{lesson_id}/reject")
+async def reject_lesson(lesson_id: str):
+    """Reject a lesson so it no longer enters the promotion path."""
+    from aletheia.learning.lessons import LessonStore
+
+    store = LessonStore()
+    _lesson_or_404(store, lesson_id)
+    store.reject(lesson_id)
+    return _lesson_or_404(store, lesson_id).model_dump()
+
+
+@router.post("/lessons/{lesson_id}/archive")
+async def archive_lesson(lesson_id: str):
+    """Archive a superseded lesson without deleting its record."""
+    from aletheia.learning.lessons import LessonStore
+
+    store = LessonStore()
+    _lesson_or_404(store, lesson_id)
+    store.archive(lesson_id)
+    return _lesson_or_404(store, lesson_id).model_dump()
+
+
 # --- Skills ---
 
 

@@ -98,6 +98,10 @@ class LessonStore:
         )
         if not was_in_tx:
             db.commit()
+        get_event_store().append(make_event(
+            "LESSON_ACCEPTED", "lesson", lesson_id,
+            payload={"status": "accepted"},
+        ))
 
     def reject(self, lesson_id: str) -> None:
         """Mark a lesson as rejected."""
@@ -109,6 +113,10 @@ class LessonStore:
         )
         if not was_in_tx:
             db.commit()
+        get_event_store().append(make_event(
+            "LESSON_REJECTED", "lesson", lesson_id,
+            payload={"status": "rejected"},
+        ))
 
     def mark_applied(self, lesson_id: str, policy_version_id: str) -> None:
         """Stamp the policy version a lesson influenced and move it to 'applied'.
@@ -127,6 +135,10 @@ class LessonStore:
         )
         if not was_in_tx:
             db.commit()
+        get_event_store().append(make_event(
+            "LESSON_APPLIED", "lesson", lesson_id,
+            payload={"status": "applied", "policy_version_id": policy_version_id},
+        ))
 
     def archive(self, lesson_id: str) -> None:
         """Mark a lesson as archived (superseded)."""
@@ -138,3 +150,7 @@ class LessonStore:
         )
         if not was_in_tx:
             db.commit()
+        get_event_store().append(make_event(
+            "LESSON_ARCHIVED", "lesson", lesson_id,
+            payload={"status": "archived"},
+        ))

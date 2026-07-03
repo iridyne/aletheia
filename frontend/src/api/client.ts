@@ -216,6 +216,9 @@ export const api = {
     dry_run_until?: string
     expires_at?: string
   }>>(`/persistence/lessons?limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ''}`),
+  acceptLesson: (lessonId: string) => post<any>(`/persistence/lessons/${lessonId}/accept`),
+  rejectLesson: (lessonId: string) => post<any>(`/persistence/lessons/${lessonId}/reject`),
+  archiveLesson: (lessonId: string) => post<any>(`/persistence/lessons/${lessonId}/archive`),
 
   // Trading guards: accepted lessons promoted to active blocking/advisory constraints.
   getGuards: () => fetchJson<Array<{
