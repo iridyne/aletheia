@@ -374,7 +374,7 @@ def test_allocate_universe_regime_aware_quota():
     # 2. None → 静态 family_quota(同一对象/等值)
     assert resolve_family_quota(cfg, None) == cfg.family_quota
 
-    # 3. 端到端:20 个 momentum 候选。static quota momentum=0.35(→7 席),
+    # 3. 端到端:20 个 momentum 候选。static quota momentum=0.30(→6 席),
     #    bear quota momentum=0.10(→2 席)——bear 应放行更少的 long-only momentum。
     scored = [
         {"symbol": f"C{i}/USDT", "scanner_family": "momentum",
@@ -388,3 +388,41 @@ def test_allocate_universe_regime_aware_quota():
     assert bear_mom < static_mom, (
         f"bear regime 未收紧 momentum 名额: bear={bear_mom} static={static_mom}"
     )
+
+
+# ---------------------------------------------------------------------------
+# UP-17 — explore phase respects family quota (no winner-take-all re-flood)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("UP-17", "universe_pipeline", "§2 explore respects family quota", "L2b",
+              "the explore phase of allocate_universe must NOT push a family past "
+              "its quota: exploration draws only from families still under quota, so "
+              "it adds diversity rather than re-flooding the winner-take-all family "
+              "(root cause of 84% momentum despite a 30% quota, diagnosis 2026-07-03)"),
+)
+def test_explore_respects_family_quota():
+    """行为断言(非源码 grep):winner-take-all 输入下,explore 不得让某 family 超配额。
+
+    构造 12 个 momentum 候选(唯一 family)。exploit 阶段把 momentum 封在配额上限,
+    余量进 remainder。旧行为:explore 从 remainder 随机补样 → 把已超配额的 momentum
+    又塞回去(84% 偏斜真因)。新行为:explore 只从「仍在配额内」的 family 取样 →
+    momentum 已达上限 → explore 不再追加 → 最终 momentum 数 ≤ 配额上限。
+    """
+    from aletheia.universe.allocator import allocate_universe
+    from aletheia.config.schema import UniverseConfig
+
+    cfg = UniverseConfig(
+        max_candidates=10, explore_ratio=0.2,
+        family_quota={"momentum": 0.30, "mean_reversion": 0.30, "volatility": 0.40},
+    )
+    scored = [
+        {"symbol": f"M{i}/USDT", "scanner_family": "momentum",
+         "total_score": 90.0 - i, "tradability_score": 60.0}
+        for i in range(12)
+    ]
+    sel = allocate_universe([dict(s) for s in scored], cfg, regime_state=None)
+    mom = sum(1 for x in sel if x.get("scanner_family") == "momentum")
+    limit = max(1, int(cfg.max_candidates * cfg.family_quota["momentum"]))  # 3
+    assert mom <= limit, f"explore re-flooded over-quota momentum: {mom} > {limit}"

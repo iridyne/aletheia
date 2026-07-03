@@ -262,15 +262,32 @@ def allocate_universe(
             exploit_selected.append(item)
             family_counts[family] = current + 1
 
-    # Explore selection: random sample from remainder
+    # Explore selection: random sample from remainder, but only families still
+    # UNDER their quota (US-17). Historically explore random-sampled the whole
+    # remainder — and because run_all_scanners is winner-take-all per symbol and
+    # momentum wins ~43% of symbols, that remainder is dominated by OVER-quota
+    # momentum. So explore silently re-flooded the very family the exploit phase
+    # had just capped, producing 84% momentum in the live pool despite a 30%
+    # momentum quota (diagnosis 2026-07-03). Restricting explore to under-quota
+    # families means exploration adds DIVERSITY, not more of the dominant family.
     explore_selected: list[dict] = []
     if remainder and explore_count > 0:
+        default_limit = max(1, int(max_total * 0.3))
         # US-13: don't let explore promote 0/low-score candidates into the executable
         # universe. Keep exploration, but require minimal viability first.
-        viable = [r for r in remainder if r.get("total_score", 0) >= _EXPLORE_MIN_SCORE]
+        # US-17: and only from families that have NOT already hit their quota.
+        viable = [
+            r for r in remainder
+            if r.get("total_score", 0) >= _EXPLORE_MIN_SCORE
+            and family_counts.get(r.get("scanner_family", "momentum"), 0)
+            < family_limits.get(r.get("scanner_family", "momentum"), default_limit)
+        ]
         if viable:
             sample_size = min(explore_count, len(viable))
             explore_selected = random.sample(viable, sample_size)
+            for r in explore_selected:
+                fam = r.get("scanner_family", "momentum")
+                family_counts[fam] = family_counts.get(fam, 0) + 1
 
     # Combine and assign TTL + rank metadata
     final = exploit_selected + explore_selected

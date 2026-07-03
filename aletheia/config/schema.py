@@ -613,9 +613,18 @@ class UniverseConfig(BaseModel):
     max_spread_bps: float = 25.0
     min_depth_10bps_usd: float = 25_000
     explore_ratio: float = 0.2
+    # Static family quota — ACTIVE whenever regime detection returns no state
+    # (~75% of refreshes in practice, so this is the dominant allocation path, not
+    # a rare fallback). Rebalanced 2026-07-03 from the data: the old default gave
+    # derivatives 0.35 + event 0.05 = 40% of the quota to two families that
+    # produce ZERO / ~1% of candidates (funding/OI feed gap), so their share went
+    # unused and momentum backfilled it → 84% momentum in the live pool. New split
+    # reflects which families actually fire: momentum trimmed, volatility &
+    # short_bias given explicit shares (they previously relied on the 0.3 default
+    # cap), derivatives/event kept small for when their feeds return. Sums to 1.0.
     family_quota: dict[str, float] = Field(default_factory=lambda: {
-        "momentum": 0.35, "mean_reversion": 0.25,
-        "derivatives": 0.35, "event": 0.05,
+        "momentum": 0.30, "mean_reversion": 0.25, "volatility": 0.20,
+        "short_bias": 0.10, "derivatives": 0.10, "event": 0.05,
     })
     # Per-regime family quota overrides (2A+.9). Maps regime state
     # (bull/bear/sideways/volatile) → family quota dict. When the current regime
