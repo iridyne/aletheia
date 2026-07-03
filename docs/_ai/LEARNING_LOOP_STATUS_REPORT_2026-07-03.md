@@ -11,7 +11,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 5. System Operator、机会排序器、Risk Engine 会读取这些学习结果。
 6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Active Guards 和学习漏斗。
 
-但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 4 个关键点：历史 scanner_family 覆盖补齐、矛盾检测、Learning 管理动作、SkillStore/时间衰减机制。
+但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 4 个关键点：历史 scanner_family 覆盖补齐、guard 候选人工晋升、矛盾检测、SkillStore/时间衰减机制。
 
 ## 当前量化状态
 
@@ -59,7 +59,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 
 ### 3. 前端展示 Learning 状态
 
-已实现监控型界面。Learning 页面可以展示：
+已实现监控 + lesson 审核界面。Learning 页面可以展示：
 
 - Dreaming summary
 - Knowledge Base
@@ -67,7 +67,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 - Active Guards
 - Learning Funnel
 
-但当前页面主要是只读状态，不是完整的 Learning 管理台。它还缺少对 lesson/guard 的人工确认、归档、拒绝、晋升入口。
+当前已补上 lesson 的人工确认入口：Post-Trade Lessons 抽屉里可以 accept / reject / archive，动作会写入事件日志并刷新 Learning/Funnel 数据。guard_candidate 到 trading_guard 的人工晋升入口仍未做。
 
 ### 4. 局部自修复
 
@@ -181,6 +181,34 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 | `BTC/USDT short momentum` | 0 条 | 2 条同 BTC short | -6.996936 |
 | `BTC/USDT long momentum` | 0 条 | 1 条同 BTC long scratch | 0 |
 
+### Learning lesson 管理动作缺失
+
+问题：Learning 前端过去只能查看 post-trade lessons，不能人工确认、拒绝或归档。后端 `LessonStore` 虽然已有 `accept/reject/archive` 方法，但没有 API，也没有前端入口。这导致 owner 无法参与 Learning 自修复闭环。
+
+修复：
+
+- 新增 API：
+  - `POST /api/persistence/lessons/{lesson_id}/accept`
+  - `POST /api/persistence/lessons/{lesson_id}/reject`
+  - `POST /api/persistence/lessons/{lesson_id}/archive`
+- `LessonStore` 状态变更写入事件日志：
+  - `LESSON_ACCEPTED`
+  - `LESSON_REJECTED`
+  - `LESSON_ARCHIVED`
+  - `LESSON_APPLIED`
+- 前端 Learning → Knowledge Base → Post-Trade Lessons 抽屉新增 `Accept / Reject / Archive` 按钮。
+- 操作成功后刷新 lesson 列表、Learning Funnel 和 Learning pulse。
+
+量化结果：
+
+| 项目 | 结果 |
+| --- | --- |
+| 新增 lesson 管理 API | 3 个 |
+| 新增前端 lesson 操作 | 3 个 |
+| lesson 状态事件 | 4 类 |
+| 后端回归测试 | 19 passed |
+| 前端 build | passed |
+
 ## 仍需处理的问题
 
 ### P1：历史 case study 的 scanner_family 覆盖不足
@@ -197,16 +225,14 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 影响：系统还不会主动发现“旧规则和新证据冲突”。
 
-### P1：Learning 页面缺少管理动作
+### P1：guard_candidate 人工晋升入口仍缺失
 
-前端可以看 Learning 状态，但不能完成 lesson/guard 的人工审核闭环。
+前端现在可以审核 lesson，但还不能把 guard_candidate 人工确认晋升为 trading_guard。
 
 建议增加：
 
-- accept / reject proposed lesson
-- archive / deprecate low-quality knowledge
 - promote guard_candidate to trading_guard
-- 查看某个 lesson 的证据来源和最近效果
+- 查看某个 guard_candidate 的证据来源和最近效果
 
 ### P2：SkillStore producer 和 time-decay 仍缺失
 
@@ -240,7 +266,7 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 ## 下一步建议
 
 1. 补齐或降级历史 case study 的 scanner_family 覆盖，目标是减少结构化过滤后的“无证据”结果。
-2. 给 Learning 页面补人工审核入口，让 owner 能确认或否决系统总结出的规则。
+2. 给 guard_candidate 补人工晋升入口，让 owner 能确认或否决系统总结出的 guard。
 3. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
 4. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
 
@@ -318,6 +344,20 @@ uv run pytest tests/test_knowledge_maintenance.py tests/test_fts_coverage.py tes
 18 passed in 1.00s
 ```
 
+新增 lesson 管理动作测试与前端构建：
+
+```powershell
+uv run pytest tests/test_server.py::test_lesson_management_actions tests/test_server.py::test_lesson_management_action_rejects_unknown_lesson tests/test_learning_stores.py -q
+cd frontend && npm run build
+```
+
+结果：
+
+```text
+19 passed in 1.42s
+frontend build passed
+```
+
 补充 API 采样：
 
 | 接口 | 结果 |
@@ -333,3 +373,6 @@ uv run pytest tests/test_knowledge_maintenance.py tests/test_fts_coverage.py tes
 | `/api/analytics/learning-funnel` | 结构化检索修复并重启 gateway 后 200，30ms |
 | `/api/knowledge?type=trade_case_study` | 不可索引高置信维护后 200，98ms |
 | `/api/analytics/learning-funnel` | 不可索引高置信维护后 200，16ms |
+| `/api/persistence/lessons?limit=3` | lesson 管理动作上线后 200，99ms |
+| `/api/analytics/learning-funnel` | lesson 管理动作上线后 200，16ms |
+| `/api/knowledge?type=trade_case_study` | lesson 管理动作上线后 200，7ms |
