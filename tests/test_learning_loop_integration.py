@@ -49,6 +49,41 @@ class TestLessonAwareScoring:
                 scanner_family="momentum",
             )
 
+    def test_falls_back_to_symbol_direction_when_scanner_history_missing(self):
+        from aletheia.agents.paper_trader_ranker import _lesson_penalty
+        from aletheia.knowledge.retrieval import Lesson
+
+        fallback_lessons = [
+            Lesson(
+                item_id="l-old", item_type="trade_case_study",
+                title="Old BTC long loss", snippet="BTC long failed before scanner tracking",
+                confidence="high_confidence", created_at="2026-06-17T00:00:00Z", score=0.5,
+                outcome="loss",
+            ),
+        ]
+        with patch(
+            "aletheia.knowledge.retrieval.retrieve_lessons",
+            side_effect=[[], fallback_lessons],
+        ) as retrieve:
+            penalty = _lesson_penalty("BTC/USDT", "long", "momentum")
+            assert penalty < 0
+            assert retrieve.call_count == 2
+            retrieve.assert_any_call(
+                "BTC/USDT long momentum",
+                k=3,
+                item_types=["trade_case_study"],
+                symbol="BTC/USDT",
+                direction="long",
+                scanner_family="momentum",
+            )
+            retrieve.assert_any_call(
+                "BTC/USDT long",
+                k=3,
+                item_types=["trade_case_study"],
+                symbol="BTC/USDT",
+                direction="long",
+            )
+
     def test_positive_lessons_no_penalty(self):
         from aletheia.agents.paper_trader_ranker import _lesson_penalty
         from aletheia.knowledge.retrieval import Lesson

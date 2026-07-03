@@ -403,6 +403,19 @@ def _lesson_penalty(symbol: str | None, direction: str | None, scanner_family: s
             direction=direction,
             scanner_family=scanner_family,
         )
+        if not lessons and scanner_family:
+            # Historical case studies often predate reliable scanner_family
+            # attribution. Fall back to same symbol+direction only, never to a
+            # different symbol/direction, so the ranker can still learn from old
+            # trades without pretending the scanner evidence exists.
+            fallback_query = " ".join(p for p in (symbol, direction) if p)
+            lessons = retrieve_lessons(
+                fallback_query,
+                k=3,
+                item_types=["trade_case_study"],
+                symbol=symbol,
+                direction=direction,
+            )
         if not lessons:
             return 0.0
         penalty = 0.0

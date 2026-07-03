@@ -193,10 +193,12 @@ def _build_case_from_row(row: dict) -> dict | None:
     else:
         outcome = "scratch"
 
+    # The strategy rules engine was removed; strategy_id is no longer a reliable
+    # proof of attribution. A useful closed-trade case needs the execution proposal
+    # and the source opportunity, because those carry symbol/direction/scanner lineage.
     has_full_chain = all([
         row.get("proposal_id"),
         row.get("opportunity_id"),
-        row.get("strategy_id"),
     ])
 
     return {

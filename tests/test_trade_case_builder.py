@@ -89,6 +89,11 @@ class TestBuildCaseFromRow:
         case = _build_case_from_row(row)
         assert case["has_full_chain"] is False
 
+    def test_strategy_id_not_required_after_strategy_engine_removal(self):
+        row = _make_row(strategy_id=None, proposal_id="prop-1", opportunity_id="opp-1")
+        case = _build_case_from_row(row)
+        assert case["has_full_chain"] is True
+
 
 class TestRenderCaseBody:
     def test_contains_metrics(self):
