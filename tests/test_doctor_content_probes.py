@@ -223,11 +223,23 @@ def test_proposal_bias_too_few_is_info(db):
     assert _verdict(dx._probe_content_proposal_bias).severity == "info"
 
 
-def test_proposal_bias_one_sided_warns(db):
+def test_proposal_bias_one_sided_warns_when_unmitigated(db, monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_decision._proposal_direction_overheated",
+        lambda direction, conviction: None,
+    )
     for i in range(22):
         _ins_prop(db, i, "short")  # 100% short, >= 20 samples
     v = _verdict(dx._probe_content_proposal_bias)
     assert v.severity == "warn" and "bias" in v.detail.lower()
+
+
+def test_proposal_bias_one_sided_info_when_direction_brake_active(db):
+    for i in range(22):
+        _ins_prop(db, i, "short")  # 100% short, >= 20 samples
+    v = _verdict(dx._probe_content_proposal_bias)
+    assert v.severity == "info"
+    assert "brake active" in v.detail
 
 
 def test_proposal_bias_mixed_is_ok(db):

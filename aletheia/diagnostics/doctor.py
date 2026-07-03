@@ -1551,10 +1551,20 @@ def _probe_content_proposal_bias(report: Report) -> None:
     top_pct = top_n / total
     detail = f"24h proposals={total}, top: {top_dir}={top_n} ({top_pct:.0%})"
     if top_pct > 0.80:
-        report.add("content.proposal_bias", "warn",
-                   f"proposal-layer directional bias: {detail}",
-                   "PI proposes almost exclusively one direction (pre-risk) — check trading_decision "
-                   "for a stuck regime read or one-sided signal inputs")
+        try:
+            from aletheia.agent_shell.trading_decision import _proposal_direction_overheated
+            brake = _proposal_direction_overheated(top_dir, 70)
+        except Exception:
+            brake = None
+        if brake:
+            report.add("content.proposal_bias", "info",
+                       f"proposal-layer directional bias mitigated: {detail}; direction brake active",
+                       brake)
+        else:
+            report.add("content.proposal_bias", "warn",
+                       f"proposal-layer directional bias: {detail}",
+                       "PI proposes almost exclusively one direction (pre-risk) — check trading_decision "
+                       "for a stuck regime read or one-sided signal inputs")
     else:
         report.add("content.proposal_bias", "ok", detail)
 
