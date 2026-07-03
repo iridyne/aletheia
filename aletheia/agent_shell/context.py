@@ -28,6 +28,7 @@ ALL_SECTIONS = (
     "knowledge",
     "strategies",
     "errors",
+    "doctor",
     "operator_state",
 )
 
@@ -44,7 +45,7 @@ CONTEXT_PROFILES: dict[str, tuple[str, ...]] = {
     "operational_context": ("system", "agents", "proposals", "errors", "operator_state"),
     "trading_context": ("system", "market", "trading", "proposals", "strategies", "risk", "errors", "operator_state"),
     "knowledge_context": ("system", "agents", "knowledge", "strategies", "operator_state"),
-    "repair_context": ("system", "agents", "trading", "proposals", "strategies", "risk", "errors", "operator_state"),
+    "repair_context": ("system", "agents", "trading", "proposals", "strategies", "risk", "errors", "doctor", "operator_state"),
 }
 
 
@@ -73,6 +74,13 @@ def _message_text(content) -> str | None:
             text = text.strip()
             return text or None
     return None
+
+
+def _short_text(value, limit: int = 180) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
 
 
 def session_trace_summary(
@@ -301,6 +309,47 @@ def build_app_context(sections: list[str] | None = None) -> dict:
             "recent_failed_operator_tasks": failed_tasks,
         }
 
+    if "doctor" in wanted:
+        try:
+            from aletheia.diagnostics.doctor import build_report
+
+            report = build_report().to_dict()
+            checks = report.get("checks") or []
+            attention_checks = [
+                {
+                    "name": check.get("name"),
+                    "severity": check.get("severity"),
+                    "detail": _short_text(check.get("detail"), 240),
+                    "fix_hint": _short_text(check.get("fix_hint"), 240),
+                }
+                for check in checks
+                if str(check.get("severity") or "") in {"warn", "blocker"}
+            ]
+            ctx["doctor"] = {
+                "healthy": bool(report.get("healthy")),
+                "generated_at": report.get("generated_at"),
+                "summary": report.get("summary") or {},
+                "attention_checks": attention_checks[:8],
+            }
+        except Exception as e:
+            ctx["doctor"] = {
+                "healthy": False,
+                "generated_at": None,
+                "summary": {
+                    "total": 1,
+                    "blockers": [],
+                    "warns": ["doctor.error"],
+                },
+                "attention_checks": [
+                    {
+                        "name": "doctor.error",
+                        "severity": "warn",
+                        "detail": f"doctor build failed: {type(e).__name__}",
+                        "fix_hint": "Run `aletheia doctor --json` from a shell and inspect diagnostics.",
+                    }
+                ],
+            }
+
     if "operator_state" in wanted:
         heartbeat = get_latest_heartbeat()
         running_tasks = list_tasks(limit=10, status="running")
@@ -361,6 +410,23 @@ def context_summary_text(ctx: dict) -> str:
         parts.append(
             f"Errors: {len(issues)} health issue(s), {len(failed_tasks)} failed operator task(s)"
         )
+    if "doctor" in ctx:
+        d = ctx["doctor"]
+        summary = d.get("summary") if isinstance(d, dict) else {}
+        blockers = summary.get("blockers") or []
+        warns = summary.get("warns") or []
+        attention = d.get("attention_checks") or []
+        if attention:
+            first = attention[0]
+            fix_hint = first.get("fix_hint") or "no fix hint"
+            parts.append(
+                "Doctor: "
+                f"{len(blockers)} blocker(s), {len(warns)} warn(s); "
+                f"top={first.get('severity')}:{first.get('name')} "
+                f"fix_hint={fix_hint}"
+            )
+        else:
+            parts.append("Doctor: healthy, no blocker/warn checks")
     if "operator_state" in ctx:
         operator_state = ctx["operator_state"]
         heartbeat = operator_state.get("heartbeat") if isinstance(operator_state, dict) else None
