@@ -907,7 +907,7 @@ export default function CommandCenter() {
     { id: 'qa-system', label: 'System Status', draft: 'what is the system doing?' },
     { id: 'qa-reco', label: 'Show Recommendations', draft: 'what recommendations do you have?' },
     { id: 'qa-failed', label: 'Review Failures', draft: 'what failed?' },
-    { id: 'qa-lifecycle', label: 'Strategy Lifecycle', draft: 'show the strategy lifecycle' },
+    { id: 'qa-learning', label: 'Learning Review', draft: 'summarize learning, strategy memory, and recent reviews' },
   ]
 
   const selectedTask =
