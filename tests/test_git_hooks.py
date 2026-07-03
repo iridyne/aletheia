@@ -35,6 +35,27 @@ def test_install_creates_all_three_hooks(repo: Path):
         assert body.startswith("#!/bin/sh")
 
 
+def test_installed_hook_debounces_restart_bursts(repo: Path):
+    git_hooks.ensure_git_hooks(repo_dir=repo, port=9999)
+    body = (_hooks_dir(repo) / "post-merge").read_text(encoding="utf-8")
+
+    assert "aletheia-auto-restart.last" in body
+    assert "$((now - last)) -lt 15" in body
+    assert "printf" in body
+
+
+def test_installed_hook_only_restarts_for_runtime_paths(repo: Path):
+    git_hooks.ensure_git_hooks(repo_dir=repo, port=9999)
+    body = (_hooks_dir(repo) / "post-merge").read_text(encoding="utf-8")
+
+    assert "git diff --name-only ORIG_HEAD HEAD" in body
+    assert "grep -Eq" in body
+    assert "aletheia/" in body
+    assert "frontend/" in body
+    assert "docs/" not in git_hooks._RUNTIME_CHANGE_PATTERN
+    assert "tests/" not in git_hooks._RUNTIME_CHANGE_PATTERN
+
+
 def test_install_is_idempotent(repo: Path):
     git_hooks.ensure_git_hooks(repo_dir=repo, port=9999)
     assert git_hooks.ensure_git_hooks(repo_dir=repo, port=9999) == []  # nothing to do

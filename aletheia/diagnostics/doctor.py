@@ -253,6 +253,19 @@ def _age_minutes(iso_ts: str | None) -> float | None:
         return None
 
 
+def _parse_iso_datetime(iso_ts: str | None) -> datetime | None:
+    if not iso_ts:
+        return None
+    try:
+        text = iso_ts.replace("Z", "+00:00")
+        ts = datetime.fromisoformat(text)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts
+    except (ValueError, TypeError):
+        return None
+
+
 def _fmt_age(minutes: float | None) -> str:
     if minutes is None:
         return "unknown"
@@ -399,6 +412,81 @@ def _probe_frontdoor_process(report: Report, host: str, port: int) -> None:
             f"backend not ready behind front door ({payload.get('backend_base_url')}): {detail}",
             "wait for supervisor restart, or run `aletheia gateway restart --no-browser`",
         )
+
+
+_GATEWAY_RESTART_EVENT_TYPES = {
+    "gateway_restart",
+    "gateway_frontdoor_restart",
+    "gateway_inner_port_lost",
+    "gateway_spawn_failed",
+    "gateway_supervisor_gave_up",
+    "self_heal_restart",
+}
+
+
+def _restart_event_bucket(event: dict) -> str:
+    event_type = str(event.get("event_type") or "unknown")
+    reason = ""
+    after = event.get("after")
+    if isinstance(after, dict):
+        reason = str(after.get("reason") or "")
+    if not reason:
+        msg = str(event.get("message") or "")
+        if "(" in msg and ")" in msg:
+            reason = msg.split("(", 1)[1].split(")", 1)[0]
+        elif ":" in msg and event_type == "self_heal_restart":
+            reason = msg.rsplit(":", 1)[-1].strip()
+    return f"{event_type}:{reason}" if reason else event_type
+
+
+def _probe_gateway_restart_history(report: Report) -> None:
+    """Summarize recent gateway restart/liveness events from audit.jsonl.
+
+    This is intentionally read-only. It gives the operator the answer to
+    "why did the backend disappear?" without manual log archaeology.
+    """
+    try:
+        from aletheia.files.jsonl import read_jsonl
+        events = read_jsonl("audit.jsonl", limit=500)
+    except Exception as e:
+        report.add("process.restart_history", "info", f"probe error: {e}")
+        return
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    counts: dict[str, int] = {}
+    latest_ts: datetime | None = None
+    latest_bucket = ""
+    critical_seen = False
+    for event in events:
+        event_type = str(event.get("event_type") or "")
+        if event_type not in _GATEWAY_RESTART_EVENT_TYPES:
+            continue
+        ts = _parse_iso_datetime(event.get("timestamp"))
+        if ts is not None and ts < cutoff:
+            continue
+        bucket = _restart_event_bucket(event)
+        counts[bucket] = counts.get(bucket, 0) + 1
+        if ts is not None and (latest_ts is None or ts > latest_ts):
+            latest_ts = ts
+            latest_bucket = bucket
+        if event_type in {"gateway_spawn_failed", "gateway_supervisor_gave_up"}:
+            critical_seen = True
+
+    total = sum(counts.values())
+    if total == 0:
+        report.add("process.restart_history", "info", "no gateway restart/liveness events in last 24h")
+        return
+
+    top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:4]
+    top_text = ", ".join(f"{name}={n}" for name, n in top)
+    latest = f", latest={latest_bucket} {_fmt_age(_age_minutes(latest_ts.isoformat()) if latest_ts else None)}"
+    severity: Severity = "warn" if critical_seen or total >= 10 else "info"
+    fix_hint = ""
+    if total >= 10:
+        fix_hint = "high restart volume — check git hook churn, frontdoor port loss, and supervisor errors"
+    if critical_seen:
+        fix_hint = "spawn/give-up event seen — inspect data/logs/errors.log and frontdoor-errors.log"
+    report.add("process.restart_history", severity, f"24h restart/liveness events={total}; {top_text}{latest}", fix_hint)
 
 
 def _probe_config_gates(report: Report) -> None:
@@ -1937,6 +2025,7 @@ def build_report() -> Report:
     for probe in (
         _probe_code_sync,
         _probe_process,
+        _probe_gateway_restart_history,
         _probe_config_gates,
         _probe_config_consistency,
         _probe_credentials,

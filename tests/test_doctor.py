@@ -347,6 +347,77 @@ def test_frontdoor_probe_reports_backend_readiness(monkeypatch):
     assert checks["process.backend"].severity == "ok"
 
 
+def test_gateway_restart_history_summarizes_recent_audit_events(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.files.jsonl import write_audit
+
+    now = datetime.now(timezone.utc)
+    old = (now - timedelta(days=2)).isoformat()
+    recent = now.isoformat()
+    write_audit({
+        "timestamp": old,
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "gateway_restart",
+        "entity_type": "gateway",
+        "entity_id": "gateway",
+        "message": "Restart requested (manual)",
+        "after": {"reason": "manual"},
+    })
+    for _ in range(3):
+        write_audit({
+            "timestamp": recent,
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "gateway_restart",
+            "entity_type": "gateway",
+            "entity_id": "gateway",
+            "message": "Restart requested (git_hook)",
+            "after": {"reason": "git_hook"},
+        })
+    write_audit({
+        "timestamp": recent,
+        "actor": "system",
+        "source": "gateway",
+        "event_type": "gateway_frontdoor_restart",
+        "entity_type": "gateway_frontdoor",
+        "entity_id": "123",
+        "message": "Gateway front door PID 123 is not serving port 8787; supervisor is restarting it",
+    })
+
+    r = dx.Report(generated_at="t")
+    dx._probe_gateway_restart_history(r)
+
+    c = next(c for c in r.checks if c.name == "process.restart_history")
+    assert c.severity == "info"
+    assert "events=4" in c.detail
+    assert "gateway_restart:git_hook=3" in c.detail
+    assert "gateway_frontdoor_restart=1" in c.detail
+    assert "manual=1" not in c.detail
+
+
+def test_gateway_restart_history_warns_on_spawn_failures(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.files.jsonl import write_audit
+
+    write_audit({
+        "actor": "system",
+        "source": "watchdog",
+        "event_type": "gateway_spawn_failed",
+        "entity_type": "gateway",
+        "entity_id": "gateway",
+        "message": "Gateway spawn failed: launcher exited with code 1",
+    })
+
+    r = dx.Report(generated_at="t")
+    dx._probe_gateway_restart_history(r)
+
+    c = next(c for c in r.checks if c.name == "process.restart_history")
+    assert c.severity == "warn"
+    assert "gateway_spawn_failed=1" in c.detail
+    assert "spawn/give-up" in c.fix_hint
+
+
 # --- loop.reconcile_thrash probe (A, 2026-07-01) ---
 
 def _insert_churn(symbol, direction="short", entry=100.0):
