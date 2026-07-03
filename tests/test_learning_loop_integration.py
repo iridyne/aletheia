@@ -36,10 +36,18 @@ class TestLessonAwareScoring:
                 outcome="loss",
             ),
         ]
-        with patch("aletheia.knowledge.retrieval.retrieve_lessons", return_value=mock_lessons):
+        with patch("aletheia.knowledge.retrieval.retrieve_lessons", return_value=mock_lessons) as retrieve:
             penalty = _lesson_penalty("BTC/USDT", "long", "momentum")
             assert penalty < 0
             assert penalty >= -25.0
+            retrieve.assert_called_once_with(
+                "BTC/USDT long momentum",
+                k=3,
+                item_types=["trade_case_study"],
+                symbol="BTC/USDT",
+                direction="long",
+                scanner_family="momentum",
+            )
 
     def test_positive_lessons_no_penalty(self):
         from aletheia.agents.paper_trader_ranker import _lesson_penalty

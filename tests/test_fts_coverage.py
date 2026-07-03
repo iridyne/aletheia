@@ -106,6 +106,77 @@ def test_retrieve_lessons_returns_results_after_reindex(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_retrieve_lessons_structured_filters_trade_case_metadata(tmp_path, monkeypatch):
+    """Symbol/direction/scanner filters must narrow broad FTS matches."""
+    setup_test_env(tmp_path, monkeypatch)
+
+    create_trade_case_study(
+        "Case: BTC/USDT long (stop_loss)",
+        "BTC/USDT momentum setup failed after entry and hit stop loss. The trade "
+        "should teach the learning loop about this exact symbol, long direction, "
+        "and momentum scanner family.",
+        metadata={
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "scanner_family": "momentum",
+            "outcome": "loss",
+        },
+        confidence="high_confidence",
+    )
+    create_trade_case_study(
+        "Case: SOL/USDT long (stop_loss)",
+        "SOL/USDT momentum setup failed after entry and hit stop loss. The trade "
+        "should teach the learning loop about this exact symbol, long direction, "
+        "and momentum scanner family.",
+        metadata={
+            "symbol": "SOL/USDT",
+            "direction": "long",
+            "scanner_family": "momentum",
+            "outcome": "loss",
+        },
+        confidence="high_confidence",
+    )
+    create_trade_case_study(
+        "Case: BTC/USDT short (stop_loss)",
+        "BTC/USDT momentum setup failed after short entry and hit stop loss. The trade "
+        "should teach the learning loop about this exact symbol, short direction, "
+        "and momentum scanner family.",
+        metadata={
+            "symbol": "BTC/USDT",
+            "direction": "short",
+            "scanner_family": "momentum",
+            "outcome": "loss",
+        },
+        confidence="high_confidence",
+    )
+
+    broad = retrieve_lessons("momentum stop loss", item_types=["trade_case_study"], k=10)
+    assert len(broad) == 3
+
+    btc_long = retrieve_lessons(
+        "momentum stop loss",
+        item_types=["trade_case_study"],
+        symbol="BTCUSDT",
+        direction="long",
+        scanner_family="momentum",
+        k=10,
+    )
+    assert len(btc_long) == 1
+    assert "BTC/USDT long" in btc_long[0].title
+    assert btc_long[0].outcome == "loss"
+
+    btc_long_reversion = retrieve_lessons(
+        "momentum stop loss",
+        item_types=["trade_case_study"],
+        symbol="BTC/USDT",
+        direction="long",
+        scanner_family="mean_reversion",
+        k=10,
+    )
+    assert btc_long_reversion == []
+    reset_db()
+
+
 def test_doctor_fts_probe(tmp_path, monkeypatch):
     """Doctor FTS coverage probe reports correct severity."""
     setup_test_env(tmp_path, monkeypatch)

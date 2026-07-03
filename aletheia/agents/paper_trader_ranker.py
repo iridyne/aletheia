@@ -395,7 +395,14 @@ def _lesson_penalty(symbol: str | None, direction: str | None, scanner_family: s
         # the hallucination source (auto-upgraded to high_confidence on any fill,
         # 1900+ rows of templated text) that flooded this retrieval and produced
         # uncontrolled false penalties via section-title keyword hits. Removed.
-        lessons = retrieve_lessons(query, k=3, item_types=["trade_case_study"])
+        lessons = retrieve_lessons(
+            query,
+            k=3,
+            item_types=["trade_case_study"],
+            symbol=symbol,
+            direction=direction,
+            scanner_family=scanner_family,
+        )
         if not lessons:
             return 0.0
         penalty = 0.0

@@ -22,6 +22,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 from aletheia.storage.sqlite import get_db
 
@@ -211,11 +212,69 @@ def _fts_query(query: str) -> str:
     return " OR ".join(f'"{t}"' for t in tokens)
 
 
-def retrieve_lessons(query: str, *, k: int = 3, item_types: list[str] | None = None) -> list[Lesson]:
+def _normalise_symbol(value: Any) -> str:
+    return "".join(c for c in str(value or "").upper() if c.isalnum())
+
+
+def _normalise_token(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _read_item_text(canon: dict) -> str:
+    body = _read_body(canon.get("file_path"))
+    if body.strip():
+        return body
+    return canon.get("content") or ""
+
+
+def _frontmatter_for_item(canon: dict) -> dict:
+    try:
+        from aletheia.knowledge.frontmatter import parse_frontmatter_text
+
+        meta, _ = parse_frontmatter_text(_read_item_text(canon))
+        return meta if isinstance(meta, dict) else {}
+    except Exception:
+        return {}
+
+
+def _matches_structured_filters(
+    canon: dict,
+    *,
+    symbol: str | None,
+    direction: str | None,
+    scanner_family: str | None,
+) -> bool:
+    if not any((symbol, direction, scanner_family)):
+        return True
+    meta = _frontmatter_for_item(canon)
+    if not meta:
+        return False
+
+    if symbol and _normalise_symbol(meta.get("symbol")) != _normalise_symbol(symbol):
+        return False
+    if direction and _normalise_token(meta.get("direction")) != _normalise_token(direction):
+        return False
+    if scanner_family and _normalise_token(meta.get("scanner_family")) != _normalise_token(scanner_family):
+        return False
+    return True
+
+
+def retrieve_lessons(
+    query: str,
+    *,
+    k: int = 3,
+    item_types: list[str] | None = None,
+    symbol: str | None = None,
+    direction: str | None = None,
+    scanner_family: str | None = None,
+) -> list[Lesson]:
     """Return the top-k most relevant prior lessons for a decision.
 
     Quality gate: only high_confidence + active items. Scoring: BM25 relevance ×
-    recency decay × importance. Returns [] on any failure (agent then runs un-augmented).
+    recency decay × importance. Optional structured filters are applied against the
+    canonical knowledge item frontmatter after FTS candidate generation, so a broad
+    token match cannot recall a different symbol/direction/scanner case study.
+    Returns [] on any failure (agent then runs un-augmented).
     """
     try:
         db = get_db()
@@ -249,6 +308,13 @@ def retrieve_lessons(query: str, *, k: int = 3, item_types: list[str] | None = N
         for r in rows:
             canon = _select_one("knowledge_items", r["item_id"])
             if canon is None or (canon.get("status") or "active") != "active":
+                continue
+            if not _matches_structured_filters(
+                canon,
+                symbol=symbol,
+                direction=direction,
+                scanner_family=scanner_family,
+            ):
                 continue
             # BM25 is negative (more negative = better). Map to positive relevance.
             relevance = 1.0 / (1.0 + math.exp(r["bm"]))  # logistic on -bm25

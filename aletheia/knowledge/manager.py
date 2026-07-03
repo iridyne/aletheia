@@ -61,6 +61,14 @@ def _index(item, content: str) -> None:
             from aletheia.knowledge.frontmatter import parse_frontmatter_text
             meta, _ = parse_frontmatter_text(content)
             outcome = (meta.get("outcome") or "") if meta else ""
+            if not outcome and getattr(item, "file_path", None):
+                from pathlib import Path
+                path = Path(item.file_path)
+                if path.exists():
+                    file_meta, _ = parse_frontmatter_text(
+                        path.read_text(encoding="utf-8", errors="replace")
+                    )
+                    outcome = (file_meta.get("outcome") or "") if file_meta else ""
         except Exception:
             pass
         index_knowledge_item(item, content, outcome=outcome)
