@@ -4,7 +4,7 @@
 > 改动信任不变量前必须 change control (see trust_and_change_control.md §6)。
 > Source files: letheia/learning/lessons.py · letheia/learning/skills.py
 > Cross-references: docs/design/knowledge_contract.md · docs/governance/trust_and_change_control.md · docs/design/data_model.md
-> Last updated: 2026-07-02
+> Last updated: 2026-07-03
 
 ---
 
@@ -15,7 +15,7 @@
 - Lesson 生命周期 + 守卫时间戳: **已实现**
 - SkillStore 权限强制: **已实现**
 - Lesson → Skill 晋升链: **预留**(Self-Evolution Tier 2/3)
-- 生产者 Scheduler/Agent 接入: **预留**
+- 生产者 Scheduler/Agent 接入: **已实现**(dreaming_agent / post_trade_reviewer 产 lesson;lesson_reviewer 每日 accept()+mark_applied() 关闭 lesson→policy 链 — LP-S09/S10)
 
 ---
 
@@ -71,7 +71,7 @@ eject() | 驳回 |
 - dry_run_until = now + 24h — 24 小时内为仅建议窗口(风险保护)
 - xpires_at = now + 30d — 30 天后过期,静默忽略(防止陈旧经验无限影响决策)
 
-消费方在检索 accepted lesson 时必须检查 xpires_at > now,跳过过期条目。
+消费方在检索 applied lesson 时必须检查 xpires_at > now,跳过过期条目。
 
 ### 2.4 信任不变量
 
@@ -90,7 +90,7 @@ lesson_reviewer (Scheduler)  →  accept() / reject()
        ↓
 trading_context.py Layer3 (ps_lessons)  →  trading_decision.py PI prompt
        ↓
-_check_lesson_constraints() (status="accepted" + not expired)
+_check_lesson_constraints() (status="applied" + not expired)  # 'accepted' 是瞬态,消费用 'applied'（L-Bug-E）
 `
 
 详见 knowledge_contract.md §A1。
@@ -235,7 +235,7 @@ query → _fts_query() → knowledge_fts (FTS5 MATCH, BM25)
 `
 LessonStore().list_all(status="proposed") → Layer3 ps_lessons block
                                            → trading_decision.py PI prompt
-LessonStore().list_all(status="accepted") → risk_engine._check_lesson_constraints()
+LessonStore().list_all(status="applied") → risk_engine._check_lesson_constraints()
 `
 
 - **Data source**: ps_lessons table (structured rows with evidence_json,
@@ -262,6 +262,33 @@ isk/engine.py → _check_lesson_constraints()
 Path A answers "what past knowledge is relevant to THIS decision?". Path B
 answers "what structured lessons are pending review / active constraint?".
 Merging them conflates two orthogonal concerns.
+
+---
+
+## §9 残留项与后续建议 (2026-07-03 审查)
+
+2026-06/07 的两份学习闭环审计(`docs/issues/LEARNING_LOOP_AUDIT_2026-06-26.md`、
+`LEARNING_LOOP_CHAIN_AUDIT.md`)描述的断口 A/B/D/E/F/G、归因根 R0、ranker 1890 行
+幻觉、lesson→policy 链缺失,**均已修复**(LP-S01…S11、UP-07、DM-A13 等 spec 已
+`implemented`)。当前学习闭环真正剩余的是以下三项 —— 均**需 owner 决策或属信任
+边界/运维**,故本次只登记方案、不擅自改行为:
+
+1. **`reduce_size` 风控动作仍是 advisory-only**(`risk/engine.py:437-441`,日志
+   "not enforced as hard block")。建议:由 owner 决定是否升级为硬约束。**未改动**
+   —— 风控信任边界,改变风控行为须显式批准(CLAUDE.md Safety Rules)。
+
+2. **生成端 C 类低信号 + app.db 膨胀**:`post_trade_reviewer` / `risk_critic` 仍产
+   模板化 review(已被 ranker 检索排除 B1,不再污染打分,但堆积在库里)。app.db
+   已 448MB(见记忆 `app-db-size-retention`)。建议:①评估降低 C 类生成频率/精简;
+   ②运维执行 `db_maintenance.py --vacuum` 回收空间(DELETE 不缩文件)。属减负+运维,
+   非重写。
+
+3. **历史 `direction=None` 胜率污染**:`repositories.family_direction_edge` /
+   `calibration_stats` 用 `COALESCE(direction,'long')`,把方向未知的历史行**当成
+   long 计入胜率**(诚实性 bug)。US-4 已修 forward 新行,但 7 天窗内仍有旧 NULL 行
+   被误算。建议:检索 edge 时排除 `direction IS NULL` 行(方向未知不可解释)。
+   **未改动** —— 该函数被风控 check #14 消费(`risk/engine.py:684`,spec RISK-14),
+   改其语义会改变风控输入,须 owner 批准 + 同步 RISK-14 spec。
 
 ### 8.4 Tripwire: render path stays structured (invariant)
 
