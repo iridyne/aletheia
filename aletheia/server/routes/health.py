@@ -3,6 +3,7 @@
 import logging
 import os
 from pathlib import Path
+import threading
 import time
 
 from fastapi import APIRouter, HTTPException
@@ -17,6 +18,8 @@ infra_router = APIRouter(prefix="/_infra", tags=["infra"])
 
 _boot_time = time.time()
 logger = logging.getLogger("aletheia.routes.health")
+_health_cache_lock = threading.Lock()
+_health_cache: tuple[float, int, dict] | None = None
 
 
 def _uptime_sec() -> float:
@@ -64,10 +67,35 @@ def _llm_model_health_snapshot() -> list[dict]:
         return []
 
 
+def _cached_compute_health(ttl_sec: float = 5.0) -> dict:
+    """Short TTL cache for dashboard polling.
+
+    The health rollup touches SQLite and several in-process monitors. Keeping a
+    5s cache preserves honest status while preventing concurrent UI polls from
+    repeating the same blocking work.
+    """
+    global _health_cache
+    from aletheia.agent_runtime import health as health_mod
+
+    fn = health_mod.compute_health
+    fn_id = id(fn)
+    now = time.monotonic()
+    with _health_cache_lock:
+        if _health_cache is not None:
+            ts, cached_fn_id, cached = _health_cache
+            if cached_fn_id == fn_id and now - ts < ttl_sec:
+                return {"healthy": bool(cached.get("healthy")), "issues": list(cached.get("issues") or [])}
+
+    h = fn()
+    snapshot = {"healthy": bool(h.get("healthy")), "issues": list(h.get("issues") or [])}
+    with _health_cache_lock:
+        _health_cache = (now, fn_id, snapshot)
+    return {"healthy": snapshot["healthy"], "issues": list(snapshot["issues"])}
+
+
 @router.get("/health")
 async def health():
-    from aletheia.agent_runtime.health import compute_health
-    h = compute_health()
+    h = _cached_compute_health()
     return {
         "status": "healthy" if h["healthy"] else "degraded",
         "issues": h["issues"],
@@ -172,8 +200,7 @@ async def stability():
 async def status():
     cfg = load_config()
     try:
-        from aletheia.agent_runtime.health import compute_health
-        h = compute_health()
+        h = _cached_compute_health()
     except Exception as e:
         logger.warning("status health rollup failed: %s", e)
         h = {"healthy": False, "issues": [f"health_check_error:{type(e).__name__}"]}

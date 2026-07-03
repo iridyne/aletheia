@@ -20,6 +20,7 @@ when a later fetch fails; persistence failures never propagate.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from aletheia.data.providers import Candle, Ticker
 from aletheia.data.symbols import InstrumentId, to_canonical
@@ -53,6 +54,41 @@ def _resolve_ccxt_symbol(symbol: InstrumentId | str) -> tuple[str, str, str]:
     return canon, canon, "spot"
 
 
+def _install_market_id_guard(exchange: Any, exchange_name: str) -> Any:
+    """Drop malformed CCXT market rows before `set_markets()` sorts by id.
+
+    Some OKX responses can include a market entry with `id=None`. CCXT then
+    builds `markets_by_id` with mixed `None` and `str` keys and Python raises
+    while sorting them. One bad row should not stop the entire market feed.
+    """
+    if getattr(exchange, "_aletheia_market_id_guard", False):
+        return exchange
+
+    original_set_markets = exchange.set_markets
+
+    def guarded_set_markets(markets, currencies=None):
+        dropped = 0
+        if isinstance(markets, list):
+            filtered = []
+            for market in markets:
+                if isinstance(market, dict) and market.get("id") is None:
+                    dropped += 1
+                    continue
+                filtered.append(market)
+            markets = filtered
+        if dropped:
+            logger.warning(
+                "ccxt %s load_markets: dropped %d malformed market row(s) with empty id",
+                exchange_name,
+                dropped,
+            )
+        return original_set_markets(markets, currencies)
+
+    exchange.set_markets = guarded_set_markets
+    exchange._aletheia_market_id_guard = True
+    return exchange
+
+
 class CCXTProvider:
     """Market data via ccxt.async_support with a primary + fallback exchange."""
 
@@ -83,7 +119,8 @@ class CCXTProvider:
         from aletheia.net import ccxt_timeout_options
         session = aiohttp_session()
         self._sessions.append(session)
-        return getattr(ccxt, name)({**ccxt_timeout_options(), "enableRateLimit": True, "session": session})
+        exchange = getattr(ccxt, name)({**ccxt_timeout_options(), "enableRateLimit": True, "session": session})
+        return _install_market_id_guard(exchange, name)
 
     def _ensure_primary(self):
         if self._primary is None:

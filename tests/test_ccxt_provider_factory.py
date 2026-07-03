@@ -16,7 +16,11 @@ is cheap and offline.
 from types import SimpleNamespace
 
 from aletheia.config import loader
-from aletheia.data.ccxt_provider import get_market_data_provider, CCXTProvider
+from aletheia.data.ccxt_provider import (
+    _install_market_id_guard,
+    get_market_data_provider,
+    CCXTProvider,
+)
 from aletheia.data.sources.chain import FallbackChainProvider
 
 
@@ -76,3 +80,27 @@ async def test_client_session_trusts_env():
     )
     await session.close()
     await client.close()
+
+
+def test_market_id_guard_drops_malformed_ccxt_rows():
+    class _FakeExchange:
+        def __init__(self):
+            self.seen_markets = None
+
+        def set_markets(self, markets, currencies=None):
+            self.seen_markets = markets
+            return {"markets": markets, "currencies": currencies}
+
+    exchange = _install_market_id_guard(_FakeExchange(), "okx")
+
+    result = exchange.set_markets(
+        [
+            {"id": "BTC-USDT", "symbol": "BTC/USDT"},
+            {"id": None, "symbol": "BROKEN/USDT"},
+            {"symbol": "MISSING-ID/USDT"},
+        ],
+        {"USDT": {}},
+    )
+
+    assert result["markets"] == [{"id": "BTC-USDT", "symbol": "BTC/USDT"}]
+    assert exchange.seen_markets == [{"id": "BTC-USDT", "symbol": "BTC/USDT"}]

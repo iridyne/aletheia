@@ -8,7 +8,12 @@ import { useEffect, useRef, useState } from 'react'
 // Static styling lives in .fetch-progress (index.css); only the dynamic width
 // stays inline since it tracks fetch state.
 export default function FetchProgress() {
-  const isFetching = useIsFetching()
+  const isFetching = useIsFetching({
+    predicate: (query) => {
+      if (query.meta?.background === true) return false
+      return !(query.options as { refetchInterval?: unknown }).refetchInterval
+    },
+  })
   const [visible, setVisible] = useState(false)
   const [width, setWidth] = useState(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)

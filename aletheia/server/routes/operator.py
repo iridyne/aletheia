@@ -2,6 +2,9 @@
 
 import asyncio
 import json
+import os
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -50,6 +53,8 @@ from aletheia.config.loader import load_config, save_config
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 
 OPERATOR_SESSION_KINDS = tuple(DEFAULT_CONTEXT_PROFILE_BY_SESSION_KIND.keys())
+_recommendations_cache_lock = threading.Lock()
+_recommendations_cache: tuple[float, int, list[dict[str, Any]]] | None = None
 
 
 def _parse_ts(value: str | None) -> datetime | None:
@@ -892,7 +897,21 @@ async def operator_enable_extension(extension_id: str, payload: OperatorExtensio
 
 @router.get("/recommendations")
 async def operator_recommendations(limit: int = 10):
-    return build_recommendations(limit=limit)
+    limit = max(1, min(limit, 50))
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return build_recommendations(limit=limit)
+
+    now = time.monotonic()
+    with _recommendations_cache_lock:
+        if _recommendations_cache is not None:
+            ts, cached_limit, cached = _recommendations_cache
+            if cached_limit == limit and now - ts < 15.0:
+                return [dict(item) for item in cached]
+
+    recommendations = build_recommendations(limit=limit)
+    with _recommendations_cache_lock:
+        _recommendations_cache = (now, limit, [dict(item) for item in recommendations])
+    return recommendations
 
 
 @router.get("/loop/latest")

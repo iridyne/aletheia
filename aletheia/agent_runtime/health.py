@@ -109,10 +109,17 @@ def _observer_stale_minutes() -> float | None:
 
 
 def _exchange_reachable(cfg=None) -> bool:
-    """Generic exchange connectivity probe (delegates to connectivity module)."""
+    """Return the last cached exchange probe result.
+
+    Health/status endpoints are dashboard hot paths. They must not run an
+    external exchange request on every frontend poll; the scheduler/startup
+    connectivity monitor owns that probe and keeps the last result in memory.
+    """
     try:
-        from aletheia.agent_runtime.connectivity import probe_exchange_sync
-        result = probe_exchange_sync(cfg)
+        from aletheia.agent_runtime.connectivity import get_status
+        result = (get_status().get("last_probe") or {})
+        if not result:
+            return True
         return result.get("reachable", False)
     except Exception:
         return False
