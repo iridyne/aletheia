@@ -45,6 +45,7 @@ class Lesson:
     confidence: str
     created_at: str
     score: float
+    outcome: str = ""
 
 
 def _fts_table_exists(db) -> bool:
@@ -75,7 +76,7 @@ def _clean_body(text: str) -> str:
     return "\n".join(out).strip()
 
 
-def index_knowledge_item(item, body: str) -> bool:
+def index_knowledge_item(item, body: str, outcome: str = "") -> bool:
     """Add/refresh an item's searchable text in the FTS index. Best-effort.
 
     Returns True if indexed, False if skipped (FTS absent / error). Never raises.
@@ -87,10 +88,10 @@ def index_knowledge_item(item, body: str) -> bool:
         # Replace any prior row for this item (idempotent re-index).
         db.execute("DELETE FROM knowledge_fts WHERE item_id = ?", (item.id,))
         db.execute(
-            "INSERT INTO knowledge_fts (title, body, item_type, item_id, confidence, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO knowledge_fts (title, body, item_type, item_id, confidence, created_at, outcome) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (item.title or "", _clean_body(body or ""), item.item_type, item.id,
-             item.confidence, getattr(item, "created_at", "") or ""),
+             item.confidence, getattr(item, "created_at", "") or "", outcome or ""),
         )
         if not db.in_transaction:
             db.commit()
@@ -149,7 +150,15 @@ def reindex_all() -> int:
                         skipped_empty += 1
                         continue
                 item = KnowledgeItem(**{k: row[k] for k in row if k in KnowledgeItem.model_fields})
-                if index_knowledge_item(item, body):
+                # Extract outcome from frontmatter for structured ranker scoring.
+                outcome = ""
+                try:
+                    from aletheia.knowledge.frontmatter import parse_frontmatter_text
+                    meta, _ = parse_frontmatter_text(body)
+                    outcome = (meta.get("outcome") or "") if meta else ""
+                except Exception:
+                    pass
+                if index_knowledge_item(item, body, outcome=outcome):
                     count += 1
             if skipped_empty:
                 logger.warning(
@@ -218,7 +227,8 @@ def retrieve_lessons(query: str, *, k: int = 3, item_types: list[str] | None = N
 
         sql = (
             "SELECT item_id, item_type, title, confidence, created_at, "
-            "snippet(knowledge_fts, 1, '', '', ' … ', 48) AS snip, bm25(knowledge_fts) AS bm "
+            "snippet(knowledge_fts, 1, '', '', ' … ', 48) AS snip, bm25(knowledge_fts) AS bm, "
+            "outcome "
             "FROM knowledge_fts WHERE knowledge_fts MATCH ? AND confidence = ?"
         )
         params: list = [match, _ALLOWED_CONFIDENCE]
@@ -247,6 +257,7 @@ def retrieve_lessons(query: str, *, k: int = 3, item_types: list[str] | None = N
                 item_id=r["item_id"], item_type=r["item_type"], title=r["title"] or "",
                 snippet=(r["snip"] or "").strip(), confidence=r["confidence"],
                 created_at=r["created_at"] or "", score=round(score, 6),
+                outcome=r["outcome"] or "",
             ))
 
         lessons.sort(key=lambda x: x.score, reverse=True)

@@ -55,7 +55,15 @@ def _index(item, content: str) -> None:
         if item.confidence != "high_confidence":
             return
         from aletheia.knowledge.retrieval import index_knowledge_item
-        index_knowledge_item(item, content)
+        # Extract outcome from frontmatter for structured ranker scoring (Phase 1a).
+        outcome = ""
+        try:
+            from aletheia.knowledge.frontmatter import parse_frontmatter_text
+            meta, _ = parse_frontmatter_text(content)
+            outcome = (meta.get("outcome") or "") if meta else ""
+        except Exception:
+            pass
+        index_knowledge_item(item, content, outcome=outcome)
     except Exception as e:
         logger.warning("_index failed for %s: %s", getattr(item, "id", "?"), e)
 

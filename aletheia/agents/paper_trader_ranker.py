@@ -400,8 +400,9 @@ def _lesson_penalty(symbol: str | None, direction: str | None, scanner_family: s
             return 0.0
         penalty = 0.0
         for lesson in lessons:
-            snippet_lower = lesson.snippet.lower()
-            if any(neg in snippet_lower for neg in ("loss", "失败", "failed", "stopped", "drawdown")):
+            # Phase 1a: use structured outcome field instead of keyword matching.
+            # Keyword matching caused false positives (e.g. "stop_loss" in title).
+            if lesson.outcome == "loss":
                 penalty -= 8.0 * lesson.score
         return max(-25.0, penalty)
     except Exception:
