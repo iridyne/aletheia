@@ -138,6 +138,22 @@ def test_prune_pi_decisions_keeps_decisions_deletes_transient(tmp_path, monkeypa
     assert not ({"sp_old", "skip_old", "watch_old"} & remaining), "old transient rows not deleted"
 
 
+def test_delete_old_rows_requires_condition_for_pi_decisions(tmp_path, monkeypatch):
+    """pi_decisions mixes transient queue rows with causal decisions.
+
+    The shared delete helper may prune it only when the caller supplies an
+    explicit action filter; a bare old-row delete would erase decision history.
+    """
+    setup_env(tmp_path, monkeypatch)
+
+    try:
+        repo._delete_old_rows("pi_decisions", days=7)
+    except ValueError as exc:
+        assert "not prunable" in str(exc)
+    else:
+        raise AssertionError("pi_decisions must not be bare-prunable")
+
+
 def test_prune_agent_shell_heartbeats_keeps_recent_deletes_old(tmp_path, monkeypatch):
     """agent_shell_heartbeats is pure liveness telemetry (read latest-row-only)
     and was the dominant app.db bloat (~199k rows / ~85 MB by 2026-06-27). It

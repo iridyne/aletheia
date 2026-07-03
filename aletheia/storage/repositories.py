@@ -1055,18 +1055,36 @@ _PRUNABLE = {
     "shadow_trades": "created_at",
 }
 
+_CONDITIONALLY_PRUNABLE = {
+    # pi_decisions contains both transient queue rows and causal decision rows.
+    # It is prunable only with an explicit action filter supplied by the caller.
+    "pi_decisions": "created_at",
+}
 
-def _delete_old_rows(table: str, days: int) -> int:
+def _delete_old_rows(
+    table: str,
+    days: int,
+    extra_where: str | None = None,
+    extra_params: tuple = (),
+) -> int:
     """Delete rows in a WHITELISTED telemetry table older than `days`. Returns count."""
-    if table not in _PRUNABLE:
+    if table in _PRUNABLE:
+        ts_col = _PRUNABLE[table]
+    elif table in _CONDITIONALLY_PRUNABLE and extra_where:
+        ts_col = _CONDITIONALLY_PRUNABLE[table]
+    else:
         raise ValueError(f"table {table!r} is not prunable")
-    ts_col = _PRUNABLE[table]
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
     # See _insert: commit when not nested in a transaction(). The old
     # `and not db.in_transaction` guard never fired (DELETE auto-opens a tx).
     was_in_tx = db.in_transaction
-    cur = db.execute(f"DELETE FROM {table} WHERE {ts_col} < ?", (cutoff,))
+    where = f"{ts_col} < ?"
+    params = (cutoff,)
+    if extra_where:
+        where = f"({where}) AND ({extra_where})"
+        params = (*params, *extra_params)
+    cur = db.execute(f"DELETE FROM {table} WHERE {where}", params)
     if not was_in_tx:
         db.commit()
     return cur.rowcount if cur.rowcount is not None else 0
@@ -1139,17 +1157,13 @@ def prune_pi_decisions(days: int = 7) -> int:
     """Delete old TRANSIENT pi_decisions (signal_pending/skip/watch), keeping
     decision-bearing rows (trade/close/recommend_promote) forever. Returns count.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     placeholders = ",".join("?" for _ in _PRUNABLE_PI_ACTIONS)
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = db.execute(
-        f"DELETE FROM pi_decisions WHERE action IN ({placeholders}) AND created_at < ?",
-        (*_PRUNABLE_PI_ACTIONS, cutoff),
+    return _delete_old_rows(
+        "pi_decisions",
+        days,
+        extra_where=f"action IN ({placeholders})",
+        extra_params=_PRUNABLE_PI_ACTIONS,
     )
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount if cur.rowcount is not None else 0
 
 
 # ---------------------------------------------------------------------------
