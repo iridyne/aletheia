@@ -112,6 +112,8 @@ def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_p
     assert bundle["attention"][0]["name"] == "process.backend"
     assert "errors.log" in bundle["attention"][0]["log_hint"]
     assert bundle["logs"]["policy"]["text_logs_rotate_at_mb"] == 50
+    assert bundle["system"]["python"]
+    assert bundle["system"]["data_dir"] == str(tmp_path)
     tail = "\n".join(bundle["logs"]["tails"]["errors.log"])
     assert "sk-DOCTORSECRET" not in tail
     assert "[REDACTED]" in tail
@@ -128,6 +130,28 @@ def test_doctor_cli_verbose_json_includes_diagnostics(tmp_path, monkeypatch):
     payload = json.loads(result.stdout)
     assert "diagnostics" in payload
     assert "logs" in payload["diagnostics"]
+
+
+def test_doctor_cli_bundle_writes_redacted_diagnostic_file(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    (tmp_path / "logs" / "errors.log").write_text("api_key=DOCTORSECRET\n", encoding="utf-8")
+    from typer.testing import CliRunner
+    from aletheia.main import app
+
+    bundle_path = tmp_path / "diagnostics" / "doctor.json"
+    result = CliRunner().invoke(app, ["doctor", "--bundle", str(bundle_path)])
+
+    assert result.exit_code in (0, 1)
+    assert bundle_path.exists()
+    import json
+    payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+    text = bundle_path.read_text(encoding="utf-8")
+    assert "diagnostics" in payload
+    assert "bundle_generated_at" in payload
+    assert "logs" in payload["diagnostics"]
+    assert "system" in payload["diagnostics"]
+    assert "DOCTORSECRET" not in text
+    assert "[REDACTED]" in text
 
 
 # --- end-to-end: probes must never raise, even on a fresh/empty environment ---

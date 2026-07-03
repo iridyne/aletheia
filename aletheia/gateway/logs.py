@@ -5,6 +5,8 @@ raw subprocess redirect, so it is not a logging.Handler and a RotatingFileHandle
 cannot manage it. Instead we size-cap it explicitly: before each spawn the
 supervisor calls rotate_if_needed(), which rolls the file to numeric backups.
 tail_logs() reads only the file's tail so a large log can never OOM the CLI.
+tail_all_logs() reads the useful operational logs with redaction for interactive
+diagnostics.
 """
 
 import os
@@ -145,17 +147,49 @@ def tail_logs(lines: int = 50) -> list[str]:
     return _tail_file(log_path(), lines)
 
 
+def operational_log_paths() -> list[tuple[str, Path]]:
+    """Return the log files an operator usually needs during live diagnosis."""
+    log_dir = get_data_dir() / "logs"
+    return [
+        ("gateway.log", log_path()),
+        ("errors.log", errors_log_path()),
+        ("frontdoor-errors.log", log_dir / "frontdoor-errors.log"),
+        ("operator-shell-errors.log", log_dir / "operator-shell-errors.log"),
+    ]
+
+
+def tail_all_logs(lines: int = 50) -> list[dict]:
+    """Return redacted tails for all useful operational logs.
+
+    The CLI should not require an operator or an AI agent to guess whether the
+    failure landed in gateway.log, backend stderr, frontdoor stderr, or the
+    operator shell.
+    """
+    result: list[dict] = []
+    for name, path in operational_log_paths():
+        tail = tail_file_redacted(path, lines)
+        if not tail:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        result.append({
+            "name": name,
+            "path": str(path),
+            "bytes": size,
+            "lines": tail,
+        })
+    return result
+
+
 def log_inventory() -> list[dict]:
     """Return size/rotation facts for known log files and rotated siblings."""
-    log_dir = get_data_dir() / "logs"
     known = [
-        log_path(),
-        errors_log_path(),
-        log_dir / "frontdoor-errors.log",
-        log_dir / "operator-shell-errors.log",
-        log_dir / "audit.jsonl",
-        log_dir / "errors.jsonl",
-        log_dir / "agent_runs.jsonl",
+        *[path for _, path in operational_log_paths()],
+        get_data_dir() / "logs" / "audit.jsonl",
+        get_data_dir() / "logs" / "errors.jsonl",
+        get_data_dir() / "logs" / "agent_runs.jsonl",
     ]
     seen: set[Path] = set()
     rows: list[dict] = []

@@ -33,7 +33,7 @@ uv run aletheia gateway restart --no-browser
 # 查看状态
 uv run aletheia gateway status
 
-# 查看日志（实时）
+# 查看日志（多日志尾部，已脱敏）
 uv run aletheia gateway logs
 ```
 
@@ -69,6 +69,9 @@ uv run aletheia doctor --json
 
 # 交互排障：附带脱敏日志尾部、最近失败、下一步日志指针
 uv run aletheia doctor --verbose
+
+# 生成可交给 AI/人排障的脱敏诊断包
+uv run aletheia doctor --bundle data/diagnostics/doctor.json
 ```
 
 **铁律**：相信 `doctor` 的输出，不信文档里写的运行态描述（文档只写意图）。

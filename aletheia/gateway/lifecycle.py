@@ -17,7 +17,7 @@ from aletheia.gateway.pidfile import (
     find_port_holders, _resolve_real_python,
 )
 from aletheia.gateway.browser import open_browser
-from aletheia.gateway.logs import tail_logs, log_path
+from aletheia.gateway.logs import tail_all_logs, log_path
 
 
 class GatewayResumeApiError(RuntimeError):
@@ -457,13 +457,17 @@ def do_status() -> None:
 
 
 def do_logs(lines: int = 50) -> None:
-    """Show recent gateway logs."""
-    entries = tail_logs(lines)
-    if not entries:
+    """Show recent operational logs with file headers and redaction."""
+    groups = tail_all_logs(lines)
+    if not groups:
         typer.echo("No logs yet.")
         return
-    for line in entries:
-        typer.echo(line)
+    for i, group in enumerate(groups):
+        if i:
+            typer.echo("")
+        typer.echo(f"== {group['name']} ({group['bytes']} bytes) ==")
+        for line in group["lines"]:
+            typer.echo(line)
 
 
 def _is_headless() -> bool:

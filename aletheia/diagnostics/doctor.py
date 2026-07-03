@@ -29,6 +29,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import platform
+from pathlib import Path
+import sys
 from typing import Literal
 
 Severity = Literal["ok", "info", "warn", "blocker"]
@@ -97,6 +100,7 @@ def build_deep_diagnostics(report: Report | None = None, *, tail_lines: int = 20
             for c in report.checks
             if c.severity in {"warn", "blocker"}
         ],
+        "system": _system_info(),
         "logs": _diagnostic_logs(tail_lines=tail_lines),
         "recent_failures": _recent_failures(),
         "recent_audit": _recent_audit_events(),
@@ -116,6 +120,29 @@ def _log_hint_for_check(name: str) -> str:
     if name.startswith("network.") or name.startswith("creds."):
         return "data/logs/errors.log; secrets are intentionally never printed"
     return "data/logs/"
+
+
+def _system_info() -> dict:
+    """Return non-secret environment facts useful for support/debugging."""
+    info = {
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "executable": sys.executable,
+        "cwd": str(Path.cwd()),
+    }
+    try:
+        from aletheia.config.loader import get_data_dir
+        info["data_dir"] = str(get_data_dir())
+    except Exception as e:
+        info["data_dir_error"] = str(e)
+    try:
+        from aletheia.update import git_ops
+        if git_ops.is_repo():
+            info["git_branch"] = git_ops.current_branch()
+            info["git_head"] = git_ops.current_commit()[:12]
+    except Exception as e:
+        info["git_error"] = str(e)
+    return info
 
 
 def _diagnostic_logs(*, tail_lines: int) -> dict:

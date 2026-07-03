@@ -21,12 +21,16 @@
 - 新增日志安全裁剪与脱敏读取，`doctor --verbose` 展示日志尾部时会遮掉 token、secret、authorization 等敏感字段。
 - `aletheia doctor --verbose` / `--deep` 增加“下一步看哪里”的诊断包：异常检查、相关日志提示、日志清单、近期失败 agent run、近期审计事件摘要、红acted 日志尾部。
 - `aletheia doctor --json --verbose` 增加 `diagnostics` 字段，方便 AI/脚本在故障时直接读取结构化诊断。
+- `aletheia doctor --bundle <file>` 可生成脱敏 JSON 诊断包，包含检查结果、系统摘要、日志清单和脱敏日志尾部。
+- `aletheia gateway logs` 现在默认展示 gateway/backend/frontdoor/operator 多路日志尾部，并带文件名和脱敏处理。
 - 运维文档补上 verbose doctor、50MB 日志分段、保留策略和敏感信息规则。
 
 验证：
 - `uv run pytest tests/test_gateway_logs.py tests/test_doctor.py tests/test_doctor_json.py tests/test_supervisor.py -q -o cache_dir=.pytest_cache_ai`
 - `uv run pytest tests/test_security.py -q -o cache_dir=.pytest_cache_ai`
 - `uv run aletheia doctor --json --verbose` 结构化输出包含 `diagnostics.logs` / `diagnostics.attention`。
+- `uv run aletheia doctor --bundle <tmp-file>` 可写出可解析 JSON bundle。
+- `uv run aletheia gateway logs -n 2` 可输出多路日志尾部。
 
 注意：当前工作区另有历史数据下载/交易决策/审计链相关未提交改动，属于其它边界；本批次不要混入这些文件。
 

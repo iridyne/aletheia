@@ -86,6 +86,24 @@ def test_redacted_tail_masks_secret_like_values(tmp_path, monkeypatch):
     assert "[REDACTED]" in text
 
 
+def test_tail_all_logs_includes_operational_files_and_redacts(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    log_dir = tmp_path / "logs"
+    gl.log_path().write_text("gateway ready\n", encoding="utf-8")
+    gl.errors_log_path().write_text("Authorization: Bearer sk-SECRETSECRETSECRET\n", encoding="utf-8")
+    (log_dir / "frontdoor-errors.log").write_text("frontdoor 502\n", encoding="utf-8")
+
+    groups = gl.tail_all_logs(lines=5)
+
+    names = {group["name"] for group in groups}
+    text = "\n".join(line for group in groups for line in group["lines"])
+    assert {"gateway.log", "errors.log", "frontdoor-errors.log"} <= names
+    assert "gateway ready" in text
+    assert "frontdoor 502" in text
+    assert "sk-SECRET" not in text
+    assert "[REDACTED]" in text
+
+
 def test_log_inventory_reports_active_and_rotated_files(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     gl.errors_log_path().write_text("x", encoding="utf-8")

@@ -8,6 +8,8 @@ live origin rather than the last fetch.
 
 import typer
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 doctor_app = typer.Typer(no_args_is_help=False)
 
@@ -103,6 +105,19 @@ def _print_deep_diagnostics(bundle: dict) -> None:
             typer.echo(f"    {line}")
 
 
+def _write_bundle(path: Path, report, diagnostics: dict, fix_actions=None) -> Path:
+    import json
+    out = report.to_dict()
+    out["diagnostics"] = diagnostics
+    if fix_actions is not None:
+        out["fix_actions"] = fix_actions
+    out["bundle_generated_at"] = datetime.now(timezone.utc).isoformat()
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
 @doctor_app.callback(invoke_without_command=True)
 def doctor(
     fix: bool = typer.Option(False, "--fix", help="Apply conservative infra repairs (start gateway, clear orphans). Never clears kill switch."),
@@ -110,6 +125,7 @@ def doctor(
     json_out: bool = typer.Option(False, "--json", help="Emit the report as machine-readable JSON (for AI agents / scripts) instead of the human table."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Include redacted log tails, recent failures, and next-log pointers."),
     deep: bool = typer.Option(False, "--deep", help="Alias for --verbose; intended for interactive troubleshooting."),
+    bundle: Path | None = typer.Option(None, "--bundle", help="Write a redacted JSON diagnostic bundle to this file."),
 ):
     """Probe and print this machine's real state (the single source of truth).
 
@@ -130,7 +146,7 @@ def doctor(
     from aletheia.diagnostics import doctor as dx
     report = dx.build_report()
 
-    include_deep = verbose or deep
+    include_deep = verbose or deep or bundle is not None
 
     if json_out:
         import json
@@ -140,23 +156,37 @@ def doctor(
             report = dx.build_report()  # re-probe so JSON reflects post-fix state
         out = report.to_dict()
         if include_deep:
-            out["diagnostics"] = dx.build_deep_diagnostics(report)
+            diagnostics = dx.build_deep_diagnostics(report)
+            out["diagnostics"] = diagnostics
+            if bundle is not None:
+                _write_bundle(bundle, report, diagnostics, fix_actions=fix_actions)
         if fix_actions is not None:
             out["fix_actions"] = fix_actions
         typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
         raise typer.Exit(1 if report.blockers else 0)
 
     _print_report(report)
+    diagnostics = None
     if include_deep:
-        _print_deep_diagnostics(dx.build_deep_diagnostics(report))
+        diagnostics = dx.build_deep_diagnostics(report)
+        if verbose or deep:
+            _print_deep_diagnostics(diagnostics)
+    fix_actions = None
     if fix:
         typer.echo("\nApplying fixes (--fix)...")
-        for action in dx.apply_fixes():
+        fix_actions = dx.apply_fixes()
+        for action in fix_actions:
             typer.echo(f"  • {action}")
         typer.echo("\nRe-probing after fixes:")
         report = dx.build_report()
         _print_report(report)
         if include_deep:
-            _print_deep_diagnostics(dx.build_deep_diagnostics(report))
+            diagnostics = dx.build_deep_diagnostics(report)
+            if verbose or deep:
+                _print_deep_diagnostics(diagnostics)
+    if bundle is not None:
+        diagnostics = diagnostics or dx.build_deep_diagnostics(report)
+        written = _write_bundle(bundle, report, diagnostics, fix_actions=fix_actions)
+        typer.echo(f"\nDiagnostic bundle written: {written}")
 
     raise typer.Exit(1 if report.blockers else 0)

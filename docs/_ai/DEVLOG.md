@@ -11,6 +11,8 @@ owner 担心 MVP/Round 1/Round 2 阶段系统日志不够详细、doctor 命令�
 - backend/frontdoor/foreground uvicorn 日志级别上调，诊断期优先可观测性。
 - doctor 增加 `--verbose` / `--deep`：输出异常检查、相关日志提示、日志清单、近期失败任务、近期审计摘要、脱敏日志尾部。
 - `doctor --json --verbose` 增加结构化 `diagnostics`，供 AI 和脚本做交互式诊断。
+- `doctor --bundle <file>` 增加脱敏诊断包落盘，方便故障复盘或交给 AI/人排查。
+- `gateway logs` 从单看 `gateway.log` 改为多路 operational logs 尾部：gateway/backend/frontdoor/operator shell。
 - 日志尾部读取增加敏感字段遮罩，避免诊断输出直接泄露 token/secret/authorization。
 - RUNBOOK / DEPLOYMENT 补充 verbose doctor 和日志保留规则。
 
@@ -18,6 +20,8 @@ owner 担心 MVP/Round 1/Round 2 阶段系统日志不够详细、doctor 命令�
 - 日志与 doctor 定向测试通过。
 - 安全测试通过。
 - `doctor --json --verbose` 可解析且包含深度诊断字段。
+- `doctor --bundle` 可写出可解析 JSON 文件。
+- `gateway logs -n 2` 可输出多路日志尾部。
 
 ### 注意
 本批不改交易执行、风控、密钥、实盘开关。工作区里同时存在其它会话的历史数据下载、
