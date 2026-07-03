@@ -107,7 +107,7 @@ def test_layer3_surfaces_serenity_id():
     region = src[src.index(marker):]
     assert '"id": o.get("id")' in region, (
         "trading_context serenity block does not surface the opportunity id — the "
-        "PI prompt would describe a pick the decision can never link back to"
+        "System Operator prompt would describe a pick the decision can never link back to"
     )
 
 

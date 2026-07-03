@@ -160,7 +160,7 @@ def test_layer3_guards_filter_via_query():
 
 @spec_claim(
     SpecClaim("LP-S03", "learning_pipeline", "§ps_lessons consumption", "L2a",
-              "trading_decision.py must reference ps_lessons when building PI prompt",
+              "trading_decision.py must reference ps_lessons when building System Operator prompt",
               status="implemented"),
 )
 def test_ps_lessons_consumed_in_prompt():
@@ -1183,7 +1183,7 @@ def test_factor_feedback_excludes_synthetic_closes():
     SpecClaim(
         "LP-DUAL-01", "learning_pipeline", "§8.4 dual path invariant", "L2c",
         "trading_decision.py MUST read structured ps_lessons from LessonStore "
-        "(not retrieve_lessons) for the PI prompt block, because FTS results "
+        "(not retrieve_lessons) for the System Operator prompt block, because FTS results "
         "lack evidence_json and guard timestamps",
         status="implemented",
     ),
@@ -1214,7 +1214,7 @@ def test_trading_decision_reads_lessons_from_lesson_store():
     )
     # trading_decision.py must render ps_lessons from the context
     assert "ps_lessons" in td_src, (
-        "trading_decision.py does not render ps_lessons into the PI prompt"
+        "trading_decision.py does not render ps_lessons into the System Operator prompt"
     )
     # Neither module must call retrieve_lessons for the structured block
     assert "retrieve_lessons" not in tc_src, (

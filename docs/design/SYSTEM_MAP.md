@@ -86,7 +86,7 @@
 
 | 级别 | 问题 | 影响 |
 |------|------|------|
-| A1 | ~~ps_lessons↔FTS 脱钩~~ → **已澄清为有意双轨** | 经验经 LessonStore→PI prompt→risk 影响决策;不入 FTS 是设计选择(knowledge_contract §6.A1) |
+| A1 | ~~ps_lessons↔FTS 脱钩~~ → **已澄清为有意双轨** | 经验经 LessonStore→System Operator prompt→risk 影响决策;不入 FTS 是设计选择(knowledge_contract §6.A1) |
 | A2 | ~~ps_skills 无生产者~~ | 已修: lesson_reviewer 产 draft skill;人工审核后才可 activate |
 | A3 | liquidation_events 不进风控 | 清算数据采集浪费 |
 | B1 | detect_contradictions() | 已有保守 support-vs-block 检测；UI 只呈现"需复核"数量，不自动裁决 |

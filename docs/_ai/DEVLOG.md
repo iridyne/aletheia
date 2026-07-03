@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-03 — 全项目 SDD 对齐第一批
+
+### 触发
+Learning SDD 对齐完成后，按 owner 要求开始把同样的文档对齐方法扩展到整个项目。
+
+### 交付
+- 修正规则引擎删除后的 SDD 漂移：`agent_contracts.md`、`knowledge_contract.md`、
+  `PI_OPERATOR_DESIGN_DECISIONS.md`、`DOC_ATLAS_BY_DOMAIN.md` 不再把 strategy_designer、
+  backtest_orchestrator、RuleSet exit、Optuna 当成当前活路径。
+- `api_reference.md` 补近期 model OAuth、settings、risk、operator、analytics 端点。
+- 当前 spec 注释/claim 文案统一为 System Operator prompt。
+- 新增 `docs/_ai/SDD_GLOBAL_ALIGNMENT_AUDIT_2026-07-03.md`，记录全项目剩余 SDD 扫描任务。
+
+### 验证
+- 相关 spec 通过：102 passed, 3 skipped。
+- `git diff --check` 通过。
+
+### 注意
+全项目 SDD 修复尚未完成；本批只处理第一组高风险漂移。下一步继续 route-vs-doc、
+config-to-UI 和 missing/xfail spec 审计。
+
+---
+
 ## 2026-07-03 — Learning SDD 文档对齐
 
 ### 触发

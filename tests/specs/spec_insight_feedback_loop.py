@@ -180,7 +180,7 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim("IFL-B05", "insight_feedback_loop", "§Defect③ Module J", "L2b",
               "render_memo_for_observer surfaces prior_corrections, so an overturned "
-              "judgment actually reaches the observer/PI prompt — the revision is visible "
+              "judgment actually reaches the observer/System Operator prompt — the revision is visible "
               "to the agent, not just stored"),
 )
 def test_prior_corrections_rendered_into_prompt():

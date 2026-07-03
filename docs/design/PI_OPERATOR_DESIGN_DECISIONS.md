@@ -3,6 +3,11 @@
 > 2026-06-21 | 基于 codebase 约束 + 竞品分析 + 控制论原则
 > **命名更新（2026-07-01）**：原标题"PI Operator"已统一为"System Operator"。
 > 详见 `docs/_ai/DECISIONS.md §2026-07-01`。
+> **Position C 更新（2026-07-03）**：本文中涉及 `strategy_designer`、
+> `backtest_orchestrator`、Optuna/RuleSet 策略生成或策略晋级的内容均为历史设计背景。
+> 规则引擎已于 2026-07-02 删除；当前 System Operator 不再触发 strategy_designer、
+> backtest 或 Optuna sweep。当前有效边界见 `agent_contracts.md` 与
+> `promotion_gates_contract.md`。
 
 ---
 
@@ -51,7 +56,7 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 | `fast_io` | 1 | price_feed (30s) | 不可中断的基础设施 |
 | `io` | 1 | exchange_sync, position_manager, data_collectors | 数据刷新 |
 | `observer` | 1 | market_observer (15min) | 信号生成 |
-| `agents` | 1 | pi_decision, paper_trader, strategy_designer, post_trade_reviewer, risk_critic | LLM 推理 |
+| `agents` | 1 | pi_decision, paper_trader, post_trade_reviewer, risk_critic | LLM 推理 |
 | `default` | 2 | portfolio_snapshot | 计算聚合 |
 
 **关键约束**：
@@ -79,7 +84,7 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 1. **底层 job 永远自主运行** — Operator 不"启停"它们，不控制它们的执行频率
 2. **Operator 消费底层产出** — 读 DB 中的 opportunities、trades、strategies、forward_outcomes
 3. **Operator 通过 Config 间接控制行为** — 调整参数（如 `min_confidence_to_trade`），下一轮 job 执行时自然拿到新值
-4. **Operator 通过 Agent Delegation 触发一次性任务** — 如"立即触发一次 strategy_designer"或"对 X 策略跑 Optuna"
+4. **Operator 通过 Agent Delegation 触发一次性任务** — 仅限当前仍存在的 agent/task；不得触发已删除的 strategy_designer、backtest 或 Optuna 路径
 
 **类比**：Operator 是工厂经理。生产线（scheduled jobs）24h 自动跑。经理不手动转动每个齿轮，而是：
 - 看报表（消费产出）
@@ -114,7 +119,6 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 | `paper_trader` | `paper_trader.py:143/235` | `signal_pending` | 交易环(信号收集) |
 | System Operator(经 reflection) | `agent_shell/reflection.py:59` | `trade`/`skip`/`close`/`reduce`(= `TradingDecision.action`) | 交易环(决策记录) |
 | `operator_loop` | `operator_loop.py:597/628` | `recommend_retire` / `recommend_demote` | **监管环** |
-| `strategy_designer` | `strategy_designer.py:615/679` | `recommend_promote` | **策略生成**(非监管环 —— owner 定调 2026-06-30) |
 
 **不变式(INV-OPS-1)**:监管环写入方(`operator_loop`)**绝不**写交易动作(`signal_pending`/`trade`/`close`/...),只写 `recommend_*`;反之交易环写入方不写 `recommend_*`。下游(`trading_context` 读 `signal_pending`、PI 消费 `recommend_*`)**必须**按 `action` 命名空间区分,不得跨环误读。spec `OL-S12` 锁定。
 
@@ -124,7 +128,7 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 
 **定时唤醒（4h cadence）**：
 - 08:00 CST — 亚盘开场：审视隔夜表现、策略池状态、data_health
-- 12:00 CST — 午间：检查晨间 strategy_designer 产出是否有新策略值得 promote
+- 12:00 CST — 午间：检查市场/执行/学习状态，不再检查已删除的 strategy_designer 产出
 - 16:00 CST — 美盘前：evaluation of position exposure before US session volatility
 - 20:00 CST — 美盘中期：mid-session check + risk tightening if needed
 - 00:00 CST — 日切：daily summary review + calibration stats consumption
@@ -146,7 +150,7 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 
 1. Crypto 24/7 运行，日内 regime shift 常见
 2. Kill switch trip 后需要尽快分析原因（不能等到明天）
-3. 新策略产出后应及时 review（strategy_designer 每天跑 3 次）
+3. 新机会/学习产出后应及时 review；规则引擎删除后不再有 strategy_designer 每日产出
 
 ---
 
@@ -178,7 +182,7 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 │ • 调低 max_demo_position_notional_usdt (缩小仓位)            │
 │ • 调高 default_stop_loss_pct (收窄止损)                     │
 │ • Retire/demote 表现差的策略                                 │
-│ • 触发 strategy_designer 生成新策略                          │
+│ • 触发现有研究/观察/学习任务                                  │
 │ • 触发 Optuna sweep                                        │
 │ • 调整 scanner family multiplier (±0.2 以内)                │
 │ • 请求 OHLCV backfill                                      │
@@ -222,7 +226,7 @@ Level 1 自动调整有 **per-cycle cap**：
 - 审视所有 `paper_running` 策略的 7d/14d 指标
 - 对达标者 promote（到 paper_passed → live_candidate 需 Level 2）
 - 对表现差者 demote/retire（Level 1）
-- 检查 uncovered symbols → delegate strategy_designer
+- 检查 uncovered symbols → 调整 universe/scanner 或触发现有观察任务
 
 #### 3. Performance Assessment (每 4h)
 - 汇总：日 PnL、win_rate 滑动 7d、per-strategy Sharpe
@@ -232,7 +236,7 @@ Level 1 自动调整有 **per-cycle cap**：
 #### 4. Parameter Tuning (每 4h，有 delta 时)
 - 当 signal_win_rate < 40% 持续 > 24h → 收紧 min_confidence
 - 当 drawdown 接近 daily limit 50% → 缩小 sizing
-- 当有 RuleSet 策略且 OHLCV 充足 → 触发 Optuna sweep
+- 规则引擎删除后不再触发 Optuna sweep；相关思路仅作为历史背景保留
 
 #### 5. Universe/Scanner Governance (每日 1-2 次)
 - 消费 calibration_stats → 调整 family_multiplier
@@ -283,7 +287,7 @@ scheduler.add_job(
 - 6 次/天 × ~20s/次 = ~2min LLM 占用，不影响 15min 的 pi_decision
 - 每 4h 有 ~16 个 pi_decision 产出作为输入数据点（足够统计意义）
 - 与 post_trade_reviewer (4h) 错开 1h，消费其产出
-- 与 backtest_orchestrator (04:00) 对齐，能消费当晚回测结果
+- 与 guard_promotion / daily learning jobs 错开，避免挤占 agent pool
 
 ### Stage 2+ 事件触发（额外）
 
@@ -307,8 +311,7 @@ def on_outcomes_settled(batch_size: int):
 |------|----------|----------|
 | 写 config.yaml 的 "safe" 字段 | `save_config()` | ≤3 patch/24h |
 | Retire/demote 策略 | `update_strategy(status="retired")` | 无限制 |
-| 触发 strategy_designer | `run_agent("strategy_designer", ...)` | ≤3 次/天 |
-| 触发 Optuna sweep | `run_parameter_sweep(...)` | ≤2 次/天 |
+| 触发现有研究/观察/学习任务 | 受具体任务权限限制 | 按任务限频 |
 | 调整 family_multiplier | 写 config 或内存 override | ±0.2/次 |
 | 写 knowledge_item (assessment/action) | DB insert | 无限制 |
 | 发送通知 (Telegram/webhook) | 现有 notify 接口 | ≤10 次/天 |

@@ -7,7 +7,31 @@
 
 ## Last Updated
 
-2026-07-03 (Learning SDD 文档对齐已补)
+2026-07-03 (全项目 SDD 对齐第一批进行中)
+
+---
+
+## Recent Change (全项目 SDD 对齐第一批 — 2026-07-03)
+
+在 Learning SDD 对齐完成后，启动全项目 SDD 漂移扫描并完成第一批高风险修正：
+
+- 修正 `agent_contracts.md`：job 数量 31；paper_trader / position_manager 不再声称
+  RuleSet exit 可直接平仓。
+- 修正 `knowledge_contract.md`：`strategy_designer` 生产/消费路径标为 legacy，不再当当前活路径。
+- 修正 `PI_OPERATOR_DESIGN_DECISIONS.md`：加入 Position C 边界说明，当前 System Operator
+  不再触发 strategy_designer / backtest / Optuna。
+- 修正 `DOC_ATLAS_BY_DOMAIN.md`：策略域变为 legacy strategy/promotion，不再把规则引擎列为当前范围。
+- 补充 `api_reference.md`：model OAuth、settings、risk、operator、analytics 等近期端点。
+- 更新多份 spec 注释/claim 文案，将当前 prompt 术语改为 System Operator prompt。
+- 新增 `docs/_ai/SDD_GLOBAL_ALIGNMENT_AUDIT_2026-07-03.md`，记录已修项和全项目剩余扫描清单。
+
+验证：
+- `uv run pytest tests/specs/spec_learning_pipeline.py tests/specs/spec_insight_feedback_loop.py tests/specs/spec_data_utilization.py tests/specs/spec_serenity_evidence.py tests/specs/spec_serenity_attribution.py tests/specs/spec_universe_pipeline.py tests/specs/spec_strategy_pool.py tests/specs/spec_pipeline_position_manager.py -q`
+  → 102 passed, 3 skipped。
+- `git diff --check` 通过。
+
+状态：全项目 SDD 修复尚未完成。下一步继续做 route-vs-api_reference 生成式比对、
+System Operator 术语边界、config-to-UI、spec missing/xfail 审计。
 
 ---
 

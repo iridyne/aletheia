@@ -42,7 +42,7 @@ def _project_root() -> str:
               status="implemented"),  # this is the observation, not the fix
 )
 def test_strategy_records_ddl_missing_kpi_columns():
-    """Structural fact: strategy_records has no KPI columns; PI prompt 必然拿到 None.
+    """Structural fact: strategy_records has no KPI columns; System Operator prompt 必然拿到 None.
 
     This test passes (status=implemented) as a documentation anchor — it
     asserts the current schema reality so that if someone adds these columns
@@ -93,7 +93,7 @@ def test_trading_context_uses_strategy_kpis():
     import pathlib
     src = (pathlib.Path(_project_root()) / _TRADING_CONTEXT).read_text(encoding="utf-8")
     assert "build_strategy_kpis" in src, (
-        "trading_context.py never references build_strategy_kpis — PI prompt 仍然拿到 "
+        "trading_context.py never references build_strategy_kpis — System Operator prompt 仍然拿到 "
         "win_rate=None total_pnl=None trade_count=None. "
         "See round2_week1_decision_chain_fixes.md Fix S-Bug-C"
     )

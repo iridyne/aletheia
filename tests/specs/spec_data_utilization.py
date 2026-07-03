@@ -483,7 +483,7 @@ def test_forward_outcome_edge_routed_to_pi():
         "trading_context must attach family_edge to each opportunity"
     )
     assert "_fmt_family_edge" in td, (
-        "trading_decision must render family_edge in the PI prompt (opportunity line)"
+        "trading_decision must render family_edge in the System Operator prompt (opportunity line)"
     )
 
 

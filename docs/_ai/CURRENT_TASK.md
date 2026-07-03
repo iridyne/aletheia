@@ -67,6 +67,10 @@ draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降
 契约/API/spec 注释对齐。下一步才扩展到全项目 SDD 文档漂移扫描；不要把历史 plans/issues
 里的旧问题描述当成当前事实，先对照代码和现行 L2 契约。
 
+全项目第一批已处理规则引擎删除后的当前契约漂移、API 端点漏登记和 System Operator
+术语漂移。后续继续按 `docs/_ai/SDD_GLOBAL_ALIGNMENT_AUDIT_2026-07-03.md` 的清单推进：
+route-vs-api_reference、config-to-UI、spec missing/xfail、以及历史/当前文档边界。
+
 > **结构性阻碍已清除(意图记录,2026-06-24)**:最小赚钱循环
 > (opportunities→paper_trader→signal_pending→PI→proposal→risk→execution)曾被
 > **五层叠加阻碍**卡死(OKX contractSize 单位 / PI 余额幻觉 8 bug / OKX 跨 loop /

@@ -231,7 +231,7 @@ Serenity 直接产出的股票代币(xStocks)机会使用独立资产类别 `equ
 | 契约 | 关系 |
 |------|------|
 | decision_lifecycle_contract.md | Serenity opportunity → PiDecision(signal_pending)→ TradeProposal 是其一条 signal_source 分支 |
-| knowledge_contract.md | Serenity 证据/裁决经 Layer 3 注入 PI prompt |
+| knowledge_contract.md | Serenity 证据/裁决经 Layer 3 注入 System Operator prompt |
 | risk_engine_contract.md | trade_school 对风控 guard 不可见(§9 隔离墙) |
 | live_unlock_contract.md | trade_school 对实盘解锁 surface 不可见(§9 隔离墙) |
 | data_model.md | SerenityOpportunity / SerenityEvidence / trade_school 列 |

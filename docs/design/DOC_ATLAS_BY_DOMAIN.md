@@ -61,14 +61,14 @@
 - **L3 计划**：`futures_integration_plan`/`_groundwork`/`_round2_deferred` · `TAG_BORROW_BACKLOG`(P0-1/P1-2✅已合并；P0-2/P1-1/P0-3⏳待 owner，触信任边界)
 - **当前状态**：金标准最齐。⛔ CR-EX-01 OKX/Binance live 不对账(确认 open)；Phase 6 live 需 owner 显式授权。
 
-## D5 · 策略生命周期
+## D5 · Legacy Strategy / Promotion
 
-**Scope**：`strategy/`(dsl/evaluator/backtest/orchestrator/performance_ledger) + `strategy_designer` + 晋级门(paper→demo→live)。
+**Scope**：legacy `strategy_records` / `backtest_*` 表、promotion gate 文档和历史归因展示。规则引擎、`strategy_designer`、`backtest_orchestrator`、RuleSet 扫描均已删除(Position C, 2026-07-02)。
 
-- **L2 契约**：[`promotion_gates_contract`](promotion_gates_contract.md) ✅(8 阈值+状态机+双门)
-- **Spec**：`spec_promotion_gates`(7) · `spec_strategy_pool`(SP-S01~03；2A+ 任务记为 missing tripwire) · `spec_evaluator_contracts`
-- **L3 计划**：`PLAN_REGIME_STRATEGY_SHORT` · research `strategy_lifecycle_analysis`
-- **当前状态**：⛔⛔ **头号结构缺口 = Phase 2A 可执行策略**：`entry_rule/exit_rule` 死字符串，paper_trader 只按 direction+confidence 交易→晋级门衡量"方向运气"非"规则验证"(`execution_path_honesty §1.3`)。2A+ 方向性 schema 已加、scanner 原生 direction 未做。
+- **L2 契约**：[`promotion_gates_contract`](promotion_gates_contract.md) ✅(legacy-only；无生产路径 wire 到晋级)
+- **Spec**：`spec_promotion_gates` · `spec_strategy_pool`(Position C 后保留 legacy/negative tripwires)
+- **L3 计划**：历史 `PLAN_REGIME_STRATEGY_SHORT` / `strategy_lifecycle_analysis` 仅作背景，不代表当前开发方向
+- **当前状态**：规则引擎删除后，交易方向来自 System Operator 对 opportunity 的决策；`strategy_id` 只作可空历史归因标签。不要恢复策略 DSL/backtest/RuleSet 路径，除非 owner 明确开启新设计。
 
 ## D6 · 知识·学习·自进化
 

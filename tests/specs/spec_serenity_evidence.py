@@ -90,7 +90,7 @@ def test_pi_context_surfaces_assessed_tier():
 
 @spec_claim(
     SpecClaim(
-        "SE-S05", _CONTRACT, "§2 PI prompt renders the assessed tier", "L2a",
+        "SE-S05", _CONTRACT, "§2 System Operator prompt renders the assessed tier", "L2a",
         "trading_decision.py renders the assessed_tier into the Serenity block of the "
         "PI decision prompt (falling back to evidence_tier only when unassessed)",
     ),
@@ -98,7 +98,7 @@ def test_pi_context_surfaces_assessed_tier():
 def test_pi_prompt_renders_assessed_tier():
     src = _TRADING_DECISION.read_text(encoding="utf-8")
     assert "assessed_tier" in src, (
-        "trading_decision.py does not render assessed_tier into the PI prompt"
+        "trading_decision.py does not render assessed_tier into the System Operator prompt"
     )
 
 

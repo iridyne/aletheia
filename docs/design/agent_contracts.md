@@ -3,11 +3,11 @@
 > Input/output contracts for all 12 registered agent functions and 32 scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-06-23 (频率全量修正 + 5 新 agent 补充)
+> Last updated: 2026-07-03 (Position C / Learning SDD alignment)
 
 ---
 
-## 1. Scheduler Job Overview (30 jobs)
+## 1. Scheduler Job Overview (31 jobs)
 
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
@@ -117,10 +117,10 @@
 #### paper_trader (refactored: signal collector)
 
 - **Trigger**: scheduler every 5min
-- **Inputs**: Active strategies (paper_running), opportunities, universe features, PI decisions
+- **Inputs**: opportunities, universe features, System Operator decisions
 - **LLM**: No (pure rule evaluation)
 - **Outputs**: signal_pending PiDecisions (Phase 4a: System Operator is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
-- **Side effects**: Writes signal_pending decisions for System Operator consumption; RuleSet exit signals may close positions directly
+- **Side effects**: Writes signal_pending decisions for System Operator consumption. RuleSet exit auto-close was removed with the rules engine; paper_trader must not close positions directly.
 - **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)
 
 #### System Operator — Trading Decision Daemon (pi_trading_decision / pi_daemon)
@@ -145,11 +145,11 @@
 #### position_manager
 
 - **Trigger**: scheduler every 5min
-- **Inputs**: Open positions, current prices, ruleset exit signals, market-aware exit signals
+- **Inputs**: Open positions, current prices, market-aware exit signals
 - **LLM**: No
 - **Outputs**: Position closes (status=closed, realized_pnl computed)
 - **Side effects**: Calls close_position(); updates exchange TP/SL orders; writes audit events
-- **Exit triggers**: stop_loss, take_profit, max_hold_time, trailing_stop, ruleset_exit, market_aware_exit. (System Operator exits run **independently** via `review_portfolio_state`, NOT inside this loop — see `execution_contract.md §10`.)
+- **Exit triggers**: stop_loss, take_profit, max_hold_time, trailing_stop, market_aware_exit. RuleSet exit auto-close is removed. System Operator exits run **independently** via `review_portfolio_state`, NOT inside this loop — see `execution_contract.md §10`.
 - **Pause semantics**: runs even when `runtime.paused` (manages existing risk; never blocks protective close — aligned with kill_switch, see `execution_contract.md §10.3`)
 
 ---

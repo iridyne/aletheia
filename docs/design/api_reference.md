@@ -113,6 +113,8 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/analytics/cost-summary` | LLM and execution cost breakdown |
 | GET | `/analytics/confidence-calibration` | ECE calibration by conviction bucket |
 | GET | `/analytics/reasoning-feedback` | Per-bucket rejection/win rates |
+| GET | `/analytics/round1-progress` | Historical Round 1 progress metrics |
+| GET | `/analytics/pipeline-funnel` | Pipeline conversion funnel counts |
 | GET | `/analytics/family-scorecard` | Scanner family performance |
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
@@ -171,14 +173,17 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 |--------|------|-------------|
 | GET | `/settings` | Full config as JSON |
 | POST | `/settings/autonomous-learning` | Learning loop toggles |
+| POST | `/settings/bypass-distress-gate` | Explicit operator bypass for distress gate checks |
 | POST | `/settings/exchange-markets` | Observed symbols list |
 | POST | `/settings/primary-exchange` | Primary exchange selection |
 | POST | `/settings/runtime` | Scheduler intervals, timeouts |
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
+| POST | `/settings/model` | Save model/provider config |
 | POST | `/settings/serenity` | Serenity research config (auto_promote, min_score_for_pi) |
 | POST | `/settings/guard` | Guard / lesson-promotion config (`auto_promote_enabled`, thresholds) |
 | POST | `/settings/operator` | Operator loop config |
+| POST | `/settings/regime` | Regime classifier config |
 | POST | `/settings/health-config` | Health check thresholds |
 | POST | `/settings/retention` | Data retention policies |
 | POST | `/settings/telegram` | Telegram bot config |
@@ -192,9 +197,10 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/settings/trading` | Trading parameters (slippage, sizing) |
 | POST | `/settings/market-data` | Market data collection config |
 | POST | `/settings/universe` | Universe pipeline config |
-| POST | `/settings/strategy_factory` | Strategy generation config |
+| POST | `/settings/strategy_factory` | Legacy strategy-factory config retained for compatibility; rules engine is removed |
 | POST | `/settings/historical_data` | Historical data backfill config |
 | POST | `/settings/event_triggers` | Event-driven trigger config |
+| POST | `/settings/news` | News ingestion/settings config |
 | POST | `/settings/network` | Network/proxy settings |
 | POST | `/settings/network/test` | Test network connectivity |
 | GET | `/settings/tunnel/status` | Cloudflare tunnel status |
@@ -239,6 +245,17 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/model/codex/login-start` | Start Codex OAuth flow |
 | GET | `/model/codex/login-status` | Codex OAuth status |
 | POST | `/model/codex/login-cancel` | Cancel Codex OAuth |
+| GET | `/model/codex/models` | List detected Codex/OpenAI model options |
+| POST | `/model/openai-oauth/start` | Start OpenAI OAuth flow |
+| GET | `/model/openai-oauth/status` | OpenAI OAuth status |
+| POST | `/model/openai-oauth/finalize` | Finalize OpenAI OAuth flow |
+| POST | `/model/openai-oauth/cancel` | Cancel OpenAI OAuth flow |
+| POST | `/model/openai-oauth/disconnect` | Disconnect OpenAI OAuth credentials |
+| POST | `/model/claude-oauth/start` | Start Claude OAuth flow |
+| POST | `/model/claude-oauth/complete` | Complete Claude OAuth flow |
+| GET | `/model/claude-oauth/status` | Claude OAuth status |
+| POST | `/model/claude-oauth/cancel` | Cancel Claude OAuth flow |
+| POST | `/model/claude-oauth/disconnect` | Disconnect Claude OAuth credentials |
 
 ---
 
@@ -331,6 +348,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/risk/boundaries` | 硬性风控限额（只读，`aletheia/server/routes/risk.py:17`） |
 | GET | `/risk/status` | Current risk state (ok/warning/blocked) + violations (`risk.py:28`) |
 | GET | `/risk/summary` | Operator-facing summary of recent risk rejections and pending boundary proposals (`risk.py:74`) |
+| GET | `/risk/account-leverage` | Account leverage summary |
 
 ### Kill Switch
 
@@ -358,7 +376,28 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 |--------|------|-------------|
 | POST | `/command` | Natural language command (Agent Shell) |
 | GET | `/operator/status` | Operator loop status |
+| POST | `/operator/branches` | Create an operator branch/session branch |
+| POST | `/operator/active-branch` | Switch active operator branch |
+| GET | `/operator/sessions` | List operator sessions |
+| GET | `/operator/sessions/{session_id}` | Operator session detail |
+| GET | `/operator/sessions/{session_id}/messages` | Operator session messages |
+| GET | `/operator/tasks` | List operator tasks |
+| GET | `/operator/tasks/{task_id}` | Operator task detail |
+| GET | `/operator/commands` | List available operator commands |
+| GET | `/operator/extensions` | List operator extensions |
+| GET | `/operator/extensions/{extension_id}` | Operator extension detail |
+| POST | `/operator/extensions/{extension_id}/enable` | Enable an operator extension |
+| GET | `/operator/recommendations` | Operator recommendations/advisory queue |
+| GET | `/operator/loop/latest` | Latest operator loop assessment |
 | POST | `/operator/trigger` | Manually trigger operator loop |
+| GET | `/operator/events` | Operator event feed snapshot |
+| GET | `/operator/events/stream` | Operator SSE event stream |
+| POST | `/operator/pause` | Pause operator loop |
+| POST | `/operator/resume` | Resume operator loop |
+| POST | `/operator/wake` | Wake operator loop |
+| POST | `/operator/command-preview` | Preview operator command effects |
+| POST | `/operator/command` | Execute operator command |
+| POST | `/operator/internal/*` | Internal operator-shell bridge endpoints; not public UI contracts |
 
 ---
 

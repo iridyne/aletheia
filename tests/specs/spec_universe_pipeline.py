@@ -126,7 +126,7 @@ def test_key_observations_reach_pi():
     assert _top_observations(None) == []
     assert _top_observations("not json") == []
 
-    # Structural: layer1 carries it AND the PI prompt renders it.
+    # Structural: layer1 carries it AND the System Operator prompt renders it.
     from aletheia.agent_shell import trading_context, trading_decision
     assert '"key_observations": _top_observations' in inspect.getsource(trading_context)
     assert "key_observations" in inspect.getsource(trading_decision)
