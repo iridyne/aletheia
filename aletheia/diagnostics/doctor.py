@@ -1037,7 +1037,7 @@ def _probe_reconciled_ratio(report: Report) -> None:
         db = get_db()
         cutoff_72h = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
         rows = list(db.execute(
-            "SELECT close_reason FROM positions "
+            "SELECT close_reason, closed_at FROM positions "
             "WHERE status='closed' AND closed_at >= ? "
             "ORDER BY closed_at DESC LIMIT 50",
             (cutoff_72h,),
@@ -1052,17 +1052,23 @@ def _probe_reconciled_ratio(report: Report) -> None:
         reconciled = cnt.get("reconciled_gone", 0)
         units_bug = cnt.get("units_bug_cleanup", 0)
         ai_driven = total - reconciled - units_bug
+        newest_reconciled = next((r[1] for r in rows if r[0] == "reconciled_gone"), None)
+        newest_reconciled_age = _age_minutes(newest_reconciled) if newest_reconciled else None
         recon_pct = round(reconciled / total * 100, 1) if total else 0
         ai_pct = round(ai_driven / total * 100, 1) if total else 0
         detail = (f"last {total}: reconciled={reconciled}({recon_pct}%), "
                   f"units_bug={units_bug}, ai_driven={ai_driven}({ai_pct}%)")
         if recon_pct > 50:
-            report.add("loop.reconciled_ratio", "warn",
-                       f"reconciler dominates closes: {detail}",
-                       "judgement PF/WR is driven by orphan sweep, not AI — "
-                       "common cause: gateway restart while exchange TP/SL was active "
-                       "(okx_demo mode: _try_get_tpsl_fill_price is Bitget-only, "
-                       "so OKX TP/SL fills appear as reconciled_gone instead of take_profit/stop_loss)")
+            if newest_reconciled_age is not None and newest_reconciled_age > 360:
+                report.add("loop.reconciled_ratio", "info",
+                           f"historical reconciler residue: {detail}; newest reconciled {_fmt_age(newest_reconciled_age)}")
+            else:
+                report.add("loop.reconciled_ratio", "warn",
+                           f"reconciler dominates closes: {detail}",
+                           "judgement PF/WR is driven by orphan sweep, not AI — "
+                           "common cause: gateway restart while exchange TP/SL was active "
+                           "(okx_demo mode: _try_get_tpsl_fill_price is Bitget-only, "
+                           "so OKX TP/SL fills appear as reconciled_gone instead of take_profit/stop_loss)")
         elif recon_pct > 25:
             report.add("loop.reconciled_ratio", "info",
                        f"reconciled noticeable: {detail}")
@@ -1148,7 +1154,7 @@ def _probe_concentration(report: Report) -> None:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         rows = list(db.execute(
-            "SELECT o.symbol || ':' || o.direction AS bucket, COUNT(*) n "
+            "SELECT o.symbol || ':' || o.direction AS bucket, COUNT(*) n, MAX(f.filled_at) newest "
             "FROM fills f JOIN orders o ON f.order_id = o.id "
             "WHERE f.filled_at >= datetime('now', '-1 day') "
             "GROUP BY bucket ORDER BY n DESC"
@@ -1157,14 +1163,19 @@ def _probe_concentration(report: Report) -> None:
             report.add("loop.concentration", "info", "no fills in last 24h")
             return
         total = sum(r[1] for r in rows)
-        top_bucket, top_n = rows[0][0], rows[0][1]
+        top_bucket, top_n, top_newest = rows[0][0], rows[0][1], rows[0][2]
+        top_age = _age_minutes(top_newest)
         top_pct = round(top_n / total * 100, 1) if total else 0
         detail = f"24h fills={total}, top: {top_bucket}={top_n} ({top_pct}%)"
         if top_pct > 60 and total >= 10:
-            report.add("loop.concentration", "warn",
-                       f"PI single-bet bias: {detail}",
-                       "highly correlated exposure — PI may be making one bet "
-                       "repeatedly; check trade_proposals for direction diversity")
+            if top_age is not None and top_age > 360:
+                report.add("loop.concentration", "info",
+                           f"historical concentration residue: {detail}; newest top-bucket fill {_fmt_age(top_age)}")
+            else:
+                report.add("loop.concentration", "warn",
+                           f"PI single-bet bias: {detail}",
+                           "highly correlated exposure — PI may be making one bet "
+                           "repeatedly; check trade_proposals for direction diversity")
         elif top_pct > 40:
             report.add("loop.concentration", "info",
                        f"moderate concentration: {detail}")
@@ -1593,16 +1604,19 @@ def _probe_audit_chain(report: Report) -> None:
     else:
         errors = result.get("errors", [])
         error_timestamps = result.get("error_timestamps", [])
-        # Splits at effective restart after the file-lock fix. Lock committed 2026-06-15
-        # (9ae782e) but gateway only restarted with new code around 2026-06-25T12:34 UTC —
-        # the last observed concurrent-writer race. Zero breaks since.
-        FILE_LOCK_TS = "2026-06-25T13:00:00"
+        # Split at the current effective write-path fix. The original file lock
+        # serialized appends, but each gateway process still cached its own chain
+        # tail; frontdoor/backend interleaving could therefore continue from a
+        # stale _prev_hash. The writer now re-reads the chain tail while holding
+        # the cross-process lock, so only breaks after this timestamp indicate
+        # an active write-path or tamper problem.
+        FILE_LOCK_TS = "2026-07-03T08:00:00+00:00"
         ts_padded = list(error_timestamps) + [""] * len(errors)
         post_lock = [e for e, t in zip(errors, ts_padded) if t and t > FILE_LOCK_TS]
         if not post_lock:
             report.add("trust.audit_chain", "info",
-                       f"{len(errors)} historical chain break(s), all pre-effective-lock "
-                       f"(before 2026-06-25T13:00 gateway restart); "
+                       f"{len(errors)} historical chain break(s), all before current "
+                       f"cross-process cache fix ({FILE_LOCK_TS}); "
                        f"zero post-lock breaks ({records} records{reanchor_extra})")
         else:
             detail = f"chain BROKEN — {len(post_lock)} post-lock error(s) in {records} records: {post_lock[:3]}"

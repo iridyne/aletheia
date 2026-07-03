@@ -230,6 +230,11 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     if decision.action not in ("trade", "scale_in", "flip") or not decision.symbol or not decision.direction:
         return None
 
+    overheated = _proposal_direction_overheated(decision.direction, decision.conviction)
+    if overheated:
+        logger.info("proposal skipped by direction diversity brake: %s", overheated)
+        return {"status": "skipped", "reason": "direction_overheated", "detail": overheated}
+
     from aletheia.trading.market_data import latest_snapshot
     from aletheia.execution.paper_tools import create_paper_proposal
     from aletheia.config.loader import load_config
@@ -359,6 +364,51 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     )
 
 
+def _proposal_direction_overheated(
+    direction: str | None,
+    conviction: int,
+    *,
+    window_hours: int = 24,
+    min_sample: int = 5,
+    max_share: float = 0.80,
+    override_conviction: int = 85,
+) -> str | None:
+    """Return a skip reason when native proposals are one-sided.
+
+    This is a pre-proposal quality brake, not a risk/execution gate. It prevents
+    normal-conviction decisions from adding yet another same-direction proposal
+    when the recent proposal stream is already overwhelmingly one-sided.
+    """
+    if direction not in ("long", "short") or conviction >= override_conviction:
+        return None
+    try:
+        from datetime import datetime, timedelta, timezone
+        from collections import Counter
+        from aletheia.storage.sqlite import get_db
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+        rows = get_db().execute(
+            "SELECT direction FROM trade_proposals "
+            "WHERE created_at >= ? AND source != 'adopted' AND direction IS NOT NULL",
+            (cutoff,),
+        ).fetchall()
+        dirs = [r["direction"] for r in rows if r["direction"] in ("long", "short")]
+        total = len(dirs)
+        if total < min_sample:
+            return None
+        counts = Counter(dirs)
+        top_dir, top_n = counts.most_common(1)[0]
+        share = top_n / total if total else 0.0
+        if top_dir == direction and share > max_share:
+            return (
+                f"{window_hours}h native proposals are {top_n}/{total} {top_dir} "
+                f"({share:.0%}); conviction {conviction} below override {override_conviction}"
+            )
+    except Exception:
+        return None
+    return None
+
+
 # ── LLM calls ─────────────────────────────────────────────────────────────────
 
 async def _assess_opportunity(ctx: dict) -> dict | None:
@@ -485,6 +535,27 @@ def _fmt_family_edge(edge: dict | None) -> str:
     ar_s = f"{ar:+.2f}%avg" if ar is not None else ""
     weak = " (thin)" if n < 5 else ""
     return f" {{edge:{n}T {wr_s} {ar_s}{weak}}}"
+
+
+def _direction_skew_note(rows: list[dict], label: str) -> str:
+    dirs = [
+        str(r.get("direction") or r.get("direction_bias") or "").lower()
+        for r in rows
+    ]
+    dirs = [d for d in dirs if d in ("long", "short")]
+    if len(dirs) < 5:
+        return ""
+    long_n = sum(1 for d in dirs if d == "long")
+    short_n = sum(1 for d in dirs if d == "short")
+    top = max(long_n, short_n)
+    if top / len(dirs) < 0.8:
+        return ""
+    top_dir = "long" if long_n >= short_n else "short"
+    return (
+        f"  Direction diversity check: {label} is {top}/{len(dirs)} {top_dir}. "
+        "Treat this as input skew, not consensus; actively check the opposite case "
+        "and prefer watch/skip when the setup lacks independent confirmation."
+    )
 
 
 def _fmt_feature_line(f: dict) -> str:
@@ -715,6 +786,9 @@ def _build_assessment_prompt(ctx: dict) -> str:
             for o in opps[:8]
         )
         parts += ["## Open Opportunities (market_observer output)", opp_lines, ""]
+        skew_note = _direction_skew_note(opps[:8], "open opportunities")
+        if skew_note:
+            parts += [skew_note, ""]
 
     # Factor feedback — blocked/preferred categories
     factors = layer1.get("factor_feedback", [])
@@ -816,6 +890,9 @@ def _build_assessment_prompt(ctx: dict) -> str:
             for c in ranker[:6]
         )
         parts += ["## Ranker Candidates (paper_trader's ranked picks)", ranker_lines, ""]
+        skew_note = _direction_skew_note(ranker[:6], "ranker candidates")
+        if skew_note:
+            parts += [skew_note, ""]
 
     # Phase 4b: Pending signals awaiting your decision
     pending = layer2.get("pending_signals", [])
@@ -830,6 +907,9 @@ def _build_assessment_prompt(ctx: dict) -> str:
             "evaluate each and decide: trade, skip, or watch.",
             pending_lines, "",
         ]
+        skew_note = _direction_skew_note(pending, "pending signals")
+        if skew_note:
+            parts += [skew_note, ""]
 
     parts += [
         "---",

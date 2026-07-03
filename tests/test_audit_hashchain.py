@@ -42,6 +42,36 @@ def test_chain_links_correctly(tmp_path):
     assert second["_prev_hash"] == first_hash
 
 
+def test_write_audit_ignores_stale_process_cache(tmp_path, monkeypatch):
+    """A second process may append while this process has a cached chain tail."""
+    import aletheia.files.jsonl as jmod
+    from aletheia.files.jsonl import write_audit, _hash_record, verify_audit_chain
+
+    write_audit({"action": "first", "timestamp": "2026-01-01T00:00:00"})
+    path = tmp_path / "audit.jsonl"
+    first_line = path.read_text("utf-8").strip()
+    stale_hash = _hash_record(first_line)
+
+    # Simulate a different gateway process appending a valid second row after
+    # this process cached the first-row tail.
+    second = {
+        "action": "second_external",
+        "timestamp": "2026-01-01T00:01:00",
+        "_prev_hash": stale_hash,
+    }
+    second_line = json.dumps(second, ensure_ascii=False)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(second_line + "\n")
+
+    monkeypatch.setattr(jmod, "_last_audit_hash", stale_hash)
+    write_audit({"action": "third", "timestamp": "2026-01-01T00:02:00"})
+
+    lines = path.read_text("utf-8").strip().splitlines()
+    third = json.loads(lines[2])
+    assert third["_prev_hash"] == _hash_record(second_line)
+    assert verify_audit_chain()["valid"] is True
+
+
 def test_verify_valid_chain(tmp_path):
     from aletheia.files.jsonl import write_audit, verify_audit_chain
 
