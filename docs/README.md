@@ -33,8 +33,10 @@ Layer 4: WHERE (状态追踪)         — Current progress
 
 **New to the project?** Read in this order:
 1. [PRD](product/PRD.md) — what we're building (5 min)
-2. [SYSTEM_ARCHITECTURE_GUIDE](SYSTEM_ARCHITECTURE_GUIDE.md) — how it works (15 min)
-3. [Implementation Guide](governance/implementation_guide.md) — what rules to follow (10 min)
+2. [ARCHITECTURE](ARCHITECTURE.md) — tech stack, directory map, forbidden zones (5 min)
+3. [DEV_SETUP](DEV_SETUP.md) — install, configure, run (5 min)
+4. [SYSTEM_ARCHITECTURE_GUIDE](SYSTEM_ARCHITECTURE_GUIDE.md) — deep architecture (15 min)
+5. [Implementation Guide](governance/implementation_guide.md) — what rules to follow (10 min)
 
 **Starting a session?** (AI agents: always do this)
 1. `git pull --ff-only && aletheia doctor`
@@ -80,6 +82,13 @@ Layer 4: WHERE (状态追踪)         — Current progress
 - [Data Model](design/data_model.md) — all 83 tables, schema, concurrency model
 - [API Reference](design/api_reference.md) — all ~293 REST endpoints
 - [Agent Contracts](design/agent_contracts.md) — all 14 agents + 30 scheduler jobs
+
+**Context Engineering（AI 可读工程环境）:**
+- [ARCHITECTURE](ARCHITECTURE.md) — tech stack, directory map, forbidden zones
+- [API_CONTRACT](API_CONTRACT.md) — endpoint conventions, compatibility rules
+- [DEV_SETUP](DEV_SETUP.md) — install, configure, commit conventions, DB migration rules
+- [TESTING](TESTING.md) — SDD flow, test commands, mock boundaries
+- [DEPLOYMENT](DEPLOYMENT.md) — gateway lifecycle, Task Scheduler, health checks
 
 **Governance (Layer 3):**
 - [Implementation Guide](governance/implementation_guide.md) — product identity and red lines
