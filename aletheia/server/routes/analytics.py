@@ -495,6 +495,46 @@ def get_learning_funnel():
     total_by_type = {row["item_type"]: row["count"] for row in type_total}
     layer3_guards_in_window = min(int(total_by_type.get("guard_candidate", 0)), 3)
 
+    contradictions: list[dict] = []
+    try:
+        from aletheia.knowledge.manager import detect_contradictions
+        from aletheia.knowledge.guards import load_trading_guards
+
+        contradiction_items = [
+            dict(r) for r in db.execute(
+                "SELECT id, item_type, title, confidence, status, tags, file_path "
+                "FROM knowledge_items "
+                "WHERE status='active' "
+                "AND item_type IN ("
+                "'research_note','strategy_memory','trading_memo','trading_guard',"
+                "'guard_candidate','trade_case_study','calibration_report'"
+                ") "
+                "ORDER BY rowid DESC LIMIT 500"
+            )
+        ]
+        for guard in load_trading_guards(status="active"):
+            meta = guard.model_dump()
+            applies = meta.get("applies_to") or {}
+            symbols = applies.get("symbol") or [None]
+            directions = applies.get("direction") or [None]
+            for symbol in symbols:
+                for direction in directions:
+                    contradiction_items.append({
+                        "id": guard.guard_id,
+                        "item_type": "trading_guard",
+                        "title": guard.title,
+                        "status": guard.status,
+                        "metadata": {
+                            "symbol": symbol,
+                            "direction": direction,
+                            "block_candidate": guard.block_candidate,
+                            "enforcement": guard.enforcement,
+                        },
+                    })
+        contradictions = detect_contradictions(contradiction_items)
+    except Exception:
+        contradictions = []
+
     return {
         "knowledge_items_by_type": type_total,
         "pi_lessons_window_limit_20_distribution": pi_window_20,
@@ -506,4 +546,10 @@ def get_learning_funnel():
         },
         "ps_lessons": ps_summary,
         "serenity_opportunities_active": serenity_active,
+        "contradictions": {
+            "checked": True,
+            "count": len(contradictions),
+            "items": contradictions[:10],
+            "note": "Conservative support-vs-block detector; findings require human review.",
+        },
     }

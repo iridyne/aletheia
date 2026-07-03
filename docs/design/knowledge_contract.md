@@ -32,7 +32,7 @@
 | `archive_item(item_id)` | `manager.py:285` | 软删除:status → `archived`;并从 FTS 索引移除 |
 | `deprecate_item(item_id)` | `manager.py:291` | 标记过时:status → `deprecated`,confidence → `deprecated`;并从 FTS 索引移除 |
 | `delete_item(item_id)` | `manager.py:297` | 永远 raise `PermissionError`——硬删除在任何路径下均被禁止 |
-| `detect_contradictions(items)` | `manager.py:302` | **STUB** — 永远返回 `[]`,见 §6.B1 |
+| `detect_contradictions(items)` | `manager.py:324` | 保守检测同 symbol/direction 下的 support-vs-block 冲突，返回需人工复核的列表 |
 
 ### 1.3 质量门（写入前置守卫）
 
@@ -244,11 +244,11 @@ ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_c
 
 **前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §A2`
 
-### B1. detect_contradictions() 是 stub
+### B1. detect_contradictions() 已有保守实现
 
-**现状**: `manager.py:302-310` 明确标注 `IMPLEMENTATION_STATUS: stub — returns empty for MVP`，永远返回 `[]`。
+**现状**: `manager.py` 已实现确定性、保守的 support-vs-block 检测：同一 symbol/direction 下，如果一条 active 知识支持交易方向，另一条 active guard/知识明确 block/avoid 同方向，则返回需人工复核的 contradiction。
 
-**影响**: 知识库中可能同时存在矛盾的 guard/lesson/research_note，系统无法检测。调用方不得将 stub 结果呈现为"已检查无矛盾"。
+**边界**: 该检测器不会自动裁决哪条知识正确，不会删除/降级任何知识；它只给 Learning UI/报告一个"需要复核"信号。没有命中只能说明当前保守规则未发现冲突，不能代表所有语义矛盾都已穷尽。
 
 **前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §B1`
 

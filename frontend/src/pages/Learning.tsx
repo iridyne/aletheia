@@ -648,6 +648,7 @@ function LearningFunnelPanel() {
   const ps = data.ps_lessons
   const lessonApplied = ps.by_status.find(x => x.status === 'applied')?.count ?? 0
   const lessonProposed = ps.by_status.find(x => x.status === 'proposed')?.count ?? 0
+  const contradictionCount = data.contradictions?.count ?? 0
 
   return (
     <Card>
@@ -657,6 +658,7 @@ function LearningFunnelPanel() {
         <span className="funnel-meta-pill">Guards available: <strong>{visibility.layer3_guards_available}</strong></span>
         <span className="funnel-meta-pill">Lessons applied: <strong>{lessonApplied}</strong> / proposed: <strong>{lessonProposed}</strong></span>
         <span className="funnel-meta-pill">Serenity active: <strong>{data.serenity_opportunities_active}</strong></span>
+        <span className="funnel-meta-pill">Contradictions needing review: <strong>{contradictionCount}</strong></span>
       </div>
       <div className="funnel-bars">
         {data.knowledge_items_by_type.map(({ item_type, count }) => {

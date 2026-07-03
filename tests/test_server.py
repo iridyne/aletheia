@@ -163,6 +163,34 @@ async def test_guard_candidate_promote_rejects_missing_guard(client):
 
 
 @pytest.mark.anyio
+async def test_learning_funnel_reports_contradictions(client):
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+
+    insert_knowledge_item(KnowledgeItem(
+        item_type="trading_memo",
+        title="BTC/USDT long opportunity",
+        content="",
+        confidence="high_confidence",
+    ))
+    insert_knowledge_item(KnowledgeItem(
+        item_type="guard_candidate",
+        title="Avoid BTC/USDT long",
+        content="",
+        confidence="medium_confidence",
+    ))
+
+    from aletheia.server.routes.analytics import get_learning_funnel
+
+    body = get_learning_funnel()
+    assert body["contradictions"]["checked"] is True
+    assert body["contradictions"]["count"] >= 1
+    first = body["contradictions"]["items"][0]
+    assert first["symbol"] == "BTC/USDT"
+    assert first["direction"] == "long"
+
+
+@pytest.mark.anyio
 async def test_pause_resume(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
 

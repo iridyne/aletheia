@@ -171,8 +171,62 @@ def test_strategy_memory_creation(tmp_path, monkeypatch):
     reset_db()
 
 
-def test_contradiction_detection_stub():
-    result = detect_contradictions([])
+def test_contradiction_detection_empty_input():
+    assert detect_contradictions([]) == []
+
+
+def test_contradiction_detection_flags_support_vs_block():
+    result = detect_contradictions([
+        {
+            "id": "memo-1",
+            "item_type": "trading_memo",
+            "title": "BTC/USDT long opportunity",
+            "content": "Research supports a BTC/USDT long opportunity after breakout.",
+            "confidence": "high_confidence",
+            "status": "active",
+        },
+        {
+            "id": "guard-1",
+            "item_type": "trading_guard",
+            "title": "Avoid BTC/USDT long",
+            "content": "Avoid BTC/USDT long entries when the setup is crowded.",
+            "metadata": {
+                "symbol": "BTC/USDT",
+                "direction": "long",
+                "block_candidate": True,
+            },
+            "confidence": "high_confidence",
+            "status": "active",
+        },
+    ])
+
+    assert len(result) == 1
+    assert result[0]["kind"] == "support_vs_block"
+    assert result[0]["symbol"] == "BTC/USDT"
+    assert result[0]["direction"] == "long"
+    assert result[0]["supporting_items"][0]["id"] == "memo-1"
+    assert result[0]["blocking_items"][0]["id"] == "guard-1"
+
+
+def test_contradiction_detection_ignores_inactive_items():
+    result = detect_contradictions([
+        {
+            "id": "memo-1",
+            "item_type": "trading_memo",
+            "title": "ETH/USDT short opportunity",
+            "content": "Research supports an ETH/USDT short opportunity.",
+            "status": "active",
+        },
+        {
+            "id": "guard-1",
+            "item_type": "trading_guard",
+            "title": "Avoid ETH/USDT short",
+            "content": "Avoid ETH/USDT short entries.",
+            "metadata": {"symbol": "ETH/USDT", "direction": "short", "block_candidate": True},
+            "status": "archived",
+        },
+    ])
+
     assert result == []
 
 

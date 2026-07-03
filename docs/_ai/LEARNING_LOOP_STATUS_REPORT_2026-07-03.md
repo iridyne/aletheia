@@ -11,7 +11,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 5. System Operator、机会排序器、Risk Engine 会读取这些学习结果。
 6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Guard Candidates、Active Guards 和学习漏斗。
 
-但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 2 个关键点：矛盾检测、SkillStore/时间衰减机制。
+但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 1 个关键点：SkillStore/时间衰减机制。
 
 ## 当前量化状态
 
@@ -77,7 +77,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 
 部分实现。Lesson Reviewer 已经能在证据变差时 demote accepted lessons，Knowledge Manager 禁止硬删除、支持 archive/deprecate，避免错误知识被直接抹掉。
 
-但更高阶的自修复仍缺失：知识之间的矛盾检测还是 stub，历史污染案例不会自动清理，旧规则随时间衰减/失效的机制还没有真正完成。
+但更高阶的自修复仍未完全完成：知识之间已经有保守矛盾检测，历史污染案例已能维护清理；旧规则随时间衰减/失效的机制还没有真正完成。
 
 ## 本次发现并修复的问题
 
@@ -241,11 +241,25 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 | FTS 可检索知识 | 566 -> 563 |
 | 第二次 dry-run 命中 | 0 |
 
-### P1：矛盾检测仍是空实现
+### 已修复：矛盾检测不再是空实现
 
-`detect_contradictions()` 目前仍返回空列表。文档已经明确要求 UI 不能把它展示成“无矛盾”，只能说“未检测”。
+`detect_contradictions()` 已从固定返回空列表，改成保守的 support-vs-block 检测。
 
-影响：系统还不会主动发现“旧规则和新证据冲突”。
+修复：
+
+- 同一 symbol/direction 下，如果一条 active 知识支持该方向，另一条 active guard/知识明确 block/avoid 该方向，则返回 contradiction。
+- `/api/analytics/learning-funnel` 返回 `contradictions.checked/count/items`。
+- Learning 页面 Knowledge Funnel 显示 `Contradictions needing review` 数量。
+- 不自动裁决哪条知识正确，不删除、不降级、不改风险/执行规则。
+
+量化结果：
+
+| 项目 | 结果 |
+| --- | ---: |
+| 新增确定性检测器 | 1 个 |
+| Learning funnel 新增字段 | 1 组 |
+| 前端新增复核数量展示 | 1 个 |
+| 新增/更新回归测试 | 4 个 |
 
 ### 已修复：guard_candidate 人工晋升入口
 
@@ -298,8 +312,7 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 ## 下一步建议
 
-1. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
-2. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
+1. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
 
 ## 验证记录
 
@@ -311,6 +324,8 @@ uv run pytest tests/test_server.py::test_guard_candidate_can_be_listed_and_manua
 uv run pytest tests/test_guard_analytics.py tests/e2e/test_pipeline_guard_promotion.py tests/specs/spec_learning_pipeline.py::test_guard_candidates_reachable_by_promoter -q
 uv run pytest tests/test_knowledge_maintenance.py::test_downgrade_unattributed_trade_case_studies tests/test_knowledge_maintenance.py::test_downgrade_unindexable_high_confidence_items -q
 uv run pytest tests/test_fts_coverage.py tests/test_learning_loop_integration.py tests/specs/spec_knowledge_fts.py -q
+uv run pytest tests/test_knowledge.py::test_contradiction_detection_empty_input tests/test_knowledge.py::test_contradiction_detection_flags_support_vs_block tests/test_knowledge.py::test_contradiction_detection_ignores_inactive_items tests/test_server.py::test_learning_funnel_reports_contradictions -q
+uv run pytest tests/test_knowledge.py tests/test_server.py::test_learning_funnel_reports_contradictions -q
 uv run aletheia knowledge downgrade-unattributed-case-studies --dry-run
 uv run aletheia knowledge downgrade-unattributed-case-studies
 cd frontend; npm run build
@@ -319,7 +334,10 @@ cd frontend; npm run build
 结果：
 
 ```text
-79 passed, 3 skipped, 1 xfailed in 5.90s
+历史核心 Learning 套件：79 passed, 3 skipped, 1 xfailed（xfail 为 time-decay 缺口）
+本轮 scanner 归因维护：20 passed
+本轮矛盾检测：4 targeted passed；knowledge suite 17 passed
+frontend build：passed
 ```
 
 新增 API 白名单回归测试：

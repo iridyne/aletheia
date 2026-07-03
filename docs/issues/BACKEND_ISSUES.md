@@ -161,10 +161,10 @@
   - 影响：scheduler 暂停或长空闲时，"昨晚发生了什么"的 LLM 输入是几天/几周前的运行；dreaming_log/daily_review 把陈旧数据当今日总结，违反 trust §3.1/§4 语义诚实
   - 最小修复：`list_agent_runs(since=now-24h, limit=200)`；agent 内显式按 started_at 过滤 24h
 
-- **`detect_contradictions` 是固定返回空的 stub，无 contract 守门**
-  - 佐证：`knowledge/manager.py:102` 永远 `return []`
-  - 影响：trust §4.4 "contradiction 可为 stub 但 UI 不得声称已分析"——目前 UI 没暴露所以**未违规**，但是个未来一加 UI 就违规的雷
-  - 最小修复：函数里加 logger.warning 或在 docstring 顶部 `IMPLEMENTATION_STATUS: stub`；UI 调用方需先核对
+- **`detect_contradictions` 固定返回空（已修 2026-07-03）**
+  - 修复：`knowledge/manager.py` 已实现保守 support-vs-block 检测；`/api/analytics/learning-funnel` 返回 `contradictions.checked/count/items`；Learning UI 只显示"需复核"数量。
+  - 边界：只检测同 symbol/direction 的明确支持 vs 明确阻止冲突，不自动裁决、不删除、不降级。
+  - 回归：`tests/test_knowledge.py::test_contradiction_detection_flags_support_vs_block`，`tests/test_server.py::test_learning_funnel_reports_contradictions`。
 
 - **经验闭环：写入侧"全 medium"撞上检索侧"仅 high"，索引恒空（2026-06-10：写入侧 + 指标侧均已修）**
   - 佐证（写入侧 dead-end，已修）：所有 producer 写 `medium_confidence`（`manager.py` `create_post_trade_review` 原硬编码；`risk_critic.py:38` 显式传 medium），但 `_index`（`manager.py:26`）与 `retrieve_lessons`（`retrieval.py:194` `_ALLOWED_CONFIDENCE="high_confidence"`）只收 high → `knowledge_fts` 恒空、`retrieve_lessons` 恒 `[]`、`format_memory_block` 恒 `""`，记忆从不进决策。**本次已加"受控晋级"**：LLM 成功且有真实证据（reviewer 有 fills / critic 有 proposals|decisions）才升 `high_confidence`，空/fallback 留 medium——**保留 §6 噪声门，不降门**。改动：`knowledge/manager.py` + `agents/post_trade_reviewer.py` + `agents/risk_critic.py` + `tests/test_experience_loop.py`（4 个新回归，全绿 519 passed）

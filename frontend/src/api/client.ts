@@ -363,6 +363,7 @@ export const api = {
     pi_actual_visibility: { layer3_lesson_hits: number; layer3_guards_available: number; note: string }
     ps_lessons: { total: number; by_status: Array<{ status: string; count: number }>; latest_created_at: string | null }
     serenity_opportunities_active: number
+    contradictions: { checked: boolean; count: number; items: any[]; note: string }
   }>('/analytics/learning-funnel'),
   getKillSwitch: () => fetchJson<{ active: boolean }>('/risk/kill-switch'),
   // Releasing the brake requires confirm_release=true (backend returns 422 otherwise).

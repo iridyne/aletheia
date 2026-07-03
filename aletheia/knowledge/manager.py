@@ -322,11 +322,150 @@ def delete_item(item_id: str) -> None:
 
 
 def detect_contradictions(items: list[dict]) -> list[dict]:
-    """IMPLEMENTATION_STATUS: stub — returns empty for MVP.
+    """Find explicit high-level knowledge conflicts that require human review.
 
-    Callers must not present results as "no contradictions found" in the UI.
-    Future: compare confidence levels and conflicting theses.
+    Conservative by design: only reports when two active items share a symbol and
+    direction, and one explicitly supports the direction while the other explicitly
+    blocks/avoids it. It never mutates knowledge and never decides which side wins.
     """
-    import logging
-    logging.getLogger("aletheia.knowledge").debug("detect_contradictions called (stub, returns [])")
-    return []
+    signals = [_extract_contradiction_signal(item) for item in items]
+    signals = [s for s in signals if s is not None]
+
+    by_key: dict[tuple[str, str], dict[str, list[dict]]] = {}
+    for sig in signals:
+        key = (sig["symbol"], sig["direction"])
+        bucket = by_key.setdefault(key, {"support": [], "block": []})
+        bucket[sig["stance"]].append(sig)
+
+    contradictions: list[dict] = []
+    for (symbol, direction), grouped in sorted(by_key.items()):
+        if not grouped["support"] or not grouped["block"]:
+            continue
+        contradictions.append({
+            "kind": "support_vs_block",
+            "symbol": symbol,
+            "direction": direction,
+            "severity": "review",
+            "summary": f"{symbol} {direction}: supportive knowledge conflicts with blocking knowledge",
+            "supporting_items": grouped["support"][:5],
+            "blocking_items": grouped["block"][:5],
+        })
+    return contradictions
+
+
+def _extract_contradiction_signal(item: dict) -> dict | None:
+    status = str(item.get("status") or "active").lower()
+    if status not in ("active", ""):
+        return None
+
+    meta, body = _item_meta_and_body(item)
+    text = " ".join(
+        str(part or "")
+        for part in (
+            item.get("title"),
+            item.get("summary"),
+            item.get("content"),
+            item.get("tags"),
+            body[:5000],
+        )
+    ).lower()
+
+    symbol = _normalise_symbol(meta.get("symbol") or item.get("symbol") or _find_symbol(text))
+    direction = _normalise_direction(meta.get("direction") or meta.get("direction_bias") or item.get("direction") or _find_direction(text))
+    if not symbol or not direction:
+        return None
+
+    stance = _detect_stance(item, meta, text)
+    if stance is None:
+        return None
+
+    return {
+        "id": str(item.get("id") or item.get("guard_id") or ""),
+        "item_type": str(item.get("item_type") or "unknown"),
+        "title": str(item.get("title") or ""),
+        "symbol": symbol,
+        "direction": direction,
+        "stance": stance,
+        "confidence": str(item.get("confidence") or ""),
+    }
+
+
+def _item_meta_and_body(item: dict) -> tuple[dict, str]:
+    from pathlib import Path
+    import json
+
+    from aletheia.knowledge.frontmatter import parse_frontmatter, parse_frontmatter_text
+
+    meta: dict = {}
+    body = ""
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        meta.update(metadata)
+    elif isinstance(metadata, str) and metadata.strip():
+        try:
+            parsed = json.loads(metadata)
+            if isinstance(parsed, dict):
+                meta.update(parsed)
+        except Exception:
+            pass
+
+    file_path = item.get("file_path")
+    if file_path:
+        try:
+            path = Path(str(file_path))
+            if path.exists():
+                meta2, body = parse_frontmatter(path)
+                meta.update(meta2)
+        except Exception:
+            pass
+    elif str(item.get("content") or "").strip():
+        meta2, body = parse_frontmatter_text(str(item.get("content")))
+        meta.update(meta2)
+    return meta, body
+
+
+def _normalise_symbol(value) -> str | None:
+    if not value:
+        return None
+    symbol = str(value).upper().replace(" ", "")
+    return symbol if "/" in symbol else None
+
+
+def _find_symbol(text: str) -> str | None:
+    import re
+
+    match = re.search(r"\b([A-Z0-9]{2,12}/USDT)\b", text.upper())
+    return match.group(1) if match else None
+
+
+def _normalise_direction(value) -> str | None:
+    direction = str(value or "").lower().strip()
+    if direction in ("long", "buy", "bull", "bullish", "做多"):
+        return "long"
+    if direction in ("short", "sell", "bear", "bearish", "做空"):
+        return "short"
+    return None
+
+
+def _find_direction(text: str) -> str | None:
+    if any(token in text for token in (" short ", " bearish ", "做空")):
+        return "short"
+    if any(token in text for token in (" long ", " bullish ", "做多")):
+        return "long"
+    return None
+
+
+def _detect_stance(item: dict, meta: dict, text: str) -> str | None:
+    item_type = str(item.get("item_type") or "").lower()
+    block_words = ("avoid", "block", "blocked", "do not", "don't", "forbid", "禁止", "不要", "避免")
+    support_words = ("support", "supported", "recommend", "candidate", "opportunity", "bullish", "bearish", "做多", "做空")
+
+    if bool(meta.get("block_candidate")) or str(meta.get("enforcement") or "").lower() == "blocking":
+        return "block"
+    if item_type in ("trading_guard", "guard_candidate") and any(word in text for word in block_words):
+        return "block"
+    if any(word in text for word in block_words):
+        return "block"
+    if any(word in text for word in support_words):
+        return "support"
+    return None

@@ -89,7 +89,7 @@
 | A1 | ~~ps_lessons↔FTS 脱钩~~ → **已澄清为有意双轨** | 经验经 LessonStore→PI prompt→risk 影响决策;不入 FTS 是设计选择(knowledge_contract §6.A1) |
 | A2 | ps_skills 无生产者 | **aspirational**:Tier2/3 预留,当前惰性(非缺陷,§6.A2) |
 | A3 | liquidation_events 不进风控 | 清算数据采集浪费 |
-| B1 | detect_contradictions() 是 stub | 未实现;**UI 禁呈现"无矛盾"为正面**(已诚实文档化 §6.B1) |
+| B1 | detect_contradictions() | 已有保守 support-vs-block 检测；UI 只呈现"需复核"数量，不自动裁决 |
 | B2 | serenity 4表 → promote→PiDecision **已闭环** | 原始4表仍不进 FTS,但 promote 路径已建(spec_serenity_promote) |
 | C1 | 6个analytics端点无前端UI | 已有能力不可达 |
 | C2 | Regime/Guard Config 无前端控制(MarketAwareExits 已部分接入) | regime/guard 只能手编 yaml |
