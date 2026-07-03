@@ -4,7 +4,7 @@
 > 改动信任不变量前必须 change control (§5)。
 > Source files: `aletheia/knowledge/manager.py` · `retrieval.py` · `guards.py` · `router.py`
 > Cross-references: `docs/governance/trust_and_change_control.md §4` · `docs/design/agent_contracts.md` · `docs/design/data_model.md §3.C`
-> Last updated: 2026-07-01
+> Last updated: 2026-07-03
 
 ---
 
@@ -182,7 +182,11 @@ Guard 的生产路径由 `trust_and_change_control.md §4.2` 定义：
 - **Tier 1（自动生成）**: Dreaming Agent 或 Self-evolution 机制写 `guard_candidate`（`medium_confidence`），不可检索，需人工确认才能晋升
 - **Tier 2/3（人工确认/seed）**: 通过 `create_trading_guard()` 写入 `trading_guard`（`high_confidence`），进入 FTS 索引，参与决策检索
 
-从 `guard_candidate` 到 `trading_guard` 的晋升路径：无自动晋升机制——必须由 operator 手动调用 `create_trading_guard()` 或通过 Dashboard 确认。
+从 `guard_candidate` 到 `trading_guard` 的晋升路径有两类：
+- 人工确认：Dashboard/API 调用 `POST /knowledge/guard-candidates/{guard_id}/promote`。
+- 配置开启后的自动晋升：`guard_promotion` 定时任务在 `guard.auto_promote_enabled=True` 且证据达标时晋升。
+
+无论哪条路径，都必须保留原候选记录并写审计事件。
 
 ### 4.5 Guard 在决策流中的位置
 
@@ -218,21 +222,22 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 `knowledge_items` 是信任持仓表（`data_model.md §7.2`）。UI 展示知识库状态必须来自真实 `knowledge_items.item_type` 值（`trust_and_change_control.md §3.1`）：
 
 - 不得为让某 tab 有数据而将一种类型存为另一种类型（no type laundering）
-- contradiction 检测是 stub——UI 禁止呈现"无矛盾"作为正面信号 (`trust_and_change_control.md §4.4`)
+- contradiction 检测是保守 support-vs-block 检测。UI 只能呈现"需要复核"数量；
+  没有命中不等于所有语义矛盾都已被证明不存在。
 
 ---
 
-## §6 已知管道断裂
+## §6 当前 Learning 管线状态
 
-### A1. ps_lessons ↔ System Operator prompt（L-Bug-B — 已修复 2026-06-27）
+### A1. ps_lessons ↔ System Operator prompt
 
-**现状（修复后）**: `trading_context.py:592-603` 读取 `LessonStore().list_all(status="proposed", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py:764-774` 将其渲染为 `## Recent Post-trade Lessons` 进入 System Operator prompt。
+**现状**: `trading_context.py` 读取 `LessonStore().list_all(status="applied", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py` 将其渲染为 `## Recent Post-trade Lessons` 进入 System Operator prompt。
 
-ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_context Layer3 → System Operator prompt → risk engine `_check_lesson_constraints()`（status="accepted" 的 lesson）。
+`ps_lessons` 的消费路径：`dreaming_agent` 提炼 → `LessonStore` → `lesson_reviewer` 审核并 `mark_applied()` → `trading_context` Layer3 → System Operator prompt → risk engine `_check_lesson_constraints()`（`status="applied"` 且未过期的 lesson）。
 
-**原始缺陷（Round 1）**: ps_lessons 写入但无消费者，dreaming 工作进死路。修复 commit: b9ad957（2026-06-27）。
+**历史缺陷（Round 1）**: `ps_lessons` 写入但无消费者，dreaming 工作进死路。该断点已修复；`accepted` 现在只是短暂中间态，稳定消费态是 `applied`。
 
-**残余 gap**: `retrieve_lessons()`（`retrieval.py:185`）仍只读 `knowledge_fts`，不读 `ps_lessons`。两条通路并行，无冲突——knowledge_fts 是自由文本检索，ps_lessons 是结构化 LessonStore。`retrieve_lessons()` 的调用方若期望看到 ps_lessons 内容需改用 LessonStore 直接查询。
+**双轨说明**: `retrieve_lessons()` 只读 `knowledge_fts`，不读 `ps_lessons`。这不是缺陷：`knowledge_fts` 是自由文本检索，`ps_lessons` 是结构化 LessonStore。需要 guard timestamps、review status、recommendation_json 的消费者必须直接读 LessonStore。
 
 **前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §A1`
 
@@ -251,6 +256,17 @@ ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_c
 **边界**: 该检测器不会自动裁决哪条知识正确，不会删除/降级任何知识；它只给 Learning UI/报告一个"需要复核"信号。没有命中只能说明当前保守规则未发现冲突，不能代表所有语义矛盾都已穷尽。
 
 **前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §B1`
+
+### B2. guard_candidate → trading_guard 晋升
+
+`guard_candidate` 可以通过两条路径晋升为 `trading_guard`：
+
+1. 人工路径：`POST /knowledge/guard-candidates/{guard_id}/promote`。
+2. 自动路径：`guard_promotion` 定时任务，受 `config.guard.auto_promote_enabled`
+   控制，并要求满足历史交易证据阈值。
+
+晋升时必须保留审计链：创建 active `trading_guard`，把原候选标为 `deprecated`，
+并写入 `TRADING_GUARD_PROMOTED` 事件。硬删除候选记录是违规行为。
 
 ---
 
@@ -276,11 +292,8 @@ ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_c
 | `paper_trader_ranker` | `retrieve_lessons(query, k=3, item_types=["trade_case_study","post_trade_review"])` | `agents/paper_trader_ranker.py:405-412` |
 | `strategy_designer` | `build_advisory_context(role="strategy_designer", ...)` | `agents/strategy_designer.py:339-344` |
 | `market_observer` | `build_advisory_context(role="market_observer", guard_context=..., ...)` | `agents/market_observer.py:386-393` |
-| System Operator (trading_context Layer 3) | 直接 `list_knowledge_items(limit=20)` + item_type 过滤 `lesson / accepted_lesson / trading_guard` | `agent_shell/trading_context.py:362-378` |
-| `dreaming_agent` | `list_knowledge_items(item_type="post_trade_review", ...)` | `agents/dreaming_agent.py:69, 184, 302` |
-
-⚠️ **注意**: `trading_context.py:367` 过滤 `item_type in ("lesson", "accepted_lesson", "trading_guard")`。
-`lesson` 和 `accepted_lesson` 均不在 `trust_and_change_control.md §4.1` 的允许枚举中。这两个类型如果有历史存量数据则可被 System Operator 消费，但当前生产者无人写入这两个类型——属于遗留字符串，实际无效。
+| System Operator (trading_context Layer 3) | `trade_case_study` + `guard_candidate` + applied `ps_lessons` | `agent_shell/trading_context.py` Layer 3 |
+| `dreaming_agent` | `list_knowledge_items(item_type="trade_case_study", ...)` → proposed `ps_lessons` | `agents/dreaming_agent.py` |
 
 ### 7.3 promotion_gates_contract 中的 knowledge 依赖
 
@@ -291,9 +304,8 @@ ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_c
 | 漂移点 | 现状 | 治理文档声称 |
 |--------|------|------------|
 | risk_critic 产出类型 | 代码写 `research_note`（metadata.subtype=risk_lesson） | `agent_contracts.md:185` 写 `item_type=risk_lesson` |
-| trading_context.py 消费类型 | 过滤 `lesson` / `accepted_lesson`（无生产者写入） | §4.1 枚举未包含这两个类型 |
 
-以上两处为文档与代码之间的表述不一致；代码行为符合 `trust_and_change_control.md §4.1` 的枚举定义，需更新 `agent_contracts.md` 和 `trading_context.py` 的过滤条件（或补充说明为遗留兼容）。
+以上为文档与代码之间的表述不一致；代码行为符合 `trust_and_change_control.md §4.1` 的枚举定义，需更新 `agent_contracts.md` 描述。
 
 ---
 
@@ -320,23 +332,28 @@ System Operator 的 system prompt 分为两层：
 |------|---------|---------|
 | 1. 近期战术总结 | `trading_memo` item_type（Insight Synthesizer 写入） | `trading_context.py:406-422` → `trading_decision.py:716-719` |
 | 2. 推理质量反馈 | `reasoning_feedback` item_type（Reasoning feedback tracker 写入） | `trading_context.py:425-430` → `trading_decision.py:724-727` |
-| 3. 建议性事后教训 | `LessonStore` 的 proposed 行（dreaming agent 写入） | `trading_context.py:596-603` → `trading_decision.py:779-787` |
+| 3. 建议性事后教训 | `LessonStore` 的 applied 行（dreaming_agent 写入、lesson_reviewer 审核并应用） | `trading_context.py` Layer3 → `trading_decision.py` prompt |
 
 学习不能直接修改 prompt 基础层文件。上述三条是当前完整的学习→推理注入路径；新增路径须同步更新 LP-S14 spec claim 和本表。
 
-> **历史修正**：本节原文写"这是'学习影响 PI 推理'的唯一合法路径"（指 `trading_memo`），
+> **历史修正**：本节原文写"这是'学习影响 System Operator 推理'的唯一合法路径"（指 `trading_memo`），
 > 实际代码同时存在 `reasoning_feedback` 和 `ps_lessons` 两条并行路径
 >（`trading_context.py:427` 的 `layer['reasoning_feedback']` 和 `:597` 的 `layer['ps_lessons']`），
-> 均通过 `trading_decision.py` 渲染进 PI system prompt。
+> 均通过 `trading_decision.py` 渲染进 System Operator prompt。
 > 已于 2026-06-30 修正为三路完整枚举，并补 LP-S14 spec claim 锁住该枚举不变量。
 
 ### 8.3 风控阈值（暂不开放）
 
 `risk_engine_contract.md` 中的 20 关数值属于宪法，学习机制不得修改。待 Round 2 数据验证后评估是否部分开放。
 
-### 8.4 推翻机制（待研究）
+### 8.4 推翻机制（部分已实现，仍可扩展）
 
-三路融合方案（置信度衰减 × 时间 half-life × PI 决策时主动过滤）需深度研究后设计。
+三路融合方案中，时间 half-life 已实现：`trading_memo` 的 regime guidance 通过
+`memo_half_life_weight()` 7 天半衰期降权，并在 System Operator prompt 中显示
+`Memo time weight`。`evaluate_prior_memo()` 也能把后续交易结果对旧 memo 的推翻写回
+memo tags。
+
+仍可扩展的部分：更完整的置信度更新模型，以及决策时更细粒度的主动过滤策略。
 研究计划：`docs/plans/learning_mechanism_research_plan.md`。
 
 ---

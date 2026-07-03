@@ -696,13 +696,13 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
 
 # ---------------------------------------------------------------------------
 # LP-S14 — §8.2: enumerate ALL three paths that inject learning content into
-#           PI prompt; verify none bypasses the documented channels
+#           System Operator prompt; verify none bypasses the documented channels
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
-    SpecClaim("LP-S14", "learning_pipeline", "§8.2 PI prompt learning paths", "L2a",
-              "Exactly three learning-content paths reach the PI system prompt via "
+    SpecClaim("LP-S14", "learning_pipeline", "§8.2 System Operator prompt learning paths", "L2a",
+              "Exactly three learning-content paths reach the System Operator prompt via "
               "trading_decision.py: (1) trading_memo (layer2.trading_memo), "
               "(2) reasoning_feedback (layer2.reasoning_feedback), "
               "(3) ps_lessons (layer3.ps_lessons, applied lessons from LessonStore). "
@@ -713,7 +713,7 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
               status="implemented"),
 )
 def test_pi_prompt_learning_paths_complete_enumeration():
-    """LP-S14: The three documented learning-content paths into the PI prompt.
+    """LP-S14: The three documented learning-content paths into the System Operator prompt.
 
     (a) trading_decision.py renders 'trading_memo' (layer2 key) into the prompt.
     (b) trading_decision.py renders 'reasoning_feedback' (layer2 key) into the prompt.
@@ -949,7 +949,7 @@ def test_batch_synthesis_jobs_all_registered():
 
 
 # ---------------------------------------------------------------------------
-# KL-B01 (L2b defer) — 时间衰减推翻路径（three-path fusion §方案2）
+# KL-B01 (L2b implemented) — 时间衰减推翻路径（three-path fusion §方案2）
 # ---------------------------------------------------------------------------
 
 
@@ -998,7 +998,7 @@ def test_time_decay_overturn_path_exists():
         "未在 aletheia/analytics/、aletheia/learning/ 或 aletheia/knowledge/ 中找到 "
         "trading_memo/regime_playbook 专属的 half-life 时间衰减函数 "
         f"（目标函数名模式: {decay_fn_patterns}）— "
-        "Phase 2 时间衰减推翻路径尚未实现。"
+        "Phase 2 时间衰减推翻路径缺失或发生回归。"
     )
 
 

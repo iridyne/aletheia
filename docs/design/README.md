@@ -123,10 +123,10 @@ docs/design/*_contract.md  →  tests/specs/spec_*.py  →  Conformance Matrix
 - P3: `RegimeConfig` / `GuardConfig` 两个 config 类无前端控制（`MarketAwareExitsConfig` 已 5/9 接入，见 SYSTEM_MAP §五）。
 
 **2026-06-30 产品定义新增待补 spec（非紧急，随功能实现补入）**：
-- `spec_live_unlock.py`：补 "Live 开启后 PI 全权 + UI 警示墙" claim（LU-* 系列）
+- `spec_live_unlock.py`：补 "Live 开启后 System Operator 全权 + UI 警示墙" claim（LU-* 系列）
 - `spec_data_utilization.py`：补 Coinalyze OI/清算 DU-* claim（待 CoinalyzeCollector 实现后）
 - `spec_operator_loop.py`：补 "自愈操作 PI 批准前置 + 结构化日志" L2a claim（OL-* 系列）
-- 学习机制 spec（`spec_learning_pipeline.py` 扩展）：补 "Ranker 权重可被学习调整" + "trading_memo 是 PI prompt 追加的唯一合法路径" claim
+- 学习机制 spec（`spec_learning_pipeline.py` 扩展）：已有三条学习注入路径 claim；后续只在新增学习路径时更新。
 
 ---
 

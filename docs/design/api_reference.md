@@ -2,7 +2,7 @@
 
 > Complete endpoint index for Aletheia Trading OS backend (FastAPI on :8788, proxied via :8787).
 > All endpoints prefixed with `/api/` unless noted. Auth: none (local-only by design).
-> Last updated: 2026-06-23 (补充 capital/persistence/audit/analytics-additional/infra 共30+端点)
+> Last updated: 2026-07-03 (Learning SDD/API alignment)
 
 ---
 
@@ -116,6 +116,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/analytics/family-scorecard` | Scanner family performance |
 | GET | `/analytics/shadow-trades` | Shadow trade comparison data |
 | GET | `/analytics/strategy-performance` | Per-strategy KPIs (backtest summary removed with rules engine, Position C) |
+| GET | `/analytics/learning-funnel` | Learning write/consume visibility, lesson status counts, conservative contradiction count |
 
 > Backtest endpoints (`/analytics/backtest/runs`, `/runs/{id}`, `/compare/{id}`,
 > `/backtest-paper-drift`) and `/analytics/strategy-evidence` were deleted with the
@@ -142,6 +143,8 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | GET | `/knowledge/dreaming-logs` | Dreaming agent summaries |
 | GET | `/knowledge/strategy-memory` | Strategy-specific memory |
 | GET | `/knowledge/guards` | Guard rules (learned constraints) |
+| GET | `/knowledge/guard-candidates` | Guard candidates awaiting review |
+| POST | `/knowledge/guard-candidates/{guard_id}/promote` | Manually promote a guard candidate to active guard |
 | GET | `/knowledge/guards/stats` | Guard activation statistics |
 | GET | `/knowledge/case-studies` | Case study analyses |
 | GET | `/knowledge/{item_id}/content` | Full content of knowledge item |
@@ -174,6 +177,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
 | POST | `/settings/serenity` | Serenity research config (auto_promote, min_score_for_pi) |
+| POST | `/settings/guard` | Guard / lesson-promotion config (`auto_promote_enabled`, thresholds) |
 | POST | `/settings/operator` | Operator loop config |
 | POST | `/settings/health-config` | Health check thresholds |
 | POST | `/settings/retention` | Data retention policies |
@@ -441,6 +445,9 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/persistence/import` | Import data |
 | GET | `/persistence/lessons` | List lessons (LessonStore) |
 | GET | `/persistence/lessons/{id}` | Get lesson detail |
+| POST | `/persistence/lessons/{id}/accept` | Accept a proposed lesson and stamp dry-run/expiry timestamps |
+| POST | `/persistence/lessons/{id}/reject` | Reject a lesson |
+| POST | `/persistence/lessons/{id}/archive` | Archive a superseded lesson without hard deletion |
 | GET | `/persistence/skills` | List skills (SkillStore) |
 | GET | `/persistence/policies` | List policies |
 | GET | `/persistence/policies/{type}` | Get policy by type |

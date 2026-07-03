@@ -7,7 +7,36 @@
 
 ## Last Updated
 
-2026-07-03 (Learning draft skill + memo time-decay 已补)
+2026-07-03 (Learning SDD 文档对齐已补)
+
+---
+
+## Recent Change (Learning SDD 文档对齐 — 2026-07-03)
+
+针对 root `discussion.md` 中 owner 对 Learning 的金标准描述，完成一轮 Learning 范围内
+SDD/契约/API 文档对齐：
+
+- `learning_contract.md` 重写为干净版，去除控制字符损坏，明确当前链路：
+  trade case / memo / feedback → lesson → policy → draft skill。
+- `knowledge_contract.md` 修正旧漂移：`ps_lessons` 稳定消费态是 `applied`，
+  contradiction 已有保守检测，time-decay 已有基础 half-life，guard candidate 既有人审
+  也有配置开启后的自动晋升路径。
+- `api_reference.md` 补齐 Learning UI 实际使用的 lesson action、guard candidate promote、
+  learning-funnel 和 guard config 接口。
+- `SYSTEM_MAP.md`、`DOC_ATLAS_BY_DOMAIN.md`、`persistence_recovery_contract.md`、
+  `learning_mechanism_research_plan.md`、`product_definition_2026-06-30.md` 同步用
+  System Operator 术语和当前 Learning 状态。
+- spec 注释同步：`spec_learning_pipeline.py` / `spec_insight_feedback_loop.py` 不再把
+  time-decay 或 memo effectiveness 描述成未实现/xfailed 缺口。
+
+验证：
+- 旧状态关键词搜索无命中：contradiction stub、time-decay xfail/missing、accepted risk path、
+  guard 无自动晋升、trading_memo 唯一路径等。
+- `git diff --check` 通过。
+- `uv run pytest tests/specs/spec_learning_pipeline.py tests/specs/spec_insight_feedback_loop.py -q`
+  在文档 worktree 通过；无主仓运行态 DB 的条目按现有测试逻辑跳过。
+
+后续：Learning 范围已先收口，下一步按同样方法做全项目 SDD 文档漂移扫描。
 
 ---
 

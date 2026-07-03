@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-07-03 — Learning SDD 文档对齐
+
+### 触发
+owner 指出 `discussion.md` 是 Learning 金标准，担心 SDD 文档系统是否准确反映当前项目理解；
+要求先在 Learning 范围内处理 SDD 文档，再扩展到全项目。
+
+### 交付
+- 重写 `docs/design/learning_contract.md`，清除控制字符污染，并按当前实现重述 Learning 链路。
+- 修正 `knowledge_contract.md` 中 proposed/accepted、contradiction stub、time-decay defer、
+  guard promotion 路径等旧描述。
+- 补齐 `api_reference.md` 中 Learning UI 使用的 lesson/guard/funnel/config 端点。
+- 同步 `SYSTEM_MAP.md`、`DOC_ATLAS_BY_DOMAIN.md`、`persistence_recovery_contract.md`、
+  `learning_mechanism_research_plan.md`、`product_definition_2026-06-30.md`。
+- 更新 Learning 相关 spec 注释，避免把已实现能力继续写成 xfail/defer。
+
+### 验证
+- 旧状态关键词搜索无命中。
+- `git diff --check` 通过。
+- Learning/Insight spec 通过；worktree 无运行态 DB 的数据依赖项按现有逻辑跳过。
+
+---
+
 ## 2026-07-03 — Learning draft skill producer 与 memo 半衰期
 
 ### 触发

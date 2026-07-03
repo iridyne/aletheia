@@ -74,7 +74,7 @@
 
 **Scope**：`knowledge/`(manager/retrieval/guards/router/FTS5) + `learning/`(lessons/skills) + `analytics`(insight_synthesizer/memo_effectiveness/reasoning_feedback/confidence_calibration) + 自进化 guard_candidate→trading_guard。
 
-- **L2 契约**：[`knowledge_contract`](knowledge_contract.md) ✅(item_type 枚举/FTS/双轨/§6 断裂现状)
+- **L2 契约**：[`knowledge_contract`](knowledge_contract.md) ✅(item_type 枚举/FTS/双轨/§6 当前 Learning 管线状态)
 - **Spec**：`spec_learning_pipeline` · `spec_lesson_guards` · `spec_insight_feedback_loop`(Module J 可推翻进化)
 - **L3 计划**：`self_evolution_plan`(Tier1/2/2.5✅done，Tier3⏳2026-08-17 gated) · `insight_feedback_loop` · `round2_negative_feedback_loop_closure`✅已合并(`dd559a7`)
 - **issue**：`LEARNING_LOOP_AUDIT`

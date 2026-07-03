@@ -1,13 +1,13 @@
 # 学习/进化机制深度研究计划
 
-状态：待启动（产品对话完成后执行）
+状态：部分落地，继续研究（2026-07-03 对齐）
 来源：2026-06-30 产品深度对话 第4领域
 
 ## 已定案
 
 - 学习输入：早期两路并行——个例 reflection（每笔平仓后）+ 批次模式归纳（定期）
-- 学习可改范围：Ranker 权重（低风险）+ PI system prompt 片段（中风险）；风控阈值暂不开放
-- 推翻机制方向：方案1（置信度更新）+ 方案2（时间衰减 half-life）+ 方案3（决策时 PI 主动过滤）三路融合，需研究后设计
+- 学习可改范围：Ranker 权重（低风险）+ System Operator prompt 片段（中风险）；风控阈值暂不开放
+- 推翻机制方向：方案1（置信度更新）+ 方案2（时间衰减 half-life）+ 方案3（决策时 System Operator 主动过滤）三路融合。方案2的基础版已落地：`trading_memo` 通过 7 天 half-life 降权，并在 prompt 中显示 `Memo time weight`。
 
 ## 研究阶段
 
@@ -32,7 +32,7 @@
 - `docs/research/LEARNING_MECHANISM_DESIGN_[date].md`
 - 更新 `spec_data_utilization` 登记学习数据消费路由
 
-## Spec 覆盖状态（2026-06-30 更新）
+## Spec 覆盖状态（2026-07-03 更新）
 
 以下 spec claims 覆盖本计划的关键 defer/tripwire 节点，见 `tests/specs/spec_learning_pipeline.py`：
 
@@ -41,8 +41,8 @@
 | KL-S01 | L2a  | GREEN    | 两路触发器独立注册验证（post_trade_reviewer interval + dreaming_daily/insight_synthesizer cron） |
 | KL-S02 | L2a  | GREEN tripwire | 风控 Phase 2 防护：risk/engine.py 不得出现 learning override 接口；接口出现时 tripwire 失败触发 change-control 审查 |
 | KL-S03 | L2a  | GREEN    | 批次归纳三核心 job 均已注册（insight_synthesizer / confidence_calibration / dreaming_daily） |
-| KL-B01 | L2b  | XFAIL defer | 方案2 时间衰减推翻路径（half-life 模型）；Phase 2 研究完成后实现并去掉 xfail |
+| KL-B01 | L2b  | GREEN | 方案2 时间衰减推翻路径（half-life 模型）；基础实现为 `memo_half_life_weight()` |
 
 ### Defer 节点对应关系
-- **KL-B01** ↔ 本计划 §已定案"推翻机制方向·方案2（时间衰减 half-life）"；实现时需同步 `learning_mechanism_research_plan.md` Phase 2 状态 + `spec_learning_pipeline.py` KL-B01 status
+- **KL-B01** ↔ 本计划 §已定案"推翻机制方向·方案2（时间衰减 half-life）"；已实现基础 half-life 降权。后续若扩展到更复杂的置信度/规则生命周期模型，需新增或更新 spec。
 - **KL-S02** ↔ 本计划 §已定案"风控阈值暂不开放"；Phase 2 正式开放风控接口前必须先过 KL-S02 审查

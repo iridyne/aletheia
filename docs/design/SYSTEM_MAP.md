@@ -60,7 +60,7 @@
 |------|---------|---------|------|
 | knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/trading_decision(PI)) | ✅ |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | paper_trader_ranker(evaluate_guards), risk_engine(check#15) | ✅ |
-| ps_lessons (LessonStore) | dreaming_agent | trading_context Layer3 → PI prompt → risk engine #15(accepted) | ⚠️ 双轨:**影响决策**但不进 knowledge_fts(有意设计,见 knowledge_contract §6.A1) |
+| ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | trading_context Layer3 → System Operator prompt → risk engine #15(applied, non-expired) | ✅ 双轨:**影响决策**但不进 knowledge_fts(有意设计,见 knowledge_contract §6.A1) |
 | ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |
 
 ---
@@ -94,4 +94,4 @@
 | C1 | 6个analytics端点无前端UI | 已有能力不可达 |
 | C2 | Regime/Guard Config 无前端控制(MarketAwareExits 已部分接入) | regime/guard 只能手编 yaml |
 
-> A1/A2/B1 现状(已澄清 / aspirational / honestly-stubbed)详见 [knowledge_contract.md §6](knowledge_contract.md)。C1/A3 记录于 [BACKEND_ISSUES.md](../issues/BACKEND_ISSUES.md)。**Last reviewed 2026-06-30**(本表 §四/§五/§六 已对齐当前代码与契约)。
+> A1/A2/B1 现状(双轨已澄清 / draft skill producer 已接入 / contradiction 保守检测已实现)详见 [knowledge_contract.md §6](knowledge_contract.md)。C1/A3 记录于 [BACKEND_ISSUES.md](../issues/BACKEND_ISSUES.md)。**Last reviewed 2026-07-03**(本表 §四/§五/§六 已对齐当前代码与契约)。

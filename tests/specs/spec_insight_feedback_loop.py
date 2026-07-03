@@ -9,12 +9,12 @@ docs/plans/round2_negative_feedback_loop_closure.md.
 These claims guard the three defects found in the audit:
   ① regime dimension collapse (regime_tag never snapshotted at entry)   → IFL-S03 (A1)
   ② dirty Round-1 data ingested (no clean-window floor)                 → IFL-S01 / IFL-B01 (A2)
-  ③ no refutable self-evolution (memo_effectiveness missing,            → IFL-S02 / IFL-B03 (B)
-     direction-bias cap declared-but-unenforced)
+  ③ no refutable self-evolution (memo effectiveness, time decay, and
+     direction-bias cap)                                                → IFL-S02 / IFL-B03 / IFL-B06
 
-GREEN claims are implemented. xfail(strict) claims are tripwires for work still
-in progress — they flip to GREEN as each defect is closed and the xfail marker
-is removed in the same commit. DO NOT delete a tripwire to make CI green.
+GREEN claims are implemented. If future work introduces xfail(strict) claims,
+they must remain as honest tripwires until the same commit implements the
+covered behavior. DO NOT delete a tripwire to make CI green.
 """
 from __future__ import annotations
 
