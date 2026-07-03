@@ -308,6 +308,17 @@ class UniverseService:
             except Exception as e:
                 logger.warning("Forward outcome registration failed (non-fatal): %s", e)
 
+            try:
+                from aletheia.analytics.causal_controls import record_universe_control_cohort
+                record_universe_control_cohort(
+                    snapshot_id=snap.id,
+                    selected_members=inserted_members,
+                    scored_candidates=scored,
+                    entry_ts=now.isoformat(),
+                )
+            except Exception as e:
+                logger.debug("Universe causal control cohort logging skipped: %s", e)
+
             # Emit deterministic opportunities for high-scoring members (LLM-free path)
             try:
                 emit_deterministic_opportunities(

@@ -152,6 +152,41 @@ def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
     assert universe["observed"] == 2.0
 
 
+def test_universe_alpha_prefers_prospective_control_cohort():
+    import json
+
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    entry = _iso(days_ago=2)
+    due_at = _iso(days_ago=2, hours_after=1)
+    for i in range(5):
+        sel = f"SELCAUSAL{i}/USDT"
+        ctl = f"CTLCAUSAL{i}/USDT"
+        _insert_ohlcv(db, sel, "1h", entry, 100.0, {1: 103.0})
+        _insert_ohlcv(db, ctl, "1h", entry, 100.0, {1: 100.0})
+        for role, sym in (("selected", sel), ("control", ctl)):
+            db.execute(
+                "INSERT INTO alpha_control_observations "
+                "(id, layer, cohort_id, treatment_id, role, symbol, direction, horizon, "
+                "entry_price, entry_ts, score, module_path, metadata) "
+                "VALUES (?, 'universe', 'cohort-1', 'snap-1', ?, ?, 'long', '1h', 100, ?, 50, "
+                "'aletheia/universe/allocator.py', ?)",
+                (f"aco-{role}-{i}", role, sym, entry, json.dumps({"due_at": due_at})),
+            )
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+    universe = report["verdicts"]["universe"]
+
+    assert universe["verdict"] == "positive"
+    assert universe["causal_grade"] == "strong_prospective_control"
+    assert universe["evidence_type"] == "prospective_control_cohort"
+    assert universe["baseline"] == 0.0
+    assert universe["observed"] == 3.0
+
+
 def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db
@@ -178,6 +213,54 @@ def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
     assert learning["sample_size"] == 5
     assert learning["baseline"] == -2.0
     assert learning["observed"] == 2.0
+
+
+def test_negative_bottleneck_reports_suspected_modules():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        batch = f"module-b{i}"
+        _insert_shadow(db, batch, f"opp-r1m-{i}", 1, -2.0, selected=1)
+        _insert_shadow(db, batch, f"opp-r2m-{i}", 2, 2.0)
+    db.commit()
+
+    report = build_alpha_attribution_audit(days=30)
+    ranker = report["verdicts"]["ranker"]
+
+    assert ranker["verdict"] == "negative"
+    assert "aletheia/agents/paper_trader_ranker.py" in ranker["suspected_modules"]
+    assert report["main_bottleneck"]["suspected_modules"]
+
+
+def test_serenity_insert_records_prospective_alpha_controls():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import SerenityOpportunity
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    entry = _iso(days_ago=1)
+    _insert_ohlcv(db, "AAPL", "1d", entry, 100.0, {24: 101.0})
+    _insert_ohlcv(db, "MSFT", "1d", entry, 100.0, {24: 100.0})
+    db.commit()
+
+    opp = SerenityOpportunity(
+        id="ser-alpha-1",
+        theme_id="theme-alpha",
+        symbol="AAPL",
+        direction="long",
+        asset_class="equity",
+        created_at=entry,
+    )
+    repo.insert_serenity_opportunity(opp)
+
+    rows = db.execute(
+        "SELECT role, symbol, layer FROM alpha_control_observations "
+        "WHERE layer = 'serenity' AND treatment_id = 'ser-alpha-1'"
+    ).fetchall()
+    assert any(r["role"] == "selected" and r["symbol"] == "AAPL" for r in rows)
+    assert any(r["role"] == "control" and r["symbol"] == "MSFT" for r in rows)
 
 
 def test_cli_and_api_surface_alpha_audit():

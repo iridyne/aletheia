@@ -161,8 +161,9 @@ def test_resolve_stale_shadows_uses_historical_bar():
     SpecClaim("AN-S04", "analytics_contract", "§alpha attribution audit", "L2b",
               "Alpha Attribution Audit must return exactly the five judging-layer "
               "verdicts (Universe, Ranker, System Operator, Learning, Serenity), "
-              "include baseline/sample/delta/confidence fields, and use "
-              "insufficient_data instead of fake conclusions when samples are thin.",
+              "include baseline/sample/delta/confidence/causal-grade fields, use "
+              "insufficient_data instead of fake conclusions when samples are thin, "
+              "and identify suspected code modules for bottleneck layers.",
               status="implemented"),
 )
 def test_alpha_attribution_contract_shape_on_empty_db():
@@ -174,7 +175,8 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     }
     for item in report["verdicts"].values():
         assert item["verdict"] == "insufficient_data"
-        for key in ("sample_size", "baseline", "observed", "delta", "confidence_label", "reason"):
+        for key in ("sample_size", "baseline", "observed", "delta", "confidence_label",
+                    "causal_grade", "evidence_type", "suspected_modules", "reason"):
             assert key in item
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 

@@ -27,6 +27,36 @@ VERDICT_NAMES = (
 MIN_SAMPLE_SIZE = 5
 ALPHA_THRESHOLD_PCT = 0.10
 
+_MODULES_BY_LAYER = {
+    "Universe Alpha": [
+        "aletheia/universe/scanners.py",
+        "aletheia/universe/allocator.py",
+        "aletheia/universe/filters.py",
+        "aletheia/universe/service.py",
+    ],
+    "Ranker Alpha": [
+        "aletheia/agents/paper_trader_ranker.py",
+        "aletheia/analytics/factor_feedback.py",
+        "aletheia/knowledge/guards.py",
+    ],
+    "System Operator Alpha": [
+        "aletheia/agent_shell/trading_decision.py",
+        "aletheia/agent_shell/trading_context.py",
+        "aletheia/agent_runtime/pi_daemon.py",
+    ],
+    "Learning Alpha": [
+        "aletheia/learning/lessons.py",
+        "aletheia/analytics/memo_effectiveness.py",
+        "aletheia/knowledge/guards.py",
+        "aletheia/analytics/guard_effectiveness.py",
+    ],
+    "Serenity Alpha": [
+        "aletheia/agents/research_worker.py",
+        "aletheia/trading/serenity_scoring.py",
+        "aletheia/trading/serenity_evidence.py",
+    ],
+}
+
 _HORIZON_SECONDS = {
     "1h": 3600,
     "4h": 4 * 3600,
@@ -99,7 +129,18 @@ def _safe_layer(name: str, fn) -> dict:
 
 
 def _empty_layer(name: str, reason: str) -> dict:
-    return _verdict(name, "insufficient_data", 0, None, None, None, "insufficient", reason)
+    return _verdict(
+        name,
+        "insufficient_data",
+        0,
+        None,
+        None,
+        None,
+        "insufficient",
+        reason,
+        evidence_type="none",
+        causal_grade="insufficient",
+    )
 
 
 def render_alpha_audit(report: dict) -> str:
@@ -121,9 +162,13 @@ def render_alpha_audit(report: dict) -> str:
             f"baseline={_fmt_metric(item.get('baseline'))} "
             f"observed={_fmt_metric(item.get('observed'))} "
             f"delta={_fmt_metric(item.get('delta'))} "
-            f"confidence={item['confidence_label']}"
+            f"confidence={item['confidence_label']} "
+            f"evidence={item.get('causal_grade', 'unknown')}"
         )
         lines.append(f"  {item['reason']}")
+        modules = item.get("suspected_modules") or []
+        if item["verdict"] == "negative" and modules:
+            lines.append(f"  Suspect modules: {', '.join(modules[:3])}")
     bottleneck = report["main_bottleneck"]
     lines.extend([
         "",
@@ -137,6 +182,10 @@ def render_alpha_audit(report: dict) -> str:
 
 
 def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
+    causal = _causal_control_alpha(db, "universe", "Universe Alpha", cutoff, min_sample_size)
+    if causal is not None:
+        return causal
+
     rows = db.execute(
         "SELECT symbol, direction, horizon, entry_ts, forward_return_pct "
         "FROM universe_forward_outcomes "
@@ -198,6 +247,8 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         _confidence_label(len(selected), min_sample_size),
         f"Selected universe members {'outperformed' if delta > 0 else 'underperformed' if delta < 0 else 'matched'} deterministic same-period tradable samples.",
         {"baseline_sample_size": len(baseline), "horizons": _horizon_details(by_horizon)},
+        evidence_type="reconstructed_ohlcv_baseline",
+        causal_grade="weak_reconstructed",
     )
 
 
@@ -349,8 +400,11 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
 
     before_avgs: list[float] = []
     after_avgs: list[float] = []
+    did_observed: list[float] = []
+    did_baseline: list[float] = []
     after_count_total = 0
     usable_events = 0
+    did_events = 0
     total_events_with_group = 0
 
     for event in events:
@@ -358,13 +412,17 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
         if not group:
             continue
         total_events_with_group += 1
-        before, after = _trade_pnl_before_after(db, event["event_at"], days, group)
+        before, after, control_before, control_after = _trade_pnl_before_after(db, event["event_at"], days, group)
         after_count_total += len(after)
         if len(before) < min_sample_size or len(after) < min_sample_size:
             continue
         before_avgs.append(mean(before))
         after_avgs.append(mean(after))
         usable_events += 1
+        if len(control_before) >= min_sample_size and len(control_after) >= min_sample_size:
+            did_observed.append(mean(after) - mean(before))
+            did_baseline.append(mean(control_after) - mean(control_before))
+            did_events += 1
 
     if usable_events == 0:
         return _verdict(
@@ -377,10 +435,22 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
             "insufficient",
             "Learning events exist, but there are not enough before/after same-pattern closed trades to judge behavior change.",
             {"event_count": len(events), "events_with_group": total_events_with_group, "usable_events": 0},
+            evidence_type="same_pattern_before_after",
+            causal_grade="insufficient",
         )
 
-    observed = mean(after_avgs)
-    base = mean(before_avgs)
+    if did_events:
+        observed = mean(did_observed)
+        base = mean(did_baseline)
+        reason_basis = "difference-in-differences against contemporaneous non-matching trade controls"
+        evidence_type = "difference_in_differences"
+        causal_grade = "moderate_quasi_causal"
+    else:
+        observed = mean(after_avgs)
+        base = mean(before_avgs)
+        reason_basis = "same-pattern before/after comparison without enough controls"
+        evidence_type = "same_pattern_before_after"
+        causal_grade = "weak_before_after"
     delta = observed - base
     status = _status_from_delta(delta)
     return _verdict(
@@ -391,12 +461,18 @@ def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
         observed,
         delta,
         _confidence_label(after_count_total, min_sample_size),
-        f"Same-pattern trades after learning events {'improved' if delta > 0 else 'worsened' if delta < 0 else 'matched'} the pre-event baseline.",
-        {"event_count": len(events), "events_with_group": total_events_with_group, "usable_events": usable_events},
+        f"Learning-treated patterns {'improved' if delta > 0 else 'worsened' if delta < 0 else 'matched'} using {reason_basis}.",
+        {"event_count": len(events), "events_with_group": total_events_with_group, "usable_events": usable_events, "did_events": did_events},
+        evidence_type=evidence_type,
+        causal_grade=causal_grade,
     )
 
 
 def _serenity_alpha(db, cutoff: str, min_sample_size: int) -> dict:
+    causal = _causal_control_alpha(db, "serenity", "Serenity Alpha", cutoff, min_sample_size)
+    if causal is not None:
+        return causal
+
     rows = db.execute(
         "SELECT symbol, direction, created_at, asset_class FROM serenity_opportunities "
         "WHERE datetime(created_at) >= datetime(?)",
@@ -455,6 +531,8 @@ def _serenity_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         _confidence_label(len(observed_returns), min_sample_size),
         f"Serenity opportunities {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} observed same-period baselines.",
         {"baseline_sample_size": len(baseline_returns), "horizons": _horizon_details(by_horizon)},
+        evidence_type="reconstructed_ohlcv_baseline",
+        causal_grade="weak_reconstructed",
     )
 
 
@@ -493,10 +571,10 @@ def _learning_events(db, cutoff: str) -> list[dict]:
     return events
 
 
-def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[list[float], list[float]]:
+def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[list[float], list[float], list[float], list[float]]:
     event_dt = _parse_dt(event_at)
     if event_dt is None:
-        return [], []
+        return [], [], [], []
     before_start = (event_dt - timedelta(days=days)).isoformat()
     after_end = _utcnow().isoformat()
     rows = db.execute(
@@ -514,20 +592,25 @@ def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[
 
     before: list[float] = []
     after: list[float] = []
+    control_before: list[float] = []
+    control_after: list[float] = []
     for row in rows:
-        if not _matches_learning_group(row, group):
-            continue
         pnl_pct = _position_pnl_pct(row)
         if pnl_pct is None:
             continue
         closed_at = _parse_dt(row["closed_at"])
         if closed_at is None:
             continue
-        if closed_at < event_dt:
+        matches = _matches_learning_group(row, group)
+        if matches and closed_at < event_dt:
             before.append(pnl_pct)
-        else:
+        elif matches:
             after.append(pnl_pct)
-    return before, after
+        elif closed_at < event_dt:
+            control_before.append(pnl_pct)
+        else:
+            control_after.append(pnl_pct)
+    return before, after, control_before, control_after
 
 
 def _matches_learning_group(row, group: dict) -> bool:
@@ -598,6 +681,96 @@ def _deterministic_baseline_returns(
         if len(returns) >= sample_size:
             break
     return returns
+
+
+def _causal_control_alpha(db, layer: str, name: str, cutoff: str, min_sample_size: int) -> dict | None:
+    rows = db.execute(
+        "SELECT * FROM alpha_control_observations "
+        "WHERE layer = ? AND datetime(entry_ts) >= datetime(?) "
+        "ORDER BY entry_ts ASC",
+        (layer, cutoff),
+    ).fetchall()
+    if not rows:
+        return None
+
+    selected: list[float] = []
+    controls: list[float] = []
+    by_horizon: dict[str, dict[str, Any]] = {}
+
+    for row in rows:
+        ret = _control_observation_return(db, row)
+        if ret is None:
+            continue
+        horizon = row["horizon"]
+        h = by_horizon.setdefault(horizon, {"selected": [], "baseline": []})
+        if row["role"] == "selected":
+            selected.append(ret)
+            h["selected"].append(ret)
+        elif row["role"] == "control":
+            controls.append(ret)
+            h["baseline"].append(ret)
+
+    if len(selected) < min_sample_size or len(controls) < min_sample_size:
+        return _verdict(
+            name,
+            "insufficient_data",
+            len(selected),
+            _safe_mean(controls),
+            _safe_mean(selected),
+            None,
+            "insufficient",
+            "Prospective control cohorts exist, but not enough selected/control outcomes have matured.",
+            {"baseline_sample_size": len(controls), "horizons": _horizon_details(by_horizon)},
+            evidence_type="prospective_control_cohort",
+            causal_grade="insufficient",
+        )
+
+    observed = mean(selected)
+    base = mean(controls)
+    delta = observed - base
+    status = _status_from_delta(delta)
+    return _verdict(
+        name,
+        status,
+        len(selected),
+        base,
+        observed,
+        delta,
+        _confidence_label(len(selected), min_sample_size),
+        f"{name} selected observations {'beat' if delta > 0 else 'trailed' if delta < 0 else 'matched'} prospectively logged same-time controls.",
+        {"baseline_sample_size": len(controls), "horizons": _horizon_details(by_horizon)},
+        evidence_type="prospective_control_cohort",
+        causal_grade="strong_prospective_control",
+    )
+
+
+def _control_observation_return(db, row) -> float | None:
+    metadata = _parse_json(row["metadata"])
+    due_at = metadata.get("due_at")
+    entry_price = row["entry_price"]
+    if not due_at or entry_price is None or float(entry_price) <= 0:
+        return None
+    due_dt = _parse_dt(due_at)
+    if due_dt is None or due_dt > _utcnow():
+        return None
+    exit_price = _exit_price_from_ohlcv(db, row["symbol"], due_at)
+    if exit_price is None:
+        return None
+    raw = (exit_price - float(entry_price)) / float(entry_price) * 100.0
+    return _directional_return(raw, row["direction"])
+
+
+def _exit_price_from_ohlcv(db, symbol: str, due_at: str) -> float | None:
+    due_dt = _parse_dt(due_at)
+    if due_dt is None:
+        return None
+    target_ms = int(due_dt.timestamp() * 1000)
+    row = db.execute(
+        "SELECT close FROM market_ohlcv "
+        "WHERE symbol = ? AND ts >= ? ORDER BY ts ASC LIMIT 1",
+        (symbol, target_ms),
+    ).fetchone()
+    return float(row["close"]) if row and row["close"] is not None else None
 
 
 def _baseline_symbols(db, *, exclude_symbol: str, equity_like: bool) -> list[str]:
@@ -676,6 +849,7 @@ def _main_bottleneck(verdicts: dict) -> dict:
             "layer": item["name"],
             "summary": f"{item['name']} is the most likely bottleneck: {item['reason']}",
             "next_action": _next_action(key),
+            "suspected_modules": item.get("suspected_modules", []),
         }
     if candidates:
         key, item = min(candidates, key=lambda kv: kv[1]["delta"])
@@ -683,11 +857,13 @@ def _main_bottleneck(verdicts: dict) -> dict:
             "layer": item["name"],
             "summary": f"No negative layer detected; weakest measured layer is {item['name']}: {item['reason']}",
             "next_action": "Keep collecting data and inspect the weakest measured layer before changing trading behavior.",
+            "suspected_modules": item.get("suspected_modules", []),
         }
     return {
         "layer": "insufficient_data",
         "summary": "No layer has enough measured data to identify a bottleneck.",
         "next_action": "Collect more settled outcomes and resolved shadow trades before changing scanner, ranker, prompt, or learning logic.",
+        "suspected_modules": [],
     }
 
 
@@ -711,6 +887,8 @@ def _verdict(
     confidence_label: str,
     reason: str,
     details: dict | None = None,
+    evidence_type: str = "observational",
+    causal_grade: str = "weak_observational",
 ) -> dict:
     return {
         "name": name,
@@ -720,6 +898,9 @@ def _verdict(
         "observed": _round_or_none(observed),
         "delta": _round_or_none(delta),
         "confidence_label": confidence_label,
+        "evidence_type": evidence_type,
+        "causal_grade": causal_grade,
+        "suspected_modules": _MODULES_BY_LAYER.get(name, []),
         "reason": reason,
         "details": details or {},
     }

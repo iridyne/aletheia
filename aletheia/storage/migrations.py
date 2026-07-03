@@ -178,6 +178,27 @@ CREATE INDEX IF NOT EXISTS idx_shadow_trades_batch ON shadow_trades(batch_id);
 CREATE INDEX IF NOT EXISTS idx_shadow_trades_opportunity ON shadow_trades(opportunity_id);
 CREATE INDEX IF NOT EXISTS idx_shadow_trades_family ON shadow_trades(scanner_family);
 
+CREATE TABLE IF NOT EXISTS alpha_control_observations (
+    id TEXT PRIMARY KEY,
+    layer TEXT NOT NULL,
+    cohort_id TEXT NOT NULL,
+    treatment_id TEXT,
+    role TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    direction TEXT,
+    horizon TEXT NOT NULL,
+    entry_price REAL,
+    entry_ts TEXT NOT NULL,
+    score REAL,
+    module_path TEXT,
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alpha_control_layer_entry
+    ON alpha_control_observations (layer, entry_ts);
+CREATE INDEX IF NOT EXISTS idx_alpha_control_cohort
+    ON alpha_control_observations (cohort_id, horizon);
+
 CREATE TABLE IF NOT EXISTS serenity_themes (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

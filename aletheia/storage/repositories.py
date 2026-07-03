@@ -635,7 +635,13 @@ def list_serenity_evidence(theme_id: str | None = None, limit: int = 100) -> lis
 
 
 def insert_serenity_opportunity(o: SerenityOpportunity) -> None:
-    _insert("serenity_opportunities", o.model_dump())
+    data = o.model_dump()
+    _insert("serenity_opportunities", data)
+    try:
+        from aletheia.analytics.causal_controls import record_serenity_control_cohort
+        record_serenity_control_cohort(data)
+    except Exception:
+        pass
 
 
 def get_serenity_opportunity(opportunity_id: str) -> dict | None:
