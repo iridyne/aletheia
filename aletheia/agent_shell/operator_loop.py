@@ -604,7 +604,7 @@ def _execute_level1_action(action: OperatorAction) -> dict:
 
 def _action_retire_strategy(action: OperatorAction) -> dict:
     """Phase 4d: Write recommendation to pi_decisions instead of direct retirement.
-    PI Agent will see this in pending_signals and confirm the action."""
+    System Operator will see this in pending_signals and confirm the action."""
     strategy_id = action.params.get("strategy_id", "")
     if not strategy_id:
         return {"action": "retire_strategy", "status": "skipped", "reason": "no strategy_id"}
@@ -635,7 +635,7 @@ def _action_retire_strategy(action: OperatorAction) -> dict:
 
 def _action_demote_strategy(action: OperatorAction) -> dict:
     """Phase 4d: Write recommendation to pi_decisions instead of direct demotion.
-    PI Agent will see this in pending_signals and confirm the action."""
+    System Operator will see this in pending_signals and confirm the action."""
     strategy_id = action.params.get("strategy_id", "")
     if not strategy_id:
         return {"action": "demote_strategy", "status": "skipped", "reason": "no strategy_id"}
@@ -1296,7 +1296,7 @@ def _check_stale_recommendations() -> list[dict]:
     """Escalate recommend_retire/recommend_demote pi_decisions that have been
     pending for >24h without PI confirmation, notifying the operator.
 
-    Does NOT auto-execute the retirement — that would bypass the PI Agent review
+    Does NOT auto-execute the retirement — that would bypass the System Operator review
     flow. It only notifies so the operator/owner can manually trigger PI or act.
     One notification per stale decision, rate-limited by the standard daily cap.
     """
@@ -1324,7 +1324,7 @@ def _check_stale_recommendations() -> list[dict]:
              datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))).total_seconds() / 3600
         ))
         msg = (f"Strategy {strat_id}: {action_label} recommendation unconfirmed for "
-               f"{hours_pending}h — PI Agent may not be running. Review and confirm manually.")
+               f"{hours_pending}h — System Operator may not be running. Review and confirm manually.")
         notify_action = OperatorAction(
             action_type="notify_operator",
             level=1,

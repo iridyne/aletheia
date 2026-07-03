@@ -1,4 +1,4 @@
-"""Paper Trader agent — ranks open opportunities into pending signals for the PI Agent.
+"""Paper Trader agent — ranks open opportunities into pending signals for the System Operator.
 
 USER-AUTHORIZED autonomous behavior (paper only). Containment:
 - Only runs when permission mode is Paper or Full. Denied in Observe.
@@ -13,8 +13,8 @@ Exchange demo (bitget_demo/okx_demo/binance_testnet) uses the real exchange sand
 
 PaperTrader v4 (opportunity-driven, Position C 2026-07-02): the RuleSet rules engine
 was deleted. The paper trader ranks market_observer opportunities deterministically
-and writes the top candidates as signal_pending PiDecisions for the PI Agent to
-evaluate. The PI Agent is the sole decision maker; the paper trader never opens or
+and writes the top candidates as signal_pending PiDecisions for the System Operator to
+evaluate. The System Operator is the sole decision maker; the paper trader never opens or
 closes positions itself.
 """
 from __future__ import annotations
@@ -138,7 +138,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it
     # ranks market_observer opportunities and writes the top ones as signal_pending
-    # for the PI Agent to decide (PI-central). There is no RuleSet scan and no
+    # for the System Operator to decide (PI-central). There is no RuleSet scan and no
     # deterministic-rule entry/exit path.
 
     # ── Opportunity-driven (ranked) ───────────────────────────────────────────
@@ -163,14 +163,14 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         logger.debug("shadow trade persistence failed: %s", _shadow_err)
 
     # Phase 4a: Path B is now a pure signal collector — write top candidates as
-    # signal_pending for PI Agent to evaluate (PI Agent is the sole decision maker).
+    # signal_pending for System Operator to evaluate (System Operator is the sole decision maker).
     eligible = [c for c in candidates if not c.get("skip_reason")]
     if not eligible:
         if not outputs:
             outputs.append("no_ranked_candidate")
         return {"outputs": outputs, "errors": errors}
 
-    # Write top 3 eligible candidates as pending signals for PI Agent
+    # Write top 3 eligible candidates as pending signals for System Operator
     signals_written = 0
     for candidate in eligible[:3]:
         try:
@@ -198,7 +198,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             # Mark the source opportunity reviewed so the next paper_trader cycle
             # doesn't re-rank and re-emit it as a duplicate signal_pending. Without
             # this, the same open opportunity was re-written every 5min — ETH short
-            # appeared 4x in pending signals, and the PI Agent read the duplicates
+            # appeared 4x in pending signals, and the System Operator read the duplicates
             # as "pipeline data integrity compromised" and skipped every decision
             # (PT-1, freeze exception 2026-06-24). Mirrors the reviewed-marking
             # already done for permanently-skipped candidates at line ~113.

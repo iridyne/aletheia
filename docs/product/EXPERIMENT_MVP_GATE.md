@@ -11,7 +11,7 @@
 
 ---
 
-## 领域 1: 决策引擎（PI Agent）
+## 领域 1: 决策引擎（System Operator）
 
 | # | 检查项 | PASS 条件 |
 |---|--------|-----------|
@@ -107,7 +107,7 @@ assert health["signal_status"] != "degraded"
 ## Round 1 正式开始流程
 
 1. 运行 `scripts/mvp_gate_check.py` → 6 领域全 PASS
-2. 48h smoke test: 确认 PI Agent 产出 conviction > 0 的评估(不要求出单,只要求 LLM 不再盲目 skip)
+2. 48h smoke test: 确认 System Operator 产出 conviction > 0 的评估(不要求出单,只要求 LLM 不再盲目 skip)
 3. 打 git tag `experiment/round-1-start`
 4. 更新 `EXPERIMENT_PROTOCOL.md` 中 Round 1 起止日期
 5. 冻结生效,14 天计时开始

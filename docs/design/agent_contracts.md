@@ -149,7 +149,7 @@
 - **LLM**: No
 - **Outputs**: Position closes (status=closed, realized_pnl computed)
 - **Side effects**: Calls close_position(); updates exchange TP/SL orders; writes audit events
-- **Exit triggers**: stop_loss, take_profit, max_hold_time, trailing_stop, ruleset_exit, market_aware_exit. (PI Agent exits run **independently** via `review_portfolio_state`, NOT inside this loop — see `execution_contract.md §10`.)
+- **Exit triggers**: stop_loss, take_profit, max_hold_time, trailing_stop, ruleset_exit, market_aware_exit. (System Operator exits run **independently** via `review_portfolio_state`, NOT inside this loop — see `execution_contract.md §10`.)
 - **Pause semantics**: runs even when `runtime.paused` (manages existing risk; never blocks protective close — aligned with kill_switch, see `execution_contract.md §10.3`)
 
 ---
@@ -157,7 +157,7 @@
 ### C. Strategy Agents — REMOVED (Position C, 2026-07-02)
 
 The rules engine (`strategy_designer` + `backtest_orchestrator`) was **deleted**.
-Strategy generation / DSL / backtesting no longer exist; the PI Agent
+Strategy generation / DSL / backtesting no longer exist; the System Operator
 (`evaluate_trading_opportunity`) is the sole decision path. Legacy
 `strategy_records` / `backtest_runs` / `backtest_trades` tables are kept read-only
 for historical attribution (not written to). The deterministic `guard_promotion`
@@ -324,6 +324,6 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
                                               dreaming_daily (02:00)
                                                           |
                                                           v
-                          PI Agent decision context (evaluate_trading_opportunity)
+                          System Operator decision context (evaluate_trading_opportunity)
                           [strategy_designer removed — Position C, 2026-07-02]
 ```

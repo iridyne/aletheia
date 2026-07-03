@@ -190,7 +190,7 @@ def _check_event_triggers(
             surge = volume_24h / prev_volume_24h
             _notify(f"Volume surge {symbol}: {surge:.1f}x 24h vol")
 
-        # Wake PI Agent on any significant price/volume event
+        # Wake System Operator on any significant price/volume event
         if abs_pct >= et.price_move_pct_threshold or (
             volume_24h and prev_volume_24h and prev_volume_24h > 0
             and volume_24h > prev_volume_24h * et.volume_surge_multiplier

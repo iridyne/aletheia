@@ -142,7 +142,7 @@ def classify_session(now_utc: datetime | None = None) -> SessionInfo:
 
 
 def render_for_prompt(now_utc: datetime | None = None) -> str:
-    """Render the session block for injection into the PI Agent assessment prompt.
+    """Render the session block for injection into the System Operator assessment prompt.
 
     Kept in this (non-frozen) module so the Round-2 wiring into
     ``trading_decision._build_assessment_prompt`` is a single call:

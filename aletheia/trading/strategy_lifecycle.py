@@ -150,7 +150,7 @@ def create_strategy(
 
 
 def _has_pi_approval(strategy_id: str) -> bool:
-    """Check that PI Agent has written a recommend_promote record for this strategy."""
+    """Check that System Operator has written a recommend_promote record for this strategy."""
     from aletheia.storage.sqlite import get_db
     db = get_db()
     row = db.execute(
@@ -178,7 +178,7 @@ def promote_strategy(strategy_id: str, target_state: str) -> dict:
         if not _has_pi_approval(strategy_id):
             return {
                 "success": False,
-                "error": "Promotion to paper_running requires PI Agent approval (recommend_promote record not found)",
+                "error": "Promotion to paper_running requires System Operator approval (recommend_promote record not found)",
             }
     if target_state == "paper_passed":
         gate_result = check_promotion_gates(strategy_id)

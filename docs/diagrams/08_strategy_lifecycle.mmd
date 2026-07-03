@@ -5,16 +5,16 @@ flowchart LR
         BT["回测验证<br/>(backtest gate)"]
     end
 
-    subgraph AUTO["自动升阶 (无需 PI Agent)"]
+    subgraph AUTO["自动升阶 (无需 System Operator)"]
         DRAFT["draft"]
         RN["research_note"]
         SH["strategy_hypothesis"]
         PC["paper_candidate<br/>⛔ 自动停止"]
     end
 
-    subgraph PI_GATE["PI Agent 决策门"]
+    subgraph PI_GATE["System Operator 决策门"]
         REC_P["recommend_promote<br/>(写入 pi_decisions)"]
-        PI_EVAL["PI Agent 评估:<br/>策略质量? 与现有冲突?<br/>资金够? 相关性如何?"]
+        PI_EVAL["System Operator 评估:<br/>策略质量? 与现有冲突?<br/>资金够? 相关性如何?"]
     end
 
     subgraph RUNNING["策略运行"]
@@ -25,7 +25,7 @@ flowchart LR
         OP_ASSESS["Operator 评估:<br/>表现如何? 需要调整?"]
         REC_R["recommend_retire<br/>(写入 pi_decisions)"]
         REC_D["recommend_demote<br/>(写入 pi_decisions)"]
-        PI_CONF["PI Agent 确认"]
+        PI_CONF["System Operator 确认"]
     end
 
     subgraph END_STATES["终态"]

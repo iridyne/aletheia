@@ -2,7 +2,7 @@
 
 Reads trade_insights + factor_feedback statistics, calls LLM for pattern discovery,
 outputs a TradingMemo consumed by:
-  - PI Agent (System Operator) via trading_context Layer 2
+  - System Operator (System Operator) via trading_context Layer 2
   - market_observer via memory_block injection
   - paper_trader_ranker via scoring adjustments (future phase)
 
@@ -507,7 +507,7 @@ def _persist_memo(memo: TradingMemo) -> None:
 
 
 def render_memo_for_observer(memo: TradingMemo, symbol: str | None = None) -> str:
-    """Render a concise text block for injection into market_observer/PI Agent prompts."""
+    """Render a concise text block for injection into market_observer/System Operator prompts."""
     lines = ["\n## Historical Performance Context (Trading Memo)"]
     lines.append(f"Data: {memo['sample_size']} trades over {memo['data_window_days']} days")
 

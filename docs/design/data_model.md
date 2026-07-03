@@ -43,7 +43,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Scanner output -- trading signals | symbol, direction, confidence, key_observations (JSON) | market_observer |
-| `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / PI agent |
+| `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / System Operator |
 | `risk_decisions` | Risk engine approval/rejection | proposal_id, approved, reasons (JSON) | risk engine |
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders | symbol, side, quantity, order_type, status | execution gateway |

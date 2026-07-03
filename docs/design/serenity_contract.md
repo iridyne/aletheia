@@ -14,7 +14,7 @@
 
 ## §1 什么是 Serenity Lens
 
-Serenity Lens 是 Aletheia 的**深度研究镜头**:对一个标的做多视角研究、给出结构化裁决与证据质量分级,产出可被 PI Agent 消费的 `SerenityOpportunity`。它是一条横跨全栈的纵切,而非单个模块:
+Serenity Lens 是 Aletheia 的**深度研究镜头**:对一个标的做多视角研究、给出结构化裁决与证据质量分级,产出可被 System Operator 消费的 `SerenityOpportunity`。它是一条横跨全栈的纵切,而非单个模块:
 
 ```
 标的 → 多镜头研究(4 lens)   [research_worker.py]

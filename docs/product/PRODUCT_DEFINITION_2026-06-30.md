@@ -19,7 +19,7 @@
 
 ## 2. 交易标的与市场
 
-- **主赛道**：永续合约（perp）+ 现货（spot）并轨，同一个 PI agent 管理
+- **主赛道**：永续合约（perp）+ 现货（spot）并轨，同一个 System Operator 管理
   - market_type 字段区分，执行层 adapter 分叉
   - 全局风控（risk_engine）单点否决，不因品类分离而出现盲区
 - **第二赛道**：xStocks（ON 系列）独立隔离，与 Serenity executor 捆绑

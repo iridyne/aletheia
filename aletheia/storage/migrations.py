@@ -1464,13 +1464,13 @@ _ADDITIVE_COLUMNS = [
     ("pending_close_order_id", "positions", "TEXT"),
     ("pending_close_status", "positions", "TEXT"),
     ("pending_close_requested_at", "positions", "TEXT"),
-    # Derivatives signal dimensions for PI Agent direction guidance
+    # Derivatives signal dimensions for System Operator direction guidance
     ("taker_buy_ratio", "universe_feature_snapshots", "REAL"),
     ("vol_ratio", "universe_feature_snapshots", "REAL"),
     ("relative_strength_24h", "universe_feature_snapshots", "REAL"),
     # OI-price divergence: +1=hidden_accumulation, -1=weak_rally, 0=neutral
     ("oi_price_divergence", "universe_feature_snapshots", "INTEGER"),
-    # Decision explainability: PI Agent reasoning chain at entry time
+    # Decision explainability: System Operator reasoning chain at entry time
     ("decision_reasoning", "positions", "TEXT"),
     # Cost visibility: itemized fee/slippage for transparency
     ("entry_fee", "positions", "REAL"),

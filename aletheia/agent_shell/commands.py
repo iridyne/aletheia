@@ -1520,7 +1520,7 @@ def _emit_self_heal_action(
 
 
 async def evaluate_trading_opportunity(params: dict) -> dict:
-    """PI agent evaluates market state and submits a paper proposal if conviction >= 55."""
+    """System Operator evaluates market state and submits a paper proposal if conviction >= 55."""
     from aletheia.agent_shell.trading_context import build_enriched_trading_context
     from aletheia.agent_shell.trading_decision import (
         evaluate_trading_opportunity as _evaluate,
@@ -1534,7 +1534,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # Build three-layer enriched context
     ctx = build_enriched_trading_context()
 
-    # Run PI agent decision loop
+    # Run System Operator decision loop
     decision = await _evaluate(ctx)
 
     result: dict = {
@@ -1592,7 +1592,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
 
 
 async def review_portfolio_state(params: dict) -> dict:
-    """PI agent reviews open positions for overexposure and optionally closes / reduces."""
+    """System Operator reviews open positions for overexposure and optionally closes / reduces."""
     import json as _json
     from aletheia.agent_shell.context import build_app_context
     from aletheia.agents.helpers import llm_structured

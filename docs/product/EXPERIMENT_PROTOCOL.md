@@ -177,7 +177,7 @@ ECE: 不可计算 — 62笔全部来自旧管道(opportunity→paper_trader→pr
      不经过 trading_decision.py 的 conviction 评估。
      无一笔记录数字 conviction score,只有文字 conf=high/medium。
      pi_decisions 表的 signal_pending 行 conviction=0(ranker写入,非评估结果)。
-     Round 1 将是新决策引擎(PI Agent structured decision + debate)的首次真实数据。
+     Round 1 将是新决策引擎(System Operator structured decision + debate)的首次真实数据。
 ```
 
 ---
@@ -214,9 +214,9 @@ ECE: 不可计算 — 62笔全部来自旧管道(opportunity→paper_trader→pr
 ### 例外 #1 — 2026-06-23:最小赚钱循环 context-injection bug 修复
 
 **触发**:Round 1 期间发现"最小赚钱循环"断流——20h 零开仓。805 opportunities
-持续生成但 PI Agent 100% skip。
+持续生成但 System Operator 100% skip。
 
-**根因(逐行核实)**:PI Agent(LLM)被喂了一批**错误事实**,构建出"账户濒临破产"
+**根因(逐行核实)**:System Operator(LLM)被喂了一批**错误事实**,构建出"账户濒临破产"
 的幻觉危机:
 1. 余额读错:`get_cached_state()` 默认读 bitget 闲置缓存 $167,真实 okx_demo 是 $88k
    (此项在 `exchange_sync.py` 修,**非冻结**,先行修复)

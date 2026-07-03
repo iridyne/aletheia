@@ -201,7 +201,7 @@ export const api = {
   getRuntimeEvents: (limit = 100) => fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),
 
-  // Post-trade lessons (LessonStore). PI agent consumes them via trading_context.py:592
+  // Post-trade lessons (LessonStore). System Operator consumes them via trading_context.py:592
   // (wired in b9ad957). TTL fields: accepted lessons enter 24h dry-run then expire after 30d.
   getLessons: (limit = 50, status?: string) => fetchJson<Array<{
     lesson_id: string

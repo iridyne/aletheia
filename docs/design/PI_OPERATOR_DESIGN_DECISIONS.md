@@ -112,13 +112,13 @@ agent_shell/operator_loop.py(4h config 调参)、agent_runtime/pi_daemon.py(交�
 | 写入方 | file:line | action 取值 | 归属 |
 |--------|-----------|------------|------|
 | `paper_trader` | `paper_trader.py:143/235` | `signal_pending` | 交易环(信号收集) |
-| PI Agent(经 reflection) | `agent_shell/reflection.py:59` | `trade`/`skip`/`close`/`reduce`(= `TradingDecision.action`) | 交易环(决策记录) |
+| System Operator(经 reflection) | `agent_shell/reflection.py:59` | `trade`/`skip`/`close`/`reduce`(= `TradingDecision.action`) | 交易环(决策记录) |
 | `operator_loop` | `operator_loop.py:597/628` | `recommend_retire` / `recommend_demote` | **监管环** |
 | `strategy_designer` | `strategy_designer.py:615/679` | `recommend_promote` | **策略生成**(非监管环 —— owner 定调 2026-06-30) |
 
 **不变式(INV-OPS-1)**:监管环写入方(`operator_loop`)**绝不**写交易动作(`signal_pending`/`trade`/`close`/...),只写 `recommend_*`;反之交易环写入方不写 `recommend_*`。下游(`trading_context` 读 `signal_pending`、PI 消费 `recommend_*`)**必须**按 `action` 命名空间区分,不得跨环误读。spec `OL-S12` 锁定。
 
-> 这条不变式是"PI Agent 三组件混称"问题(见本文顶部警告框)的**结构化根治**:把"哪个环写哪些 action"显式化后,审计不再需要靠语义猜测两环边界。
+> 这条不变式是"System Operator 三组件混称"问题(见本文顶部警告框)的**结构化根治**:把"哪个环写哪些 action"显式化后,审计不再需要靠语义猜测两环边界。
 
 ### Operator 的触发时机
 

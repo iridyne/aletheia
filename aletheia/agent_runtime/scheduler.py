@@ -861,7 +861,7 @@ def _run_paper_trader():
 
 
 def _run_pi_trading_decision():
-    """PI Agent heartbeat — notifies the event-driven daemon or runs inline as fallback.
+    """System Operator heartbeat — notifies the event-driven daemon or runs inline as fallback.
 
     When pi_daemon is enabled and running, this job simply wakes the daemon
     (which handles debounce, cooldown, and the actual LLM evaluation). The daemon

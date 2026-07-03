@@ -3,7 +3,7 @@
 Fractional Kelly formula adapted for conviction scores:
   size = base_notional * kelly_fraction * conviction_ratio * drawdown_scale
 
-Used by PI agent (evaluate_trading_opportunity) and can be called from
+Used by System Operator (evaluate_trading_opportunity) and can be called from
 paper_trader for RuleSet-driven entries. Does NOT touch risk engine limits
 — all proposals still pass through Risk Engine gates after sizing.
 """

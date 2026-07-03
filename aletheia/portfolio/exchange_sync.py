@@ -145,7 +145,7 @@ def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
     active-account equity — so on the default path we prefer the unified
     (multi-broker) cache projection when the active broker isn't Bitget. Callers
     that pass an explicit `mode` (CLI bitget tools) still get the per-mode cache
-    verbatim. This keeps the PI Agent from seeing a phantom near-bankrupt account
+    verbatim. This keeps the System Operator from seeing a phantom near-bankrupt account
     and skipping every signal (the "minimum profit loop" stall, 2026-06-23).
     """
     explicit_mode = mode is not None

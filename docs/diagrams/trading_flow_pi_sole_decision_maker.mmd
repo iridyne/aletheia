@@ -54,9 +54,9 @@ flowchart TD
     end
 
     %% ============================================================
-    %% PHASE 4: PI Agent 决策 (唯一决策者, 5min)
+    %% PHASE 4: System Operator 决策 (唯一决策者, 5min)
     %% ============================================================
-    subgraph PI["🧠 Phase 4: PI Agent 决策 (Sole Decision Maker)"]
+    subgraph PI["🧠 Phase 4: System Operator 决策 (Sole Decision Maker)"]
         direction TB
 
         CTX["Enriched Trading Context<br/>三层数据注入"]
@@ -81,7 +81,7 @@ flowchart TD
     end
 
     %% ============================================================
-    %% PHASE 5: 执行 (仅 PI Agent trade 决策触发)
+    %% PHASE 5: 执行 (仅 System Operator trade 决策触发)
     %% ============================================================
     subgraph EXEC["⚡ Phase 5: 执行"]
         direction TB
@@ -100,7 +100,7 @@ flowchart TD
     %% ============================================================
     %% PHASE 6: 持仓管理 (自治安全层)
     %% ============================================================
-    subgraph MANAGE["🛡️ Phase 6: 持仓管理 (自治, 不经 PI Agent)"]
+    subgraph MANAGE["🛡️ Phase 6: 持仓管理 (自治, 不经 System Operator)"]
         direction TB
 
         TRAIL["Trailing Stop 追踪止损<br/>(ATR-based, breakeven移动)"]
@@ -122,7 +122,7 @@ flowchart TD
         OUTCOME["Trade Outcome<br/>(win/loss/pnl)"]
         FACTOR["Factor Feedback 更新<br/>(win_rate, expectancy)"]
         LESSON["Knowledge Lesson 提取"]
-        REFLECT["下轮 PI Agent 回顾<br/>(上次决策 + 结果)"]
+        REFLECT["下轮 System Operator 回顾<br/>(上次决策 + 结果)"]
 
         REC --> OUTCOME --> FACTOR & LESSON --> REFLECT
     end
@@ -136,15 +136,15 @@ flowchart TD
         DESIGN["Strategy Designer<br/>创建新策略"]
         DRAFT["draft → research_note<br/>→ strategy_hypothesis"]
         PC["paper_candidate<br/>(自动止步)"]
-        PI_PROMOTE["PI Agent 确认<br/>recommend_promote"]
+        PI_PROMOTE["System Operator 确认<br/>recommend_promote"]
         PR["paper_running<br/>(RuleSet 激活)"]
 
         RETIRE_REC["Operator: recommend_retire"]
         DEMOTE_REC["Operator: recommend_demote"]
-        PI_CONFIRM["PI Agent 确认<br/>执行 retire/demote"]
+        PI_CONFIRM["System Operator 确认<br/>执行 retire/demote"]
 
         DESIGN --> DRAFT --> PC
-        PC -->|"PI Agent approve"| PR
+        PC -->|"System Operator approve"| PR
         PR --> RETIRE_REC & DEMOTE_REC
         RETIRE_REC & DEMOTE_REC --> PI_CONFIRM
     end

@@ -1,4 +1,4 @@
-"""PI Agent event-driven daemon.
+"""System Operator event-driven daemon.
 
 Runs as a long-lived asyncio.Task inside the uvicorn event loop.
 Wakes immediately when any signal producer calls notify_pi_daemon(),

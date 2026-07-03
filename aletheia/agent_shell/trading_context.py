@@ -1,4 +1,4 @@
-"""Enriched trading context builder for PI Agent decisions.
+"""Enriched trading context builder for System Operator decisions.
 
 Assembles a three-layer context snapshot:
   Layer 1 — Environment Snapshot (deterministic, read-only, fresh each call)
@@ -18,7 +18,7 @@ logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
 
 def build_enriched_trading_context() -> dict[str, Any]:
-    """Build the three-layer context for PI Agent trading decisions.
+    """Build the three-layer context for System Operator trading decisions.
 
     Returns a dict with keys: layer1, layer2, layer3, each containing
     pre-formatted data ready for prompt injection.
@@ -160,7 +160,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     except Exception:
         layer["features"] = []
 
-    # Open opportunities (what market_observer has flagged — PI Agent was blind to these)
+    # Open opportunities (what market_observer has flagged — System Operator was blind to these)
     try:
         from aletheia.storage.repositories import _select_all
         opps = _select_all(
@@ -192,7 +192,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
 
         layer["opportunities"] = [
             {
-                # R0 fix: carry the opportunity id so the PI Agent's pick can be
+                # R0 fix: carry the opportunity id so the System Operator's pick can be
                 # matched back to its source opportunity and the proposal records
                 # a real opportunity_id (not None). Without this the whole
                 # attribution chain is severed (LEARNING_LOOP_AUDIT_2026-06-26 §R0).
@@ -249,7 +249,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
             # kill_switch_active lives on RuntimeConfig, not RiskConfig. The old
             # cfg.risk.kill_switch_active raised AttributeError, silently caught
             # below → the entire risk block was {} and the prompt showed
-            # "max_daily_loss=?%, max_positions=?", blinding the PI Agent to its
+            # "max_daily_loss=?%, max_positions=?", blinding the System Operator to its
             # own risk limits (2026-06-23 profit-loop audit, freeze exception).
             "kill_switch": cfg.runtime.kill_switch_active,
             "max_daily_loss_pct": cfg.risk.max_daily_loss_pct,
@@ -258,11 +258,11 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     except Exception:
         layer["risk"] = {}
 
-    # Data health — lets PI Agent reason about its own environment quality
+    # Data health — lets System Operator reason about its own environment quality
     layer["data_health"] = _get_data_health_summary()
 
     # Futures: leverage ceilings + account leverage ratio + margin headroom so the
-    # PI Agent chooses spot/perp and a leverage level against real limits.
+    # System Operator chooses spot/perp and a leverage level against real limits.
     try:
         from aletheia.config.loader import load_config
         layer["futures"] = _build_futures_context(layer, load_config())
@@ -273,7 +273,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
 
 
 def _build_futures_context(layer: dict[str, Any], cfg) -> dict[str, Any]:
-    """Leverage limits + account leverage ratio + margin headroom for the PI Agent.
+    """Leverage limits + account leverage ratio + margin headroom for the System Operator.
 
     Best-effort: any failure yields a partial/empty dict so the decision path never
     breaks on missing futures telemetry. Symbols come from the already-built feature +
@@ -375,7 +375,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
         # the 3 contractSize-inflated positions force-closed 2026-06-23). These
         # are migration debt, NOT strategy performance; counting them poisoned the
         # 7d stats (total_pnl -13.46 vs real +9.80, worst -23.13 vs real -6.95),
-        # making the PI Agent see a phantom crisis and skip every signal.
+        # making the System Operator see a phantom crisis and skip every signal.
         _NON_STRATEGY_CLOSE_REASONS = {"units_bug_cleanup", "reconciled_gone"}
         recent = [
             p for p in closed
@@ -429,11 +429,11 @@ def _build_layer2_short_term() -> dict[str, Any]:
         from aletheia.storage.repositories import list_strategies
         strategies = list_strategies(limit=20)
         # strategy_records column is `state`, not `status` — the old s.get("status")
-        # always returned None so the filter matched nothing and the PI Agent saw
+        # always returned None so the filter matched nothing and the System Operator saw
         # "(none active)" while 4 strategies were paper_running (2026-06-23 audit).
         active = [s for s in strategies if s.get("state") in ("paper_running", "active")]
         # S-Bug-C (LEARNING_LOOP_AUDIT): strategy_records has NO win_rate/total_pnl/
-        # trade_count columns, so the PI Agent saw None/'?' for every strategy. Real
+        # trade_count columns, so the System Operator saw None/'?' for every strategy. Real
         # KPIs come from build_strategy_kpis() (computed live from fills + positions).
         from aletheia.analytics.trade_stats import build_strategy_kpis
         kpis = build_strategy_kpis()  # {strategy_id: {trade_count, win_rate, total_pnl}}
@@ -503,7 +503,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
     except Exception:
         layer["ranker_candidates"] = []
 
-    # Phase 4b: Pending signals awaiting PI Agent evaluation
+    # Phase 4b: Pending signals awaiting System Operator evaluation
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
@@ -624,7 +624,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     except Exception:
         layer["guard_candidates"] = []
 
-    # Serenity research opportunities (most recent active, for PI Agent consumption)
+    # Serenity research opportunities (most recent active, for System Operator consumption)
     try:
         from aletheia.storage.repositories import (
             list_serenity_evidence,
@@ -722,7 +722,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
 
 
 def _get_data_health_summary() -> dict[str, Any]:
-    """Build a concise data-health dict for PI Agent context injection."""
+    """Build a concise data-health dict for System Operator context injection."""
     try:
         from aletheia.storage.repositories import get_active_universe_members
         from aletheia.storage.sqlite import get_db

@@ -573,7 +573,7 @@ def _probe_profit_loop(report: Report) -> None:
     """Minimum profit loop liveness — the core revenue closed loop.
 
     The loop is: opportunities -> (paper_trader ranks) -> signal_pending pi_decisions
-    -> PI Agent LLM decides -> trade_proposals -> risk -> orders -> positions.
+    -> System Operator LLM decides -> trade_proposals -> risk -> orders -> positions.
 
     A silent stall here is the most dangerous failure class: the observe stage
     keeps producing opportunities (so loop.newest_opportunity stays green) while
@@ -582,7 +582,7 @@ def _probe_profit_loop(report: Report) -> None:
     age of the newest opportunity against the age of the newest proposal, and by
     inspecting the recent PI-decision action mix for an all-skip pattern.
 
-    Root precedent: 2026-06-23 the PI Agent saw a phantom $167 balance (wrong
+    Root precedent: 2026-06-23 the System Operator saw a phantom $167 balance (wrong
     broker cache) and skipped every signal for 20h. This probe exists so that
     class of stall surfaces in `aletheia doctor` instead of reaching the user.
     """
@@ -642,7 +642,7 @@ def _probe_profit_loop(report: Report) -> None:
             trades = mix.get("trade", 0) + mix.get("scale_in", 0) + mix.get("flip", 0)
             skip_count = skips
             if skips > 0:
-                # Check if PI Agent is deliberately self-protecting (distress pattern).
+                # Check if System Operator is deliberately self-protecting (distress pattern).
                 # Don't require trades==0: stale trades (>PROPOSAL_STALL_MIN ago) count as
                 # pipeline stalled even if they appear in the 12h window.
                 reason_rows = db.execute(
@@ -663,7 +663,7 @@ def _probe_profit_loop(report: Report) -> None:
                             self_protecting = True
                             break
                 if not self_protecting:
-                    attribution = (f" — PI Agent returned skip×{skips}/trade×{trades} in 12h "
+                    attribution = (f" — System Operator returned skip×{skips}/trade×{trades} in 12h "
                                    f"(check trading_context balance + regime inputs)")
         except Exception:
             pass
@@ -671,17 +671,17 @@ def _probe_profit_loop(report: Report) -> None:
         if self_protecting:
             bypass_note = " (bypass_distress_gate active — deliberate skip)" if cfg.agent.bypass_distress_gate else ""
             report.add("loop.profit", "info",
-                       f"PI Agent self-protecting{bypass_note}: opportunities fresh ({_fmt_age(opp_age)}), "
+                       f"System Operator self-protecting{bypass_note}: opportunities fresh ({_fmt_age(opp_age)}), "
                        f"skip×{skip_count}/trade×0 in 12h (distress pattern); "
                        f"newest proposal {prop_desc}",
                        "deliberate protective behavior — not a pipeline failure; "
-                       "PI Agent sees adverse trading_context (low WR / recent SL streak)")
+                       "System Operator sees adverse trading_context (low WR / recent SL streak)")
         else:
             report.add("loop.profit", "warn",
                        f"PROFIT LOOP STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
                        f"newest proposal {prop_desc}{attribution}",
                        "opportunities flow but produce no proposals — inspect "
-                       "paper_trader_ranker scoring + PI Agent decision inputs "
+                       "paper_trader_ranker scoring + System Operator decision inputs "
                        "(see docs/issues/MINIMUM_PROFIT_LOOP_AUDIT.md)")
     elif prop_age is not None and prop_age < PROPOSAL_STALL_MIN:
         report.add("loop.profit", "ok",

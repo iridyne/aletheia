@@ -1,4 +1,4 @@
-"""Conviction Calibration — measures whether PI Agent conviction scores are predictive.
+"""Conviction Calibration — measures whether System Operator conviction scores are predictive.
 
 Formula: ECE (Expected Calibration Error) = Σ (n_bucket/total) × |actual_wr - expected_wr|
 No LLM calls. Runs every 6h via scheduler; also available on-demand from API.
@@ -154,7 +154,7 @@ def get_latest_calibration_report() -> dict | None:
 
 
 def render_calibration_for_pi(report: dict) -> str:
-    """Render compact text for PI Agent Layer 2 prompt injection."""
+    """Render compact text for System Operator Layer 2 prompt injection."""
     ece = report.get("ece")
     grade = report.get("ece_grade", "?")
     total = report.get("total_executed", 0)

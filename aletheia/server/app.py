@@ -344,7 +344,7 @@ async def lifespan(app: FastAPI):
         from aletheia.agent_runtime.connectivity import startup_exchange_gate
         exchange_gate_task = asyncio.create_task(startup_exchange_gate(cfg))
 
-    # PI Agent event-driven daemon — wakes immediately on signal arrival
+    # System Operator event-driven daemon — wakes immediately on signal arrival
     pi_daemon_task = None
     if background_services_enabled and cfg.pi_daemon.enabled:
         try:

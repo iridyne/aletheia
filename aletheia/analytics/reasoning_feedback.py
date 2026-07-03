@@ -1,7 +1,7 @@
-"""Reasoning Quality Feedback — tracks which PI Agent reasoning patterns lead to
+"""Reasoning Quality Feedback — tracks which System Operator reasoning patterns lead to
 approved/rejected proposals and whether approved ones actually win.
 
-No LLM calls — pure SQL aggregation. Results injected into PI Agent Layer 2 prompt
+No LLM calls — pure SQL aggregation. Results injected into System Operator Layer 2 prompt
 so the agent can self-correct on next decision cycle.
 """
 from __future__ import annotations
@@ -225,7 +225,7 @@ def get_latest_reasoning_feedback() -> dict | None:
 
 
 def render_feedback_for_pi(fb: dict) -> str:
-    """Render compact text block for PI Agent Layer 2 prompt injection."""
+    """Render compact text block for System Operator Layer 2 prompt injection."""
     n_prop = fb.get("sample_proposals", 0)
     n_exec = fb.get("sample_executed", 0)
     lines = [f"\n## Reasoning Quality Feedback ({fb.get('window_days', 30)}d, {n_prop} proposals → {n_exec} executed)"]

@@ -130,7 +130,7 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str, mark
 # --- PI Decisions ---
 
 def insert_pi_decision(decision) -> None:
-    """Persist a PI Agent trading decision to the database."""
+    """Persist a System Operator trading decision to the database."""
     _insert("pi_decisions", decision.model_dump() if hasattr(decision, "model_dump") else decision)
 
 
@@ -1128,7 +1128,7 @@ def prune_shadow_trades(days: int = 90) -> int:
 
 # Transient PI-decision actions: pre-decision signals + non-trade outcomes that
 # carry no causal-chain reference (proposal_id is NULL). Decision-bearing actions
-# (trade / close / recommend_promote) are KEPT forever — they are the PI Agent's
+# (trade / close / recommend_promote) are KEPT forever — they are the System Operator's
 # audit trail. signal_pending in particular accumulated to 1600+ rows (PT-1 bug)
 # and, when duplicated, made the PI read its own pending queue as "data corrupted"
 # and skip every decision. Pruning the transient rows keeps that queue clean.
@@ -1581,7 +1581,7 @@ def calibration_stats() -> list[dict]:
 def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[dict]:
     """Per-(scanner_family, direction) forward-outcome edge from settled outcomes.
 
-    Thesis evidence for the PI Agent (Position B, P1a 2026-07-02): unlike
+    Thesis evidence for the System Operator (Position B, P1a 2026-07-02): unlike
     calibration_stats() which folds direction into the win metric and groups only
     by (family, horizon), this groups by (scanner_family, direction) so the PI can
     see "momentum:long" and "momentum:short" as SEPARATE falsifiable theses at

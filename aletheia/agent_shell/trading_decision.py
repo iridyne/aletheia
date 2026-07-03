@@ -1,6 +1,6 @@
-"""PI Agent trading decision engine.
+"""System Operator trading decision engine.
 
-Provides evaluate_trading_opportunity() — the PI agent's ability to act as
+Provides evaluate_trading_opportunity() — the System Operator's ability to act as
 Trading Decision Authority. Given a rich context snapshot, it uses structured
 LLM output to decide whether to trade, then optionally runs a Bull/Bear debate
 when conviction is uncertain, and finally computes a conviction-based position size.
@@ -11,7 +11,7 @@ This is intentionally a THIN layer over existing infrastructure:
   - Sizing respects existing notional caps from config/risk engine
   - No new DB tables; decisions are recorded as agent_shell audit events
 
-Safety: PI agent can only submit paper proposals (PaperAuto permission gate).
+Safety: System Operator can only submit paper proposals (PaperAuto permission gate).
 Live trading is never reachable from this path.
 """
 from __future__ import annotations
@@ -84,7 +84,7 @@ class TradingDecision:
     # Stamped by _attach_opportunity_context (market_observer takes precedence).
     signal_source: str = "market_observer"
     # S4 / P2 (2026-06-28, AI Berkshire forced-verdict): explicit counter-argument.
-    # PI Agent must fill bear_case even when recommending a trade — forces acknowledgment
+    # System Operator must fill bear_case even when recommending a trade — forces acknowledgment
     # of what could go wrong. Empty string = not provided (legacy / pre-S4 decisions).
     bear_case: str = ""
     # P1 (2026-06-28, AI Berkshire belief decomposition): the critical assumptions
@@ -151,7 +151,7 @@ _BEAR_SCHEMA = {
 # ── main entry point ──────────────────────────────────────────────────────────
 
 async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision:
-    """PI Agent trading decision loop.
+    """System Operator trading decision loop.
 
     Steps:
     1. Assess opportunities using structured LLM with full context
@@ -757,7 +757,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
     # A10 (LEARNING_LOOP_AUDIT / PIPELINE_GAPS D1): these three analytics signals
     # were COMPUTED in layer2 (trading_context._build_layer2_short_term) but never
     # rendered into the prompt — so calibration, the trading memo, and reasoning
-    # feedback were silently dropped before reaching the PI Agent. They are real,
+    # feedback were silently dropped before reaching the System Operator. They are real,
     # data-derived signals; surface them.
     if not _bypass:
         memo = layer2.get("trading_memo")
@@ -956,7 +956,7 @@ def _parse_decision(raw: dict) -> TradingDecision:
 def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     """Backfill opportunity_id + signal_source from the source opportunity (R0 + Phase 2).
 
-    The PI Agent freely picks a symbol+direction from the whole context; this
+    The System Operator freely picks a symbol+direction from the whole context; this
     matches that pick back to the opportunity it came from so the decision
     records a real opportunity_id (not the hard-coded None that severed the
     attribution chain). Two signal sources are matched, in priority order:

@@ -25,8 +25,8 @@ flowchart TB
 
     subgraph INJECT["反馈注入 (下一轮)"]
         direction LR
-        INJ1["PI Agent Layer 1:<br/>factor_feedback 评分影响"]
-        INJ2["PI Agent Layer 3:<br/>最近教训 + 上次回顾"]
+        INJ1["System Operator Layer 1:<br/>factor_feedback 评分影响"]
+        INJ2["System Operator Layer 3:<br/>最近教训 + 上次回顾"]
         INJ3["Ranker 评分:<br/>factor_status bonus/penalty"]
         INJ4["Strategy Designer:<br/>evidence_status 判定"]
     end
@@ -36,7 +36,7 @@ flowchart TB
     KNOWLEDGE --> INJ2
     STRATEGY_FB --> INJ4
 
-    INJ1 & INJ2 -.->|"5分钟后<br/>下一轮 PI Agent 决策"| NEXT["PI Agent<br/>更好的下一个决策"]
+    INJ1 & INJ2 -.->|"5分钟后<br/>下一轮 System Operator 决策"| NEXT["System Operator<br/>更好的下一个决策"]
 
     classDef outcome fill:#1a2e1a,stroke:#88ff88,stroke-width:2px,color:#88ff88
     classDef learn fill:#1a1a2e,stroke:#4a9eff,stroke-width:2px,color:#4a9eff

@@ -2,7 +2,7 @@
 flowchart TB
     POS["Position 已开仓<br/>ETH/USDT long @ 3800<br/>stop=3686 qty=0.5"]
 
-    subgraph AUTONOMOUS["自治安全层 (不经 PI Agent, 每分钟检查)"]
+    subgraph AUTONOMOUS["自治安全层 (不经 System Operator, 每分钟检查)"]
         direction TB
 
         subgraph TRAILING["追踪止损"]

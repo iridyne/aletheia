@@ -5,7 +5,7 @@
 > boundary 保持不变，但在文档、注释、会话交流中一律使用"System Operator"。
 > earendil-works/pi（外部 npm 包）与本文无关——详见 `DECISIONS.md §2026-07-01`。
 
-**Version:** 0.2 (2026-07-01: 重命名 PI Agent → System Operator)  
+**Version:** 0.2 (2026-07-01: 重命名 System Operator → System Operator)  
 **Purpose:** Define how Aletheia's System Operator layer works as the top-level system agent, so the product becomes a coherent self-managing Agentic Trading OS rather than a set of disconnected micro-agents and backend services.
 
 ---
@@ -247,7 +247,7 @@ OpenAlice treats the AI interaction layer as central, not secondary.
 
 Aletheia’s Command Center should do the same: it should not be a generic chat box. It should be the user’s primary interface for asking, commanding, diagnosing, and delegating.
 
-Practical UI consequence: **do not treat `Ctrl+K` as the PI agent itself**. A command palette is a good
+Practical UI consequence: **do not treat `Ctrl+K` as the System Operator itself**. A command palette is a good
 launcher, but the real Operator surface should be a dedicated Command Center workspace/page with persistent
 sessions, evidence, trace, and state.
 

@@ -1450,7 +1450,7 @@ async def promote_serenity_theme(theme_id: str):
          opportunity_id=<serenity_opportunities.id>
       3. Wake the PI daemon so the new signals are evaluated promptly
 
-    PI Agent remains the sole trade-decision maker — these rows are inputs, not orders.
+    System Operator remains the sole trade-decision maker — these rows are inputs, not orders.
     """
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)

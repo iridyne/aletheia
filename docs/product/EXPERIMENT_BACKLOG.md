@@ -51,24 +51,24 @@
 **诊断**: 如果 Round 1 确认只有 ETH short 有 edge,不需要改 AI 能力,只需要限制它的行动范围。
 
 **具体改动**:
-- 在 PI Agent 决策层加 allowlist:只允许在被验证有正期望的 symbol+direction 上开单
+- 在 System Operator 决策层加 allowlist:只允许在被验证有正期望的 symbol+direction 上开单
 - 其他方向只能 "watch",不能 "trade"
 - 预估工作量: 小
 
 **2026-06-23 实证强化(profit-loop 修复后实测)**:
-修复 8 个 context-injection bug 后,PI Agent 拿到准确数据,但连续 6+ 轮仍主动 skip。
+修复 8 个 context-injection bug 后,System Operator 拿到准确数据,但连续 6+ 轮仍主动 skip。
 关键观察:LLM 面对它**历史最赚钱的交易**仍拒绝开仓——
 - 当前最强信号 = ETH/USDT short(score 125.28),regime=bear 88.9%(支持做空),
   per_symbol 显示 **ETH short 43T 21W +19.66**(唯一稳定盈利方向)
 - 但 LLM skip,理由 ="整体 46% 胜率(23W/27L) + structural headwinds + signal conflict"
-- **机制发现:PI Agent 用组合层面的平庸表现(46% 总胜率)否决单个最优 edge(ETH short 正期望)**
+- **机制发现:System Operator 用组合层面的平庸表现(46% 总胜率)否决单个最优 edge(ETH short 正期望)**
 
 这把 P2 从"如果确认只有 ETH short 有 edge"升级为**已实测确认的行为缺陷**:
-当前 harness 下 PI Agent 不会单独押注分品种 edge,而是被组合表现拖住。
+当前 harness 下 System Operator 不会单独押注分品种 edge,而是被组合表现拖住。
 这直接对应协议 G2(最优子集 PF≥1.5 即可 Go,允许窄域 edge)——
 **系统有 edge(ETH short),但 AI 的决策机制看不到/不押注它**。
 
-P2 的 allowlist 是对症;更根本的修法是让 PI Agent 的 prompt 能识别"分品种 edge"
+P2 的 allowlist 是对症;更根本的修法是让 System Operator 的 prompt 能识别"分品种 edge"
 而非只看组合 aggregate。两者都是 Round 2 候选,P2 工作量更小、风险更低,优先。
 
 **2026-06-26 干净窗实证再强化(P2 当前最强候选)**:
@@ -418,10 +418,10 @@ Operator loop 自调节:
 **修复**: 字段改名为 `today_realized_pnl` 并在 prompt 中标注清楚
 **为什么现在不修**: 文件在 EXPERIMENT FREEZE 冻结区内
 
-### Round 2 候选: KL-3 — Layer 3 wisdom 类型不匹配(PI Agent 永远拿不到 lessons)
+### Round 2 候选: KL-3 — Layer 3 wisdom 类型不匹配(System Operator 永远拿不到 lessons)
 
 **文件**: `aletheia/agent_shell/trading_context.py:367`
-**问题**: `_build_layer3_wisdom` 过滤 `item_type in ('lesson','accepted_lesson')`，但无任何 producer 写这两种类型 → PI Agent 的 Layer 3 wisdom 永远是空列表
+**问题**: `_build_layer3_wisdom` 过滤 `item_type in ('lesson','accepted_lesson')`，但无任何 producer 写这两种类型 → System Operator 的 Layer 3 wisdom 永远是空列表
 **修复**: 把类型过滤扩展到实际有 producer 的类型(`post_trade_review`/`trade_case_study`)，补 E2E spec
 **为什么现在不修**: 冻结区(改变 AI 看到的历史经验 → 改决策)。SDD 审计 §16.3 确认
 
@@ -460,9 +460,9 @@ Operator loop 自调节:
 
 ---
 
-### P7 — News 信号注入 PI Agent Trading Context
+### P7 — News 信号注入 System Operator Trading Context
 
-**诊断**: RSS news 自动抓取 + LLM sentiment 分析已实现（`news_collector.py` + `news_analyzer.py`），Serenity 研究管道已注入新闻。但 PI Agent 的 `trading_context.py` Layer 1 尚未消费新闻信号——AI 做交易决策时看不到实时新闻上下文。
+**诊断**: RSS news 自动抓取 + LLM sentiment 分析已实现（`news_collector.py` + `news_analyzer.py`），Serenity 研究管道已注入新闻。但 System Operator 的 `trading_context.py` Layer 1 尚未消费新闻信号——AI 做交易决策时看不到实时新闻上下文。
 
 **具体改动**:
 - `trading_context.py` `_build_layer1_snapshot()` 新增 `layer["news_signals"]`
@@ -475,11 +475,11 @@ Operator loop 自调节:
 
 ---
 
-### P8 — Trading Session(全球流动性时段)注入 PI Agent Context
+### P8 — Trading Session(全球流动性时段)注入 System Operator Context
 
 **提出**: 2026-06-26(用户)。**状态**: 休眠件已建好 + 测试通过,等 Round 1 解冻一键接线。
 
-**诊断**: PI Agent 当前对"现在是几点、哪个时段"完全无感——同一组 RSI/funding/momentum
+**诊断**: System Operator 当前对"现在是几点、哪个时段"完全无感——同一组 RSI/funding/momentum
 数字,无论出现在亚盘凌晨(美欧休市、盘薄、易震荡假突破)还是 EU/US overlap(峰值流动性、
 突破最有延续性),AI 看到的输入完全一样,因此决策也一样。但加密 24/7 的流动性/波动率
 其实严格跟随 TradFi 时段钟摆(机构盘 + BTC↔美股相关性 + 美国宏观数据都集中在伦敦/纽约盘)。

@@ -986,11 +986,11 @@ def equity(
 def reflection(
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Show PI Agent's last trading decision (from reflection state)."""
+    """Show System Operator's last trading decision (from reflection state)."""
     from aletheia.agent_shell.reflection import get_last_reflection
     ref = get_last_reflection()
     if not ref:
-        typer.echo("(no reflection state — PI agent hasn't made a decision yet)")
+        typer.echo("(no reflection state — System Operator hasn't made a decision yet)")
         return
     if json_output:
         _output(ref if isinstance(ref, dict) else {"reflection": ref}, True)

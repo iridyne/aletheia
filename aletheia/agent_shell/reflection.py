@@ -1,4 +1,4 @@
-"""PI Agent Reflection Loop — records decisions and injects outcomes.
+"""System Operator Reflection Loop — records decisions and injects outcomes.
 
 Implements the "last decision reflection" pattern from arXiv:2510.08068
 (+31% improvement via verbal feedback). Zero extra LLM cost: just writes
@@ -22,7 +22,7 @@ _REFLECTION_FILE = Path("data/pi_reflection.json")
 
 
 def record_decision(decision_result: dict) -> None:
-    """Record the PI agent's latest decision for next-cycle reflection.
+    """Record the System Operator's latest decision for next-cycle reflection.
 
     Called after evaluate_trading_opportunity() returns.
     Persists to both JSON (reflection) and DB (pi_decisions for audit trail).

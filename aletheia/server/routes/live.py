@@ -48,7 +48,7 @@ async def live_unlock(req: LiveUnlockRequest):
     old_permission_mode = cfg.operator.permission_mode
     cfg.live.state = "live_limited"
     cfg.live.first_live_confirmation_done = True
-    # §4b: PI Agent gets full autonomy (Auto=4) when live is unlocked.
+    # §4b: System Operator gets full autonomy (Auto=4) when live is unlocked.
     # This is the only path that can elevate operator.permission_mode to Auto;
     # it must be symmetric with live_lock() which resets it to ReadOnly.
     cfg.operator.permission_mode = "Auto"

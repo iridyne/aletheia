@@ -448,7 +448,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
       <Section
         title="Serenity Research"
-        description="Long-horizon industrial-chain analyst lens. Promoting a theme enqueues its opportunities into the PI evaluation queue (PI remains sole trade-decision maker)."
+        description="Long-horizon industrial-chain analyst lens. Promoting a theme enqueues its opportunities into the System Operator evaluation queue (the System Operator remains sole trade-decision maker)."
       >
         <Row
           label="Auto-promote candidate themes"
@@ -457,15 +457,15 @@ function AgentModelsTab({ status, settings, qc }: any) {
           <Toggle
             checked={serenityAutoPromote}
             onChange={v => {
-              if (v && !confirm('Enable auto-promote? Themes that meet the threshold will be queued to PI without human review.')) return
+              if (v && !confirm('Enable auto-promote? Themes that meet the threshold will be queued to the System Operator without human review.')) return
               serenityMut.mutate({ auto_promote: v })
             }}
             disabled={serenityMut.isPending}
           />
         </Row>
         <Row
-          label="Min score for PI"
-          hint="Minimum aggregate research score (0-100) required before an opportunity is forwarded to PI. Default 72."
+          label="Min score for System Operator"
+          hint="Minimum aggregate research score (0-100) required before an opportunity is forwarded to the System Operator. Default 72."
         >
           <input
             type="number"
@@ -556,7 +556,7 @@ function AgentModelsTab({ status, settings, qc }: any) {
           <Toggle
             checked={piDaemonEnabled}
             onChange={v => {
-              if (!v && !confirm('Disable the PI daemon? The agent will revert to 15-minute polling intervals.')) return
+              if (!v && !confirm('Disable the System Operator daemon? The agent will revert to 15-minute polling intervals.')) return
               piDaemonMut.mutate({ enabled: v })
             }}
             disabled={piDaemonMut.isPending}
@@ -2128,7 +2128,7 @@ function TradingParamsCard({ settings, qc, onDirty }: any) {
         />
         <p className="hint mt-1">
           When ON, position_manager evaluates market signals and may force-close losing positions early,
-          tighten stops on rising risk, or exit when PI confidence drops below threshold.
+          tighten stops on rising risk, or exit when System Operator confidence drops below threshold.
         </p>
       </div>
       {maeEnabled && (
