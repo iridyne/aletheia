@@ -99,3 +99,33 @@ def test_scheduler_guard_allows_concurrent_job_bodies():
     release.set()
     t1.join(timeout=2)
     t2.join(timeout=2)
+
+
+def test_guard_records_swallowed_job_failure_and_resets_on_success(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.agent_runtime import connectivity
+
+    async def fail_check():
+        raise RuntimeError("probe down")
+
+    monkeypatch.setattr(scheduler, "load_config", lambda: _cfg())
+    monkeypatch.setattr(connectivity, "run_connectivity_check", fail_check)
+    scheduler._consecutive_failures.clear()
+
+    scheduler._run_job_guarded("connectivity_monitor", scheduler._run_connectivity_monitor)
+    assert scheduler._consecutive_failures["connectivity_monitor"] == 1
+
+    scheduler._run_job_guarded("connectivity_monitor", lambda: None)
+    assert scheduler._consecutive_failures["connectivity_monitor"] == 0
+
+
+def test_guard_records_unhandled_job_failure():
+    from aletheia.agent_runtime import scheduler
+
+    def fail_job():
+        raise RuntimeError("boom")
+
+    scheduler._consecutive_failures.clear()
+    scheduler._run_job_guarded("unguarded_job", fail_job)
+
+    assert scheduler._consecutive_failures["unguarded_job"] == 1
