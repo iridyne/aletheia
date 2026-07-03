@@ -160,3 +160,49 @@ def test_archive_synthetic_trade_case_studies_uses_shared_close_reason_list(tmp_
     summary = archive_synthetic_trade_case_studies()
     assert summary["matched"] == 2
     assert summary["archived"] == 2
+
+
+def test_downgrade_unindexable_high_confidence_items(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.maintenance import downgrade_unindexable_high_confidence_items
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+    from aletheia.storage.sqlite import get_db
+
+    empty = KnowledgeItem(
+        item_type="operator_assessment",
+        title="Operator assessment without persisted body",
+        confidence="high_confidence",
+        file_path=None,
+        content=None,
+    )
+    good = KnowledgeItem(
+        item_type="operator_assessment",
+        title="Operator assessment with body",
+        confidence="high_confidence",
+        file_path=None,
+        content="Operator assessment with sufficient persisted body for FTS rebuild.",
+    )
+    insert_knowledge_item(empty)
+    insert_knowledge_item(good)
+
+    dry = downgrade_unindexable_high_confidence_items(dry_run=True)
+    assert dry["matched"] == 1
+    assert dry["downgraded"] == 0
+    assert dry["by_type"] == {"operator_assessment": 1}
+
+    summary = downgrade_unindexable_high_confidence_items()
+    assert summary["matched"] == 1
+    assert summary["downgraded"] == 1
+    assert summary["remaining_high"] == 0
+    assert summary["reindexed"] >= 1
+
+    db = get_db()
+    empty_row = db.execute("SELECT confidence FROM knowledge_items WHERE id=?", (empty.id,)).fetchone()
+    good_row = db.execute("SELECT confidence FROM knowledge_items WHERE id=?", (good.id,)).fetchone()
+    assert empty_row["confidence"] == "medium_confidence"
+    assert good_row["confidence"] == "high_confidence"
+
+    again = downgrade_unindexable_high_confidence_items()
+    assert again["matched"] == 0
+    assert again["downgraded"] == 0

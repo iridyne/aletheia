@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 logger = logging.getLogger("aletheia.knowledge.maintenance")
 
@@ -144,4 +145,80 @@ def archive_synthetic_trade_case_studies(*, dry_run: bool = False) -> dict:
         "dry_run": False,
     }
     logger.info("archive_synthetic_trade_case_studies: %s", summary)
+    return summary
+
+
+def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dict:
+    """Downgrade active high-confidence knowledge rows that have no retrievable body.
+
+    A high-confidence knowledge item is expected to be reconstructable into FTS from
+    either its markdown file or the DB `content` column. Rows with neither are audit
+    stubs, not learnable material. This keeps the row intact but changes confidence
+    to medium_confidence so FTS coverage probes stop counting it as eligible.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.knowledge.retrieval import reindex_all
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, item_type, file_path, content FROM knowledge_items "
+        "WHERE status='active' AND confidence='high_confidence'"
+    ).fetchall()
+
+    matched_ids: list[str] = []
+    by_type: dict[str, int] = {}
+    for row in rows:
+        body = ""
+        file_path = row["file_path"]
+        if file_path:
+            try:
+                path = Path(file_path)
+                if path.exists():
+                    body = path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                body = ""
+        if body.strip() or str(row["content"] or "").strip():
+            continue
+        matched_ids.append(row["id"])
+        item_type = row["item_type"] or "unknown"
+        by_type[item_type] = by_type.get(item_type, 0) + 1
+
+    if dry_run or not matched_ids:
+        return {
+            "matched": len(matched_ids),
+            "downgraded": 0,
+            "remaining_high": len(matched_ids),
+            "by_type": by_type,
+            "reindexed": None,
+            "dry_run": dry_run,
+        }
+
+    placeholders = ", ".join("?" for _ in matched_ids)
+    was_in_tx = db.in_transaction
+    db.execute(
+        f"UPDATE knowledge_items SET confidence='medium_confidence', updated_at=? "
+        f"WHERE id IN ({placeholders})",
+        (datetime.now(timezone.utc).isoformat(), *matched_ids),
+    )
+    if not was_in_tx:
+        db.commit()
+
+    remaining_high = 0
+    for item_id in matched_ids:
+        row = db.execute(
+            "SELECT confidence FROM knowledge_items WHERE id = ?", (item_id,)
+        ).fetchone()
+        if row and row["confidence"] == "high_confidence":
+            remaining_high += 1
+
+    reindexed = reindex_all()
+    summary = {
+        "matched": len(matched_ids),
+        "downgraded": len(matched_ids) - remaining_high,
+        "remaining_high": remaining_high,
+        "by_type": by_type,
+        "reindexed": reindexed,
+        "dry_run": False,
+    }
+    logger.info("downgrade_unindexable_high_confidence_items: %s", summary)
     return summary

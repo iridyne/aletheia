@@ -52,3 +52,16 @@ def archive_synthetic_case_studies(
     run_migrations()
     summary = archive_synthetic_trade_case_studies(dry_run=dry_run)
     typer.echo(summary)
+
+
+@knowledge_app.command()
+def downgrade_unindexable_high_confidence(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Only count matching items."),
+):
+    """Downgrade high-confidence knowledge rows that cannot be rebuilt into FTS."""
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.knowledge.maintenance import downgrade_unindexable_high_confidence_items
+
+    run_migrations()
+    summary = downgrade_unindexable_high_confidence_items(dry_run=dry_run)
+    typer.echo(summary)
