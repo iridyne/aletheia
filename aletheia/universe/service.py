@@ -20,6 +20,34 @@ from aletheia.storage.models import (
 logger = logging.getLogger("aletheia.universe")
 
 
+def _dedupe_by_symbol_preferred_market(allocated: list[dict], cfg) -> list[dict]:
+    """Keep one market instrument per symbol, respecting configured market preference."""
+    preferred = getattr(cfg.exchange, "preferred_market_type", "auto")
+    spot_enabled = cfg.exchange.enabled_markets.get("spot", True)
+    perp_enabled = cfg.exchange.enabled_markets.get("usdt_futures", False)
+    preferred_market = "spot" if preferred == "spot" else "perp"
+
+    def market_rank(item: dict) -> int:
+        if spot_enabled and perp_enabled:
+            return 0 if item.get("market_type", "spot") == preferred_market else 1
+        return 0
+
+    seen_symbols: dict[str, dict] = {}
+    for item in allocated:
+        sym = item["symbol"]
+        current = seen_symbols.get(sym)
+        if current is None:
+            seen_symbols[sym] = item
+            continue
+
+        current_key = (market_rank(current), -current.get("total_score", 0))
+        item_key = (market_rank(item), -item.get("total_score", 0))
+        if item_key < current_key:
+            seen_symbols[sym] = item
+
+    return sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
+
+
 class UniverseService:
     """Main orchestrator for the dynamic universe pipeline."""
 
@@ -213,14 +241,12 @@ class UniverseService:
             repo.insert_universe_snapshot(snap)
             repo.expire_universe_snapshots(market_type, except_id=snap.id)
 
-            # Deduplicate by symbol — keep highest total_score per symbol
-            seen_symbols: dict[str, dict] = {}
-            for item in allocated:
-                sym = item["symbol"]
-                if sym not in seen_symbols or item["total_score"] > seen_symbols[sym]["total_score"]:
-                    seen_symbols[sym] = item
-            allocated = sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
+            # Deduplicate by symbol, but keep the configured market instrument.
+            # With spot+perp enabled, auto defaults to perp (OD-S01). The old
+            # "highest score wins" path let spot rows crowd out every perp row.
+            allocated = _dedupe_by_symbol_preferred_market(allocated, cfg)
 
+            regime_tag = current_regime.state if current_regime else None
             inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
                 ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
@@ -240,6 +266,7 @@ class UniverseService:
                     crowding_risk=item.get("crowding_risk"),
                     late_entry_penalty=item.get("late_entry_penalty"),
                     scanner_family=item.get("scanner_family"),
+                    regime_tag=regime_tag,
                     all_scores=json.dumps(item.get("all_scores", {})),
                     quote_volume_24h=item.get("quote_volume_24h"),
                     spread_bps=item.get("spread_bps"),
@@ -260,6 +287,7 @@ class UniverseService:
                     # to "spot" (signal_emitter:70), mislabeling perp/derivatives.
                     "market_type": item.get("market_type", "spot"),
                     "scanner_family": item.get("scanner_family"),
+                    "regime_tag": regime_tag,
                     # Direction MUST come from the same source the opportunity
                     # uses (signal_emitter: scanner_direction first). Re-inferring
                     # here dropped the scanner's own direction — momentum/event

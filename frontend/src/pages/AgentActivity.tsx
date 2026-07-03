@@ -214,7 +214,7 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
             </DrawerSection>
             <DrawerSection label="Links">
               <DrawerField label="Linked Strategy" value={selected.linked_strategy_id ? (
-                <a href="#" onClick={e => { e.preventDefault(); navigate('/strategies') }} className="mono">{selected.linked_strategy_id}</a>
+                <span className="mono">{selected.linked_strategy_id}</span>
               ) : null} />
               <DrawerField label="Created" value={fmtTimestamp(selected.created_at)} mono />
             </DrawerSection>

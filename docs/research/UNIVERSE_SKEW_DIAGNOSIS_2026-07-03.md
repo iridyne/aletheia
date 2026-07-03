@@ -47,11 +47,24 @@ vol 4.6% / short 1.4%。**偏斜在 member 层就已存在**——不是 emit �
   explore 把刚封顶的 momentum 又塞回来，悄悄抵消了配额平衡。
 - 这是 84% momentum（配额只有 30%）的直接机制。
 
-### RC3 — regime 检测 75% 出 None → regime 感知逻辑休眠
-- 最近 200 条 opportunities 的 regime_tag：150 条 None、50 条 sideways。
+### RC2b — member 去重忽略 preferred market → perp 通道被 spot 覆盖
+- 配置层 `preferred_market_type="auto"` 默认应偏向 perp（OD-S01 已锁定），但
+  `UniverseService.refresh` 在 allocate 之后按 `symbol` 去重时只保留 `total_score`
+  最高项，完全不看 `market_type`。
+- 真实库复核：最近 500 条 universe_members 全部是 `market_type="spot"`，perp=0；
+  这会让 futures/perp 观察与 derivatives family 的机会入口被 spot 行挤掉。
+- 修复：同 symbol 仍只保留 1 个 instrument，但先按配置保留 preferred market
+  (`auto→perp`, `spot→spot`)，同 preferred market 内再比分数。锁定 spec **OD-S02d**。
+
+### RC3 — regime 上下文在 member 层断裂 → regime 感知学习被压到 unknown
+- 最近 200 条 opportunities 的 regime_tag：150 条 None、50 条 sideways；最近 500 条
+  universe_members 的 regime_tag：500 条 None（100%）。
+- 复核 `market_regimes` 最近 50 条均有 state=sideways，说明当前 detector 有产出；断点在
+  `UniverseMember` 模型缺字段 + `UniverseService.refresh` 未写当前 regime，导致 member 层
+  训练/归因无法按 regime 分桶。
 - regime=None 时用**静态** family_quota（即 RC1 那份 40% 给死 family 的配额）；
   regime-aware 配额（bull/bear/sideways/volatile）和 `scanner_regime_scoring` 方向
-  加权基本没机会生效。
+  加权基本没机会稳定生效。历史 opportunity NULL 是否还有 detector 失败，需要修复后用新样本复测。
 - 另：winner-take-all（`run_all_scanners` 每 symbol 只 emit 最高分 family）+
   momentum 触发率最高（59%），本身就让 momentum 天然占多数。多发次级信号的路子被
   `service.py:216-222` 的「按 symbol 去重留最高分」堵死（且违反每 symbol 单
@@ -64,6 +77,11 @@ vol 4.6% / short 1.4%。**偏斜在 member 层就已存在**——不是 emit �
 - **RC1 缓解**（`config/schema.py` 静态 family_quota 默认重平衡）：momentum 0.35→0.30、
   derivatives 0.35→0.10、event 0.05 保留；volatility 0.20 / short_bias 0.10 给出显式
   份额（此前靠 0.3 默认上限）。sum=1.0。运行态 `data/config.yaml` 同步（不入 git）。
+- **RC3a 修复**（`models.py` + `service.py`）：`UniverseMember` 恢复 `regime_tag` 字段，
+  `UniverseService.refresh` 把当前 `market_regimes.state` 写入 member 与内存 member dict。
+  锁定 spec **UP-18**（model field + migration column + DB round-trip + service assignment）。
+- **RC2b 修复**（`service.py`）：member 去重从“最高分 spot 可覆盖 perp”改为“同 symbol
+  保留配置首选 market；auto 默认 perp”。锁定 spec **OD-S02d**。
 
 **量化预期**：合成池（81% momentum 输入、regime=None）下，选中集 momentum 占比从
 ~84% 降到配额上限附近（≈30–50%，视非 momentum 候选供给），mean_reversion / volatility /
@@ -73,7 +91,7 @@ short_bias 拿回被 momentum 抢走的名额。
 
 - **RC1 根治**：修 derivatives（funding/OI 喂数）+ event 数据源，让这两个 family 真正
   产出信号——属数据源工程，与 `data-source-audit-2026-06-28` 的免费填洞方案合并做。
-- **RC3 根治**：regime 分类器 75% 出 None 的问题——查 regime detector 为何常不分类；
-  修好后 regime-aware 配额 + 方向评分才会真正接管。
+- **RC3b 复测**：修复 member 传播后跑新 refresh，验证新 universe_members.regime_tag NULL 率
+  是否从 100% 降到 0%；若新 opportunities 仍大量 None，再查 detector/调度失败路径。
 - 二者都不做「强行塞多样性」，遵守 owner 定调的高维可推翻自进化、拒绝低维硬拦截
   （见记忆 `negfeedback-high-dimensional-evolve`）。

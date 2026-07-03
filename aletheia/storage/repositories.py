@@ -1552,8 +1552,9 @@ def calibration_stats() -> list[dict]:
     """Aggregate forward return stats grouped by scanner_family + horizon.
 
     A "win" is direction-aware: a long member wins when the forward return is
-    positive, a short member wins when it is negative. Legacy rows with NULL
-    direction are treated as long (positive = win) for back-compat.
+    positive, a short member wins when it is negative. Rows with NULL direction
+    are excluded because the system cannot honestly score an unknown direction
+    as either long or short.
 
     Rows with |forward_return_pct| > 100 are excluded — they indicate
     cross-symbol price contamination and skew avg_return into the billions.
@@ -1565,13 +1566,14 @@ def calibration_stats() -> list[dict]:
         "AVG(forward_return_pct) as avg_return, "
         "SUM(CASE "
         "  WHEN direction = 'short' AND forward_return_pct < 0 THEN 1 "
-        "  WHEN COALESCE(direction, 'long') != 'short' AND forward_return_pct > 0 THEN 1 "
+        "  WHEN direction = 'long' AND forward_return_pct > 0 THEN 1 "
         "  ELSE 0 END) as win_count, "
         "MIN(forward_return_pct) as min_return, "
         "MAX(forward_return_pct) as max_return "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
         "AND ABS(forward_return_pct) <= 100 "
+        "AND direction IN ('long', 'short') "
         "GROUP BY scanner_family, horizon "
         "ORDER BY scanner_family, horizon"
     ).fetchall()
@@ -1594,18 +1596,19 @@ def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[di
     db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
     rows = db.execute(
-        "SELECT scanner_family, COALESCE(direction, 'long') as direction, "
+        "SELECT scanner_family, direction, "
         "COUNT(*) as n, "
         "AVG(forward_return_pct) as avg_return, "
         "SUM(CASE "
         "  WHEN direction = 'short' AND forward_return_pct < 0 THEN 1 "
-        "  WHEN COALESCE(direction, 'long') != 'short' AND forward_return_pct > 0 THEN 1 "
+        "  WHEN direction = 'long' AND forward_return_pct > 0 THEN 1 "
         "  ELSE 0 END) as win_count "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' AND horizon = ? "
         "AND settled_at >= ? AND ABS(forward_return_pct) <= 100 "
         "AND scanner_family IS NOT NULL "
-        "GROUP BY scanner_family, COALESCE(direction, 'long') "
+        "AND direction IN ('long', 'short') "
+        "GROUP BY scanner_family, direction "
         "ORDER BY n DESC",
         (horizon, cutoff),
     ).fetchall()

@@ -79,6 +79,7 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.market_data.observed_equities = ["AAPL"]
     cfg.market_data.observed_xstocks = []  # no xStocks cross-validation in this test
+    cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
     # Stub yfinance fetch so no network needed.

@@ -513,7 +513,12 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
     return None
 
 
-def build_risk_summary(limit: int = 20, *, cfg=None) -> dict:
+def build_risk_summary(
+    limit: int = 20,
+    *,
+    cfg=None,
+    recent_artifacts: list[dict] | None = None,
+) -> dict:
     cfg = cfg or load_config()
     cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
     recent_rejected_decisions: list[dict] = []
@@ -539,7 +544,8 @@ def build_risk_summary(limit: int = 20, *, cfg=None) -> dict:
 
     recent_risk_boundary_proposals: list[dict] = []
     recent_proposed_boundary_keys: set[str] = set()
-    for artifact in list_artifacts(limit=500):
+    artifacts = recent_artifacts if recent_artifacts is not None else list_artifacts(limit=500)
+    for artifact in artifacts:
         if artifact.get("artifact_type") != "risk_boundary_change_proposal":
             continue
         created_at = _parse_utc_timestamp(artifact.get("created_at"))
@@ -724,7 +730,12 @@ def _command_center_requested_behavior(command_name: str, sample_response: str |
     )
 
 
-def build_command_center_behavior_summary(limit: int = 20, *, cfg=None) -> dict:
+def build_command_center_behavior_summary(
+    limit: int = 20,
+    *,
+    cfg=None,
+    recent_artifacts: list[dict] | None = None,
+) -> dict:
     cfg = cfg or load_config()
     cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
     command_session_ids = {
@@ -752,7 +763,8 @@ def build_command_center_behavior_summary(limit: int = 20, *, cfg=None) -> dict:
 
     recent_behavior_proposals: list[dict] = []
     proposed_commands: set[str] = set()
-    for artifact in list_artifacts(limit=500):
+    artifacts = recent_artifacts if recent_artifacts is not None else list_artifacts(limit=500)
+    for artifact in artifacts:
         if artifact.get("artifact_type") != "command_center_behavior_proposal":
             continue
         created_at = _parse_utc_timestamp(artifact.get("created_at"))
@@ -1214,7 +1226,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     ]
     raw_recent_strategy_evaluations = [
         artifact
-        for artifact in list_artifacts(limit=500)
+        for artifact in recent_artifacts
         if artifact.get("artifact_type") == "strategy_evaluation"
         and (_parse_utc_timestamp(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
         > datetime.now(timezone.utc) - timedelta(hours=24)
@@ -1441,7 +1453,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         )
 
     recent_prompt_change_proposals = []
-    for artifact in list_artifacts(limit=500):
+    for artifact in recent_artifacts:
         if artifact.get("artifact_type") != "prompt_change_proposal":
             continue
         created_at = _parse_utc_timestamp(artifact.get("created_at"))
@@ -1485,7 +1497,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         )
 
     recent_schedule_change_proposals = []
-    for artifact in list_artifacts(limit=500):
+    for artifact in recent_artifacts:
         if artifact.get("artifact_type") != "schedule_change_proposal":
             continue
         created_at = _parse_utc_timestamp(artifact.get("created_at"))
@@ -1625,7 +1637,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             }
         )
 
-    risk_summary = build_risk_summary(cfg=cfg)
+    risk_summary = build_risk_summary(cfg=cfg, recent_artifacts=recent_artifacts)
     if (
         not cfg.runtime.paused
         and risk_summary["recent_rejected_decisions"]
@@ -1725,7 +1737,10 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             }
         )
 
-    command_center_summary = build_command_center_behavior_summary(cfg=cfg)
+    command_center_summary = build_command_center_behavior_summary(
+        cfg=cfg,
+        recent_artifacts=recent_artifacts,
+    )
     due_command_center_behavior_changes = command_center_summary[
         "needs_command_center_behavior_proposals"
     ]
@@ -1798,4 +1813,3 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         ]
 
     return recommendations[:limit]
-    

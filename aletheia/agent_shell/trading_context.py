@@ -451,6 +451,24 @@ def _build_layer2_short_term() -> dict[str, Any]:
     except Exception:
         layer["strategies"] = []
 
+    # Trades & Positions analytics — the same closed-position analytics surfaced
+    # in the UI, compressed for System Operator consumption.
+    try:
+        from aletheia.analytics.trade_stats import build_trade_stats
+        trade_stats = build_trade_stats()
+        layer["trade_analytics"] = {
+            "totals": trade_stats.get("totals", {}),
+            "by_source": (trade_stats.get("by_source") or [])[:4],
+            "by_family": sorted(
+                trade_stats.get("by_family") or [],
+                key=lambda x: x.get("trade_count", 0),
+                reverse=True,
+            )[:6],
+            "hold_distribution": trade_stats.get("hold_distribution") or [],
+        }
+    except Exception:
+        layer["trade_analytics"] = None
+
     # Trading Memo — structured insights from historical performance analysis
     try:
         from aletheia.analytics.insight_synthesizer import get_latest_memo, render_memo_for_observer
@@ -754,12 +772,13 @@ def _get_data_health_summary() -> dict[str, Any]:
             """SELECT COUNT(*),
                       SUM(CASE
                         WHEN direction = 'short' AND forward_return_pct < 0 THEN 1
-                        WHEN COALESCE(direction, 'long') != 'short' AND forward_return_pct > 0 THEN 1
+                        WHEN direction = 'long' AND forward_return_pct > 0 THEN 1
                         ELSE 0
                       END)
                FROM universe_forward_outcomes
                WHERE status = 'settled' AND horizon = '24h'
-                 AND settled_at >= ? AND ABS(forward_return_pct) <= 100""",
+                 AND settled_at >= ? AND ABS(forward_return_pct) <= 100
+                 AND direction IN ('long', 'short')""",
             (cutoff,),
         ).fetchone()
         settled, wins = row if row else (0, None)

@@ -430,11 +430,11 @@ def test_close_position_writes_audit_event_row(tmp_path, monkeypatch):
     SpecClaim(
         "PL-PM-08", "pipeline_position_manager", "§7 ruleset_exit_bypass_removed", "L2a",
         "RuleSet exit signals must NOT auto-close a position. Exit authority belongs "
-        "to SL/TP/max_hold/market-aware/PI only. Neither position_manager.evaluate_open_positions "
+        "to SL/TP/max_hold/market-aware/System Operator only. Neither position_manager.evaluate_open_positions "
         "nor paper_trader may wire a RuleSet exit into close_position — this locks the "
-        "PI-central exit invariant against re-introducing the deterministic-rule bypass "
+        "System Operator-centered exit invariant against re-introducing the deterministic-rule bypass "
         "(Position B, P0 defuse 2026-07-02). The bypass had zero live effect (0/208 closes) "
-        "but was a wired-but-dormant override of PI autonomy.",
+        "but was a wired-but-dormant override of System Operator autonomy.",
         status="implemented",
     ),
 )
@@ -456,8 +456,8 @@ def test_ruleset_exit_bypass_removed():
 
     # position_manager must not turn a ruleset exit into an exit decision tuple
     assert '"ruleset_exit_signal"' not in pm_src and "'ruleset_exit_signal'" not in pm_src, (
-        "position_manager still wires a ruleset_exit_signal decision — the PI-central "
-        "exit bypass was re-introduced. Exit authority must be SL/TP/max_hold/market/PI only."
+        "position_manager still wires a ruleset_exit_signal decision — the System Operator-centered "
+        "exit bypass was re-introduced. Exit authority must be SL/TP/max_hold/market/System Operator only."
     )
     assert "scan_active_rulesets" not in pm_src, (
         "position_manager still calls scan_active_rulesets in the exit loop — remove it "

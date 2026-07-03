@@ -77,7 +77,7 @@ def test_prediction_observer_routes_through_evaluator():
         "SE-S04", _CONTRACT, "§2 PI consumes the assessed tier", "L2a",
         "trading_context.py surfaces the independently assessed_tier (not just the "
         "generator's self-graded evidence_tier) into the Serenity opportunities the "
-        "PI agent consumes",
+        "System Operator consumes",
     ),
 )
 def test_pi_context_surfaces_assessed_tier():

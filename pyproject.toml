@@ -44,10 +44,30 @@ packages = ["aletheia"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+python_files = ["test_*.py", "spec_*.py"]
 filterwarnings = ["ignore::DeprecationWarning"]
-addopts = "-p no:cacheprovider"
 markers = [
     "e2e: end-to-end pipeline tests (deselect with -m 'not e2e')",
+    "tier_unit: fast unit/pure-function tests",
+    "tier_integration: tests that cross module, route, DB, scheduler, broker, or runtime boundaries",
+    "tier_e2e: end-to-end pipeline tests",
+    "tier_spec: executable specification tests under tests/specs",
+    "domain_operator: System Operator / agent shell / operator loop tests",
+    "domain_universe: universe scanner / allocator / signal tests",
+    "domain_serenity: Serenity Lens / research pipeline tests",
+    "domain_risk: Risk Engine / kill switch / risk route tests",
+    "domain_execution: order, broker, position, trade, and execution-path tests",
+    "domain_market_data: market data, exchange data, price feed, and collector tests",
+    "domain_learning: knowledge, learning, dreaming, lesson, and feedback tests",
+    "domain_frontend: frontend/static UI source checks",
+    "domain_runtime: gateway, scheduler, runtime continuity, lifecycle, and supervisor tests",
+    "domain_storage: storage, DB, migration, retention, and audit-log tests",
+    "domain_security: secrets, auth, permission, and safety guard tests",
+    "domain_config: config/settings tests",
+    "domain_misc: fallback domain marker when no narrower domain applies",
+    "slow: manually marked slow tests; daily loop can skip with -m 'not slow'",
+    "slow_optimizable: duration classifier tag for slow call-path tests worth inspecting",
+    "slow_structural: duration classifier tag for slow setup/teardown/framework overhead",
 ]
 
 [tool.aletheia]

@@ -270,7 +270,7 @@ Merging them conflates two orthogonal concerns.
 2026-06/07 的两份学习闭环审计(`docs/issues/LEARNING_LOOP_AUDIT_2026-06-26.md`、
 `LEARNING_LOOP_CHAIN_AUDIT.md`)描述的断口 A/B/D/E/F/G、归因根 R0、ranker 1890 行
 幻觉、lesson→policy 链缺失,**均已修复**(LP-S01…S11、UP-07、DM-A13 等 spec 已
-`implemented`)。当前学习闭环真正剩余的是以下三项 —— 均**需 owner 决策或属信任
+`implemented`)。当前学习闭环真正剩余的是以下两项 —— 均**需 owner 决策或属信任
 边界/运维**,故本次只登记方案、不擅自改行为:
 
 1. **`reduce_size` 风控动作仍是 advisory-only**(`risk/engine.py:437-441`,日志
@@ -283,12 +283,9 @@ Merging them conflates two orthogonal concerns.
    ②运维执行 `db_maintenance.py --vacuum` 回收空间(DELETE 不缩文件)。属减负+运维,
    非重写。
 
-3. **历史 `direction=None` 胜率污染**:`repositories.family_direction_edge` /
-   `calibration_stats` 用 `COALESCE(direction,'long')`,把方向未知的历史行**当成
-   long 计入胜率**(诚实性 bug)。US-4 已修 forward 新行,但 7 天窗内仍有旧 NULL 行
-   被误算。建议:检索 edge 时排除 `direction IS NULL` 行(方向未知不可解释)。
-   **未改动** —— 该函数被风控 check #14 消费(`risk/engine.py:684`,spec RISK-14),
-   改其语义会改变风控输入,须 owner 批准 + 同步 RISK-14 spec。
+已关闭(2026-07-03):**历史 `direction=None` 胜率污染**。`calibration_stats()`、
+`family_direction_edge()` 和 System Operator 的数据健康摘要已排除方向未知的 forward outcome,
+不再把 NULL 方向当成 long 计入胜率；对应测试覆盖 calibration 和 family-direction evidence。
 
 ### 8.4 Tripwire: render path stays structured (invariant)
 

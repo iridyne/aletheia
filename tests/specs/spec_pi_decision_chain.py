@@ -1,4 +1,4 @@
-"""Spec: PI Agent decision-chain fixes (Round 2 PI-agent audit, 2026-06-28).
+"""Spec: System Operator decision-chain fixes (Round 2 PI-agent audit, 2026-06-28).
 
 Locks the two PI decision-chain fixes made during the PI-agent SDD audit
 (see docs/issues/PI_AGENT_SDD_AUDIT_2026-06-28.md):

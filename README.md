@@ -70,7 +70,7 @@ origin is the canonical API + UI surface.
 
 ![System Overview](docs/diagrams/01_system_overview.png)
 
-### Trading Flow (PI Agent Sole Decision Maker)
+### Trading Flow (System Operator Sole Decision Maker)
 
 ![Trading Flow](docs/diagrams/trading_flow_pi_sole_decision_maker.png)
 

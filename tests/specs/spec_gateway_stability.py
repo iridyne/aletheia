@@ -106,7 +106,7 @@ def _patch_llm(monkeypatch_obj, responses):
         return responses[i]
 
     monkeypatch_obj.setattr(helpers, "complete_with_fallback", fake_complete)
-    monkeypatch_obj.setattr(helpers, "get_provider", lambda: object())
+    monkeypatch_obj.setattr(helpers, "get_provider", lambda provider_name=None: object())
     monkeypatch_obj.setattr(helpers, "_record_llm", lambda ok: None)
     return calls
 

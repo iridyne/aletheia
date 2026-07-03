@@ -108,7 +108,6 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
         stage="Strategy"
         state={strategyId ? 'present' : 'empty'}
         facts={<span className="mono">{strategyId}</span>}
-        onOpen={strategyId ? () => navigate('/strategies') : undefined}
       />
 
       {/* 3 — PROPOSAL */}

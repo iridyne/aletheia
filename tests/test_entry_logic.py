@@ -169,7 +169,7 @@ async def test_paper_trader_skips_low_confidence(tmp_path, monkeypatch):
 
 
 async def test_paper_trader_trades_directional_and_sets_stop(tmp_path, monkeypatch):
-    """Phase 4a: Paper trader Path B now writes signal_pending entries for PI Agent."""
+    """Phase 4a: Paper trader Path B now writes signal_pending entries for System Operator."""
     setup_env(tmp_path, monkeypatch)
     _set_paperauto(monkeypatch)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
@@ -246,7 +246,7 @@ async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
     assert len(opps) == 1
     assert opps[0]["symbol"] == "BTC/USDT"
 
-    # Step 2: paper_trader writes signal_pending for PI Agent (Phase 4a)
+    # Step 2: paper_trader writes signal_pending for System Operator (Phase 4a)
     await run_agent("paper_trader", trigger_type="manual")
     from aletheia.storage.repositories import list_pi_decisions
     decisions = list_pi_decisions(limit=5)
