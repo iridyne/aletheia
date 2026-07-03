@@ -65,3 +65,16 @@ def downgrade_unindexable_high_confidence(
     run_migrations()
     summary = downgrade_unindexable_high_confidence_items(dry_run=dry_run)
     typer.echo(summary)
+
+
+@knowledge_app.command()
+def downgrade_unattributed_case_studies(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Only count matching items."),
+):
+    """Downgrade high-confidence trade cases with no real scanner_family."""
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.knowledge.maintenance import downgrade_unattributed_trade_case_studies
+
+    run_migrations()
+    summary = downgrade_unattributed_trade_case_studies(dry_run=dry_run)
+    typer.echo(summary)

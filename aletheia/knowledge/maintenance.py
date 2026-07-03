@@ -222,3 +222,78 @@ def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dic
     }
     logger.info("downgrade_unindexable_high_confidence_items: %s", summary)
     return summary
+
+
+def downgrade_unattributed_trade_case_studies(*, dry_run: bool = False) -> dict:
+    """Downgrade high-confidence trade cases that lack scanner_family attribution.
+
+    A high-confidence trade_case_study is used as structured learning evidence by
+    retrieval and opportunity ranking. If the case has no real scanner_family in
+    frontmatter, the historical causal chain is incomplete; guessing from symbol,
+    direction, or prose would fabricate attribution. Keep the row active/auditable,
+    but move it out of the high-confidence learning pool.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.knowledge.frontmatter import parse_frontmatter, parse_frontmatter_text
+    from aletheia.knowledge.retrieval import reindex_all
+
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, file_path, content FROM knowledge_items "
+        "WHERE item_type='trade_case_study' "
+        "AND status='active' AND confidence='high_confidence'"
+    ).fetchall()
+
+    matched_ids: list[str] = []
+    for row in rows:
+        meta = {}
+        file_path = row["file_path"]
+        if file_path:
+            try:
+                path = Path(file_path)
+                if path.exists():
+                    meta, _ = parse_frontmatter(path)
+            except Exception:
+                meta = {}
+        if not meta and str(row["content"] or "").strip():
+            meta, _ = parse_frontmatter_text(str(row["content"]))
+        if not str(meta.get("scanner_family") or "").strip():
+            matched_ids.append(row["id"])
+
+    if dry_run or not matched_ids:
+        return {
+            "matched": len(matched_ids),
+            "downgraded": 0,
+            "remaining_high": len(matched_ids),
+            "reindexed": None,
+            "dry_run": dry_run,
+        }
+
+    placeholders = ", ".join("?" for _ in matched_ids)
+    was_in_tx = db.in_transaction
+    db.execute(
+        f"UPDATE knowledge_items SET confidence='medium_confidence', updated_at=? "
+        f"WHERE id IN ({placeholders})",
+        (datetime.now(timezone.utc).isoformat(), *matched_ids),
+    )
+    if not was_in_tx:
+        db.commit()
+
+    remaining_high = db.execute(
+        "SELECT COUNT(*) FROM knowledge_items "
+        "WHERE item_type='trade_case_study' "
+        "AND status='active' AND confidence='high_confidence' "
+        f"AND id IN ({placeholders})",
+        tuple(matched_ids),
+    ).fetchone()[0]
+    reindexed = reindex_all()
+
+    summary = {
+        "matched": len(matched_ids),
+        "downgraded": len(matched_ids) - remaining_high,
+        "remaining_high": remaining_high,
+        "reindexed": reindexed,
+        "dry_run": False,
+    }
+    logger.info("downgrade_unattributed_trade_case_studies: %s", summary)
+    return summary

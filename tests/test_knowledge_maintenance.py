@@ -206,3 +206,70 @@ def test_downgrade_unindexable_high_confidence_items(tmp_path, monkeypatch):
     again = downgrade_unindexable_high_confidence_items()
     assert again["matched"] == 0
     assert again["downgraded"] == 0
+
+
+def test_downgrade_unattributed_trade_case_studies(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.manager import create_trade_case_study
+    from aletheia.knowledge.maintenance import downgrade_unattributed_trade_case_studies
+    from aletheia.knowledge.retrieval import retrieve_lessons
+    from aletheia.storage.sqlite import get_db
+
+    missing = create_trade_case_study(
+        title="Case: DOGE/USDT short (take_profit)",
+        content=(
+            "DOGE/USDT short took profit, but the historical proposal had no "
+            "opportunity_id and no scanner_family. This should not remain a high "
+            "confidence structured case."
+        ),
+        metadata={
+            "type": "Trade Case Study",
+            "symbol": "DOGE/USDT",
+            "direction": "short",
+            "outcome": "win",
+            "factor_key": "unknown:DOGE/USDT:short:low:unknown",
+        },
+        confidence="high_confidence",
+    )
+    attributed = create_trade_case_study(
+        title="Case: BTC/USDT long (stop_loss)",
+        content=(
+            "BTC/USDT long stopped out after a momentum scanner entry failed. "
+            "The scanner_family is real structured metadata and must stay high confidence."
+        ),
+        metadata={
+            "type": "Trade Case Study",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "outcome": "loss",
+            "scanner_family": "momentum",
+            "factor_key": "momentum:BTC/USDT:long:high:clean",
+        },
+        confidence="high_confidence",
+    )
+
+    before = retrieve_lessons("DOGE historical proposal no scanner_family", item_types=["trade_case_study"])
+    assert any(item.item_id == missing.id for item in before)
+    dry = downgrade_unattributed_trade_case_studies(dry_run=True)
+    assert dry["matched"] == 1
+    assert dry["downgraded"] == 0
+
+    summary = downgrade_unattributed_trade_case_studies()
+    assert summary["matched"] == 1
+    assert summary["downgraded"] == 1
+    assert summary["remaining_high"] == 0
+    assert summary["reindexed"] >= 1
+
+    db = get_db()
+    missing_row = db.execute("SELECT confidence, status FROM knowledge_items WHERE id=?", (missing.id,)).fetchone()
+    attributed_row = db.execute("SELECT confidence, status FROM knowledge_items WHERE id=?", (attributed.id,)).fetchone()
+    assert missing_row["confidence"] == "medium_confidence"
+    assert missing_row["status"] == "active"
+    assert attributed_row["confidence"] == "high_confidence"
+    assert attributed_row["status"] == "active"
+    after = retrieve_lessons("DOGE historical proposal no scanner_family", item_types=["trade_case_study"])
+    assert all(item.item_id != missing.id for item in after)
+
+    again = downgrade_unattributed_trade_case_studies()
+    assert again["matched"] == 0
+    assert again["downgraded"] == 0
