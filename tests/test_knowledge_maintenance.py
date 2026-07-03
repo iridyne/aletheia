@@ -70,3 +70,73 @@ def test_reclassify_legacy_reviews_idempotent_and_dry_run(tmp_path, monkeypatch)
     # Second real run finds nothing left to do.
     again = reclassify_legacy_reviews()
     assert again["matched"] == 0 and again["reclassified"] == 0
+
+
+def test_archive_synthetic_trade_case_studies_archives_and_deindexes(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.manager import create_trade_case_study
+    from aletheia.knowledge.maintenance import archive_synthetic_trade_case_studies
+    from aletheia.knowledge.retrieval import retrieve_lessons
+    from aletheia.storage.sqlite import get_db
+
+    synthetic = create_trade_case_study(
+        title="Case: BTC/USDT long (reconciled_gone)",
+        content=(
+            "BTC/USDT long was closed by reconciled_gone during state reconciliation. "
+            "This synthetic close reason should not teach the learning loop a trade lesson."
+        ),
+        confidence="high_confidence",
+    )
+    real = create_trade_case_study(
+        title="Case: ETH/USDT long (stop_loss)",
+        content=(
+            "ETH/USDT long stopped out after momentum failed. This is a real closed trade "
+            "case study and should stay active for the learning loop."
+        ),
+        confidence="high_confidence",
+    )
+
+    assert retrieve_lessons("BTC reconciled_gone", item_types=["trade_case_study"])
+
+    summary = archive_synthetic_trade_case_studies()
+    assert summary["matched"] == 1
+    assert summary["archived"] == 1
+    assert summary["remaining_active"] == 0
+    assert summary["reindexed"] >= 1
+
+    db = get_db()
+    synthetic_row = db.execute(
+        "SELECT status FROM knowledge_items WHERE id = ?", (synthetic.id,)
+    ).fetchone()
+    real_row = db.execute("SELECT status FROM knowledge_items WHERE id = ?", (real.id,)).fetchone()
+    assert synthetic_row["status"] == "archived"
+    assert real_row["status"] == "active"
+    assert retrieve_lessons("BTC reconciled_gone", item_types=["trade_case_study"]) == []
+
+
+def test_archive_synthetic_trade_case_studies_dry_run_and_idempotent(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.knowledge.manager import create_trade_case_study
+    from aletheia.knowledge.maintenance import archive_synthetic_trade_case_studies
+
+    create_trade_case_study(
+        title="Case: SOL/USDT short (demo_validation_cleanup)",
+        content=(
+            "SOL/USDT short was closed by demo_validation_cleanup during validation cleanup. "
+            "This synthetic close reason must be archived rather than used as experience."
+        ),
+        confidence="medium_confidence",
+    )
+
+    dry = archive_synthetic_trade_case_studies(dry_run=True)
+    assert dry["dry_run"] is True
+    assert dry["matched"] == 1
+    assert dry["archived"] == 0
+
+    done = archive_synthetic_trade_case_studies()
+    assert done["matched"] == 1
+    assert done["archived"] == 1
+
+    again = archive_synthetic_trade_case_studies()
+    assert again["matched"] == 0
+    assert again["archived"] == 0

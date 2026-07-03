@@ -34,3 +34,21 @@ def search(query: str = typer.Argument(...), k: int = typer.Option(5, help="Max 
     for ls in lessons:
         typer.echo(f"[{ls.item_type} · {ls.confidence} · {ls.created_at[:10]}] (score={ls.score})")
         typer.echo(f"  {ls.title}: {ls.snippet}")
+
+
+@knowledge_app.command()
+def archive_synthetic_case_studies(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Only count matching items."),
+):
+    """Archive historical synthetic trade case studies and rebuild FTS.
+
+    This keeps the rows for audit history but removes them from active Learning
+    retrieval. It targets case studies with synthetic close reasons such as
+    reconciled_gone and demo_validation_cleanup.
+    """
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.knowledge.maintenance import archive_synthetic_trade_case_studies
+
+    run_migrations()
+    summary = archive_synthetic_trade_case_studies(dry_run=dry_run)
+    typer.echo(summary)

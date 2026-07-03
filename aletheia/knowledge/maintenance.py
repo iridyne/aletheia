@@ -24,12 +24,14 @@ Round 2's full-chain trade_case_study volume dilutes it.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger("aletheia.knowledge.maintenance")
 
 _LEGACY_TYPE = "post_trade_review"
 _FROM = "high_confidence"
 _TO = "medium_confidence"
+_SYNTHETIC_CASE_REASONS = ("reconciled_gone", "demo_validation_cleanup")
 
 
 def reclassify_legacy_reviews(*, dry_run: bool = False) -> dict:
@@ -76,4 +78,70 @@ def reclassify_legacy_reviews(*, dry_run: bool = False) -> dict:
     summary = {"matched": matched, "reclassified": matched - remaining_high,
                "remaining_high": remaining_high, "reindexed": reindexed, "dry_run": False}
     logger.info("reclassify_legacy_reviews: %s", summary)
+    return summary
+
+
+def archive_synthetic_trade_case_studies(*, dry_run: bool = False) -> dict:
+    """Archive historical synthetic trade case studies and rebuild FTS.
+
+    New case-study generation already skips synthetic close reasons. This maintenance
+    entry applies that rule retroactively to old rows that were created before the
+    filter existed. It never deletes knowledge; matching rows move from active to
+    archived so they disappear from active Learning reads and from the high-confidence
+    FTS retrieval pool after reindexing.
+    """
+    from aletheia.storage.sqlite import get_db
+    from aletheia.knowledge.retrieval import reindex_all
+
+    db = get_db()
+    like_clauses: list[str] = []
+    params: list[str] = []
+    for column in ("title", "content", "tags", "file_path"):
+        for reason in _SYNTHETIC_CASE_REASONS:
+            like_clauses.append(f"COALESCE({column}, '') LIKE ?")
+            params.append(f"%{reason}%")
+
+    predicate = " OR ".join(like_clauses)
+    matched = db.execute(
+        "SELECT COUNT(*) FROM knowledge_items "
+        "WHERE item_type='trade_case_study' AND status='active' "
+        f"AND ({predicate})",
+        tuple(params),
+    ).fetchone()[0]
+
+    if dry_run or matched == 0:
+        return {
+            "matched": matched,
+            "archived": 0,
+            "remaining_active": matched,
+            "reindexed": None,
+            "dry_run": dry_run,
+        }
+
+    was_in_tx = db.in_transaction
+    db.execute(
+        "UPDATE knowledge_items SET status='archived', updated_at=? "
+        "WHERE item_type='trade_case_study' AND status='active' "
+        f"AND ({predicate})",
+        (datetime.now(timezone.utc).isoformat(), *params),
+    )
+    if not was_in_tx:
+        db.commit()
+
+    remaining_active = db.execute(
+        "SELECT COUNT(*) FROM knowledge_items "
+        "WHERE item_type='trade_case_study' AND status='active' "
+        f"AND ({predicate})",
+        tuple(params),
+    ).fetchone()[0]
+    reindexed = reindex_all()
+
+    summary = {
+        "matched": matched,
+        "archived": matched - remaining_active,
+        "remaining_active": remaining_active,
+        "reindexed": reindexed,
+        "dry_run": False,
+    }
+    logger.info("archive_synthetic_trade_case_studies: %s", summary)
     return summary
