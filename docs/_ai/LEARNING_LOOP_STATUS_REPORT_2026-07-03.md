@@ -11,7 +11,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 5. System Operator、机会排序器、Risk Engine 会读取这些学习结果。
 6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Guard Candidates、Active Guards 和学习漏斗。
 
-但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 1 个关键点：SkillStore/时间衰减机制。
+Learning 现在可以描述为“可学习、可反馈、局部可自修复、具备长期技能候选沉淀”的系统。它仍不是完全自主交易进化系统，因为 draft skill 需要人工审核后才会启用，但 discussion 中要求的关键闭环已经落地：交易历史进入案例，案例进入 lesson，lesson 进入 policy 和 draft skill，旧 memo 会随时间衰减，矛盾会被提示复核。
 
 ## 当前量化状态
 
@@ -36,7 +36,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | `retrieve_lessons` 工具调用 | 2006 次 | agent 已经实际调用学习检索 |
 | `build_case_studies` 调用 | 566 次 | 交易案例构建器持续运行 |
 | `detect_guard_candidates` 调用 | 566 次 | guard 候选生成持续运行 |
-| Learning 相关测试 | 本轮新增/回归 20 passed | time-decay 仍是已知 xfail 缺口 |
+| Learning 相关测试 | 本轮存储链路 22 passed；相关 spec 29 passed, 3 skipped | time-decay xfail 已解除 |
 
 ## 已经实现的能力
 
@@ -77,7 +77,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 
 部分实现。Lesson Reviewer 已经能在证据变差时 demote accepted lessons，Knowledge Manager 禁止硬删除、支持 archive/deprecate，避免错误知识被直接抹掉。
 
-但更高阶的自修复仍未完全完成：知识之间已经有保守矛盾检测，历史污染案例已能维护清理；旧规则随时间衰减/失效的机制还没有真正完成。
+自修复能力已经覆盖三类路径：知识之间的保守矛盾检测、历史污染案例维护清理、旧 memo 影响力随时间半衰期下降。draft skill 仍需人工审核后启用，这是安全边界，不是自动交易授权。
 
 ## 本次发现并修复的问题
 
@@ -213,7 +213,7 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 | 后端回归测试 | 19 passed |
 | 前端 build | passed |
 
-## 仍需处理的问题
+## 关键问题处理结果
 
 ### 已修复：历史 case study 的 scanner_family 覆盖不足
 
@@ -281,9 +281,28 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 | promote 后 hard delete | 0 |
 | promote 审计事件 | 1 条 `TRADING_GUARD_PROMOTED` |
 
-### P2：SkillStore producer 和 time-decay 仍缺失
+### 已修复：SkillStore producer 和 time-decay
 
-当前 SkillStore 没有稳定 producer，time-decay overturn 仍是已知 xfail。这意味着系统已经能产生“规则”，但还没有形成长期“技能库”和自然衰减机制。
+旧问题：系统可以把 lesson 变成 policy，但 `ps_skills` 没有稳定生产者，旧 memo 也没有随时间自然衰减。这会让 Learning 停留在“规则”层，缺少长期技能候选沉淀和旧经验降权机制。
+
+修复：
+
+- `LessonReviewer` 在 lesson 被应用后，会调用 `SkillStore.create_from_lesson()` 生成 draft skill。
+- draft skill 只允许进入 `knowledge` / `prompt_context` / `ranking_advisory` 这类低风险层，不触碰 `risk` / `execution`。
+- skill 创建按 `lesson_id` 幂等，同一个 lesson 重跑不会重复生成多个技能。
+- draft skill 不会自动启用；后续仍需要人工审核，这是交易系统的安全边界。
+- `trading_memo` 增加 7 天半衰期权重，System Operator prompt 会显示 `Memo time weight`，并把 regime playbook 的胜率边缘按时间权重折算。
+
+量化结果：
+
+| 项目 | 结果 |
+| --- | ---: |
+| 新增 draft skill producer | 1 个 |
+| lesson -> draft skill 幂等测试 | 1 个 |
+| time-decay xfail | 1 -> 0 |
+| 新增/更新针对性测试 | 5 个 |
+| 自动启用 skill | 0 |
+| 触碰 risk/execution/live 交易路径 | 0 |
 
 ### 部分 high-confidence 知识缺少可重建正文
 
@@ -312,7 +331,9 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 ## 下一步建议
 
-1. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
+1. 为 draft skills 增加更完整的前端审核/启用工作台。目前生产链路已打通，但启用仍应保持人工确认。
+2. 观察 1-2 周真实 lesson -> draft skill 产量，避免过早扩大自动化范围。
+3. 后续可以把矛盾检测从保守规则扩展到更多语义类型，但仍不应自动删除或覆盖知识。
 
 ## 验证记录
 
@@ -326,6 +347,9 @@ uv run pytest tests/test_knowledge_maintenance.py::test_downgrade_unattributed_t
 uv run pytest tests/test_fts_coverage.py tests/test_learning_loop_integration.py tests/specs/spec_knowledge_fts.py -q
 uv run pytest tests/test_knowledge.py::test_contradiction_detection_empty_input tests/test_knowledge.py::test_contradiction_detection_flags_support_vs_block tests/test_knowledge.py::test_contradiction_detection_ignores_inactive_items tests/test_server.py::test_learning_funnel_reports_contradictions -q
 uv run pytest tests/test_knowledge.py tests/test_server.py::test_learning_funnel_reports_contradictions -q
+uv run pytest tests/test_learning_stores.py::TestSkillStoreCreate::test_create_from_lesson_is_draft_and_idempotent tests/specs/spec_learning_pipeline.py::test_lesson_reviewer_promotes_and_applies tests/specs/spec_learning_pipeline.py::test_time_decay_overturn_path_exists tests/specs/spec_learning_pipeline.py::test_skill_store_producer_is_draft_only tests/specs/spec_insight_feedback_loop.py::test_memo_half_life_weight_rendered_into_prompt -q
+uv run pytest tests/test_learning_stores.py tests/specs/spec_learning_pipeline.py::test_lesson_reviewer_promotes_and_applies tests/specs/spec_learning_pipeline.py::test_time_decay_overturn_path_exists tests/specs/spec_learning_pipeline.py::test_skill_store_producer_is_draft_only tests/specs/spec_insight_feedback_loop.py::test_memo_half_life_weight_rendered_into_prompt -q
+uv run pytest tests/specs/spec_learning_pipeline.py tests/specs/spec_insight_feedback_loop.py -q
 uv run aletheia knowledge downgrade-unattributed-case-studies --dry-run
 uv run aletheia knowledge downgrade-unattributed-case-studies
 cd frontend; npm run build
@@ -334,9 +358,12 @@ cd frontend; npm run build
 结果：
 
 ```text
-历史核心 Learning 套件：79 passed, 3 skipped, 1 xfailed（xfail 为 time-decay 缺口）
+历史核心 Learning 套件：79 passed, 3 skipped, 1 xfailed（旧记录；time-decay 缺口已在本轮解除）
 本轮 scanner 归因维护：20 passed
 本轮矛盾检测：4 targeted passed；knowledge suite 17 passed
+本轮 SkillStore/time-decay targeted：5 passed
+本轮 Learning 存储链路：22 passed
+本轮 Learning/Insight spec：29 passed, 3 skipped
 frontend build：passed
 ```
 

@@ -241,6 +241,7 @@ async def run_lesson_reviewer(
     if newly_accepted:
         try:
             policy_store = PolicyStore()
+            skill_store = None
             pv = policy_store.create_version(
                 policy_type="lesson_policy",
                 policy={
@@ -252,6 +253,22 @@ async def run_lesson_reviewer(
             )
             for lid in newly_accepted:
                 store.mark_applied(lid, pv.policy_version_id)
+                try:
+                    from aletheia.learning.skills import SkillStore
+
+                    if skill_store is None:
+                        skill_store = SkillStore()
+                    lesson = store.get(lid)
+                    if lesson:
+                        skill = skill_store.create_from_lesson(
+                            lesson,
+                            policy_version_id=pv.policy_version_id,
+                        )
+                        if skill:
+                            outputs.append(f"draft_skill:{skill.skill_id}")
+                            log_tool(run_id, "create_draft_skill", "observe", True, output=skill.skill_id)
+                except Exception as e:
+                    errors.append(f"skill_create_failed:{lid}:{e}")
             outputs.append(f"policy_version:{pv.policy_version_id}:{len(newly_accepted)}_applied")
             log_tool(run_id, "apply_lessons_to_policy", "observe", True,
                      output=f"{pv.policy_version_id}:{len(newly_accepted)}")

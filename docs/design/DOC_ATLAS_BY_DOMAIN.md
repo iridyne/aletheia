@@ -78,7 +78,7 @@
 - **Spec**：`spec_learning_pipeline` · `spec_lesson_guards` · `spec_insight_feedback_loop`(Module J 可推翻进化)
 - **L3 计划**：`self_evolution_plan`(Tier1/2/2.5✅done，Tier3⏳2026-08-17 gated) · `insight_feedback_loop` · `round2_negative_feedback_loop_closure`✅已合并(`dd559a7`)
 - **issue**：`LEARNING_LOOP_AUDIT`
-- **当前状态**：核心闭环活(Module J memo 自评→推翻→喂下一份)；ps_lessons 双轨=有意设计(§6.A1)；⚠️ ps_skills aspirational(无生产者)；contradiction 已有保守 support-vs-block 检测，UI 只提示需复核数量。
+- **当前状态**：核心闭环活(Module J memo 自评→推翻→喂下一份)；ps_lessons 双轨=有意设计(§6.A1)；ps_skills 已由 lesson_reviewer 产 draft 候选(不自动启用)；contradiction 已有保守 support-vs-block 检测，UI 只提示需复核数量。
 
 ## D7 · 系统监管 / Operator
 

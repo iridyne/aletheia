@@ -61,7 +61,7 @@
 | knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/trading_decision(PI)) | ✅ |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | paper_trader_ranker(evaluate_guards), risk_engine(check#15) | ✅ |
 | ps_lessons (LessonStore) | dreaming_agent | trading_context Layer3 → PI prompt → risk engine #15(accepted) | ⚠️ 双轨:**影响决策**但不进 knowledge_fts(有意设计,见 knowledge_contract §6.A1) |
-| ps_skills (SkillStore) | **无生产者** | 仅 persistence API | ⚠️ aspirational:Tier2/3 预留架构,当前惰性(见 knowledge_contract §6.A2) |
+| ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |
 
 ---
 
@@ -87,7 +87,7 @@
 | 级别 | 问题 | 影响 |
 |------|------|------|
 | A1 | ~~ps_lessons↔FTS 脱钩~~ → **已澄清为有意双轨** | 经验经 LessonStore→PI prompt→risk 影响决策;不入 FTS 是设计选择(knowledge_contract §6.A1) |
-| A2 | ps_skills 无生产者 | **aspirational**:Tier2/3 预留,当前惰性(非缺陷,§6.A2) |
+| A2 | ~~ps_skills 无生产者~~ | 已修: lesson_reviewer 产 draft skill;人工审核后才可 activate |
 | A3 | liquidation_events 不进风控 | 清算数据采集浪费 |
 | B1 | detect_contradictions() | 已有保守 support-vs-block 检测；UI 只呈现"需复核"数量，不自动裁决 |
 | B2 | serenity 4表 → promote→PiDecision **已闭环** | 原始4表仍不进 FTS,但 promote 路径已建(spec_serenity_promote) |

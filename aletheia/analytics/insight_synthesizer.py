@@ -508,8 +508,12 @@ def _persist_memo(memo: TradingMemo) -> None:
 
 def render_memo_for_observer(memo: TradingMemo, symbol: str | None = None) -> str:
     """Render a concise text block for injection into market_observer/System Operator prompts."""
+    from aletheia.analytics.memo_effectiveness import memo_half_life_weight
+
+    memo_weight = memo_half_life_weight(memo.get("generated_at"))
     lines = ["\n## Historical Performance Context (Trading Memo)"]
     lines.append(f"Data: {memo['sample_size']} trades over {memo['data_window_days']} days")
+    lines.append(f"Memo time weight: {memo_weight:.2f} (half-life 7d)")
 
     # Direction summary
     ds = memo.get("direction_summary", {})
@@ -523,8 +527,9 @@ def render_memo_for_observer(memo: TradingMemo, symbol: str | None = None) -> st
     if memo.get("regime_playbook"):
         lines.append("Regime edges:")
         for rule in memo["regime_playbook"][:4]:
+            weighted_win = round(float(rule["win_rate"]) * memo_weight, 1)
             lines.append(f"  - {rule['direction']} in {rule['regime']}: "
-                         f"{rule['win_rate']}% win, avg {rule['avg_pnl_pct']}% "
+                         f"{rule['win_rate']}% win, time-weighted {weighted_win}%, avg {rule['avg_pnl_pct']}% "
                          f"({rule['sample_size']} trades) → {rule['edge'].upper()}")
 
     # Timing

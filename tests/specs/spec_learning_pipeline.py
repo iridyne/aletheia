@@ -508,6 +508,7 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.models import new_id
     from aletheia.learning.lessons import LessonStore
+    from aletheia.learning.skills import SkillStore
     from aletheia.policies.store import PolicyStore
     import aletheia.agents.lesson_reviewer as lr
 
@@ -550,6 +551,10 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     assert refreshed.applied_policy_version == versions[0].policy_version_id, (
         "lesson is not linked to the policy version it was folded into"
     )
+    skills = SkillStore().list_all(scope="learning_advisory")
+    assert len(skills) == 1
+    assert skills[0].status == "draft"
+    assert skills[0].name == f"lesson:{lesson.lesson_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -948,27 +953,17 @@ def test_batch_synthesis_jobs_all_registered():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="DEFER Phase 2: 时间衰减推翻路径尚未实现 — 研究计划完成后实现并去掉 xfail",
-)
 @spec_claim(
     SpecClaim("KL-B01", "learning_pipeline", "§time decay overturn path", "L2b",
-              "defer（Phase 2 / 研究后实现）：时间衰减推翻路径（三路融合之一）— "
+              "时间衰减推翻路径（三路融合之一）："
               "trading_memo knowledge item 在生成超过 N 天后，其 regime_playbook 条目的"
               "有效边缘权重应随时间衰减（half-life 模型），使旧 memo 影响力自动降低，"
               "即使没有显式 overturn 信号。"
               "来源: learning_mechanism_research_plan.md §已定案 方案2。",
-              status="missing"),
+              status="implemented"),
 )
 def test_time_decay_overturn_path_exists():
-    """KL-B01 DEFER: 时间衰减推翻路径（Phase 2）.
-
-    当此测试从 xfail 转为 GREEN 时，需同步:
-    1. 去掉 @pytest.mark.xfail 装饰器
-    2. 更新 learning_mechanism_research_plan.md Phase 2 状态为已完成
-    3. 更新 spec status 为 "implemented"
-    """
+    """KL-B01: trading memo/regime playbook half-life decay exists."""
     import pathlib
     import ast
 
@@ -1230,48 +1225,28 @@ def test_trading_decision_reads_lessons_from_lesson_store():
     )
 
 # ---------------------------------------------------------------------------
-# LP-P3-01 — SkillStore producer gap (tracked, not blocking)
+# LP-P3-01 — SkillStore producer is wired but draft-only
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "LP-P3-01", "learning_pipeline", "§SkillStore producer", "L2a",
-        "SkillStore.create() is never called by any Agent or Scheduler job "
-        "(only the manual REST API in server/routes/persistence.py). "
-        "This is an empty-shell reservation for Self-Evolution Tiers 2/3. "
-        "Status tracked via learning_contract.md section A2.",
-        status="missing",
+        "lesson_reviewer turns applied lessons into draft SkillStore entries, "
+        "without auto-activating them or granting access to forbidden layers.",
+        status="implemented",
     ),
 )
-def test_skill_store_has_no_producer():
-    """LP-P3-01: track the SkillStore empty-shell gap.
-
-    Reads all Scheduler jobs and Agent entry points -- confirms none call
-    SkillStore().create(). Fires when a producer is wired without updating
-    learning_contract.md.
-    """
+def test_skill_store_producer_is_draft_only():
+    """LP-P3-01: lesson_reviewer creates draft skills from applied lessons."""
     import pathlib
 
     root = pathlib.Path(_project_root())
+    reviewer_src = (root / "aletheia" / "agents" / "lesson_reviewer.py").read_text(encoding="utf-8")
+    skill_src = (root / "aletheia" / "learning" / "skills.py").read_text(encoding="utf-8")
 
-    producers = []
-    for py_file in root.rglob("*.py"):
-        rel = str(py_file)
-        if "learning/" in rel or "persistence.py" in rel:
-            continue
-        # Exclude test files — they legitimately create via SkillStore
-        if "/tests/" in rel or "tests\\" in rel:
-            continue
-        try:
-            src = py_file.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if "SkillStore" in src and ".create(" in src:
-            producers.append(rel)
-
-    assert not producers, (
-        "SkillStore().create() is now called from outside learning/ and "
-        "persistence.py: " + str(producers)
-        + ". Update learning_contract.md A2."
-    )
+    assert "SkillStore" in reviewer_src and "create_from_lesson" in reviewer_src
+    assert "status=\"draft\"" in skill_src
+    assert "activate(" not in reviewer_src
+    for forbidden in ("risk_limits", "execution_gateway", "credentials", "live_mode", "order_submission"):
+        assert forbidden not in reviewer_src

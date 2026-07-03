@@ -236,11 +236,11 @@ ps_lessons 的消费路径：dreaming_agent 提炼 → LessonStore → trading_c
 
 **前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §A1`
 
-### A2. ps_skills 无生产者（SkillStore 空壳）
+### A2. ps_skills 有 draft 生产者（不自动启用）
 
-**现状**: `aletheia/learning/skills.py` 的 SkillStore 有完整的 create/activate/deprecate 生命周期，但无任何 Agent 或 Scheduler 调用 `SkillStore().create()`。唯一写入入口是 `server/routes/persistence.py` 的手工 REST API。这是 Self-Evolution Tier 2/3 的预留架构。
+**现状**: `aletheia/learning/skills.py` 的 SkillStore 有完整的 create/activate/deprecate 生命周期；`lesson_reviewer` 在 lesson 被应用到 policy version 后，会通过 `SkillStore.create_from_lesson()` 生成一个 `status="draft"` 的长期技能候选。
 
-**影响**: "技能学习"系统有 schema 无内容；如有相关 UI 页面，应标注"coming soon"而非空白。
+**边界**: draft skill 不会自动启用，不会 grant risk/execution/live/credential/order 权限；`FORBIDDEN_LAYERS` 仍拒绝风险、执行、凭证、live、下单相关层。人工审核后才可 activate。
 
 **前向链接**: `docs/issues/archive/PIPELINE_GAPS.md §A2`
 

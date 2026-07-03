@@ -14,7 +14,7 @@
 - LessonStore 和 SkillStore 数据模型: **已实现**
 - Lesson 生命周期 + 守卫时间戳: **已实现**
 - SkillStore 权限强制: **已实现**
-- Lesson → Skill 晋升链: **预留**(Self-Evolution Tier 2/3)
+- Lesson → Skill 晋升链: **已实现 draft producer**(lesson_reviewer 只生成待审 skill，不自动 activate)
 - 生产者 Scheduler/Agent 接入: **已实现**(dreaming_agent / post_trade_reviewer 产 lesson;lesson_reviewer 每日 accept()+mark_applied() 关闭 lesson→policy 链 — LP-S09/S10)
 
 ---
@@ -144,18 +144,18 @@ FORBIDDEN_LAYERS = frozenset({
 
 这是**信任边界**:任何 skill 都不能通过 allowed_layers 绕过这五条红线。
 
-### 3.4 当前状态 — **预留架构**
+### 3.4 当前状态 — **draft producer 已接入**
 
-> ⚠️ **空壳状态**: SkillStore 有完整 create/activate/deprecate 生命周期,但无 Agent 或 Scheduler 调用 SkillStore().create()。唯一写入入口是 server/routes/persistence.py 手工 REST API。这是 Self-Evolution Tier 2/3 的预留架构,当前不接入生产决策流。详见 knowledge_contract.md §A2。
+`lesson_reviewer` 在 lesson 被 mark_applied 到 policy version 后，会调用 `SkillStore.create_from_lesson()` 创建 `status="draft"` 的长期技能候选。draft skill 不会自动启用，不会修改风险/执行/live/凭证/下单路径；人工审核后才可 activate。详见 knowledge_contract.md §A2。
 
 ---
 
 ## §4 Lesson → Skill → PolicyVersion 晋升链
 
-### 4.1 设计(预留)
+### 4.1 设计
 
 `
-lesson (accepted)  →  skill (draft)  →  skill (active)  →  policy_version
+lesson (applied)  →  skill (draft)  →  skill (active, manual review)  →  policy_version
      ↑                    ↑                   ↑                  ↑
   LessonStore         SkillStore          SkillStore        PSPolicyVersion
 `
@@ -163,7 +163,7 @@ lesson (accepted)  →  skill (draft)  →  skill (active)  →  policy_version
 ### 4.2 当前实现
 
 - LessonStore → PSPolicyVersion: mark_applied(policy_version_id) 直接关闭链
-- Lesson → Skill: **未实现**(预留)
+- Lesson → Skill: **已实现 draft 生产者**，由 lesson_reviewer 在应用 lesson 后创建
 - Skill → PolicyVersion: **未实现**(预留)
 
 ---

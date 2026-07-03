@@ -58,6 +58,11 @@ owner 决策边界经验。
 doctor / gateway logs 的日志尾部输出必须走脱敏读取，不能把 token/secret/authorization
 原样展示给人或 AI。
 
+**Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
+draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需
+人工审核后才可启用；后续不要把 draft skill 自动接入 risk/execution/live/credential/order
+路径。
+
 > **结构性阻碍已清除(意图记录,2026-06-24)**:最小赚钱循环
 > (opportunities→paper_trader→signal_pending→PI→proposal→risk→execution)曾被
 > **五层叠加阻碍**卡死(OKX contractSize 单位 / PI 余额幻觉 8 bug / OKX 跨 loop /

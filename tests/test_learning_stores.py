@@ -261,6 +261,35 @@ class TestSkillStoreCreate:
         assert len(draft_skills) == 2
         _teardown()
 
+    def test_create_from_lesson_is_draft_and_idempotent(self, tmp_path, monkeypatch):
+        _setup_test_db(tmp_path, monkeypatch)
+        lesson_store = LessonStore()
+        skill_store = SkillStore()
+        lesson = lesson_store.create(
+            summary="Use BTC/USDT momentum lessons as advisory context",
+            source_type="trade_case_study",
+            source_id="case-1",
+            evidence={"symbol": "BTC/USDT", "scanner_family": "momentum"},
+            recommendation={"action": "ranker_advisory"},
+        )
+        lesson_store.accept(lesson.lesson_id)
+        lesson_store.mark_applied(lesson.lesson_id, "pv-1")
+        applied = lesson_store.get(lesson.lesson_id)
+
+        skill = skill_store.create_from_lesson(applied, policy_version_id="pv-1")
+        again = skill_store.create_from_lesson(applied, policy_version_id="pv-1")
+
+        assert skill is not None
+        assert again.skill_id == skill.skill_id
+        assert skill.name == f"lesson:{lesson.lesson_id}"
+        assert skill.status == "draft"
+        assert skill.scope == "learning_advisory"
+        assert "risk_limits" not in json.loads(skill.allowed_layers_json)
+        assert "execution_gateway" not in json.loads(skill.allowed_layers_json)
+        assert "BTC/USDT" in applied.evidence_json
+        assert len(skill_store.list_all()) == 1
+        _teardown()
+
 
 # ---------------------------------------------------------------------------
 # SkillStore — state machine

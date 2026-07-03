@@ -1,5 +1,25 @@
 # Development Log
 
+## 2026-07-03 — Learning draft skill producer 与 memo 半衰期
+
+### 触发
+discussion 后续复核发现 Learning 闭环虽然已经能从交易案例进入 lesson/policy，但长期
+`ps_skills` 候选没有稳定生产者，旧 trading memo 也缺少自然衰减机制。
+
+### 交付
+- `lesson_reviewer` 在 lesson 被应用后，生成 draft skill 候选。
+- `SkillStore.create_from_lesson()` 按 lesson id 幂等，避免重复 reviewer 运行复制技能。
+- draft skill 默认不启用，只允许进入低风险 advisory 层；不触碰 risk/execution/live/credentials/order。
+- `memo_half_life_weight()` 使用 7 天半衰期给旧 memo 降权。
+- System Operator memo prompt 显示 `Memo time weight`，并把 regime playbook 的胜率边缘做时间折算。
+- Learning 状态报告和设计契约同步更新。
+
+### 验证
+- Learning 存储链路相关测试通过。
+- Learning/Insight spec 通过，原 time-decay xfail 已解除。
+
+---
+
 ## 2026-07-03 — verbose 日志与 doctor 深度诊断
 
 ### 触发

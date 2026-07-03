@@ -203,6 +203,37 @@ def test_prior_corrections_rendered_into_prompt():
     assert "20" in text and "long" in text, "the overturned rule's specifics must surface"
 
 
+@spec_claim(
+    SpecClaim("IFL-B06", "insight_feedback_loop", "§Time decay", "L2b",
+              "render_memo_for_observer applies memo_half_life_weight so stale "
+              "regime_playbook guidance is visibly downweighted in the prompt"),
+)
+def test_memo_half_life_weight_rendered_into_prompt():
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.analytics.insight_synthesizer import render_memo_for_observer
+    from aletheia.analytics.memo_effectiveness import memo_half_life_weight
+
+    now = datetime.now(timezone.utc)
+    generated_at = (now - timedelta(days=7)).isoformat()
+    assert 0.49 <= memo_half_life_weight(generated_at, now=now) <= 0.51
+
+    memo = {
+        "generated_at": generated_at,
+        "sample_size": 12, "data_window_days": 30,
+        "direction_summary": {},
+        "regime_playbook": [
+            {"direction": "long", "regime": "bull", "win_rate": 80.0,
+             "avg_pnl_pct": 1.2, "sample_size": 8, "edge": "strong"},
+        ],
+        "timing_windows": [], "symbol_affinity": [], "anti_patterns": [],
+        "key_insight": "", "prior_corrections": [],
+    }
+    text = render_memo_for_observer(memo)
+    assert "Memo time weight" in text
+    assert "time-weighted 40.0%" in text
+
+
 # ---------------------------------------------------------------------------
 # ① regime dimension (A1) — IMPLEMENTED
 # ---------------------------------------------------------------------------

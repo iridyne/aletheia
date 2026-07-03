@@ -1,8 +1,7 @@
 """Skill store — learned agent capabilities with permission enforcement.
 
-RESERVED — not connected to any consumer in the current MVP.
-Lesson → Skill promotion chain is a future Tier 2/3 feature.
-See docs/design/learning_contract.md §4.
+Skills are created as draft artifacts from applied lessons. They are not
+activated automatically; a human/operator route must review them before use.
 """
 
 import json
@@ -90,6 +89,64 @@ class SkillStore:
         ))
 
         return skill
+
+    def create_from_lesson(self, lesson, *, policy_version_id: str | None = None) -> PSSkill | None:
+        """Create a draft skill candidate from an applied lesson.
+
+        Idempotent per lesson_id. The skill is a reviewable long-term capability
+        proposal, not an executable permission grant.
+        """
+        db = get_db()
+        lesson_id = getattr(lesson, "lesson_id", None)
+        if not lesson_id:
+            return None
+        existing = db.execute(
+            "SELECT * FROM ps_skills WHERE name = ? LIMIT 1",
+            (f"lesson:{lesson_id}",),
+        ).fetchone()
+        if existing:
+            return PSSkill(**dict(existing))
+
+        evidence = {}
+        recommendation = {}
+        try:
+            evidence = json.loads(getattr(lesson, "evidence_json", "") or "{}")
+        except (TypeError, ValueError):
+            evidence = {}
+        try:
+            recommendation = json.loads(getattr(lesson, "recommendation_json", "") or "{}")
+        except (TypeError, ValueError):
+            recommendation = {}
+
+        inputs = [
+            "applied_lesson",
+            getattr(lesson, "source_type", "") or "unknown_source",
+        ]
+        if evidence.get("symbol"):
+            inputs.append("symbol")
+        if evidence.get("scanner_family"):
+            inputs.append("scanner_family")
+
+        outputs = ["operator_prompt_context", "ranking_advisory"]
+        if recommendation.get("action"):
+            outputs.append(f"recommendation:{recommendation['action']}")
+
+        description = (
+            f"Draft skill from applied lesson {lesson_id}: "
+            f"{getattr(lesson, 'summary', '')}"
+        )[:500]
+        if policy_version_id:
+            description += f" (policy_version={policy_version_id})"
+
+        return self.create(
+            name=f"lesson:{lesson_id}",
+            scope="learning_advisory",
+            description=description,
+            allowed_layers=["knowledge", "prompt_context", "ranking_advisory"],
+            inputs=inputs,
+            outputs=outputs,
+            risk_level="low",
+        )
 
     def get(self, skill_id: str) -> PSSkill | None:
         db = get_db()

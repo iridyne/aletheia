@@ -7,7 +7,28 @@
 
 ## Last Updated
 
-2026-07-03 (verbose 日志 + doctor 深度诊断已补)
+2026-07-03 (Learning draft skill + memo time-decay 已补)
+
+---
+
+## Recent Change (Learning 长期技能候选与 memo 时间衰减 — 2026-07-03)
+
+针对 discussion 后续审计里最后一段 Learning 缺口，补齐 lesson → draft skill 和旧 memo 降权：
+
+- `lesson_reviewer` 在 lesson 被应用到 policy version 后，会通过 `SkillStore.create_from_lesson()`
+  生成 `status="draft"` 的长期技能候选。
+- draft skill 只进入 `knowledge` / `prompt_context` / `ranking_advisory` 低风险层，不会自动
+  activate，不会触碰 risk / execution / live / credentials / order submission。
+- skill 创建按 lesson id 幂等，重复 reviewer 运行不会复制多条技能。
+- `trading_memo` 增加 7 天半衰期权重；System Operator prompt 会显示 `Memo time weight`，
+  并把 regime playbook 的胜率边缘做时间折算，旧 memo 不再无限期等权影响判断。
+- `docs/_ai/LEARNING_LOOP_STATUS_REPORT_2026-07-03.md` 已更新为当前 Learning 闭环报告。
+
+验证：
+- `uv run pytest tests/test_learning_stores.py tests/specs/spec_learning_pipeline.py::test_lesson_reviewer_promotes_and_applies tests/specs/spec_learning_pipeline.py::test_time_decay_overturn_path_exists tests/specs/spec_learning_pipeline.py::test_skill_store_producer_is_draft_only tests/specs/spec_insight_feedback_loop.py::test_memo_half_life_weight_rendered_into_prompt -q`
+- `uv run pytest tests/specs/spec_learning_pipeline.py tests/specs/spec_insight_feedback_loop.py -q`
+
+边界：本批不改交易执行、风控限额、凭证或 live 开关；skill 启用仍保留人工审核。
 
 ---
 
