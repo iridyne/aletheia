@@ -11,7 +11,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 5. System Operator、机会排序器、Risk Engine 会读取这些学习结果。
 6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Active Guards 和学习漏斗。
 
-但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 4 个关键点：历史污染数据清理、结构化检索过滤、矛盾检测、SkillStore/时间衰减机制。
+但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 4 个关键点：结构化检索过滤、矛盾检测、Learning 管理动作、SkillStore/时间衰减机制。
 
 ## 当前量化状态
 
@@ -20,7 +20,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | 指标 | 当前值 | 说明 |
 | --- | ---: | --- |
 | `knowledge_items` 数据库大小 | 431.6 MB | 学习/审计数据已经有明显体量 |
-| active `trade_case_study` | 267 条 | 已经有可被 Learning 使用的交易案例 |
+| active `trade_case_study` | 174 条 | 已经有可被 Learning 使用的交易案例；93 条 synthetic 历史污染已软归档 |
 | active `guard_candidate` | 131 条 | 已经能自动产生候选防守规则 |
 | active high-confidence research notes | 397 条 | 市场研究知识已进入知识库 |
 | active strategy memory | 56 条 | 策略记忆有持久化 |
@@ -28,11 +28,11 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | `ps_lessons` proposed | 67 条 | 候选 lesson 已形成 |
 | `ps_lessons` applied | 25 条 | 已有 lesson 被应用到策略/风控读取路径 |
 | lesson policy versions | 7 个 active | 说明 lesson reviewer 已经产出可追踪版本 |
-| FTS 可检索知识 | 614 条 | 只有 high-confidence active 知识进入全文检索 |
+| FTS 可检索知识 | 569 条 | 只有 high-confidence active 知识进入全文检索 |
 | `retrieve_lessons` 工具调用 | 2006 次 | agent 已经实际调用学习检索 |
 | `build_case_studies` 调用 | 566 次 | 交易案例构建器持续运行 |
 | `detect_guard_candidates` 调用 | 566 次 | guard 候选生成持续运行 |
-| Learning 相关测试 | 82 passed, 1 xfailed | xfail 是已知的 time-decay 缺口 |
+| Learning 相关测试 | 79 passed, 3 skipped, 1 xfailed | xfail 是已知的 time-decay 缺口 |
 
 ## 已经实现的能力
 
@@ -88,25 +88,38 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 - 修复后：测试覆盖 4 个 Learning 类型，全部返回 200。
 - 未放宽安全边界：未知类型仍返回 400。
 
-## 仍需处理的问题
+### 历史 synthetic case study 污染 Learning 检索
 
-### P0：历史污染案例仍在 active 和 FTS 中
+虽然新代码已经阻止新的 `reconciled_gone` / `demo_validation_cleanup` 案例进入学习语料，但历史数据仍留在 active/FTS 里。它们不是交易经验，却会被检索出来影响 System Operator、ranker 或 Dreaming。
 
-虽然新代码已经阻止新的 `reconciled_gone` / `demo_validation_cleanup` 案例进入学习语料，但历史数据还在：
+修复：
+
+- 新增 `archive_synthetic_trade_case_studies()` 维护函数。
+- 新增 CLI：`uv run aletheia knowledge archive-synthetic-case-studies`。
+- 只做软归档：`active -> archived`，不硬删除。
+- 执行后重建 FTS，让污染案例退出全文检索。
+- 增加回归测试，证明 synthetic 案例会归档、真实案例保持 active、命令可重复执行。
+
+量化结果：
 
 | 项目 | 数量 |
 | --- | ---: |
-| active `trade_case_study` 总数 | 267 |
-| active 中带 synthetic close reason 的案例 | 93 |
-| 仍在 FTS 检索索引中的 synthetic active 案例 | 46 |
+| 清理前 active `trade_case_study` 总数 | 267 |
+| 清理后 active `trade_case_study` 总数 | 174 |
+| active 中带 synthetic close reason 的案例 | 93 -> 0 |
+| 仍在 FTS 检索索引中的 synthetic active 案例 | 46 -> 0 |
+| 本次软归档 synthetic case study | 93 |
+| 硬删除 | 0 |
+| FTS 重建后索引总量 | 569 |
 
-影响：这些不是真实交易经验，但可能被 System Operator、ranker 或 Dreaming 检索到，污染“系统从交易历史学习”的质量。
+执行记录：
 
-建议处理方式：不硬删除。写一个一次性维护命令，将这些案例 archive/deprecate，并重建 FTS 索引。执行前后量化目标：
+```text
+dry-run: {'matched': 93, 'archived': 0, 'remaining_active': 93, 'reindexed': None, 'dry_run': True}
+real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 569, 'dry_run': False}
+```
 
-- active synthetic case study：93 -> 0
-- FTS synthetic active case study：46 -> 0
-- hard delete：0
+## 仍需处理的问题
 
 ### P0：Learning 检索缺少结构化过滤
 
@@ -137,12 +150,18 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 
 当前 SkillStore 没有稳定 producer，time-decay overturn 仍是已知 xfail。这意味着系统已经能产生“规则”，但还没有形成长期“技能库”和自然衰减机制。
 
+### P2：部分 high-confidence 知识缺少可重建正文
+
+本次 FTS 重建时报告：`skipped 55 high_confidence items with empty body`。这说明仍有少量历史知识条目缺失文件或正文，无法重新进入全文检索。
+
+影响：不是错误知识污染，而是检索覆盖率损失。它不会让系统学到错误经验，但会让一部分本该可检索的高置信知识不可用。
+
 ## 下一步建议
 
-1. 先清理历史 synthetic case study，目标是 active/FTS 污染归零。
-2. 给 `retrieve_lessons` 增加结构化过滤，优先保证同 symbol / direction / scanner 的经验被读取。
-3. 给 Learning 页面补人工审核入口，让 owner 能确认或否决系统总结出的规则。
-4. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
+1. 给 `retrieve_lessons` 增加结构化过滤，优先保证同 symbol / direction / scanner 的经验被读取。
+2. 给 Learning 页面补人工审核入口，让 owner 能确认或否决系统总结出的规则。
+3. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
+4. 处理 55 条缺少正文的 high-confidence 知识，目标是恢复正文或降级退出 FTS 期望池。
 5. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
 
 ## 验证记录
@@ -171,6 +190,18 @@ uv run pytest tests/test_server.py::test_knowledge_route_accepts_learning_item_t
 2 passed in 1.74s
 ```
 
+新增 synthetic case study 软归档维护测试：
+
+```powershell
+uv run pytest tests/test_knowledge_maintenance.py tests/test_fts_coverage.py tests/test_experience_loop.py -q
+```
+
+结果：
+
+```text
+20 passed in 3.59s
+```
+
 补充 API 采样：
 
 | 接口 | 结果 |
@@ -180,3 +211,5 @@ uv run pytest tests/test_server.py::test_knowledge_route_accepts_learning_item_t
 | `/api/persistence/lessons?limit=20` | 200 |
 | `/api/knowledge/guards` | 200 |
 | `/api/knowledge?type=trade_case_study` | 本次修复前 400，修复后由测试覆盖为 200 |
+| `/api/knowledge?type=trade_case_study` | 清理并重启 gateway 后 200，84ms |
+| `/api/analytics/learning-funnel` | 清理并重启 gateway 后 200，16ms |
