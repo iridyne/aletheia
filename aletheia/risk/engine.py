@@ -635,13 +635,19 @@ def _check_correlation_exposure(proposal: TradeProposal, cfg) -> list[str]:
 
 
 def _lookup_beta(symbol: str) -> float | None:
-    """Fetch the most recent btc_beta for a symbol from universe_feature_snapshots."""
+    """Fetch the most recent btc_beta for a symbol from universe_feature_snapshots.
+
+    universe_feature_snapshots uses asset_id (FK → universe_registry) + ts,
+    not symbol. We join through universe_registry to filter by symbol.
+    """
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         row = db.execute(
-            "SELECT btc_beta FROM universe_feature_snapshots "
-            "WHERE symbol = ? ORDER BY ts DESC LIMIT 1",
+            "SELECT ufs.btc_beta FROM universe_feature_snapshots ufs "
+            "JOIN universe_registry ur ON ufs.asset_id = ur.id "
+            "WHERE ur.symbol = ? "
+            "ORDER BY ufs.ts DESC LIMIT 1",
             (symbol,)
         ).fetchone()
         if row and row[0] is not None:

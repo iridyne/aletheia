@@ -733,13 +733,11 @@ class RuntimeContinuityService:
         metadata = dict(runtime.get("metadata") or {})
         gateway_process = metadata.get("gateway_process")
         gateway_process_attempted = isinstance(gateway_process, dict) and bool(gateway_process.get("attempted"))
-        gateway_process_ready = (
-            not gateway_process_attempted
-            or (
-                bool(gateway_process.get("started"))
-                and gateway_process.get("ready", True) is not False
-                and bool(gateway_process.get("base_url") or gateway_process.get("pid"))
-            )
+        gateway_process_ready = not gateway_process_attempted or (
+            isinstance(gateway_process, dict)
+            and bool(gateway_process.get("started"))
+            and gateway_process.get("ready", True) is not False
+            and bool(gateway_process.get("base_url") or gateway_process.get("pid"))
         )
         checks = [
             {"name": "candidate_record", "passed": bool(runtime.get("runtime_id"))},

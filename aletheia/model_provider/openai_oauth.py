@@ -112,7 +112,10 @@ async def start_login() -> dict:
 async def _await_and_exchange() -> None:
     """Background: wait for callback code, then do token + key exchange."""
     try:
-        code = await _session._server.await_code(timeout=_AUTH_TIMEOUT)
+        server = _session._server
+        if server is None:
+            raise RuntimeError("callback server not initialized")
+        code = await server.await_code(timeout=_AUTH_TIMEOUT)
 
         # Step 1: code → tokens
         tokens = await exchange_code(

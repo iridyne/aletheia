@@ -585,17 +585,21 @@ def build_risk_summary(limit: int = 20, *, cfg=None) -> dict:
                 }
                 aggregated[boundary_key] = bucket
             bucket["rejection_count"] += 1
-            if violation_text not in bucket["sample_violations"] and len(bucket["sample_violations"]) < 3:
-                bucket["sample_violations"].append(violation_text)
+            violations: list[str] = bucket["sample_violations"]
+            if violation_text not in violations and len(violations) < 3:
+                violations.append(violation_text)
+            decision_ids: list[str] = bucket["decision_ids"]
             decision_id = decision.get("id")
-            if decision_id and decision_id not in bucket["decision_ids"]:
-                bucket["decision_ids"].append(decision_id)
+            if decision_id and decision_id not in decision_ids:
+                decision_ids.append(decision_id)
+            symbols: list[str] = bucket["affected_symbols"]
             symbol = decision.get("symbol")
-            if symbol and symbol not in bucket["affected_symbols"]:
-                bucket["affected_symbols"].append(symbol)
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+            modes: list[str] = bucket["execution_modes"]
             execution_mode = decision.get("execution_mode")
-            if execution_mode and execution_mode not in bucket["execution_modes"]:
-                bucket["execution_modes"].append(execution_mode)
+            if execution_mode and execution_mode not in modes:
+                modes.append(execution_mode)
             if (
                 isinstance(candidate.get("suggested_value"), (int, float))
                 and isinstance(bucket.get("suggested_value"), (int, float))
@@ -651,11 +655,13 @@ def build_risk_summary(limit: int = 20, *, cfg=None) -> dict:
             }
             symbol_rejections[symbol] = bucket
         bucket["rejection_count"] += 1
+        decision_ids: list[str] = bucket["decision_ids"]
         decision_id = decision.get("id")
-        if decision_id and decision_id not in bucket["decision_ids"]:
-            bucket["decision_ids"].append(decision_id)
-        if execution_mode and execution_mode not in bucket["execution_modes"]:
-            bucket["execution_modes"].append(execution_mode)
+        if decision_id and decision_id not in decision_ids:
+            decision_ids.append(decision_id)
+        modes: list[str] = bucket["execution_modes"]
+        if execution_mode and execution_mode not in modes:
+            modes.append(execution_mode)
         created_at = _parse_utc_timestamp(decision.get("created_at"))
         if created_at and (
             _parse_utc_timestamp(bucket.get("latest_created_at")) is None

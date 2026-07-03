@@ -153,7 +153,8 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str]:
     if err:
         return "defer", f"llm_error:{err}"
     try:
-        parsed = json.loads(content.strip().strip("`").removeprefix("json").strip())
+        content_str = (content or "").strip().strip("`").removeprefix("json").strip()
+        parsed = json.loads(content_str)
     except (json.JSONDecodeError, ValueError):
         return "defer", "unparseable_llm_response"
     decision = str(parsed.get("decision", "defer")).lower()

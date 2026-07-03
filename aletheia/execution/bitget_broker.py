@@ -20,7 +20,7 @@ fill detail, in which case the order stays effectively at the requested level).
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_bitget
@@ -129,6 +129,7 @@ def execute_live_order(
 
     # Order row is persisted with its exchange id. If anything below fails,
     # reconciliation can still find this order by exchange_order_id.
+    fill = None
     try:
         if filled:
             fill = Fill(
@@ -138,7 +139,7 @@ def execute_live_order(
                 fee=fill_qty * fill_price * fee_rate,
             )
             insert_fill(fill)
-            update_order(order.id, status="filled", filled_at=datetime.utcnow().isoformat())
+            update_order(order.id, status="filled", filled_at=datetime.now(timezone.utc).isoformat())
 
             existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
             if existing:
@@ -209,7 +210,7 @@ def execute_live_order(
     return {
         "order_id": order.id,
         "exchange_order_id": exchange_order_id,
-        "fill_id": fill.id if filled else None,
+        "fill_id": getattr(fill, "id", None) if filled else None,
         "position_id": position_id,
         "fill_price": fill_price if filled else None,
         "fill_quantity": fill_qty if filled else 0,
@@ -286,7 +287,7 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
     exchange_symbol = to_bitget(row["symbol"])
 
     # Write a pending close order BEFORE the exchange call (same §1.3 hazard logic).
-    close_requested_at = datetime.utcnow().isoformat()
+    close_requested_at = datetime.now(timezone.utc).isoformat()
     close_order = Order(
         proposal_id=row.get("proposal_id"),
         symbol=row["symbol"],
@@ -331,7 +332,7 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         close_order.id,
         exchange_order_id=exchange_order_id,
         status=close_status,
-        filled_at=datetime.utcnow().isoformat() if confirmed_close else None,
+        filled_at=datetime.now(timezone.utc).isoformat() if confirmed_close else None,
     )
     if not confirmed_close:
         update_position(

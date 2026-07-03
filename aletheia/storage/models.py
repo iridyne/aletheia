@@ -121,6 +121,9 @@ class TradeProposal(BaseModel):
     stop_price: float | None = None
     execution_mode: str = "paper_internal"
     agent_rationale: str | None = None
+    # JSON snapshot captured at proposal/decision time for replay-stable paper
+    # position attribution (BTC benchmark, regime, market context).
+    attribution_snapshot: str | None = None
     status: str = "pending"
     # Provenance: "native" (Aletheia generated it) or "adopted" (synthetic chain the
     # reconciler built to bring a pre-existing/external exchange position under

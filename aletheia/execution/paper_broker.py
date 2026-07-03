@@ -1,5 +1,8 @@
 """Paper broker — simulates order fills for paper/demo trading."""
 
+from typing import Any
+import json
+
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     insert_order, update_order, insert_fill, insert_position, update_position, list_positions,
@@ -30,6 +33,7 @@ def execute_paper_order(
     leverage: int | None = None,
     opportunity_id: str | None = None,
     trade_school: str = "short_term",
+    attribution_snapshot: dict[str, Any] | str | None = None,
 ) -> dict:
     """Execute a paper order: create order, fill, and position.
 
@@ -84,30 +88,24 @@ def execute_paper_order(
                 update_kwargs["stop_price"] = max(stop_price, old_stop) if direction in ("long", "buy") else min(stop_price, old_stop)
             else:
                 update_kwargs["stop_price"] = stop_price
+        # Accumulate entry-fee and slippage across averaging-in legs: the standing
+        # position must reflect the full cost basis of every leg so realized PnL
+        # after a close isn't overstated. Standalone NULL/0.0 from legacy rows → 0.
+        new_entry_fee = round(fill_price * quantity * fee_rate, 8)
+        new_slippage_cost = round(abs(fill_price - price) * quantity, 8)
+        existing_entry_fee = existing.get("entry_fee")
+        existing_slippage = existing.get("slippage_cost")
+        update_kwargs["entry_fee"] = round((existing_entry_fee or 0.0) + new_entry_fee, 8)
+        update_kwargs["slippage_cost"] = round((existing_slippage or 0.0) + new_slippage_cost, 8)
         update_position(existing["id"], **update_kwargs)
         position_id = existing["id"]
     else:
         take_profit_price = _take_profit_for(direction, fill_price)
         filled_take_profit = take_profit_price
-        # BTC benchmark: record BTC price at entry for alpha/beta separation
-        btc_entry_price = _btc_price_now()
-        # Regime tag at entry time
-        regime_tag = _current_regime()
-        # Capture entry-time market context for post-trade review
-        entry_market_summary = None
-        try:
-            import json as _json
-            from aletheia.data.context_builder import build_market_context_from_db
-            ctx = build_market_context_from_db([symbol])
-            entry_market_summary = _json.dumps({
-                "regime": regime_tag,
-                "price": fill_price,
-                "data_completeness": ctx.data_completeness,
-                "tradability": ctx.tradability.get(symbol, {}),
-                "leverage": ctx.leverage.get(symbol, {}),
-            }, default=str)[:2000]
-        except Exception:
-            pass
+        attribution = _paper_position_attribution(symbol, fill_price, attribution_snapshot)
+        btc_entry_price = attribution["btc_entry_price"]
+        regime_tag = attribution["regime_tag"]
+        entry_market_summary = attribution["entry_market_summary"]
         # Decision explainability: pull reasoning from the originating proposal
         decision_reasoning = None
         try:
@@ -173,6 +171,109 @@ def _btc_price_now() -> float | None:
         snap = latest_snapshot("BTC/USDT")
         return float(snap["price"]) if snap else None
     except Exception:
+        return None
+
+
+def capture_paper_attribution_snapshot(symbol: str) -> dict[str, Any]:
+    """Capture proposal-time attribution inputs for replay-stable paper fills."""
+    regime_tag = _current_regime()
+    snapshot: dict[str, Any] = {
+        "btc_entry_price": _btc_price_now(),
+        "regime_tag": regime_tag,
+    }
+    try:
+        from aletheia.data.context_builder import build_market_context_from_db
+        ctx = build_market_context_from_db([symbol])
+        snapshot["market_context"] = {
+            "data_completeness": ctx.data_completeness,
+            "tradability": ctx.tradability.get(symbol, {}),
+            "leverage": ctx.leverage.get(symbol, {}),
+        }
+    except Exception:
+        pass
+    return snapshot
+
+
+def _paper_position_attribution(
+    symbol: str,
+    fill_price: float,
+    attribution_snapshot: dict[str, Any] | str | None,
+) -> dict[str, Any]:
+    snapshot = _coerce_attribution_snapshot(attribution_snapshot)
+    if snapshot:
+        regime_tag = str(snapshot.get("regime_tag") or "unknown")
+        return {
+            "btc_entry_price": _float_or_none(snapshot.get("btc_entry_price")),
+            "regime_tag": regime_tag,
+            "entry_market_summary": _entry_market_summary_from_snapshot(
+                snapshot, fill_price, regime_tag
+            ),
+        }
+
+    regime_tag = _current_regime()
+    return {
+        "btc_entry_price": _btc_price_now(),
+        "regime_tag": regime_tag,
+        "entry_market_summary": _live_entry_market_summary(symbol, fill_price, regime_tag),
+    }
+
+
+def _coerce_attribution_snapshot(value: dict[str, Any] | str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _entry_market_summary_from_snapshot(
+    snapshot: dict[str, Any],
+    fill_price: float,
+    regime_tag: str,
+) -> str | None:
+    explicit = snapshot.get("entry_market_summary")
+    if isinstance(explicit, str):
+        return explicit[:2000]
+    if isinstance(explicit, dict):
+        return json.dumps(explicit, default=str)[:2000]
+
+    context = snapshot.get("market_context")
+    if not isinstance(context, dict):
+        return None
+    return json.dumps({
+        "regime": regime_tag,
+        "price": fill_price,
+        "data_completeness": context.get("data_completeness"),
+        "tradability": context.get("tradability", {}),
+        "leverage": context.get("leverage", {}),
+    }, default=str)[:2000]
+
+
+def _live_entry_market_summary(symbol: str, fill_price: float, regime_tag: str) -> str | None:
+    try:
+        from aletheia.data.context_builder import build_market_context_from_db
+        ctx = build_market_context_from_db([symbol])
+        return json.dumps({
+            "regime": regime_tag,
+            "price": fill_price,
+            "data_completeness": ctx.data_completeness,
+            "tradability": ctx.tradability.get(symbol, {}),
+            "leverage": ctx.leverage.get(symbol, {}),
+        }, default=str)[:2000]
+    except Exception:
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
         return None
 
 

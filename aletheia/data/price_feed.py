@@ -209,7 +209,7 @@ def _notify(message: str) -> None:
     """Best-effort operator notification."""
     try:
         from aletheia.notifications import notify_operator
-        notify_operator(message)
+        notify_operator("Price Feed", message)
     except Exception:
         pass
 

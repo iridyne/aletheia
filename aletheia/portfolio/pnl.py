@@ -126,7 +126,13 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         "binance_live_limited": 0.0004,
     }
     fee_rate = _EXIT_FEE_BY_MODE.get(row.get("execution_mode", ""), 0.0006)
-    entry_fee = row.get("entry_fee") or (row["entry_price"] * row["quantity"] * fee_rate)
+    # Sprint B (QR-2026-07-01-02): entry_fee=0.0 is a legitimate stored value (zero-cost
+    # paper fills). Only fall back to re-deriving from the fee schedule when the field is
+    # genuinely missing (NULL from pre-Sprint-B positions). Truthiness "or 0" had been
+    # recomputing fees on legible zeros and inflating realized PnL.
+    entry_fee = row.get("entry_fee")
+    if entry_fee is None:
+        entry_fee = row["entry_price"] * row["quantity"] * fee_rate
     exit_fee = exit_price * row["quantity"] * fee_rate
     realized = gross_pnl - entry_fee - exit_fee
 

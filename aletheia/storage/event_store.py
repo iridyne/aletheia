@@ -83,7 +83,7 @@ class EventStore:
         ).fetchall()
         return [self._row_to_event(r) for r in rows]
 
-    def list_since(self, since: str, limit: int = 500) -> list[PSEvent]:
+    def list_since(self, since: str = "", limit: int = 500) -> list[PSEvent]:
         """List events created after a timestamp (ISO string)."""
         db = get_db()
         rows = db.execute(

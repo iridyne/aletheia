@@ -7,11 +7,13 @@ Endpoint pattern: {workspace_url}/serving-endpoints/{endpoint_name}/invocations
 The model field doubles as the endpoint_name for URL construction.
 """
 
+from __future__ import annotations
+
 from urllib.parse import urlparse
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-from aletheia.model_provider.base import ModelHealth
+from aletheia.model_provider.base import ModelHealth, ModelResponse
 
 
 def _normalize_workspace_url(raw: str) -> str:
@@ -86,8 +88,7 @@ class DatabricksProvider(OpenAICompatibleProvider):
         except Exception as e:
             return ModelHealth(provider=self.name, available=False, error=str(e))
 
-    async def _complete_chat(self, request) -> "ModelResponse":
-        from aletheia.model_provider.base import ModelResponse
+    async def _complete_chat(self, request) -> ModelResponse:
         messages = list(request.messages)
         if request.system:
             messages.insert(0, {"role": "system", "content": request.system})

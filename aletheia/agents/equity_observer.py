@@ -293,34 +293,30 @@ async def _analyze_equity(
     xstock_price: float | None = None
     deviation_pct: float | None = None
 
-    for token_sym in candidate_tokens:
-        if token_sym not in observed_xstocks:
-            continue
-        xstock_symbol = token_sym
-        exchange = stock_token_exchange(token_sym)
-        price = await _fetch_stock_token_price(token_sym, exchange)
-        if price is not None:
-            xstock_price = price
-            break
+    xstock_price_for_llm = None
+    deviation_for_llm = None
+    if xstock_symbol and xstock_in_config:
+        xstock_price = await _fetch_xstock_price(xstock_symbol)
+        if xstock_price is not None and data["last"] > 0:
+            # data["last"] is yfinance previous-day close; xstock_price is live.
+            # During market hours the stock may have moved legitimately, so we use
+            # the intraday live price from yfinance (fast_info) when available to
+            # give a same-timeframe comparison. Falls back to prior close otherwise.
+            ref_price = await loop.run_in_executor(None, _fetch_live_price, data["ticker"])
+            ref_price = ref_price if (ref_price and ref_price > 0) else data["last"]
+            deviation_pct = abs(xstock_price - ref_price) / ref_price * 100.0
+            if deviation_pct > _XSTOCK_DEVIATION_ANOMALY_PCT:
+                logger.warning(
+                    "xStock data anomaly for %s: deviation=%.2f%% (threshold=%.1f%%), excluding from LLM",
+                    ticker, deviation_pct, _XSTOCK_DEVIATION_ANOMALY_PCT,
+                )
+                # Still record the deviation in metadata but don't pass to LLM
+                xstock_price_for_llm = None
+                deviation_for_llm = None
+            else:
+                xstock_price_for_llm = xstock_price
+                deviation_for_llm = deviation_pct
 
-    if xstock_price is not None and data["last"] > 0:
-        # data["last"] is yfinance previous-day close; xstock_price is live.
-        # During market hours the stock may have moved legitimately, so we use
-        # the intraday live price from yfinance (fast_info) when available for
-        # a same-timeframe comparison. Falls back to prior close otherwise.
-        ref_price = await loop.run_in_executor(None, _fetch_live_price, data["ticker"])
-        ref_price = ref_price if (ref_price and ref_price > 0) else data["last"]
-        deviation_pct = abs(xstock_price - ref_price) / ref_price * 100.0
-        if deviation_pct > _XSTOCK_DEVIATION_ANOMALY_PCT:
-            logger.warning(
-                "Stock token data anomaly for %s (%s): deviation=%.2f%% (threshold=%.1f%%), excluding from LLM",
-                ticker, xstock_symbol, deviation_pct, _XSTOCK_DEVIATION_ANOMALY_PCT,
-            )
-            xstock_price_for_llm = None
-            deviation_for_llm = None
-        else:
-            xstock_price_for_llm = xstock_price
-            deviation_for_llm = deviation_pct
     else:
         xstock_price_for_llm = None
         deviation_for_llm = None

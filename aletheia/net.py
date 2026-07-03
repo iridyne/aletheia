@@ -100,9 +100,7 @@ def _is_proxy_reachable(url: str) -> bool:
     import asyncio
 
     cached = _proxy_reachable_cache.get(url)
-    cache_fresh = cached is not None and (time.monotonic() - cached[1] < _PROXY_CACHE_TTL)
-
-    if cache_fresh:
+    if cached is not None and (time.monotonic() - cached[1] < _PROXY_CACHE_TTL):
         return cached[0]
 
     # If we're on an event loop thread, return stale cache or False and refresh async

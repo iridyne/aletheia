@@ -641,10 +641,10 @@ def _run_price_feed():
         _run_async_with_timeout("price_feed", refresh_watched_prices())
     except TimeoutError:
         logger.debug("price_feed job timed out")
-        _record_job_failure("price_feed")
+        _record_job_failure("price_feed", "timeout")
     except Exception as e:
         logger.debug("price_feed job failed: %s", e)
-        _record_job_failure("price_feed")
+        _record_job_failure("price_feed", str(e))
 
 
 def _run_connectivity_monitor():
@@ -1250,7 +1250,6 @@ def _run_insight_synthesizer():
     if cfg.runtime.paused:
         return
     try:
-        import asyncio
         from aletheia.analytics.insight_synthesizer import synthesize_trading_memo
 
         loop = asyncio.new_event_loop()

@@ -157,8 +157,9 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
     try:
         from aletheia.notifications import notify_operator
         notify_operator(
+            "Exchange Connectivity Lost",
             f"Exchange {cfg.exchange.name} unreachable — trading paused. Auto-resume active.",
-            severity="critical",
+            level="critical",
         )
     except Exception:
         pass
@@ -240,8 +241,9 @@ async def _resume_from_network(cfg) -> None:
     try:
         from aletheia.notifications import notify_operator
         notify_operator(
+            "Exchange Connectivity Restored",
             f"Exchange {cfg.exchange.name} reachable — trading resumed.",
-            severity="info",
+            level="info",
         )
     except Exception:
         pass
