@@ -31,7 +31,8 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | `ps_lessons` proposed | 67 条 | 候选 lesson 已形成 |
 | `ps_lessons` applied | 25 条 | 已有 lesson 被应用到策略/风控读取路径 |
 | lesson policy versions | 7 个 active | 说明 lesson reviewer 已经产出可追踪版本 |
-| FTS 可检索知识 | 566 条 | 只有 high-confidence active 知识进入全文检索 |
+| FTS 可检索知识 | 566 条 | high-confidence active 可学习池已与 FTS 对齐 |
+| active high-confidence 缺正文知识 | 0 条 | 55 条历史空正文 `operator_assessment` 已降级退出 FTS 期望池 |
 | `retrieve_lessons` 工具调用 | 2006 次 | agent 已经实际调用学习检索 |
 | `build_case_studies` 调用 | 566 次 | 交易案例构建器持续运行 |
 | `detect_guard_candidates` 调用 | 566 次 | guard 候选生成持续运行 |
@@ -211,19 +212,37 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 当前 SkillStore 没有稳定 producer，time-decay overturn 仍是已知 xfail。这意味着系统已经能产生“规则”，但还没有形成长期“技能库”和自然衰减机制。
 
-### P2：部分 high-confidence 知识缺少可重建正文
+### 部分 high-confidence 知识缺少可重建正文
 
-本次 FTS 重建时报告：`skipped 55 high_confidence items with empty body`。这说明仍有少量历史知识条目缺失文件或正文，无法重新进入全文检索。
+问题：FTS 重建时报告 `skipped 55 high_confidence items with empty body`。核查后发现 55 条全是历史 `operator_assessment`，没有 `file_path`，也没有 DB `content`。这些记录是审计 stub，不是可学习正文，却被 high-confidence 质量门计入 FTS 期望池。
 
-影响：不是错误知识污染，而是检索覆盖率损失。它不会让系统学到错误经验，但会让一部分本该可检索的高置信知识不可用。
+修复：
+
+- 新增维护函数 `downgrade_unindexable_high_confidence_items()`。
+- 新增 CLI：`uv run aletheia knowledge downgrade-unindexable-high-confidence`。
+- 只降级 confidence：`high_confidence -> medium_confidence`，不删除记录。
+- 重新构建 FTS，使 high-confidence 可学习池与 FTS 对齐。
+
+量化结果：
+
+| 项目 | 数量 |
+| --- | ---: |
+| dry-run 命中缺正文 high-confidence | 55 |
+| 实际降级 | 55 |
+| hard delete | 0 |
+| active high-confidence 缺正文知识 | 55 -> 0 |
+| active high-confidence 知识总数 | 621 -> 566 |
+| FTS 总量 | 566 |
+| FTS skipped empty body warning | 有 -> 无 |
+
+这不是删除学习材料，而是把不可学习的空记录退出“高置信可学习池”。
 
 ## 下一步建议
 
 1. 补齐或降级历史 case study 的 scanner_family 覆盖，目标是减少结构化过滤后的“无证据”结果。
 2. 给 Learning 页面补人工审核入口，让 owner 能确认或否决系统总结出的规则。
 3. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
-4. 处理 55 条缺少正文的 high-confidence 知识，目标是恢复正文或降级退出 FTS 期望池。
-5. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
+4. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
 
 ## 验证记录
 
@@ -287,6 +306,18 @@ uv run pytest tests/test_knowledge_maintenance.py tests/test_trade_case_builder.
 56 passed in 3.69s
 ```
 
+新增不可索引高置信知识维护测试：
+
+```powershell
+uv run pytest tests/test_knowledge_maintenance.py tests/test_fts_coverage.py tests/specs/spec_knowledge_fts.py -q
+```
+
+结果：
+
+```text
+18 passed in 1.00s
+```
+
 补充 API 采样：
 
 | 接口 | 结果 |
@@ -300,3 +331,5 @@ uv run pytest tests/test_knowledge_maintenance.py tests/test_trade_case_builder.
 | `/api/analytics/learning-funnel` | 清理并重启 gateway 后 200，16ms |
 | `/api/knowledge?type=trade_case_study` | 结构化检索修复并重启 gateway 后 200，94ms |
 | `/api/analytics/learning-funnel` | 结构化检索修复并重启 gateway 后 200，30ms |
+| `/api/knowledge?type=trade_case_study` | 不可索引高置信维护后 200，98ms |
+| `/api/analytics/learning-funnel` | 不可索引高置信维护后 200，16ms |
