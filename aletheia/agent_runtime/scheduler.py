@@ -16,6 +16,7 @@ logger = logging.getLogger("aletheia.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
 _SCHEDULER_JOB_LOCK = threading.RLock()
+_JOB_RUN_STATE = threading.local()
 
 # Hard time budgets for scheduler jobs that depend on external IO or LLM calls.
 # APScheduler's max_instances=1 prevents overlap, but it cannot recover a job
@@ -68,6 +69,7 @@ def _record_job_success(job_id: str) -> None:
 
 
 def _record_job_failure(job_id: str, error: str) -> None:
+    _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
     count = _consecutive_failures[job_id]
     if count >= _FAILURE_ALERT_THRESHOLD:
@@ -134,13 +136,26 @@ def _run_job_guarded(job_id: str, fn):
     with _SCHEDULER_JOB_LOCK:
         if rollback_if_in_transaction():
             logger.warning("Rolled back stale SQLite transaction before scheduler job %s", job_id)
+    _JOB_RUN_STATE.job_id = job_id
+    _JOB_RUN_STATE.failure_recorded = False
     try:
-        return fn()
+        result = fn()
+        if not getattr(_JOB_RUN_STATE, "failure_recorded", False):
+            _record_job_success(job_id)
+        return result
+    except Exception as e:
+        logger.warning("%s job failed outside wrapper: %s", job_id, e)
+        _record_job_failure(job_id, str(e))
     finally:
         with _SCHEDULER_JOB_LOCK:
             if rollback_if_in_transaction():
                 logger.warning("Rolled back leaked SQLite transaction after scheduler job %s", job_id)
             close_db()
+        for attr in ("job_id", "failure_recorded"):
+            try:
+                delattr(_JOB_RUN_STATE, attr)
+            except AttributeError:
+                pass
 
 
 def _guarded(job_id: str, fn):
@@ -656,8 +671,10 @@ def _run_connectivity_monitor():
         _run_async_with_timeout("connectivity_monitor", run_connectivity_check())
     except TimeoutError:
         logger.debug("connectivity_monitor job timed out")
+        _record_job_failure("connectivity_monitor", "timeout")
     except Exception as e:
         logger.debug("connectivity_monitor job failed: %s", e)
+        _record_job_failure("connectivity_monitor", str(e))
 
 
 def _run_daily_summary():
@@ -666,6 +683,7 @@ def _run_daily_summary():
         notify_daily_summary()
     except Exception as e:
         logger.warning("daily_summary job failed: %s", e)
+        _record_job_failure("daily_summary", str(e))
 
 
 def _run_market_data():
@@ -680,8 +698,10 @@ def _run_market_data():
             "market_data job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["market_data"],
         )
+        _record_job_failure("market_data", "timeout")
     except Exception as e:
         logger.warning("market_data job failed: %s", e)
+        _record_job_failure("market_data", str(e))
 
 
 def _run_market_observer():
@@ -700,6 +720,7 @@ def _run_market_observer():
                 "market_observer job timed out after %.0fs",
                 _ASYNC_JOB_TIMEOUT_SEC["market_observer"],
             )
+            _record_job_failure("market_observer", "timeout")
             return
         except Exception as e:
             if "database is locked" in str(e) and attempt == 0:
@@ -708,6 +729,7 @@ def _run_market_observer():
                 _time.sleep(10)
                 continue
             logger.warning("market_observer job failed: %s", e)
+            _record_job_failure("market_observer", str(e))
             return
 
 
@@ -728,6 +750,7 @@ def _run_dreaming_agent():
         enqueue_research_run(run.id)
     except Exception as e:
         logger.warning("dreaming_agent: serenity research enqueue failed: %s", e)
+        _record_job_failure("dreaming_daily", str(e))
 
     # Step 2: Lesson extraction — mines actionable lessons from recent trade case studies
     # and writes them to ps_lessons (proposed). lesson_reviewer at 03:00 then reviews
@@ -747,8 +770,10 @@ def _run_dreaming_agent():
             logger.warning("dreaming_agent: lesson extraction errors: %s", errors)
     except TimeoutError:
         logger.warning("dreaming_agent: lesson extraction timed out")
+        _record_job_failure("dreaming_daily", "lesson extraction timed out")
     except Exception as e:
         logger.warning("dreaming_agent: lesson extraction failed: %s", e)
+        _record_job_failure("dreaming_daily", str(e))
 
 
 def _run_lesson_reviewer():
@@ -762,8 +787,10 @@ def _run_lesson_reviewer():
             "lesson_reviewer job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["lesson_reviewer"],
         )
+        _record_job_failure("lesson_reviewer", "timeout")
     except Exception as e:
         logger.warning("lesson_reviewer job failed: %s", e)
+        _record_job_failure("lesson_reviewer", str(e))
 
 
 def _run_shadow_resolver():
@@ -783,6 +810,7 @@ def _run_shadow_resolver():
             )
     except Exception as e:
         logger.warning("shadow_resolver job failed: %s", e)
+        _record_job_failure("shadow_resolver", str(e))
 
 
 def _run_reconciliation():
@@ -797,6 +825,7 @@ def _run_reconciliation():
         reconcile()
     except Exception as e:
         logger.warning("reconciliation job failed: %s", e)
+        _record_job_failure("reconciliation", str(e))
 
 
 def _run_exchange_sync():
@@ -856,8 +885,10 @@ def _run_paper_trader():
             "paper_trader job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["paper_trader"],
         )
+        _record_job_failure("paper_trader", "timeout")
     except Exception as e:
         logger.warning("paper_trader job failed: %s", e)
+        _record_job_failure("paper_trader", str(e))
 
 
 def _run_pi_trading_decision():
@@ -901,8 +932,10 @@ def _run_pi_trading_decision():
             logger.debug("pi_trading_decision: %s — %s", action, result.get("reasoning", "")[:80])
     except TimeoutError:
         logger.warning("pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300))
+        _record_job_failure("pi_trading_decision", "timeout")
     except Exception as e:
         logger.warning("pi_trading_decision job failed: %s", e)
+        _record_job_failure("pi_trading_decision", str(e))
 
 
 def _run_operator_loop():
@@ -929,8 +962,10 @@ def _run_operator_loop():
             )
     except TimeoutError:
         logger.warning("pi_operator_loop timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_operator_loop", 120))
+        _record_job_failure("pi_operator_loop", "timeout")
     except Exception as e:
         logger.warning("pi_operator_loop job failed: %s", e)
+        _record_job_failure("pi_operator_loop", str(e))
 
 
 def _run_position_manager():
@@ -945,6 +980,7 @@ def _run_position_manager():
         evaluate_open_positions()
     except Exception as e:
         logger.warning("position_manager job failed: %s", e)
+        _record_job_failure("position_manager", str(e))
 
 
 def _run_position_reconcile():
@@ -974,6 +1010,7 @@ def _run_position_reconcile():
             raise
     except Exception as e:
         logger.warning("position_reconcile job failed: %s", e)
+        _record_job_failure("position_reconcile", str(e))
 
 
 def _run_tpsl_fill_check():
@@ -1053,6 +1090,7 @@ def _run_tpsl_fill_check():
             })
     except Exception as e:
         logger.warning("tpsl_fill_check job failed: %s", e)
+        _record_job_failure("tpsl_fill_check", str(e))
 
 
 def _run_equity_observer():
@@ -1070,8 +1108,10 @@ def _run_equity_observer():
             "equity_observer job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["equity_observer"],
         )
+        _record_job_failure("equity_observer", "timeout")
     except Exception as e:
         logger.warning("equity_observer job failed: %s", e)
+        _record_job_failure("equity_observer", str(e))
 
 
 def _run_prediction_observer():
@@ -1089,8 +1129,10 @@ def _run_prediction_observer():
             "prediction_observer job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["prediction_observer"],
         )
+        _record_job_failure("prediction_observer", "timeout")
     except Exception as e:
         logger.warning("prediction_observer job failed: %s", e)
+        _record_job_failure("prediction_observer", str(e))
         return  # skip divergence scan on observer failure
     # Chain: scan for crypto/prediction divergences after observer persists fresh data
     try:
@@ -1100,8 +1142,10 @@ def _run_prediction_observer():
             "divergence_scanner timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["divergence_scanner"],
         )
+        _record_job_failure("prediction_observer", "divergence_scanner timeout")
     except Exception as e:
         logger.warning("divergence_scanner failed: %s", e)
+        _record_job_failure("prediction_observer", f"divergence_scanner: {e}")
 
 
 def _run_cleanup():
@@ -1150,6 +1194,7 @@ def _run_cleanup():
         })
     except Exception as e:
         logger.warning("cleanup job failed: %s", e)
+        _record_job_failure("cleanup", str(e))
 
 
 def _prune_news(cfg) -> int:
@@ -1177,8 +1222,10 @@ def _run_news_fetch():
         _run_async_with_timeout("news_fetch", _async_news_fetch())
     except TimeoutError:
         logger.warning("news_fetch timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["news_fetch"])
+        _record_job_failure("news_fetch", "timeout")
     except Exception as e:
         logger.warning("news_fetch failed: %s", e)
+        _record_job_failure("news_fetch", str(e))
 
 
 async def _async_news_fetch():
@@ -1197,6 +1244,7 @@ def _run_persona_rollout():
             logger.info("persona_rollout: advanced → %s", result.get("step"))
     except Exception as e:
         logger.warning("persona_rollout job failed: %s", e)
+        _record_job_failure("persona_rollout", str(e))
 
 
 def _run_health_check():
@@ -1213,6 +1261,7 @@ def _run_health_check():
         run_health_check()
     except Exception as e:
         logger.warning("health_check job failed: %s", e)
+        _record_job_failure("health_check", str(e))
 
 
 def _run_post_trade_reviewer():
@@ -1226,8 +1275,10 @@ def _run_post_trade_reviewer():
             "post_trade_reviewer job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["post_trade_reviewer"],
         )
+        _record_job_failure("post_trade_reviewer", "timeout")
     except Exception as e:
         logger.warning("post_trade_reviewer job failed: %s", e)
+        _record_job_failure("post_trade_reviewer", str(e))
 
 
 def _run_risk_critic():
@@ -1241,8 +1292,10 @@ def _run_risk_critic():
             "risk_critic job timed out after %.0fs",
             _ASYNC_JOB_TIMEOUT_SEC["risk_critic"],
         )
+        _record_job_failure("risk_critic", "timeout")
     except Exception as e:
         logger.warning("risk_critic job failed: %s", e)
+        _record_job_failure("risk_critic", str(e))
 
 
 def _run_insight_synthesizer():
@@ -1266,6 +1319,7 @@ def _run_insight_synthesizer():
             loop.close()
     except asyncio.TimeoutError:
         logger.warning("insight_synthesizer timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["insight_synthesizer"])
+        _record_job_failure("insight_synthesizer", "timeout")
     except Exception as e:
         logger.warning("insight_synthesizer failed: %s", e)
         _record_job_failure("insight_synthesizer", str(e))
@@ -1417,6 +1471,7 @@ def _run_guard_promotion():
         logger.info("guard_promotion: %s", result)
     except Exception as e:
         logger.warning("guard_promotion job failed: %s", e)
+        _record_job_failure("guard_promotion", str(e))
 
 
 def _run_ohlcv_nightly_backfill():
@@ -1429,8 +1484,10 @@ def _run_ohlcv_nightly_backfill():
     except TimeoutError:
         logger.warning("ohlcv_nightly_backfill timed out after %.0fs",
                        _ASYNC_JOB_TIMEOUT_SEC["ohlcv_nightly_backfill"])
+        _record_job_failure("ohlcv_nightly_backfill", "timeout")
     except Exception as e:
         logger.warning("ohlcv_nightly_backfill failed: %s", e)
+        _record_job_failure("ohlcv_nightly_backfill", str(e))
 
 
 def _ohlcv_backfill_body():
@@ -1469,6 +1526,7 @@ def _run_okx_demo_symbols():
         logger.info("okx_demo_symbols refreshed: %d symbols", count)
     except Exception as e:
         logger.warning("okx_demo_symbols refresh failed: %s", e)
+        _record_job_failure("okx_demo_symbols", str(e))
 
 
 async def _async_universe_refresh():
@@ -1729,6 +1787,7 @@ def _run_okx_demo_symbols():
         logger.debug("okx_demo_symbols refreshed: %d symbols", count)
     except Exception as e:
         logger.warning("okx_demo_symbols refresh failed: %s", e)
+        _record_job_failure("okx_demo_symbols", str(e))
 
 
 def _run_ohlcv_nightly_backfill():
@@ -1770,3 +1829,4 @@ def _run_ohlcv_nightly_backfill():
         logger.info("ohlcv_nightly_backfill: +%d bars across %d symbols", total_bars, len(symbols))
     except Exception as e:
         logger.warning("ohlcv_nightly_backfill failed: %s", e)
+        _record_job_failure("ohlcv_nightly_backfill", str(e))
