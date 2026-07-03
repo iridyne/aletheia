@@ -171,7 +171,7 @@ export default function Proposals() {
             <RiskDecisionSection proposalId={selected.id} />
             <DrawerSection label="Links">
               <DrawerField label="Strategy ID" value={selected.strategy_id ? (
-                <a href="#" onClick={e => { e.preventDefault(); navigate('/strategies') }} className="mono">{selected.strategy_id}</a>
+                <span className="mono">{selected.strategy_id}</span>
               ) : null} />
               <DrawerField label="Opportunity ID" value={selected.opportunity_id ? (
                 <a href="#" onClick={e => { e.preventDefault(); navigate('/agent-activity') }} className="mono">{selected.opportunity_id}</a>
@@ -241,9 +241,9 @@ function ProposalCard({
         <Button onClick={onApprove} disabled={busy}>Approve</Button>
         <Button variant="secondary" onClick={onReject} disabled={busy}>Reject</Button>
         <Button variant="secondary" onClick={onOpenDetail}>Details</Button>
-        {(p.strategy_id || p.opportunity_id) && (
-          <Button variant="secondary" onClick={() => navigate(p.opportunity_id ? '/agent-activity' : '/strategies')}>
-            {p.opportunity_id ? 'Opportunity →' : 'Strategy →'}
+        {p.opportunity_id && (
+          <Button variant="secondary" onClick={() => navigate('/agent-activity')}>
+            Opportunity →
           </Button>
         )}
       </div>

@@ -33,9 +33,7 @@ export type NavGroup = { group: string; items: NavItem[] }
 
 // Nav grouped by the 5 workflow phases (docs/WEBUI_PAGE_MAP.md target IA):
 // Observe -> Decide -> Execute -> Evolve -> Operate.
-// NOTE: page MERGES (Positions+PaperTrades, AgentRuns+Opportunities, Dreaming+KB+Reports)
-// are later build steps — until those merged pages exist, nav keeps the existing routes
-// under their target phase rather than pointing at not-yet-built destinations.
+// Keep this list honest: items must point only at implemented routes.
 export const NAV: NavGroup[] = [
   { group: '', items: [{ to: '/', label: 'Overview' }] },
   {
