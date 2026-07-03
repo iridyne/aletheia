@@ -18,9 +18,17 @@ initDevReload()
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchInterval: 10000,
-      refetchOnMount: 'always',
-      refetchOnWindowFocus: 'always',
+      // staleTime:0 (default) + refetchOnMount:'always' means every page switch
+      // discards cached data and shows a blank skeleton instead of serving the
+      // cached view while re-fetching in the background. 30s stale window gives
+      // instant navigation without sacrificing data freshness on a 10s-polling app.
+      staleTime: 30_000,
+      gcTime: 5 * 60_000,
+      refetchOnMount: true,          // re-fetch when stale, NOT always
+      refetchOnWindowFocus: false,   // avoid bursts when user alt-tabs
+      // No global refetchInterval — real-time queries set their own interval
+      // (e.g. StatusBar queries set refetchInterval:10000 explicitly).
+      retry: 1,
     },
   },
 })

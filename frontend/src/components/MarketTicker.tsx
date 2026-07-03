@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { fmtNum, fmtSigned, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, fmtTimestamp, isoToEpochSeconds, useDecimals } from '../lib/format'
 
 /**
  * MarketTicker — Bloomberg-flavored top-bar ticker.
@@ -10,13 +10,20 @@ import { fmtNum, fmtSigned, useDecimals } from '../lib/format'
  *   local clock · UTC clock   |   crypto tokens (BTC/ETH/SOL — real)   |   indices (SPX/VIX — pending)
  *
  * Honesty:
- *   - Crypto = real Bitget snapshots from /api/market/snapshots (already in use elsewhere).
+ *   - Crypto = real Bitget snapshots from /api/market/snapshots.
  *   - Indices = NOT WIRED. We render '—' + a "feed not wired" tooltip rather than fabricate.
- *     When the backend lands GET /api/market/indices (see WEBUI_BACKEND_HANDOFF.md §13),
- *     swap the placeholder block with a useQuery and the slots auto-fill.
+ *
+ * Why per-symbol queries (fixes the recurring "price shows a dash" bug):
+ *   The old code fetched the latest 20 snapshots ACROSS ALL symbols and picked
+ *   BTC/ETH/SOL out of that window. Once the scanner tracks >20 symbols, the
+ *   majors routinely fall out of the newest-20 rows → the ticker got nothing →
+ *   it rendered '—'. We now query each of the three symbols independently
+ *   (limit=1), so a major is only ever blank if it has genuinely never been
+ *   snapshotted. A present-but-old snapshot is shown dimmed + "(stale)" so a
+ *   stalled feed is visibly distinct from a missing one.
  *
  * Refresh cadence:
- *   - Clock: 1s setInterval (display-only).
+ *   - Clock: 1s setInterval (display-only, also drives the staleness age).
  *   - Crypto: react-query refetchInterval 15s (Bitget rate-limit friendly).
  */
 
@@ -26,6 +33,9 @@ const CRYPTO = [
   { sym: 'SOL/USDT', label: 'SOL' },
 ]
 
+// A snapshot older than this is treated as a stalled feed: keep showing the
+// last price but dim it and surface the age, rather than implying it's live.
+const STALE_SECONDS = 300
 
 function pad2(n: number): string {
   return n < 10 ? '0' + n : String(n)
@@ -47,38 +57,44 @@ export default function MarketTicker() {
     return () => clearInterval(t)
   }, [])
 
-  const { data: snapshots = [] } = useQuery({
-    queryKey: ['market-snapshots-ticker'],
-    queryFn: () => api.getMarketSnapshots(undefined, 20),
-    refetchInterval: 15000,
+  // One query per symbol so majors never fall out of a shared "latest N" window.
+  const results = useQueries({
+    queries: CRYPTO.map(({ sym }) => ({
+      queryKey: ['ticker-snap', sym],
+      queryFn: () => api.getMarketSnapshots(sym, 1),
+      refetchInterval: 15000,
+    })),
   })
 
-  // Take latest snapshot per symbol (api may return multiple rows newest-first).
-  const snapMap: Record<string, any> = {}
-  for (const s of snapshots as any[]) {
-    if (!snapMap[s.symbol]) snapMap[s.symbol] = s
-  }
+  const snaps = CRYPTO.map((_, i) => {
+    const rows = (results[i]?.data as any[]) || []
+    return rows[0] || null
+  })
 
-  // Tick flash: compare current vs previous prices
+  const nowSec = Math.floor(now.getTime() / 1000)
+
+  // Tick flash: compare current vs previous prices.
   const prevPrices = useRef<Record<string, number>>({})
   const [flashes, setFlashes] = useState<Record<string, 'up' | 'down'>>({})
+  const priceSig = snaps.map((s) => s?.price ?? '').join(',')
 
   useEffect(() => {
     const next: Record<string, 'up' | 'down'> = {}
-    for (const { sym } of CRYPTO) {
-      const price = snapMap[sym]?.price
+    CRYPTO.forEach(({ sym }, i) => {
+      const price = snaps[i]?.price
       const prev = prevPrices.current[sym]
       if (price != null && prev != null && price !== prev) {
         next[sym] = price > prev ? 'up' : 'down'
       }
       if (price != null) prevPrices.current[sym] = price
-    }
+    })
     if (Object.keys(next).length > 0) {
       setFlashes(next)
       const t = setTimeout(() => setFlashes({}), 650)
       return () => clearTimeout(t)
     }
-  }, [snapshots])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceSig])
 
   return (
     <div className="market-ticker" role="status" aria-label="Market ticker">
@@ -95,18 +111,24 @@ export default function MarketTicker() {
       <span className="ticker-divider" aria-hidden="true" />
 
       {/* Crypto tokens — real data */}
-      {CRYPTO.map(({ sym, label }) => {
-        const snap = snapMap[sym]
+      {CRYPTO.map(({ sym, label }, i) => {
+        const snap = snaps[i]
         const price = snap?.price
         const pct = snap?.change_pct_24h
+        const ageSec = snap ? isoToEpochSeconds(snap.snapshot_at) : null
+        const stale = ageSec != null && nowSec - ageSec > STALE_SECONDS
         const tone = pct == null ? 'muted' : pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat'
+        const title = snap
+          ? `${sym} · 24h change · updated ${fmtTimestamp(snap.snapshot_at)}${stale ? ' (stale feed)' : ''}`
+          : `${sym} · no snapshot feed yet`
         return (
-          <span key={sym} className="ticker-token" title={`${sym} · 24h change`}>
+          <span key={sym} className={`ticker-token${stale ? ' ticker-stale' : ''}`} title={title}>
             <span className="ticker-label">{label}</span>
             <span className={`ticker-price${flashes[sym] ? ` tick-flash-${flashes[sym]}` : ''}`}>{price != null ? fmtNum(price) : '—'}</span>
             <span className={`ticker-pct ticker-${tone}`}>
-              {pct != null ? `${pct > 0 ? '▲' : pct < 0 ? '▼' : ''}${fmtSigned(pct)}%` : ''}
+              {price != null && pct != null ? `${pct > 0 ? '▲' : pct < 0 ? '▼' : ''}${fmtSigned(pct)}%` : ''}
             </span>
+            {stale && <span className="ticker-stale-dot" aria-hidden="true">◦</span>}
           </span>
         )
       })}

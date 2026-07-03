@@ -208,6 +208,16 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .ticker-down  { color: var(--red); }
 .ticker-flat  { color: var(--muted); }
 .ticker-muted { color: var(--faint); }
+.ticker-stale { opacity: 0.5; }
+.ticker-stale-dot { color: var(--faint); font-size: 0.6rem; margin-left: 2px; }
+
+/* Global top progress bar (see FetchProgress.tsx) */
+.fetch-progress {
+  position: fixed; top: 0; left: 0; height: 2px;
+  background: var(--accent); z-index: 9999; pointer-events: none;
+}
+.fetch-progress.is-active { opacity: 1; transition: width 0.4s ease-out; }
+.fetch-progress.is-done { opacity: 0; transition: width 0.2s ease-in, opacity 0.3s 0.1s ease-out; }
 
 @media (max-width: 900px) {
   .market-ticker .ticker-divider { display: none; }

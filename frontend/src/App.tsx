@@ -24,6 +24,7 @@ import Universe from './pages/Universe'
 import CommandPalette from './components/CommandPalette'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
+import FetchProgress from './components/FetchProgress'
 import type { InfraEvent } from './types'
 import { deriveMasterState } from './lib/systemState'
 
@@ -451,6 +452,7 @@ export default function App() {
 
   return (
     <div className="layout">
+      <FetchProgress />
       <CommandPalette />
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="brand">
