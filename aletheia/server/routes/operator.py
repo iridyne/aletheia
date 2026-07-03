@@ -897,6 +897,7 @@ async def operator_enable_extension(extension_id: str, payload: OperatorExtensio
 
 @router.get("/recommendations")
 async def operator_recommendations(limit: int = 10):
+    global _recommendations_cache
     limit = max(1, min(limit, 50))
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return build_recommendations(limit=limit)
