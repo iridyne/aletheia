@@ -217,12 +217,16 @@ runtime probes are `/_infra/livez` (process liveness), `/_infra/readyz`
 
 - **Dashboard:** Overview (gateway/live/permission/kill-switch state, account/PnL),
   Agent Runs, Positions, Charts, Reports, Knowledge Base.
-- **CLI (bootstrap):** `aletheia doctor` (full ground-truth probe), `aletheia gateway status`,
-  `aletheia gateway logs`. (`aletheia risk status` still works but the Risk panel is primary.)
+- **CLI (bootstrap):** `aletheia doctor` (full ground-truth probe), `aletheia doctor --verbose`
+  or `--deep` (redacted log tails + recent failures + next-log pointers),
+  `aletheia gateway status`, `aletheia gateway logs`. (`aletheia risk status` still works but the Risk panel is primary.)
 - **Files** under `data/`:
-  - `logs/audit.jsonl` — every state transition (rotates at the size cap to `.1`)
-  - `logs/errors.jsonl`, `logs/gateway.log`, `logs/errors.log` (inner server stderr)
+  - `logs/audit.jsonl` — every state transition (rotates at `retention.jsonl_max_mb`, default 50 MB, numeric generations)
+  - `logs/errors.jsonl`, `logs/agent_runs.jsonl` — structured diagnostic streams, same JSONL rotation cap
+  - `logs/gateway.log`, `logs/errors.log`, `logs/frontdoor-errors.log` — text logs split at 50 MB and kept for many generations during MVP/Round 1/Round 2 diagnosis
   - `app.db` — SQLite state; `config.yaml` — config; `secrets.enc` — encrypted secrets
+- **Secret rule:** verbose diagnostics are allowed to be noisy, but must stay redacted:
+  no API key, secret, passphrase, bearer token, request signature, or raw credential may appear in logs or doctor output.
 - **Telegram (optional):** set `telegram.enabled: true` + `allowed_chat_ids`, store
   the token via `aletheia secrets set telegram.bot_token`. A 10-minute health check
   alerts you (transition-only, de-duped) when the agent-failure ratio is high or the

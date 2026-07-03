@@ -294,7 +294,7 @@ def _run_server(cfg) -> None:
         "aletheia.server.app:app",
         host=cfg.app.bind_host,
         port=cfg.app.dashboard_port,
-        log_level="info",
+        log_level="debug",
         reload=True,
         reload_dirs=[aletheia_dir],
     )

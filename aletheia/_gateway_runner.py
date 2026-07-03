@@ -126,7 +126,7 @@ def _spawn_frontdoor(cfg, backend_port: int) -> subprocess.Popen:
         "--port",
         str(cfg.app.dashboard_port),
         "--log-level",
-        "warning",
+        "info",
         # loop=none → uvicorn passes loop_factory=None → standard asyncio.run()
         # → respects the process WindowsSelectorEventLoopPolicy set at the top of
         # gateway/frontdoor.py. Without this, uvicorn's own factory hardcodes
@@ -203,7 +203,7 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     cmd = [
         real_python, "-m", "uvicorn", "aletheia.server.app:app",
         "--host", runtime_context["host"], "--port", str(runtime_context["port"]),
-        "--log-level", "info",
+        "--log-level", "debug",
         # loop=none → uvicorn uses the process WindowsSelectorEventLoopPolicy set
         # at the top of server/app.py instead of its hardcoded ProactorEventLoop
         # factory (§23/§24). See gateway/frontdoor.py cmd for the same rationale.

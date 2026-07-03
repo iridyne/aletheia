@@ -78,6 +78,141 @@ class Report:
         }
 
 
+def build_deep_diagnostics(report: Report | None = None, *, tail_lines: int = 20) -> dict:
+    """Build a read-only diagnostic bundle for `doctor --verbose/--deep`.
+
+    This intentionally contains pointers and redacted tails, not secrets or full
+    logs. It is the "where do I look next" layer above the health summary.
+    """
+    report = report or build_report()
+    bundle = {
+        "attention": [
+            {
+                "name": c.name,
+                "severity": c.severity,
+                "detail": c.detail,
+                "fix_hint": c.fix_hint,
+                "log_hint": _log_hint_for_check(c.name),
+            }
+            for c in report.checks
+            if c.severity in {"warn", "blocker"}
+        ],
+        "logs": _diagnostic_logs(tail_lines=tail_lines),
+        "recent_failures": _recent_failures(),
+        "recent_audit": _recent_audit_events(),
+    }
+    return bundle
+
+
+def _log_hint_for_check(name: str) -> str:
+    if name.startswith("process.") or name.startswith("webui."):
+        return "data/logs/errors.log or data/logs/frontdoor-errors.log"
+    if name.startswith("data."):
+        return "data/logs/errors.log plus recent scheduler/collector agent_runs"
+    if name.startswith("loop.") or name.startswith("content.") or name.startswith("operator."):
+        return "data/logs/agent_runs.jsonl and app.db agent_runs/run_steps"
+    if name.startswith("trust.") or name.startswith("config."):
+        return "data/logs/audit.jsonl"
+    if name.startswith("network.") or name.startswith("creds."):
+        return "data/logs/errors.log; secrets are intentionally never printed"
+    return "data/logs/"
+
+
+def _diagnostic_logs(*, tail_lines: int) -> dict:
+    try:
+        from aletheia.gateway.logs import (
+            errors_log_path,
+            log_inventory,
+            log_path,
+            tail_file_redacted,
+        )
+
+        inventory = log_inventory()
+        total_bytes = sum(int(row.get("bytes") or 0) for row in inventory)
+        tails = {
+            "gateway.log": tail_file_redacted(log_path(), tail_lines),
+            "errors.log": tail_file_redacted(errors_log_path(), tail_lines),
+        }
+        try:
+            from aletheia.config.loader import get_data_dir
+            log_dir = get_data_dir() / "logs"
+            tails["frontdoor-errors.log"] = tail_file_redacted(log_dir / "frontdoor-errors.log", tail_lines)
+            tails["operator-shell-errors.log"] = tail_file_redacted(log_dir / "operator-shell-errors.log", tail_lines)
+        except Exception:
+            pass
+        return {
+            "policy": {
+                "text_logs_rotate_at_mb": 50,
+                "text_logs_keep_generations": 100,
+                "jsonl_rotate_at_mb": "config.retention.jsonl_max_mb (default 50)",
+                "deletion": "doctor does not delete logs; telemetry DB pruning is separate",
+            },
+            "total_bytes": total_bytes,
+            "files": inventory,
+            "tails": tails,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _recent_failures(limit: int = 12) -> list[dict]:
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        rows = db.execute(
+            "SELECT id, agent_name, status, started_at, finished_at, error "
+            "FROM agent_runs "
+            "WHERE status NOT IN ('completed', 'success') OR error IS NOT NULL "
+            "ORDER BY COALESCE(finished_at, started_at) DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "agent_name": row["agent_name"],
+                "status": row["status"],
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "error": _shorten_secret_safe(row["error"]),
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        return [{"error": f"could not read agent_runs: {e}"}]
+
+
+def _recent_audit_events(limit: int = 12) -> list[dict]:
+    try:
+        from aletheia.files.jsonl import read_jsonl
+        events = read_jsonl("audit.jsonl", limit=limit)
+        result = []
+        for event in events[-limit:]:
+            result.append({
+                "timestamp": event.get("timestamp"),
+                "actor": event.get("actor"),
+                "source": event.get("source"),
+                "event_type": event.get("event_type"),
+                "entity_type": event.get("entity_type"),
+                "entity_id": event.get("entity_id"),
+                "message": _shorten_secret_safe(event.get("message")),
+            })
+        return result
+    except Exception as e:
+        return [{"error": f"could not read audit.jsonl: {e}"}]
+
+
+def _shorten_secret_safe(value: object, max_len: int = 240) -> str:
+    if value is None:
+        return ""
+    text = str(value)
+    try:
+        from aletheia.gateway.logs import redact_log_text
+        text = redact_log_text(text)
+    except Exception:
+        pass
+    return text if len(text) <= max_len else text[: max_len - 3] + "..."
+
+
 def _age_minutes(iso_ts: str | None) -> float | None:
     """Minutes since an ISO-8601 timestamp (tz-aware or naive-UTC). None if unparseable."""
     if not iso_ts:

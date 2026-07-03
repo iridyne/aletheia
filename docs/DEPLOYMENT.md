@@ -66,6 +66,9 @@ Measure-Command { Invoke-WebRequest -Uri 'http://127.0.0.1:8788/api/health' -Use
 
 # 查看 doctor JSON（机器可读）
 uv run aletheia doctor --json
+
+# 交互排障：附带脱敏日志尾部、最近失败、下一步日志指针
+uv run aletheia doctor --verbose
 ```
 
 **铁律**：相信 `doctor` 的输出，不信文档里写的运行态描述（文档只写意图）。

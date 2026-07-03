@@ -7,7 +7,28 @@
 
 ## Last Updated
 
-2026-07-03 (runtime 通讯通路拆分 + pytest 分层已补)
+2026-07-03 (verbose 日志 + doctor 深度诊断已补)
+
+---
+
+## Recent Change (verbose 日志与 doctor 深度诊断 — 2026-07-03)
+
+针对 MVP/Round 1/Round 2 阶段“先尽量保留问题现场、诊断输出要更具体”的要求，完成一轮
+日志和 doctor 命令增强：
+
+- gateway/error/frontdoor 文本日志从 10MB 单备份改为 50MB 分段、数字多代保留，适合先保留更多现场。
+- gateway/backend uvicorn 日志提升到更详细级别：后端 debug、frontdoor info、前台运行 debug。
+- 新增日志安全裁剪与脱敏读取，`doctor --verbose` 展示日志尾部时会遮掉 token、secret、authorization 等敏感字段。
+- `aletheia doctor --verbose` / `--deep` 增加“下一步看哪里”的诊断包：异常检查、相关日志提示、日志清单、近期失败 agent run、近期审计事件摘要、红acted 日志尾部。
+- `aletheia doctor --json --verbose` 增加 `diagnostics` 字段，方便 AI/脚本在故障时直接读取结构化诊断。
+- 运维文档补上 verbose doctor、50MB 日志分段、保留策略和敏感信息规则。
+
+验证：
+- `uv run pytest tests/test_gateway_logs.py tests/test_doctor.py tests/test_doctor_json.py tests/test_supervisor.py -q -o cache_dir=.pytest_cache_ai`
+- `uv run pytest tests/test_security.py -q -o cache_dir=.pytest_cache_ai`
+- `uv run aletheia doctor --json --verbose` 结构化输出包含 `diagnostics.logs` / `diagnostics.attention`。
+
+注意：当前工作区另有历史数据下载/交易决策/审计链相关未提交改动，属于其它边界；本批次不要混入这些文件。
 
 ---
 

@@ -98,6 +98,38 @@ def test_report_severity_partitions():
     assert [c.name for c in r.warns] == ["b"]
 
 
+def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    (tmp_path / "logs" / "errors.log").write_text(
+        "Authorization: Bearer sk-DOCTORSECRETSECRET\nplain traceback\n",
+        encoding="utf-8",
+    )
+    report = dx.Report(generated_at="t")
+    report.add("process.backend", "warn", "backend not ready", "restart")
+
+    bundle = dx.build_deep_diagnostics(report, tail_lines=5)
+
+    assert bundle["attention"][0]["name"] == "process.backend"
+    assert "errors.log" in bundle["attention"][0]["log_hint"]
+    assert bundle["logs"]["policy"]["text_logs_rotate_at_mb"] == 50
+    tail = "\n".join(bundle["logs"]["tails"]["errors.log"])
+    assert "sk-DOCTORSECRET" not in tail
+    assert "[REDACTED]" in tail
+
+
+def test_doctor_cli_verbose_json_includes_diagnostics(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from typer.testing import CliRunner
+    from aletheia.main import app
+
+    result = CliRunner().invoke(app, ["doctor", "--json", "--verbose"])
+    assert result.exit_code in (0, 1)
+    import json
+    payload = json.loads(result.stdout)
+    assert "diagnostics" in payload
+    assert "logs" in payload["diagnostics"]
+
+
 # --- end-to-end: probes must never raise, even on a fresh/empty environment ---
 
 def test_build_report_runs_and_covers_all_dimensions():
