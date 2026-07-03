@@ -865,6 +865,7 @@ class UniverseMember(BaseModel):
     crowding_risk: float | None = None
     late_entry_penalty: float | None = None
     scanner_family: str | None = None
+    regime_tag: str | None = None
     # JSON dict {family: score} of all 5+ scanner families' scores for this member
     # (Phase 2A+.12). Enables ensemble/consensus analysis beyond the single winning
     # family; without persistence the run_all_scanners all_scores dict was discarded.

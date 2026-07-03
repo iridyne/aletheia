@@ -426,3 +426,70 @@ def test_explore_respects_family_quota():
     mom = sum(1 for x in sel if x.get("scanner_family") == "momentum")
     limit = max(1, int(cfg.max_candidates * cfg.family_quota["momentum"]))  # 3
     assert mom <= limit, f"explore re-flooded over-quota momentum: {mom} > {limit}"
+
+
+# ---------------------------------------------------------------------------
+# UP-18 — UniverseMember persists current regime context
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("UP-18", "universe_pipeline", "§2A+.9 regime propagation", "L2b",
+              "UniverseService writes the detected market regime into "
+              "UniverseMember.regime_tag, and the repository persists it so "
+              "member-layer learning is not stuck in the unknown bucket"),
+)
+def test_universe_member_regime_tag_persists_and_refresh_assigns(tmp_path, monkeypatch):
+    """regime_tag must survive model_dump + insert and be assigned by refresh.
+
+    The database migration already had universe_members.regime_tag, but the model
+    omitted the field and refresh never populated it. That made recent member rows
+    100% NULL even while market_regimes.state had live values.
+    """
+    import sqlite3
+
+    from aletheia.storage.models import UniverseMember
+    assert "regime_tag" in UniverseMember.model_fields, (
+        "UniverseMember lacks regime_tag; model_dump will drop the regime context"
+    )
+
+    from aletheia.storage.migrations import _ADDITIVE_COLUMNS, run_migrations
+    cols = {(c, t) for c, t, _ in _ADDITIVE_COLUMNS}
+    assert ("regime_tag", "universe_members") in cols, (
+        "_ADDITIVE_COLUMNS must keep universe_members.regime_tag available"
+    )
+
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    sq._db_conn = conn
+    run_migrations()
+
+    member = UniverseMember(
+        snapshot_id="snap_regime", asset_id="asset_regime", symbol="BTC/USDT",
+        rank=1, total_score=42.0, scanner_family="momentum",
+        regime_tag="sideways",
+    )
+    repo.insert_universe_member(member)
+
+    row = conn.execute(
+        "SELECT regime_tag FROM universe_members WHERE id=?", (member.id,)
+    ).fetchone()
+    assert row is not None, "member row was not inserted"
+    assert row["regime_tag"] == "sideways", (
+        f"regime_tag was not persisted: {row['regime_tag']!r}"
+    )
+
+    from aletheia.universe import service
+    src = inspect.getsource(service.UniverseService.refresh)
+    assert "regime_tag = current_regime.state if current_regime else None" in src
+    assert "regime_tag=regime_tag" in src
+    assert '"regime_tag": regime_tag' in src

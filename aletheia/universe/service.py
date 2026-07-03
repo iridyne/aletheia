@@ -221,6 +221,7 @@ class UniverseService:
                     seen_symbols[sym] = item
             allocated = sorted(seen_symbols.values(), key=lambda x: x["total_score"], reverse=True)
 
+            regime_tag = current_regime.state if current_regime else None
             inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
                 ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
@@ -240,6 +241,7 @@ class UniverseService:
                     crowding_risk=item.get("crowding_risk"),
                     late_entry_penalty=item.get("late_entry_penalty"),
                     scanner_family=item.get("scanner_family"),
+                    regime_tag=regime_tag,
                     all_scores=json.dumps(item.get("all_scores", {})),
                     quote_volume_24h=item.get("quote_volume_24h"),
                     spread_bps=item.get("spread_bps"),
@@ -260,6 +262,7 @@ class UniverseService:
                     # to "spot" (signal_emitter:70), mislabeling perp/derivatives.
                     "market_type": item.get("market_type", "spot"),
                     "scanner_family": item.get("scanner_family"),
+                    "regime_tag": regime_tag,
                     # Direction MUST come from the same source the opportunity
                     # uses (signal_emitter: scanner_direction first). Re-inferring
                     # here dropped the scanner's own direction — momentum/event
