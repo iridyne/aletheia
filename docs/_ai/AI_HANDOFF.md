@@ -7,7 +7,41 @@
 
 ## Last Updated
 
-2026-07-02 (Position C **全部完成** A+B+C — 规则引擎删除 + 决策链解耦 + 信任边界 + 全 operator/UI 面移除 + 文档/spec 同步)
+2026-07-03 (discussion.md 口述长文全量落地 7 项,已 FF-merge master)
+
+---
+
+## Recent Change (discussion.md 口述 7 项全量落地 — 2026-07-03)
+
+> 7 项已 FF-merge master(commits `1c889a6`→`659057d`,64 文件,线性)。详见记忆
+> `aletheia-discussion-round-2026-07-03` + 计划 `docs/_ai/DISCUSSION_ACTION_PLAN.md`。
+> **前置再基线**:owner 以为学习闭环大面积断裂——两份审计已过时,断口 A-G/R0/ranker
+> 幻觉/lesson→policy 全已修(引用审计前先核 HEAD)。
+
+- **W1 顶栏价格横线真根因**:MarketTicker 取全市场最近20条快照,标的>20 时 BTC/ETH/SOL
+  掉出窗口→横线。修=按 symbol 各查最新1条 + snapshot_at 过期指示。+ 全局 FetchProgress。
+- **W2**:Trades Orders&Fills|Closed 并排;Analytics+Insights 合并(tab id 保 'analytics');
+  侧边栏 Serenity Evolve→Observe。
+- **W3** PI Agent→System Operator **仅显示层**(UI/注释/prompt/活文档);技术内核
+  (pi_daemon.py/pi_decisions表/PiDaemon类/PI-S*/pi_agent_*)保留。
+- **W5 选币偏斜**(数据实证 momentum 84%/long 85%):根因=explore 绕过配额回流 momentum
+  + derivatives/event 死 family 占 40% 静态配额 + regime 75% None。修=allocator explore 只取
+  under-quota(UP-17)+ 静态 family_quota 重平衡。合成池 84%→39%。诊断 docs/research/
+  UNIVERSE_SKEW_DIAGNOSIS_2026-07-03.md。
+- **W6** learning_contract.md 订正到 HEAD(accepted→applied L-Bug-E;生产者已接);登记 3 残留。
+  发现文档预存 ESC 控制字符损坏(独立清理)。
+- **W4 限价单+四要素**(信任边界,owner授权):TradeProposal +take_profit/risk_reward(DB列);
+  决策端总填齐四要素;create_paper_proposal 默认 limit;风控 check 2b 对 limit+native 缺一拒单
+  (incomplete_entry_plan,market/adopt 豁免)。spec PI-S05。
+- **W7** pytest 已优化(110s/1699,最慢2.4s);注册 slow marker + 文档,不硬凑。
+
+**待办(需 owner 决策/信任边界,已登记未擅改)**:reduce_size 升级硬约束?;历史
+direction=None 污染(family_direction_edge COALESCE 当 long,被风控 RISK-14 消费);
+derivatives/event 数据源死 + regime 75% None(W5 根治的深层);learning_contract ESC 清理。
+
+**验证**:spec 540/530/98%;全量 1686 passed / 10 **预存**失败(基线同样红,测试自身过时);
+frontend build+assets 200;后端冷探 3ms;doctor 15 warn 全预存/暂停态无新增。gateway
+Paused=True(未擅解除)。⚠️ spot-parity 分支仍未 merge(历史遗留,与本轮无关)。
 
 ---
 
