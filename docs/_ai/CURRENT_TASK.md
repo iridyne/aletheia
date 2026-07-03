@@ -41,6 +41,11 @@
 该文档总结了本轮 20+ worktree 批量修复的拆解、量化、性能、pytest、worktree 收尾和
 owner 决策边界经验。
 
+**AI 默认测试入口（2026-07-03）**:修 bug 时默认先跑 `.\scripts\test_ai.ps1`
+（上次失败 + `fast` 层）。需要更大信心时再跑相关 `integration`/`e2e`/`slow`，
+最后才用 `pytest-xdist` 并行或全量测试。完整规则见
+`docs/operations/PYTEST_OPTIMIZATION_GUIDE.md`。
+
 > **结构性阻碍已清除(意图记录,2026-06-24)**:最小赚钱循环
 > (opportunities→paper_trader→signal_pending→PI→proposal→risk→execution)曾被
 > **五层叠加阻碍**卡死(OKX contractSize 单位 / PI 余额幻觉 8 bug / OKX 跨 loop /

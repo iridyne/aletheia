@@ -40,6 +40,9 @@ except ImportError:
 
 
 _PYTEST_MARKERS = [
+    "fast: default AI feedback set; cheap local tests suitable for every bug-fix loop.",
+    "integration: tests that cross route, DB, scheduler, broker, runtime, or service boundaries.",
+    "e2e: end-to-end pipeline tests (deselect with -m 'not e2e').",
     "real_place_order: test exercises BitgetClient.place_order directly with httpx "
     "mocked (no network) - opt out of the place_order guard.",
     "real_llm: test provides its own LLM mock - opt out of the fast-fail guard.",
@@ -94,6 +97,26 @@ _INTEGRATION_TOKENS = (
     "workbench",
 )
 
+_SLOW_PATH_TOKENS = (
+    # Current --durations=20 hot spots and intentionally broad workflow tests.
+    "test_agent_runtime.py",
+    "test_agent_shell.py",
+    "test_doctor.py",
+    "test_doctor_content_probes.py",
+    "test_doctor_json.py",
+    "test_operator_routes.py",
+    "test_operator_shell_supervision.py",
+    "test_serenity_workbench.py",
+    "spec_serenity_verdict.py",
+    "spec_learning_pipeline.py",
+    "spec_pipeline_entry_enrichment.py",
+    # Training / sweep / remote-service paths should not be in the default loop.
+    "optuna",
+    "training",
+    "remote",
+    "live_e2e",
+)
+
 _DOMAIN_PATTERNS = [
     ("domain_operator", ("operator", "agent_shell", "pi_daemon", "command")),
     ("domain_universe", ("universe",)),
@@ -133,6 +156,17 @@ def _classify_test_tier(path: str) -> str:
     return "tier_unit"
 
 
+def _is_slow_test(path: str, item=None) -> bool:
+    if "tests/e2e/" in path:
+        return True
+    if any(token in path for token in _SLOW_PATH_TOKENS):
+        return True
+    if item is not None:
+        if item.get_closest_marker("online") or item.get_closest_marker("real_network"):
+            return True
+    return False
+
+
 def _classify_test_domains(path: str) -> list[str]:
     domains = [
         marker
@@ -148,8 +182,14 @@ def pytest_collection_modifyitems(config, items):  # noqa: ARG001
         path = _normalized_node_path(item)
         tier = _classify_test_tier(path)
         item.add_marker(getattr(pytest.mark, tier))
+        if tier == "tier_unit" and not _is_slow_test(path, item):
+            item.add_marker(pytest.mark.fast)
+        elif tier == "tier_integration":
+            item.add_marker(pytest.mark.integration)
         if tier == "tier_e2e":
             item.add_marker(pytest.mark.e2e)
+        if _is_slow_test(path, item):
+            item.add_marker(pytest.mark.slow)
         for domain in _classify_test_domains(path):
             item.add_marker(getattr(pytest.mark, domain))
 

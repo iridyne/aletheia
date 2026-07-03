@@ -55,6 +55,9 @@ def test_pytest_markers_register_layers_domains_and_slow_binary_labels():
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     conftest = Path("tests/conftest.py").read_text(encoding="utf-8")
     for marker in [
+        "fast",
+        "integration",
+        "e2e",
         "tier_unit",
         "tier_integration",
         "tier_e2e",
@@ -70,12 +73,51 @@ def test_pytest_markers_register_layers_domains_and_slow_binary_labels():
         assert marker in conftest
 
 
+def test_fast_integration_slow_classifier_sample_accuracy():
+    assert pytest_conftest._classify_test_tier("tests/test_hypothesis_properties.py") == "tier_unit"
+    assert pytest_conftest._is_slow_test("tests/test_hypothesis_properties.py") is False
+    assert pytest_conftest._is_slow_test("tests/test_serenity_workbench.py") is True
+    assert pytest_conftest._is_slow_test("tests/e2e/test_pipeline_feedback_loop.py") is True
+    assert pytest_conftest._is_slow_test("tests/specs/spec_hyperliquid.py::test_hyperliquid_live_e2e") is True
+
+
 def test_pytest_cacheprovider_enabled_for_last_failed_workflow():
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
 
     assert "-p no:cacheprovider" not in pyproject
     assert ".pytest_cache/" in gitignore
+
+
+def test_ai_default_test_script_runs_last_failed_then_fast():
+    script = Path("scripts/test_ai.ps1").read_text(encoding="utf-8")
+
+    assert "--lf" in script
+    assert "--last-failed-no-failures=none" in script
+    assert "cache_dir=.pytest_cache_ai" in script
+    assert '-m", "fast' in script
+    assert "pytest" in script
+
+
+def test_xdist_is_available_but_not_default_parallel():
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+
+    assert "pytest-xdist" in pyproject
+    assert "-n auto" not in pyproject
+
+
+def test_core_project_rules_are_mapped_to_executable_tests():
+    guide = Path("docs/operations/PYTEST_OPTIMIZATION_GUIDE.md").read_text(encoding="utf-8")
+    for expected in [
+        "tests/specs/spec_execution.py",
+        "tests/specs/spec_live_unlock.py",
+        "tests/specs/spec_api_reference.py",
+        "tests/specs/spec_data_layer.py",
+        "tests/specs/spec_data_model.py",
+        "tests/test_pytest_tiering.py",
+        "scripts/test_ai.ps1",
+    ]:
+        assert expected in guide
 
 
 def test_slow_duration_classifier_parses_and_binary_labels_pytest_output():

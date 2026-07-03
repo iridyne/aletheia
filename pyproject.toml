@@ -47,6 +47,8 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "spec_*.py"]
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
+    "fast: default AI feedback set; cheap local tests suitable for every bug-fix loop",
+    "integration: tests that cross route, DB, scheduler, broker, runtime, or service boundaries",
     "e2e: end-to-end pipeline tests (deselect with -m 'not e2e')",
     "tier_unit: fast unit/pure-function tests",
     "tier_integration: tests that cross module, route, DB, scheduler, broker, or runtime boundaries",
@@ -79,4 +81,5 @@ dev = [
     "hypothesis>=6.155.3",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
+    "pytest-xdist>=3.8.0",
 ]

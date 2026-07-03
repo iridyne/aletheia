@@ -20,6 +20,7 @@ frontend/dist/
 # Frontend build artifacts — gitignored; run `cd frontend && npm run build` before first use or after UI changes.
 aletheia/dashboard_static/
 .pytest_cache/
+.pytest_cache_ai/
 url-to-markdown/
 
 # === AI Workspace Safety Rules ===

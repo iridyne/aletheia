@@ -149,16 +149,26 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 
 ---
 
-## 六、pytest-xdist 并行——为什么不用
+## 六、pytest-xdist 并行——最后阶段才用
 
-已经评估过，结论：**不引入**。
+2026-07-03 已引入 `pytest-xdist`，但**不设为默认**。
 
 原因：
-1. 测试瓶颈是 SQLite I/O（每用例 `sqlite3.connect` + migrations），不是 CPU
-2. Windows 下多进程共享 `tmp_path` 可能引发文件锁冲突
-3. CLAUDE.md 明确 no Docker/Postgres，SQLite 是设计约束，不是临时选择
+1. AI 修 bug 的默认目标是快反馈，不是把全量测试并行打满。
+2. Windows 下多进程容易暴露隐藏的文件锁、端口、全局单例问题。
+3. 本项目有 gateway 全局单例和 SQLite 运行态约束，不能把 `-n auto` 写进默认 `addopts`。
 
-如果将来要并行：需要先把 `setup_env` 改成每进程独立目录，并验证 `reset_db()` / `_db_conn` 的线程局部状态在 fork 下是否安全。
+可用命令：
+
+```powershell
+# 只在 fast 层稳定后使用
+uv run pytest -m fast -n auto -q
+
+# 提交前后台全量可尝试并行；失败时先用非并行复现
+uv run pytest tests/ -n auto --tb=line -q
+```
+
+判断原则：如果并行失败、非并行通过，先把它当成测试隔离问题处理，不要直接改生产逻辑。
 
 ---
 
@@ -276,6 +286,10 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 
 | Marker | 用途 |
 |---|---|
+| `fast` | AI 默认快反馈层：便宜、本地、单测为主 |
+| `integration` | 跨 route / DB / scheduler / runtime / broker 边界 |
+| `e2e` | 端到端 pipeline 和 `_e2e` 文件 |
+| `slow` | 不进默认 AI 快反馈：慢榜热点、训练/远程/真实联调/端到端 |
 | `tier_unit` | 日常最快回归，纯函数/局部模块为主 |
 | `tier_integration` | 跨 route / DB / scheduler / runtime / broker 边界 |
 | `tier_e2e` | 端到端 pipeline 和 `_e2e` 文件 |
@@ -289,10 +303,13 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 常用命令：
 
 ```powershell
-# 日常最快层
-uv run pytest -m tier_unit -q
+# AI 默认：先跑上次失败；再跑 fast
+.\scripts\test_ai.ps1
 
-# 只跑一个领域
+# 手工只跑日常最快层
+uv run pytest -m fast -q
+
+# 只跑一个领域 / 层
 uv run pytest -m "tier_integration and domain_operator" -q
 
 # 只跑上次失败；cacheprovider 已启用，.pytest_cache/ 被 .gitignore 排除
@@ -313,37 +330,29 @@ uv run pytest tests/ -q --tb=no --durations=20 2>&1 |
 
 2026-07-03 实测：
 
-- 默认 collection：`2274 tests collected in 1.82s`
-- 四层覆盖：`tier_unit=1230`, `tier_integration=416`, `tier_e2e=63`, `tier_spec=565`
-  ，总和正好 2274，层级覆盖率 100%。
-- `tier_unit`: `1228 passed, 1 skipped, 1044 deselected`，pytest 时间 59.88s。
-- `tier_e2e`: `63 passed, 2210 deselected`，pytest 时间 5.73s。
-- 全量含 `spec_*.py`: `2246 passed, 10 failed, 10 skipped, 7 xfailed`，
-  pytest 时间 164.98s；失败率 0.44%（10/2274），不是测试框架崩溃。
-- 全量 slow top 20 二分类：`slow_optimizable=20`, `slow_structural=0`，
-  说明当前最慢项集中在 test body，不是 setup/teardown。
+- 全量：`2267 passed, 7 skipped, 7 xfailed`，pytest 时间 `132.55s`。
+- 分层计数：`fast=1189`，`slow or e2e=338`，`not slow and not e2e=1943`。
+- `--durations=20` 最慢项全部是 `call` 阶段，说明慢点集中在测试主体，不是 autouse fixture 清理。
+- 当前 top 20 热点：Serenity pipeline/workbench、doctor 报告、operator/session、agent runtime、少量 specs。
+- 这些热点已通过路径规则自动打 `slow`，不会进入 `.\scripts\test_ai.ps1` 的默认 fast 回归。
 
 注意：`spec_*.py` 现在被 `python_files` 默认收集。这样会更准确地暴露 SDD
 契约红灯；当前 spec 层仍有红灯，不应通过禁收集或静默 xfail 掩盖。
 
 ---
 
-## 实测基线复核 (2026-07-03)
+## 十二、文档规则到测试的映射
 
-全量 `uv run pytest tests/ -q`:**110s / 1699 测试**(1686 passed, 3 skipped,
-10 pre-existing failed — 见下),最慢单测仅 **2.41s**(doctor 报告构建)。DB 层已
-是内存 + blueprint 克隆(~0.4ms/test),**不存在「网络超时」级慢测**。owner 对
-「测试非常非常久」的印象与实测不符——瓶颈是全量的 test 数量本身,不是单测慢。
+核心规则必须落到可执行检查，而不是只写在 Markdown 里：
 
-### `slow` marker(2026-07-03 注册)
-`conftest.py` 现注册 `slow` marker,供未来真正慢的(真实 TCP 超时路径 / ASGI
-lifespan teardown)测试打标。日常快跑可 `-m "not slow"` 跳过;提交前后台全量仍
-含全部。当前没有值得打标的慢测(最慢 2.4s),故暂无 `@pytest.mark.slow` 用例——
-标签就位,等真有慢测再用,不为凑数硬标。
+| 规则 | 可执行检查 |
+|---|---|
+| 订单必须经过后端执行网关 | `tests/specs/spec_execution.py`、`tests/specs/spec_pipeline_execution_chain.py` |
+| 默认禁止 live trading | `tests/specs/spec_live_unlock.py`、`tests/specs/spec_serenity_live_readiness.py` |
+| GET 接口不能返回密钥值 | `tests/specs/spec_api_reference.py`、`tests/test_secrets.py` |
+| 市场数据不能直接用 Bitget execution client | `tests/specs/spec_data_layer.py` |
+| 前端 symbol 展示必须走 `fmtSymbol` | `tests/specs/spec_equity_observer.py`、`tests/test_universe_settings_ui.py` |
+| SQLite 并发三根柱子不能破 | `tests/specs/spec_data_model.py`、`tests/test_storage.py` |
+| AI 默认只跑快反馈 + 上次失败 | `tests/test_pytest_tiering.py`、`scripts/test_ai.ps1` |
 
-### 已知预存失败(与本轮改动无关,基线 26f35cc 上同样红)
-- `test_learning_loop_integration.py::TestLessonAwareScoring`(2):惩罚返回 0.0
-  ——测试内 FTS 索引为空,`_lesson_penalty` 检索不到 lesson。
-- `test_universe_signal_emitter.py::TestEmitDeterministicOpportunities`(8):
-  `_fake_find() unexpected kwarg`——测试 fake 签名与生产 find 调用漂移。
-- 两组均为**测试自身**过时,非生产代码 bug;留待专门的测试修复批次。
+新增文档规则时，同步补一条测试或在这里登记已有测试；否则这条规则会在下一次重构中失效。

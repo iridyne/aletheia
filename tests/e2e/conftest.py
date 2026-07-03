@@ -18,7 +18,9 @@ from aletheia.storage.migrations import run_migrations
 def pytest_collection_modifyitems(items):
     """Auto-mark all tests in this directory as 'e2e'."""
     for item in items:
-        item.add_marker(pytest.mark.e2e)
+        path = str(getattr(item, "path", "") or getattr(item, "fspath", "")).replace("\\", "/")
+        if "/tests/e2e/" in path or path.startswith("tests/e2e/"):
+            item.add_marker(pytest.mark.e2e)
 
 
 @pytest.fixture(scope="session")

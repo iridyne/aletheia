@@ -36,6 +36,14 @@ def _recent():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _run_cleanup_with_test_config(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.schema import AletheiaConfig
+
+    monkeypatch.setattr(scheduler, "load_config", lambda: AletheiaConfig())
+    scheduler._run_cleanup()
+
+
 def test_prune_agent_runs_keeps_recent_deletes_old(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
     conn.execute("INSERT INTO agent_runs (id, agent_name, permission_mode, started_at, status) VALUES (?,?,?,?,?)",
@@ -86,8 +94,7 @@ def test_cleanup_never_touches_causal_chain(tmp_path, monkeypatch):
                  ("aud_old", _old(999), "system", "scheduler", "x"))
     conn.commit()
 
-    from aletheia.agent_runtime.scheduler import _run_cleanup
-    _run_cleanup()
+    _run_cleanup_with_test_config(monkeypatch)
 
     assert repo.get_trade_proposal("prop_old") is not None  # proposal survives
     audits = {r["id"] for r in repo.list_audit_events(limit=1000)}
@@ -100,8 +107,7 @@ def test_cleanup_never_touches_causal_chain(tmp_path, monkeypatch):
 
 def test_cleanup_writes_audit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime.scheduler import _run_cleanup
-    _run_cleanup()
+    _run_cleanup_with_test_config(monkeypatch)
     from aletheia.files.jsonl import read_jsonl
     assert any(e.get("event_type") == "data_pruned" for e in read_jsonl("audit.jsonl"))
 

@@ -7,7 +7,27 @@
 
 ## Last Updated
 
-2026-07-03 (discussion 批次经验沉淀入口已补)
+2026-07-03 (pytest 分层与 AI 快反馈链路已补)
+
+---
+
+## Recent Change (pytest 分层与 AI 快反馈链路 — 2026-07-03)
+
+测试体系改为面向 AI 修 bug 的快反馈：
+
+- 新增直观 marker：`fast` / `integration` / `e2e` / `slow`，保留原 `tier_*` 和 `domain_*` 兼容标签。
+- `fast` 只覆盖便宜的本地单测；当前计数 `fast=1189`。
+- `slow/e2e` 自动覆盖端到端、在线/真实网络、训练/Optuna/远程联调、doctor/Serenity/Operator 等慢榜热点；当前计数 `slow or e2e=338`。
+- 新增 `scripts/test_ai.ps1`：AI 默认先跑上次失败，再跑 `fast`；使用独立 `.pytest_cache_ai/`，绕开本机坏掉的 `.pytest_cache` 权限残留。
+- 引入 `pytest-xdist`，但不写进默认 `addopts`；只作为最后阶段可选并行。
+- 修复 `tests/e2e/conftest.py` 原来全量收集时给所有测试加 `e2e` 的分层 bug。
+- 修复 `tests/test_retention.py` 对 scheduler 配置状态的隐式依赖，使 `fast -n 4` 并行可过。
+- `docs/operations/PYTEST_OPTIMIZATION_GUIDE.md` 已更新：慢榜、默认命令、xdist 使用边界、文档规则到测试的映射表。
+
+验证：
+- `uv run pytest tests/test_pytest_tiering.py -q -o cache_dir=.pytest_cache_ai` → 9 passed。
+- `uv run pytest -m fast -n 4 -q` → 1188 passed, 1 skipped。
+- `uv run pytest tests/ -q --tb=line -o cache_dir=.pytest_cache_ai` → 2267 passed, 7 skipped, 7 xfailed。
 
 ---
 

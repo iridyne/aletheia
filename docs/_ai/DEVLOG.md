@@ -1,5 +1,25 @@
 # Development Log
 
+## 2026-07-03 — pytest 分层与 AI 快反馈链路
+
+### 触发
+owner 要求把测试从“全量慢跑”改成更适合 AI 修 bug 的分层反馈：先找慢测，再标
+fast / integration / e2e / slow，默认只跑快层和上次失败，最后再上并行。
+
+### 交付
+- 新增 `fast` / `integration` / `e2e` / `slow` marker；保留 `tier_*` / `domain_*` 旧标签。
+- `scripts/test_ai.ps1` 作为 AI 默认命令：先 `--lf`，再 `-m fast`。
+- 引入 `pytest-xdist`，仅作为手动最后阶段，不写入默认 `addopts`。
+- 修复 e2e conftest 全量误标 bug；修复 retention 测试对外部配置状态的隐式依赖。
+- 更新 `docs/operations/PYTEST_OPTIMIZATION_GUIDE.md`，补慢榜、命令、并行边界和核心规则到测试映射。
+
+### 验证
+- 分层自检 9 passed。
+- `fast -n 4` 并行通过：1188 passed, 1 skipped。
+- 全量非并行通过：2267 passed, 7 skipped, 7 xfailed。
+
+---
+
 ## 2026-07-03 — discussion 批次开发经验沉淀
 
 ### 触发
