@@ -122,48 +122,14 @@ def test_operator_loop_converged_actions_not_emitted():
 @spec_claim(
     SpecClaim("PI-S04", "promotion_gates_contract", "§4 PI approval gate", "L2b",
               "promotion to paper_running requires a recommend_promote PiDecision: blocked when "
-              "absent, allowed when present (the PI/operator approval gate is the single chokepoint)"),
+              "absent, allowed when present (the PI/operator approval gate is the single chokepoint)",
+              status="superseded"),
 )
 def test_recommend_promote_gates_paper_running(tmp_path, monkeypatch):
-    import sqlite3
-
-    import aletheia.config.loader as loader
-    import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage.models import StrategyRecord, PiDecision
-    from aletheia.storage.repositories import insert_strategy, insert_pi_decision
-    
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    sq._db_conn = None
-    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    sq._db_conn = conn
-    run_migrations()
-
-    strat = StrategyRecord(name="GateTest", state="paper_candidate")
-    insert_strategy(strat)
-
-    # No recommend_promote on record → promotion to paper_running is BLOCKED.
-    from aletheia.storage.repositories import update_strategy
-    blocked_dict = {"success": False}
-    # paper_running promotion no longer gated by strategy_lifecycle FSM (Position C 2026-07-02)
-    # The gate logic was deleted; positions are PI-driven, not strategy-FSM-driven.
-    update_strategy(strat.id, state="paper_running")
-    blocked = {"success": True}
-    # FSM gate deleted Position C 2026-07-02 — paper_running is now legacy attribution only
-
-    # With a recommend_promote PiDecision (proposal_id == strategy_id) → gate passes.
-    insert_pi_decision(PiDecision(
-        proposal_id=strat.id, action="recommend_promote", symbol="BTC/USDT", direction="long",
-    ))
-    # With recommend_promote present, update succeeds (legacy attribution only)
-    update_strategy(strat.id, state="paper_running")
-    allowed = {"success": True}
-    assert allowed.get("success") is True
+    # Position C (2026-07-02): strategy FSM gate deleted.
+    # paper_running is now legacy attribution only — this gate no longer exists.
+    import pytest as _pytest
+    _pytest.skip("PI-S04 superseded — FSM promotion gate deleted in Position C")
 
 
 # ---------------------------------------------------------------------------

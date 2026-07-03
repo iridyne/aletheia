@@ -608,7 +608,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                         parts: list[str] = []
                         if _meta:
                             if _meta.get("outcome"):
-                                parts.append(f"outcome={_meta['outcome']} return={_meta.get('forward_return_pct', '?')}%%")
+                                parts.append(f"outcome={_meta['outcome']} return={_meta.get('forward_return_pct', '?')}%")
                             if _meta.get("scanner_family"):
                                 parts.append(f"scanner={_meta['scanner_family']}")
                         if _body:

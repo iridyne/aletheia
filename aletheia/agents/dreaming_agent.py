@@ -281,7 +281,7 @@ async def _extract_lessons(run_id: str | None, outputs: list[str], errors: list[
                 rec = {"action": "block_scanner", "scanner": agg_evidence["scanner_families"][0]}
                 logger.info(
                     "dreaming_agent: deterministic recommendation generated "
-                    "(block_scanner=%%s, loss_rate=%%d/%%d)",
+                    "(block_scanner=%s, loss_rate=%d/%d)",
                     rec["scanner"], losses, total,
                 )
         created = store.create(
