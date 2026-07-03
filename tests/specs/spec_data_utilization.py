@@ -488,30 +488,77 @@ def test_forward_outcome_edge_routed_to_pi():
 
 
 # ---------------------------------------------------------------------------
-# DU-T01 — tripwire: CoinalyzeCollector actually writes to open_interest_snapshots
+# DU-T01 — scheduler persists CoinalyzeCollector output
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "NOT YET IMPLEMENTED — scheduler 待接入 tripwire: "
-        "CoinalyzeCollector 尚未被 scheduler 调度，DB 里不存在 exchange='coinalyze' 行。"
-        "scheduler 接入完成后去掉 xfail，升级为可执行 L2b 测试。"
-    ),
-)
 @spec_claim(
     SpecClaim(
-        "DU-T01", _CONTRACT, "§coinalyze db write tripwire", "L2a",
-        "missing_tripwire 占位：CoinalyzeCollector 实际写入 open_interest_snapshots "
-        "（exchange='coinalyze' 行存在），即 Coinalyze OI 数据真正流入 DB，"
-        "crowding_score 有实际数据可读而非永远 None。"
-        "当前状态 '🟠 scheduler 待接入' 使本 claim status=missing，"
-        "一旦 scheduler 接入完成须升级为可执行 L2b 测试。",
-        status="missing",
+        "DU-T01", _CONTRACT, "§coinalyze db write path", "L2b",
+        "data_collectors persists CoinalyzeCollector open_interest and liquidation "
+        "outputs into open_interest_snapshots/liquidation_events. The test injects "
+        "collector output offline, so it proves scheduler wiring without requiring "
+        "a real Coinalyze API key.",
+        status="implemented",
     ),
 )
-def test_coinalyze_data_written_to_db():
-    pytest.fail(
-        "NOT IMPLEMENTED: CoinalyzeCollector 尚未被 scheduler 调度，"
-        "open_interest_snapshots 中无 exchange='coinalyze' 行 (DU-T01 tripwire)"
-    )
+def test_scheduler_persists_coinalyze_outputs(monkeypatch):
+    import asyncio
+
+    from aletheia.agent_runtime import scheduler as sch
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data.models import LiquidationEvent, OpenInterestSnapshot
+    from aletheia.storage import repositories as repo
+
+    oi_rows: list[dict] = []
+    liq_rows: list[dict] = []
+
+    monkeypatch.setattr(sch, "_get_observed_symbols", lambda cfg: ["BTC/USDT"])
+    monkeypatch.setattr(repo, "insert_open_interest_snapshot", lambda row: oi_rows.append(row))
+    monkeypatch.setattr(repo, "insert_liquidation_event", lambda row: liq_rows.append(row))
+    monkeypatch.setattr(repo, "insert_orderbook_snapshot", lambda row: None)
+    monkeypatch.setattr(repo, "insert_funding_rate_snapshot", lambda row: None)
+    monkeypatch.setattr(repo, "insert_macro_snapshot", lambda row: None)
+    monkeypatch.setattr(repo, "insert_coingecko_top_rows", lambda rows: None)
+    monkeypatch.setattr(repo, "save_volume_ranking_snapshot", lambda symbols, observed_at: None)
+
+    async def fake_bounded(coro, label, timeout, deadline):
+        if hasattr(coro, "close"):
+            coro.close()
+        if label == "coinalyze":
+            return {
+                "open_interest": [
+                    OpenInterestSnapshot(
+                        symbol="BTC/USDT",
+                        exchange="coinalyze",
+                        open_interest_usd=12_500_000.0,
+                        oi_change_1h_pct=1.7,
+                        observed_at="2026-01-01T00:00:00+00:00",
+                    )
+                ],
+                "liquidations": [
+                    LiquidationEvent(
+                        symbol="BTC/USDT",
+                        exchange="coinalyze",
+                        side="long",
+                        quantity_usd=250_000.0,
+                        price=0.0,
+                        event_time="2026-01-01T00:00:00+00:00",
+                        observed_at="2026-01-01T00:00:00+00:00",
+                    )
+                ],
+                "errors": [],
+            }
+        return {}
+
+    monkeypatch.setattr(sch, "_bounded", fake_bounded)
+
+    cfg = AletheiaConfig()
+    cfg.market_data.enable_coinalyze = True
+    asyncio.run(sch._async_data_collectors(cfg, tick=1))
+
+    assert len(oi_rows) == 1, "Coinalyze OI output was not persisted"
+    assert oi_rows[0]["exchange"] == "coinalyze"
+    assert oi_rows[0]["open_interest_usd"] == 12_500_000.0
+    assert len(liq_rows) == 1, "Coinalyze liquidation output was not persisted"
+    assert liq_rows[0]["exchange"] == "coinalyze"
+    assert liq_rows[0]["quantity_usd"] == 250_000.0

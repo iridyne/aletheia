@@ -1666,6 +1666,25 @@ async def _async_data_collectors(cfg, tick: int) -> None:
             if getattr(cfg.market_data, "enable_coinalyze", True):
                 from aletheia.data.collectors.coinalyze import CoinalyzeCollector
                 cz_result = await _bounded(CoinalyzeCollector().collect(symbols), "coinalyze", 12.0, _deadline) or {}
+                cz_oi_count = 0
+                for snap in cz_result.get("open_interest", []):
+                    try:
+                        repo.insert_open_interest_snapshot(snap.model_dump())
+                        cz_oi_count += 1
+                    except Exception as e:
+                        logger.debug("coinalyze OI persist failed: %s", e)
+                cz_liq_count = 0
+                for event in cz_result.get("liquidations", []):
+                    try:
+                        repo.insert_liquidation_event(event.model_dump())
+                        cz_liq_count += 1
+                    except Exception as e:
+                        logger.debug("coinalyze liquidation persist failed: %s", e)
+                if cz_oi_count or cz_liq_count:
+                    logger.info(
+                        "coinalyze persisted: open_interest=%d liquidations=%d",
+                        cz_oi_count, cz_liq_count,
+                    )
                 if cz_result.get("errors"):
                     logger.debug("coinalyze collection errors: %s", cz_result["errors"])
         except Exception as e:
