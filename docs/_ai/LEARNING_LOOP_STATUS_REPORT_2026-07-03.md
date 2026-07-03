@@ -11,7 +11,7 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 5. System Operator、机会排序器、Risk Engine 会读取这些学习结果。
 6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Guard Candidates、Active Guards 和学习漏斗。
 
-但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 3 个关键点：历史 scanner_family 覆盖补齐、矛盾检测、SkillStore/时间衰减机制。
+但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 2 个关键点：矛盾检测、SkillStore/时间衰减机制。
 
 ## 当前量化状态
 
@@ -21,9 +21,9 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | --- | ---: | --- |
 | `knowledge_items` 数据库大小 | 431.6 MB | 学习/审计数据已经有明显体量 |
 | active `trade_case_study` | 168 条 | 已经有可被 Learning 使用的交易案例；所有已知 synthetic 历史污染已软归档 |
-| active high-confidence `trade_case_study` | 75 条 | 当前真正会进入 FTS 学习检索的交易案例 |
-| high-confidence case study 带 symbol/direction | 75 / 75 条 | symbol/direction 过滤覆盖完整 |
-| high-confidence case study 带真实 scanner_family | 9 / 75 条 | 历史 scanner_family 覆盖不足，已用同 symbol/direction fallback 缓解 |
+| active high-confidence `trade_case_study` | 72 条 | 当前真正会进入 FTS 学习检索的交易案例 |
+| high-confidence case study 带 symbol/direction | 72 / 72 条 | symbol/direction 过滤覆盖完整 |
+| high-confidence case study 带真实 scanner_family | 72 / 72 条 | 缺真实 scanner 的 3 条历史案例已降级，避免假归因 |
 | active `guard_candidate` | 131 条 | 已经能自动产生候选防守规则 |
 | active high-confidence research notes | 397 条 | 市场研究知识已进入知识库 |
 | active strategy memory | 56 条 | 策略记忆有持久化 |
@@ -31,12 +31,12 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 | `ps_lessons` proposed | 67 条 | 候选 lesson 已形成 |
 | `ps_lessons` applied | 25 条 | 已有 lesson 被应用到策略/风控读取路径 |
 | lesson policy versions | 7 个 active | 说明 lesson reviewer 已经产出可追踪版本 |
-| FTS 可检索知识 | 566 条 | high-confidence active 可学习池已与 FTS 对齐 |
+| FTS 可检索知识 | 563 条 | high-confidence active 可学习池已与 FTS 对齐 |
 | active high-confidence 缺正文知识 | 0 条 | 55 条历史空正文 `operator_assessment` 已降级退出 FTS 期望池 |
 | `retrieve_lessons` 工具调用 | 2006 次 | agent 已经实际调用学习检索 |
 | `build_case_studies` 调用 | 566 次 | 交易案例构建器持续运行 |
 | `detect_guard_candidates` 调用 | 566 次 | guard 候选生成持续运行 |
-| Learning 相关测试 | 79 passed, 3 skipped, 1 xfailed | xfail 是已知的 time-decay 缺口 |
+| Learning 相关测试 | 本轮新增/回归 20 passed | time-decay 仍是已知 xfail 缺口 |
 
 ## 已经实现的能力
 
@@ -215,13 +215,31 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 ## 仍需处理的问题
 
-### P1：历史 case study 的 scanner_family 覆盖不足
+### 已修复：历史 case study 的 scanner_family 覆盖不足
 
-当前 75 条 active high-confidence case study 全部带 symbol/direction，但只有 9 条带真实 scanner_family。结构化过滤修复后，scanner_family 维度会更诚实，也会暴露历史数据覆盖不足。
+旧报告里这一项曾显示为 9/75。复核真实数据后，当前只剩 3 条高置信 case 缺真实 scanner_family；这 3 条的 position/proposal/order 都没有 opportunity_id，无法从真实因果链补齐。
 
-影响：对于 scanner_family 明确的机会，系统可能因为历史案例缺少同 scanner_family 证据而返回 0 条 lesson。这不会污染判断，但会降低可学习样本量。
+处理原则：不从自然语言或同币种近期机会里猜 scanner_family。能证明就补，不能证明就降级。
 
-建议：对历史 case study 做一次只读归因补齐或降级，目标是把真实 scanner_family 覆盖率从 9/78 提升到可解释水平；不能补齐的不要伪造，应保留 unknown。
+修复：
+
+- 新增维护函数 `downgrade_unattributed_trade_case_studies()`。
+- 新增 CLI：`uv run aletheia knowledge downgrade-unattributed-case-studies`。
+- 只把缺真实 scanner_family 的 active high-confidence `trade_case_study` 降为 `medium_confidence`。
+- 不改正文、不伪造 scanner、不 hard delete。
+- 执行后重建 FTS，让这些断链案例退出高置信学习检索池。
+
+量化结果：
+
+| 项目 | 数量 |
+| --- | ---: |
+| dry-run 命中缺真实 scanner_family 的高置信 case | 3 |
+| 实际降级 | 3 |
+| hard delete | 0 |
+| active high-confidence `trade_case_study` | 75 -> 72 |
+| high-confidence case study 带真实 scanner_family | 72 / 72 |
+| FTS 可检索知识 | 566 -> 563 |
+| 第二次 dry-run 命中 | 0 |
 
 ### P1：矛盾检测仍是空实现
 
@@ -273,16 +291,15 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 | hard delete | 0 |
 | active high-confidence 缺正文知识 | 55 -> 0 |
 | active high-confidence 知识总数 | 621 -> 566 |
-| FTS 总量 | 566 |
+| FTS 总量 | 当时 566；本轮 scanner 归因降级后当前为 563 |
 | FTS skipped empty body warning | 有 -> 无 |
 
 这不是删除学习材料，而是把不可学习的空记录退出“高置信可学习池”。
 
 ## 下一步建议
 
-1. 补齐或降级历史 case study 的 scanner_family 覆盖，目标是减少结构化过滤后的“无证据”结果。
-2. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
-3. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
+1. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
+2. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
 
 ## 验证记录
 
@@ -292,6 +309,10 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 uv run pytest tests/test_learning_stores.py tests/test_learning_loop_integration.py tests/test_knowledge.py tests/test_knowledge_router.py tests/test_knowledge_maintenance.py tests/specs/spec_learning_pipeline.py tests/specs/spec_lesson_guards.py tests/specs/spec_knowledge_fts.py -q
 uv run pytest tests/test_server.py::test_guard_candidate_can_be_listed_and_manually_promoted tests/test_server.py::test_guard_candidate_promote_rejects_missing_guard tests/test_server.py::test_lesson_management_actions -q
 uv run pytest tests/test_guard_analytics.py tests/e2e/test_pipeline_guard_promotion.py tests/specs/spec_learning_pipeline.py::test_guard_candidates_reachable_by_promoter -q
+uv run pytest tests/test_knowledge_maintenance.py::test_downgrade_unattributed_trade_case_studies tests/test_knowledge_maintenance.py::test_downgrade_unindexable_high_confidence_items -q
+uv run pytest tests/test_fts_coverage.py tests/test_learning_loop_integration.py tests/specs/spec_knowledge_fts.py -q
+uv run aletheia knowledge downgrade-unattributed-case-studies --dry-run
+uv run aletheia knowledge downgrade-unattributed-case-studies
 cd frontend; npm run build
 ```
 
