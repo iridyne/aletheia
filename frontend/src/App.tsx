@@ -44,6 +44,9 @@ export const NAV: NavGroup[] = [
       { to: '/charts', label: 'Markets' },
       { to: '/prediction-markets', label: 'Prediction Markets' },
       { to: '/universe', label: 'Universe' },
+      // Serenity Lens is a supply-chain research/discovery path (a way to observe
+      // the world for opportunities), not a learning/evolution loop — belongs here.
+      { to: '/serenity-lens', label: 'Serenity Lens' },
     ],
   },
   {
@@ -63,7 +66,6 @@ export const NAV: NavGroup[] = [
     group: 'Evolve',
     items: [
       { to: '/learning', label: 'Learning' },
-      { to: '/serenity-lens', label: 'Serenity Lens' },
     ],
   },
   {

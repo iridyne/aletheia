@@ -161,38 +161,52 @@ export default function TradesPositions() {
               syncStatus={reconciliation?.sync_status}
             />
 
-            {/* ORDER / FILL HISTORY */}
-            <div className="blotter-section-head">
-              <h3>Orders &amp; Fills</h3>
-              <span className="text-muted text-sm">click a row for the causal chain</span>
-              <a href={api.exportTradesCsv()} download className="btn btn-secondary btn-sm ml-auto">Export CSV</a>
-            </div>
-            <Card>
-              <DataTable
-                data={orderRows}
-                columns={orderColumns}
-                onRowClick={o => setSel({ kind: 'order', order: o })}
-                emptyMessage="No orders yet."
-              />
-            </Card>
-
-            {/* CLOSED POSITIONS */}
-            {closed.length > 0 && (
-              <>
-                <div className="blotter-section-head"><h3>Closed Positions</h3></div>
+            {/* ORDERS & FILLS  |  CLOSED POSITIONS — side by side so realized PnL is
+                visible without scrolling past the full-width order ledger. Falls back
+                to a single full-width column when there are no closed positions yet. */}
+            <div className={`blotter-split${closed.length > 0 ? '' : ' single'}`}>
+              <div className="blotter-col">
+                <div className="blotter-section-head">
+                  <h3>Orders &amp; Fills</h3>
+                  <span className="text-muted text-sm">click a row for the causal chain</span>
+                  <a href={api.exportTradesCsv()} download className="btn btn-secondary btn-sm ml-auto">Export CSV</a>
+                </div>
                 <Card>
                   <DataTable
-                    data={closed}
-                    columns={closedColumns}
-                    onRowClick={p => setSel({ kind: 'position', position: p })}
+                    data={orderRows}
+                    columns={orderColumns}
+                    onRowClick={o => setSel({ kind: 'order', order: o })}
+                    emptyMessage="No orders yet."
                   />
                 </Card>
-              </>
-            )}
+              </div>
+
+              {closed.length > 0 && (
+                <div className="blotter-col">
+                  <div className="blotter-section-head"><h3>Closed Positions</h3></div>
+                  <Card>
+                    <DataTable
+                      data={closed}
+                      columns={closedColumns}
+                      onRowClick={p => setSel({ kind: 'position', position: p })}
+                    />
+                  </Card>
+                </div>
+              )}
+            </div>
           </>
         )},
-        { id: 'analytics', label: 'Analytics', render: () => <TradeAnalyticsPanel /> },
-        { id: 'insights', label: 'Insights', render: () => <Suspense fallback={<Card><p className="text-muted text-sm">Loading charts…</p></Card>}><TradeInsightsPanel /></Suspense> },
+        // Analytics + Insights merged into one scrolling view (both read the same
+        // closed-trade population; Insights is the superset of charts, Analytics
+        // adds the by-strategy-source / by-scanner-family attribution bars).
+        { id: 'analytics', label: 'Analytics', render: () => (
+          <>
+            <TradeAnalyticsPanel />
+            <Suspense fallback={<Card><p className="text-muted text-sm">Loading charts…</p></Card>}>
+              <TradeInsightsPanel />
+            </Suspense>
+          </>
+        ) },
       ]} />
 
       <DetailDrawer
