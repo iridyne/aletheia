@@ -67,6 +67,12 @@ def pytest_configure(config):
         "markers",
         "online: test hits a live external API (network-gated; skipped when offline).",
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: test is slow (real TCP timeout paths / ASGI lifespan teardown, not the "
+        "already-optimized in-memory DB). Daily loop: `-m \"not slow\"` to skip; the "
+        "pre-commit background full run still includes them.",
+    )
     config.addinivalue_line("markers", "spec: spec-driven development test")
     config.addinivalue_line("markers", "L2a: structural spec check (static, fast)")
     config.addinivalue_line("markers", "L2b: behavioral spec check (needs fixtures)")

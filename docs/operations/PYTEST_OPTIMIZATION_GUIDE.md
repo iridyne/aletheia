@@ -267,3 +267,25 @@ uv run pytest tests/ --tb=no --durations=20 -q 2>&1 | Select-String "^\d+\.\d+s"
 ```
 
 **原则：不等全量完成再继续工作**——后台跑，有红灯再回头修。
+
+---
+
+## 实测基线复核 (2026-07-03)
+
+全量 `uv run pytest tests/ -q`:**110s / 1699 测试**(1686 passed, 3 skipped,
+10 pre-existing failed — 见下),最慢单测仅 **2.41s**(doctor 报告构建)。DB 层已
+是内存 + blueprint 克隆(~0.4ms/test),**不存在「网络超时」级慢测**。owner 对
+「测试非常非常久」的印象与实测不符——瓶颈是全量的 test 数量本身,不是单测慢。
+
+### `slow` marker(2026-07-03 注册)
+`conftest.py` 现注册 `slow` marker,供未来真正慢的(真实 TCP 超时路径 / ASGI
+lifespan teardown)测试打标。日常快跑可 `-m "not slow"` 跳过;提交前后台全量仍
+含全部。当前没有值得打标的慢测(最慢 2.4s),故暂无 `@pytest.mark.slow` 用例——
+标签就位,等真有慢测再用,不为凑数硬标。
+
+### 已知预存失败(与本轮改动无关,基线 26f35cc 上同样红)
+- `test_learning_loop_integration.py::TestLessonAwareScoring`(2):惩罚返回 0.0
+  ——测试内 FTS 索引为空,`_lesson_penalty` 检索不到 lesson。
+- `test_universe_signal_emitter.py::TestEmitDeterministicOpportunities`(8):
+  `_fake_find() unexpected kwarg`——测试 fake 签名与生产 find 调用漂移。
+- 两组均为**测试自身**过时,非生产代码 bug;留待专门的测试修复批次。
