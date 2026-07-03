@@ -233,6 +233,19 @@ export const api = {
     block_candidate?: boolean
     tags?: string[]
   }>>('/knowledge/guards'),
+  getGuardCandidates: () => fetchJson<Array<{
+    guard_id: string
+    title: string
+    description?: string
+    status?: string
+    scope?: string
+    enforcement?: string
+    severity?: string
+    score_penalty?: number
+    block_candidate?: boolean
+    tags?: string[]
+  }>>('/knowledge/guard-candidates'),
+  promoteGuardCandidate: (guardId: string) => post<any>(`/knowledge/guard-candidates/${guardId}/promote`),
   getGuardStats: () => fetchJson<Array<{
     guard_id: string
     title: string

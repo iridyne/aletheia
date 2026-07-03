@@ -8,8 +8,8 @@ Deterministic. No LLM. Requires explicit config opt-in (auto_promote_enabled).
 """
 from __future__ import annotations
 
+import json
 import logging
-from pathlib import Path
 
 from aletheia.config.loader import load_config, get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
@@ -67,14 +67,22 @@ def run_promotion_check() -> dict:
     }
 
 
-def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
-    """Promote a candidate guard to active, writing default penalty fields.
+def promote_guard_candidate_to_active(
+    guard_id: str,
+    *,
+    actor_type: str = "system",
+    actor_id: str = "guard_promotion",
+    loss_rate: float | None = None,
+    reason: str = "evidence_threshold",
+) -> bool:
+    """Promote a candidate guard to active without deleting the candidate record.
 
     score_penalty=10.0 / enforcement=hard_block are written so ranker
     evaluate_guards actually penalizes matching opportunities (断口G fix).
     """
     guards_dir = get_data_dir() / "knowledge" / "guards"
     candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
+    active_existing = any(g.guard_id == guard_id for g in load_trading_guards(status="active"))
 
     for search_dir in [guards_dir, candidates_dir]:
         if not search_dir.exists():
@@ -85,29 +93,99 @@ def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
                 if not meta or meta.get("guard_id") != guard_id:
                     continue
 
-                meta["status"] = "active"
+                source_meta = dict(meta)
+                active_meta = dict(meta)
+                active_meta["status"] = "active"
                 # Ensure penalty values are set so guard actually affects scoring
-                if not meta.get("score_penalty"):
-                    meta["score_penalty"] = 10.0
-                if not meta.get("enforcement"):
-                    meta["enforcement"] = "blocking"
-                if not meta.get("block_candidate"):
-                    meta["block_candidate"] = True
+                if not active_meta.get("score_penalty"):
+                    active_meta["score_penalty"] = 10.0
+                if not active_meta.get("enforcement"):
+                    active_meta["enforcement"] = "blocking"
+                if not active_meta.get("block_candidate"):
+                    active_meta["block_candidate"] = True
 
-                content = render_frontmatter(meta, body)
                 if search_dir == candidates_dir:
-                    target = guards_dir / path.name
-                    guards_dir.mkdir(parents=True, exist_ok=True)
-                    target.write_text(content, encoding="utf-8")
-                    path.unlink()
+                    if not active_existing:
+                        from aletheia.knowledge.manager import create_trading_guard
+
+                        create_trading_guard(
+                            title=active_meta.get("title") or path.stem,
+                            content=body,
+                            metadata=active_meta,
+                        )
+                    source_meta["status"] = "deprecated"
+                    source_meta["promoted_to"] = guard_id
+                    source_meta["promotion_reason"] = reason
+                    path.write_text(render_frontmatter(source_meta, body), encoding="utf-8")
+                    _update_candidate_row_status(path)
                 else:
-                    path.write_text(content, encoding="utf-8")
+                    path.write_text(render_frontmatter(active_meta, body), encoding="utf-8")
+                _record_guard_promotion_event(
+                    guard_id,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    loss_rate=loss_rate,
+                    reason=reason,
+                    source_path=str(path),
+                )
                 return True
             except Exception as e:
                 logger.warning("Failed to promote guard %s: %s", guard_id, e)
                 continue
 
     return False
+
+
+def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
+    """Backward-compatible auto-promotion entry point."""
+    return promote_guard_candidate_to_active(guard_id, loss_rate=loss_rate)
+
+
+def _update_candidate_row_status(path) -> None:
+    """Best-effort DB downgrade for the source candidate row."""
+    try:
+        from aletheia.storage import repositories as repo
+
+        rows = repo._select_all(
+            "knowledge_items",
+            where="file_path = ? AND item_type = ?",
+            params=(str(path), "guard_candidate"),
+            limit=1,
+        )
+        for row in rows:
+            repo.update_knowledge_item(row["id"], status="deprecated", confidence="deprecated")
+    except Exception:
+        logger.debug("Failed to update promoted guard candidate DB row", exc_info=True)
+
+
+def _record_guard_promotion_event(
+    guard_id: str,
+    *,
+    actor_type: str,
+    actor_id: str,
+    loss_rate: float | None,
+    reason: str,
+    source_path: str,
+) -> None:
+    try:
+        from aletheia.storage.event_store import get_event_store
+        from aletheia.storage.models import PSEvent
+
+        get_event_store().append(PSEvent(
+            event_type="TRADING_GUARD_PROMOTED",
+            aggregate_type="trading_guard",
+            aggregate_id=guard_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            payload_json=json.dumps({
+                "guard_id": guard_id,
+                "loss_rate": loss_rate,
+                "reason": reason,
+                "source_path": source_path,
+            }, sort_keys=True),
+        ))
+    except Exception:
+        logger.debug("Failed to record guard promotion event", exc_info=True)
 
 
 def _update_guard_status(guard_id: str, new_status: str) -> bool:

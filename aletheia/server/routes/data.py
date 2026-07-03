@@ -921,6 +921,39 @@ async def get_guards():
         return {"error": str(e), "guards": []}
 
 
+@router.get("/knowledge/guard-candidates")
+async def get_guard_candidates():
+    """List guard candidates awaiting manual review."""
+    try:
+        from aletheia.knowledge.guards import load_trading_guards
+        guards = load_trading_guards(status="candidate")
+        return [g.model_dump() for g in guards]
+    except Exception as e:
+        return {"error": str(e), "guards": []}
+
+
+@router.post("/knowledge/guard-candidates/{guard_id}/promote")
+async def promote_guard_candidate(guard_id: str):
+    """Manually promote a candidate guard to an active trading guard."""
+    from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+    from aletheia.knowledge.guards import load_trading_guards
+
+    if not any(g.guard_id == guard_id for g in load_trading_guards(status="candidate")):
+        raise HTTPException(404, "Guard candidate not found")
+    ok = promote_guard_candidate_to_active(
+        guard_id,
+        actor_type="operator",
+        actor_id="web",
+        reason="manual_review",
+    )
+    if not ok:
+        raise HTTPException(404, "Guard candidate not found")
+    promoted = [g for g in load_trading_guards(status="active") if g.guard_id == guard_id]
+    if not promoted:
+        raise HTTPException(500, "Guard promotion did not create an active guard")
+    return promoted[0].model_dump()
+
+
 @router.get("/knowledge/guards/stats")
 async def get_guard_stats():
     """Guard effectiveness statistics."""

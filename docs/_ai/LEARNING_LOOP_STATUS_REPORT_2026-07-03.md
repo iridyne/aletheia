@@ -9,9 +9,9 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 3. Dreaming Agent 从案例中提炼 `ps_lessons`。
 4. Lesson Reviewer 把证据足够的 lesson 变成 active policy。
 5. System Operator、机会排序器、Risk Engine 会读取这些学习结果。
-6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Active Guards 和学习漏斗。
+6. 前端 Learning 页面能看到 Dreaming、Knowledge、Post-Trade Lessons、Guard Candidates、Active Guards 和学习漏斗。
 
-但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 4 个关键点：历史 scanner_family 覆盖补齐、guard 候选人工晋升、矛盾检测、SkillStore/时间衰减机制。
+但它还不能被描述成“完整自我进化系统”。目前是“可学习、可反馈、局部可自修复”的状态，距离 discussion 中要求的“持续从市场信息和历史交易中重构规则、发现矛盾、淘汰旧规则、形成长期技能”还差 3 个关键点：历史 scanner_family 覆盖补齐、矛盾检测、SkillStore/时间衰减机制。
 
 ## 当前量化状态
 
@@ -64,10 +64,14 @@ Learning 已经不是空页面或单纯日志展示。当前系统具备一条�
 - Dreaming summary
 - Knowledge Base
 - Post-Trade Lessons
+- Guard Candidates
 - Active Guards
 - Learning Funnel
 
-当前已补上 lesson 的人工确认入口：Post-Trade Lessons 抽屉里可以 accept / reject / archive，动作会写入事件日志并刷新 Learning/Funnel 数据。guard_candidate 到 trading_guard 的人工晋升入口仍未做。
+当前已补上两类人工确认入口：
+
+- Post-Trade Lessons 抽屉里可以 accept / reject / archive，动作会写入事件日志并刷新 Learning/Funnel 数据。
+- Guard Candidates 子页可以查看候选防守规则并手动 Promote；promote 会生成 active `trading_guard`，把原 `guard_candidate` 降为 deprecated，写入 `TRADING_GUARD_PROMOTED` 事件，不硬删候选记录。
 
 ### 4. 局部自修复
 
@@ -225,14 +229,25 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 影响：系统还不会主动发现“旧规则和新证据冲突”。
 
-### P1：guard_candidate 人工晋升入口仍缺失
+### 已修复：guard_candidate 人工晋升入口
 
-前端现在可以审核 lesson，但还不能把 guard_candidate 人工确认晋升为 trading_guard。
+前端现在可以审核 lesson，也可以在 Guard Candidates 子页把 guard_candidate 人工确认晋升为 trading_guard。
 
-建议增加：
+修复：
 
-- promote guard_candidate to trading_guard
-- 查看某个 guard_candidate 的证据来源和最近效果
+- 新增 `/api/knowledge/guard-candidates`，让前端能看到待审核候选。
+- 新增 `/api/knowledge/guard-candidates/{guard_id}/promote`，只在人工点击时晋升。
+- 底层 promote 改为“创建 active guard + 原候选 deprecated + 事件记录”，避免旧逻辑把候选文件移动后留下断开的数据库记录。
+
+量化结果：
+
+| 项目 | 结果 |
+| --- | ---: |
+| 新增后端接口 | 2 个 |
+| 新增前端审核入口 | 1 个 |
+| 新增回归测试 | 2 个 |
+| promote 后 hard delete | 0 |
+| promote 审计事件 | 1 条 `TRADING_GUARD_PROMOTED` |
 
 ### P2：SkillStore producer 和 time-decay 仍缺失
 
@@ -266,9 +281,8 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 ## 下一步建议
 
 1. 补齐或降级历史 case study 的 scanner_family 覆盖，目标是减少结构化过滤后的“无证据”结果。
-2. 给 guard_candidate 补人工晋升入口，让 owner 能确认或否决系统总结出的 guard。
-3. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
-4. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
+2. 实现矛盾检测，把冲突知识标记为需要复核，而不是默认无冲突。
+3. 完成 SkillStore producer 和 time-decay，让 Learning 从“经验规则”升级到“长期技能”。
 
 ## 验证记录
 
@@ -276,6 +290,9 @@ real-run: {'matched': 93, 'archived': 93, 'remaining_active': 0, 'reindexed': 56
 
 ```powershell
 uv run pytest tests/test_learning_stores.py tests/test_learning_loop_integration.py tests/test_knowledge.py tests/test_knowledge_router.py tests/test_knowledge_maintenance.py tests/specs/spec_learning_pipeline.py tests/specs/spec_lesson_guards.py tests/specs/spec_knowledge_fts.py -q
+uv run pytest tests/test_server.py::test_guard_candidate_can_be_listed_and_manually_promoted tests/test_server.py::test_guard_candidate_promote_rejects_missing_guard tests/test_server.py::test_lesson_management_actions -q
+uv run pytest tests/test_guard_analytics.py tests/e2e/test_pipeline_guard_promotion.py tests/specs/spec_learning_pipeline.py::test_guard_candidates_reachable_by_promoter -q
+cd frontend; npm run build
 ```
 
 结果：

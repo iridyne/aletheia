@@ -110,6 +110,59 @@ async def test_lesson_management_action_rejects_unknown_lesson(client):
 
 
 @pytest.mark.anyio
+async def test_guard_candidate_can_be_listed_and_manually_promoted(client):
+    from aletheia.knowledge.manager import create_guard_candidate
+    from aletheia.knowledge.guards import load_trading_guards
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.event_store import get_event_store
+
+    candidate = create_guard_candidate(
+        title="Avoid weak BTC longs",
+        content="Repeated weak BTC long entries lost money.",
+        metadata={
+            "guard_id": "manual-btc-long-guard",
+            "title": "Avoid weak BTC longs",
+            "status": "candidate",
+            "scope": "paper_entry",
+            "scanner_family": "momentum",
+            "direction": "long",
+            "severity": "warning",
+        },
+    )
+
+    listed = await client.get("/api/knowledge/guard-candidates")
+    assert listed.status_code == 200
+    assert any(g["guard_id"] == "manual-btc-long-guard" for g in listed.json())
+
+    promoted = await client.post("/api/knowledge/guard-candidates/manual-btc-long-guard/promote")
+    assert promoted.status_code == 200
+    promoted_body = promoted.json()
+    assert promoted_body["status"] == "active"
+    assert promoted_body["enforcement"] == "blocking"
+    assert promoted_body["block_candidate"] is True
+    assert promoted_body["score_penalty"] == 10.0
+
+    assert not any(g.guard_id == "manual-btc-long-guard" for g in load_trading_guards(status="candidate"))
+    assert any(g.guard_id == "manual-btc-long-guard" for g in load_trading_guards(status="active"))
+    row = repo._select_all("knowledge_items", where="id = ?", params=(candidate.id,), limit=1)[0]
+    assert row["status"] == "deprecated"
+    assert row["confidence"] == "deprecated"
+
+    events = get_event_store().list_by_aggregate("trading_guard", "manual-btc-long-guard")
+    assert [e.event_type for e in events] == ["TRADING_GUARD_PROMOTED"]
+    assert events[0].actor_type == "operator"
+
+    second_promote = await client.post("/api/knowledge/guard-candidates/manual-btc-long-guard/promote")
+    assert second_promote.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_guard_candidate_promote_rejects_missing_guard(client):
+    resp = await client.post("/api/knowledge/guard-candidates/missing-guard/promote")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_pause_resume(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
 

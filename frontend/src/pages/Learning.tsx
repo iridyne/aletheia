@@ -218,6 +218,7 @@ const KB_TABS = [
   { key: 'reviews', label: 'Daily Reviews', fn: () => api.getKnowledge('daily_review') },
   { key: 'dreaming', label: 'Dreaming Logs', fn: () => api.getDreamingLogs() },
   { key: 'lessons', label: 'Post-Trade Lessons', fn: () => api.getLessons(100) },
+  { key: 'guardCandidates', label: 'Guard Candidates', fn: () => api.getGuardCandidates() },
   { key: 'guards', label: 'Active Guards', fn: () => api.getGuards() },
 ] as const
 
@@ -240,7 +241,7 @@ type LessonRow = {
 // Guard row shape (matches /api/knowledge/guards output).
 type GuardRow = {
   guard_id: string; title: string; description?: string
-  scope?: string; enforcement?: string; severity?: string
+  status?: string; scope?: string; enforcement?: string; severity?: string
   score_penalty?: number; block_candidate?: boolean; tags?: string[]
 }
 const lessonCol = createColumnHelper<LessonRow>()
@@ -272,7 +273,9 @@ function KnowledgeTab() {
   const { data = [] } = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
   const isLessons = tab === 'lessons'
   const isGuards = tab === 'guards'
-  const rows = isLessons ? (data as unknown as LessonRow[]) : isGuards ? (data as unknown as GuardRow[]) : (data as KnowledgeItem[])
+  const isGuardCandidates = tab === 'guardCandidates'
+  const isGuardRows = isGuards || isGuardCandidates
+  const rows = isLessons ? (data as unknown as LessonRow[]) : isGuardRows ? (data as unknown as GuardRow[]) : (data as KnowledgeItem[])
 
   const { data: d0 } = useQuery({ queryKey: ['knowledge', KB_TABS[0].key], queryFn: KB_TABS[0].fn, staleTime: 60_000 })
   const { data: d1 } = useQuery({ queryKey: ['knowledge', KB_TABS[1].key], queryFn: KB_TABS[1].fn, staleTime: 60_000 })
@@ -280,6 +283,7 @@ function KnowledgeTab() {
   const { data: d3 } = useQuery({ queryKey: ['knowledge', KB_TABS[3].key], queryFn: KB_TABS[3].fn, staleTime: 60_000 })
   const { data: d4 } = useQuery({ queryKey: ['knowledge', KB_TABS[4].key], queryFn: KB_TABS[4].fn, staleTime: 60_000 })
   const { data: d5 } = useQuery({ queryKey: ['knowledge', KB_TABS[5].key], queryFn: KB_TABS[5].fn, staleTime: 60_000 })
+  const { data: d6 } = useQuery({ queryKey: ['knowledge', KB_TABS[6].key], queryFn: KB_TABS[6].fn, staleTime: 60_000 })
   const counts: Record<string, number | undefined> = {
     [KB_TABS[0].key]: Array.isArray(d0) ? d0.length : undefined,
     [KB_TABS[1].key]: Array.isArray(d1) ? d1.length : undefined,
@@ -287,6 +291,7 @@ function KnowledgeTab() {
     [KB_TABS[3].key]: Array.isArray(d3) ? d3.length : undefined,
     [KB_TABS[4].key]: Array.isArray(d4) ? d4.length : undefined,
     [KB_TABS[5].key]: Array.isArray(d5) ? d5.length : undefined,
+    [KB_TABS[6].key]: Array.isArray(d6) ? d6.length : undefined,
   }
   const lessonAction = useMutation({
     mutationFn: ({ lessonId, action }: { lessonId: string; action: 'accept' | 'reject' | 'archive' }) => {
@@ -298,6 +303,14 @@ function KnowledgeTab() {
       setSelectedLesson(updated)
       queryClient.invalidateQueries({ queryKey: ['knowledge'] })
       queryClient.invalidateQueries({ queryKey: ['lessons-all'] })
+      queryClient.invalidateQueries({ queryKey: ['learning-funnel'] })
+    },
+  })
+  const guardAction = useMutation({
+    mutationFn: (guardId: string) => api.promoteGuardCandidate(guardId),
+    onSuccess: (updated: GuardRow) => {
+      setSelectedGuard(updated)
+      queryClient.invalidateQueries({ queryKey: ['knowledge'] })
       queryClient.invalidateQueries({ queryKey: ['learning-funnel'] })
     },
   })
@@ -314,8 +327,13 @@ function KnowledgeTab() {
       <Card>
         {isLessons ? (
           <DataTable data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
-        ) : isGuards ? (
-          <DataTable data={rows as GuardRow[]} columns={guardColumns} onRowClick={setSelectedGuard} emptyMessage="No active guards — accept a lesson to promote it." />
+        ) : isGuardRows ? (
+          <DataTable
+            data={rows as GuardRow[]}
+            columns={guardColumns}
+            onRowClick={setSelectedGuard}
+            emptyMessage={isGuardCandidates ? 'No guard candidates awaiting review.' : 'No active guards yet.'}
+          />
         ) : (
           <DataTable data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
         )}
@@ -377,8 +395,22 @@ function KnowledgeTab() {
             <DrawerSection label="Description">
               <p className="text-sm text-pre-wrap">{selectedGuard.description || '—'}</p>
             </DrawerSection>
+            {isGuardCandidates && (
+              <DrawerSection label="Actions">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={guardAction.isPending}
+                  onClick={() => guardAction.mutate(selectedGuard.guard_id)}
+                >
+                  Promote
+                </Button>
+                {guardAction.error && <p className="text-error text-sm">{guardAction.error.message}</p>}
+              </DrawerSection>
+            )}
             <DrawerSection label="Properties">
               <DrawerField label="Guard ID" value={selectedGuard.guard_id} mono />
+              <DrawerField label="Status" value={<StatusBadge status={selectedGuard.status || ''} />} />
               <DrawerField label="Severity" value={<Badge tone={severityTone(selectedGuard.severity)}>{humanize(selectedGuard.severity || '—')}</Badge>} />
               <DrawerField label="Enforcement" value={<Badge tone={selectedGuard.enforcement === 'blocking' ? 'red' : 'yellow'}>{humanize(selectedGuard.enforcement || '—')}</Badge>} />
               <DrawerField label="Scope" value={<Badge tone="blue">{humanize(selectedGuard.scope || '—')}</Badge>} />
@@ -394,7 +426,7 @@ function KnowledgeTab() {
         )}
       </DetailDrawer>
 
-      <DetailDrawer open={!!selected && !isLessons && !isGuards} onClose={() => setSelected(null)} title={selected?.title || 'Knowledge Item'}>
+      <DetailDrawer open={!!selected && !isLessons && !isGuardRows} onClose={() => setSelected(null)} title={selected?.title || 'Knowledge Item'}>
         {selected && (
           <>
             <DrawerSection label="Metadata">
