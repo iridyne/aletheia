@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 // Thin accent bar at the very top of the viewport that lights up whenever
 // any React Query fetch is in-flight. Width animates to ~90% while fetching,
-// then shoots to 100% and fades out on completion. This gives instant visual
+// then reaches 100% before fading out on completion. This gives instant visual
 // feedback on every page switch without any per-page wiring.
 // Static styling lives in .fetch-progress (index.css); only the dynamic width
 // stays inline since it tracks fetch state.
@@ -23,7 +23,7 @@ export default function FetchProgress() {
 
     if (isFetching > 0) {
       setVisible(true)
-      setWidth(70 + Math.min(isFetching * 5, 20)) // up to 90%
+      setWidth(Math.min(70 + Math.min(isFetching * 5, 30), 95))
     } else {
       setWidth(100)
       timerRef.current = setTimeout(() => {
