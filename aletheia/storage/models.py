@@ -886,8 +886,8 @@ class UniverseForwardOutcome(BaseModel):
     symbol: str
     scanner_family: str | None = None
     # Trade direction the scanner family implied at selection ("long" | "short").
-    # None for legacy rows / members with no inferable direction; win-rate
-    # calibration treats those as long (positive return = win) for back-compat.
+    # None for legacy rows / members with no inferable direction; direction-aware
+    # win-rate calibration excludes those rows because their side is unknown.
     direction: str | None = None
     horizon: str  # "15m" | "1h" | "4h" | "24h"
     entry_price_usd: float

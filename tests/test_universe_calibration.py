@@ -1,8 +1,8 @@
 """Direction-aware forward-outcome calibration.
 
 A long member wins when the forward return is positive; a short member wins
-when it is negative. Legacy rows with NULL direction fall back to long
-semantics. These tests pin that contract on the real SQLite path.
+when it is negative. Rows with NULL direction are excluded because their trade
+side is unknown. These tests pin that contract on the real SQLite path.
 """
 
 from aletheia.storage.sqlite import get_db, reset_db
@@ -67,15 +67,15 @@ def test_long_winner_counts_on_positive_return(tmp_path):
     reset_db()
 
 
-def test_null_direction_falls_back_to_long(tmp_path):
+def test_null_direction_is_excluded_from_calibration(tmp_path):
     setup_test_db(tmp_path)
-    # Legacy row: direction is NULL → positive return treated as a win.
     repo.insert_forward_outcomes_batch([
         _settled("AAA/USDT", None, 4.0, family="volatility"),
         _settled("BBB/USDT", None, -4.0, family="volatility"),
+        _settled("CCC/USDT", "long", 3.0, family="volatility"),
     ])
     stats = {(r["scanner_family"], r["horizon"]): r for r in repo.calibration_stats()}
     row = stats[("volatility", "1h")]
-    assert row["n"] == 2
-    assert row["win_count"] == 1  # +4% wins, -4% loses (long fallback)
+    assert row["n"] == 1
+    assert row["win_count"] == 1  # only the explicit long row counts
     reset_db()

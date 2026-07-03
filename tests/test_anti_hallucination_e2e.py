@@ -172,6 +172,51 @@ def test_a10_layer2_signals_injected_into_prompt():
     assert "RF: momentum scanner" in prompt
 
 
+def test_data_health_signal_win_rate_excludes_unknown_direction(tmp_path, monkeypatch):
+    """System Operator data health must not count unknown-direction outcomes as long.
+
+    Historical NULL direction rows are not honest long or short evidence. They
+    should not affect the signal win-rate that the operator sees in Layer 1.
+    """
+    setup_env(tmp_path, monkeypatch)
+
+    from datetime import datetime, timezone
+    from aletheia.storage.models import UniverseForwardOutcome
+    from aletheia.storage import repositories as repo
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _outcome(symbol: str, direction: str | None, ret: float) -> UniverseForwardOutcome:
+        return UniverseForwardOutcome(
+            member_id=f"m_{symbol}_{direction}_{ret}",
+            snapshot_id="snap_data_health",
+            symbol=symbol,
+            scanner_family="momentum",
+            direction=direction,
+            horizon="24h",
+            entry_price_usd=100.0,
+            entry_ts=now,
+            due_at=now,
+            settled_at=now,
+            exit_price_usd=100.0 * (1 + ret / 100.0),
+            forward_return_pct=ret,
+            status="settled",
+        )
+
+    repo.insert_forward_outcomes_batch([
+        _outcome("AAA/USDT", None, 9.0),
+        _outcome("BBB/USDT", None, -9.0),
+        _outcome("CCC/USDT", "long", 3.0),
+    ])
+
+    from aletheia.agent_shell.trading_context import _get_data_health_summary
+    summary = _get_data_health_summary()
+
+    assert summary["signal_win_rate_24h"] == 100.0, (
+        f"unknown-direction rows leaked into data-health win rate: {summary}"
+    )
+
+
 def test_b1_ranker_penalty_ignores_post_trade_review(tmp_path, monkeypatch):
     """B1: the ranker's _lesson_penalty must NOT draw penalties from post_trade_review
     (the hallucination source) — it only retrieves trade_case_study now. A high_confidence

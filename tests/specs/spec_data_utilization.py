@@ -446,6 +446,8 @@ def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
     # momentum:short — 2 outcomes, 2 wins (negative return = short win)
     _seed_forward_outcome(conn, "momentum", "short", -2.0)
     _seed_forward_outcome(conn, "momentum", "short", -3.0)
+    # Unknown-direction legacy row must not be folded into momentum:long.
+    _seed_forward_outcome(conn, "momentum", None, 9.0)
 
     rows = family_direction_edge(horizon="24h", within_days=7)
     by_key = {(r["scanner_family"], r["direction"]): r for r in rows}
