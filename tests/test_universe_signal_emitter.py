@@ -137,7 +137,7 @@ class TestEmitDeterministicOpportunities:
         if inserted is None:
             inserted = []
 
-        def _fake_find(symbol, snapshot_id):
+        def _fake_find(symbol, snapshot_id, market=None):
             return existing.get(symbol) if existing else None
 
         def _fake_insert(opp):
@@ -233,6 +233,21 @@ class TestEmitDeterministicOpportunities:
         count, opps = self._run(members, feats)
         assert count == 1
         assert opps[0].valid_until == "2099-06-01T00:00:00"
+
+    def test_derivatives_context_stamped_on_universe_opportunity(self):
+        members = [_make_member("BTC/USDT", "derivatives", 75)]
+        feats = [_make_feat(
+            "BTC/USDT",
+            funding_rate=-0.012,
+            open_interest=1_250_000_000.0,
+            oi_delta_1h=7.5,
+        )]
+        count, opps = self._run(members, feats)
+        assert count == 1
+        opp = opps[0]
+        assert opp.funding_rate == -0.012
+        assert opp.open_interest == 1_250_000_000.0
+        assert opp.oi_delta_1h == 7.5
 
     def test_thesis_includes_reasons(self):
         members = [_make_member("BTC/USDT", "momentum", 75)]

@@ -156,6 +156,9 @@ def emit_deterministic_opportunities(
             scanner_family=family,
             valid_until=m.get("expires_at"),
             regime_tag=regime.state if regime else None,
+            funding_rate=feat.get("funding_rate"),
+            open_interest=feat.get("open_interest"),
+            oi_delta_1h=feat.get("oi_delta_1h"),
         )
         try:
             insert_opportunity(opp)
