@@ -98,6 +98,79 @@ BACKEND_ISSUES.md             ← 记录偏差，代码追文档修复
 
 ---
 
+## Doctor / 运营告警修复流程（2026-07-03 事故教训）
+
+`aletheia doctor` 告警不能直接等同于"当前代码坏了"。本项目大量探针是滚动窗口，
+会把历史残留、已缓解风险和当前活跃故障混在同一份报告里。AI 如果不先分类，会陷入
+"查日志 → 改一点 → 再查 → 再改"的长循环，浪费时间并扩大改动面。
+
+### 强制顺序
+
+1. **先建立基线**：记录 `doctor` warning 数、每条 detail、最新事件时间、涉及表/文件。
+2. **先分类再修**：
+   - 当前活跃故障：最新事件仍在发生，或重启/新写入后继续复现。
+   - 历史残留：滚动窗口仍显示，但最新事件已经超过合理冷却期。
+   - 已缓解风险：异常事实仍存在，但当前代码已有明确拦截/降级。
+   - 观测口径问题：探针 severity 没区分上述状态。
+3. **每条告警必须有证据源**：SQL 查询、日志行、函数路径、测试或重启后行为之一。
+4. **先修真实写入/决策路径，再修 doctor 展示语义**。不要只把 warn 降成 info。
+5. **每个修复都要有量化复核**：warning 数变化、最新事件年龄、重复次数、错误数、测试数。
+6. **最后再判断完成**：只有 `doctor` 复跑、相关测试通过、工作区干净，才算收口。
+
+### 反例：本次为什么耗时过久
+
+2026-07-03 的 doctor warning 修复中，初始状态是 4 个 warning：
+`loop.reconciled_ratio`、`loop.concentration`、`content.proposal_bias`、
+`trust.audit_chain`。耗时过久的原因：
+
+- 没有第一时间把 warning 分为"当前故障"和"历史窗口残留"。
+- 对 audit chain 先看了历史断点，再定位跨进程 hash 缓存，顺序偏慢。
+- 对 proposal bias 先看 doctor 表象，再追到机会池/候选/提案三层输入，路径较长。
+- 没有一开始就写出"完成标准 = warning 数、最新事件年龄、拦截是否生效、测试覆盖"。
+- 在解释和实现之间来回切换，导致 owner 感知为长时间无交付。
+
+正确收敛方式应是：
+
+```text
+doctor baseline
+→ 对每条 warning 查最新事件时间
+→ 活跃故障改代码，历史残留改探针语义
+→ focused tests
+→ restart gateway
+→ doctor final
+→ commit
+```
+
+### 本次沉淀出的硬规则
+
+- 审计链类告警：不能修改历史审计文件来"修绿"；先修未来写入路径，再让 doctor 明确显示
+  历史断点与当前断点的分界。
+- 滚动窗口类告警：必须显示最新事件年龄。超过冷却期且当前精确探针为 0 时，不应继续
+  报当前 warning。
+- 策略方向偏置：不要只改 scanner 或 doctor 文案。至少检查三层：机会池方向分布、
+  pending signal 队列、proposal 写入层。必要时在 proposal 写入前加质量刹车。
+- `doctor` 修复必须保持只读探针原则。写操作只能在被测试覆盖的业务路径中发生。
+- 汇报 owner 时先说结果数字：warning 从多少到多少、当前还有没有活跃故障、哪些只是历史信息。
+
+### Gateway 掉线 / 重启排查规则
+
+前端显示 `backend unreachable` 时，不能直接判断为"后端崩了"。本系统是
+frontdoor `:8787` → backend `:8788` 的两层结构，至少要先区分三类：
+
+- **主动重启**：`audit.jsonl` 里 `gateway_restart`，尤其 `reason=git_hook` / `manual`。
+- **frontdoor 断流**：`gateway_frontdoor_restart` 或 `frontdoor-errors.log` 中代理读取中断。
+- **真实 backend 异常**：`errors.log` 中 FastAPI 路由 traceback、启动失败或 supervisor give-up。
+
+强制做法：
+
+1. 先看 `doctor` 的 `process.restart_history`，确认 24h 内重启来源和次数。
+2. 若是 git hook 高频触发，先判断是否 docs/tests-only 变更；这类变更不应重启 gateway。
+3. 若是 frontdoor 断流，优先检查代理降级是否返回结构化 503，避免长 traceback 误导 owner。
+4. 若是 backend traceback，必须定位到具体路由/函数并补回归测试。
+5. 汇报时用"哪一层断了"说人话：前门断、后端路由报错、还是开发流程主动重启。
+
+---
+
 ## 每阶段 Checkpoint 制度
 
 | Phase | Checkpoint 形式 | 通过标准 |

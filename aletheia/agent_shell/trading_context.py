@@ -17,6 +17,21 @@ from typing import Any
 logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
 
+def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Keep the first item for each symbol/direction pair."""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str | None, str | None]] = set()
+    for item in items:
+        key = (item.get("symbol"), item.get("direction"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def build_enriched_trading_context() -> dict[str, Any]:
     """Build the three-layer context for System Operator trading decisions.
 
@@ -508,16 +523,17 @@ def _build_layer2_short_term() -> dict[str, Any]:
     try:
         from aletheia.agents.paper_trader_ranker import build_paper_candidates
         candidates = build_paper_candidates(limit=30)
-        layer["ranker_candidates"] = [
+        ranker_candidates = [
             {
                 "symbol": c.get("symbol"),
-                "direction": c.get("direction_bias"),
+                "direction": c.get("direction"),
                 "trade_score": c.get("trade_score"),
                 "skip_reason": c.get("skip_reason"),
                 "scanner_family": c.get("scanner_family"),
             }
-            for c in candidates[:8]
+            for c in candidates
         ]
+        layer["ranker_candidates"] = _dedupe_symbol_direction(ranker_candidates, limit=8)
     except Exception:
         layer["ranker_candidates"] = []
 
@@ -533,13 +549,14 @@ def _build_layer2_short_term() -> dict[str, Any]:
             "ORDER BY created_at DESC LIMIT 5",
             (cutoff,),
         ).fetchall()
-        layer["pending_signals"] = [
+        pending_signals = [
             {
                 "symbol": r[0], "direction": r[1], "reasoning": r[2][:100],
                 "at": r[3], "opportunity_id": r[4], "signal_source": r[5],
             }
             for r in rows
         ]
+        layer["pending_signals"] = _dedupe_symbol_direction(pending_signals, limit=5)
     except Exception:
         layer["pending_signals"] = []
 

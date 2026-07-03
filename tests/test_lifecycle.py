@@ -430,6 +430,28 @@ def test_verify_started_surfaces_errors_log_tail(tmp_path, monkeypatch, capsys):
     assert "ImportError boom" in err
 
 
+def test_do_logs_shows_all_operational_logs_redacted(tmp_path, monkeypatch, capsys):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.gateway import lifecycle
+    from aletheia.gateway.logs import errors_log_path, log_path
+
+    log_dir = tmp_path / "logs"
+    log_path().write_text("gateway alive\n", encoding="utf-8")
+    errors_log_path().write_text("api_key=SECRET123\n", encoding="utf-8")
+    (log_dir / "frontdoor-errors.log").write_text("frontdoor failed\n", encoding="utf-8")
+
+    lifecycle.do_logs(lines=5)
+
+    out = capsys.readouterr().out
+    assert "== gateway.log" in out
+    assert "== errors.log" in out
+    assert "== frontdoor-errors.log" in out
+    assert "gateway alive" in out
+    assert "frontdoor failed" in out
+    assert "SECRET123" not in out
+    assert "[REDACTED]" in out
+
+
 def test_do_start_background_raises_when_spawn_dies(tmp_path, monkeypatch):
     """End-to-end: do_start background path now propagates a dead spawn as Exit(1),
     instead of silently returning 0 (the false-green the watchdog used to record)."""

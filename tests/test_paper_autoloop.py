@@ -6,6 +6,7 @@ live, and never fake the causal chain (trust_and_change_control §1.1/§1.2/§1.
 """
 
 import sqlite3
+from types import SimpleNamespace
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
@@ -99,6 +100,19 @@ def test_observe_mode_scheduler_gate(tmp_path, monkeypatch):
     assert len(repo.list_trade_proposals()) == 0
     assert len(repo.list_orders()) == 0
     reset_db()
+
+
+def test_paper_trader_scheduler_gate_tolerates_minimal_config(monkeypatch):
+    """Older focused tests stub only the fields they exercise."""
+    import aletheia.agent_runtime.scheduler as sched
+
+    monkeypatch.setattr(
+        sched,
+        "load_config",
+        lambda: SimpleNamespace(agent=SimpleNamespace(permission_mode="Observe")),
+    )
+
+    sched._run_paper_trader()
 
 
 async def test_kill_switch_blocks_autoloop(tmp_path, monkeypatch):

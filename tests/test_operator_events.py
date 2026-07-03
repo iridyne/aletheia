@@ -1,4 +1,5 @@
 import sqlite3
+import os
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -224,6 +225,31 @@ async def test_operator_recommendations_reuse_recent_artifact_scan(client, monke
     ]
     assert len(unscoped_500_scans) == 1
 
+
+@pytest.mark.anyio
+async def test_operator_recommendations_cache_avoids_recompute(client, monkeypatch):
+    import aletheia.server.routes.operator as route
+
+    old_token = os.environ.pop("PYTEST_CURRENT_TEST", None)
+    calls: list[dict[str, int]] = []
+
+    def fake_build_recommendations(limit: int = 10):
+        calls.append({"limit": limit})
+        return [{"id": "cached-reco", "kind": "test", "limit": limit, "summary": "cached from test"}]
+
+    try:
+        monkeypatch.setattr(route, "build_recommendations", fake_build_recommendations)
+
+        first = await client.get("/api/operator/recommendations?limit=3")
+        second = await client.get("/api/operator/recommendations?limit=3")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json() == second.json()
+        assert len(calls) == 1
+    finally:
+        if old_token is not None:
+            os.environ["PYTEST_CURRENT_TEST"] = old_token
 
 @pytest.mark.anyio
 async def test_operator_recommendations_surface_stuck_running_tasks(client):

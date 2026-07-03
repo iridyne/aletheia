@@ -34,7 +34,7 @@ import subprocess
 from pathlib import Path
 
 # Bump when the rendered hook body changes so existing installs self-update.
-HOOK_VERSION = "1"
+HOOK_VERSION = "2"
 _BEGIN = f"# >>> aletheia-auto-restart v{HOOK_VERSION} (managed by `aletheia doctor` — edits overwritten) >>>"
 _END = "# <<< aletheia-auto-restart <<<"
 _MARKER_PREFIX = "# >>> aletheia-auto-restart"  # version-agnostic: detects ANY managed install
@@ -47,6 +47,19 @@ _HOOK_GUARDS: dict[str, str] = {
     "post-checkout": '[ "$3" = "1" ] || exit 0   # only branch switches, not file restores',
     "post-rewrite": "",
 }
+_HOOK_CHANGED_FILES: dict[str, str] = {
+    "post-merge": 'changed=$(git diff --name-only ORIG_HEAD HEAD 2>/dev/null || true)',
+    "post-checkout": 'changed=$(git diff --name-only "$1" "$2" 2>/dev/null || true)',
+    "post-rewrite": (
+        'changed=$(while read old new rest; do '
+        'git diff --name-only "$old" "$new" 2>/dev/null; '
+        'done || true)'
+    ),
+}
+_RUNTIME_CHANGE_PATTERN = (
+    "^(aletheia/|frontend/|operator-shell/|scripts/|"
+    "pyproject\\.toml$|uv\\.lock$|package\\.json$|package-lock\\.json$)"
+)
 
 
 def _git(repo_dir: Path, *args: str) -> str | None:
@@ -83,6 +96,7 @@ def _hooks_dir(repo_dir: Path) -> Path | None:
 def _render_hook(hook_name: str, port: int) -> str:
     guard = _HOOK_GUARDS.get(hook_name, "")
     guard_line = f"{guard}\n" if guard else ""
+    changed_files_line = _HOOK_CHANGED_FILES.get(hook_name, "changed=")
     return (
         "#!/bin/sh\n"
         f"{_BEGIN}\n"
@@ -91,6 +105,13 @@ def _render_hook(hook_name: str, port: int) -> str:
         'gd=$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd)\n'
         'cd_=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd)\n'
         '[ -n "$gd" ] && [ "$gd" = "$cd_" ] || exit 0   # not the main work tree (worktree/bare) → skip\n'
+        f"{changed_files_line}\n"
+        f'printf "%s\\n" "$changed" | grep -Eq \'{_RUNTIME_CHANGE_PATTERN}\' || exit 0\n'
+        'stamp="$cd_/aletheia-auto-restart.last"\n'
+        'now=$(date +%s 2>/dev/null || echo 0)\n'
+        'last=$(cat "$stamp" 2>/dev/null || echo 0)\n'
+        '[ "$now" -gt 0 ] && [ "$last" -gt 0 ] && [ $((now - last)) -lt 15 ] && exit 0\n'
+        'printf "%s\\n" "$now" > "$stamp" 2>/dev/null || true\n'
         f'curl -fsS -m 3 -X POST "http://127.0.0.1:{port}/api/gateway/restart" \\\n'
         "  -H 'Content-Type: application/json' \\\n"
         '  -d \'{"reason":"git_hook"}\' >/dev/null 2>&1 &\n'

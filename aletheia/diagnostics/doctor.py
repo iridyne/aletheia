@@ -29,6 +29,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import platform
+from pathlib import Path
+import sys
 from typing import Literal
 
 Severity = Literal["ok", "info", "warn", "blocker"]
@@ -78,6 +81,165 @@ class Report:
         }
 
 
+def build_deep_diagnostics(report: Report | None = None, *, tail_lines: int = 20) -> dict:
+    """Build a read-only diagnostic bundle for `doctor --verbose/--deep`.
+
+    This intentionally contains pointers and redacted tails, not secrets or full
+    logs. It is the "where do I look next" layer above the health summary.
+    """
+    report = report or build_report()
+    bundle = {
+        "attention": [
+            {
+                "name": c.name,
+                "severity": c.severity,
+                "detail": c.detail,
+                "fix_hint": c.fix_hint,
+                "log_hint": _log_hint_for_check(c.name),
+            }
+            for c in report.checks
+            if c.severity in {"warn", "blocker"}
+        ],
+        "system": _system_info(),
+        "logs": _diagnostic_logs(tail_lines=tail_lines),
+        "recent_failures": _recent_failures(),
+        "recent_audit": _recent_audit_events(),
+    }
+    return bundle
+
+
+def _log_hint_for_check(name: str) -> str:
+    if name.startswith("process.") or name.startswith("webui."):
+        return "data/logs/errors.log or data/logs/frontdoor-errors.log"
+    if name.startswith("data."):
+        return "data/logs/errors.log plus recent scheduler/collector agent_runs"
+    if name.startswith("loop.") or name.startswith("content.") or name.startswith("operator."):
+        return "data/logs/agent_runs.jsonl and app.db agent_runs/run_steps"
+    if name.startswith("trust.") or name.startswith("config."):
+        return "data/logs/audit.jsonl"
+    if name.startswith("network.") or name.startswith("creds."):
+        return "data/logs/errors.log; secrets are intentionally never printed"
+    return "data/logs/"
+
+
+def _system_info() -> dict:
+    """Return non-secret environment facts useful for support/debugging."""
+    info = {
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "executable": sys.executable,
+        "cwd": str(Path.cwd()),
+    }
+    try:
+        from aletheia.config.loader import get_data_dir
+        info["data_dir"] = str(get_data_dir())
+    except Exception as e:
+        info["data_dir_error"] = str(e)
+    try:
+        from aletheia.update import git_ops
+        if git_ops.is_repo():
+            info["git_branch"] = git_ops.current_branch()
+            info["git_head"] = git_ops.current_commit()[:12]
+    except Exception as e:
+        info["git_error"] = str(e)
+    return info
+
+
+def _diagnostic_logs(*, tail_lines: int) -> dict:
+    try:
+        from aletheia.gateway.logs import (
+            errors_log_path,
+            log_inventory,
+            log_path,
+            tail_file_redacted,
+        )
+
+        inventory = log_inventory()
+        total_bytes = sum(int(row.get("bytes") or 0) for row in inventory)
+        tails = {
+            "gateway.log": tail_file_redacted(log_path(), tail_lines),
+            "errors.log": tail_file_redacted(errors_log_path(), tail_lines),
+        }
+        try:
+            from aletheia.config.loader import get_data_dir
+            log_dir = get_data_dir() / "logs"
+            tails["frontdoor-errors.log"] = tail_file_redacted(log_dir / "frontdoor-errors.log", tail_lines)
+            tails["operator-shell-errors.log"] = tail_file_redacted(log_dir / "operator-shell-errors.log", tail_lines)
+        except Exception:
+            pass
+        return {
+            "policy": {
+                "text_logs_rotate_at_mb": 50,
+                "text_logs_keep_generations": 100,
+                "jsonl_rotate_at_mb": "config.retention.jsonl_max_mb (default 50)",
+                "deletion": "doctor does not delete logs; telemetry DB pruning is separate",
+            },
+            "total_bytes": total_bytes,
+            "files": inventory,
+            "tails": tails,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _recent_failures(limit: int = 12) -> list[dict]:
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        rows = db.execute(
+            "SELECT id, agent_name, status, started_at, finished_at, error "
+            "FROM agent_runs "
+            "WHERE status NOT IN ('completed', 'success') OR error IS NOT NULL "
+            "ORDER BY COALESCE(finished_at, started_at) DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "agent_name": row["agent_name"],
+                "status": row["status"],
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "error": _shorten_secret_safe(row["error"]),
+            }
+            for row in rows
+        ]
+    except Exception as e:
+        return [{"error": f"could not read agent_runs: {e}"}]
+
+
+def _recent_audit_events(limit: int = 12) -> list[dict]:
+    try:
+        from aletheia.files.jsonl import read_jsonl
+        events = read_jsonl("audit.jsonl", limit=limit)
+        result = []
+        for event in events[-limit:]:
+            result.append({
+                "timestamp": event.get("timestamp"),
+                "actor": event.get("actor"),
+                "source": event.get("source"),
+                "event_type": event.get("event_type"),
+                "entity_type": event.get("entity_type"),
+                "entity_id": event.get("entity_id"),
+                "message": _shorten_secret_safe(event.get("message")),
+            })
+        return result
+    except Exception as e:
+        return [{"error": f"could not read audit.jsonl: {e}"}]
+
+
+def _shorten_secret_safe(value: object, max_len: int = 240) -> str:
+    if value is None:
+        return ""
+    text = str(value)
+    try:
+        from aletheia.gateway.logs import redact_log_text
+        text = redact_log_text(text)
+    except Exception:
+        pass
+    return text if len(text) <= max_len else text[: max_len - 3] + "..."
+
+
 def _age_minutes(iso_ts: str | None) -> float | None:
     """Minutes since an ISO-8601 timestamp (tz-aware or naive-UTC). None if unparseable."""
     if not iso_ts:
@@ -87,6 +249,19 @@ def _age_minutes(iso_ts: str | None) -> float | None:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - ts).total_seconds() / 60.0
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_iso_datetime(iso_ts: str | None) -> datetime | None:
+    if not iso_ts:
+        return None
+    try:
+        text = iso_ts.replace("Z", "+00:00")
+        ts = datetime.fromisoformat(text)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts
     except (ValueError, TypeError):
         return None
 
@@ -237,6 +412,81 @@ def _probe_frontdoor_process(report: Report, host: str, port: int) -> None:
             f"backend not ready behind front door ({payload.get('backend_base_url')}): {detail}",
             "wait for supervisor restart, or run `aletheia gateway restart --no-browser`",
         )
+
+
+_GATEWAY_RESTART_EVENT_TYPES = {
+    "gateway_restart",
+    "gateway_frontdoor_restart",
+    "gateway_inner_port_lost",
+    "gateway_spawn_failed",
+    "gateway_supervisor_gave_up",
+    "self_heal_restart",
+}
+
+
+def _restart_event_bucket(event: dict) -> str:
+    event_type = str(event.get("event_type") or "unknown")
+    reason = ""
+    after = event.get("after")
+    if isinstance(after, dict):
+        reason = str(after.get("reason") or "")
+    if not reason:
+        msg = str(event.get("message") or "")
+        if "(" in msg and ")" in msg:
+            reason = msg.split("(", 1)[1].split(")", 1)[0]
+        elif ":" in msg and event_type == "self_heal_restart":
+            reason = msg.rsplit(":", 1)[-1].strip()
+    return f"{event_type}:{reason}" if reason else event_type
+
+
+def _probe_gateway_restart_history(report: Report) -> None:
+    """Summarize recent gateway restart/liveness events from audit.jsonl.
+
+    This is intentionally read-only. It gives the operator the answer to
+    "why did the backend disappear?" without manual log archaeology.
+    """
+    try:
+        from aletheia.files.jsonl import read_jsonl
+        events = read_jsonl("audit.jsonl", limit=500)
+    except Exception as e:
+        report.add("process.restart_history", "info", f"probe error: {e}")
+        return
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    counts: dict[str, int] = {}
+    latest_ts: datetime | None = None
+    latest_bucket = ""
+    critical_seen = False
+    for event in events:
+        event_type = str(event.get("event_type") or "")
+        if event_type not in _GATEWAY_RESTART_EVENT_TYPES:
+            continue
+        ts = _parse_iso_datetime(event.get("timestamp"))
+        if ts is not None and ts < cutoff:
+            continue
+        bucket = _restart_event_bucket(event)
+        counts[bucket] = counts.get(bucket, 0) + 1
+        if ts is not None and (latest_ts is None or ts > latest_ts):
+            latest_ts = ts
+            latest_bucket = bucket
+        if event_type in {"gateway_spawn_failed", "gateway_supervisor_gave_up"}:
+            critical_seen = True
+
+    total = sum(counts.values())
+    if total == 0:
+        report.add("process.restart_history", "info", "no gateway restart/liveness events in last 24h")
+        return
+
+    top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:4]
+    top_text = ", ".join(f"{name}={n}" for name, n in top)
+    latest = f", latest={latest_bucket} {_fmt_age(_age_minutes(latest_ts.isoformat()) if latest_ts else None)}"
+    severity: Severity = "warn" if critical_seen or total >= 10 else "info"
+    fix_hint = ""
+    if total >= 10:
+        fix_hint = "high restart volume — check git hook churn, frontdoor port loss, and supervisor errors"
+    if critical_seen:
+        fix_hint = "spawn/give-up event seen — inspect data/logs/errors.log and frontdoor-errors.log"
+    report.add("process.restart_history", severity, f"24h restart/liveness events={total}; {top_text}{latest}", fix_hint)
 
 
 def _probe_config_gates(report: Report) -> None:
@@ -875,7 +1125,7 @@ def _probe_reconciled_ratio(report: Report) -> None:
         db = get_db()
         cutoff_72h = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
         rows = list(db.execute(
-            "SELECT close_reason FROM positions "
+            "SELECT close_reason, closed_at FROM positions "
             "WHERE status='closed' AND closed_at >= ? "
             "ORDER BY closed_at DESC LIMIT 50",
             (cutoff_72h,),
@@ -890,6 +1140,8 @@ def _probe_reconciled_ratio(report: Report) -> None:
         reconciled = cnt.get("reconciled_gone", 0)
         units_bug = cnt.get("units_bug_cleanup", 0)
         ai_driven = total - reconciled - units_bug
+        newest_reconciled = next((r[1] for r in rows if r[0] == "reconciled_gone"), None)
+        newest_reconciled_age = _age_minutes(newest_reconciled) if newest_reconciled else None
         recon_pct = round(reconciled / total * 100, 1) if total else 0
         ai_pct = round(ai_driven / total * 100, 1) if total else 0
         detail = (f"last {total}: reconciled={reconciled}({recon_pct}%), "
@@ -907,8 +1159,13 @@ def _probe_reconciled_ratio(report: Report) -> None:
                            "current close→reopen churn is present; judgement PF/WR is driven by "
                            "orphan sweep rather than AI exits")
             else:
+                age_note = (
+                    f"; newest reconciled {_fmt_age(newest_reconciled_age)}"
+                    if newest_reconciled_age is not None else ""
+                )
                 report.add("loop.reconciled_ratio", "info",
-                           f"historical reconciler-dominated closes: {detail}; no active churn fingerprint",
+                           f"historical reconciler-dominated closes: {detail}{age_note}; "
+                           "no active churn fingerprint",
                            "recent judgement PF/WR remains polluted by historical orphan sweeps, but "
                            "loop.reconcile_thrash is the current-fault detector")
         elif recon_pct > 25:
@@ -996,7 +1253,7 @@ def _probe_concentration(report: Report) -> None:
         from aletheia.storage.sqlite import get_db
         db = get_db()
         rows = list(db.execute(
-            "SELECT o.symbol || ':' || o.direction AS bucket, COUNT(*) n "
+            "SELECT o.symbol || ':' || o.direction AS bucket, COUNT(*) n, MAX(f.filled_at) newest "
             "FROM fills f JOIN orders o ON f.order_id = o.id "
             "WHERE f.filled_at >= datetime('now', '-1 day') "
             "GROUP BY bucket ORDER BY n DESC"
@@ -1005,14 +1262,19 @@ def _probe_concentration(report: Report) -> None:
             report.add("loop.concentration", "info", "no fills in last 24h")
             return
         total = sum(r[1] for r in rows)
-        top_bucket, top_n = rows[0][0], rows[0][1]
+        top_bucket, top_n, top_newest = rows[0][0], rows[0][1], rows[0][2]
+        top_age = _age_minutes(top_newest)
         top_pct = round(top_n / total * 100, 1) if total else 0
         detail = f"24h fills={total}, top: {top_bucket}={top_n} ({top_pct}%)"
         if top_pct > 60 and total >= 10:
-            report.add("loop.concentration", "warn",
-                       f"PI single-bet bias: {detail}",
-                       "highly correlated exposure — PI may be making one bet "
-                       "repeatedly; check trade_proposals for direction diversity")
+            if top_age is not None and top_age > 360:
+                report.add("loop.concentration", "info",
+                           f"historical concentration residue: {detail}; newest top-bucket fill {_fmt_age(top_age)}")
+            else:
+                report.add("loop.concentration", "warn",
+                           f"PI single-bet bias: {detail}",
+                           "highly correlated exposure — PI may be making one bet "
+                           "repeatedly; check trade_proposals for direction diversity")
         elif top_pct > 40:
             report.add("loop.concentration", "info",
                        f"moderate concentration: {detail}")
@@ -1388,10 +1650,20 @@ def _probe_content_proposal_bias(report: Report) -> None:
     top_pct = top_n / total
     detail = f"24h proposals={total}, top: {top_dir}={top_n} ({top_pct:.0%})"
     if top_pct > 0.80:
-        report.add("content.proposal_bias", "warn",
-                   f"proposal-layer directional bias: {detail}",
-                   "PI proposes almost exclusively one direction (pre-risk) — check trading_decision "
-                   "for a stuck regime read or one-sided signal inputs")
+        try:
+            from aletheia.agent_shell.trading_decision import _proposal_direction_overheated
+            brake = _proposal_direction_overheated(top_dir, 70)
+        except Exception:
+            brake = None
+        if brake:
+            report.add("content.proposal_bias", "info",
+                       f"proposal-layer directional bias mitigated: {detail}; direction brake active",
+                       brake)
+        else:
+            report.add("content.proposal_bias", "warn",
+                       f"proposal-layer directional bias: {detail}",
+                       "PI proposes almost exclusively one direction (pre-risk) — check trading_decision "
+                       "for a stuck regime read or one-sided signal inputs")
     else:
         report.add("content.proposal_bias", "ok", detail)
 
@@ -1441,16 +1713,27 @@ def _probe_audit_chain(report: Report) -> None:
     else:
         errors = result.get("errors", [])
         error_timestamps = result.get("error_timestamps", [])
-        # Split at the effective fix boundary. The file lock fixed same-process
-        # races, but cross-process writers could still reuse a stale per-process
-        # hash cache until write_audit started re-reading the tail under lock.
-        EFFECTIVE_CHAIN_FIX_TS = "2026-07-03T07:00:00"
+        # Split at the current effective write-path fix. The original file lock
+        # serialized appends, but each gateway process still cached its own chain
+        # tail; frontdoor/backend interleaving could therefore continue from a
+        # stale _prev_hash. The writer now re-reads the chain tail while holding
+        # the cross-process lock, so only breaks after this timestamp indicate
+        # an active write-path or tamper problem.
+        EFFECTIVE_CHAIN_FIX_TS = "2026-07-03T08:00:00+00:00"
+        effective_ts = _parse_iso_datetime(EFFECTIVE_CHAIN_FIX_TS)
         ts_padded = list(error_timestamps) + [""] * len(errors)
-        post_fix = [e for e, t in zip(errors, ts_padded) if t and t > EFFECTIVE_CHAIN_FIX_TS]
+        post_fix = [
+            e
+            for e, t in zip(errors, ts_padded)
+            if (parsed := _parse_iso_datetime(t)) is not None
+            and effective_ts is not None
+            and parsed > effective_ts
+        ]
         if not post_fix:
             report.add("trust.audit_chain", "info",
-                       f"{len(errors)} historical chain break(s), all before cross-process "
-                       f"hash-cache fix; zero post-fix breaks ({records} records{reanchor_extra})")
+                       f"{len(errors)} historical chain break(s), all before current "
+                       f"cross-process cache fix ({EFFECTIVE_CHAIN_FIX_TS}); "
+                       f"zero post-lock breaks ({records} records{reanchor_extra})")
         else:
             detail = f"chain BROKEN — {len(post_fix)} post-fix error(s) in {records} records: {post_fix[:3]}"
             report.add("trust.audit_chain", "warn", detail,
@@ -1760,6 +2043,7 @@ def build_report() -> Report:
     for probe in (
         _probe_code_sync,
         _probe_process,
+        _probe_gateway_restart_history,
         _probe_config_gates,
         _probe_config_consistency,
         _probe_credentials,

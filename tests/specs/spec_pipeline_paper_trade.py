@@ -382,3 +382,46 @@ def test_paper_trader_marks_opportunity_consumed(tmp_path, monkeypatch):
         "PT-1: opportunity is not marked as consumed — next run will re-process it, "
         "creating duplicate signals and breaking the signal deduplication guarantee."
     )
+
+
+def test_paper_trader_skips_recent_duplicate_signal_pair(tmp_path, monkeypatch):
+    """Do not keep re-emitting the same symbol/direction into the PI queue."""
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        lambda source=None: None,
+        raising=False,
+    )
+
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
+    init_tool_registry()
+
+    insert_pi_decision(PiDecision(
+        symbol="BTC/USDT",
+        direction="long",
+        action="signal_pending",
+        reasoning="recent duplicate seed",
+    ))
+    _insert_opportunity(conn, symbol="BTC/USDT", direction_bias="long", confidence_score=0.9)
+    _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
+
+    before = conn.execute(
+        "SELECT COUNT(*) AS n FROM pi_decisions "
+        "WHERE action='signal_pending' AND symbol='BTC/USDT' AND direction='long'"
+    ).fetchone()["n"]
+
+    import asyncio
+    from aletheia.agents.paper_trader import run_paper_trader
+
+    result = asyncio.run(run_paper_trader(permission_mode="Paper"))
+
+    after = conn.execute(
+        "SELECT COUNT(*) AS n FROM pi_decisions "
+        "WHERE action='signal_pending' AND symbol='BTC/USDT' AND direction='long'"
+    ).fetchone()["n"]
+
+    assert after == before
+    assert any("skip_recent_signal:BTC/USDT:long" in o for o in result.get("outputs", []))

@@ -20,6 +20,7 @@ closes positions itself.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import log_tool
@@ -33,6 +34,7 @@ logger = logging.getLogger("aletheia.agents.paper_trader")
 
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
+_RECENT_SIGNAL_COOLDOWN_MINUTES = 120
 
 
 _EXCHANGE_CRED_KEYS: dict[str, str] = {
@@ -116,6 +118,43 @@ def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
         return 0
 
 
+def _recent_signal_pairs(window_minutes: int = _RECENT_SIGNAL_COOLDOWN_MINUTES) -> set[tuple[str, str]]:
+    """Pairs recently handed to the System Operator via signal_pending."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
+        rows = get_db().execute(
+            "SELECT symbol, direction FROM pi_decisions "
+            "WHERE action='signal_pending' AND created_at >= ? "
+            "AND symbol IS NOT NULL AND direction IS NOT NULL",
+            (cutoff,),
+        ).fetchall()
+        return {(r["symbol"], r["direction"]) for r in rows}
+    except Exception:
+        return set()
+
+
+def _select_signal_candidates(candidates: list[dict], limit: int = 3) -> list[dict]:
+    """Pick a compact signal batch without duplicate symbols or pairs."""
+    selected: list[dict] = []
+    seen_symbols: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        sym = candidate.get("symbol")
+        direction = candidate.get("direction")
+        if not sym or not direction:
+            continue
+        pair = (sym, direction)
+        if sym in seen_symbols or pair in seen_pairs:
+            continue
+        selected.append(candidate)
+        seen_symbols.add(sym)
+        seen_pairs.add(pair)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
 @register_agent("paper_trader")
 async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     outputs: list[str] = []
@@ -132,6 +171,7 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
 
     # Snapshot of currently open symbols — used to skip redundant signal writes.
     open_symbols: set[str] = {p["symbol"] for p in list_positions(status="open")}
+    recent_signal_pairs = _recent_signal_pairs()
     # Track symbols that received a signal_pending write in this cycle (cross-path dedup).
     cycle_pending_symbols: set[str] = set()
 
@@ -172,17 +212,21 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
 
     # Write top 3 eligible candidates as pending signals for System Operator
     signals_written = 0
-    for candidate in eligible[:3]:
+    for candidate in _select_signal_candidates(eligible, limit=3):
         try:
             sym = candidate["symbol"]
+            direction = candidate.get("direction")
             if sym in open_symbols or sym in cycle_pending_symbols:
                 outputs.append(f"skip_existing_position:{sym}")
+                continue
+            if direction and (sym, direction) in recent_signal_pairs:
+                outputs.append(f"skip_recent_signal:{sym}:{direction}")
                 continue
             from aletheia.storage.models import PiDecision
             from aletheia.storage.repositories import insert_pi_decision
             pi_dec = PiDecision(
                 symbol=candidate["symbol"],
-                direction=candidate.get("direction"),
+                direction=direction,
                 action="signal_pending",
                 conviction=0,
                 reasoning=(
@@ -208,6 +252,8 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 except Exception as _e:
                     logger.debug("opportunity reviewed-mark failed: %s", _e)
             cycle_pending_symbols.add(sym)
+            if direction:
+                recent_signal_pairs.add((sym, direction))
             signals_written += 1
             try:
                 from aletheia.agent_runtime.pi_daemon import notify_pi_daemon

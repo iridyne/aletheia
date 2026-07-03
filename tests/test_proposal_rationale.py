@@ -108,3 +108,36 @@ def test_rationale_short_thesis_not_truncated(monkeypatch):
     assert text == short          # untouched
     assert not text.endswith("…")
     json.loads(meta_json)
+
+
+def test_direction_overheated_skips_proposal_creation(monkeypatch):
+    """Normal-conviction same-direction trades should not add to an overheated stream."""
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+
+    called = {"create": 0}
+
+    def fake_create_paper_proposal(**kwargs):
+        called["create"] += 1
+        return {"id": "unexpected", "status": "pending"}
+
+    monkeypatch.setattr(td, "_proposal_direction_overheated", lambda direction, conviction: "6h native proposals are 5/5 long")
+    monkeypatch.setattr("aletheia.trading.market_data.latest_snapshot", lambda symbol: {"price": 100.0})
+    monkeypatch.setattr("aletheia.execution.paper_tools.create_paper_proposal", fake_create_paper_proposal)
+
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=70,
+        reasoning="another same-direction setup",
+        position_size_usdt=25.0,
+    )
+    result = asyncio.run(submit_decision_as_proposal(decision, "okx_demo"))
+
+    assert result == {
+        "status": "skipped",
+        "reason": "direction_overheated",
+        "detail": "6h native proposals are 5/5 long",
+    }
+    assert called["create"] == 0

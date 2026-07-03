@@ -219,9 +219,10 @@ def write_audit(event: dict) -> None:
     try:
         with _audit_hash_lock:
             with _exclusive_file_lock(_log_dir() / ".audit.lock"):
-                # The process-local cache can be stale after another process
-                # appends under the same file lock. Re-read the tail while the
-                # cross-process lock is held so every writer links to disk truth.
+                # This lock is cross-process, but _last_audit_hash is only
+                # process-local. Re-read the chain tail while holding the file
+                # lock so frontdoor/backend writes cannot continue from a stale
+                # cached hash after the other process appended an audit row.
                 prev_hash = _get_last_audit_hash(use_cache=False)
                 event["_prev_hash"] = prev_hash
                 line = json.dumps(event, default=str, ensure_ascii=False)

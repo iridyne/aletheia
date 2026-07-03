@@ -51,6 +51,13 @@ owner 决策边界经验。
 作为后台轮询，不驱动全局加载条。完整约束见
 `docs/_ai/RUNTIME_COMMUNICATION_LANES.md`。
 
+**诊断默认入口（2026-07-03）**:排障时先跑 `uv run aletheia doctor --verbose`
+（或机器消费用 `--json --verbose`）。需要留给人/AI 复盘时用
+`uv run aletheia doctor --bundle data/diagnostics/doctor.json` 生成脱敏诊断包。
+普通日志按 50MB 分段并尽量保留多代，MVP/Round 1/Round 2 阶段优先保留问题现场；
+doctor / gateway logs 的日志尾部输出必须走脱敏读取，不能把 token/secret/authorization
+原样展示给人或 AI。
+
 > **结构性阻碍已清除(意图记录,2026-06-24)**:最小赚钱循环
 > (opportunities→paper_trader→signal_pending→PI→proposal→risk→execution)曾被
 > **五层叠加阻碍**卡死(OKX contractSize 单位 / PI 余额幻觉 8 bug / OKX 跨 loop /
