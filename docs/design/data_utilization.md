@@ -56,8 +56,8 @@
 | **美股 r-series 代币 (113 tokens, Bitget)** | equity_observer (stock token cross-validation) | 不落库，实时抓取作 cross-val | **equity_observer → `_fetch_stock_token_price()` → yfinance 偏差监测 → LLM equity snapshot**；亦注入 Serenity equity_chain lens 上下文 | ✅ |
 | 市场状态 regime | MacroCollector._classify_risk_regime()（内联派生，无独立 RegimeCollector 类） | `macro_snapshots.risk_regime` | market_observer / context_builder → regime 评分 → LLM | ✅ |
 | OHLCV 历史 | history_downloader | ohlcv | 回测/指标 | ✅ |
-| 清算 liquidations | CoinalyzeCollector（已建，待 scheduler 接入；DU-S06/DU-T01 追踪） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |
-| OI 历史（跨所） | CoinalyzeCollector（已建，替代 Bitget 死代码；DU-S06/DU-T01 追踪） | `open_interest_snapshots` | market_observer→crowding_score→LLM | 🟠 collector 已建 / scheduler 待接入 |
+| 清算 liquidations | CoinalyzeCollector（key-guard，data_collectors Phase B；DU-S06/DU-T01） | `liquidation_events` | context_builder→`liquidation_1h_usd`→crowding_score→LLM | ✅ 有 key 时写入 / 无 key 时诚实跳过 |
+| OI 历史（跨所） | CoinalyzeCollector（key-guard，data_collectors Phase B；DU-S06/DU-T01） | `open_interest_snapshots` | market_observer→crowding_score→LLM | ✅ 有 key 时写入 / 无 key 时诚实跳过 |
 | OHLCV 多周期（1h/4h/1d） | CCXTProvider（market_context._TIMEFRAMES 锁定三周期；DU-S07） | `market_snapshots` | market_context.build_market_context → 多周期技术块 → LLM | ✅ |
 
 ---
@@ -66,7 +66,7 @@
 
 - **Hyperliquid（曾 ❌ orphan）→ 已闭合 ✅**：本次新增 `market_observer` 读 `latest_funding_rate(sym, exchange="hyperliquid"/"hyperliquid_predicted")` → `render_enriched_context_md(xvenue_funding=...)` 渲染"跨venue资金费率对比"（**annualized 比较**，因 HL 1h vs 主所 8h 间隔，原始费率不可比）。揭示基差/情绪背离。锁定于 DU-S01/S02/B01/B02。
   - OI 暂作为 funding 信号的伴随数据存储（cross-venue OI 聚合可作后续宏观杠杆景气信号，未纳入本次以免 prompt 膨胀，遵 R3）。
-- **清算 + OI 历史（🟠 collector 已建）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建（`aletheia/data/collectors/coinalyze.py`，锁定于 DU-C01），支持聚合 OI + 清算历史，key-guard 模式（无 key 时 skip+errors=["no_key"]）。**剩余待做**：scheduler 接入（仿 HyperliquidCollector 模式，在 `_async_data_collectors` 中加 `CoinalyzeCollector().collect(symbols)` 调用 + 持久化）；config 加 `enable_coinalyze` + `coinalyze_api_key` 字段。
+- **清算 + OI 历史（✅ key-guard 接通）**：CoinGlass 全面 paywall、Glassnode 无免费 tier、Bitget OI 历史死代码已确认（2026-06-30 产品定义）。CCXT 清算死代码（`_fetch_liquidations_ccxt` + `_CCXTLiquidationsUnsupported`）已从 `derivatives.py` 删除（GAP-DU-C02，锁定于 DU-C02）。`CoinalyzeCollector` 已建并接入 `data_collectors` Phase B；有 `coinalyze_api_key` 时写入 `open_interest_snapshots(exchange='coinalyze')` 与 `liquidation_events(exchange='coinalyze')`，无 key 时返回 `errors=["no_key"]` 并诚实跳过。持久化路径锁定于 DU-T01。
 - **美股/xStocks（🟡）**：owner 明确 observation-only（不交易），符合 R1 的"显式标注"分支，非违反。
 
 ---
@@ -86,6 +86,6 @@
 | DU-S05 | L2a | 不存在 `class RegimeCollector`；`MacroCollector._classify_risk_regime()` 是 regime 的唯一实现（防虚构采集器类） |
 | DU-S06 | L2a | `scheduler.py` 含 `CoinalyzeCollector` 引用（已注册 `_async_data_collectors`）且 `config/schema.py` 定义 `enable_coinalyze` + `coinalyze_api_key`（调度+配置结构双锁） |
 | DU-S07 | L2a | `market_context._TIMEFRAMES` 包含 `'1h'`、`'4h'`、`'1d'` 三值（OHLCV 多周期全量采集，防缩减） |
-| DU-T01 | L2a | xfail tripwire：`open_interest_snapshots` 存在 `exchange='coinalyze'` 行（scheduler 接入后去掉 xfail） |
+| DU-T01 | L2b | 离线注入 CoinalyzeCollector 输出，断言 scheduler 写入 `open_interest_snapshots` 与 `liquidation_events`（不依赖真实 API key） |
 
 **维护规则**：新增数据源 → 同步在 §3 登记表加行 + 声明消费者 + 加 DU-* claim（R5）。
