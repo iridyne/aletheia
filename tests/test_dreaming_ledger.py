@@ -46,10 +46,13 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
     _mock_llm_unavailable(monkeypatch)
 
     # Seed strategies across lifecycle states + a couple of knowledge items.
-    from aletheia.trading.strategy_lifecycle import create_strategy
+    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.repositories import insert_strategy
     from aletheia.storage.repositories import update_strategy
-    s1 = create_strategy("S1", "draft one")
-    s2 = create_strategy("S2", "to hypothesis")
+    s1 = StrategyRecord(name="S1", description="draft one", state="draft")
+    insert_strategy(s1)
+    s2 = StrategyRecord(name="S2", description="to hypothesis", state="draft")
+    insert_strategy(s2)
     update_strategy(s2.id, state="strategy_hypothesis")
 
     from aletheia.knowledge.manager import create_research_note

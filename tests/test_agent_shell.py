@@ -56,8 +56,8 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
 # --- Registry tests ---
 
 def test_registry_has_32_commands():
-    # Position C (2026-07-02): removed 6 strategy-FSM operator commands.
-    assert len(COMMANDS) == 37
+    # Position C (2026-07-02): removed propose_live_limited_enablement + 5 strategy-FSM commands.
+    assert len(COMMANDS) == 36
 
 
 def test_registry_all_read_commands_require_observe():
@@ -69,7 +69,7 @@ def test_registry_all_read_commands_require_observe():
 
 def test_registry_operational_commands_require_paper():
     ops = [c for c in COMMANDS.values() if c.risk_level == "operational"]
-    assert len(ops) == 14
+    assert len(ops) == 13
     observe_ops = {c.name for c in ops if c.required_permission == "Observe"}
     paper_ops = {c.name for c in ops if c.required_permission == "Paper"}
     assert observe_ops == {
@@ -84,7 +84,6 @@ def test_registry_operational_commands_require_paper():
         "reconcile_positions",
         "propose_prompt_change",
         "propose_schedule_change",
-        "propose_live_limited_enablement",
         "propose_risk_boundary_change",
         "propose_extension_enablement",
         "evaluate_trading_opportunity",
@@ -145,7 +144,7 @@ def test_allowed_commands_observe():
 
 def test_allowed_commands_paper():
     cmds = allowed_commands("Paper")
-    assert len(cmds) == 37
+    assert len(cmds) == 36
 
 
 # --- Intent keyword fallback tests ---
@@ -248,11 +247,6 @@ def test_keyword_propose_prompt_change():
 def test_keyword_propose_schedule_change():
     intent = _classify_keyword("propose schedule change")
     assert intent.command == "propose_schedule_change"
-
-
-def test_keyword_propose_live_limited_enablement():
-    intent = _classify_keyword("propose live limited enablement")
-    assert intent.command == "propose_live_limited_enablement"
 
 
 def test_keyword_propose_risk_boundary_change():
@@ -1355,28 +1349,6 @@ async def test_propose_schedule_change_creates_artifact(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_propose_live_limited_enablement_creates_artifact(tmp_path, monkeypatch):
-    _init_agent_shell_db(tmp_path, monkeypatch)
-
-    from aletheia.agent_shell.commands import propose_live_limited_enablement
-    from aletheia.agent_shell.operator_store import list_artifacts
-    from aletheia.trading.strategy_lifecycle import create_strategy
-
-    strategy = create_strategy("Live Limited Candidate", "candidate")
-
-    result = await propose_live_limited_enablement(
-        {
-            "strategy_id": strategy.id,
-            "rationale": "Prepare explicit human review for live-limited admission.",
-        }
-    )
-
-    assert result["proposed"] is True
-    artifacts = list_artifacts(session_id="operator-main")
-    assert artifacts[0]["artifact_type"] == "live_limited_enablement_proposal"
-    assert artifacts[0]["content"]["strategy_id"] == strategy.id
-
-
 @pytest.mark.asyncio
 async def test_propose_risk_boundary_change_creates_artifact(tmp_path, monkeypatch):
     _init_agent_shell_db(tmp_path, monkeypatch)

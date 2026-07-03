@@ -386,6 +386,7 @@ def _check_lesson_constraints(proposal) -> list[str]:
 
         for lesson in active_lessons:
             if not lesson.recommendation_json:
+                logger.debug("lesson %s: recommendation_json is NULL, skipping", lesson.lesson_id)
                 continue
             try:
                 rec = json.loads(lesson.recommendation_json)

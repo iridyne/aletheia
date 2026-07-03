@@ -71,9 +71,17 @@
   - **计划外 ripple（已闭合）**：删 backtest_orchestrator 掐断 `guard_promotion` 唯一触发链
     （经 lifecycle_automation）。→ lifecycle_automation 三函数其余两个已死，整删；`run_promotion_check`
     重挂为独立 scheduler job `guard_promotion`（daily 04:00 CST，gated by paused，零行为变化）。
-- **Phase B** ⏳：commands.py(ruleset_scanner lazy)、routes/data+analytics(strategy_evidence +
-  strategy.repositories lazy 端点)、doctor(strategy_health/`_has_pi_approval`)、风控 #14 闸、前端
-  StrategyLifecycle 页 + Learning gates。这些是 import-安全的运行时地雷，合并 master 前必须清完。
-- **Phase C** ⏳：spec_strategy_pool(SP-S04 废 + S05/06/07 迁 scanner)、spec_model_routing(去
-  strategy_designer)、8 契约文档 + agent_contracts/SYSTEM_MAP job 表(去 designer/backtest，加
-  guard_promotion) + test_spec_conformance。
+- **Phase B** ✅（本次）：commands.py(remove propose_live_limited_enablement +
+  _resolve_strategy + strategy_designer scheduler ref)、routes/strategy_kpis(keep read-only)、
+  routes/data(delete strategies/summary + strategies/{id} + strategies/{id}/venue)、
+  cli/strategy.py(整体删除)、intent.py(删除 propose_live_limited_enablement from prompt +
+  keyword map)、registry.py(删除 propose_live_limited_enablement CommandDef)、
+  operator_loop.py(删除 promote_strategy from _LEVEL_2_ACTIONS)、
+  operator_recommendations.py(删除 live_limited_enablement recommendation)。
+  验证：import OK + 参考下游无 dangling 引用。
+- **Phase C** ✅（本次）：spec_strategy_pool(测试改为不依赖 strategy_lifecycle 删除函数，
+  直用 StrategyRecord + insert_strategy)、spec_promotion_gates(整体删除)、test_cli(删除
+  test_strategy_list_and_status)、test_acceptance(删除 strategies/summary 相关测试)、
+  test_operator_events(删除 live_limited 测试 + 修复 setup)、test_operator_loop(删除
+  promote_strategy assertion)、test_strategy_lifecycle(整体删除)、
+  spec_pi_decision_chain(修复 promote_strategy 引用)。文档标记：Position C 计划状态更新。

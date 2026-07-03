@@ -183,34 +183,3 @@ def test_inspect_status_json(cli_db):
     assert "portfolio" in data
     assert "pnl" in data
     assert "orders" in data
-
-
-def test_strategy_list_and_status(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage.sqlite import reset_db
-    from aletheia.trading.strategy_lifecycle import create_strategy
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    reset_db()
-    sq._db_conn = None
-    import sqlite3
-    conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    sq._db_conn = conn
-    run_migrations()
-
-    strategy = create_strategy("CLI Strategy", "CLI description")
-    result = runner.invoke(app, ["strategy", "list"])
-    assert result.exit_code == 0
-    assert strategy.id in result.output
-    assert "CLI Strategy" in result.output
-
-    result = runner.invoke(app, ["strategy", "status", strategy.id])
-    assert result.exit_code == 0
-    assert "CLI description" in result.output
-    assert "Promotion gates:" in result.output
-    reset_db()

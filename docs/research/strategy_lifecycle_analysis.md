@@ -1,3 +1,16 @@
+# ⚠️ SUPERSEDED — 2026-07-02
+
+> This analysis (2026-06-18) proposed 7 incremental optimizations to the strategy
+> rules engine. It has been **superseded** by Position B/C (2026-07-02):
+> the entire strategy rules engine was deleted and replaced with a
+> scanner-family + PI-queue architecture. These 7 recommendations assume the
+> engine continues to exist and are **no longer applicable**.
+>
+> See: `docs/plans/strategy_module_position_b_refactor_2026-07-02.md`
+> See: `docs/plans/strategy_engine_deletion_position_c_2026-07-02.md`
+
+---
+
 # Strategy 生命周期优化分析
 
 > 2026-06-18 · 对比竞品/社区实践 + 可落地建议

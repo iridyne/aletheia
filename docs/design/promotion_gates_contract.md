@@ -93,4 +93,6 @@ post_trade_reviews_required = True
 | 自动退役 | 连续 3 次无数据回测→`promote_strategy(sid,retired)` | `strategy/orchestrator.py:130` |
 | Operator 推荐退役/降级 | **已收敛到 TS operator-shell（owner 决定 2026-06-28）**：策略退役/降级由 TS operator-shell 评估并经 command registry 执行。Python `operator_loop.decide_actions` **不再产生** `retire_strategy`/`demote_strategy`（旧机制写 `PiDecision(recommend_retire/demote)` 但无消费者，是死写——见 `docs/issues/PI_AGENT_SDD_AUDIT_2026-06-28.md`）。`_action_retire/demote_strategy` 函数暂留供 PG-B05 + TS 收敛完成前引用，但不再被调度。收敛锁：`spec_pi_decision_chain.py::PI-S03`。 | TS `operator-shell/`；Python `operator_loop.py` 已停产生 |
 
-> ⚠️ 门阈值当前**硬编码**(`DEFAULT_PROMOTION_GATES`),未在 config.yaml 暴露。按 [CLAUDE.md Config↔UI 规则](../../CLAUDE.md),若要做成用户可调需同步加 schema 字段 + 前端控件。当前不可调=有意 MVP 简化。
+> ⚠️ 门阈值当前**硬编码**(`DEFAULT_PROMOTION_GATES`),未在 config.yaml 暴露。按 [CLAUDE.md Config↔UI 规则](../../CLAUDE.md),若要做成用户可调需同步加 schema 字段 + 前端控件。
+>
+> **裁决(2026-07-02):LEGACY 冻结,不暴露。** Position C 删除规则引擎后,策略"创建→回测→晋级"生产路径已废:`promote_strategy()` 全仓**无活调用者**(agents/routes/前端均无),前端策略生命周期页已删,这 7 个阈值现仅被只读诊断命令 `aletheia strategy gates <id>` 读取,不参与任何活决策。给死参数做 config 暴露 + 前端控件属反向过度工程化,故**暂不做**;**待策略晋级路径复活时再一并实现**(见 EVO 评估报告 P2-4)。
