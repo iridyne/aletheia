@@ -54,13 +54,14 @@ Run after v1 is merged and the gateway has been restarted on the target machine:
 ```powershell
 uv run aletheia doctor --deep
 uv run aletheia thesis audit --days 7
+uv run aletheia thesis snapshot --days 7
 uv run aletheia thesis audit --days 7 --json
 uv run aletheia thesis records --days 7 --json
 ```
 
-For local snapshots, write JSON output under a gitignored runtime folder such as
-`data/diagnostics/`. Do not commit raw observation snapshots or machine-specific
-runtime facts into git.
+`thesis snapshot` writes the audit JSON under `data/diagnostics/` by default.
+Do not commit raw observation snapshots or machine-specific runtime facts into
+git.
 
 ## What To Measure
 

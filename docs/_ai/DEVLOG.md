@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-07-04 — Thesis Lineage V1.1 snapshot 命令
+
+### 触发
+V1.1 观察窗口要每天留本机 JSON 快照；只靠手动重定向容易漏路径或漏字段。
+
+### 交付
+- 新增 `uv run aletheia thesis snapshot --days 7`。
+- 命令只读生成同一份 thesis audit JSON，默认写入 `data/diagnostics/`，并打印文件路径和关键缺口计数。
+- 测试覆盖 snapshot 落盘和 JSON 内容。
+
+### 边界
+只改 CLI / 测试 / 文档；不写数据库、不改交易行为、不加 LLM、不加 UI、不建表。
+
+---
+
 ## 2026-07-04 — Thesis Lineage V1.1 数据完整性统计内建
 
 ### 触发

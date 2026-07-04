@@ -19,7 +19,8 @@
 - 后端新增 `aletheia/analytics/thesis_lineage.py`，从 opportunities / serenity_opportunities /
   pi_decisions / trade_proposals / risk_decisions / orders / fills / positions / shadow_trades /
   universe_members / universe_forward_outcomes 只读重建记录。
-- CLI 新增 `aletheia thesis audit` 和 `aletheia thesis records`。
+- CLI 新增 `aletheia thesis audit`、`aletheia thesis records` 和只读落盘用的
+  `aletheia thesis snapshot`。
 - API 新增 `GET /api/analytics/thesis-lineage`，支持按 position/order/proposal/opportunity 过滤。
 - 前端 Trades & Positions 的 Order / Position detail drawer 在现有 Causal Chain 下方新增
   Thesis Lineage 区块，显示 verdict、actual/shadow/batch 对比、观察假说、决策信号、assumptions、
@@ -41,7 +42,8 @@ return，先修 provenance，不做 v2。
 
 `aletheia thesis audit` 已内建 V1.1 统计：JSON 里看 `data_completeness` 和
 `raw_table_completeness`，CLI 人类输出里看 `Data completeness`。这些统计只读现有记录，
-不调用 LLM、不写表、不改交易。
+不调用 LLM、不写表、不改交易。`aletheia thesis snapshot --days 7` 会把同一份 audit
+JSON 写到 `data/diagnostics/`，用于观察窗口留本机快照；不要提交这些运行快照。
 
 验证：
 - thesis lineage tests：11 passed。
