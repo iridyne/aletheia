@@ -1,6 +1,6 @@
 """Settings API routes."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -1209,8 +1209,14 @@ async def stop_tunnel_api():
 # ---------------------------------------------------------------------------
 
 class NetworkConfigUpdate(SettingsRequest):
-    proxy_url: Optional[str] = None
+    # Structured proxy definition — the panel drives these; proxy_url is derived.
+    proxy_protocol: Optional[Literal["http", "https", "socks5"]] = None
+    proxy_host: Optional[str] = None
+    proxy_port: Optional[int] = None
+    enforce: Optional[bool] = None
     no_proxy: Optional[str] = None
+    # Legacy: accepted for backward compatibility (older clients sent only this).
+    proxy_url: Optional[str] = None
 
 
 @router.post("/network")
@@ -1221,6 +1227,14 @@ async def update_network_config(req: NetworkConfigUpdate):
     updates = req.model_dump(exclude_none=True)
     for field, value in updates.items():
         setattr(cfg.network, field, value)
+    # setattr does not re-run the model validator, so keep proxy_url and the
+    # structured parts consistent explicitly (structured inputs win; a legacy
+    # proxy_url-only update is decomposed back into the parts).
+    if {"proxy_protocol", "proxy_host", "proxy_port"} & set(updates):
+        cfg.network.recompose_proxy_url()
+    elif "proxy_url" in updates and cfg.network.proxy_url:
+        cfg.network.parse_proxy_url()
+        cfg.network.recompose_proxy_url()
     save_config(cfg)
 
     # Apply immediately: set env vars so trust_env=True clients pick them up.

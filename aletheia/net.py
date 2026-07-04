@@ -87,6 +87,19 @@ def _proxy_url() -> str | None:
         return None
 
 
+def _enforce() -> bool:
+    """Read the fail-closed policy (config.network.enforce). False on any error.
+
+    When True, outbound traffic MUST traverse the proxy: an unreachable proxy
+    fails the request rather than silently connecting direct (no real-IP leak).
+    """
+    try:
+        from aletheia.config.loader import load_config
+        return bool(load_config().network.enforce)
+    except Exception:
+        return False
+
+
 def _is_proxy_reachable(url: str) -> bool:
     """TCP-connect to the proxy host:port. Returns False on any error.
 
@@ -153,30 +166,69 @@ def invalidate_proxy_cache() -> None:
 
 
 def _effective_proxy() -> str | None:
-    """Return the proxy URL only if it is actually reachable; else None."""
+    """Return the proxy URL to use, or None to connect directly.
+
+    Enforce mode (fail-closed): always return the configured proxy, even when the
+    reachability probe reports it DOWN — callers must never silently go direct.
+    A dead proxy then surfaces as a request error, which the exchange connectivity
+    monitor (also on this client) turns into an auto-pause, and which httpx does
+    NOT retry-direct in enforce mode.
+
+    Non-enforce (fail-open): return the proxy only when it is reachable, else None
+    so httpx_client falls back to a direct connection (availability first).
+    """
     url = _proxy_url()
     if not url:
         return None
+    if _enforce():
+        return url
     if _is_proxy_reachable(url):
         return url
     return None
 
 
+def _no_proxy_value() -> str:
+    """Compose the NO_PROXY bypass list: loopback (always) + config.network.no_proxy.
+
+    Loopback is ALWAYS bypassed so localhost gateway/probe calls never route
+    through the proxy — the root cause of the localhost-probe 502 trap.
+    """
+    bypass = ["127.0.0.1", "localhost", "::1"]
+    try:
+        from aletheia.config.loader import load_config
+        extra = load_config().network.no_proxy or ""
+        bypass += [h.strip() for h in extra.split(",") if h.strip()]
+    except Exception:
+        pass  # intentional — config unreadable at early startup: loopback bypass still applies
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for h in bypass:
+        if h not in seen:
+            seen.add(h)
+            ordered.append(h)
+    return ",".join(ordered)
+
+
 def apply_proxy_env() -> None:
-    """Ensure HTTP_PROXY / HTTPS_PROXY env vars are set for trust_env=True clients.
+    """Ensure proxy env vars are set for trust_env=True clients (aiohttp, urllib).
 
     Priority: existing env vars (shell/system) > config.network.proxy_url > none.
-    Never clears env vars that were already present — they represent the user's
-    actual network path (e.g. Clash/v2ray on a different port than config records).
+    Never clears an existing HTTP(S)_PROXY — it represents the user's actual network
+    path (e.g. Clash/v2ray on a different port than config records). ALWAYS
+    (re)writes NO_PROXY so loopback/internal traffic stays DIRECT even when a proxy
+    is active, and sets ALL_PROXY so SOCKS-aware clients pick the same proxy up.
     """
     existing = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
-    if existing:
-        # Env already set (by shell profile, system, or prior call) — don't touch.
-        return
-    proxy = _proxy_url()
-    if proxy:
-        os.environ["HTTP_PROXY"] = proxy
-        os.environ["HTTPS_PROXY"] = proxy
+    if not existing:
+        proxy = _proxy_url()
+        if proxy:
+            os.environ["HTTP_PROXY"] = proxy
+            os.environ["HTTPS_PROXY"] = proxy
+            os.environ["ALL_PROXY"] = proxy
+    # NO_PROXY is always refreshed (loopback + config), independent of the proxy.
+    no_proxy_val = _no_proxy_value()
+    os.environ["NO_PROXY"] = no_proxy_val
+    os.environ["no_proxy"] = no_proxy_val
 
 
 class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
@@ -212,14 +264,21 @@ class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
 
 
 def httpx_client(timeout: float = 30, **kwargs) -> httpx.AsyncClient:
-    """Return an httpx.AsyncClient with automatic proxy fallback.
+    """Return an httpx.AsyncClient wired to the managed proxy path.
 
-    When proxy is configured and reachable (TCP probe), uses _ProxyFallbackTransport
-    which transparently retries via direct connection on proxy-layer errors.
-    Callers use it identically to a plain httpx.AsyncClient — zero code changes needed.
+    - enforce=True: a proxy-only client (fail-closed). A proxy-layer error
+      propagates — it is NEVER retried over a direct connection, so the real IP
+      cannot leak. (socks5 requires the ``socksio`` extra: ``httpx[socks]``.)
+    - enforce=False + reachable proxy: _ProxyFallbackTransport transparently
+      retries direct on proxy-layer errors (availability first).
+    - no proxy configured (or non-enforce + unreachable): a direct client.
+
+    Callers use it identically to a plain httpx.AsyncClient — zero changes needed.
     """
     proxy = _effective_proxy()
     if proxy:
+        if _enforce():
+            return httpx.AsyncClient(proxy=proxy, timeout=timeout, **kwargs)
         transport = _ProxyFallbackTransport(proxy)
         return httpx.AsyncClient(
             transport=transport,
@@ -233,21 +292,41 @@ def httpx_client(timeout: float = 30, **kwargs) -> httpx.AsyncClient:
 
 
 def aiohttp_session(**kwargs) -> aiohttp.ClientSession:
-    """Return an aiohttp.ClientSession with proxy from config.
+    """Return an aiohttp.ClientSession wired to the managed proxy path.
 
-    Respects existing HTTP_PROXY/HTTPS_PROXY env vars (e.g. set by the system
-    or shell profile). Only falls back to config.network.proxy_url when no env
-    var is present. Never clears env vars — the scheduler's fresh event loop
-    previously caused apply_proxy_env() to race and clear valid proxy settings.
+    HTTP(S) proxy: env-based (trust_env=True). apply_proxy_env() sets
+    HTTP(S)_PROXY + ALL_PROXY from config and always refreshes NO_PROXY so
+    loopback/internal traffic stays direct. Existing shell/system env proxy wins.
+
+    SOCKS proxy: aiohttp has no native SOCKS support, so we route through an
+    aiohttp_socks ProxyConnector (remote DNS via socks5h avoids the c-ares issue).
+    Requires the ``aiohttp_socks`` package — imported lazily so it's only needed
+    when the user actually selects the socks5 protocol.
+
+    Note: aiohttp/ccxt do NOT transparently fall back to direct like httpx does
+    (aiohttp has no fallback transport). Under enforce=True this is exactly the
+    fail-closed behaviour we want; under enforce=False an unreachable proxy still
+    surfaces as an error that the exchange fallback / connectivity monitor handles.
     """
-    if not os.environ.get("HTTPS_PROXY") and not os.environ.get("HTTP_PROXY"):
-        proxy = _proxy_url()
-        if proxy:
-            os.environ["HTTP_PROXY"] = proxy
-            os.environ["HTTPS_PROXY"] = proxy
     timeout = kwargs.pop("timeout", None)
     if timeout is None:
         timeout = aiohttp.ClientTimeout(total=15, connect=8)
+
+    proxy = _effective_proxy()
+    if proxy and proxy.lower().startswith("socks"):
+        try:
+            from aiohttp_socks import ProxyConnector
+        except ImportError as e:  # pragma: no cover — dep only needed for socks
+            raise RuntimeError(
+                "SOCKS proxy configured (proxy_protocol=socks5) but 'aiohttp_socks' "
+                "is not installed. Run `uv add aiohttp_socks`, or switch the proxy "
+                "protocol to http in Settings → Network."
+            ) from e
+        connector = ProxyConnector.from_url(proxy)
+        return aiohttp.ClientSession(connector=connector, timeout=timeout, **kwargs)
+
+    # HTTP proxy (or direct) via env.
+    apply_proxy_env()
     connector = aiohttp.TCPConnector(resolver=ThreadedResolver())
     return aiohttp.ClientSession(
         connector=connector,
@@ -263,3 +342,49 @@ def ccxt_timeout_options() -> dict:
     Apply to any ccxt exchange constructor: ``ccxt.okx({**ccxt_timeout_options(), ...})``
     """
     return {"timeout": 15000}
+
+
+def make_ccxt(name: str, **options):
+    """Build a ccxt.async_support exchange with the managed proxy session injected.
+
+    This is the ONLY sanctioned way to construct an exchange client (spec
+    NET-S03/S04): it guarantees the aiohttp session carries the configured proxy,
+    so exchange REST traffic can never silently bypass the managed egress path.
+    Caller keyword args (apiKey/secret/password/options/...) are merged over the
+    defaults (timeout + enableRateLimit + session).
+
+    Returns ``(exchange, session)``. The caller OWNS the session and must close it
+    (ccxt will not, since we inject our own — ``own_session=False`` semantics).
+    Post-construction tweaks like ``exchange.set_sandbox_mode(True)`` are the
+    caller's responsibility.
+    """
+    import ccxt.async_support as ccxt
+
+    if not hasattr(ccxt, name):
+        raise ValueError(f"unknown ccxt exchange: {name}")
+    session = aiohttp_session()
+    opts = {**ccxt_timeout_options(), "enableRateLimit": True, "session": session}
+    opts.update(options)
+    exchange = getattr(ccxt, name)(opts)
+    return exchange, session
+
+
+def build_urllib_opener():
+    """Return a urllib opener routing external requests through the managed proxy.
+
+    For the few SYNC callers (webhook POST, polymarket urllib fallback) that can't
+    use the async httpx_client. Honours enforce / reachability via _effective_proxy;
+    loopback stays direct. SOCKS is not supported by urllib without PySocks, so a
+    socks5 proxy degrades this opener to direct (only affects the best-effort
+    webhook — all primary egress uses httpx/aiohttp which DO support socks).
+    """
+    import urllib.request
+
+    proxy = _effective_proxy()
+    if proxy and not proxy.lower().startswith("socks"):
+        handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+    else:
+        # No proxy / non-enforce-unreachable / socks → explicit no-env-proxy handler
+        # so we never accidentally route through a stale env proxy.
+        handler = urllib.request.ProxyHandler({})
+    return urllib.request.build_opener(handler)

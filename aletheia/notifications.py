@@ -154,7 +154,10 @@ def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
             req.add_header("X-Aletheia-Signature", sig)
 
         timeout = cfg.webhook.timeout_sec or 10.0
-        urllib.request.urlopen(req, timeout=timeout)
+        # Route through the managed proxy (aletheia.net) rather than a raw urlopen,
+        # so the outbound webhook honours the configured proxy / enforce policy.
+        from aletheia.net import build_urllib_opener
+        build_urllib_opener().open(req, timeout=timeout)
     except Exception as e:
         logger.debug("Webhook notification failed (non-critical): %s", e)
 

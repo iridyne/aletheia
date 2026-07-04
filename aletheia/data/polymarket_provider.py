@@ -95,7 +95,10 @@ def _matches_categories(raw: dict, categories: list[str]) -> bool:
 
 def _fetch_raw_urllib(params: str) -> list[dict]:
     req = urllib.request.Request(f"{_GAMMA_URL}?{params}", headers={"User-Agent": "aletheia"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # noqa: S310 — fixed https host
+    # Route through the managed proxy (aletheia.net) so this sync fallback honours
+    # the configured proxy / enforce policy instead of connecting direct.
+    from aletheia.net import build_urllib_opener
+    with build_urllib_opener().open(req, timeout=_TIMEOUT) as resp:  # noqa: S310 — fixed https host
         data = json.loads(resp.read().decode("utf-8"))
     return data if isinstance(data, list) else data.get("data", [])
 

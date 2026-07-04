@@ -228,17 +228,20 @@ async def binance_test_candidate(req: BinanceCandidateRequest):
     if req.mode not in ("testnet", "live"):
         raise HTTPException(400, "mode must be 'testnet' or 'live'")
     try:
-        import ccxt.async_support as ccxt
-        exchange = ccxt.binanceusdm({
-            "apiKey": req.api_key,
-            "secret": req.api_secret,
-            "enableRateLimit": True,
-            "options": {"defaultType": "future"},
-        })
-        if req.mode == "testnet":
-            exchange.set_sandbox_mode(True)
-        await exchange.fetch_time()
-        await exchange.close()
+        from aletheia.net import make_ccxt
+        exchange, session = make_ccxt(
+            "binanceusdm",
+            apiKey=req.api_key,
+            secret=req.api_secret,
+            options={"defaultType": "future"},
+        )
+        try:
+            if req.mode == "testnet":
+                exchange.set_sandbox_mode(True)
+            await exchange.fetch_time()
+        finally:
+            await exchange.close()
+            await session.close()
         return {"connected": True, "mode": req.mode}
     except Exception as e:
         err_msg = str(e)
@@ -345,19 +348,20 @@ async def okx_test_candidate(req: OkxCandidateRequest):
     if req.mode not in ("demo", "live"):
         raise HTTPException(400, "mode must be 'demo' or 'live'")
     try:
-        import ccxt.async_support as ccxt
-        from aletheia.net import ccxt_timeout_options
-        exchange = ccxt.okx({
-            **ccxt_timeout_options(),
-            "apiKey": req.api_key,
-            "secret": req.api_secret,
-            "password": req.passphrase,
-            "enableRateLimit": True,
-        })
-        if req.mode == "demo":
-            exchange.set_sandbox_mode(True)
-        await exchange.fetch_time()
-        await exchange.close()
+        from aletheia.net import make_ccxt
+        exchange, session = make_ccxt(
+            "okx",
+            apiKey=req.api_key,
+            secret=req.api_secret,
+            password=req.passphrase,
+        )
+        try:
+            if req.mode == "demo":
+                exchange.set_sandbox_mode(True)
+            await exchange.fetch_time()
+        finally:
+            await exchange.close()
+            await session.close()
         return {"connected": True, "mode": req.mode}
     except Exception as e:
         err_msg = str(e)
