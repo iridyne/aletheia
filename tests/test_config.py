@@ -21,6 +21,19 @@ def test_default_config_has_correct_values():
     assert cfg.telegram.enabled is False
 
 
+def test_default_news_feeds_include_official_sources():
+    cfg = AletheiaConfig()
+    feeds = {feed.source: feed for feed in cfg.news.feeds}
+
+    for source in ("sec-press", "cftc-press", "ethereum-foundation"):
+        assert source in feeds
+        assert feeds[source].enabled is True
+        assert "official" in feeds[source].categories
+        assert feeds[source].url.startswith("https://")
+
+    assert len(feeds) == len(cfg.news.feeds)
+
+
 def test_config_roundtrip(tmp_path):
     config_file = tmp_path / "config.yaml"
     data_dir = tmp_path
