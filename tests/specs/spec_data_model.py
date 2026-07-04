@@ -413,6 +413,10 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
         "reasoning": "test reasoning",
         "proposal_id": None,
         "debate_ran": False,
+        "debate_initial_conviction": 61,
+        "debate_bull": 43,
+        "debate_bear": 73,
+        "debate_adjustment": -9,
         "opportunity_id": test_opp_id,
         "bear_case": "breakout failure risk",
         "key_assumptions": ["liquidity holds", "funding stays benign"],
@@ -429,6 +433,39 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
     )
     assert latest.get("bear_case") == "breakout failure risk"
     assert latest.get("key_assumptions") == '["liquidity holds", "funding stays benign"]'
+    assert latest.get("debate_initial_conviction") == 61
+    assert latest.get("debate_bull_confidence") == 43
+    assert latest.get("debate_bear_confidence") == 73
+    assert latest.get("debate_adjustment") == -9
+
+
+@spec_claim(
+    SpecClaim(
+        "DM-S10", "data_model", "§pi_decisions debate trace", "L2a",
+        "PiDecision and additive migrations carry debate trace fields for audit-only analysis",
+    ),
+)
+def test_pi_decision_debate_trace_fields_and_migrations_exist():
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage import migrations
+
+    fields = PiDecision.model_fields
+    for name in (
+        "debate_initial_conviction",
+        "debate_bull_confidence",
+        "debate_bear_confidence",
+        "debate_adjustment",
+    ):
+        assert name in fields
+
+    additive = {(col, table) for col, table, _type in migrations._ADDITIVE_COLUMNS}
+    for name in (
+        "debate_initial_conviction",
+        "debate_bull_confidence",
+        "debate_bear_confidence",
+        "debate_adjustment",
+    ):
+        assert (name, "pi_decisions") in additive
 
 
 # ---------------------------------------------------------------------------

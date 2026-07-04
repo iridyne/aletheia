@@ -76,8 +76,10 @@ class TradingDecision:
     market_type: str | None = None
     leverage: int | None = None
     debate_ran: bool = False
+    debate_initial_conviction: int | None = None
     debate_bull_confidence: int | None = None
     debate_bear_confidence: int | None = None
+    debate_adjustment: int | None = None
     # R0 attribution: backfilled from the source opportunity by
     # _attach_opportunity_context so the proposal carries a real opportunity_id /
     # strategy_id and the decision_meta records scanner_family (LEARNING_LOOP_AUDIT
@@ -204,6 +206,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
         debate = await _run_debate(decision.symbol, decision.direction, trading_context)
         if debate:
             decision.debate_ran = True
+            decision.debate_initial_conviction = initial_conviction
             decision.debate_bull_confidence = debate.bull_confidence
             decision.debate_bear_confidence = debate.bear_confidence
             # Debate ADJUSTS the initial conviction, it does not REPLACE it. The
@@ -217,6 +220,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             advantage = debate.bull_confidence - debate.bear_confidence
             adjusted = int(round(initial_conviction + advantage * 0.3))
             decision.conviction = max(0, min(100, adjusted))
+            decision.debate_adjustment = decision.conviction - initial_conviction
             if decision.conviction < _MIN_CONVICTION_TO_TRADE:
                 decision.action = "skip"
                 decision.reasoning += (
@@ -319,8 +323,10 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     decision_meta = {
         "conviction": decision.conviction,
         "debate_ran": decision.debate_ran,
+        "debate_initial_conviction": decision.debate_initial_conviction,
         "debate_bull": decision.debate_bull_confidence,
         "debate_bear": decision.debate_bear_confidence,
+        "debate_adjustment": decision.debate_adjustment,
         "supporting_signals": decision.supporting_signals[:5],
         "opposing_signals": decision.opposing_signals[:5],
         "bear_case": decision.bear_case,

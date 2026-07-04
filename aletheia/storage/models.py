@@ -935,6 +935,11 @@ class PiDecision(BaseModel):
     # 'market_observer' → opportunities.id; 'serenity' → serenity_opportunities.id.
     signal_source: str = "market_observer"
     debate_ran: bool = False
+    # Debate trace fields are audit-only. NULL means no debate ran or legacy row.
+    debate_initial_conviction: int | None = None
+    debate_bull_confidence: int | None = None
+    debate_bear_confidence: int | None = None
+    debate_adjustment: int | None = None
     # P2 / S4 (2026-06-28, AI Berkshire forced-verdict): explicit counter-argument from PI.
     bear_case: str = ""
     # P1 (2026-06-28, AI Berkshire belief decomposition): JSON-encoded list of

@@ -66,6 +66,18 @@ def record_decision(decision_result: dict) -> None:
             opportunity_id=decision_result.get("opportunity_id"),
             signal_source=record.get("signal_source") or "market_observer",
             debate_ran=decision_result.get("debate_ran", False),
+            debate_initial_conviction=decision_result.get("debate_initial_conviction"),
+            debate_bull_confidence=(
+                decision_result.get("debate_bull_confidence")
+                if decision_result.get("debate_bull_confidence") is not None
+                else decision_result.get("debate_bull")
+            ),
+            debate_bear_confidence=(
+                decision_result.get("debate_bear_confidence")
+                if decision_result.get("debate_bear_confidence") is not None
+                else decision_result.get("debate_bear")
+            ),
+            debate_adjustment=decision_result.get("debate_adjustment"),
             bear_case=decision_result.get("bear_case") or "",
             key_assumptions=assumptions_json,
         )

@@ -1329,6 +1329,12 @@ _ADDITIVE_COLUMNS = [
     ("leverage", "trade_proposals", "INTEGER"),
     # A13: link signal_pending pi_decisions back to their source opportunity
     ("opportunity_id", "pi_decisions", "TEXT"),
+    # Debate trace fields are audit-only: they explain how debate changed a
+    # candidate's conviction without changing the decision behavior.
+    ("debate_initial_conviction", "pi_decisions", "INTEGER"),
+    ("debate_bull_confidence", "pi_decisions", "INTEGER"),
+    ("debate_bear_confidence", "pi_decisions", "INTEGER"),
+    ("debate_adjustment", "pi_decisions", "INTEGER"),
     # Phase 2 (Serenity Option A): discriminator for which table opportunity_id
     # points at ('market_observer' → opportunities; 'serenity' → serenity_opportunities).
     ("signal_source", "pi_decisions", "TEXT"),
@@ -1760,6 +1766,10 @@ CREATE TABLE IF NOT EXISTS pi_decisions (
     reasoning TEXT DEFAULT '',
     proposal_id TEXT,
     debate_ran INTEGER NOT NULL DEFAULT 0,
+    debate_initial_conviction INTEGER,
+    debate_bull_confidence INTEGER,
+    debate_bear_confidence INTEGER,
+    debate_adjustment INTEGER,
     opportunity_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pi_decisions_symbol ON pi_decisions(symbol, created_at DESC);

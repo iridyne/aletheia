@@ -44,7 +44,7 @@ def build_debate_impact_audit(hours: int = 24) -> dict[str, Any]:
         "notes": [
             "Read-only snapshot: no decisions, proposals, guards, or thresholds were modified.",
             "Unsupported candidate signal is counted from persisted decision reasoning only; this audit does not rerun the ranker.",
-            "Initial pre-debate conviction and bull/bear scores are not currently persisted, so this audit cannot prove the debate delta.",
+            "Debate trace fields are available only for rows written after the trace migration; legacy rows stay missing.",
             "Verdict uses existing forward outcomes only; missing outcomes stay insufficient_data.",
         ],
     }
@@ -90,7 +90,7 @@ def render_debate_impact_audit(report: dict[str, Any]) -> str:
             f"{row.get('symbol') or 'unknown'} {row.get('direction') or 'unknown'} "
             f"family={row.get('scanner_family') or 'unknown'} "
             f"decisions={row.get('decision_count', 0)} "
-            f"avg_conviction={_fmt_num(row.get('avg_final_conviction'))} "
+            f"conviction={_fmt_trace(row)} "
             f"outcomes={_fmt_outcomes(row.get('outcomes') or {})} "
             f"verdict={row.get('verdict')}"
         )
@@ -133,10 +133,27 @@ def _debated_opportunities(db, cutoff: str) -> list[dict[str, Any]]:
         return []
     if not _table_exists(db, "opportunities"):
         return []
+    trace_select = (
+        "AVG(pd.debate_initial_conviction) AS avg_initial_conviction, "
+        "AVG(pd.debate_bull_confidence) AS avg_debate_bull, "
+        "AVG(pd.debate_bear_confidence) AS avg_debate_bear, "
+        "AVG(pd.debate_adjustment) AS avg_debate_adjustment, "
+    ) if _has_columns(db, "pi_decisions", [
+        "debate_initial_conviction",
+        "debate_bull_confidence",
+        "debate_bear_confidence",
+        "debate_adjustment",
+    ]) else (
+        "NULL AS avg_initial_conviction, "
+        "NULL AS avg_debate_bull, "
+        "NULL AS avg_debate_bear, "
+        "NULL AS avg_debate_adjustment, "
+    )
     rows = db.execute(
         "SELECT "
         "pd.opportunity_id, MAX(pd.created_at) AS latest_decision_at, "
         "COUNT(*) AS decision_count, AVG(pd.conviction) AS avg_final_conviction, "
+        f"{trace_select}"
         "o.symbol, o.direction_bias, o.scanner_family, o.universe_member_id "
         "FROM pi_decisions pd "
         "LEFT JOIN opportunities o ON o.id = pd.opportunity_id "
@@ -154,6 +171,10 @@ def _debated_opportunities(db, cutoff: str) -> list[dict[str, Any]]:
             "latest_decision_at": d.get("latest_decision_at"),
             "decision_count": int(d.get("decision_count") or 0),
             "avg_final_conviction": _round(_to_float(d.get("avg_final_conviction")), 1),
+            "avg_initial_conviction": _round(_to_float(d.get("avg_initial_conviction")), 1),
+            "avg_debate_bull": _round(_to_float(d.get("avg_debate_bull")), 1),
+            "avg_debate_bear": _round(_to_float(d.get("avg_debate_bear")), 1),
+            "avg_debate_adjustment": _round(_to_float(d.get("avg_debate_adjustment")), 1),
             "symbol": d.get("symbol"),
             "direction": _direction_from_bias(d.get("direction_bias")),
             "scanner_family": d.get("scanner_family"),
@@ -280,9 +301,29 @@ def _fmt_outcomes(outcomes: dict[str, Any]) -> str:
     return ", ".join(parts) if parts else "n/a"
 
 
+def _fmt_trace(row: dict[str, Any]) -> str:
+    final = _fmt_num(row.get("avg_final_conviction"))
+    initial = row.get("avg_initial_conviction")
+    if initial is None:
+        return f"final={final} trace=missing"
+    return (
+        f"initial={_fmt_num(initial)} final={final} "
+        f"adj={_fmt_num(row.get('avg_debate_adjustment'))} "
+        f"bull={_fmt_num(row.get('avg_debate_bull'))} "
+        f"bear={_fmt_num(row.get('avg_debate_bear'))}"
+    )
+
+
 def _table_exists(db, table: str) -> bool:
     found = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (table,),
     ).fetchone()
     return found is not None
+
+
+def _has_columns(db, table: str, columns: list[str]) -> bool:
+    if not _table_exists(db, table):
+        return False
+    found = {row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+    return all(column in found for column in columns)

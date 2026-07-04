@@ -181,9 +181,11 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `pi_decisions` | Structured System Operator decisions | decision_type, action, symbol, conviction, reasoning (JSON), opportunity_id, **signal_source** |
+| `pi_decisions` | Structured System Operator decisions | decision_type, action, symbol, conviction, reasoning (JSON), opportunity_id, **signal_source**, debate trace fields |
 
 > `signal_source ∈ {'market_observer','serenity'}` (default `'market_observer'`) — discriminator for which table `opportunity_id` resolves against. Both `opportunities.id` (market_observer) and `serenity_opportunities.id` are bare `uuid4().hex[:12]` with no type tag, so the id alone is cross-table ambiguous. Stamped by `_attach_opportunity_context` (market_observer takes precedence). Phase 2 of Serenity Option A — see `docs/plans/serenity_execution_path.md` §3.2.
+
+> **Debate trace fields** (`debate_initial_conviction`, `debate_bull_confidence`, `debate_bear_confidence`, `debate_adjustment`) are audit-only fields on `pi_decisions`. They preserve how a Bull/Bear debate changed the System Operator's conviction after the initial LLM decision. Legacy rows and non-debated rows keep these fields `NULL`; audit readers must treat NULL as missing data, not synthesize a value.
 
 > **`trade_proposals.trade_school` / `positions.trade_school` ∈ {'short_term','serenity'}** (default `'short_term'`, NOT NULL) — EXECUTION-level discriminator. Distinct from `pi_decisions.signal_source` which lives at DECISION level. Derived in `trading_decision.submit_decision_as_proposal` from the upstream `signal_source`, then propagated through `paper_tools` → `gateway.submit_proposal` → all four brokers (paper/bitget/binance/okx) onto the `Position` row. `position_manager` reads `trade_school` to (a) skip trailing/breakeven entirely for serenity holdings, (b) gate `max_hold` between `cfg.trading.max_position_hold_hours` (short_term) and `cfg.serenity.max_hold_days * 24` (serenity). Phase 4 of Serenity Option A — see `docs/plans/serenity_execution_path.md` §5.
 

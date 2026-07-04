@@ -35,12 +35,21 @@ def _insert_decision(
     conviction: int = 45,
     debate_ran: bool = True,
     reasoning: str = "TRX/USDT short setup debated and skipped",
+    debate_initial: int | None = None,
+    debate_bull: int | None = None,
+    debate_bear: int | None = None,
+    debate_adjustment: int | None = None,
 ) -> None:
     db.execute(
         "INSERT INTO pi_decisions "
-        "(id, symbol, direction, action, conviction, reasoning, opportunity_id, debate_ran, created_at) "
-        "VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, datetime('now','-1 hour'))",
-        (f"pi-debate-{idx}", action, conviction, reasoning, opp_id, 1 if debate_ran else 0),
+        "(id, symbol, direction, action, conviction, reasoning, opportunity_id, debate_ran, "
+        "debate_initial_conviction, debate_bull_confidence, debate_bear_confidence, "
+        "debate_adjustment, created_at) "
+        "VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','-1 hour'))",
+        (
+            f"pi-debate-{idx}", action, conviction, reasoning, opp_id, 1 if debate_ran else 0,
+            debate_initial, debate_bull, debate_bear, debate_adjustment,
+        ),
     )
 
 
@@ -149,6 +158,33 @@ def test_debate_impact_flags_positive_direction_outcome_as_missed_alpha_suspect(
     assert row["outcomes"]["1h"]["direction_adjusted_return_pct"] == 0.3
     assert row["verdict"] == "missed_alpha_suspect"
     assert report["verdict"] == "missed_alpha_suspect"
+
+
+def test_debate_impact_surfaces_persisted_trace_fields():
+    from aletheia.analytics.debate_impact import build_debate_impact_audit, render_debate_impact_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opportunity(db)
+    _insert_decision(
+        db,
+        idx=1,
+        conviction=48,
+        debate_initial=60,
+        debate_bull=40,
+        debate_bear=80,
+        debate_adjustment=-12,
+    )
+
+    report = build_debate_impact_audit(hours=24)
+    row = report["debated_opportunities"][0]
+
+    assert row["avg_initial_conviction"] == 60.0
+    assert row["avg_final_conviction"] == 48.0
+    assert row["avg_debate_bull"] == 40.0
+    assert row["avg_debate_bear"] == 80.0
+    assert row["avg_debate_adjustment"] == -12.0
+    assert "initial=60.0 final=48.0 adj=-12.0 bull=40.0 bear=80.0" in render_debate_impact_audit(report)
 
 
 def test_debate_impact_counts_unsupported_mentions_from_persisted_reasoning_only():

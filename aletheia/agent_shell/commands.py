@@ -1542,8 +1542,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "conviction": decision.conviction,
         "reasoning": decision.reasoning[:300],
         "debate_ran": decision.debate_ran,
+        "debate_initial_conviction": decision.debate_initial_conviction,
         "debate_bull": decision.debate_bull_confidence,
         "debate_bear": decision.debate_bear_confidence,
+        "debate_adjustment": decision.debate_adjustment,
         # R0/attribution: carry the source opportunity_id through to record_decision
         # so the pi_decisions(action='trade') row links back to its opportunity.
         "opportunity_id": decision.opportunity_id,
