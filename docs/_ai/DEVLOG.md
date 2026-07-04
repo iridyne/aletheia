@@ -1,5 +1,31 @@
 # Development Log
 
+## 2026-07-04 — Guard Impact Audit 只读诊断
+
+### 触发
+System Operator 持续 skip 后，下一步需要判断 active blocking guards 是否正在过度压制候选池，
+尤其是 momentum long / momentum short guards。
+
+### 交付
+- 新增 `uv run aletheia inspect guard-impact --hours 24`。
+- 支持 `--json`，输出 active blocking guards 总数、按 scanner_family / direction / symbol 聚合、
+  最近窗口内被 blocking guard 命中的候选、命中 guard 明细、guard 作用范围分类，以及已有
+  shadow / forward outcome。
+- verdict 只用已有 outcome：`protective`、`overbroad_suspect`、`insufficient_data`。
+- 诊断会排除本地已知的 pre-guard skip（例如 TTL 过期、execution_eligible=False），但不会调用
+  交易所去判断 demo unsupported symbol。
+
+### 验证
+- `uv run pytest tests/test_guard_impact_audit.py tests/test_paper_trader_guards.py tests/test_paper_trader_ranker.py tests/test_trade_funnel_audit.py -q`
+- `uv run aletheia inspect guard-impact --hours 24`
+- `uv run aletheia inspect guard-impact --hours 24 --json`
+
+### 边界
+只读 DB + guard markdown/frontmatter + existing shadow/forward outcomes；不禁用/修改 guard，
+不改 ranker / System Operator / risk / execution / live，不调用 LLM / HTTP / exchange。
+
+---
+
 ## 2026-07-04 — Thesis Lineage 链路完整性修复
 
 ### 触发

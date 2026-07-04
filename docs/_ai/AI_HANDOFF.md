@@ -7,7 +7,35 @@
 
 ## Last Updated
 
-2026-07-04 (Thesis Lineage 链路完整性修复)
+2026-07-04 (Guard Impact Audit 只读诊断)
+
+---
+
+## Recent Change (Guard Impact Audit — 2026-07-04)
+
+新增一个窄范围、只读的 guard impact 诊断入口，用来判断 active blocking guards 是否正在压制
+候选流：
+
+```powershell
+uv run aletheia inspect guard-impact --hours 24
+uv run aletheia inspect guard-impact --hours 24 --json
+```
+
+- 读取 active blocking guard markdown/frontmatter、最近窗口内本地可评估的 open opportunities、
+  existing shadow / forward outcomes。
+- 输出 active blocking guards 总数、按 scanner_family / direction / symbol 的聚合、
+  被 guard 命中的候选、每个候选命中的 guard、guard 作用范围分类、已有 outcome 和 verdict。
+- verdict 只来自已有 outcome：`protective`、`overbroad_suspect`、`insufficient_data`。
+- 本地已知的 pre-guard skip（如 TTL 过期、execution_eligible=False）不计入 guard impact；
+  demo unsupported symbol 不在这里过滤，因为该诊断禁止调用 exchange/HTTP。
+
+边界：不禁用/修改 guard，不改 ranker，不改 System Operator，不动 risk/execution/live，
+不调用 LLM/HTTP/exchange，不写 DB，不修改 guard 文件。
+
+验证：
+- `uv run pytest tests/test_guard_impact_audit.py tests/test_paper_trader_guards.py tests/test_paper_trader_ranker.py tests/test_trade_funnel_audit.py -q`
+- `uv run aletheia inspect guard-impact --hours 24`
+- `uv run aletheia inspect guard-impact --hours 24 --json`
 
 ---
 

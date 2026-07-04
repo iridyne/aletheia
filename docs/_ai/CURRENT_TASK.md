@@ -62,13 +62,21 @@ doctor / gateway logs 的日志尾部输出必须走脱敏读取，不能把 tok
 第一诊断入口，会用 compact summary 指向 Alpha / Trade Funnel / Sizing / Thesis Lineage
 哪一块最值得看。
 详细报告走只读 standalone 命令：`uv run aletheia funnel audit --hours 24` 和
-`uv run aletheia sizing trace --hours 24`。Thesis 样本级复盘走
+`uv run aletheia sizing trace --hours 24`。Guard 是否压制候选流走
+`uv run aletheia inspect guard-impact --hours 24`（可加 `--json` 给机器消费）。Thesis 样本级复盘走
 `uv run aletheia thesis audit --days 7` 和 `uv run aletheia thesis records --days 7 --json`；
 Trades & Positions 详情 drawer 会在 Causal Chain 下方显示对应 Thesis Lineage。
 生成 thesis 的上游可以用 LLM 或规则/模型；Thesis Lineage v1 只还原和评估已经留下的
 thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不新增 LLM 调用，
 不事后补写理由。这些 audit 只做诊断，不自动调仓位、风控、Kelly、杠杆、ranker、prompt
 或 persona。
+
+**Guard Impact Audit 边界（2026-07-04）**：`inspect guard-impact` 只读 DB、active guard
+markdown/frontmatter 和已有 shadow/forward outcome。它用来判断 active blocking guards 是否疑似
+过度压制候选流，verdict 只有 `protective`、`overbroad_suspect`、`insufficient_data`。它不会
+禁用/修改 guard，不改 ranker/System Operator/risk/execution/live，不调用 LLM/HTTP/exchange。
+如果结果是 `insufficient_data`，继续观察或转向 unsupported candidates / debate；不要用它自动改
+交易行为。
 
 **Thesis Lineage V1.1 观察窗口（2026-07-04）**:v1 合并运行后，不要马上升 v2。
 接下来 7-14 天只回答一个问题：现有交易判断链有没有留下足够完整、可审判的数据。
