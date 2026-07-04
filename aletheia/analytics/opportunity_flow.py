@@ -23,28 +23,39 @@ _FORWARD_HORIZONS = ("15m", "1h", "4h", "24h")
 _TRADE_ACTIONS = {"trade", "scale_in", "flip"}
 
 
-def build_opportunity_flow_ledger(*, hours: int = 24, limit: int = 200) -> dict[str, Any]:
+def build_opportunity_flow_ledger(
+    *,
+    hours: int = 24,
+    limit: int = 200,
+    stage: str | None = None,
+    verdict: str | None = None,
+    symbol: str | None = None,
+) -> dict[str, Any]:
     """Build a JSON-serializable read-only opportunity lifecycle ledger."""
     hours_i = max(1, int(hours or 24))
     limit_i = max(1, int(limit or 200))
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_i)).isoformat()
     generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    filters = _filters(stage=stage, verdict=verdict, symbol=symbol)
     db, schema_errors = _open_db()
     if db is None:
-        return _empty_report(generated_at, hours_i, cutoff, schema_errors)
+        return _empty_report(generated_at, hours_i, cutoff, schema_errors, filters)
 
     integrated = _integrated_audits(hours_i)
     context = _context_from_audits(integrated)
-    opportunities = _recent_opportunities(db, cutoff, limit_i)
-    records = [_build_record(db, opp, context) for opp in opportunities]
+    opportunities = _recent_opportunities(db, cutoff, limit_i, symbol_filter=filters.get("symbol"))
+    unfiltered_records = [_build_record(db, opp, context) for opp in opportunities]
+    records = _filter_records(unfiltered_records, filters)
 
     final_states = Counter(row["final_state"] for row in records)
     final_stages = Counter(row["final_stage"] for row in records)
     drop_stages = Counter(row["final_stage"] for row in records if row["final_state"] in {"dropped", "rejected"})
+    debate_summary = _debate_summary(db, cutoff, integrated)
 
     return {
         "generated_at": generated_at,
         "window": {"hours": hours_i, "cutoff": cutoff},
+        "filters": filters,
         "read_only": True,
         "schema_errors": schema_errors,
         "notes": [
@@ -54,11 +65,13 @@ def build_opportunity_flow_ledger(*, hours: int = 24, limit: int = 200) -> dict[
         ],
         "summary": {
             "total_opportunities": len(records),
+            "source_opportunities": len(unfiltered_records),
             "final_state_counts": dict(final_states),
             "final_stage_counts": dict(final_stages),
             "drop_stage_counts": dict(drop_stages),
             "main_drop_stages": _top_counts(drop_stages),
             "trade_zero_explanation": _trade_zero_explanation(integrated, drop_stages),
+            "debate": debate_summary,
         },
         "integrated_audits": integrated,
         "opportunities": records,
@@ -78,10 +91,17 @@ def trace_opportunity_flow(opportunity_id: str) -> dict[str, Any]:
     return record
 
 
-def _empty_report(generated_at: str, hours: int, cutoff: str, schema_errors: list[str]) -> dict[str, Any]:
+def _empty_report(
+    generated_at: str,
+    hours: int,
+    cutoff: str,
+    schema_errors: list[str],
+    filters: dict[str, str | None] | None = None,
+) -> dict[str, Any]:
     return {
         "generated_at": generated_at,
         "window": {"hours": hours, "cutoff": cutoff},
+        "filters": filters or {},
         "read_only": True,
         "schema_errors": schema_errors,
         "notes": [
@@ -91,6 +111,7 @@ def _empty_report(generated_at: str, hours: int, cutoff: str, schema_errors: lis
         ],
         "summary": {
             "total_opportunities": 0,
+            "source_opportunities": 0,
             "final_state_counts": {},
             "final_stage_counts": {},
             "drop_stage_counts": {},
@@ -99,6 +120,7 @@ def _empty_report(generated_at: str, hours: int, cutoff: str, schema_errors: lis
                 "stage": "insufficient_data",
                 "summary": "No local trading database is available.",
             },
+            "debate": _empty_debate_summary(),
         },
         "integrated_audits": {},
         "opportunities": [],
@@ -128,6 +150,16 @@ def render_flow_audit(report: dict[str, Any]) -> str:
         f"Opportunities: {summary.get('total_opportunities', 0)}",
         "",
     ]
+    filters = report.get("filters") or {}
+    if any(filters.get(key) for key in ("stage", "verdict", "symbol")):
+        lines.extend([
+            "Filters:",
+            f"  stage: {filters.get('stage') or 'any'}",
+            f"  verdict: {filters.get('verdict') or 'any'}",
+            f"  symbol: {filters.get('symbol') or 'any'}",
+            f"  source_opportunities_before_filter: {summary.get('source_opportunities', 0)}",
+            "",
+        ])
     if report.get("schema_errors"):
         lines.append("Evidence:")
         for err in report["schema_errors"]:
@@ -158,6 +190,20 @@ def render_flow_audit(report: dict[str, Any]) -> str:
     lines.append(f"  debate_impact: {debate.get('verdict', 'insufficient_data')}")
     lines.append(f"  thesis_lineage: missed={thesis.get('missed_alpha_count', 0)} poor={thesis.get('poor_expression_count', 0)}")
     lines.append(f"  sizing_trace: {(sizing.get('main_sizing_bottleneck') or {}).get('reason', 'insufficient_data')}")
+    debate_summary = summary.get("debate") or {}
+    trace_flow = debate_summary.get("trace_flow") or {}
+    decision_flow = debate_summary.get("decision_flow") or {}
+    lines.extend([
+        "",
+        "Debate signal:",
+        f"  debated_decisions: {decision_flow.get('debated_decisions', 0)}",
+        f"  debated_skips: {decision_flow.get('debated_skips', 0)}",
+        f"  trade_like_decisions: {decision_flow.get('trade_like_decisions', 0)}",
+        f"  trace_complete: {trace_flow.get('trace_complete_decisions', 0)}",
+        f"  trace_missing: {trace_flow.get('trace_missing_decisions', 0)}",
+        f"  missed_alpha_suspect: {(debate_summary.get('verdict_counts') or {}).get('missed_alpha_suspect', 0)}",
+        f"  next_needed: {debate_summary.get('next_needed', 'collect_more_evidence')}",
+    ])
     lines.extend(["", "Recent opportunities:"])
     records = report.get("opportunities") or []
     if not records:
@@ -254,6 +300,101 @@ def _compact_debate_impact(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _debate_summary(db, cutoff: str, integrated: dict[str, Any]) -> dict[str, Any]:
+    debate = integrated.get("debate_impact") or {}
+    decision_flow = debate.get("decision_flow") or {}
+    trace_flow = _debate_trace_flow(db, cutoff)
+    verdict_counts = debate.get("verdict_counts") or {}
+    return {
+        "verdict": debate.get("verdict", "insufficient_data"),
+        "decision_flow": decision_flow,
+        "trace_flow": trace_flow,
+        "verdict_counts": verdict_counts,
+        "outcome_summary": debate.get("outcome_summary") or {},
+        "next_needed": _debate_next_needed(decision_flow, trace_flow, verdict_counts),
+    }
+
+
+def _empty_debate_summary() -> dict[str, Any]:
+    return {
+        "verdict": "insufficient_data",
+        "decision_flow": {},
+        "trace_flow": {
+            "debated_decisions": 0,
+            "trace_complete_decisions": 0,
+            "trace_missing_decisions": 0,
+            "avg_initial_conviction": None,
+            "avg_final_conviction": None,
+            "avg_adjustment": None,
+        },
+        "verdict_counts": {},
+        "outcome_summary": {},
+        "next_needed": "collect_more_evidence",
+    }
+
+
+def _debate_trace_flow(db, cutoff: str) -> dict[str, Any]:
+    base = _empty_debate_summary()["trace_flow"]
+    if not _table_exists(db, "pi_decisions"):
+        return base
+    if not all(
+        _has_column(db, "pi_decisions", col)
+        for col in (
+            "debate_initial_conviction",
+            "debate_bull_confidence",
+            "debate_bear_confidence",
+            "debate_adjustment",
+        )
+    ):
+        return base
+    row = db.execute(
+        "SELECT "
+        "COUNT(*) AS debated_decisions, "
+        "SUM(CASE WHEN debate_initial_conviction IS NOT NULL "
+        "AND debate_bull_confidence IS NOT NULL "
+        "AND debate_bear_confidence IS NOT NULL "
+        "AND debate_adjustment IS NOT NULL THEN 1 ELSE 0 END) AS trace_complete_decisions, "
+        "SUM(CASE WHEN debate_initial_conviction IS NULL "
+        "OR debate_bull_confidence IS NULL "
+        "OR debate_bear_confidence IS NULL "
+        "OR debate_adjustment IS NULL THEN 1 ELSE 0 END) AS trace_missing_decisions, "
+        "AVG(debate_initial_conviction) AS avg_initial_conviction, "
+        "AVG(conviction) AS avg_final_conviction, "
+        "AVG(debate_adjustment) AS avg_adjustment "
+        "FROM pi_decisions "
+        "WHERE debate_ran = 1 AND datetime(created_at) >= datetime(?)",
+        (cutoff,),
+    ).fetchone()
+    if not row:
+        return base
+    d = dict(row)
+    return {
+        "debated_decisions": int(d.get("debated_decisions") or 0),
+        "trace_complete_decisions": int(d.get("trace_complete_decisions") or 0),
+        "trace_missing_decisions": int(d.get("trace_missing_decisions") or 0),
+        "avg_initial_conviction": _round(_to_float(d.get("avg_initial_conviction"))),
+        "avg_final_conviction": _round(_to_float(d.get("avg_final_conviction"))),
+        "avg_adjustment": _round(_to_float(d.get("avg_adjustment"))),
+    }
+
+
+def _debate_next_needed(
+    decision_flow: dict[str, Any],
+    trace_flow: dict[str, Any],
+    verdict_counts: dict[str, Any],
+) -> str:
+    debated = int(decision_flow.get("debated_decisions") or trace_flow.get("debated_decisions") or 0)
+    complete = int(trace_flow.get("trace_complete_decisions") or 0)
+    missed = int(verdict_counts.get("missed_alpha_suspect") or 0)
+    if debated <= 0:
+        return "collect_more_debate_samples"
+    if complete <= 0:
+        return "wait_for_post_migration_debate_samples"
+    if missed > 0:
+        return "inspect_debate_adjustments_before_tuning"
+    return "monitor_debate_calibration"
+
+
 def _context_from_audits(audits: dict[str, Any]) -> dict[str, Any]:
     debate_rows = (audits.get("debate_impact") or {}).get("debated_opportunities") or []
     return {
@@ -261,13 +402,65 @@ def _context_from_audits(audits: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _recent_opportunities(db, cutoff: str, limit: int) -> list[dict[str, Any]]:
+def _filters(*, stage: str | None, verdict: str | None, symbol: str | None) -> dict[str, str | None]:
+    return {
+        "stage": _clean_filter(stage),
+        "verdict": _clean_filter(verdict),
+        "symbol": _clean_symbol(symbol),
+    }
+
+
+def _clean_filter(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _clean_symbol(value: str | None) -> str | None:
+    text = str(value or "").strip().upper()
+    return text or None
+
+
+def _filter_records(records: list[dict[str, Any]], filters: dict[str, str | None]) -> list[dict[str, Any]]:
+    stage = filters.get("stage")
+    verdict = filters.get("verdict")
+    symbol = filters.get("symbol")
+    out: list[dict[str, Any]] = []
+    for row in records:
+        if symbol and str(row.get("symbol") or "").upper() != symbol:
+            continue
+        if verdict and str((row.get("counterfactual") or {}).get("verdict") or "") != verdict:
+            continue
+        if stage and not _record_has_stage(row, stage):
+            continue
+        out.append(row)
+    return out
+
+
+def _record_has_stage(row: dict[str, Any], stage: str) -> bool:
+    if row.get("final_stage") == stage:
+        return True
+    return any(event.get("stage") == stage for event in row.get("timeline") or [])
+
+
+def _recent_opportunities(
+    db,
+    cutoff: str,
+    limit: int,
+    *,
+    symbol_filter: str | None = None,
+) -> list[dict[str, Any]]:
     if not _table_exists(db, "opportunities"):
         return []
+    where = ["datetime(created_at) >= datetime(?)"]
+    params: list[Any] = [cutoff]
+    if symbol_filter:
+        where.append("upper(symbol) = ?")
+        params.append(symbol_filter)
+    params.append(limit)
     rows = db.execute(
-        "SELECT * FROM opportunities WHERE datetime(created_at) >= datetime(?) "
+        f"SELECT * FROM opportunities WHERE {' AND '.join(where)} "
         "ORDER BY datetime(created_at) DESC LIMIT ?",
-        (cutoff, limit),
+        tuple(params),
     ).fetchall()
     return [dict(row) for row in rows]
 

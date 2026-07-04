@@ -38,6 +38,14 @@ def _output(data, json_output: bool) -> None:
                 typer.echo(f"{k}: {v}")
 
 
+def _with_flow_hint(text: str, hours: int) -> str:
+    return (
+        f"{text}\n\n"
+        "Also summarized in the opportunity ledger:\n"
+        f"  uv run aletheia flow audit --hours {max(1, int(hours or 24))}"
+    )
+
+
 def _parse_age(snapshot_at: str) -> tuple:
     """Return (age_seconds, is_stale) for a snapshot_at ISO string."""
     try:
@@ -432,7 +440,7 @@ def guard_impact(
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False, default=str))
         return
-    typer.echo(render_guard_impact_audit(report))
+    typer.echo(_with_flow_hint(render_guard_impact_audit(report), hours))
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +459,7 @@ def debate_impact(
     if json_output:
         typer.echo(json.dumps(report, indent=2, ensure_ascii=False, default=str))
         return
-    typer.echo(render_debate_impact_audit(report))
+    typer.echo(_with_flow_hint(render_debate_impact_audit(report), hours))
 
 
 # ---------------------------------------------------------------------------

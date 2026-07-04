@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-07-04 — Opportunity Flow CLI polish
+
+### 触发
+Opportunity Flow 已经能作为总账本，但排查 debate/guard/错过机会时还需要更快地缩小范围。
+
+### 交付
+- `flow audit` 增加 `--stage`、`--verdict`、`--symbol` 三个过滤参数。
+- human output 增加 `Debate signal` 区块，展示 debate 总量、skip 数、trace 完整度、
+  missed-alpha 可疑数和下一步需要的证据。
+- `inspect debate-impact` / `inspect guard-impact` 的 human output 增加指向 flow 的软提示；
+  JSON 输出不变。
+- 更新 `docs/_ai/OPPORTUNITY_FLOW_LEDGER_V1.md` 的使用示例和迁移状态。
+
+### 验证
+- `uv run pytest tests/test_opportunity_flow_ledger.py tests/test_debate_impact_audit.py tests/test_guard_impact_audit.py tests/specs/spec_analytics_contracts.py tests/test_architecture_fitness.py -q`
+- `uv run aletheia flow audit --hours 24 --limit 5 --stage debate_downgraded --verdict missed_alpha_suspect --symbol BTC/USDT`
+
+### 边界
+只读输出增强；不改交易决策、不调 debate 参数、不跑 ranker/guard/risk/execution、不新增 LLM。
+
+---
+
 ## 2026-07-04 — Opportunity Flow Ledger V1
 
 ### 触发

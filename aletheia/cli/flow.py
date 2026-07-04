@@ -13,12 +13,21 @@ flow_app = typer.Typer(no_args_is_help=True)
 def audit(
     hours: int = typer.Option(24, "--hours", help="Lookback window in hours."),
     limit: int = typer.Option(200, "--limit", help="Maximum opportunities to reconstruct."),
+    stage: str | None = typer.Option(None, "--stage", help="Only show opportunities whose timeline includes this stage."),
+    verdict: str | None = typer.Option(None, "--verdict", help="Only show opportunities with this counterfactual verdict."),
+    symbol: str | None = typer.Option(None, "--symbol", help="Only show opportunities for this canonical symbol."),
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
     """Print the read-only opportunity flow ledger."""
     from aletheia.analytics.opportunity_flow import build_opportunity_flow_ledger, render_flow_audit
 
-    report = build_opportunity_flow_ledger(hours=hours, limit=limit)
+    report = build_opportunity_flow_ledger(
+        hours=hours,
+        limit=limit,
+        stage=stage,
+        verdict=verdict,
+        symbol=symbol,
+    )
     if json_output:
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
         return

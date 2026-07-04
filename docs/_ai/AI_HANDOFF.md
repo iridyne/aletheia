@@ -7,7 +7,32 @@
 
 ## Last Updated
 
-2026-07-04 (Opportunity Flow Ledger V1)
+2026-07-04 (Opportunity Flow CLI polish)
+
+---
+
+## Recent Change (Opportunity Flow CLI polish — 2026-07-04)
+
+`aletheia flow audit` 增加三个只读过滤参数，方便直接看可疑机会：
+
+```powershell
+uv run aletheia flow audit --hours 24 --stage debate_downgraded
+uv run aletheia flow audit --hours 24 --verdict missed_alpha_suspect
+uv run aletheia flow audit --hours 24 --symbol TRX/USDT
+```
+
+Flow human output 新增 `Debate signal` 区块，直接展示 debated decisions、debated skips、
+trade-like decisions、trace_complete / trace_missing、missed_alpha_suspect 和下一步需要的证据。
+
+`inspect debate-impact` 和 `inspect guard-impact` 的人工输出末尾增加软提示，指向
+`uv run aletheia flow audit --hours <n>`；JSON 输出保持不变。
+
+边界：只读 CLI/read-model 输出增强；不改 debate 公式、ranker、guard、risk、execution，
+不新增 LLM 调用，不建表。
+
+验证：
+- `uv run pytest tests/test_opportunity_flow_ledger.py tests/test_debate_impact_audit.py tests/test_guard_impact_audit.py tests/specs/spec_analytics_contracts.py tests/test_architecture_fitness.py -q`
+- `uv run aletheia flow audit --hours 24 --limit 5 --stage debate_downgraded --verdict missed_alpha_suspect --symbol BTC/USDT`
 
 ---
 

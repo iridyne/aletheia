@@ -250,5 +250,8 @@ def test_guard_impact_cli_outputs_human_and_json(tmp_path):
     assert human.exit_code == 0
     assert "Guard Impact Audit" in human.output
     assert "guard_blocked_candidates: 1" in human.output
+    assert "Also summarized in the opportunity ledger:" in human.output
+    assert "uv run aletheia flow audit --hours 24" in human.output
     assert raw.exit_code == 0
     assert '"guard_blocked_candidates": 1' in raw.output
+    assert "opportunity ledger" not in raw.output

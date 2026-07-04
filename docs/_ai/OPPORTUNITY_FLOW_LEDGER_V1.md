@@ -19,6 +19,14 @@ uv run aletheia flow audit --hours 24
 uv run aletheia flow trace --opportunity-id <id>
 ```
 
+Useful filters:
+
+```text
+uv run aletheia flow audit --hours 24 --stage debate_downgraded
+uv run aletheia flow audit --hours 24 --verdict missed_alpha_suspect
+uv run aletheia flow audit --hours 24 --symbol TRX/USDT
+```
+
 V1 integrates the read-only summaries that are already useful:
 
 - Trade Funnel: overall opportunity-to-position choke point.
@@ -57,6 +65,7 @@ Recommended migration:
 1. V1: keep old commands unchanged and introduce `aletheia flow`.
 2. V1.1: add a short note to old human-readable outputs:
    `This report is also summarized by: uv run aletheia flow audit --hours <n>`.
+   Implemented for `inspect debate-impact` and `inspect guard-impact`.
 3. V2: if the flow ledger is stable, optionally make old commands thin section views:
    - `aletheia funnel audit` -> flow funnel section
    - `aletheia thesis audit` -> flow thesis section

@@ -22,6 +22,14 @@ uv run aletheia flow audit --hours 24
 uv run aletheia flow trace --opportunity-id <id>
 ```
 
+排查特定问题时优先加过滤：
+
+```powershell
+uv run aletheia flow audit --hours 24 --stage debate_downgraded
+uv run aletheia flow audit --hours 24 --verdict missed_alpha_suspect
+uv run aletheia flow audit --hours 24 --symbol TRX/USDT
+```
+
 它把 Trade Funnel、Debate Impact、Thesis Lineage、Sizing Trace 等只读审计摘要合到一个
 机会生命周期视图里。旧专项命令仍保留，用于需要深挖单一环节时查看细节。
 

@@ -179,7 +179,11 @@ def test_opportunity_flow_empty_db_does_not_crash(monkeypatch):
 
 
 def test_opportunity_flow_debate_skip_with_positive_forward_outcome_is_missed_alpha():
-    from aletheia.analytics.opportunity_flow import build_opportunity_flow_ledger, trace_opportunity_flow
+    from aletheia.analytics.opportunity_flow import (
+        build_opportunity_flow_ledger,
+        render_flow_audit,
+        trace_opportunity_flow,
+    )
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -198,6 +202,15 @@ def test_opportunity_flow_debate_skip_with_positive_forward_outcome_is_missed_al
     assert row["final_stage"] == "debate_downgraded"
     assert row["counterfactual"]["verdict"] == "missed_alpha_suspect"
     assert row["counterfactual"]["forward"]["1h"]["direction_adjusted_return_pct"] == 0.8
+    debate = report["summary"]["debate"]
+    assert debate["decision_flow"]["debated_decisions"] == 1
+    assert debate["decision_flow"]["debated_skips"] == 1
+    assert debate["trace_flow"]["trace_complete_decisions"] == 1
+    assert debate["trace_flow"]["trace_missing_decisions"] == 0
+    assert debate["next_needed"] == "inspect_debate_adjustments_before_tuning"
+    rendered = render_flow_audit(report)
+    assert "Debate signal:" in rendered
+    assert "trace_complete: 1" in rendered
     assert trace["found"] is True
     assert [event["stage"] for event in trace["timeline"]] == [
         "created",
@@ -226,6 +239,36 @@ def test_opportunity_flow_missing_legacy_debate_fields_stay_insufficient_data():
 
     assert debate["details"]["trace_status"] == "insufficient_data"
     assert "Legacy debate row has no trace fields." in debate["reason"]
+
+
+def test_opportunity_flow_audit_filters_by_stage_verdict_and_symbol():
+    from aletheia.analytics.opportunity_flow import build_opportunity_flow_ledger, render_flow_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, opp_id="opp-flow-debate", member_id="member-flow-debate", symbol="BTC/USDT")
+    _insert_decision(db, opp_id="opp-flow-debate")
+    _insert_forward(db, member_id="member-flow-debate", ret=0.8)
+    _insert_opp(
+        db,
+        opp_id="opp-flow-filtered",
+        member_id="member-flow-filtered",
+        symbol="ETH/USDT",
+        confidence_score=20,
+    )
+
+    by_stage = build_opportunity_flow_ledger(hours=24, stage="debate_downgraded")
+    by_verdict = build_opportunity_flow_ledger(hours=24, verdict="missed_alpha_suspect")
+    by_symbol = build_opportunity_flow_ledger(hours=24, symbol="ETH/USDT")
+
+    assert [row["opportunity_id"] for row in by_stage["opportunities"]] == ["opp-flow-debate"]
+    assert [row["opportunity_id"] for row in by_verdict["opportunities"]] == ["opp-flow-debate"]
+    assert [row["opportunity_id"] for row in by_symbol["opportunities"]] == ["opp-flow-filtered"]
+    assert by_symbol["filters"]["symbol"] == "ETH/USDT"
+    assert by_symbol["summary"]["source_opportunities"] == 1
+    rendered = render_flow_audit(by_stage)
+    assert "Filters:" in rendered
+    assert "stage: debate_downgraded" in rendered
 
 
 def test_opportunity_flow_success_path_reaches_closed_position():
@@ -258,12 +301,29 @@ def test_opportunity_flow_cli_outputs_audit_and_trace():
     _insert_decision(db)
 
     runner = CliRunner()
-    audit = runner.invoke(app, ["flow", "audit", "--hours", "24", "--limit", "5"])
+    audit = runner.invoke(
+        app,
+        [
+            "flow",
+            "audit",
+            "--hours",
+            "24",
+            "--limit",
+            "5",
+            "--stage",
+            "debate_downgraded",
+            "--verdict",
+            "insufficient_data",
+            "--symbol",
+            "BTC/USDT",
+        ],
+    )
     trace = runner.invoke(app, ["flow", "trace", "--opportunity-id", "opp-flow-1", "--json"])
 
     assert audit.exit_code == 0
     assert "Opportunity Flow Ledger" in audit.output
     assert "debate_downgraded" in audit.output
+    assert "Filters:" in audit.output
     assert trace.exit_code == 0
     payload = json.loads(trace.output)
     assert payload["opportunity_id"] == "opp-flow-1"
