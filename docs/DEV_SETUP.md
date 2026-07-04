@@ -58,6 +58,9 @@ uv run aletheia configure
 ## 日常开发
 
 ```powershell
+# pull 后同步依赖（幂等、无变更时 <1s）
+uv sync
+
 # 启动 gateway（后台三进程）
 uv run aletheia gateway start --no-browser
 
@@ -66,6 +69,9 @@ uv run aletheia gateway start --no-browser
 
 # 查看健康状态
 uv run aletheia doctor
+
+# 跑测试（必须 uv run，裸 python 可能缺依赖）
+uv run pytest tests/ -q --tb=line
 ```
 
 访问 `http://127.0.0.1:8787/` — **不要用 :5173 作为日常入口**。

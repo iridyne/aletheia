@@ -153,7 +153,7 @@ Spec as Code：L2 契约文档的关键断言已编码为 `tests/specs/spec_*.py
 
 ## Testing Strategy
 
-全量测试 ~5min（515+ tests，I/O-bound，SQLite setup/teardown 是瓶颈，并行无收益）。
+全量测试 ~5min（2300+ tests，I/O-bound，SQLite setup/teardown 是瓶颈，并行无收益）。
 
 - **日常**：`uv run pytest tests/test_xxx.py -q`（秒级）；针对性用 `-k "knowledge or dreaming"`
 - **提交前**：后台跑全量，不阻塞工作流
@@ -176,6 +176,10 @@ Iterate against `http://127.0.0.1:8787/`; do not use `:5173` as the daily entryp
 
 **`aletheia/data/` is the source package** (symbols.py, ccxt_provider.py, etc.) — distinct from repo-root `data/` runtime dir (gitignored). `.gitignore` must keep the runtime rule root-anchored as `/data/`; a bare `data/` silently excludes the source package from git. After cloning verify: `uv run python -c "import aletheia.risk.engine"`.
 
+**Python 调用铁律**：所有 Python 命令必须通过 `uv run` 执行（`uv run python`、`uv run pytest`、`uv run aletheia ...`），**禁止裸 `python` / `python -m`**。裸 `python` 可能指向系统 Python 或其他 venv（如 hermes-agent），缺少项目声明的依赖（`typer`、`hypothesis` 等），导致 import 失败。`uv run` 保证使用项目 `.venv` + `pyproject.toml` 声明的完整依赖树。
+
+**依赖同步**：`git pull` 后如果 `pyproject.toml` 有变更，必须跑一次 `uv sync`（幂等、秒级）。会话开始时建议无条件跑 `uv sync`——无变更时 <1s，有变更时自动补装。
+
 ---
 
 ## AI Collaboration Rules
@@ -184,7 +188,7 @@ Iterate against `http://127.0.0.1:8787/`; do not use `:5173` as the daily entryp
 
 意图/事实分离：git 同步**意图**（代码+文档），绝不写运行态事实（gateway 进程/app.db/config.yaml/凭证）进任何 git 文档——在另一台机器上必然过期。详见 `docs/_ai/DEV_PROTOCOL.md`。
 
-会话开始：`git pull --ff-only` → `aletheia doctor` → 读 CLAUDE.md / AGENTS.md / CURRENT_TASK.md / AI_HANDOFF.md。
+会话开始：`git pull --ff-only` → `uv sync` → `uv run aletheia doctor` → 读 CLAUDE.md / AGENTS.md / CURRENT_TASK.md / AI_HANDOFF.md。
 会话结束：更新 `docs/_ai/AI_HANDOFF.md`、`DEVLOG.md`、`CURRENT_TASK.md`（只写计划/意图，不写运行态）。架构决策记入 `docs/_ai/DECISIONS.md`。
 
 Issue 分工：`docs/issues/BACKEND_ISSUES.md`（bugs/contract drift/dead code，带 file:line）；`docs/issues/FRONTEND_ISSUES.md`（UI spec gaps/honesty breaches）。
