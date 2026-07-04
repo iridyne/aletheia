@@ -98,6 +98,41 @@ def test_report_severity_partitions():
     assert [c.name for c in r.warns] == ["b"]
 
 
+def test_doctor_warns_when_coinalyze_enabled_without_rows(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_coinalyze(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.coinalyze"].severity == "warn"
+    assert "enabled but no OI rows" in checks["data.coinalyze"].detail
+    assert checks["data.liquidations"].severity == "warn"
+
+
+def test_doctor_coinalyze_ok_when_oi_rows_are_fresh(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.execute(
+        "INSERT INTO open_interest_snapshots "
+        "(id, symbol, exchange, open_interest_usd, observed_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("oi-doctor-1", "BTC/USDT", "coinalyze", 123456.0, now),
+    )
+    db.commit()
+    report = dx.Report(generated_at="t")
+
+    dx._probe_coinalyze(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.coinalyze"].severity == "ok"
+    assert "BTC/USDT" in checks["data.coinalyze"].detail
+    assert checks["data.liquidations"].severity == "info"
+
+
 def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     (tmp_path / "logs" / "errors.log").write_text(

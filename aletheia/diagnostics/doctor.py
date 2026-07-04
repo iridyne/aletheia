@@ -799,6 +799,66 @@ def _probe_macro_signals(report: Report) -> None:
         report.add("data.macro_signals", "info", f"macro signals probe failed: {e}")
 
 
+def _probe_coinalyze(report: Report) -> None:
+    """Expose whether the optional Coinalyze OI/liquidation feed is actually live."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        enabled = bool(getattr(cfg.market_data, "enable_coinalyze", False))
+        if not enabled:
+            report.add("data.coinalyze", "info", "Coinalyze disabled in settings")
+            return
+
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        oi_row = db.execute(
+            "SELECT symbol, observed_at FROM open_interest_snapshots "
+            "WHERE exchange = 'coinalyze' "
+            "ORDER BY observed_at DESC LIMIT 1"
+        ).fetchone()
+        liq_row = db.execute(
+            "SELECT symbol, observed_at FROM liquidation_events "
+            "WHERE exchange = 'coinalyze' "
+            "ORDER BY observed_at DESC LIMIT 1"
+        ).fetchone()
+
+        if oi_row:
+            age = _age_minutes(oi_row["observed_at"])
+            sev = "warn" if age is not None and age > 60 else "ok"
+            report.add(
+                "data.coinalyze",
+                sev,
+                f"newest Coinalyze OI {oi_row['symbol']} ({_fmt_age(age)})",
+                "check Coinalyze key/quota or scheduler if stale > 60m"
+                if sev == "warn" else None,
+            )
+        else:
+            report.add(
+                "data.coinalyze",
+                "warn",
+                "Coinalyze enabled but no OI rows yet",
+                "configure coinalyze_api_key or COINALYZE_API_KEY, then wait for the data_collectors tick",
+            )
+
+        if liq_row:
+            age = _age_minutes(liq_row["observed_at"])
+            report.add(
+                "data.liquidations",
+                "info",
+                f"newest Coinalyze liquidation {liq_row['symbol']} ({_fmt_age(age)})",
+            )
+        else:
+            report.add(
+                "data.liquidations",
+                "warn" if not oi_row else "info",
+                "no Coinalyze liquidation rows yet",
+                "same key path as Coinalyze OI; no rows is expected until a real liquidation occurs"
+                if oi_row else "Coinalyze has not produced any OI/liquidation rows yet",
+            )
+    except Exception as e:
+        report.add("data.coinalyze", "info", f"could not read Coinalyze state: {e}")
+
+
 def _probe_data_quality(report: Report) -> None:
     """Check data provenance: are prices coming from fallback sources?"""
     try:
@@ -2118,6 +2178,7 @@ def build_report() -> Report:
         _probe_credentials,
         _probe_market_data,
         _probe_macro_signals,
+        _probe_coinalyze,
         _probe_serenity_pipeline,
         _probe_volume_ranking,
         _probe_data_quality,
