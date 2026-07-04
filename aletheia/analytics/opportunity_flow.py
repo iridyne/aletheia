@@ -187,10 +187,19 @@ def render_flow_audit(report: dict[str, Any]) -> str:
     thesis = audits.get("thesis_lineage") or {}
     debate = audits.get("debate_impact") or {}
     sizing = audits.get("sizing_trace") or {}
+    supply = audits.get("candidate_supply") or {}
+    supply_latest = supply.get("latest_snapshot") or {}
+    supply_drought = supply.get("drought") or {}
     lines.append(f"  trade_funnel: {funnel.get('stage', 'insufficient_data')}")
     lines.append(f"  debate_impact: {debate.get('verdict', 'insufficient_data')}")
     lines.append(f"  thesis_lineage: missed={thesis.get('missed_alpha_count', 0)} poor={thesis.get('poor_expression_count', 0)}")
     lines.append(f"  sizing_trace: {(sizing.get('main_sizing_bottleneck') or {}).get('reason', 'insufficient_data')}")
+    lines.append(
+        "  candidate_supply: "
+        f"executable={supply_latest.get('executable_count', 'n/a')} "
+        f"main_reason={supply_latest.get('main_reason', 'n/a')} "
+        f"drought={'yes' if supply_drought else 'no'}"
+    )
     debate_summary = summary.get("debate") or {}
     trace_flow = debate_summary.get("trace_flow") or {}
     decision_flow = debate_summary.get("decision_flow") or {}
@@ -277,6 +286,20 @@ def _integrated_audits(hours: int) -> dict[str, Any]:
         audits["sizing_trace"] = compact_sizing_trace_summary(build_sizing_trace_audit(hours=hours))
     except Exception as exc:  # pragma: no cover - defensive read-only boundary
         audits["sizing_trace"] = {"error": str(exc)}
+    try:
+        from aletheia.agent_shell.operator_store import list_events
+        from aletheia.analytics.candidate_supply import (
+            evaluate_candidate_supply_drought,
+            latest_candidate_supply_snapshot,
+        )
+
+        events = list_events(limit=20)
+        audits["candidate_supply"] = {
+            "latest_snapshot": latest_candidate_supply_snapshot(events),
+            "drought": evaluate_candidate_supply_drought(events),
+        }
+    except Exception as exc:  # pragma: no cover - defensive read-only boundary
+        audits["candidate_supply"] = {"error": str(exc), "latest_snapshot": None, "drought": None}
     return audits
 
 

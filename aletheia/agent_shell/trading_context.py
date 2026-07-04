@@ -66,6 +66,42 @@ def _candidate_skip_bucket(reason: str) -> str:
     return reason or "unknown"
 
 
+def _record_candidate_supply_snapshot(layer: dict[str, Any]) -> None:
+    """Record candidate supply telemetry for recommendations without changing decisions."""
+    try:
+        from aletheia.analytics.candidate_supply import build_candidate_supply_snapshot
+
+        snapshot = build_candidate_supply_snapshot(
+            executable_candidates=layer.get("executable_candidates") or [],
+            excluded_candidates_summary=layer.get("excluded_candidates_summary") or [],
+        )
+    except Exception as exc:
+        logger.debug("candidate supply snapshot build failed: %s", exc)
+        layer["candidate_supply"] = {
+            "executable_count": len(layer.get("executable_candidates") or []),
+            "below_floor": None,
+            "main_reason": "insufficient_data",
+        }
+        return
+
+    layer["candidate_supply"] = snapshot
+    try:
+        from aletheia.agent_shell.operator_store import create_event
+
+        event_id = create_event(
+            event_type="candidate_supply_snapshot",
+            severity="warning" if snapshot.get("below_floor") else "info",
+            source="trading_context",
+            related_entity_type="candidate_supply",
+            related_entity_id="system_operator",
+            payload=snapshot,
+        )
+        snapshot["event_id"] = event_id
+    except Exception as exc:
+        logger.debug("candidate supply snapshot skipped: %s", exc)
+        snapshot["event_status"] = "not_persisted"
+
+
 def build_enriched_trading_context() -> dict[str, Any]:
     """Build the three-layer context for System Operator trading decisions.
 
@@ -590,6 +626,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
         layer["executable_candidates"] = []
         layer["excluded_candidates_summary"] = []
         layer["ranker_candidates"] = []
+    _record_candidate_supply_snapshot(layer)
 
     # Phase 4b: Pending signals awaiting System Operator evaluation
     try:

@@ -33,6 +33,10 @@ uv run aletheia flow audit --hours 24 --symbol TRX/USDT
 它把 Trade Funnel、Debate Impact、Thesis Lineage、Sizing Trace 等只读审计摘要合到一个
 机会生命周期视图里。旧专项命令仍保留，用于需要深挖单一环节时查看细节。
 
+候选供给不足时，`trading_context` 会写 `candidate_supply_snapshot`，连续 2 个 cycle 的
+`executable_count < 3` 会在 `/api/operator/recommendations` 中出现
+`candidate_supply_drought`，并建议刷新机会池（`run_market_scan`）。
+
 边界保持不变：flow 只读重建，不调用 LLM，不跑 ranker，不重跑 guard/debate/risk/execution，
 不改交易行为；缺字段保留 `insufficient_data`。
 

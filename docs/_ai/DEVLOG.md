@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-04 — Executable Candidate Supply Floor V1
+
+### 触发
+System Operator 在可执行候选池不足时会继续从贫瘠候选池里做判断，容易表现成连续 skip。
+
+### 交付
+- `trading_context` 写入 `candidate_supply_snapshot` operator event。
+- layer2 增加 `candidate_supply` 摘要：可执行候选数、供给 floor、主排除原因。
+- `operator_recommendations` 在连续 2 个 snapshot 的 `executable_count < 3` 时输出
+  `candidate_supply_drought`。
+- recommendation 指向既有安全命令 `run_market_scan`，由 Command Center / 权限层决定是否执行。
+- `flow audit` integrated signals 增加 candidate supply 状态。
+
+### 验证
+- `uv run pytest tests/test_candidate_supply_floor.py tests/test_operator_events.py tests/test_anti_hallucination_e2e.py tests/test_agent_shell.py -q`
+- `uv run pytest tests/specs/spec_decision_lifecycle.py tests/specs/spec_data_model.py tests/test_architecture_fitness.py -q`
+
+### 边界
+只做供给诊断和刷新建议；不调交易阈值、不改 debate/guard/risk/execution、不调用 LLM、
+不创建 proposal、不下单。
+
+---
+
 ## 2026-07-04 — Opportunity Flow CLI polish
 
 ### 触发

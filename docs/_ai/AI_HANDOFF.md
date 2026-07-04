@@ -7,7 +7,29 @@
 
 ## Last Updated
 
-2026-07-04 (Opportunity Flow CLI polish)
+2026-07-04 (Executable Candidate Supply Floor V1)
+
+---
+
+## Recent Change (Executable Candidate Supply Floor V1 — 2026-07-04)
+
+新增候选供给枯竭诊断，用来在 System Operator 连续面对贫瘠可执行候选池时提示刷新机会池，而不是继续反复 skip。
+
+- `trading_context` 在构建 `executable_candidates` / `excluded_candidates_summary` 后写入
+  `candidate_supply_snapshot` operator event，并把 `candidate_supply` 摘要放入 layer2。
+- 连续 2 个 snapshot 的 `executable_count < 3` 时，`/api/operator/recommendations` 输出
+  `candidate_supply_drought`。
+- recommendation metadata 包含 `main_reason`（例如 `ttl_expired`）、`executable_count`、
+  `floor`、`consecutive_cycles`、`task_type=run_market_scan`。
+- `flow audit` 的 integrated signals 增加 candidate supply 摘要，方便 OFL 也能看到当前供给是否枯竭。
+- 暂停状态下只给 recommendation，不带可执行 `taskType`。
+
+边界：不改 trading threshold、不改 debate、不改 guard、不改 risk、不改 execution、
+不调用 LLM、不创建 proposal、不下单；只是候选供给 telemetry + recommendation。
+
+验证：
+- `uv run pytest tests/test_candidate_supply_floor.py tests/test_operator_events.py tests/test_anti_hallucination_e2e.py tests/test_agent_shell.py -q`
+- `uv run pytest tests/specs/spec_decision_lifecycle.py tests/specs/spec_data_model.py tests/test_architecture_fitness.py -q`
 
 ---
 
