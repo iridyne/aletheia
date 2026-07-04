@@ -7,7 +7,7 @@
 
 ## Last Updated
 
-2026-07-04 (Thesis Lineage 读模型 + 交易详情 UI)
+2026-07-04 (Thesis Lineage V1.1 Observation Window 计划)
 
 ---
 
@@ -32,8 +32,15 @@
 已经生成并落库的 thesis / reasoning / evidence。缺字段就标 missing/insufficient_data，
 不事后补写聪明理由；前端无数据时显示不可用，不伪造状态。
 
+下一步不要直接升 v2。先按
+`docs/plans/thesis_lineage_v1_1_observation_window.md` 跑 7-14 天观察窗口，只看三件事：
+跑起来、数据是否完整、断链/缺字段在哪里。V1.1 禁止新增 thesis generator、LLM normalizer、
+prompt 优化、自动调参、新 UI、交易行为改动、新 `ThesisRecord` 表或决策前历史 thesis 检索。
+如果大量记录缺 `opportunity_id`、`signal_source`、`decision_meta`、shadow outcome 或 forward
+return，先修 provenance，不做 v2。
+
 验证：
-- thesis lineage tests：9 passed。
+- thesis lineage tests：10 passed。
 - 相关审计/归因 tests：48 passed。
 - API reference + architecture tests：21 passed。
 - `frontend npm run build` 通过。

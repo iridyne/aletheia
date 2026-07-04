@@ -1,5 +1,24 @@
 # Development Log
 
+## 2026-07-04 — Thesis Lineage V1.1 Observation Window 计划
+
+### 触发
+owner 明确要求 Thesis Lineage v1 做完后不要马上升 v2。先跑 7-14 天真实数据，确认现有
+交易判断链有没有留下足够完整、可审判的数据；如果断链严重，先补 provenance 和缺字段。
+
+### 交付
+- 新增 `docs/plans/thesis_lineage_v1_1_observation_window.md`。
+- 下一阶段定义为 `Thesis Lineage V1.1 Observation Window`：跑起来、看数据完整性、修断链和缺字段。
+- 明确 V1.1 禁止项：不做新 thesis generator、LLM normalizer、prompt 优化、自动调参、新 UI、
+  交易行为改动、新 ThesisRecord 表、决策前历史 thesis 检索。
+- 明确运行结果属于本机事实，JSON 快照写入 `data/diagnostics/` 这类 gitignored 运行目录，
+  不提交到 git 文档。
+
+### 边界
+本批只改计划/交接文档，不改代码、不改交易行为、不重启 gateway。
+
+---
+
 ## 2026-07-04 — Thesis Lineage 读模型 + 交易详情 UI
 
 ### 触发

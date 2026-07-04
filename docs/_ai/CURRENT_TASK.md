@@ -69,6 +69,14 @@ thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不�
 不事后补写理由。这些 audit 只做诊断，不自动调仓位、风控、Kelly、杠杆、ranker、prompt
 或 persona。
 
+**Thesis Lineage V1.1 观察窗口（2026-07-04）**:v1 合并运行后，不要马上升 v2。
+接下来 7-14 天只回答一个问题：现有交易判断链有没有留下足够完整、可审判的数据。
+计划见 `docs/plans/thesis_lineage_v1_1_observation_window.md`。V1.1 只做三件事：跑起来、
+看 `universe -> opportunity -> decision -> proposal / skip -> shadow / position -> outcome`
+是否能串起来、修断链和缺字段。禁止新增 thesis generator、LLM normalizer、prompt 优化、
+自动调参、新 UI、交易行为改动、新 `ThesisRecord` 表或决策前历史 thesis 检索。观察 JSON
+快照属于本机运行事实，写到 `data/diagnostics/` 这类 gitignored 目录，不写进 git 文档。
+
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需
 人工审核后才可启用；后续不要把 draft skill 自动接入 risk/execution/live/credential/order
