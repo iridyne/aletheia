@@ -48,6 +48,10 @@ JSON 写到 `data/diagnostics/`，用于观察窗口留本机快照；`aletheia 
 `doctor --deep` 的 trading diagnostics 也会带 `thesis` compact summary，方便日常入口直接
 看到断链/缺字段概况。
 
+观察节奏：部署后先跑 `uv run aletheia doctor --deep --json`，然后每天跑一次
+`uv run aletheia thesis snapshot --days 7`。如果观察期内修 provenance，只用修复后新写入的行
+判断效果，不要用修复前历史行否定修复。
+
 验证：
 - thesis lineage tests：11 passed。
 - 相关审计/归因 tests：48 passed。

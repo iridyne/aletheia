@@ -80,7 +80,9 @@ thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不�
 `aletheia thesis audit --days 7 --json` 已内建 `data_completeness` 和
 `raw_table_completeness`，`aletheia thesis snapshot --days 7` 会把同一份 audit JSON
 写到 `data/diagnostics/`，`aletheia thesis snapshots` 汇总最近保存的快照。下一轮观察优先
-看这两个区块，再决定修哪个 provenance 写入点。
+看这两个区块，再决定修哪个 provenance 写入点。节奏：部署后先跑 `doctor --deep --json`，
+然后每天跑一次 `thesis snapshot --days 7`；如果 V1.1 期间修了 provenance，修复效果只看修复后
+新写入的行，不用修复前历史行判断。
 
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需

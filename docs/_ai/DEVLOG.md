@@ -1,5 +1,21 @@
 # Development Log
 
+## 2026-07-04 — Thesis Lineage V1.1 观察节奏收口
+
+### 触发
+V1.1 不只是有命令，还需要明确每天怎么跑、什么时候判断、修 provenance 后怎么看效果。
+
+### 交付
+- `docs/plans/thesis_lineage_v1_1_observation_window.md` 增加 Observation Cadence。
+- 当前任务和 handoff 明确：部署后先跑 `doctor --deep --json`，每天跑一次
+  `thesis snapshot --days 7`。
+- 明确如果观察期内修 provenance，只用修复后新写入的行判断效果，不用修复前历史行否定修复。
+
+### 边界
+只改文档；不改代码、不改交易行为、不加 LLM、不加 UI、不建表。
+
+---
+
 ## 2026-07-04 — Thesis Lineage snapshot 汇总命令
 
 ### 触发

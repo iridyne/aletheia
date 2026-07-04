@@ -65,6 +65,24 @@ uv run aletheia thesis records --days 7 --json
 Do not commit raw observation snapshots or machine-specific runtime facts into
 git.
 
+## Observation Cadence
+
+During the 7-14 day window:
+
+1. Run `uv run aletheia doctor --deep --json` after deployment and at least once
+   per day. This confirms the gateway is healthy enough for the snapshot to mean
+   anything.
+2. Run `uv run aletheia thesis snapshot --days 7` once per day on the machine
+   that is actually running the demo loop.
+3. Run `uv run aletheia thesis snapshots` before deciding next work. Look for
+   direction, not one noisy point.
+4. If a provenance fix is made during V1.1, keep collecting snapshots after the
+   fix. Do not judge the fix from historical rows that were written before it.
+
+Do not use the first snapshot to justify v2. A single snapshot can identify
+obvious broken writers, but it cannot prove the thesis system has explanatory
+power.
+
 ## What To Measure
 
 The audit should be read as a data-completeness report first, not as a product
