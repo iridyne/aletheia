@@ -436,6 +436,25 @@ def guard_impact(
 
 
 # ---------------------------------------------------------------------------
+# 11c. debate-impact
+# ---------------------------------------------------------------------------
+
+@inspect_app.command("debate-impact")
+def debate_impact(
+    hours: int = typer.Option(24, "--hours", "-h", help="Lookback window for System Operator decisions"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Read-only audit of debated skips versus existing forward outcomes."""
+    from aletheia.analytics.debate_impact import build_debate_impact_audit, render_debate_impact_audit
+
+    report = build_debate_impact_audit(hours=hours)
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        return
+    typer.echo(render_debate_impact_audit(report))
+
+
+# ---------------------------------------------------------------------------
 # 12. scorecard
 # ---------------------------------------------------------------------------
 
