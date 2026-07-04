@@ -119,6 +119,7 @@ def _trading_diagnostics() -> dict:
         "alpha": _safe_alpha_diagnostic(),
         "funnel": _safe_funnel_diagnostic(),
         "sizing": _safe_sizing_diagnostic(),
+        "thesis": _safe_thesis_diagnostic(),
     }
 
 
@@ -160,6 +161,18 @@ def _safe_sizing_diagnostic() -> dict:
         )
 
         return compact_sizing_trace_summary(build_sizing_trace_audit(hours=24))
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def _safe_thesis_diagnostic() -> dict:
+    try:
+        from aletheia.analytics.thesis_lineage import (
+            build_thesis_lineage_audit,
+            compact_thesis_lineage_summary,
+        )
+
+        return compact_thesis_lineage_summary(build_thesis_lineage_audit(days=7))
     except Exception as exc:
         return {"available": False, "reason": str(exc)}
 

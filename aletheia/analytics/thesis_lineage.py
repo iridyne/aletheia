@@ -194,6 +194,50 @@ def filter_thesis_lineage_records(
     return records[: max(1, int(limit or 50))]
 
 
+def compact_thesis_lineage_summary(report: dict) -> dict:
+    """Small doctor-safe summary without full lineage records."""
+    summary = report.get("summary") or {}
+    completeness = report.get("data_completeness") or {}
+    missing = completeness.get("missing_counts") or {}
+    rates = completeness.get("missing_rates") or {}
+    raw = report.get("raw_table_completeness") or {}
+    return {
+        "available": not bool(report.get("schema_errors")),
+        "window_days": (report.get("window") or {}).get("days"),
+        "total_thesis_count": summary.get("total_thesis_count", 0),
+        "traded_count": summary.get("traded_count", 0),
+        "missed_alpha_count": summary.get("missed_alpha_count", 0),
+        "failed_traded_thesis_count": summary.get("failed_traded_thesis_count", 0),
+        "poor_expression_count": summary.get("poor_expression_count", 0),
+        "chain_counts": completeness.get("chain_counts") or {},
+        "missing_counts": {
+            "missing_decision_action": missing.get("missing_decision_action", 0),
+            "missing_decision_reasoning": missing.get("missing_decision_reasoning", 0),
+            "missing_decision_meta_on_proposed_records": missing.get("missing_decision_meta_on_proposed_records", 0),
+            "non_traded_missing_shadow_outcome": missing.get("non_traded_missing_shadow_outcome", 0),
+            "non_traded_missing_forward_return": missing.get("non_traded_missing_forward_return", 0),
+            "traded_missing_position_id": missing.get("traded_missing_position_id", 0),
+            "traded_missing_actual_pnl_pct": missing.get("traded_missing_actual_pnl_pct", 0),
+        },
+        "missing_rates": {
+            "missing_decision_action": rates.get("missing_decision_action"),
+            "non_traded_missing_shadow_outcome": rates.get("non_traded_missing_shadow_outcome"),
+            "non_traded_missing_forward_return": rates.get("non_traded_missing_forward_return"),
+        },
+        "raw_missing": {
+            "pi_decisions_missing_opportunity_id": (raw.get("pi_decisions") or {}).get("missing_opportunity_id"),
+            "pi_decisions_missing_signal_source": (raw.get("pi_decisions") or {}).get("missing_signal_source"),
+            "trade_proposals_missing_opportunity_id": (raw.get("trade_proposals") or {}).get("missing_opportunity_id"),
+            "trade_proposals_missing_decision_meta": (raw.get("trade_proposals") or {}).get("missing_decision_meta_in_agent_rationale"),
+            "shadow_trades_missing_pnl_pct": (raw.get("shadow_trades") or {}).get("missing_pnl_pct"),
+            "forward_outcomes_missing_forward_return_pct": (raw.get("universe_forward_outcomes") or {}).get("missing_forward_return_pct"),
+        },
+        "main_finding": report.get("main_finding"),
+        "next_action": report.get("next_action"),
+        "schema_errors": report.get("schema_errors") or [],
+    }
+
+
 def _market_roots(db, cutoff: str) -> list[dict]:
     rows = db.execute(
         "SELECT * FROM opportunities WHERE datetime(created_at) >= datetime(?) "

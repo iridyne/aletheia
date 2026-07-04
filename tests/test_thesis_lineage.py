@@ -291,7 +291,7 @@ def test_detect_poor_expression_against_shadow_batch_average():
 
 
 def test_audit_reports_v1_1_data_completeness_gaps():
-    from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit, compact_thesis_lineage_summary
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -328,6 +328,10 @@ def test_audit_reports_v1_1_data_completeness_gaps():
     assert raw["pi_decisions"]["missing_opportunity_id"] == 1
     assert raw["pi_decisions"]["missing_signal_source"] == 1
     assert raw["trade_proposals"]["missing_decision_meta_in_agent_rationale"] == 1
+    compact = compact_thesis_lineage_summary(report)
+    assert "records" not in compact
+    assert compact["missing_counts"]["missing_decision_action"] == 2
+    assert compact["raw_missing"]["pi_decisions_missing_opportunity_id"] == 1
 
 
 def test_resolve_serenity_thesis_via_signal_source():

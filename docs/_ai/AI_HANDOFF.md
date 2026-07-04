@@ -44,6 +44,8 @@ return，先修 provenance，不做 v2。
 `raw_table_completeness`，CLI 人类输出里看 `Data completeness`。这些统计只读现有记录，
 不调用 LLM、不写表、不改交易。`aletheia thesis snapshot --days 7` 会把同一份 audit
 JSON 写到 `data/diagnostics/`，用于观察窗口留本机快照；不要提交这些运行快照。
+`doctor --deep` 的 trading diagnostics 也会带 `thesis` compact summary，方便日常入口直接
+看到断链/缺字段概况。
 
 验证：
 - thesis lineage tests：11 passed。

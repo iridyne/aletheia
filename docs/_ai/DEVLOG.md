@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-07-04 — Thesis Lineage 接入 doctor deep 观察
+
+### 触发
+V1.1 观察窗口的日常入口是 `doctor --deep`；Thesis Lineage 只在单独 CLI 里容易被漏看。
+
+### 交付
+- `doctor --deep` 的 trading diagnostics 增加 `thesis` compact summary。
+- summary 只包含总数、缺字段计数、raw table 缺口、main_finding / next_action，不带全量 records。
+- `thesis_lineage.compact_thesis_lineage_summary()` 供 doctor 复用。
+
+### 边界
+只改只读诊断输出和测试；不改交易行为、不加 LLM、不加 UI、不建表、不触 risk/execution/live。
+
+---
+
 ## 2026-07-04 — Thesis Lineage V1.1 snapshot 命令
 
 ### 触发

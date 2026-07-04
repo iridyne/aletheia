@@ -59,7 +59,8 @@ doctor / gateway logs 的日志尾部输出必须走脱敏读取，不能把 tok
 原样展示给人或 AI。
 
 **交易诊断入口（2026-07-04）**:`uv run aletheia doctor --deep` 现在是交易问题的
-第一诊断入口，会用 compact summary 指向 Alpha / Trade Funnel / Sizing 哪一块最值得看。
+第一诊断入口，会用 compact summary 指向 Alpha / Trade Funnel / Sizing / Thesis Lineage
+哪一块最值得看。
 详细报告走只读 standalone 命令：`uv run aletheia funnel audit --hours 24` 和
 `uv run aletheia sizing trace --hours 24`。Thesis 样本级复盘走
 `uv run aletheia thesis audit --days 7` 和 `uv run aletheia thesis records --days 7 --json`；

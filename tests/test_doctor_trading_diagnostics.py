@@ -19,6 +19,10 @@ def test_default_doctor_json_does_not_include_trading_diagnostics(monkeypatch):
         "aletheia.analytics.sizing_trace.build_sizing_trace_audit",
         fail_if_called,
     )
+    monkeypatch.setattr(
+        "aletheia.analytics.thesis_lineage.build_thesis_lineage_audit",
+        fail_if_called,
+    )
 
     result = CliRunner().invoke(app, ["doctor", "--json"])
 
@@ -37,10 +41,12 @@ def test_doctor_json_deep_includes_compact_trading_diagnostics():
     assert result.exit_code in (0, 1)
     payload = json.loads(result.output)
     trading = payload["diagnostics"]["trading"]
-    assert set(trading) == {"alpha", "funnel", "sizing"}
+    assert set(trading) == {"alpha", "funnel", "sizing", "thesis"}
     assert "main_bottleneck" in trading["alpha"]
     assert "main_choke_point" in trading["funnel"]
     assert "main_sizing_bottleneck" in trading["sizing"]
+    assert "missing_counts" in trading["thesis"]
+    assert "raw_missing" in trading["thesis"]
 
 
 def test_doctor_embeds_audit_failures_as_unavailable(monkeypatch):
@@ -83,6 +89,7 @@ def test_trading_diagnostics_do_not_create_doctor_blockers(monkeypatch):
 
     assert report.blockers == []
     assert bundle["trading"]["funnel"]["main_choke_point"]["stage"] == "risk_engine"
+    assert "thesis" in bundle["trading"]
 
 
 def test_doctor_fix_does_not_mutate_trading_config(monkeypatch):
