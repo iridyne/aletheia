@@ -181,6 +181,50 @@ def test_doctor_orderbook_ok_when_rows_are_fresh(tmp_path, monkeypatch):
     assert "depth10=$23,000" in checks["data.orderbook"].detail
 
 
+def test_doctor_prediction_markets_disabled_is_informational(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_prediction_markets(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.prediction_markets"].severity == "info"
+    assert "disabled" in checks["data.prediction_markets"].detail
+
+
+def test_doctor_prediction_markets_warns_when_enabled_data_is_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.market_data.prediction_enabled = True
+    save_config(cfg)
+
+    stale = _iso_ago(120)
+    db = get_db()
+    db.execute(
+        "INSERT INTO prediction_markets "
+        "(id, source, external_market_id, question, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("pm-doctor-1", "polymarket", "ext-1", "Will BTC close higher this week?", stale),
+    )
+    db.execute(
+        "INSERT INTO prediction_market_claims "
+        "(id, market_id, claim_text, created_at) VALUES (?, ?, ?, ?)",
+        ("pc-doctor-1", "pm-doctor-1", "Stale probability momentum", stale),
+    )
+    db.commit()
+    report = dx.Report(generated_at="t")
+
+    dx._probe_prediction_markets(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.prediction_markets"].severity == "warn"
+    assert "newest stored signal" in checks["data.prediction_markets"].detail
+    assert "stale data is ignored" in checks["data.prediction_markets"].fix_hint
+
+
 def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     (tmp_path / "logs" / "errors.log").write_text(

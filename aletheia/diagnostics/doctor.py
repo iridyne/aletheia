@@ -899,6 +899,66 @@ def _probe_coinalyze(report: Report) -> None:
         report.add("data.coinalyze", "info", f"could not read Coinalyze state: {e}")
 
 
+def _probe_prediction_markets(report: Report) -> None:
+    """Expose whether prediction-market data is enabled and fresh enough to use."""
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.storage.sqlite import get_db
+
+        cfg = load_config()
+        enabled = bool(getattr(cfg.market_data, "prediction_enabled", False))
+        db = get_db()
+        market_row = db.execute(
+            "SELECT question, updated_at FROM prediction_markets "
+            "ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        claim_row = db.execute(
+            "SELECT claim_text, created_at FROM prediction_market_claims "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception as e:
+        report.add("data.prediction_markets", "info", f"could not read prediction market state: {e}")
+        return
+
+    market_age = _age_minutes(market_row["updated_at"]) if market_row else None
+    claim_age = _age_minutes(claim_row["created_at"]) if claim_row else None
+    newest_age = min(age for age in (market_age, claim_age) if age is not None) if (
+        market_age is not None or claim_age is not None
+    ) else None
+    newest_detail = _fmt_age(newest_age)
+
+    if not enabled:
+        report.add(
+            "data.prediction_markets",
+            "info",
+            f"prediction markets disabled in settings; newest stored signal {newest_detail}",
+        )
+        return
+
+    if not market_row and not claim_row:
+        report.add(
+            "data.prediction_markets",
+            "warn",
+            "prediction markets enabled but no rows yet",
+            "wait for prediction_observer or trigger a manual prediction refresh",
+        )
+        return
+
+    sev = "warn" if newest_age is None or newest_age > 90 else "ok"
+    detail = f"prediction markets enabled; newest stored signal {newest_detail}"
+    if market_row:
+        detail += f"; latest market={market_row['question'][:80]}"
+    if claim_row:
+        detail += f"; latest claim={claim_row['claim_text'][:80]}"
+    report.add(
+        "data.prediction_markets",
+        sev,
+        detail,
+        "prediction_observer runs every 30m; stale data is ignored by agent context"
+        if sev == "warn" else None,
+    )
+
+
 def _probe_data_quality(report: Report) -> None:
     """Check data provenance: are prices coming from fallback sources?"""
     try:
@@ -2220,6 +2280,7 @@ def build_report() -> Report:
         _probe_orderbook,
         _probe_macro_signals,
         _probe_coinalyze,
+        _probe_prediction_markets,
         _probe_serenity_pipeline,
         _probe_volume_ranking,
         _probe_data_quality,
