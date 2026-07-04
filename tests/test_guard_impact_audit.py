@@ -55,6 +55,13 @@ def _insert_member(db: sqlite3.Connection, *, member_id: str = "member-1", symbo
     )
 
 
+def _expire_member(db: sqlite3.Connection, member_id: str = "member-1") -> None:
+    db.execute(
+        "UPDATE universe_members SET expires_at = datetime('now','-1 hour') WHERE id = ?",
+        (member_id,),
+    )
+
+
 def _insert_opportunity(
     db: sqlite3.Connection,
     *,
@@ -207,6 +214,24 @@ def test_guard_impact_negative_blocked_outcome_is_protective(tmp_path):
 
     assert report["blocked_candidates"][0]["verdict"] == "protective"
     assert report["verdict"] == "protective"
+
+
+def test_guard_impact_excludes_local_pre_guard_skips(tmp_path):
+    from aletheia.storage.sqlite import get_db
+    from aletheia.analytics.guard_impact import build_guard_impact_audit
+
+    _write_guard(tmp_path)
+    db = get_db()
+    _insert_member(db)
+    _expire_member(db)
+    _insert_opportunity(db)
+
+    report = build_guard_impact_audit(hours=24)
+
+    assert report["candidate_flow"]["recent_open_opportunities"] == 1
+    assert report["candidate_flow"]["pre_guard_skipped"] == {"ttl_expired": 1}
+    assert report["candidate_flow"]["guard_blocked_candidates"] == 0
+    assert report["blocked_candidates"] == []
 
 
 def test_guard_impact_cli_outputs_human_and_json(tmp_path):

@@ -41,11 +41,17 @@ def build_guard_impact_audit(hours: int = 24) -> dict[str, Any]:
     universe_members = _universe_members_by_id(db, [o.get("universe_member_id") for o in opportunities])
 
     blocked: list[dict[str, Any]] = []
+    pre_guard_skipped: Counter[str] = Counter()
     for opp in opportunities:
         direction = _direction_from_bias(opp.get("direction_bias"))
         if not direction:
+            pre_guard_skipped["neutral_bias"] += 1
             continue
         member = universe_members.get(opp.get("universe_member_id"))
+        pre_guard_skip = _pre_guard_skip_reason(opp, member)
+        if pre_guard_skip:
+            pre_guard_skipped[pre_guard_skip] += 1
+            continue
         context = _guard_context(opp, member, direction)
         evaluation = evaluate_guards(context, scope="paper_entry", guards=active_guards)
         hard_hits = [h for h in evaluation.hits if h.block_candidate]
@@ -80,6 +86,7 @@ def build_guard_impact_audit(hours: int = 24) -> dict[str, Any]:
         },
         "candidate_flow": {
             "recent_open_opportunities": len(opportunities),
+            "pre_guard_skipped": dict(pre_guard_skipped),
             "guard_blocked_candidates": len(blocked),
             "by_scanner_family": _aggregate_candidates(blocked, "scanner_family"),
             "by_direction": _aggregate_candidates(blocked, "direction"),
@@ -90,6 +97,8 @@ def build_guard_impact_audit(hours: int = 24) -> dict[str, Any]:
         "verdict": _overall_verdict(blocked, active_guards),
         "notes": [
             "Read-only snapshot: no guards were modified and no candidates were submitted.",
+            "Candidate set excludes local pre-guard skips such as expired universe members or execution_eligible=False.",
+            "Exchange/demo unsupported symbols are not filtered here because this audit intentionally avoids exchange calls.",
             "Verdict uses existing shadow/forward outcomes only; missing outcomes stay insufficient_data.",
         ],
     }
@@ -114,6 +123,7 @@ def render_guard_impact_audit(report: dict[str, Any]) -> str:
         "",
         "Candidate flow:",
         f"  recent_open_opportunities: {flow.get('recent_open_opportunities', 0)}",
+        f"  pre_guard_skipped: {_fmt_counts(flow.get('pre_guard_skipped'))}",
         f"  guard_blocked_candidates: {flow.get('guard_blocked_candidates', 0)}",
         f"  by_scanner_family: {_fmt_counts(flow.get('by_scanner_family'))}",
         f"  by_direction: {_fmt_counts(flow.get('by_direction'))}",
@@ -192,6 +202,21 @@ def _guard_context(opp: dict[str, Any], member: dict[str, Any] | None, direction
         "paper_expectancy": None,
         "backtest_expectancy": None,
     }
+
+
+def _pre_guard_skip_reason(opp: dict[str, Any], member: dict[str, Any] | None) -> str | None:
+    asset_class = opp.get("asset_class") or "crypto"
+    if asset_class != "crypto":
+        return "non_crypto_asset"
+    if not _truthy(opp.get("execution_eligible"), default=True):
+        return "execution_eligible_false"
+    if member:
+        if not _truthy(member.get("execution_eligible"), default=True):
+            return "universe_not_eligible"
+        expires_at = member.get("expires_at")
+        if expires_at and _is_past(expires_at):
+            return "ttl_expired"
+    return None
 
 
 def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str, Any]:
@@ -360,6 +385,29 @@ def _direction_from_bias(raw: Any) -> str | None:
     if bias in {"short", "bearish"}:
         return "short"
     return None
+
+
+def _truthy(value: Any, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
+
+
+def _is_past(raw: Any) -> bool:
+    try:
+        text = str(raw).replace("Z", "+00:00")
+        ts = datetime.fromisoformat(text)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts < datetime.now(timezone.utc)
+    except (TypeError, ValueError):
+        return False
 
 
 def _direction_adjusted(value: float | None, direction: str) -> float | None:
