@@ -87,6 +87,9 @@ conformance matrix：**493 claims / 485 implemented / 98%**。剩 8 个 xfail �
 
 ## 3. Ledger 陈旧项（应标 done / 已确认落地但文档未收口）
 
+> **2026-07-04 收口完成**：下列陈旧项已在 `frozen_optimization_backlog.md`（17 条加 `[完成 hash]` 前缀）
+> 和 `round2_week1_decision_chain_fixes.md`（6 个 Fix 全标完成）中就地加完成标记。
+>
 > 交叉扫描 `docs/issues/` + `docs/plans/` 发现下列已落地但文档仍标 OPEN/partial。**建议在各自文件就地标 done/archive，遵循 06-30 版 §5 收口纪律**。
 
 | 文件 | 条目 | 实际 | 证据 |
@@ -117,4 +120,4 @@ conformance matrix：**493 claims / 485 implemented / 98%**。剩 8 个 xfail �
 
 1. **让 Phase 2A 管道跑起来攒干净窗**（owner 已选此路）——用 `aletheia doctor` 观察 ROADMAP Phase 2A 观察门：ruleset 策略有没有产出 Path-A signal_pending？带 ruleset 的 Path-B 候选是否被 `ruleset_entry_not_met` 而非方向运气挡下？这是判断"要不要继续堆 phase"的唯一诚实依据（对应 Round 1 干净窗 PF 0.06 的教训）。
 2. **修 2A+.8 假 DONE**（0.5 天）——不是新功能，是**堵一个会误导未来判断的假绿**：short scanner 现在是死码 + 假 GREEN spec，会让人以为 bear 市能产出做空信号（实际不能）。修完顺带解锁 2A+.10 端到端。
-3. **`frozen_optimization_backlog.md` 收口扫描**（半天）——该文件零 done 标记、状态全失真，是下一个"还剩什么"误导源。
+3. ~~**`frozen_optimization_backlog.md` 收口扫描**（半天）~~  ✅ 已完成（2026-07-04，17 条加 `[完成 hash]`）。

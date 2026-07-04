@@ -7,7 +7,21 @@
 
 ## Last Updated
 
-2026-07-03 (全项目 SDD 对齐第一批进行中)
+2026-07-04 (文档收口 + 环境修复)
+
+---
+
+## Recent Change (文档全量收口 — 2026-07-04)
+
+`frozen_optimization_backlog.md` 和 `round2_week1_decision_chain_fixes.md` 自创建以来从未加过完成标记，
+状态严重失真。本次一次性收口：
+
+- `frozen_optimization_backlog.md`：17 条已完成项加 `[完成 hash]` 前缀（A1-A6/A8-A13/B1/B2/B4/D14/D21）
+- `round2_week1_decision_chain_fixes.md`：6 个核心 Fix 全标完成（L-Bug-A/A'/B/C/D + S-Bug-C）
+- `REMAINING_WORK_2026-07-01.md`：§3 标已收口，§5.3 标已完成
+- 环境修复：hermes-agent 移除 + PATH 清理；`AGENTS.md` + `DEV_SETUP.md` 加 `uv run` 铁律防重复踩坑
+
+未完成确认仍 OPEN：A7/A14/C1/C2/D 系列大部分/E 系列。
 
 ---
 

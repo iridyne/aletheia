@@ -16,7 +16,11 @@
 > 2. 补 2 个 RED claim:LP-S05(opportunity_id 总根因)/ LP-S06(guard 升级死路)
 > 3. doctor 新增只读探针 `loop.retrieval_pool` + `loop.guard_promotion`(`diagnostics/doctor.py`)
 >    — 实测当前 review:case = 118.2:1、105 candidate / 0 promoted,两条都正确报 warn
-> 下方所有 Fix 仍是 **Round 2 解冻当天** 才能动的代码(全部落在冻结路径)。
+> ~~下方所有 Fix 仍是 **Round 2 解冻当天** 才能动的代码(全部落在冻结路径)。~~
+>
+> **✅ 2026-07-04 收口:下方 6 个核心修复已全部完成。**
+> 冻结已于 2026-06-27 解除,批量修复于同日落地(`b9ad9574`),L-Bug-D 于 `bd91eda8` 落地。
+> 仅 C 类系统性重构(§末尾)仍 deferred。
 
 ---
 
@@ -44,7 +48,7 @@
 
 ## 4 个核心修复
 
-### Fix L-Bug-A — Layer3 lessons 过滤值对齐 DB 实际 item_type
+### Fix L-Bug-A — Layer3 lessons 过滤值对齐 DB 实际 item_type ✅ 完成 (`b9ad9574`)
 
 **位置**:`aletheia/agent_shell/trading_context.py:379` (函数 `_build_layer3_wisdom()`)
 
@@ -74,7 +78,7 @@ items = list_knowledge_items(item_type='trade_case_study', limit=20)
 
 ---
 
-### Fix L-Bug-A' — Layer3 guards 查询加 item_type 参数
+### Fix L-Bug-A' — Layer3 guards 查询加 item_type 参数 ✅ 完成 (`b9ad9574`)
 
 **位置**:`aletheia/agent_shell/trading_context.py:398`(同一函数 `_build_layer3_wisdom`)
 
@@ -101,7 +105,7 @@ items = list_knowledge_items(item_type='guard_candidate', limit=30)
 
 ---
 
-### Fix L-Bug-B — ps_lessons 接入决策链
+### Fix L-Bug-B — ps_lessons 接入决策链 ✅ 完成 (`b9ad9574`)
 
 **位置**:`aletheia/agent_shell/trading_context.py` + `aletheia/agent_shell/trading_decision.py`(都冻结)
 
@@ -137,7 +141,7 @@ items = list_knowledge_items(item_type='guard_candidate', limit=30)
 
 ---
 
-### Fix S-Bug-C — strategy_records 暴露 win_rate / total_pnl / trade_count
+### Fix S-Bug-C — strategy_records 暴露 win_rate / total_pnl / trade_count ✅ 完成 (`b9ad9574`)
 
 **位置**:`aletheia/agent_shell/trading_context.py`(冻结)
 
@@ -181,7 +185,7 @@ for s in strategies:
 > **消费侧断路**(数据进不了 PI 视野);下面解决的是**归因链源头被切断**——
 > 数据即便进得来也是 unknown 噪音。这两条比上面 4 个优先级更高:它们是总根因。
 
-### Fix L-Bug-C — 透传真实 opportunity_id(总根因 R0,单一最高杠杆)
+### Fix L-Bug-C — 透传真实 opportunity_id(总根因 R0,单一最高杠杆) ✅ 完成 (`b9ad9574`)
 
 **位置**:`aletheia/agent_shell/trading_decision.py:250-251`(`create_paper_proposal(...)` 调用,冻结)
 
@@ -219,7 +223,7 @@ create_paper_proposal(
 
 ---
 
-### Fix L-Bug-D — guard 升级链可达性(三重死锁 → 0 升级)
+### Fix L-Bug-D — guard 升级链可达性(三重死锁 → 0 升级) ✅ 完成 (`bd91eda8`)
 
 **位置**:`aletheia/knowledge/guards.py`(本身不在冻结列表,但 `load_trading_guards`
 被冻结的 `paper_trader_ranker` 调用,故归 Round 2 统一处理)
