@@ -323,6 +323,40 @@ def test_market_context_timeframes_cover_all_three_periods():
 
 
 # ---------------------------------------------------------------------------
+# DU-S12 — official RSS news feeds are registered and consumed
+# ---------------------------------------------------------------------------
+
+@spec_claim(
+    SpecClaim(
+        "DU-S12", _CONTRACT, "§official RSS feeds", "L2a",
+        "Default news feeds include SEC/CFTC/Ethereum Foundation official RSS "
+        "sources, and data_utilization.md §3 registers them as NewsCollector -> "
+        "news_items -> market_observer/research_worker consumers.",
+    ),
+)
+def test_official_news_feeds_registered_and_consumed():
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    feed_sources = {feed.source for feed in cfg.news.feeds}
+    for source in ("sec-press", "cftc-press", "ethereum-foundation"):
+        assert source in feed_sources, (
+            f"default news feeds must include official source {source!r} (DU-S12)"
+        )
+
+    doc = (_ROOT / "docs" / "design" / "data_utilization.md").read_text(encoding="utf-8")
+    assert "官方公告/监管 RSS" in doc, (
+        "data_utilization.md §3 must register official RSS feeds (DU-S12)"
+    )
+    assert "NewsCollector" in doc and "news_items" in doc, (
+        "official RSS registration must declare collector and storage (DU-S12)"
+    )
+    assert "market_observer" in doc and "research_worker" in doc, (
+        "official RSS registration must declare consumers (DU-S12)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # DU-S08 / DU-S09 — Serenity research pipeline data injection
 # ---------------------------------------------------------------------------
 
