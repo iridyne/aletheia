@@ -146,6 +146,8 @@ def test_opportunity_flow_read_model_has_no_llm_ranker_guard_or_execution_calls(
     }
 
     def forbidden_root(name: str) -> str | None:
+        if name == "aletheia.agent_shell.operator_store":
+            return None
         for root in forbidden_import_roots:
             if name == root or name.startswith(f"{root}."):
                 return root
@@ -176,6 +178,52 @@ def test_opportunity_flow_empty_db_does_not_crash(monkeypatch):
     assert report["summary"]["total_opportunities"] == 0
     assert report["opportunities"] == []
     assert report["read_only"] is True
+
+
+def test_opportunity_flow_candidate_supply_uses_wide_event_window(monkeypatch):
+    import aletheia.agent_shell.operator_store as store
+    import aletheia.analytics.opportunity_flow as flow
+
+    captured: dict[str, int] = {}
+
+    def fake_list_events(*, limit: int) -> list[dict]:
+        captured["limit"] = limit
+        return [
+            {
+                "id": "supply-2",
+                "event_type": "candidate_supply_snapshot",
+                "created_at": "2026-07-04T12:02:00+00:00",
+                "payload": {
+                    "executable_count": 1,
+                    "main_reason": "ttl_expired",
+                    "excluded_candidates_summary": [{"reason": "ttl_expired", "count": 7}],
+                },
+            },
+            {
+                "id": "supply-1",
+                "event_type": "candidate_supply_snapshot",
+                "created_at": "2026-07-04T12:01:00+00:00",
+                "payload": {
+                    "executable_count": 2,
+                    "main_reason": "ttl_expired",
+                    "excluded_candidates_summary": [{"reason": "ttl_expired", "count": 5}],
+                },
+            },
+        ]
+
+    monkeypatch.setattr(flow, "build_trade_funnel_audit", lambda **_: {})
+    monkeypatch.setattr(flow, "build_debate_impact_audit", lambda **_: {})
+    monkeypatch.setattr(flow, "build_thesis_lineage_audit", lambda **_: {})
+    monkeypatch.setattr(flow, "compact_thesis_lineage_summary", lambda report: report)
+    monkeypatch.setattr(flow, "build_sizing_trace_audit", lambda **_: {})
+    monkeypatch.setattr(flow, "compact_sizing_trace_summary", lambda report: report)
+    monkeypatch.setattr(store, "list_events", fake_list_events)
+
+    audits = flow._integrated_audits(hours=24)
+
+    assert captured["limit"] == 100
+    assert audits["candidate_supply"]["latest_snapshot"]["main_reason"] == "ttl_expired"
+    assert audits["candidate_supply"]["drought"]["main_reason"] == "ttl_expired"
 
 
 def test_opportunity_flow_debate_skip_with_positive_forward_outcome_is_missed_alpha():

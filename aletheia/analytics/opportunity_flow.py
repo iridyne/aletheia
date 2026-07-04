@@ -21,6 +21,7 @@ from aletheia.analytics.trade_funnel import build_trade_funnel_audit
 
 _FORWARD_HORIZONS = ("15m", "1h", "4h", "24h")
 _TRADE_ACTIONS = {"trade", "scale_in", "flip"}
+_CANDIDATE_SUPPLY_EVENT_LIMIT = 100
 
 
 def build_opportunity_flow_ledger(
@@ -293,7 +294,7 @@ def _integrated_audits(hours: int) -> dict[str, Any]:
             latest_candidate_supply_snapshot,
         )
 
-        events = list_events(limit=20)
+        events = list_events(limit=_CANDIDATE_SUPPLY_EVENT_LIMIT)
         audits["candidate_supply"] = {
             "latest_snapshot": latest_candidate_supply_snapshot(events),
             "drought": evaluate_candidate_supply_drought(events),
