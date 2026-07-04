@@ -104,6 +104,40 @@ def _print_deep_diagnostics(bundle: dict) -> None:
         for line in lines[-8:]:
             typer.echo(f"    {line}")
 
+    trading = bundle.get("trading") or {}
+    if trading:
+        typer.echo("\nTrading diagnostics")
+        typer.echo("-" * 64)
+        alpha = trading.get("alpha") or {}
+        funnel = trading.get("funnel") or {}
+        sizing = trading.get("sizing") or {}
+
+        alpha_b = alpha.get("main_bottleneck") or {}
+        typer.echo("Alpha:")
+        if alpha.get("available") is False:
+            typer.echo(f"  unavailable: {alpha.get('reason')}")
+        else:
+            typer.echo(f"  bottleneck: {alpha_b.get('layer', 'unknown')}")
+            typer.echo(f"  summary: {alpha_b.get('summary', 'n/a')}")
+
+        funnel_b = funnel.get("main_choke_point") or {}
+        typer.echo("\nTrade funnel:")
+        if funnel.get("available") is False:
+            typer.echo(f"  unavailable: {funnel.get('reason')}")
+        else:
+            typer.echo(f"  main choke point: {funnel_b.get('stage', 'unknown')}")
+            typer.echo(f"  summary: {funnel_b.get('summary', 'n/a')}")
+            typer.echo(f"  next action: {funnel_b.get('next_action', 'n/a')}")
+
+        sizing_b = sizing.get("main_sizing_bottleneck") or {}
+        typer.echo("\nSizing:")
+        if sizing.get("available") is False:
+            typer.echo(f"  unavailable: {sizing.get('reason')}")
+        else:
+            typer.echo(f"  main bottleneck: {sizing_b.get('reason', 'unknown')}")
+            typer.echo(f"  summary: {sizing_b.get('summary', 'n/a')}")
+            typer.echo(f"  next action: {sizing_b.get('next_action', 'n/a')}")
+
 
 def _write_bundle(path: Path, report, diagnostics: dict, fix_actions=None) -> Path:
     import json

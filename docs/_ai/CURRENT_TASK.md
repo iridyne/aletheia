@@ -58,6 +58,12 @@ owner 决策边界经验。
 doctor / gateway logs 的日志尾部输出必须走脱敏读取，不能把 token/secret/authorization
 原样展示给人或 AI。
 
+**交易诊断入口（2026-07-04）**:`uv run aletheia doctor --deep` 现在是交易问题的
+第一诊断入口，会用 compact summary 指向 Alpha / Trade Funnel / Sizing 哪一块最值得看。
+详细报告走只读 standalone 命令：`uv run aletheia funnel audit --hours 24` 和
+`uv run aletheia sizing trace --hours 24`。这些 audit 只做诊断，不自动调仓位、风控、
+Kelly、杠杆或 persona。
+
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需
 人工审核后才可启用；后续不要把 draft skill 自动接入 risk/execution/live/credential/order

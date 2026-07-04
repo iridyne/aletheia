@@ -104,8 +104,64 @@ def build_deep_diagnostics(report: Report | None = None, *, tail_lines: int = 20
         "logs": _diagnostic_logs(tail_lines=tail_lines),
         "recent_failures": _recent_failures(),
         "recent_audit": _recent_audit_events(),
+        "trading": _trading_diagnostics(),
     }
     return bundle
+
+
+def _trading_diagnostics() -> dict:
+    """Compact read-only trading diagnostics for doctor --deep.
+
+    Trading quality is intentionally separate from infrastructure health. These
+    diagnostics never add blockers and never trigger auto-fixes.
+    """
+    return {
+        "alpha": _safe_alpha_diagnostic(),
+        "funnel": _safe_funnel_diagnostic(),
+        "sizing": _safe_sizing_diagnostic(),
+    }
+
+
+def _safe_alpha_diagnostic() -> dict:
+    try:
+        from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+
+        report = build_alpha_attribution_audit(days=30)
+        verdicts = report.get("verdicts") or {}
+        return {
+            "available": True,
+            "main_bottleneck": report.get("main_bottleneck"),
+            "verdicts": {
+                key: value.get("verdict")
+                for key, value in verdicts.items()
+            },
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def _safe_funnel_diagnostic() -> dict:
+    try:
+        from aletheia.analytics.trade_funnel import (
+            build_trade_funnel_audit,
+            compact_trade_funnel_summary,
+        )
+
+        return compact_trade_funnel_summary(build_trade_funnel_audit(hours=24))
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+
+
+def _safe_sizing_diagnostic() -> dict:
+    try:
+        from aletheia.analytics.sizing_trace import (
+            build_sizing_trace_audit,
+            compact_sizing_trace_summary,
+        )
+
+        return compact_sizing_trace_summary(build_sizing_trace_audit(hours=24))
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
 
 
 def _log_hint_for_check(name: str) -> str:
