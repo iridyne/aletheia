@@ -91,6 +91,98 @@ def test_r0_direction_mismatch_does_not_misattribute(tmp_path, monkeypatch):
     assert decision.opportunity_id is None, "long opp must not attribute to a short decision"
 
 
+def test_ranker_candidate_context_backfills_opportunity_id():
+    """A PI pick from ranker_candidates must keep the source opportunity id."""
+    from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
+
+    ctx = {
+        "layer1": {"opportunities": []},
+        "layer2": {
+            "ranker_candidates": [
+                {
+                    "opportunity_id": "opp-ranker-1",
+                    "symbol": "UNI/USDT",
+                    "direction": "long",
+                    "scanner_family": "momentum",
+                    "strategy_id": "strat-ranker",
+                    "signal_source": "market_observer",
+                    "market_type": "usdt_futures",
+                }
+            ]
+        },
+        "layer3": {},
+    }
+    decision = TradingDecision(
+        action="trade", symbol="UNI/USDT", direction="long",
+        conviction=60, reasoning="ranker candidate looks best",
+    )
+
+    _attach_opportunity_context(decision, ctx)
+
+    assert decision.opportunity_id == "opp-ranker-1"
+    assert decision.scanner_family == "momentum"
+    assert decision.strategy_id == "strat-ranker"
+    assert decision.market_type == "usdt_futures"
+
+
+def test_close_decision_backfills_from_open_position_when_symbol_omitted():
+    """Close/reduce decisions judge an existing position and can inherit its chain."""
+    from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
+
+    ctx = {
+        "layer1": {
+            "positions": [
+                {
+                    "symbol": "NEAR/USDT",
+                    "direction": "short",
+                    "opportunity_id": "opp-near-short",
+                    "strategy_id": "strat-near",
+                    "trade_school": "short_term",
+                }
+            ],
+            "opportunities": [],
+        },
+        "layer2": {},
+        "layer3": {},
+    }
+    decision = TradingDecision(
+        action="close", symbol=None, direction=None, conviction=72,
+        reasoning="NEAR/USDT short is underwater and thesis failed",
+    )
+
+    _attach_opportunity_context(decision, ctx)
+
+    assert decision.symbol == "NEAR/USDT"
+    assert decision.direction == "short"
+    assert decision.opportunity_id == "opp-near-short"
+    assert decision.strategy_id == "strat-near"
+
+
+def test_close_decision_does_not_guess_ambiguous_open_position():
+    from aletheia.agent_shell.trading_decision import TradingDecision, _attach_opportunity_context
+
+    ctx = {
+        "layer1": {
+            "positions": [
+                {"symbol": "NEAR/USDT", "direction": "short", "opportunity_id": "opp-near"},
+                {"symbol": "SOL/USDT", "direction": "long", "opportunity_id": "opp-sol"},
+            ],
+            "opportunities": [],
+        },
+        "layer2": {},
+        "layer3": {},
+    }
+    decision = TradingDecision(
+        action="close", symbol=None, direction=None, conviction=70,
+        reasoning="Portfolio risk is high; close one position",
+    )
+
+    _attach_opportunity_context(decision, ctx)
+
+    assert decision.opportunity_id is None
+    assert decision.symbol is None
+
+
 def test_layer3_lessons_from_trade_case_study(tmp_path, monkeypatch):
     """L-Bug-A: Layer3 lessons must surface real trade_case_study items — the old dead
     filter ('lesson'/'accepted_lesson'/'trading_guard') matched 0 DB rows so lessons

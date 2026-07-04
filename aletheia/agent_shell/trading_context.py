@@ -78,6 +78,7 @@ def _build_layer1_snapshot() -> dict[str, Any]:
         open_pos = list_positions(status="open", limit=10)
         layer["positions"] = [
             {
+                "id": p.get("id"),
                 "symbol": p.get("symbol"),
                 "direction": p.get("direction"),
                 "quantity": p.get("quantity"),
@@ -85,6 +86,10 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "current_price": p.get("current_price"),
                 "unrealized_pnl": p.get("unrealized_pnl"),
                 "hold_hours": _hours_since(p.get("opened_at")),
+                "proposal_id": p.get("proposal_id"),
+                "opportunity_id": p.get("opportunity_id"),
+                "strategy_id": p.get("strategy_id"),
+                "trade_school": p.get("trade_school"),
                 # Futures telemetry for the leverage/margin context + near-liquidation alerts.
                 "leverage": p.get("leverage"),
                 "liquidation_price": p.get("liquidation_price"),
@@ -528,11 +533,15 @@ def _build_layer2_short_term() -> dict[str, Any]:
         candidates = build_paper_candidates(limit=30)
         ranker_candidates = [
             {
+                "opportunity_id": c.get("opportunity_id"),
+                "signal_source": "market_observer",
                 "symbol": c.get("symbol"),
                 "direction": c.get("direction"),
                 "trade_score": c.get("trade_score"),
                 "skip_reason": c.get("skip_reason"),
                 "scanner_family": c.get("scanner_family"),
+                "strategy_id": c.get("strategy_id") or c.get("linked_strategy_id"),
+                "market_type": c.get("market_type") or c.get("market"),
             }
             for c in candidates
         ]

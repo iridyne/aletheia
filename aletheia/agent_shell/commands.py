@@ -1550,6 +1550,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         # Phase 2 (Serenity Option A): which table opportunity_id resolves against
         # ('market_observer' → opportunities; 'serenity' → serenity_opportunities).
         "signal_source": decision.signal_source,
+        "bear_case": decision.bear_case,
+        "key_assumptions": decision.key_assumptions,
+        "supporting_signals": decision.supporting_signals,
+        "opposing_signals": decision.opposing_signals,
     }
 
     # trade / scale_in / flip all produce proposals

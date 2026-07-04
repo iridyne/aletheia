@@ -414,6 +414,8 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
         "proposal_id": None,
         "debate_ran": False,
         "opportunity_id": test_opp_id,
+        "bear_case": "breakout failure risk",
+        "key_assumptions": ["liquidity holds", "funding stays benign"],
     }
 
     record_decision(decision_result)
@@ -425,6 +427,8 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
         f"opportunity_id mismatch: expected {test_opp_id!r}, got {latest.get('opportunity_id')!r}. "
         "A13 fix: commands.py and reflection.py must wire opportunity_id through."
     )
+    assert latest.get("bear_case") == "breakout failure risk"
+    assert latest.get("key_assumptions") == '["liquidity holds", "funding stays benign"]'
 
 
 # ---------------------------------------------------------------------------

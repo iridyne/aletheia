@@ -115,6 +115,8 @@ def render_thesis_lineage_audit(report: dict) -> str:
     for key in (
         "missing_decision_action",
         "missing_decision_reasoning",
+        "mature_non_traded_missing_shadow_outcome",
+        "mature_non_traded_missing_forward_return",
         "missing_decision_meta_on_proposed_records",
         "non_traded_missing_shadow_outcome",
         "non_traded_missing_forward_return",
@@ -134,12 +136,24 @@ def render_thesis_lineage_audit(report: dict) -> str:
             ]
             if row.get("missing_signal_source") is not None:
                 important.append(f"missing_signal_source={row.get('missing_signal_source', 0)}")
+            if row.get("link_required_missing_opportunity_id") is not None:
+                important.append(
+                    f"link_required_missing_opp={row.get('link_required_missing_opportunity_id', 0)}"
+                )
+            if row.get("proposal_backfillable_missing_opportunity_id") is not None:
+                important.append(
+                    f"proposal_backfillable_missing_opp={row.get('proposal_backfillable_missing_opportunity_id', 0)}"
+                )
             if "missing_decision_meta_in_agent_rationale" in row:
                 important.append(f"missing_decision_meta={row.get('missing_decision_meta_in_agent_rationale', 0)}")
             if "missing_pnl_pct" in row:
                 important.append(f"missing_pnl_pct={row.get('missing_pnl_pct', 0)}")
+            if "stale_missing_pnl_pct" in row:
+                important.append(f"stale_missing_pnl_pct={row.get('stale_missing_pnl_pct', 0)}")
             if "missing_forward_return_pct" in row:
                 important.append(f"missing_forward_return_pct={row.get('missing_forward_return_pct', 0)}")
+            if "overdue_pending" in row:
+                important.append(f"overdue_pending={row.get('overdue_pending', 0)}")
             lines.append(f"    {table}: {', '.join(important)}")
     lines.extend([
         "",
@@ -213,6 +227,8 @@ def compact_thesis_lineage_summary(report: dict) -> dict:
         "missing_counts": {
             "missing_decision_action": missing.get("missing_decision_action", 0),
             "missing_decision_reasoning": missing.get("missing_decision_reasoning", 0),
+            "mature_non_traded_missing_shadow_outcome": missing.get("mature_non_traded_missing_shadow_outcome", 0),
+            "mature_non_traded_missing_forward_return": missing.get("mature_non_traded_missing_forward_return", 0),
             "missing_decision_meta_on_proposed_records": missing.get("missing_decision_meta_on_proposed_records", 0),
             "non_traded_missing_shadow_outcome": missing.get("non_traded_missing_shadow_outcome", 0),
             "non_traded_missing_forward_return": missing.get("non_traded_missing_forward_return", 0),
@@ -221,16 +237,22 @@ def compact_thesis_lineage_summary(report: dict) -> dict:
         },
         "missing_rates": {
             "missing_decision_action": rates.get("missing_decision_action"),
+            "mature_non_traded_missing_shadow_outcome": rates.get("mature_non_traded_missing_shadow_outcome"),
+            "mature_non_traded_missing_forward_return": rates.get("mature_non_traded_missing_forward_return"),
             "non_traded_missing_shadow_outcome": rates.get("non_traded_missing_shadow_outcome"),
             "non_traded_missing_forward_return": rates.get("non_traded_missing_forward_return"),
         },
         "raw_missing": {
             "pi_decisions_missing_opportunity_id": (raw.get("pi_decisions") or {}).get("missing_opportunity_id"),
+            "pi_decisions_link_required_missing_opportunity_id": (raw.get("pi_decisions") or {}).get("link_required_missing_opportunity_id"),
+            "pi_decisions_proposal_backfillable_missing_opportunity_id": (raw.get("pi_decisions") or {}).get("proposal_backfillable_missing_opportunity_id"),
             "pi_decisions_missing_signal_source": (raw.get("pi_decisions") or {}).get("missing_signal_source"),
             "trade_proposals_missing_opportunity_id": (raw.get("trade_proposals") or {}).get("missing_opportunity_id"),
             "trade_proposals_missing_decision_meta": (raw.get("trade_proposals") or {}).get("missing_decision_meta_in_agent_rationale"),
             "shadow_trades_missing_pnl_pct": (raw.get("shadow_trades") or {}).get("missing_pnl_pct"),
+            "shadow_trades_stale_missing_pnl_pct": (raw.get("shadow_trades") or {}).get("stale_missing_pnl_pct"),
             "forward_outcomes_missing_forward_return_pct": (raw.get("universe_forward_outcomes") or {}).get("missing_forward_return_pct"),
+            "forward_outcomes_overdue_pending": (raw.get("universe_forward_outcomes") or {}).get("overdue_pending"),
         },
         "main_finding": report.get("main_finding"),
         "next_action": report.get("next_action"),
@@ -299,6 +321,23 @@ def _build_context(db, market_roots: list[dict], serenity_roots: list[dict], cut
                 p = dict(row)
                 proposal_ids.add(p["id"])
                 ctx["proposals_by_id"][p["id"]] = p
+        if proposal_ids and _table_exists(db, "pi_decisions"):
+            for rows in _select_in(db, "SELECT * FROM pi_decisions WHERE proposal_id IN ({})", list(proposal_ids)):
+                for row in rows:
+                    d = dict(row)
+                    proposal = ctx["proposals_by_id"].get(d.get("proposal_id"))
+                    inferred_root = d.get("opportunity_id") or (proposal or {}).get("opportunity_id")
+                    if not inferred_root:
+                        continue
+                    source = d.get("signal_source") or _source_from_proposal(proposal)
+                    if not d.get("signal_source"):
+                        d["signal_source"] = source
+                        d["_signal_source_inferred_from"] = "proposal_trade_school"
+                    d["_lineage_root_id"] = inferred_root
+                    d["_opportunity_id_inferred_from"] = None if d.get("opportunity_id") else "proposal_id"
+                    key = (inferred_root, source)
+                    if _is_newer(d, ctx["decisions"].get(key), "created_at"):
+                        ctx["decisions"][key] = d
     if proposal_ids and _table_exists(db, "risk_decisions"):
         for rows in _select_in(db, "SELECT * FROM risk_decisions WHERE proposal_id IN ({})", list(proposal_ids)):
             for row in rows:
@@ -412,6 +451,8 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
         "decision_conviction": decision.get("conviction") if decision else None,
         "decision_reasoning": decision.get("reasoning") if decision else None,
         "decision_signal_source": decision.get("signal_source") if decision else None,
+        "decision_signal_source_inferred_from": decision.get("_signal_source_inferred_from") if decision else None,
+        "decision_opportunity_id_inferred_from": decision.get("_opportunity_id_inferred_from") if decision else None,
         "supporting_signals": parsed.get("supporting_signals"),
         "opposing_signals": parsed.get("opposing_signals"),
         "bear_case": (decision.get("bear_case") if decision else None) or parsed.get("bear_case"),
@@ -446,6 +487,12 @@ def _decision_for_root(root_id: str | None, root_type: str, ctx: dict) -> dict |
     return ctx["decisions"].get((root_id, source))
 
 
+def _source_from_proposal(proposal: dict | None) -> str:
+    if proposal and proposal.get("trade_school") == "serenity":
+        return "serenity"
+    return "market_observer"
+
+
 def _proposal_for_root(root_id: str | None, decision: dict | None, ctx: dict) -> dict | None:
     if decision and decision.get("proposal_id"):
         proposal = ctx["proposals_by_id"].get(decision["proposal_id"])
@@ -478,8 +525,8 @@ def _parse_agent_rationale(raw: str | None) -> dict:
         result["parse_warning"] = "decision_meta_json_invalid"
         return result
     result["decision_meta"] = meta
-    result["supporting_signals"] = _coerce_list(meta.get("supporting_signals"))
-    result["opposing_signals"] = _coerce_list(meta.get("opposing_signals"))
+    result["supporting_signals"] = _coerce_list(meta.get("supporting_signals") or meta.get("supporting"))
+    result["opposing_signals"] = _coerce_list(meta.get("opposing_signals") or meta.get("opposing"))
     result["bear_case"] = meta.get("bear_case")
     result["key_assumptions"] = _coerce_list(meta.get("key_assumptions"))
     return result
@@ -533,12 +580,16 @@ def _data_completeness(records: list[dict]) -> dict:
     records_with_decision = count_where(lambda r: bool(r.get("decision_action")))
     proposed_records = count_where(lambda r: bool(r.get("proposal_id")))
     non_traded_records = count_where(lambda r: not r.get("was_traded"))
+    mature_non_traded_records = count_where(
+        lambda r: not r.get("was_traded") and _older_than_hours(r.get("created_at"), 25)
+    )
     traded_records = count_where(lambda r: bool(r.get("was_traded")))
     counts = {
         "missing_root_id": missing("root_id"),
         "missing_root_source": missing("root_type"),
         "missing_universe_member_id": missing("universe_member_id"),
         "missing_observation_thesis": missing("observation_thesis"),
+        "unjudged_observation_count": missing("decision_action"),
         "missing_decision_action": missing("decision_action"),
         "missing_decision_reasoning": missing("decision_reasoning"),
         "linked_decision_missing_signal_source": count_where(
@@ -551,8 +602,22 @@ def _data_completeness(records: list[dict]) -> dict:
         "non_traded_missing_shadow_outcome": count_where(
             lambda r: not r.get("was_traded") and r.get("shadow_pnl_pct") is None
         ),
+        "mature_non_traded_missing_shadow_outcome": count_where(
+            lambda r: (
+                not r.get("was_traded")
+                and _older_than_hours(r.get("created_at"), 25)
+                and r.get("shadow_pnl_pct") is None
+            )
+        ),
         "non_traded_missing_forward_return": count_where(
             lambda r: not r.get("was_traded") and r.get("forward_return_pct") is None
+        ),
+        "mature_non_traded_missing_forward_return": count_where(
+            lambda r: (
+                not r.get("was_traded")
+                and _older_than_hours(r.get("created_at"), 25)
+                and r.get("forward_return_pct") is None
+            )
         ),
         "traded_missing_position_id": count_where(
             lambda r: bool(r.get("was_traded")) and not r.get("position_id")
@@ -565,7 +630,9 @@ def _data_completeness(records: list[dict]) -> dict:
         "missing_decision_meta_on_proposed_records": proposed_records,
         "linked_decision_missing_signal_source": records_with_decision,
         "non_traded_missing_shadow_outcome": non_traded_records,
+        "mature_non_traded_missing_shadow_outcome": mature_non_traded_records,
         "non_traded_missing_forward_return": non_traded_records,
+        "mature_non_traded_missing_forward_return": mature_non_traded_records,
         "traded_missing_position_id": traded_records,
         "traded_missing_actual_pnl_pct": traded_records,
     }
@@ -590,14 +657,43 @@ def _data_completeness(records: list[dict]) -> dict:
 def _raw_table_completeness(db, cutoff: str) -> dict:
     rows: dict[str, dict] = {}
     if _table_exists(db, "pi_decisions"):
+        link_required = (
+            "action IN ('trade','scale_in','flip','close','reduce') "
+            "OR proposal_id IS NOT NULL OR symbol IS NOT NULL OR direction IS NOT NULL"
+        )
+        global_no_target = (
+            "action IN ('skip','watch') AND symbol IS NULL AND direction IS NULL "
+            "AND proposal_id IS NULL AND (opportunity_id IS NULL OR opportunity_id = '')"
+        )
+        has_signal_source = "signal_source" in _table_columns(db, "pi_decisions")
         rows["pi_decisions"] = {
             "total": _count_rows(db, "pi_decisions", cutoff),
             "missing_opportunity_id": _count_rows(
                 db, "pi_decisions", cutoff, "(opportunity_id IS NULL OR opportunity_id = '')"
             ),
+            "global_no_target_count": _count_rows(db, "pi_decisions", cutoff, global_no_target),
+            "link_required_count": _count_rows(db, "pi_decisions", cutoff, link_required),
+            "link_required_missing_opportunity_id": _count_rows(
+                db,
+                "pi_decisions",
+                cutoff,
+                f"({link_required}) AND (opportunity_id IS NULL OR opportunity_id = '')",
+            ),
+            "proposal_backfillable_missing_opportunity_id": _count_pi_proposal_join_rows(
+                db,
+                cutoff,
+                "(pd.opportunity_id IS NULL OR pd.opportunity_id = '') "
+                "AND tp.opportunity_id IS NOT NULL AND tp.opportunity_id != ''",
+            ) if _table_exists(db, "trade_proposals") else 0,
             "missing_signal_source": _count_rows(
                 db, "pi_decisions", cutoff, "(signal_source IS NULL OR signal_source = '')"
-            ) if "signal_source" in _table_columns(db, "pi_decisions") else None,
+            ) if has_signal_source else None,
+            "link_required_missing_signal_source": _count_rows(
+                db,
+                "pi_decisions",
+                cutoff,
+                f"({link_required}) AND (signal_source IS NULL OR signal_source = '')",
+            ) if has_signal_source else None,
             "missing_reasoning": _count_rows(
                 db, "pi_decisions", cutoff, "(reasoning IS NULL OR reasoning = '')"
             ),
@@ -636,17 +732,37 @@ def _raw_table_completeness(db, cutoff: str) -> dict:
                 db, "shadow_trades", cutoff, "(opportunity_id IS NULL OR opportunity_id = '')"
             ),
             "missing_pnl_pct": _count_rows(db, "shadow_trades", cutoff, "pnl_pct IS NULL"),
+            "stale_missing_pnl_pct": _count_rows(
+                db,
+                "shadow_trades",
+                cutoff,
+                "pnl_pct IS NULL AND datetime(created_at) < datetime('now','-25 hours')",
+            ),
         }
     if _table_exists(db, "universe_forward_outcomes"):
         rows["universe_forward_outcomes"] = {
-            "total": _count_rows(db, "universe_forward_outcomes", cutoff),
-            "missing_member_id": _count_rows(
-                db, "universe_forward_outcomes", cutoff, "(member_id IS NULL OR member_id = '')"
+            "total": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff),
+            "missing_member_id": _count_rows_by_time(
+                db, "universe_forward_outcomes", "entry_ts", cutoff, "(member_id IS NULL OR member_id = '')"
             ),
-            "missing_forward_return_pct": _count_rows(
-                db, "universe_forward_outcomes", cutoff, "forward_return_pct IS NULL"
+            "missing_forward_return_pct": _count_rows_by_time(
+                db,
+                "universe_forward_outcomes",
+                "entry_ts",
+                cutoff,
+                "status = 'settled' AND forward_return_pct IS NULL",
             ),
-            "settled": _count_rows(db, "universe_forward_outcomes", cutoff, "status = 'settled'"),
+            "settled": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff, "status = 'settled'"),
+            "pending": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff, "status = 'pending'"),
+            "cancelled": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff, "status = 'cancelled'"),
+            "failed": _count_rows_by_time(db, "universe_forward_outcomes", "entry_ts", cutoff, "status = 'failed'"),
+            "overdue_pending": _count_rows_by_time(
+                db,
+                "universe_forward_outcomes",
+                "entry_ts",
+                cutoff,
+                "status = 'pending' AND datetime(due_at) <= datetime('now')",
+            ),
         }
     return rows
 
@@ -789,6 +905,18 @@ def _direction_adjusted_forward(forward: dict | None, direction: str | None) -> 
     return _round(-value if str(direction or "").lower() == "short" else value)
 
 
+def _older_than_hours(raw: str | None, hours: int) -> bool:
+    if not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt <= _utcnow() - timedelta(hours=hours)
+
+
 def _is_filled_order(order: dict) -> bool:
     return (order.get("status") or "").lower() in {"filled", "executed"} or bool(order.get("filled_at"))
 
@@ -875,6 +1003,28 @@ def _where_for_window(db, table: str, cutoff: str, extra: str | None = None) -> 
 def _count_rows(db, table: str, cutoff: str, extra: str | None = None) -> int:
     where, params = _where_for_window(db, table, cutoff, extra)
     row = db.execute(f"SELECT COUNT(*) FROM {table}{where}", params).fetchone()
+    return int(row[0] if row else 0)
+
+
+def _count_rows_by_time(db, table: str, time_col: str, cutoff: str, extra: str | None = None) -> int:
+    clauses = [f"datetime({time_col}) >= datetime(?)"]
+    params: list[Any] = [cutoff]
+    if extra:
+        clauses.append(f"({extra})")
+    row = db.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE {' AND '.join(clauses)}",
+        params,
+    ).fetchone()
+    return int(row[0] if row else 0)
+
+
+def _count_pi_proposal_join_rows(db, cutoff: str, extra: str) -> int:
+    row = db.execute(
+        "SELECT COUNT(*) FROM pi_decisions pd "
+        "JOIN trade_proposals tp ON tp.id = pd.proposal_id "
+        "WHERE datetime(pd.created_at) >= datetime(?) AND (" + extra + ")",
+        (cutoff,),
+    ).fetchone()
     return int(row[0] if row else 0)
 
 

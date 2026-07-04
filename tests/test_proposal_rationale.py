@@ -82,6 +82,8 @@ def test_rationale_meta_json_is_always_parseable(monkeypatch):
     assert meta["conviction"] == 64
     assert meta["debate_bear"] == 72
     assert len(meta["supporting"]) == 5
+    assert len(meta["supporting_signals"]) == 5
+    assert len(meta["opposing_signals"]) == 5
 
 
 def test_rationale_thesis_capped_but_not_the_whole_string(monkeypatch):

@@ -225,6 +225,34 @@ def test_reconstruct_traded_thesis_through_proposal_and_position():
     assert record["verdict"] == "validated"
 
 
+def test_decision_can_be_reconstructed_from_proposal_id_when_opportunity_id_missing():
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 22)
+    pid = _insert_proposal(db, 22)
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, action, conviction, reasoning, proposal_id, signal_source, created_at) "
+        "VALUES ('pi-lineage-proposal-backfill', 'BTC/USDT', 'long', 'trade', 61, "
+        "'decision linked only by proposal', ?, 'market_observer', ?)",
+        (pid, _iso()),
+    )
+    db.commit()
+
+    report = build_thesis_lineage_audit(days=7)
+    record = report["records"][0]
+
+    assert record["root_id"] == "opp-lineage-22"
+    assert record["decision_action"] == "trade"
+    assert record["decision_reasoning"] == "decision linked only by proposal"
+    assert record["decision_signal_source"] == "market_observer"
+    assert record["decision_signal_source_inferred_from"] is None
+    assert record["decision_opportunity_id_inferred_from"] == "proposal_id"
+    assert report["raw_table_completeness"]["pi_decisions"]["proposal_backfillable_missing_opportunity_id"] == 1
+
+
 def test_parse_decision_meta_from_agent_rationale():
     from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
     from aletheia.storage.sqlite import get_db
@@ -248,6 +276,29 @@ def test_parse_decision_meta_from_agent_rationale():
     assert record["supporting_signals"] == ["volume"]
     assert record["opposing_signals"] == ["funding"]
     assert record["bear_case"] == "bear case"
+    assert record["key_assumptions"] == ["assumption"]
+
+
+def test_parse_legacy_supporting_opposing_meta_keys():
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
+    from aletheia.storage.sqlite import get_db
+
+    meta = {
+        "supporting": ["legacy volume"],
+        "opposing": ["legacy funding"],
+        "bear_case": "legacy bear",
+        "key_assumptions": ["legacy assumption"],
+    }
+    db = get_db()
+    _insert_opp(db, 33)
+    pid = _insert_proposal(db, 33, rationale="Legacy thesis\n---\n" + json.dumps(meta))
+    _insert_decision(db, 33, proposal_id=pid)
+    db.commit()
+
+    record = build_thesis_lineage_records(days=7)[0]
+
+    assert record["supporting_signals"] == ["legacy volume"]
+    assert record["opposing_signals"] == ["legacy funding"]
     assert record["key_assumptions"] == ["assumption"]
 
 
@@ -318,20 +369,27 @@ def test_audit_reports_v1_1_data_completeness_gaps():
     assert completeness["chain_counts"]["with_proposal"] == 1
     assert missing["missing_decision_action"] == 2
     assert missing["missing_decision_reasoning"] == 2
+    assert missing["unjudged_observation_count"] == 2
     assert missing["missing_decision_meta_on_proposed_records"] == 1
     assert missing["non_traded_missing_shadow_outcome"] == 2
+    assert missing["mature_non_traded_missing_shadow_outcome"] == 0
     assert missing["non_traded_missing_forward_return"] == 2
+    assert missing["mature_non_traded_missing_forward_return"] == 0
     assert missing["traded_missing_position_id"] == 1
     assert missing["traded_missing_actual_pnl_pct"] == 1
     assert missing["parse_warning_count"] == 0
     assert raw["pi_decisions"]["total"] == 2
     assert raw["pi_decisions"]["missing_opportunity_id"] == 1
+    assert raw["pi_decisions"]["global_no_target_count"] == 0
+    assert raw["pi_decisions"]["link_required_missing_opportunity_id"] == 1
     assert raw["pi_decisions"]["missing_signal_source"] == 1
     assert raw["trade_proposals"]["missing_decision_meta_in_agent_rationale"] == 1
     compact = compact_thesis_lineage_summary(report)
     assert "records" not in compact
     assert compact["missing_counts"]["missing_decision_action"] == 2
     assert compact["raw_missing"]["pi_decisions_missing_opportunity_id"] == 1
+    assert compact["raw_missing"]["pi_decisions_link_required_missing_opportunity_id"] == 1
+    assert compact["raw_missing"]["pi_decisions_proposal_backfillable_missing_opportunity_id"] == 0
 
 
 def test_resolve_serenity_thesis_via_signal_source():

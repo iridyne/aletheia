@@ -321,6 +321,11 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         "debate_ran": decision.debate_ran,
         "debate_bull": decision.debate_bull_confidence,
         "debate_bear": decision.debate_bear_confidence,
+        "supporting_signals": decision.supporting_signals[:5],
+        "opposing_signals": decision.opposing_signals[:5],
+        "bear_case": decision.bear_case,
+        "key_assumptions": decision.key_assumptions[:3],
+        # Legacy keys kept for existing dashboard/feedback readers.
         "supporting": decision.supporting_signals[:5],
         "opposing": decision.opposing_signals[:5],
         # R0: scanner_family is parsed back out of this JSON by
@@ -1201,12 +1206,17 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     features/signals), the fields stay None rather than being fabricated. See
     LEARNING_LOOP_AUDIT_2026-06-26 §R0 + docs/plans/serenity_execution_path.md §3.2.
     """
+    if decision.action in {"close", "reduce"} and _attach_position_context(decision, ctx):
+        return
+
     if not decision.symbol:
         return
     opps = (ctx.get("layer1") or {}).get("opportunities") or []
+    saw_same_symbol_opportunity = False
     for o in opps:
         if o.get("symbol") != decision.symbol:
             continue
+        saw_same_symbol_opportunity = True
         bias = o.get("direction_bias")
         # Require direction agreement only when both sides declare one; an
         # opportunity with no bias still matches on symbol.
@@ -1221,6 +1231,29 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         # than defaulting to perp (owner principle 3: no fixed instrument bias).
         if not decision.market_type and o.get("market"):
             decision.market_type = o.get("market")
+        return
+    if saw_same_symbol_opportunity:
+        return
+
+    # Ranker candidates are a second deterministic source of market_observer
+    # opportunity ids. They may include candidates not currently visible in the
+    # compact Layer-1 opportunity list, so use them before falling back to Serenity.
+    ranker = (ctx.get("layer2") or {}).get("ranker_candidates") or []
+    for c in ranker:
+        if c.get("symbol") != decision.symbol:
+            continue
+        cdir = c.get("direction") or c.get("direction_bias")
+        if decision.direction and cdir and cdir != decision.direction:
+            continue
+        oid = c.get("opportunity_id")
+        if not oid:
+            continue
+        decision.opportunity_id = oid
+        decision.strategy_id = c.get("strategy_id")
+        decision.scanner_family = c.get("scanner_family")
+        decision.signal_source = c.get("signal_source") or "market_observer"
+        if not decision.market_type and c.get("market_type"):
+            decision.market_type = c.get("market_type")
         return
 
     # Serenity direct match (Phase 2 fix): pending_signals carry opportunity_id
@@ -1266,3 +1299,46 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         if not decision.market_type and o.get("market"):
             decision.market_type = o.get("market")
         return
+
+
+def _attach_position_context(decision: TradingDecision, ctx: dict) -> bool:
+    """Link close/reduce decisions to the open position they are judging.
+
+    Close/reduce decisions judge an existing trade, not a fresh opportunity. If
+    the model omits symbol but its reasoning uniquely names one current position,
+    the causal parent is still deterministic and should be preserved.
+    """
+    positions = (ctx.get("layer1") or {}).get("positions") or []
+    match = _match_position_for_decision(decision, positions)
+    if not match:
+        return False
+    if not decision.symbol:
+        decision.symbol = match.get("symbol")
+    if not decision.direction:
+        decision.direction = match.get("direction")
+    decision.opportunity_id = match.get("opportunity_id") or decision.opportunity_id
+    decision.strategy_id = match.get("strategy_id") or decision.strategy_id
+    trade_school = match.get("trade_school")
+    decision.signal_source = "serenity" if trade_school == "serenity" else "market_observer"
+    return bool(decision.opportunity_id or decision.symbol)
+
+
+def _match_position_for_decision(decision: TradingDecision, positions: list[dict]) -> dict | None:
+    if not positions:
+        return None
+    if decision.symbol:
+        matches = [
+            p for p in positions
+            if p.get("symbol") == decision.symbol
+            and (not decision.direction or not p.get("direction") or p.get("direction") == decision.direction)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    reasoning = decision.reasoning or ""
+    mentioned = [p for p in positions if p.get("symbol") and str(p["symbol"]) in reasoning]
+    symbols = {p.get("symbol") for p in mentioned}
+    if len(symbols) == 1:
+        return mentioned[0]
+    if len(positions) == 1:
+        return positions[0]
+    return None

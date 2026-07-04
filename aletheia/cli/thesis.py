@@ -46,6 +46,8 @@ def snapshot(
     typer.echo(f"snapshot: {out_path}")
     typer.echo(f"total_thesis_count: {summary.get('total_thesis_count', 0)}")
     typer.echo(f"missing_decision_action: {missing.get('missing_decision_action', 0)}")
+    typer.echo(f"mature_missing_shadow: {missing.get('mature_non_traded_missing_shadow_outcome', 0)}")
+    typer.echo(f"mature_missing_forward: {missing.get('mature_non_traded_missing_forward_return', 0)}")
     typer.echo(f"non_traded_missing_shadow_outcome: {missing.get('non_traded_missing_shadow_outcome', 0)}")
     typer.echo(f"non_traded_missing_forward_return: {missing.get('non_traded_missing_forward_return', 0)}")
 
@@ -76,7 +78,8 @@ def snapshots(
             f"missing_decision={row.get('missing_decision_action', 0)} "
             f"missing_shadow={row.get('non_traded_missing_shadow_outcome', 0)} "
             f"missing_forward={row.get('non_traded_missing_forward_return', 0)} "
-            f"raw_pi_missing_opp={row.get('pi_decisions_missing_opportunity_id', 'n/a')}"
+            f"raw_pi_missing_opp={row.get('pi_decisions_missing_opportunity_id', 'n/a')} "
+            f"link_required_missing_opp={row.get('pi_decisions_link_required_missing_opportunity_id', 'n/a')}"
         )
 
 
@@ -149,16 +152,23 @@ def _snapshot_row(path: Path) -> dict:
         "poor_expression_count": summary.get("poor_expression_count", 0),
         "missing_decision_action": missing.get("missing_decision_action", 0),
         "missing_decision_reasoning": missing.get("missing_decision_reasoning", 0),
+        "mature_non_traded_missing_shadow_outcome": missing.get("mature_non_traded_missing_shadow_outcome", 0),
+        "mature_non_traded_missing_forward_return": missing.get("mature_non_traded_missing_forward_return", 0),
         "missing_decision_meta_on_proposed_records": missing.get("missing_decision_meta_on_proposed_records", 0),
         "non_traded_missing_shadow_outcome": missing.get("non_traded_missing_shadow_outcome", 0),
         "non_traded_missing_forward_return": missing.get("non_traded_missing_forward_return", 0),
         "traded_missing_position_id": missing.get("traded_missing_position_id", 0),
         "traded_missing_actual_pnl_pct": missing.get("traded_missing_actual_pnl_pct", 0),
         "pi_decisions_missing_opportunity_id": pi.get("missing_opportunity_id"),
+        "pi_decisions_link_required_missing_opportunity_id": pi.get("link_required_missing_opportunity_id"),
+        "pi_decisions_proposal_backfillable_missing_opportunity_id": pi.get("proposal_backfillable_missing_opportunity_id"),
+        "pi_decisions_global_no_target_count": pi.get("global_no_target_count"),
         "pi_decisions_missing_signal_source": pi.get("missing_signal_source"),
         "trade_proposals_missing_opportunity_id": proposals.get("missing_opportunity_id"),
         "trade_proposals_missing_decision_meta": proposals.get("missing_decision_meta_in_agent_rationale"),
         "shadow_trades_missing_pnl_pct": shadows.get("missing_pnl_pct"),
+        "shadow_trades_stale_missing_pnl_pct": shadows.get("stale_missing_pnl_pct"),
         "forward_outcomes_missing_forward_return_pct": forwards.get("missing_forward_return_pct"),
+        "forward_outcomes_overdue_pending": forwards.get("overdue_pending"),
         "schema_error_count": len(payload.get("schema_errors") or []),
     }

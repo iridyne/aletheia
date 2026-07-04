@@ -106,6 +106,9 @@ export interface ThesisLineageRecord {
   decision_action: string | null
   decision_conviction: number | null
   decision_reasoning: string | null
+  decision_signal_source?: string | null
+  decision_signal_source_inferred_from?: string | null
+  decision_opportunity_id_inferred_from?: string | null
   supporting_signals: unknown[]
   opposing_signals: unknown[]
   bear_case: string | null
