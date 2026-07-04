@@ -7,7 +7,24 @@
 
 ## Last Updated
 
-2026-07-04 (文档收口 + 环境修复)
+2026-07-04 (Trade diagnostics audit + 文档收口)
+
+---
+
+## Recent Change (Trade diagnostics audit — 2026-07-04)
+
+新增两组只读交易诊断，并把 doctor deep 作为主入口：
+
+- `Trade Funnel Audit`：看机会、pending signal、System Operator 决策、proposal、risk、order、
+  position 哪一步掉量。
+- `Sizing Trace Audit`：看最近 proposal/position 的实际 notional，并用当前配置近似解释小仓位来源。
+- `uv run aletheia doctor --deep` / `--json --deep` 现在包含 Alpha / Funnel / Sizing compact summary。
+- 新增 standalone 命令：`aletheia funnel audit`、`aletheia sizing trace`，支持 `--hours`、`--days`、`--json`。
+- 实现说明：`docs/_ai/TRADE_DIAGNOSTICS_AUDIT_2026-07-04.md`。
+
+边界：本批只读，不改交易行为、不调风控/仓位/杠杆/persona、不创建 proposal、不下单、
+不调用 LLM/交易所、不触发 agent/scheduler；doctor 的交易诊断不制造 blocker，`--fix`
+不根据诊断自动调参。
 
 ---
 

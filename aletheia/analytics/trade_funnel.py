@@ -1,0 +1,558 @@
+"""Read-only Trade Funnel Audit.
+
+Answers where opportunity flow is lost before it becomes opened positions.
+This module only reads local SQLite state. It does not submit orders, create
+proposals, update opportunities, call agents, call LLMs, or call exchanges.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from statistics import mean, median
+from typing import Any
+
+
+_COUNT_KEYS = (
+    "opportunities_created",
+    "open_opportunities",
+    "ranker_candidates",
+    "ranker_eligible",
+    "signal_pending_written",
+    "system_operator_evaluated",
+    "decisions_trade",
+    "decisions_watch",
+    "decisions_skip",
+    "decisions_scale_in",
+    "decisions_flip",
+    "proposals_created",
+    "risk_approved",
+    "risk_rejected",
+    "orders_executed",
+    "positions_opened",
+)
+
+_REQUIRED_TABLES = (
+    "opportunities",
+    "pi_decisions",
+    "trade_proposals",
+    "risk_decisions",
+    "orders",
+    "positions",
+)
+
+_TINY_POSITION_NOTIONAL_USDT = 5.0
+
+
+def build_trade_funnel_audit(
+    *,
+    hours: int | None = 24,
+    days: int | None = None,
+    min_sample_size: int = 3,
+    include_ranker_snapshot: bool = True,
+) -> dict:
+    """Build a JSON-serializable opportunity-to-position funnel report."""
+    import aletheia.storage.sqlite as sqlite_store
+
+    window = _window(hours=hours, days=days)
+    generated_at = _utcnow().isoformat(timespec="seconds")
+    report = _base_report(generated_at, window)
+
+    if getattr(sqlite_store, "_db_conn", None) is None and not sqlite_store.db_path().exists():
+        report["schema_errors"].append("Database is not initialized.")
+        report["main_choke_point"] = _choke(
+            "insufficient_data",
+            "insufficient_data",
+            "No local trading database is available.",
+            "Start the system and collect opportunities/signals before auditing the funnel.",
+        )
+        return report
+
+    try:
+        db = sqlite_store.get_db()
+    except sqlite3.OperationalError as exc:
+        report["schema_errors"].append(str(exc))
+        report["main_choke_point"] = _choke(
+            "insufficient_data",
+            "insufficient_data",
+            f"Trading database could not be opened: {exc}",
+            "Fix database availability before auditing trading flow.",
+        )
+        return report
+
+    missing = [table for table in _REQUIRED_TABLES if not _table_exists(db, table)]
+    if missing:
+        report["schema_errors"].append(f"Missing required table(s): {', '.join(missing)}")
+
+    cutoff = window["cutoff"]
+    try:
+        counts = report["counts"]
+        if _table_exists(db, "opportunities"):
+            counts["opportunities_created"] = _count(db, "opportunities", "created_at", cutoff)
+            counts["open_opportunities"] = _count(
+                db,
+                "opportunities",
+                "created_at",
+                cutoff,
+                "status = 'open'",
+            )
+        if _table_exists(db, "pi_decisions"):
+            counts["signal_pending_written"] = _count(
+                db,
+                "pi_decisions",
+                "created_at",
+                cutoff,
+                "action = 'signal_pending'",
+            )
+            for action, key in (
+                ("trade", "decisions_trade"),
+                ("watch", "decisions_watch"),
+                ("skip", "decisions_skip"),
+                ("scale_in", "decisions_scale_in"),
+                ("flip", "decisions_flip"),
+            ):
+                counts[key] = _count(db, "pi_decisions", "created_at", cutoff, "action = ?", (action,))
+        counts["system_operator_evaluated"] = sum(
+            int(counts[key] or 0)
+            for key in (
+                "decisions_trade",
+                "decisions_watch",
+                "decisions_skip",
+                "decisions_scale_in",
+                "decisions_flip",
+            )
+        )
+        if _table_exists(db, "trade_proposals"):
+            counts["proposals_created"] = _count(db, "trade_proposals", "created_at", cutoff)
+        if _table_exists(db, "risk_decisions"):
+            counts["risk_approved"] = _count(db, "risk_decisions", "created_at", cutoff, "approved = 1")
+            counts["risk_rejected"] = _count(db, "risk_decisions", "created_at", cutoff, "approved = 0")
+        if _table_exists(db, "orders"):
+            counts["orders_executed"] = _orders_executed(db, cutoff)
+        if _table_exists(db, "positions"):
+            counts["positions_opened"] = _count(db, "positions", "opened_at", cutoff)
+        if include_ranker_snapshot and _table_exists(db, "opportunities"):
+            snapshot = _ranker_snapshot()
+            counts["ranker_candidates"] = snapshot.get("ranker_candidates")
+            counts["ranker_eligible"] = snapshot.get("ranker_eligible")
+            if snapshot.get("error"):
+                report["ranker_snapshot_error"] = snapshot["error"]
+
+        report["conversion_rates"] = _conversion_rates(counts)
+        report["top_dropoffs"] = _top_dropoffs(counts)
+        if _table_exists(db, "risk_decisions"):
+            report["risk_rejection_reasons"] = _risk_rejection_reasons(db, cutoff)
+        if _table_exists(db, "orders"):
+            report["execution_error_reasons"] = _execution_error_reasons(db, cutoff)
+        if _table_exists(db, "positions"):
+            report["position_stats"] = _position_stats(db, cutoff)
+        report["main_choke_point"] = _main_choke_point(counts, report["position_stats"], min_sample_size)
+    except sqlite3.OperationalError as exc:
+        report["schema_errors"].append(str(exc))
+        report["main_choke_point"] = _choke(
+            "insufficient_data",
+            "insufficient_data",
+            f"Required funnel evidence is unavailable: {exc}",
+            "Run migrations or collect more trading evidence before interpreting the funnel.",
+        )
+    return report
+
+
+def render_trade_funnel_audit(report: dict) -> str:
+    """Render the report for the standalone CLI."""
+    window = report.get("window") or {}
+    lines = ["Trade Funnel Audit", "", f"Window: {_window_label(window)}", ""]
+    if report.get("schema_errors"):
+        lines.append("Evidence:")
+        for err in report["schema_errors"]:
+            lines.append(f"  {err}")
+        lines.append("")
+    lines.append("Counts:")
+    counts = report.get("counts") or {}
+    for key in (
+        "opportunities_created",
+        "ranker_candidates",
+        "ranker_eligible",
+        "signal_pending_written",
+        "system_operator_evaluated",
+        "decisions_trade",
+        "decisions_watch",
+        "decisions_skip",
+        "proposals_created",
+        "risk_approved",
+        "risk_rejected",
+        "orders_executed",
+        "positions_opened",
+    ):
+        value = counts.get(key)
+        lines.append(f"  {key}: {'n/a' if value is None else value}")
+    stats = report.get("position_stats") or {}
+    if stats.get("sample_size"):
+        lines.extend([
+            "",
+            "Position stats:",
+            f"  median_notional_usdt: {_fmt_num(stats.get('median_notional_usdt'))}",
+            f"  avg_notional_usdt: {_fmt_num(stats.get('avg_notional_usdt'))}",
+            f"  median_leverage: {_fmt_num(stats.get('median_leverage'))}",
+        ])
+    choke = report.get("main_choke_point") or {}
+    lines.extend([
+        "",
+        "Main choke point:",
+        f"  {choke.get('summary', 'insufficient data')}",
+        "",
+        "Next action:",
+        f"  {choke.get('next_action', 'Collect more evidence before changing behavior.')}",
+    ])
+    return "\n".join(lines)
+
+
+def compact_trade_funnel_summary(report: dict) -> dict:
+    """Small object suitable for doctor JSON output."""
+    counts = report.get("counts") or {}
+    has_evidence = any(int(counts.get(key) or 0) > 0 for key in (
+        "opportunities_created",
+        "signal_pending_written",
+        "system_operator_evaluated",
+        "proposals_created",
+        "risk_approved",
+        "risk_rejected",
+        "orders_executed",
+        "positions_opened",
+    ))
+    return {
+        "available": has_evidence or not bool(report.get("schema_errors")),
+        "reason": "; ".join(report.get("schema_errors") or []),
+        "main_choke_point": report.get("main_choke_point"),
+        "counts": report.get("counts"),
+        "position_stats": report.get("position_stats"),
+    }
+
+
+def _base_report(generated_at: str, window: dict) -> dict:
+    counts: dict[str, int | None] = {key: 0 for key in _COUNT_KEYS}
+    counts["ranker_candidates"] = None
+    counts["ranker_eligible"] = None
+    return {
+        "generated_at": generated_at,
+        "window": window,
+        "counts": counts,
+        "conversion_rates": {
+            "opportunity_to_signal_pending": None,
+            "signal_pending_to_evaluated": None,
+            "evaluated_to_trade_decision": None,
+            "trade_decision_to_proposal": None,
+            "proposal_to_risk_approved": None,
+            "risk_approved_to_executed": None,
+            "proposal_to_position": None,
+        },
+        "top_dropoffs": [],
+        "risk_rejection_reasons": [],
+        "execution_error_reasons": [],
+        "position_stats": {
+            "sample_size": 0,
+            "avg_notional_usdt": None,
+            "median_notional_usdt": None,
+            "max_notional_usdt": None,
+            "avg_leverage": None,
+            "median_leverage": None,
+        },
+        "main_choke_point": _choke(
+            "insufficient_data",
+            "insufficient_data",
+            "Not enough trading evidence to identify a choke point.",
+            "Collect opportunities, decisions, proposals, and executions before tuning behavior.",
+        ),
+        "schema_errors": [],
+    }
+
+
+def _window(*, hours: int | None, days: int | None) -> dict:
+    if days is not None:
+        lookback_hours = max(1, int(days) * 24)
+        display_hours = None
+    else:
+        lookback_hours = max(1, int(hours or 24))
+        display_hours = lookback_hours
+    cutoff = (_utcnow() - timedelta(hours=lookback_hours)).isoformat()
+    return {
+        "hours": display_hours,
+        "days": int(days) if days is not None else None,
+        "cutoff": cutoff,
+    }
+
+
+def _table_exists(db, table: str) -> bool:
+    row = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _count(
+    db,
+    table: str,
+    time_col: str,
+    cutoff: str,
+    extra_where: str | None = None,
+    extra_params: tuple = (),
+) -> int:
+    where = [f"datetime({time_col}) >= datetime(?)"]
+    params: list[Any] = [cutoff]
+    if extra_where:
+        where.append(extra_where)
+        params.extend(extra_params)
+    row = db.execute(
+        f"SELECT COUNT(*) AS n FROM {table} WHERE {' AND '.join(where)}",
+        tuple(params),
+    ).fetchone()
+    return int(row["n"] if row else 0)
+
+
+def _orders_executed(db, cutoff: str) -> int:
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM orders "
+        "WHERE datetime(created_at) >= datetime(?) "
+        "AND (lower(COALESCE(status, '')) IN ('filled', 'executed') OR filled_at IS NOT NULL)",
+        (cutoff,),
+    ).fetchone()
+    return int(row["n"] if row else 0)
+
+
+def _ranker_snapshot() -> dict:
+    try:
+        from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+        candidates = build_paper_candidates(limit=50)
+        return {
+            "ranker_candidates": len(candidates),
+            "ranker_eligible": sum(1 for c in candidates if not c.get("skip_reason")),
+        }
+    except Exception as exc:
+        return {"ranker_candidates": None, "ranker_eligible": None, "error": str(exc)}
+
+
+def _conversion_rates(counts: dict) -> dict:
+    trade_decisions = _trade_decision_count(counts)
+    return {
+        "opportunity_to_signal_pending": _rate(counts["signal_pending_written"], counts["opportunities_created"]),
+        "signal_pending_to_evaluated": _rate(counts["system_operator_evaluated"], counts["signal_pending_written"]),
+        "evaluated_to_trade_decision": _rate(trade_decisions, counts["system_operator_evaluated"]),
+        "trade_decision_to_proposal": _rate(counts["proposals_created"], trade_decisions),
+        "proposal_to_risk_approved": _rate(counts["risk_approved"], counts["proposals_created"]),
+        "risk_approved_to_executed": _rate(counts["orders_executed"], counts["risk_approved"]),
+        "proposal_to_position": _rate(counts["positions_opened"], counts["proposals_created"]),
+    }
+
+
+def _top_dropoffs(counts: dict) -> list[dict]:
+    trade_decisions = _trade_decision_count(counts)
+    stages = [
+        ("opportunity_to_signal_pending", counts["opportunities_created"], counts["signal_pending_written"], "Ranker/paper_trader gate is filtering or deduping candidates."),
+        ("signal_pending_to_evaluated", counts["signal_pending_written"], counts["system_operator_evaluated"], "System Operator daemon/scheduler is not consuming pending signals."),
+        ("evaluated_to_trade_decision", counts["system_operator_evaluated"], trade_decisions, "System Operator is mostly choosing skip/watch."),
+        ("trade_decision_to_proposal", trade_decisions, counts["proposals_created"], "Decision-to-proposal submission path is not producing proposals."),
+        ("proposal_to_risk_approved", counts["proposals_created"], counts["risk_approved"], "Risk Engine or configured constraints are blocking proposals."),
+        ("risk_approved_to_executed", counts["risk_approved"], counts["orders_executed"], "Execution Gateway, broker, or symbol availability is failing after approval."),
+        ("proposal_to_position", counts["proposals_created"], counts["positions_opened"], "Approved/executed flow is not materializing into positions."),
+    ]
+    rows = []
+    for stage, from_count, to_count, interpretation in stages:
+        from_i = int(from_count or 0)
+        to_i = int(to_count or 0)
+        if from_i <= 0:
+            continue
+        drop = max(0, from_i - to_i)
+        rows.append({
+            "stage": stage,
+            "from": from_i,
+            "to": to_i,
+            "drop_count": drop,
+            "drop_pct": _round(drop / from_i) if from_i else None,
+            "interpretation": interpretation,
+        })
+    rows.sort(key=lambda r: (r["drop_pct"] or 0, r["drop_count"]), reverse=True)
+    return rows[:5]
+
+
+def _risk_rejection_reasons(db, cutoff: str) -> list[dict]:
+    rows = db.execute(
+        "SELECT violations, message FROM risk_decisions "
+        "WHERE approved = 0 AND datetime(created_at) >= datetime(?)",
+        (cutoff,),
+    ).fetchall()
+    counter: Counter[str] = Counter()
+    for row in rows:
+        reasons = _json_list(row["violations"])
+        if not reasons and row["message"]:
+            reasons = [str(row["message"])]
+        for reason in reasons or ["unknown"]:
+            counter[str(reason)] += 1
+    return [{"reason": reason, "count": count} for reason, count in counter.most_common(10)]
+
+
+def _execution_error_reasons(db, cutoff: str) -> list[dict]:
+    rows = db.execute(
+        "SELECT status, error_reason FROM orders "
+        "WHERE datetime(created_at) >= datetime(?) "
+        "AND (error_reason IS NOT NULL OR lower(COALESCE(status, '')) IN ('error', 'failed', 'rejected'))",
+        (cutoff,),
+    ).fetchall()
+    counter: Counter[str] = Counter()
+    for row in rows:
+        reason = row["error_reason"] or row["status"] or "unknown"
+        counter[str(reason)] += 1
+    return [{"reason": reason, "count": count} for reason, count in counter.most_common(10)]
+
+
+def _position_stats(db, cutoff: str) -> dict:
+    rows = db.execute(
+        "SELECT quantity, entry_price, leverage FROM positions "
+        "WHERE datetime(opened_at) >= datetime(?)",
+        (cutoff,),
+    ).fetchall()
+    notionals = [
+        float(row["quantity"] or 0) * float(row["entry_price"] or 0)
+        for row in rows
+        if float(row["quantity"] or 0) > 0 and float(row["entry_price"] or 0) > 0
+    ]
+    leverages = [float(row["leverage"] or 1) for row in rows if row["leverage"] is not None]
+    return {
+        "sample_size": len(notionals),
+        "avg_notional_usdt": _round(mean(notionals)) if notionals else None,
+        "median_notional_usdt": _round(median(notionals)) if notionals else None,
+        "max_notional_usdt": _round(max(notionals)) if notionals else None,
+        "avg_leverage": _round(mean(leverages)) if leverages else None,
+        "median_leverage": _round(median(leverages)) if leverages else None,
+    }
+
+
+def _main_choke_point(counts: dict, stats: dict, min_sample_size: int) -> dict:
+    trade_decisions = _trade_decision_count(counts)
+    positions = int(counts["positions_opened"] or 0)
+    median_notional = stats.get("median_notional_usdt")
+
+    if positions >= min_sample_size and median_notional is not None and median_notional <= _TINY_POSITION_NOTIONAL_USDT:
+        return _choke(
+            "sizing_tiny_positions",
+            "warn",
+            f"{positions} positions opened, but median notional is {median_notional}U.",
+            "Run Sizing Trace Audit to inspect base notional, Kelly, ATR, conviction, and risk caps.",
+        )
+    if int(counts["opportunities_created"] or 0) < min_sample_size:
+        return _choke(
+            "no_opportunities",
+            "insufficient_data",
+            f"Only {counts['opportunities_created']} opportunities were created in this window.",
+            "Collect more market/news/observer output before changing ranker, System Operator, or sizing behavior.",
+        )
+    if int(counts["proposals_created"] or 0) >= min_sample_size and int(counts["risk_rejected"] or 0) > int(counts["risk_approved"] or 0):
+        return _choke(
+            "risk_engine",
+            "warn",
+            f"{counts['risk_rejected']} of {counts['proposals_created']} proposals were rejected by risk.",
+            "Inspect top risk rejection reasons before changing sizing or execution behavior.",
+        )
+    if int(counts["risk_approved"] or 0) >= min_sample_size and int(counts["orders_executed"] or 0) == 0:
+        return _choke(
+            "execution_gateway",
+            "warn",
+            f"{counts['risk_approved']} risk-approved proposals produced 0 executed orders.",
+            "Inspect Execution Gateway and broker/demo exchange errors.",
+        )
+    if int(counts["proposals_created"] or 0) >= min_sample_size and positions == 0:
+        return _choke(
+            "position_opening",
+            "warn",
+            f"{counts['proposals_created']} proposals produced 0 opened positions.",
+            "Inspect order fill handling and position creation after execution.",
+        )
+    if trade_decisions >= min_sample_size and int(counts["proposals_created"] or 0) == 0:
+        return _choke(
+            "proposal_submission",
+            "warn",
+            f"{trade_decisions} trade-like decisions produced 0 proposals.",
+            "Inspect decision-to-proposal submission and no-price/guard-advisory paths.",
+        )
+    if int(counts["system_operator_evaluated"] or 0) >= min_sample_size and trade_decisions == 0:
+        return _choke(
+            "system_operator_decision",
+            "warn",
+            f"{counts['system_operator_evaluated']} evaluated signals produced 0 trade decisions.",
+            "Inspect System Operator skip/watch reasons and prompt/context constraints.",
+        )
+    if int(counts["signal_pending_written"] or 0) > 0 and int(counts["system_operator_evaluated"] or 0) == 0:
+        return _choke(
+            "system_operator_consumption",
+            "warn",
+            f"{counts['signal_pending_written']} signal_pending rows were written, but none were evaluated.",
+            "Inspect System Operator daemon/scheduler consumption of pending signals.",
+        )
+    if int(counts["signal_pending_written"] or 0) == 0:
+        return _choke(
+            "ranker_or_paper_trader",
+            "warn",
+            f"{counts['opportunities_created']} opportunities produced 0 signal_pending rows.",
+            "Inspect ranker eligibility, paper_trader dedupe, symbol filters, and opportunity status handling.",
+        )
+    return _choke(
+        "ok",
+        "ok",
+        f"{counts['positions_opened']} positions opened from {counts['opportunities_created']} opportunities in this window.",
+        "No single funnel choke point is obvious; inspect standalone reports before changing behavior.",
+    )
+
+
+def _trade_decision_count(counts: dict) -> int:
+    return int(counts["decisions_trade"] or 0) + int(counts["decisions_scale_in"] or 0) + int(counts["decisions_flip"] or 0)
+
+
+def _rate(numerator: int | None, denominator: int | None) -> float | None:
+    denom = int(denominator or 0)
+    if denom <= 0:
+        return None
+    return _round(float(numerator or 0) / denom)
+
+
+def _json_list(raw: Any) -> list:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    try:
+        value = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return [str(raw)] if str(raw).strip() else []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _choke(stage: str, severity: str, summary: str, next_action: str) -> dict:
+    return {
+        "stage": stage,
+        "severity": severity,
+        "summary": summary,
+        "next_action": next_action,
+    }
+
+
+def _round(value: float | None) -> float | None:
+    return round(float(value), 4) if value is not None else None
+
+
+def _fmt_num(value: Any) -> str:
+    return "n/a" if value is None else str(value)
+
+
+def _window_label(window: dict) -> str:
+    if window.get("days") is not None:
+        return f"{window['days']}d"
+    return f"{window.get('hours', 24)}h"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)

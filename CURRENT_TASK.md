@@ -46,4 +46,8 @@ factor_feedback 是否过滤 thrash。
 - 观察 bull regime 翻转时 short 是否被 regime gate 正确过滤
 - 核心问题:集中做空到底有没有 edge(信号是否仍近随机)——运行态证据留 `data/observation/`(gitignored)
 
+**交易诊断入口已扩展(2026-07-04)**:`uv run aletheia doctor --deep` 现在会汇总 Alpha /
+Trade Funnel / Sizing 三类只读诊断。详细报告用 `uv run aletheia funnel audit --hours 24`
+和 `uv run aletheia sizing trace --hours 24`。这些命令只诊断,不自动改仓位/风控/Kelly/杠杆/persona。
+
 其余活动/并行工作线(TaG 借鉴、账户级纳管)见 `docs/_ai/CURRENT_TASK.md`。

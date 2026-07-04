@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-07-04 — Trade Funnel + Sizing Trace audit 接入 doctor deep
+
+### 触发
+owner 需要把 audit 的诊断能力产品化，用一个主入口回答两个生产问题：为什么信号没有变成足够多交易，
+以及为什么开仓 notional 经常很小。
+
+### 交付
+- 新增 `aletheia/analytics/trade_funnel.py`：只读统计 opportunity → signal_pending →
+  System Operator decision → proposal → risk → order → position 的掉量位置。
+- 新增 `aletheia/analytics/sizing_trace.py`：只读追踪 proposal/position/fill 的实际 notional，
+  并用当前 sizing 配置做近似解释，明确标记 `reconstructed_from_current_config`。
+- 新增 CLI：`aletheia funnel audit`、`aletheia sizing trace`，均支持 `--hours`、`--days`、`--json`。
+- `doctor --deep` / `doctor --json --deep` 增加 Alpha / Funnel / Sizing compact summary。
+- 新增实现说明：`docs/_ai/TRADE_DIAGNOSTICS_AUDIT_2026-07-04.md`。
+
+### 边界
+本批不改风控、执行、agent 决策、prompt、配置、persona、Kelly、杠杆或 live 状态。
+doctor 只展示诊断，不自动调参；交易表现问题不变成 infrastructure blocker。
+
+### 验证
+聚焦测试覆盖 trade funnel、sizing trace、doctor trading diagnostics。完整命令记录见本次完成报告。
+
+---
+
 ## 2026-07-03 — 全项目 SDD 对齐第一批
 
 ### 触发
