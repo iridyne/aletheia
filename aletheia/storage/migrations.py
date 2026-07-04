@@ -1540,6 +1540,9 @@ _ADDITIVE_COLUMNS = [
     # 2026-06-29: lesson block guard fields (dry-run window + TTL expiry).
     # Prevent immediately-accepted lessons from blocking all trades without
     # cooldown (sleeping bomb fix; see spec_lesson_guards.py LG-S01..S04).
+    ("activated_at", "ps_lessons", "TEXT"),
+    ("dry_run_until", "ps_lessons", "TEXT"),
+    ("expires_at", "ps_lessons", "TEXT"),
     # P0-1 (2026-06-29, OpenAlice TaG borrow): proposal-level hash chain.
     # NULL on legacy rows; insert_trade_proposal() fills both for new writes.
     ("commit_hash", "trade_proposals", "TEXT"),

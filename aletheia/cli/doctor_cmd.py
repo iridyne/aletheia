@@ -176,7 +176,7 @@ def doctor(
         typer.echo("\nApplying fixes (--fix)...")
         fix_actions = dx.apply_fixes()
         for action in fix_actions:
-            typer.echo(f"  • {action}")
+            typer.echo(f"  - {action}")
         typer.echo("\nRe-probing after fixes:")
         report = dx.build_report()
         _print_report(report)
