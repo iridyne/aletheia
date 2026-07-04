@@ -108,10 +108,13 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     except Exception:
         layer["balance"] = None
 
-    # Today's realized PnL
+    # Today's realized PnL (scoped to active execution mode so PI sees
+    # the same figure as the paper dashboard, not a cross-mode total).
     try:
         from aletheia.portfolio.pnl import today_realized_pnl
-        layer["today_pnl"] = round(today_realized_pnl(), 2)
+        from aletheia.config import load_config as _load_cfg
+        _mode = _load_cfg().exchange.paper_execution_mode or "paper_internal"
+        layer["today_pnl"] = round(today_realized_pnl(execution_mode=_mode), 2)
     except Exception:
         layer["today_pnl"] = None
 

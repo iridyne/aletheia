@@ -1065,6 +1065,11 @@ _CONDITIONALLY_PRUNABLE = {
     # pi_decisions contains both transient queue rows and causal decision rows.
     # It is prunable only with an explicit action filter supplied by the caller.
     "pi_decisions": "created_at",
+    # knowledge_items is a causal table, but system_action rows are pure
+    # telemetry noise (1200+/day) that floods the limit-30 window. Pruning
+    # ONLY item_type='system_action' older than N days is safe because A2
+    # fix made PI query with explicit item_type filters.
+    "knowledge_items": "created_at",
 }
 
 def _delete_old_rows(
@@ -1169,6 +1174,21 @@ def prune_pi_decisions(days: int = 7) -> int:
         days,
         extra_where=f"action IN ({placeholders})",
         extra_params=_PRUNABLE_PI_ACTIONS,
+    )
+
+
+def prune_system_actions(days: int = 7) -> int:
+    """Delete old system_action rows from knowledge_items.
+
+    system_action is pure telemetry noise (~1200 rows/day) that used to flood
+    the limit-30 window before the A2 fix added explicit item_type filters.
+    Safe to prune because no learning/PI path queries system_action anymore.
+    """
+    return _delete_old_rows(
+        "knowledge_items",
+        days,
+        extra_where="item_type = ?",
+        extra_params=("system_action",),
     )
 
 

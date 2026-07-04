@@ -1174,6 +1174,7 @@ def _run_cleanup():
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
+            "system_actions": repo.prune_system_actions(7),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
             # bloat — pure liveness, read latest-row-only, so a short window.
             "agent_shell_heartbeats": repo.prune_agent_shell_heartbeats(2),

@@ -24,7 +24,7 @@
 - [完成 b9ad9574] [A4] S-Bug-C strategy_records 暴露 win_rate/total_pnl/trade_count
 - [完成 fee8ddad] [A5] CR-EX-03 bitget_broker Position 补 opportunity_id
 - [完成 b9ad9574] [A6] §13.1 paper_trader_ranker evidence 硬编码 paper_internal
-- [A7] §13.2 trading_context today_pnl 语义不一致
+- [完成 2f3ba24] [A7] §13.2 trading_context today_pnl 语义不一致
 - [完成 b9ad9574] [A8] §16.3 KL-3 Layer 3 wisdom 过滤类型写错 (=A1)
 - [完成 b9ad9574] [A9] §18.2 OP-WINRATE operator win_rate 恒 0%
 - [完成 b9ad9574] [A10] PIPELINE_GAPS D1 calibration_feedback 未注入 LLM prompt
@@ -40,7 +40,7 @@
 - [完成 b9ad9574] [B4] type:ignore workaround → PostSubmitDBError(binance/okx broker)
 
 ### C. 当前 indirect-risk(可能间接影响 PI 输入),等 Round 1 结束后 safe
-- [C1] prune_system_actions TTL 7d(scheduler + repositories)
+- [完成 2f3ba24] [C1] prune_system_actions TTL 7d(scheduler + repositories)
 - [C2] prune backtest_runs best-per-strategy
 
 ### D. 安全可做但未列入"立即落地"(本会话排序后劣后,留作下次)
@@ -143,11 +143,12 @@ trade_case_study 496 行 + post_trade_review 1679 行
 
 ---
 
-### [A7] §13.2 trading_context today_pnl 语义不一致
+### [完成 2f3ba24] [A7] §13.2 trading_context today_pnl 语义不一致
 
-**位置**:`aletheia/agent_shell/trading_context.py:75` 附近
-**问题**:today_pnl 字段语义在不同分支不一致(单 broker vs 全模式)
-**亲核状态**:BACKEND_ISSUES.md §13.2,未修
+**位置**:`aletheia/agent_shell/trading_context.py:114`
+**问题**:today_pnl 字段语义在不同分支不一致(单 broker vs 全模式)——`today_realized_pnl()`
+无 execution_mode 参数,PI 看到的是跨模式合计,dashboard 看到的是单模式
+**修复**:传 `cfg.exchange.paper_execution_mode` 给 `today_realized_pnl(execution_mode=...)`
 **解冻条件**:冻结路径,Round 1 判决后
 
 ---
@@ -234,20 +235,13 @@ trade_case_study 496 行 + post_trade_review 1679 行
 
 ## C. 当前 indirect-risk(Round 1 后变 safe)
 
-### [C1] prune_system_actions TTL 7d
+### [完成 2f3ba24] [C1] prune_system_actions TTL 7d
 
-**位置**:新增 `_PRUNABLE` 条目 + `_run_cleanup` 注册(`aletheia/storage/repositories.py` + `aletheia/agent_runtime/scheduler.py`)
+**位置**:`aletheia/storage/repositories.py` (`_CONDITIONALLY_PRUNABLE` + `prune_system_actions()`) + `aletheia/agent_runtime/scheduler.py` (`_run_cleanup`)
 **亲核数字 (2026-06-24)**:system_action 1211 条全部在 7d 内,TTL=7d 当前**不会清理任何行**
-**为何 indirect-risk**:理论上一旦 TTL 设错时区或配置,可能误清新数据 → 改 PI 窗口
-**解冻条件**:Round 1 判决后,或 Fix [A2] 完成后(PI 不再依赖该窗口)
-**操作**:
-```python
-# repositories.py 加
-_PRUNABLE['system_action'] = ('knowledge_items', 'item_type', 'system_action', 'created_at')
-def prune_system_actions(days: int = 7) -> int: ...
-# scheduler.py _run_cleanup 注册
-prune_system_actions(7)
-```
+**解冻条件**:Fix [A2] 完成后(PI 不再依赖该窗口)— ✅ A2 已完成
+**实现**:用 `_CONDITIONALLY_PRUNABLE`（同 `pi_decisions` 模式）+ 强制 `item_type='system_action'` 过滤;
+`knowledge_items` 裸调用仍被 `_delete_old_rows` 拒绝（architecture_fitness 测试通过）
 
 ---
 
