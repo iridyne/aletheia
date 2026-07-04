@@ -888,7 +888,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     failed_tasks = list_tasks(limit=10, status="failed")
     running_tasks = list_tasks(limit=20, status="running")
     queued_tasks = list_tasks(limit=20, status="queued")
-    recent_events = list_events(limit=20)
+    recent_events = list_events(limit=100)
     recent_artifacts = list_artifacts(limit=500)
 
     if heartbeat is None or heartbeat.get("status") == "offline":
