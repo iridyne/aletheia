@@ -43,9 +43,10 @@ def build_opportunity_flow_ledger(
 
     integrated = _integrated_audits(hours_i)
     context = _context_from_audits(integrated)
-    opportunities = _recent_opportunities(db, cutoff, limit_i, symbol_filter=filters.get("symbol"))
+    search_limit = _search_limit(limit_i, filters)
+    opportunities = _recent_opportunities(db, cutoff, search_limit, symbol_filter=filters.get("symbol"))
     unfiltered_records = [_build_record(db, opp, context) for opp in opportunities]
-    records = _filter_records(unfiltered_records, filters)
+    records = _filter_records(unfiltered_records, filters, limit_i)
 
     final_states = Counter(row["final_state"] for row in records)
     final_stages = Counter(row["final_stage"] for row in records)
@@ -420,7 +421,17 @@ def _clean_symbol(value: str | None) -> str | None:
     return text or None
 
 
-def _filter_records(records: list[dict[str, Any]], filters: dict[str, str | None]) -> list[dict[str, Any]]:
+def _search_limit(limit: int, filters: dict[str, str | None]) -> int:
+    if any(filters.get(key) for key in ("stage", "verdict", "symbol")):
+        return min(max(limit * 20, 1000), 5000)
+    return limit
+
+
+def _filter_records(
+    records: list[dict[str, Any]],
+    filters: dict[str, str | None],
+    limit: int,
+) -> list[dict[str, Any]]:
     stage = filters.get("stage")
     verdict = filters.get("verdict")
     symbol = filters.get("symbol")
@@ -433,6 +444,8 @@ def _filter_records(records: list[dict[str, Any]], filters: dict[str, str | None
         if stage and not _record_has_stage(row, stage):
             continue
         out.append(row)
+        if len(out) >= limit:
+            break
     return out
 
 
