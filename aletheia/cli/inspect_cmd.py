@@ -417,6 +417,25 @@ def guards(
 
 
 # ---------------------------------------------------------------------------
+# 11b. guard-impact
+# ---------------------------------------------------------------------------
+
+@inspect_app.command("guard-impact")
+def guard_impact(
+    hours: int = typer.Option(24, "--hours", "-h", help="Lookback window for recent open opportunities"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Read-only audit of active blocking guard impact on recent candidates."""
+    from aletheia.analytics.guard_impact import build_guard_impact_audit, render_guard_impact_audit
+
+    report = build_guard_impact_audit(hours=hours)
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        return
+    typer.echo(render_guard_impact_audit(report))
+
+
+# ---------------------------------------------------------------------------
 # 12. scorecard
 # ---------------------------------------------------------------------------
 
