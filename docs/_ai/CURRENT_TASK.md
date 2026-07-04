@@ -76,6 +76,8 @@ thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不�
 是否能串起来、修断链和缺字段。禁止新增 thesis generator、LLM normalizer、prompt 优化、
 自动调参、新 UI、交易行为改动、新 `ThesisRecord` 表或决策前历史 thesis 检索。观察 JSON
 快照属于本机运行事实，写到 `data/diagnostics/` 这类 gitignored 目录，不写进 git 文档。
+`aletheia thesis audit --days 7 --json` 已内建 `data_completeness` 和
+`raw_table_completeness`，下一轮观察优先看这两个区块，再决定修哪个 provenance 写入点。
 
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需

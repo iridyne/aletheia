@@ -1,5 +1,25 @@
 # Development Log
 
+## 2026-07-04 — Thesis Lineage V1.1 数据完整性统计内建
+
+### 触发
+V1.1 观察窗口需要稳定回答“哪些链路字段缺失”，不能每次靠临时脚本查库。
+
+### 交付
+- `thesis audit` JSON 增加 `data_completeness`：统计 lineage 记录能串到 decision / proposal /
+  shadow / forward / position 的数量，以及缺 decision、缺 shadow outcome、缺 forward return、
+  缺 position / actual PnL 等比例。
+- `thesis audit` JSON 增加 `raw_table_completeness`：按当前窗口只读统计 `pi_decisions`、
+  `trade_proposals`、`shadow_trades`、`universe_forward_outcomes` 的关键缺字段。
+- CLI 人类输出增加 `Data completeness` 区块，方便每天观察 V1.1。
+- 测试补到 11 个，覆盖缺字段统计和 raw table completeness。
+
+### 边界
+只改 Thesis Lineage 读模型/audit 输出和测试；不改交易行为、不调 prompt、不加 LLM、
+不加 UI、不建表、不重启 gateway。
+
+---
+
 ## 2026-07-04 — Thesis Lineage V1.1 Observation Window 计划
 
 ### 触发

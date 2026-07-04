@@ -7,7 +7,7 @@
 
 ## Last Updated
 
-2026-07-04 (Thesis Lineage V1.1 Observation Window 计划)
+2026-07-04 (Thesis Lineage V1.1 数据完整性统计)
 
 ---
 
@@ -39,8 +39,12 @@ prompt 优化、自动调参、新 UI、交易行为改动、新 `ThesisRecord` 
 如果大量记录缺 `opportunity_id`、`signal_source`、`decision_meta`、shadow outcome 或 forward
 return，先修 provenance，不做 v2。
 
+`aletheia thesis audit` 已内建 V1.1 统计：JSON 里看 `data_completeness` 和
+`raw_table_completeness`，CLI 人类输出里看 `Data completeness`。这些统计只读现有记录，
+不调用 LLM、不写表、不改交易。
+
 验证：
-- thesis lineage tests：10 passed。
+- thesis lineage tests：11 passed。
 - 相关审计/归因 tests：48 passed。
 - API reference + architecture tests：21 passed。
 - `frontend npm run build` 通过。

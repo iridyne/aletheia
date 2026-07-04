@@ -290,6 +290,46 @@ def test_detect_poor_expression_against_shadow_batch_average():
     assert report["summary"]["poor_expression_count"] == 1
 
 
+def test_audit_reports_v1_1_data_completeness_gaps():
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db, 70)
+    _insert_opp(db, 71)
+    _insert_decision(db, 71, action="skip")
+    _insert_opp(db, 72)
+    _insert_proposal(db, 72, rationale="proposal thesis without structured meta")
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id, symbol, direction, action, conviction, reasoning, created_at) "
+        "VALUES ('pi-lineage-missing-source', 'ETH/USDT', 'long', 'skip', 10, 'missing source row', ?)",
+        (_iso(),),
+    )
+    db.commit()
+
+    report = build_thesis_lineage_audit(days=7)
+    completeness = report["data_completeness"]
+    missing = completeness["missing_counts"]
+    raw = report["raw_table_completeness"]
+
+    assert completeness["total_records"] == 3
+    assert completeness["chain_counts"]["with_decision"] == 1
+    assert completeness["chain_counts"]["with_proposal"] == 1
+    assert missing["missing_decision_action"] == 2
+    assert missing["missing_decision_reasoning"] == 2
+    assert missing["missing_decision_meta_on_proposed_records"] == 1
+    assert missing["non_traded_missing_shadow_outcome"] == 2
+    assert missing["non_traded_missing_forward_return"] == 2
+    assert missing["traded_missing_position_id"] == 1
+    assert missing["traded_missing_actual_pnl_pct"] == 1
+    assert missing["parse_warning_count"] == 0
+    assert raw["pi_decisions"]["total"] == 2
+    assert raw["pi_decisions"]["missing_opportunity_id"] == 1
+    assert raw["pi_decisions"]["missing_signal_source"] == 1
+    assert raw["trade_proposals"]["missing_decision_meta_in_agent_rationale"] == 1
+
+
 def test_resolve_serenity_thesis_via_signal_source():
     from aletheia.analytics.thesis_lineage import build_thesis_lineage_records
     from aletheia.storage.sqlite import get_db
@@ -340,8 +380,10 @@ def test_cli_human_and_json_outputs_are_stable():
     assert human.exit_code == 0
     assert "Thesis Lineage Audit" in human.output
     assert "missed_alpha_count" in human.output
+    assert "Data completeness:" in human.output
     assert machine.exit_code == 0
     assert json.loads(machine.output)["summary"]["total_thesis_count"] == 1
+    assert "data_completeness" in json.loads(machine.output)
     assert records.exit_code == 0
     assert json.loads(records.output)[0]["lineage_id"] == "market_observer:opp-lineage-6"
 

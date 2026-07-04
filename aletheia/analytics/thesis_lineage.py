@@ -76,6 +76,8 @@ def build_thesis_lineage_audit(days: int = 7) -> dict:
         records = []
     report["records"] = records
     report["summary"] = _summary(records)
+    report["data_completeness"] = _data_completeness(records)
+    report["raw_table_completeness"] = _raw_table_completeness(db, window["cutoff"])
     report["by_scanner_family"] = _group_summary(records, "scanner_family")
     report["by_source"] = _group_summary(records, "root_type")
     report["top_missed_alpha"] = _top(records, "missed_alpha", "shadow_pnl_pct", reverse=True)
@@ -104,6 +106,42 @@ def render_thesis_lineage_audit(report: dict) -> str:
         f"  missed_alpha_count: {summary.get('missed_alpha_count', 0)}",
         f"  failed_traded_thesis_count: {summary.get('failed_traded_thesis_count', 0)}",
         f"  poor_expression_count: {summary.get('poor_expression_count', 0)}",
+        "",
+        "Data completeness:",
+    ])
+    completeness = report.get("data_completeness") or {}
+    missing = completeness.get("missing_counts") or {}
+    rates = completeness.get("missing_rates") or {}
+    for key in (
+        "missing_decision_action",
+        "missing_decision_reasoning",
+        "missing_decision_meta_on_proposed_records",
+        "non_traded_missing_shadow_outcome",
+        "non_traded_missing_forward_return",
+        "traded_missing_position_id",
+        "traded_missing_actual_pnl_pct",
+    ):
+        lines.append(f"  {key}: {missing.get(key, 0)} ({_fmt_rate(rates.get(key))})")
+    raw = report.get("raw_table_completeness") or {}
+    if raw:
+        lines.append("  raw tables:")
+        for table, row in raw.items():
+            if not isinstance(row, dict):
+                continue
+            important = [
+                f"total={row.get('total', 0)}",
+                f"missing_opportunity_id={row.get('missing_opportunity_id', 0)}",
+            ]
+            if row.get("missing_signal_source") is not None:
+                important.append(f"missing_signal_source={row.get('missing_signal_source', 0)}")
+            if "missing_decision_meta_in_agent_rationale" in row:
+                important.append(f"missing_decision_meta={row.get('missing_decision_meta_in_agent_rationale', 0)}")
+            if "missing_pnl_pct" in row:
+                important.append(f"missing_pnl_pct={row.get('missing_pnl_pct', 0)}")
+            if "missing_forward_return_pct" in row:
+                important.append(f"missing_forward_return_pct={row.get('missing_forward_return_pct', 0)}")
+            lines.append(f"    {table}: {', '.join(important)}")
+    lines.extend([
         "",
         "By source:",
     ])
@@ -329,6 +367,7 @@ def _record_from_root(root: dict, *, root_type: str, ctx: dict) -> dict:
         "decision_action": decision.get("action") if decision else None,
         "decision_conviction": decision.get("conviction") if decision else None,
         "decision_reasoning": decision.get("reasoning") if decision else None,
+        "decision_signal_source": decision.get("signal_source") if decision else None,
         "supporting_signals": parsed.get("supporting_signals"),
         "opposing_signals": parsed.get("opposing_signals"),
         "bear_case": (decision.get("bear_case") if decision else None) or parsed.get("bear_case"),
@@ -436,6 +475,136 @@ def _summary(records: list[dict]) -> dict:
         "failed_traded_thesis_count": sum(1 for r in records if r.get("verdict") == "failed"),
         "poor_expression_count": sum(1 for r in records if r.get("verdict") == "poor_expression"),
     }
+
+
+def _data_completeness(records: list[dict]) -> dict:
+    total = len(records)
+
+    def missing(field: str) -> int:
+        return sum(1 for r in records if r.get(field) in (None, "", [], {}))
+
+    def count_where(predicate) -> int:
+        return sum(1 for r in records if predicate(r))
+
+    records_with_decision = count_where(lambda r: bool(r.get("decision_action")))
+    proposed_records = count_where(lambda r: bool(r.get("proposal_id")))
+    non_traded_records = count_where(lambda r: not r.get("was_traded"))
+    traded_records = count_where(lambda r: bool(r.get("was_traded")))
+    counts = {
+        "missing_root_id": missing("root_id"),
+        "missing_root_source": missing("root_type"),
+        "missing_universe_member_id": missing("universe_member_id"),
+        "missing_observation_thesis": missing("observation_thesis"),
+        "missing_decision_action": missing("decision_action"),
+        "missing_decision_reasoning": missing("decision_reasoning"),
+        "linked_decision_missing_signal_source": count_where(
+            lambda r: bool(r.get("decision_action")) and not r.get("decision_signal_source")
+        ),
+        "missing_decision_meta_on_proposed_records": count_where(
+            lambda r: bool(r.get("proposal_id")) and not r.get("decision_meta")
+        ),
+        "parse_warning_count": count_where(lambda r: bool(r.get("parse_warning"))),
+        "non_traded_missing_shadow_outcome": count_where(
+            lambda r: not r.get("was_traded") and r.get("shadow_pnl_pct") is None
+        ),
+        "non_traded_missing_forward_return": count_where(
+            lambda r: not r.get("was_traded") and r.get("forward_return_pct") is None
+        ),
+        "traded_missing_position_id": count_where(
+            lambda r: bool(r.get("was_traded")) and not r.get("position_id")
+        ),
+        "traded_missing_actual_pnl_pct": count_where(
+            lambda r: bool(r.get("was_traded")) and r.get("actual_pnl_pct") is None
+        ),
+    }
+    denominators = {
+        "missing_decision_meta_on_proposed_records": proposed_records,
+        "linked_decision_missing_signal_source": records_with_decision,
+        "non_traded_missing_shadow_outcome": non_traded_records,
+        "non_traded_missing_forward_return": non_traded_records,
+        "traded_missing_position_id": traded_records,
+        "traded_missing_actual_pnl_pct": traded_records,
+    }
+    return {
+        "total_records": total,
+        "chain_counts": {
+            "with_universe_member": total - counts["missing_universe_member_id"],
+            "with_decision": records_with_decision,
+            "with_proposal": proposed_records,
+            "with_shadow_outcome": count_where(lambda r: r.get("shadow_pnl_pct") is not None),
+            "with_forward_return": count_where(lambda r: r.get("forward_return_pct") is not None),
+            "with_position": count_where(lambda r: bool(r.get("position_id"))),
+        },
+        "missing_counts": counts,
+        "missing_rates": {
+            key: _rate(value, denominators.get(key, total))
+            for key, value in counts.items()
+        },
+    }
+
+
+def _raw_table_completeness(db, cutoff: str) -> dict:
+    rows: dict[str, dict] = {}
+    if _table_exists(db, "pi_decisions"):
+        rows["pi_decisions"] = {
+            "total": _count_rows(db, "pi_decisions", cutoff),
+            "missing_opportunity_id": _count_rows(
+                db, "pi_decisions", cutoff, "(opportunity_id IS NULL OR opportunity_id = '')"
+            ),
+            "missing_signal_source": _count_rows(
+                db, "pi_decisions", cutoff, "(signal_source IS NULL OR signal_source = '')"
+            ) if "signal_source" in _table_columns(db, "pi_decisions") else None,
+            "missing_reasoning": _count_rows(
+                db, "pi_decisions", cutoff, "(reasoning IS NULL OR reasoning = '')"
+            ),
+        }
+    if _table_exists(db, "trade_proposals"):
+        rationale_rows = _select_rows(
+            db,
+            "trade_proposals",
+            cutoff,
+            "agent_rationale IS NOT NULL AND agent_rationale != ''",
+            columns="agent_rationale",
+        )
+        missing_meta = 0
+        invalid_meta = 0
+        for row in rationale_rows:
+            parsed = _parse_agent_rationale(row["agent_rationale"])
+            if not parsed.get("decision_meta"):
+                missing_meta += 1
+            if parsed.get("parse_warning"):
+                invalid_meta += 1
+        rows["trade_proposals"] = {
+            "total": _count_rows(db, "trade_proposals", cutoff),
+            "missing_opportunity_id": _count_rows(
+                db, "trade_proposals", cutoff, "(opportunity_id IS NULL OR opportunity_id = '')"
+            ),
+            "missing_agent_rationale": _count_rows(
+                db, "trade_proposals", cutoff, "(agent_rationale IS NULL OR agent_rationale = '')"
+            ),
+            "missing_decision_meta_in_agent_rationale": missing_meta,
+            "invalid_decision_meta_in_agent_rationale": invalid_meta,
+        }
+    if _table_exists(db, "shadow_trades"):
+        rows["shadow_trades"] = {
+            "total": _count_rows(db, "shadow_trades", cutoff),
+            "missing_opportunity_id": _count_rows(
+                db, "shadow_trades", cutoff, "(opportunity_id IS NULL OR opportunity_id = '')"
+            ),
+            "missing_pnl_pct": _count_rows(db, "shadow_trades", cutoff, "pnl_pct IS NULL"),
+        }
+    if _table_exists(db, "universe_forward_outcomes"):
+        rows["universe_forward_outcomes"] = {
+            "total": _count_rows(db, "universe_forward_outcomes", cutoff),
+            "missing_member_id": _count_rows(
+                db, "universe_forward_outcomes", cutoff, "(member_id IS NULL OR member_id = '')"
+            ),
+            "missing_forward_return_pct": _count_rows(
+                db, "universe_forward_outcomes", cutoff, "forward_return_pct IS NULL"
+            ),
+            "settled": _count_rows(db, "universe_forward_outcomes", cutoff, "status = 'settled'"),
+        }
+    return rows
 
 
 def _group_summary(records: list[dict], key: str) -> list[dict]:
@@ -610,6 +779,13 @@ def _base_report(generated_at: str, window: dict) -> dict:
             "poor_expression_count": 0,
         },
         "records": [],
+        "data_completeness": {
+            "total_records": 0,
+            "chain_counts": {},
+            "missing_counts": {},
+            "missing_rates": {},
+        },
+        "raw_table_completeness": {},
         "by_scanner_family": [],
         "by_source": [],
         "top_missed_alpha": [],
@@ -624,6 +800,43 @@ def _base_report(generated_at: str, window: dict) -> dict:
 def _table_exists(db, table: str) -> bool:
     row = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
     return row is not None
+
+
+def _table_columns(db, table: str) -> set[str]:
+    if not _table_exists(db, table):
+        return set()
+    return {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _time_column(db, table: str) -> str | None:
+    cols = _table_columns(db, table)
+    for col in ("created_at", "opened_at", "settled_at", "resolved_at", "entry_ts"):
+        if col in cols:
+            return col
+    return None
+
+
+def _where_for_window(db, table: str, cutoff: str, extra: str | None = None) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    time_col = _time_column(db, table)
+    if time_col:
+        clauses.append(f"datetime({time_col}) >= datetime(?)")
+        params.append(cutoff)
+    if extra:
+        clauses.append(f"({extra})")
+    return (" WHERE " + " AND ".join(clauses), params) if clauses else ("", params)
+
+
+def _count_rows(db, table: str, cutoff: str, extra: str | None = None) -> int:
+    where, params = _where_for_window(db, table, cutoff, extra)
+    row = db.execute(f"SELECT COUNT(*) FROM {table}{where}", params).fetchone()
+    return int(row[0] if row else 0)
+
+
+def _select_rows(db, table: str, cutoff: str, extra: str | None = None, *, columns: str = "*") -> list:
+    where, params = _where_for_window(db, table, cutoff, extra)
+    return db.execute(f"SELECT {columns} FROM {table}{where}", params).fetchall()
 
 
 def _select_in(db, sql_template: str, values: list[Any], *, chunk_size: int = 800):
@@ -713,9 +926,20 @@ def _round(value: float | None) -> float | None:
     return round(float(value), 4) if value is not None else None
 
 
+def _rate(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return _round(float(numerator) / float(denominator))
+
+
 def _fmt_pct(value: Any) -> str:
     num = _first_number(value)
     return "n/a" if num is None else f"{num:+.2f}%"
+
+
+def _fmt_rate(value: Any) -> str:
+    num = _first_number(value)
+    return "n/a" if num is None else f"{num:.1%}"
 
 
 def _window_label(window: dict) -> str:
