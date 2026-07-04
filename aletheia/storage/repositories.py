@@ -323,7 +323,12 @@ def insert_prediction_claim(data: dict) -> None:
     _insert("prediction_market_claims", data)
 
 
-def list_prediction_claims(market_id: str | None = None, claim_type: str | None = None, limit: int = 100) -> list[dict]:
+def list_prediction_claims(
+    market_id: str | None = None,
+    claim_type: str | None = None,
+    since: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
     parts = []
     params: list = []
     if market_id:
@@ -332,6 +337,9 @@ def list_prediction_claims(market_id: str | None = None, claim_type: str | None 
     if claim_type:
         parts.append("claim_type = ?")
         params.append(claim_type)
+    if since:
+        parts.append("datetime(created_at) >= datetime(?)")
+        params.append(since)
     where = " AND ".join(parts) if parts else None
     return _select_all("prediction_market_claims", where=where, params=tuple(params), order="created_at DESC", limit=limit)
 

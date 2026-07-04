@@ -8,6 +8,7 @@ opportunity.
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -39,6 +40,7 @@ _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 # the job timeout changes.
 _MARKET_OBSERVER_JOB_TIMEOUT_S = 240.0
 _MARKET_OBSERVER_LOOP_BUDGET_SEC = 200.0
+_PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
 
 
 class MarketRead(BaseModel):
@@ -180,6 +182,66 @@ def _has_sufficient_signal(context_str: str) -> bool:
     return False
 
 
+def _prediction_cutoff_iso(max_age_hours: int = _PREDICTION_CONTEXT_MAX_AGE_HOURS) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+
+
+def _prediction_market_signal_lines(
+    symbol: str,
+    cutoff_iso: str,
+    limit: int = 3,
+) -> list[str]:
+    """Return fresh prediction-market lines for a symbol.
+
+    Prediction markets are observation-only catalysts. Stale rows are worse than
+    missing rows because their 24h probability change reads like a current fact.
+    """
+    from aletheia.storage.repositories import _select_all
+
+    base = symbol.split("/")[0].lower()
+    keyword_variants = [base]
+    coin_names = {
+        "btc": "bitcoin",
+        "eth": "ethereum",
+        "sol": "solana",
+        "xrp": "ripple",
+        "doge": "dogecoin",
+        "ada": "cardano",
+        "avax": "avalanche",
+        "link": "chainlink",
+    }
+    if base in coin_names:
+        keyword_variants.append(coin_names[base])
+
+    where_clauses = " OR ".join(["LOWER(question) LIKE ?" for _ in keyword_variants])
+    params = [f"%{kw}%" for kw in keyword_variants]
+    params.append(cutoff_iso)
+    pred_rows = _select_all(
+        "prediction_markets",
+        where=(
+            f"({where_clauses}) AND status = 'active' "
+            "AND COALESCE(volume_24h, 0) > 0 "
+            "AND datetime(updated_at) >= datetime(?)"
+        ),
+        params=tuple(params),
+        order="abs(probability_change_24h) DESC",
+        limit=limit,
+    )
+
+    lines: list[str] = []
+    for r in pred_rows:
+        q = (r.get("question") or "")[:80]
+        yes = (r.get("yes_probability") or 0) * 100
+        delta = (r.get("probability_change_24h") or 0) * 100
+        vol = r.get("volume_24h") or 0
+        updated = (r.get("updated_at") or "")[:16]
+        lines.append(
+            f"- {q}: YES={yes:.0f}% (Delta24h {delta:+.1f}pp, "
+            f"vol=${vol:,.0f}, updated={updated})"
+        )
+    return lines
+
+
 async def _analyze_symbol(
     symbol: str,
     market_type: str,
@@ -193,6 +255,8 @@ async def _analyze_symbol(
     universe_member_id: str | None = None,
     scanner_family: str | None = None,
     force_full: bool = False,
+    prediction_context_enabled: bool = False,
+    prediction_context_cutoff: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Run market context build + LLM read for a single symbol.
 
@@ -284,36 +348,14 @@ async def _analyze_symbol(
         except Exception:
             pass  # enriched context is optional; never break the main path
 
-        # Append prediction market signals relevant to this symbol
-        try:
-            from aletheia.storage.repositories import _select_all
-            base = symbol.split("/")[0].lower()
-            keyword_variants = [base]
-            _COIN_NAMES = {"btc": "bitcoin", "eth": "ethereum", "sol": "solana",
-                           "xrp": "ripple", "doge": "dogecoin", "ada": "cardano",
-                           "avax": "avalanche", "link": "chainlink"}
-            if base in _COIN_NAMES:
-                keyword_variants.append(_COIN_NAMES[base])
-            where_clauses = " OR ".join(["LOWER(question) LIKE ?" for _ in keyword_variants])
-            params = tuple(f"%{kw}%" for kw in keyword_variants)
-            pred_rows = _select_all(
-                "prediction_markets",
-                where=f"({where_clauses}) AND status = 'active' AND COALESCE(volume_24h, 0) > 0",
-                params=params,
-                order="abs(probability_change_24h) DESC",
-                limit=3,
-            )
-            if pred_rows:
-                lines = []
-                for r in pred_rows:
-                    q = (r.get("question") or "")[:80]
-                    yes = (r.get("yes_probability") or 0) * 100
-                    delta = (r.get("probability_change_24h") or 0) * 100
-                    vol = r.get("volume_24h") or 0
-                    lines.append(f"- {q}: YES={yes:.0f}% (Δ24h {delta:+.1f}pp, vol=${vol:,.0f})")
-                context += "\n\n## Prediction Market Signals\n" + "\n".join(lines)
-        except Exception:
-            pass
+        # Append fresh prediction market signals relevant to this symbol.
+        if prediction_context_enabled and prediction_context_cutoff:
+            try:
+                pred_lines = _prediction_market_signal_lines(symbol, prediction_context_cutoff)
+                if pred_lines:
+                    context += "\n\n## Prediction Market Signals\n" + "\n".join(pred_lines)
+            except Exception:
+                pass
 
         # Append recent news headlines for this symbol
         try:
@@ -588,18 +630,24 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
     except Exception:
         pass
 
-    # Prediction market catalyst context (observation-only enrichment)
-    try:
-        from aletheia.storage.repositories import list_prediction_claims
-        pred_claims = list_prediction_claims(claim_type="probability_momentum", limit=5)
-        if pred_claims:
-            pred_lines = ["\n\n## Prediction Market Context (observation-only)"]
-            for pc in pred_claims[:5]:
-                direction = pc.get("direction", "")
-                pred_lines.append(f"- {pc['claim_text']} [{direction}]")
-            memory_block += "\n".join(pred_lines)
-    except Exception:
-        pass
+    prediction_context_enabled = bool(cfg.market_data.prediction_enabled)
+    prediction_context_cutoff = _prediction_cutoff_iso()
+    if prediction_context_enabled:
+        try:
+            from aletheia.storage.repositories import list_prediction_claims
+            pred_claims = list_prediction_claims(
+                claim_type="probability_momentum",
+                since=prediction_context_cutoff,
+                limit=5,
+            )
+            if pred_claims:
+                pred_lines = ["\n\n## Prediction Market Context (observation-only, fresh)"]
+                for pc in pred_claims[:5]:
+                    direction = pc.get("direction", "")
+                    pred_lines.append(f"- {pc['claim_text']} [{direction}]")
+                memory_block += "\n".join(pred_lines)
+        except Exception:
+            pass
 
     # Build a lookup for universe member metadata (symbol → member dict)
     _universe_lookup = {m["symbol"]: m for m in universe_members} if universe_members else {}
@@ -659,6 +707,8 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
                 universe_member_id=u_member.get("id") if u_member else None,
                 scanner_family=u_member.get("scanner_family") if u_member else None,
                 force_full=_force_full,
+                prediction_context_enabled=prediction_context_enabled,
+                prediction_context_cutoff=prediction_context_cutoff,
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")

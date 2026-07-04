@@ -1,19 +1,34 @@
 """Research Agent — creates research notes and strategy hypotheses."""
 
+from datetime import datetime, timedelta, timezone
+
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.knowledge.manager import create_research_note
 
+_PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
+
 
 def _prediction_context_block() -> str:
     """Gather recent high-signal prediction market observations for LLM context."""
     try:
+        from aletheia.config.loader import load_config
         from aletheia.storage.repositories import list_prediction_claims
-        claims = list_prediction_claims(claim_type="probability_momentum", limit=5)
+        cfg = load_config()
+        if not cfg.market_data.prediction_enabled:
+            return ""
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(hours=_PREDICTION_CONTEXT_MAX_AGE_HOURS)
+        ).isoformat()
+        claims = list_prediction_claims(
+            claim_type="probability_momentum",
+            since=cutoff,
+            limit=5,
+        )
         if not claims:
             return ""
-        lines = ["## Prediction Market Catalyst Signals (observation-only)"]
+        lines = ["## Prediction Market Catalyst Signals (observation-only, fresh)"]
         for c in claims[:5]:
             direction_str = f" [{c.get('direction', '')}]" if c.get("direction") else ""
             lines.append(f"- {c['claim_text']}{direction_str}")
