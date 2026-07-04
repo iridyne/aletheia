@@ -937,18 +937,33 @@ def _build_assessment_prompt(ctx: dict) -> str:
             parts += ["## Reasoning Feedback (which signal patterns have actually worked)",
                       reasoning_fb, ""]
 
-    # Ranker candidates (what paper_trader would do)
-    ranker = layer2.get("ranker_candidates", [])
+    # Executable candidates (what paper_trader could actually submit)
+    ranker = (
+        layer2.get("executable_candidates")
+        if "executable_candidates" in layer2
+        else layer2.get("ranker_candidates", [])
+    )
     if ranker:
         ranker_lines = "\n".join(
             f"  {c['symbol']} {c.get('direction', '?')} score={c.get('trade_score', '?')}"
-            + (f" SKIP:{c['skip_reason']}" if c.get("skip_reason") else " ✓ eligible")
             for c in ranker[:6]
         )
-        parts += ["## Ranker Candidates (paper_trader's ranked picks)", ranker_lines, ""]
-        skew_note = _direction_skew_note(ranker[:6], "ranker candidates")
+        parts += ["## Executable Candidates (ranked picks that passed local filters)", ranker_lines, ""]
+        skew_note = _direction_skew_note(ranker[:6], "executable candidates")
         if skew_note:
             parts += [skew_note, ""]
+    excluded_summary = layer2.get("excluded_candidates_summary") or []
+    if excluded_summary:
+        excluded_lines = []
+        for row in excluded_summary[:6]:
+            examples = ", ".join(
+                f"{e.get('symbol')} {e.get('direction')}"
+                for e in (row.get("examples") or [])[:3]
+                if e.get("symbol")
+            )
+            suffix = f" examples={examples}" if examples else ""
+            excluded_lines.append(f"  {row.get('reason')}: {row.get('count', 0)}{suffix}")
+        parts += ["## Excluded Candidate Summary (not executable now)", "\n".join(excluded_lines), ""]
 
     # Phase 4b: Pending signals awaiting your decision
     pending = layer2.get("pending_signals", [])
@@ -1238,7 +1253,8 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     # Ranker candidates are a second deterministic source of market_observer
     # opportunity ids. They may include candidates not currently visible in the
     # compact Layer-1 opportunity list, so use them before falling back to Serenity.
-    ranker = (ctx.get("layer2") or {}).get("ranker_candidates") or []
+    layer2 = ctx.get("layer2") or {}
+    ranker = (layer2.get("executable_candidates") or []) + (layer2.get("ranker_candidates") or [])
     for c in ranker:
         if c.get("symbol") != decision.symbol:
             continue

@@ -11,6 +11,7 @@ Token budget target: ~2200 tokens total (vs ~800 in the old thin context).
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -30,6 +31,39 @@ def _dedupe_symbol_direction(items: list[dict[str, Any]], limit: int) -> list[di
         if len(out) >= limit:
             break
     return out
+
+
+def _excluded_candidates_summary(items: list[dict[str, Any]], *, examples_per_reason: int = 3) -> list[dict[str, Any]]:
+    """Summarize skipped ranker candidates without letting them occupy prompt slots."""
+    counts: Counter[str] = Counter()
+    examples: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        raw_reason = str(item.get("skip_reason") or "unknown")
+        reason = _candidate_skip_bucket(raw_reason)
+        counts[reason] += 1
+        bucket_examples = examples.setdefault(reason, [])
+        if len(bucket_examples) < examples_per_reason:
+            bucket_examples.append({
+                "symbol": item.get("symbol"),
+                "direction": item.get("direction"),
+                "trade_score": item.get("trade_score"),
+                "scanner_family": item.get("scanner_family"),
+                "skip_reason": raw_reason,
+            })
+    return [
+        {"reason": reason, "count": count, "examples": examples.get(reason, [])}
+        for reason, count in counts.most_common()
+    ]
+
+
+def _candidate_skip_bucket(reason: str) -> str:
+    if reason == "okx_demo_symbol_not_supported" or "demo_symbol_not_supported" in reason:
+        return "unsupported_demo_symbol"
+    if reason.startswith("guard_blocked:"):
+        return "guard_blocked"
+    if reason.startswith("confidence_below_"):
+        return "confidence_below"
+    return reason or "unknown"
 
 
 def build_enriched_trading_context() -> dict[str, Any]:
@@ -545,8 +579,16 @@ def _build_layer2_short_term() -> dict[str, Any]:
             }
             for c in candidates
         ]
-        layer["ranker_candidates"] = _dedupe_symbol_direction(ranker_candidates, limit=8)
+        executable_candidates = [c for c in ranker_candidates if not c.get("skip_reason")]
+        excluded_candidates = [c for c in ranker_candidates if c.get("skip_reason")]
+        layer["executable_candidates"] = _dedupe_symbol_direction(executable_candidates, limit=8)
+        layer["excluded_candidates_summary"] = _excluded_candidates_summary(excluded_candidates)
+        # Compatibility alias for older consumers; new prompt rendering should use
+        # executable_candidates so skipped rows cannot consume the main candidate slots.
+        layer["ranker_candidates"] = layer["executable_candidates"]
     except Exception:
+        layer["executable_candidates"] = []
+        layer["excluded_candidates_summary"] = []
         layer["ranker_candidates"] = []
 
     # Phase 4b: Pending signals awaiting System Operator evaluation

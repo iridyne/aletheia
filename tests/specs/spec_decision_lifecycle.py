@@ -93,6 +93,25 @@ def test_signal_pending_seam_present():
     )
 
 
+@spec_claim(
+    SpecClaim(
+        "DL-S05", "decision_lifecycle_contract", "§2.3 executable candidate view", "L2b",
+        "System Operator context separates executable ranker candidates from excluded "
+        "candidate summaries so unsupported/expired/guard-blocked rows do not occupy "
+        "the main prompt candidate slots.",
+    ),
+)
+def test_executable_candidate_view_separates_skips_from_main_slots():
+    root = Path(__file__).parents[2]
+    context_text = (root / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
+    decision_text = (root / "aletheia" / "agent_shell" / "trading_decision.py").read_text(encoding="utf-8")
+
+    assert "executable_candidates" in context_text
+    assert "excluded_candidates_summary" in context_text
+    assert "## Executable Candidates" in decision_text
+    assert "## Excluded Candidate Summary" in decision_text
+
+
 # ---------------------------------------------------------------------------
 # L2c — Invariant claims
 # ---------------------------------------------------------------------------
