@@ -79,7 +79,8 @@ thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不�
 快照属于本机运行事实，写到 `data/diagnostics/` 这类 gitignored 目录，不写进 git 文档。
 `aletheia thesis audit --days 7 --json` 已内建 `data_completeness` 和
 `raw_table_completeness`，`aletheia thesis snapshot --days 7` 会把同一份 audit JSON
-写到 `data/diagnostics/`。下一轮观察优先看这两个区块，再决定修哪个 provenance 写入点。
+写到 `data/diagnostics/`，`aletheia thesis snapshots` 汇总最近保存的快照。下一轮观察优先
+看这两个区块，再决定修哪个 provenance 写入点。
 
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需

@@ -1,5 +1,20 @@
 # Development Log
 
+## 2026-07-04 — Thesis Lineage snapshot 汇总命令
+
+### 触发
+V1.1 观察窗口会连续保存多天快照；需要不用手工打开 JSON 就能扫最近几次缺字段趋势。
+
+### 交付
+- 新增 `uv run aletheia thesis snapshots`，只读汇总 `data/diagnostics/` 中最近保存的
+  thesis audit JSON。
+- 支持 `--json`，输出每份快照的 total、缺 decision、缺 shadow/forward、底层表缺口等关键数字。
+
+### 边界
+只改 CLI / 测试 / 文档；不写数据库、不改交易行为、不加 LLM、不加 UI、不建表。
+
+---
+
 ## 2026-07-04 — Thesis Lineage 接入 doctor deep 观察
 
 ### 触发

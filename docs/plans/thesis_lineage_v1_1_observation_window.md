@@ -55,11 +55,13 @@ Run after v1 is merged and the gateway has been restarted on the target machine:
 uv run aletheia doctor --deep
 uv run aletheia thesis audit --days 7
 uv run aletheia thesis snapshot --days 7
+uv run aletheia thesis snapshots
 uv run aletheia thesis audit --days 7 --json
 uv run aletheia thesis records --days 7 --json
 ```
 
 `thesis snapshot` writes the audit JSON under `data/diagnostics/` by default.
+`thesis snapshots` lists recent saved snapshots and the key missing-field counts.
 Do not commit raw observation snapshots or machine-specific runtime facts into
 git.
 

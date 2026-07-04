@@ -381,6 +381,8 @@ def test_cli_human_and_json_outputs_are_stable():
     machine = runner.invoke(app, ["thesis", "audit", "--days", "7", "--json"])
     records = runner.invoke(app, ["thesis", "records", "--days", "7", "--json"])
     snapshot = runner.invoke(app, ["thesis", "snapshot", "--days", "7"])
+    snapshot_list = runner.invoke(app, ["thesis", "snapshots", "--json"])
+    snapshot_human = runner.invoke(app, ["thesis", "snapshots"])
 
     assert human.exit_code == 0
     assert "Thesis Lineage Audit" in human.output
@@ -398,6 +400,14 @@ def test_cli_human_and_json_outputs_are_stable():
     snapshot_data = json.loads(snapshot_path.read_text(encoding="utf-8"))
     assert snapshot_data["summary"]["total_thesis_count"] == 1
     assert "data_completeness" in snapshot_data
+    assert snapshot_list.exit_code == 0
+    snapshot_rows = json.loads(snapshot_list.output)
+    assert snapshot_rows[0]["file"] == snapshot_path.name
+    assert snapshot_rows[0]["total_thesis_count"] == 1
+    assert "missing_decision_action" in snapshot_rows[0]
+    assert snapshot_human.exit_code == 0
+    assert "Thesis Lineage Snapshots" in snapshot_human.output
+    assert snapshot_path.name in snapshot_human.output
 
 
 def test_analytics_route_filters_thesis_lineage_by_position_id():
