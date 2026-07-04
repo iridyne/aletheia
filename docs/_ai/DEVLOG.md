@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-07-04 — Opportunity Flow Ledger V1
+
+### 触发
+guard / unsupported / debate / risk / thesis 等诊断分散在不同入口，排查“机会为什么没有变成交易”时认知成本过高。
+
+### 交付
+- 新增 `uv run aletheia flow audit --hours 24`，输出最近窗口内每个 opportunity 的最终状态、最终阶段、原因、时间线和已有反事实结果。
+- 新增 `uv run aletheia flow trace --opportunity-id <id>`，输出单个 opportunity 的完整只读 trace。
+- 汇总复用已有只读审计：Trade Funnel、Debate Impact、Thesis Lineage、Sizing Trace。
+- 新增 `docs/_ai/OPPORTUNITY_FLOW_LEDGER_V1.md`，记录 flow 定位和旧 audit 命令的兼容路由计划。
+- 空数据库 / 缺运行库时返回 `insufficient_data`，不崩溃。
+
+### 验证
+- `uv run pytest tests/test_opportunity_flow_ledger.py tests/test_trade_funnel_audit.py tests/test_debate_impact_audit.py tests/test_sizing_trace_audit.py tests/test_thesis_lineage.py -q`
+- `uv run pytest tests/specs/spec_analytics_contracts.py tests/test_architecture_fitness.py -q`
+- `uv run aletheia flow audit --hours 24 --limit 5`
+- `uv run aletheia flow trace --opportunity-id missing-flow-id`
+
+### 边界
+只读重建，不新增 LLM 调用，不跑 ranker，不重跑 guard/debate/risk/execution，不建新表，
+不改交易行为；缺字段保持 `insufficient_data`。
+
+---
+
 ## 2026-07-04 — Guard Impact Audit 只读诊断
 
 ### 触发

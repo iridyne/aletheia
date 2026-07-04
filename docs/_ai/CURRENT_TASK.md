@@ -13,6 +13,23 @@
 
 ---
 
+## 当前诊断入口:Opportunity Flow Ledger
+
+近期排查“机会为什么没有变成交易”时，优先使用统一入口：
+
+```powershell
+uv run aletheia flow audit --hours 24
+uv run aletheia flow trace --opportunity-id <id>
+```
+
+它把 Trade Funnel、Debate Impact、Thesis Lineage、Sizing Trace 等只读审计摘要合到一个
+机会生命周期视图里。旧专项命令仍保留，用于需要深挖单一环节时查看细节。
+
+边界保持不变：flow 只读重建，不调用 LLM，不跑 ranker，不重跑 guard/debate/risk/execution，
+不改交易行为；缺字段保留 `insufficient_data`。
+
+---
+
 ## 当前阶段:Phase 0 — 边开发边观察闭环跑通
 
 **目标(机器无关,长期有效)**:让闭环在 `bitget_demo`(真实模拟盘)形态下能稳定跑起来,

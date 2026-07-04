@@ -7,7 +7,40 @@
 
 ## Last Updated
 
-2026-07-04 (Guard Impact Audit 只读诊断)
+2026-07-04 (Opportunity Flow Ledger V1)
+
+---
+
+## Recent Change (Opportunity Flow Ledger V1 — 2026-07-04)
+
+新增统一的只读机会流账本入口：
+
+```powershell
+uv run aletheia flow audit --hours 24
+uv run aletheia flow trace --opportunity-id <id>
+```
+
+目标：把一个 opportunity 从出现到最终状态的生命周期串起来，回答“为什么这个机会没有变成交易”。
+
+- 每条记录输出 root opportunity、`final_state`、`final_stage`、`final_reason`、timeline、
+  shadow/forward counterfactual outcome。
+- 覆盖成功和失败路径：created、ranker_excluded、guard_blocked、venue_unsupported、
+  ttl_expired、signal_pending、operator_skip、debate_downgraded、proposal_created、
+  risk_rejected、order_executed、position_opened、position_closed、shadow_resolved、
+  forward_outcome_resolved。
+- 复用已有只读审计摘要：Trade Funnel、Debate Impact、Thesis Lineage、Sizing Trace。
+- Guard Impact V1 保持专项入口；flow 只在已有持久化 reasoning/skip reason 明确写出
+  guard_blocked 时标记该 stage，不重新跑 guard 规则。
+- 旧 audit 命令暂不硬路由，兼容计划见 `docs/_ai/OPPORTUNITY_FLOW_LEDGER_V1.md`。
+
+边界：不调用 LLM，不跑 ranker，不重跑 guard/debate/risk/execution，不建新表，不改交易行为。
+旧数据缺字段时保持 `insufficient_data`，不事后补写理由。
+
+验证：
+- `uv run pytest tests/test_opportunity_flow_ledger.py tests/test_trade_funnel_audit.py tests/test_debate_impact_audit.py tests/test_sizing_trace_audit.py tests/test_thesis_lineage.py -q`
+- `uv run pytest tests/specs/spec_analytics_contracts.py tests/test_architecture_fitness.py -q`
+- `uv run aletheia flow audit --hours 24 --limit 5`
+- `uv run aletheia flow trace --opportunity-id missing-flow-id`
 
 ---
 
