@@ -133,6 +133,54 @@ def test_doctor_coinalyze_ok_when_oi_rows_are_fresh(tmp_path, monkeypatch):
     assert checks["data.liquidations"].severity == "info"
 
 
+def test_doctor_warns_when_orderbook_rows_are_missing(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    report = dx.Report(generated_at="t")
+
+    dx._probe_orderbook(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.orderbook"].severity == "warn"
+    assert "no orderbook rows" in checks["data.orderbook"].detail
+
+
+def test_doctor_orderbook_ok_when_rows_are_fresh(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.execute(
+        "INSERT INTO orderbook_snapshots "
+        "(id, symbol, exchange, bid_price, ask_price, spread_bps, "
+        "bid_depth_10bps_usd, ask_depth_10bps_usd, total_depth_10bps_usd, "
+        "imbalance_ratio, observed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "ob-doctor-1",
+            "BTC/USDT",
+            "bitget",
+            100.0,
+            100.1,
+            10.0,
+            12000.0,
+            11000.0,
+            23000.0,
+            0.04,
+            now,
+        ),
+    )
+    db.commit()
+    report = dx.Report(generated_at="t")
+
+    dx._probe_orderbook(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.orderbook"].severity == "ok"
+    assert "BTC/USDT" in checks["data.orderbook"].detail
+    assert "depth10=$23,000" in checks["data.orderbook"].detail
+
+
 def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     (tmp_path / "logs" / "errors.log").write_text(

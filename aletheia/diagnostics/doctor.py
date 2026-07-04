@@ -673,6 +673,46 @@ def _probe_market_data(report: Report) -> None:
         report.add("data.market", "ok", detail)
 
 
+def _probe_orderbook(report: Report) -> None:
+    """Expose whether L2 orderbook snapshots are actually reaching storage."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT symbol, observed_at, spread_bps, total_depth_10bps_usd "
+            "FROM orderbook_snapshots "
+            "ORDER BY observed_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception as e:
+        report.add("data.orderbook", "info", f"could not read orderbook snapshots: {e}")
+        return
+
+    if not row:
+        report.add(
+            "data.orderbook",
+            "warn",
+            "no orderbook rows yet",
+            "check microstructure collector logs and exchange orderbook support",
+        )
+        return
+
+    age = _age_minutes(row["observed_at"])
+    sev = "warn" if age is not None and age > 15 else "ok"
+    spread = row["spread_bps"]
+    depth = row["total_depth_10bps_usd"]
+    detail = (
+        f"newest orderbook {row['symbol']} ({_fmt_age(age)}), "
+        f"spread={spread:.2f}bps, depth10=${depth:,.0f}"
+    )
+    report.add(
+        "data.orderbook",
+        sev,
+        detail,
+        "check data_collectors microstructure job if stale > 15m"
+        if sev == "warn" else None,
+    )
+
+
 def _probe_macro_signals(report: Report) -> None:
     """Round 2 macro signal freshness probes — LSR / F&G / CoinGecko top.
 
@@ -2224,6 +2264,7 @@ def build_report() -> Report:
         _probe_config_consistency,
         _probe_credentials,
         _probe_market_data,
+        _probe_orderbook,
         _probe_macro_signals,
         _probe_coinalyze,
         _probe_serenity_pipeline,
