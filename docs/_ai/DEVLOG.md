@@ -1,5 +1,33 @@
 # Development Log
 
+## 2026-07-04 — Thesis Lineage 链路完整性修复
+
+### 触发
+Thesis Lineage V1.1 观察发现：不是所有 `opportunity_id` 缺失都是真断链，有一部分是合法的全局
+skip/watch；但另一些确实是需要父机会 ID 的判断链路没有带全。
+
+### 交付
+- ranker candidates 和 open positions 的 causal IDs 进入 System Operator context，供确定性归因使用。
+- `_attach_opportunity_context()` 支持从 ranker candidate 回填 opportunity，从 close/reduce 的目标持仓回填原始机会。
+- 方向冲突或多持仓歧义时保持空，不用 symbol/time 猜测。
+- System Operator 已生成的 `bear_case`、`key_assumptions`、supporting/opposing signals 进入持久化链路。
+- proposal `decision_meta` 同时写新旧 supporting/opposing 键，Thesis Lineage parser 兼容历史键。
+- Thesis Lineage read model 可通过 `proposal_id -> trade_proposals.opportunity_id` 只读还原确定性历史链，并标 `decision_opportunity_id_inferred_from`。
+- 审计统计拆出真正要盯的链路缺口：`link_required_missing_opportunity_id`、`global_no_target_count`、`stale_missing_pnl_pct`、`overdue_pending` 等。
+- 修复计划文档：`docs/plans/thesis_lineage_integrity_repair_plan.md`。
+
+### 验证
+- `uv run pytest tests/test_thesis_lineage.py tests/test_anti_hallucination_e2e.py tests/test_proposal_rationale.py tests/specs/spec_data_model.py::test_pi_decision_carries_opportunity_id tests/specs/spec_decision_lifecycle.py tests/specs/spec_serenity_attribution.py -q`
+- `uv run pytest tests/test_architecture_fitness.py tests/specs/ -q`
+- `uv run pytest tests/test_doctor_trading_diagnostics.py tests/test_doctor.py::test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention -q`
+- `.\scripts\test_ai.ps1`
+- `cd frontend && npm run build`
+
+### 边界
+只修链路归因和只读审计口径；不新增 LLM 调用、不建新表、不改交易决策、不动 risk/execution/live/credentials。
+
+---
+
 ## 2026-07-04 — Thesis Lineage V1.1 观察节奏收口
 
 ### 触发

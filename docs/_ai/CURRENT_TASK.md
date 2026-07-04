@@ -84,6 +84,15 @@ thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不�
 然后每天跑一次 `thesis snapshot --days 7`；如果 V1.1 期间修了 provenance，修复效果只看修复后
 新写入的行，不用修复前历史行判断。
 
+**Thesis Lineage 链路完整性修复（2026-07-04）**：已落地 `7df8889f`，计划见
+`docs/plans/thesis_lineage_integrity_repair_plan.md`。后续观察不要只看 raw
+`missing_opportunity_id` 总数，因为其中混有全局 skip/watch。优先看：
+`link_required_missing_opportunity_id`（真正需要机会链的 PI 行缺父 ID）、
+`global_no_target_count`（合法的全局 skip/watch）、`stale_missing_pnl_pct`
+（超过 shadow 结算窗口仍缺结果）、`overdue_pending`（forward outcome 到期未结算）。
+修复是否有效，只用修复后新增行判断；历史缺口中无法确定性回填的部分保留为历史债务，
+不要用 LLM 或 symbol/time 猜测回写。
+
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需
 人工审核后才可启用；后续不要把 draft skill 自动接入 risk/execution/live/credential/order

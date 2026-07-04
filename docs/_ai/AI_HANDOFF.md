@@ -7,7 +7,41 @@
 
 ## Last Updated
 
-2026-07-04 (Thesis Lineage V1.1 数据完整性统计)
+2026-07-04 (Thesis Lineage 链路完整性修复)
+
+---
+
+## Recent Change (Thesis Lineage 链路完整性修复 — 2026-07-04)
+
+完成一轮 Thesis Lineage V1.1 数据链路完整性修复（commit `7df8889f`）。
+目标不是生成新 thesis，而是让已有判断留下更完整的父子关系，并让审计统计区分真实断链和
+正常的全局判断。
+
+- `trading_context` 现在把 ranker candidates 和 open positions 的 causal IDs 带入上下文：
+  `opportunity_id`、`strategy_id`、`proposal_id`、`trade_school` 等。
+- `_attach_opportunity_context()` 增加两类确定性回填：
+  ranker candidate → opportunity；close/reduce decision → open position。方向冲突或多持仓歧义时不猜。
+- System Operator 已生成的 `bear_case`、`key_assumptions`、supporting/opposing signals 会从
+  `commands.evaluate_trading_opportunity()` 传到 persistence path。
+- proposal rationale 的 `decision_meta` 同时写新键 `supporting_signals` / `opposing_signals`
+  和旧键 `supporting` / `opposing`，历史/前端/反馈读取保持兼容。
+- Thesis Lineage read model 可以只读地通过 `proposal_id -> trade_proposals.opportunity_id`
+  还原一部分历史决策链，并用 `decision_opportunity_id_inferred_from="proposal_id"` 标明是推断。
+- 审计口径拆分：`global_no_target_count`、`link_required_missing_opportunity_id`、
+  `proposal_backfillable_missing_opportunity_id`、`stale_missing_pnl_pct`、`overdue_pending`、
+  mature-only shadow/forward missing。不要再把所有 `opportunity_id=NULL` 都当作断链。
+- 修复计划文档：`docs/plans/thesis_lineage_integrity_repair_plan.md`。
+
+后续看效果时，优先看修复后新写入数据：
+`signal_pending` 应继续保持 opportunity_id 缺失为 0；`link_required_missing_opportunity_id`
+才是真正需要盯的 PI 决策断链；`global_no_target_count` 是全局 skip/watch，不应作为断链修。
+
+验证：
+- `uv run pytest tests/test_thesis_lineage.py tests/test_anti_hallucination_e2e.py tests/test_proposal_rationale.py tests/specs/spec_data_model.py::test_pi_decision_carries_opportunity_id tests/specs/spec_decision_lifecycle.py tests/specs/spec_serenity_attribution.py -q`
+- `uv run pytest tests/test_architecture_fitness.py tests/specs/ -q`
+- `uv run pytest tests/test_doctor_trading_diagnostics.py tests/test_doctor.py::test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention -q`
+- `.\scripts\test_ai.ps1`
+- `cd frontend && npm run build`
 
 ---
 
