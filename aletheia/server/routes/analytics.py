@@ -206,6 +206,30 @@ def get_alpha_attribution(days: int = 30):
     return build_alpha_attribution_audit(days=days)
 
 
+@router.get("/thesis-lineage")
+def get_thesis_lineage(
+    days: int = 30,
+    position_id: str | None = None,
+    order_id: str | None = None,
+    proposal_id: str | None = None,
+    opportunity_id: str | None = None,
+    limit: int = 50,
+):
+    """Read-only thesis lineage records layered on top of the causal trade chain."""
+    from aletheia.analytics.thesis_lineage import filter_thesis_lineage_records
+
+    return {
+        "records": filter_thesis_lineage_records(
+            days=days,
+            position_id=position_id,
+            order_id=order_id,
+            proposal_id=proposal_id,
+            opportunity_id=opportunity_id,
+            limit=limit,
+        )
+    }
+
+
 # --- Round 1 progress / pipeline-funnel / learning-funnel ---
 # Read-only observability endpoints added 2026-06-24 to make the freeze-period
 # experiment status visible without manual SQL. None of these affect AI decisions.

@@ -1,4 +1,4 @@
-import type { InfraEvent, SystemStatus } from '../types'
+import type { InfraEvent, SystemStatus, ThesisLineageRecord } from '../types'
 
 const BASE = '/api'
 
@@ -821,6 +821,23 @@ export const api = {
     total_realized: number;
   }>(`/analytics/equity-curve${days ? `?days=${days}` : ''}`),
   getTradeInsights: () => fetchJson<TradeInsights>('/analytics/trade-insights'),
+  getThesisLineage: (params: {
+    days?: number
+    position_id?: string
+    order_id?: string
+    proposal_id?: string
+    opportunity_id?: string
+    limit?: number
+  }) => {
+    const q = new URLSearchParams()
+    if (params.days != null) q.set('days', String(params.days))
+    if (params.position_id) q.set('position_id', params.position_id)
+    if (params.order_id) q.set('order_id', params.order_id)
+    if (params.proposal_id) q.set('proposal_id', params.proposal_id)
+    if (params.opportunity_id) q.set('opportunity_id', params.opportunity_id)
+    if (params.limit != null) q.set('limit', String(params.limit))
+    return fetchJson<{ records: ThesisLineageRecord[] }>(`/analytics/thesis-lineage?${q.toString()}`)
+  },
   getGoLiveScorecard: () => fetchJson<GoLiveScorecard>('/analytics/go-live-scorecard'),
   getCostSummary: () => fetchJson<CostSummary>('/analytics/cost-summary'),
   getConfidenceCalibration: () => fetchJson<CalibrationReport>('/analytics/confidence-calibration'),

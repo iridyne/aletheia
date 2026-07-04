@@ -3,13 +3,14 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
-import type { Order, Position, ReconcileItem } from '../types'
+import type { Order, Position, ReconcileItem, ThesisLineageRecord } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import AccountSnapshot from '../components/AccountSnapshot'
 import CausalChain from '../components/CausalChain'
 import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
+import ThesisText from '../components/ThesisText'
 import { Badge, Button, Card, TableWrap } from '../components/ui'
 import { fmtNum, fmtSigned, useDecimals, humanize, fmtTimestamp, fmtSymbol, exchangeOf, marketBadgeTone, isPerpMarket } from '../lib/format'
 import TradeAnalyticsPanel from '../charts/TradeAnalyticsPanel'
@@ -321,6 +322,9 @@ function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) 
       <DrawerSection label="Causal Chain">
         <CausalChain anchor={{ kind: 'order', order }} />
       </DrawerSection>
+      <DrawerSection label="Thesis Lineage">
+        <ThesisLineagePanel order={order} />
+      </DrawerSection>
       {order.filled_at && (
         <div className="mt-2">
           <Button variant="secondary" onClick={() => navigate('/charts')}>View on Chart</Button>
@@ -381,6 +385,98 @@ function PositionDetail({ position }: { position: Position }) {
       <DrawerSection label="Causal Chain">
         <CausalChain anchor={{ kind: 'position', position }} />
       </DrawerSection>
+      <DrawerSection label="Thesis Lineage">
+        <ThesisLineagePanel position={position} />
+      </DrawerSection>
     </>
   )
+}
+
+function ThesisLineagePanel({ order, position }: { order?: Order; position?: Position }) {
+  const query = useQuery({
+    queryKey: ['thesis-lineage', order?.id ?? null, position?.id ?? null, order?.proposal_id ?? position?.proposal_id ?? null],
+    queryFn: () => api.getThesisLineage({
+      days: 90,
+      order_id: order?.id,
+      position_id: position?.id,
+      proposal_id: order?.proposal_id ?? position?.proposal_id ?? undefined,
+      limit: 3,
+    }),
+    enabled: !!(order?.id || position?.id || order?.proposal_id || position?.proposal_id),
+  })
+
+  if (query.isLoading) return <p className="text-muted text-sm">Loading thesis lineage…</p>
+  if (query.error) return <p className="text-muted text-sm">Thesis lineage not available.</p>
+  const record = query.data?.records?.[0]
+  if (!record) {
+    return <p className="text-muted text-sm">No thesis lineage record found for this trade.</p>
+  }
+  return <ThesisLineageRecordView record={record} />
+}
+
+function ThesisLineageRecordView({ record }: { record: ThesisLineageRecord }) {
+  const actual = record.actual_pnl_pct
+  const shadow = record.shadow_pnl_pct
+  const batch = record.counterfactual_avg_pnl_pct
+  return (
+    <div className="thesis-lineage">
+      <div className="thesis-lineage-head">
+        <Badge tone={verdictTone(record.verdict)}>{humanize(record.verdict)}</Badge>
+        <span className="mono text-xs">{record.lineage_id}</span>
+      </div>
+      <div className="thesis-lineage-grid">
+        <LineageMetric label="Actual" value={actual == null ? '—' : `${fmtSigned(actual)}%`} tone={actual == null ? undefined : actual >= 0 ? 'good' : 'bad'} />
+        <LineageMetric label="Shadow" value={shadow == null ? '—' : `${fmtSigned(shadow)}%`} tone={shadow == null ? undefined : shadow >= 0 ? 'good' : 'bad'} />
+        <LineageMetric label="Batch avg" value={batch == null ? '—' : `${fmtSigned(batch)}%`} tone={batch == null ? undefined : batch >= 0 ? 'good' : 'bad'} />
+      </div>
+      <div className="thesis-lineage-meta">
+        <span>{humanize(record.root_type)}</span>
+        {record.scanner_family && <span>{humanize(record.scanner_family)}</span>}
+        {record.decision_action && <span>decision: {humanize(record.decision_action)}</span>}
+        {record.decision_conviction != null && <span>conviction: {record.decision_conviction}</span>}
+        {record.universe_rank != null && <span>universe rank: {record.universe_rank}</span>}
+      </div>
+      {record.observation_thesis ? (
+        <ThesisText text={record.observation_thesis} />
+      ) : (
+        <p className="text-muted text-sm">No observation thesis recorded.</p>
+      )}
+      {(record.supporting_signals?.length > 0 || record.opposing_signals?.length > 0 || record.key_assumptions?.length > 0 || record.bear_case) && (
+        <div className="thesis-lineage-evidence">
+          {record.supporting_signals?.length > 0 && <LineageList label="Supporting" values={record.supporting_signals} />}
+          {record.opposing_signals?.length > 0 && <LineageList label="Opposing" values={record.opposing_signals} />}
+          {record.key_assumptions?.length > 0 && <LineageList label="Assumptions" values={record.key_assumptions} />}
+          {record.bear_case && <div><span className="text-muted">Bear case:</span> {record.bear_case}</div>}
+        </div>
+      )}
+      {record.failure_bucket && <p className="thesis-lineage-note">Failure bucket: {humanize(record.failure_bucket)}</p>}
+      {record.parse_warning && <p className="thesis-lineage-note">Rationale metadata parse warning: {humanize(record.parse_warning)}</p>}
+    </div>
+  )
+}
+
+function LineageMetric({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'bad' }) {
+  return (
+    <div className="thesis-lineage-metric">
+      <span>{label}</span>
+      <strong className={tone === 'good' ? 'pnl-positive' : tone === 'bad' ? 'pnl-negative' : undefined}>{value}</strong>
+    </div>
+  )
+}
+
+function LineageList({ label, values }: { label: string; values: unknown[] }) {
+  return (
+    <div>
+      <span className="text-muted">{label}:</span>{' '}
+      {values.map(v => typeof v === 'string' ? v : JSON.stringify(v)).join('; ')}
+    </div>
+  )
+}
+
+function verdictTone(verdict: string): 'green' | 'red' | 'yellow' | 'blue' | 'muted' {
+  if (verdict === 'validated') return 'green'
+  if (verdict === 'failed' || verdict === 'poor_expression') return 'red'
+  if (verdict === 'missed_alpha') return 'yellow'
+  if (verdict === 'pending') return 'blue'
+  return 'muted'
 }

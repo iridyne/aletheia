@@ -61,8 +61,13 @@ doctor / gateway logs 的日志尾部输出必须走脱敏读取，不能把 tok
 **交易诊断入口（2026-07-04）**:`uv run aletheia doctor --deep` 现在是交易问题的
 第一诊断入口，会用 compact summary 指向 Alpha / Trade Funnel / Sizing 哪一块最值得看。
 详细报告走只读 standalone 命令：`uv run aletheia funnel audit --hours 24` 和
-`uv run aletheia sizing trace --hours 24`。这些 audit 只做诊断，不自动调仓位、风控、
-Kelly、杠杆或 persona。
+`uv run aletheia sizing trace --hours 24`。Thesis 样本级复盘走
+`uv run aletheia thesis audit --days 7` 和 `uv run aletheia thesis records --days 7 --json`；
+Trades & Positions 详情 drawer 会在 Causal Chain 下方显示对应 Thesis Lineage。
+生成 thesis 的上游可以用 LLM 或规则/模型；Thesis Lineage v1 只还原和评估已经留下的
+thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不新增 LLM 调用，
+不事后补写理由。这些 audit 只做诊断，不自动调仓位、风控、Kelly、杠杆、ranker、prompt
+或 persona。
 
 **Learning 闭环当前边界（2026-07-03）**:交易历史 → case study → lesson → policy →
 draft skill 的代码链路已打通，旧 trading memo 会按 7 天半衰期降权。draft skill 仍需

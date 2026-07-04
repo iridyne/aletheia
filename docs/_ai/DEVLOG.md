@@ -1,5 +1,39 @@
 # Development Log
 
+## 2026-07-04 — Thesis Lineage 读模型 + 交易详情 UI
+
+### 触发
+owner 要求把 thesis lineage 叠到现有交易因果链上，并且前端 Trades & Positions 的每笔交易详情
+已经有 causal chain UI，需要同步显示 thesis 的参与情况和实际/反事实对比。
+
+### 交付
+- 新增 `aletheia/analytics/thesis_lineage.py`：只读重建 observation thesis → decision →
+  proposal → risk → order/fill/position → shadow/forward outcome 的语义链。
+- 新增 CLI：`uv run aletheia thesis audit --days 7`、
+  `uv run aletheia thesis records --days 7 --json`。
+- 新增 API：`GET /api/analytics/thesis-lineage`，支持按 `position_id` / `order_id` /
+  `proposal_id` / `opportunity_id` 过滤，供交易详情 drawer 使用。
+- 前端 `Trades & Positions` 的 Order / Position detail drawer 在现有 Causal Chain 下方新增
+  `Thesis Lineage` 区块，展示 verdict、actual vs shadow vs batch average、观察假说、决策信号、
+  assumptions / bear case 和缺失提示。
+- `docs/design/api_reference.md` 登记新 analytics endpoint。
+
+### 边界
+本批只读，不新建 DB 表，不改交易行为，不调 prompt/ranker/sizing/risk/execution/scheduler/live，
+不调用交易所。LLM 边界更精确地说：生成 thesis 的上游可以用 LLM 或规则/模型；Thesis
+Lineage 读模型/审计层不新增额外 LLM 调用，只消费 market_observer / System Operator /
+Serenity 已经生成并落库的 thesis / reasoning / evidence。缺字段就标 missing/insufficient_data，
+不事后补写聪明理由。前端只展示后端真实返回；没有记录时显示不可用，不编造正向状态。
+
+### 验证
+- `uv run pytest tests/test_thesis_lineage.py -q -o cache_dir=.pytest_cache_ai`
+- `uv run pytest tests/test_thesis_lineage.py tests/test_trade_attribution.py tests/test_alpha_attribution.py tests/test_trade_funnel_audit.py tests/test_sizing_trace_audit.py -q -o cache_dir=.pytest_cache_ai`
+- `uv run pytest tests/specs/spec_api_reference.py tests/test_architecture_fitness.py -q -o cache_dir=.pytest_cache_ai`
+- `cd frontend && npm run build`
+- `.\scripts\test_ai.ps1`
+
+---
+
 ## 2026-07-04 — Trade Funnel + Sizing Trace audit 接入 doctor deep
 
 ### 触发

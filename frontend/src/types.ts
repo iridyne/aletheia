@@ -86,6 +86,53 @@ export interface Position {
   slippage_cost?: number | null
 }
 
+export interface ThesisLineageRecord {
+  lineage_id: string
+  root_type: 'market_observer' | 'serenity' | 'unknown' | string
+  root_id: string | null
+  symbol: string | null
+  market_type: string | null
+  direction: string | null
+  created_at: string | null
+  universe_member_id: string | null
+  universe_rank: number | null
+  scanner_family: string | null
+  tradability_score: number | null
+  late_entry_penalty: number | null
+  regime_tag: string | null
+  observation_thesis: string | null
+  observation_confidence: string | number | null
+  key_observations: unknown[]
+  decision_action: string | null
+  decision_conviction: number | null
+  decision_reasoning: string | null
+  supporting_signals: unknown[]
+  opposing_signals: unknown[]
+  bear_case: string | null
+  key_assumptions: unknown[]
+  proposal_id: string | null
+  proposal_status: string | null
+  risk_approved: boolean | null
+  risk_violations: unknown[]
+  order_id: string | null
+  position_id: string | null
+  was_traded: boolean
+  notional_usdt: number | null
+  actual_pnl: number | null
+  actual_pnl_pct: number | null
+  close_reason: string | null
+  shadow_batch_id: string | null
+  shadow_rank: number | null
+  shadow_pnl_pct: number | null
+  counterfactual_avg_pnl_pct: number | null
+  verdict: 'pending' | 'validated' | 'failed' | 'missed_alpha' | 'poor_expression' | 'insufficient_data' | string
+  failure_bucket: string | null
+  parse_warning?: string | null
+  human_thesis?: string | null
+  forward_return_pct?: number | null
+  serenity?: Record<string, unknown> | null
+}
+
 export type AssetClass = 'crypto' | 'equity' | 'prediction'
 
 export interface Opportunity {

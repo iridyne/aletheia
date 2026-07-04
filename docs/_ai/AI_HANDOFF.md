@@ -7,7 +7,38 @@
 
 ## Last Updated
 
-2026-07-04 (Trade diagnostics audit + 文档收口)
+2026-07-04 (Thesis Lineage 读模型 + 交易详情 UI)
+
+---
+
+## Recent Change (Thesis Lineage — 2026-07-04)
+
+新增一层只读 thesis lineage：不替代交易因果链，而是在现有事实链上显示“这条交易假说怎么参与、
+最后实际结果和反事实结果怎么对比”。
+
+- 后端新增 `aletheia/analytics/thesis_lineage.py`，从 opportunities / serenity_opportunities /
+  pi_decisions / trade_proposals / risk_decisions / orders / fills / positions / shadow_trades /
+  universe_members / universe_forward_outcomes 只读重建记录。
+- CLI 新增 `aletheia thesis audit` 和 `aletheia thesis records`。
+- API 新增 `GET /api/analytics/thesis-lineage`，支持按 position/order/proposal/opportunity 过滤。
+- 前端 Trades & Positions 的 Order / Position detail drawer 在现有 Causal Chain 下方新增
+  Thesis Lineage 区块，显示 verdict、actual/shadow/batch 对比、观察假说、决策信号、assumptions、
+  bear case 和 parse warning。
+- API reference 已登记新 endpoint。
+
+边界：不新建表、不改交易行为、不调 prompt/ranker/sizing/risk/execution/scheduler/live、
+不调用交易所。LLM 边界：生成 thesis 的上游可以用 LLM 或规则/模型；Thesis Lineage
+读模型/审计层不新增额外 LLM 调用，只消费 market_observer / System Operator / Serenity
+已经生成并落库的 thesis / reasoning / evidence。缺字段就标 missing/insufficient_data，
+不事后补写聪明理由；前端无数据时显示不可用，不伪造状态。
+
+验证：
+- thesis lineage tests：9 passed。
+- 相关审计/归因 tests：48 passed。
+- API reference + architecture tests：21 passed。
+- `frontend npm run build` 通过。
+- `scripts/test_ai.ps1` 通过。
+- 空 DB CLI 不崩；真实库 7 天窗口可生成 summary。
 
 ---
 
@@ -23,8 +54,8 @@
 - 实现说明：`docs/_ai/TRADE_DIAGNOSTICS_AUDIT_2026-07-04.md`。
 
 边界：本批只读，不改交易行为、不调风控/仓位/杠杆/persona、不创建 proposal、不下单、
-不调用 LLM/交易所、不触发 agent/scheduler；doctor 的交易诊断不制造 blocker，`--fix`
-不根据诊断自动调参。
+不调用交易所、不触发 agent/scheduler。这些诊断/审计层不新增 LLM 调用，只读已有系统记录；
+doctor 的交易诊断不制造 blocker，`--fix` 不根据诊断自动调参。
 
 ---
 
