@@ -13,31 +13,41 @@
 
 ---
 
-## 当前诊断入口:Opportunity Flow Ledger
+## 当前诊断入口:Opportunity Lifecycle
 
 近期排查“机会为什么没有变成交易”时，优先使用统一入口：
 
 ```powershell
-uv run aletheia flow audit --hours 24
-uv run aletheia flow trace --opportunity-id <id>
+uv run aletheia opportunity audit --hours 24
+uv run aletheia opportunity trace --id <id>
 ```
 
 排查特定问题时优先加过滤：
 
 ```powershell
-uv run aletheia flow audit --hours 24 --stage debate_downgraded
-uv run aletheia flow audit --hours 24 --verdict missed_alpha_suspect
-uv run aletheia flow audit --hours 24 --symbol TRX/USDT
+uv run aletheia opportunity audit --hours 24 --stage debate_downgraded
+uv run aletheia opportunity audit --hours 24 --verdict missed_alpha_suspect
+uv run aletheia opportunity audit --hours 24 --symbol TRX/USDT
 ```
 
-它把 Trade Funnel、Debate Impact、Thesis Lineage、Sizing Trace 等只读审计摘要合到一个
-机会生命周期视图里。旧专项命令仍保留，用于需要深挖单一环节时查看细节。
+需要看单一维度时仍走同一个入口：
+
+```powershell
+uv run aletheia opportunity audit --view funnel
+uv run aletheia opportunity audit --view sizing
+uv run aletheia opportunity audit --view alpha
+uv run aletheia opportunity audit --view thesis
+```
+
+`inspect opportunities` 只用于列出机会原始记录；`opportunity audit/trace` 用于分析机会
+从生成到放弃或执行的完整生命周期。旧 `flow` / `alpha` / `funnel` / `sizing` / `thesis audit`
+入口保留为隐藏兼容命令，不再作为 owner 日常主入口。
 
 候选供给不足时，`trading_context` 会写 `candidate_supply_snapshot`，连续 2 个 cycle 的
 `executable_count < 3` 会在 `/api/operator/recommendations` 中出现
 `candidate_supply_drought`，并建议刷新机会池（`run_market_scan`）。
 
-边界保持不变：flow 只读重建，不调用 LLM，不跑 ranker，不重跑 guard/debate/risk/execution，
+边界保持不变：opportunity CLI 只读重建，不调用 LLM，不跑 ranker，不重跑 guard/debate/risk/execution，
 不改交易行为；缺字段保留 `insufficient_data`。
 
 ---
@@ -90,10 +100,11 @@ doctor / gateway logs 的日志尾部输出必须走脱敏读取，不能把 tok
 **交易诊断入口（2026-07-04）**:`uv run aletheia doctor --deep` 现在是交易问题的
 第一诊断入口，会用 compact summary 指向 Alpha / Trade Funnel / Sizing / Thesis Lineage
 哪一块最值得看。
-详细报告走只读 standalone 命令：`uv run aletheia funnel audit --hours 24` 和
-`uv run aletheia sizing trace --hours 24`。Guard 是否压制候选流走
+详细报告统一走只读 opportunity 命令：`uv run aletheia opportunity audit --view funnel`、
+`uv run aletheia opportunity audit --view sizing`、`uv run aletheia opportunity audit --view alpha`、
+`uv run aletheia opportunity audit --view thesis`。Guard 是否压制候选流走
 `uv run aletheia inspect guard-impact --hours 24`（可加 `--json` 给机器消费）。Thesis 样本级复盘走
-`uv run aletheia thesis audit --days 7` 和 `uv run aletheia thesis records --days 7 --json`；
+`uv run aletheia opportunity audit --view thesis` 和 `uv run aletheia thesis records --days 7 --json`；
 Trades & Positions 详情 drawer 会在 Causal Chain 下方显示对应 Thesis Lineage。
 生成 thesis 的上游可以用 LLM 或规则/模型；Thesis Lineage v1 只还原和评估已经留下的
 thesis / reasoning / evidence，缺字段就标 missing/insufficient_data，不新增 LLM 调用，
@@ -114,7 +125,7 @@ markdown/frontmatter 和已有 shadow/forward outcome。它用来判断 active b
 是否能串起来、修断链和缺字段。禁止新增 thesis generator、LLM normalizer、prompt 优化、
 自动调参、新 UI、交易行为改动、新 `ThesisRecord` 表或决策前历史 thesis 检索。观察 JSON
 快照属于本机运行事实，写到 `data/diagnostics/` 这类 gitignored 目录，不写进 git 文档。
-`aletheia thesis audit --days 7 --json` 已内建 `data_completeness` 和
+`aletheia opportunity audit --view thesis --json` 已内建 `data_completeness` 和
 `raw_table_completeness`，`aletheia thesis snapshot --days 7` 会把同一份 audit JSON
 写到 `data/diagnostics/`，`aletheia thesis snapshots` 汇总最近保存的快照。下一轮观察优先
 看这两个区块，再决定修哪个 provenance 写入点。节奏：部署后先跑 `doctor --deep --json`，

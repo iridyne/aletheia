@@ -7,7 +7,42 @@
 
 ## Last Updated
 
-2026-07-04 (Executable Candidate Supply Floor V1)
+2026-07-05 (Opportunity CLI consolidation)
+
+---
+
+## Recent Change (Opportunity CLI consolidation — 2026-07-05)
+
+机会/假说排查入口已收口到 `opportunity`，避免 `flow`、`alpha`、`funnel`、`sizing`、
+`thesis audit` 平级抢入口。
+
+新的 owner 日常入口：
+
+```powershell
+uv run aletheia opportunity audit --hours 24
+uv run aletheia opportunity trace --id <opportunity_id>
+uv run aletheia opportunity audit --view funnel
+uv run aletheia opportunity audit --view sizing
+uv run aletheia opportunity audit --view alpha
+uv run aletheia opportunity audit --view thesis
+```
+
+语义边界：
+- `inspect opportunities`：只列出机会原始记录。
+- `opportunity audit`：分析机会整体生命周期。
+- `opportunity trace`：追踪单个机会的一生。
+
+兼容策略：
+- `flow` 是隐藏兼容别名，继续可执行但提示改用 `opportunity`。
+- `alpha`、`funnel`、`sizing` 顶层命令从根帮助菜单隐藏，human 输出提示改用 `opportunity --view ...`。
+- `thesis audit` 隐藏为兼容入口；`thesis snapshot/snapshots/records` 保留用于观察留档和明细导出。
+
+边界：只改 CLI 入口和只读分析路由；不改 risk、execution、scheduler、agent 决策、DB schema、
+配置或 live 行为。
+
+验证：
+- `uv run pytest tests/test_cli.py::test_help -q`
+- `uv run pytest tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_audit_and_trace tests/test_opportunity_flow_ledger.py::test_legacy_flow_cli_remains_hidden_compatibility_alias tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_specialized_views -q`
 
 ---
 

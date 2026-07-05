@@ -21,4 +21,5 @@ def audit(
     if json_output:
         typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
         return
+    typer.echo("Deprecated: use `uv run aletheia opportunity audit --view alpha` instead.\n")
     typer.echo(render_alpha_audit(report))

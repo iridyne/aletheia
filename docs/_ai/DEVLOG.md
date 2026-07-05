@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-05 — Opportunity CLI consolidation
+
+### 触发
+`inspect`、`flow`、`alpha`、`funnel`、`sizing`、`thesis` 在机会排查上职责重叠，owner 日常
+不知道应该先敲哪个命令。
+
+### 交付
+- 新增主入口 `uv run aletheia opportunity audit`，用于分析机会从生成到放弃或执行的完整生命周期。
+- 新增 `uv run aletheia opportunity trace --id <opportunity_id>`，用于追踪单个机会。
+- `opportunity audit --view funnel|sizing|alpha|thesis` 统一承接四个细分视角。
+- `flow` 保留为隐藏兼容别名，执行时提示改用 `opportunity`。
+- `alpha`、`funnel`、`sizing` 顶层命令从根帮助菜单隐藏；人类输出提示改用 `opportunity --view ...`。
+- `thesis audit` 隐藏为兼容命令；`thesis snapshot/snapshots/records` 保留，用于观察留档和明细导出。
+
+### 验证
+- `uv run pytest tests/test_cli.py::test_help -q`
+- `uv run pytest tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_audit_and_trace tests/test_opportunity_flow_ledger.py::test_legacy_flow_cli_remains_hidden_compatibility_alias tests/test_opportunity_flow_ledger.py::test_opportunity_cli_outputs_specialized_views -q`
+
+### 边界
+只改 CLI 入口和只读分析路由；不改 risk、execution、scheduler、agent 决策、DB schema、配置或 live 行为。
+
+---
+
 ## 2026-07-04 — Executable Candidate Supply Floor V1
 
 ### 触发

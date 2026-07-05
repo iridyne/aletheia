@@ -1,8 +1,8 @@
-# Opportunity Flow Ledger V1
+# Opportunity Lifecycle CLI
 
 ## Boundary
 
-Opportunity Flow Ledger V1 is a read-only reconstruction layer. It reads existing opportunity, decision, proposal, risk, order, position, shadow, forward-outcome, and audit-summary evidence to answer:
+The opportunity lifecycle CLI is a read-only reconstruction layer. It reads existing opportunity, decision, proposal, risk, order, position, shadow, forward-outcome, and audit-summary evidence to answer:
 
 > Why did this opportunity not become a trade?
 
@@ -15,19 +15,35 @@ Missing legacy evidence stays `insufficient_data`.
 Primary entrypoint:
 
 ```text
-uv run aletheia flow audit --hours 24
-uv run aletheia flow trace --opportunity-id <id>
+uv run aletheia opportunity audit --hours 24
+uv run aletheia opportunity trace --id <id>
 ```
 
 Useful filters:
 
 ```text
-uv run aletheia flow audit --hours 24 --stage debate_downgraded
-uv run aletheia flow audit --hours 24 --verdict missed_alpha_suspect
-uv run aletheia flow audit --hours 24 --symbol TRX/USDT
+uv run aletheia opportunity audit --hours 24 --stage debate_downgraded
+uv run aletheia opportunity audit --hours 24 --verdict missed_alpha_suspect
+uv run aletheia opportunity audit --hours 24 --symbol TRX/USDT
 ```
 
-V1 integrates the read-only summaries that are already useful:
+Specialized views are available under the same command:
+
+```text
+uv run aletheia opportunity audit --view funnel
+uv run aletheia opportunity audit --view sizing
+uv run aletheia opportunity audit --view alpha
+uv run aletheia opportunity audit --view thesis
+```
+
+`funnel`, `sizing`, `alpha`, and `thesis` are not separate top-level owner workflows. They are focused views of the opportunity lifecycle:
+
+- Funnel: where opportunity flow stops before an opened position.
+- Sizing: why intended or executed position sizes are small.
+- Alpha: whether layers appear to add, miss, or destroy value.
+- Thesis: whether the original trading rationale links through decision, proposal, execution, and outcome evidence.
+
+The overview integrates the read-only summaries that are already useful:
 
 - Trade Funnel: overall opportunity-to-position choke point.
 - Debate Impact: persisted debate skip trace and forward outcome verdicts.
@@ -56,20 +72,19 @@ V1 reconstructs these stages when evidence exists:
 - `shadow_resolved`
 - `forward_outcome_resolved`
 
-## Old Audit Command Routing Plan
+## Compatibility Routing
 
-Do not delete or hard-route existing commands in V1. They are still useful as focused views and may be used by scripts.
+`aletheia flow` is now a hidden compatibility alias for `aletheia opportunity`.
 
-Recommended migration:
+The old focused commands remain executable for scripts, but human output points back to the opportunity command:
 
-1. V1: keep old commands unchanged and introduce `aletheia flow`.
-2. V1.1: add a short note to old human-readable outputs:
-   `This report is also summarized by: uv run aletheia flow audit --hours <n>`.
-   Implemented for `inspect debate-impact` and `inspect guard-impact`.
-3. V2: if the flow ledger is stable, optionally make old commands thin section views:
-   - `aletheia funnel audit` -> flow funnel section
-   - `aletheia thesis audit` -> flow thesis section
-   - `aletheia sizing trace` -> flow sizing section
-   - `aletheia inspect debate-impact` -> flow debate section
+```text
+uv run aletheia flow audit      -> uv run aletheia opportunity audit
+uv run aletheia flow trace      -> uv run aletheia opportunity trace
+uv run aletheia funnel audit    -> uv run aletheia opportunity audit --view funnel
+uv run aletheia sizing trace    -> uv run aletheia opportunity audit --view sizing
+uv run aletheia alpha audit     -> uv run aletheia opportunity audit --view alpha
+uv run aletheia thesis audit    -> uv run aletheia opportunity audit --view thesis
+```
 
-This keeps compatibility while making the opportunity flow ledger the collaboration entrypoint.
+`inspect opportunities` remains the raw row listing: it answers "which opportunities exist?" The opportunity CLI answers "what happened to this opportunity lifecycle?"

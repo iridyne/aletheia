@@ -340,7 +340,7 @@ def test_opportunity_flow_success_path_reaches_closed_position():
     assert "position_closed" in stages
 
 
-def test_opportunity_flow_cli_outputs_audit_and_trace():
+def test_opportunity_cli_outputs_audit_and_trace():
     from aletheia.main import app
     from aletheia.storage.sqlite import get_db
 
@@ -352,7 +352,7 @@ def test_opportunity_flow_cli_outputs_audit_and_trace():
     audit = runner.invoke(
         app,
         [
-            "flow",
+            "opportunity",
             "audit",
             "--hours",
             "24",
@@ -366,7 +366,7 @@ def test_opportunity_flow_cli_outputs_audit_and_trace():
             "BTC/USDT",
         ],
     )
-    trace = runner.invoke(app, ["flow", "trace", "--opportunity-id", "opp-flow-1", "--json"])
+    trace = runner.invoke(app, ["opportunity", "trace", "--id", "opp-flow-1", "--json"])
 
     assert audit.exit_code == 0
     assert "Opportunity Flow Ledger" in audit.output
@@ -376,3 +376,45 @@ def test_opportunity_flow_cli_outputs_audit_and_trace():
     payload = json.loads(trace.output)
     assert payload["opportunity_id"] == "opp-flow-1"
     assert payload["final_stage"] == "debate_downgraded"
+
+
+def test_legacy_flow_cli_remains_hidden_compatibility_alias():
+    from aletheia.main import app
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db)
+    _insert_decision(db)
+
+    runner = CliRunner()
+    audit = runner.invoke(app, ["flow", "audit", "--hours", "24", "--limit", "5"])
+    trace = runner.invoke(app, ["flow", "trace", "--opportunity-id", "opp-flow-1", "--json"])
+
+    assert audit.exit_code == 0
+    assert "Deprecated: use `uv run aletheia opportunity audit`" in audit.output
+    assert "Opportunity Flow Ledger" in audit.output
+    assert trace.exit_code == 0
+    payload = json.loads(trace.output)
+    assert payload["opportunity_id"] == "opp-flow-1"
+
+
+def test_opportunity_cli_outputs_specialized_views():
+    from aletheia.main import app
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db)
+    _insert_decision(db)
+
+    runner = CliRunner()
+    expected_titles = {
+        "funnel": "Trade Funnel Audit",
+        "sizing": "Sizing Trace Audit",
+        "alpha": "Alpha Attribution Audit",
+        "thesis": "Thesis Lineage Audit",
+    }
+
+    for view, title in expected_titles.items():
+        result = runner.invoke(app, ["opportunity", "audit", "--view", view, "--hours", "24"])
+        assert result.exit_code == 0
+        assert title in result.output
