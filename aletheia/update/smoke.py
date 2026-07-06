@@ -27,7 +27,10 @@ _FAST_TESTS = [
     "tests/test_workflow_routes.py",
 ]
 
-_SECRET_PREFIXES = ("BITGET_", "OPENAI_", "ANTHROPIC_", "LLM_", "TELEGRAM_BOT_TOKEN")
+# #136: strip every exchange/API credential prefix the app reads from os.environ
+# (COINALYZE_/FRED_ are read directly; OKX_/BINANCE_ for cross-broker parity).
+_SECRET_PREFIXES = ("BITGET_", "OKX_", "BINANCE_", "OPENAI_", "ANTHROPIC_", "LLM_",
+                    "TELEGRAM_BOT_TOKEN", "COINALYZE_", "FRED_")
 
 
 def _safe_env() -> dict:

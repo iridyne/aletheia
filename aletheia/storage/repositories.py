@@ -1930,6 +1930,19 @@ def prune_onchain_snapshots(days: int = 30) -> int:
     return cur.rowcount or 0
 
 
+def prune_prediction_probability_snapshots(days: int = 90) -> int:
+    """#150: prune prediction_probability_snapshots older than `days`. Observation-only
+    telemetry (prediction_observer, 30-min cadence, gated on prediction_enabled) that
+    previously had no retention path."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cur = db.execute("DELETE FROM prediction_probability_snapshots WHERE ts < ?", (cutoff,))
+    if not was_in_tx:
+        db.commit()
+    return cur.rowcount or 0
+
+
 def prune_liquidation_events(days: int = 7) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()

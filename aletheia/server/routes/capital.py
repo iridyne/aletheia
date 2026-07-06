@@ -8,9 +8,17 @@ from aletheia.storage import repositories as repo
 
 router = APIRouter(prefix="/api/capital", tags=["capital"])
 
+_migrated = False
+
 
 def _ensure_db():
-    run_migrations()
+    # #88: run migrations once per process, not on every request. run_migrations() does
+    # a batch of DDL + column checks; calling it inside every async capital handler
+    # added avoidable latency on a hot-ish path (migrations are idempotent + global).
+    global _migrated
+    if not _migrated:
+        run_migrations()
+        _migrated = True
 
 
 class CapitalEventRequest(BaseModel):

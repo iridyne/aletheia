@@ -1005,7 +1005,10 @@ def _run_position_reconcile():
                 outputs.append(f"closed {len(summary['closed_orphans'])} orphans")
             if not outputs:
                 outputs.append("no action needed")
-            end_run(run, status="completed", outputs=outputs, errors=summary.get("errors") or None)
+            # #144: reflect per-item errors in the run status so health's failure-ratio
+            # sees a systematically-failing reconciler (matches the orchestrator convention).
+            _recon_status = "completed_with_errors" if summary.get("errors") else "completed"
+            end_run(run, status=_recon_status, outputs=outputs, errors=summary.get("errors") or None)
         except Exception as e:
             end_run(run, status="failed", errors=[str(e)])
             raise
@@ -1169,6 +1172,10 @@ def _run_cleanup():
             "open_interest_snapshots": repo.prune_open_interest_snapshots(30),
             "macro_snapshots": repo.prune_macro_snapshots(90),
             "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(14),
+            # #149/#150: these had a prune fn but no cleanup-job wiring (onchain) or no
+            # prune at all (prediction), so they grew unbounded.
+            "onchain_snapshots": repo.prune_onchain_snapshots(30),
+            "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(30),
             "universe_forward_outcomes": repo.prune_universe_forward_outcomes(30),
             "serenity_claims": repo.prune_serenity_claims(90),
