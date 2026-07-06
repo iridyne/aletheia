@@ -534,8 +534,8 @@ export const api = {
   getPortfolio: () => fetchJson<Record<string, any>>('/portfolio'),
   getUtaState: () => fetchJson<Record<string, any>>('/uta/state'),
   getStrategies: () => fetchJson<any[]>('/strategies'),
-  setStrategyVenue: (id: string, execution_venue: string | null) =>
-    fetchJson<any>(`/strategies/${id}/venue`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ execution_venue }) }),
+  // #95: removed dead setStrategyVenue() — it PATCHed /strategies/{id}/venue, a route
+  // deleted with the rules engine (Position C); no backend handler, no TSX caller.
   getKnowledge: (type = 'research_note') => fetchJson<any[]>(`/knowledge?type=${encodeURIComponent(type)}`),
   getStrategyMemory: () => fetchJson<any[]>('/knowledge/strategy-memory'),
   getDreamingLogs: () => fetchJson<any[]>('/knowledge/dreaming-logs'),

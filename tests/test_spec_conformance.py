@@ -128,9 +128,14 @@ def _import_all_specs():
         # Quant-review paper attribution replay (2026-07-01, QR-04): proposal-time
         # attribution snapshot threads into paper_broker position fields.
         spec_pipeline_paper_attribution,
-        spec_pi_decision_chain,
         spec_operator_contract_parity,
         spec_operator_single_source,
+        # #34: these spec files existed but were never imported here, so their claims
+        # (skill store, universe distribution audit) were absent from the conformance
+        # matrix — register them so they are actually loaded and counted. Also removed a
+        # duplicate spec_pi_decision_chain import that was in this list twice.
+        spec_skill_store,
+        spec_universe_distribution_audit,
         # Lesson block guards (LG-*): dry-run window + TTL expiry before block takes effect.
         # Attaches to risk_engine_contract (trust boundary, already REQUIRED). 2026-06-29.
         spec_lesson_guards,
