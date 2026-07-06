@@ -37,6 +37,8 @@ logger = logging.getLogger("aletheia.agents.paper_trader_ranker")
 
 _CONFIDENCE_RANK = {"speculative": 0, "medium": 1, "high": 2}
 _CONFIDENCE_SCORE_DEFAULT = {"speculative": 20, "medium": 50, "high": 75}
+_DEFAULT_CANDIDATE_LIMIT = 50
+_MAX_OPPORTUNITY_SCAN_LIMIT = 500
 
 # Evidence-based strategy gates (not_executable is NOT a block — strategies
 # without a RuleSet can still trade from LLM signals; the entry validation
@@ -70,8 +72,11 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
 
     min_conf = cfg.trading.min_confidence_to_trade
 
+    requested_limit = max(1, int(limit or _DEFAULT_CANDIDATE_LIMIT))
+    scan_limit = min(_MAX_OPPORTUNITY_SCAN_LIMIT, max(requested_limit, requested_limit * 5))
+
     candidates: list[dict] = []
-    opportunities = list_opportunities(limit=limit)
+    opportunities = list_opportunities(limit=scan_limit)
 
     for opp in opportunities:
         candidate = _evaluate_candidate(opp, cfg, now_iso, _symbol_allowed, min_conf, global_venue)
@@ -80,7 +85,7 @@ def build_paper_candidates(limit: int = 50) -> list[dict]:
 
     # Sort by trade_score descending
     candidates.sort(key=lambda c: c.get("trade_score", -999), reverse=True)
-    return candidates
+    return candidates[:requested_limit]
 
 
 def select_best_candidate(candidates: list[dict]) -> dict | None:
