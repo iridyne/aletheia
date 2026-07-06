@@ -436,6 +436,11 @@ app.add_middleware(
 _PROTECTED_PATHS = {
     "/api/settings/live-unlock", "/api/settings/live-lock",
     "/api/risk/kill-switch",
+    # #137/#42: these config mutations are trust-boundary (they can disable the
+    # kill switch, widen risk limits, flip demo->live, or elevate the agent
+    # permission mode), so they must require the tunnel token too — otherwise the
+    # protection on /api/risk/kill-switch is trivially bypassed via /settings/risk.
+    "/api/settings/risk", "/api/settings/exchange-mode", "/api/settings/permission-mode",
     "/api/gateway/restart", "/api/gateway/stop",
 }
 

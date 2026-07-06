@@ -217,6 +217,39 @@ async def test_settings_post_does_not_echo_secrets(client):
 
 
 @pytest.mark.anyio
+async def test_tunnel_guard_protects_risk_config_mutation(client):
+    """Regression #137: with the tunnel enabled, POST /settings/risk requires the token."""
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
+    cfg = load_config()
+    cfg.tunnel.enabled = True
+    save_config(cfg)
+    set_secret("tunnel_api_token", "TUNNELTOKEN123")
+
+    # No token -> blocked (401): risk config cannot be mutated over a public tunnel.
+    r = await client.post("/api/settings/risk", json={"max_leverage_major_live": 3})
+    assert r.status_code == 401
+
+    # Correct token -> the auth guard passes (route then handles it, not a 401).
+    r2 = await client.post(
+        "/api/settings/risk",
+        json={"max_leverage_major_live": 3},
+        headers={"X-Aletheia-Token": "TUNNELTOKEN123"},
+    )
+    assert r2.status_code != 401
+
+
+def test_restart_audit_actor_source_maps_automated_triggers():
+    """Regression #132: automated restart triggers are not recorded as actor='human'."""
+    from aletheia.server.routes.gateway import _restart_audit_actor_source
+    assert _restart_audit_actor_source("git_hook") == ("system", "git_hook")
+    assert _restart_audit_actor_source("file_change") == ("dev_watcher", "dev_watcher")
+    assert _restart_audit_actor_source("manual") == ("human", "dashboard")
+    # unknown reasons default to human/dashboard (dashboard-originated)
+    assert _restart_audit_actor_source("whatever")[0] == "human"
+
+
+@pytest.mark.anyio
 async def test_settings_update_controls_persist_new_config_fields(client):
     resp = await client.post(
         "/api/settings/exchange-markets",
