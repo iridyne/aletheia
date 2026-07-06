@@ -319,12 +319,6 @@ async def lifespan(app: FastAPI):
             init_scheduler()
         except Exception as e:
             logger.warning("Scheduler failed to start: %s", e)
-        try:
-            from aletheia.portfolio.exchange_sync import sync_all_exchanges
-            sync_all_exchanges()
-            logger.info("startup exchange sync complete")
-        except Exception as e:
-            logger.warning("startup exchange sync failed (non-fatal): %s", e)
     else:
         logger.info("Runtime mode %s: background services disabled", runtime_context["runtime_mode"])
     # Fail-loud LLM gate, run as a BACKGROUND task (not awaited here): if no
@@ -336,6 +330,23 @@ async def lifespan(app: FastAPI):
     # cfg.runtime.paused, and the only time-sensitive job (market_data) is
     # harmless to run once. See _llm_startup_gate.
     llm_gate_task = asyncio.create_task(_llm_startup_gate(cfg)) if background_services_enabled else None
+
+    # #138: initial exchange-state sync deferred to a POST-yield worker-thread task.
+    # It is a blocking aggregation that can take up to 30s on a slow/unreachable broker;
+    # running it inline before `yield` delayed the HTTP port bind, so the spawn-verifier /
+    # OS watchdog could see a dead port and falsely report gateway failure — the same
+    # reason the LLM/exchange gates are deferred. asyncio.to_thread keeps it off the loop.
+    # The scheduler's periodic exchange-sync keeps state fresh regardless.
+    startup_sync_task = None
+    if background_services_enabled:
+        async def _startup_exchange_sync():
+            try:
+                from aletheia.portfolio.exchange_sync import sync_all_exchanges
+                await asyncio.to_thread(sync_all_exchanges)
+                logger.info("startup exchange sync complete")
+            except Exception as e:
+                logger.warning("startup exchange sync failed (non-fatal): %s", e)
+        startup_sync_task = asyncio.create_task(_startup_exchange_sync())
 
     # Exchange connectivity gate — if exchange is unreachable at startup, pause
     # immediately and start auto-resume (same pattern as LLM gate).
