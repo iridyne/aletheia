@@ -55,7 +55,10 @@ def build_case_studies(
         return []
 
     cutoff = datetime.now(timezone.utc).timestamp() - since_hours * 3600
-    recent_rows = [r for r in rows if _opened_after(r, cutoff)]
+    # #16: window on CLOSE time, not open time — case studies are built from recently
+    # *closed* trades (see docstring), so a position opened before the window but
+    # closed within it must still be captured; otherwise long-held trades never get one.
+    recent_rows = [r for r in rows if _closed_after(r, cutoff)]
     if not recent_rows:
         return []
 
@@ -334,6 +337,19 @@ def _create_factor_guard_candidate(
     except Exception as e:
         logger.warning("Failed to create guard candidate for %s: %s", fk, e, exc_info=True)
         return None
+
+
+def _closed_after(row: dict, cutoff_ts: float) -> bool:
+    """#16: True if the position CLOSED at/after the cutoff (case studies window on
+    close time, not open time — long-held trades closed within the window still count)."""
+    closed = row.get("closed_at")
+    if not closed:
+        return False
+    try:
+        dt = datetime.fromisoformat(closed.replace("Z", "+00:00"))
+        return dt.timestamp() >= cutoff_ts
+    except (ValueError, TypeError):
+        return False
 
 
 def _opened_after(row: dict, cutoff_ts: float) -> bool:

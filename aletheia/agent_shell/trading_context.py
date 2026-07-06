@@ -833,7 +833,14 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     # These lessons have passed: deterministic floor (≥20 settled outcomes) + LLM judge.
     try:
         from aletheia.learning.lessons import LessonStore
-        ps = LessonStore().list_all(status="applied", limit=5)
+        from datetime import datetime, timezone
+        _now_iso = datetime.now(timezone.utc).isoformat()
+        # #18: exclude expired lessons — the risk engine skips them (engine.py:416),
+        # so the prompt must not present a stale lesson as active guidance. Fetch a
+        # wider set, drop expired, then cap at 5 (matches the previous surface size).
+        _applied = LessonStore().list_all(status="applied", limit=20)
+        ps = [l for l in _applied
+              if not (getattr(l, "expires_at", None) and _now_iso > l.expires_at)][:5]
         layer["ps_lessons"] = [
             {"summary": l.summary, "severity": l.severity, "category": l.category}
             for l in ps

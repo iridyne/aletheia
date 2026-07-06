@@ -468,6 +468,11 @@ def _memo_scoring(symbol: str | None, direction: str | None, regime: MarketRegim
                     adj -= 15
                     break
 
+        # #131: fade the memo's influence by its age using the same 7-day half-life
+        # the prompt renderer applies (memo_half_life_weight), so a nearly-decayed memo
+        # no longer moves candidate ranking at full strength while the UI shows it faded.
+        from aletheia.analytics.memo_effectiveness import memo_half_life_weight
+        adj *= memo_half_life_weight(memo.get("generated_at"))
         return max(-45.0, min(45.0, adj))
     except Exception:
         return 0.0
