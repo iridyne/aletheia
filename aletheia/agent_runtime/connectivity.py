@@ -18,13 +18,41 @@ logger = logging.getLogger("aletheia.connectivity")
 _consecutive_failures: int = 0
 _consecutive_successes: int = 0
 _last_probe_result: dict | None = None
-_active_resume_task: asyncio.Task | None = None
+_active_resume_task = None  # asyncio.Task | concurrent.futures.Future | None
+_uvicorn_loop: asyncio.AbstractEventLoop | None = None  # persistent loop, captured at startup (#145)
 
 _EXCHANGE_ENDPOINTS: dict[str, str] = {
     "okx": "https://www.okx.com/api/v5/public/time",
     "bitget": "https://api.bitget.com/api/v2/public/time",
     "binance": "https://api.binance.com/api/v3/ping",
 }
+
+
+def set_uvicorn_loop(loop) -> None:
+    """Capture the persistent uvicorn event loop so the auto-resume task can be
+    scheduled onto it (#145). The periodic connectivity check runs on an ephemeral
+    per-job loop that is torn down as soon as the job returns, so a resume task
+    created there would be destroyed pending and never fire — only a startup-time
+    pause (already on the uvicorn loop) auto-resumed."""
+    global _uvicorn_loop
+    _uvicorn_loop = loop
+
+
+def _choose_resume_scheduling(uvicorn_loop, running_loop) -> str:
+    """Decide how to schedule the auto-resume loop so it survives (#145).
+
+    - "threadsafe": a distinct, running persistent loop is captured — schedule onto
+      it from this (ephemeral/worker) loop via run_coroutine_threadsafe.
+    - "create_task": we are already on a persistent loop (startup gate) or no loop
+      was captured — create the task on the current loop.
+    - "none": no loop available at all.
+    """
+    if uvicorn_loop is not None and uvicorn_loop is not running_loop \
+            and getattr(uvicorn_loop, "is_running", lambda: False)():
+        return "threadsafe"
+    if running_loop is not None:
+        return "create_task"
+    return "none"
 
 
 async def probe_exchange(cfg=None) -> dict:
@@ -164,13 +192,27 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
     except Exception:
         pass
 
-    # Start auto-resume loop (independent of paused scheduler)
+    # Start auto-resume loop on a loop that SURVIVES (#145). The periodic connectivity
+    # check runs on an ephemeral per-job loop torn down right after the job returns, so
+    # asyncio.get_running_loop().create_task() here would orphan the resume task. Schedule
+    # onto the captured persistent uvicorn loop when we are not already running on it.
     if _active_resume_task is None or _active_resume_task.done():
         interval = cfg.health.exchange_auto_resume_interval_sec
-        _active_resume_task = asyncio.get_running_loop().create_task(
-            _exchange_auto_resume_loop(interval),
-            name="exchange_auto_resume",
-        )
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        mode = _choose_resume_scheduling(_uvicorn_loop, running)
+        if mode == "threadsafe":
+            _active_resume_task = asyncio.run_coroutine_threadsafe(
+                _exchange_auto_resume_loop(interval), _uvicorn_loop,
+            )
+        elif mode == "create_task":
+            _active_resume_task = running.create_task(
+                _exchange_auto_resume_loop(interval), name="exchange_auto_resume",
+            )
+        else:
+            logger.error("connectivity auto-resume: no event loop available to schedule resume task")
 
 
 async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
@@ -213,6 +255,22 @@ async def _exchange_auto_resume_loop(interval_sec: int = 60) -> None:
 
 async def _resume_from_network(cfg) -> None:
     """Resume scheduler after exchange connectivity is restored."""
+    # #146: the paused flag is shared with the LLM startup gate. If the LLM is still
+    # unavailable, do NOT clear paused on exchange recovery — that would un-pause a
+    # system the LLM gate still requires paused, and the LLM auto-resume loop would
+    # then exit early seeing paused=False. Stay paused; the LLM auto-resume clears it
+    # once the LLM is back (exchange is already up by then). Fail-safe: on any probe
+    # error we proceed (pre-existing behaviour), never blocking a legitimate resume.
+    try:
+        if cfg.health.require_llm_at_startup:
+            from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
+            _llm = await probe_llm_providers_at_startup(cfg, max_retries=1)
+            if not _llm.get("any_usable"):
+                logger.info("exchange reachable again but LLM still unavailable — staying paused")
+                return
+    except Exception:
+        pass  # intentional: a probe failure must not block a legitimate resume
+
     from aletheia.agent_runtime.scheduler import resume_scheduler
     from aletheia.config.loader import save_config
     from aletheia.infra.events import emit_infra_event

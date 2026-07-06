@@ -341,7 +341,11 @@ async def lifespan(app: FastAPI):
     # immediately and start auto-resume (same pattern as LLM gate).
     exchange_gate_task = None
     if background_services_enabled:
-        from aletheia.agent_runtime.connectivity import startup_exchange_gate
+        from aletheia.agent_runtime.connectivity import startup_exchange_gate, set_uvicorn_loop
+        # #145: capture the persistent uvicorn loop so a mid-run connectivity loss (detected
+        # on an ephemeral scheduler-job loop) can schedule its auto-resume task HERE, where it
+        # survives — not on the per-job loop that is torn down right after the check runs.
+        set_uvicorn_loop(asyncio.get_running_loop())
         exchange_gate_task = asyncio.create_task(startup_exchange_gate(cfg))
 
     # System Operator event-driven daemon — wakes immediately on signal arrival
