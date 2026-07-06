@@ -16,6 +16,25 @@ from aletheia.knowledge.guards import load_trading_guards
 logger = logging.getLogger("aletheia.analytics.guard_effectiveness")
 
 
+def _clean_rows(rows: list[dict]) -> list[dict]:
+    """#159: drop synthetic/administrative closes AND pre-clean-window (dirty) data.
+
+    Guard promotion/effectiveness learn loss-rates that MUTATE live guard state
+    (promote to a hard block / deprecate), so they must only count genuine
+    post-floor trade outcomes — matching factor_feedback._genuine_rows plus the
+    clean-window floor the sibling learners apply. Reconciler orphan sweeps and
+    cleanups close near ~entry (near-random) and would tip the promote/deprecate
+    thresholds on fabricated evidence.
+    """
+    from aletheia.analytics.close_reasons import is_synthetic_close
+    from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
+    return [
+        r for r in rows
+        if not is_synthetic_close(r.get("close_reason"))
+        and str(r.get("closed_at") or "") >= LEARNING_DATA_FLOOR_ISO
+    ]
+
+
 def compute_guard_stats() -> list[dict]:
     """Compute effectiveness stats for all active guards.
 
@@ -32,7 +51,7 @@ def compute_guard_stats() -> list[dict]:
     if not guards:
         return []
 
-    rows = build_trade_attribution_rows(limit=500)
+    rows = _clean_rows(build_trade_attribution_rows(limit=500))
     if not rows:
         return []
 

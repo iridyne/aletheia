@@ -167,19 +167,27 @@ def _gather_statistics(window_days: int) -> dict[str, Any] | None:
         from aletheia.storage.repositories import get_latest_market_regime
         from aletheia.analytics.learning_window import clean_window_cutoff
 
+        from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
+
         db = get_db()
         # Clean-window floor: never ingest pre-2026-06-25T15:22 dirty Round 1 data.
         cutoff = clean_window_cutoff(
             (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
         )
 
+        # #160: exclude synthetic/administrative closes (reconciler sweeps, cleanups) —
+        # they are not trade outcomes, and this memo steers the System Operator prompt,
+        # so fitting regime/direction/anti-pattern rules on fabricated exits mis-teaches it.
+        _syn = tuple(SYNTHETIC_CLOSE_REASONS)
+        _ph = ",".join(["?"] * len(_syn))
         rows = db.execute(
             "SELECT id, symbol, direction, realized_pnl, entry_price, quantity, "
             "       opened_at, closed_at, regime_tag "
             "FROM positions "
             "WHERE status = 'closed' AND closed_at >= ? "
+            f"  AND (close_reason IS NULL OR close_reason NOT IN ({_ph})) "
             "ORDER BY closed_at ASC",
-            (cutoff,),
+            (cutoff, *_syn),
         ).fetchall()
 
         if not rows:

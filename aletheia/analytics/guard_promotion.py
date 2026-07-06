@@ -34,10 +34,13 @@ def run_promotion_check() -> dict:
     if not candidates:
         return {"promotions": 0, "deprecations": 0, "candidates_checked": 0}
 
-    from aletheia.analytics.guard_effectiveness import _rows_matching_guard
+    from aletheia.analytics.guard_effectiveness import _rows_matching_guard, _clean_rows
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
 
-    rows = build_trade_attribution_rows(limit=500)
+    # #159: this job MUTATES live guard state, so only learn loss-rates from genuine
+    # post-clean-window trade outcomes — synthetic/administrative closes (reconciler
+    # sweeps, cleanups) and pre-floor dirty data must not drive promotion/deprecation.
+    rows = _clean_rows(build_trade_attribution_rows(limit=500))
     promotions = 0
     deprecations = 0
 
