@@ -58,6 +58,7 @@ class TestGuardPromotionChain:
         mine = [g for g in cands if g.guard_id == guard_id]
         assert mine, f"candidate not reachable by load_trading_guards: {[g.guard_id for g in cands]}"
         g = mine[0]
+        assert g.applies_to.symbol == ["SOL/USDT"]
         assert g.applies_to.scanner_family == ["momentum"]
         assert g.applies_to.direction == ["long"]
 
@@ -72,5 +73,6 @@ class TestGuardPromotionChain:
         # 5) the candidate is now an ACTIVE guard (moved to guards/, status=active)
         active = [g for g in load_trading_guards(status="active") if g.guard_id == guard_id]
         assert active, "promoted guard should now load as active"
+        assert active[0].applies_to.symbol == ["SOL/USDT"]
         # ...and no longer appears as a candidate
         assert not any(g.guard_id == guard_id for g in load_trading_guards(status="candidate"))

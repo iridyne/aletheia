@@ -275,10 +275,13 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
                     "guard_id": guard_id,
                     "status": "candidate",
                     "scope": "paper_entry",
-                    # applies_to (built from scanner_family/direction in load_trading_guards)
-                    # filters which trades count; predicates must be non-empty for the
-                    # matcher to fire (_predicates_match returns False on []), so encode
-                    # the family as the predicate. Together they match this family+direction.
+                    "applies_to": {
+                        "symbol": [symbol],
+                        "scanner_family": [family],
+                        "direction": [direction],
+                    },
+                    # predicates must be non-empty for the matcher to fire
+                    # (_predicates_match returns False on []), so keep the family predicate.
                     "predicates": [{"field": "scanner_family", "op": "eq", "value": family}],
                     "outcome_id": row["id"],
                     "symbol": symbol,
