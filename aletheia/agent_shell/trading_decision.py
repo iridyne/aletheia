@@ -356,6 +356,11 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     market_type = decision.market_type
     if not market_type:
         market_type = "usdt_futures" if decision.direction == "short" else "spot"
+    elif market_type == "spot" and decision.direction == "short":
+        # #151: spot cannot be shorted — an explicit spot+short from the PI is forced
+        # to perp (same intent as the fallback above; risk engine #24 is the backstop).
+        # Prevents an impossible spot-short reaching the broker as a spot SELL.
+        market_type = "usdt_futures"
 
     # Leverage only applies to futures. Clamp the PI's request to the per-asset-tier
     # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
@@ -1189,11 +1194,19 @@ def _parse_decision(raw: dict) -> TradingDecision:
         except (TypeError, ValueError):
             return None
 
+    def _int(v, default=0):
+        # #12: guard against non-integer LLM conviction (e.g. "high", "8.5", null-ish).
+        # A garbled conviction falls back to 0, which is below the gate and safely skips.
+        try:
+            return int(float(v)) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
     return TradingDecision(
         action=raw.get("action", "skip"),
         symbol=raw.get("symbol"),
         direction=raw.get("direction"),
-        conviction=int(raw.get("conviction", 0)),
+        conviction=_int(raw.get("conviction", 0)),
         reasoning=raw.get("reasoning", ""),
         market_type=mt,
         leverage=leverage,
@@ -1233,11 +1246,9 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
     if not decision.symbol:
         return
     opps = (ctx.get("layer1") or {}).get("opportunities") or []
-    saw_same_symbol_opportunity = False
     for o in opps:
         if o.get("symbol") != decision.symbol:
             continue
-        saw_same_symbol_opportunity = True
         bias = o.get("direction_bias")
         # Require direction agreement only when both sides declare one; an
         # opportunity with no bias still matches on symbol.
@@ -1253,8 +1264,12 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         if not decision.market_type and o.get("market"):
             decision.market_type = o.get("market")
         return
-    if saw_same_symbol_opportunity:
-        return
+
+    # #152: even when a same-symbol Layer-1 opportunity was seen but its direction
+    # conflicted (so the loop above did not attach), fall through to the ranker +
+    # serenity fallbacks — a matching-direction ranker candidate (same market_observer
+    # provenance) or serenity pick still carries the real opportunity_id, so the
+    # attribution chain (DL-INV-4) is preserved instead of severed.
 
     # Ranker candidates are a second deterministic source of market_observer
     # opportunity ids. They may include candidates not currently visible in the
@@ -1318,8 +1333,12 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             continue
         decision.opportunity_id = oid
         decision.signal_source = "serenity"
-        if not decision.market_type and o.get("market"):
-            decision.market_type = o.get("market")
+        # #21/#102: serenity_opportunities dicts store the instrument under
+        # "market_type" (trading_context builds them that way), NOT "market" — the
+        # old o.get("market") always returned None, so a serenity spot pick fell
+        # through to the short->perp fallback. Read the correct key.
+        if not decision.market_type and o.get("market_type"):
+            decision.market_type = o.get("market_type")
         return
 
 
