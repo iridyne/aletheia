@@ -115,10 +115,23 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             _missing.append("risk_reward")
         if _missing:
             violations.append(f"incomplete_entry_plan:{'+'.join(_missing)}")
+        else:
+            # 2c. Side-of-entry geometry (#98): all four numbers are present, but they
+            #     must sit on the correct side of entry, else the "plan" is inverted
+            #     (e.g. a long whose stop is ABOVE entry). Presence != a valid bet.
+            entry = proposal.price
+            if proposal.direction == "long" and not (proposal.stop_price < entry < proposal.take_profit):
+                violations.append("entry_plan_geometry:expected_stop<entry<tp_for_long")
+            elif proposal.direction == "short" and not (proposal.take_profit < entry < proposal.stop_price):
+                violations.append("entry_plan_geometry:expected_tp<entry<stop_for_short")
 
-    # 3. Live state
+    # 3. Live state — fail CLOSED. A *_live_limited order is permitted ONLY when the
+    #    live state is the explicit unlocked value ("live_limited", set by human
+    #    confirmation). Any other value (default "live_disabled", a typo, or an
+    #    unknown/future state) must BLOCK — the previous `== "live_disabled"` check
+    #    let every non-disabled value through, permitting live orders by accident (#7).
     live_state = cfg.live.state
-    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited") and live_state == "live_disabled":
+    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited") and live_state != "live_limited":
         violations.append("live_disabled")
 
     # 4. Permission mode
@@ -178,6 +191,13 @@ def _evaluate_proposal_locked(proposal: TradeProposal) -> RiskCheckResult:
             violations.append("short_not_allowed_live")
         elif not _is_live(proposal.execution_mode) and not risk.allow_short_demo:
             violations.append("short_not_allowed_demo")
+
+    # 7b. Spot cannot be shorted (#24). A short is only expressible on a futures/perp
+    #     instrument; a spot+short would reach the broker as a spot SELL of an asset
+    #     the account may not hold. Reject at the risk boundary regardless of
+    #     allow_short_* (which only gate direction, not instrument type).
+    if proposal.direction == "short" and proposal.market_type == "spot":
+        violations.append("spot_short_not_allowed")
 
     # 8. Max daily loss — global brake. If today's realized loss breaches the limit,
     #    reject and auto-trip the kill switch (guide §21.3, §2.4).
@@ -426,6 +446,15 @@ def _check_lesson_constraints(proposal) -> list[str]:
                 )
 
             action = rec.get("action")
+            # Contract (#93): hard blocks (block_symbol/direction/scanner) are only
+            # valid from category='risk' lessons — the docstring says so but the code
+            # never checked. A non-risk lesson carrying a block_* action must NOT hard
+            # reject (that gates trades outside the documented risk-lesson boundary).
+            # Advisory actions (reduce_size) are unaffected.
+            if action in ("block_symbol", "block_direction", "block_scanner") and getattr(lesson, "category", None) != "risk":
+                logger.debug("lesson %s action=%s skipped: category=%s is not 'risk'",
+                             lesson.lesson_id, action, getattr(lesson, "category", None))
+                continue
             if action == "block_symbol":
                 blocked_sym = to_canonical(rec.get("symbol", ""))
                 if blocked_sym and blocked_sym == sym_canonical:
