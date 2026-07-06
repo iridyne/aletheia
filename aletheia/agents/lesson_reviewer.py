@@ -107,6 +107,21 @@ def _fetch_evidence(lesson) -> dict:
     evidence["symbol"] = symbol
     if symbol:
         evidence["symbol_stats"] = _agg("AND symbol = ?", (symbol,))
+
+    # Scanner-family slice (#99): a block_scanner lesson must be judged against the
+    # scanner-family's OWN settled outcomes, not just the global/symbol aggregates —
+    # otherwise a family-specific block is approved on evidence that never looked at
+    # that family. universe_forward_outcomes carries scanner_family.
+    scanner = (rec or {}).get("scanner")
+    if not scanner:
+        try:
+            ev = json.loads(lesson.evidence_json or "{}")
+            scanner = ev.get("scanner") or ev.get("scanner_family")
+        except (ValueError, TypeError):
+            pass  # intentional: missing/malformed evidence_json -> no scanner slice
+    evidence["scanner_family"] = scanner
+    if scanner:
+        evidence["scanner_family_stats"] = _agg("AND scanner_family = ?", (scanner,))
     return evidence
 
 
@@ -121,6 +136,12 @@ def _evidence_block(evidence: dict) -> str:
         lines.append(
             f"Symbol {evidence['symbol']}: total: {s.get('total')}, "
             f"win_rate: {s.get('win_rate')}%, avg_return: {s.get('avg_return')}%"
+        )
+    if evidence.get("scanner_family"):
+        sf = evidence.get("scanner_family_stats") or {}
+        lines.append(
+            f"Scanner family {evidence['scanner_family']}: total: {sf.get('total')}, "
+            f"win_rate: {sf.get('win_rate')}%, avg_return: {sf.get('avg_return')}%"
         )
     return "\n".join(lines)
 
@@ -185,9 +206,14 @@ async def run_lesson_reviewer(
     errors: list[str] = []
     store = LessonStore()
 
-    # ── Step A: overturn — re-judge accepted lessons against fresh evidence ──
+    # ── Step A: overturn — re-judge already-consumed lessons against fresh evidence ──
+    # #130: 'accepted' is transient (accept + mark_applied happen in the same run), so
+    # the consumed stable state is 'applied'. Re-review BOTH, so an applied lesson with
+    # contradictory settled evidence is demoted rather than left active until expiry.
     demoted = 0
-    for lesson in store.list_all(status="accepted", limit=100):
+    _to_review = (store.list_all(status="accepted", limit=100)
+                  + store.list_all(status="applied", limit=100))
+    for lesson in _to_review:
         try:
             evidence = _fetch_evidence(lesson)
         except Exception as e:  # evidence query must never crash the job

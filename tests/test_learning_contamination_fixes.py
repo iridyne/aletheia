@@ -66,3 +66,72 @@ def test_case_builder_windows_on_close_time():
     assert _closed_after(recent_close, cutoff) is True    # opened long ago, closed recently → captured
     assert _closed_after(old_close, cutoff) is False
     assert _closed_after({"closed_at": None}, cutoff) is False
+
+
+def test_evidence_block_includes_scanner_family():
+    """#99: block_scanner lessons must surface a scanner-family evidence slice to the judge."""
+    from aletheia.agents.lesson_reviewer import _evidence_block
+    ev = {
+        "aggregate": {"total": 100, "win_rate": 45.0, "avg_return": 0.1},
+        "symbol": None,
+        "scanner_family": "momentum",
+        "scanner_family_stats": {"total": 20, "win_rate": 30.0, "avg_return": -0.5},
+    }
+    block = _evidence_block(ev)
+    assert "Scanner family momentum" in block
+    assert "30.0" in block
+
+
+def _reviewer_db(tmp_path, monkeypatch):
+    import sqlite3
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    sq._db_conn = conn
+    run_migrations()
+    return sq
+
+
+def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch):
+    """#130: the overturn pass re-reviews APPLIED lessons and demotes a failing one.
+
+    Uses the deterministic-demote path (symbol win-rate < 35% over >=10 settled
+    outcomes), so no LLM is needed.
+    """
+    import asyncio
+    sq = _reviewer_db(tmp_path, monkeypatch)
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.agents.lesson_reviewer import run_lesson_reviewer
+
+    store = LessonStore()
+    les = store.create("block BTC/USDT longs", source_type="test", source_id="t",
+                       category="risk", severity="high",
+                       recommendation={"action": "block_symbol", "symbol": "BTC/USDT", "direction": "long"})
+    store.accept(les.lesson_id)
+    store.mark_applied(les.lesson_id, "pv-test")
+    assert store.get(les.lesson_id).status == "applied"
+
+    # 10 settled 24h BTC/USDT long outcomes, 30% win rate (< 35% demote floor).
+    db = sq.get_db()
+    for i in range(10):
+        ret = 2.0 if i < 3 else -2.0
+        db.execute(
+            "INSERT INTO universe_forward_outcomes "
+            "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+            " entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, status) "
+            "VALUES (?, 'm1', 's1', 'BTC/USDT', 'momentum', 'long', '24h', "
+            " 100.0, datetime('now','-2 days'), datetime('now','-1 day'), datetime('now'), ?, 'settled')",
+            (f"fo-{i}", ret),
+        )
+    db.commit()
+
+    asyncio.run(run_lesson_reviewer(run_id="test"))
+    assert store.get(les.lesson_id).status == "rejected"   # applied lesson overturned
