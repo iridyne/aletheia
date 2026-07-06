@@ -28,6 +28,40 @@ def _is_secret_path(path: str) -> bool:
     return False
 
 
+def _secret_ignore(dirpath, names):
+    """shutil.copytree ignore callback — skip secret files/dirs at ANY depth, not just top level."""
+    return [n for n in names if _is_secret_path(n) or n.lower() == "secrets"]
+
+
+def _redact_proxy_url_str(url: str) -> str:
+    if not url:
+        return url
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(str(url))
+        if parts.username or parts.password:
+            host = parts.hostname or ""
+            if parts.port:
+                host = f"{host}:{parts.port}"
+            return urlunsplit((parts.scheme, f"***@{host}", parts.path, parts.query, parts.fragment))
+    except Exception:
+        return "***"
+    return url
+
+
+def _redact_config_dict(data):
+    """Mask credential-bearing config.yaml fields (proxy creds, legacy coinalyze key) before export."""
+    import copy
+    d = copy.deepcopy(data) if isinstance(data, dict) else {}
+    net = d.get("network")
+    if isinstance(net, dict) and net.get("proxy_url"):
+        net["proxy_url"] = _redact_proxy_url_str(net["proxy_url"])
+    md = d.get("market_data")
+    if isinstance(md, dict) and md.get("coinalyze_api_key"):
+        md["coinalyze_api_key"] = "***REDACTED***"
+    return d
+
+
 class ExportService:
     """Creates export bundles in various modes."""
 
@@ -80,11 +114,18 @@ class ExportService:
         return archive_path
 
     def _export_config(self, bundle_dir: Path) -> None:
-        """Export config and policy files only."""
+        """Export config with credential-bearing fields redacted (keeps manifest secrets_included=False honest)."""
         config_src = self._data_dir / "config.yaml"
         if config_src.exists():
             (bundle_dir / "config").mkdir(exist_ok=True)
-            shutil.copy2(config_src, bundle_dir / "config" / "config.yaml")
+            dst = bundle_dir / "config" / "config.yaml"
+            try:
+                data = yaml.safe_load(config_src.read_text(encoding="utf-8")) or {}
+                redacted = _redact_config_dict(data)
+                dst.write_text(yaml.safe_dump(redacted, default_flow_style=False, sort_keys=False), encoding="utf-8")
+            except Exception:
+                # Fail closed: never fall back to copying the raw file (that would leak).
+                dst.write_text("# config.yaml omitted from export: could not parse to redact secrets\n", encoding="utf-8")
 
     def _export_research(self, bundle_dir: Path, since: str | None) -> None:
         """Export evidence, claims, analyses, lessons, skills."""
@@ -158,12 +199,12 @@ class ExportService:
             # Copy all
             for item in artifacts_src.iterdir():
                 if item.is_dir() and not _is_secret_path(str(item)):
-                    shutil.copytree(item, artifacts_dst / item.name, dirs_exist_ok=True)
+                    shutil.copytree(item, artifacts_dst / item.name, dirs_exist_ok=True, ignore=_secret_ignore)
         else:
             for cat in categories:
                 src = artifacts_src / cat
                 if src.exists():
-                    shutil.copytree(src, artifacts_dst / cat, dirs_exist_ok=True)
+                    shutil.copytree(src, artifacts_dst / cat, dirs_exist_ok=True, ignore=_secret_ignore)
 
     def _write_checksums(self, bundle_dir: Path) -> None:
         """Write checksums.txt with SHA-256 of all files."""

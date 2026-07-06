@@ -4,6 +4,20 @@ from unittest.mock import patch
 from aletheia.config.secrets import redact, set_secret, get_secret
 
 
+def test_redact_log_text_covers_bare_secret_and_access_headers():
+    """Regression #133: log-tail redaction must catch bare `secret` and ACCESS-KEY/ACCESS-SIGN headers."""
+    from aletheia.gateway.logs import redact_log_text
+    assert "SECRETVAL9" not in redact_log_text('{"secret":"SECRETVAL9"}')
+    assert "SECRETVAL9" not in redact_log_text("secret=SECRETVAL9")
+    assert "bgkey12345" not in redact_log_text("ACCESS-KEY: bgkey12345")
+    assert "signxyz678" not in redact_log_text("ACCESS-SIGN: signxyz678")
+    # Previously-covered forms must still be redacted.
+    assert "passval42" not in redact_log_text("ACCESS-PASSPHRASE: passval42")
+    assert "apival123" not in redact_log_text('{"apiKey":"apival123"}')
+    # A non-secret word containing 'secret' as a value key is still masked; unrelated text survives.
+    assert "hello world" in redact_log_text("hello world")
+
+
 def test_redact_short():
     assert redact("abc") == "***"
     assert redact("") == "***"

@@ -63,10 +63,12 @@ def _check_default_provider(cfg: "AletheiaConfig") -> ConfigInconsistency | None
     return None
 
 
+# NOTE: credentials are loaded via get_secret() (keyring / encrypted store), NOT from
+# environment variables — so the fix hints must point at the secrets store, not env vars.
 _DEMO_CRED_MAP: dict[str, tuple[str, str]] = {
-    "bitget_demo": ("bitget.demo.api_key", "Set BITGET_API_KEY_DEMO / BITGET_API_SECRET_DEMO / BITGET_PASSPHRASE_DEMO"),
-    "okx_demo": ("okx.demo.api_key", "Set OKX_API_KEY_DEMO / OKX_API_SECRET_DEMO / OKX_PASSPHRASE_DEMO"),
-    "binance_testnet": ("binance.testnet.api_key", "Set BINANCE_API_KEY_TESTNET / BINANCE_API_SECRET_TESTNET"),
+    "bitget_demo": ("bitget.demo.api_key", "Configure demo credentials via Settings → Credentials (or `aletheia secrets set bitget.demo.api_key` / `.api_secret` / `.passphrase`)"),
+    "okx_demo": ("okx.demo.api_key", "Configure demo credentials via Settings → Credentials (or `aletheia secrets set okx.demo.api_key` / `.api_secret` / `.passphrase`)"),
+    "binance_testnet": ("binance.testnet.api_key", "Configure testnet credentials via Settings → Credentials (or `aletheia secrets set binance.testnet.api_key` / `.api_secret`)"),
 }
 
 
@@ -85,7 +87,7 @@ def _check_demo_credentials(cfg: "AletheiaConfig") -> ConfigInconsistency | None
                 field_path="exchange.paper_execution_mode",
                 severity="warning",
                 message=f"paper_execution_mode={pem} but demo API credentials are missing",
-                fix_hint=f"{fix_hint} in settings, or switch paper_execution_mode to 'paper_internal'",
+                fix_hint=f"{fix_hint}, or switch paper_execution_mode to 'paper_internal'",
             )
     except Exception:  # noqa: BLE001 — secrets layer might not be available
         pass

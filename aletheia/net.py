@@ -33,6 +33,23 @@ from aiohttp.resolver import ThreadedResolver
 
 logger = logging.getLogger("aletheia.net")
 
+
+def _redact_url(url):
+    """Mask embedded credentials before logging a URL: scheme://user:pass@host -> scheme://***@host."""
+    if not url:
+        return str(url)
+    try:
+        p = urlparse(str(url))
+        if p.username or p.password:
+            host = p.hostname or ""
+            if p.port:
+                host = f"{host}:{p.port}"
+            return f"{p.scheme}://***@{host}{p.path}"
+    except Exception:  # noqa: BLE001 — never let log redaction raise
+        return "***"
+    return url
+
+
 # Request headers that carry credentials. httpx's HTTPStatusError keeps a reference
 # to the originating Request (directly and via response.request), whose headers hold
 # the bearer token / api key. A full-traceback log or any access to
@@ -134,7 +151,7 @@ def _probe_proxy_sync(url: str) -> bool:
         return True
     except OSError:
         _proxy_reachable_cache[url] = (False, time.monotonic())
-        logger.debug("Proxy %s unreachable — falling back to direct connection", url)
+        logger.debug("Proxy %s unreachable — falling back to direct connection", _redact_url(url))
         return False
 
 
@@ -149,7 +166,7 @@ def invalidate_proxy_cache() -> None:
     url = _proxy_url()
     if url:
         _proxy_reachable_cache[url] = (False, time.monotonic())
-        logger.info("Proxy %s marked failed (HTTP-level) — bypassing for %ds", url, int(_PROXY_CACHE_TTL))
+        logger.info("Proxy %s marked failed (HTTP-level) — bypassing for %ds", _redact_url(url), int(_PROXY_CACHE_TTL))
 
 
 def _effective_proxy() -> str | None:

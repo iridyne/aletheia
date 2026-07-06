@@ -16,6 +16,57 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
 
 
+# --- Inline-secret redaction ---------------------------------------------------
+# Secrets must never leave the backend via a GET response, an echoed POST body,
+# or an audit record. `config.yaml` can hold credential-bearing fields (a proxy
+# URL with user:pass, or the legacy market_data.coinalyze_api_key), so every
+# surface that serializes those config sections runs them through these helpers.
+def _mask_secret(value):
+    """Mask a secret-bearing string for display, keeping only the last 4 chars."""
+    if not value:
+        return value
+    s = str(value)
+    return f"***{s[-4:]}" if len(s) > 4 else "***"
+
+
+def _redact_proxy_url(url):
+    """Strip embedded credentials from a proxy URL: scheme://user:pass@host -> scheme://***@host."""
+    if not url:
+        return url
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(str(url))
+        if parts.username or parts.password:
+            host = parts.hostname or ""
+            if parts.port:
+                host = f"{host}:{parts.port}"
+            return urlunsplit((parts.scheme, f"***@{host}", parts.path, parts.query, parts.fragment))
+    except Exception:  # noqa: BLE001 — never let redaction raise into a response
+        return "***"
+    return url
+
+
+def _redacted_market_data(md: dict) -> dict:
+    md = dict(md)
+    if md.get("coinalyze_api_key"):
+        md["coinalyze_api_key"] = _mask_secret(md["coinalyze_api_key"])
+    return md
+
+
+def _redacted_network(net: dict) -> dict:
+    net = dict(net)
+    if net.get("proxy_url"):
+        net["proxy_url"] = _redact_proxy_url(net["proxy_url"])
+    return net
+
+
+def _redacted_webhook(wh: dict) -> dict:
+    wh = dict(wh)
+    if wh.get("secret"):
+        wh["secret"] = _mask_secret(wh["secret"])
+    return wh
+
+
 class SettingsRequest(BaseModel):
     """Strict request body for Settings mutations.
 
@@ -76,13 +127,13 @@ async def get_settings():
         "retention": cfg.retention.model_dump(mode="json"),
         "telegram": cfg.telegram.model_dump(mode="json"),
         "webhook": {k: v for k, v in cfg.webhook.model_dump(mode="json").items() if k != "secret"},
-        "market_data": cfg.market_data.model_dump(mode="json"),
+        "market_data": _redacted_market_data(cfg.market_data.model_dump(mode="json")),
         "universe": cfg.universe.model_dump(mode="json"),
         "guard": cfg.guard.model_dump(mode="json"),
         "tunnel": {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
                    if k != "credentials_path"},
         "regime": cfg.regime.model_dump(mode="json"),
-        "network": cfg.network.model_dump(mode="json"),
+        "network": _redacted_network(cfg.network.model_dump(mode="json")),
         "strategy_factory": cfg.strategy_factory.model_dump(mode="json"),
         "historical_data": cfg.historical_data.model_dump(mode="json"),
         "event_triggers": cfg.event_triggers.model_dump(mode="json"),
@@ -618,10 +669,10 @@ async def update_webhook_config(req: WebhookConfigUpdate):
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "webhook_config_changed",
-                 "entity_type": "webhook_config", "before": old,
-                 "after": cfg.webhook.model_dump(mode="json"),
+                 "entity_type": "webhook_config", "before": _redacted_webhook(old),
+                 "after": _redacted_webhook(cfg.webhook.model_dump(mode="json")),
                  "message": f"Webhook config updated: {list(updates.keys())}"})
-    return {"updated": updates}
+    return {"updated": _redacted_webhook(updates)}
 
 
 # ---------------------------------------------------------------------------
@@ -1230,10 +1281,10 @@ async def update_network_config(req: NetworkConfigUpdate):
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard",
                  "event_type": "network_config_changed",
-                 "entity_type": "network_config", "before": old,
-                 "after": cfg.network.model_dump(mode="json"),
+                 "entity_type": "network_config", "before": _redacted_network(old),
+                 "after": _redacted_network(cfg.network.model_dump(mode="json")),
                  "message": f"Network config updated: {list(updates.keys())}"})
-    return {"updated": updates, "network": cfg.network.model_dump(mode="json")}
+    return {"updated": _redacted_network(updates), "network": _redacted_network(cfg.network.model_dump(mode="json"))}
 
 
 @router.post("/network/test")
