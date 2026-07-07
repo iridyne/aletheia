@@ -317,34 +317,48 @@ function SettingsSearch({ onPick }: { onPick: (tab: Tab) => void }) {
 function AgentModelsTab({ status, settings, qc }: any) {
   const agent = settings?.agent as any || {}
   const runtime = settings?.runtime as any || {}
+  // #164 fix: previously these mutations had onSuccess only — a rejected save
+  // (validation, permission, backend error) failed silently. Toggle appears to
+  // work, config never persists. Route every failure through a shared local
+  // banner so the operator sees the real reason.
+  const [saveErr, setSaveErr] = useState<string | null>(null)
+  const onSaveError = (label: string) => (e: any) =>
+    setSaveErr(`${label}: ${e?.message || 'save failed'}`)
 
   const permMut = useMutation({
     mutationFn: (mode: string) => api.setPermissionMode(mode),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['status'] }); qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Permission mode'),
   })
   const autoLearnMut = useMutation({
     mutationFn: (enabled: boolean) => api.setAutonomousLearning(enabled),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Autonomous learning'),
   })
   const bypassDistressMut = useMutation({
     mutationFn: (enabled: boolean) => api.setBypassDistressGate(enabled),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Bypass distress gate'),
   })
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Runtime config'),
   })
   const operatorMut = useMutation({
     mutationFn: (body: any) => api.updateOperatorConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Operator config'),
   })
   const piDaemonMut = useMutation({
     mutationFn: (body: any) => api.updatePiDaemonConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('System Operator daemon'),
   })
   const serenityMut = useMutation({
     mutationFn: (body: any) => api.updateSerenityConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Serenity config'),
   })
 
   const perm = String(status.permission_mode || agent.permission_mode || '')
@@ -364,17 +378,30 @@ function AgentModelsTab({ status, settings, qc }: any) {
 
   const guardMut = useMutation({
     mutationFn: (body: any) => api.updateGuardConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Guard promotion'),
   })
 
   const regimeCfg = (settings?.regime ?? {}) as any
   const regimeMut = useMutation({
     mutationFn: (body: any) => api.updateRegimeConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
+    onError: onSaveError('Regime config'),
   })
 
   return (
     <div>
+      {saveErr && (
+        <div className="save-err-banner" role="alert" style={{
+          background: 'var(--red-bg, rgba(255,0,0,0.08))',
+          color: 'var(--red)',
+          padding: '0.6em 0.8em',
+          borderRadius: 4,
+          marginBottom: 12,
+        }}>
+          Save failed — {saveErr}
+        </div>
+      )}
       <Section
         title="Permission Mode"
         description="Controls how much autonomy agents have over trading decisions. Changes are audited."
