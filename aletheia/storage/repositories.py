@@ -1183,13 +1183,45 @@ def prune_system_actions(days: int = 7) -> int:
     system_action is pure telemetry noise (~1200 rows/day) that used to flood
     the limit-30 window before the A2 fix added explicit item_type filters.
     Safe to prune because no learning/PI path queries system_action anymore.
+
+    #44 note (2026-07-08): knowledge_items is otherwise governed by the
+    no-hard-delete rule (audit reconstruction). This function is the ONE
+    documented exception — telemetry rows are not causal/knowledge content
+    and their unbounded growth would swamp the audit path itself. To keep
+    the accountability trail honest despite the hard delete, we emit an
+    audit event summarising the sweep (row count + oldest cutoff) so an
+    operator can grep pruning history without keeping the row bodies.
     """
-    return _delete_old_rows(
+    deleted = _delete_old_rows(
         "knowledge_items",
         days,
         extra_where="item_type = ?",
         extra_params=("system_action",),
     )
+    if deleted > 0:
+        try:
+            from aletheia.files.jsonl import write_audit
+            write_audit({
+                "actor": "system",
+                "source": "retention",
+                "event_type": "knowledge_items_pruned",
+                "entity_type": "knowledge_items",
+                "message": (
+                    f"prune_system_actions: hard-deleted {deleted} system_action rows "
+                    f"older than {days} days (documented exception to no-hard-delete)"
+                ),
+                "after": {
+                    "deleted_count": deleted,
+                    "cutoff_days": days,
+                    "item_type": "system_action",
+                },
+            })
+        except Exception:
+            # Retention MUST NOT crash if the audit write fails — the point of
+            # the audit hook is best-effort observability, not the retention
+            # decision itself.
+            pass
+    return deleted
 
 
 # ---------------------------------------------------------------------------
