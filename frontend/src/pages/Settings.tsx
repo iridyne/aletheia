@@ -2700,8 +2700,16 @@ function RiskCard({ settings, qc }: any) {
       <div className="kill-switch-info">
         <div className="kill-switch-info-title">Kill Switch Auto-Trigger Conditions</div>
         <ul>
-          <li><strong>Trigger formula:</strong> daily realized PnL &le; &minus;(Live Cap &times; Max Daily Loss %)</li>
-          <li><strong>Current threshold:</strong> &minus;{fmtNum((vals.max_live_limited_cap_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
+          {/* #39 fix: the trigger formula is MODE-DEPENDENT (risk/engine.py:209-216
+              — CR-RE-03). Live trades use `max_live_limited_cap_usdt × pct`;
+              demo trades use `starting_capital_usdt × pct` (the demo base — using
+              the tiny live cap spuriously tripped demo mode on any small loss).
+              The old UI only showed the live formula, so operators reading it for
+              a demo account saw a threshold ~1/1000th of the actual one. */}
+          <li><strong>Trigger formula (live):</strong> daily realized PnL &le; &minus;(Live Cap &times; Max Daily Loss %)</li>
+          <li><strong>Live threshold:</strong> &minus;{fmtNum((vals.max_live_limited_cap_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
+          <li><strong>Trigger formula (demo):</strong> daily realized PnL &le; &minus;(Starting Capital &times; Max Daily Loss %)</li>
+          <li><strong>Demo threshold:</strong> &minus;{fmtNum((vals.starting_capital_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
           <li><strong>Scope:</strong> applies to live trades when "Kill switch auto-trigger (live)" is ON; applies to demo trades when "Kill switch auto-trigger (demo)" is ON</li>
           <li><strong>Effect:</strong> once tripped, ALL proposals (live + demo) are rejected until manually released</li>
           <li><strong>Reset:</strong> release from Risk Controls panel or CLI after UTC new day</li>
