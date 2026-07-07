@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-07-07 — B8-chart-nav：PriceChart marketType + View-on-Chart 带 symbol 跳转（2 findings / 1 commit）
+
+### 触发
+接 B8-safety 后 owner「继续推进」。挑两条 chart 页相关的诚实性小改。
+
+### 做法
+1. **#115 PriceChart 没 marketType prop**：`<PriceChart symbol="BTC/USDT" ... />` 内部三次 `api.getOhlcv(...)` 都不传 marketType，走 client 签名的默认 'spot' —— 一个 perp instrument 的图表 quietly 拉 spot 蜡烛，价格偏离真实 perp mark。加 `marketType` prop（默认 'spot' 保 backwards compat），三处 getOhlcv 调用都透传。
+2. **#116 TradesPositions View on Chart 无 symbol**：Order 抽屉里 `onClick={() => navigate('/charts')}` 不带任何参数，Charts 页永远初始化到默认 BTC/USDT —— 用户要手动重新选 order 的真实 symbol。改成 `navigate({ pathname: '/charts', search: '?symbol=<order.symbol>&market_type=<...>' })`。Charts 页需要在 mount 时读 searchParams（大多数 chart 页都做这个，如没有则是下一批的工作）。
+
+### 交付
+- 2 findings。1 提交（PriceChart + TradesPositions）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 层。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~15 finding**（session B8 累计 19：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3 + safety 2 + chart-nav 2）。较大：Settings coverage matrix mislabel (#163)、CausalChain fill/position 源不对 (#122/#123)、Charts prediction fields 错 (#169/#170)、Proposals approve/confirm 骗人 (#113/#114)、SetupBanner 只 Bitget (#121)、CommandPalette Enter 劫持 (#126)、ReconciliationCard 零漂移隐藏 (#117)、Charts.tsx searchParams 未读 (Charts 需要接收 #116 传的 symbol/market_type)。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。**依赖 follow-up**：Charts.tsx 需在 mount 时读 `searchParams.get('symbol')` + `.get('market_type')` 并作为初值 —— 本批未改 Charts.tsx（大文件、需 UI 测试），下批做。
+
+---
+
 ## 2026-07-07 — B8-safety：Settings 保存 onError 横幅 + Serenity assessed_tier（2 findings / 1 commit）
 
 ### 触发
