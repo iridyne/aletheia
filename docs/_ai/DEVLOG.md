@@ -1,5 +1,18 @@
 # Development Log
 
+## 2026-07-08 — 尾扫延续：prune_system_actions 审计豁免 + gateway API 错误脱敏（2 findings / 2 commits）
+
+- **#44 prune_system_actions 硬删破 no-hard-delete 规则**：知识条目按规矩不 hard-delete，但 `system_action` 是 ~1200 rows/day 的纯 telemetry 噪声，保留反而淹没审计路径。保持 hard delete，但 docstring 显式声明这是 knowledge_items 里**唯一记录的例外**，并在实际删除时 emit `knowledge_items_pruned` audit event 记 deleted_count + cutoff_days —— 保住问责链条不至于失踪。→ `6b9cc40`
+- **#8 gateway API 错误响应泄漏 str(e)**：`execution/gateway.py` 三处 `return {..., "message": str(e)}`（demo / live / outer catch）直接把 raw CCXT/requests 异常文本抛给 API，可能带请求 URL / 部分头 / 栈碎片。新增 `_safe_error_message()` 转 `broker_utils.clean_error_message`（已知处理 OKX/Bitget/Binance JSON 形状）+ 截 200 字符。审计写入依然带原始信息，只切 API 表面。→ `1ac2247`
+
+### 验证
+`tests/specs/` 554 passed / 0 failed 两条都跑过。
+
+### 边界
+仅 storage/repositories.py + execution/gateway.py 各一个函数；未推 / 未 restart。
+
+---
+
 ## 2026-07-07 — 尾扫多点：research_worker docstring / /status head_commit 缓存 / SpecClaim 验证（3 findings / 3 commits）
 
 - **#22 research_worker docstring**：`is_serenity_tradable_symbol` docstring 说 stock tokens 是 `asset_class="equity"` observation-only，实际代码 line 769 打的是 `asset_class="equity_tradeable"`（可执行）。改写 docstring 列清两个 class 的区别 + `trading_decision.py:1321` 是分流点。运行时未动。→ `23b3cd2`
