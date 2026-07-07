@@ -48,9 +48,25 @@ def _is_allowed_serenity_symbol(symbol: str) -> bool:
     - Macro aggregates / non-tradeable: ALTCOINS, STABLECOIN_SUPPLY_AGGREGATE
     - Symbols longer than 14 chars base (catches most hallucinated tickers)
 
-    The function is intentionally permissive toward stock tokens: they are
-    observation-only (asset_class="equity") but valid Serenity research targets.
-    The execution guard lives in trading_context Layer 3, not here.
+    The function is intentionally permissive toward stock tokens.
+
+    #22 correction (2026-07-08): the previous docstring said stock tokens are
+    "observation-only (asset_class='equity')", but this function's caller
+    actually tags them as `asset_class='equity_tradeable'` (line ~769). The
+    two labels have distinct meanings:
+
+      - `asset_class='equity'`         → observation-only. Emitted by
+                                          equity_observer / stock_observer.
+                                          trading_decision.py:1324 skips these.
+      - `asset_class='equity_tradeable'` → Serenity-research xStocks tokens
+                                          that ARE spot-tradable on Bitget.
+                                          trading_decision.py:1321 lets them
+                                          through the execution gate.
+
+    So stock tokens THAT come through this validator will be flagged as
+    `equity_tradeable` and can execute. The execution eligibility guard
+    still lives in trading_context Layer 3; that's where the two classes
+    diverge downstream.
     """
     from aletheia.data.symbols import is_stock_token as _is_stock_token
     if not symbol or "/" not in symbol:
