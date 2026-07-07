@@ -1,5 +1,36 @@
 # Development Log
 
+## 2026-07-07 — B7-broker：跨 broker averaging + trailed-stop 三联（3 findings + #142 核对 / 1 commit）
+
+### 触发
+接 B7-trust 后 owner「继续推进」。选 B7 中形状统一的 broker 三联（都是 paper_broker → 三家 live broker 的克隆漂移）+ 顺手核对 #142 是否已被 `iridite/system_proxy_support` 覆盖。
+
+### 做法
+1. **#140 averaging-in entry_fee 累加**：paper_broker 在均入时累加 entry_fee（`existing.entry_fee + new_leg_fee`）；bitget/okx/binance 三家 live broker 从没抄这段 —— 均入后 entry_fee 只写新的一腿，之后 close 按 schedule 重推的费用喂给学习环，realized PnL 被高估。三家各加一段 mirror paper_broker 的累加代码。
+2. **#141 averaging-in liquidation_price 重算**：均入后加权平均入场变了，jetty liquidation 也应该重算（用同 leverage）。paper_broker 有这段；三家 live broker 没有。三家各加一段 `if existing_lev and existing_lev > 1: update_kwargs['liquidation_price'] = liquidation_price_for(new_entry, direction, existing_lev, symbol)`。展示/LLM 用，非实际风控闸门 —— 交易所自己的强平线是真闸门。
+3. **#139 trailed-stop exchange 同步**：`position_manager._maybe_update_trailing_stop` 只在 `execution_mode in (bitget_demo, bitget_live_limited)` 时调 `replace_exchange_stop`；okx/binance 均入的 DB stop 收紧但交易所侧不动，网关掉线时旧的宽 stop 先触发。新增 `execution.stops.replace_exchange_protective_stop(pos_id, new_stop)` 做 broker-agnostic 分派：Bitget 调既有 `replace_exchange_stop`；OKX 加 `replace_okx_exchange_stop`（cancel old algo + place new via `client.place_algo_order` / `cancel_algo_order`，signature 已核）；Binance 目前 client 只有 `place_order` 无 algo/stop 接口，dispatcher log warning + 跳过（DB stop 已收紧，仅交易所侧未同步）。整个特性 gated 在 default-off `cfg.trading.exchange_tpsl_enabled` 后 —— 生产 dormant，用户 opt-in 时三家 broker 行为需一致。
+4. **#142 核对**：拉起 `.claude/worktrees/system-proxy-support` worktree（PR #38，Option C），确认该分支已重写 `binance.client.py` 用 `make_ccxt(...)` 工厂 + managed aiohttp session 走 proxy，`_ensure_exchange` 惰性构建。**结论：#142 已在那条 PR 里被覆盖**，不在 bug_fix 分支上独立修（会与 PR merge 冲突且重复工作）。台账记 refuted-in-that-branch。
+
+### 交付
+- 3 findings 全处置 + 1 finding 核对为 already-fixed-elsewhere。1 提交（代码 + 测试）。
+- **新增回归** `tests/test_broker_averaging_and_trail_fixes.py`（7 tests / 7 passed）：
+  - `test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidation` — parametrized 三家 broker，构造 leg1=100 qty=1 + leg2=110 qty=1，断言 entry_fee = fee(leg1) + fee(leg2)（不是被覆盖），liquidation 重算且不等于 leg1 的值。
+  - `test_replace_exchange_protective_stop_dispatches_to_okx_when_okx_demo` — dispatch 到 OKX 分支。
+  - `test_replace_exchange_protective_stop_still_dispatches_bitget` — 保住既有 Bitget 路径不回归。
+  - `test_replace_exchange_protective_stop_is_noop_when_flag_disabled` — feature-flag 关时全静默（连 Bitget 也不动），生产 default-off 语义正确。
+  - `test_replace_exchange_protective_stop_binance_logs_and_skips` — Binance 未实现 log 但不炸。
+- **验证**：`tests/specs/` 554 passed / 0 failed（同 baseline）；`tests/test_broker_averaging_and_trail_fixes + test_tpsl + test_okx_broker + test_bitget_broker + test_position_manager + test_position_close + test_position_reconciler + test_paper_broker_stops` = 64 passed。
+
+### 剩余
+- B7 剩：backup/import 完整性 (#58/59/62/63/64/162)、capital 审计 (#87)、reconciler 状态、export docstring 诚实性 (#65) —— 都比较机械；下一批候选。
+- market_type 数据模型迁移（#51/52/54/55/57/96 等）仍暂缓 —— 与 market_snapshots migration 耦合。
+- **B8/B9/B10** 保留 —— B8 需 `npm run build`，规划中。
+
+### 边界
+只改本会话四条 finding 直接对应的代码 + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。**#139 的 Binance 侧交易所同步未实现，dispatcher 会 log warning** —— 用户即使 opt-in `exchange_tpsl_enabled` 到 Binance testnet，也只能收紧 DB stop，交易所侧 bracket 保持初始值；这是**诚实的 partial-fix**（Binance client 需补 algo/stop 表面才能补齐，不在本批范围）。
+
+---
+
 ## 2026-07-07 — B7-trust：信任边界四联批（4 findings / 1 commit）
 
 ### 触发
