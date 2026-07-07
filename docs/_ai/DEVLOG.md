@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-07-07 — B8-safety：Settings 保存 onError 横幅 + Serenity assessed_tier（2 findings / 1 commit）
+
+### 触发
+接 B8-quickies 后 owner「继续推进」。#164 是 Settings 里一大堆 mutation 缺 onError 的诚实性 gap；#167 是 SerenityLens 显示的 tier 用错来源（advisory 而非 authoritative）。
+
+### 做法
+1. **#164 Settings AgentModelsTab 9 个 mutation 缺 onError**：`permMut` / `autoLearnMut` / `bypassDistressMut` / `runtimeMut` / `operatorMut` / `piDaemonMut` / `serenityMut` / `guardMut` / `regimeMut` 都只有 onSuccess。后端 422/403/500 时前端 silent，toggle 视觉「切换成功」但配置从未落库。加一个 tab-局部的 `saveErr` state 与 `onSaveError(label)` 工厂 —— 每个 mutation 加 `onError: onSaveError('Permission mode')` 之类，成功时清空。Tab top 加一条红色 banner「Save failed — <label>: <message>」，用户不再面对沉默失败。
+2. **#167 SerenityLens Opportunity 表 Tier 列**：显示 `humanize(o.evidence_tier)` —— 那是**提交时的 proposed**（advisory only）；risk engine 实际用的是 `assessed_tier`（serenity 证据管道打分后落库）。改成 `humanize(o.assessed_tier || o.evidence_tier)` —— assessed 优先；管道尚未打分才回退 proposed。用户看到的 Tier 现在与 risk engine 用的一致。
+
+### 交付
+- 2 findings。1 提交（Settings.tsx + SerenityLens.tsx）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动都在 React 层，不涉及 Python spec 覆盖。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~17 finding**（session B8 累计 17：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3 + safety 2）。较大的：CausalChain fill/position 源不对 (#122/#123)、Settings coverage matrix mislabel (#163)、Charts prediction fields 错 (#169/#170)、Proposals approve/confirm 骗人 (#113/#114)、TradesPositions 无 symbol (#116)、ReconciliationCard 零漂移隐藏状态 (#117)、SetupBanner 只 Bitget (#121)、CommandPalette Enter 劫持 (#126)、PriceChart 无 marketType prop (#115)。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件（Settings 局部 tab + SerenityLens 单行）；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。#164 只覆盖了 AgentModelsTab 9 个 mutation，其他 tab（外汇/网络/记账/风控）的 save mutation 还需类似处理，留下批。
+
+---
+
 ## 2026-07-07 — B8-quickies：CommandPalette /universe + Scheduler 真状态 + AgentFeed 失败集（3 findings / 1 commit）
 
 ### 触发
