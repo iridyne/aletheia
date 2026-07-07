@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-07 — B8-mini：预测偏好 PATCH + NewsIntel analyzed 桶 + 时间线加日期（3 findings / 1 commit）
+
+### 触发
+接 B8-cleanup 后 owner「继续推进」。B8 里挑另外 3 条单点小改，都是「client 用错方法 / filter 缺项 / 时间戳不带日期」这类清晰易修。
+
+### 做法
+1. **#86 prediction/preferences POST→PATCH**：backend 是 `@router.patch("/preferences")` (prediction.py:232)，client `updatePredictionPreferences` 却是 `post(...)` —— 保存偏好每次 405 Method Not Allowed。换成 `fetchJson(path, { method: 'PATCH', headers, body })`。
+2. **#168 NewsIntel 缺 analyzed 过滤桶**：`filter` 只有 all/new/reviewed，auto-analysed 行 status='analyzed' 只能在 all 里看到 —— 用户不知道有哪些被自动分析过。filter row 加 `'analyzed'`，comprehension 加相应分支。
+3. **#173 ActivityTimeline HH:MM 撒谎**：只渲染 HH:MM，3 天前的事件跟今天的看起来一样，误导 stale feed 看起来 current。同日事件保 HH:MM（避免噪音），跨日事件前置 "Nov 12" 形式的月日。
+
+### 交付
+- 3 findings。1 提交（3 前端文件）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed（不受前端改动影响）。**tsc 未跑**（无 node_modules），full UI 验证 tracked。改动全是 text-level / 加 case 分支 / 加日期条件，无 hooks / 数据形状 / props 契约变化。
+
+### 剩余
+- **B8 剩 ~27 finding**（起初 ~35，本 session B8-cleanup 4 + B8-mini 3 = 7 处置）。较大宗未处理：pause/resume 吞 409 (#165)、topbar riskState 死支 (#174)、Overview exchange 灯永远探 Bitget (#171)、CausalChain fill 源不对 (#122/#123)、Settings coverage matrix 错标 18 字段 (#163)、多个 onError 缺失 (#164) 等。都需要 `npm run build` + 浏览器验证才能安全大改。
+- 已 deferred 项不变。
+
+### 边界
+仅 3 前端文件（`client.ts` + `NewsIntel.tsx` + `ActivityTimeline.tsx`）；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B8-cleanup：fmtSymbol 恢复 + AgentActivity 过时说明 + RuleSet legacy 标签（4 findings 逻辑修 + 1 已applied / 1 commit）
 
 ### 触发
