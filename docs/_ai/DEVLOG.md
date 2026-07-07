@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-07 — B8-quickies：CommandPalette /universe + Scheduler 真状态 + AgentFeed 失败集（3 findings / 1 commit）
+
+### 触发
+接 B8-topbar 后 owner「继续推进」。三条前端诚实性小改，都是「路由/状态可见但用错源/漏项」。
+
+### 做法
+1. **#125 CommandPalette 缺 `/universe`**：`nav-universe` 条目从 NAV bar 一直有但 palette 没挂 —— keyboard shortcut 用户无法跳到 Universe Board。加一行 nav entry（keywords 含 universe/scanner/instruments）。
+2. **#118 Overview Scheduler 灯只看 paused**：`light={paused ? 'yellow' : 'green'}` 忽略 `scheduler_running` / `scheduler_state`（/status 明确返回这两）—— scheduler 实际停了（比如崩了/apscheduler shutdown 后）仍显示绿。改成读 `s?.scheduler_running` (bool)，`paused=true → yellow`, `running=true → green`, 其余 → `red`；label 显示 `scheduler_state`。
+3. **#120 AgentFeed 只染 `status=='error'` 红**：`failed`/`timed_out`/`stale`/`completed_with_errors`/`rejected` 五种失败态都走 accent-blue（feed icon）+ yellow（badge），被当「进行中」显示，实际是失败。抽 `FAILURE_STATUSES` set，两处（feed-icon color + badge className）都用它 —— 图标 + badge 一致告诉用户「这条真挂了」。
+
+### 交付
+- 3 findings。1 提交（CommandPalette + Overview + AgentFeed）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 状态映射层。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~19 finding**（session B8 累计 15：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3）。
+- 已 deferred 项不变。
+
+### 边界
+仅 3 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B8-topbar：Overview 交易所探针分派 + 顶栏 risk-status 查询（2 findings / 1 commit）
 
 ### 触发
