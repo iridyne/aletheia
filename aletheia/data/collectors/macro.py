@@ -68,10 +68,17 @@ class MacroCollector:
                 errors.append(f"fred: {e}")
                 logger.debug("FRED fetch failed, falling back to yfinance: %s", e)
 
-        # Fallback: fill any None values from yFinance
+        # Fallback: fill any None values from yFinance.
+        # #92 fix: yfinance's Ticker.history() is synchronous and can block the
+        # event loop for several seconds — each ticker does its own HTTP round
+        # trip. This tick runs from the scheduler's async worker, so a sync
+        # call here stalled every other scheduled task (market observers,
+        # heartbeats, exchange sync) for the duration. Route through
+        # asyncio.to_thread so the blocking work happens off-loop.
         if any(v is None for v in (spy, vix, dxy, nasdaq)):
             try:
-                yf_spy, yf_vix, yf_dxy, yf_nasdaq = _fetch_tradfi()
+                import asyncio as _asyncio
+                yf_spy, yf_vix, yf_dxy, yf_nasdaq = await _asyncio.to_thread(_fetch_tradfi)
                 spy = spy or yf_spy
                 vix = vix or yf_vix
                 dxy = dxy or yf_dxy

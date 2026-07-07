@@ -99,10 +99,21 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
 
     Returns count of assets upserted.
     """
+    # #91 fix: previously built CCXTProvider(exchange=venue, fallback_exchange=venue) —
+    # primary and fallback pointed at the SAME exchange, so a primary outage had no
+    # cross-exchange fallback. The market-data factory (get_market_data_provider)
+    # already resolves fallback from `market_data.ccxt_fallback`, but that factory
+    # returns a FallbackChainProvider whose surface doesn't include the CCXT-native
+    # `_ensure_primary` + `load_markets` we need for universe sync. Match the
+    # factory's config resolution (fallback_exchange = md.ccxt_fallback) here so the
+    # two agree; a follow-up can lift the shared logic once the chain provider
+    # grows a load_markets equivalent.
     from aletheia.data.ccxt_provider import CCXTProvider
 
-    venue = cfg.market_data.ccxt_exchange
-    provider = CCXTProvider(exchange=venue, fallback_exchange=venue)
+    md = cfg.market_data
+    venue = md.ccxt_exchange
+    fallback_venue = md.ccxt_fallback or venue
+    provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
     count = 0
     sync_started_at = datetime.now(timezone.utc).isoformat()
 
