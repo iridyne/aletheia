@@ -1,5 +1,31 @@
 # Development Log
 
+## 2026-07-07 — B10-docs-tail：因果链 + CCXT 直构造异常 + Spec 索引（4 findings / 1 commit / 纯 docs+docstring）
+
+### 触发
+接 B10-docs-sweep 后 owner「继续推进」。B10 剩几条不涉及 code rename 的 docs drift 一并扫掉。
+
+### 做法
+1. **#30 Position 因果链 docs 说 schema 不含**：三份文档都写「positions 从 orders/fills 投影，不直链 proposal」—— 实际 schema 早已带 `proposal_id` / `order_id` / `opportunity_id`，每个 broker 开仓时写，`adopt_position()` 也走同一路径（synthetic-but-honest 链）。修 `docs/governance/trust_and_change_control.md` + `docs/design/execution_contract.md` + `docs/design/webui_page_map.md` 三处，各自把「不直接链」的旧描述改成「已直接链，并说明 adopted 也走同链」。
+2. **#49 CCXT 直构造异常清单不全**：`aletheia/data/ccxt_provider.py` 模块 docstring 说「xStocks 是唯一直构造 `CCXTProvider(...)` 的例外」—— 但 B9-data 修的 #91 揭示 universe/registry + universe/features 也直构造。docstring 扩展成正式清单：`xStocks` + `universe.registry.sync_registry` + `universe.features.collect_features`，每条注明理由（唯一交易所 / factory 缺 `_ensure_primary+load_markets` 表面），并加一句「任何新的直构造点应加进这里，缺失即视为 review-flagged 偏差」。
+3. **#50 execution_contract 因果链 stale**：ledger 说 execution_contract 声称 position 因果链比实际弱 —— 但该文件本身只在 §1 一处引用了 position 因果链，那处已被 #30 修的同一批次覆盖到（改成「已直接链 — #30/#50」）。视为 #30 fix 顺带 subsumed。
+4. **#76 README Spec-as-Code 表旧且不全**：手写 14 行表列了不存在的 `spec_promotion_gates.py`，claim 数（如 `spec_risk_engine.py=7` 但实际 34+）也过时；实际 `tests/specs/` 有 59 个 spec 文件。**放弃手抄枚举**（会一直漂），改为 pointer：跑 `ls tests/specs/spec_*.py | wc -l` + `uv run pytest tests/test_spec_conformance.py` 才是活的真相。README 保留一份「代表性 spec」快速定位清单（按契约类/管道类/Serenity 类/学习类分组），不再声称完整。
+
+### 交付
+- 4 findings（#50 是 #30 的 subset，一次修同时覆盖）。1 提交（3 doc + 1 docstring）。
+- 无新回归（纯 docs/docstring 无 runtime 行为）。
+- **验证**：`tests/specs/` 554 passed / 0 failed。
+
+### 剩余
+- **B10 剩最后一条大件**：#97 (System Operator rename 未完 —— `pi_daemon` 名字仍散落 config/API/audit/client contracts)。这条涉及**代码 rename**，改动面明显大于本批 docs-only 批。留作 B10-rename 单独一批（可能是 B10 收官）。
+- **B10 完成**：#28（superseded）、#29、#30、#31、#32、#33、#49、#50（subsumed）、#76、#77、#78、#79、#80、#81 —— 全部处置。
+- **B8** 前端诚实性（需 `npm run build`）+ 已 deferred 项仍留。
+
+### 边界
+仅 3 个 doc 文件 + 1 个模块 docstring；未推 / 未 restart / 未 enable live / 未触 code runtime 行为。
+
+---
+
 ## 2026-07-07 — B10-docs-sweep：scheduler + live-unlock + kill-switch + permission-mode 漂移（5 findings / 1 commit / 纯 docs）
 
 ### 触发
