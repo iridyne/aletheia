@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-07 — B8-approve-honesty + SetupBanner 覆盖（3 findings / 1 commit）
+
+### 触发
+接 B8-chart-follow-up 后 owner「继续推进」。Proposals 审批路径的两个诚实性 gap（#113/#114）+ 首屏 SetupBanner 只认部分 provider（#121）。
+
+### 做法
+1. **#113 approve 200-with-error 静默 reset**：backend `/approve-paper` 对成功和「approved 但 execution 时挂了」都返 HTTP 200，只是 body 里 `execution.status='error'`。前端 approve mutation onSuccess 无脑 `clearErr(id)` —— 错误被清，操作员以为 order 落了。改成检查 `r.execution.status`，`error`/`rejected` → 走 `setErr` 保留 inline 错误。
+2. **#114 approve confirm 显示 proposal.execution_mode 骗人**：dialog 说「Mode: bitget_live_limited」或「Mode: okx_demo」（proposal 上带的），但 backend 硬编码 `execution_mode="paper_internal"`（data.py:642）。 现在 dialog 显示强制的 `paper_internal (paper simulation — no real order)`；若 proposal 的 stored mode 与之不同，加一句「the proposal was tagged '...', but the /approve-paper route routes every approval through paper_internal. Use the live-unlock flow to place a real order.」诚实告诉操作员该按钮实际做什么。
+3. **#121 SetupBanner 只认 Bitget-demo + api_key**：`anyModelKey = providers.some(p => p?.api_key?.configured)` 忽略 OAuth / CLI；`anyDemoCreds = creds.demo?.api_key?.configured` 只看 Bitget。OAuth-Claude + OKX demo 用户永远看到 setup 提示。加 OKX + Binance credential 查询，模型侧检查 api_key OR oauth OR cli-configured 任一存在，交易所侧任一（bitget_demo / okx_demo / binance_testnet）有 api_key 就算就绪。banner 文案改成「add a model endpoint (API key / OAuth / CLI) and at least one exchange's demo/testnet credentials」。
+
+### 交付
+- 3 findings。1 提交（Proposals + SetupBanner）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 层。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~9 finding**（session B8 累计 25：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3 + safety 2 + chart-nav 2 + chart-follow-up 3 + approve-honesty 3）。较大还剩：Settings coverage matrix mislabel 18 字段 (#163)、CausalChain fill/position 源不对 (#122/#123)、Charts prediction fields 错 (#169/#170)、Markets candlestick market-type forwarding (#96 — 与 market_type 迁移耦合，暂缓)。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B8-chart-follow-up + 对账 + Palette Enter（3 findings / 1 commit）
 
 ### 触发
