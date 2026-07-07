@@ -389,6 +389,62 @@ def test_research_prediction_context_requires_enabled_and_fresh_claims(tmp_path,
     assert "Fresh probability momentum may appear" in _prediction_context_block()
 
 
+def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
+    """Fresh perp-structure snapshots must reach the market_observer LLM prompt."""
+    _setup_env(tmp_path, monkeypatch)
+    import aletheia.agents.market_observer as mo
+    from aletheia.storage import repositories as repo
+
+    repo.insert_perp_structure_snapshot({
+        "id": "perp-struct-observer-1",
+        "symbol": "BTC/USDT",
+        "venue": "hyperliquid",
+        "source": "vergex",
+        "as_of_time": datetime.now(timezone.utc).isoformat(),
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "data_quality": "complete",
+        "poc": 62267.64,
+        "value_area_low": 60000.0,
+        "value_area_high": 65000.0,
+        "short_liq_above_usd": 335_141_283.44,
+        "long_liq_below_usd": 220_161_274.01,
+        "top10_concentration": 0.21,
+        "top50_concentration": 0.44,
+    })
+
+    captured = []
+
+    async def fake_llm_structured(*, system, user, schema, max_tokens=1024, provider=None):
+        captured.append(user)
+        return ({
+            "direction_bias": "neutral",
+            "confidence": "speculative",
+            "confidence_score": 50,
+            "rationale": "structure context inspected",
+            "key_observations": ["Perp structure block present"],
+        }, None)
+
+    monkeypatch.setattr(mo, "llm_structured", fake_llm_structured)
+    monkeypatch.setattr(mo, "_has_sufficient_signal", lambda ctx: True)
+
+    async def fake_builder(symbols, market_type="spot", **kw):
+        return ("snapshot", {"fallback": False, "errors": [], "symbols": {}})
+
+    import aletheia.trading.market_context as mc
+    monkeypatch.setattr(mc, "build_market_context", fake_builder)
+
+    from aletheia.agents.market_observer import run_market_observer
+    asyncio.run(run_market_observer(permission_mode="Full", run_id="run-mo-struct"))
+
+    btc_prompt = next(p for p in captured if "Market data for BTC/USDT" in p)
+    assert "Perp structure" in btc_prompt
+    assert "POC $62,268" in btc_prompt
+    assert "short-liq above $335M vs long-liq below $220M" in btc_prompt
+
+    from aletheia.agents.helpers import _release_run_counter
+    _release_run_counter("run-mo-struct")
+
+
 def test_observer_thesis_fallback_avoids_raw_snapshot(tmp_path, monkeypatch):
     """When LLM returns empty rationale + observations, thesis must NOT dump
     the raw markdown snapshot (which used to leak through and look broken on

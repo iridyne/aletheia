@@ -70,6 +70,7 @@ def render_enriched_context_md(
     macro: MacroSnapshot | None,
     onchain: list[dict] | None = None,
     xvenue_funding: dict[str, dict] | None = None,
+    perp_structure: dict[str, dict] | None = None,
 ) -> str:
     """Render a markdown block with microstructure + derivatives + macro sections.
 
@@ -82,6 +83,10 @@ def render_enriched_context_md(
     interval — raw per-interval rates are not comparable). Routes the otherwise
     orphan Hyperliquid feed into the decision context as a basis/sentiment-
     divergence signal. Omitted when empty.
+
+    perp_structure: {symbol: latest row} — observation-only perp positioning
+    structure (value area, POC, liquidation walls, concentration). Omitted when
+    empty so the prompt never invents this signal.
 
     Returns "" if all domains are empty so callers can skip appending.
     """
@@ -158,6 +163,42 @@ def render_enriched_context_md(
         if xrows:
             sections.append("### Cross-venue funding (Hyperliquid, annualized)\n" + "  \n".join(xrows))
 
+    # --- Perp structure (observation-only positioning map) ---
+    if perp_structure:
+        ps_rows: list[str] = []
+        for sym in symbols:
+            row = perp_structure.get(sym)
+            if not row:
+                continue
+            parts: list[str] = []
+            if row.get("data_quality"):
+                parts.append(str(row["data_quality"]))
+            if row.get("as_of_time"):
+                parts.append(f"as-of {row['as_of_time']}")
+            if row.get("poc") is not None:
+                parts.append(f"POC {_fmt_usd(row['poc'])}")
+            if row.get("value_area_low") is not None and row.get("value_area_high") is not None:
+                parts.append(
+                    f"Value Area {_fmt_usd(row['value_area_low'])}-{_fmt_usd(row['value_area_high'])}"
+                )
+            if row.get("short_liq_above_usd") is not None or row.get("long_liq_below_usd") is not None:
+                short_liq = _fmt_usd_compact(row.get("short_liq_above_usd"))
+                long_liq = _fmt_usd_compact(row.get("long_liq_below_usd"))
+                parts.append(f"short-liq above {short_liq} vs long-liq below {long_liq}")
+            conc: list[str] = []
+            if row.get("top10_concentration") is not None:
+                conc.append(f"top10 {row['top10_concentration'] * 100:.0f}%")
+            if row.get("top50_concentration") is not None:
+                conc.append(f"top50 {row['top50_concentration'] * 100:.0f}%")
+            if conc:
+                parts.append("concentration " + ", ".join(conc))
+            if parts:
+                src = row.get("source") or "unknown"
+                venue = row.get("venue") or "unknown"
+                ps_rows.append(f"{sym} ({src}/{venue}): " + "; ".join(parts))
+        if ps_rows:
+            sections.append("### Perp structure (positioning map)\n" + "  \n".join(ps_rows))
+
     # --- Macro ---
     if macro:
         lines = [f"**Risk regime**: {macro.risk_regime}"]
@@ -205,6 +246,28 @@ def render_enriched_context_md(
             sections.append("### On-chain (DefiLlama)\n" + "  \n".join(ol))
 
     return "\n\n".join(sections)
+
+
+def _fmt_usd(value: object) -> str:
+    try:
+        return f"${float(value):,.0f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _fmt_usd_compact(value: object) -> str:
+    if value is None:
+        return "n/a"
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    abs_num = abs(num)
+    if abs_num >= 1_000_000_000:
+        return f"${num / 1_000_000_000:.1f}B".replace(".0B", "B")
+    if abs_num >= 1_000_000:
+        return f"${num / 1_000_000:.0f}M"
+    return f"${num:,.0f}"
 
 
 # ---------------------------------------------------------------------------

@@ -225,6 +225,57 @@ def test_doctor_prediction_markets_warns_when_enabled_data_is_stale(tmp_path, mo
     assert "stale data is ignored" in checks["data.prediction_markets"].fix_hint
 
 
+def test_doctor_perp_structure_ok_when_rows_are_fresh(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    now = datetime.now(timezone.utc).isoformat()
+    repo.insert_perp_structure_snapshot({
+        "id": "perp-struct-doctor-1",
+        "symbol": "BTC/USDT",
+        "venue": "hyperliquid",
+        "source": "vergex",
+        "as_of_time": now,
+        "observed_at": now,
+        "data_quality": "complete",
+        "poc": 62267.64,
+        "short_liq_above_usd": 335_141_283.44,
+        "long_liq_below_usd": 220_161_274.01,
+    })
+    report = dx.Report(generated_at="t")
+
+    dx._probe_perp_structure(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.perp_structure"].severity == "ok"
+    assert "BTC/USDT" in checks["data.perp_structure"].detail
+    assert "complete" in checks["data.perp_structure"].detail
+
+
+def test_doctor_perp_structure_warns_when_rows_are_stale(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat()
+    repo.insert_perp_structure_snapshot({
+        "id": "perp-struct-doctor-stale",
+        "symbol": "ETH/USDT",
+        "venue": "hyperliquid",
+        "source": "vergex",
+        "as_of_time": stale,
+        "observed_at": stale,
+        "data_quality": "partial",
+        "poc": 2000.0,
+    })
+    report = dx.Report(generated_at="t")
+
+    dx._probe_perp_structure(report)
+
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.perp_structure"].severity == "warn"
+    assert "stale" in checks["data.perp_structure"].fix_hint
+
+
 def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     (tmp_path / "logs" / "errors.log").write_text(

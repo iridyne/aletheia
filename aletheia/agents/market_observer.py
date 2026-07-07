@@ -41,6 +41,7 @@ _VALID_CONFIDENCE = {"high", "medium", "speculative"}
 _MARKET_OBSERVER_JOB_TIMEOUT_S = 240.0
 _MARKET_OBSERVER_LOOP_BUDGET_SEC = 200.0
 _PREDICTION_CONTEXT_MAX_AGE_HOURS = 6
+_PERP_STRUCTURE_MAX_AGE_MINUTES = 60
 
 
 class MarketRead(BaseModel):
@@ -64,6 +65,21 @@ class MarketRead(BaseModel):
         default_factory=list,
         description="2-4 bullets citing specific numbers from the snapshot"
     )
+
+
+def _is_perp_structure_fresh(row: dict | None) -> bool:
+    if not row:
+        return False
+    ts_text = row.get("as_of_time") or row.get("observed_at")
+    if not ts_text:
+        return False
+    try:
+        ts = datetime.fromisoformat(str(ts_text).replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - ts <= timedelta(minutes=_PERP_STRUCTURE_MAX_AGE_MINUTES)
 
 
 # ROUND 2 SIGNAL-INTRODUCTION DECISION (per plan §8.6.2, spec MS-S15):
@@ -288,6 +304,7 @@ async def _analyze_symbol(
             ob = repo.latest_orderbook(symbol)
             fr = repo.latest_funding_rate(symbol)
             oi = repo.latest_open_interest(symbol)
+            ps = repo.latest_perp_structure(symbol)
             macro_row = repo.latest_macro_snapshot()
 
             # Capture derivatives state for the Opportunity row.
@@ -339,9 +356,13 @@ async def _analyze_symbol(
                     "primary_ann": fr.get("funding_rate_annualized") if fr else None,
                 }
 
+            perp_structure = {symbol: ps} if _is_perp_structure_fresh(ps) else {}
+
             enriched = render_enriched_context_md(
                 [symbol], tradability, leverage, macro,
-                onchain=onchain_rows, xvenue_funding=xvenue_funding,
+                onchain=onchain_rows,
+                xvenue_funding=xvenue_funding,
+                perp_structure=perp_structure,
             )
             if enriched:
                 context = context + "\n\n" + enriched
