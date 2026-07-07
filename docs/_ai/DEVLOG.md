@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-07-07 — 审计链头截断修复（1 finding / 1 commit）
+
+### 触发
+接 B8-risk-mixed 后 owner「继续推进」。挑一条安全性 finding —— #43 audit_chain 头截断被误判为 benign。
+
+### 做法
+- **#43 verify_audit_chain 首行 mismatch 无条件 benign**：旧代码 `if is_first_in_file: benign = True` —— **任何**文件的首行 _prev_hash mismatch 都被当成 rotation-boundary reanchor。攻击者（或误操作 `head -c` / `truncate`）把**最老**的 audit 文件头切掉后，verifier 静默 reanchor，头部记录被静悄悄丢弃。修改 for 循环用 `enumerate`，标记 `is_oldest_file = (path_index == 0)`，条件收紧到 `is_first_in_file and not is_oldest_file` —— 最老文件的首行必须从 `_GENESIS_HASH` chain 起，否则视为真错。
+- **新增回归** `tests/test_audit_chain_head_truncation_fix.py`（2 tests / 2 passed）：
+  - `test_head_truncation_of_oldest_file_now_reads_as_error` — 种 3 条链、删首行、断言 `valid=False`、`errors` 非空、`reanchors=0`。
+  - `test_legitimate_rotation_still_reanchors_benignly` — 手动构造 `audit.jsonl.1` + 一条从 GENESIS 起链的 fresh audit.jsonl，断言 `reanchors=1`（合法 rotation 边界不应回归成 error）。
+
+### 交付
+- 1 finding（safety-critical）。1 提交（jsonl.py + 焦点回归）。
+- **验证**：`tests/specs/` + audit 回归 = 556 passed / 0 failed。
+
+### 剩余
+- **B7 / B9 / B10** 保持完成状态；**B8** 剩 ~6 finding（CausalChain 源、Settings coverage matrix、几处未处理的 tail）。
+- 已 deferred 项不变。
+
+### 边界
+仅 `aletheia/files/jsonl.py` + 新回归测试；未推 / 未 restart / 未 enable live / 未触 credentials。这是安全类修复，`write_audit` 路径完全没改（`use_cache=False` 已经防了缓存漂移）；只堵住 verifier 的 sensor 盲点。
+
+---
+
 ## 2026-07-07 — B8-risk-mixed：RiskControls 同名 spot+perp 可见性（2 findings / 1 commit）
 
 ### 触发
