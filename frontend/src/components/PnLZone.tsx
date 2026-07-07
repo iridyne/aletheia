@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
 import PnLChart from '../charts/PnLChart'
-import { fmtNum, fmtSigned, fmtDelta, useDecimals } from '../lib/format'
+import { fmtNum, fmtSigned, fmtDelta, fmtSymbol, useDecimals } from '../lib/format'
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
 const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6']
@@ -170,7 +170,12 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
         >
           {entries.map(([sym, val]) => (
             <div key={sym} className="tile-tooltip-row">
-              <span className="mono">{sym.replace('/USDT', '')}</span>
+              {/* #15 fix: fmtSymbol handles the spot/perp convention; the
+                  tooltip payload here is symbol-keyed (no market_type at hand),
+                  so it renders as spot which matches the prior behaviour but
+                  routes through the shared helper so future market_type-aware
+                  callers change one place. */}
+              <span className="mono">{fmtSymbol(sym)}</span>
               <span className={`mono ${val > 0 ? 'pnl-positive' : val < 0 ? 'pnl-negative' : ''}`}>
                 {val > 0 ? '+' : ''}{fmtNum(val)}
               </span>

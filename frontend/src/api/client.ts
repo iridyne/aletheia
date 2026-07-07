@@ -525,6 +525,11 @@ export const api = {
   // Data
   getAgentRuns: () => fetchJson<any[]>('/agent-runs'),
   getAgentRunToolCalls: (runId: string) => fetchJson<any[]>(`/agent-runs/${runId}/tool-calls`),
+  // #72 fix: the per-step reasoning trace backend endpoint exists at
+  // /api/agent-runs/{run_id}/steps (server/routes/data.py:236). The
+  // client method was missing so AgentActivity was displaying the
+  // "not yet available" placeholder. Frontend surface can now consume it.
+  getAgentRunSteps: (runId: string) => fetchJson<any[]>(`/agent-runs/${runId}/steps`),
   startAgentRun: (agent_name: string) => post('/agent-runs/start', { agent_name }),
   getDreamingSummary: () => fetchJson<Record<string, any[]>>('/dreaming/summary'),
   getOpportunities: () => fetchJson<any[]>('/opportunities'),

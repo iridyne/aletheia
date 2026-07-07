@@ -21,10 +21,9 @@ import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
  *   RUNS          — every agent invocation, with tool-call drill-down (the reasoning log).
  *   OPPORTUNITIES — the findings those runs produced, with thesis + strategy link.
  *
- * Backend gap (documented, parked): GET /api/agent-runs/{id}/steps (step-by-step reasoning
- * + tool inputs/outputs) is approved but not yet built. The run drawer's "Reasoning Steps"
- * block is the stable mount point — today it renders the existing tool-calls ledger and an
- * honest note that the deeper per-step trace is pending backend.
+ * The run drawer's "Reasoning Steps" block renders BOTH the tool-calls ledger AND the
+ * per-step reasoning trace (#72 fix, 2026-07-07 — GET /api/agent-runs/{id}/steps is live at
+ * server/routes/data.py:236; the earlier "backend gap" comment was stale).
  */
 
 const runCol = createColumnHelper<AgentRun>()
@@ -233,14 +232,20 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
 }
 
 /**
- * Reasoning drill-down. Renders the existing tool-call ledger (/agent-runs/{id}/tool-calls)
- * as the available transparency, plus an honest note that the deeper per-step trace
- * (GET /api/agent-runs/{id}/steps) is an approved-but-unbuilt backend endpoint.
+ * Reasoning drill-down. Renders the tool-call ledger (/agent-runs/{id}/tool-calls)
+ * PLUS the per-step reasoning trace (/agent-runs/{id}/steps) — the latter was
+ * previously labelled "not yet available" but the endpoint has been live at
+ * server/routes/data.py:236 for a while (#72 fix).
  */
 function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: string | null }) {
   const { data: toolCalls = [] } = useQuery({
     queryKey: ['tool-calls', runId],
     queryFn: () => api.getAgentRunToolCalls(runId),
+    enabled: !!runId,
+  })
+  const { data: steps = [] } = useQuery({
+    queryKey: ['agent-run-steps', runId],
+    queryFn: () => api.getAgentRunSteps(runId),
     enabled: !!runId,
   })
 
@@ -271,9 +276,23 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
       ) : (
         <span className="text-muted text-sm">No tool calls recorded</span>
       )}
-      <p className="text-muted text-sm steps-pending">
-        Step-by-step reasoning trace (inputs/outputs per step) pending backend — GET /api/agent-runs/&#123;id&#125;/steps not yet available.
-      </p>
+      {(steps as any[]).length > 0 && (
+        <table className="drawer-table" style={{ marginTop: 8 }}>
+          <thead>
+            <tr><th>#</th><th>Action</th><th>Input</th><th>Output</th></tr>
+          </thead>
+          <tbody>
+            {(steps as any[]).map((s: any, i: number) => (
+              <tr key={s.id || i}>
+                <td className="mono">{s.step_number ?? i + 1}</td>
+                <td className="mono">{s.action || '—'}</td>
+                <td className="mono text-muted">{s.input_data ? String(s.input_data).slice(0, 80) : '—'}</td>
+                <td className="mono text-muted">{s.output_data ? String(s.output_data).slice(0, 80) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </DrawerSection>
   )
 }
