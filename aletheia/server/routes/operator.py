@@ -977,18 +977,41 @@ async def operator_events_stream(limit: int = 50, once: bool = False):
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
+def _require_operator_permission(command_name: str) -> None:
+    """#40 fix: /pause, /resume, /wake used to mutate runtime.paused without any
+    permission check — the same operations are gated by `pause_agents` /
+    `resume_agents` command permissions elsewhere. Reuse that permission model
+    here so the two paths agree: an operator running in ReadOnly cannot silently
+    pause the whole system from the REST route while the same command through
+    the command channel would be denied.
+    """
+    from aletheia.agent_shell.permissions import check_permission
+
+    cfg = load_config()
+    allowed, denial = check_permission(
+        command_name,
+        cfg.operator.permission_mode,
+        permission_scope="operator",
+    )
+    if not allowed:
+        raise HTTPException(status_code=403, detail=denial or "Permission denied")
+
+
 @router.post("/pause")
 async def operator_pause():
+    _require_operator_permission("pause_agents")
     return await _set_paused(True, event_type="operator_paused", message="Operator paused via API")
 
 
 @router.post("/resume")
 async def operator_resume():
+    _require_operator_permission("resume_agents")
     return await _set_paused(False, event_type="operator_resumed", message="Operator resumed via API")
 
 
 @router.post("/wake")
 async def operator_wake():
+    _require_operator_permission("resume_agents")
     return await _set_paused(False, event_type="operator_woken", message="Operator wake requested via API")
 
 

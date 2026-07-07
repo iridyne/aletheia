@@ -398,6 +398,16 @@ async def test_operator_pause_resume_and_wake(client, monkeypatch):
 
     monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
 
+    # #40 fix (2026-07-08): /pause + /resume + /wake now check the operator
+    # permission mode against pause_agents/resume_agents, matching the /command
+    # gating. Default ReadOnly denies — lift to PaperAuto so this route test
+    # exercises the happy path.
+    from aletheia.config.loader import load_config as _load_cfg, save_config as _save_cfg
+    _cfg = _load_cfg()
+    _cfg.agent.permission_mode = "Paper"
+    _cfg.operator.permission_mode = "PaperAuto"
+    _save_cfg(_cfg)
+
     pause = await client.post("/api/operator/pause")
     assert pause.status_code == 200
     assert pause.json()["paused"] is True
@@ -429,6 +439,15 @@ async def test_operator_resume_and_wake_block_when_llm_unavailable(client, monke
         }
 
     monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
+
+    # #40 fix: same permission gate applies here too. Lift to PaperAuto so
+    # this test exercises the LLM-unavailable branch, not the permission
+    # branch.
+    from aletheia.config.loader import save_config as _save_cfg
+    _cfg = load_config()
+    _cfg.agent.permission_mode = "Paper"
+    _cfg.operator.permission_mode = "PaperAuto"
+    _save_cfg(_cfg)
 
     pause = await client.post("/api/operator/pause")
     assert pause.status_code == 200
