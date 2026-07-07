@@ -459,6 +459,17 @@ _PROTECTED_PATHS = {
     "/api/gateway/restart", "/api/gateway/stop",
 }
 
+# #41 fix: whole path PREFIXES that must require the tunnel token when the tunnel
+# is enabled. The operator-shell internal writer endpoints (`/api/operator/internal/*`)
+# had no auth guard at all — a tunneled caller could write heartbeats, tasks,
+# messages, events, artifacts, and repair decisions impersonating the operator.
+# These are LEGITIMATE for the local TypeScript bridge (loopback), so we don't
+# strictly forbid them; we require the same tunnel token the trust-boundary
+# routes require when public exposure is on.
+_PROTECTED_PATH_PREFIXES = (
+    "/api/operator/internal/",
+)
+
 
 @app.middleware("http")
 async def _tunnel_auth_guard(request, call_next):
@@ -470,7 +481,9 @@ async def _tunnel_auth_guard(request, call_next):
     an enabled tunnel with no secret would expose live-unlock and kill-switch to the
     public internet without any authentication.
     """
-    if request.url.path in _PROTECTED_PATHS:
+    path = request.url.path
+    _matches_prefix = any(path.startswith(p) for p in _PROTECTED_PATH_PREFIXES)
+    if path in _PROTECTED_PATHS or _matches_prefix:
         cfg = load_config()
         if getattr(cfg, "tunnel", None) and getattr(cfg.tunnel, "enabled", False):
             from aletheia.config.secrets import get_secret
