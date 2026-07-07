@@ -430,6 +430,30 @@ function AgentModelsTab({ status, settings, qc }: any) {
         title="Guard Promotion"
         description="Post-trade lesson guards learned by the dreaming agent. When auto-promote is ON, guard candidates that accumulate enough matching trades are automatically promoted to active guards that block future trades. When OFF, promotions are manual-only."
       >
+        {/* #36 fix: previously only `auto_promote_enabled` was visible even though the
+            backend GuardConfig carries `enabled` / `enforce_in_paper_ranker` /
+            `min_matching_trades` / `max_score_penalty`. The API accepts all four,
+            so hiding them left the settings page mismatched with backend truth. */}
+        <Row
+          label="Guards enabled"
+          hint="Master switch. When OFF, guards do nothing — no scoring penalty, no auto-promotion, no candidate accumulation."
+        >
+          <Toggle
+            checked={guardCfg.enabled !== false}
+            onChange={v => guardMut.mutate({ enabled: v })}
+            disabled={guardMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Enforce in paper ranker"
+          hint="When ON, active guards subtract score in the paper trader's ranking pass. When OFF, guards are advisory only (kept for observation but do not affect trade selection)."
+        >
+          <Toggle
+            checked={guardCfg.enforce_in_paper_ranker !== false}
+            onChange={v => guardMut.mutate({ enforce_in_paper_ranker: v })}
+            disabled={guardMut.isPending}
+          />
+        </Row>
         <Row
           label="Auto-promote guard candidates"
           hint="When ON, the lesson_reviewer promotes guard_candidate entries to active trading guards automatically. When OFF, guards are promoted manually only."
@@ -441,6 +465,41 @@ function AgentModelsTab({ status, settings, qc }: any) {
               guardMut.mutate({ auto_promote_enabled: v })
             }}
             disabled={guardMut.isPending}
+          />
+        </Row>
+        <Row
+          label="Min matching trades before promotion"
+          hint="A candidate guard needs at least this many matching trades before auto-promotion considers it. Higher = more evidence required, slower promotions."
+        >
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={Number(guardCfg.min_matching_trades ?? 3)}
+            onChange={e => {
+              const n = Math.max(1, Math.min(20, Math.round(Number(e.target.value) || 0)))
+              guardMut.mutate({ min_matching_trades: n })
+            }}
+            disabled={guardMut.isPending}
+            style={{ width: 80 }}
+          />
+        </Row>
+        <Row
+          label="Max score penalty"
+          hint="Maximum score points a single guard can subtract in the ranker. Caps runaway penalties from broad-matching guards."
+        >
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step={5}
+            value={Number(guardCfg.max_score_penalty ?? 40)}
+            onChange={e => {
+              const n = Math.max(0, Math.min(100, Number(e.target.value) || 0))
+              guardMut.mutate({ max_score_penalty: n })
+            }}
+            disabled={guardMut.isPending}
+            style={{ width: 80 }}
           />
         </Row>
       </Section>
