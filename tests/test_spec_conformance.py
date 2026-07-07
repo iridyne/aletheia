@@ -247,6 +247,11 @@ def test_print_conformance_matrix(capsys):
                 "implemented": "+",
                 "partial": "~",
                 "missing": "-",
+                # #74 fix: "superseded" claims (older contract clauses replaced
+                # by a newer one) get their own icon so the matrix doesn't render
+                # them as "?" (unknown). Not a failure — a legitimate lifecycle
+                # state next to implemented/partial/missing.
+                "superseded": "s",
             }.get(claim.status, "?")
             if claim.status == "implemented":
                 implemented += 1
