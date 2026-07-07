@@ -24,6 +24,36 @@ Sensitive raw material exists in the source folder, including account snapshots,
 - `16_final_residual_moat_analysis.md`: final residual moat analysis.
 - `04_evidence/*.json`: analysis, signals, holders, prompts, and fit datasets.
 - `05_scripts/08_composite_z_fit.py`, `09_recompute_fuel.py`, `11_recompute_poc.py`, `12_dimension_formula_fit.py`: formula reconstruction scripts.
+- `01_findings.md`, `05_jwt_analysis.md`, `07_exploitability_assessment.md`, `08_technical_briefing.md`: security context and misuse boundaries.
+- `04_evidence/dataIntelligence.js`, `js_bundle_analysis.json`, `code_protocols_sdk.json`: frontend/service contract clues and SDK surface.
+
+## Coverage Audit
+
+The source folder was audited as:
+
+- 15 Markdown reports.
+- 14 Python scripts.
+- 66 JSON evidence/extracted-data files.
+- 1 frontend JavaScript bundle fragment.
+
+Important evidence families:
+
+- Structure intelligence: `analysis_BTC.json`, `analysis_ETH.json`, `analysis_SOL.json`, `analysis_SNDK.json`, `sndk_intelligence_signals.json`, `btc_structure_overview.json`, `eth_structure_overview.json`, `volume_profile_SNDK.json`.
+- Formula reconstruction: `composite_z_fit_data.json`, `dim_internal_fit.json`, `05_scripts/08_composite_z_fit.py`, `05_scripts/11_recompute_poc.py`, `05_scripts/12_dimension_formula_fit.py`.
+- Holder/position samples: `eth_whale_holders.json`, `eth_all_addrs_partial.json`, `cross_market_whale_intelligence.json`, exchange position/order files.
+- Prompt/agent material: `prompt_templates.json`, `strategy_details_with_prompts.json`, `leaked_user_strategy_prompts.json`, `marketplace_*`, `running_agents_leak.json`.
+- Infrastructure/security context: `ai_*`, `models_pricing.json`, `proxy_allocation.json`, `wallets.json`, `exchanges.json`, `response_headers.json`, `js_bundle_analysis.json`.
+- Public/low-value market data: K-line files, asset catalogs, hot assets, stock profiles, HL stocks universe.
+
+Keyword cross-checks were run for:
+
+- `compositeZ`, `composite_z`, `rank`, `universeSize`.
+- `dimensions`, `structureRead`, `percentile`, `what`.
+- research-source names such as Grinblatt, Market Profile, Brunnermeier, Shefrin, Ben-David, An 2016.
+- `prompt`, `system_prompt`, `credential`, `token`, `api_key`, `holders`, `entryPrice`, `liquidationPrice`.
+- frontend-only surfaces such as `riskbins`, `flow-quadrants`, `twaps`, `whale-activity`.
+
+This found no additional core scoring dimension beyond CGO/VAP/SKW/LFA/WP plus context dimensions convexity/cascade/top concentration. It did identify additional future surfaces: risk bins, flow quadrants, TWAPs, and whale activity.
 
 ## High-Value Capability To Rebuild
 
@@ -114,6 +144,16 @@ Holder fields from `eth_whale_holders.json`:
 - `costCohort`
 - `ageCohort`
 - `asOf`
+
+Additional frontend/service fields from `dataIntelligence.js`:
+
+- `riskbins`: cost and liquidation bins with `longCost`, `shortCost`, `longLiquidation`, `shortLiquidation`.
+- `flow-quadrants`: opening/closing long/short flow buckets over a window.
+- `twaps`: TWAP order progress, target size/notional, execution progress, remaining time.
+- `whale-activity`: recent whale action type, notional change, VWAP, fill count, last fill time.
+- address positions: account value, total notional, margin used, withdrawable, maintenance margin, per-position entry/liquidation/funding fields.
+
+These are useful later, but they are second-stage features. The first Aletheia version should not depend on them.
 
 ## Seven Dimensions
 
@@ -289,6 +329,37 @@ Evidence-specific formula notes:
 - POC is a weighted entry-price histogram peak.
 - Value Area is an approximate 70% weighted cost interval.
 - Clear dollar metrics are public-position arithmetic once the holder set exists.
+
+## Prompt, Agent, And Strategy Material
+
+The folder contains three different kinds of prompt/agent material:
+
+- platform prompt templates (`prompt_templates.json`).
+- marketplace or strategy prompt snapshots (`strategy_details_with_prompts.json`, `leaked_user_strategy_prompts.json`, `marketplace_*`).
+- agent/runtime asset data (`running_agents_leak.json`, `agent_full_detail.json`, `vergex_extracted_data/09_my_agents.json`).
+
+Use in Aletheia:
+
+- Prompt templates can teach us how Position X packages market evidence for an AI.
+- Strategy prompt snapshots can be mined for reasoning patterns, but should not be copied verbatim into Aletheia's trading agent.
+- Agent/runtime asset data is not a market signal. It should not enter Aletheia's market-analysis prompt except as a schema lesson.
+
+The useful extraction target is not "copy the prompt"; it is:
+
+- what evidence blocks are shown to the model.
+- how constraints and risk boundaries are expressed.
+- how position sizing and action vocabulary are constrained.
+- how the model is told to separate data facts from forecasts.
+
+## Security Context That Matters For Aletheia
+
+The security reports are not implementation instructions for Aletheia, but they define misuse boundaries:
+
+- JWT, proxy, credential, wallet, account, balance, exchange order, and running-agent material must not be written to git docs or Agent prompts.
+- Credentials remain secrets even if the source material is authorized for research.
+- Raw account snapshots are not reusable alpha unless explicitly tied to our own trading state; otherwise they are privacy/security evidence.
+- Marketplace prompts and `what` text are authorized research material, but runtime context should be condensed and attributed by `source_ref`/`source_hash`.
+- PoC scripts should not be run as part of Aletheia implementation. They are documentation of data shape and formulas only.
 
 ## Prompt And What Usage
 
