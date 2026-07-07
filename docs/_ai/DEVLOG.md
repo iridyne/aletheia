@@ -1,5 +1,25 @@
 # Development Log
 
+## 2026-07-07 — B8-cc-confirm：Send 按 requires_confirmation 走 window.confirm（1 finding / 1 commit）
+
+### 触发
+接审计链修复后 owner「继续推进」。#71 Command Center Send 按钮无视 "confirmation" badge 直接触发 —— 与 backend #67 修复搭配不当（后端要求 confirm=true 参数才执行 confirmation-required 命令，前端不 confirm 就得连点两次）。
+
+### 做法
+- Send onClick 里加 `if (commandPreview?.command?.requires_confirmation)` 分支，未确认返回；确认后走 `commandMut.mutate()`。同 pattern 与既有 runtime buttons（Promote/Drain/Rollback）。
+
+### 交付
+- 1 finding。1 提交（CommandCenter.tsx Send handler + Fix Progress 表）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed。
+
+### 剩余
+- **B8 剩 ~5 finding**（大部分是复杂的 CausalChain 源问题 #122/#123，或需 audit 每字段的 Settings coverage matrix #163；已 deferred 项不变）。
+
+### 边界
+仅一个前端文件；未推 / 未 restart。
+
+---
+
 ## 2026-07-07 — 审计链头截断修复（1 finding / 1 commit）
 
 ### 触发
