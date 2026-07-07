@@ -1,5 +1,31 @@
 # Development Log
 
+## 2026-07-07 — B7-trust：信任边界四联批（4 findings / 1 commit）
+
+### 触发
+owner「继续推进 B7-B10」。选 B7 中形状统一的信任边界四联（无跨模块耦合、每处触信任边界、可用一个焦点回归覆盖）。
+
+### 做法
+1. **#66 persistence 路径根边界**：`POST /persistence/backups/verify` 和 `POST /persistence/import` 以前接受任意 caller path 直塞进 `verify_backup(Path(path))` / `ImportService.merge(archive)`。现在 `_resolve_archive_path()` 拒绝 `..` 段、resolve() 后要求落在 `data_dir/backups` 或 `data_dir/exports` 内，不满足 → 400。
+2. **#67 executor 确认门**：`requires_confirmation` 原本是 metadata-only —— handler 已经跑了，response 才「标注」自己需要确认。现在 `execute_typed_command` + `AgentShellRuntime.handle` 在调用 handler 前检查 `params.confirm`；`requires_confirmation=True` 且 `confirm != true` → 返回 `permitted=True, needs_confirmation=True` 但**不跑 handler**。第二次调用需带 `confirm=true` 才真正执行。锁定测试 `test_operator_command_persists_structured_response_metadata_for_result_cards` 更新为断言首次不产生 action。
+3. **#82 runtime_continuity kill switch**：service 有 `self.enabled` 但从来不检查。加 `_require_enabled(op_name)` 守卫，在 `prepare_candidate` / `start_shadow` / `validate_shadow` / `promote` / `drain` / `rollback` / `acquire_lock` / `release_lock` 各首行调用，disabled 时 raise `RuntimeTransitionError("runtime_continuity_disabled:<op>")` → 路由 409。读路径（status / list_events / current_runtime_id）不加守卫，dashboard 保持能看。`server/routes/update.py::update_continuity` 的直用也改为透传 `enabled=cfg.runtime.runtime_continuity_enabled`。
+4. **#83 runtime 路由 actor+confirm**：req model 去掉 `actor: str = "human"`（改由 `_ROUTE_ACTOR="human"` 服务端硬编码，攻击者无法伪造 audit actor）；`RuntimeTransitionRequest` 加 `confirm: bool = False`，promote / rollback / forced-drain 强制 `confirm=True`，不然 400。`frontend/src/api/client.ts` 的 promoteRuntime / drainRuntime / rollbackRuntime 都相应加 `confirm: true`。
+
+### 交付
+- 4 findings 全处置。1 提交（代码 + 测试 + 前端 client）。
+- **新增回归** `tests/test_trust_boundary_confirmation_fixes.py`（10 tests / 10 passed）：验证 #66 out-of-root/`..`/合法路径三档、#67 两阶段 confirm 契约、#82 kill switch 各写方法均 reject 且状态可读、#83 promote/rollback 无 confirm → 400 + candidate actor 服务端硬编码不接受调用方 `actor` 字段。
+- **既有测试更新**：`tests/test_runtime_continuity.py` 加 `_mock_shadow_gateway` 桩（打 `server.routes.runtime` 的 `spawn_shadow_gateway` 名称绑定，而不是原始模块 —— 闭包按调用时词法作用域解析）+ setup_env 默认写入 `runtime_continuity_enabled: true` 配置。`tests/test_operator_routes.py` 的 resume 断言从「有 action」改为「无 action + needs_confirmation=True」。
+- **验证**：`tests/specs/` 554 passed / 0 failed（+1 vs baseline 553）；`tests/` 非 specs 1870 passed / 3 deselected（3 deselected 皆为 bug_fix 与 master 漂移，已由 handoff §2 记明，非本批引入）。
+
+### 剩余
+- B7 内其它类别（PnL/reconciler market_type 键、backup 完整性、persistence 导入冲突、broker 跨市场）留下一批。市场类型数据模型迁移（#54/55/51/52/57/96 涉及）仍暂缓 —— 与已 deferred 的 market_snapshots migration 耦合。
+- **#142 Binance 客户端 proxy 绕过**须先对 `iridite/system_proxy_support` 分支核对是否已修（worktree 已建 `.claude/worktrees/system-proxy-support`）。
+
+### 边界
+只改本会话四条 finding 直接对应的代码 + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。合并注意仍如上批 —— 本分支基点较老，`origin/master` 已推进多个提交（含 `c945110f` 可能与 B5 重叠），留待 PR 阶段 rebase。
+
+---
+
 ## 2026-07-07 — Bug 台账修复推进：B1–B6 + B10a（42 findings / 11 commits）
 
 ### 触发
