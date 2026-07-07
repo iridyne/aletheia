@@ -77,7 +77,23 @@ export default function Proposals() {
 
   const approve = useMutation({
     mutationFn: (id: string) => api.approveProposal(id).then(r => ({ id, r })),
-    onSuccess: ({ id }) => { clearErr(id); qc.invalidateQueries({ queryKey: ['proposals'] }); qc.invalidateQueries({ queryKey: ['positions'] }) },
+    // #113 fix: backend approve-paper responds 200 for both success AND
+    // execution-time failures — success body is `{execution: {status:...}}`,
+    // failure body is `{execution: {status:'error', message:'...'}}`. The old
+    // onSuccess unconditionally cleared any inline error, so a 200-with-error
+    // silently reset the UI to "clean" while the order never landed. Inspect
+    // execution.status and route real failures back to setErr.
+    onSuccess: ({ id, r }: { id: string; r: any }) => {
+      const execStatus = String(r?.execution?.status || '').toLowerCase()
+      const isFailure = execStatus === 'error' || execStatus === 'rejected'
+      if (isFailure) {
+        setErr(id, String(r?.execution?.message || `execution ${execStatus}`))
+        return
+      }
+      clearErr(id)
+      qc.invalidateQueries({ queryKey: ['proposals'] })
+      qc.invalidateQueries({ queryKey: ['positions'] })
+    },
     onError: (e: any, id: string) => setErr(id, String(e?.message || 'approve failed')),
   })
   const reject = useMutation({
@@ -91,10 +107,19 @@ export default function Proposals() {
   const decided = rows.filter(p => p.status !== 'pending')
 
   function doApprove(p: TradeProposal) {
-    const modeLabel = p.execution_mode === 'paper_internal'
-      ? 'Paper simulation — no real order.'
-      : p.execution_mode
-    if (!confirm(`Approve ${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}\nMode: ${modeLabel}\n\nConfirm?`)) return
+    // #114 fix: the confirm dialog used to echo p.execution_mode — which may
+    // say `bitget_live_limited` / `okx_demo` etc. — but the /approve-paper
+    // route ALWAYS overrides to `paper_internal` on the backend
+    // (data.py:642). The dialog lied to the operator about what would
+    // actually happen. Show the real, forced mode instead, along with a
+    // heads-up if the proposal's stored mode differs (rare but honest).
+    const forcedMode = 'paper_internal'
+    const modeLine = `Mode: ${forcedMode} (paper simulation — no real order will be placed)`
+    const proposalMode = String(p.execution_mode || '')
+    const modeMismatch = proposalMode && proposalMode !== forcedMode
+      ? `\nNote: the proposal was tagged '${proposalMode}', but the /approve-paper route routes every approval through ${forcedMode}. Use the live-unlock flow to place a real order.`
+      : ''
+    if (!confirm(`Approve ${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}\n${modeLine}${modeMismatch}\n\nConfirm?`)) return
     setPendingId(p.id)
     approve.mutate(p.id, { onSettled: () => setPendingId(null) })
   }
