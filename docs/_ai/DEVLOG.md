@@ -1,5 +1,33 @@
 # Development Log
 
+## 2026-07-07 — B10-api-ref：api_reference.md 漂移扫（5 findings / 1 commit / 纯 docs）
+
+### 触发
+B9 收官后 owner「继续推进」。B10 docs drift 尾，先扫 `docs/design/api_reference.md` 与实际路由的分歧 —— 一条一条修，全部纯 docs 无 code touch。
+
+### 做法
+针对台账 #77–#81，逐条对着实际后端路由更新 `api_reference.md`：
+- **#77 strategy 详情/mutation 路由早删了**：文档还写 `/strategies/summary`、`/strategies/{id}`、`PATCH /strategies/{id}/venue`。实际后端只有 `GET /strategies`（read-only 遗留归因）。删掉三行，说明块从「有 promote/retire/gates」改成「所有变异端点全删，只留 legacy list」。
+- **#78 operator loop 触发路径**：文档写 `POST /operator/trigger`，代码是 `POST /operator/loop/trigger`（operator.py:938 `@router.post("/loop/trigger")` 挂在 `/api/operator` 下）。修为正确路径。
+- **#79 缺 `GET /proposals/{id}`**：data.py:609 有此路由，索引里没有。补一行「Get one proposal by id (404 when absent)」。
+- **#80 `/operator/internal/*` 通配折叠掩盖 15 条独立路由**：文档一行通配符「Internal operator-shell bridge endpoints; not public UI contracts」—— 与 §0 「complete endpoint index」承诺冲突。展开为 15 条具体 POST/PATCH，每条一句描述；下面加说明确认「internal-only，不是公共 UI 契约，枚举是为兑现 §0 完整承诺」。
+- **#81 缺 `/_infra/doctor` / `/_infra/status` + dev-only 边界**：Infra 段只列了 livez/readyz。补充 `_infra/doctor`（诊断报告 JSON）+ `_infra/status`（infra 快照），并新增「Dev-only (environment-gated)」子段落显式记 `/dev/reload/status`/`/dev/reload/events` —— 生产 dev_reload_router 不挂载，UI 客户不应依赖。
+
+### 交付
+- 5 findings。1 提交（纯 docs）。
+- 无新回归（docs-only 无 runtime 行为）。
+- **验证**：`tests/specs/` 554 passed / 0 failed；`spec_api_reference.py` 一起跑绿（该 spec 会做「文档提到的路径也真存在」/「代码有的路径文档也有」的一致性检查，本批修的正是这层漂移，通过说明修得对）。
+
+### 剩余
+- **B10 剩余** #28（api_reference 别处遗漏 —— 与本批部分重叠可能已顺手修）+ #29（agent_contracts.md job table 漂移）+ #30/#31/#32/#33（其它 docs drift）+ #49/#50（docstring 漂移，一行改）+ #76（README Spec-as-Code 索引旧）+ #97（System Operator 命名 `pi_daemon` 仍散落多处 —— 与代码耦合，改动面大）+ #104（serenity 执行 plan 承诺 vs 代码）。下一批候选 **#29 + #30 + #31 + #32 + #33** —— 都是单文件小改。
+- **B8** 前端诚实性（需 `npm run build`）仍留。
+- 已 deferred：market_type 迁移 / operator 鉴权 / #109/#143/#102-pending/#17 / 运行时性能 #90/#147/#134 / #154/#155/#156（B9 尾）。
+
+### 边界
+仅 `docs/design/api_reference.md`；未推 / 未 restart / 未 enable live / 未触 credentials / 未改 code。若后续「complete endpoint index」承诺又漂移，spec_api_reference 会先失败提醒。
+
+---
+
 ## 2026-07-07 — B9-data：universe fallback exchange + macro yfinance 出 loop（2 findings / 1 commit）
 
 ### 触发
