@@ -72,9 +72,7 @@ append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust
 **依据**：产品定义 §8（失败与撤退）。demo 阶段是 live 的前置证明期；
 没有量化证据支撑的 live 解锁等同于盲目冒险。
 
-**当前实现状态**：`server/routes/live.py` 尚未调用 `compute_scorecard()`——
-D8-B02 / D8-C01（`tests/specs/spec_kill_conditions.py`）是 xfail tripwire，
-实现后去掉 xfail。
+**当前实现状态（2026-07-07 更新）**：`server/routes/live.py:30-41` 已经实现 —— 在状态迁移前调用 `compute_scorecard()`，`composite_score < 70` 直接返回 422 并附上分项，D8-B02 / D8-C01 tripwire 已通过（不再 xfail）。#31 修订：把旧的「尚未实现 / xfail」描述纠正为「已实现且被 spec 锁定」，反映现状。
 
 > 关联契约：[kill_conditions_contract.md § K3](kill_conditions_contract.md)
 

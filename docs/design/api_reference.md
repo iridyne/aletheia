@@ -35,7 +35,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | Endpoint | Requirement | Contract |
 |----------|-------------|----------|
 | `POST /settings/live-unlock` | explicit `confirm=true`; first unlock needs `acknowledge_first_unlock` | [live_unlock_contract](live_unlock_contract.md) |
-| `POST /risk/kill-switch` | body `{"active": true\|false}`; human-only; release does NOT enforce confirm token in current code — see ⚠️ note in §Risk / Kill Switch | [risk_engine_contract §4](risk_engine_contract.md) |
+| `POST /risk/kill-switch` | body `{"active": true\|false, "confirm_release"?: bool}`; human-only. **Engage** (`active=true`): no extra confirm. **Release** (`active=false`): requires `confirm_release=true` — else the route returns 422. | [risk_engine_contract §4](risk_engine_contract.md) |
 | `POST /settings/exchange-credentials` (+ binance/okx) | write-only; GET never returns raw secret | trust §6.3 secrets |
 | `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](live_unlock_contract.md) |
 | `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row) | [execution_contract §1](execution_contract.md) |
@@ -191,7 +191,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/settings/telegram` | Telegram bot config |
 | POST | `/settings/webhook` | Webhook notification config |
 | POST | `/settings/update-config` | Auto-update settings |
-| POST | `/settings/permission-mode` | Permission mode — worker (Observe/Paper/Full) + operator (ReadOnly/Research/PaperAuto/AllowEditing/Auto); see [live_unlock_contract §5](live_unlock_contract.md) |
+| POST | `/settings/permission-mode` | **Worker/agent permission mode only** (Observe/Paper/Full — writes to `cfg.agent.permission_mode`). Operator permission (ReadOnly/Research/PaperAuto/AllowEditing/Auto) is a SEPARATE surface at `cfg.operator.permission_mode` — this endpoint does not change it. See [live_unlock_contract §5](live_unlock_contract.md). |
 | POST | `/settings/exchange-mode` | Exchange mode (paper_internal/paper_demo/live) |
 | POST | `/settings/risk` | Risk limit parameters |
 | POST | `/settings/symbols` | Crypto symbol config |
@@ -357,9 +357,9 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/risk/kill-switch` | Kill switch current state `{"active": bool}` |
-| POST | `/risk/kill-switch` | Engage or release the global trading brake; body: `{"active": true\|false, "reason": ""}` |
+| POST | `/risk/kill-switch` | Engage or release the global trading brake; body: `{"active": true\|false, "reason": "", "confirm_release": bool}`. Releasing (`active=false`) requires `confirm_release=true` — else 422 (see ⚠️ note below). |
 
-> ⚠️ **已知缺陷**：`POST /risk/kill-switch` 的 release 路径（`active: false`）在代码中**不要求 confirm token**——这与原始安全设计（两步确认）矛盾。已记录于 `docs/issues/BACKEND_ISSUES.md`，条目标识 `kill-switch-release-missing-confirm`（后续任务修复）。
+> ✅ **2026-07-07 更新（#32）**：release 路径的 confirm 要求已在代码里实现 —— `aletheia/server/routes/risk.py:85-101` 校验 `confirm_release=True` 才放行 release，否则 HTTP 422。旧的「已知缺陷」描述已过时；docs/issues/BACKEND_ISSUES.md 里 `kill-switch-release-missing-confirm` 条目相应标记为已解决。
 
 ---
 
