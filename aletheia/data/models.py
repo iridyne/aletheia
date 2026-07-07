@@ -1,4 +1,4 @@
-"""Domain models for the 9-domain data collection layer.
+"""Domain models for the market data collection layer.
 
 All models are Pydantic BaseModel — serialization-ready for SQLite JSON columns,
 API responses, and LLM context injection. Fields use snake_case; observed_at is
@@ -64,6 +64,41 @@ class LiquidationEvent(BaseModel):
     price: float
     event_time: str
     observed_at: str
+
+
+class PerpStructureSnapshot(BaseModel):
+    """Observation-only perp positioning map from a whitelisted aggregate feed."""
+    symbol: str
+    venue: str = "hyperliquid"
+    source: str = "vergex"
+    as_of_time: str
+    observed_at: str
+    data_quality: str = "unknown"
+    coverage_note: str | None = None
+    poc: float | None = None
+    value_area_low: float | None = None
+    value_area_high: float | None = None
+    support: float | None = None
+    resistance: float | None = None
+    magnet: float | None = None
+    short_liq_above_usd: float | None = None
+    long_liq_below_usd: float | None = None
+    long_unrealized_pnl_usd: float | None = None
+    short_unrealized_pnl_usd: float | None = None
+    top10_concentration: float | None = None
+    top50_concentration: float | None = None
+    holder_count: int | None = None
+    long_holder_count: int | None = None
+    short_holder_count: int | None = None
+    cgo_direction: str | None = None
+    vap_direction: str | None = None
+    lfa_direction: str | None = None
+    cascade_risk: float | None = None
+    convexity: float | None = None
+    vendor_bias: str | None = None
+    vendor_rank: int | None = None
+    vendor_universe_size: int | None = None
+    raw_json: str = "{}"
 
 
 class LeverageState(BaseModel):

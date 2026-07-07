@@ -7,7 +7,35 @@
 
 ## Last Updated
 
-2026-07-05 (Opportunity CLI consolidation)
+2026-07-07 (Vergex 永续结构信号 observation-only 最小接入)
+
+---
+
+## Recent Change (Vergex 永续结构信号 observation-only 最小接入 — 2026-07-07)
+
+完成 Vergex/Hyperliquid 永续持仓结构信号的最小安全接入。目标是让系统能消费聚合后的
+结构证据，不导入地址明细、他人 prompt、账户/资产/credential，也不让该信号直接影响下单。
+
+- 新增 `perp_structure_snapshots` 表，存 POC、Value Area、上下方清算燃料、集中度、
+  data_quality、as_of_time 等聚合字段。
+- 新增 `PerpStructureSnapshot` 模型、repository 写入/最新读取/30 天清理函数。
+- 新增 `VergexStructureCollector` fixture 写入入口：只接受白名单聚合字段；拒收/丢弃
+  钱包地址、prompt、账户、credential 形态字段；当前不调用真实 Vergex API。
+- `market_observer` 只读取 60 分钟内的新鲜结构快照，拼进 `Perp structure` 证据块；
+  该块只进 prompt，不改 proposal 阈值、不改排序、不碰风控/执行。
+- `doctor` 新增 `data.perp_structure` 新鲜度探针；无数据/旧数据只做可观测提示。
+- `docs/design/data_utilization.md` 和 `docs/design/data_model.md` 已登记该 observation-only 数据域。
+
+边界：不改 live/risk/execution/credentials，不接真实 Vergex endpoint，不建地址库，不接 marketplace
+prompt，不复刻 Vergex composite score，不让结构信号单独触发开仓。
+
+验证：
+- `uv run pytest tests/test_data_collectors.py tests/test_doctor.py tests/test_market_context.py tests/specs/spec_data_utilization.py tests/specs/spec_data_model.py -q`
+- `git diff --check`
+- `uv run aletheia doctor`（只读诊断；运行态结果以执行机器为准，本文不记录为共享事实）
+
+后续如果要从 fixture 进入真实 partner feed，先补配置 + Settings 控件 + collector fixture 测试，
+继续保持默认关闭和 observation-only。
 
 ---
 
@@ -151,9 +179,6 @@ uv run aletheia inspect guard-impact --hours 24 --json
 - `uv run pytest tests/test_guard_impact_audit.py tests/test_paper_trader_guards.py tests/test_paper_trader_ranker.py tests/test_trade_funnel_audit.py -q`
 - `uv run aletheia inspect guard-impact --hours 24`
 - `uv run aletheia inspect guard-impact --hours 24 --json`
-
----
-
 ## Recent Change (Thesis Lineage 链路完整性修复 — 2026-07-04)
 
 完成一轮 Thesis Lineage V1.1 数据链路完整性修复（commit `7df8889f`）。

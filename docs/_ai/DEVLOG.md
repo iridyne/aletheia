@@ -1,5 +1,31 @@
 # Development Log
 
+## 2026-07-07 — Vergex 永续结构信号 observation-only 最小接入
+
+### 触发
+当前分支要把 Vergex 报告里可合作的“永续持仓成本结构 / 清算燃料 / 集中度”转成
+Aletheia 可消费证据，但不能导入敏感明细，也不能影响 live/risk/execution。
+
+### 交付
+- 新增 `perp_structure_snapshots` 表和 `PerpStructureSnapshot` 模型。
+- 新增 `insert_perp_structure_snapshot`、`latest_perp_structure`、`prune_perp_structure_snapshots`。
+- 新增 `VergexStructureCollector` fixture 入口，白名单接受聚合字段，丢弃地址、prompt、账户、credential 形态字段。
+- `render_enriched_context_md(perp_structure=...)` 渲染 POC、Value Area、清算燃料、集中度、data_quality、as_of_time。
+- `market_observer` 只消费 60 分钟内的新鲜结构快照，作为 prompt 证据，不改变交易行为。
+- `doctor` 增加 `data.perp_structure` 新鲜度探针。
+- 数据利用和数据模型文档登记该 observation-only 数据域。
+
+### 验证
+- `uv run pytest tests/test_data_collectors.py tests/test_doctor.py tests/test_market_context.py tests/specs/spec_data_utilization.py tests/specs/spec_data_model.py -q`
+- `git diff --check`
+- `uv run aletheia doctor`（只读诊断）
+
+### 边界
+不接真实 Vergex API、不新增交易所、不导入地址库/账户/prompt/credential、不改 risk/execution/live、
+不让该信号单独触发开仓或提高杠杆。
+
+---
+
 ## 2026-07-05 — Opportunity CLI consolidation
 
 ### 触发
@@ -115,9 +141,6 @@ System Operator 持续 skip 后，下一步需要判断 active blocking guards �
 ### 边界
 只读 DB + guard markdown/frontmatter + existing shadow/forward outcomes；不禁用/修改 guard，
 不改 ranker / System Operator / risk / execution / live，不调用 LLM / HTTP / exchange。
-
----
-
 ## 2026-07-04 — Thesis Lineage 链路完整性修复
 
 ### 触发

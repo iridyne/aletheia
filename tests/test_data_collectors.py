@@ -1,4 +1,4 @@
-"""Unit tests for the 9-domain data collection layer.
+"""Unit tests for the market data collection layer.
 
 All tests are offline (no network, no DB). We mock ccxt and httpx.
 """
@@ -265,6 +265,106 @@ def test_render_enriched_context_md_with_data():
     assert "neutral" in md
 
 
+def test_render_enriched_context_md_with_perp_structure():
+    from aletheia.data.context_builder import render_enriched_context_md
+
+    md = render_enriched_context_md(
+        ["BTC/USDT"],
+        {},
+        {},
+        None,
+        perp_structure={
+            "BTC/USDT": {
+                "source": "vergex",
+                "venue": "hyperliquid",
+                "data_quality": "complete",
+                "as_of_time": "2026-07-04T14:16:53+00:00",
+                "poc": 62267.64,
+                "value_area_low": 60000.0,
+                "value_area_high": 65000.0,
+                "short_liq_above_usd": 335_141_283.44,
+                "long_liq_below_usd": 220_161_274.01,
+                "top10_concentration": 0.21,
+                "top50_concentration": 0.44,
+            }
+        },
+    )
+
+    assert "Perp structure" in md
+    assert "BTC/USDT" in md
+    assert "POC $62,268" in md
+    assert "Value Area $60,000-$65,000" in md
+    assert "short-liq above $335M vs long-liq below $220M" in md
+    assert "top10 21%" in md
+    assert "complete" in md
+    assert "as-of 2026-07-04T14:16:53+00:00" in md
+
+
+@pytest.mark.asyncio
+async def test_vergex_structure_collector_filters_rejected_fields():
+    from aletheia.data.collectors.vergex_structure import VergexStructureCollector
+
+    collector = VergexStructureCollector(fixture_payloads=[{
+        "symbol": "BTC/USDT",
+        "venue": "hyperliquid",
+        "source": "vergex",
+        "as_of_time": "2026-07-04T14:16:53+00:00",
+        "data_quality": "complete",
+        "poc": 62267.64,
+        "value_area_low": 60000.0,
+        "value_area_high": 65000.0,
+        "short_liq_above_usd": 335_141_283.44,
+        "long_liq_below_usd": 220_161_274.01,
+        "top10_concentration": 0.21,
+        "top50_concentration": 0.44,
+        "wallet_addresses": ["0xabc"],
+        "api_key": "must-not-survive",
+        "system_prompt": "must-not-survive",
+        "account_balance": 123.45,
+        "unknown_nested": {"credential": "must-not-survive"},
+    }])
+
+    out = await collector.collect(["BTC/USDT"])
+
+    assert out["errors"] == []
+    assert len(out["perp_structure"]) == 1
+    snap = out["perp_structure"][0]
+    assert snap.symbol == "BTC/USDT"
+    assert snap.poc == 62267.64
+    assert snap.cascade_risk is None
+    raw = snap.raw_json
+    assert "wallet_addresses" not in raw
+    assert "api_key" not in raw
+    assert "system_prompt" not in raw
+    assert "account_balance" not in raw
+    assert "unknown_nested" not in raw
+
+
+@pytest.mark.asyncio
+async def test_vergex_structure_fixture_persists_btc_eth_sol():
+    from aletheia.data.collectors.vergex_structure import VergexStructureCollector
+    from aletheia.storage import repositories as repo
+
+    collector = VergexStructureCollector(
+        fixture_payloads=VergexStructureCollector.sample_fixture_payloads(
+            as_of_time="2026-07-04T14:16:53+00:00",
+        )
+    )
+
+    out = await collector.collect(["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+
+    assert out["errors"] == []
+    assert [s.symbol for s in out["perp_structure"]] == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    for snap in out["perp_structure"]:
+        repo.insert_perp_structure_snapshot(snap.model_dump())
+
+    for sym in ("BTC/USDT", "ETH/USDT", "SOL/USDT"):
+        latest = repo.latest_perp_structure(sym)
+        assert latest is not None
+        assert latest["source"] == "vergex"
+        assert latest["venue"] == "hyperliquid"
+
+
 def test_build_market_context_snapshot_completeness():
     from aletheia.data.context_builder import build_market_context_snapshot
     from aletheia.data.normalizer import compute_tradability, compute_leverage_state
@@ -278,3 +378,48 @@ def test_build_market_context_snapshot_completeness():
     assert "macro" in snap.stale_domains
     assert len(snap.tradability) == 2
     assert len(snap.leverage) == 2
+
+
+def test_perp_structure_repository_roundtrip_and_prune():
+    from datetime import datetime, timedelta, timezone
+    from aletheia.storage import repositories as repo
+
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+    fresh_ts = datetime.now(timezone.utc).isoformat()
+    repo.insert_perp_structure_snapshot({
+        "id": "ps-old",
+        "symbol": "BTC/USDT",
+        "venue": "hyperliquid",
+        "source": "vergex",
+        "as_of_time": old_ts,
+        "observed_at": old_ts,
+        "data_quality": "complete",
+        "poc": 60000.0,
+        "raw_json": '{"wallets":["must-not-be-required"]}',
+    })
+    repo.insert_perp_structure_snapshot({
+        "id": "ps-fresh",
+        "symbol": "BTC/USDT",
+        "venue": "hyperliquid",
+        "source": "vergex",
+        "as_of_time": fresh_ts,
+        "observed_at": fresh_ts,
+        "data_quality": "degraded",
+        "poc": 62267.64,
+        "value_area_low": 60000.0,
+        "value_area_high": 65000.0,
+        "short_liq_above_usd": 335_141_283.44,
+        "long_liq_below_usd": 220_161_274.01,
+        "top10_concentration": 0.21,
+        "top50_concentration": 0.44,
+        "raw_json": "{}",
+    })
+
+    latest = repo.latest_perp_structure("BTC/USDT")
+    assert latest is not None
+    assert latest["id"] == "ps-fresh"
+    assert latest["data_quality"] == "degraded"
+    assert latest["poc"] == 62267.64
+
+    assert repo.prune_perp_structure_snapshots(days=30) == 1
+    assert repo.latest_perp_structure("BTC/USDT")["id"] == "ps-fresh"

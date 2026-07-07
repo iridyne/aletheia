@@ -713,6 +713,44 @@ def _probe_orderbook(report: Report) -> None:
     )
 
 
+def _probe_perp_structure(report: Report) -> None:
+    """Expose whether observation-only perp structure rows are fresh."""
+    try:
+        from aletheia.storage.sqlite import get_db
+        db = get_db()
+        row = db.execute(
+            "SELECT symbol, source, venue, as_of_time, observed_at, data_quality "
+            "FROM perp_structure_snapshots "
+            "ORDER BY as_of_time DESC, observed_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception as e:
+        report.add("data.perp_structure", "info", f"could not read perp structure: {e}")
+        return
+
+    if not row:
+        report.add(
+            "data.perp_structure",
+            "info",
+            "no perp structure rows yet",
+            "no action unless this observation-only feed is expected to be populated",
+        )
+        return
+
+    age = _age_minutes(row["as_of_time"] or row["observed_at"])
+    sev = "warn" if age is None or age > 60 else "ok"
+    detail = (
+        f"newest perp structure {row['symbol']} "
+        f"{row['source']}/{row['venue']} quality={row['data_quality']} ({_fmt_age(age)})"
+    )
+    report.add(
+        "data.perp_structure",
+        sev,
+        detail,
+        "perp structure stale > 60m; check the offline importer/feed job"
+        if sev == "warn" else None,
+    )
+
+
 def _probe_macro_signals(report: Report) -> None:
     """Round 2 macro signal freshness probes — LSR / F&G / CoinGecko top.
 
@@ -2325,6 +2363,7 @@ def build_report() -> Report:
         _probe_credentials,
         _probe_market_data,
         _probe_orderbook,
+        _probe_perp_structure,
         _probe_macro_signals,
         _probe_coinalyze,
         _probe_prediction_markets,
