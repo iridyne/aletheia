@@ -230,10 +230,23 @@ export default function RiskControls() {
                 )
               })}
             </ul>
-          ) : (
+          ) : riskState === 'healthy' ? (
             <div className="risk-clear">
               <span className="risk-dot risk-dot-ok" />
               <span className="text-muted text-sm">No active violations — operating within all limits.</span>
+            </div>
+          ) : (
+            // #172 fix: "within all limits" used to render whenever the
+            // violation list was empty — including when riskState was
+            // 'unknown' / missing / never-evaluated (the API returned no
+            // status yet). That's the WORST case to render as green:
+            // "no data" mislabels itself as "all clear". Only claim clear
+            // when the backend actually says riskState === 'healthy'.
+            <div className="risk-clear">
+              <span className="risk-dot" style={{ background: 'var(--muted)' }} />
+              <span className="text-muted text-sm">
+                Risk state <span className="mono">{riskState}</span> — not confirming clear until the risk engine reports "healthy".
+              </span>
             </div>
           )}
 
