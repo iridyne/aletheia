@@ -1,5 +1,51 @@
 # Development Log
 
+## 2026-07-07 — B10-rename：System Operator naming 注册 + naming-regression（1 finding / 1 commit）
+
+### 触发
+接 B10-docs-tail 后 owner「继续推进」。B10 剩最后一条 #97 —— `discussion.md` 已经把「PI Agent」重命名为「System Operator」，但 `pi_daemon` 名字仍散落 config schema / 路由 / 审计事件 / 前端。全项目 rename 成本大，采用 ledger 的「at minimum: 记为 legacy 兼容键 + naming-regression test」路径。
+
+### 做法
+1. **配置层单点真相**：`config/schema.py::PiDaemonConfig` 加详细 class docstring 建立 **naming registry** —— 明写 `pi_daemon` = legacy 兼容键、当前产品名 = System Operator daemon，列出 4 处 legacy 契约（field / audit event / REST path / product name）。
+2. **路由 docstring 加 legacy 标记**：`server/routes/settings.py::update_pi_daemon_config` 加 docstring 说 `/pi_daemon` 路径 + `pi_daemon_config_changed` 事件 + `pi_daemon_config` entity 都是 legacy 兼容名。audit message 里的文本从 "PI daemon config updated" 改为 "System Operator daemon config updated"（用户/操作员可见的那部分改到当前语言，机器契约保 legacy）。
+3. **前端 UI 可见 label 已在 System Operator daemon**：Settings.tsx:553 已是 `System Operator daemon (event-driven)` —— 本批只加 regression 锁住不回归。`pi daemon` 作为搜索别名（line 69）保留，用户肌肉记忆。
+4. **naming-regression 测试**（`tests/test_system_operator_naming_registry.py`，3 tests）：
+   - 断言 `PiDaemonConfig` docstring 包含 "System Operator daemon" + "legacy" 字样 + 4 处契约 key —— docstring 是 registry，丢了这段本测试会报。
+   - 断言 `PiDaemonConfig` 4 个字段（enabled/debounce_sec/cooldown_sec/heartbeat_sec）都还在 —— 防止 silent config break。
+   - 断言 `Settings.tsx` 含 `System Operator daemon` **且不含** `PI Agent daemon` / `PI daemon (event-driven)` 之类的 visible label —— 防新代码回退旧命名。
+
+### 交付
+- 1 finding。1 提交（config/schema + settings 路由 + 新回归 test）。
+- **验证**：`tests/specs/` 557 passed / 0 failed（相较 baseline 554 多 3 —— 新 test 3 条 all green）。
+- 未做完整 rename（会破 existing config.yaml + audit trail），改用 ledger 明写建议的 minimum：登记 + 锁住 —— 「full rename (config key + REST alias) deferred as bigger migration」记在 Fix Progress。
+
+### 剩余
+- **B10 全部处置**（除 deferred full rename）。至此 **B7 / B9 / B10 均完成**。
+- **B8** 前端诚实性仍留（最大一组，约 35 findings，需 `npm run build` 验证）。
+- 已 deferred：market_type migration / operator 鉴权 / #109/#143/#102-pending/#17 / 运行时性能 / #154/#155/#156 (B9 尾) / #97 完整 rename。
+
+### 边界
+仅 3 文件 + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。未改任何 config.yaml 消费者接口（既有 `cfg.pi_daemon.enabled` 等仍 work）。
+
+---
+
+## 2026-07-07 — B10-serenity-plan：thesis-invalidation marker doc reconciled（1 finding / 1 commit / 纯 docs）
+
+### 触发
+接 B10-docs-tail 后 owner「继续推进」。B10 快扫尾一条 #104。
+
+### 做法
+`docs/plans/serenity_execution_path.md` §5.2 承诺过「显式 `thesis_invalidated` 标记」作为独立退出触发器，但 SerenityOpportunity 模型 + 迁移都无此字段，`position_manager.py:247-253` 也只查 `opp.status != active`。改写为「status 是唯一控制轴，`invalidated` 语义通过 status 迁到 `dismissed`/`expired` 表达」，并注明若未来要独立布尔 marker 需加 field + 迁移 + spec claim。
+
+### 交付
+- 1 finding。1 提交。
+- 验证：`tests/specs/` 554 passed / 0 failed。
+
+### 边界
+仅一个 doc 文件。
+
+---
+
 ## 2026-07-07 — B10-docs-tail：因果链 + CCXT 直构造异常 + Spec 索引（4 findings / 1 commit / 纯 docs+docstring）
 
 ### 触发
