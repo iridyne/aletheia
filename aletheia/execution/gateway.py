@@ -348,7 +348,12 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     "entity_id": proposal.id, "before": {"status": proposal.status},
                     "after": {"status": "error"}, "message": msg,
                 })
-                return {"status": "error", "proposal_id": proposal.id, "message": str(e),
+                # #8 fix: don't leak raw exception text to the API — some CCXT
+                # errors carry request URLs / partial headers. Route through
+                # clean_error_message (already used by broker error paths) and
+                # cap length so the API response stays a summary.
+                return {"status": "error", "proposal_id": proposal.id,
+                        "message": _safe_error_message(str(e)),
                         "exchange_order_id": exchange_oid}
 
         elif allowed_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited"):
@@ -434,7 +439,12 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
                     "entity_id": proposal.id, "before": {"status": proposal.status},
                     "after": {"status": "error"}, "message": msg,
                 })
-                return {"status": "error", "proposal_id": proposal.id, "message": str(e),
+                # #8 fix: don't leak raw exception text to the API — some CCXT
+                # errors carry request URLs / partial headers. Route through
+                # clean_error_message (already used by broker error paths) and
+                # cap length so the API response stays a summary.
+                return {"status": "error", "proposal_id": proposal.id,
+                        "message": _safe_error_message(str(e)),
                         "exchange_order_id": exchange_oid}
 
     except Exception as e:
@@ -446,9 +456,24 @@ def _execute_proposal(proposal: TradeProposal) -> dict:
             "entity_id": proposal.id, "before": {"status": proposal.status},
             "after": {"status": "error"}, "message": f"Execution failed: {e}",
         })
-        return {"status": "error", "proposal_id": proposal.id, "message": str(e)}
+        # #8 fix: same treatment as the inner exception branches — never dump
+        # raw exception text to the API response.
+        return {"status": "error", "proposal_id": proposal.id, "message": _safe_error_message(str(e))}
 
     return {"status": "unknown_mode", "proposal_id": proposal.id}
+
+
+def _safe_error_message(raw: str, max_len: int = 200) -> str:
+    """Clean an exception string for an API-facing error payload.
+
+    #8 fix: prevents raw CCXT / requests exception text from leaking through
+    the /gateway response body. Delegates to the shared clean_error_message
+    which already knows the exchange-specific JSON shapes, then caps at
+    max_len so a stack-trace-flavored message doesn't paint the UI.
+    """
+    from aletheia.execution.broker_utils import clean_error_message
+    cleaned = clean_error_message(raw or "")
+    return (cleaned or "execution error")[:max_len]
 
 
 def _ensure_paper_attribution_snapshot(proposal: TradeProposal) -> dict | None:
