@@ -1,5 +1,31 @@
 # Development Log
 
+## 2026-07-07 — B9-data：universe fallback exchange + macro yfinance 出 loop（2 findings / 1 commit）
+
+### 触发
+接 B9-llm 后 owner「继续推进」。B9 剩最后两条独立可修的（#91 provider fallback + #92 async 阻塞），形状对偶：都是「本该走既有基础设施但没有」。
+
+### 做法
+1. **#91 universe registry+features 用同一交易所做 primary+fallback**：`registry.py::sync_registry` 和 `features.py::collect_features` 都写死 `CCXTProvider(exchange=venue, fallback_exchange=venue)` —— primary 挂了 fallback 是同一个 exchange 等于没有。`get_market_data_provider` 工厂已经在读 `md.ccxt_fallback` 做交叉交易所 fallback，两个地方直接 mirror 这套配置解析：`fallback_venue = md.ccxt_fallback or venue`。工厂本身返回 FallbackChainProvider 缺 `_ensure_primary`/`load_markets`，universe 这两处需要 CCXT 原生接口所以还是直接 `CCXTProvider(...)`，但至少 fallback 现在真的能落到另一个交易所了。
+2. **#92 MacroCollector async 内 sync yfinance**：`_fetch_tradfi()` 是同步的，一 ticker 一 HTTP round trip；`collect()` 是 async 但直接 `_fetch_tradfi()` 调它 —— 这跑在 scheduler 的 async worker loop 上，每次宏观 tick 会 block loop 好几秒，其他 async 任务（market observer / heartbeat / exchange sync）全被冻。改成 `await asyncio.to_thread(_fetch_tradfi)` —— 阻塞工作出 loop 到线程池，loop 保持响应。
+
+### 交付
+- 2 findings。1 提交。
+- **新增回归** `tests/test_data_provider_and_async_fixes.py`（3 tests / 3 passed）：
+  - `test_universe_registry_uses_configured_fallback_exchange` — mock `CCXTProvider` 捕获构造参数，`ccxt_exchange="bitget"` + `ccxt_fallback="okx"` 后运行 `sync_registry(cfg)`，断言 `fallback_exchange == "okx"` 不是 `"bitget"`。
+  - `test_universe_features_uses_configured_fallback_exchange` — 同套断言在 `collect_features()`。
+  - `test_macro_collector_runs_yfinance_off_loop` — 关键测试：mock `_fetch_tradfi` 让它 `time.sleep(0.5)`（真同步阻塞），`asyncio.gather` 里同时跑 `collect()` 和一个 50×10ms 的竞态 async ticker。如果 loop 被阻塞 → 竞态 ticker 达不到 50 次。断言 `competing_ticks == 50` + 总墙钟 < serial 时长（并发不串行）。修前会失败；修后 to_thread 让 sleep 出 loop，竞态 ticker 顺利跑完。
+- **验证**：`tests/specs/` 557 passed / 0 failed；本 batch 3 tests。
+
+### 剩余
+- **B9 全部处置或标 refuted**：#91/#92（本批）+ #124/#158（B9-analytics）+ #161（B9-llm）+ #177/#178/#179/#180（B9-diag）已修；#154 (divergence_scanner) 属 dormant gated 特性可留待 flag 启用；#155 (OHLCV cache market_type) 与 market_type 迁移耦合暂缓；#156 (Coinalyze OI live schema) 需先核对外部 API 后再修，脱离静态测试范围。
+- **B8** 前端诚实性（需 `npm run build`）+ **B10** 文档漂移仍留。B10 大部分是机械改，成本低价值明确 —— 下一批候选。
+
+### 边界
+仅 universe/registry.py + universe/features.py + data/collectors/macro.py + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。config schema 未变，只 mirror 既有工厂的解析。
+
+---
+
 ## 2026-07-07 — B9-llm：complete_with_fallback tier provider name 透传（1 finding / 1 commit）
 
 ### 触发
