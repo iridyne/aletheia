@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-07-07 — B8-cleanup：fmtSymbol 恢复 + AgentActivity 过时说明 + RuleSet legacy 标签（4 findings 逻辑修 + 1 已applied / 1 commit）
+
+### 触发
+接 B10-rename 后 owner「继续推进」。B7/B9/B10 全部收官，进入 B8 前端诚实性组 —— 挑几条最机械、不依赖 UI 运行时的清理，先把易改的先处理。
+
+### 做法
+1. **#15 + #175 fmtSymbol 恢复**：`TradeInsightsPanel.tsx:449` 的 `row.symbol.replace('/USDT', '')` + `PnLZone.tsx:173` 的 `sym.replace('/USDT', '')` 都是硬编码剥 USDT，不走 `fmtSymbol()` helper —— 非 USDT quote / perp 会显示错。TradeInsightsPanel 已经 import 了 fmtSymbol；PnLZone 需要加 import。改成 `fmtSymbol(row.symbol, (row as any).market_type)` / `fmtSymbol(sym)`。#175 是 #15 在 SymbolDirectionMatrix 的具体实例，同一次修覆盖。
+2. **#95 已在过往会话应用**：`frontend/src/api/client.ts:543` 已有 `// #95: removed dead setStrategyVenue()` 注释，grep 全项目无残留调用点，已 resolved（不占本批工作量，登记）。
+3. **#72 AgentActivity 「steps 后端未建」过时**：backend `/api/agent-runs/{run_id}/steps` 早在 `server/routes/data.py:236` 挂了，但 `frontend/src/api/client.ts` 从没加 `getAgentRunSteps` 方法，AgentActivity 抽屉里显示「pending backend — not yet available」。加 `api.getAgentRunSteps(runId)` 客户端方法 + AgentActivity `ReasoningStepsSection` 用 useQuery 拉步骤并渲染成表格（step_number/action/input/output 各 80 字符预览）；顶部模块 docstring 里的「backend gap」段改为「#72 fix：GET /steps 已 live」+ 「note was stale」。
+4. **#128 TradeAnalyticsPanel `RuleSet` legacy 标签**：`By Strategy Source` 段列的 `ruleset` 是 Position C 已删规则引擎的产物 —— 只有 legacy 数据行才有。标签从 `RuleSet` 改成 `RuleSet (legacy)`，颜色从 `var(--accent)` 改为 `var(--muted)`（少抢注意力），并在文件 top docstring 明写「legacy attribution 仍展示历史行，新 trade 全是 opportunity」。
+
+### 交付
+- 4 finding 逻辑修 + 1 verified-already-done。1 提交。
+- **验证**：Python `tests/specs/` + naming registry 共 557 passed / 0 failed（不受 frontend 改动影响）。**tsc 未跑**（本 worktree 未装 node_modules），full UI 验证 tracked as follow-up；本批只做 mechanical 文本+import 层的改动，不改任何组件的 hooks / 数据形状 / props 契约。
+
+### 剩余
+- **B8 剩 ~30 finding**：pause/resume 吞 409（#165）、topbar riskState 死支（#174）、Overview exchange 灯永远探 Bitget（#171）、CausalChain fill 从 order 而非 fills 表（#122/#123）、settings coverage matrix mislabel（#163）、多个 onError 缺失（#164）等等。都要看 UI 才能验证；建议在 owner 说「可跑 npm build」时集中做。
+- **已 deferred 项** 不变。
+
+### 边界
+仅 4 个前端文件（`TradeInsightsPanel.tsx` + `PnLZone.tsx` + `client.ts` + `AgentActivity.tsx` + `TradeAnalyticsPanel.tsx`）；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B10-rename：System Operator naming 注册 + naming-regression（1 finding / 1 commit）
 
 ### 触发
