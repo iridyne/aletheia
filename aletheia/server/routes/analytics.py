@@ -73,10 +73,19 @@ def get_equity_curve(
         params.append(f"-{days} days")
 
     where = " AND ".join(conditions)
+    # #124 fix: `ORDER BY closed_at ASC LIMIT ?` truncates to the OLDEST N rows,
+    # so under full_cumulative when the account has more closes than `limit` we
+    # never see any recent points — the equity curve is frozen on ancient
+    # history. Take the NEWEST N via a subquery (DESC LIMIT) and re-sort ASC in
+    # the outer query so the cumulative accumulation below still walks in
+    # chronological order. This preserves both invariants: (a) any point that
+    # makes it into `rows` is one of the most recent closes, and (b) the loop
+    # can still build a monotonic running sum against `closed_at`.
     sql = (
-        f"SELECT realized_pnl, closed_at "
-        f"FROM positions WHERE {where} "
-        f"ORDER BY closed_at ASC LIMIT ?"
+        f"SELECT realized_pnl, closed_at FROM ("
+        f"  SELECT realized_pnl, closed_at FROM positions WHERE {where} "
+        f"  ORDER BY closed_at DESC LIMIT ?"
+        f") ORDER BY closed_at ASC"
     )
     params.append(limit)
     rows = db.execute(sql, params).fetchall()

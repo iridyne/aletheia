@@ -494,15 +494,30 @@ def _r_multiple_distribution(rows) -> list[dict]:
     return [{"bin": label, "count": counts[label]} for label, _, _ in _BINS]
 
 
+def _reason_of(row) -> str:
+    """Extract the bucketing key used by _by_exit_reason.
+
+    #158 fix: the inline ternary this replaces —
+      `r["close_reason"] if "close_reason" in r.keys() else None or "unknown"`
+    — parses as `r["close_reason"] if ... else (None or "unknown")` because
+    `or` binds tighter than the ternary else. So when the column IS present but
+    the row VALUE is None (SQLite null), the expression returned None, not
+    "unknown"; the outer `if reason_of(r) == "unknown"` then matched nothing,
+    the unknown bucket's avg_pnl_pct summed zero rows and divided by a nonzero
+    trade_count, and every unknown-bucket avg came back ~0. Pulling it into a
+    real function fixes precedence AND makes the intent auditable.
+    """
+    reason = row["close_reason"] if "close_reason" in row.keys() else None
+    return reason or "unknown"
+
+
 def _by_exit_reason(rows) -> list[dict]:
     """Group trades by close_reason and compute stats."""
     from collections import defaultdict
 
     buckets: dict[str, list[float]] = defaultdict(list)
     for r in rows:
-        reason = r["close_reason"] if "close_reason" in r.keys() else None
-        reason = reason or "unknown"
-        buckets[reason].append(r["realized_pnl"] or 0.0)
+        buckets[_reason_of(r)].append(r["realized_pnl"] or 0.0)
 
     result = []
     total_pnl_all = sum(r["realized_pnl"] or 0.0 for r in rows)
@@ -510,13 +525,12 @@ def _by_exit_reason(rows) -> list[dict]:
         tc = len(pnls)
         wins = sum(1 for p in pnls if p > 0)
         total = sum(pnls)
+        pct_sum = sum(_pnl_pct(r) for r in rows if _reason_of(r) == reason)
         result.append({
             "reason": reason,
             "trade_count": tc,
             "win_rate": round(wins / tc * 100, 1) if tc else 0,
-            "avg_pnl_pct": round(sum(_pnl_pct(r) for r in rows
-                                      if (r["close_reason"] if "close_reason" in r.keys() else None or "unknown") == reason)
-                                  / tc, 2) if tc else 0,
+            "avg_pnl_pct": round(pct_sum / tc, 2) if tc else 0,
             "total_pnl": round(total, 4),
             "pnl_contribution_pct": round(total / total_pnl_all * 100, 1) if total_pnl_all != 0 else 0,
         })
