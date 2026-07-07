@@ -565,7 +565,14 @@ export const api = {
   getPredictionMarketHistory: (id: string) => fetchJson<{ source: string; points: import('../types').ProbabilitySnapshot[] }>(`/prediction/markets/${id}/history`),
   getPredictionMarketClaims: (id: string) => fetchJson<import('../types').PredictionClaim[]>(`/prediction/markets/${id}/claims`),
   getPredictionPreferences: () => fetchJson<import('../types').PredictionPreferences>('/prediction/preferences'),
-  updatePredictionPreferences: (body: { categories?: string[] }) => post<any>('/prediction/preferences', body),
+  // #86 fix: backend is @router.patch("/preferences") (prediction.py:232),
+  // client was POSTing → 405 Method Not Allowed on every save. Use PATCH.
+  updatePredictionPreferences: (body: { categories?: string[] }) =>
+    fetchJson<any>('/prediction/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   togglePrediction: (enabled: boolean) => post<{ enabled: boolean }>('/prediction/toggle', { enabled }),
 
   // Serenity Lens endpoints (research-first investigation pipeline)

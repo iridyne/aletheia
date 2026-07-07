@@ -74,6 +74,9 @@ export default function NewsIntel() {
     if (filter === 'all') return true
     if (filter === 'new') return item.status === 'new'
     if (filter === 'reviewed') return item.status === 'reviewed'
+    // #168 fix: auto-analysed rows carry status='analyzed'; without this
+    // bucket they only showed up under 'all'. Now filterable explicitly.
+    if (filter === 'analyzed') return item.status === 'analyzed'
     return true
   })
 
@@ -85,7 +88,7 @@ export default function NewsIntel() {
       />
 
       <div className="flex items-center gap-2 mb-3">
-        {['all', 'new', 'reviewed'].map(f => (
+        {['all', 'new', 'reviewed', 'analyzed'].map(f => (
           <Button
             key={f}
             variant={f === filter ? 'primary' : 'secondary'}
