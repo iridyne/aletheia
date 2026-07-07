@@ -378,6 +378,17 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "unrealized_pnl": round(final_unrealized, 4),
         "realized_pnl": round(total_realized, 4),
         "all_realized_pnl": round(all_realized, 4),
+        # #56 note (2026-07-08): `today_pnl` is a legacy misnomer — it's
+        # `unrealized_pnl (lifetime for all currently-open positions) +
+        # today_realized_pnl`. It is NOT PnL earned today alone. A card
+        # labelled "Today" using this value overstates today's activity by
+        # any long-held open position's total uPnL. Callers wanting pure
+        # today-only PnL should read `today_realized_pnl` and add whatever
+        # they can defensibly claim as today's mark-to-market delta
+        # (requires a yesterday-close snapshot which the schema doesn't
+        # currently persist — parked as a Serenity-adjacent improvement).
+        # Kept as-is for API back-compat; UI callers are expected to
+        # transition to today_realized_pnl for the honest "Today" number.
         "today_pnl": round(final_today_pnl, 4),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},

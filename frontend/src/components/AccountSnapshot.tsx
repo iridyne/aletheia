@@ -28,10 +28,17 @@ export default function AccountSnapshot() {
         : syncStatus === 'error' ? 'exchange sync error'
         : 'exchange sync pending'
 
-  // "Today PnL" prefers the real day figure; when it's absent we fall back to
-  // unrealized PnL — but say so, rather than mislabel open-position drift as today's result.
-  const usingUnrealizedFallback = p?.today_pnl == null && p?.unrealized_pnl != null
-  const todayPnlRaw = p?.today_pnl ?? p?.unrealized_pnl
+  // "Today PnL" prefers the real day figure. #56 fix (2026-07-08): the
+  // backend's `today_pnl` field is a legacy misnomer — it's actually
+  // `unrealized_pnl (lifetime, all open) + today_realized_pnl`, so an
+  // open position's total drift shows up under "Today". Prefer the
+  // pure-today value `today_realized_pnl` when present, fall back to
+  // legacy `today_pnl`, then to unrealized (with caveat) as before.
+  const todayRealizedRaw = (p as any)?.today_realized_pnl
+  const legacyTodayPnl = p?.today_pnl
+  const usingUnrealizedFallback = todayRealizedRaw == null && legacyTodayPnl == null && p?.unrealized_pnl != null
+  const usingLegacyTodayFallback = todayRealizedRaw == null && legacyTodayPnl != null
+  const todayPnlRaw = todayRealizedRaw ?? legacyTodayPnl ?? p?.unrealized_pnl
   const todayPnlNum = todayPnlRaw == null ? null : Number(todayPnlRaw)
   const todayPnlText = fmtSigned(todayPnlNum)
   const todayPnlTone: 'positive' | 'negative' | 'muted' = todayPnlNum == null
@@ -49,7 +56,13 @@ export default function AccountSnapshot() {
         label="Today PnL"
         value={`${todayPnlText} USDT`}
         tone={todayPnlTone}
-        caveat={usingUnrealizedFallback ? 'unrealized · today figure unavailable' : undefined}
+        caveat={
+          usingUnrealizedFallback ? 'unrealized · today figure unavailable' :
+          // #56: the legacy today_pnl includes lifetime uPnL of open positions.
+          // Surface that so the operator knows the number isn't pure today.
+          usingLegacyTodayFallback ? 'includes open-position uPnL (legacy today_pnl)' :
+          undefined
+        }
       />
       <MetricTile
         label="Open Positions"
