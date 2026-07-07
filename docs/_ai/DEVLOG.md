@@ -1,5 +1,36 @@
 # Development Log
 
+## 2026-07-07 — B9-analytics：equity-curve 窗口 + trade_insights 运算符优先级（2 findings / 1 commit）
+
+### 触发
+接 B9-diag 后 owner「继续推进」。两个 analytics 单点小改（#124 SQL、#158 Python 表达式）打包。
+
+### 做法
+1. **#124 equity-curve LIMIT 截错方向**：`server/routes/analytics.py::get_equity_curve` 用 `ORDER BY closed_at ASC LIMIT ?`。full_cumulative 模式下账户 close 数 > limit 时，SQL 保留**最老**的 N 条 —— 曲线冻在古老历史里，最近的所有点都被切掉。改成 `SELECT * FROM (SELECT ... ORDER BY closed_at DESC LIMIT ?) ORDER BY closed_at ASC` —— 取**最新** N 条后按时间正序供 cumulative loop 走。
+2. **#158 trade_insights 运算符优先级 trap**：`_by_exit_reason` 里的内联三元
+   ```python
+   r["close_reason"] if "close_reason" in r.keys() else None or "unknown"
+   ```
+   按 Python 优先级解析为 `X if C else (None or "unknown")` —— `or` 比 `else` 结合更紧。当列存在但值 None（SQLite null），返回 None（不是 "unknown"）。外层 `if reason_of(r) == "unknown"` 匹配为零 → unknown 桶的 `avg_pnl_pct = 0/tc = ~0`（tc 却不为零，因为分桶那步用了 `reason or "unknown"` 二段式，正确落入 unknown）。抽出成 `_reason_of(row)` 独立函数，一次得对，两处复用（分桶 + avg 求和），意图可审计。
+
+### 交付
+- 2 findings。1 提交。
+- **新增回归** `tests/test_analytics_windowing_fixes.py`（3 tests / 3 passed）：
+  - `test_equity_curve_returns_recent_points_when_over_limit` — 种 10 条跨 day-30 到 day-3 的 closed positions，GET `/equity-curve?limit=3` 期望返回 3 条最近的（时间 > 11 天前），不是最老的 3 条。
+  - `test_by_exit_reason_unknown_bucket_avg_pnl_is_nonzero_when_pnl_nonzero` — 两条 `close_reason=None` 行，realized_pnl=5/3；断言 unknown 桶的 avg_pnl_pct **非零**（就是当年零的 bug 就是这个）。
+  - `test_by_exit_reason_named_buckets_still_work` — 保护 stop_loss/take_profit 命名桶不回归。
+- 测试 setup 用 `test_pnl_pipeline._setup` 相同模式（equity-curve 是 sync route，跑在 threadpool worker，需 `monkeypatch.setattr(sq, "db_path", lambda: test_db)` 让 worker 打开自己的连接指向同一个文件）。
+- **验证**：`tests/specs/` 571 passed / 0 failed（+17 vs 前批 baseline 554，因为 test_pnl_pipeline 也一起跑）；本 batch 3 tests。
+
+### 剩余
+- **B9 剩余** #91 (universe/registry direct CCXTProvider 绕过 factory)、#92 (MacroCollector sync yf.Ticker inside async)、#154 (divergence_scanner 方向逻辑，dormant gated)、#155 (OHLCV cache 键漏 market_type，与 market_type 迁移耦合暂缓)、#156 (Coinalyze OI 需先核 live schema)、#161 (complete_with_fallback 用错 provider name)。下一批候选 **#161** —— 单点 helper 改动，无外部依赖。
+- **B8**（前端诚实性）+ **B10**（doc drift 尾）仍留。
+
+### 边界
+仅 analytics.py + trade_insights.py + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。SQL 是 SELECT-only 子查询无 schema 变更；trade_insights 抽 helper 无外部 API 变化。
+
+---
+
 ## 2026-07-07 — B9-diag：doctor/CLI/knowledge 诚实性四联（4 findings / 1 commit）
 
 ### 触发
