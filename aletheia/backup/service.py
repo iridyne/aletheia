@@ -94,6 +94,25 @@ class BackupService:
                         file_count += 1
                         total_bytes += f.stat().st_size
 
+            # #58 fix: copy data/logs/ (contains audit.jsonl, the hash-chained
+            # append-only audit log). Backup previously only captured app.db +
+            # config + events + artifacts — restoring from that omitted the entire
+            # audit chain, so a fresh restore couldn't verify the audit-integrity
+            # invariant (files/jsonl.verify_audit_chain). Recovering audit trust
+            # requires the file itself. Secrets are excluded via _should_exclude.
+            logs_dir = self._data_dir / "logs"
+            if logs_dir.exists():
+                dst_logs = staging / "logs"
+                dst_logs.mkdir(exist_ok=True)
+                for item in logs_dir.rglob("*"):
+                    if item.is_file() and not _should_exclude(item):
+                        rel = item.relative_to(logs_dir)
+                        dst = dst_logs / rel
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, dst)
+                        file_count += 1
+                        total_bytes += item.stat().st_size
+
             # Copy artifacts (excluding secrets)
             artifacts_dir = self._data_dir / "artifacts"
             if artifacts_dir.exists():
