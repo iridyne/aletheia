@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-07-07 — B8-topbar：Overview 交易所探针分派 + 顶栏 risk-status 查询（2 findings / 1 commit）
+
+### 触发
+接 B8-honesty 后 owner「继续推进」。两条影响 dashboard 首屏状态的诚实性 gap。
+
+### 做法
+1. **#171 Overview 交易所灯永远探 Bitget**：`Overview.tsx:31` 无脑 `api.testBitget(exchangeMode)`，OKX/Binance 部署看到的是**过时**的 Bitget 探针 —— 没 bitget creds 会红（假警报），bitget 侥幸活着而真交易所挂了会绿（假 OK）。改成按 `status.exchange`（值为 `okx`/`binance`/`bitget`）选择 `api.testOkx` / `api.testBinance` / `api.testBitget`；三个 client 方法本来就在。
+2. **#174 顶栏 riskState 永远为空**：`App.tsx::StatusBar` 读 `data?.risk_status || data?.risk?.status || ''`，但 `/api/status` 从不返回 risk 字段 —— riskState 永远 `""`。deriveMasterState 里 CAUTION / OPERATIONAL 分支永远不激活，健康态误显 STANDBY-绿。加 `useQuery({ queryFn: api.getRiskStatus, refetchInterval: 15000 })`，读 `risk.status` 首选，`/status` 里的 legacy 兼容值兜底。这样与 `RiskControls.tsx:83-86` 用同一数据源，Overview 说 yellow / Risk 说 blue 的旧不一致也顺带消。
+
+### 交付
+- 2 findings。1 提交（`App.tsx` + `Overview.tsx`）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React query 层 + StatusBar 计算式，不涉及 Python spec 覆盖。`tsc` 未跑（无 node_modules），full UI check tracked。
+
+### 剩余
+- **B8 剩 ~22 finding**（session B8 累计已修 12：cleanup 4 + mini 3 + honesty 3 + topbar 2）。较大的：CausalChain fill/position 源不对 (#122/#123)、Settings coverage matrix mislabel 18 字段 (#163)、Charts prediction 读不存在字段 (#169/#170)、Proposals approve 忽略 execution.status (#113)、Proposals confirm demo/live 承诺骗人 (#114)、TradesPositions View on Chart 无 symbol (#116)、ReconciliationCard 零漂移时隐藏 stale/error 状态 (#117)、Overview scheduler 只看 paused (#118)、AgentFeed 只染 status=='error' (#120)、SetupBanner 数只 Bitget (#121)、CommandPalette 缺 /universe (#125)、CommandPalette Enter 劫持 (#126)。都需 npm 验证再动，逐条挑机械/低风险的继续。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B8-honesty：pause/resume onError + guidance tone + risk-clear 门（3 findings / 1 commit）
 
 ### 触发
