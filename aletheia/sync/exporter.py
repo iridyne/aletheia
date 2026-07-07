@@ -137,13 +137,83 @@ class ExportService:
         self._copy_artifacts(bundle_dir, ["evidence", "claims", "analyses", "lessons", "skills"])
 
     def _export_proposal(self, bundle_dir: Path, proposal_id: str | None) -> None:
-        """Export a single proposal bundle."""
+        """Export a single proposal bundle.
+
+        #62/#162 fix: was raising on missing proposal_id but then ignoring it —
+        the follow-up _export_db_tables call had `where_clause=None`, so a call
+        that named ONE proposal dumped every trade_proposals row (and every
+        serenity_themes/evidence/claims row) into the bundle. Now the proposal
+        is filtered by id; serenity rows are filtered through the proposal's
+        opportunity_id → theme_id chain when resolvable, else the file is
+        omitted rather than exporting the entire table under a misleading
+        proposal-pack label.
+        """
         if not proposal_id:
             raise ValueError("proposal_id required for proposal-pack export")
-        self._export_db_tables(bundle_dir, [
-            "trade_proposals", "serenity_themes", "serenity_evidence", "serenity_claims",
-        ], where_clause=None)
+
+        db = get_db()
+        proposal_row = db.execute(
+            "SELECT * FROM trade_proposals WHERE id = ?", (proposal_id,)
+        ).fetchone()
+        if proposal_row is None:
+            raise ValueError(f"proposal-pack: proposal {proposal_id!r} not found")
+
+        db_dir = bundle_dir / "db"
+        db_dir.mkdir(exist_ok=True)
+        self._write_rows(db_dir / "trade_proposals.jsonl", [dict(proposal_row)])
+
+        # Resolve the serenity chain if this proposal was serenity-attributed.
+        opportunity_id = proposal_row["opportunity_id"] if "opportunity_id" in proposal_row.keys() else None
+        theme_ids: set[str] = set()
+        opp_rows: list[dict] = []
+        if opportunity_id:
+            try:
+                opps = db.execute(
+                    "SELECT * FROM serenity_opportunities WHERE id = ?", (opportunity_id,)
+                ).fetchall()
+                opp_rows = [dict(r) for r in opps]
+                for r in opp_rows:
+                    tid = r.get("theme_id") or r.get("focus_theme_id")
+                    if tid:
+                        theme_ids.add(str(tid))
+            except Exception:
+                # Table shape can drift across migrations — non-fatal.
+                opp_rows = []
+
+        if opp_rows:
+            self._write_rows(db_dir / "serenity_opportunities.jsonl", opp_rows)
+        if theme_ids:
+            self._export_by_id(db_dir, "serenity_themes", "id", theme_ids)
+            self._export_by_id(db_dir, "serenity_evidence", "theme_id", theme_ids)
+            self._export_by_id(db_dir, "serenity_claims", "theme_id", theme_ids)
         self._copy_artifacts(bundle_dir, ["proposals"])
+
+    def _export_by_id(self, db_dir: Path, table: str, column: str, ids: set[str]) -> None:
+        """Emit `SELECT * FROM {table} WHERE {column} IN (...)` as a JSONL file.
+
+        Table/column names are trusted (not caller-controlled — always literals
+        from the surrounding _export_proposal). ids are parametrised so the IN
+        list can't smuggle SQL. Silent no-op on schema drift (missing column /
+        missing table) — never fail the export because a serenity sub-table
+        moved under a migration.
+        """
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        sql = f"SELECT * FROM {table} WHERE {column} IN ({placeholders})"
+        try:
+            rows = get_db().execute(sql, tuple(ids)).fetchall()
+        except Exception:
+            return
+        if not rows:
+            return
+        self._write_rows(db_dir / f"{table}.jsonl", [dict(r) for r in rows])
+
+    @staticmethod
+    def _write_rows(path: Path, rows: list[dict]) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def _export_runtime(self, bundle_dir: Path) -> None:
         """Export open orders, positions, gateway state."""

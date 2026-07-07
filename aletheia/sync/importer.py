@@ -104,7 +104,14 @@ class ImportService:
         return result
 
     def _verify_checksums(self, bundle_dir: Path, checksums_file: Path, result: ImportResult) -> None:
-        """Verify all files against checksums.txt."""
+        """Verify all files against checksums.txt.
+
+        #63 fix: a file listed in the manifest but MISSING on disk used to be
+        silently skipped (the `if file_path.exists()` branch just fell through
+        with no `result.errors` append). Now the missing case is an explicit
+        error — a bundle can't be safely imported when the manifest lists files
+        that were never delivered.
+        """
         for line in checksums_file.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
@@ -113,10 +120,12 @@ class ImportService:
                 continue
             expected_hash, rel_path = parts
             file_path = bundle_dir / rel_path
-            if file_path.exists():
-                actual = sha256_file(file_path)
-                if actual != expected_hash:
-                    result.errors.append(f"Checksum mismatch: {rel_path}")
+            if not file_path.exists():
+                result.errors.append(f"Checksum manifest lists missing file: {rel_path}")
+                continue
+            actual = sha256_file(file_path)
+            if actual != expected_hash:
+                result.errors.append(f"Checksum mismatch: {rel_path}")
 
     def _import_db_tables(self, db_dir: Path, result: ImportResult, commit: bool) -> None:
         """Import JSONL table data with deduplication."""
@@ -133,15 +142,40 @@ class ImportService:
                         continue
                     row = json.loads(line)
 
-                    # Check for duplicate by primary key (assume 'id' column)
+                    # Check for duplicate by primary key (assume 'id' column).
+                    # #64 fix: an existing PK with DIFFERENT column values used to
+                    # be counted as `skipped_duplicates` — a diverged row silently
+                    # ignored so the operator never learned the bundle was already
+                    # out of sync. The `ImportConflict` class existed but was
+                    # never instantiated. Now we distinguish:
+                    #   PK exists, payload identical  → `skipped_duplicates`
+                    #   PK exists, payload different  → `conflicts` entry
+                    #   PK missing                    → inserted (as before)
                     pk_col = self._find_pk(table_name, row)
                     if pk_col and pk_col in row:
                         existing = db.execute(
-                            f"SELECT 1 FROM {table_name} WHERE {pk_col} = ?",
+                            f"SELECT * FROM {table_name} WHERE {pk_col} = ?",
                             (row[pk_col],),
                         ).fetchone()
                         if existing:
-                            result.skipped_duplicates += 1
+                            local = dict(existing)
+                            diff_cols = [
+                                col for col, val in row.items()
+                                if col in local and local[col] != val
+                            ]
+                            if diff_cols:
+                                result.conflicts.append(ImportConflict(
+                                    object_type=table_name,
+                                    object_id=str(row[pk_col]),
+                                    local_hash=self._row_fingerprint(local),
+                                    remote_hash=self._row_fingerprint(row),
+                                    message=(
+                                        f"{table_name} row {row[pk_col]!r} diverges "
+                                        f"from local on columns: {', '.join(sorted(diff_cols))}"
+                                    ),
+                                ))
+                            else:
+                                result.skipped_duplicates += 1
                             continue
 
                     if commit:
@@ -172,6 +206,15 @@ class ImportService:
             if category.is_dir():
                 dst = local_artifacts / category.name
                 shutil.copytree(category, dst, dirs_exist_ok=True)
+
+    @staticmethod
+    def _row_fingerprint(row: dict) -> str:
+        """Stable SHA-256 fingerprint of a row's JSON canonical form for the
+        conflict local_hash / remote_hash fields. Keys sorted so identical rows
+        with different insertion order produce identical hashes."""
+        import hashlib
+        canonical = json.dumps(row, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def _find_pk(self, table_name: str, row: dict) -> str | None:
         """Guess the primary key column name for a table."""
