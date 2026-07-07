@@ -63,6 +63,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 |--------|------|-------------|
 | GET | `/opportunities` | List recent opportunities (scanner output) |
 | GET | `/proposals` | List trade proposals |
+| GET | `/proposals/{id}` | Get one proposal by id (404 when absent) |
 | POST | `/proposals/{id}/approve-paper` | Approve proposal for paper execution |
 | POST | `/proposals/{id}/reject` | Reject proposal with reason |
 | GET | `/proposals/{id}/risk-decision` | View risk engine decision for proposal |
@@ -89,14 +90,13 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/strategies` | List all strategies |
-| GET | `/strategies/summary` | Condensed strategy status overview |
-| GET | `/strategies/{id}` | Strategy detail with parameters (legacy read-only) |
-| PATCH | `/strategies/{id}/venue` | Change strategy venue (paper/live) |
+| GET | `/strategies` | List all strategies (read-only legacy attribution) |
 
-> Rules engine removed (Position C, 2026-07-02): `/strategies/{id}/gates`, `/promote`,
-> `/retire` deleted — strategies are no longer created/promoted; `strategy_records` is a
-> read-only legacy table. GET routes remain for historical attribution display.
+> Rules engine removed (Position C, 2026-07-02): `/strategies/{id}/gates`,
+> `/promote`, `/retire`, `/strategies/summary`, `/strategies/{id}` and
+> `PATCH /strategies/{id}/venue` are all gone — strategies are no longer
+> created/promoted and `strategy_records` is a read-only legacy table. Only
+> `GET /strategies` remains for historical attribution display.
 
 ---
 
@@ -391,7 +391,7 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/operator/extensions/{extension_id}/enable` | Enable an operator extension |
 | GET | `/operator/recommendations` | Operator recommendations/advisory queue |
 | GET | `/operator/loop/latest` | Latest operator loop assessment |
-| POST | `/operator/trigger` | Manually trigger operator loop |
+| POST | `/operator/loop/trigger` | Manually trigger operator loop |
 | GET | `/operator/events` | Operator event feed snapshot |
 | GET | `/operator/events/stream` | Operator SSE event stream |
 | POST | `/operator/pause` | Pause operator loop |
@@ -399,7 +399,26 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 | POST | `/operator/wake` | Wake operator loop |
 | POST | `/operator/command-preview` | Preview operator command effects |
 | POST | `/operator/command` | Execute operator command |
-| POST | `/operator/internal/*` | Internal operator-shell bridge endpoints; not public UI contracts |
+| POST | `/operator/internal/artifacts` | Internal: attach artifact to session |
+| POST | `/operator/internal/command-intents` | Internal: record a classified command intent |
+| POST | `/operator/internal/commands/execute` | Internal: execute a resolved command |
+| POST | `/operator/internal/commands/{command_name}` | Internal: dispatch a typed command by name |
+| POST | `/operator/internal/compact` | Internal: compact operator memory into an artifact |
+| POST | `/operator/internal/context/query` | Internal: query operator context builder |
+| POST | `/operator/internal/decisions` | Internal: record a repair decision |
+| POST | `/operator/internal/events` | Internal: append an operator event |
+| POST | `/operator/internal/heartbeat` | Internal: operator agent heartbeat |
+| POST | `/operator/internal/llm-session` | Internal: multi-turn operator LLM session |
+| POST | `/operator/internal/messages` | Internal: append a message to a session |
+| POST | `/operator/internal/repair-decisions` | Internal: record a repair decision (typed) |
+| POST | `/operator/internal/sessions` | Internal: create an operator session |
+| POST | `/operator/internal/tasks` | Internal: create an operator task |
+| PATCH | `/operator/internal/tasks/{task_id}` | Internal: update an operator task |
+
+> All `/operator/internal/*` routes above are the operator-shell bridge —
+> internal-only, not part of the public UI contract. Kept enumerated so the
+> "complete endpoint index" claim (§0) actually holds (was previously
+> collapsed to a single wildcard row that hid drift; see #80).
 
 ---
 
@@ -521,5 +540,18 @@ These endpoints cross a [trust boundary](../governance/trust_and_change_control.
 |--------|------|-------------|
 | GET | `/_infra/livez` | Liveness probe |
 | GET | `/_infra/readyz` | Readiness probe |
+| GET | `/_infra/doctor` | Full diagnostic report (JSON of doctor probes) |
+| GET | `/_infra/status` | Infra-only status snapshot |
 | GET | `/version` | Build version info |
 | GET | `/stability` | System stability metrics |
+
+### Dev-only (environment-gated)
+
+The dev-reload endpoints below are mounted only when the dev-reload router is
+enabled at startup (developer builds) — production deployments deliberately
+exclude them. Do not depend on them from UI clients.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/dev/reload/status` | Dev hot-reload status (dev builds only) |
+| GET | `/dev/reload/events` | Dev hot-reload event stream (dev builds only) |
