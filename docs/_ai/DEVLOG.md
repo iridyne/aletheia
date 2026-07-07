@@ -1,5 +1,27 @@
 # Development Log
 
+## 2026-07-07 — B8-charts-pred：PredictionsTab 类型化 + market_type fallback 顺序（2 findings / 1 commit）
+
+### 触发
+接 B8-approve-honesty 后 owner「继续推进」。Charts 页两处诚实性 gap：预测卡读错字段、fmtSymbol fallback 顺序错。
+
+### 做法
+1. **#169 PredictionsTab 读不存在字段**：卡里读 `m.question` + `m.volume_usd`，但 `PredictionMarket` 类型是 `event_title` + `volume_24h`（`types.ts:159/162`）—— 两个字段永远 undefined，问题行空白、volume 整行被条件隐藏。改用类型化 `useQuery<PredictionMarket[]>`（丢掉 as any 逃生舱），读 `m.event_title` + `m.volume_24h`。未来 rename 时 tsc 会红。
+2. **#170 fmtSymbol 用 board asset-class**：`mtFor = marketType ?? snap.market_type`（`??` 语义是「marketType 有值就用」）—— 当 board 传来 `crypto`（asset-class，不是 spot/perp），perp snapshot 的 market_type 被丢，fmtSymbol 收到 'crypto' → 非 perp 判定 → 带斜杠渲染。反转优先级：`snap.market_type || marketType`—— per-snapshot 权威，board 只当 snap 缺失时兜底。同时改 symbol-chip 那一处的 fmtSymbol 调用同样反转。
+
+### 交付
+- 2 findings。1 提交（Charts.tsx）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动在 React 层 + TS 类型收紧。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~7 finding**（session B8 累计 27）：#122/#123 CausalChain fill/position 源不对（复杂 —— 需 fills 表 route）、#163 Settings coverage matrix 18 字段错标（大 —— 需 audit 每字段）、#96 Markets candlestick market_type forwarding（已 deferred 与 market_type 迁移耦合），加零星几条。
+- 已 deferred 项不变。
+
+### 边界
+仅 Charts.tsx（+ 一条类型 import）；未推 / 未 restart / 未 enable live / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B8-approve-honesty + SetupBanner 覆盖（3 findings / 1 commit）
 
 ### 触发
