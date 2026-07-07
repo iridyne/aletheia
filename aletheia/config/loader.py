@@ -125,12 +125,22 @@ def _invalidate_config_cache() -> None:
 
 
 def load_config() -> AletheiaConfig:
-    """Load config from disk or return defaults.  Hot path uses in-memory cache."""
+    """Load config from disk or return defaults.  Hot path uses in-memory cache.
+
+    #147 fix: return a DEEP COPY of the cached config, not the cached object
+    itself. Route handlers routinely do
+        cfg = load_config(); cfg.risk.foo = new_value; save_config(cfg)
+    — if save_config rejects (validation error, disk failure), the caller's
+    mutated cfg is the SAME OBJECT that was in the cache, so any concurrent
+    load_config call inside the 5s TTL sees the phantom mutation. Deep-copy
+    on the read side makes mutations local to each caller; the cache stays
+    the source of truth on disk.
+    """
     global _config_cache
     if _config_cache is not None:
         ts, cached_path, cfg = _config_cache
         if time.monotonic() - ts < _CONFIG_CACHE_TTL and cached_path == CONFIG_PATH:
-            return cfg
+            return cfg.model_copy(deep=True)
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         cfg = AletheiaConfig.model_validate(raw)
@@ -144,10 +154,10 @@ def load_config() -> AletheiaConfig:
         if changed:
             save_config(cfg)
         _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
-        return cfg
+        return cfg.model_copy(deep=True)
     cfg = AletheiaConfig()
     _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
-    return cfg
+    return cfg.model_copy(deep=True)
 
 
 def save_config(cfg: AletheiaConfig) -> None:
