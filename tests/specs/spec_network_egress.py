@@ -319,3 +319,51 @@ def test_sync_urllib_uses_net_opener():
         "_send_webhook must build its opener through aletheia.net so the webhook "
         "POST honours the managed proxy / enforce policy"
     )
+
+
+# ---------------------------------------------------------------------------
+# NET-S11 — L2b Behavioral: CLI surface persists structured proxy config
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("NET-S11", _CONTRACT, "§5 CLI network surface", "L2b",
+              "the `aletheia network` command group exists; `set` and `status` "
+              "persist and read the structured proxy config through the config "
+              "loader, keeping proxy_url recomposed from protocol/host/port"),
+)
+def test_network_cli_surface_persists_structured_config(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    import aletheia.config.loader as loader
+    import aletheia.files.jsonl as jsonl
+    from aletheia.main import app
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(loader, "_config_cache", None)
+    monkeypatch.setattr(loader, "_dirs_ensured_for", None)
+    monkeypatch.setattr(jsonl, "_last_audit_hash", None)
+    monkeypatch.setattr("aletheia.net.apply_proxy_env", lambda: None)
+
+    runner = CliRunner()
+    help_result = runner.invoke(app, ["network", "--help"])
+    assert help_result.exit_code == 0
+    assert "status" in help_result.output
+    assert "set" in help_result.output
+
+    set_result = runner.invoke(
+        app,
+        ["network", "set", "--protocol", "http", "--host", "127.0.0.1", "--port", "7890"],
+    )
+    assert set_result.exit_code == 0
+
+    cfg = loader.load_config()
+    assert cfg.network.proxy_protocol == "http"
+    assert cfg.network.proxy_host == "127.0.0.1"
+    assert cfg.network.proxy_port == 7890
+    assert cfg.network.proxy_url == "http://127.0.0.1:7890"
+
+    status_result = runner.invoke(app, ["network", "status"])
+    assert status_result.exit_code == 0
+    assert "Effective proxy: http://127.0.0.1:7890" in status_result.output
