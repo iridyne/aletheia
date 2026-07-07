@@ -232,6 +232,51 @@ class TestConformanceStructure:
                 f"{contract} has no L2a (structural) claims"
             )
 
+    def test_non_implemented_claim_budget(self):
+        """#75 fix: `test_print_conformance_matrix` is informational-only
+        and passes green even when the matrix contains missing/partial/
+        superseded claims. An owner reading "green tests" then believes the
+        contracts are all wired up. Anchor the current baseline as a budget
+        — new missing/partial claims can only be added by consciously
+        updating this test's expectation, matching what happened when
+        contracts were paused or new claims added without wiring.
+
+        If this test fails, either:
+          - flip the newly-broken claim's status to 'implemented' (the fix), OR
+          - if the gap is intentional, update the counts below and note why.
+        """
+        counts: dict[str, int] = {}
+        for entries in SPEC_REGISTRY.values():
+            for claim, _ in entries:
+                counts[claim.status] = counts.get(claim.status, 0) + 1
+
+        # Baseline anchored 2026-07-08 from the review's own count:
+        #   missing=5, partial=1, superseded=1.
+        # Bumping any of these upward is a signal that a new gap opened;
+        # bumping downward means a fix landed and someone should ratchet
+        # this budget down accordingly.
+        MAX_MISSING = 5
+        MAX_PARTIAL = 1
+        MAX_SUPERSEDED = 1
+
+        missing = counts.get("missing", 0)
+        partial = counts.get("partial", 0)
+        superseded = counts.get("superseded", 0)
+
+        assert missing <= MAX_MISSING, (
+            f"CONFORMANCE REGRESSION: {missing} missing claims exceed the "
+            f"documented budget of {MAX_MISSING}. New missing claim(s) landed — "
+            "either implement them or consciously bump the budget with a reason."
+        )
+        assert partial <= MAX_PARTIAL, (
+            f"CONFORMANCE REGRESSION: {partial} partial claims exceed the "
+            f"documented budget of {MAX_PARTIAL}."
+        )
+        assert superseded <= MAX_SUPERSEDED, (
+            f"CONFORMANCE REGRESSION: {superseded} superseded claims exceed the "
+            f"documented budget of {MAX_SUPERSEDED}."
+        )
+
 
 def test_print_conformance_matrix(capsys):
     """Print the full matrix (always passes — informational output)."""
