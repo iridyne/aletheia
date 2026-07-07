@@ -1,5 +1,147 @@
 # Development Log
 
+## 2026-07-07 — Bug 台账修复推进：B1–B6 + B10a（42 findings / 11 commits）
+
+### 触发
+owner「开始完全修复」→「请继续，保证要一次搞完」。从 180 条台账按主题分批修，每批一次提交 + 定向回归。
+
+### 做法
+- 专用分支 `fix/bug-review-fixes`（基于 `iridite/bug_fix` HEAD）。每批：读码 → 最小改动 → 定向回归测试（触信任边界/安全/密钥/生命周期必带）→ 窄 + 宽测试 → 逐批提交。
+- 显式 `git add` 指定文件，绝不 `-A`；修复期间不 push/restart/enable live（推送在收尾单独一步，owner 指令后执行）。
+- 台账 `FULL_BUG_REVIEW_2026-07-06.md` 顶部「Fix Progress」表是权威修复日志（batch → commit → findings → 验证）。
+
+### 交付（11 提交 / 42 findings，9 HIGH 全处置）
+- **B1 密钥防泄漏**（`6b3c0e3`）#1,2,4,5,60,61,69,133,148 — GET/webhook/network 响应+审计脱敏、日志/导出/诊断脱敏。
+- **B2 风控闸门**（`62054af`，信任边界）#7,24,93,98 — live 失败即拒（只 `live_limited` 放行）、现货+做空拒单、入场几何 stop/entry/tp 校验、lesson 拦截须 category=risk。
+- **B3 隧道鉴权**（`756973d`）#137,132 — risk/exchange-mode/permission-mode 纳入公网隧道保护、重启审计发起方诚实。
+- **B4a 决策链**（`98e964e`）#12,21,102-部分,151,152 — conviction 解析加固、现货做空归一、serenity 读对 `market_type` 键、归因回退。
+- **B5 学习闭环**（`14eef58`/`ed2ca9d`/`45ef293`）#157,159,160,131,16,18,20,99,130 — guard/分析去合成平仓+过 clean_window、memo 半衰期权重、case 按平仓时间开窗、过期 lesson 不进 prompt、scanner-family 证据、applied lesson 复审。
+- **B6 自愈/运行时**（`da7c6c3`/`843944a3`/`9483a4d4`）#145,146,135,136,144,88,149,150,138 — 修**中途掉线永久暂停**（HIGH）、回滚诚实、env-strip 补齐前缀、reconciler 状态、onchain/prediction 留存清理接线、capital 迁移守卫、启动同步移出端口绑定路径。
+- **B10a SDD/契约**（`c8b798f4`）#34,176,95,105 — 注册漏挂的 spec（矩阵 +100 claims）、删死码前端方法、knowledge/execution 契约去除已删除路径。
+
+### 验证
+- 全 SDD spec 套件 **588 passed / 0 failed**（顺带修好 #20 非 hermetic）；每批另加窄回归，共新增 15 个 test 文件。
+
+### 剩余（逐批续做，见台账 Fix Progress）
+- **B7** 组合/PnL/对账/broker/持久化 · **B8** 前端诚实性（需 `npm run build`）· **B9** 数据/分析/doctor/cli · **B10** 文档漂移尾。
+- **暂缓（耦合/基建，记原因）**：市场类型数据模型迁移（#9,10,11,13,14）、operator 鉴权（#40,41）、#109/#143/#102-pending/#17、运行时性能 #90/#147/#134。
+
+### 边界
+本阶段（与前几条审查记录不同）**确有**改业务/风控/执行/配置代码 + 跑测试 + 逐批提交，全部在专用分支 `fix/bug-review-fixes`；推送前未碰 live、未 restart gateway；触信任边界的每处改动都带定向回归测试。合并注意：`origin/master` 自本分支分叉后已推进 5 个提交（并发会话，含 `c945110f` 可能与 B5 guard 改动重叠），留待 PR 时对账。
+
+---
+
+## 2026-07-06 — Bug 台账整理：加导航索引 + 复核 #1–#131 精度
+
+### 触发
+owner「先把扫描出来的问题这个文档完整整理一下，确保足够准确、具体细致、方便 debug」。
+
+### 做法
+- `#132`–`#180` 是本会话产出、已双重对抗性核验；`#1`–`#131` 来自更早的手工会话、从未独立复核，且代码可能已漂移。
+- 只读 workflow 14 lane 逐条把 `#1`–`#131` 对照**当前代码**复核，返回 confirmed/line_drift/overstated/likely_fixed/duplicate + 严重度 + 首打开位置 + 精炼一句话。结果：**126 confirmed / 2 line_drift / 3 overstated / 0 已修 / 0 重复**——旧台账质量很高。
+- 用结构化产出 + 我自己整理的 `#132`–`#180` 元数据，在台账顶部插入 **Finding Index**（图例 + HIGH 优先清单 + 180 行可导航表：编号/严重度/首打开 file:line/一句话/状态）。
+
+### 交付
+- 台账新增顶部导航索引（180 行，9 HIGH / 99 MED / 72 LOW；另 9 条 refuted）。
+- 5 条非 confirmed（#18/#23/#38/#84/#119）各追加 `**Correction (verify pass 2026-07-06)**` 说明并在索引标 `corrected`。要点：**#84 不是 XSS**（`_ERROR_HTML.format()` 先因 CSS 花括号抛 KeyError，真缺陷是错误页 500，降为 low）；#23/#38 impact 被高估（无前端调用者 / UI 下拉不给该值）；#18/#119 是行号漂移已给正确位置。
+- 交接文档同步记录。台账现 2827 行，`#1`–`#180` 每条都可从索引一跳到位、且精度可信。
+
+### 边界
+只整理审查文档 + 交接；未改任何业务/风控/执行/配置/前端/测试代码；未跑测试；未 git add/commit。用临时脚本生成 180 行表格（生成后已删）以避免手抄错误。
+
+---
+
+## 2026-07-06 — Bug 审查收尾：前端逐页 + 后端零头 12 路并行审（全项目覆盖完成）
+
+### 触发
+owner「先不修，先继续收尾」。剩余未扫描 = 前端逐页（最大一块）+ 后端零头（knowledge/runtime_continuity/uta/doctor/cli）。
+
+### 做法
+- 只读 workflow 12 lane（前端 8：Settings 4280 / CommandCenter 1548 / Serenity+Learning / Prediction+News+Universe /
+  Trades+Charts+Proposals / Risk+Overview+AgentActivity / 未覆盖 components / 共享 App·client·types·lib+charts；
+  后端 4：knowledge / runtime_continuity+uta / doctor 逐行 / cli）。前端 lane 额外套「UI 诚实性 / fmtSymbol /
+  +00:00-vs-Z 时间戳 / 加载通道 / onError」房规。并发压到 3。
+- 每条候选再派独立对抗性核验。33 agent，0 报错。21 候选 → 18 保留（`#163`–`#180`），3 推翻。
+
+### 交付
+- 台账 `#163`–`#180` + 3 refuted + **Coverage status 标注「full-project pass complete」**。
+- 三轮 fan-out（9+16+12）+ 原 #1–#131 手工，合计覆盖前端端到端 + 全部后端子系统，范围 `#1`–`#180`。
+- 关键发现：`#171`（Overview 交易所连接灯永远探 Bitget，OKX/Binance 显示错）；`#174`（顶栏主状态永远读不到风控引擎，
+  CAUTION/OPERATIONAL 是死支，健康态误显"未评估"）；`#165`（暂停/恢复吞 409，operator 误以为已恢复）；
+  `#176`（knowledge 契约仍写 post_trade_review 为检索类型，照文档回接会重现 1900 行洪泛）；`#178`/`#180` doctor/CLI 诚实性。
+- 交接文档全部更新为"覆盖完成 → 下一步是修或按变更再扫"，并给了 #163–#180 修复分诊。
+
+### 边界
+只做审查记录 + 交接文档；未改任何业务/风控/执行/配置/前端/测试代码；未重启 gateway；未跑测试（只改文档）；未 git add/commit。
+
+---
+
+## 2026-07-06 — Bug 审查缺口扫描：全项目未扫描子系统 16 路并行审 + 对抗性核验
+
+### 触发
+owner「继续对未扫描的部分做完整 code review，要求与之前一致」。先做全 `aletheia/` 覆盖缺口地图，
+确认第一轮只覆盖了路由/网关基础设施/broker，剩 ~60k LOC 的信任关键区与决策链未系统审。
+
+### 做法
+- 只读 workflow 16 lane（信任关键：risk 引擎 20 关守卫链 / execution 下单咽喉 / permissions+tool_registry /
+  config+secrets；运行态：self-heal 调度 job 体+connectivity / storage was_in_tx+审计链+保留；决策链：
+  agent_shell decision+operator / agents 生产者；数据：provider+collectors+sources；analytics 28 文件拆 2 lane；
+  model_provider；universe/trading/sizing；operator-shell+杂项）。每 lane 对照契约+spec；并发压到 3。
+- 每条候选再派独立对抗性核验 agent。40 agent，0 报错，0 rate-limit。24 候选 → 20 保留（`#143`–`#162`），4 推翻。
+- 亲手复核了两个矛盾/关键点：coinalyze OI 解析 vs 污染的矛盾（读 coinalyze.py 定论合并进 #156）。
+
+### 交付
+- 台账 `FULL_BUG_REVIEW_2026-07-06.md` 新增 `#143`–`#162` + 4 条 refuted + Coverage/Verification 更新。
+- 交接文档更新：范围 `#1`–`#162`、最近发现、修复分诊（`#159`/`#145` 列 HIGH）、下一步覆盖。
+- 两条 HIGH：`#145`（连接掉线后自动恢复任务挂在临时事件循环上→中途掉线永久暂停不自愈）；
+  `#159`（守卫晋升日 cron 默认开、会改活配置，却用含合成/对账平仓的污染数据算胜率→可凭假数据晋升硬拦截守卫）。
+- 关键 medium：`#153`（L1/L2 自愈动作是不可达死码 + PI 审批门是空转橡皮章，spec 假绿）；
+  `#157`（校准反馈 f-string 崩溃被静默吞→喂 LLM 的校准反馈是死的）；`#161` 双层模型路由 fallback 认错 provider；
+  `#160` memo/推理反馈用污染数据喂 PI prompt；`#162` proposal-pack 导出无视 id 全量导出。
+
+### 边界
+只做审查记录 + 交接文档；未改任何业务/风控/执行/配置/前端/测试代码；未重启 gateway；未跑测试（只改文档）；未 git add/commit。
+
+---
+
+## 2026-07-06 — Bug 审查续做：后端未覆盖区 9 路并行审 + 对抗性核验
+
+### 触发
+接手暂停的全项目 bug 审查，owner 选「继续审查扩覆盖」。目标是覆盖交接文档标注的未覆盖后端区（控制路由、gateway 生命周期/边缘、自更新、server app、持仓退出、交易所同步/broker、底层 client），不重复已记录区域。
+
+### 做法
+- 只读 workflow 编排 9 个 reviewer lane，每 lane 拿对应 `docs/design/*.md` 契约 + `tests/specs/spec_*.py` 对照代码；并发压到 3（尊重本 workspace 的 rate-limit 教训）。
+- 每条候选 finding 再派一个独立「对抗性核验」agent 复核（确认真实、非预期行为、非死码假绿）。
+- 两条最重要的密钥/信任边界发现（#133 日志脱敏、#137 tunnel 鉴权）我另行亲手复读锚点，防「假绿」。
+- 22 个 agent，0 报错，0 rate-limit 失败；13 候选 → 11 保留（`#132`–`#142`），2 条被核验推翻。
+
+### 交付
+- 审查台账：`docs/_ai/FULL_BUG_REVIEW_2026-07-06.md` 新增 `#132`–`#142` + 「Investigated and refuted」小节 + Coverage/Verification 更新。
+- 交接文档 `BUG_REVIEW_HANDOFF_2026-07-06.md`：更新范围、最近发现、修复分诊（`#137` 列为最高优先）、下一步覆盖。
+- 关键发现：`#137` tunnel 鉴权漏 `/api/settings/risk`（公网下可无鉴权关熔断/放宽风控，defeat 了 `/api/risk/kill-switch` 的保护）；`#133` 日志脱敏漏 bare `secret`/`ACCESS-KEY`/`ACCESS-SIGN`；`#135` 自更新回滚不检查 `reset_hard` 结果谎报成功；`#140`/`#141`/`#139`/`#142` 三 broker 一致性/代理（`#142` 疑似已在 `iridite/system_proxy_support` 修，须先确认）。
+
+### 边界
+只做审查记录 + 交接文档；未改任何业务/风控/执行/配置/前端/测试代码；未重启 gateway；未跑测试（本轮只改文档）；未 git add/commit。
+
+---
+
+## 2026-07-06 — Full bug review ledger + AI handoff
+
+### 触发
+Owner 要求从 SDD 文档和 `discussion.md` 出发做完整代码域 bug 审查，并明确要求所有发现落本地文件；随后要求暂停，由 Claude Code 接手。
+
+### 交付
+- 新增/更新审查台账：`docs/_ai/FULL_BUG_REVIEW_2026-07-06.md`。
+- 当前已记录 findings `#1` 到 `#131`。
+- 新增接手说明：`docs/_ai/BUG_REVIEW_HANDOFF_2026-07-06.md`。
+- `AI_HANDOFF.md` 和 `CURRENT_TASK.md` 增加接手入口。
+- 后续记录格式调整为更短的 Markdown 分条格式。
+
+### 边界
+只做代码审查记录和交接文档；不改交易、风控、执行、配置、前端或测试代码；不重启 gateway；不触发交易行为。
+
+---
+
 ## 2026-07-04 — Executable Candidate Supply Floor V1
 
 ### 触发
@@ -742,7 +884,7 @@ PnLChart 新增 `isError` 分支:红色 "Failed to load equity curve." + Retry �
   `NO_PROXY` 空。curl 默认会无脑把 localhost 也丢给代理 → 误返回 502/000。**我**
   诊断时中招后,把 curl 假象错误地外推成"浏览器/后端故障"。
 
-记忆 [[aletheia-localhost-probe-proxy-trap]] 已写入,以后诊断:
+记忆 `aletheia-localhost-probe-proxy-trap` 已写入,以后诊断:
 - curl 探活 localhost **一律加 `--noproxy '*'`**;
 - 验证浏览器体验用 `Invoke-WebRequest`(走 WinINET);
 - 后端死活以 `aletheia gateway status` + `/api/health` 的 `status` 字段为准,

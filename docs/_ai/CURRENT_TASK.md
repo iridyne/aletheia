@@ -13,6 +13,38 @@
 
 ---
 
+## 当前任务:全项目 Bug/SDD 审查 — 修复阶段进行中
+
+全项目 bug/SDD 审查**已完成**（`#1`–`#180`）；现处于**修复阶段**，分支 `fix/bug-review-fixes`（已推送 origin）。
+
+接手入口：
+
+- 详细问题台账 + 权威「Fix Progress」修复日志：`docs/_ai/FULL_BUG_REVIEW_2026-07-06.md`
+- 短交接说明：`docs/_ai/BUG_REVIEW_HANDOFF_2026-07-06.md`
+
+修复进度（2026-07-07）：**已修 42 findings / 11 提交（B1–B6 + B10a），9 个 HIGH 全部处置**；全 SDD spec 套件 588 passed / 0 failed + 15 个新回归测试文件。剩余按批续做：B7 组合/PnL · B8 前端（需 npm build）· B9 数据/分析/doctor/cli · B10 文档尾；另 ~15 个耦合/基建项暂缓（市场类型数据模型迁移 / operator 鉴权 #40,41 / #109,143,102-pending,17 / 运行时性能 #90,147,134），各记原因于台账。
+
+审查进度（2026-07-06）：**全项目覆盖审查已完成**，台账范围 `#1`–`#180`。
+
+- 三轮只读并行审 + 对抗性核验，叠加原 #1–#131 手工审：
+  - `#132`–`#142`（9 路）：未覆盖后端（控制路由 / gateway 生命周期·边缘 / 自更新 / server app / 持仓退出 / 交易所同步·broker / 底层 client）。
+  - `#143`–`#162`（16 路）：信任关键 + 决策链 + 数据/分析（risk 守卫链 / execution 咽喉 / permissions / self-heal / config·secrets / storage / agent_shell / agents / data / analytics 全 28 文件 / model_provider / universe·trading）。
+  - `#163`–`#180`（12 路收尾）：前端逐页（13 页 + 5 图表 + 全部组件 + 共享 App/client/types/lib）+ knowledge / doctor 逐行 / cli / runtime_continuity·uta。
+  - 合计覆盖前端端到端 + 全部后端子系统；台账 Coverage status 已标「full-project pass complete」。共 9 条候选被核验推翻，记在「Investigated and refuted」，勿再报。
+- **下一步不再做广扫**（无剩余未扫描区）。要么开修，要么仅在「新增子系统 / 新数据源 / 新学习消费者 / 新前端页」时做定向补扫。
+- 最高优先修复候选（HIGH）：`#159`（守卫晋升用污染数据可凭假证据晋升硬拦截守卫）、`#145`（掉线后自愈恢复任务挂错事件循环→永久暂停不自愈）、`#137`（tunnel 鉴权漏风控设置）。全部分诊见 `BUG_REVIEW_HANDOFF_2026-07-06.md` 的 Fix Triage Hints。
+- 动手前须先确认：`#142`（Binance 绕代理）疑似已在 `iridite/system_proxy_support` 修复；`#156`（Coinalyze OI）须先核实线上 `/open-interest` 字段名。
+
+当前意图：
+
+- 修复阶段进行中。逐批选择问题，先声明边界，再写聚焦回归测试，再改代码；触
+  `risk/`·`execution/`·secrets·live·gateway lifecycle 的改动带定向回归、需 owner 显式授权。
+- 每批一次提交（显式 `git add`，不 `-A`）；修复期间不 push/restart/enable live，推送/重启由 owner 指令触发。
+- 修学习/分析类消费者时套「合成平仓 + clean_window 过滤」自检（#159/#160 同类）。
+- 下一批优先级建议：B10 文档尾（最快）→ B9 → B7 → B8（留给需 npm build 的专门轮次）→ 数据模型迁移/operator 鉴权（基建专门轮次）。
+
+---
+
 ## 当前诊断入口:Opportunity Flow Ledger
 
 近期排查“机会为什么没有变成交易”时，优先使用统一入口：

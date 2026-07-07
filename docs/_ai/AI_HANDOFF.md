@@ -7,7 +7,25 @@
 
 ## Last Updated
 
-2026-07-04 (Executable Candidate Supply Floor V1)
+2026-07-07 (Full bug review — fix phase in progress)
+
+---
+
+## Recent Handoff (Full Bug Review — fix phase, 2026-07-07)
+
+Full-project bug/SDD review is **complete** (`#1`–`#180`, coverage marked "full-project pass complete"). The **fix phase is underway** on branch `fix/bug-review-fixes` (off `iridite/bug_fix` HEAD, pushed to origin).
+
+- Detailed finding ledger + authoritative Fix Progress table: `docs/_ai/FULL_BUG_REVIEW_2026-07-06.md`
+- Short takeover guide: `docs/_ai/BUG_REVIEW_HANDOFF_2026-07-06.md`
+- Findings recorded: `#1` through `#180` (9 HIGH / 99 MED / 72 LOW; + 9 refuted, do not re-report).
+- **Fixed so far: 42 findings across 11 commits** (batches B1–B6 + B10a). All 9 HIGH findings addressed.
+- Verification: full SDD spec suite **588 passed / 0 failed** + 15 new focused regression test files. Trust-boundary changes (`risk`/`execution`/secrets/live/gateway lifecycle) each carry a focused regression per AGENTS.md.
+- Remaining (batched, ledger Fix Progress is source of truth): **B7** portfolio/PnL/reconciliation/broker/persistence · **B8** frontend honesty (needs `npm run build`) · **B9** data/analytics/doctor/cli · **B10** doc-drift tail. Plus ~15 deferred coupled/infra items (market-type data-model migration, operator auth #40/#41, #109/#143/#102-pending/#17, runtime-perf #90/#147/#134) — each recorded with its reason in the ledger.
+- Merge note: `origin/master` has advanced 5 commits since this branch forked (concurrent session; incl. `c945110f "Scope auto guards to their source symbol"` which may overlap B5 guard changes) — reconcile at PR time, not on this branch.
+
+Owner preference for future records: use short, structured Markdown rather than long prose. Suggested fields: domain, impact, document expectation, code evidence, reproduction/verification, expected fix direction.
+
+Next AI should read the ledger's Fix Progress table first, then continue the next batch instead of re-checking already-fixed or already-recorded findings.
 
 ---
 
@@ -1023,7 +1041,7 @@ Lessons 列表行可点击展开 DetailDrawer，正文超 120 字符显示 "…"
 
 ## Recent Change (负反馈闭环：高维 + 可推翻 self-evolve — 2026-06-28)
 
-分支 `worktree-neg-feedback-loop-fix`。审计发现"用交易结果调整未来交易"的 4 条通路 3 条坏；owner 定调（记忆 [[aletheia-negfeedback-high-dimensional-evolve]]）：**要高维模式归因 + 可被后续证据推翻的 self-evolve + 全自动，摒弃低维 symbol/direction/scanner 硬拦截**。设计见 `docs/plans/round2_negative_feedback_loop_closure.md`。
+分支 `worktree-neg-feedback-loop-fix`。审计发现"用交易结果调整未来交易"的 4 条通路 3 条坏；owner 定调（记忆 `aletheia-negfeedback-high-dimensional-evolve`）：**要高维模式归因 + 可被后续证据推翻的 self-evolve + 全自动，摒弃低维 symbol/direction/scanner 硬拦截**。设计见 `docs/plans/round2_negative_feedback_loop_closure.md`。
 
 **根因 + 修复（5 项核心）**：
 - **Path 6 反思**：`reflection.py:62/65` 重复 `opportunity_id=` kwarg → 整模块 `SyntaxError`，被调用方 `try/except` 静默吞 → record_decision/get_last_reflection 双失效、doctor 不报警。提交 5be7826（A13）引入。修=删重复行 + `test_agent_shell::test_reflection_module_imports_cleanly` import smoke 锁回归。
@@ -1076,7 +1094,7 @@ Lessons 列表行可点击展开 DetailDrawer，正文超 120 字符显示 "…"
 **spec 覆盖**：303 claims GREEN（ML-S01~S03/B01~B02 + SE-S06/I06 + SV-S03/S04/B02 + 迁移修正）。
 
 **待合并主仓**：分支 `worktree-lazy-drifting-clarke`。合并后须在主仓 `gateway restart`
-才能生效（worktree data/ 为空，见记忆 [[aletheia-worktree-gateway-empty-data-trap]]）。
+才能生效（worktree data/ 为空，见记忆 `aletheia-worktree-gateway-empty-data-trap`）。
 
 **剩余 P3 项（数据积累后再推）**：
 - D1: xStock 可研究性数据质量管理（等 researchability_grade 数据积累后再做）
@@ -1095,7 +1113,7 @@ curve." + Retry 按钮。
 走系统代理被转坏",并建议用户"代理软件绕过列表加 127.0.0.1"。用户当场指出
 后实测纠正:WinINET 系统代理 `ProxyEnable=0` 且 127.* 已 DIRECT,浏览器直连
 无碍;只是**环境变量代理** `HTTP_PROXY=127.0.0.1:7897`+NO_PROXY 空,导致 curl
-误把 localhost 丢给代理产生 502 假象。记忆 [[aletheia-localhost-probe-proxy-trap]]
+误把 localhost 丢给代理产生 502 假象。记忆 `aletheia-localhost-probe-proxy-trap`
 已写入。以后诊断:curl 探活 localhost 必须 `--noproxy '*'`;后端死活以 gateway
 status + /api/health 的 status 字段为准。
 
