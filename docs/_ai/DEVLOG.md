@@ -1,5 +1,29 @@
 # Development Log
 
+## 2026-07-07 — B7-wal：backup 用 SQLite Connection.backup() 走 WAL 安全路径（1 finding / 1 commit）
+
+### 触发
+接 B7-mini 后 owner「继续推进」。B7 最后剩的 raw copy WAL 隐患 —— 收官 B7。
+
+### 做法
+- **#59 backup raw-copy WAL 隐患**：`create_backup` 用 `shutil.copy2(app.db)` —— SQLite 生产在 WAL 模式，一条 committed 行还可能存在于 `app.db-wal` sidecar 里没被 checkpoint。裸 copy 只带 `.db` → 那行没进 backup。改用 `sqlite3.Connection.backup(dst_conn)` API —— 官方为 live snapshot 设计，读锁 + 顺 WAL 走页 dependency，产出的 dst 是内部一致的、单文件（无 -wal/-shm 边角）、无 checkpoint 竞态。若 src 不是有效 SQLite（空占位/被裁剪的测试固件），fallback 回 shutil.copy2 —— 不比修前更差。
+
+### 交付
+- 1 finding。1 提交。
+- **新增回归** `tests/test_backup_wal_safety_fix.py`（2 tests / 1 passed + 1 conditionally skipped）：
+  - `test_backup_captures_wal_committed_rows` — 构造 WAL 模式 db、INSERT + commit **但不 checkpoint**，触发 -wal 存在的场景（若 SQLite 自动 checkpoint 了则 skip 这条 —— 测试只在有真 sidecar 时才有意义）；backup → 解压 → 打开复制的 db 读该行 → 断言存在。
+  - `test_backup_still_handles_non_sqlite_app_db` — src 不是有效 SQLite（写入 `b"not a sqlite file"`）时 backup 不炸，fallback 到 raw copy。
+- **验证**：`tests/specs/` 559 passed / 0 failed（+1 vs 前批 baseline 558）；本会话 2 tests。
+
+### 剩余
+- **B7 全部完成**（除已显式暂缓的 #109/#143/#102-pending/#17，各有独立 blocker 记在台账 Fix Progress Deferred）。
+- B8（前端诚实性）/ B9（数据·分析·doctor·cli）/ B10（doc drift 尾）三批 + 已 deferred 的 market_type 数据模型迁移仍在。
+
+### 边界
+仅 backup/service.py + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。sqlite3 是 stdlib，无新依赖。
+
+---
+
 ## 2026-07-07 — B7-mini：backup 覆盖 + trades 导出实体 + capital 审计（3 findings / 1 commit）
 
 ### 触发
