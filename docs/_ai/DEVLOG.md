@@ -1,5 +1,35 @@
 # Development Log
 
+## 2026-07-07 — B9-llm：complete_with_fallback tier provider name 透传（1 finding / 1 commit）
+
+### 触发
+接 B9-analytics 后 owner「继续推进」。剩下 B9 里 #161 是最简单的 helpers 单点改动，独立无依赖。
+
+### 做法
+- **#161 complete_with_fallback provider name 落错**：调用链是 `agents.helpers.llm_complete(provider="deep_provider_xyz")` → `get_provider(name) → ModelProvider obj` → `complete_with_fallback(request, provider=obj)`。complete_with_fallback 首行 `resolved_provider_name = provider_name or cfg.models.default_provider` —— helpers 从来没传 `provider_name=`，所以永远回退 default。后果两条：
+  - deep-tier 失败被计到 default_provider 的 model 冷却状态里，tier 自己的 model 永远不冷却
+  - candidate_models 走 default_provider 的候选表，不是 tier 的
+  修：`helpers.llm_complete` + `llm_structured` 都在 `get_provider(...)` 前把入参 str 记到 `provider_name`，然后 `complete_with_fallback(..., provider=obj, provider_name=provider_name)`。llm_stream 不用改（不经过 fallback，直接 `provider.stream`）。
+- **既有 spec 更新**：`tests/specs/spec_gateway_stability.py::_patch_llm` 里的 `fake_complete(req, provider=None)` 现在会收到多一个 kwarg，把签名加 `provider_name=None` 兼容。
+
+### 交付
+- 1 finding。1 提交。
+- **新增回归** `tests/test_llm_helpers_provider_name_fix.py`（3 tests / 3 passed）：
+  - `test_llm_complete_threads_provider_name_to_complete_with_fallback` — mock `helpers.complete_with_fallback`，断言 provider_name="deep_provider_xyz" 被原样透传。
+  - `test_llm_complete_forwards_none_when_caller_did_not_specify` — 缺省 None 也如实透传（保 default_provider 回退语义）。
+  - `test_llm_structured_threads_provider_name_to_complete_with_fallback` — 结构化路径同样透传。
+- **既有测试更新**：`spec_gateway_stability::_patch_llm` fake_complete signature 加 `provider_name=None`。
+- **验证**：`tests/specs/` 563 passed / 0 failed（+9 vs 前批 baseline 554，因为多包含了几个 spec_gateway_stability 相关）；本 batch 3 tests + 更新 1 fixture。
+
+### 剩余
+- **B9 剩余** #91（universe/registry direct CCXTProvider 绕过 factory）+ #92（MacroCollector sync yf.Ticker inside async blocking hot tick）+ #154（divergence_scanner 方向逻辑 dormant gated）+ #155（OHLCV cache 键漏 market_type，与 market_type 迁移耦合暂缓）+ #156（Coinalyze OI 需先核 live schema）。下一批候选 **#91 + #92** —— 两个都是「构造 provider 时绕过工厂」和「async 内 sync 阻塞」，形状统一。
+- **B8** 前端诚实性（需 `npm run build`）+ **B10** 文档漂移仍留。
+
+### 边界
+仅 helpers.py + spec_gateway_stability.py fixture + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。API 变化只在 helpers 内部（callers 已通过 provider= 传 str，`llm_complete` 签名未变）。
+
+---
+
 ## 2026-07-07 — B9-analytics：equity-curve 窗口 + trade_insights 运算符优先级（2 findings / 1 commit）
 
 ### 触发
