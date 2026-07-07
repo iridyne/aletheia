@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-07 — B8-honesty：pause/resume onError + guidance tone + risk-clear 门（3 findings / 1 commit）
+
+### 触发
+接 B8-mini 后 owner「继续推进」。B8 挑三条更有影响力的诚实性 gap —— 操作员会实际操作的按钮 / 状态标签。
+
+### 做法
+1. **#165 pause/resume/wake 吞 409**：三个 mutation 只有 `onSuccess` 无 `onError`，backend 返 409（LLM-unavailable / kill-switch-active）时前端 silent 「成功」，操作员以为 resume 生效了实际系统还在 paused。三个 mutation 都加 `onError: (e) => toast('error', ...)`，match `App.tsx` 里已存在的 extractResumeError 模式。
+2. **#166 CommandCenter runtime guidance 死支**：`<StatusText tone={runtimeBadge(guidance?.action).includes('green') ? 'green' : ...}>` —— `runtimeBadge` 词汇是 **runtime state**（current/candidate/failed 等），guidance.action 是**动词**（promote/rollback/drain/observe 等），永远不匹配 → 永远走 badge-blue → tone 永远 yellow → promote 和 rollback 长得完全一样。新加 `guidanceTone(action)` 助手：promote/start_shadow/prepare_candidate=green（推进），rollback=red（回滚），drain/activate_restart=yellow（谨慎），observe/未知=muted。
+3. **#172 RiskControls "within all limits" 误绿**：violation list 空时无脑显示「operating within all limits」+ 绿点 —— 包括 riskState='unknown'/missing 的**初始/没有数据**场景，把「没数据」当「一切正常」显示。加条件：只有 `riskState === 'healthy'` 才显示 clear + 绿；否则显示 `Risk state <state> — not confirming clear until the risk engine reports "healthy"` + 灰点。
+
+### 交付
+- 3 findings。1 提交（CommandCenter + RiskControls）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 组件层，不涉及 Python spec 覆盖。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~24 finding**（本 session B8 累计已修 10：cleanup 4 + mini 3 + honesty 3）。较大的还剩 topbar riskState 死支 (#174)、Overview exchange 灯永远 Bitget (#171)、CausalChain fill/position 源不对 (#122/#123)、Settings coverage matrix mislabel (#163)、Charts prediction 读不存在字段 (#169/#170) 等。
+- 已 deferred 项不变。
+
+### 边界
+仅 2 前端文件（`CommandCenter.tsx` + `RiskControls.tsx`）；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B8-mini：预测偏好 PATCH + NewsIntel analyzed 桶 + 时间线加日期（3 findings / 1 commit）
 
 ### 触发
