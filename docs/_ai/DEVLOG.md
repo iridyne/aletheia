@@ -1,5 +1,22 @@
 # Development Log
 
+## 2026-07-07 — 尾扫多点：research_worker docstring / /status head_commit 缓存 / SpecClaim 验证（3 findings / 3 commits）
+
+- **#22 research_worker docstring**：`is_serenity_tradable_symbol` docstring 说 stock tokens 是 `asset_class="equity"` observation-only，实际代码 line 769 打的是 `asset_class="equity_tradeable"`（可执行）。改写 docstring 列清两个 class 的区别 + `trading_decision.py:1321` 是分流点。运行时未动。→ `23b3cd2`
+- **#6 /api/status 阻塞 git subprocess**：`current_commit()` shell 出去跑 `git rev-parse HEAD`，topbar 每 10s 一 poll，subprocess 30-500ms 阻塞 async loop。加 `_cached_head_commit(ttl=60s)` module-level 缓存（thread-lock，non-raising），HEAD 只在重启/自更新时变，60s 缓存安全。→ `a1869e1`
+- **#74 SpecClaim.status 未运行时校验 + 缺 "superseded"**：Literal 只列 implemented/partial/missing，但 spec_pi_decision_chain.py:126 用了 `status="superseded"` —— Literal 只是 type hint 不 enforce，运行时接受了但矩阵渲染 `?`。三件事：Literal 加 "superseded"；SpecClaim `__post_init__` 校验 status ∈ 合法集合（拼写错立即抛）；test_spec_conformance icon map 加 `superseded → s`。→ `37238a1`
+
+### 验证
+`tests/specs/` + test_spec_conformance = 559 passed / 0 failed。
+
+### 剩余
+- **B8 剩少量**（大件 #163 Settings coverage matrix、#122/#123 CausalChain 源 都需要更多 UI 验证 / backend 改动）；已 deferred 项不变。
+
+### 边界
+所有改动在测试树 + 服务器 route + docstring；未推 / 未 restart / 未 enable live。
+
+---
+
 ## 2026-07-07 — B8-cc-confirm：Send 按 requires_confirmation 走 window.confirm（1 finding / 1 commit）
 
 ### 触发
