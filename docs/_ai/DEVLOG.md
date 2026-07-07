@@ -1,5 +1,32 @@
 # Development Log
 
+## 2026-07-07 — B7-mini：backup 覆盖 + trades 导出实体 + capital 审计（3 findings / 1 commit）
+
+### 触发
+接 B7-io-honesty 后 owner「继续推进」。挑 B7 中三条**单点小改**的诚实性 gap 打包成 mini-batch —— 都是「文档/行为不一致」，成本低价值明确。
+
+### 做法
+1. **#58 backup 缺 audit.jsonl**：`backup/service.py::create_backup` 之前只落 app.db / config.yaml / events/ / artifacts/，**不复制 data/logs/**，而 `data/logs/audit.jsonl` 正是那条 hash-chained 审计链。从这样的 backup 恢复后 `verify_audit_chain` 无从跑（文件根本不在）。加一段 copy `data_dir/logs/` 到 staging，用同一个 `_should_exclude` 过滤secrets，file_count/total_bytes 相应累加。
+2. **#65 /trades/export 与 docstring 矛盾**：docstring 写 "tax/PnL reporting"，实际返回 orders 表（无 realized_pnl / entry_fee / exit_fee / closed_at）。改为返回 `list_positions(status="closed")`，CSV 列换成 opened_at/closed_at/symbol/market_type/direction/quantity/entry_price/current_price(=exit)/realized_pnl/entry_fee/exit_fee/slippage_cost/execution_mode/close_reason/btc_entry_price/btc_exit_price/trade_school/position_id。前端只有一个 `<a href={api.exportTradesCsv()} download>` 无 CSV 解析，schema 变更安全。
+3. **#87 capital 事件无审计**：`POST /api/capital/events` 写 `capital_events` 表但**从未 write_audit** —— 权益曲线基线一跳无审计链条可查。加 `write_audit({event_type=capital_deposit/capital_withdraw, entity_type=capital_event, after=payload})`，方向 event_type 区分便于 grep。
+
+### 交付
+- 3 findings。1 提交。
+- **新增回归** `tests/test_mini_honesty_fixes.py`（4 tests / 4 passed）：
+  - `test_backup_captures_audit_jsonl_hash_chain` — 种 audit.jsonl → 打 backup → 断言归档成员含 `logs/audit.jsonl`。
+  - `test_trades_export_returns_closed_positions_with_pnl_columns` — 种 closed Position → GET /api/trades/export → 断言 CSV header 含 realized_pnl/entry_fee/exit_fee/closed_at + row 里 9.85 (realized_pnl)。
+  - `test_capital_deposit_writes_audit_event` + `test_capital_withdraw_writes_audit_event` — POST 之后读 logs/audit.jsonl 里应有 capital_deposit/capital_withdraw entries。
+- **验证**：`tests/specs/` 558 passed / 0 failed；本会话 4 tests / 4 passed。
+
+### 剩余
+- B7 剩：**#59** backup raw-copies WAL app.db without SQLite checkpoint —— 需真正接 sqlite3.Connection.backup() API + WAL checkpoint，比其他 B7 findings 大一档，留下一批单独做。**#109 broker partial-fill、#143 paper_internal drawdown、#102-pending、#17 dreaming cursor** 仍暂缓（各有独立 blocker，见台账 Fix Progress deferred 列表）。
+- B8/B9/B10 保留。
+
+### 边界
+只改本会话三处 + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。前端 client 不需改（CSV 只是 raw download 无 schema 解析）。
+
+---
+
 ## 2026-07-07 — B7-io-honesty：proposal-pack 过滤 + import 校验/冲突诚实（4 findings / 1 commit）
 
 ### 触发
