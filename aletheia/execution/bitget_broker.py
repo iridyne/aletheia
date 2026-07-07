@@ -124,6 +124,7 @@ def execute_live_order(
     # fabricate. Fall back to the requested values only when detail is absent (the
     # order is still effectively at the requested level until reconciliation refines).
     filled = order_resp.status in ("filled", "partially_filled")
+    partial = order_resp.status == "partially_filled"
     fill_price = order_resp.fill_price if (filled and order_resp.fill_price) else price
     fill_qty = order_resp.filled_quantity if (filled and order_resp.filled_quantity) else quantity
 
@@ -139,7 +140,15 @@ def execute_live_order(
                 fee=fill_qty * fill_price * fee_rate,
             )
             insert_fill(fill)
-            update_order(order.id, status="filled", filled_at=datetime.now(timezone.utc).isoformat())
+            # #109 fix: preserve partial state — the previous code always wrote
+            # status='filled' even when the exchange returned 'partially_filled'.
+            # A downstream `WHERE status='filled'` query then treated a partial
+            # as a full fill, and averaging-in / close paths saw the position
+            # as complete when it was still being filled. Now the row keeps
+            # 'partially_filled' until a follow-up fetch flips it to 'filled'
+            # (or the reconciler observes the exchange marking it complete).
+            order_status = "partially_filled" if partial else "filled"
+            update_order(order.id, status=order_status, filled_at=datetime.now(timezone.utc).isoformat())
 
             existing = _find_open_position(symbol, market_type, direction, execution_mode, strategy_id)
             if existing:
