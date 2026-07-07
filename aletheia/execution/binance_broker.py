@@ -124,6 +124,16 @@ def execute_live_order(
                 new_qty = existing["quantity"] + fill_qty
                 new_entry = (existing["entry_price"] * existing["quantity"] + fill_price * fill_qty) / new_qty
                 update_kwargs = {"quantity": new_qty, "entry_price": new_entry, "current_price": fill_price}
+                # #140 fix: accumulate entry_fee across averaging-in legs (see paper_broker).
+                new_entry_fee_leg = round(fill_price * fill_qty * fee_rate, 8)
+                existing_entry_fee = existing.get("entry_fee")
+                update_kwargs["entry_fee"] = round((existing_entry_fee or 0.0) + new_entry_fee_leg, 8)
+                # #141 fix: recompute liquidation for the new weighted-average entry.
+                existing_lev = existing.get("leverage")
+                if existing_lev and existing_lev > 1:
+                    update_kwargs["liquidation_price"] = liquidation_price_for(
+                        new_entry, direction, existing_lev, symbol,
+                    )
                 # Tighten (never loosen) the protective stop when averaging in.
                 merged_stop = merge_protective_stop(direction, stop_price, existing.get("stop_price"))
                 if merged_stop is not None:
