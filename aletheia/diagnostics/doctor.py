@@ -724,6 +724,14 @@ def _probe_perp_structure(report: Report) -> None:
             "ORDER BY as_of_time DESC, observed_at DESC LIMIT 1"
         ).fetchone()
     except Exception as e:
+        if "no such table: perp_structure_snapshots" in str(e):
+            report.add(
+                "data.perp_structure",
+                "info",
+                "no perp structure rows yet",
+                "no action unless this observation-only feed is expected to be populated",
+            )
+            return
         report.add("data.perp_structure", "info", f"could not read perp structure: {e}")
         return
 
