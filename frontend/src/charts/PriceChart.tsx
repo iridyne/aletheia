@@ -49,8 +49,14 @@ function seriesMarkers(markers: TradeMarker[]) {
  * State is held imperatively in refs (the chart is long-lived, not re-rendered
  * per data change) so paging never resets the user's scroll position.
  */
-export default function PriceChart({ symbol, timeframe = '1h', markers = [], onMarkerClick }: {
-  symbol: string; timeframe?: string; markers?: TradeMarker[]; onMarkerClick?: (id: string) => void
+export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spot', markers = [], onMarkerClick }: {
+  // #115 fix: PriceChart used to default every getOhlcv call to spot (client
+  // signature marketType='spot'), so a perp instrument's chart quietly pulled
+  // spot bars — the price would look off vs the true perp mark. Take
+  // marketType as a prop; callers pass it based on the symbol's board /
+  // context. Defaults to 'spot' for backward compat with any caller not yet
+  // updated.
+  symbol: string; timeframe?: string; marketType?: string; markers?: TradeMarker[]; onMarkerClick?: (id: string) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -103,7 +109,7 @@ export default function PriceChart({ symbol, timeframe = '1h', markers = [], onM
       loadingOlderRef.current = true
       const earliest = barsRef.current[0].time
       try {
-        const res = await api.getOhlcv(symbol, timeframe, PAGE_LIMIT, earliest)
+        const res = await api.getOhlcv(symbol, timeframe, PAGE_LIMIT, earliest, '', marketType)
         if (cancelled) return
         const rows = Array.isArray(res) ? res : []
         const fresh = rows.map(toBar).filter(b => !timesRef.current.has(b.time))
@@ -130,7 +136,7 @@ export default function PriceChart({ symbol, timeframe = '1h', markers = [], onM
     const pollLatest = async () => {
       if (cancelled || !initializedRef.current || !barsRef.current.length) return
       try {
-        const res = await api.getOhlcv(symbol, timeframe, 2, 0)
+        const res = await api.getOhlcv(symbol, timeframe, 2, 0, '', marketType)
         if (cancelled) return
         const rows = (Array.isArray(res) ? res : []).map(toBar).sort((a, b) => a.time - b.time)
         let appended = false
@@ -155,7 +161,7 @@ export default function PriceChart({ symbol, timeframe = '1h', markers = [], onM
     // Initial load: most recent INITIAL_LIMIT candles.
     ;(async () => {
       try {
-        const res = await api.getOhlcv(symbol, timeframe, INITIAL_LIMIT, 0)
+        const res = await api.getOhlcv(symbol, timeframe, INITIAL_LIMIT, 0, '', marketType)
         if (cancelled) return
         const rows = Array.isArray(res) ? res : []
         if (!rows.length) { setStatus(Array.isArray(res) ? 'empty' : 'error'); return }

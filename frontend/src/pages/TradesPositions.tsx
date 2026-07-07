@@ -327,7 +327,16 @@ function OrderDetail({ order, navigate }: { order: Order; navigate: (p: string) 
       </DrawerSection>
       {order.filled_at && (
         <div className="mt-2">
-          <Button variant="secondary" onClick={() => navigate('/charts')}>View on Chart</Button>
+          {/* #116 fix: `View on Chart` used to navigate('/charts') with no
+              params, so the Charts page always initialised to its default
+              symbol (BTC/USDT) — the operator had to manually pick the
+              order's actual symbol to see anything relevant. Pass the
+              order's symbol + market_type via searchParams so the chart
+              lands on the RIGHT instrument. Charts must read these on mount. */}
+          <Button variant="secondary" onClick={() => navigate({
+            pathname: '/charts',
+            search: `?symbol=${encodeURIComponent(order.symbol)}&market_type=${encodeURIComponent(order.market_type || 'spot')}`,
+          } as any)}>View on Chart</Button>
         </div>
       )}
     </>
