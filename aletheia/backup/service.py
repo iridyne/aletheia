@@ -55,6 +55,32 @@ class BackupService:
         self._backup_dir = self._data_dir / "backups"
         self._backup_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _snapshot_sqlite_db(src: Path, dst: Path) -> None:
+        """Copy a SQLite database using Connection.backup() so WAL-mode commits
+        that haven't been checkpointed yet still make it into the archive.
+
+        `sqlite3.Connection.backup(target)` is the officially-safe way to snapshot
+        a live database — it holds a read lock, walks pages including the WAL,
+        and produces a consistent .db without a -wal/-shm sidecar. Falling back
+        to shutil.copy2 keeps the old best-effort behaviour when the file isn't
+        actually SQLite (e.g. empty placeholder or a stripped test fixture)."""
+        import sqlite3
+
+        try:
+            src_conn = sqlite3.connect(str(src))
+            try:
+                dst_conn = sqlite3.connect(str(dst))
+                try:
+                    src_conn.backup(dst_conn)
+                finally:
+                    dst_conn.close()
+            finally:
+                src_conn.close()
+        except sqlite3.DatabaseError:
+            # Not a SQLite file (or corrupt beyond backup()) — best-effort raw copy.
+            shutil.copy2(src, dst)
+
     def create_backup(self, label: str | None = None) -> Path:
         """Create a full backup of the workspace. Returns archive path."""
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -69,11 +95,20 @@ class BackupService:
             file_count = 0
             total_bytes = 0
 
-            # Copy app.db
+            # Copy app.db.
+            # #59 fix: SQLite runs in WAL journal mode; a bare shutil.copy2 of the
+            # .db file races the writer — committed rows still in the -wal sidecar
+            # get missed, and the copied .db can even be internally inconsistent
+            # (page torn between the copy and a mid-flight WAL checkpoint). Use
+            # sqlite3.Connection.backup() which is the API designed for exactly
+            # this: a live consistent snapshot even under concurrent writes, no
+            # checkpoint hazard, no partial WAL. Fall back to the raw copy if the
+            # source isn't a readable SQLite file (empty init or non-sqlite path)
+            # so the backup still packages what's on disk rather than exploding.
             db_path = self._data_dir / "app.db"
             if db_path.exists():
                 dst = staging / "app.db"
-                shutil.copy2(db_path, dst)
+                self._snapshot_sqlite_db(db_path, dst)
                 file_count += 1
                 total_bytes += dst.stat().st_size
 
