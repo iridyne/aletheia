@@ -150,6 +150,12 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
     except Exception:
         slippage_cost = None
 
+    # #103 fix: compute `closed_at` before update_position and reuse it below.
+    # _close_serenity_feedback receives `row` — that's the PRE-CLOSE snapshot
+    # fetched at line 111, so `row['closed_at']` is None and PostMortem's
+    # hold_h was always 0. Stamp the value into row too so the Serenity hook
+    # sees the honest close time.
+    closed_at = datetime.now(timezone.utc).isoformat()
     update_position(
         position_id,
         status="closed",
@@ -157,12 +163,13 @@ def close_position(position_id: str, exit_price: float, reason: str = "manual") 
         realized_pnl=realized,
         unrealized_pnl=0.0,
         close_reason=reason,
-        closed_at=datetime.now(timezone.utc).isoformat(),
+        closed_at=closed_at,
         btc_exit_price=btc_exit,
         entry_fee=round(entry_fee, 8),
         exit_fee=round(exit_fee, 8),
         slippage_cost=slippage_cost,
     )
+    row["closed_at"] = closed_at  # so the Serenity hook computes real hold_h
     write_audit({
         "actor": "system",
         "source": "scheduler",
