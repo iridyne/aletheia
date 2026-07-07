@@ -5,10 +5,65 @@ Endpoints for gateway state, reconciliation, events, backups, exports, lessons, 
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/persistence", tags=["persistence"])
+
+
+def _archive_roots() -> list[Path]:
+    """Directories the persistence import/verify endpoints will accept archives from.
+
+    Currently `<data_dir>/backups` (where BackupService writes) and `<data_dir>/exports`
+    (where ExportService writes). Kept in a helper so both endpoints stay in sync and a
+    later batch that adds an additional archive root only has to touch one place.
+    """
+    from aletheia.config.loader import get_data_dir
+    data_dir = get_data_dir()
+    return [data_dir / "backups", data_dir / "exports"]
+
+
+def _resolve_archive_path(caller_path: str) -> Path:
+    """Constrain a caller-supplied archive path to one of the archive roots.
+
+    #66 fix: `/backups/verify` and `/import` used to accept any local path and hand
+    it straight to BackupVerifier / ImportService, so anyone able to reach the API
+    could make the backend read arbitrary files (config, keys, sockets, /proc/*) on
+    the host. Now we resolve the path and require it to live inside one of the
+    configured archive roots.
+
+    Raises HTTPException(400) on path-traversal / out-of-root, (404) on missing files.
+    """
+    if not caller_path or ".." in caller_path.split("/") or ".." in caller_path.split("\\"):
+        raise HTTPException(status_code=400, detail="invalid_archive_path")
+    try:
+        # Reject NUL bytes and other pathological input early — Path() itself is fine
+        # with unicode filenames, so a strict resolve() is the trust boundary here.
+        resolved = Path(caller_path).expanduser().resolve()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid_archive_path: {exc}") from exc
+    roots = [r.resolve() for r in _archive_roots()]
+    if not any(_path_is_within(resolved, root) for root in roots):
+        raise HTTPException(
+            status_code=400,
+            detail="archive_path_outside_managed_roots",
+        )
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="archive_not_found")
+    if not resolved.is_file():
+        raise HTTPException(status_code=400, detail="archive_path_not_a_file")
+    return resolved
+
+
+def _path_is_within(candidate: Path, root: Path) -> bool:
+    """True when candidate resolves to a location inside root (both already resolved)."""
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 # --- Gateway State ---
@@ -134,12 +189,15 @@ async def create_backup(req: BackupRequest):
 
 @router.post("/backups/verify")
 async def verify_backup_endpoint(path: str):
-    """Verify a backup archive."""
-    from pathlib import Path
+    """Verify a backup archive.
 
+    Only accepts paths inside the managed archive roots (data_dir/backups or
+    data_dir/exports) — see #66 fix in `_resolve_archive_path`.
+    """
     from aletheia.backup.verify import verify_backup
 
-    result = verify_backup(Path(path))
+    archive = _resolve_archive_path(path)
+    result = verify_backup(archive)
     return result.to_dict()
 
 
@@ -169,16 +227,15 @@ class ImportRequest(BaseModel):
 
 @router.post("/import")
 async def import_bundle(req: ImportRequest):
-    """Import an export bundle. Set dry_run=false to actually merge."""
-    from pathlib import Path
+    """Import an export bundle. Set dry_run=false to actually merge.
 
+    Only accepts paths inside the managed archive roots (data_dir/backups or
+    data_dir/exports) — see #66 fix in `_resolve_archive_path`.
+    """
     from aletheia.sync.importer import ImportService
 
+    archive = _resolve_archive_path(req.path)
     svc = ImportService()
-    archive = Path(req.path)
-    if not archive.exists():
-        raise HTTPException(status_code=404, detail="Archive not found")
-
     if req.dry_run:
         result = svc.dry_run(archive)
     else:

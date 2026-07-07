@@ -75,7 +75,14 @@ async def update_continuity(body: ContinuityBody = ContinuityBody()):
         }
     from aletheia.runtime_continuity.service import RuntimeContinuityService
 
-    candidate = RuntimeContinuityService().prepare_candidate(
+    # #82 fix: this update-driven candidate creation now honours the same kill switch
+    # as the operator routes — if runtime_continuity is disabled the write is rejected
+    # rather than silently succeeding. Owner sees "off" in Settings, we behave "off".
+    from aletheia.config.loader import load_config as _load_cfg
+    _cfg = _load_cfg()
+    candidate = RuntimeContinuityService(
+        enabled=_cfg.runtime.runtime_continuity_enabled,
+    ).prepare_candidate(
         actor="human",
         cause=body.cause,
         code_version=str(remote_commit),

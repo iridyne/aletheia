@@ -220,20 +220,26 @@ export const api = {
       runtime_id: runtimeId,
       cause: 'command_center_shadow',
     }),
+  // #83 fix: promote/rollback/forced-drain now require an explicit confirm=true.
+  // The Command Center already surfaces these as human-driven pivots, so we can
+  // hardcode confirm=true here; a follow-up UI batch can lift it into a modal.
   promoteRuntime: (runtimeId?: string) =>
     post<any>('/operator/runtime/promote', {
       runtime_id: runtimeId,
       cause: 'command_center_promote',
+      confirm: true,
     }),
   drainRuntime: (runtimeId?: string, force = true) =>
     post<any>('/operator/runtime/drain', {
       runtime_id: runtimeId,
       force,
       cause: 'command_center_drain',
+      confirm: force,
     }),
   rollbackRuntime: () =>
     post<any>('/operator/runtime/rollback', {
       cause: 'command_center_rollback',
+      confirm: true,
     }),
   getRuntimeEvents: (limit = 100) => fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
   getSettings: () => fetchJson<Record<string, unknown>>('/settings'),

@@ -5,7 +5,14 @@ from httpx import ASGITransport, AsyncClient
 from typer.testing import CliRunner
 
 
-def setup_env(tmp_path, monkeypatch):
+def setup_env(tmp_path, monkeypatch, *, runtime_continuity_enabled: bool = True):
+    """Runtime-continuity test scaffold.
+
+    #82 fix: the service + API now honour cfg.runtime.runtime_continuity_enabled and
+    reject writes when it is off. Existing tests here exercise the feature end-to-end
+    so they need the flag ON — default True keeps them working. Set the kwarg to
+    False for a negative test that asserts the kill switch actually blocks writes.
+    """
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
@@ -13,6 +20,15 @@ def setup_env(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+
+    # Write a minimal config with the runtime_continuity flag set so load_config()
+    # from route handlers picks it up. Everything else falls back to defaults.
+    if runtime_continuity_enabled:
+        (tmp_path / "config.yaml").write_text(
+            "runtime:\n  runtime_continuity_enabled: true\n",
+            encoding="utf-8",
+        )
+        loader._config_cache = None  # bust the ttl cache so the write is visible
 
     sq.reset_db()
     sq._db_conn = None
@@ -86,7 +102,7 @@ def test_runtime_service_candidate_shadow_promote_and_rollback(tmp_path, monkeyp
             "base_url": "http://127.0.0.1:8877",
         }
 
-    svc = RuntimeContinuityService(lock_ttl_sec=30, shadow_gateway_launcher=fake_launcher)
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
     candidate = svc.prepare_candidate(
         actor="human",
         cause="test-candidate",
@@ -142,7 +158,7 @@ def test_runtime_service_rejects_lock_conflicts(tmp_path, monkeypatch):
 
     from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
 
-    svc = RuntimeContinuityService(lock_ttl_sec=300)
+    svc = RuntimeContinuityService(lock_ttl_sec=300, enabled=True)
     token = svc.acquire_lock("promote", runtime_id="runtime-local-current", owner="operator-a")
     assert token
 
@@ -169,7 +185,7 @@ def test_runtime_status_exposes_metrics_guidance_and_dto_types(tmp_path, monkeyp
         RuntimeRecord,
     )
 
-    svc = RuntimeContinuityService()
+    svc = RuntimeContinuityService(enabled=True)
     status = svc.status()
 
     assert RuntimeRecord(runtime_id="runtime-x", state="candidate").runtime_id == "runtime-x"
@@ -188,7 +204,7 @@ def test_runtime_shadow_validation_rejects_unready_gateway_process(tmp_path, mon
 
     from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
 
-    svc = RuntimeContinuityService()
+    svc = RuntimeContinuityService(enabled=True)
     candidate = svc.prepare_candidate(
         actor="test",
         cause="validation-gateway-test",
@@ -217,9 +233,50 @@ def test_runtime_shadow_validation_rejects_unready_gateway_process(tmp_path, mon
     assert failed["last_error"] == "shadow_validation_failed"
 
 
+def _mock_shadow_gateway(monkeypatch) -> None:
+    """Stub the shadow-gateway spawn so API tests don't need a real subprocess.
+
+    The API's `_service()` builds a real `spawn_shadow_gateway` closure when
+    runtime_continuity_enabled=True (which the tests below need for #82 to pass);
+    without this stub start_shadow tries to actually fork a gateway and fails.
+
+    We patch the NAME as imported into `server.routes.runtime` (the module that
+    holds the closure), NOT the original in `runtime_continuity.processes` —
+    Python resolves `spawn_shadow_gateway` inside the lambda against the enclosing
+    module's namespace at call time, so patching processes.spawn_shadow_gateway
+    alone doesn't reach the route's closure.
+    """
+    def fake_spawn(cfg, runtime):
+        return {
+            "attempted": True,
+            "started": True,
+            "ready": True,
+            "pid": 9999,
+            "host": "127.0.0.1",
+            "port": 8877,
+            "base_url": "http://127.0.0.1:8877",
+        }
+
+    from aletheia.server.routes import runtime as _routes_runtime
+    monkeypatch.setattr(_routes_runtime, "spawn_shadow_gateway", fake_spawn)
+
+    # The shadow route also imports spawn_shadow_operator_shell inline via
+    # `from aletheia.gateway.operator_shell import spawn_shadow_operator_shell`.
+    # Patch it at the source module — the inline `from … import …` will resolve
+    # the current attribute of the module at import time, which is inside the
+    # request handler, so this reaches it.
+    from aletheia.gateway import operator_shell as _os_mod
+
+    def fake_spawn_operator_shell(cfg, runtime_id):
+        return None
+
+    monkeypatch.setattr(_os_mod, "spawn_shadow_operator_shell", fake_spawn_operator_shell)
+
+
 @pytest.mark.anyio
 async def test_runtime_api_and_operator_heartbeat_surface_runtime_metadata(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    _mock_shadow_gateway(monkeypatch)
 
     from aletheia.server.app import app
 
@@ -291,6 +348,7 @@ async def test_runtime_api_and_operator_heartbeat_surface_runtime_metadata(tmp_p
 @pytest.mark.anyio
 async def test_runtime_api_exposes_and_drains_previous_runtime(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    _mock_shadow_gateway(monkeypatch)
 
     from aletheia.server.app import app
 
@@ -310,7 +368,11 @@ async def test_runtime_api_exposes_and_drains_previous_runtime(tmp_path, monkeyp
         runtime_id = candidate.json()["runtime_id"]
         shadow = await client.post("/api/operator/runtime/shadow", json={"runtime_id": runtime_id})
         assert shadow.status_code == 200
-        promoted = await client.post("/api/operator/runtime/promote", json={"runtime_id": runtime_id})
+        # #83 fix: promote is state-changing; server-side confirm required.
+        promoted = await client.post(
+            "/api/operator/runtime/promote",
+            json={"runtime_id": runtime_id, "confirm": True},
+        )
         assert promoted.status_code == 200
         assert promoted.json()["draining"]["runtime_id"] == "runtime-local-current"
 
@@ -319,9 +381,10 @@ async def test_runtime_api_exposes_and_drains_previous_runtime(tmp_path, monkeyp
         assert status.json()["can_drain"] is True
         assert status.json()["draining"]["runtime_id"] == "runtime-local-current"
 
+        # #83 fix: force-drain moves current runtime to legacy_position_manager; confirm required.
         drained = await client.post(
             "/api/operator/runtime/drain",
-            json={"runtime_id": "runtime-local-current", "force": True, "cause": "api-drain-test"},
+            json={"runtime_id": "runtime-local-current", "force": True, "confirm": True, "cause": "api-drain-test"},
         )
         assert drained.status_code == 200
         assert drained.json()["state"] == "legacy_position_manager"
@@ -393,7 +456,7 @@ def test_runtime_cli_drain_defaults_to_latest_draining_runtime(tmp_path, monkeyp
     from aletheia.cli.runtime_cmd import runtime_app
     from aletheia.runtime_continuity.service import RuntimeContinuityService
 
-    svc = RuntimeContinuityService()
+    svc = RuntimeContinuityService(enabled=True)
     candidate = svc.prepare_candidate(
         actor="test",
         cause="cli-drain-test",
