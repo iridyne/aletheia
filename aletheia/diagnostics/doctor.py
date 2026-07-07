@@ -1737,34 +1737,81 @@ def _probe_content_proposal_bias(report: Report) -> None:
         report.add("content.proposal_bias", "ok", detail)
 
 
+def _egress_ip(opener) -> str | None:
+    """Best-effort external egress IP via an opener. None on any failure."""
+    import urllib.request  # noqa: F401 — opener carries its own handlers
+
+    try:
+        return opener.open("https://api.ipify.org", timeout=6).read().decode("utf-8").strip()
+    except Exception:
+        return None
+
+
 def _probe_network(report: Report) -> None:
     try:
         from aletheia.config.loader import load_config
-        cfg = load_config()
-        proxy_url = cfg.network.proxy_url
+        net = load_config().network
+        proxy_url = net.proxy_url
+        enforce = bool(getattr(net, "enforce", False))
+        protocol = getattr(net, "proxy_protocol", "http")
     except Exception as e:
         report.add("network.proxy", "info", f"could not read config: {e}")
         return
 
+    mode = "ENFORCE/fail-closed" if enforce else "fail-open"
+
     if not proxy_url:
-        report.add("network.proxy", "ok", "not configured (direct connection)")
+        if enforce:
+            report.add("network.proxy", "warn",
+                       "enforce is ON but no proxy is configured — all outbound traffic is blocked",
+                       "set a proxy host in Settings → Network, or turn enforce off")
+        else:
+            report.add("network.proxy", "ok", "not configured (direct connection)")
         return
 
     import time
     import urllib.request
-    url = "https://api.binance.com/api/v3/ping"
+
+    # SOCKS can't be probed with urllib's ProxyHandler — defer reachability to the
+    # exchange connectivity monitor (which rides the aiohttp_socks path).
+    if str(protocol).startswith("socks"):
+        report.add("network.proxy", "info",
+                   f"{protocol} proxy configured [{mode}] — {proxy_url}; "
+                   "reachability verified by the exchange connectivity monitor")
+        return
+
+    proxy_opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"https": proxy_url, "http": proxy_url})
+    )
     t0 = time.monotonic()
     try:
-        import os
-        proxies = {"https": proxy_url, "http": proxy_url}
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies))
-        opener.open(url, timeout=8).read()
+        proxy_opener.open("https://api.binance.com/api/v3/ping", timeout=8).read()
         latency_ms = int((time.monotonic() - t0) * 1000)
-        report.add("network.proxy", "ok", f"proxy configured, reachable ({latency_ms}ms) — {proxy_url}")
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
-        report.add("network.proxy", "warn", f"proxy configured but unreachable ({latency_ms}ms): {e}",
-                   "check proxy is running and proxy_url is correct in Settings → Infrastructure → Network")
+        hint = "check the proxy is running and host/port are correct in Settings → Network"
+        if enforce:
+            hint += "; enforce is ON, so trading auto-pauses until the proxy recovers"
+        report.add("network.proxy", "warn",
+                   f"proxy configured but unreachable [{mode}] ({latency_ms}ms): {type(e).__name__}",
+                   hint)
+        return
+
+    # Leak check: confirm traffic actually egresses via the proxy (exit IP differs
+    # from a direct connection). A match means requests may NOT be routed through
+    # the proxy despite it being reachable.
+    proxy_ip = _egress_ip(proxy_opener)
+    direct_ip = _egress_ip(urllib.request.build_opener(urllib.request.ProxyHandler({})))
+    if proxy_ip and direct_ip and proxy_ip == direct_ip:
+        report.add("network.proxy", "warn",
+                   f"proxy reachable [{mode}] ({latency_ms}ms) but egress IP == direct IP "
+                   f"({proxy_ip}) — traffic may NOT be routed through the proxy",
+                   "verify the proxy forwards to an upstream with a different exit IP")
+        return
+
+    leak_note = f"; egress {proxy_ip} ≠ direct {direct_ip}" if (proxy_ip and direct_ip) else ""
+    report.add("network.proxy", "ok",
+               f"proxy reachable [{mode}] ({latency_ms}ms) — {proxy_url}{leak_note}")
 
 
 def _probe_audit_chain(report: Report) -> None:

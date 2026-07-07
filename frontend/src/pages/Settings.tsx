@@ -2689,7 +2689,7 @@ function RuntimeSystemTab({ settings, qc, onDirty }: any) {
         <AutostartCard qc={qc} />
       </Section>
 
-      <Section title="Network Proxy" description="Route all outbound HTTP through a proxy. Required when direct internet access is unavailable (e.g. Task Scheduler-started gateway).">
+      <Section title="Network Proxy" description="Route all outbound traffic (exchange, market data, news, LLM) through a managed proxy. Set the protocol/host/port, and enable Enforce to require the proxy (fail-closed) so a proxy outage never leaks your real IP.">
         <NetworkCard settings={settings} qc={qc} />
       </Section>
     </div>
@@ -2866,7 +2866,8 @@ function ConfigCoverageCard({ settings }: { settings: any }) {
     'health.auto_resume_enabled', 'health.auto_resume_interval_sec',  // HealthCard (DO-1/CUI-4)
     'health.exchange_probe_interval_sec', 'health.exchange_probe_failure_threshold',
     'health.exchange_auto_resume_interval_sec', 'health.exchange_auto_resume_success_threshold',
-    'network.proxy_url', 'network.no_proxy',
+    'network.proxy_protocol', 'network.proxy_host', 'network.proxy_port',
+    'network.enforce', 'network.proxy_url', 'network.no_proxy',
     'operator.loop_enabled',
     'guard.auto_promote_enabled',
   ])
@@ -3413,16 +3414,22 @@ function AutostartCard({ qc }: any) {
 
 function NetworkCard({ settings, qc }: any) {
   const net = (settings?.network as any) || {}
-  const [proxyUrl, setProxyUrl] = useState<string>(net.proxy_url || '')
+  const [protocol, setProtocol] = useState<string>(net.proxy_protocol || 'http')
+  const [host, setHost] = useState<string>(net.proxy_host ?? '')
+  const [port, setPort] = useState<string>(net.proxy_port != null ? String(net.proxy_port) : '')
+  const [enforce, setEnforce] = useState<boolean>(!!net.enforce)
   const [noProxy, setNoProxy] = useState<string>(net.no_proxy || '')
   const [testResult, setTestResult] = useState<{ reachable: boolean; latency_ms: number; error: string | null } | null>(null)
   const [testing, setTesting] = useState(false)
 
   // Sync from server state when settings load
   useEffect(() => {
-    setProxyUrl(net.proxy_url || '')
+    setProtocol(net.proxy_protocol || 'http')
+    setHost(net.proxy_host ?? '')
+    setPort(net.proxy_port != null ? String(net.proxy_port) : '')
+    setEnforce(!!net.enforce)
     setNoProxy(net.no_proxy || '')
-  }, [net.proxy_url, net.no_proxy])
+  }, [net.proxy_protocol, net.proxy_host, net.proxy_port, net.enforce, net.no_proxy])
 
   const mut = useMutation({
     mutationFn: (body: any) => api.updateNetworkConfig(body),
@@ -3430,7 +3437,14 @@ function NetworkCard({ settings, qc }: any) {
   })
 
   const handleSave = () => {
-    mut.mutate({ proxy_url: proxyUrl.trim(), no_proxy: noProxy.trim() })
+    const portNum = parseInt(port, 10)
+    mut.mutate({
+      proxy_protocol: protocol,
+      proxy_host: host.trim(),
+      proxy_port: Number.isFinite(portNum) ? portNum : 0,
+      enforce,
+      no_proxy: noProxy.trim(),
+    })
     setTestResult(null)
   }
 
@@ -3447,32 +3461,55 @@ function NetworkCard({ settings, qc }: any) {
     }
   }
 
-  const isConfigured = !!proxyUrl.trim()
+  const isConfigured = !!host.trim()
+  const composed = isConfigured ? `${protocol}://${host.trim()}:${port || '?'}` : '(disabled — direct connection)'
   let statusDot = <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>●</span>
   if (isConfigured && testResult?.reachable) statusDot = <span style={{ color: 'var(--green)', fontSize: '0.75rem' }}>●</span>
   else if (isConfigured && testResult && !testResult.reachable) statusDot = <span style={{ color: 'var(--red)', fontSize: '0.75rem' }}>●</span>
 
   return (
     <div className="flex flex-col gap-2">
-      <Row label="Proxy URL" hint="Applied to all outbound HTTP (LLM, exchange, market data). Leave empty for direct connection.">
+      <Row label="Protocol" hint="HTTP for a Clash/Mihomo mixed port; SOCKS5 for a SOCKS proxy (requires the aiohttp_socks backend package).">
+        <select value={protocol} onChange={e => setProtocol(e.target.value)} className="text-sm">
+          <option value="http">HTTP</option>
+          <option value="https">HTTPS</option>
+          <option value="socks5">SOCKS5</option>
+        </select>
+      </Row>
+      <Row label="Host" hint="Proxy hostname or IP. Leave empty to disable the proxy (direct connection).">
         <div className="flex gap-2 items-center">
           {statusDot}
           <input
-            type="text" value={proxyUrl}
-            onChange={e => setProxyUrl(e.target.value)}
-            placeholder="http://127.0.0.1:7897"
-            className="mono text-sm" style={{ width: '220px' }}
+            type="text" value={host}
+            onChange={e => setHost(e.target.value)}
+            placeholder="127.0.0.1"
+            className="mono text-sm" style={{ width: '160px' }}
           />
         </div>
       </Row>
-      <Row label="No Proxy" hint="Comma-separated hosts to bypass (e.g. 127.0.0.1,localhost).">
+      <Row label="Port" hint="Proxy port (e.g. Clash 7890 / 7897).">
+        <input
+          type="number" value={port}
+          onChange={e => setPort(e.target.value)}
+          placeholder="7890"
+          className="mono text-sm" style={{ width: '110px' }}
+        />
+      </Row>
+      <Row label="Enforce (fail-closed)" hint="Require ALL outbound traffic to go through the proxy. If the proxy is unreachable, requests fail and trading auto-pauses instead of silently connecting direct and leaking your real IP. Recommended for production.">
+        <label className="flex gap-2 items-center text-sm">
+          <input type="checkbox" checked={enforce} onChange={e => setEnforce(e.target.checked)} />
+          <span>{enforce ? 'Strict — proxy required' : 'Off — direct fallback allowed'}</span>
+        </label>
+      </Row>
+      <Row label="No Proxy" hint="Comma-separated hosts to bypass. Loopback (127.0.0.1, localhost, ::1) is always bypassed automatically.">
         <input
           type="text" value={noProxy}
           onChange={e => setNoProxy(e.target.value)}
-          placeholder="127.0.0.1,localhost"
+          placeholder="example.internal"
           className="mono text-sm" style={{ width: '220px' }}
         />
       </Row>
+      <div className="hint" style={{ paddingLeft: '0.2rem' }}>Effective proxy: <span className="mono">{composed}</span></div>
       <div className="flex gap-2 flex-wrap">
         <button onClick={handleSave} disabled={mut.isPending}>Save</button>
         <button className="secondary" onClick={handleTest} disabled={testing}>

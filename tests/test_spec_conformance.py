@@ -172,6 +172,12 @@ def _import_all_specs():
         # canonical symbol when both spot and usdt_futures are enabled; LLM is not
         # called twice for the same directional read. Reuses data_layer_contract.
         spec_market_type_dedup,
+        # Managed network egress / system proxy (NET-*): every outbound interaction
+        # routes through the aletheia.net choke point; structured proxy config
+        # (protocol/host/port) + enforce fail-closed policy; ccxt single-constructor
+        # invariant; NO_PROXY/ALL_PROXY wiring. New "network_egress_contract"
+        # (cross-cutting infra — not in REQUIRED_CONTRACTS). 2026-07-04.
+        spec_network_egress,
     )
 
 
