@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PriceChart, { type TradeMarker } from '../charts/PriceChart'
@@ -153,7 +154,10 @@ function ChartPanel({
             ))}
           </div>
         </div>
-        <PriceChart symbol={symbol} timeframe={timeframe} markers={markers} onMarkerClick={setSelectedOrder} />
+        {/* #115 fix: PriceChart now reads marketType so a perp instrument's
+            chart pulls perp bars, not spot. mtFor(symbol) resolves via prop
+            override → snapshot lookup → 'spot' fallback. */}
+        <PriceChart symbol={symbol} timeframe={timeframe} marketType={mtFor(symbol) || 'spot'} markers={markers} onMarkerClick={setSelectedOrder} />
       </Card>
 
       {symbolOpportunities.length > 0 && (
@@ -342,9 +346,23 @@ function PredictionsTab() {
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function Charts() {
-  const [symbol, setSymbol] = useState('BTC/USDT')
+  // #116 fix (Charts side): pick up ?symbol=... &market_type=... from deep
+  // links (TradesPositions "View on Chart" passes them). Falls back to the
+  // BTC/USDT default when the caller didn't specify.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialSymbol = searchParams.get('symbol') || 'BTC/USDT'
+  const initialMarketType = searchParams.get('market_type') || 'spot'
+  const [symbol, setSymbol] = useState(initialSymbol)
+  const [marketType, setMarketType] = useState(initialMarketType)
   const [activeTab, setActiveTab] = useState('signals')
   useDecimals()
+  // Keep the URL in sync when the user picks a different symbol — deep links
+  // stay copy-pasteable and the browser back button behaves.
+  useEffect(() => {
+    const params: Record<string, string> = { symbol }
+    if (marketType && marketType !== 'spot') params.market_type = marketType
+    setSearchParams(params, { replace: true })
+  }, [symbol, marketType, setSearchParams])
 
   const { data: universe } = useQuery({
     queryKey: ['universe-current'],
@@ -461,7 +479,12 @@ export default function Charts() {
         snapshotMap={snapshotMap}
         dataProvider={dataProvider}
         lastUpdatedLabel={lastUpdatedLabel}
-        marketType={boardMarketType}
+        // #116 fix continuation: prefer the URL-provided market_type (from
+        // TradesPositions "View on Chart") over the board's market_type. A
+        // deep link that says market_type=perp shouldn't be overridden by
+        // the parent board's asset class (which may be a broader label like
+        // 'crypto'). Falls back to the board's value when the URL didn't say.
+        marketType={marketType !== 'spot' ? marketType : boardMarketType}
       />
 
       {/* Intelligence panels below the chart */}

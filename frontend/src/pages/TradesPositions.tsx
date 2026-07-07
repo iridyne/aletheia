@@ -231,8 +231,16 @@ function ReconciliationCard({
   orphaned: ReconcileItem[]
   syncStatus?: string
 }) {
-  // Nothing to surface when there is no drift and the sync is healthy.
-  if (external.length === 0 && orphaned.length === 0) return null
+  // #117 fix: previously returned null whenever external.length + orphaned
+  // .length was 0 — including when syncStatus was 'stale' / 'error' /
+  // 'unconfigured'. That hid the reconciliation status entirely: an operator
+  // couldn't tell whether the "no drift" was because everything was in sync
+  // OR because the sync itself had never run / had failed / was stale (which
+  // is not the same story at all). Show the status card in those cases too,
+  // just without the drift lists — the badge carries the honest state.
+  const hasDrift = external.length > 0 || orphaned.length > 0
+  const isDegraded = syncStatus && !['ok', 'unconfigured'].includes(syncStatus)
+  if (!hasDrift && !isDegraded) return null
 
   return (
     <Card>
@@ -240,7 +248,19 @@ function ReconciliationCard({
         <h4 className="blotter-group-label">Account Reconciliation</h4>
         {external.length > 0 && <Badge tone="yellow">{external.length} unmanaged</Badge>}
         {orphaned.length > 0 && <Badge tone="muted">{orphaned.length} orphaned</Badge>}
+        {!hasDrift && isDegraded && (
+          <Badge tone={syncStatus === 'stale' ? 'yellow' : 'red'}>
+            sync {syncStatus}
+          </Badge>
+        )}
       </div>
+      {!hasDrift && isDegraded && (
+        <p className="text-muted text-sm">
+          No drift reported, but the exchange sync is <strong>{syncStatus}</strong> —
+          the "no drift" result may be based on stale or missing data. Fix the
+          sync source before treating the reconciliation as complete.
+        </p>
+      )}
 
       {external.length > 0 && (
         <>

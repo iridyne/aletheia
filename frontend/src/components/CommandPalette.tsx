@@ -75,9 +75,17 @@ export default function CommandPalette() {
       <div className="cmd-dialog" onClick={e => e.stopPropagation()}>
         <Command
           onKeyDown={(e) => {
+            // #126 fix: previously ANY non-empty input intercepted Enter and
+            // drafted a Command Center message — even a 3-char search that
+            // happened to match a suggestion. cmdk couldn't fire its own
+            // Enter selection because our handler had already navigated
+            // away. Only hijack for LONG inputs that look like a real
+            // freeform prompt (≥20 chars), matching the placeholder's
+            // "20+ chars for AI" hint. Short inputs fall through to cmdk
+            // so the highlighted suggestion selects normally.
             if (e.key === 'Enter') {
-              const input = (e.target as HTMLInputElement)?.value?.trim()
-              if (input) {
+              const input = (e.target as HTMLInputElement)?.value?.trim() || ''
+              if (input.length >= 20) {
                 e.preventDefault()
                 setOpen(false)
                 navigate(`/command-center?draft=${encodeURIComponent(input)}`)
