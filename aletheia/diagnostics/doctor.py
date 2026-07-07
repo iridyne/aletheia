@@ -1791,22 +1791,42 @@ def _probe_audit_chain(report: Report) -> None:
         EFFECTIVE_CHAIN_FIX_TS = "2026-07-03T08:00:00+00:00"
         effective_ts = _parse_iso_datetime(EFFECTIVE_CHAIN_FIX_TS)
         ts_padded = list(error_timestamps) + [""] * len(errors)
-        post_fix = [
-            e
-            for e, t in zip(errors, ts_padded)
-            if (parsed := _parse_iso_datetime(t)) is not None
-            and effective_ts is not None
-            and parsed > effective_ts
-        ]
-        if not post_fix:
+        # #179 fix: undateable breaks (no parseable timestamp on the surrounding
+        # audit event) used to be silently excluded from `post_fix`; when every
+        # break was undateable the code declared "all historical, info" and
+        # masked a real post-fix corruption that happened to also break the
+        # timestamp. Now we split into three bins so an undateable break can't
+        # hide behind the historical label.
+        post_fix: list[str] = []
+        undateable: list[str] = []
+        pre_fix_count = 0
+        for e, t in zip(errors, ts_padded):
+            parsed = _parse_iso_datetime(t)
+            if parsed is None:
+                undateable.append(e)
+            elif effective_ts is not None and parsed > effective_ts:
+                post_fix.append(e)
+            else:
+                pre_fix_count += 1
+
+        if not post_fix and not undateable:
             report.add("trust.audit_chain", "info",
                        f"{len(errors)} historical chain break(s), all before current "
                        f"cross-process cache fix ({EFFECTIVE_CHAIN_FIX_TS}); "
                        f"zero post-lock breaks ({records} records{reanchor_extra})")
-        else:
+        elif post_fix:
             detail = f"chain BROKEN — {len(post_fix)} post-fix error(s) in {records} records: {post_fix[:3]}"
             report.add("trust.audit_chain", "warn", detail,
                        "audit log may have been tampered with or corrupted (post hash-cache fix)")
+        else:
+            # Only undateable breaks — can't confirm they're historical, so
+            # surface them as warn (not info) rather than hiding them.
+            detail = (
+                f"{len(undateable)} chain break(s) with unparseable timestamp — "
+                f"cannot confirm historical vs post-fix; treat as WARN: {undateable[:3]}"
+            )
+            report.add("trust.audit_chain", "warn", detail,
+                       "inspect audit log manually; missing timestamps prevent automatic classification")
 
 
 def _probe_config_consistency(report: Report) -> None:
@@ -1818,8 +1838,15 @@ def _probe_config_consistency(report: Report) -> None:
     if not findings:
         report.add("config.consistency", "ok", "no cross-field inconsistencies")
         return
+    # #178 fix: config_consistency emits three severities — "info", "warning",
+    # "blocker" — but this branch previously mapped only "warning"→"warn" and
+    # collapsed everything else (including the info-severity ones) to "blocker".
+    # An info finding (e.g. a hint about optional demo credentials) escalated
+    # to a doctor BLOCKER drove `doctor` exit code 1, which downstream tooling
+    # reads as "system is broken". Three-way map matches source severity honestly.
+    _SEV_MAP: dict[str, Severity] = {"info": "info", "warning": "warn", "blocker": "blocker"}
     for f in findings:
-        sev: Severity = "warn" if f.severity == "warning" else "blocker"  # type: ignore[assignment]
+        sev: Severity = _SEV_MAP.get(f.severity, "blocker")
         report.add(f"config.consistency.{f.field_path}", sev, f.message, f.fix_hint)
 
 

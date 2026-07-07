@@ -13,11 +13,13 @@ from aletheia.knowledge.router import (
 class TestRetrieveForRole:
     @patch("aletheia.knowledge.router.retrieve_lessons")
     def test_uses_role_item_types(self, mock_retrieve):
+        # #177 fix: dead role entries (strategy_designer/equity_observer/paper_trader)
+        # were removed from _ITEM_TYPES_BY_ROLE. Exercise the sole live role.
         mock_retrieve.return_value = []
-        retrieve_for_role("strategy_designer", "entry exit")
+        retrieve_for_role("market_observer", "entry exit")
         mock_retrieve.assert_called_once_with(
             "entry exit", k=3,
-            item_types=_ITEM_TYPES_BY_ROLE["strategy_designer"],
+            item_types=_ITEM_TYPES_BY_ROLE["market_observer"],
         )
 
     @patch("aletheia.knowledge.router.retrieve_lessons")
@@ -85,7 +87,7 @@ class TestBuildAdvisoryContext:
         mock_lessons.return_value = "## Lessons block"
         mock_guards.return_value = "## Guard block"
         result = build_advisory_context(
-            "strategy_designer", "query",
+            "market_observer", "query",
             guard_context={"symbol": "BTC/USDT"},
         )
         assert "Lessons block" in result

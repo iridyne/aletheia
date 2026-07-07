@@ -364,9 +364,18 @@ def config(
             "scheduler_enabled": cfg.runtime.scheduler_enabled,
         },
         "agent": {
-            "permission_mode": cfg.operator.permission_mode,
+            # #180 fix: the "agent" block was printing cfg.operator.permission_mode
+            # instead of the trading-agent's cfg.agent.permission_mode — the
+            # operator namespace is a separate permission surface for the human
+            # System Operator LLM, so this misled every `aletheia inspect config`
+            # reader about which mode was gating trading. Print both explicitly
+            # so no future reader has to remember the namespace boundary.
+            "permission_mode": cfg.agent.permission_mode,
             "autonomous_learning": cfg.agent.autonomous_learning,
             "bypass_distress_gate": cfg.agent.bypass_distress_gate,
+        },
+        "operator": {
+            "permission_mode": cfg.operator.permission_mode,
         },
         "exchange": {
             "mode": cfg.exchange.mode,

@@ -17,24 +17,25 @@ from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block, 
 
 logger = logging.getLogger("aletheia.knowledge.router")
 
-AgentRole = Literal["strategy_designer", "market_observer", "equity_observer", "paper_trader"]
+# #177 fix: only `market_observer` currently invokes build_advisory_context.
+# The prior list also carried three unreachable entries — `strategy_designer`
+# (whose lifecycle was deleted per #94), `equity_observer` (the agent exists
+# but doesn't call the router — retrieves no knowledge in practice), and
+# `paper_trader` (no caller either). Dead map entries mislead readers into
+# thinking retrieval was wired up; drop them until a real caller re-adds them.
+AgentRole = Literal["market_observer"]
 
 # post_trade_review is deliberately EXCLUDED from every role's advisory retrieval.
 # It is the hallucination-prone source identified in LEARNING_LOOP_AUDIT_2026-06-26
 # (reviews of paper fills graded "execution quality" with no real execution to grade);
 # B1 already removed it from the ranker's _lesson_penalty, and C1 downgraded new reviews
 # to medium_confidence. This list closes the symmetric gap on the *advisory* path:
-# build_advisory_context (live in market_observer + strategy_designer) must not inject
-# post_trade_review lessons into agent prompts. trade_case_study (full-chain, has the R0
-# attribution) is the trustworthy lesson source. Re-adding post_trade_review here is a
-# regression (locked by test_knowledge_router::test_no_role_retrieves_post_trade_review).
+# build_advisory_context (live in market_observer) must not inject post_trade_review
+# lessons into agent prompts. trade_case_study (full-chain, has the R0 attribution) is
+# the trustworthy lesson source. Re-adding post_trade_review here is a regression
+# (locked by test_knowledge_router::test_no_role_retrieves_post_trade_review).
 _ITEM_TYPES_BY_ROLE: dict[str, list[str]] = {
-    "strategy_designer": ["trade_case_study", "research_note", "strategy_memory"],
     "market_observer": ["trade_case_study", "research_note", "dreaming_log", "trading_guard"],
-    # equity_observer uses equity-context knowledge: sector rotation, earnings events,
-    # relative strength patterns. Query terms should use equity vocabulary (not crypto).
-    "equity_observer": ["research_note", "trade_case_study"],
-    "paper_trader": ["trade_case_study", "trading_guard"],
 }
 
 
