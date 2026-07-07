@@ -1,5 +1,28 @@
 # Development Log
 
+## 2026-07-07 — B8-chart-follow-up + 对账 + Palette Enter（3 findings / 1 commit）
+
+### 触发
+接 B8-chart-nav 后 owner「继续推进」。补上 #116 依赖的 Charts.tsx 侧读 searchParams，再顺手挑 #117 (ReconciliationCard 零漂移隐藏 stale) + #126 (CommandPalette Enter 劫持) —— 两条独立小改。
+
+### 做法
+1. **#116 后续（Charts.tsx 读 searchParams）**：加 `useSearchParams` import + `useEffect` 保持 URL ↔ state 同步。`symbol` state 初值从 `?symbol=`；`marketType` state 初值从 `?market_type=`（默认 'spot'）。ChartPanel 的 `marketType` prop 现在 URL 优先（deep link 的市场类型不能被父 board 的 asset-class 覆盖），否则回退 boardMarketType。View-on-Chart 现在真正在期望的 instrument 上落地。
+2. **#117 ReconciliationCard 零漂移时隐藏 stale/error**：之前 `if (external.length===0 && orphaned.length===0) return null` —— 当 syncStatus='stale'/'error'/'unconfigured' 而 drift 恰为零时，整张 Reconciliation 卡不显示。用户不知道对账压根没跑或数据过期。加 `isDegraded = syncStatus && !['ok','unconfigured'].includes(syncStatus)`；drift=0 但 degraded 时仍渲染卡 + 显示 `sync <status>` badge + 解释文字「'no drift' 结论可能基于过时/缺失数据」。
+3. **#126 CommandPalette Enter 劫持**：无脑 `if (e.key==='Enter' && input.trim())` navigate 到 command-center —— 3 字符搜索匹配到建议时也劫持，cmdk 无法用 Enter 选建议。加长度门槛 `input.length >= 20`（呼应输入框 placeholder 的「20+ chars for AI」提示），短输入落回 cmdk 走建议选择。
+
+### 交付
+- 3 findings。1 提交（Charts + TradesPositions + CommandPalette）。
+- **验证**：Python `tests/specs/` 554 passed / 0 failed；改动全在 React 层，不涉及 Python spec 覆盖。`tsc` 未跑。
+
+### 剩余
+- **B8 剩 ~12 finding**（session B8 累计 22：cleanup 4 + mini 3 + honesty 3 + topbar 2 + quickies 3 + safety 2 + chart-nav 2 + chart-follow-up/reconcile/palette 3）。大件仍在：Settings coverage matrix mislabel (#163)、CausalChain fill/position 源不对 (#122/#123)、Charts prediction fields 错 (#169/#170)、Proposals approve/confirm 骗人 (#113/#114)、SetupBanner 只 Bitget (#121)、Charts fmtSymbol 用 board asset-class (#170)、PredictionMarket 类型丢失 (#169)。
+- 已 deferred 项不变。
+
+### 边界
+仅 3 前端文件；未推 / 未 restart / 未 enable live / 未触 credentials / 未跑 npm。
+
+---
+
 ## 2026-07-07 — B8-chart-nav：PriceChart marketType + View-on-Chart 带 symbol 跳转（2 findings / 1 commit）
 
 ### 触发
