@@ -1,5 +1,31 @@
 # Development Log
 
+## 2026-07-07 — B10-docs-sweep：scheduler + live-unlock + kill-switch + permission-mode 漂移（5 findings / 1 commit / 纯 docs）
+
+### 触发
+接 B10-api-ref 后 owner「继续推进」。B10 docs drift 尾第二轮 —— 5 条 stale docs 一次批处理。
+
+### 做法
+1. **#29 agent_contracts.md 调度器表旧**：文档写「31 jobs」+ 编号跳空（12→16），漏 5 个真实 job：`lesson_reviewer`、`connectivity_monitor`、`shadow_resolver`、`news_fetch`、`outcome_settler`。用 `grep -oP 'id="[^"]+"' scheduler.py | sort -u` 得实际 33 个 unique ID，全表重写、连续编号、5 条新行按各自 schedule 补齐（cron/interval/executor）。
+2. **#31 live_unlock_contract.md scorecard "尚未实现 xfail"**：§4a 写「`server/routes/live.py` 尚未调用 `compute_scorecard()`——D8-B02/D8-C01 是 xfail tripwire，实现后去掉 xfail」。实际 `live.py:30-41` 早已实现（`compute_scorecard()` + `composite_score < 70 → 422`）。改写为「已实现且被 spec 锁定，tripwire 已通过（不再 xfail）」。
+3. **#32 api_reference.md kill-switch confirm token「已知缺陷」注**：文档 §Risk / Kill Switch 挂了个 ⚠️ 说 release 路径**不要求** confirm token。实际 `server/routes/risk.py:85-101` 已经强制 `confirm_release=True`（否则 422）。§0 SDD 表 + §Risk 表都补上 `confirm_release` 字段说明；⚠️ 缺陷注改写成 ✅「2026-07-07 已解决」并指向 `docs/issues/BACKEND_ISSUES.md` 的对应条目。
+4. **#33 api_reference.md `/settings/permission-mode` 说明误导**：文档写「worker + operator」，实际 `set_permission_mode` 只写 `cfg.agent.permission_mode`（worker）—— operator 是完全独立的 `cfg.operator.permission_mode` 面。改写描述强调 worker-only + operator 是**独立**面（这处正好呼应 B9-diag 的 #180 inspect config namespace 混淆修）。
+5. **#28 覆盖回顾**：ledger #28 是 3 条问题的汇总（错 operator trigger + 缺 infra/proposal + dead strategy），三条分别已由 B10-api-ref 的 #78/#79/#81/#77 直接修 —— 本批 Fix Progress 行里标注「superseded by prior batches」。
+
+### 交付
+- 5 findings。1 提交（纯 docs）。
+- 无新回归（docs-only 无 runtime 行为）。
+- **验证**：`tests/specs/` 554 passed / 0 failed；`spec_api_reference.py` 一起跑绿。
+
+### 剩余
+- **B10 剩余** #30 (Position causal links docs stale — code has proposal_id/order_id/opportunity_id but docs说没有)、#49 (ccxt_provider docstring xStocks-only 声明错)、#50 (execution_contract causal links 信息性 stale)、#76 (README Spec-as-Code 索引旧)、#97 (System Operator rename incomplete pi_daemon 仍散落)、#104 (serenity 执行 plan 承诺 vs 代码)。下一批候选 #30 + #49 + #50 + #76 (纯 docs)。#97 涉及代码 rename，成本大，单独一批。
+- **B8** 前端诚实性（需 `npm run build`）仍留。
+
+### 边界
+仅 `docs/design/api_reference.md` + `docs/design/agent_contracts.md` + `docs/design/live_unlock_contract.md`；未推 / 未 restart / 未 enable live / 未触 code。
+
+---
+
 ## 2026-07-07 — B10-api-ref：api_reference.md 漂移扫（5 findings / 1 commit / 纯 docs）
 
 ### 触发
