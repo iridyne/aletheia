@@ -1,5 +1,35 @@
 # Development Log
 
+## 2026-07-07 — B9-diag：doctor/CLI/knowledge 诚实性四联（4 findings / 1 commit）
+
+### 触发
+B7 收官后 owner「继续推进」。挑 B9 中 **doctor / CLI / knowledge router** 单点小改的诚实性 gap 打包成 mini-batch —— 都是「输出与实际状态不符」，成本低价值明确。
+
+### 做法
+1. **#178 doctor 严重度三档映射**：`_probe_config_consistency` 用 `sev = "warn" if f.severity == "warning" else "blocker"` 二叉，`config_consistency` 实际发 `"info"/"warning"/"blocker"` 三档 —— info 一律被误升级成 blocker → doctor exit 1。改用 `_SEV_MAP = {"info":"info","warning":"warn","blocker":"blocker"}`，未知 severity 保守回退 blocker。
+2. **#179 doctor 审计链无时间戳误分类**：`_probe_audit_chain` 里 `post_fix` list comprehension `if parsed is not None`—— 没时间戳的 break 被排除；如果**全部** break 都无时间戳，`post_fix` 空 → 走「历史 INFO」分支，隐藏真正的 post-fix 损坏（时间戳被抹掉的 tampering）。改成三桶：pre_fix / post_fix / undateable；只有 undateable 时报 WARN + hint「无法自动分类，需人工检查」。
+3. **#180 inspect config namespace 错位**：`aletheia inspect config` 在 `"agent"` 块里打 `cfg.operator.permission_mode` —— 两个是不同的权限面（agent 是 trading agent，operator 是 System Operator LLM），把 operator 的值挂在 agent 名下误导读者「哪个 mode 在闸门 trading」。修为 `cfg.agent.permission_mode`，并新增独立的 `"operator": {"permission_mode": cfg.operator.permission_mode}` 块使两个面都可见。
+4. **#177 knowledge router 不可达 role**：`_ITEM_TYPES_BY_ROLE` 有 4 条（strategy_designer / market_observer / equity_observer / paper_trader），实际只有 `market_observer.py` 调 `build_advisory_context`。`strategy_designer` 是 #94 已删生命周期残余；`equity_observer` agent 存在但不调 router；`paper_trader` 无调用方。删 3 条不可达项，`AgentRole` Literal 收窄到 `market_observer`；未来任何 caller 再加时同步加回。
+
+### 交付
+- 4 findings。1 提交。
+- **新增回归** `tests/test_diagnostics_honesty_fixes.py`（4 tests / 4 passed）：
+  - `test_knowledge_router_lists_only_wired_roles` — 断言 `_ITEM_TYPES_BY_ROLE.keys() == {"market_observer"}`。
+  - `test_doctor_maps_info_severity_to_info_not_blocker` — mock check_config_consistency 返回三档 finding，断言 `info→info, warning→warn, blocker→blocker`。
+  - `test_doctor_audit_chain_flags_undateable_breaks_as_warn` — mock `verify_audit_chain` 返回 `errors=[...], error_timestamps=[""]`，断言 doctor 报 warn + detail 含 "unparseable timestamp"。
+  - `test_inspect_config_reports_agent_permission_mode_under_agent_namespace` — 配置 agent=Paper / operator=PaperAuto，CliRunner 跑 `inspect config --json`，断言 `payload["agent"]["permission_mode"] == "Paper"` + `payload["operator"]["permission_mode"] == "PaperAuto"`。
+- **既有测试更新** `test_knowledge_router.py`：`test_uses_role_item_types` + `test_combines_lessons_and_guards` 从 `"strategy_designer"` 改为 `"market_observer"`（前者已删）。
+- **验证**：`tests/specs/` 554 passed / 0 failed；本 batch 4 + 更新 34 = 38 tests all green。
+
+### 剩余
+- **B9 剩余** #91/#92/#124/#154/#155/#156/#158/#161 —— 数据源工厂、blocking 调用、analytics 窗口/键、collector schema。下一批候选：`#124` (equity-curve ORDER BY LIMIT before date cutoff — SQL 修) + `#158` (trade_insights 运算符优先级) —— 两个都单行改动。
+- **B8** 前端诚实性（需 `npm run build`）+ **B10** 文档漂移仍留。
+
+### 边界
+仅 doctor.py + inspect_cmd.py + router.py + 焦点回归；未推 / 未 restart / 未 enable live / 未触 credentials。router 收窄的 Literal 会让静态类型工具捕获未来错误调用 —— 是好副作用。
+
+---
+
 ## 2026-07-07 — B7-wal：backup 用 SQLite Connection.backup() 走 WAL 安全路径（1 finding / 1 commit）
 
 ### 触发
