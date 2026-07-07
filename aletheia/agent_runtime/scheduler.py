@@ -51,6 +51,11 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "lesson_reviewer": 300.0,
     "shadow_resolver": 60.0,
     "outcome_settler": 120.0,
+    # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
+    # asyncio.run() internally. Without a bound, a stuck exchange session can
+    # block the scheduler pool for the full IOCP drain (~255s on Windows) and
+    # starve other io-executor jobs. 45s cap matches other network-bound polls.
+    "tpsl_fill_check": 45.0,
 }
 
 
@@ -1023,7 +1028,27 @@ def _run_tpsl_fill_check():
     Scans open positions with exchange_tpsl_order_id, queries Bitget plan order
     history, and proactively closes positions with accurate fill prices when a
     TPSL has been triggered on the exchange.
+
+    #90 fix: the body is wrapped in `_run_sync_with_timeout` (45s cap; see
+    _ASYNC_JOB_TIMEOUT_SEC['tpsl_fill_check']) so a stuck Bitget session can't
+    hold the io executor slot indefinitely. The inner asyncio.run() blocks the
+    calling thread; the timeout wrapper is what enforces the wall-clock bound.
+    The outer try/except keeps job-wrapper contract intact (spec_agent_contracts
+    test_scheduler_job_wrappers_have_try_except).
     """
+    try:
+        return _run_sync_with_timeout("tpsl_fill_check", _tpsl_fill_check_body)
+    except Exception as e:
+        logger.warning("tpsl_fill_check outer wrapper failed: %s", e)
+        _record_job_failure("tpsl_fill_check", str(e))
+        return None
+
+
+def _tpsl_fill_check_body():
+    """Inner body of tpsl_fill_check — kept separate so _run_sync_with_timeout
+    can wrap it. The outer entry point (`_run_tpsl_fill_check`) is what the
+    scheduler dispatches; keep the paused-check + timeout wiring there so the
+    body stays a plain sync function."""
     cfg = load_config()
     if cfg.runtime.paused:
         return
