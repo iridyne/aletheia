@@ -13,7 +13,7 @@
 > - 🟠 让数据失真或学习失效（promotion gate 错算 / KB 类型混淆 / PnL 不可信）
 > - 🟡 dead code / cosmetic / future-violation tripwire
 >
-> **最后更新**：2026-06-30 · 维护者：Aletheia Dev
+> **最后更新**：2026-07-05 · 维护者：Aletheia Dev
 > **来源**：6 个并行 subagent 审计（agents+runtime / risk+execution / storage+knowledge /
 > server+config / lifecycle+gateway / model+telegram+update+cli）+ 早期对照表
 
@@ -951,3 +951,53 @@
 | E5 | operator retire_strategy 无超时降级，PI 不在跑则卡住 | `operator_loop.py:555` 写 pi_decisions 无 24h 兜底 |
 | ~~F6~~ ✅ | ~~symbol_map ~30 个硬编码 CoinGecko slug，未知币 KeyError~~ **ALREADY FIXED (2026-06-30 核实)** — `to_coingecko_id()` 已改用 `.get()` 返回 None | `data/sources/symbol_map.py` |
 | G10 | 无 Prometheus `/metrics`，可观测性靠 10min 采样 | grep prometheus_client / /metrics = 0 |
+
+---
+
+## §20. 市场数据收集与供给审计（2026-07-05）
+
+> 范围：本节只记录代码实现层面的市场数据采集、存储、消费、供给问题，不记录任何单机运行态事实。
+> 当前 gateway 是否在跑、`data/app.db` 当前有多少行、某台机器 config.yaml 当前值是多少，均以
+> `uv run aletheia doctor` / `uv run aletheia audit data` 的本机输出为准，不写进 git 文档。
+>
+> 覆盖域：行情快照、K 线、盘口/orderbook、funding、OI、多空比 LSR、清算、宏观/链上、universe 特征、API/CLI 供给。
+
+### §20.1 总体判断
+
+代码层已经有一套较完整的低成本 REST 轮询市场数据架构：
+
+- 基础行情/K 线：`CCXTProvider` 作为公共 ticker/OHLCV 入口，`get_market_data_provider()` 每次新建 provider，避免 aiohttp event loop 绑定问题；OHLCV best-effort 写入 `market_ohlcv`。
+- 盘口：`MicrostructureCollector` 拉 `fetch_order_book(limit=20)`，计算 spread、10bps depth、imbalance。
+- 衍生品：`DerivativesCollector` 拉 funding + OI，并可把 Binance Futures LSR 写入 `open_interest_snapshots.long_short_ratio`。
+- 额外数据源：Coinalyze（OI/清算，需 key）、Hyperliquid（跨 venue funding/OI，无 key）、DefiLlama（链上）、CoinGecko top movers、宏观数据。
+- 消费路径：market_observer LLM 上下文、universe/features 选币特征、scanner 打分、System Operator trading context、doctor/CLI 诊断、dashboard 部分 API。
+
+主要缺口不是“完全没有 collector”，而是：数据新鲜度门控不一致、配置源可能分叉、部分字段写入后不一定进入真实运行上下文、dashboard 供给可见性薄、测试覆盖绕过实际丢失点。
+
+### §20.2 开放问题清单
+
+| ID | 标题 | 级别 | 证据 | 影响 | 最小修复建议 |
+|---|---|---:|---|---|---|
+| MDS-01 | 增强市场数据在 `market_observer` 中缺少 freshness gate | 🟠 | `agents/market_observer.py:224-227` 直接读 `latest_orderbook/latest_funding_rate/latest_open_interest/latest_macro_snapshot`；`data/context_builder.py:230-253` 有 `_is_fresh()` 门控但该统一入口没有被 `market_observer` 使用 | 旧 orderbook/OI/funding/macro 行可能被拼进 LLM prompt，当成当前市场信号；对“数据语义诚实”和机会生成质量有直接影响 | 抽一个统一 `latest_fresh_*` 或复用 `build_market_context_from_db()`；market_observer 只渲染新鲜增强数据，过期则显示 unavailable/stale，不参与 crowding_score |
+| MDS-02 | `build_market_context_from_db()` 丢失 LSR，多空比写入后不进通用上下文 | 🟠 | `data/context_builder.py:246-253` 调 `compute_leverage_state(...)` 时未传 `long_short_ratio=oi.get("long_short_ratio")`；`data/normalizer.py:53-77` 明确支持 long_short_ratio；`data/collectors/derivatives.py:180-187` 已写入 long_short_ratio | LSR 已采集并入库，但通用 runtime context 输出仍可能显示 `LSR=n/a`、crowding_score 不含多空比；现有集成测试手工传参给 render，绕过了实际丢失点 | 给 `build_market_context_from_db()` 补传 `long_short_ratio`；新增回归测试：mock repo.latest_open_interest 返回 `long_short_ratio=2.09`，断言 snapshot.leverage 中保留该值且 render 出 `2.09` |
+| MDS-03 | Universe feature 读取 orderbook/funding/OI 时也缺 freshness gate | 🟠 | `universe/features.py:204-211` 直接读取 `repo.latest_orderbook/latest_funding_rate/latest_open_interest`；仅 OHLCV 有 live fetch freshness，DB 增强行没有年龄校验 | 选币特征可能混入过期 depth/OI/funding，scanner 的 derivatives/momentum/event 分数被旧信号污染；尤其 `score_derivatives()` 和 OI confirmation 会受影响 | 在 feature 层按字段年龄过滤，超过阈值则置 None；把 `data_freshness_sec` 扩展为每类数据 freshness，或在 `UniverseFeatureSnapshot` 增加 stale 标记 |
+| MDS-04 | 行情源与执行交易所可被再次手动分叉，只由 doctor 提醒 | 🟠 | 默认 schema 中 `ExchangeConfig.name="bitget"`、`paper_execution_mode="bitget_demo"`，但 `MarketDataConfig.ccxt_exchange="binance"`（`config/schema.py:64-97`）；`settings.py:184-200` 的 Primary Exchange 路由会统一四个字段；但 `settings.py:990-1008` 的 `/settings/market-data` 仍允许单独改 `ccxt_exchange/ccxt_fallback`；doctor 仅通过 `diagnostics/config_consistency.py:_check_exchange_consistency()` 报告 | 研究/选币/LLM 可能基于一个交易所行情，执行却发生在另一个交易所；价差、funding、OI、可交易合约、深度均可能不同。对 demo/live 行为解释会变困难 | 保留“有意分叉”能力，但 Settings UI/后端需要显式二次确认和醒目标记；对于 `paper_execution_mode != paper_internal`，至少在 operator context 和 dashboard 标出 `data_exchange != execution_exchange` |
+| MDS-05 | `market_ohlcv` 主键不含 exchange，跨交易所历史会互相覆盖 | 🟡 | `migrations.py:377-388` `PRIMARY KEY (symbol, timeframe, ts)`；`repositories.py:1219-1224` 注释明确“last-writer wins across exchanges” | 当前单主交易所 MVP 可接受；但只要同时拉 Binance/Bitget/Bybit 同一 symbol/timeframe，同一根 K 线只能保留最后写入来源，无法做严格交易所价差、回放或供给质量对比 | 若后续需要跨交易所历史对比，迁移主键为 `(symbol,timeframe,exchange,ts)`；短期至少在 API/文档中声明 `market_ohlcv` 不是 multi-exchange canonical store |
+| MDS-06 | Orderbook 是 REST 点时刻快照，不是连续盘口流 | 🟡 | `data/collectors/microstructure.py:50-55` 每 symbol 调一次 `fetch_order_book(limit=20)`；`data/collectors/microstructure.py:82-90` 只计算 10bps depth 和 top10 imbalance | 能估算执行成本，但不能判断盘口队列变化、撤单速度、冲击恢复，也不能做微结构级回放；不适合把它解释为实时 orderflow | 文档/UI 中称为 “latest orderbook snapshot”；若要升级，再引入 WebSocket/增量 orderbook，但当前 MVP 不建议先扩范围 |
+| MDS-07 | `inspect microstructure` 读取了不存在的 imbalance 字段 | 🟡 | `cli/inspect_cmd.py:888-891` 输出 `entry["imbalance"] = ob.get("bid_ask_imbalance")`；实际模型和表字段是 `imbalance_ratio`（`data/models.py:16-25`，`migrations.py:1132-1144`） | 即使 orderbook 表有数据，CLI 也会把 imbalance 显示为空；排障时误以为采集器没产出该字段 | 改为 `ob.get("imbalance_ratio")`，并补一个 CLI/仓储 fixture 测试 |
+| MDS-08 | Dashboard 对 OI/funding/orderbook/清算覆盖率可见性不足 | 🟡 | 后端公开 API 主要是 `/api/market/snapshots`、`/api/market/ohlcv`、`/api/market/macro`（`server/routes/data.py:773-884`）；OI/funding/orderbook 主要通过 CLI `inspect microstructure` 看 | owner 在 UI 里很难一眼判断“采集链是否在供给真实新数据”；doctor 能发现部分问题，但不是 dashboard 常驻视图 | 新增只读 `/api/market/data-coverage`：按 domain 返回 row_count、newest_observed_at、symbols_covered、exchange_counts、stale_domains；dashboard 只展示，不改变交易行为 |
+| MDS-09 | 数据采集调度有硬 wall-clock 预算，标的扩张时会主动跳过 domain | 🟡 | `scheduler.py:1567-1600` data_collectors 45s job / 40s deadline；`scheduler.py:1640-1759` micro/derivatives/macro/volume/coinalyze/hyperliquid/defillama 串在一个 tick 里，每段 `_bounded()` | 这是正确的防挂死设计，但代价是网络慢或 symbol 多时，某些 domain 会被跳过；如果没有覆盖率视图，用户只看到“系统在跑”，不知道某类信号已经缺失 | 保留预算；补覆盖率 telemetry，并把连续 N 次 domain skipped/timeouts 写 infra event 或 operator recommendation |
+| MDS-10 | Coinalyze OI 与主交易所 OI 共用 primary read，可能改变“主交易所 OI”语义 | 🟡 | `repositories.py:1709-1729` 只排除 `hyperliquid/hyperliquid_predicted`；`coinalyze` 不在 `_CROSS_VENUE_TAGS`；`collectors/coinalyze.py` 写 `exchange="coinalyze"` 到 `open_interest_snapshots` | Coinalyze 是跨所聚合 OI，不等同于当前执行交易所 OI；`latest_open_interest(symbol)` 可能返回聚合 OI，影响 market_observer/universe/features 的 “primary venue” 语义 | 明确分层：`latest_open_interest(exchange=None)` 是否应该排除 coinalyze；如要消费聚合 OI，应在 context 中标 `aggregated_oi`，不要伪装成主所 OI |
+| MDS-11 | OHLCV API 每次请求可触发 live CCXT fetch，dashboard 图表依赖外部网络 | 🟡 | `/api/market/ohlcv` 在 cache miss 时直接 `provider.get_ohlcv(...)`（`server/routes/data.py:839-853`），而 provider 内部再写 DB（`data/ccxt_provider.py:158-205`） | 图表不是纯 DB read model；网络慢时页面请求受影响，且同一 API 同时承担“供给”和“采集补写”职责 | 保留 live tail，但加清晰指标：response 标明 `source=cache|live|db_fallback`；必要时先读 DB，live fetch 只刷新最新窗口 |
+
+### §20.3 已有保护和测试覆盖
+
+- `doctor` 已有基础 freshness 探针：`diagnostics/doctor.py:657-673` 检查 `market_snapshots` 年龄，`diagnostics/doctor.py:676-705` 检查 LSR 年龄，`diagnostics/doctor.py:1862-1905` 检查 OHLCV 覆盖。
+- 相关测试已覆盖 collector 写入链：`tests/test_derivatives_collector.py`、`tests/test_data_collectors_integration.py`、`tests/specs/spec_macro_signals.py`。
+- 但测试缺口仍存在：当前测试证明 “LSR 能写入 + render 能显示手工传入的 LSR”，没有证明 `build_market_context_from_db()` 会从 DB 读取并传递 LSR；MDS-02 需要新增专门回归测试。
+
+### §20.4 建议处理顺序
+
+1. **先修数据诚实性**：MDS-01 / MDS-02 / MDS-03。目标是旧数据不进决策、已采字段不丢。
+2. **再修排障可见性**：MDS-07 / MDS-08 / MDS-09。目标是 owner 能看到每类数据是否真的在供给。
+3. **最后处理架构取舍**：MDS-04 / MDS-05 / MDS-06 / MDS-10 / MDS-11。需要明确产品方向后再改，避免把 MVP 扩成多交易所行情平台。
