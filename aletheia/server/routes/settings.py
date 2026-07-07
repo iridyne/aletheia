@@ -1038,13 +1038,32 @@ class MarketDataConfigUpdate(SettingsRequest):
     # Free zero-key data sources (datasrc overhaul).
     enable_hyperliquid: Optional[bool] = None
     enable_defillama: Optional[bool] = None
+    # #35 fix: fields present in MarketDataConfig but previously missing from
+    # the update surface — a settings-page save silently dropped edits to
+    # these because the API model didn't accept them. Adding the safe
+    # scalars here; `coinalyze_api_key` is a SECRET and stays with the
+    # dedicated credential route, never in bulk-update payloads.
+    provider: Optional[str] = None
+    enable_crypto_fallback: Optional[bool] = None
+    enable_coinalyze: Optional[bool] = None
+    prediction_enabled: Optional[bool] = None
+    price_divergence_threshold_pct: Optional[float] = None
+    price_divergence_alert_enabled: Optional[bool] = None
+    observed_equities: Optional[list[str]] = None
 
 
 _MARKET_DATA_BOUNDS: dict[str, tuple[float, float]] = {
     "ohlcv_cache_ttl_min": (1, 60),
     "coingecko_top_n": (10, 250),  # CoinGecko per_page hard ceiling is 250
     "derivatives_history_hours": (0, 168),  # 0 = disabled, up to 7 days backfill
+    # #35 fix: divergence-alert threshold percent — 0 disables alerts,
+    # 25% is a generous ceiling (anything larger is noise, not a divergence).
+    "price_divergence_threshold_pct": (0.0, 25.0),
 }
+
+# #35 fix: `provider` must resolve to a known data-source label. Kept in a
+# separate set (not part of the numeric bounds) so validation stays explicit.
+_MARKET_DATA_PROVIDERS = {"ccxt", "bitget"}
 
 
 @router.post("/market-data")
@@ -1063,7 +1082,12 @@ async def update_market_data_config(req: MarketDataConfigUpdate):
             value = str(value).strip().lower()
             if value not in _SUPPORTED_EXCHANGES:
                 raise HTTPException(400, f"'{field}' must be one of: {sorted(_SUPPORTED_EXCHANGES)}")
-        if field in {"observed_stocks", "observed_stock_tokens", "observed_xstocks", "observed_prediction_markets"}:
+        # #35 fix: validate `provider` against the known label set.
+        if field == "provider":
+            value = str(value).strip().lower()
+            if value not in _MARKET_DATA_PROVIDERS:
+                raise HTTPException(400, f"'provider' must be one of: {sorted(_MARKET_DATA_PROVIDERS)}")
+        if field in {"observed_stocks", "observed_stock_tokens", "observed_xstocks", "observed_prediction_markets", "observed_equities"}:
             value = list(dict.fromkeys(str(s).strip() for s in value if str(s).strip()))
         setattr(cfg.market_data, field, value)
 
