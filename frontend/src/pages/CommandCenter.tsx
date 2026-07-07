@@ -1246,7 +1246,25 @@ export default function CommandCenter() {
               <Button
                 className="btn-control"
                 disabled={commandMut.isPending || input.trim().length === 0}
-                onClick={() => commandMut.mutate()}
+                onClick={() => {
+                  // #71 fix: the preview shows a "confirmation" badge when the
+                  // resolved command requires it, but Send used to fire
+                  // mutate() unconditionally — the badge was cosmetic. Now
+                  // gate the Send with a real window.confirm mirror of the
+                  // pattern the runtime buttons already use. This matches the
+                  // backend contract from #67 (execute_typed_command with
+                  // requires_confirmation returns a non-executing response
+                  // unless params.confirm=true is set); the wrapper here
+                  // catches the intent BEFORE that round-trip so a confirmed
+                  // command actually executes on the first send.
+                  if (commandPreview?.command?.requires_confirmation) {
+                    const label = commandPreview?.command?.name || commandPreview?.intent || 'this command'
+                    if (!window.confirm(`Confirm: run ${label}?\n\nThis is marked as requiring confirmation. Cancel to review the preview above.`)) {
+                      return
+                    }
+                  }
+                  commandMut.mutate()
+                }}
               >
                 {commandMut.isPending ? 'Sending…' : 'Send'}
               </Button>
