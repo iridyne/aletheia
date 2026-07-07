@@ -370,4 +370,3 @@ Decision 3:
 
 - Whether to include `WP` as a fifth dimension later.
 - Recommendation: defer. `WP` overlaps with VAP/CGO and should be added only if validation shows missing explanatory power.
-
